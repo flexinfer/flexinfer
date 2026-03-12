@@ -20,6 +20,13 @@ import (
 	"github.com/crb2nu/loom/pkg/validator"
 )
 
+func normalizeLoomBinary(loomBinary string) string {
+	if strings.TrimSpace(loomBinary) == "" {
+		return "loom"
+	}
+	return strings.TrimSpace(loomBinary)
+}
+
 func isExecutableFile(path string) bool {
 	if path == "" {
 		return false
@@ -34,29 +41,8 @@ func isExecutableFile(path string) bool {
 	return info.Mode()&0o111 != 0
 }
 
-func preferWorkspaceLoomBinary(loomBinary string, workspaceRoot string) string {
-	if workspaceRoot == "" {
-		return loomBinary
-	}
-
-	// In this monorepo, prefer the workspace-built loom binary so GUI clients
-	// don't depend on PATH and we avoid known issues with ~/.local/bin/loom.
-	candidate := filepath.Join(workspaceRoot, "services", "loom-core", "bin", "loom")
-	if !isExecutableFile(candidate) {
-		return loomBinary
-	}
-
-	// If unset, or explicitly pointing at ~/.local/bin/loom, force the workspace binary.
-	if loomBinary == "" {
-		return candidate
-	}
-	home, _ := os.UserHomeDir()
-	local := filepath.Join(home, ".local", "bin", "loom")
-	if filepath.Clean(loomBinary) == filepath.Clean(local) {
-		return candidate
-	}
-
-	return loomBinary
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
 const (
@@ -211,7 +197,7 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 		}
 
 		// Generate lifecycle hook configs for platforms that support them.
-		if err := generateHooksConfig(reg, outputDir, target, profile); err != nil {
+		if err := generateHooksConfig(reg, outputDir, target, profile, loomBinary); err != nil {
 			return fmt.Errorf("generate hooks for %s: %w", target, err)
 		}
 	}
@@ -252,10 +238,7 @@ func GenerateConfigsWithPath(reg *registry.Registry, registryPath string, output
 
 func buildTargetMap(reg *registry.Registry, target string, profile *PlatformProfile, hubMode bool, hubURL string, loomMode bool, loomBinary string, workspaceRoot string, registryRoot string, resolveSecrets bool) (map[string]*registry.TargetSpec, error) {
 	if loomMode {
-		cmd := preferWorkspaceLoomBinary(loomBinary, workspaceRoot)
-		if cmd == "" {
-			cmd = "loom"
-		}
+		cmd := normalizeLoomBinary(loomBinary)
 		args := []any{"proxy"}
 		// Apply proxy args from profile (agent-hint, tool-profile, max-tools).
 		if profile != nil {
@@ -608,7 +591,7 @@ func generateTomlConfig(p *GenerateParams) error {
 	// Platforms with requires_preamble get a config preamble (e.g., Codex's
 	// approval_policy, features, sandbox_mode, and notify hook).
 	if profile.Features.RequiresPreamble {
-		emitCodexPreamble(&sb, p.Reg, p.WorkspaceRoot)
+		emitCodexPreamble(&sb, p.Reg, p.WorkspaceRoot, p.LoomBinary)
 	}
 
 	// Sort keys for deterministic output
@@ -712,7 +695,7 @@ func sortStrings(s []string) {
 // generateHooksConfig writes a settings.json with lifecycle hooks for platforms
 // that support them. The hooks call `loom agent` subcommands to ensure
 // consistent session tracking and presence management.
-func generateHooksConfig(reg *registry.Registry, outputDir, target string, profile *PlatformProfile) error {
+func generateHooksConfig(reg *registry.Registry, outputDir, target string, profile *PlatformProfile, loomBinary string) error {
 	if profile == nil || !profile.Hooks.Enabled {
 		return nil // Platform doesn't support hooks.
 	}
@@ -731,13 +714,13 @@ func generateHooksConfig(reg *registry.Registry, outputDir, target string, profi
 	var config map[string]any
 	switch target {
 	case "claude":
-		config = claudeHooksConfig(reg, profile)
+		config = claudeHooksConfig(reg, profile, loomBinary)
 	case "gemini":
-		config = geminiHooksConfigFromRegistry(reg, profile)
+		config = geminiHooksConfigFromRegistry(reg, profile, loomBinary)
 	default:
 		// Generic JSON hooks stub for platforms with hooks.enabled but no
 		// platform-specific wrapper (future platforms).
-		config = hooksConfigFromProfile(reg, profile)
+		config = hooksConfigFromProfile(reg, profile, loomBinary)
 	}
 
 	destDir := filepath.Join(outputDir, target)
@@ -801,10 +784,10 @@ func validateSettingsAgainstUpstream(target, filePath string, content []byte) {
 // guardrail hooks, and default-allow permissions. Permissions are read from the
 // registry's platform_permissions.claude section; hooks remain in Go because
 // they are structural (event names, matcher groups) rather than data.
-func claudeHooksConfig(reg *registry.Registry, profile *PlatformProfile) map[string]any {
+func claudeHooksConfig(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
 	return map[string]any{
 		"permissions": claudePermissions(reg),
-		"hooks":       claudeHooks(reg, profile),
+		"hooks":       claudeHooks(reg, profile, loomBinary),
 	}
 }
 
@@ -812,24 +795,25 @@ func claudeHooksConfig(reg *registry.Registry, profile *PlatformProfile) map[str
 // hooks for any platform that supports lifecycle hooks. Platform-specific extras
 // (e.g. Claude's PreToolUse guardrails) are appended by the caller.
 // Hook parameters are read from the platform profile's HookProfile.
-func buildPlatformHooks(reg *registry.Registry, hp HookProfile) map[string]any {
+func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary string) map[string]any {
 	log := `2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log"`
 	bootstrap := hookAgentIDBootstrap(hp.AgentID)
 	staleCleanup := hookStaleCleanup()
+	loomCmd := shellQuote(normalizeLoomBinary(loomBinary))
 	policy := agentSafetyPolicyFromRegistry(reg)
 
 	sessionStartHooks := []map[string]any{
 		{
 			"type": "command",
 			"command": fmt.Sprintf(
-				`%s; %s; loom agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "$AGENT_ID" --agent-type %s --description %q --auto-recall --auto-recall-strategy fast --quiet %s || true`,
-				bootstrap, staleCleanup, hp.AgentType, hp.Description, log),
+				`%s; %s; %s agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "$AGENT_ID" --agent-type %s --description %q --auto-recall --auto-recall-strategy fast --quiet %s || true`,
+				bootstrap, staleCleanup, loomCmd, hp.AgentType, hp.Description, log),
 		},
 		{
 			"type": "command",
 			"command": fmt.Sprintf(
-				`%s; PID_FILE="${TMPDIR:-/tmp}/loom-keepalive-${AGENT_ID}.pid"; [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; loom agent keepalive --agent-id "$AGENT_ID" --agent-type %s --quiet %s & printf '%%s' "$!" > "${PID_FILE}.tmp" && mv "${PID_FILE}.tmp" "$PID_FILE"`,
-				bootstrap, hp.AgentType, log),
+				`%s; PID_FILE="${TMPDIR:-/tmp}/loom-keepalive-${AGENT_ID}.pid"; [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; %s agent keepalive --agent-id "$AGENT_ID" --agent-type %s --quiet %s & printf '%%s' "$!" > "${PID_FILE}.tmp" && mv "${PID_FILE}.tmp" "$PID_FILE"`,
+				bootstrap, loomCmd, hp.AgentType, log),
 		},
 	}
 	if policy.DirtyWorktreeNudgeOnSessionStart {
@@ -856,8 +840,8 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile) map[string]any {
 					{
 						"type": "command",
 						"command": fmt.Sprintf(
-							`%s; PID_FILE="${TMPDIR:-/tmp}/loom-keepalive-${AGENT_ID}.pid"; [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; rm -f "$PID_FILE"; rm -f "$AGENT_ID_FILE"; loom agent session-end --agent-id "$AGENT_ID" --summarize --summary-async --quiet %s || true`,
-							bootstrap, log),
+							`%s; PID_FILE="${TMPDIR:-/tmp}/loom-keepalive-${AGENT_ID}.pid"; [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; rm -f "$PID_FILE"; rm -f "$AGENT_ID_FILE"; %s agent session-end --agent-id "$AGENT_ID" --summarize --summary-async --quiet %s || true`,
+							bootstrap, loomCmd, log),
 					},
 				},
 			},
@@ -869,8 +853,8 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile) map[string]any {
 					{
 						"type": "command",
 						"command": fmt.Sprintf(
-							`%s; loom agent heartbeat --agent-id "$AGENT_ID" --status active --ensure-session --agent-type %s --quiet %s || true`,
-							bootstrap, hp.AgentType, log),
+							`%s; %s agent heartbeat --agent-id "$AGENT_ID" --status active --ensure-session --agent-type %s --quiet %s || true`,
+							bootstrap, loomCmd, hp.AgentType, log),
 					},
 				},
 			},
@@ -921,8 +905,8 @@ func claudePostToolUseExtras() []map[string]any {
 }
 
 // claudeHooks returns the hooks block for Claude Code settings.json.
-func claudeHooks(reg *registry.Registry, profile *PlatformProfile) map[string]any {
-	hooks := buildPlatformHooks(reg, profile.Hooks)
+func claudeHooks(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
+	hooks := buildPlatformHooks(reg, profile.Hooks, loomBinary)
 
 	// Append extras defined in the profile (e.g. preToolUse_guardrails, postToolUse_formatters).
 	appendHookExtras(hooks, profile.Hooks.Extras)
@@ -1086,9 +1070,10 @@ func filterClaudePermissionRules(rules []string) (kept []string, dropped []strin
 
 // emitCodexPreamble writes Codex-specific top-level TOML settings.
 // Settings are read from the registry's platform_permissions.codex section.
-func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoot string) {
+func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoot string, loomBinary string) {
 	pp := registryPlatformPerms(reg, "codex")
 	policy := agentSafetyPolicyFromRegistry(reg)
+	loomCmd := shellQuote(normalizeLoomBinary(loomBinary))
 
 	// Defaults when registry has no codex entry.
 	approvalPolicy := "never"
@@ -1161,7 +1146,7 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 	// The workspace hash from cksum matches the scheme used by hookAgentIDBootstrap
 	// for Claude/Gemini, avoiding cross-workspace agent ID collisions.
 	sb.WriteString("# Agent lifecycle: heartbeat on turn completion (self-bootstraps session/presence)\n")
-	sb.WriteString(`notify = ["sh", "-c", "WS_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || printf '%s' \"$PWD\")\"; WS_HASH=\"$(printf '%s' \"$WS_ROOT\" | cksum | cut -d' ' -f1)\"; AGENT_ID_FILE=\"${HOME}/.cache/loom/agent-id-codex-${WS_HASH}\"; mkdir -p \"$(dirname \"$AGENT_ID_FILE\")\"; if [ -s \"$AGENT_ID_FILE\" ]; then AGENT_ID=\"$(cat \"$AGENT_ID_FILE\")\"; else AGENT_ID=\"codex-${WS_HASH}\"; printf '%s' \"$AGENT_ID\" > \"$AGENT_ID_FILE\"; fi; exec loom agent heartbeat --agent-id \"$AGENT_ID\" --status active --ensure-session --infer-namespace --agent-type codex --quiet 2>>\"${TMPDIR:-/tmp}/loom-agent-hooks.log\" || true"]`)
+	fmt.Fprintf(sb, `notify = ["sh", "-c", "WS_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || printf '%%s' \"$PWD\")\"; WS_HASH=\"$(printf '%%s' \"$WS_ROOT\" | cksum | cut -d' ' -f1)\"; AGENT_ID_FILE=\"${HOME}/.cache/loom/agent-id-codex-${WS_HASH}\"; mkdir -p \"$(dirname \"$AGENT_ID_FILE\")\"; if [ -s \"$AGENT_ID_FILE\" ]; then AGENT_ID=\"$(cat \"$AGENT_ID_FILE\")\"; else AGENT_ID=\"codex-${WS_HASH}\"; printf '%%s' \"$AGENT_ID\" > \"$AGENT_ID_FILE\"; fi; exec %s agent heartbeat --agent-id \"$AGENT_ID\" --status active --ensure-session --infer-namespace --agent-type codex --quiet 2>>\"${TMPDIR:-/tmp}/loom-agent-hooks.log\" || true"]`, loomCmd)
 	sb.WriteString("\n\n")
 }
 
@@ -1238,15 +1223,15 @@ func mainBranchWorktreeNudgeCommand() string {
 // Gemini tool names also differ (run_shell_command vs Bash).
 func geminiHooksConfig() map[string]any {
 	profile, _ := GetPlatformProfile("gemini")
-	return geminiHooksConfigFromRegistry(nil, profile)
+	return geminiHooksConfigFromRegistry(nil, profile, "")
 }
 
 // geminiHooksConfigFromRegistry builds Gemini CLI settings.json, merging
 // lifecycle hooks with auto-approve settings from the registry's
 // platform_permissions.gemini section.
-func geminiHooksConfigFromRegistry(reg *registry.Registry, profile *PlatformProfile) map[string]any {
+func geminiHooksConfigFromRegistry(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
 	config := map[string]any{
-		"hooks": geminiHooks(reg, profile),
+		"hooks": geminiHooks(reg, profile, loomBinary),
 	}
 
 	// Merge auto-approve and tool settings from registry.
@@ -1273,16 +1258,16 @@ func geminiHooksConfigFromRegistry(reg *registry.Registry, profile *PlatformProf
 }
 
 // geminiHooks returns the hooks block for Gemini CLI settings.json.
-func geminiHooks(reg *registry.Registry, profile *PlatformProfile) map[string]any {
-	hooks := buildPlatformHooks(reg, profile.Hooks)
+func geminiHooks(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
+	hooks := buildPlatformHooks(reg, profile.Hooks, loomBinary)
 	appendHookExtras(hooks, profile.Hooks.Extras)
 	return hooks
 }
 
 // hooksConfigFromProfile builds a generic hooks config from the platform profile.
 // Used for platforms that have hooks.enabled but no platform-specific wrapper.
-func hooksConfigFromProfile(reg *registry.Registry, profile *PlatformProfile) map[string]any {
-	hooks := buildPlatformHooks(reg, profile.Hooks)
+func hooksConfigFromProfile(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
+	hooks := buildPlatformHooks(reg, profile.Hooks, loomBinary)
 	appendHookExtras(hooks, profile.Hooks.Extras)
 	return map[string]any{"hooks": hooks}
 }

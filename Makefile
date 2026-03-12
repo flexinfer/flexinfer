@@ -402,8 +402,8 @@ dev-reload:
 # - regenerate and sync loom-mode configs
 # - run environment checks
 bootstrap-local: git-setup install-core
-	@./bin/loom sync all --regen --loom-mode
-	@./bin/loom check
+	@"$(INSTALL_DIR)/loom" sync all --regen --loom-mode --loom-binary "$(INSTALL_DIR)/loom"
+	@"$(INSTALL_DIR)/loom" check
 	@echo ""
 	@echo "Bootstrap complete."
 	@echo "Next:"

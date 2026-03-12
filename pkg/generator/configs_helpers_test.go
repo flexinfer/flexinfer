@@ -75,9 +75,19 @@ func TestHubWrapperCandidates_WithWorkspace(t *testing.T) {
 	}
 }
 
-func TestIsExecutableFile(t *testing.T) {
-	// Non-existent file should return false
-	if isExecutableFile("/nonexistent/path/to/file") {
-		t.Error("expected false for non-existent file")
+func TestNormalizeLoomBinary(t *testing.T) {
+	if got := normalizeLoomBinary(""); got != "loom" {
+		t.Fatalf("normalizeLoomBinary(\"\") = %q, want %q", got, "loom")
+	}
+	if got := normalizeLoomBinary(" /tmp/loom "); got != "/tmp/loom" {
+		t.Fatalf("normalizeLoomBinary trims explicit paths, got %q", got)
+	}
+}
+
+func TestShellQuote(t *testing.T) {
+	got := shellQuote("/tmp/loom binary")
+	want := "'/tmp/loom binary'"
+	if got != want {
+		t.Fatalf("shellQuote() = %q, want %q", got, want)
 	}
 }

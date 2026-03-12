@@ -121,7 +121,7 @@ func checkClaudeHealth(health *PlatformHealth, reg *registry.Registry, configDir
 
 	// Compare hooks block.
 	claudeProfile, _ := GetPlatformProfile("claude")
-	expectedHooks := claudeHooks(reg, claudeProfile)
+	expectedHooks := claudeHooks(reg, claudeProfile, "")
 	onDiskHooks := onDisk["hooks"]
 	if onDiskHooks == nil {
 		health.Hooks = "missing"
@@ -180,7 +180,7 @@ func checkGeminiHealth(health *PlatformHealth, reg *registry.Registry, configDir
 
 	// Compare hooks block.
 	geminiProfile, _ := GetPlatformProfile("gemini")
-	expectedConfig := geminiHooksConfigFromRegistry(reg, geminiProfile)
+	expectedConfig := geminiHooksConfigFromRegistry(reg, geminiProfile, "")
 	expectedHooks := expectedConfig["hooks"]
 	onDiskHooks := onDisk["hooks"]
 	if onDiskHooks == nil {

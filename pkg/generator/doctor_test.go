@@ -23,7 +23,7 @@ func TestDoctorCheckClaudeHealthy(t *testing.T) {
 
 	// Write a settings.json with the expected hooks and permissions.
 	claudeProfile, _ := GetPlatformProfile("claude")
-	expectedHooks := claudeHooks(nil, claudeProfile)
+	expectedHooks := claudeHooks(nil, claudeProfile, "")
 	expectedPerms := claudePermissions(nil) // nil registry → minimal fallback
 	settings := map[string]any{
 		"hooks":       expectedHooks,

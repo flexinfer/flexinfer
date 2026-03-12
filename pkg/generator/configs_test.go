@@ -55,7 +55,7 @@ func testRegistry() *registry.Registry {
 
 func TestGeneratedClaudeSettingsValid(t *testing.T) {
 	claudeProfile, _ := GetPlatformProfile("claude")
-	config := claudeHooksConfig(testRegistry(), claudeProfile)
+	config := claudeHooksConfig(testRegistry(), claudeProfile, "")
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -78,7 +78,7 @@ func TestGeneratedClaudeSettingsValid(t *testing.T) {
 func TestGeneratedClaudeSettingsNilRegistry(t *testing.T) {
 	// Ensure nil registry produces valid settings with fallback permissions.
 	claudeProfile, _ := GetPlatformProfile("claude")
-	config := claudeHooksConfig(nil, claudeProfile)
+	config := claudeHooksConfig(nil, claudeProfile, "")
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -185,7 +185,7 @@ tool_timeout_sec = 300
 func TestEmitCodexPreamble(t *testing.T) {
 	reg := testRegistry()
 	var sb strings.Builder
-	emitCodexPreamble(&sb, reg, "/tmp/workspace")
+	emitCodexPreamble(&sb, reg, "/tmp/workspace", "")
 	content := sb.String()
 
 	for _, want := range []string{
@@ -219,11 +219,21 @@ func TestEmitCodexPreamble(t *testing.T) {
 func TestEmitCodexPreambleNilRegistry(t *testing.T) {
 	// Ensure nil registry still produces valid defaults.
 	var sb strings.Builder
-	emitCodexPreamble(&sb, nil, "/tmp")
+	emitCodexPreamble(&sb, nil, "/tmp", "")
 	content := sb.String()
 
 	if !strings.Contains(content, `approval_policy = "never"`) {
 		t.Error("expected default approval_policy in nil-registry Codex preamble")
+	}
+}
+
+func TestEmitCodexPreamble_UsesExplicitLoomBinary(t *testing.T) {
+	var sb strings.Builder
+	emitCodexPreamble(&sb, testRegistry(), "/tmp/workspace", "/opt/loom/bin/loom")
+	content := sb.String()
+
+	if !strings.Contains(content, `exec '/opt/loom/bin/loom' agent heartbeat`) {
+		t.Fatalf("expected explicit loom binary in codex notify hook, got: %s", content)
 	}
 }
 
@@ -233,7 +243,7 @@ func TestGenerateHooksConfig_WritesAndValidates(t *testing.T) {
 
 	// Generate Claude hooks config
 	claudeProfile, _ := GetPlatformProfile("claude")
-	if err := generateHooksConfig(reg, tmpDir, "claude", claudeProfile); err != nil {
+	if err := generateHooksConfig(reg, tmpDir, "claude", claudeProfile, ""); err != nil {
 		t.Fatalf("generateHooksConfig(claude) failed: %v", err)
 	}
 
@@ -268,7 +278,7 @@ func TestGenerateHooksConfig_Gemini(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	geminiProfile, _ := GetPlatformProfile("gemini")
-	if err := generateHooksConfig(nil, tmpDir, "gemini", geminiProfile); err != nil {
+	if err := generateHooksConfig(nil, tmpDir, "gemini", geminiProfile, ""); err != nil {
 		t.Fatalf("generateHooksConfig(gemini) failed: %v", err)
 	}
 
@@ -289,13 +299,31 @@ func TestGenerateHooksConfig_NoHooksPlatform(t *testing.T) {
 
 	// Platforms without hooks should return nil and not write any file
 	codexProfile, _ := GetPlatformProfile("codex")
-	if err := generateHooksConfig(nil, tmpDir, "codex", codexProfile); err != nil {
+	if err := generateHooksConfig(nil, tmpDir, "codex", codexProfile, ""); err != nil {
 		t.Fatalf("generateHooksConfig(codex) failed: %v", err)
 	}
 
 	settingsPath := filepath.Join(tmpDir, "codex", "settings.json")
 	if _, err := os.Stat(settingsPath); !os.IsNotExist(err) {
 		t.Error("codex should not have a settings.json")
+	}
+}
+
+func TestGenerateHooksConfig_UsesExplicitLoomBinary(t *testing.T) {
+	tmpDir := t.TempDir()
+	claudeProfile, _ := GetPlatformProfile("claude")
+
+	if err := generateHooksConfig(testRegistry(), tmpDir, "claude", claudeProfile, "/opt/loom/bin/loom"); err != nil {
+		t.Fatalf("generateHooksConfig(claude) failed: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "claude", "settings.json"))
+	if err != nil {
+		t.Fatalf("settings.json not found: %v", err)
+	}
+
+	if !strings.Contains(string(content), `'/opt/loom/bin/loom' agent session-start`) {
+		t.Fatalf("expected explicit loom binary in generated claude hooks, got: %s", string(content))
 	}
 }
 
@@ -599,7 +627,7 @@ func TestGeneratedClaudeSettings_WithInvalidRulesStillValid(t *testing.T) {
 	}
 
 	claudeProfile, _ := GetPlatformProfile("claude")
-	config := claudeHooksConfig(reg, claudeProfile)
+	config := claudeHooksConfig(reg, claudeProfile, "")
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -614,7 +642,7 @@ func TestGeneratedClaudeSettings_WithInvalidRulesStillValid(t *testing.T) {
 
 func TestClaudeHooksConfig_IncludesDirtyWorktreeNudge(t *testing.T) {
 	claudeProfile, _ := GetPlatformProfile("claude")
-	config := claudeHooksConfig(testRegistry(), claudeProfile)
+	config := claudeHooksConfig(testRegistry(), claudeProfile, "")
 	hooks, ok := config["hooks"].(map[string]any)
 	if !ok {
 		t.Fatal("expected hooks map in claude config")
@@ -644,7 +672,7 @@ func TestClaudeHooksConfig_IncludesDirtyWorktreeNudge(t *testing.T) {
 
 func TestClaudeHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
 	claudeProfile, _ := GetPlatformProfile("claude")
-	config := claudeHooksConfig(testRegistry(), claudeProfile)
+	config := claudeHooksConfig(testRegistry(), claudeProfile, "")
 	hooks, ok := config["hooks"].(map[string]any)
 	if !ok {
 		t.Fatal("expected hooks map in claude config")
@@ -683,7 +711,7 @@ func TestClaudeHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
 
 func TestGeminiHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
 	geminiProfile, _ := GetPlatformProfile("gemini")
-	config := geminiHooksConfigFromRegistry(testRegistry(), geminiProfile)
+	config := geminiHooksConfigFromRegistry(testRegistry(), geminiProfile, "")
 	hooks, ok := config["hooks"].(map[string]any)
 	if !ok {
 		t.Fatal("expected hooks map in gemini config")
@@ -722,7 +750,7 @@ func TestGeminiHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
 
 func TestGeminiHooksConfig_IncludesDirtyWorktreeNudge(t *testing.T) {
 	geminiProfile, _ := GetPlatformProfile("gemini")
-	config := geminiHooksConfigFromRegistry(testRegistry(), geminiProfile)
+	config := geminiHooksConfigFromRegistry(testRegistry(), geminiProfile, "")
 	hooks, ok := config["hooks"].(map[string]any)
 	if !ok {
 		t.Fatal("expected hooks map in gemini config")
@@ -764,7 +792,7 @@ func TestEmitCodexPreamble_WebSearchOverride(t *testing.T) {
 	}
 
 	var sb strings.Builder
-	emitCodexPreamble(&sb, reg, "/tmp")
+	emitCodexPreamble(&sb, reg, "/tmp", "")
 	content := sb.String()
 
 	if !strings.Contains(content, `web_search = "cached"`) {
@@ -787,7 +815,7 @@ func TestEmitCodexPreamble_WebSearchDisabled(t *testing.T) {
 	}
 
 	var sb strings.Builder
-	emitCodexPreamble(&sb, reg, "/tmp")
+	emitCodexPreamble(&sb, reg, "/tmp", "")
 	content := sb.String()
 
 	if !strings.Contains(content, `web_search = "disabled"`) {
@@ -845,7 +873,7 @@ func TestBuildPlatformHooks_ClaudeEventNames(t *testing.T) {
 		SessionEndEvent:  "Stop",
 		HeartbeatEvent:   "PostToolUse",
 		HeartbeatMatcher: "Bash|Task",
-	})
+	}, "")
 
 	for _, key := range []string{"SessionStart", "Stop", "PostToolUse"} {
 		if _, ok := hooks[key]; !ok {
@@ -870,7 +898,7 @@ func TestBuildPlatformHooks_GeminiEventNames(t *testing.T) {
 		SessionEndEvent:  "SessionEnd",
 		HeartbeatEvent:   "AfterTool",
 		HeartbeatMatcher: "run_shell_command",
-	})
+	}, "")
 
 	for _, key := range []string{"SessionStart", "SessionEnd", "AfterTool"} {
 		if _, ok := hooks[key]; !ok {
@@ -895,7 +923,7 @@ func TestBuildPlatformHooks_AtomicPIDWrite(t *testing.T) {
 		SessionEndEvent:  "Stop",
 		HeartbeatEvent:   "PostToolUse",
 		HeartbeatMatcher: "Bash|Task",
-	})
+	}, "")
 
 	sessionStart := hooks["SessionStart"].([]map[string]any)
 	sessionHooks := sessionStart[0]["hooks"].([]map[string]any)
@@ -923,7 +951,7 @@ func TestBuildPlatformHooks_StaleCleanupInSessionStart(t *testing.T) {
 		SessionEndEvent:  "Stop",
 		HeartbeatEvent:   "PostToolUse",
 		HeartbeatMatcher: "Bash|Task",
-	})
+	}, "")
 
 	sessionStart := hooks["SessionStart"].([]map[string]any)
 	sessionHooks := sessionStart[0]["hooks"].([]map[string]any)
@@ -956,7 +984,7 @@ func TestBuildPlatformHooks_StopHookUsesSummaryAsync(t *testing.T) {
 		SessionEndEvent:  "Stop",
 		HeartbeatEvent:   "PostToolUse",
 		HeartbeatMatcher: "Bash|Task",
-	})
+	}, "")
 
 	stop := hooks["Stop"].([]map[string]any)
 	stopHooks := stop[0]["hooks"].([]map[string]any)
@@ -976,7 +1004,7 @@ func TestBuildPlatformHooks_StopHookUsesSummaryAsync(t *testing.T) {
 
 func TestCodexPreamble_ContainsWorkspaceHash(t *testing.T) {
 	var sb strings.Builder
-	emitCodexPreamble(&sb, testRegistry(), "/tmp/workspace")
+	emitCodexPreamble(&sb, testRegistry(), "/tmp/workspace", "")
 	content := sb.String()
 
 	for _, want := range []string{
@@ -1149,6 +1177,34 @@ func TestBuildTargetMap_LoomModeAntigravityAddsToolFilterArgs(t *testing.T) {
 	}
 	if strings.Join(gotArgs, " ") != strings.Join(want, " ") {
 		t.Fatalf("loom-mode antigravity args = %v, want %v", gotArgs, want)
+	}
+}
+
+func TestBuildTargetMap_LoomModeUsesExplicitBinaryAcrossPlatforms(t *testing.T) {
+	reg := &registry.Registry{}
+	loomBinary := "/opt/loom/bin/loom"
+	targetsToCheck := []string{"antigravity", "claude", "claude_desktop", "codex", "gemini", "kilocode", "opencode", "vscode", "zed"}
+
+	for _, targetName := range targetsToCheck {
+		t.Run(targetName, func(t *testing.T) {
+			profile, err := GetPlatformProfile(targetName)
+			if err != nil {
+				t.Fatalf("GetPlatformProfile(%s): %v", targetName, err)
+			}
+
+			targets, err := buildTargetMap(reg, targetName, profile, false, "", true, loomBinary, "/tmp/workspace", "/tmp/registry-root", false)
+			if err != nil {
+				t.Fatalf("buildTargetMap(%s): %v", targetName, err)
+			}
+
+			spec := targets["loom"]
+			if spec == nil {
+				t.Fatalf("expected loom target spec for %s", targetName)
+			}
+			if spec.Command != loomBinary {
+				t.Fatalf("loom command for %s = %q, want %q", targetName, spec.Command, loomBinary)
+			}
+		})
 	}
 }
 

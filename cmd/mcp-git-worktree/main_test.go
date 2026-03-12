@@ -107,7 +107,7 @@ func TestHandleAddRejectsTraversal(t *testing.T) {
 	setDefaultRepo(t, dir)
 
 	addResult, err := handleAdd(context.Background(), map[string]any{
-		"path":          "../escape",
+		"path":          "../../escape",
 		"create_branch": true,
 		"branch":        "escape",
 	})
@@ -117,18 +117,54 @@ func TestHandleAddRejectsTraversal(t *testing.T) {
 	if !addResult.IsError {
 		t.Fatalf("expected traversal path to be rejected")
 	}
-	if !strings.Contains(addResult.Content[0].Text, "path must be inside repository") {
+	if !strings.Contains(addResult.Content[0].Text, "path must stay within repository parent") {
 		t.Fatalf("expected path validation error, got: %s", addResult.Content[0].Text)
 	}
 
 	removeResult, err := handleRemove(context.Background(), map[string]any{
-		"path": "../escape",
+		"path": "../../escape",
 	})
 	if err != nil {
 		t.Fatalf("unexpected remove error: %v", err)
 	}
 	if !removeResult.IsError {
 		t.Fatalf("expected traversal path to be rejected for remove")
+	}
+}
+
+func TestHandleAddAndRemoveAllowSiblingWorktreePaths(t *testing.T) {
+	dir := initTestRepo(t)
+	setDefaultRepo(t, dir)
+
+	siblingRel := "../wt-feature-sibling"
+	siblingPath := filepath.Join(filepath.Dir(dir), "wt-feature-sibling")
+
+	addResult, err := handleAdd(context.Background(), map[string]any{
+		"path":          siblingRel,
+		"create_branch": true,
+		"branch":        "feature/sibling",
+	})
+	if err != nil {
+		t.Fatalf("unexpected add error: %v", err)
+	}
+	if addResult.IsError {
+		t.Fatalf("expected sibling worktree add success, got: %s", addResult.Content[0].Text)
+	}
+	if _, err := os.Stat(siblingPath); err != nil {
+		t.Fatalf("expected sibling worktree dir to exist: %v", err)
+	}
+
+	removeResult, err := handleRemove(context.Background(), map[string]any{
+		"path": siblingRel,
+	})
+	if err != nil {
+		t.Fatalf("unexpected remove error: %v", err)
+	}
+	if removeResult.IsError {
+		t.Fatalf("expected sibling worktree remove success, got: %s", removeResult.Content[0].Text)
+	}
+	if _, err := os.Stat(siblingPath); !os.IsNotExist(err) {
+		t.Fatalf("expected sibling worktree dir to be removed, got err: %v", err)
 	}
 }
 
