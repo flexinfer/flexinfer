@@ -27,7 +27,8 @@ RUN python3 -m pip install --force-reinstall triton==3.2.0
 # CRITICAL: Use --no-deps to prevent gptqmodel from pulling CUDA torch>=2.8.0
 # from PyPI, which would overwrite the ROCm PyTorch 2.6.0 from the base image.
 # On ROCm, ext_modules=[] (no native extensions), so the build is pure Python.
-RUN python3 -m pip install -v gptqmodel --no-build-isolation --no-deps
+RUN python3 -m pip install -v "gptqmodel @ git+https://github.com/ModelCloud/GPTQModel.git@main" \
+    --no-build-isolation --no-deps
 
 # Install gptqmodel's runtime dependencies separately, keeping ROCm torch intact.
 # GPTQModel 5.7.0 requires transformers>=4.57.1 (handles Qwen3 attention_type API).
@@ -49,7 +50,8 @@ RUN python3 -m pip install \
     pyarrow \
     dill \
     pypcre \
-    zstandard
+    zstandard \
+    defuser
 
 # Fix numpy ABI mismatch. Base image has numpy 1.22.4, pandas 1.5.x, scipy 1.10.x,
 # numba 0.55.2. Modern pyarrow/datasets pull newer scipy/sklearn compiled against

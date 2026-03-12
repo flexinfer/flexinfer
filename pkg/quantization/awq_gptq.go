@@ -42,6 +42,13 @@ const (
 	// Keeps VRAM usage in check for 14B+ models on 24GB cards.
 	DefaultNParallelCalibSamples = 16
 
+	// DefaultCalibrationDataset is the HuggingFace dataset for calibration samples.
+	DefaultCalibrationDataset = "mit-han-lab/pile-val-backup"
+
+	// DefaultGPUMemoryFraction caps GPU VRAM usage during quantization.
+	// 0.80 leaves 20% headroom for ROCm driver GTT overhead.
+	DefaultGPUMemoryFraction = "0.80"
+
 	// DefaultAWQBits is the default bit width for AWQ.
 	DefaultAWQBits = 4
 
@@ -121,6 +128,7 @@ func (b *AWQJobBuilder) buildScript(modelPath string, bits, groupSize int, calib
 	maxSeqLen := int32(DefaultCalibrationMaxSeqLen)
 	maxSamples := int32(DefaultCalibrationMaxSamples)
 	var nParallel *int32
+	dataset := DefaultCalibrationDataset
 	if calib != nil {
 		if calib.MaxSeqLen != nil {
 			maxSeqLen = *calib.MaxSeqLen
@@ -129,6 +137,9 @@ func (b *AWQJobBuilder) buildScript(modelPath string, bits, groupSize int, calib
 			maxSamples = *calib.MaxSamples
 		}
 		nParallel = calib.NParallelCalibSamples
+		if calib.Dataset != nil {
+			dataset = *calib.Dataset
+		}
 	}
 
 	// Build the n_parallel_calib_samples kwarg line.
@@ -150,13 +161,19 @@ TYPE="W${BITS}_G${GROUP_SIZE}"
 OUT_DIR="${MODEL_DIR}/awq-w${BITS}-g${GROUP_SIZE}"
 START_TS=$(date +%%s)
 
-cleanup() { rm -rf "${OUT_DIR}"; echo "Cleaned up partial output"; }
+cleanup() {
+    local ec=$?
+    if [ $ec -ne 0 ] && [ ! -f "${OUT_DIR}/config.json" ]; then
+        rm -rf "${OUT_DIR}"
+        echo "Cleaned up partial output (exit code $ec)"
+    fi
+}
 trap cleanup EXIT
 
 echo "=== AWQ Quantization ==="
 echo "Model: ${MODEL_DIR}"
 echo "Type: ${TYPE}"
-echo "Calibration: maxSeqLen=%d maxSamples=%d nParallel=%s"
+echo "Calibration: maxSeqLen=%d maxSamples=%d nParallel=%s dataset=%s"
 echo "Start: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
 
 ORIGINAL_SIZE=$(du -sb "${MODEL_DIR}" | cut -f1)
@@ -189,23 +206,16 @@ model.quantize(
     max_calib_seq_len=%d,
     max_calib_samples=%d,
 %s)
-
-# Remove FP16 source weight files BEFORE save to reclaim disk space.
-import glob as _glob
-for _f in sorted(
-    _glob.glob(os.path.join(model_dir, "*.safetensors"))
-    + _glob.glob(os.path.join(model_dir, "*.bin"))
-    + _glob.glob(os.path.join(model_dir, "*.pt"))
-):
-    os.remove(_f)
-    print(f"Removed source file: {os.path.basename(_f)}")
-print("FP16 source files removed — disk reclaimed for save")
-
 model.save_quantized(out_dir)
 tokenizer.save_pretrained(out_dir)
 PY
 
 trap - EXIT
+
+# Remove FP16 source weight files after successful save to reclaim disk space.
+find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) \
+    ! -path "${OUT_DIR}/*" -print -delete 2>/dev/null || true
+echo "FP16 source files cleaned up"
 
 COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"
@@ -235,7 +245,7 @@ TERMINATION
 echo "=== Quantization complete ==="
 echo "Output: ${OUT_DIR}"
 echo "End: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
-`, modelPath, bits, groupSize, maxSeqLen, maxSamples, nParallelLog, maxSeqLen, maxSamples, nParallelKwarg)
+`, modelPath, bits, groupSize, maxSeqLen, maxSamples, nParallelLog, dataset, maxSeqLen, maxSamples, nParallelKwarg)
 }
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
@@ -305,6 +315,15 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		descAct = *params.Spec.DescAct
 	}
 
+	gpuMemFraction := DefaultGPUMemoryFraction
+	if params.Spec.GPUMemoryFraction != nil {
+		gpuMemFraction = *params.Spec.GPUMemoryFraction
+	}
+	dynamicExclusion := "auto"
+	if params.Spec.DynamicExclusion != nil {
+		dynamicExclusion = *params.Spec.DynamicExclusion
+	}
+
 	image := gptqQuantizerImage()
 	if params.GPUVendor == "amd" {
 		image = gptqQuantizerROCmImage(params.GPUArch)
@@ -313,21 +332,25 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	return buildGPUQuantizationJob(
 		params,
 		image,
-		b.buildScript(params.ModelPath, bits, groupSize, sym, descAct, memoryGB, params.Spec.Calibration),
+		b.buildScript(params.ModelPath, bits, groupSize, sym, descAct, memoryGB, gpuMemFraction, dynamicExclusion, params.Spec.Calibration),
 		memoryGB,
 	)
 }
 
 // buildScript generates the shell script for GPTQ quantization using GPTQModel.
-func (b *GPTQJobBuilder) buildScript(modelPath string, bits, groupSize int, sym, descAct bool, memoryGB int32, calib *aiv1alpha1.CalibrationSpec) string {
+func (b *GPTQJobBuilder) buildScript(modelPath string, bits, groupSize int, sym, descAct bool, memoryGB int32, gpuMemFraction, dynamicExclusion string, calib *aiv1alpha1.CalibrationSpec) string {
 	maxSeqLen := int32(DefaultCalibrationMaxSeqLen)
 	maxSamples := int32(DefaultCalibrationMaxSamples)
+	dataset := DefaultCalibrationDataset
 	if calib != nil {
 		if calib.MaxSeqLen != nil {
 			maxSeqLen = *calib.MaxSeqLen
 		}
 		if calib.MaxSamples != nil {
 			maxSamples = *calib.MaxSamples
+		}
+		if calib.Dataset != nil {
+			dataset = *calib.Dataset
 		}
 	}
 
@@ -340,6 +363,34 @@ func (b *GPTQJobBuilder) buildScript(modelPath string, bits, groupSize int, sym,
 		descActPy = "True"
 	}
 
+	// Build the dynamic exclusion Python snippet conditionally.
+	// "auto" emits hybrid architecture detection; "none" emits a simple assignment.
+	var dynamicExclusionSnippet string
+	if dynamicExclusion == "none" {
+		dynamicExclusionSnippet = `# Dynamic exclusion: disabled (mode=none). All modules quantized to target bit width.
+dynamic_config = None
+print("Dynamic exclusion disabled (mode=none) — all modules will be quantized")`
+	} else {
+		dynamicExclusionSnippet = `# Dynamic exclusion: auto-detect hybrid architectures.
+# When heterogeneous layer types are present (e.g. Qwen3.5 mixed attention),
+# exclude attention/expert/vision/MTP modules — matching official GPTQ-Int4 approach.
+with open(cfg_path) as f:
+    cfg_recheck = json.load(f)
+dynamic_config = None
+if "layer_types" in cfg_recheck:
+    layer_types = cfg_recheck["layer_types"]
+    unique_types = set(layer_types)
+    if len(unique_types) > 1:
+        print(f"Hybrid architecture detected: {dict((t, layer_types.count(t)) for t in unique_types)}")
+        dynamic_config = {
+            "-:.*attn.*": {},
+            "-:.*shared_expert.*": {},
+            "-:.*visual.*": {},
+            "-:.*mtp.*": {},
+        }
+        print(f"Dynamic exclusion: {list(dynamic_config.keys())}")`
+	}
+
 	return fmt.Sprintf(`set -euo pipefail
 
 MODEL_DIR="/cache/%s"
@@ -350,8 +401,31 @@ TYPE="W${BITS}_G${GROUP_SIZE}"
 OUT_DIR="${MODEL_DIR}/gptq-w${BITS}-g${GROUP_SIZE}"
 START_TS=$(date +%%s)
 
-cleanup() { rm -rf "${OUT_DIR}"; echo "Cleaned up partial output"; }
+cleanup() {
+    local ec=$?
+    if [ $ec -ne 0 ]; then
+        # Only clean up if no quantized output was written.
+        # Check for both quantize_config.json and safetensors files —
+        # GPTQModel may crash after writing weights but before writing config.
+        if [ ! -f "${OUT_DIR}/quantize_config.json" ] && \
+           ! ls "${OUT_DIR}"/*.safetensors &>/dev/null; then
+            rm -rf "${OUT_DIR}"
+            echo "Cleaned up partial output (exit code $ec)"
+        else
+            echo "Preserving output (safetensors or config found despite exit code $ec)"
+        fi
+    fi
+}
 trap cleanup EXIT
+
+# Patch GPTQModel writer.py to guard against ZeroDivisionError.
+# Turtle offload moves source files during quantization; save_quantized
+# tries to compute a size comparison from them and crashes if they're gone.
+WRITER_PY=$(python3 -c "import gptqmodel.models.writer as w; print(w.__file__)" 2>/dev/null || true)
+if [ -n "${WRITER_PY}" ] && grep -q "pre_quantized_size_mb) \* 100" "${WRITER_PY}" 2>/dev/null; then
+    sed -i 's|percent_diff = (size_diff_mb / pre_quantized_size_mb) \* 100|percent_diff = (size_diff_mb / pre_quantized_size_mb) * 100 if pre_quantized_size_mb > 0 else 0.0|' "${WRITER_PY}"
+    echo "Patched GPTQModel writer.py for ZeroDivisionError"
+fi
 
 # Auto-detect gfx900 (Radeon VII reports as gfx900, needs gfx906 ISA override).
 # Must be set BEFORE any HIP/PyTorch call so the driver loads correct ISA.
@@ -368,7 +442,8 @@ fi
 echo "=== GPTQ Quantization (GPTQModel) ==="
 echo "Model: ${MODEL_DIR}"
 echo "Type: ${TYPE}"
-echo "Calibration: maxSeqLen=%d maxSamples=%d sym=%s descAct=%s"
+echo "Calibration: maxSeqLen=%d maxSamples=%d sym=%s descAct=%s dataset=%s"
+echo "GPU memory fraction: %s  Dynamic exclusion: %s"
 echo "Container memory limit: ${MAX_MEMORY_GB}Gi"
 echo "Start: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
 
@@ -417,30 +492,13 @@ if "text_config" in cfg and "model_type" in cfg.get("text_config", {}):
         json.dump(text_cfg, f, indent=2)
     print(f"Extracted text_config: model_type={text_cfg.get('model_type')}")
 
-# Detect hybrid architecture (e.g. Qwen3.5 with mixed linear_attention/full_attention).
-# When heterogeneous layer types are present, use dynamic exclusion to skip attention
-# modules and quantize only MLP/FFN — matching the official Qwen GPTQ-Int4 approach.
-with open(cfg_path) as f:
-    cfg_recheck = json.load(f)
-dynamic_config = None
-if "layer_types" in cfg_recheck:
-    layer_types = cfg_recheck["layer_types"]
-    unique_types = set(layer_types)
-    if len(unique_types) > 1:
-        print(f"Hybrid architecture detected: {dict((t, layer_types.count(t)) for t in unique_types)}")
-        dynamic_config = {
-            "-:.*attn.*": {},
-            "-:.*shared_expert.*": {},
-            "-:.*visual.*": {},
-            "-:.*mtp.*": {},
-        }
-        print(f"Dynamic exclusion: {list(dynamic_config.keys())}")
+%s
 
 # Memory management: cap GPU VRAM to leave headroom for quantization workspace.
 # ROCm GPU driver also allocates GTT/system RAM outside the container cgroup,
 # so reduced calibration samples (controlled via CR) is the main guard.
 total_vram = torch.cuda.get_device_properties(0).total_memory
-gpu_fraction = 0.80
+gpu_fraction = %s
 try:
     torch.cuda.set_per_process_memory_fraction(gpu_fraction)
 except RuntimeError:
@@ -458,37 +516,40 @@ model = GPTQModel.load(
     trust_remote_code=True,
 )
 
-dataset = load_dataset("mit-han-lab/pile-val-backup", split="validation")
+dataset = load_dataset("%s", split="validation")
 examples = []
 for sample in dataset.select(range(min(max_samples, len(dataset)))):
     tok = tokenizer(sample["text"], return_tensors="pt", max_length=max_seq_len, truncation=True)
     examples.append({"input_ids": tok.input_ids, "attention_mask": tok.attention_mask})
 
 model.quantize(examples)
-
-# Remove FP16 source weight files BEFORE save to reclaim disk space for
-# the quantized output.  After quantize(), all layers are in memory or
-# in GPTQModel's turtle offload dir — the original HF download files
-# are no longer needed.  Re-quantization requires a fresh download
-# (delete .flexinfer_cached + prefetch job).
-import glob as _glob
-for _f in sorted(
-    _glob.glob(os.path.join(model_dir, "*.safetensors"))
-    + _glob.glob(os.path.join(model_dir, "*.bin"))
-    + _glob.glob(os.path.join(model_dir, "*.pt"))
-):
-    os.remove(_f)
-    print(f"Removed source file: {os.path.basename(_f)}")
-print("FP16 source files removed — disk reclaimed for save")
-
 model.save(out_dir)
 tokenizer.save_pretrained(out_dir)
 PY
 
 trap - EXIT
 
+# Verify quantized output exists before proceeding to cleanup.
+if ! ls "${OUT_DIR}"/*.safetensors &>/dev/null; then
+    echo "ERROR: No safetensors files in output dir — quantization may have failed silently"
+    exit 1
+fi
+
 COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"
+
+# Remove FP16 source weight files after successful save to reclaim disk space.
+# Re-quantization requires a fresh download (delete .flexinfer_cached + prefetch job).
+FP16_COUNT=$(find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) \
+    ! -path "${OUT_DIR}/*" 2>/dev/null | wc -l)
+if [ "${FP16_COUNT}" -gt 0 ]; then
+    find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) \
+        ! -path "${OUT_DIR}/*" -print -delete 2>/dev/null || true
+    echo "FP16 source files cleaned up (${FP16_COUNT} files)"
+else
+    echo "No FP16 source files to clean up (already removed or turtle-offloaded)"
+fi
+
 END_TS=$(date +%%s)
 DURATION_SEC=$((END_TS - START_TS))
 
@@ -516,8 +577,8 @@ echo "=== Quantization complete ==="
 echo "Output: ${OUT_DIR}"
 echo "End: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
 `, modelPath, bits, groupSize, memoryGB,
-		maxSeqLen, maxSamples, symPy, descActPy,
-		maxSeqLen, maxSamples, symPy, descActPy)
+		maxSeqLen, maxSamples, symPy, descActPy, dataset, gpuMemFraction, dynamicExclusion,
+		maxSeqLen, maxSamples, dynamicExclusionSnippet, gpuMemFraction, symPy, descActPy, dataset)
 }
 
 func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB int32) (*batchv1.Job, error) {

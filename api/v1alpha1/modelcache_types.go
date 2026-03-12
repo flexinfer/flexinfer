@@ -104,6 +104,11 @@ type CalibrationSpec struct {
 	// +kubebuilder:validation:Maximum=256
 	// +optional
 	NParallelCalibSamples *int32 `json:"nParallelCalibSamples,omitempty"`
+
+	// Dataset is the HuggingFace dataset used for calibration samples.
+	// Defaults to "mit-han-lab/pile-val-backup".
+	// +optional
+	Dataset *string `json:"dataset,omitempty"`
 }
 
 // QuantizationSpec configures post-download quantization of model weights.
@@ -160,6 +165,25 @@ type QuantizationSpec struct {
 	// Ignored for GGUF and EXL2 formats.
 	// +optional
 	Calibration *CalibrationSpec `json:"calibration,omitempty"`
+
+	// GPUMemoryFraction caps the fraction of GPU VRAM available to the
+	// quantization process (e.g. "0.80"). Defaults to "0.80".
+	// Lower values leave more headroom for GPU driver overhead (important on ROCm
+	// where HIP/GTT allocations bypass container cgroup limits).
+	// Only used for GPTQ format.
+	// +optional
+	GPUMemoryFraction *string `json:"gpuMemoryFraction,omitempty"`
+
+	// DynamicExclusion controls which module patterns are excluded from
+	// quantization (kept at full precision). Defaults to "auto".
+	//   - "auto": auto-detect hybrid architectures and exclude attention/expert/
+	//     vision/MTP modules (matches official Qwen GPTQ-Int4 approach).
+	//   - "none": quantize all modules to the target bit width (pure INT4).
+	//     Produces smaller models that fit on smaller VRAM cards.
+	// Only used for GPTQ format.
+	// +kubebuilder:validation:Enum=auto;none
+	// +optional
+	DynamicExclusion *string `json:"dynamicExclusion,omitempty"`
 }
 
 // QuantizationStatus records the result of quantization.

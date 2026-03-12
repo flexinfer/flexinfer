@@ -18,6 +18,8 @@ package controllers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -44,6 +46,16 @@ import (
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
+)
+
+const (
+	// annotationQuantSpecHash stores a SHA-256 hash of the QuantizationSpec.
+	// When the hash changes, the controller triggers re-quantization.
+	annotationQuantSpecHash = "flexinfer.ai/quant-spec-hash"
+
+	// annotationRequantize triggers re-quantization when set to "true".
+	// The controller clears this annotation after initiating the re-quantization.
+	annotationRequantize = "flexinfer.ai/requantize"
 )
 
 // ModelCacheReconciler reconciles a ModelCache object
@@ -132,6 +144,17 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			return ctrl.Result{Requeue: true}, nil
 		} else if err != nil {
 			return ctrl.Result{}, err
+		}
+
+		// Gate on PVC readiness — don't create jobs against a PVC that is
+		// still being provisioned or is being deleted (Terminating).
+		if pvc.DeletionTimestamp != nil {
+			log.Info("PVC is terminating, waiting for cleanup", "pvc", pvcName)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		}
+		if pvc.Status.Phase != corev1.ClaimBound {
+			log.Info("PVC not yet bound, waiting", "pvc", pvcName, "phase", pvc.Status.Phase)
+			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 		}
 	}
 
@@ -409,12 +432,19 @@ MODEL_ID="%s"
 DEST_DIR="/models/%s"
 MARKER="$DEST_DIR/.download_complete"
 
-# Skip only if marker exists (indicates previous successful download).
-# Checking just "directory non-empty" is unreliable: an interrupted download
-# leaves metadata files but no weight files (.safetensors/.bin).
-if [ -f "$MARKER" ]; then
-    echo "Model already cached at $DEST_DIR"
+# Skip if marker exists AND weight files are present.
+# A previous quantization retry may have cleaned up source weights,
+# leaving the marker but no actual model files.
+WEIGHT_COUNT=0
+if [ -d "$DEST_DIR" ]; then
+    WEIGHT_COUNT=$(find "$DEST_DIR" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' -o -name '*.gguf' \) 2>/dev/null | wc -l)
+fi
+if [ -f "$MARKER" ] && [ "$WEIGHT_COUNT" -gt 0 ]; then
+    echo "Model already cached at $DEST_DIR ($WEIGHT_COUNT weight files)"
     exit 0
+elif [ -f "$MARKER" ] && [ "$WEIGHT_COUNT" -eq 0 ]; then
+    echo "WARNING: Marker exists but no weight files found — re-downloading"
+    rm -f "$MARKER"
 fi
 
 pip install --no-cache-dir huggingface_hub hf_transfer
@@ -437,21 +467,28 @@ snapshot_download(
     token=token,
 )
 PY
+
+# Verify weight files were actually downloaded before marking complete.
+WEIGHT_COUNT=$(find "$DEST_DIR" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' -o -name '*.gguf' \) 2>/dev/null | wc -l)
+if [ "$WEIGHT_COUNT" -eq 0 ]; then
+    echo "ERROR: Download completed but no weight files found in $DEST_DIR"
+    exit 1
+fi
 touch "$MARKER"
-echo "Download complete."
+echo "Download complete ($WEIGHT_COUNT weight files)."
 `, modelID, modelPath)
 	}
 
-	// Tolerate dedicated GPU nodes so the downloader can schedule on tainted GPU nodes.
-	var tolerations []corev1.Toleration
-	if len(m.Spec.NodeSelector) > 0 {
-		tolerations = append(tolerations, corev1.Toleration{
-			Key:      "dedicated",
-			Operator: corev1.TolerationOpEqual,
-			Value:    "gpu",
-			Effect:   corev1.TaintEffectNoSchedule,
-		})
-	}
+	// Download jobs don't need GPU — let K8s schedule them wherever the
+	// Longhorn volume replica lives for local I/O. Only add GPU node
+	// toleration so the pod CAN land on a GPU node if that's where the
+	// volume is, but don't force it with nodeSelector.
+	tolerations := []corev1.Toleration{{
+		Key:      "dedicated",
+		Operator: corev1.TolerationOpEqual,
+		Value:    "gpu",
+		Effect:   corev1.TaintEffectNoSchedule,
+	}}
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -462,7 +499,6 @@ echo "Download complete."
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
-					NodeSelector:  m.Spec.NodeSelector,
 					Tolerations:   tolerations,
 					Containers: []corev1.Container{{
 						Name:    "downloader",
@@ -1853,11 +1889,79 @@ func (r *ModelCacheReconciler) recordEvictionMetric(cache *aiv1alpha1.ModelCache
 // reconcileQuantization handles the quantization phase of the ModelCache lifecycle.
 // It is called after the download job succeeds, when spec.quantization is set.
 // Lifecycle: Provisioning (download done) → Quantizing → Ready
+//
+// Spec change detection: When the QuantizationSpec changes (hash mismatch) or
+// the "flexinfer.ai/requantize" annotation is set, the controller deletes the
+// old quantize job and resets status to trigger a fresh quantization run.
 func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelCache *aiv1alpha1.ModelCache, pvcName, modelPath string) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	// If already Ready or already has quantization status, skip
+	currentHash := quantSpecHash(modelCache.Spec.Quantization)
+	storedHash := ""
+	if modelCache.Annotations != nil {
+		storedHash = modelCache.Annotations[annotationQuantSpecHash]
+	}
+
+	// Detect spec change or explicit requantize request.
+	specChanged := storedHash != "" && storedHash != currentHash
+	requantize := modelCache.Annotations != nil && modelCache.Annotations[annotationRequantize] == "true"
+	needsRequant := specChanged || requantize
+
+	if needsRequant && (modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady || modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseFailed) {
+		reason := "spec change"
+		if requantize {
+			reason = "requantize annotation"
+		}
+		log.Info("Re-quantization triggered", "cache", modelCache.Name, "reason", reason,
+			"storedHash", storedHash, "currentHash", currentHash)
+
+		// Delete existing quantize job so the controller recreates it below.
+		quantJobName := modelCache.Name + "-quantize"
+		existingJob := &batchv1.Job{}
+		if err := r.Get(ctx, types.NamespacedName{Name: quantJobName, Namespace: modelCache.Namespace}, existingJob); err == nil {
+			propagation := metav1.DeletePropagationBackground
+			if err := r.Delete(ctx, existingJob, &client.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !errors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("deleting old quantize job for re-quant: %w", err)
+			}
+			log.Info("Deleted old quantize job for re-quantization", "job", quantJobName)
+		}
+
+		// Reset quantization status and phase.
+		modelCache.Status.Quantization = nil
+		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
+		if err := r.Status().Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		// Update annotation: store new hash, clear requantize flag.
+		if modelCache.Annotations == nil {
+			modelCache.Annotations = make(map[string]string)
+		}
+		modelCache.Annotations[annotationQuantSpecHash] = currentHash
+		delete(modelCache.Annotations, annotationRequantize)
+		if err := r.Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "RequantizationTriggered",
+			fmt.Sprintf("Re-quantization triggered (%s), old job deleted", reason))
+
+		// Requeue to let the deleted job disappear before creating a new one.
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	// If already Ready with quantization status and hash matches, nothing to do.
 	if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady && modelCache.Status.Quantization != nil {
+		// Seed the hash annotation if this is an existing cache without one.
+		if storedHash == "" {
+			if modelCache.Annotations == nil {
+				modelCache.Annotations = make(map[string]string)
+			}
+			modelCache.Annotations[annotationQuantSpecHash] = currentHash
+			if err := r.Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -1918,6 +2022,15 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 		log.Info("Creating quantization job", "Job", newJob.Name, "format", modelCache.Spec.Quantization.Format)
 		if err := r.Create(ctx, newJob); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		// Seed the spec hash annotation so future spec changes are detected.
+		if modelCache.Annotations == nil {
+			modelCache.Annotations = make(map[string]string)
+		}
+		modelCache.Annotations[annotationQuantSpecHash] = currentHash
+		if err := r.Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
 
@@ -2335,6 +2448,20 @@ func truncateString(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// quantSpecHash returns a stable SHA-256 hash of the QuantizationSpec.
+// Used to detect spec changes that should trigger re-quantization.
+func quantSpecHash(spec *aiv1alpha1.QuantizationSpec) string {
+	if spec == nil {
+		return ""
+	}
+	b, err := json.Marshal(spec)
+	if err != nil {
+		return ""
+	}
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:8]) // 16-char hex prefix is sufficient
 }
 
 // SetupWithManager sets up the controller with the Manager.

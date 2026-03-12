@@ -341,6 +341,232 @@ export DEFAULT_MLC_LLM_IMAGE_GFX1100="my-registry/mlc-llm:custom-gfx1100"
 export DEFAULT_VLLM_IMAGE_GFX1100="my-registry/vllm:custom-gfx1100"
 ```
 
+## Image Generation with FLUX on ROCm
+
+FlexInfer runs FLUX.1 models on ROCm GPUs using the `diffusers` backend with NF4 quantization via bitsandbytes. This section covers deployment on gfx1100 (24GB) and gfx906 (16GB).
+
+### FLUX Model Variants
+
+| Model | Pipeline | License | Steps | Use Case |
+|-------|----------|---------|-------|----------|
+| FLUX.1 Schnell | `FluxPipeline` | Apache 2.0 | 4 | Text-to-image (fast) |
+| FLUX.1 Fill Dev | `FluxFillPipeline` | Non-commercial | 20 | Inpainting |
+
+Key differences between pipelines:
+- **FluxPipeline** (Schnell): text-to-image only, no `negative_prompt`, no `strength` parameter
+- **FluxFillPipeline** (Fill): inpainting only, no `negative_prompt`, no `strength`, requires explicit `height`/`width` and mask image
+- FLUX has **no FP16 variant files** — do not pass `variant="fp16"` to pipeline loaders
+
+### NF4 Quantization and Memory
+
+FLUX.1 models are 12B parameters. At FP16, the transformer alone uses ~24GB — too large for a single 24GB GPU when combined with the T5-XXL text encoder (~9GB).
+
+NF4 quantization via bitsandbytes solves this:
+
+| Component | FP16 | NF4/BF16 |
+|-----------|------|----------|
+| Transformer | ~24 GB | ~6 GB |
+| T5-XXL text encoder | ~9.4 GB | ~9.4 GB (not quantized) |
+| VAE + overhead | ~1 GB | ~1 GB |
+| **Total** | **~34 GB** | **~16.4 GB** |
+
+NF4 fits comfortably in 24GB VRAM (gfx1100) and in 16GB VRAM (gfx906) with CPU offload.
+
+**Requirements:**
+- `bitsandbytes >= 0.49.2` — earlier versions have incorrect blocksize (128 vs 64) on ROCm and an indexing overflow bug (PR #1796)
+- bitsandbytes must be installed with `--no-deps` to prevent pip from replacing the ROCm PyTorch with a CUDA build
+
+Enable NF4 in the Model CR:
+
+```yaml
+config:
+  quantization: "nf4"
+```
+
+### Compute Dtype Strategy
+
+The `computeDtype` config controls how bitsandbytes dequantizes NF4 weights during inference. The dtype of the pipeline (`torch_dtype`) must match `bnb_4bit_compute_dtype` — a mismatch causes `"Input type and bias type should be the same"`.
+
+| Dtype | TFLOPS (gfx1100) | Speed | Stability |
+|-------|-----------------|-------|-----------|
+| `bfloat16` (recommended) | 123 | ~2x faster | Preferred |
+| `float32` (fallback) | 61 | Baseline | Safe fallback |
+
+Set via Model CR config:
+
+```yaml
+config:
+  quantization: "nf4"
+  computeDtype: "bfloat16"   # recommended, 2x faster on gfx1100
+```
+
+The controller passes this as `BNB_COMPUTE_DTYPE` to the container. The diffusers server loads the entire pipeline with `torch_dtype=torch.bfloat16`, ensuring all non-quantized layers (norms, projections, embeddings) match the compute dtype.
+
+### CPU Offload
+
+CPU offload moves pipeline components to GPU one at a time instead of loading everything at once. This reduces peak VRAM usage at the cost of ~20-30% slower inference.
+
+| GPU | VRAM | CPU Offload | Rationale |
+|-----|------|-------------|-----------|
+| gfx1100 (24GB) | 24 GB | `false` | NF4 total ~16.4GB fits without offload |
+| gfx906 (16GB) | 16 GB | `true` | Only transformer + VAE on GPU (~6GB), T5 stays on CPU |
+
+```yaml
+config:
+  cpuOffload: "true"   # required for gfx906 (16GB VRAM)
+```
+
+### ROCm Environment Variables
+
+The controller automatically sets these for AMD GPUs. Understanding them helps with troubleshooting.
+
+| Variable | Value (gfx1100) | Purpose |
+|----------|----------------|---------|
+| `MIOPEN_FIND_MODE` | `2` (FAST) | Workaround for ROCm#4729 — VAE decode crash at >1024px. ~10-15% slower but stable. |
+| `PYTORCH_HIP_ALLOC_CONF` | `garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:True` | Prevents memory fragmentation on consecutive generations |
+| `TORCH_BLAS_PREFER_HIPBLASLT` | `0` | Disabled for diffusers stability (enabled by default for vLLM GEMM) |
+| `WARMUP_RESOLUTIONS` | `512x512,1024x1024` | Pre-compiles MIOpen kernels at both resolutions, avoiding 14-16s penalty on first 1024px request |
+
+Override `MIOPEN_FIND_MODE` if needed:
+
+```yaml
+config:
+  miopenFindMode: "1"   # default=2 (FAST), 1=NORMAL (slower but more kernel options)
+```
+
+### GFX906 (Radeon VII) Differences
+
+Running FLUX on gfx906 requires additional configuration:
+
+- **bitsandbytes must be built from source** — the pip wheel only ships HIP kernels for gfx90a/gfx942/gfx1100, not gfx906
+- `HSA_OVERRIDE_GFX_VERSION=9.0.6` is required (hardware reports as gfx900)
+- `HSA_ENABLE_SDMA=0` and `HSA_USE_SVM=0` for Vega20 stability
+- Memory allocation is tighter: `garbage_collection_threshold:0.8,max_split_size_mb:256`
+- Attention slicing is auto-enabled (`ENABLE_ATTENTION_SLICING=1`)
+- Warmup is limited to `512x512` only (1024x1024 risks OOM on 16GB)
+
+The controller handles all of these automatically when the node has `flexinfer.ai/gpu.arch: gfx906`.
+
+### Example Model CRs
+
+**Text-to-image (Schnell on gfx1100, 24GB):**
+
+```yaml
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: flux-schnell-imagegen
+  namespace: flexinfer-system
+spec:
+  backend: diffusers
+  source: HF://black-forest-labs/FLUX.1-schnell
+  gpu:
+    vendor: amd
+    shared: gpu-imagegen        # share GPU with other image models
+    priority: 200
+    count: 1
+    vramEstimateMB: 16000       # NF4 uses ~16GB
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 10m
+    coldStartTimeout: 15m
+  cache:
+    strategy: Local
+    hostPath: /mnt/nvme/flexinfer/models
+  config:
+    cpuOffload: "false"         # 24GB VRAM — no offload needed
+    quantization: "nf4"
+    computeDtype: "bfloat16"
+    guidanceScale: "0.0"        # Schnell is distilled — no CFG needed
+    numInferenceSteps: "4"      # 4-step distilled model
+  nodeSelector:
+    kubernetes.io/hostname: my-gfx1100-node
+  resources:
+    requests:
+      cpu: "2"
+      memory: 16Gi
+    limits:
+      cpu: "4"
+      memory: 40Gi
+  serviceLabels:
+    - image-gen
+    - text-to-image
+```
+
+**Inpainting (Fill on gfx906, 16GB):**
+
+```yaml
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: flux-fill-inpainting
+  namespace: flexinfer-system
+spec:
+  backend: diffusers
+  source: HF://black-forest-labs/FLUX.1-Fill-dev
+  gpu:
+    vendor: amd
+    shared: radeonvii-models
+    priority: 200
+    count: 1
+    vramEstimateMB: 8000        # with cpuOffload, only ~6GB on GPU
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 15m
+  cache:
+    size: 30Gi
+    storageClass: nvme-1r
+    strategy: SharedPVC
+  config:
+    pipelineMode: "inpainting"  # uses FluxFillPipeline
+    cpuOffload: "true"          # required for 16GB VRAM
+    quantization: "nf4"
+    computeDtype: "bfloat16"
+    guidanceScale: "3.5"        # Fill uses flow-matching, needs low CFG
+    numInferenceSteps: "20"     # Dev model, not distilled
+  nodeSelector:
+    kubernetes.io/hostname: my-gfx906-node
+  resources:
+    requests:
+      cpu: "2"
+      memory: 16Gi
+    limits:
+      cpu: "4"
+      memory: 40Gi
+  serviceLabels:
+    - image-edit
+    - flux-inpainting
+```
+
+### FLUX Troubleshooting
+
+**"Input type and bias type should be the same"**
+
+`torch_dtype` does not match `bnb_4bit_compute_dtype`. Set `computeDtype` in the Model CR config to match. Use `bfloat16` for best performance.
+
+**VAE decode crash (SIGSEGV)**
+
+ROCm issue #4729 causes crashes during VAE decode on RDNA3 at resolutions above 1024px. The controller auto-sets `MIOPEN_FIND_MODE=2` as a workaround. If you still see crashes, try `miopenFindMode: "1"` in the config.
+
+**Memory fragmentation on consecutive generations**
+
+Symptoms: OOM after several successful generations despite sufficient VRAM. The controller auto-sets `expandable_segments:True` in `PYTORCH_HIP_ALLOC_CONF` to prevent this. If running outside FlexInfer, set this env var manually.
+
+**FLUX has no FP16 variant files**
+
+Unlike Stable Diffusion, FLUX model repos do not contain `fp16/` subdirectories. Do not pass `variant="fp16"` to the pipeline — this causes a `FileNotFoundError`.
+
+**Startup takes 8-10 minutes**
+
+NF4 models with CPU offload need time for bitsandbytes quantization hooks and accelerate device placement. The controller sets a startup probe timeout of 900s (15 min). The `coldStartTimeout` in the Model CR should be at least 15m.
+
+**bitsandbytes installs CUDA PyTorch**
+
+Always install bitsandbytes with `--no-deps` on ROCm images. Without this flag, pip resolves bitsandbytes' torch dependency and replaces the ROCm build with a CUDA build, causing `"HIP error"` at runtime.
+
 ## References
 
 - [Full ROCm Build Guide](/build/README-rocm.md)

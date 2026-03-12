@@ -718,6 +718,231 @@ func TestGPTQJobBuilder_BuildJob_VLMConfigExtraction(t *testing.T) {
 	if !contains(script, "HSA_OVERRIDE_GFX_VERSION=9.0.6") {
 		t.Fatal("expected GPTQ script to auto-detect gfx900 and set HSA_OVERRIDE_GFX_VERSION")
 	}
+	// Hybrid architecture detection: script should re-read config and check layer_types.
+	if !contains(script, "layer_types") {
+		t.Fatal("expected GPTQ script to contain hybrid architecture detection via layer_types")
+	}
+	if !contains(script, "dynamic_config") {
+		t.Fatal("expected GPTQ script to contain dynamic_config for module exclusion")
+	}
+	if !contains(script, `"-:.*attn.*"`) {
+		t.Fatal("expected GPTQ script to contain attention exclusion pattern")
+	}
+	if !contains(script, `"-:.*shared_expert.*"`) {
+		t.Fatal("expected GPTQ script to contain shared_expert exclusion pattern")
+	}
+	if !contains(script, "qcfg_kwargs") {
+		t.Fatal("expected GPTQ script to use qcfg_kwargs for QuantizeConfig construction")
+	}
+}
+
+func TestGPTQJobBuilder_BuildJob_DynamicExclusionNone(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	dynExcl := "none"
+	params := JobParams{
+		Name:      "qwen35-gptq-pure",
+		Namespace: "flexinfer-system",
+		PVCName:   "qwen35-gptq-pure",
+		ModelPath: "qwen35-gptq-pure",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:           aiv1alpha1.QuantizationFormatGPTQ,
+			Bits:             &bits,
+			GroupSize:        &groupSize,
+			UseGPU:           true,
+			DynamicExclusion: &dynExcl,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+	// "none" mode should NOT contain layer_types auto-detection or dynamic_config patterns
+	if contains(script, "layer_types") {
+		t.Error("script with dynamicExclusion=none should NOT contain layer_types detection")
+	}
+	if contains(script, `"-:.*attn.*"`) {
+		t.Error("script with dynamicExclusion=none should NOT contain attention exclusion pattern")
+	}
+	// Should contain the mode log
+	if !contains(script, "Dynamic exclusion disabled") {
+		t.Error("script should log that dynamic exclusion is disabled")
+	}
+	// Should still contain GPTQModel and core functionality
+	if !contains(script, "GPTQModel") {
+		t.Error("script should still reference GPTQModel")
+	}
+}
+
+func TestGPTQJobBuilder_BuildJob_DynamicExclusionAuto(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	dynExcl := "auto"
+	params := JobParams{
+		Name:      "qwen35-gptq-auto",
+		Namespace: "flexinfer-system",
+		PVCName:   "qwen35-gptq-auto",
+		ModelPath: "qwen35-gptq-auto",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:           aiv1alpha1.QuantizationFormatGPTQ,
+			Bits:             &bits,
+			GroupSize:        &groupSize,
+			UseGPU:           true,
+			DynamicExclusion: &dynExcl,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+	// "auto" mode should contain layer_types detection and dynamic_config patterns
+	if !contains(script, "layer_types") {
+		t.Error("script with dynamicExclusion=auto should contain layer_types detection")
+	}
+	if !contains(script, `"-:.*attn.*"`) {
+		t.Error("script with dynamicExclusion=auto should contain attention exclusion pattern")
+	}
+	if !contains(script, "dynamic_config") {
+		t.Error("script with dynamicExclusion=auto should contain dynamic_config")
+	}
+}
+
+func TestGPTQJobBuilder_BuildJob_CustomGPUMemoryFraction(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	gpuFrac := "0.95"
+	params := JobParams{
+		Name:      "test-gptq-gpufrac",
+		Namespace: "flexinfer-system",
+		PVCName:   "test-gptq-gpufrac",
+		ModelPath: "test-gptq-gpufrac",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:            aiv1alpha1.QuantizationFormatGPTQ,
+			Bits:              &bits,
+			GroupSize:         &groupSize,
+			UseGPU:            true,
+			GPUMemoryFraction: &gpuFrac,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+	if !contains(script, "gpu_fraction = 0.95") {
+		t.Error("script should contain custom GPU memory fraction 0.95")
+	}
+	if !contains(script, "GPU memory fraction: 0.95") {
+		t.Error("script should log custom GPU memory fraction")
+	}
+}
+
+func TestGPTQJobBuilder_BuildJob_CustomCalibrationDataset(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	dataset := "wikitext/wikitext-2-raw-v1"
+	params := JobParams{
+		Name:      "test-gptq-dataset",
+		Namespace: "flexinfer-system",
+		PVCName:   "test-gptq-dataset",
+		ModelPath: "test-gptq-dataset",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+			Calibration: &aiv1alpha1.CalibrationSpec{
+				Dataset: &dataset,
+			},
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+	if !contains(script, "wikitext/wikitext-2-raw-v1") {
+		t.Error("script should contain custom calibration dataset")
+	}
+	if contains(script, "mit-han-lab/pile-val-backup") {
+		t.Error("script should NOT contain default dataset when custom is set")
+	}
+}
+
+func TestAWQJobBuilder_BuildJob_CustomCalibrationDataset(t *testing.T) {
+	builder := &AWQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	dataset := "allenai/c4"
+	params := JobParams{
+		Name:      "test-awq-dataset",
+		Namespace: "flexinfer-system",
+		PVCName:   "test-awq-dataset",
+		ModelPath: "test-awq-dataset",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:    aiv1alpha1.QuantizationFormatAWQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+			Calibration: &aiv1alpha1.CalibrationSpec{
+				Dataset: &dataset,
+			},
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+	// AWQ logs the dataset in the echo line
+	if !contains(script, "allenai/c4") {
+		t.Error("script should log custom calibration dataset")
+	}
+}
+
+func TestGPTQJobBuilder_BuildJob_DefaultGPUMemoryFraction(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	params := JobParams{
+		Name:      "test-gptq-default-frac",
+		Namespace: "flexinfer-system",
+		PVCName:   "test-gptq-default-frac",
+		ModelPath: "test-gptq-default-frac",
+		Spec: &aiv1alpha1.QuantizationSpec{
+			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+			// GPUMemoryFraction nil — should default to 0.80
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+	if !contains(script, "gpu_fraction = 0.80") {
+		t.Error("script should contain default GPU memory fraction 0.80")
+	}
 }
 
 func TestEXL2JobBuilder_Validate(t *testing.T) {
