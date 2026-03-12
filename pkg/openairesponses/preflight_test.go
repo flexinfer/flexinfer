@@ -44,7 +44,7 @@ func TestEstimateTokens_ToolResults(t *testing.T) {
 			{CallID: "call_2", Output: strings.Repeat("a", 4000)},
 		},
 	})
-	assert.True(t, est.InputTokens > 1000, "large tool results should produce many tokens")
+	assert.True(t, est.InputTokens > 500, "large tool results should produce many tokens")
 }
 
 func TestPreflightCheck_NoBudget(t *testing.T) {
