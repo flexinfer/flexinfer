@@ -2813,6 +2813,10 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		if origShared == nil || origShared.State != "Active" {
 			log.Info("Model is active in shared group", "group", groupName)
 		}
+		// Emit shared-group state metric
+		metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Active").Set(1)
+		metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Queued").Set(0)
+		metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Preempted").Set(0)
 	} else {
 		// This model should be preempted/queued
 		model.Status.SharedGroup.State = "Queued"
@@ -2826,6 +2830,14 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 			model.Status.SharedGroup.PreemptedAt = &metav1.Time{Time: time.Now()}
 			r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted",
 				fmt.Sprintf("Preempted by %s with priority %d", activeModel.Name, activeModel.Spec.GetPriority()))
+			metrics.SharedGroupPreemptionsTotal.WithLabelValues(groupName, model.Namespace, model.Name, activeModel.Name).Inc()
+			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Preempted").Set(1)
+			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Active").Set(0)
+			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Queued").Set(0)
+		} else {
+			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Queued").Set(1)
+			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Active").Set(0)
+			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Preempted").Set(0)
 		}
 	}
 

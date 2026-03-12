@@ -205,6 +205,12 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 
 	// 3. Check Job Status
 	if job.Status.Succeeded > 0 {
+		// Record download job duration metric
+		if job.Status.StartTime != nil && job.Status.CompletionTime != nil {
+			dur := job.Status.CompletionTime.Sub(job.Status.StartTime.Time).Seconds()
+			metrics.ModelCacheJobDurationSeconds.WithLabelValues(modelCache.Name, modelCache.Namespace, "download", "succeeded").Observe(dur)
+		}
+
 		// Path includes both PVC name and model subdirectory
 		modelCache.Status.Path = fmt.Sprintf("%s:%s", pvcName, modelPath)
 
@@ -235,6 +241,7 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 				fmt.Sprintf("Model cached successfully at %s", modelCache.Status.Path))
 		}
 	} else if job.Status.Failed > 0 {
+		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "download_failed").Inc()
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
@@ -2077,6 +2084,11 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 	if ablitJob.Status.Succeeded > 0 {
 		log.Info("Abliteration job succeeded", "cache", modelCache.Name)
 
+		if ablitJob.Status.StartTime != nil && ablitJob.Status.CompletionTime != nil {
+			dur := ablitJob.Status.CompletionTime.Sub(ablitJob.Status.StartTime.Time).Seconds()
+			metrics.ModelCacheJobDurationSeconds.WithLabelValues(modelCache.Name, modelCache.Namespace, "abliterate", "succeeded").Observe(dur)
+		}
+
 		ablitStatus := &aiv1alpha1.AbliterationStatus{}
 		if ablitJob.Status.StartTime != nil {
 			ablitStatus.StartedAt = ablitJob.Status.StartTime
@@ -2113,6 +2125,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 
 	if ablitJob.Status.Failed > 0 {
 		log.Info("Abliteration job failed", "cache", modelCache.Name)
+		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "abliteration_failed").Inc()
 
 		failureMsg := captureAbliterationFailureLogs(ctx, r.Client, modelCache.Namespace, ablitJob.Name)
 		ablitStatus := &aiv1alpha1.AbliterationStatus{
@@ -2399,6 +2412,11 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 	if quantJob.Status.Succeeded > 0 {
 		log.Info("Quantization job succeeded", "cache", modelCache.Name)
 
+		if quantJob.Status.StartTime != nil && quantJob.Status.CompletionTime != nil {
+			dur := quantJob.Status.CompletionTime.Sub(quantJob.Status.StartTime.Time).Seconds()
+			metrics.ModelCacheJobDurationSeconds.WithLabelValues(modelCache.Name, modelCache.Namespace, "quantize", "succeeded").Observe(dur)
+		}
+
 		// Populate quantization status and metrics from quantizer output.
 		quantType := quantizationTypeFromSpec(modelCache.Spec.Quantization)
 		quantStatus := &aiv1alpha1.QuantizationStatus{
@@ -2484,6 +2502,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 	if quantJob.Status.Failed > 0 {
 		log.Info("Quantization job failed", "cache", modelCache.Name)
+		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "quantization_failed").Inc()
 
 		failureMsg := captureQuantizationFailureLogs(ctx, r.Client, modelCache.Namespace, quantJob.Name)
 		quantStatus := &aiv1alpha1.QuantizationStatus{

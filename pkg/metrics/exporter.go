@@ -294,6 +294,67 @@ var (
 		},
 		[]string{"model", "namespace", "backend"},
 	)
+
+	// === Shared-Group Scheduling Metrics (v1alpha2) ===
+
+	// SharedGroupState tracks the state of each model in a shared GPU group.
+	SharedGroupState = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_sharedgroup_state",
+			Help: "State of a model in a shared GPU group (1 for current state, 0 otherwise).",
+		},
+		[]string{"group", "model", "namespace", "state"},
+	)
+
+	// SharedGroupPreemptionsTotal counts preemption events in shared GPU groups.
+	SharedGroupPreemptionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_sharedgroup_preemptions_total",
+			Help: "Total preemption events in shared GPU groups.",
+		},
+		[]string{"group", "namespace", "from", "to"},
+	)
+
+	// === Cache Job Metrics ===
+
+	// ModelCacheJobDurationSeconds tracks duration of ModelCache pipeline jobs.
+	ModelCacheJobDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_model_cache_job_duration_seconds",
+			Help:    "Duration of ModelCache pipeline jobs (download, abliterate, quantize).",
+			Buckets: []float64{30, 60, 120, 300, 600, 1200, 1800, 3600, 7200, 14400},
+		},
+		[]string{"model", "namespace", "job_type", "result"},
+	)
+
+	// ModelCacheJobFailuresTotal counts ModelCache pipeline job failures.
+	ModelCacheJobFailuresTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_model_cache_failures_total",
+			Help: "Total ModelCache pipeline job failures by reason.",
+		},
+		[]string{"model", "namespace", "reason"},
+	)
+
+	// === Benchmark Result Metrics ===
+
+	// BenchmarkTokensPerSecond publishes the latest benchmark TPS result.
+	BenchmarkTokensPerSecond = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_benchmark_tokens_per_second",
+			Help: "Latest benchmark tokens per second result.",
+		},
+		[]string{"model", "backend", "gpu_vendor", "gpu_arch"},
+	)
+
+	// BenchmarkVRAMUsedBytes publishes VRAM used during benchmark.
+	BenchmarkVRAMUsedBytes = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_benchmark_vram_used_bytes",
+			Help: "GPU VRAM used during benchmark in bytes.",
+		},
+		[]string{"model", "backend", "gpu_vendor", "gpu_arch"},
+	)
 )
 
 func init() {
@@ -339,6 +400,18 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(ModelPhase)
 	ctrlmetrics.Registry.MustRegister(ModelTransitionsTotal)
 	ctrlmetrics.Registry.MustRegister(ModelReadyLatencySeconds)
+
+	// Shared-group scheduling metrics (v1alpha2)
+	ctrlmetrics.Registry.MustRegister(SharedGroupState)
+	ctrlmetrics.Registry.MustRegister(SharedGroupPreemptionsTotal)
+
+	// Cache job metrics
+	ctrlmetrics.Registry.MustRegister(ModelCacheJobDurationSeconds)
+	ctrlmetrics.Registry.MustRegister(ModelCacheJobFailuresTotal)
+
+	// Benchmark result metrics
+	ctrlmetrics.Registry.MustRegister(BenchmarkTokensPerSecond)
+	ctrlmetrics.Registry.MustRegister(BenchmarkVRAMUsedBytes)
 }
 
 // Exporter handles serving the Prometheus metrics.

@@ -131,6 +131,7 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 
 	// Attempt activation with optional backoff
 	var lastErr error
+	activationStart := time.Now()
 	maxAttempts := 1
 	if p.backoffEnabled {
 		maxAttempts = p.backoffMaxRetries + 1 // Initial attempt + retries
@@ -160,6 +161,7 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 		if err != nil {
 			lastErr = fmt.Errorf("scale-up failed: %v", err)
 			slog.Warn("activation attempt failed", "model", modelName, "attempt", attempt+1, "error", err)
+			activationFailuresTotal.WithLabelValues(modelName, "scale_up").Inc()
 			continue
 		}
 
@@ -167,6 +169,11 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 		if err := p.waitForReady(ctx, modelName); err != nil {
 			lastErr = err
 			slog.Warn("model failed to become ready", "model", modelName, "attempt", attempt+1, "error", err)
+			reason := "ready_timeout"
+			if ctx.Err() != nil {
+				reason = "context_cancelled"
+			}
+			activationFailuresTotal.WithLabelValues(modelName, reason).Inc()
 			continue
 		}
 
@@ -177,9 +184,12 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 
 	if lastErr != nil {
 		slog.Error("all activation attempts failed", "model", modelName, "attempts", maxAttempts, "error", lastErr)
+		activationDurationSeconds.WithLabelValues(modelName, "", "failure").Observe(time.Since(activationStart).Seconds())
 		p.drainQueueWithError(queue, lastErr)
 		return
 	}
+
+	activationDurationSeconds.WithLabelValues(modelName, "", "success").Observe(time.Since(activationStart).Seconds())
 
 	slog.Info("model ready, draining queue", "model", modelName)
 

@@ -86,26 +86,23 @@ Defined in `services/flexinfer/controllers/gpugroup_controller.go`:
 
 These only appear once the controller has observed at least one GPUGroup and called `WithLabelValues(...)` for the series.
 
-## Planned Metrics Extensions
+## Recently Shipped Metrics
 
-What we have today is enough for basic proxy load + queueing visibility, but it is missing first-class lifecycle metrics for v1alpha2 `Model`.
+The following metrics were added as part of the Sprint 1 observability initiative:
 
-Recommended additions (all emitted by `flexinfer-manager` unless noted):
-
-- **Model lifecycle**:
+- **Model lifecycle** (emitted by `flexinfer-manager`): ✅
   - `flexinfer_model_phase{model,namespace,phase}` (gauge; `1` for current phase)
   - `flexinfer_model_transitions_total{model,namespace,from,to,reason}` (counter)
   - `flexinfer_model_ready_latency_seconds{model,namespace,backend}` (histogram; reconcile to Ready)
-- **Serverless activations** (proxy):
+- **Serverless activations** (emitted by proxy): ✅
   - `flexinfer_proxy_activation_duration_seconds{model,backend,result}` (histogram; request seen to Ready)
-  - `flexinfer_proxy_activation_failures_total{model,reason}` (counter; timeout, validation, backend error)
-- **Shared-group scheduling (v1alpha2)**:
+  - `flexinfer_proxy_activation_failures_total{model,reason}` (counter; scale_up, ready_timeout, context_cancelled)
+- **Shared-group scheduling (v1alpha2)** (emitted by `flexinfer-manager`): ✅
   - `flexinfer_sharedgroup_state{group,model,namespace,state}` (gauge; Active/Queued/Preempted)
   - `flexinfer_sharedgroup_preemptions_total{group,namespace,from,to}` (counter)
-- **Cache/prefetch**:
-  - `flexinfer_model_cache_job_duration_seconds{model,namespace,job_type,result}` (histogram; prefetch/check)
+- **Cache/prefetch** (emitted by `flexinfer-manager`): ✅
+  - `flexinfer_model_cache_job_duration_seconds{model,namespace,job_type,result}` (histogram; download/abliterate/quantize)
   - `flexinfer_model_cache_failures_total{model,namespace,reason}` (counter)
-- **Benchmarks**:
-  - publish benchmark results into metrics alongside ConfigMaps:
-    - `flexinfer_benchmark_tokens_per_second{model,backend,gpu_vendor,gpu_arch}` (gauge)
-    - `flexinfer_benchmark_vram_used_bytes{model,backend,gpu_vendor,gpu_arch}` (gauge)
+- **Benchmarks** (emitted by benchmarker via `pkg/metrics`): ✅
+  - `flexinfer_benchmark_tokens_per_second{model,backend,gpu_vendor,gpu_arch}` (gauge)
+  - `flexinfer_benchmark_vram_used_bytes{model,backend,gpu_vendor,gpu_arch}` (gauge; defined, not yet populated)

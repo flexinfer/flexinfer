@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
+	"github.com/flexinfer/flexinfer/pkg/metrics"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -232,7 +234,25 @@ func (b *Benchmarker) Run(ctx context.Context, model, configMapName string) erro
 		}
 	}
 
+	// Emit benchmark result as Prometheus metrics for scraping.
+	b.emitBenchmarkMetrics(ctx, record)
+
 	return nil
+}
+
+// emitBenchmarkMetrics publishes benchmark results to Prometheus gauges.
+func (b *Benchmarker) emitBenchmarkMetrics(ctx context.Context, record *BenchmarkRecord) {
+	vendor, arch := "", ""
+	if b.nodeName != "" {
+		node, err := b.kubeClient.CoreV1().Nodes().Get(ctx, b.nodeName, metav1.GetOptions{})
+		if err == nil {
+			vendor = node.Labels["flexinfer.ai/gpu.vendor"]
+			arch = node.Labels["flexinfer.ai/gpu.arch"]
+		}
+	}
+	metrics.BenchmarkTokensPerSecond.WithLabelValues(
+		record.ModelName, record.Backend, vendor, arch,
+	).Set(record.TokensPerSecond)
 }
 
 func deviceClassFromNode(node *corev1.Node) string {

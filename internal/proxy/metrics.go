@@ -175,6 +175,24 @@ var (
 		},
 		[]string{"model"},
 	)
+
+	// Activation lifecycle metrics
+	activationDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_proxy_activation_duration_seconds",
+			Help:    "Total time from activation trigger to model Ready.",
+			Buckets: []float64{1, 5, 10, 30, 60, 120, 180, 300, 600, 900},
+		},
+		[]string{"model", "backend", "result"},
+	)
+
+	activationFailuresTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_activation_failures_total",
+			Help: "Total activation failures by model and reason.",
+		},
+		[]string{"model", "reason"},
+	)
 )
 
 var metricsOnce sync.Once
@@ -219,6 +237,8 @@ func RegisterMetrics() {
 		prometheus.MustRegister(routingKeyCardinalityOverflowTotal)
 		prometheus.MustRegister(activationRetriesTotal)
 		prometheus.MustRegister(activationRetryWaitDuration)
+		prometheus.MustRegister(activationDurationSeconds)
+		prometheus.MustRegister(activationFailuresTotal)
 		prometheus.MustRegister(rateLimitedTotal)
 	})
 }
