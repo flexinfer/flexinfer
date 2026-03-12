@@ -448,8 +448,10 @@ elif [ -f "$MARKER" ] && [ "$WEIGHT_COUNT" -eq 0 ]; then
 fi
 
 pip install --no-cache-dir huggingface_hub hf_transfer
-export HF_HUB_ENABLE_HF_TRANSFER=1
-echo "Downloading $MODEL_ID to $DEST_DIR..."
+# HF_HUB_ENABLE_HF_TRANSFER controlled via env var (default: 0).
+# hf_transfer uses ~4-8Gi for parallel connections on large models,
+# which can OOM the 8Gi download container. Keep disabled by default.
+echo "Downloading $MODEL_ID to $DEST_DIR (hf_transfer=$HF_HUB_ENABLE_HF_TRANSFER)..."
 mkdir -p "$DEST_DIR"
 MODEL_ID="$MODEL_ID" DEST_DIR="$DEST_DIR" python - <<'PY'
 import os
@@ -916,8 +918,10 @@ if [ -f "$MARKER" ]; then
 fi
 
 pip install --no-cache-dir huggingface_hub hf_transfer
-export HF_HUB_ENABLE_HF_TRANSFER=1
-echo "Downloading $MODEL_ID to $DEST_DIR..."
+# HF_HUB_ENABLE_HF_TRANSFER controlled via env var (default: 0).
+# hf_transfer uses ~4-8Gi for parallel connections on large models,
+# which can OOM the 8Gi download container. Keep disabled by default.
+echo "Downloading $MODEL_ID to $DEST_DIR (hf_transfer=$HF_HUB_ENABLE_HF_TRANSFER)..."
 mkdir -p "$DEST_DIR"
 MODEL_ID="$MODEL_ID" DEST_DIR="$DEST_DIR" python - <<'PY'
 import os
