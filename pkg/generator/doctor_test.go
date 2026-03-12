@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+const geminiDoctorConfig = `# Generated MCP configuration for gemini
+[mcp_servers.loom]
+command = "loom"
+args = ["proxy"]
+`
+
 func TestDoctorCheckNotConfigured(t *testing.T) {
 	tmpDir := t.TempDir()
 	health := DoctorCheck(nil, "claude", filepath.Join(tmpDir, "nonexistent"))
@@ -94,7 +100,66 @@ func TestDoctorCheckClaudeMissingSettings(t *testing.T) {
 func TestDoctorCheckGeminiHealthy(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Write settings.json with expected gemini hooks.
+	// Write settings.json with expected gemini hooks and policy.
+	expected := geminiHooksConfig()
+	data, err := json.MarshalIndent(expected, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(geminiDoctorConfig), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	health := DoctorCheck(nil, "gemini", tmpDir)
+	if health.Hooks != "ok" {
+		t.Errorf("hooks = %s, want ok; details: %v", health.Hooks, health.Details)
+	}
+	if health.Perms != "ok" {
+		t.Errorf("perms = %s, want ok; details: %v", health.Perms, health.Details)
+	}
+	if health.Status != "healthy" {
+		t.Errorf("status = %s, want healthy; details: %v", health.Status, health.Details)
+	}
+}
+
+func TestDoctorCheckGeminiStaleHooks(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	settings := geminiHooksConfig()
+	settings["hooks"] = map[string]any{
+		"SessionStart": []map[string]any{
+			{"hooks": []map[string]any{{"type": "command", "command": "echo old"}}},
+		},
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(geminiDoctorConfig), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	health := DoctorCheck(nil, "gemini", tmpDir)
+	if health.Hooks != "stale" {
+		t.Errorf("hooks = %s, want stale", health.Hooks)
+	}
+	if health.Perms != "ok" {
+		t.Errorf("perms = %s, want ok; details: %v", health.Perms, health.Details)
+	}
+	if health.Status != "stale" {
+		t.Errorf("status = %s, want stale", health.Status)
+	}
+}
+
+func TestDoctorCheckGeminiMissingConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+
 	expected := geminiHooksConfig()
 	data, err := json.MarshalIndent(expected, "", "  ")
 	if err != nil {
@@ -108,23 +173,26 @@ func TestDoctorCheckGeminiHealthy(t *testing.T) {
 	if health.Hooks != "ok" {
 		t.Errorf("hooks = %s, want ok; details: %v", health.Hooks, health.Details)
 	}
-	if health.Status != "healthy" {
-		t.Errorf("status = %s, want healthy", health.Status)
+	if health.Perms != "missing" {
+		t.Errorf("perms = %s, want missing; details: %v", health.Perms, health.Details)
+	}
+	if health.Status != "stale" {
+		t.Errorf("status = %s, want stale; details: %v", health.Status, health.Details)
 	}
 }
 
-func TestDoctorCheckGeminiStale(t *testing.T) {
+func TestDoctorCheckGeminiPolicyDrift(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	settings := map[string]any{
-		"hooks": map[string]any{
-			"SessionStart": []map[string]any{
-				{"hooks": []map[string]any{{"type": "command", "command": "echo old"}}},
-			},
-		},
+	settings := geminiHooksConfig()
+	settings["general"] = map[string]any{
+		"defaultApprovalMode": "manual",
 	}
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(geminiDoctorConfig), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), data, 0644); err != nil {
@@ -132,11 +200,14 @@ func TestDoctorCheckGeminiStale(t *testing.T) {
 	}
 
 	health := DoctorCheck(nil, "gemini", tmpDir)
-	if health.Hooks != "stale" {
-		t.Errorf("hooks = %s, want stale", health.Hooks)
+	if health.Hooks != "ok" {
+		t.Errorf("hooks = %s, want ok; details: %v", health.Hooks, health.Details)
+	}
+	if health.Perms != "drift" {
+		t.Errorf("perms = %s, want drift; details: %v", health.Perms, health.Details)
 	}
 	if health.Status != "stale" {
-		t.Errorf("status = %s, want stale", health.Status)
+		t.Errorf("status = %s, want stale; details: %v", health.Status, health.Details)
 	}
 }
 
@@ -240,6 +311,11 @@ func TestDeriveStatus(t *testing.T) {
 		{
 			name:     "missing hooks on claude",
 			health:   PlatformHealth{Platform: "claude", Hooks: "missing", Perms: "n/a", Schema: "n/a"},
+			expected: "stale",
+		},
+		{
+			name:     "missing perms on gemini",
+			health:   PlatformHealth{Platform: "gemini", Hooks: "ok", Perms: "missing", Schema: "ok"},
 			expected: "stale",
 		},
 		{

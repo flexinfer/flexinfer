@@ -160,12 +160,26 @@ func checkClaudeHealth(health *PlatformHealth, reg *registry.Registry, configDir
 	}
 }
 
-// checkGeminiHealth checks Gemini CLI settings.json for hooks freshness.
+// checkGeminiHealth checks Gemini CLI config.toml and settings.json for loom
+// proxy wiring, hooks freshness, and policy drift.
 func checkGeminiHealth(health *PlatformHealth, reg *registry.Registry, configDir string) {
+	configPath := filepath.Join(configDir, "config.toml")
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		health.Perms = "missing"
+		health.Details = append(health.Details, "config.toml not found")
+	} else if !hasGeminiLoomProxyConfig(configData) {
+		health.Perms = "drift"
+		health.Details = append(health.Details, "config.toml exists but has no loom MCP proxy configuration")
+	} else {
+		health.Perms = "ok"
+	}
+
 	settingsPath := filepath.Join(configDir, "settings.json")
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		health.Hooks = "missing"
+		health.Perms = "missing"
 		health.Details = append(health.Details, "settings.json not found")
 		return
 	}
@@ -193,6 +207,43 @@ func checkGeminiHealth(health *PlatformHealth, reg *registry.Registry, configDir
 		health.Hooks = "ok"
 	}
 
+	expectedGeneral, expectedGeneralOK := expectedConfig["general"]
+	onDiskGeneral, onDiskGeneralOK := onDisk["general"]
+	expectedTools, expectedToolsOK := expectedConfig["tools"]
+	onDiskTools, onDiskToolsOK := onDisk["tools"]
+
+	switch {
+	case expectedGeneralOK && !onDiskGeneralOK:
+		health.Perms = "missing"
+		health.Details = append(health.Details, "general block missing from settings.json")
+	case !expectedGeneralOK && onDiskGeneralOK:
+		if health.Perms != "missing" {
+			health.Perms = "drift"
+		}
+		health.Details = append(health.Details, "general block differs from expected")
+	case expectedGeneralOK && onDiskGeneralOK && jsonFingerprint(onDiskGeneral) != jsonFingerprint(expectedGeneral):
+		if health.Perms != "missing" {
+			health.Perms = "drift"
+		}
+		health.Details = append(health.Details, "general block differs from expected")
+	}
+
+	switch {
+	case expectedToolsOK && !onDiskToolsOK:
+		health.Perms = "missing"
+		health.Details = append(health.Details, "tools block missing from settings.json")
+	case !expectedToolsOK && onDiskToolsOK:
+		if health.Perms != "missing" {
+			health.Perms = "drift"
+		}
+		health.Details = append(health.Details, "tools block differs from expected")
+	case expectedToolsOK && onDiskToolsOK && jsonFingerprint(onDiskTools) != jsonFingerprint(expectedTools):
+		if health.Perms != "missing" {
+			health.Perms = "drift"
+		}
+		health.Details = append(health.Details, "tools block differs from expected")
+	}
+
 	// Schema validation.
 	result := validator.ValidateGeminiSettings(settingsPath, data)
 	if result == nil {
@@ -205,6 +256,12 @@ func checkGeminiHealth(health *PlatformHealth, reg *registry.Registry, configDir
 	} else {
 		health.Schema = "ok"
 	}
+}
+
+func hasGeminiLoomProxyConfig(data []byte) bool {
+	content := string(data)
+	return strings.Contains(content, "[mcp_servers.loom]") &&
+		strings.Contains(content, `args = ["proxy"]`)
 }
 
 // checkCodexHealth checks Codex config.toml for the notify hook line.
@@ -349,7 +406,7 @@ func platformDirNames(platform string) (workspace, home string) {
 
 // deriveStatus computes the overall platform status from individual check results.
 func deriveStatus(h *PlatformHealth) string {
-	if h.Hooks == "stale" || h.Perms == "drift" {
+	if h.Hooks == "stale" || h.Perms == "drift" || h.Perms == "missing" {
 		return "stale"
 	}
 	if h.Schema == "errors" {
