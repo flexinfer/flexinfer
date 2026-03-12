@@ -1,6 +1,6 @@
 # MCP Inventory
 
-_Last verified: 2026-03-10_
+_Last verified: 2026-03-11_
 
 ## Why
 
@@ -25,17 +25,17 @@ Snapshot from `read_mcp_resource(server="loom", uri="loom://config")`:
 | Field | Value |
 |---|---|
 | active profile | `full` |
-| serverCount | `45` |
-| toolCount | `468` |
-| activeProxySessions | `4` |
-| running local servers | `agent_context`, `youtube`, `codebase_memory`, `devbox` |
+| serverCount | `46` |
+| toolCount | `483` |
+| activeProxySessions | `7` |
+| running local servers | `agent_context`, `codebase_memory`, `devbox`, `k8s_harvester_infra`, `longhorn_k3s`, `ops_mcp`, `server_mgmt` |
 
 Snapshot from `read_mcp_resource(server="loom", uri="loom://tools/index")`:
 
 | Field | Value |
 |---|---|
 | server | `all` |
-| totalTools | `468` |
+| totalTools | `483` |
 | totalPages | `5` |
 | pageSize | `100` |
 
@@ -66,9 +66,9 @@ Planning implication:
 
 ## Sources
 
-- Tool call: `list_mcp_resources` (2026-03-10)
-- Tool call: `list_mcp_resource_templates` (2026-03-10)
-- Tool call: `read_mcp_resource(server="loom", uri="loom://config")` (2026-03-10)
-- Tool call: `read_mcp_resource(server="loom", uri="loom://servers")` (2026-03-10)
-- Tool call: `read_mcp_resource(server="loom", uri="loom://tools/index")` (2026-03-10)
-- Tool call: `codebase_memory__codebase_stats(repo_id="loom-core")` (2026-03-10)
+- Tool call: `list_mcp_resources` (2026-03-11)
+- Tool call: `list_mcp_resource_templates` (2026-03-11)
+- Tool call: `read_mcp_resource(server="loom", uri="loom://config")` (2026-03-11)
+- Tool call: `read_mcp_resource(server="loom", uri="loom://servers")` (2026-03-11)
+- Tool call: `read_mcp_resource(server="loom", uri="loom://tools/index")` (2026-03-11)
+- Tool call: `codebase_memory__codebase_stats(repo_id="loom-core")` (2026-03-11)

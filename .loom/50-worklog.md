@@ -1,5 +1,26 @@
 # Worklog
 
+## 2026-03-11 (session 25) — Codebase benchmark harness recovery and watch baseline
+
+- What changed:
+  - Regenerated `.loom/00-workspace-snapshot.md` and refreshed `.loom/00-mcp-inventory.md` against the live loom-mode runtime.
+  - Fixed `cmd/codebase-bench` so MCP results are decoded correctly under default TOON output and MCP error envelopes.
+  - Added focused tests covering TOON, JSON, error-envelope decoding, and watch repo ID fallback.
+  - Corrected watch benchmark repo IDs to fall back to `mixedrepo-watch` instead of `-watch`.
+  - Ran a bounded watch-only benchmark and saved `.loom/codebase-bench/codebase-bench-20260312-004421.json`.
+  - Populated the codebase benchmark planning docs and sprint report from the live artifact instead of leaving placeholders.
+- Why:
+  - Claude’s latest indexer work added the benchmark surface, but the harness was not actually usable under the repo’s default output mode.
+  - A real watch artifact was needed before choosing the next optimization slice.
+- Verification:
+  - `go test ./cmd/codebase-bench`
+  - `go run ./cmd/codebase-bench -scenario watch -runs 1 -warmup-runs 0 -timeout-seconds 120 -output-dir .loom/codebase-bench`
+  - `python - <<'PY' ... .loom/codebase-bench/codebase-bench-20260312-004421.json ... PY`
+- Sources:
+  - [S1] `cmd/codebase-bench/main.go`
+  - [S2] `cmd/codebase-bench/main_test.go`
+  - [S3] `.loom/codebase-bench/codebase-bench-20260312-004421.json`
+
 ## 2026-03-11 (session 24) — Worktree reconciliation and branch cleanup
 
 - What changed:

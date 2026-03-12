@@ -4,6 +4,7 @@
 
 - Workspace snapshot: `00-workspace-snapshot.md`
 - MCP inventory: `00-mcp-inventory.md`
+- Research (codebase indexer benchmark operability, 2026-03-11): `17-research-codebase-indexer-benchmark-operability-2026-03-11.md`
 - Roadmap review + task carve-out (2026-03-07): `39-roadmap-review-and-task-carveout-2026-03-07.md`
 - Research (mobile companion): `10-research.md`
 - Research (OpenAI Responses + Loom tool/context integration): `15-research-openai-responses-tool-context-2026-03-04.md`
@@ -11,6 +12,7 @@
 - Product spec (mobile companion): `20-product-spec.md`
 - Product spec (OpenAI Responses orchestration): `21-product-spec-openai-responses-orchestration-2026-03-04.md`
 - Implementation plan (mobile companion): `30-implementation-plan.md`
+- Implementation plan (codebase indexer benchmark phase 2, 2026-03-11): `39-implementation-plan-codebase-indexer-benchmark-phase2-2026-03-11.md`
 - Implementation plan (agent trace + telemetry dashboards): `34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
 - Implementation plan (OpenAI Responses orchestration): `36-implementation-plan-openai-responses-orchestration-2026-03-04.md`
 - Mobile API draft: `../docs/MOBILE_COMPANION_API.md`
@@ -26,7 +28,11 @@
 
 ## Current State (2026-03-11)
 
-**Branch**: `codex/google-workspace-finish` at `b220ba9` (main at latest)
+**Branch**: `main` at `489f3a0`
+
+**Current planning thread**:
+- Codebase indexer benchmark operability and next-slice latency work after the sprint 1-3 backlog landed on `main`.
+- Fresh evidence includes a successful watch-only benchmark artifact at `.loom/codebase-bench/codebase-bench-20260312-004421.json` and a harness fix for TOON/error-envelope decoding.
 
 **Worktree reconciliation (2026-03-11)**:
 - Cleaned 43 worktrees down to 6 (including main checkout and codex-tmp).

@@ -1,0 +1,129 @@
+{
+  "generated_at": "2026-03-12T00:44:21.795248Z",
+  "config": {
+    "root": ".",
+    "fixture_root": "pkg/codebase/testdata/mixedrepo",
+    "repo_id": "",
+    "scenario": "watch",
+    "runs": 1,
+    "warmup_runs": 0,
+    "embeddings": false,
+    "git_metadata": false,
+    "index_concurrency": 4,
+    "embed_batch_size": 64,
+    "upsert_batch_size": 64,
+    "poll_interval_ms": 250,
+    "timeout_seconds": 120
+  },
+  "runs": [
+    {
+      "scenario": "watch",
+      "run_index": 0,
+      "warmup": false,
+      "started_at": "2026-03-12T00:44:18.538144Z",
+      "finished_at": "2026-03-12T00:44:21.793703Z",
+      "duration_millis": 3255,
+      "memory_before": {
+        "alloc_bytes": 302520,
+        "total_alloc_bytes": 333208,
+        "heap_alloc_bytes": 302520,
+        "num_gc": 1
+      },
+      "memory_after": {
+        "alloc_bytes": 766488,
+        "total_alloc_bytes": 1569688,
+        "heap_alloc_bytes": 766488,
+        "num_gc": 2
+      },
+      "memory_delta": {
+        "alloc_bytes_delta": 463968,
+        "total_alloc_bytes_delta": 1236480,
+        "heap_alloc_bytes_delta": 463968,
+        "num_gc_delta": 1
+      },
+      "watch_stats": {
+        "repo_id": "mixedrepo-watch",
+        "root": "/var/folders/48/_dzc3bt15qq8yn0n98lm6mgh0000gn/T/codebase-watch-bench-311787246",
+        "events_total": 2,
+        "files_queued": 2,
+        "files_indexed": 2,
+        "files_skipped": 0,
+        "files_deleted": 0,
+        "chunks_upserted": 6,
+        "errors": 0,
+        "started_at": "2026-03-11T20:44:18.538178-04:00",
+        "stopped_at": "2026-03-11T20:44:21.543088-04:00",
+        "last_event_at": "2026-03-11T20:44:20.291597-04:00",
+        "stages": {
+          "file_read": {
+            "runs": 2,
+            "items": 2,
+            "duration_nanos": 446666
+          },
+          "preflight_lookup": {
+            "runs": 2,
+            "items": 2,
+            "duration_nanos": 310319417
+          },
+          "unchanged_hash_lookup": {
+            "runs": 2,
+            "items": 2
+          },
+          "embedding_cache_lookup": {},
+          "delete_before_upsert": {
+            "runs": 2,
+            "items": 2,
+            "duration_nanos": 10137458
+          },
+          "parse_index": {
+            "runs": 2,
+            "items": 2,
+            "duration_nanos": 2202125
+          },
+          "git_metadata": {},
+          "chunk_split_enrich": {
+            "runs": 2,
+            "items": 6,
+            "duration_nanos": 14208
+          },
+          "embedding": {},
+          "qdrant_upsert": {
+            "runs": 2,
+            "items": 6,
+            "duration_nanos": 1418853251
+          },
+          "total": {
+            "runs": 1,
+            "items": 2,
+            "duration_nanos": 3004898875
+          }
+        }
+      },
+      "watch_latencies": [
+        {
+          "file_path": "main.go",
+          "latency_millis": 1251,
+          "files_indexed": 1,
+          "files_skipped": 0,
+          "chunks_upserted": 3
+        },
+        {
+          "file_path": "src/index.ts",
+          "latency_millis": 1251,
+          "files_indexed": 2,
+          "files_skipped": 0,
+          "chunks_upserted": 6
+        }
+      ]
+    }
+  ],
+  "summary": [
+    {
+      "scenario": "watch",
+      "measured_runs": 1,
+      "median_duration_millis": 3255,
+      "min_duration_millis": 3255,
+      "max_duration_millis": 3255
+    }
+  ]
+}

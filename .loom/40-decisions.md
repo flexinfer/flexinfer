@@ -1,5 +1,25 @@
 # Decisions
 
+## 2026-03-11: Make codebase benchmark artifacts valid under default MCP output mode
+
+- Decision:
+  - `cmd/codebase-bench` will decode MCP tool responses as structured text that may be JSON, TOON, or an MCP error envelope.
+  - Watch benchmark runs will derive a stable fallback repo ID from the fixture name when `--repo-id` is omitted.
+- Rationale:
+  - `mcp.JSONResult(...)` defaults to TOON output in this repo, so a plain `json.Unmarshal` made `make codebase-bench-baseline` fail before any measurement could start.
+  - The previous watch repo ID fallback produced `-watch`, which made artifacts hard to compare or script.
+- Alternatives considered:
+  - Forcing `LOOM_MCP_OUTPUT_FORMAT=json` only inside the benchmark command.
+  - Requiring `--repo-id` for all watch runs.
+- Consequences:
+  - The benchmark harness now works under the same default output mode as the rest of the repo.
+  - Watch artifacts are attributable (`mixedrepo-watch`) and can feed reporting automation.
+- Sources:
+  - [S1] `cmd/codebase-bench/main.go:223`
+  - [S2] `cmd/codebase-bench/main.go:283`
+  - [S3] `cmd/codebase-bench/main.go:418`
+  - [S4] `cmd/codebase-bench/main_test.go:10`
+
 ## 2026-02-19: Set mobile auth bootstrap default to native OAuth + PKCE with device-code fallback
 
 - Decision:
