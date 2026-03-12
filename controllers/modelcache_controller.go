@@ -1919,18 +1919,26 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		log.Info("Re-quantization triggered", "cache", modelCache.Name, "reason", reason,
 			"storedHash", storedHash, "currentHash", currentHash)
 
-		// Delete existing quantize job so the controller recreates it below.
-		quantJobName := modelCache.Name + "-quantize"
-		existingJob := &batchv1.Job{}
-		if err := r.Get(ctx, types.NamespacedName{Name: quantJobName, Namespace: modelCache.Namespace}, existingJob); err == nil {
-			propagation := metav1.DeletePropagationBackground
-			if err := r.Delete(ctx, existingJob, &client.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !errors.IsNotFound(err) {
-				return ctrl.Result{}, fmt.Errorf("deleting old quantize job for re-quant: %w", err)
+		// Delete existing quantize AND download jobs. Re-quantization requires
+		// fresh FP16 source weights because the previous run's FP16 cleanup
+		// deletes them after save. The download job's "Complete" status is stale
+		// once we need to re-download.
+		propagation := metav1.DeletePropagationBackground
+		for _, suffix := range []string{"-quantize", "-downloader"} {
+			jobName := modelCache.Name + suffix
+			existingJob := &batchv1.Job{}
+			if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: modelCache.Namespace}, existingJob); err == nil {
+				if err := r.Delete(ctx, existingJob, &client.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !errors.IsNotFound(err) {
+					return ctrl.Result{}, fmt.Errorf("deleting job %s for re-quant: %w", jobName, err)
+				}
+				log.Info("Deleted job for re-quantization", "job", jobName)
 			}
-			log.Info("Deleted old quantize job for re-quantization", "job", quantJobName)
 		}
 
-		// Reset quantization status and phase.
+		// Reset quantization status and phase back to Provisioning.
+		// The download job will re-run; the improved marker validation
+		// (checks for actual weight files) ensures it re-downloads if
+		// FP16 sources were cleaned up by the previous quantization.
 		modelCache.Status.Quantization = nil
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
 		if err := r.Status().Update(ctx, modelCache); err != nil {
