@@ -60,6 +60,8 @@ const (
 	ModelCachePhaseInitializing ModelCachePhase = "Initializing"
 	// ModelCachePhaseProvisoning means the model is being downloaded/synced
 	ModelCachePhaseProvisioning ModelCachePhase = "Provisioning"
+	// ModelCachePhaseAbliterating means the model weights are being abliterated
+	ModelCachePhaseAbliterating ModelCachePhase = "Abliterating"
 	// ModelCachePhaseQuantizing means the model is being quantized
 	ModelCachePhaseQuantizing ModelCachePhase = "Quantizing"
 	// ModelCachePhaseReady means the model is ready to be used
@@ -224,6 +226,71 @@ type QuantizationStatus struct {
 	FailureMessage string `json:"failureMessage,omitempty"`
 }
 
+// AbliterationSpec configures pre-quantization abliteration of model weights.
+// Abliteration removes the "refusal direction" from model weights so the model
+// responds without censorship. The pipeline becomes:
+// Download (BF16) → Abliterate (modify weights in-place) → Quantize → Ready.
+// +kubebuilder:object:generate=true
+type AbliterationSpec struct {
+	// TargetLayers selects which decoder layers to abliterate.
+	// "auto" (default) = all decoder layers, "10-55" = range, "0,1,5,10" = explicit indices.
+	// +kubebuilder:default="auto"
+	// +optional
+	TargetLayers *string `json:"targetLayers,omitempty"`
+
+	// WeightMatrices to orthogonalize against the refusal direction.
+	// Defaults to ["o_proj", "down_proj"] if empty.
+	// +optional
+	WeightMatrices []string `json:"weightMatrices,omitempty"`
+
+	// NumSamples is the number of contrastive prompt pairs for activation collection.
+	// +kubebuilder:validation:Minimum=16
+	// +kubebuilder:validation:Maximum=512
+	// +kubebuilder:default=128
+	// +optional
+	NumSamples *int32 `json:"numSamples,omitempty"`
+
+	// MaxMemoryGB for the abliteration container. Default 56 (27B BF16 + overhead).
+	// +optional
+	MaxMemoryGB *int32 `json:"maxMemoryGB,omitempty"`
+
+	// TimeoutSeconds overrides the default 2-hour deadline.
+	// +kubebuilder:validation:Minimum=300
+	// +kubebuilder:validation:Maximum=43200
+	// +optional
+	TimeoutSeconds *int64 `json:"timeoutSeconds,omitempty"`
+
+	// UseGPU: when true, loads model with device_map="auto" (GPU+CPU offload).
+	// +optional
+	UseGPU bool `json:"useGPU,omitempty"`
+
+	// SkipVisionLayers excludes vision encoder layers from abliteration (VLMs like Qwen3.5).
+	// +kubebuilder:default=true
+	// +optional
+	SkipVisionLayers *bool `json:"skipVisionLayers,omitempty"`
+}
+
+// AbliterationStatus records the result of abliteration.
+// +kubebuilder:object:generate=true
+type AbliterationStatus struct {
+	// LayersModified is the number of decoder layers that were abliterated.
+	LayersModified int32 `json:"layersModified,omitempty"`
+
+	// RefusalDirNorm is the L2 norm of the mean refusal direction vector (diagnostic).
+	RefusalDirNorm string `json:"refusalDirNorm,omitempty"`
+
+	// AbliterationTime is the wall-clock duration of the abliteration job.
+	AbliterationTime string `json:"abliterationTime,omitempty"`
+
+	// StartedAt is the timestamp when the abliteration job started.
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+
+	// FailureMessage contains the last lines of pod logs on failure.
+	// +optional
+	FailureMessage string `json:"failureMessage,omitempty"`
+}
+
 // ModelCacheSpec defines the desired state of ModelCache
 // +kubebuilder:object:generate=true
 type ModelCacheSpec struct {
@@ -331,6 +398,13 @@ type ModelCacheSpec struct {
 	// completes, converting the model to the specified format before marking Ready.
 	// +optional
 	Quantization *QuantizationSpec `json:"quantization,omitempty"`
+
+	// Abliteration configures pre-quantization abliteration of model weights.
+	// When set, the controller creates an abliteration Job after download completes
+	// (and before quantization if both are set). Abliteration removes the "refusal
+	// direction" from transformer weights via contrastive activation analysis.
+	// +optional
+	Abliteration *AbliterationSpec `json:"abliteration,omitempty"`
 }
 
 // FlashLoaderSpec configures the flash-loader init container for fast model loading.
@@ -438,6 +512,11 @@ type ModelCacheStatus struct {
 	// Only populated when spec.quantization is set and the job completes.
 	// +optional
 	Quantization *QuantizationStatus `json:"quantization,omitempty"`
+
+	// Abliteration records the result of model abliteration.
+	// Only populated when spec.abliteration is set and the job completes.
+	// +optional
+	Abliteration *AbliterationStatus `json:"abliteration,omitempty"`
 
 	// === OCI Registry Status ===
 

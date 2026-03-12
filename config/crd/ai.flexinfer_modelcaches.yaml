@@ -67,6 +67,55 @@ spec:
           spec:
             description: ModelCacheSpec defines the desired state of ModelCache
             properties:
+              abliteration:
+                description: |-
+                  Abliteration configures pre-quantization abliteration of model weights.
+                  When set, the controller creates an abliteration Job after download completes
+                  (and before quantization if both are set). Abliteration removes the "refusal
+                  direction" from transformer weights via contrastive activation analysis.
+                properties:
+                  maxMemoryGB:
+                    description: MaxMemoryGB for the abliteration container. Default
+                      56 (27B BF16 + overhead).
+                    format: int32
+                    type: integer
+                  numSamples:
+                    default: 128
+                    description: NumSamples is the number of contrastive prompt pairs
+                      for activation collection.
+                    format: int32
+                    maximum: 512
+                    minimum: 16
+                    type: integer
+                  skipVisionLayers:
+                    default: true
+                    description: SkipVisionLayers excludes vision encoder layers from
+                      abliteration (VLMs like Qwen3.5).
+                    type: boolean
+                  targetLayers:
+                    default: auto
+                    description: |-
+                      TargetLayers selects which decoder layers to abliterate.
+                      "auto" (default) = all decoder layers, "10-55" = range, "0,1,5,10" = explicit indices.
+                    type: string
+                  timeoutSeconds:
+                    description: TimeoutSeconds overrides the default 2-hour deadline.
+                    format: int64
+                    maximum: 43200
+                    minimum: 300
+                    type: integer
+                  useGPU:
+                    description: 'UseGPU: when true, loads model with device_map="auto"
+                      (GPU+CPU offload).'
+                    type: boolean
+                  weightMatrices:
+                    description: |-
+                      WeightMatrices to orthogonalize against the refusal direction.
+                      Defaults to ["o_proj", "down_proj"] if empty.
+                    items:
+                      type: string
+                    type: array
+                type: object
               clusterStorageClassName:
                 description: ClusterStorageClassName is the storage class to use for
                   SharedPVC strategy
@@ -324,6 +373,34 @@ spec:
           status:
             description: ModelCacheStatus defines the observed state of ModelCache
             properties:
+              abliteration:
+                description: |-
+                  Abliteration records the result of model abliteration.
+                  Only populated when spec.abliteration is set and the job completes.
+                properties:
+                  abliterationTime:
+                    description: AbliterationTime is the wall-clock duration of the
+                      abliteration job.
+                    type: string
+                  failureMessage:
+                    description: FailureMessage contains the last lines of pod logs
+                      on failure.
+                    type: string
+                  layersModified:
+                    description: LayersModified is the number of decoder layers that
+                      were abliterated.
+                    format: int32
+                    type: integer
+                  refusalDirNorm:
+                    description: RefusalDirNorm is the L2 norm of the mean refusal
+                      direction vector (diagnostic).
+                    type: string
+                  startedAt:
+                    description: StartedAt is the timestamp when the abliteration
+                      job started.
+                    format: date-time
+                    type: string
+                type: object
               accessCount:
                 description: |-
                   AccessCount tracks total number of accesses to this cache.
