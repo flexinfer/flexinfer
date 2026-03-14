@@ -29,6 +29,7 @@ const (
 	mobileScopeSessionCreate = "mobile:session:create"
 	mobileScopeSessionEnd    = "mobile:session:end"
 	mobileScopePush          = "mobile:push"
+	mobileScopeAgentSpawn    = "mobile:agent:spawn"
 )
 
 // mobileEnvelope is the standard response shape for /api/mobile/v1 endpoints.
@@ -2181,4 +2182,113 @@ func eventHasSessionID(raw json.RawMessage, sessionID string) bool {
 	}
 	got, _ := payload["session_id"].(string)
 	return strings.TrimSpace(got) == sessionID
+}
+
+// --- Mobile Agent Spawn Endpoints ---
+
+// handleMobileSpawnAgent handles POST /api/mobile/v1/agent/spawn.
+func (a *App) handleMobileSpawnAgent(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeAgentSpawn) {
+		return
+	}
+	if a.spawner == nil {
+		a.writeMobileError(w, http.StatusServiceUnavailable, "spawn_unavailable", "spawn orchestrator not configured")
+		return
+	}
+
+	var req SpawnRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		a.writeMobileError(w, http.StatusBadRequest, "invalid_body", "invalid request body")
+		return
+	}
+
+	spawnID, err := a.spawner.Spawn(r.Context(), req)
+	if err != nil {
+		a.writeMobileError(w, http.StatusBadRequest, "spawn_error", err.Error())
+		return
+	}
+
+	state, _ := a.spawner.GetSpawn(spawnID)
+	a.logMobileAudit(r, "agent_spawn", map[string]string{
+		"agent_type": req.AgentType,
+		"project":    req.Project,
+		"spawn_id":   spawnID,
+	}, "success", nil)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(mobileEnvelope{
+		OK: true,
+		Data: map[string]any{
+			"spawn_id": spawnID,
+			"agent_id": state.AgentID,
+			"status":   state.Status,
+		},
+	})
+}
+
+// handleMobileSpawnList handles GET /api/mobile/v1/agent/spawns.
+func (a *App) handleMobileSpawnList(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	spawns := make([]*SpawnState, 0)
+	if a.spawner != nil {
+		spawns = a.spawner.ListSpawns()
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{"spawns": spawns})
+}
+
+// handleMobileSpawnDetail handles GET /api/mobile/v1/agent/spawn/{spawn_id}.
+func (a *App) handleMobileSpawnDetail(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	spawnID := r.PathValue("spawn_id")
+	if spawnID == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "missing_param", "spawn_id required")
+		return
+	}
+
+	if a.spawner == nil {
+		a.writeMobileError(w, http.StatusNotFound, "not_found", "spawn not found")
+		return
+	}
+
+	state, ok := a.spawner.GetSpawn(spawnID)
+	if !ok {
+		a.writeMobileError(w, http.StatusNotFound, "not_found", "spawn not found")
+		return
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, state)
+}
+
+// handleMobileSpawnStop handles POST /api/mobile/v1/agent/spawn/{spawn_id}/stop.
+func (a *App) handleMobileSpawnStop(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeAgentSpawn) {
+		return
+	}
+
+	spawnID := r.PathValue("spawn_id")
+	if spawnID == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "missing_param", "spawn_id required")
+		return
+	}
+
+	if a.spawner == nil {
+		a.writeMobileError(w, http.StatusServiceUnavailable, "spawn_unavailable", "spawn orchestrator not configured")
+		return
+	}
+
+	if err := a.spawner.StopSpawn(r.Context(), spawnID); err != nil {
+		a.writeMobileError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+
+	a.logMobileAudit(r, "agent_spawn_stop", map[string]string{"spawn_id": spawnID}, "success", nil)
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{"stopped": true, "spawn_id": spawnID})
 }

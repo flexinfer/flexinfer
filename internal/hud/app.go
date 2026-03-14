@@ -27,12 +27,15 @@ import (
 	"syscall"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	loomcache "github.com/crb2nu/loom/internal/cache"
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/coordinator"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 	"github.com/crb2nu/loom/internal/hud/window"
 	"github.com/crb2nu/loom/internal/tui"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 )
 
 //go:embed frontend/dist
@@ -72,6 +75,13 @@ type Config struct {
 
 	// Mobile push notifications (behind feature flag).
 	MobilePushEnabled bool // Enable push notification endpoints (default: false).
+
+	// APNs configuration for push delivery.
+	APNsKeyPath string // Path to .p8 signing key.
+	APNsKeyID   string // APNs key ID from Apple Developer portal.
+	APNsTeamID  string // Apple Developer Team ID.
+	APNsTopic   string // APNs topic (bundle ID).
+	APNsSandbox bool   // Use sandbox APNs endpoint (development).
 
 	// TLS for gateway mode.
 	TLSCert     string // Path to PEM certificate file.
@@ -119,6 +129,16 @@ type App struct {
 	mobileRateLimiter    *MobileRateLimiter
 	mobileRevocationList *MobileTokenRevocationList
 	deviceTokenStore     *DeviceTokenStore // Push notification device tokens (MBL-7).
+
+	// OTel instrumentation.
+	tracer  trace.Tracer
+	metrics *HUDMetrics
+
+	// Push notification bridge (SSE events → APNs).
+	pushBridge *PushEventBridge
+
+	// Headless agent spawn orchestrator.
+	spawner *SpawnOrchestrator
 }
 
 const (
@@ -168,6 +188,16 @@ func Run(cfg Config) error {
 	}
 
 	defer appCache.Close()
+
+	// Initialize OTel tracer for HUD-native instrumentation.
+	tp, otelShutdown, err := mcpotel.InitTracer(context.Background(), "loom-hud", logger)
+	if err != nil {
+		logger.Warn("otel tracer init failed, continuing without tracing", "error", err)
+	} else {
+		defer otelShutdown(context.Background())
+	}
+	app.tracer = mcpotel.Tracer(tp, "loom-hud")
+	app.metrics = NewHUDMetrics()
 
 	// Initialize and start background monitors.
 	app.fleetMonitor = monitor.NewFleetMonitor(client, agent, logger)
@@ -220,6 +250,22 @@ func Run(cfg Config) error {
 		pushCleanupCtx, pushCleanupCancel := context.WithCancel(context.Background())
 		defer pushCleanupCancel()
 		go app.pushTokenReaper(pushCleanupCtx)
+	}
+
+	// Initialize APNs push bridge when push is enabled and APNs key is configured.
+	if cfg.MobilePushEnabled && cfg.APNsKeyPath != "" {
+		apnsSender := NewAPNsSender(APNsSenderConfig{
+			KeyPath: cfg.APNsKeyPath,
+			KeyID:   cfg.APNsKeyID,
+			TeamID:  cfg.APNsTeamID,
+			Topic:   cfg.APNsTopic,
+			Sandbox: cfg.APNsSandbox,
+		}, app.tracer, app.metrics, logger)
+
+		app.pushBridge = NewPushEventBridge(
+			apnsSender, app.deviceTokenStore, app.tracer, app.metrics, logger,
+		)
+		logger.Info("APNs push bridge enabled", "topic", cfg.APNsTopic, "sandbox", cfg.APNsSandbox)
 	}
 
 	// Wire monitor OnRefresh callbacks to broadcast fresh snapshots via SSE.
@@ -442,6 +488,13 @@ func Run(cfg Config) error {
 		if !cfg.TUI {
 			ec.OnAny(func(e bridge.SSEEvent) {
 				app.sseHub.Broadcast(e)
+			})
+		}
+
+		// Wire push bridge to daemon events for push-worthy notifications.
+		if app.pushBridge != nil {
+			ec.OnAny(func(e bridge.SSEEvent) {
+				go app.pushBridge.HandleEvent(e)
 			})
 		}
 
@@ -730,6 +783,10 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mobile/v1/sandbox", a.withCORS(a.handleMobileSandbox))
 	mux.HandleFunc("POST /api/mobile/v1/sandbox/start", a.withCORS(a.handleMobileSandboxStart))
 	mux.HandleFunc("POST /api/mobile/v1/sandbox/stop", a.withCORS(a.handleMobileSandboxStop))
+	mux.HandleFunc("POST /api/mobile/v1/agent/spawn", a.withCORS(a.handleMobileSpawnAgent))
+	mux.HandleFunc("GET /api/mobile/v1/agent/spawns", a.withCORS(a.handleMobileSpawnList))
+	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/{spawn_id}", a.withCORS(a.handleMobileSpawnDetail))
+	mux.HandleFunc("POST /api/mobile/v1/agent/spawn/{spawn_id}/stop", a.withCORS(a.handleMobileSpawnStop))
 
 	// API routes — topology graph.
 	mux.HandleFunc("GET /api/topology", a.withCORS(a.handleTopology))
@@ -739,6 +796,12 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/timeline", a.withCORS(a.handleTimeline))
 	mux.HandleFunc("POST /api/agent/dispatch", a.withCORS(a.handleAgentDispatch))
 	mux.HandleFunc("DELETE /api/claims/{agent_id}/{file_path...}", a.withCORS(a.handleClaimRelease))
+
+	// API routes — headless agent spawn.
+	mux.HandleFunc("POST /api/agent/spawn", a.withCORS(a.handleAgentSpawn))
+	mux.HandleFunc("GET /api/agent/spawns", a.withCORS(a.handleAgentSpawnList))
+	mux.HandleFunc("GET /api/agent/spawn/{spawn_id}", a.withCORS(a.handleAgentSpawnDetail))
+	mux.HandleFunc("POST /api/agent/spawn/{spawn_id}/stop", a.withCORS(a.handleAgentSpawnStop))
 
 	// API routes — agent lifecycle (CLI hooks call these).
 	mux.HandleFunc("POST /api/agent/session-start", a.withCORS(a.handleAgentSessionStart))

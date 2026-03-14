@@ -369,6 +369,28 @@ struct OpsView: View {
 
     private var agentsSection: some View {
         VStack(spacing: LoomSpacing.cardSpacing) {
+            NavigationLink {
+                SpawnAgentView(viewModel: SpawnViewModel(apiClient: viewModel.apiClient))
+            } label: {
+                LoomCard {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Spawn Agent")
+                                .font(LoomTypography.headlineMedium)
+                                .foregroundStyle(LoomColors.textPrimary)
+                            Text("Launch a headless AI agent in K8s")
+                                .font(LoomTypography.caption)
+                                .foregroundStyle(LoomColors.textSecondary)
+                        }
+                        Spacer()
+                        Image(systemName: "play.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(LoomColors.accent)
+                    }
+                }
+            }
+            .cardAppear(index: 0)
+
             LoomCard {
                 VStack(alignment: .leading, spacing: LoomSpacing.sm) {
                     Text("Presence Summary")

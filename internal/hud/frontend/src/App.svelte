@@ -19,6 +19,7 @@
   import ReasoningPanel from './lib/components/ReasoningPanel.svelte';
   import KnowledgePanel from './lib/components/KnowledgePanel.svelte';
   import SandboxPanel from './lib/components/SandboxPanel.svelte';
+  import SpawnPanel from './lib/components/SpawnPanel.svelte';
   import CatalogPanel from './lib/components/CatalogPanel.svelte';
   import DispatchPanel from './lib/components/DispatchPanel.svelte';
   import TimelinePanel from './lib/components/TimelinePanel.svelte';
@@ -255,6 +256,8 @@
                   <PresencePanel />
                 {:else if router.subView === 'sandbox'}
                   <SandboxPanel />
+                {:else if router.subView === 'spawn'}
+                  <SpawnPanel />
                 {:else if router.subView === 'reasoning'}
                   <ReasoningPanel />
                 {:else if router.subView === 'topology'}

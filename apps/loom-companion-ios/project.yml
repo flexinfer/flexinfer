@@ -46,6 +46,11 @@ targets:
     entitlements:
       com.apple.security.application-groups:
         - group.ai.flexinfer.loom.companion
+      aps-environment: development
+    info:
+      properties:
+        UIBackgroundModes:
+          - remote-notification
   LoomCompanionWidget:
     type: app-extension
     platform: iOS

@@ -1,4 +1,7 @@
 import Foundation
+#if os(iOS)
+import WidgetKit
+#endif
 
 /// ViewModel for the main dashboard screen.
 @Observable
@@ -69,6 +72,14 @@ public final class DashboardViewModel {
         "agent.session.reaped",
         "agent.heartbeat",
         "hud.handoff.created",
+        "hud.workflows",
+    ]
+
+    /// SSE event types that trigger widget timeline refresh.
+    private static let widgetRefreshEventTypes: Set<String> = [
+        "hud.fleet",
+        "hud.health",
+        "hud.workflows",
     ]
 
     /// SSE event types that are notification-worthy (forwarded to AlertsViewModel).
@@ -91,9 +102,84 @@ public final class DashboardViewModel {
             alertsViewModel?.handleSSEEvent(event)
         }
 
+        // Drive Live Activities from workflow events.
+        #if os(iOS)
+        if event.type == "hud.workflows" {
+            if #available(iOS 16.2, *) {
+                handleWorkflowLiveActivities(event)
+            }
+        }
+
+        // Refresh widget timelines on relevant state changes.
+        if Self.widgetRefreshEventTypes.contains(event.type) {
+            WidgetCenter.shared.reloadAllTimelines()
+        }
+        #endif
+
         // Refresh dashboard data for relevant events.
         if Self.refreshEventTypes.contains(event.type) {
             await load()
         }
     }
+
+    #if os(iOS)
+    /// Parse workflow SSE events and drive Live Activity start/update/end.
+    @available(iOS 16.2, *)
+    @MainActor
+    private func handleWorkflowLiveActivities(_ event: SSEEvent) {
+        guard let data = event.data.data(using: .utf8) else { return }
+
+        struct WorkflowPayload: Decodable {
+            let workflows: [WorkflowItem]?
+        }
+        struct WorkflowItem: Decodable {
+            let workflow_id: String
+            let name: String?
+            let status: String
+            let current_step: String?
+            let completed_steps: Int?
+            let total_steps: Int?
+            let progress: Double?
+        }
+
+        guard let payload = try? JSONDecoder().decode(WorkflowPayload.self, from: data),
+              let workflows = payload.workflows else { return }
+
+        let lam = LiveActivityManager.shared
+        for wf in workflows {
+            let total = wf.total_steps ?? 1
+            let completed = wf.completed_steps ?? 0
+            let step = wf.current_step ?? wf.status
+
+            switch wf.status {
+            case "running", "in_progress":
+                if lam.activeCount == 0 || completed == 0 {
+                    lam.startWorkflowActivity(
+                        workflowId: wf.workflow_id,
+                        name: wf.name ?? wf.workflow_id,
+                        agentId: "",
+                        initialStep: step,
+                        totalSteps: total
+                    )
+                } else {
+                    lam.updateWorkflowActivity(
+                        workflowId: wf.workflow_id,
+                        stepName: step,
+                        stepIndex: completed,
+                        totalSteps: total,
+                        status: wf.status,
+                        elapsedSeconds: 0
+                    )
+                }
+            case "completed", "failed", "cancelled":
+                lam.endWorkflowActivity(
+                    workflowId: wf.workflow_id,
+                    finalStatus: wf.status
+                )
+            default:
+                break
+            }
+        }
+    }
+    #endif
 }

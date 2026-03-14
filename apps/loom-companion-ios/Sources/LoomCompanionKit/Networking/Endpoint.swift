@@ -31,6 +31,10 @@ public enum Endpoint: Sendable {
     case sandbox
     case sandboxStart(project: String, agentId: String? = nil)
     case sandboxStop(project: String)
+    case spawnAgent(request: MobileSpawnRequest)
+    case spawnList
+    case spawnDetail(id: String)
+    case spawnStop(id: String)
 
     var method: String {
         switch self {
@@ -38,10 +42,10 @@ public enum Endpoint: Sendable {
              .tasks, .workflows, .workflowDetail, .presence, .memoryStats,
              .memoryItems, .stream, .topology, .graphStats, .graphEntities,
              .graphPath, .reasoningChains, .reasoningChainDetail,
-             .eventsStream, .audit, .sandbox:
+             .eventsStream, .audit, .sandbox, .spawnList, .spawnDetail:
             return "GET"
         case .createSession, .endSession, .pushRegister, .pushUnregister,
-             .sandboxStart, .sandboxStop:
+             .sandboxStart, .sandboxStop, .spawnAgent, .spawnStop:
             return "POST"
         }
     }
@@ -106,6 +110,14 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/sandbox/start"
         case .sandboxStop:
             return "/api/mobile/v1/sandbox/stop"
+        case .spawnAgent:
+            return "/api/mobile/v1/agent/spawn"
+        case .spawnList:
+            return "/api/mobile/v1/agent/spawns"
+        case let .spawnDetail(id):
+            return "/api/mobile/v1/agent/spawn/\(id)"
+        case let .spawnStop(id):
+            return "/api/mobile/v1/agent/spawn/\(id)/stop"
         }
     }
 
@@ -273,6 +285,14 @@ public enum Endpoint: Sendable {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             let body: [String: Any] = ["project": project]
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        case let .spawnAgent(spawnRequest):
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(spawnRequest)
+
+        case .spawnStop:
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [:] as [String: Any])
 
         default:
             break

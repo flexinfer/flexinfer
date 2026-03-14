@@ -41,7 +41,7 @@ public final class OpsViewModel {
     public var sandboxMutationError: String?
 
     @ObservationIgnored
-    private let apiClient: any LoomAPIClientProtocol
+    public let apiClient: any LoomAPIClientProtocol
 
     public init(apiClient: any LoomAPIClientProtocol) {
         self.apiClient = apiClient

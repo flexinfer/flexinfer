@@ -88,6 +88,7 @@ export const views: ViewDef[] = [
     default: 'sandbox',
     subViews: [
       { id: 'sandbox', label: 'Sandbox', key: 'a' },
+      { id: 'spawn',   label: 'Spawn',   key: 'b' },
     ],
   },
 ];
