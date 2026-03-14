@@ -115,9 +115,15 @@ func (b *AWQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		groupSize = int(*params.Spec.GroupSize)
 	}
 
+	image := awqQuantizerImage()
+	// GPUProfile image override takes priority.
+	if params.ProfileQuantizerImage != "" {
+		image = params.ProfileQuantizerImage
+	}
+
 	return buildGPUQuantizationJob(
 		params,
-		awqQuantizerImage(),
+		image,
 		b.buildScript(params.ModelPath, bits, groupSize, params.Spec.Calibration),
 		memoryGB,
 	)
@@ -327,6 +333,10 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	image := gptqQuantizerImage()
 	if params.GPUVendor == "amd" {
 		image = gptqQuantizerROCmImage(params.GPUArch)
+	}
+	// GPUProfile image override takes priority.
+	if params.ProfileQuantizerImage != "" {
+		image = params.ProfileQuantizerImage
 	}
 
 	return buildGPUQuantizationJob(

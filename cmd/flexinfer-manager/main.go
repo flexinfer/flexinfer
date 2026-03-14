@@ -99,17 +99,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.ModelDeploymentReconciler{
+	// GPUProfile controller - caches GPU architecture capabilities for other controllers.
+	// Must be registered before controllers that depend on it.
+	gpuProfileReconciler := &controllers.GPUProfileReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+	}
+	if err = gpuProfileReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "GPUProfile")
+		os.Exit(1)
+	}
+
+	if err = (&controllers.ModelDeploymentReconciler{
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		GPUProfiles: gpuProfileReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ModelDeployment")
 		os.Exit(1)
 	}
 
 	if err = (&controllers.ModelCacheReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		GPUProfiles: gpuProfileReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ModelCache")
 		os.Exit(1)
@@ -125,10 +138,11 @@ func main() {
 
 	// Model v1alpha2 controller - simplified single-resource API
 	if err = (&controllers.ModelReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Recorder:  mgr.GetEventRecorderFor("model-controller"),
-		APIReader: mgr.GetAPIReader(),
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		Recorder:    mgr.GetEventRecorderFor("model-controller"),
+		APIReader:   mgr.GetAPIReader(),
+		GPUProfiles: gpuProfileReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Model")
 		os.Exit(1)
@@ -171,6 +185,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "FederatedModel")
 		os.Exit(1)
 	}
+
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

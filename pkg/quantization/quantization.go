@@ -56,6 +56,10 @@ type JobParams struct {
 	// Tolerations allows the quantization pod to schedule on tainted nodes
 	// (e.g. dedicated=gpu nodes).
 	Tolerations []corev1.Toleration
+
+	// ProfileQuantizerImage is an optional image override from a GPUProfile CR.
+	// When set, it takes priority over env var and hardcoded defaults.
+	ProfileQuantizerImage string
 }
 
 // FormatBackendCompatibility maps quantization formats to compatible backends.

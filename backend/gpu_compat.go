@@ -1,6 +1,10 @@
 package backend
 
-import "strings"
+import (
+	"strings"
+
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+)
 
 // GPUArchSupportLevel indicates how well a backend supports a GPU architecture.
 type GPUArchSupportLevel int
@@ -111,4 +115,54 @@ func LookupGPUArchSupport(backendName, gpuArch string) (GPUArchSupport, bool) {
 	}
 
 	return bestMatch, found
+}
+
+// LookupGPUArchSupportFromProfile returns the support level for a backend from a GPUProfile.
+// Returns (support, true) if the profile has an entry for the backend, or (zero, false) otherwise.
+func LookupGPUArchSupportFromProfile(profile *aiv1alpha2.GPUProfileSpec, backendName string) (GPUArchSupport, bool) {
+	if profile == nil || profile.Backends == nil {
+		return GPUArchSupport{}, false
+	}
+	bp, ok := profile.Backends[backendName]
+	if !ok {
+		return GPUArchSupport{}, false
+	}
+	var level GPUArchSupportLevel
+	switch bp.Support {
+	case "full":
+		level = SupportFull
+	case "experimental":
+		level = SupportExperimental
+	case "unsupported":
+		level = SupportUnsupported
+	default:
+		return GPUArchSupport{}, false
+	}
+	return GPUArchSupport{Level: level, MaxVRAMMB: int(profile.VRAMMB)}, true
+}
+
+// ImageFromProfile returns the container image override for a backend from a GPUProfile.
+// Returns ("", false) if no override is configured.
+func ImageFromProfile(profile *aiv1alpha2.GPUProfileSpec, backendName string) (string, bool) {
+	if profile == nil || profile.Backends == nil {
+		return "", false
+	}
+	bp, ok := profile.Backends[backendName]
+	if !ok || bp.Image == "" {
+		return "", false
+	}
+	return bp.Image, true
+}
+
+// QuantizerImageFromProfile returns the quantizer container image for a format from a GPUProfile.
+// Returns ("", false) if no image is configured.
+func QuantizerImageFromProfile(profile *aiv1alpha2.GPUProfileSpec, format string) (string, bool) {
+	if profile == nil || profile.Quantization == nil || profile.Quantization.Images == nil {
+		return "", false
+	}
+	img, ok := profile.Quantization.Images[format]
+	if !ok || img == "" {
+		return "", false
+	}
+	return img, true
 }

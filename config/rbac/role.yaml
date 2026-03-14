@@ -66,6 +66,7 @@ rules:
   - clusters/status
   - federatedmodels/status
   - gpugroups/status
+  - gpuprofiles/status
   - loraadapters/status
   - modelcaches/status
   - modelcatalogs/status
@@ -75,6 +76,14 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - ai.flexinfer
+  resources:
+  - gpuprofiles
+  verbs:
+  - get
+  - list
+  - watch
 - apiGroups:
   - apps
   resources:

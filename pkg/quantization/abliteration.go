@@ -48,6 +48,10 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 	}
 
 	image := abliterationImage(params.GPUVendor, params.GPUArch)
+	// GPUProfile image override takes priority.
+	if params.ProfileQuantizerImage != "" {
+		image = params.ProfileQuantizerImage
+	}
 	script := buildAbliterationScript(params.ModelPath, ablitSpec)
 
 	backoffLimit := int32(2)
@@ -171,6 +175,7 @@ func buildAbliterationScript(modelPath string, spec *aiv1alpha1.AbliterationSpec
 	}
 
 	return fmt.Sprintf(`set -euo pipefail
+set -a
 
 MODEL_DIR="/cache/%s"
 NUM_SAMPLES=%d
@@ -223,6 +228,7 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map=device_map,
     trust_remote_code=True,
     low_cpu_mem_usage=True,
+    use_mmap=False,  # NFS mmap causes SIGBUS under I/O pressure
 )
 print(f"Model loaded in {time.time() - load_start:.1f}s")
 

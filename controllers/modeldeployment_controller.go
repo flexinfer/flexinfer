@@ -47,6 +47,7 @@ import (
 	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
 	"github.com/flexinfer/flexinfer/pkg/k8surl"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
+	"github.com/flexinfer/flexinfer/pkg/observability"
 )
 
 func canonicalBackend(backend string) string {
@@ -130,9 +131,10 @@ func getLiteLLMAnnotations(m *aiv1alpha1.ModelDeployment) map[string]string {
 // ModelDeploymentReconciler reconciles a ModelDeployment object
 type ModelDeploymentReconciler struct {
 	client.Client
-	Scheme    *runtime.Scheme
-	Recorder  record.EventRecorder
-	APIReader client.Reader // Uncached reader for critical sections
+	Scheme      *runtime.Scheme
+	Recorder    record.EventRecorder
+	APIReader   client.Reader // Uncached reader for critical sections
+	GPUProfiles *GPUProfileReconciler
 }
 
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=modeldeployments,verbs=get;list;watch;create;update;patch;delete
@@ -148,6 +150,8 @@ type ModelDeploymentReconciler struct {
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *ModelDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	ctx, _, endSpan := observability.StartReconcileSpan(ctx, "modeldeployment", req.Namespace, req.Name)
+	defer endSpan()
 	log := log.FromContext(ctx)
 
 	// Fetch the ModelDeployment instance

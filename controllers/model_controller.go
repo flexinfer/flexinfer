@@ -215,9 +215,10 @@ func mergeStringMap(existing map[string]string, additional map[string]string) ma
 // ModelReconciler reconciles a Model object
 type ModelReconciler struct {
 	client.Client
-	Scheme    *runtime.Scheme
-	Recorder  record.EventRecorder
-	APIReader client.Reader
+	Scheme      *runtime.Scheme
+	Recorder    record.EventRecorder
+	APIReader   client.Reader
+	GPUProfiles *GPUProfileReconciler
 }
 
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=models,verbs=get;list;watch;create;update;patch;delete
@@ -516,9 +517,19 @@ func (r *ModelReconciler) validateVRAMFit(model *aiv1alpha2.Model, b backend.Bac
 		return nil
 	}
 
-	support, found := backend.LookupGPUArchSupport(b.Name(), gpuArch)
-	if !found || support.MaxVRAMMB <= 0 {
-		return nil
+	// Try GPUProfile VRAM first, then fall back to hardcoded compatibility matrix.
+	var maxVRAMMB int
+	if r.GPUProfiles != nil {
+		if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok && profile.VRAMMB > 0 {
+			maxVRAMMB = int(profile.VRAMMB)
+		}
+	}
+	if maxVRAMMB == 0 {
+		support, found := backend.LookupGPUArchSupport(b.Name(), gpuArch)
+		if !found || support.MaxVRAMMB <= 0 {
+			return nil
+		}
+		maxVRAMMB = support.MaxVRAMMB
 	}
 
 	estimateMB := *model.Spec.GPU.VRAMEstimateMB
@@ -526,7 +537,7 @@ func (r *ModelReconciler) validateVRAMFit(model *aiv1alpha2.Model, b backend.Bac
 	if model.Spec.GPU.Count != nil && *model.Spec.GPU.Count > 1 {
 		gpuCount = int64(*model.Spec.GPU.Count)
 	}
-	totalVRAMMB := int64(support.MaxVRAMMB) * gpuCount
+	totalVRAMMB := int64(maxVRAMMB) * gpuCount
 
 	// Block if estimate exceeds 95% of total VRAM
 	if estimateMB > totalVRAMMB*95/100 {
@@ -547,8 +558,18 @@ func (r *ModelReconciler) validateVRAMFit(model *aiv1alpha2.Model, b backend.Bac
 // validateBackendGPUCompatibility checks if the backend is compatible with the target GPU arch.
 // Uses the GPU compatibility matrix for data-driven validation with fallback to architecture-specific checks.
 func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, gpuArch string) error {
-	// Check the GPU compatibility matrix first.
-	if support, found := backend.LookupGPUArchSupport(b.Name(), gpuArch); found {
+	// Try GPUProfile first, then fall back to hardcoded compatibility matrix.
+	var support backend.GPUArchSupport
+	var found bool
+	if r.GPUProfiles != nil {
+		if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok {
+			support, found = backend.LookupGPUArchSupportFromProfile(profile, b.Name())
+		}
+	}
+	if !found {
+		support, found = backend.LookupGPUArchSupport(b.Name(), gpuArch)
+	}
+	if found {
 		switch support.Level {
 		case backend.SupportUnsupported:
 			return fmt.Errorf("%s backend is not supported on %s GPUs. Use a compatible backend instead", b.Name(), gpuArch)
@@ -642,6 +663,11 @@ func (r *ModelReconciler) emitVLLMOptInEvents(model *aiv1alpha2.Model) {
 // desiredReplicas calculates the desired replica count for the model.
 // For serverless models, this is driven by LastActiveTime (written by the proxy) and idle timeout.
 func (r *ModelReconciler) desiredReplicas(model *aiv1alpha2.Model, b backend.Backend) int32 {
+	// KV-cache eviction: override to 0 replicas while evicted.
+	if model.Status.KVCache != nil && model.Status.KVCache.Evicted {
+		return 0
+	}
+
 	// Shared GPU: only the active model should run.
 	if model.Spec.IsShared() && model.Status.SharedGroup != nil {
 		if model.Status.SharedGroup.State != "Active" {
@@ -871,14 +897,39 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	// Build ModelSpec for backend
 	spec := r.buildBackendModelSpec(model, b, gpuVendor)
 	spec.GPUArch = gpuArch
+
+	// Apply KV-cache reconfigure overrides (reduced maxNumSeqs) if active.
+	if model.Status.KVCache != nil && model.Status.KVCache.Reconfigured && model.Status.KVCache.ReconfiguredMaxNumSeqs != nil {
+		if spec.Config == nil {
+			spec.Config = map[string]interface{}{}
+		}
+		spec.Config["maxNumSeqs"] = float64(*model.Status.KVCache.ReconfiguredMaxNumSeqs)
+	}
+
 	storagePlan := resolveBackendStoragePlan(model, b, spec.Config)
 
-	// Get container configuration from backend
+	// Get container configuration from backend.
+	// Try GPUProfile image override first, fall back to backend default.
 	image := b.Image(gpuVendor, gpuArch)
+	if r.GPUProfiles != nil {
+		if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok {
+			if profileImage, ok := backend.ImageFromProfile(profile, b.Name()); ok {
+				log.V(1).Info("Using GPUProfile image override", "backend", b.Name(), "arch", gpuArch, "image", profileImage)
+				image = profileImage
+			}
+		}
+	}
 	port := b.Port()
 	command := b.Command()
 	args := b.Args(spec)
 	env := b.Env(spec)
+
+	// Merge GPUProfile env vars (override hardcoded ROCmEnvVars with profile-declared env).
+	if r.GPUProfiles != nil {
+		if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok && len(profile.Env) > 0 {
+			env = mergeEnv(env, profile.Env)
+		}
+	}
 	probe := b.ReadinessProbe()
 	startupProbe := b.StartupProbe()
 
@@ -2069,7 +2120,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 			}
 
 			model.Status.Cache = &aiv1alpha2.CacheStatus{
-				Strategy:  "SharedPVC",
+				Strategy:  cacheStrategy(model),
 				PVCName:   cachePVCName,
 				JobName:   jobName,
 				JobPhase:  jobPhase,
@@ -2137,7 +2188,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 		}
 
 		model.Status.Cache = &aiv1alpha2.CacheStatus{
-			Strategy:  "SharedPVC",
+			Strategy:  cacheStrategy(model),
 			PVCName:   pvcName,
 			JobName:   jobName,
 			JobPhase:  jobPhase,
@@ -2422,6 +2473,7 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 		})
 	}
 
+	quantGPUArch := gpuArchFromNodeSelector(model.Spec.NodeSelector)
 	params := quantization.JobParams{
 		Name:         model.Name,
 		Namespace:    model.Namespace,
@@ -2429,9 +2481,17 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 		ModelPath:    model.Name,
 		Spec:         spec,
 		GPUVendor:    gpuVendor,
-		GPUArch:      gpuArchFromNodeSelector(model.Spec.NodeSelector),
+		GPUArch:      quantGPUArch,
 		NodeSelector: model.Spec.NodeSelector,
 		Tolerations:  tolerations,
+	}
+	// Look up GPUProfile for quantizer image override.
+	if r.GPUProfiles != nil && quantGPUArch != "" {
+		if profile, ok := r.GPUProfiles.Lookup(quantGPUArch); ok {
+			if img, ok := backend.QuantizerImageFromProfile(profile, string(spec.Format)); ok {
+				params.ProfileQuantizerImage = img
+			}
+		}
 	}
 
 	job := &batchv1.Job{}
@@ -3456,6 +3516,45 @@ func (r *ModelReconciler) reconcileKVCachePressure(ctx context.Context, model *a
 	highWatermark := model.Spec.GetKVCacheHighWatermark()
 	lowWatermark := model.Spec.GetKVCacheLowWatermark()
 
+	// Check for eviction restore: model is scaled to 0, so no utilization signal.
+	// Restore after cooldown to allow the model to come back up.
+	if model.Status.KVCache.Evicted {
+		cooldown := model.Spec.GetKVCacheReconfigureCooldown()
+		if model.Status.KVCache.EvictedAt != nil && time.Since(model.Status.KVCache.EvictedAt.Time) >= cooldown {
+			log.Info("KV-cache eviction cooldown elapsed, restoring model",
+				"model", model.Name)
+			model.Status.KVCache.Evicted = false
+			model.Status.KVCache.EvictedAt = nil
+			model.Status.KVCache.LastAction = "EvictRestored"
+			model.Status.KVCache.Pressure = false
+			r.Recorder.Event(model, corev1.EventTypeNormal, "KVCacheEvictRestored",
+				"Eviction cooldown elapsed, restoring model replicas")
+			return
+		}
+		// Still in cooldown — don't evaluate pressure further.
+		model.Status.KVCache.LastAction = "EvictActive"
+		return
+	}
+
+	// Check for reconfigure restore: if reconfigured and util dropped below low watermark,
+	// and cooldown has elapsed, restore original config.
+	if model.Status.KVCache.Reconfigured && util < lowWatermark {
+		cooldown := model.Spec.GetKVCacheReconfigureCooldown()
+		if model.Status.KVCache.ReconfiguredAt != nil && time.Since(model.Status.KVCache.ReconfiguredAt.Time) >= cooldown {
+			log.Info("KV-cache pressure relieved, restoring original config",
+				"model", model.Name, "utilization", util, "lowWatermark", lowWatermark)
+			model.Status.KVCache.Reconfigured = false
+			model.Status.KVCache.ReconfiguredMaxNumSeqs = nil
+			model.Status.KVCache.OriginalMaxNumSeqs = nil
+			model.Status.KVCache.ReconfiguredAt = nil
+			model.Status.KVCache.LastAction = "Restored"
+			model.Status.KVCache.Pressure = false
+			r.Recorder.Event(model, corev1.EventTypeNormal, "KVCacheRestored",
+				fmt.Sprintf("KV-cache utilization %.2f below low watermark %.2f, restored original maxNumSeqs", util, lowWatermark))
+			return
+		}
+	}
+
 	if util < highWatermark {
 		model.Status.KVCache.Pressure = false
 		return
@@ -3475,16 +3574,74 @@ func (r *ModelReconciler) reconcileKVCachePressure(ctx context.Context, model *a
 			fmt.Sprintf("KV-cache utilization %.2f exceeds high watermark %.2f (policy: Observe)", util, highWatermark))
 
 	case aiv1alpha2.KVCachePressurePolicyReconfigure:
-		model.Status.KVCache.LastAction = "Reconfigure"
-		r.Recorder.Event(model, corev1.EventTypeWarning, "KVCachePressure",
-			fmt.Sprintf("KV-cache utilization %.2f exceeds high watermark %.2f (policy: Reconfigure, target: %.2f)", util, highWatermark, lowWatermark))
+		r.handleKVCacheReconfigure(ctx, model, util, highWatermark, lowWatermark)
 
 	case aiv1alpha2.KVCachePressurePolicyEvict:
-		model.Status.KVCache.LastAction = "EvictRequested"
-		r.Recorder.Event(model, corev1.EventTypeWarning, "KVCachePressure",
-			fmt.Sprintf("KV-cache utilization %.2f exceeds high watermark %.2f (policy: Evict)", util, highWatermark))
-		log.Info("KV-cache pressure: eviction requested", "model", model.Name, "utilization", util, "highWatermark", highWatermark)
+		r.handleKVCacheEvict(ctx, model, util, highWatermark)
 	}
+}
+
+// handleKVCacheReconfigure reduces maxNumSeqs to alleviate KV-cache pressure.
+// On the next reconcile, ensureDeployment merges the override into backend args,
+// triggering a rolling update of the model deployment.
+func (r *ModelReconciler) handleKVCacheReconfigure(ctx context.Context, model *aiv1alpha2.Model, util, highWatermark, lowWatermark float64) {
+	log := log.FromContext(ctx)
+
+	// Already reconfigured — don't reduce further, wait for cooldown + restore.
+	if model.Status.KVCache.Reconfigured {
+		model.Status.KVCache.LastAction = "ReconfigureActive"
+		return
+	}
+
+	// Determine current maxNumSeqs from spec config.
+	currentMaxSeqs := int32(model.Spec.ConfigInt("maxNumSeqs", 256))
+
+	// Reduce by 50%, minimum 1.
+	reduced := currentMaxSeqs / 2
+	if reduced < 1 {
+		reduced = 1
+	}
+
+	now := metav1.Now()
+	model.Status.KVCache.Reconfigured = true
+	model.Status.KVCache.ReconfiguredAt = &now
+	model.Status.KVCache.OriginalMaxNumSeqs = &currentMaxSeqs
+	model.Status.KVCache.ReconfiguredMaxNumSeqs = &reduced
+	model.Status.KVCache.LastAction = fmt.Sprintf("Reconfigured:maxNumSeqs=%d->%d", currentMaxSeqs, reduced)
+
+	log.Info("KV-cache pressure: reconfiguring maxNumSeqs",
+		"model", model.Name, "utilization", util,
+		"highWatermark", highWatermark,
+		"originalMaxNumSeqs", currentMaxSeqs,
+		"reducedMaxNumSeqs", reduced)
+
+	r.Recorder.Event(model, corev1.EventTypeWarning, "KVCacheReconfigure",
+		fmt.Sprintf("KV-cache utilization %.2f exceeds high watermark %.2f, reducing maxNumSeqs %d -> %d",
+			util, highWatermark, currentMaxSeqs, reduced))
+}
+
+// handleKVCacheEvict scales down the model to 0 replicas to relieve KV-cache pressure.
+// The desiredReplicas() function reads KVCacheStatus.Evicted on the next reconcile
+// and returns 0, which triggers ensureDeployment to scale down the deployment.
+func (r *ModelReconciler) handleKVCacheEvict(ctx context.Context, model *aiv1alpha2.Model, util, highWatermark float64) {
+	log := log.FromContext(ctx)
+
+	if model.Status.KVCache.Evicted {
+		model.Status.KVCache.LastAction = "EvictActive"
+		return
+	}
+
+	now := metav1.Now()
+	model.Status.KVCache.Evicted = true
+	model.Status.KVCache.EvictedAt = &now
+	model.Status.KVCache.LastAction = "Evicted"
+
+	log.Info("KV-cache pressure: evicting model",
+		"model", model.Name, "utilization", util, "highWatermark", highWatermark)
+
+	r.Recorder.Event(model, corev1.EventTypeWarning, "KVCacheEvict",
+		fmt.Sprintf("KV-cache utilization %.2f exceeds high watermark %.2f, scaling down to 0 replicas",
+			util, highWatermark))
 }
 
 // SetupWithManager sets up the controller with the Manager.

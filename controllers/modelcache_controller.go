@@ -44,7 +44,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
+	"github.com/flexinfer/flexinfer/pkg/observability"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
 )
 
@@ -64,13 +66,21 @@ const (
 	// annotationReabliterate triggers re-abliteration when set to "true".
 	// The controller clears this annotation after initiating the re-abliteration.
 	annotationReabliterate = "flexinfer.ai/reabliterate"
+
+	// DefaultDownloadMemoryGB is the default memory limit for download jobs (in GiB).
+	DefaultDownloadMemoryGB = 16
+	// DefaultDownloadBackoffLimit is the default number of retries for download jobs.
+	DefaultDownloadBackoffLimit = int32(3)
+	// HFTransferAutoThresholdGB is the memory threshold above which hf_transfer is auto-enabled.
+	HFTransferAutoThresholdGB = int32(16)
 )
 
 // ModelCacheReconciler reconciles a ModelCache object
 type ModelCacheReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme      *runtime.Scheme
+	Recorder    record.EventRecorder
+	GPUProfiles *GPUProfileReconciler
 }
 
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=modelcaches,verbs=get;list;watch;create;update;patch;delete
@@ -83,6 +93,8 @@ type ModelCacheReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop
 func (r *ModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	ctx, _, endSpan := observability.StartReconcileSpan(ctx, "modelcache", req.Namespace, req.Name)
+	defer endSpan()
 	// Fetch the ModelCache instance
 	modelCache := &aiv1alpha1.ModelCache{}
 	err := r.Get(ctx, req.NamespacedName, modelCache)
@@ -343,11 +355,40 @@ func parseOCISource(source string) string {
 }
 
 func (r *ModelCacheReconciler) jobForDownload(m *aiv1alpha1.ModelCache, pvcName, modelPath string) (*batchv1.Job, error) {
+	// Resolve download spec with defaults
+	memoryGB := int32(DefaultDownloadMemoryGB)
+	backoffLimit := DefaultDownloadBackoffLimit
+	if m.Spec.Download != nil {
+		if m.Spec.Download.MaxMemoryGB != nil {
+			memoryGB = *m.Spec.Download.MaxMemoryGB
+		}
+		if m.Spec.Download.BackoffLimit != nil {
+			backoffLimit = *m.Spec.Download.BackoffLimit
+		}
+	}
+
+	// Determine hf_transfer: explicit override > auto (on when memory >= threshold)
+	hfTransferEnabled := memoryGB >= HFTransferAutoThresholdGB
+	if m.Spec.Download != nil && m.Spec.Download.HFTransfer != nil {
+		hfTransferEnabled = *m.Spec.Download.HFTransfer
+	}
+	hfTransferValue := "0"
+	if hfTransferEnabled {
+		hfTransferValue = "1"
+	}
+
 	// 1. Prepare Environment Variables
+	// HF_HUB_ENABLE_HF_TRANSFER: deprecated in huggingface_hub >=1.7 but still respected by older versions.
+	// HF_HUB_DISABLE_XET: disables the xet protocol (replaced hf_transfer in huggingface_hub >=1.7).
+	//   The xet client opens 48-64 concurrent connections which can overwhelm constrained WANs.
 	envVars := []corev1.EnvVar{
 		{
 			Name:  "HF_HUB_ENABLE_HF_TRANSFER",
-			Value: "0",
+			Value: hfTransferValue,
+		},
+		{
+			Name:  "HF_HUB_DISABLE_XET",
+			Value: "1",
 		},
 	}
 
@@ -468,9 +509,9 @@ elif [ -f "$MARKER" ] && [ "$WEIGHT_COUNT" -eq 0 ]; then
 fi
 
 pip install --no-cache-dir huggingface_hub hf_transfer
-# HF_HUB_ENABLE_HF_TRANSFER controlled via env var (default: 0).
-# hf_transfer uses ~4-8Gi for parallel connections on large models,
-# which can OOM the 8Gi download container. Keep disabled by default.
+# HF_HUB_ENABLE_HF_TRANSFER controlled via env var.
+# Auto-enabled when download container has >= 16Gi memory.
+# hf_transfer uses ~4-8Gi for parallel connections on large models.
 echo "Downloading $MODEL_ID to $DEST_DIR (hf_transfer=$HF_HUB_ENABLE_HF_TRANSFER)..."
 mkdir -p "$DEST_DIR"
 MODEL_ID="$MODEL_ID" DEST_DIR="$DEST_DIR" python - <<'PY'
@@ -504,7 +545,7 @@ echo "Download complete ($WEIGHT_COUNT weight files)."
 	// Download jobs don't need GPU — let K8s schedule them wherever the
 	// Longhorn volume replica lives for local I/O. Only add GPU node
 	// toleration so the pod CAN land on a GPU node if that's where the
-	// volume is, but don't force it with nodeSelector.
+	// volume is. Propagate nodeSelector from spec for node-local PVCs.
 	tolerations := []corev1.Toleration{{
 		Key:      "dedicated",
 		Operator: corev1.TolerationOpEqual,
@@ -512,16 +553,32 @@ echo "Download complete ($WEIGHT_COUNT weight files)."
 		Effect:   corev1.TaintEffectNoSchedule,
 	}}
 
+	memoryLimit := resource.MustParse(fmt.Sprintf("%dGi", memoryGB))
+
+	// Optional job deadline
+	var activeDeadlineSeconds *int64
+	if m.Spec.Download != nil && m.Spec.Download.TimeoutSeconds != nil {
+		activeDeadlineSeconds = m.Spec.Download.TimeoutSeconds
+	}
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      m.Name + "-downloader",
 			Namespace: m.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":      "flexinfer",
+				"app.kubernetes.io/component": "downloader",
+				"app.kubernetes.io/instance":  m.Name,
+			},
 		},
 		Spec: batchv1.JobSpec{
+			BackoffLimit:          &backoffLimit,
+			ActiveDeadlineSeconds: activeDeadlineSeconds,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Tolerations:   tolerations,
+					NodeSelector:  m.Spec.NodeSelector,
 					Containers: []corev1.Container{{
 						Name:    "downloader",
 						Image:   image,
@@ -538,7 +595,7 @@ echo "Download complete ($WEIGHT_COUNT weight files)."
 								corev1.ResourceMemory: resource.MustParse("1Gi"),
 							},
 							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse("8Gi"),
+								corev1.ResourceMemory: memoryLimit,
 							},
 						},
 					}},
@@ -938,9 +995,9 @@ if [ -f "$MARKER" ]; then
 fi
 
 pip install --no-cache-dir huggingface_hub hf_transfer
-# HF_HUB_ENABLE_HF_TRANSFER controlled via env var (default: 0).
-# hf_transfer uses ~4-8Gi for parallel connections on large models,
-# which can OOM the 8Gi download container. Keep disabled by default.
+# HF_HUB_ENABLE_HF_TRANSFER controlled via env var.
+# Auto-enabled when download container has >= 16Gi memory.
+# hf_transfer uses ~4-8Gi for parallel connections on large models.
 echo "Downloading $MODEL_ID to $DEST_DIR (hf_transfer=$HF_HUB_ENABLE_HF_TRANSFER)..."
 mkdir -p "$DEST_DIR"
 MODEL_ID="$MODEL_ID" DEST_DIR="$DEST_DIR" python - <<'PY'
@@ -2027,6 +2084,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			})
 		}
 
+		ablGPUArch := gpuArchFromNodeSelector(modelCache.Spec.NodeSelector)
 		params := quantization.JobParams{
 			Name:         modelCache.Name,
 			Namespace:    modelCache.Namespace,
@@ -2035,7 +2093,15 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			Tolerations:  tolerations,
 			NodeSelector: modelCache.Spec.NodeSelector,
 			GPUVendor:    gpuVendorFromNodeSelector(modelCache.Spec.NodeSelector),
-			GPUArch:      gpuArchFromNodeSelector(modelCache.Spec.NodeSelector),
+			GPUArch:      ablGPUArch,
+		}
+		// Look up GPUProfile for quantizer image override (abliteration uses GPTQ image).
+		if r.GPUProfiles != nil && ablGPUArch != "" {
+			if profile, ok := r.GPUProfiles.Lookup(ablGPUArch); ok {
+				if img, ok := backend.QuantizerImageFromProfile(profile, "gptq"); ok {
+					params.ProfileQuantizerImage = img
+				}
+			}
 		}
 
 		newJob, buildErr := quantization.BuildAbliterationJob(params, modelCache.Spec.Abliteration)
@@ -2349,6 +2415,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			})
 		}
 
+		gpuArch := gpuArchFromNodeSelector(modelCache.Spec.NodeSelector)
 		params := quantization.JobParams{
 			Name:         modelCache.Name,
 			Namespace:    modelCache.Namespace,
@@ -2358,7 +2425,16 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			Tolerations:  tolerations,
 			NodeSelector: modelCache.Spec.NodeSelector,
 			GPUVendor:    gpuVendorFromNodeSelector(modelCache.Spec.NodeSelector),
-			GPUArch:      gpuArchFromNodeSelector(modelCache.Spec.NodeSelector),
+			GPUArch:      gpuArch,
+		}
+		// Look up GPUProfile for quantizer image override.
+		if r.GPUProfiles != nil && gpuArch != "" {
+			if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok {
+				format := string(modelCache.Spec.Quantization.Format)
+				if img, ok := backend.QuantizerImageFromProfile(profile, format); ok {
+					params.ProfileQuantizerImage = img
+				}
+			}
 		}
 
 		newJob, buildErr := builder.BuildJob(params)
