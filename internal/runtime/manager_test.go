@@ -90,22 +90,26 @@ func TestShutdownEmpty(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestInferExecutable(t *testing.T) {
+func TestInferCommand(t *testing.T) {
 	tests := []struct {
-		backend  string
-		expected string
+		backend      string
+		expectedExec string
+		expectedArgs []string
 	}{
-		{"vllm", "python"},
-		{"llamacpp", "llama-server"},
-		{"ollama", "ollama"},
-		{"diffusers", "python"},
-		{"comfyui", "python"},
-		{"unknown", "unknown"},
+		{"vllm", "python", []string{"-m", "vllm.entrypoints.openai.api_server"}},
+		{"vllm-omni", "python", []string{"-m", "vllm.entrypoints.openai.api_server"}},
+		{"llamacpp", "llama-server", nil},
+		{"ollama", "ollama", nil},
+		{"diffusers", "python", []string{"/opt/flexinfer/server-diffusers.py"}},
+		{"comfyui", "python", []string{"main.py"}},
+		{"unknown", "unknown", nil},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.backend, func(t *testing.T) {
-			assert.Equal(t, tt.expected, inferExecutable(tt.backend))
+			exec, args := inferCommand(tt.backend)
+			assert.Equal(t, tt.expectedExec, exec)
+			assert.Equal(t, tt.expectedArgs, args)
 		})
 	}
 }

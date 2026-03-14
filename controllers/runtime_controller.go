@@ -78,6 +78,9 @@ func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 }
 
 // FindRuntimeForNode returns the runtime endpoint for a node, if one exists.
+// Returns Running pods preferentially. If no Running pod matches, returns a
+// Pending/starting pod with Ready=false so callers can wait instead of
+// falling back to Deployment (which would deadlock on GPU resources).
 func (r *RuntimeReconciler) FindRuntimeForNode(ctx context.Context, namespace string, nodeSelector map[string]string) (*RuntimeEndpoint, error) {
 	pods := &corev1.PodList{}
 	if err := r.List(ctx, pods,
@@ -87,26 +90,56 @@ func (r *RuntimeReconciler) FindRuntimeForNode(ctx context.Context, namespace st
 		return nil, fmt.Errorf("listing runtime pods: %w", err)
 	}
 
+	var pendingMatch *RuntimeEndpoint
+
 	for _, pod := range pods.Items {
-		if pod.Status.Phase != corev1.PodRunning {
-			continue
+		// For Pending pods, nodeSelector matching uses the DaemonSet's
+		// nodeSelector (stored on the pod spec) rather than the assigned node.
+		nodeName := pod.Spec.NodeName
+		if nodeName == "" {
+			// Pending pod: check if its own nodeSelector matches the model's.
+			if !podNodeSelectorMatches(pod.Spec.NodeSelector, nodeSelector) {
+				continue
+			}
+		} else {
+			if !nodeMatchesSelector(ctx, r.Client, nodeName, nodeSelector) {
+				continue
+			}
 		}
 
-		// Check if this runtime pod's node matches the model's nodeSelector.
-		if !nodeMatchesSelector(ctx, r.Client, pod.Spec.NodeName, nodeSelector) {
-			continue
+		if pod.Status.Phase == corev1.PodRunning {
+			return &RuntimeEndpoint{
+				PodName:  pod.Name,
+				PodIP:    pod.Status.PodIP,
+				Port:     runtimeAPIPort,
+				NodeName: nodeName,
+				Ready:    isPodReady(&pod),
+			}, nil
 		}
 
-		return &RuntimeEndpoint{
-			PodName:  pod.Name,
-			PodIP:    pod.Status.PodIP,
-			Port:     runtimeAPIPort,
-			NodeName: pod.Spec.NodeName,
-			Ready:    isPodReady(&pod),
-		}, nil
+		// Track non-Running match as fallback.
+		if pendingMatch == nil {
+			pendingMatch = &RuntimeEndpoint{
+				PodName:  pod.Name,
+				NodeName: nodeName,
+				Port:     runtimeAPIPort,
+				Ready:    false,
+			}
+		}
 	}
 
-	return nil, nil
+	return pendingMatch, nil
+}
+
+// podNodeSelectorMatches checks if a pod's nodeSelector is a superset of
+// the required selector (i.e., they target the same or more specific node).
+func podNodeSelectorMatches(podSelector, required map[string]string) bool {
+	for k, v := range required {
+		if podSelector[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // LoadModel sends a load request to a runtime endpoint.

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/flexinfer/flexinfer/backend"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -155,6 +156,13 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		env = append(env, backend.DeviceIsolationEnvVars(spec)...)
 	}
 
+	// In the runtime, all models share /models without SubPath mounts.
+	// Set LOCAL_MODEL_PATH so backends that use env-based model discovery
+	// (e.g. diffusers server-diffusers.py) find the correct subdirectory.
+	if modelPath != "" {
+		env = append(env, corev1.EnvVar{Name: "LOCAL_MODEL_PATH", Value: modelPath})
+	}
+
 	// Determine the executable.
 	var executable string
 	var execArgs []string
@@ -162,9 +170,12 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		executable = command[0]
 		execArgs = append(command[1:], args...)
 	} else {
-		// Infer executable from backend name.
-		executable = inferExecutable(b.Name())
-		execArgs = args
+		// Infer executable and default args from backend name.
+		// Python-based backends (vLLM, diffusers) need a module or script
+		// path since the runtime container doesn't use Dockerfile CMD.
+		var defaultArgs []string
+		executable, defaultArgs = inferCommand(b.Name())
+		execArgs = append(defaultArgs, args...)
 	}
 
 	subCtx, cancel := context.WithCancel(context.Background())
@@ -465,21 +476,24 @@ func (m *Manager) continuousHealthCheck(ctx context.Context, name, healthURL str
 	}
 }
 
-// inferExecutable maps backend name to an executable path.
-func inferExecutable(backendName string) string {
+// inferCommand maps a backend name to its executable and any required
+// default arguments (e.g. Python module or script path). These are only
+// used when the backend's Command() returns nil, meaning the standalone
+// Dockerfile handles invocation via ENTRYPOINT/CMD.
+func inferCommand(backendName string) (string, []string) {
 	switch backendName {
-	case "vllm":
-		return "python"
-	case "llamacpp":
-		return "llama-server"
-	case "ollama":
-		return "ollama"
+	case "vllm", "vllm-omni":
+		return "python", []string{"-m", "vllm.entrypoints.openai.api_server"}
 	case "diffusers":
-		return "python"
+		return "python", []string{"/opt/flexinfer/server-diffusers.py"}
+	case "llamacpp":
+		return "llama-server", nil
+	case "ollama":
+		return "ollama", nil
 	case "comfyui":
-		return "python"
+		return "python", []string{"main.py"}
 	default:
-		return backendName
+		return backendName, nil
 	}
 }
 
