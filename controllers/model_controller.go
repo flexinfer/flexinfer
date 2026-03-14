@@ -468,30 +468,19 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	// Check if a persistent runtime exists on the target node.
-	// If so, load the model via the runtime API instead of creating a Deployment.
-	if r.Runtime != nil && desiredReplicas > 0 {
+	// If so, manage the model via the runtime API instead of creating a Deployment.
+	// The runtime pod already holds the GPU device, so Deployment creation is skipped.
+	if r.Runtime != nil {
 		runtimeEndpoint, err := r.Runtime.FindRuntimeForNode(ctx, model.Namespace, model.Spec.NodeSelector)
 		if err != nil {
 			log.V(1).Info("Runtime discovery failed, falling back to Deployment", "error", err)
 		}
 		if runtimeEndpoint != nil && runtimeEndpoint.Ready {
-			log.Info("Runtime detected, loading model via runtime API",
-				"node", runtimeEndpoint.NodeName,
-				"runtimePod", runtimeEndpoint.PodName,
-			)
-			if err := r.loadViaRuntime(ctx, model, b, runtimeEndpoint, gpuArch); err != nil {
-				log.Error(err, "Failed to load model via runtime, falling back to Deployment")
-				// Fall through to Deployment-based flow.
-			} else {
-				// Runtime load initiated — update status and return.
-				if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseLoading); err != nil {
-					log.Error(err, "Failed to update phase after runtime load")
-				}
-				return ctrl.Result{RequeueAfter: requeueAfter}, nil
-			}
+			return r.reconcileViaRuntime(ctx, model, b, gpuVendor, gpuArch, runtimeEndpoint, desiredReplicas, cacheReady, requeueAfter)
 		}
 	}
 
+	// No runtime available — use Deployment-based flow.
 	// Ensure Deployment exists with correct spec
 	if err := r.ensureDeployment(ctx, model, b, gpuVendor, gpuArch, desiredReplicas); err != nil {
 		log.Error(err, "Failed to ensure Deployment")
@@ -4443,11 +4432,11 @@ echo "Copy complete."
 // loadViaRuntime sends a model load request to a runtime pod instead of
 // creating a Deployment. This path is used when a persistent runtime
 // container exists on the target GPU node.
-func (r *ModelReconciler) loadViaRuntime(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, endpoint *RuntimeEndpoint, gpuArch string) error {
+func (r *ModelReconciler) loadViaRuntime(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, endpoint *RuntimeEndpoint, gpuArch string) error {
 	runtimeLog := log.FromContext(ctx)
 
 	// Build the load request payload.
-	spec := r.buildBackendModelSpec(model, b, backend.GPUVendorAMD)
+	spec := r.buildBackendModelSpec(model, b, gpuVendor)
 	spec.GPUArch = gpuArch
 
 	payload := map[string]interface{}{
@@ -4469,4 +4458,211 @@ func (r *ModelReconciler) loadViaRuntime(ctx context.Context, model *aiv1alpha2.
 	)
 
 	return r.Runtime.LoadModel(ctx, endpoint, model.Name, data)
+}
+
+// reconcileViaRuntime manages a model's lifecycle via the runtime API.
+// When a runtime pod exists on the target node, this completely replaces
+// the Deployment-based flow: the runtime pod already holds the GPU device.
+func (r *ModelReconciler) reconcileViaRuntime(
+	ctx context.Context,
+	model *aiv1alpha2.Model,
+	b backend.Backend,
+	gpuVendor backend.GPUVendor,
+	gpuArch string,
+	endpoint *RuntimeEndpoint,
+	desiredReplicas int32,
+	cacheReady bool,
+	requeueAfter time.Duration,
+) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	log.Info("Reconciling model via runtime",
+		"node", endpoint.NodeName,
+		"runtimePod", endpoint.PodName,
+		"desiredReplicas", desiredReplicas,
+		"cacheReady", cacheReady,
+	)
+
+	// Ensure a Service exists for proxy routing (annotations for LiteLLM, etc.).
+	if err := r.ensureService(ctx, model, b); err != nil {
+		log.Error(err, "Failed to ensure Service for runtime model")
+		return ctrl.Result{}, err
+	}
+
+	// If we don't want the model running, unload it from the runtime.
+	if desiredReplicas == 0 || !cacheReady {
+		r.unloadFromRuntime(ctx, model, endpoint)
+		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
+			phase := aiv1alpha2.ModelPhaseIdle
+			if !cacheReady {
+				phase = aiv1alpha2.ModelPhasePending
+			}
+			if err := r.updatePhase(ctx, model, phase); err != nil {
+				log.Error(err, "Failed to update phase")
+			}
+		}
+		// Clean up any Endpoints that pointed to a previous runtime session.
+		r.removeRuntimeEndpoints(ctx, model)
+		return ctrl.Result{RequeueAfter: requeueAfter}, nil
+	}
+
+	// desiredReplicas > 0 and cache is ready — check if model is loaded.
+	status, err := r.Runtime.CheckModelHealth(ctx, endpoint, model.Name)
+	if err != nil {
+		log.Error(err, "Failed to check runtime model health")
+		status = nil // Can't determine state — try to load anyway.
+	}
+
+	if status == nil {
+		// Model not loaded — send load request.
+		if err := r.loadViaRuntime(ctx, model, b, gpuVendor, endpoint, gpuArch); err != nil {
+			log.Error(err, "Failed to load model via runtime")
+			r.Recorder.Event(model, corev1.EventTypeWarning, "RuntimeLoadFailed", err.Error())
+			model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+			_ = r.Status().Update(ctx, model)
+			return ctrl.Result{RequeueAfter: requeueAfter}, nil
+		}
+		if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseLoading); err != nil {
+			log.Error(err, "Failed to update phase after runtime load")
+		}
+		// Requeue quickly to poll for readiness.
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	// Model is loaded — update status based on runtime state.
+	switch status.State {
+	case "Ready":
+		// Update Endpoints to point to the runtime pod's backend port.
+		port := b.Port()
+		if err := r.ensureRuntimeEndpoints(ctx, model, endpoint.PodIP, port); err != nil {
+			log.Error(err, "Failed to ensure runtime endpoints")
+			return ctrl.Result{}, err
+		}
+		model.Status.Endpoint = k8surl.ServiceURL(model.Name, model.Namespace, port, false)
+		setModelCondition(model, aiv1alpha2.ConditionModelReady, true, "RuntimeReady", "Model ready via runtime")
+		if model.Status.Phase != aiv1alpha2.ModelPhaseReady {
+			r.Recorder.Event(model, corev1.EventTypeNormal, "RuntimeReady", "Model is ready via runtime")
+		}
+		model.Status.Phase = aiv1alpha2.ModelPhaseReady
+		if err := r.Status().Update(ctx, model); err != nil {
+			log.Error(err, "Failed to update status")
+			return ctrl.Result{}, err
+		}
+	case "Loading":
+		if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseLoading); err != nil {
+			log.Error(err, "Failed to update phase")
+		}
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	case "Failed":
+		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, "RuntimeFailed", status.Error)
+		r.Recorder.Event(model, corev1.EventTypeWarning, "RuntimeFailed", status.Error)
+		if err := r.Status().Update(ctx, model); err != nil {
+			log.Error(err, "Failed to update status")
+			return ctrl.Result{}, err
+		}
+	default:
+		log.Info("Unknown runtime model state", "state", status.State)
+	}
+
+	return ctrl.Result{RequeueAfter: requeueAfter}, nil
+}
+
+// unloadFromRuntime sends an unload request to the runtime if the model is loaded.
+func (r *ModelReconciler) unloadFromRuntime(ctx context.Context, model *aiv1alpha2.Model, endpoint *RuntimeEndpoint) {
+	log := log.FromContext(ctx)
+
+	// Check if the model is actually loaded.
+	status, err := r.Runtime.CheckModelHealth(ctx, endpoint, model.Name)
+	if err != nil {
+		log.V(1).Info("Could not check runtime model health for unload", "error", err)
+	}
+	if status == nil {
+		return // Not loaded — nothing to do.
+	}
+
+	log.Info("Unloading model from runtime", "model", model.Name)
+	if err := r.Runtime.UnloadModel(ctx, endpoint, model.Name); err != nil {
+		log.Error(err, "Failed to unload model from runtime")
+	}
+}
+
+// ensureRuntimeEndpoints creates or updates an Endpoints resource for a
+// runtime-managed model, pointing to the runtime pod's backend port.
+// The model's Service must not have a selector for this to take effect.
+func (r *ModelReconciler) ensureRuntimeEndpoints(ctx context.Context, model *aiv1alpha2.Model, podIP string, port int32) error {
+	log := log.FromContext(ctx)
+
+	// First, ensure the Service has no selector (runtime manages endpoints manually).
+	svc := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, svc); err != nil {
+		return fmt.Errorf("getting service for runtime endpoints: %w", err)
+	}
+	if svc.Spec.Selector != nil {
+		svc.Spec.Selector = nil
+		if err := r.Update(ctx, svc); err != nil {
+			return fmt.Errorf("removing selector from service: %w", err)
+		}
+		log.Info("Removed selector from Service for runtime management", "service", svc.Name)
+	}
+
+	// Build desired Endpoints.
+	desired := &corev1.Endpoints{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      model.Name,
+			Namespace: model.Namespace,
+			Labels:    r.labelsForModel(model),
+		},
+		Subsets: []corev1.EndpointSubset{
+			{
+				Addresses: []corev1.EndpointAddress{
+					{IP: podIP},
+				},
+				Ports: []corev1.EndpointPort{
+					{
+						Name:     "http",
+						Port:     port,
+						Protocol: corev1.ProtocolTCP,
+					},
+				},
+			},
+		},
+	}
+
+	existing := &corev1.Endpoints{}
+	err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		log.Info("Creating runtime Endpoints", "name", model.Name, "podIP", podIP, "port", port)
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+
+	// Update if subsets differ.
+	if !apiequality.Semantic.DeepEqual(existing.Subsets, desired.Subsets) {
+		existing.Subsets = desired.Subsets
+		log.Info("Updating runtime Endpoints", "name", model.Name, "podIP", podIP)
+		return r.Update(ctx, existing)
+	}
+
+	return nil
+}
+
+// removeRuntimeEndpoints clears the Endpoints subsets for a runtime-managed
+// model so the proxy stops routing to it.
+func (r *ModelReconciler) removeRuntimeEndpoints(ctx context.Context, model *aiv1alpha2.Model) {
+	log := log.FromContext(ctx)
+
+	ep := &corev1.Endpoints{}
+	if err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, ep); err != nil {
+		return // Not found or error — nothing to clean up.
+	}
+
+	if len(ep.Subsets) > 0 {
+		ep.Subsets = nil
+		if err := r.Update(ctx, ep); err != nil {
+			log.Error(err, "Failed to clear runtime endpoints", "model", model.Name)
+		}
+	}
 }

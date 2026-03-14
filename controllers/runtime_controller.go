@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -156,6 +157,42 @@ func (r *RuntimeReconciler) UnloadModel(ctx context.Context, endpoint *RuntimeEn
 	}
 
 	return nil
+}
+
+// RuntimeModelStatus is the health response from the runtime API.
+type RuntimeModelStatus struct {
+	Name  string `json:"name"`
+	State string `json:"state"`
+	Error string `json:"error"`
+}
+
+// CheckModelHealth queries the runtime for a model's current state.
+// Returns nil if the model is not loaded on the runtime.
+func (r *RuntimeReconciler) CheckModelHealth(ctx context.Context, endpoint *RuntimeEndpoint, name string) (*RuntimeModelStatus, error) {
+	url := fmt.Sprintf("%s/api/v1/models/%s/health", endpoint.URL(), name)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating health request: %w", err)
+	}
+
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("health request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil // Model not loaded
+	}
+
+	var status RuntimeModelStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, fmt.Errorf("decoding health response: %w", err)
+	}
+
+	return &status, nil
 }
 
 // isPodReady returns true if all containers in the pod are ready.
