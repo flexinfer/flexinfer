@@ -43,14 +43,13 @@ targets:
         INFOPLIST_KEY_NSBonjourServices:
           - _http._tcp
         INFOPLIST_KEY_NSSupportsLiveActivities: YES
+        INFOPLIST_KEY_UIBackgroundModes: remote-notification
     entitlements:
-      com.apple.security.application-groups:
-        - group.ai.flexinfer.loom.companion
-      aps-environment: development
-    info:
+      path: Sources/LoomCompanion/LoomCompanion.entitlements
       properties:
-        UIBackgroundModes:
-          - remote-notification
+        com.apple.security.application-groups:
+          - group.ai.flexinfer.loom.companion
+        aps-environment: development
   LoomCompanionWidget:
     type: app-extension
     platform: iOS
@@ -70,5 +69,7 @@ targets:
         INFOPLIST_KEY_NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
-      com.apple.security.application-groups:
-        - group.ai.flexinfer.loom.companion
+      path: Sources/LoomCompanionWidget/LoomCompanionWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.ai.flexinfer.loom.companion

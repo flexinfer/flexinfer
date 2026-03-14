@@ -16,7 +16,7 @@ struct TasksWidget: Widget {
     }
 }
 
-struct TasksEntry: TimelineEntry {
+struct TasksEntry: WidgetKit.TimelineEntry {
     let date: Date
     let data: TaskWidgetData
 }

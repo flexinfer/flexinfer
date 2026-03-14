@@ -16,7 +16,7 @@ struct FleetHealthWidget: Widget {
     }
 }
 
-struct FleetHealthEntry: TimelineEntry {
+struct FleetHealthEntry: WidgetKit.TimelineEntry {
     let date: Date
     let data: FleetWidgetData
 }

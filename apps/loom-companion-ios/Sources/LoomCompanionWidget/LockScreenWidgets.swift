@@ -19,7 +19,7 @@ struct LockScreenWidgets: Widget {
     }
 }
 
-struct LockScreenEntry: TimelineEntry {
+struct LockScreenEntry: WidgetKit.TimelineEntry {
     let date: Date
     let data: WidgetData
 }

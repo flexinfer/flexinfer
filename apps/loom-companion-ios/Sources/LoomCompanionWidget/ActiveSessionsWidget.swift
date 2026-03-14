@@ -16,7 +16,7 @@ struct ActiveSessionsWidget: Widget {
     }
 }
 
-struct ActiveSessionsEntry: TimelineEntry {
+struct ActiveSessionsEntry: WidgetKit.TimelineEntry {
     let date: Date
     let data: SessionWidgetData
 }

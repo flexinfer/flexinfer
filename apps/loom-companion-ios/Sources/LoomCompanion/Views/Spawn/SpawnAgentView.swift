@@ -118,7 +118,7 @@ private struct SpawnRow: View {
                 Text(spawn.request.project)
                     .font(.headline)
                 Spacer()
-                StatusBadge(status: spawn.status)
+                StatusBadge(spawn.status, color: spawnStatusColor(spawn.status))
             }
 
             Text(spawn.request.taskDescription)
@@ -142,29 +142,13 @@ private struct SpawnRow: View {
     }
 }
 
-/// Colored badge for spawn status.
-private struct StatusBadge: View {
-    let status: String
-
-    var body: some View {
-        Text(status)
-            .font(.caption2)
-            .fontWeight(.medium)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(statusColor.opacity(0.15))
-            .foregroundStyle(statusColor)
-            .clipShape(Capsule())
-    }
-
-    private var statusColor: Color {
-        switch status {
-        case "running": return .green
-        case "creating": return .blue
-        case "completed": return .secondary
-        case "failed": return .red
-        case "stopped": return .orange
-        default: return .secondary
-        }
+private func spawnStatusColor(_ status: String) -> Color {
+    switch status {
+    case "running": return .green
+    case "creating": return .blue
+    case "completed": return .secondary
+    case "failed": return .red
+    case "stopped": return .orange
+    default: return .secondary
     }
 }

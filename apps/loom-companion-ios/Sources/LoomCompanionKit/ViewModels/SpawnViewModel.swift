@@ -61,8 +61,17 @@ public final class SpawnViewModel {
 
     /// Stop a running spawn.
     public func stopSpawn(id: String) async {
+        struct StopResponse: Decodable {
+            let stopped: Bool
+            let spawnId: String
+
+            enum CodingKeys: String, CodingKey {
+                case stopped
+                case spawnId = "spawn_id"
+            }
+        }
         do {
-            let _: [String: Any] = try await apiClient.request(.spawnStop(id: id))
+            let _: StopResponse = try await apiClient.request(.spawnStop(id: id))
             await loadSpawns()
         } catch {
             // Refresh list anyway.
