@@ -51,6 +51,17 @@ struct DashboardView: View {
 
                     TimelineListView(entries: dashboard.recentTimeline)
                         .cardAppear(index: 3)
+
+                    if let agoText = Self.relativeTime(dashboard.updatedAt) {
+                        HStack {
+                            Spacer()
+                            Text("Updated \(agoText)")
+                                .font(LoomTypography.monoCaption)
+                                .foregroundStyle(LoomColors.textTertiary)
+                            Spacer()
+                        }
+                        .padding(.top, LoomSpacing.xs)
+                    }
                 } else if viewModel.isLoading {
                     VStack(spacing: LoomSpacing.lg) {
                         SkeletonDashboardCard()
@@ -94,6 +105,28 @@ struct DashboardView: View {
                 viewModel.startListening(sseClient: sseClient)
             }
         }
+    }
+
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let isoFallback: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    private static func relativeTime(_ iso: String) -> String? {
+        guard let date = isoFormatter.date(from: iso) ?? isoFallback.date(from: iso) else { return nil }
+        let diff = Int(Date().timeIntervalSince(date))
+        if diff < 0 { return "just now" }
+        if diff < 5 { return "just now" }
+        if diff < 60 { return "\(diff)s ago" }
+        if diff < 3600 { return "\(diff / 60)m ago" }
+        return "\(diff / 3600)h ago"
     }
 
     private var criticalAlertBanner: some View {

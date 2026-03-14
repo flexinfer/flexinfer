@@ -201,7 +201,7 @@ struct OpsView: View {
                         Spacer()
                         opsMetric(label: "Active", value: viewModel.taskCounts.inProgress, icon: "bolt.fill", color: LoomColors.statusActive)
                         Spacer()
-                        opsMetric(label: "Blocked", value: viewModel.taskCounts.blocked, icon: "exclamationmark.triangle.fill", color: LoomColors.statusDegraded)
+                        opsMetric(label: "Blocked", value: viewModel.taskCounts.blocked, icon: "exclamationmark.triangle.fill", color: LoomColors.statusBlocked)
                         Spacer()
                         opsMetric(label: "Done", value: viewModel.taskCounts.completed, icon: "checkmark.circle.fill", color: LoomColors.statusHealthy)
                     }
@@ -767,7 +767,7 @@ struct OpsView: View {
         switch status {
         case .pending: return LoomColors.statusIdle
         case .inProgress: return LoomColors.statusActive
-        case .blocked: return LoomColors.statusDegraded
+        case .blocked: return LoomColors.statusBlocked
         case .completed: return LoomColors.statusHealthy
         case .unknown: return LoomColors.statusIdle
         }

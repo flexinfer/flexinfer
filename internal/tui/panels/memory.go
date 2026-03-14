@@ -17,21 +17,30 @@ import (
 
 // MsgMemoryData is sent by the app when new memory stats arrive.
 type MsgMemoryData struct {
-	WorkingItems  int
-	WorkingTokens int
-	ShortItems    int
-	ShortTokens   int
-	LongItems     int
-	LongTokens    int
-	TotalItems    int
-	TotalTokens   int
-	History       []float64
+	WorkingItems       int
+	WorkingTokens      int
+	ShortItems         int
+	ShortTokens        int
+	LongItems          int
+	LongTokens         int
+	TotalItems         int
+	TotalTokens        int
+	History            []float64
+	CompressionRatio   float64
+	ItemsAdded24h      int
+	ItemsCompressed24h int
 }
 
 // MsgMemoryItems delivers items for an expanded tier.
 type MsgMemoryItems struct {
 	Tier  string
 	Items []MemoryItemData
+}
+
+// MsgMemoryExpandTier is emitted when the user expands a tier,
+// signaling the app to fetch items for that tier.
+type MsgMemoryExpandTier struct {
+	Tier string
 }
 
 // MemoryItemData holds a single memory item for display.
@@ -49,16 +58,19 @@ type MemoryItemData struct {
 
 // MemoryPanel renders memory tier gauges and token trend.
 type MemoryPanel struct {
-	width, height int
-	workingItems  int
-	workingTokens int
-	shortItems    int
-	shortTokens   int
-	longItems     int
-	longTokens    int
-	totalItems    int
-	totalTokens   int
-	history       []float64
+	width, height      int
+	workingItems       int
+	workingTokens      int
+	shortItems         int
+	shortTokens        int
+	longItems          int
+	longTokens         int
+	totalItems         int
+	totalTokens        int
+	history            []float64
+	compressionRatio   float64
+	itemsAdded24h      int
+	itemsCompressed24h int
 
 	// Interactive state
 	selectedTier int                         // 0=Working, 1=Short, 2=Long
@@ -104,6 +116,9 @@ func (p MemoryPanel) Update(msg tea.Msg) (MemoryPanel, tea.Cmd) {
 		p.totalItems = msg.TotalItems
 		p.totalTokens = msg.TotalTokens
 		p.history = msg.History
+		p.compressionRatio = msg.CompressionRatio
+		p.itemsAdded24h = msg.ItemsAdded24h
+		p.itemsCompressed24h = msg.ItemsCompressed24h
 	case MsgMemoryItems:
 		p.tierItems[msg.Tier] = msg.Items
 	case tea.KeyMsg:
@@ -132,8 +147,15 @@ func (p MemoryPanel) Update(msg tea.Msg) (MemoryPanel, tea.Cmd) {
 				p.itemOffset = 0
 			}
 		case "enter":
-			p.expanded[tier] = !p.expanded[tier]
+			wasExpanded := p.expanded[tier]
+			p.expanded[tier] = !wasExpanded
 			p.itemOffset = 0
+			if !wasExpanded && len(p.tierItems[tier]) == 0 {
+				// Expanding a tier with no cached items — request fetch.
+				return p, func() tea.Msg {
+					return MsgMemoryExpandTier{Tier: tier}
+				}
+			}
 		case "esc":
 			for k := range p.expanded {
 				delete(p.expanded, k)
@@ -158,8 +180,30 @@ func (p MemoryPanel) View() string {
 		"  " +
 		theme.Styles.Label.Render("Tokens: ") +
 		theme.Styles.Value.Render(formatNumber(p.totalTokens))
+	if p.compressionRatio > 0 {
+		summary += "  " +
+			theme.Styles.Label.Render("Compression: ") +
+			theme.Styles.Value.Render(fmt.Sprintf("%.1fx", p.compressionRatio))
+	}
 	b.WriteString(summary)
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+
+	// 24h activity line (only when there is activity)
+	if p.itemsAdded24h > 0 || p.itemsCompressed24h > 0 {
+		activity := theme.Styles.Label.Render("24h: ")
+		if p.itemsAdded24h > 0 {
+			activity += lipgloss.NewStyle().Foreground(theme.ColorSuccess).Render(fmt.Sprintf("+%d added", p.itemsAdded24h))
+		}
+		if p.itemsCompressed24h > 0 {
+			if p.itemsAdded24h > 0 {
+				activity += "  "
+			}
+			activity += lipgloss.NewStyle().Foreground(theme.ColorInfo).Render(fmt.Sprintf("%d compressed", p.itemsCompressed24h))
+		}
+		b.WriteString(activity)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 
 	// Tier gauges
 	gaugeWidth := p.width - 4

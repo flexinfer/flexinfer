@@ -4,6 +4,7 @@ import "github.com/charmbracelet/bubbles/key"
 
 // KeyMap defines the key bindings for the TUI dashboard.
 type KeyMap struct {
+	Overview key.Binding
 	Fleet    key.Binding
 	Health   key.Binding
 	Tasks    key.Binding
@@ -22,29 +23,33 @@ type KeyMap struct {
 
 // Keys is the default set of key bindings for the TUI dashboard.
 var Keys = KeyMap{
-	Fleet: key.NewBinding(
+	Overview: key.NewBinding(
 		key.WithKeys("1"),
-		key.WithHelp("1", "fleet"),
+		key.WithHelp("1", "overview"),
+	),
+	Fleet: key.NewBinding(
+		key.WithKeys("2"),
+		key.WithHelp("2", "fleet"),
 	),
 	Health: key.NewBinding(
-		key.WithKeys("2"),
-		key.WithHelp("2", "health"),
+		key.WithKeys("3"),
+		key.WithHelp("3", "health"),
 	),
 	Tasks: key.NewBinding(
-		key.WithKeys("3"),
-		key.WithHelp("3", "tasks"),
+		key.WithKeys("4"),
+		key.WithHelp("4", "tasks"),
 	),
 	Memory: key.NewBinding(
-		key.WithKeys("4"),
-		key.WithHelp("4", "memory"),
+		key.WithKeys("5"),
+		key.WithHelp("5", "memory"),
 	),
 	Stream: key.NewBinding(
-		key.WithKeys("5"),
-		key.WithHelp("5", "stream"),
+		key.WithKeys("6"),
+		key.WithHelp("6", "stream"),
 	),
 	Presence: key.NewBinding(
-		key.WithKeys("6"),
-		key.WithHelp("6", "presence"),
+		key.WithKeys("7"),
+		key.WithHelp("7", "presence"),
 	),
 	Refresh: key.NewBinding(
 		key.WithKeys("r"),
@@ -80,7 +85,7 @@ func (k KeyMap) ShortHelp() []key.Binding {
 // FullHelp returns key bindings shown in the expanded help view.
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Fleet, k.Health, k.Tasks, k.Memory, k.Stream, k.Presence},
+		{k.Overview, k.Fleet, k.Health, k.Tasks, k.Memory, k.Stream, k.Presence},
 		{k.Refresh, k.Enter, k.Escape, k.Filter},
 		{k.Help, k.Quit},
 	}

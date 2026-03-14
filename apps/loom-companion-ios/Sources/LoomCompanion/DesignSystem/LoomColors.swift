@@ -9,7 +9,14 @@ enum LoomColors {
     static let statusCritical = Color.red
     static let statusIdle = Color.gray
     static let statusActive = Color.blue
+    static let statusBlocked = Color(red: 0.9, green: 0.35, blue: 0.25) // warm red — distinct from critical
     static let statusInfo = Color.indigo
+
+    // MARK: - Memory Tier Palette (aligned with HUD design tokens)
+
+    static let tierWorking = Color(red: 0.31, green: 0.92, blue: 0.99)   // ~#4EEAFE
+    static let tierShortTerm = Color(red: 0.61, green: 0.36, blue: 0.82) // ~#9B5CD0
+    static let tierLongTerm = Color.green                                  // matches statusHealthy
 
     // MARK: - Accent
 

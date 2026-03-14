@@ -2,7 +2,9 @@
   /** @type {{ data: number[], width?: number, height?: number, color?: string, showTrend?: boolean }} */
   let { data = [], width = 120, height = 24, color = 'var(--info)', showTrend = false } = $props();
 
-  let gradientId = $derived(`spark-grad-${Math.random().toString(36).slice(2, 8)}`);
+  // Stable unique IDs — generated once per component instance (not on every reactive update).
+  const instanceId = Math.random().toString(36).slice(2, 8);
+  const gradientId = `spark-grad-${instanceId}`;
 
   // Compute SVG polyline points and path for smooth cubic interpolation.
   let computed = $derived.by(() => {
@@ -70,7 +72,7 @@
     return '→';
   });
 
-  let glowFilterId = $derived(`spark-glow-${Math.random().toString(36).slice(2, 8)}`);
+  const glowFilterId = `spark-glow-${instanceId}`;
 
   // Tooltip state.
   let hoveredIdx = $state(null);

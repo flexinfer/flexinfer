@@ -72,7 +72,7 @@ struct OpsTaskDetailView: View {
         switch task.status {
         case .pending: return LoomColors.statusIdle
         case .inProgress: return LoomColors.statusActive
-        case .blocked: return LoomColors.statusDegraded
+        case .blocked: return LoomColors.statusBlocked
         case .completed: return LoomColors.statusHealthy
         case .unknown: return LoomColors.statusIdle
         }

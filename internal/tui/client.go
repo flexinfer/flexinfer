@@ -111,6 +111,11 @@ func (c *Client) MemoryStats() *bridge.MemoryStatsResult {
 	return c.memory.Stats()
 }
 
+// MemoryTokenHistory returns sparkline history of TotalTokens readings.
+func (c *Client) MemoryTokenHistory() []float64 {
+	return c.memory.TokenHistory()
+}
+
 // StreamEntries returns recent context stream entries.
 func (c *Client) StreamEntries() []monitor.StreamEntry {
 	return c.stream.Entries()
