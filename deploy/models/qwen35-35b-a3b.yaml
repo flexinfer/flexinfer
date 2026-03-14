@@ -1,0 +1,67 @@
+# Qwen3.5-35B-A3B MoE via llama.cpp on AMD gfx1100
+#
+# Model: unsloth/Qwen3.5-35B-A3B-GGUF
+# GGUF:  Q3_K_XL (~17.2 GB) — 3-bit quantization, tight fit in 24 GB VRAM
+# Arch:  MoE 35B total / ~3B active parameters
+# VRAM:  ~18 GB weights + KV cache at q4_0 (reduced context to fit)
+#
+# DEPRECATED — replaced by qwen35-35b-a3b-vllm.yaml. Removed from kustomization.
+# Retained in repo for rollback reference only.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen35-35b-a3b
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  source: HF://unsloth/Qwen3.5-35B-A3B-GGUF
+  gpu:
+    vendor: amd
+    shared: 7900xtx-quality
+    priority: 200
+    # Request both GPUs so the container sees card0 (iGPU) and card1 (dGPU).
+    # hipVisibleDevices=0 in config then reliably selects the dGPU.
+    count: 2
+    vramEstimateMB: 18000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    contextSize: 8192
+    batchSize: 512
+    parallel: 2
+    flashAttention: true
+    jinja: true
+    cacheTypeK: q4_0
+    cacheTypeV: q4_0
+    ggufFile: Qwen3.5-35B-A3B-UD-Q3_K_XL.gguf
+    metrics: true
+    nGPULayers: 999
+    # cblevins-7900xtx has iGPU + dGPU — pin to dGPU (device 0)
+    hipVisibleDevices: "0"
+  cache:
+    size: 20Gi
+    storageClass: local-path
+    strategy: SharedPVC
+    hostPath: /var/lib/flexinfer/models
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "2"
+      memory: 16Gi
+    limits:
+      cpu: "4"
+      memory: 32Gi
+  serviceLabels:
+    - qwen35
+    - qwen35-35b
+  litellm:
+    enabled: true
+    servedModelName: qwen35-35b-a3b
+    aliases:
+      - qwen35
+      - qwen35-moe
+      - qwen35-35b

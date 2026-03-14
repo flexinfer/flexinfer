@@ -1,0 +1,48 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-8b-fast-7900xtx
+  namespace: flexinfer-system
+spec:
+  backend: mlc-llm
+  source: pvc://mlc-8b-abliterated-nvme-7900xtx/Qwen3-8B-abliterated-q4f32_1-MLC
+  gpu:
+    vendor: amd
+    shared: 7900xtx-quality
+    priority: 140
+    vramEstimateMB: 12000
+  serverless:
+    enabled: true
+    # Scaled to 0 -- sdxl holds the only amd.com/gpu device on 7900xtx.
+    # Text routing handled by qwen3-30b on 5930k.
+    minReplicas: 0
+    idleTimeout: 5m
+    coldStartTimeout: 10m
+  config:
+    mode: server
+    jitPolicy: "READONLY"
+    modelLibPath: /models/Qwen3-8B-abliterated-q4f32_1-MLC/lib_rocm_gfx1100.so
+    maxNumSequence: 4
+    maxTotalSeqLength: 32768
+    # cblevins-7900xtx exposes both iGPU and dGPU; force the RX 7900 XTX device.
+    hipVisibleDevices: "0"
+    rocrVisibleDevices: "0"
+    gpuDeviceOrdinal: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 24Gi
+  serviceLabels:
+    - fast-chat-7900
+    - fast-text
+    - gpt-3.5-turbo
+  litellm:
+    enabled: true
+    servedModelName: qwen3-8b-fast-7900xtx
+    aliases:
+      - fast-chat-7900

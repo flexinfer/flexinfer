@@ -1,0 +1,68 @@
+# Qwen3.5-27B Opus-Reasoning-Distilled via vLLM on AMD gfx1100
+#
+# Model: Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled
+# Pipeline: Download → Abliterate → GPTQ INT4 (sym=true, desc_act=false, group_size=128)
+# Source: ModelCache qwen35-27b-opus-distill-gptq → gptq-w4-g128/ on PVC
+#
+# 27B dense at INT4 = ~15 GB model weights. On 24GB gfx1100:
+#   Model weights:  ~15 GiB
+#   CUDA graphs:    ~0.8 GiB
+#   KV cache:       ~6 GiB → limited context window
+#   Total:          ~22 GiB / 24 GiB
+#
+# maxModelLen=8192 to fit KV cache budget (tighter than 14B setup).
+# maxNumSeqs=4 to avoid KV cache pressure.
+#
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen35-27b-opus-distill
+  namespace: flexinfer-system
+spec:
+  backend: vllm
+  source: pvc://qwen35-27b-opus-distill-gptq/qwen35-27b-opus-distill-gptq/gptq-w4-g128
+  gpu:
+    vendor: amd
+    shared: 7900xtx-textgen
+    priority: 200
+    count: 2
+    vramEstimateMB: 15000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 15m
+  config:
+    quantization: gptq
+    dtype: "half"
+    maxModelLen: 8192
+    gpuMemoryUtilization: "0.95"
+    maxNumSeqs: 4
+    enforceEager: false
+    trustRemoteCode: true
+    servedModelName: qwen35-27b-opus-distill
+    enableToolCalling: true
+    toolCallParser: hermes
+    enablePrefixCaching: true
+    enableChunkedPrefill: true
+    maxNumBatchedTokens: 4096
+    disableLogStats: false
+    hipVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "2"
+      memory: 16Gi
+    limits:
+      cpu: "4"
+      memory: 56Gi
+  serviceLabels:
+    - qwen35-27b-opus-distill
+    - qwen35-27b-opus
+  litellm:
+    enabled: true
+    servedModelName: qwen35-27b-opus-distill
+    aliases:
+      - qwen35-27b-opus
+      - qwen35-opus

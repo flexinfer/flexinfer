@@ -219,6 +219,10 @@ type ModelReconciler struct {
 	Recorder    record.EventRecorder
 	APIReader   client.Reader
 	GPUProfiles *GPUProfileReconciler
+	// Runtime provides runtime pod discovery for direct model loading.
+	// When non-nil and a runtime pod exists on the target node, models
+	// are loaded via the runtime API instead of creating Deployments.
+	Runtime *RuntimeReconciler
 }
 
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=models,verbs=get;list;watch;create;update;patch;delete
@@ -459,6 +463,31 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhasePending); err != nil {
 				// Non-fatal: this is a best-effort status update while cache warms.
 				log.Error(err, "Failed to update Model phase to Pending while cache is warming")
+			}
+		}
+	}
+
+	// Check if a persistent runtime exists on the target node.
+	// If so, load the model via the runtime API instead of creating a Deployment.
+	if r.Runtime != nil && desiredReplicas > 0 {
+		runtimeEndpoint, err := r.Runtime.FindRuntimeForNode(ctx, model.Namespace, model.Spec.NodeSelector)
+		if err != nil {
+			log.V(1).Info("Runtime discovery failed, falling back to Deployment", "error", err)
+		}
+		if runtimeEndpoint != nil && runtimeEndpoint.Ready {
+			log.Info("Runtime detected, loading model via runtime API",
+				"node", runtimeEndpoint.NodeName,
+				"runtimePod", runtimeEndpoint.PodName,
+			)
+			if err := r.loadViaRuntime(ctx, model, b, runtimeEndpoint, gpuArch); err != nil {
+				log.Error(err, "Failed to load model via runtime, falling back to Deployment")
+				// Fall through to Deployment-based flow.
+			} else {
+				// Runtime load initiated — update status and return.
+				if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseLoading); err != nil {
+					log.Error(err, "Failed to update phase after runtime load")
+				}
+				return ctrl.Result{RequeueAfter: requeueAfter}, nil
 			}
 		}
 	}
@@ -4409,4 +4438,35 @@ echo "Copy complete."
 		return nil, err
 	}
 	return job, nil
+}
+
+// loadViaRuntime sends a model load request to a runtime pod instead of
+// creating a Deployment. This path is used when a persistent runtime
+// container exists on the target GPU node.
+func (r *ModelReconciler) loadViaRuntime(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, endpoint *RuntimeEndpoint, gpuArch string) error {
+	runtimeLog := log.FromContext(ctx)
+
+	// Build the load request payload.
+	spec := r.buildBackendModelSpec(model, b, backend.GPUVendorAMD)
+	spec.GPUArch = gpuArch
+
+	payload := map[string]interface{}{
+		"backend":   b.Name(),
+		"model":     spec.Model,
+		"modelPath": spec.ModelPath,
+		"config":    model.Spec.GetConfigMap(),
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshalling load request: %w", err)
+	}
+
+	runtimeLog.Info("Sending load request to runtime",
+		"model", model.Name,
+		"backend", b.Name(),
+		"runtimeURL", endpoint.URL(),
+	)
+
+	return r.Runtime.LoadModel(ctx, endpoint, model.Name, data)
 }

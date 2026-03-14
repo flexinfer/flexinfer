@@ -1,0 +1,61 @@
+# Qwen3-1.7B GGUF on Radeon VII (gfx906) — fast tool-call routing model
+#
+# Small model for function calling and tool routing decisions.
+# VRAM: ~1.5 GB Q4_K_M — coexists with BGE embeddings in 16 GB.
+# Part of the radeonvii-models shared group at priority 120.
+#
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-1.7b-tools-radeonvii
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  source: HF://Qwen/Qwen3-1.7B-GGUF
+  cache:
+    size: 2Gi
+    storageClass: nvme-1r
+    strategy: SharedPVC
+  gpu:
+    vendor: amd
+    shared: radeonvii-models
+    priority: 120
+    count: 1
+    vramEstimateMB: 2000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 5m
+    coldStartTimeout: 5m
+  config:
+    ggufFile: Qwen3-1.7B-Q4_K_M.gguf
+    contextSize: 8192
+    nGPULayers: 999
+    batchSize: 1024
+    ubatchSize: 512
+    parallel: 2
+    flashAttention: false
+    fitOff: true
+    jinja: true
+    metrics: true
+    cacheTypeK: q4_0
+    cacheTypeV: q4_0
+    rocrVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  resources:
+    requests:
+      cpu: "2"
+      memory: 4Gi
+    limits:
+      cpu: "8"
+      memory: 8Gi
+  serviceLabels:
+    - tool-router
+    - fast
+  litellm:
+    enabled: true
+    servedModelName: qwen3-1.7b-tools
+    aliases:
+      - tool-router
+      - qwen3-1.7b

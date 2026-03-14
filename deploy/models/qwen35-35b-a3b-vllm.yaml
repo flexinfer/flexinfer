@@ -1,0 +1,87 @@
+# Qwen3.5-35B-A3B MoE via vLLM on AMD gfx1100 (GGUF Q4_K_M)
+#
+# Model: unsloth/Qwen3.5-35B-A3B-GGUF (UD-Q4_K_M variant, ~19.9 GiB)
+# Quant: GGUF Q4_K_M — fits in 24 GB VRAM with 4 GiB headroom for KV cache
+# Arch:  MoE 35B total / ~3B active parameters (Gated Delta Networks)
+# Image: registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-nightly-v2
+#        vLLM nightly (from source), ROCm 7.2, GGUF via vLLM >= 0.14.0
+#
+# vLLM features enabled: tool calling, reasoning parser, structured output,
+# prefix caching, continuous batching, GGUF quantization
+#
+# Why GGUF instead of AWQ: compressed-tensors AWQ on ROCm uses
+# ExllamaLinearKernel which has a fixed 288 MiB scratch buffer — OOMs on
+# 24 GB GPUs (model weights = 22.82 GiB, only ~600 MiB left). GGUF Q4_K_M
+# is 19.9 GiB, leaving comfortable headroom.
+#
+# BLOCKED: transformers library does not support qwen35moe GGUF architecture yet.
+# CrashLoopBackOff since 2026-03-01. Scaled to minReplicas=0 until upstream fix.
+#
+# Requires DEFAULT_VLLM_IMAGE_GFX1100 env var on controller to point
+# to the nightly image until image override is added to the CRD.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen35-35b-a3b-vllm
+  namespace: flexinfer-system
+spec:
+  backend: vllm
+  source: HF://unsloth/Qwen3.5-35B-A3B-GGUF
+  gpu:
+    vendor: amd
+    shared: 7900xtx-quality
+    priority: 200
+    # Request both GPUs so the container sees card0 (iGPU) and card1 (dGPU).
+    # hipVisibleDevices=0 in config then reliably selects the dGPU.
+    count: 2
+    vramEstimateMB: 20000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    dtype: "half"
+    quantization: gguf
+    # GGUF file to download from the multi-file repo (avoids 320 GB full download)
+    ggufFile: "Qwen3.5-35B-A3B-UD-Q4_K_M.gguf"
+    # Tokenizer from the base (non-GGUF) repo — GGUF files lack HF tokenizer
+    tokenizer: "Qwen/Qwen3.5-35B-A3B"
+    maxModelLen: 4096
+    gpuMemoryUtilization: "0.95"
+    maxNumSeqs: 4
+    enforceEager: true
+    trustRemoteCode: true
+    servedModelName: qwen35-35b-a3b
+    # Tool calling — Qwen3.5 supports native function calling
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    # Reasoning parser — separates <think>...</think> blocks in API responses
+    reasoningParser: qwen3
+    # cblevins-7900xtx has iGPU + dGPU — pin to dGPU (device 0)
+    hipVisibleDevices: "0"
+  cache:
+    size: 25Gi
+    storageClass: local-path
+    strategy: SharedPVC
+    hostPath: /var/lib/flexinfer/models
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "2"
+      memory: 16Gi
+    limits:
+      cpu: "4"
+      memory: 32Gi
+  serviceLabels:
+    - qwen35
+    - qwen35-35b
+    - qwen35-vllm
+  litellm:
+    enabled: true
+    servedModelName: qwen35-35b-a3b
+    aliases:
+      - qwen35
+      - qwen35-moe
+      - qwen35-35b

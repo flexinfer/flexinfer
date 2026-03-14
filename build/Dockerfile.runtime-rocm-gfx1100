@@ -1,0 +1,153 @@
+# Unified flexinfer-runtime image for AMD gfx1100 (RX 7900 series, RDNA3)
+# Contains: flexinfer-runtime manager + vLLM + llamacpp + ollama + diffusers + comfyui
+#
+# Build command:
+#   docker --context 7900xtx build -f build/Dockerfile.runtime-rocm-gfx1100 \
+#     -t registry.harbor.lan/flexinfer/runtime:rocm-gfx1100 .
+#
+# Image size: ~65GB (layers shared across backends)
+
+# ── Stage 1: Build flexinfer-runtime Go binary ──────────────────────
+FROM golang:1.26.0 AS go-builder
+
+WORKDIR /workspace
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd/ cmd/
+COPY api/ api/
+COPY backend/ backend/
+COPY internal/ internal/
+COPY controllers/ controllers/
+COPY pkg/ pkg/
+COPY scheduler/ scheduler/
+COPY agents/ agents/
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o /runtime cmd/flexinfer-runtime/main.go
+
+# ── Stage 2: Build llama.cpp with HIP for gfx1100 ──────────────────
+ARG ROCM_VERSION=6.4.4
+FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION} AS llamacpp-builder
+
+ARG LLAMACPP_VERSION=b8173
+ARG AMDGPU_TARGETS=gfx1100
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake ninja-build build-essential curl \
+    hipblas-dev rocblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/src
+RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
+
+WORKDIR /opt/src/llama.cpp
+RUN cmake -B build -G Ninja \
+    -DGGML_HIP=ON \
+    -DGGML_NATIVE=OFF \
+    -DAMDGPU_TARGETS=${AMDGPU_TARGETS} \
+    -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release -j$(nproc)
+
+# ── Stage 3: Build ollama with ROCm for gfx1100 ────────────────────
+FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION} AS ollama-builder
+
+ARG OLLAMA_VERSION=v0.17.4
+ARG GO_VERSION=1.25.7
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake make gcc g++ curl ca-certificates \
+    hipblas-dev rocblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+    | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+WORKDIR /build
+RUN git clone --depth 1 --branch "${OLLAMA_VERSION}" https://github.com/ollama/ollama.git .
+
+ENV CGO_ENABLED=1
+RUN go generate ./... && go build -trimpath -o /build/ollama .
+
+# ── Stage 4: Runtime image ──────────────────────────────────────────
+ARG ROCM_PYTORCH_TAG=rocm6.4.1_ubuntu24.04_py3.12_pytorch_release_2.6.0
+FROM rocm/pytorch:${ROCM_PYTORCH_TAG}
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# ROCm environment for gfx1100
+ENV ROCM_PATH=/opt/rocm
+ENV HIP_PATH=/opt/rocm/hip
+ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
+ENV PYTORCH_ROCM_ARCH=gfx1100
+ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
+ENV HIP_FORCE_DEV_KERNARG=1
+ENV TORCH_BLAS_PREFER_HIPBLASLT=1
+
+# vLLM settings for gfx1100
+ENV VLLM_USE_V1=0
+ENV VLLM_USE_TRITON_FLASH_ATTN=0
+ENV VLLM_ROCM_USE_AITER=0
+
+# Fix VAE decode crashes on gfx1100 (ROCm issue #4729)
+ENV MIOPEN_FIND_MODE=2
+ENV PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.9,max_split_size_mb:512
+
+# Runtime GPU vendor/arch for the flexinfer-runtime manager
+ENV GPU_VENDOR=amd
+ENV GPU_ARCH=gfx1100
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl tini \
+    hipblas rocblas rocsparse hipsparse rocthrust rocprim hipcub rccl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Install vLLM ────────────────────────────────────────────────────
+RUN pip install --no-cache-dir \
+    vllm==0.7.3 \
+    diffusers>=0.30.0 \
+    pillow \
+    sentencepiece \
+    protobuf \
+    "numpy<2"
+
+# ── Install diffusers server ────────────────────────────────────────
+RUN pip install --no-cache-dir \
+    accelerate \
+    bitsandbytes --no-deps \
+    safetensors \
+    transformers>=5.0
+
+COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py
+
+# ── Copy llama.cpp binary ───────────────────────────────────────────
+COPY --from=llamacpp-builder /opt/src/llama.cpp/build/bin/ /opt/llamacpp/bin/
+ENV PATH="/opt/llamacpp/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/llamacpp/bin:${LD_LIBRARY_PATH}"
+
+# ── Copy ollama binary ──────────────────────────────────────────────
+COPY --from=ollama-builder /build/ollama /usr/local/bin/ollama
+ENV OLLAMA_MODELS=/models/ollama
+
+# ── Copy flexinfer-runtime binary ───────────────────────────────────
+COPY --from=go-builder /runtime /usr/local/bin/flexinfer-runtime
+
+# Create model and cache directories
+RUN mkdir -p /models /var/lib/flexinfer/compile-cache
+
+WORKDIR /workspace
+
+# Expose runtime API (8080) + backend port (8000)
+EXPOSE 8080 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8080/healthz || exit 1
+
+ENTRYPOINT ["tini", "--", "flexinfer-runtime"]
+CMD ["--listen", ":8080", "--gpu-vendor", "amd", "--gpu-arch", "gfx1100"]

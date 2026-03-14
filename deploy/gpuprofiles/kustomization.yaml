@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: flexinfer-system
+resources:
+  - gfx1100.yaml   # AMD RDNA3 (RX 7900 XTX)
+  - gfx906.yaml    # AMD Vega20 (Radeon VII)
+  - sm_52.yaml     # NVIDIA Maxwell (GTX 980 Ti)

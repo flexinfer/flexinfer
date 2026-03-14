@@ -1,0 +1,52 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: instruct-pix2pix
+  namespace: flexinfer-system
+spec:
+  backend: diffusers
+  source: HF://timbrooks/instruct-pix2pix
+  gpu:
+    vendor: amd
+    shared: 7900xtx-image
+    priority: 100
+    count: 1
+    vramEstimateMB: 6000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 5m
+    coldStartTimeout: 10m
+  cache:
+    strategy: Local
+    hostPath: /mnt/nvme/flexinfer/models
+    flashLoader:
+      enabled: true
+      concurrency: 8
+      tmpfsSizeLimit: "15Gi"
+      bufferSizeKB: 4096
+      verifyIntegrity: true
+  config:
+    pipelineMode: "instruct"
+    cpuOffload: "false"
+    useFp16: "1"
+    guidanceScale: "7.5"
+    imageGuidanceScale: "1.5"
+    numInferenceSteps: "20"
+    hipVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "2"
+      memory: 8Gi
+    limits:
+      cpu: "4"
+      memory: 12Gi
+  serviceLabels:
+    - instruct-edit
+  litellm:
+    enabled: true
+    servedModelName: instruct-pix2pix
+    aliases:
+      - instruct-edit

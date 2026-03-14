@@ -1,0 +1,60 @@
+# Qwen3-14B abliterated v2 via vLLM on cblevins-5930k (self-quantized GPTQ INT4)
+#
+# Second instance of the 14B GPTQ model for multi-node text throughput.
+# Shares the ModelCache PVC (RWX) from cblevins-7900xtx via Longhorn NFS.
+# Shares GPU with FLUX Schnell on 5930k — yields to FLUX via shared group
+# preemption (priority 100 < FLUX's 200).
+#
+# Expected: ~72-73 tok/s decode per GPU. Two instances behind flexinfer proxy
+# should roughly double aggregate text throughput when FLUX is idle.
+#
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-14b-abliterated-v2-5930k
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/routing: least-loaded
+spec:
+  backend: vllm
+  source: pvc://qwen3-14b-abliterated-v2-gptq/qwen3-14b-abliterated-v2-gptq/gptq-w4-g128
+  gpu:
+    vendor: amd
+    count: 1
+    vramEstimateMB: 10000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 5m
+    coldStartTimeout: 15m
+  config:
+    quantization: gptq
+    dtype: "half"
+    maxModelLen: 16384
+    gpuMemoryUtilization: "0.95"
+    maxNumSeqs: 8
+    enforceEager: false
+    trustRemoteCode: true
+    servedModelName: qwen3-14b-abliterated-v2
+    enableToolCalling: true
+    toolCallParser: hermes
+    reasoningParser: qwen3
+    enablePrefixCaching: true
+    enableChunkedPrefill: true
+    maxNumBatchedTokens: 8192
+    disableLogStats: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "2"
+      memory: 12Gi
+    limits:
+      cpu: "4"
+      memory: 48Gi
+  serviceLabels:
+    - qwen3-14b-abliterated-v2
+    - abliterated
+    - uncensored
+  litellm:
+    enabled: false

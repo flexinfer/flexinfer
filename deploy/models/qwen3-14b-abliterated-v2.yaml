@@ -1,0 +1,69 @@
+# Qwen3-14B abliterated v2 via vLLM on AMD gfx1100 (self-quantized GPTQ INT4)
+#
+# Model: huihui-ai/Huihui-Qwen3-14B-abliterated-v2
+# Quant: Self-quantized GPTQ INT4 (sym=true, desc_act=false, group_size=128)
+# Source: ModelCache qwen3-14b-abliterated-v2-gptq → gptq-w4-g128/ on PVC
+#
+# vLLM routes GPTQ through ExLlama v2 kernels (HIP-compiled on ROCm).
+# Expected: ~72-73 tok/s decode on gfx1100, same as JunHowie pre-quant.
+#
+# Replaces: qwen3-14b-abliterated (JunHowie/Qwen3-14B-GPTQ-Int4)
+#
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-14b-abliterated-v2
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/routing: least-loaded
+spec:
+  backend: vllm
+  source: pvc://qwen3-14b-abliterated-v2-gptq/qwen3-14b-abliterated-v2-gptq/gptq-w4-g128
+  gpu:
+    vendor: amd
+    shared: 7900xtx-textgen
+    priority: 150
+    count: 2
+    vramEstimateMB: 10000
+  serverless:
+    enabled: true
+    minReplicas: 0  # Temporarily 0 to free GPU for qwen35-27b GPTQ quantization. Restore to 1 after quant completes.
+    idleTimeout: 60m
+    coldStartTimeout: 15m
+  config:
+    quantization: gptq
+    dtype: "half"
+    maxModelLen: 16384
+    gpuMemoryUtilization: "0.95"
+    maxNumSeqs: 8
+    enforceEager: false
+    trustRemoteCode: true
+    servedModelName: qwen3-14b-abliterated-v2
+    enableToolCalling: true
+    toolCallParser: hermes
+    reasoningParser: qwen3
+    enablePrefixCaching: true
+    enableChunkedPrefill: true
+    maxNumBatchedTokens: 8192
+    disableLogStats: false
+    hipVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "2"
+      memory: 12Gi
+    limits:
+      cpu: "4"
+      memory: 48Gi
+  serviceLabels:
+    - qwen3-14b-abliterated-v2
+    - abliterated
+    - uncensored
+  litellm:
+    enabled: true
+    servedModelName: qwen3-14b-abliterated-v2
+    aliases:
+      - abliterated-v2
+      - uncensored-v2
+      - qwen3-14b-abl-v2

@@ -1,0 +1,65 @@
+# GPUProfile: AMD RDNA3 (RX 7900 XTX, gfx1100)
+#
+# Nodes: cblevins-7900xtx (dGPU + iGPU), cblevins-5930k (dGPU only)
+#
+# cblevins-7900xtx has an integrated GPU (Raphael iGPU) that the K8s device
+# plugin exposes as a second amd.com/gpu resource. The iGPU has no dedicated
+# VRAM and crashes inference workloads. deviceCount=2 reflects K8s resource
+# accounting, but usableDeviceIndices=["0"] ensures only the discrete GPU is
+# used via HIP_VISIBLE_DEVICES/ROCR_VISIBLE_DEVICES injection.
+#
+# cblevins-5930k has a single 7900 XTX with no iGPU (deviceCount would be 1).
+# The usableDeviceIndices=["0"] is harmless on single-GPU nodes.
+apiVersion: ai.flexinfer/v1alpha2
+kind: GPUProfile
+metadata:
+  name: gfx1100
+  namespace: flexinfer-system
+spec:
+  architecture: gfx1100
+  vendor: amd
+  vramMB: 24576
+  deviceCount: 2
+  usableDeviceIndices:
+    - "0"
+  features:
+    fp16: true
+    bf16: true
+    fp8: false
+    flashAttention: true
+    int4: true
+    int8: true
+  backends:
+    vllm:
+      support: full
+      image: registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-nightly-v2
+    llamacpp:
+      support: full
+    diffusers:
+      support: full
+      image: registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100
+    ollama:
+      support: full
+    comfyui:
+      support: full
+    mlc-llm:
+      support: full
+  env:
+    - name: HSA_OVERRIDE_GFX_VERSION
+      value: "11.0.0"
+    - name: TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL
+      value: "1"
+    - name: HIP_FORCE_DEV_KERNARG
+      value: "1"
+    - name: TORCH_BLAS_PREFER_HIPBLASLT
+      value: "1"
+    - name: PYTORCH_ROCM_ARCH
+      value: gfx1100
+  quantization:
+    supported:
+      - gptq
+      - awq
+      - gguf
+      - exl2
+    images:
+      gptq: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100

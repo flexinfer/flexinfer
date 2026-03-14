@@ -1,0 +1,46 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: deepseek-r1-reasoning
+  namespace: flexinfer-system
+spec:
+  backend: mlc-llm
+  source: HF://mlc-ai/DeepSeek-R1-Distill-Qwen-14B-q4f16_1-MLC
+  cache:
+    strategy: SharedPVC
+    storageClass: nvme-1r
+    size: 20Gi
+  gpu:
+    vendor: amd
+    shared: 7900xtx-quality
+    priority: 70
+    vramEstimateMB: 16000
+  serverless:
+    enabled: true
+    idleTimeout: 5m
+    coldStartTimeout: 120s
+  config:
+    mode: server
+    jitPolicy: "ON"
+    maxNumSequence: 2
+    maxTotalSeqLength: 65536
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 20Gi
+    limits:
+      cpu: "8"
+      memory: 28Gi
+  serviceLabels:
+    - chain-of-thought
+    - reasoning
+    - o1-preview
+  litellm:
+    # Disabled - reasoning aliases now served by qwen3-14b-mlc
+    enabled: false
+    servedModelName: deepseek-r1-reasoning
+    aliases:
+      - reasoning
+      - o1-preview

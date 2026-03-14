@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: flexinfer-system
+resources:
+  # === 7900xtx-textgen group (cblevins-7900xtx, 24 GB gfx1100) ===
+  # - qwen3-14b-abliterated.yaml    # DISABLED: replaced by self-quant v2
+  - qwen35-27b-opus-distill.yaml    # priority 200, abliterated Opus distill GPTQ INT4
+  - qwen3-14b-abliterated-v2.yaml   # priority 150, self-quant GPTQ INT4
+
+  # === 5930k: dedicated image gen (cblevins-5930k, 24 GB gfx1100) ===
+  - gonzalomo-fluxpony-source.yaml
+  - gonzalomo-fluxpony-imagegen.yaml   # solo model, no shared group
+  - sdxl-inpainting-radeonvii.yaml # image-edit alias on radeonvii
+
+  # === radeonvii-models group (cblevins-radeonvii, 16 GB gfx906) ===
+  # - bge-radeonvii.yaml         # disabled to free radeonvii for image edit
+  - vision-ocr-radeonvii.yaml    # priority 150, min=0, scaled down for Steam host use
+  - qwen3-1.7b-tools-radeonvii.yaml  # priority 120, min=0, tool-call routing
+  - qwen3-8b-radeonvii.yaml      # priority 100, min=0, text fallback
+
+  # === singleton (cblevins-gtx980ti, 6 GB sm_52) ===
+  - embeddings.yaml             # nomic-embed-text, min=1, always warm

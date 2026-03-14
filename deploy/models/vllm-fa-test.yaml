@@ -1,0 +1,65 @@
+# vLLM Flash Attention smoke test on AMD gfx1100 (RX 7900 XTX)
+# Temporary deployment — remove after benchmarking.
+#
+# Model: Qwen2.5-7B-Instruct-abliterated (uncensored, instruct-tuned)
+# Image: registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-fa
+#        vLLM 0.14.0rc0, ROCm 7.2, flash attention via AOTriton
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: vllm-fa-test
+  namespace: flexinfer-system
+spec:
+  backend: vllm
+  source: HF://huihui-ai/Qwen2.5-7B-Instruct-abliterated
+  gpu:
+    vendor: amd
+    shared: 7900xtx-quality
+    priority: 200
+    # Request both GPUs so the container sees card0 (iGPU) and card1 (dGPU).
+    # hipVisibleDevices=0 in config then reliably selects the dGPU.
+    count: 2
+    vramEstimateMB: 16000
+  serverless:
+    enabled: true
+    # Scaled to 0 for qwen35 bench on 7900xtx — restore after benchmarking
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 15m
+  config:
+    dtype: "half"
+    maxModelLen: 8192
+    gpuMemoryUtilization: "0.92"
+    maxNumSeqs: 256
+    maxNumBatchedTokens: 4096
+    enableToolCalling: true
+    servedModelName: vllm-fa-test
+    # cblevins-7900xtx has iGPU + dGPU. With gpu.count=2 both are visible.
+    # ROCm enumerates dGPU (7900 XTX) as GPU[0] and iGPU as GPU[1].
+    # Pin to device 0 to always use the dGPU for inference.
+    hipVisibleDevices: "0"
+  cache:
+    strategy: Local
+    hostPath: /mnt/nvme/flexinfer/models
+    flashLoader:
+      enabled: true
+      concurrency: 8
+      tmpfsSizeLimit: "20Gi"
+      bufferSizeKB: 4096
+      verifyIntegrity: true
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "2"
+      memory: 12Gi
+    limits:
+      cpu: "4"
+      memory: 20Gi
+  serviceLabels:
+    - vllm-fa-test
+  litellm:
+    enabled: true
+    servedModelName: vllm-fa-test
+    aliases:
+      - vllm-test

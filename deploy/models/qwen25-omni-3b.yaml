@@ -1,0 +1,55 @@
+# vLLM-Omni smoke test on AMD gfx1100 (RX 7900 XTX)
+# Temporary deployment — remove after validation.
+#
+# Model: Qwen2.5-Omni-3B (multimodal: text + audio + image generation)
+# Image: registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100
+#        vLLM 0.14.0rc0 + vllm-omni 0.14.0, ROCm 7.2, FA disabled
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen25-omni-3b
+  namespace: flexinfer-system
+spec:
+  backend: vllm-omni
+  source: HF://Qwen/Qwen2.5-Omni-3B
+  gpu:
+    vendor: amd
+    shared: 5930k-models
+    # Smoke test — low priority so it doesn't starve production models.
+    priority: 90
+    vramEstimateMB: 8000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 15m
+  config:
+    dtype: "half"
+    maxModelLen: 16384
+    gpuMemoryUtilization: "0.95"
+    maxNumBatchedTokens: 8192
+    trustRemoteCode: true
+    servedModelName: qwen25-omni-3b
+  cache:
+    strategy: Local
+    hostPath: /mnt/nvme/flexinfer/models
+    flashLoader:
+      enabled: true
+      concurrency: 8
+      tmpfsSizeLimit: "12Gi"
+      bufferSizeKB: 4096
+      verifyIntegrity: true
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "2"
+      memory: 12Gi
+    limits:
+      cpu: "4"
+      memory: 20Gi
+  serviceLabels:
+    - qwen25-omni-3b
+  litellm:
+    enabled: true
+    servedModelName: qwen25-omni-3b

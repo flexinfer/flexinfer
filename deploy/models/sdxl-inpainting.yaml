@@ -1,0 +1,58 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: sdxl-inpainting
+  namespace: flexinfer-system
+spec:
+  backend: diffusers
+  source: HF://diffusers/stable-diffusion-xl-1.0-inpainting-0.1
+  gpu:
+    vendor: amd
+    shared: 7900xtx-image
+    priority: 200
+    count: 1
+    vramEstimateMB: 12000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 5m
+    coldStartTimeout: 10m
+  cache:
+    strategy: Local
+    hostPath: /mnt/nvme/flexinfer/models
+    flashLoader:
+      enabled: true
+      concurrency: 8
+      tmpfsSizeLimit: "20Gi"
+      bufferSizeKB: 4096
+      verifyIntegrity: true
+  config:
+    pipelineMode: "inpainting"
+    cpuOffload: "true"
+    useFp16: "1"
+    strength: "0.75"
+    guidanceScale: "7.5"
+    numInferenceSteps: "30"
+    hipVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "2"
+      memory: 12Gi
+    limits:
+      cpu: "4"
+      memory: 20Gi
+  serviceLabels:
+    - image-edit
+    - inpainting
+    - sdxl-image-edit
+    - sdxl-inpainting
+  litellm:
+    enabled: true
+    servedModelName: sdxl-inpainting
+    aliases:
+      - image-edit
+      - inpainting
+      - sdxl-image-edit
+      - sdxl-inpainting

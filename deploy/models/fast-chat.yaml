@@ -1,0 +1,46 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-8b-fast
+  namespace: flexinfer-system
+spec:
+  backend: mlc-llm
+  source: pvc://mlc-8b-abliterated-nvme-5930k/Qwen3-8B-abliterated-q4f32_1-MLC
+  gpu:
+    vendor: amd
+    shared: 5930k-models
+    # Fallback fast-chat; yields to glm47 (140) and qwen3-14b-claude-distill (160).
+    priority: 120
+    vramEstimateMB: 12000
+  serverless:
+    enabled: true
+    # Yields GPU to higher-priority models in the 5930k-models group (glm47 at 140, claude-distill at 160).
+    minReplicas: 0
+    idleTimeout: 5m
+    coldStartTimeout: 10m
+  config:
+    mode: server
+    # Avoid slow startup-time compilation; use the prebuilt ROCm library shipped with the model.
+    jitPolicy: "READONLY"
+    modelLibPath: /models/Qwen3-8B-abliterated-q4f32_1-MLC/lib_rocm_gfx1100.so
+    maxNumSequence: 4
+    maxTotalSeqLength: 32768
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 24Gi
+  serviceLabels:
+    - fast-chat-fallback
+    - fast-text
+    - gpt-3.5-turbo
+    - copilot
+  litellm:
+    enabled: true
+    servedModelName: qwen3-8b-fast
+    aliases:
+      - fast-chat-fallback

@@ -1,0 +1,59 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-8b-radeonvii
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  source: HF://Qwen/Qwen3-8B-GGUF
+  cache:
+    size: 8Gi
+    storageClass: nvme-1r
+    strategy: SharedPVC
+  gpu:
+    vendor: amd
+    shared: radeonvii-models
+    # Lower priority than VL model (150) -- yields GPU for OCR.
+    priority: 100
+    count: 1
+    vramEstimateMB: 6000
+  serverless:
+    enabled: true
+    # Scaled to 0 to dedicate GPU to VL model. Re-enable with minReplicas: 1 for time-sharing.
+    minReplicas: 0
+    idleTimeout: 15m
+    coldStartTimeout: 15m
+  config:
+    ggufFile: Qwen3-8B-Q4_K_M.gguf
+    contextSize: 16384
+    nGPULayers: 999
+    batchSize: 2048
+    ubatchSize: 512
+    parallel: 2
+    threads: 12
+    flashAttention: true
+    # gfx906 lacks VMM support; hipMemGetInfo crashes without this.
+    fitOff: true
+    cacheTypeK: q4_0
+    cacheTypeV: q4_0
+    jinja: true
+    metrics: true
+    rocrVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  resources:
+    requests:
+      cpu: "4"
+      memory: 12Gi
+    limits:
+      cpu: "14"
+      memory: 24Gi
+  serviceLabels:
+    - qwen3-8b
+    - textgen
+  litellm:
+    enabled: true
+    servedModelName: qwen3-8b-radeonvii
+    aliases:
+      - qwen3-8b-vii
+      - qwen3-8b

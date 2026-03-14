@@ -1,0 +1,57 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gonzalomo-fluxpony-imagegen
+  namespace: flexinfer-system
+spec:
+  backend: diffusers
+  source: pvc://gonzalomo-fluxpony-source/gonzalomoXLFluxPony_v30FluxDAIO.safetensors
+  gpu:
+    vendor: amd
+    count: 1
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 10m
+    coldStartTimeout: 30m
+  config:
+    # Civitai single-file FLUX Dev checkpoint (fp8 AIO).
+    # Run with CPU offload on gfx1100 to stay inside 24 GB VRAM while keeping
+    # the model warm enough for interactive use.
+    cpuOffload: "true"
+    useFp16: "1"
+    guidanceScale: "3.5"
+    numInferenceSteps: "28"
+    warmupResolutions: "512x512"
+    hipVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "2"
+      memory: 16Gi
+    limits:
+      cpu: "4"
+      memory: 40Gi
+  serviceLabels:
+    - image-gen
+    - text-to-image
+    - dall-e-3
+    - flux-image-gen
+    - fluxpony-image-gen
+    - imagegen
+  litellm:
+    enabled: true
+    servedModelName: gonzalomo-fluxpony-imagegen
+    aliases:
+      - image-gen
+      - dall-e-3
+      - flux-image-gen
+      - text-to-image
+      - fluxpony-image-gen
+      - gonzalomo-fluxpony
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

@@ -1,0 +1,41 @@
+# GPUProfile: NVIDIA Maxwell (GTX 980 Ti, sm_52)
+#
+# Node: cblevins-gtx980ti (single dGPU, 6 GB GDDR5)
+#
+# Maxwell GPUs only support ollama and llamacpp backends.
+# CUDA compute capability 5.2 — no FP16 tensor cores, no INT8/INT4 acceleration.
+# vLLM, diffusers, comfyui all require higher compute capability.
+apiVersion: ai.flexinfer/v1alpha2
+kind: GPUProfile
+metadata:
+  name: sm-52
+  namespace: flexinfer-system
+spec:
+  architecture: sm_52
+  vendor: nvidia
+  vramMB: 6144
+  features:
+    fp16: false
+    bf16: false
+    fp8: false
+    flashAttention: false
+    int4: false
+    int8: false
+  backends:
+    ollama:
+      support: full
+      image: registry.harbor.lan/flexinfer/ollama:cuda-maxwell
+    llamacpp:
+      support: full
+      image: registry.harbor.lan/flexinfer/llamacpp:cuda-maxwell
+    mlc-llm:
+      support: full
+    vllm:
+      support: unsupported
+    diffusers:
+      support: unsupported
+    comfyui:
+      support: unsupported
+  quantization:
+    supported:
+      - gguf

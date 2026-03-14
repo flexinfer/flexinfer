@@ -1,0 +1,132 @@
+{{- if .Values.runtime.enabled }}
+{{- range .Values.runtime.profiles }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "flexinfer.fullname" $ }}-runtime-{{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "flexinfer.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: flexinfer-runtime
+    flexinfer.ai/gpu-arch: {{ .gpuArch }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "flexinfer.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: flexinfer-runtime
+      flexinfer.ai/gpu-arch: {{ .gpuArch }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      annotations:
+        flexinfer.ai/chart-version: {{ $.Chart.Version | quote }}
+      labels:
+        {{- include "flexinfer.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: flexinfer-runtime
+        flexinfer.ai/gpu-arch: {{ .gpuArch }}
+    spec:
+      serviceAccountName: {{ include "flexinfer.agentServiceAccountName" $ }}
+      terminationGracePeriodSeconds: {{ $.Values.runtime.terminationGracePeriodSeconds | default 60 }}
+      containers:
+        - name: runtime
+          image: {{ .image | quote }}
+          imagePullPolicy: {{ $.Values.runtime.imagePullPolicy | default "IfNotPresent" }}
+          ports:
+            - name: api
+              containerPort: 8080
+              protocol: TCP
+            - name: backend
+              containerPort: 8000
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: GPU_VENDOR
+              value: {{ .gpuVendor | quote }}
+            - name: GPU_ARCH
+              value: {{ .gpuArch | quote }}
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- with .env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: models
+              mountPath: /models
+            - name: dshm
+              mountPath: /dev/shm
+            - name: compile-cache
+              mountPath: /var/lib/flexinfer/compile-cache
+            {{- if eq .gpuVendor "amd" }}
+            - name: dev-dri
+              mountPath: /dev/dri
+            {{- end }}
+          resources:
+            {{- if .resources }}
+            {{- toYaml .resources | nindent 12 }}
+            {{- else }}
+            limits:
+              {{ if eq .gpuVendor "amd" }}amd.com/gpu{{ else }}nvidia.com/gpu{{ end }}: {{ .gpuCount | default 1 }}
+              memory: {{ .memoryLimit | default "4Gi" }}
+            requests:
+              memory: {{ .memoryRequest | default "1Gi" }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: api
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      volumes:
+        - name: models
+          {{- if .modelVolume }}
+          {{- toYaml .modelVolume | nindent 10 }}
+          {{- else }}
+          hostPath:
+            path: {{ $.Values.runtime.modelHostPath | default "/var/lib/flexinfer/models" }}
+            type: DirectoryOrCreate
+          {{- end }}
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .shmSize | default "8Gi" }}
+        - name: compile-cache
+          hostPath:
+            path: /var/lib/flexinfer/compile-cache
+            type: DirectoryOrCreate
+        {{- if eq .gpuVendor "amd" }}
+        - name: dev-dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+        {{- end }}
+      tolerations:
+        - key: dedicated
+          value: gpu
+          effect: NoSchedule
+        {{- with .tolerations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end }}

@@ -62,6 +62,12 @@ type GPUProfileSpec struct {
 	// Quantization declares which quantization formats and images are available.
 	// +optional
 	Quantization *QuantizationProfile `json:"quantization,omitempty"`
+
+	// Runtime configures the persistent runtime container for this GPU architecture.
+	// When set, the controller deploys a DaemonSet with this image on matching nodes
+	// instead of creating per-model Deployments.
+	// +optional
+	Runtime *RuntimeProfile `json:"runtime,omitempty"`
 }
 
 // GPUFeatures declares hardware capability flags.
@@ -93,6 +99,17 @@ type QuantizationProfile struct {
 	// Images maps quantization format to the container image used for quantization jobs.
 	// +optional
 	Images map[string]string `json:"images,omitempty"`
+}
+
+// RuntimeProfile configures the persistent flexinfer-runtime container for a GPU architecture.
+type RuntimeProfile struct {
+	// Image is the unified runtime container image for this architecture.
+	// Example: "registry.harbor.lan/flexinfer/runtime:rocm-gfx1100"
+	Image string `json:"image"`
+
+	// Port is the runtime API port. Defaults to 8080.
+	// +optional
+	Port *int32 `json:"port,omitempty"`
 }
 
 // GPUProfileStatus holds observed state from the controller.

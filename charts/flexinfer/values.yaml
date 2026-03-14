@@ -67,6 +67,44 @@ controller:
       # Optional tmpfs size limit for flash-loader staging volume.
       tmpfsSizeLimit: ""
 
+# Persistent runtime containers — one per GPU node for near-instant model swapping.
+# When enabled, the controller loads models via the runtime API instead of creating
+# separate Deployments for each model.
+runtime:
+  enabled: false
+  imagePullPolicy: IfNotPresent
+  # Default host path for model storage (overridden per-profile via modelVolume).
+  modelHostPath: "/var/lib/flexinfer/models"
+  terminationGracePeriodSeconds: 60
+  # Per-GPU-profile runtime configurations.
+  # Each entry creates a DaemonSet targeting nodes with that GPU architecture.
+  profiles: []
+  # Example profiles:
+  # - name: gfx1100
+  #   image: "registry.harbor.lan/flexinfer/runtime:rocm-gfx1100"
+  #   gpuVendor: amd
+  #   gpuArch: gfx1100
+  #   gpuCount: 1
+  #   shmSize: "8Gi"
+  #   memoryLimit: "4Gi"
+  #   memoryRequest: "1Gi"
+  #   nodeSelector:
+  #     kubernetes.io/hostname: cblevins-7900xtx
+  # - name: gfx906
+  #   image: "registry.harbor.lan/flexinfer/runtime:rocm-gfx906"
+  #   gpuVendor: amd
+  #   gpuArch: gfx906
+  #   gpuCount: 1
+  #   nodeSelector:
+  #     kubernetes.io/hostname: cblevins-radeonvii
+  # - name: cuda-maxwell
+  #   image: "registry.harbor.lan/flexinfer/runtime:cuda-maxwell"
+  #   gpuVendor: nvidia
+  #   gpuArch: sm_52
+  #   gpuCount: 1
+  #   nodeSelector:
+  #     kubernetes.io/hostname: cblevins-5930k
+
 agent:
   enabled: true
   image:

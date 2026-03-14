@@ -1,0 +1,57 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-vl-vision
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  # Use local NVMe storage instead of NFS (NFS server down)
+  source: pvc://vision-models-nvme-5930k/Qwen3-VL-8B-Instruct-abliterated-v2.0.Q4_K_M.gguf
+  gpu:
+    vendor: amd
+    shared: 5930k-models
+    priority: 100
+    count: 1
+    vramEstimateMB: 12000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 10m
+    coldStartTimeout: 10m
+  config:
+    # Multimodal projection for vision capabilities (from local NVMe)
+    mmproj: /models/Qwen3-VL-8B-Instruct-abliterated-v2.0.mmproj-Q8_0.gguf
+    chatTemplate: chatml
+    contextSize: 16384
+    nGPULayers: 999
+    batchSize: 2048
+    ubatchSize: 1024
+    parallel: 2
+    cacheTypeK: q8_0
+    cacheTypeV: q8_0
+    flashAttention: true
+    metrics: true
+    # Pin to discrete GPU
+    hipVisibleDevices: "0"
+    rocrVisibleDevices: "0"
+  nodeSelector:
+    # Pin to cblevins-5930k (other 7900 XTX node)
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "2"
+      memory: 12Gi
+    limits:
+      cpu: "8"
+      memory: 18Gi
+  serviceLabels:
+    - vision
+    - ocr
+    - multimodal
+    - gpt-4o
+    - gpt-4-vision-preview
+  litellm:
+    enabled: false
+    servedModelName: qwen3-vl-vision
+    aliases:
+      - qwen3-vl-5930k

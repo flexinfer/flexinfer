@@ -1,0 +1,41 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: nomic-embed-text
+  namespace: flexinfer-system
+spec:
+  backend: ollama
+  # Ollama downloads the model on first activation (~270 MB).
+  source: ollama://nomic-embed-text
+  gpu:
+    vendor: nvidia
+    priority: 100
+    vramEstimateMB: 1000
+  serverless:
+    enabled: true
+    # Warm: keep one replica always ready for low-latency embeddings.
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 5m
+  nodeSelector:
+    # GTX 980 Ti (Maxwell, sm_52, 6 GB VRAM).
+    # Controller selects the custom ollama Maxwell image automatically
+    # via DEFAULT_BACKEND_IMAGE_MAXWELL (ollama.maxwellImage in Helm values).
+    kubernetes.io/hostname: cblevins-gtx980ti
+  resources:
+    requests:
+      cpu: "2"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  serviceLabels:
+    - embeddings
+    - semantic-search
+    - rag
+  litellm:
+    enabled: true
+    servedModelName: nomic-embed-text
+    aliases:
+      - embeddings
+      - text-embedding-3-small

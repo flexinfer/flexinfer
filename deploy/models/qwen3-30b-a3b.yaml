@@ -1,0 +1,50 @@
+# On-demand model in 5930k-models group. Scaled to zero by default;
+# activates via qwen3-30b / qwen3-moe alias when explicitly requested.
+# Group leader is now qwen3-14b-claude-distill (priority 160).
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-30b-a3b-abliterated
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  source: HF://mradermacher/Qwen3-30B-A3B-abliterated-i1-GGUF
+  gpu:
+    vendor: amd
+    shared: 5930k-models
+    priority: 110
+    vramEstimateMB: 19000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    contextSize: 16384
+    batchSize: 2048
+    parallel: 2
+    flashAttention: true
+    jinja: true
+    cacheTypeK: q4_0
+    cacheTypeV: q4_0
+    ggufFile: Qwen3-30B-A3B-abliterated.i1-Q4_K_M.gguf
+  cache:
+    size: 25Gi
+    storageClass: nvme-1r
+    strategy: SharedPVC
+  nodeSelector:
+    flexinfer.ai/gpu.arch: gfx1100
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      memory: 16Gi
+    limits:
+      memory: 32Gi
+  serviceLabels:
+    - qwen3-30b
+  litellm:
+    enabled: true
+    servedModelName: qwen3-30b-abliterated
+    aliases:
+      - qwen3-30b
+      - qwen3-moe

@@ -1,0 +1,48 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-14b-mlc
+  namespace: flexinfer-system
+spec:
+  backend: mlc-llm
+  # Use local NVMe storage instead of NFS (NFS server down)
+  source: pvc://mlc-models-nvme-7900xtx
+  gpu:
+    vendor: amd
+    shared: 7900xtx-quality
+    priority: 120
+    # Use the discrete GPU (GPU 0) when present.
+    count: 1
+    vramEstimateMB: 16000
+  serverless:
+    enabled: true
+    # Keep cold by default; qwen3-8b-fast-7900xtx is the always-on text model.
+    minReplicas: 0
+    idleTimeout: 10m
+    # First activation can include pulling a ~9GB backend image + loading weights from PVC.
+    coldStartTimeout: 10m
+  config:
+    mode: server
+    jitPolicy: "READONLY"
+    maxNumSequence: 2
+    maxTotalSeqLength: 32768
+  nodeSelector:
+    # Pin to cblevins-7900xtx only (cblevins-5930k runs vision model)
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 24Gi
+    limits:
+      cpu: "8"
+      memory: 32Gi
+  serviceLabels:
+    - mid-chat
+    - qwen-chat
+  litellm:
+    enabled: true
+    servedModelName: qwen3-14b-mlc
+    aliases:
+      - qwen3-14b-mlc
+      - mid-chat
+      - qwen-chat

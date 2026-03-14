@@ -136,6 +136,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Runtime controller - watches runtime pods for direct model loading
+	runtimeReconciler := &controllers.RuntimeReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}
+	if err = runtimeReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Runtime")
+		os.Exit(1)
+	}
+
 	// Model v1alpha2 controller - simplified single-resource API
 	if err = (&controllers.ModelReconciler{
 		Client:      mgr.GetClient(),
@@ -143,6 +153,7 @@ func main() {
 		Recorder:    mgr.GetEventRecorderFor("model-controller"),
 		APIReader:   mgr.GetAPIReader(),
 		GPUProfiles: gpuProfileReconciler,
+		Runtime:     runtimeReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Model")
 		os.Exit(1)

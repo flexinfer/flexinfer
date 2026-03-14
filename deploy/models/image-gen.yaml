@@ -1,0 +1,62 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: sdxl-turbo-imagegen
+  namespace: flexinfer-system
+spec:
+  backend: diffusers
+  source: HF://SG161222/RealVisXL_V5.0
+  gpu:
+    vendor: amd
+    shared: 7900xtx-image
+    priority: 100
+    count: 1
+    vramEstimateMB: 10000
+  serverless:
+    enabled: true
+    # Scaled to 0 for vLLM FA smoke test — restore to 1 after testing
+    minReplicas: 0
+    idleTimeout: 10m
+    coldStartTimeout: 10m
+  cache:
+    strategy: Local
+    hostPath: /mnt/nvme/flexinfer/models
+    flashLoader:
+      enabled: true
+      concurrency: 8
+      tmpfsSizeLimit: "20Gi"
+      bufferSizeKB: 4096
+      verifyIntegrity: true
+  config:
+    # RealVisXL V5.0 is a full SDXL model (~6.5GB fp16). Bulk .to("cuda")
+    # triggers ROCm memory access faults on gfx1100. CPU offload transfers
+    # components one at a time, avoiding the fault with ~20-30% overhead.
+    cpuOffload: "true"
+    # Use fp16 with the madebyollin/sdxl-vae-fp16-fix VAE to avoid NaN
+    # decode artifacts while halving VRAM usage vs fp32.
+    useFp16: "1"
+    vaeRepo: "madebyollin/sdxl-vae-fp16-fix"
+    vaePath: "/models/.vae/sdxl-vae-fp16-fix"
+    guidanceScale: "7.0"
+    numInferenceSteps: "40"
+    # DPM++ SDE Karras: recommended by RealVisXL V5.0 model card for best quality.
+    scheduler: "dpm++sde-karras"
+    # Default negative prompt for quality filtering. Callers can override per-request.
+    negativePrompt: "(worst quality, low quality, normal quality:2), blurry, jpeg artifacts, watermark, text, logo, signature, deformed, disfigured, bad anatomy, extra limbs"
+    hipVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "2"
+      memory: 12Gi
+    limits:
+      cpu: "4"
+      memory: 20Gi
+  serviceLabels:
+    - sdxl-image-gen
+  litellm:
+    enabled: true
+    servedModelName: sdxl-turbo-imagegen
+    aliases:
+      - sdxl-image-gen

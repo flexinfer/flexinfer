@@ -1,0 +1,46 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-32b-quality
+  namespace: flexinfer-system
+spec:
+  backend: mlc-llm
+  source: HF://mlc-ai/Qwen3-32B-q4f16_1-MLC
+  cache:
+    strategy: SharedPVC
+    storageClass: nvme-1r
+    size: 60Gi
+  gpu:
+    vendor: amd
+    shared: 7900xtx-quality
+    priority: 80
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    idleTimeout: 10m
+    coldStartTimeout: 180s
+  config:
+    mode: server
+    jitPolicy: "ON"
+    maxNumSequence: 2
+    maxTotalSeqLength: 32768
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 24Gi
+    limits:
+      cpu: "8"
+      memory: 32Gi
+  serviceLabels:
+    - quality-chat
+    - quality-text
+    - gpt-4
+  litellm:
+    enabled: false
+    # Disabled - using qwen3-14b-abliterated as primary model
+    # servedModelName: qwen3-32b-quality
+    # aliases:
+    #   - quality-chat
+    #   - gpt-4

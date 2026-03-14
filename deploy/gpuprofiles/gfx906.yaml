@@ -1,0 +1,55 @@
+# GPUProfile: AMD Vega20 (Radeon VII, gfx906)
+#
+# Node: cblevins-radeonvii (single dGPU, 16 GB HBM2)
+#
+# gfx906 hardware reports as gfx900 — HSA_OVERRIDE_GFX_VERSION=9.0.6 is
+# required for gfx906 ISA (bitsandbytes NF4 HIP kernels, etc.).
+# SDMA disabled for stability. SVM disabled to avoid hipMemGetInfo crash
+# (VMM not supported on Vega20, ROCm/ROCm#2433).
+#
+# diffusers/comfyui are experimental — ROCm images bake gfx1100 env vars,
+# runtime ROCmEnvVars overrides them but may have quirks.
+apiVersion: ai.flexinfer/v1alpha2
+kind: GPUProfile
+metadata:
+  name: gfx906
+  namespace: flexinfer-system
+spec:
+  architecture: gfx906
+  vendor: amd
+  vramMB: 16384
+  features:
+    fp16: true
+    bf16: false
+    fp8: false
+    flashAttention: false
+    int4: true
+    int8: true
+  backends:
+    vllm:
+      support: full
+    llamacpp:
+      support: full
+    diffusers:
+      support: experimental
+    ollama:
+      support: full
+    comfyui:
+      support: experimental
+    mlc-llm:
+      support: experimental
+  env:
+    - name: HSA_OVERRIDE_GFX_VERSION
+      value: "9.0.6"
+    - name: HSA_ENABLE_SDMA
+      value: "0"
+    - name: HSA_USE_SVM
+      value: "0"
+    - name: PYTORCH_ROCM_ARCH
+      value: gfx906
+  quantization:
+    supported:
+      - gptq
+      - gguf
+    images:
+      gptq: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx906

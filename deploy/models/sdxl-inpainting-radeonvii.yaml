@@ -1,0 +1,61 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: sdxl-inpainting-radeonvii
+  namespace: flexinfer-system
+spec:
+  backend: diffusers
+  source: HF://diffusers/stable-diffusion-xl-1.0-inpainting-0.1
+  gpu:
+    vendor: amd
+    shared: radeonvii-image
+    priority: 200
+    count: 1
+    vramEstimateMB: 12000
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 5m
+    coldStartTimeout: 10m
+  cache:
+    size: 20Gi
+    storageClass: nvme-1r
+    strategy: SharedPVC
+  config:
+    pipelineMode: inpainting
+    cpuOffload: 'true'
+    # SDXL inpainting on gfx906 returns gray/NaN decodes in fp16 without the
+    # fp16-fix VAE. Keep this path in fp32 until the VAE is staged alongside
+    # the model cache.
+    useFp16: '0'
+    strength: '0.75'
+    guidanceScale: '7.5'
+    numInferenceSteps: '30'
+    hipVisibleDevices: '0'
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  resources:
+    requests:
+      cpu: '2'
+      memory: 12Gi
+    limits:
+      cpu: '4'
+      memory: 20Gi
+  serviceLabels:
+  - image-edit
+  - inpainting
+  - sdxl-image-edit
+  - sdxl-inpainting
+  litellm:
+    enabled: true
+    servedModelName: sdxl-inpainting-radeonvii
+    aliases:
+    - image-edit
+    - inpainting
+    - sdxl-image-edit
+    - sdxl-inpainting
+    - image-edit-radeonvii
+  tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule

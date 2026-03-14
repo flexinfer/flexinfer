@@ -1,0 +1,63 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-vl-radeonvii
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  source: HF://Qwen/Qwen3-VL-8B-Instruct-GGUF
+  cache:
+    size: 10Gi
+    storageClass: nvme-1r
+    strategy: SharedPVC
+  gpu:
+    vendor: amd
+    shared: radeonvii-models
+    priority: 150
+    count: 1
+    vramEstimateMB: 12000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 10m
+    coldStartTimeout: 15m
+  config:
+    ggufFile: Qwen3VL-8B-Instruct-Q4_K_M.gguf
+    mmproj: /models/qwen3-vl-radeonvii/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
+    # mmproj has an absolute path so the controller skips it from HF allow_patterns;
+    # add it explicitly so the prefetch job downloads both files.
+    hfAllowPatterns: mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
+    contextSize: 8192
+    nGPULayers: 999
+    batchSize: 1024
+    ubatchSize: 512
+    parallel: 1
+    # Flash attention disabled on gfx906 (Vega20) -- controller sets HSA_ENABLE_SDMA=0.
+    flashAttention: false
+    cacheTypeK: q4_0
+    cacheTypeV: q4_0
+    jinja: true
+    metrics: true
+    # gfx906 lacks VMM support; hipMemGetInfo crashes without this.
+    fitOff: true
+    rocrVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  resources:
+    requests:
+      cpu: "4"
+      memory: 12Gi
+    limits:
+      cpu: "14"
+      memory: 20Gi
+  serviceLabels:
+    - vision
+    - ocr
+    - multimodal
+    - gpt-4o
+    - gpt-4-vision-preview
+  litellm:
+    enabled: true
+    servedModelName: qwen3-vl-radeonvii
+    aliases:
+      - qwen3-vl
