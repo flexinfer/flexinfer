@@ -158,7 +158,13 @@ func (p StreamPanel) View() string {
 		)
 		b.WriteString(scrollInfo)
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+
+	// Type distribution bar
+	if len(p.entries) > 0 {
+		b.WriteString(p.renderTypeDistribution())
+	}
+	b.WriteString("\n")
 
 	if len(filtered) == 0 {
 		msg := "  No activity yet"
@@ -199,6 +205,61 @@ func (p StreamPanel) View() string {
 	b.WriteString("\n")
 
 	return b.String()
+}
+
+func (p StreamPanel) renderTypeDistribution() string {
+	counts := make(map[string]int)
+	for _, e := range p.entries {
+		t := strings.ToLower(e.EntryType)
+		if t == "" {
+			t = "note"
+		}
+		counts[t]++
+	}
+	total := len(p.entries)
+	if total == 0 {
+		return ""
+	}
+
+	// Color map for entry types
+	colorMap := map[string]lipgloss.Color{
+		"decision": theme.ColorAccent,
+		"finding":  theme.ColorInfo,
+		"error":    theme.ColorError,
+		"action":   theme.ColorWarning,
+		"task":     theme.ColorWarning,
+		"note":     theme.ColorSuccess,
+	}
+
+	// Build compact distribution: "decision:12 finding:8 error:3"
+	order := []string{"decision", "finding", "error", "task", "action", "note"}
+	var parts []string
+	for _, t := range order {
+		c := counts[t]
+		if c == 0 {
+			continue
+		}
+		color, ok := colorMap[t]
+		if !ok {
+			color = theme.ColorFgMuted
+		}
+		parts = append(parts, lipgloss.NewStyle().Foreground(color).Render(fmt.Sprintf("%s:%d", t, c)))
+	}
+	// Any types not in the predefined list
+	for t, c := range counts {
+		found := false
+		for _, o := range order {
+			if t == o {
+				found = true
+				break
+			}
+		}
+		if !found {
+			parts = append(parts, lipgloss.NewStyle().Foreground(theme.ColorFgMuted).Render(fmt.Sprintf("%s:%d", t, c)))
+		}
+	}
+
+	return "  " + strings.Join(parts, "  ")
 }
 
 func (p StreamPanel) renderEntry(e StreamEntryData) string {

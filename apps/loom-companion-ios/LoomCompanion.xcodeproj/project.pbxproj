@@ -67,6 +67,9 @@
 		D5E6F7A8B9C00BE2F3A4B5C6 /* PulsingDot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5B6C7D8E9F00BB2C3D4E5F6 /* PulsingDot.swift */; };
 		D6E7F8A9B0C10CE3F4A5B6C7 /* SkeletonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6B7C8D9E0F10CB3C4D5E6F7 /* SkeletonView.swift */; };
 		D7E8F9A0B1C20DE4F5A6B7C8 /* StatusAccentBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B8C9D0E1F20DB4C5D6E7F8 /* StatusAccentBar.swift */; };
+		ECBC53C9569D4E455A97EE98 /* CompactSparkline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A15E75A7206DEAC8AC437FC /* CompactSparkline.swift */; };
+		21B9073FC3F71F47CA5027A4 /* ProportionBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84DDB8424E8346FA207D749B /* ProportionBar.swift */; };
+		6DABAFBC87911A6D14FD6DB0 /* ActiveWorkCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DEE749E1E283253EBAF6945 /* ActiveWorkCard.swift */; };
 		D8E9F0A1B2C30EE5F6A7B8C9 /* FleetCompositionChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8B9C0D1E2F30EB5C6D7E8F9 /* FleetCompositionChart.swift */; };
 		D9E0F1A2B3C40FE6F7A8B9C0 /* HealthGaugeChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9B0C1D2E3F40FB6C7D8E9F0 /* HealthGaugeChart.swift */; };
 		E0F1A2B3C4D510E7F8A9B0D1 /* MemoryTierChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0C1D2E3F4A510B7C8D9E0F1 /* MemoryTierChart.swift */; };
@@ -171,6 +174,9 @@
 		A5B6C7D8E9F00BB2C3D4E5F6 /* PulsingDot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulsingDot.swift; sourceTree = "<group>"; };
 		A6B7C8D9E0F10CB3C4D5E6F7 /* SkeletonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkeletonView.swift; sourceTree = "<group>"; };
 		A7B8C9D0E1F20DB4C5D6E7F8 /* StatusAccentBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusAccentBar.swift; sourceTree = "<group>"; };
+		2A15E75A7206DEAC8AC437FC /* CompactSparkline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompactSparkline.swift; sourceTree = "<group>"; };
+		84DDB8424E8346FA207D749B /* ProportionBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProportionBar.swift; sourceTree = "<group>"; };
+		7DEE749E1E283253EBAF6945 /* ActiveWorkCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveWorkCard.swift; sourceTree = "<group>"; };
 		A8B9C0D1E2F30EB5C6D7E8F9 /* FleetCompositionChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetCompositionChart.swift; sourceTree = "<group>"; };
 		A9B0C1D2E3F40FB6C7D8E9F0 /* HealthGaugeChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthGaugeChart.swift; sourceTree = "<group>"; };
 		B0C1D2E3F4A510B7C8D9E0F1 /* MemoryTierChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryTierChart.swift; sourceTree = "<group>"; };
@@ -392,6 +398,7 @@
 				1CF7388A60BCC73E46496965 /* FleetSummaryCard.swift */,
 				CFBB16BC786E0CA1239A1927 /* HealthStatusCard.swift */,
 				1F6913A8C8AD409B9046B8A0 /* TimelineListView.swift */,
+				7DEE749E1E283253EBAF6945 /* ActiveWorkCard.swift */,
 			);
 			path = Dashboard;
 			sourceTree = "<group>";
@@ -422,6 +429,8 @@
 				A5B6C7D8E9F00BB2C3D4E5F6 /* PulsingDot.swift */,
 				A6B7C8D9E0F10CB3C4D5E6F7 /* SkeletonView.swift */,
 				A7B8C9D0E1F20DB4C5D6E7F8 /* StatusAccentBar.swift */,
+				2A15E75A7206DEAC8AC437FC /* CompactSparkline.swift */,
+				84DDB8424E8346FA207D749B /* ProportionBar.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -580,6 +589,9 @@
 				D5E6F7A8B9C00BE2F3A4B5C6 /* PulsingDot.swift in Sources */,
 				D6E7F8A9B0C10CE3F4A5B6C7 /* SkeletonView.swift in Sources */,
 				D7E8F9A0B1C20DE4F5A6B7C8 /* StatusAccentBar.swift in Sources */,
+				ECBC53C9569D4E455A97EE98 /* CompactSparkline.swift in Sources */,
+				21B9073FC3F71F47CA5027A4 /* ProportionBar.swift in Sources */,
+				6DABAFBC87911A6D14FD6DB0 /* ActiveWorkCard.swift in Sources */,
 				D8E9F0A1B2C30EE5F6A7B8C9 /* FleetCompositionChart.swift in Sources */,
 				D9E0F1A2B3C40FE6F7A8B9C0 /* HealthGaugeChart.swift in Sources */,
 				E0F1A2B3C4D510E7F8A9B0D1 /* MemoryTierChart.swift in Sources */,

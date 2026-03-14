@@ -2,6 +2,7 @@
   import { streamStore } from '../stores/stream.svelte.ts';
   import { formatTime, entryVariant } from '../utils/format.ts';
   import Badge from '../widgets/Badge.svelte';
+  import SparkLine from '../widgets/SparkLine.svelte';
   import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
@@ -56,6 +57,32 @@
     streamStore.filterAgent = agent;
   }
 
+  // Event density: bucket entries into 12 time slices for sparkline
+  let densityData = $derived.by(() => {
+    if (entries.length < 2) return [];
+    const times = entries.map(e => new Date(e.timestamp).getTime()).filter(t => !isNaN(t));
+    if (times.length < 2) return [];
+    const min = Math.min(...times);
+    const max = Math.max(...times);
+    const span = max - min || 1;
+    const buckets = new Array(12).fill(0);
+    for (const t of times) {
+      const idx = Math.min(11, Math.floor(((t - min) / span) * 12));
+      buckets[idx]++;
+    }
+    return buckets;
+  });
+
+  // Entry type distribution counts
+  let typeCounts = $derived.by(() => {
+    const counts = {};
+    for (const e of entries) {
+      const t = e.entry_type ?? 'note';
+      counts[t] = (counts[t] || 0) + 1;
+    }
+    return counts;
+  });
+
   function typeBorderColor(type) {
     const map = {
       decision: 'var(--accent)',
@@ -107,6 +134,24 @@
     </div>
   </div>
 
+  <!-- Density strip -->
+  {#if densityData.length > 0 || Object.keys(typeCounts).length > 0}
+    <div class="density-strip">
+      {#if densityData.length > 0}
+        <SparkLine data={densityData} width={140} height={20} color="var(--accent)" />
+      {/if}
+      {#if Object.keys(typeCounts).length > 0}
+        <div class="type-dist">
+          {#each Object.entries(typeCounts).sort((a, b) => b[1] - a[1]) as [type, count]}
+            <span class="type-dist-item" style:border-color={typeBorderColor(type)}>
+              {type.replace('_', ' ')}: {count}
+            </span>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   <!-- Stream area -->
   <div class="stream-container" bind:this={streamEl}>
     {#if paused}
@@ -152,6 +197,29 @@
     border-bottom: 1px solid var(--border);
     gap: 12px;
     flex-wrap: wrap;
+  }
+
+  .density-strip {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+
+  .type-dist {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .type-dist-item {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--fg-muted);
+    border-left: 3px solid;
+    padding-left: 4px;
   }
 
   .filter-pills {

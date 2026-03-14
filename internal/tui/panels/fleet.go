@@ -384,6 +384,27 @@ func (p FleetPanel) renderSessionTable() string {
 			nsTokens += s.TokenCount
 		}
 		nsMeta := fmt.Sprintf("%s  (%d sessions, %d active, %s tok)", ns, len(nsSessions), nsActive, formatNumber(nsTokens))
+
+		// Coordination risk badges
+		if coord, ok := p.namespaceCoordination[ns]; ok {
+			var badges []string
+			if coord.BlockedTasks > 0 {
+				badges = append(badges, lipgloss.NewStyle().Foreground(theme.ColorError).Render(fmt.Sprintf("%d blocked", coord.BlockedTasks)))
+			}
+			if coord.ConflictFiles > 0 {
+				badges = append(badges, lipgloss.NewStyle().Foreground(theme.ColorWarning).Render(fmt.Sprintf("%d conflicts", coord.ConflictFiles)))
+			}
+			if coord.CrossAgentBlockers > 0 {
+				badges = append(badges, lipgloss.NewStyle().Foreground(theme.ColorError).Bold(true).Render(fmt.Sprintf("%d x-agent", coord.CrossAgentBlockers)))
+			}
+			if coord.OrphanTasks > 0 {
+				badges = append(badges, lipgloss.NewStyle().Foreground(theme.ColorFgMuted).Render(fmt.Sprintf("%d orphans", coord.OrphanTasks)))
+			}
+			if len(badges) > 0 {
+				nsMeta += "  " + strings.Join(badges, " · ")
+			}
+		}
+
 		indicator := "▾ "
 		if p.collapsedNS[ns] {
 			indicator = "▸ "

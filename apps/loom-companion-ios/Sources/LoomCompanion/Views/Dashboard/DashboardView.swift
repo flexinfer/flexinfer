@@ -35,6 +35,13 @@ struct DashboardView: View {
                         .cardAppear(index: 0)
                     FleetSummaryCard(dashboard: dashboard)
                         .cardAppear(index: 1)
+
+                    if let counts = viewModel.taskCounts,
+                       counts.pending + counts.inProgress + counts.blocked > 0 {
+                        ActiveWorkCard(counts: counts)
+                            .cardAppear(index: 2)
+                    }
+
                     #if canImport(Charts)
                     if !dashboard.recentTimeline.isEmpty {
                         LoomCard {
@@ -45,12 +52,12 @@ struct DashboardView: View {
                                 SessionTimelineChart(entries: dashboard.recentTimeline)
                             }
                         }
-                        .cardAppear(index: 2)
+                        .cardAppear(index: 3)
                     }
                     #endif
 
                     TimelineListView(entries: dashboard.recentTimeline)
-                        .cardAppear(index: 3)
+                        .cardAppear(index: 4)
 
                     if let agoText = Self.relativeTime(dashboard.updatedAt) {
                         HStack {

@@ -12,6 +12,7 @@
   import BulkToolbar from './shared/BulkToolbar.svelte';
   import DetailDrawer from './shared/DetailDrawer.svelte';
   import EmptyState from './shared/EmptyState.svelte';
+  import DagView from '../widgets/DagView.svelte';
 
   // --- GitLab issue-reference linking ---
   const GITLAB_BASE = 'https://gitlab.flexinfer.ai';
@@ -438,6 +439,25 @@
     tasks.filter((task) => task.status === 'blocked' && task.blocked_by?.length).length
   );
 
+  // Build DAG steps from blocked tasks and their blockers
+  let blockerDagSteps = $derived.by(() => {
+    if (activeBlockers.length === 0) return [];
+    const seen = new Map();
+    for (const b of activeBlockers) {
+      if (!seen.has(b.task_id)) {
+        seen.set(b.task_id, { id: b.task_id, name: (b.task_title || b.task_id).slice(0, 20), status: 'blocked', depends_on: [] });
+      }
+      const blockerTaskId = b.blocked_by_task_id;
+      if (blockerTaskId) {
+        seen.get(b.task_id).depends_on.push(blockerTaskId);
+        if (!seen.has(blockerTaskId)) {
+          seen.set(blockerTaskId, { id: blockerTaskId, name: (b.blocked_by_task_title || blockerTaskId).slice(0, 20), status: b.blocked_by_status || 'pending', depends_on: [] });
+        }
+      }
+    }
+    return Array.from(seen.values());
+  });
+
   function selectTask(task) {
     selectedTask = selectedTask?.id === task.id ? null : task;
   }
@@ -690,7 +710,11 @@
 
       <section class="radar-card">
         <div class="radar-label">Active Blockers</div>
-        {#if activeBlockers.length > 0}
+        {#if blockerDagSteps.length > 1}
+          <div class="blocker-dag">
+            <DagView steps={blockerDagSteps} />
+          </div>
+        {:else if activeBlockers.length > 0}
           <div class="radar-stack">
             {#each activeBlockers.slice(0, 5) as blocker}
               <div class="radar-list-item">
@@ -1032,6 +1056,12 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+  }
+
+  .blocker-dag {
+    max-height: 200px;
+    overflow: auto;
+    margin-top: 4px;
   }
 
   .radar-label {

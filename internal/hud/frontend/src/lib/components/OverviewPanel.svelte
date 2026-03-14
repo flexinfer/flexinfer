@@ -296,10 +296,11 @@
 
   <div class="overview-grid">
     <!-- Fleet tile -->
-    <button class="tile" onclick={() => navigate('fleet')}>
+    <button class="tile" class:tile-warn={coordinationSummary.conflict_files > 0} onclick={() => navigate('fleet')}>
       <div class="tile-header">
         <span class="tile-icon">◈</span>
         <span class="tile-title">Fleet</span>
+        {#if coordinationSummary.conflict_files > 0}<span class="tile-badge-alert">{coordinationSummary.conflict_files}</span>{/if}
       </div>
       <div class="tile-body">
         <div class="tile-metric">{sessionCount} <span class="tile-unit">sessions</span></div>
@@ -309,10 +310,11 @@
     </button>
 
     <!-- Health tile -->
-    <button class="tile" onclick={() => navigate('servers')}>
+    <button class="tile" class:tile-warn={downCount > 0} onclick={() => navigate('servers')}>
       <div class="tile-header">
         <span class="tile-icon">♥</span>
         <span class="tile-title">Health</span>
+        {#if downCount > 0}<span class="tile-badge-alert">{downCount}</span>{/if}
       </div>
       <div class="tile-body">
         <div class="tile-metric-row">
@@ -332,10 +334,11 @@
     </button>
 
     <!-- Tasks tile -->
-    <button class="tile" onclick={() => navigate('tasks')}>
+    <button class="tile" class:tile-warn={blockedTasks > 0} onclick={() => navigate('tasks')}>
       <div class="tile-header">
         <span class="tile-icon">☑</span>
         <span class="tile-title">Tasks</span>
+        {#if blockedTasks > 0}<span class="tile-badge-alert">{blockedTasks}</span>{/if}
       </div>
       <div class="tile-body">
         <div class="tile-metric-row">
@@ -734,6 +737,26 @@
 
   .tile-progress-fill.health-warn {
     background: var(--warning);
+  }
+
+  .tile-warn {
+    border-color: rgba(231, 179, 18, 0.35);
+    box-shadow: inset 0 0 0 1px rgba(231, 179, 18, 0.08);
+  }
+
+  .tile-badge-alert {
+    margin-left: auto;
+    font-size: 9px;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    min-width: 16px;
+    height: 16px;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 8px;
+    background: var(--warning);
+    color: var(--bg-primary);
+    padding: 0 4px;
   }
 
   .tile-alert-bg {

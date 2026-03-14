@@ -328,7 +328,39 @@ func (p TasksPanel) renderSelectedTaskDetails(task TaskData) string {
 	info := lipgloss.NewStyle().Foreground(theme.ColorInfo)
 
 	var b strings.Builder
-	b.WriteString(headerStyle.Render("DEPENDENCY RELATIONS"))
+	b.WriteString(headerStyle.Render("DEPENDENCY CHAIN"))
+	b.WriteString("\n")
+
+	// ASCII dependency tree
+	taskTitle := truncate(task.Title, max(20, p.width-16))
+	b.WriteString("  " + lipgloss.NewStyle().Foreground(theme.ColorError).Render(taskTitle))
+	b.WriteString("\n")
+	for i, blocker := range related {
+		connector := "  ├── "
+		if i == len(related)-1 {
+			connector = "  └── "
+		}
+		targetTitle := blocker.BlockedByTaskTitle
+		if targetTitle == "" {
+			targetTitle = blocker.BlockedByTaskID
+		}
+		statusColor := lipgloss.NewStyle().Foreground(theme.ColorFgMuted)
+		if blocker.BlockedByStatus == "in_progress" || blocker.BlockedByStatus == "active" {
+			statusColor = lipgloss.NewStyle().Foreground(theme.ColorSuccess)
+		} else if blocker.Resolved {
+			statusColor = lipgloss.NewStyle().Foreground(theme.ColorFgMuted)
+		}
+		statusLabel := statusColor.Render("[" + blocker.BlockedByStatus + "]")
+		xAgent := ""
+		if blocker.CrossAgent {
+			xAgent = " " + warn.Render("x-agent")
+		}
+		b.WriteString(muted.Render(connector) + truncate(targetTitle, max(16, p.width-30)) + " " + statusLabel + xAgent)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+
+	b.WriteString(headerStyle.Render("RELATION DETAILS"))
 	b.WriteString("\n")
 	for _, blocker := range related {
 		badge := info.Render("local")

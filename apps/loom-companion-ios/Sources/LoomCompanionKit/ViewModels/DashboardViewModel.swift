@@ -6,6 +6,7 @@ public final class DashboardViewModel {
     public var dashboard: DashboardData?
     public var isLoading = false
     public var error: LoomAPIError?
+    public var taskCounts: MobileTaskCounts?
 
     @ObservationIgnored
     private let apiClient: any LoomAPIClientProtocol
@@ -32,6 +33,14 @@ public final class DashboardViewModel {
             error = err
         } catch {
             self.error = .networkError(underlying: error.localizedDescription)
+        }
+
+        // Fetch task counts (best-effort, non-blocking)
+        do {
+            let response: MobileTasksResponse = try await apiClient.request(.tasks(limit: 1))
+            taskCounts = response.counts
+        } catch {
+            // Non-critical — dashboard works without task counts
         }
     }
 
