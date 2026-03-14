@@ -192,6 +192,10 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 
 	m.active = loaded
 
+	// Clear any previous model state metrics.
+	ModelActiveState.Reset()
+	ModelActiveState.WithLabelValues(name, req.Backend, "Loading").Set(1)
+
 	logger.Info("Starting backend subprocess",
 		"executable", executable,
 		"args", execArgs,
@@ -202,11 +206,16 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		loaded.State = ModelStateFailed
 		loaded.Error = err.Error()
 		cancel()
+		ModelLoadsTotal.WithLabelValues(req.Backend, "error").Inc()
+		ModelActiveState.Reset()
+		ModelActiveState.WithLabelValues(name, req.Backend, "Failed").Set(1)
 		return fmt.Errorf("failed to start backend: %w", err)
 	}
 
 	loaded.PID = cmd.Process.Pid
 	loaded.LoadedAt = time.Now()
+
+	ModelLoadsTotal.WithLabelValues(req.Backend, "ok").Inc()
 
 	// Stream subprocess output to logger.
 	go streamLogs(stdout, logger, "stdout")
@@ -267,6 +276,8 @@ func (m *Manager) unloadLocked(ctx context.Context) error {
 		m.active.cancel()
 	}
 
+	ModelUnloadsTotal.WithLabelValues(m.active.Backend, "requested").Inc()
+	ModelActiveState.Reset()
 	m.active = nil
 	return nil
 }
@@ -345,6 +356,9 @@ func (m *Manager) monitorProcess(ctx context.Context, name string, cmd *exec.Cmd
 			logger.Error(err, "Backend subprocess crashed")
 			m.active.State = ModelStateFailed
 			m.active.Error = err.Error()
+			BackendSubprocessCrashesTotal.WithLabelValues(name, m.active.Backend).Inc()
+			ModelActiveState.Reset()
+			ModelActiveState.WithLabelValues(name, m.active.Backend, "Failed").Set(1)
 		}
 	}
 }
@@ -389,6 +403,8 @@ func (m *Manager) healthCheckLoop(ctx context.Context, name string, b backend.Ba
 				m.active.State = ModelStateFailed
 				m.active.Error = "startup timeout exceeded"
 				logger.Error(nil, "Backend startup timeout exceeded")
+				ModelActiveState.Reset()
+				ModelActiveState.WithLabelValues(name, m.active.Backend, "Failed").Set(1)
 			}
 			m.mu.Unlock()
 			return
@@ -398,6 +414,9 @@ func (m *Manager) healthCheckLoop(ctx context.Context, name string, b backend.Ba
 				if m.active != nil && m.active.Name == name && m.active.State == ModelStateLoading {
 					m.active.State = ModelStateReady
 					logger.Info("Model is ready", "healthURL", healthURL)
+					ModelActiveState.Reset()
+					ModelActiveState.WithLabelValues(name, m.active.Backend, "Ready").Set(1)
+					ModelLoadDurationSeconds.WithLabelValues(name, m.active.Backend).Observe(time.Since(m.active.LoadedAt).Seconds())
 				}
 				m.mu.Unlock()
 
@@ -435,6 +454,9 @@ func (m *Manager) continuousHealthCheck(ctx context.Context, name, healthURL str
 					m.active.State = ModelStateFailed
 					m.active.Error = "health check failed"
 					logger.Error(nil, "Backend health check failed, marking model as failed")
+					HealthCheckFailuresTotal.WithLabelValues(name, m.active.Backend).Inc()
+					ModelActiveState.Reset()
+					ModelActiveState.WithLabelValues(name, m.active.Backend, "Failed").Set(1)
 				}
 				m.mu.Unlock()
 				return

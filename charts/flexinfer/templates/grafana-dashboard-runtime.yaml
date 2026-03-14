@@ -1,0 +1,597 @@
+{{- if and .Values.grafanaDashboard.enabled .Values.runtime.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-grafana-dashboard-runtime
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  flexinfer-runtime.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "title": "Runtime Fleet Overview",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Runtime Nodes",
+          "description": "Active runtime instances with GPU info",
+          "type": "table",
+          "gridPos": { "x": 0, "y": 1, "w": 12, "h": 6 },
+          "targets": [
+            {
+              "expr": "flexinfer_runtime_info == 1",
+              "legendFormat": "",
+              "refId": "A",
+              "format": "table",
+              "instant": true
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "container": true, "endpoint": true, "namespace": true, "service": true, "pod": true },
+                "renameByName": { "node": "Node", "gpu_vendor": "Vendor", "gpu_arch": "Architecture" }
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "align": "left", "cellOptions": { "type": "color-text" } },
+              "color": { "mode": "fixed", "fixedColor": "green" }
+            }
+          },
+          "options": { "showHeader": true, "cellHeight": "sm" }
+        },
+        {
+          "title": "Runtime Uptime",
+          "description": "How long each runtime has been running",
+          "type": "stat",
+          "gridPos": { "x": 12, "y": 1, "w": 6, "h": 6 },
+          "targets": [
+            {
+              "expr": "flexinfer_runtime_uptime_seconds",
+              "legendFormat": "{{ "{{" }}pod{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "color": { "mode": "palette-classic" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "horizontal",
+            "textMode": "value_and_name",
+            "colorMode": "value"
+          }
+        },
+        {
+          "title": "Active Models",
+          "description": "Currently loaded models per runtime",
+          "type": "table",
+          "gridPos": { "x": 18, "y": 1, "w": 6, "h": 6 },
+          "targets": [
+            {
+              "expr": "flexinfer_runtime_model_state{state=\"Ready\"} == 1",
+              "legendFormat": "",
+              "refId": "A",
+              "format": "table",
+              "instant": true
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "container": true, "endpoint": true, "namespace": true, "service": true, "pod": true, "state": true },
+                "renameByName": { "model": "Model", "backend": "Backend" }
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "align": "left", "cellOptions": { "type": "color-text" } },
+              "color": { "mode": "fixed", "fixedColor": "blue" }
+            }
+          },
+          "options": { "showHeader": true, "cellHeight": "sm" }
+        },
+        {
+          "title": "GPU VRAM",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 7, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "VRAM Usage",
+          "description": "GPU VRAM utilization over time",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 8, "w": 16, "h": 8 },
+          "targets": [
+            {
+              "expr": "flexinfer_runtime_gpu_vram_used_bytes / 1024 / 1024",
+              "legendFormat": "Used ({{ "{{" }}gpu_arch{{ "}}" }})",
+              "refId": "A"
+            },
+            {
+              "expr": "flexinfer_runtime_gpu_vram_total_bytes / 1024 / 1024",
+              "legendFormat": "Total ({{ "{{" }}gpu_arch{{ "}}" }})",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "decmbytes",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 15,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byRegexp", "options": "Total.*" },
+                "properties": [
+                  { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+                  { "id": "custom.fillOpacity", "value": 0 }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "title": "VRAM Utilization %",
+          "description": "Percentage of VRAM in use",
+          "type": "gauge",
+          "gridPos": { "x": 16, "y": 8, "w": 8, "h": 8 },
+          "targets": [
+            {
+              "expr": "flexinfer_runtime_gpu_vram_used_bytes / flexinfer_runtime_gpu_vram_total_bytes * 100",
+              "legendFormat": "{{ "{{" }}gpu_arch{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "min": 0,
+              "max": 100,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 70 },
+                  { "color": "orange", "value": 85 },
+                  { "color": "red", "value": 95 }
+                ]
+              },
+              "color": { "mode": "thresholds" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "auto",
+            "showThresholdLabels": false,
+            "showThresholdMarkers": true
+          }
+        },
+        {
+          "title": "GPU Temperature",
+          "description": "GPU core temperature",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 16, "w": 12, "h": 6 },
+          "targets": [
+            {
+              "expr": "flexinfer_runtime_gpu_temperature_celsius",
+              "legendFormat": "{{ "{{" }}gpu_arch{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "celsius",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 75 },
+                  { "color": "red", "value": 90 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "VRAM Free per Node",
+          "description": "Available VRAM for model loading",
+          "type": "stat",
+          "gridPos": { "x": 12, "y": 16, "w": 12, "h": 6 },
+          "targets": [
+            {
+              "expr": "flexinfer_runtime_gpu_vram_free_bytes / 1024 / 1024",
+              "legendFormat": "{{ "{{" }}gpu_arch{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "decmbytes",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 2048 },
+                  { "color": "green", "value": 8192 }
+                ]
+              },
+              "color": { "mode": "thresholds" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "horizontal",
+            "textMode": "value_and_name",
+            "colorMode": "background"
+          }
+        },
+        {
+          "title": "Model Lifecycle",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 22, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Model Loads",
+          "description": "Model load operations over time",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 23, "w": 8, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (backend, result) (rate(flexinfer_runtime_model_loads_total[5m]))",
+              "legendFormat": "{{ "{{" }}backend{{ "}}" }} ({{ "{{" }}result{{ "}}" }})",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {
+                "drawStyle": "bars",
+                "lineInterpolation": "linear",
+                "fillOpacity": 50,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "normal" }
+              },
+              "color": { "mode": "palette-classic" }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byRegexp", "options": ".*error.*" },
+                "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+              }
+            ]
+          }
+        },
+        {
+          "title": "Model Load Duration",
+          "description": "Time from load request to model Ready (p50, p95)",
+          "type": "timeseries",
+          "gridPos": { "x": 8, "y": 23, "w": 8, "h": 8 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum by (le, model) (rate(flexinfer_runtime_model_load_duration_seconds_bucket[15m])))",
+              "legendFormat": "p50 - {{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, model) (rate(flexinfer_runtime_model_load_duration_seconds_bucket[15m])))",
+              "legendFormat": "p95 - {{ "{{" }}model{{ "}}" }}",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Model Unloads",
+          "description": "Model unload operations over time",
+          "type": "timeseries",
+          "gridPos": { "x": 16, "y": 23, "w": 8, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (backend, reason) (rate(flexinfer_runtime_model_unloads_total[5m]))",
+              "legendFormat": "{{ "{{" }}backend{{ "}}" }} ({{ "{{" }}reason{{ "}}" }})",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {
+                "drawStyle": "bars",
+                "lineInterpolation": "linear",
+                "fillOpacity": 50,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "normal" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Reliability",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 31, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Backend Crashes",
+          "description": "Unexpected backend subprocess exits",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 32, "w": 12, "h": 6 },
+          "targets": [
+            {
+              "expr": "sum by (model, backend) (rate(flexinfer_runtime_backend_crashes_total[15m]))",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }} ({{ "{{" }}backend{{ "}}" }})",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {
+                "drawStyle": "bars",
+                "lineInterpolation": "linear",
+                "fillOpacity": 50,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "fixed", "fixedColor": "red" }
+            }
+          }
+        },
+        {
+          "title": "Health Check Failures",
+          "description": "Backend health check failures leading to model marking as failed",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 32, "w": 12, "h": 6 },
+          "targets": [
+            {
+              "expr": "sum by (model, backend) (rate(flexinfer_runtime_health_check_failures_total[15m]))",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }} ({{ "{{" }}backend{{ "}}" }})",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": {
+                "drawStyle": "bars",
+                "lineInterpolation": "linear",
+                "fillOpacity": 50,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "fixed", "fixedColor": "orange" }
+            }
+          }
+        },
+        {
+          "title": "Totals Summary",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 38, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Total Loads (all time)",
+          "type": "stat",
+          "gridPos": { "x": 0, "y": 39, "w": 6, "h": 4 },
+          "targets": [
+            {
+              "expr": "sum(flexinfer_runtime_model_loads_total{result=\"ok\"})",
+              "legendFormat": "Successful",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": { "mode": "fixed", "fixedColor": "green" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "textMode": "value_and_name",
+            "colorMode": "value"
+          }
+        },
+        {
+          "title": "Total Crashes (all time)",
+          "type": "stat",
+          "gridPos": { "x": 6, "y": 39, "w": 6, "h": 4 },
+          "targets": [
+            {
+              "expr": "sum(flexinfer_runtime_backend_crashes_total) or vector(0)",
+              "legendFormat": "Crashes",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "red", "value": 5 }
+                ]
+              },
+              "color": { "mode": "thresholds" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "textMode": "value_and_name",
+            "colorMode": "background"
+          }
+        },
+        {
+          "title": "Total Load Errors (all time)",
+          "type": "stat",
+          "gridPos": { "x": 12, "y": 39, "w": 6, "h": 4 },
+          "targets": [
+            {
+              "expr": "sum(flexinfer_runtime_model_loads_total{result=\"error\"}) or vector(0)",
+              "legendFormat": "Errors",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 1 },
+                  { "color": "red", "value": 5 }
+                ]
+              },
+              "color": { "mode": "thresholds" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "textMode": "value_and_name",
+            "colorMode": "background"
+          }
+        },
+        {
+          "title": "Total Unloads (all time)",
+          "type": "stat",
+          "gridPos": { "x": 18, "y": 39, "w": 6, "h": 4 },
+          "targets": [
+            {
+              "expr": "sum(flexinfer_runtime_model_unloads_total)",
+              "legendFormat": "Unloads",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": { "mode": "fixed", "fixedColor": "blue" }
+            }
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "textMode": "value_and_name",
+            "colorMode": "value"
+          }
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 36,
+      "style": "dark",
+      "tags": ["flexinfer", "runtime", "gpu"],
+      "templating": {
+        "list": [
+          {
+            "allValue": ".*",
+            "current": { "selected": true, "text": "All", "value": "$__all" },
+            "datasource": "Prometheus",
+            "definition": "label_values(flexinfer_runtime_info, gpu_arch)",
+            "hide": 0,
+            "includeAll": true,
+            "label": "GPU Arch",
+            "multi": true,
+            "name": "gpu_arch",
+            "query": "label_values(flexinfer_runtime_info, gpu_arch)",
+            "refresh": 2,
+            "regex": "",
+            "sort": 1,
+            "type": "query"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "",
+      "title": "FlexInfer Runtime",
+      "uid": "flexinfer-runtime",
+      "version": 1,
+      "weekStart": ""
+    }
+{{- end }}

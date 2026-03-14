@@ -68,6 +68,16 @@ func main() {
 		gpuVendor = "cpu"
 	}
 
+	// Register Prometheus metrics for the runtime.
+	runtime.RegisterMetrics()
+
+	// Set runtime info gauge.
+	nodeName := os.Getenv("NODE_NAME")
+	if nodeName == "" {
+		nodeName, _ = os.Hostname()
+	}
+	runtime.RuntimeInfo.WithLabelValues(nodeName, gpuVendor, gpuArch).Set(1)
+
 	logger.Info("Starting flexinfer-runtime",
 		"listenAddr", listenAddr,
 		"gpuVendor", gpuVendor,
@@ -75,6 +85,25 @@ func main() {
 		"modelBasePath", modelBasePath,
 		"backends", backend.List(),
 	)
+
+	startTime := time.Now()
+
+	// Background goroutine to update uptime and GPU metrics.
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			runtime.RuntimeUptimeSeconds.Set(time.Since(startTime).Seconds())
+
+			gpuInfo := runtime.QueryGPU(gpuVendor, gpuArch)
+			runtime.GPUVRAMTotalBytesRT.WithLabelValues(gpuVendor, gpuArch).Set(float64(gpuInfo.VRAMTotalMB) * 1024 * 1024)
+			runtime.GPUVRAMUsedBytesRT.WithLabelValues(gpuVendor, gpuArch).Set(float64(gpuInfo.VRAMUsedMB) * 1024 * 1024)
+			runtime.GPUVRAMFreeBytesRT.WithLabelValues(gpuVendor, gpuArch).Set(float64(gpuInfo.VRAMFreeMB) * 1024 * 1024)
+			runtime.GPUTemperatureCelsiusRT.WithLabelValues(gpuVendor, gpuArch).Set(gpuInfo.Temperature)
+
+			<-ticker.C
+		}
+	}()
 
 	mgr := runtime.NewManager(runtime.ManagerConfig{
 		GPUVendor:           backend.GPUVendor(gpuVendor),

@@ -44,6 +44,9 @@ WORKDIR /opt/src
 RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
 
 WORKDIR /opt/src/llama.cpp
+# llama.cpp b8173+ uses CUDA Driver API (VMM: cuMemCreate, cuMemMap).
+# Link stubs so the linker can resolve these symbols at build time.
+RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/libcuda.so.1 && ldconfig
 RUN cmake -B build -G Ninja \
     -DGGML_CUDA=ON \
     -DGGML_NATIVE=OFF \
