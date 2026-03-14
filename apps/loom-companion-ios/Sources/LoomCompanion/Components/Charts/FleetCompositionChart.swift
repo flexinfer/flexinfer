@@ -12,7 +12,7 @@ struct FleetCompositionChart: View {
     private var segments: [(label: String, value: Int, color: Color)] {
         [
             ("Active", active, LoomColors.statusHealthy),
-            ("Idle", idle, LoomColors.statusDegraded),
+            ("Idle", idle, LoomColors.statusIdle),
             ("Offline", offline, LoomColors.statusCritical),
         ].filter { $0.value > 0 }
     }

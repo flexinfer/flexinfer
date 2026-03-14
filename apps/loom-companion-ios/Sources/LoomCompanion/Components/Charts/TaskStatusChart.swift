@@ -14,7 +14,7 @@ struct TaskStatusChart: View {
         [
             ("Pending", pending, LoomColors.statusIdle),
             ("Active", inProgress, LoomColors.statusActive),
-            ("Blocked", blocked, LoomColors.statusCritical),
+            ("Blocked", blocked, LoomColors.statusBlocked),
             ("Done", completed, LoomColors.statusHealthy),
         ]
     }

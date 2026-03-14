@@ -12,6 +12,8 @@
   import { rbacStore } from '../stores/rbac.svelte.ts';
   import { coordinationStore } from '../stores/coordination.svelte.ts';
   import SparkLine from '../widgets/SparkLine.svelte';
+  import Gauge from '../widgets/Gauge.svelte';
+  import DonutChart from '../widgets/DonutChart.svelte';
 
   /**
    * OverviewPanel renders a KPI strip at the top followed by all panels
@@ -320,9 +322,7 @@
           {/if}
         </div>
         {#if serverCount > 0}
-          <div class="tile-progress-track">
-            <div class="tile-progress-fill" class:health-warn={downCount > 0} style="width: {(healthyCount / serverCount * 100).toFixed(0)}%"></div>
-          </div>
+          <Gauge value={healthyCount} max={serverCount} color="var(--success)" showPercentage={false} />
         {/if}
         <div class="tile-detail" class:tile-alert={downCount > 0}>
           {downCount > 0 ? `${downCount} down` : 'all healthy'}
@@ -338,8 +338,27 @@
         <span class="tile-title">Tasks</span>
       </div>
       <div class="tile-body">
-        <div class="tile-metric">{pendingTasks} <span class="tile-unit">pending</span></div>
-        <div class="tile-detail">{activeTasks} active · {blockedTasks} blocked · {coordinationSummary.cross_agent_blockers} x-agent</div>
+        <div class="tile-metric-row">
+          <div>
+            <div class="tile-metric">{pendingTasks} <span class="tile-unit">pending</span></div>
+            <div class="tile-detail">{activeTasks} active · {blockedTasks} blocked</div>
+          </div>
+          {#if pendingTasks + activeTasks + blockedTasks > 0}
+            <DonutChart
+              segments={[
+                { label: 'Pending', value: pendingTasks, color: 'var(--warning)' },
+                { label: 'Active', value: activeTasks, color: 'var(--success)' },
+                { label: 'Blocked', value: blockedTasks, color: 'var(--error)' },
+              ]}
+              size={48}
+              thickness={6}
+              centerValue={String(pendingTasks + activeTasks + blockedTasks)}
+            />
+          {/if}
+        </div>
+        {#if coordinationSummary.cross_agent_blockers > 0}
+          <div class="tile-detail tile-alert">{coordinationSummary.cross_agent_blockers} x-agent blockers</div>
+        {/if}
       </div>
       {#if agoText(taskStore.lastUpdated)}<div class="tile-footer">{agoText(taskStore.lastUpdated)}</div>{/if}
     </button>
@@ -353,9 +372,9 @@
       <div class="tile-body">
         <div class="tile-metric-row">
           <div class="tile-metric tile-tier">
-            <span class="tier-w">{workingItems}</span>
-            <span class="tier-s">{shortItems}</span>
-            <span class="tier-l">{longItems}</span>
+            <span class="tier-w" title="Working memory">{workingItems}<span class="tier-label">W</span></span>
+            <span class="tier-s" title="Short-term memory">{shortItems}<span class="tier-label">S</span></span>
+            <span class="tier-l" title="Long-term memory">{longItems}<span class="tier-label">L</span></span>
           </div>
           {#if memoryHistory.length >= 2}
             <SparkLine data={memoryHistory} width={60} height={24} color="var(--tier-short)" />
@@ -663,6 +682,14 @@
   .tier-w { color: var(--tier-working); }
   .tier-s { color: var(--tier-short); }
   .tier-l { color: var(--tier-long); }
+
+  .tier-label {
+    font-size: 9px;
+    font-weight: 400;
+    opacity: 0.6;
+    margin-left: 1px;
+    vertical-align: super;
+  }
 
   .kpi-value-row {
     display: flex;

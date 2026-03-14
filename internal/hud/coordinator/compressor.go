@@ -2,7 +2,6 @@ package coordinator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -65,9 +64,8 @@ func (c *Compressor) CompressItem(ctx context.Context, item bridge.MemoryItem) (
 		return nil, fmt.Errorf("compress item %s: %w", item.ID, err)
 	}
 
-	raw = stripCodeFence(raw)
 	var result CompressionResult
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := decodeStructuredJSON(raw, &result); err != nil {
 		return nil, fmt.Errorf("parse compression result: %w", err)
 	}
 
@@ -98,11 +96,10 @@ func (c *Compressor) SuggestMerges(ctx context.Context, items []bridge.MemoryIte
 		return nil, fmt.Errorf("suggest merges: %w", err)
 	}
 
-	raw = stripCodeFence(raw)
 	var result struct {
 		MergeGroups []MergeSuggestion `json:"merge_groups"`
 	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := decodeStructuredJSON(raw, &result); err != nil {
 		return nil, fmt.Errorf("parse merge suggestions: %w", err)
 	}
 

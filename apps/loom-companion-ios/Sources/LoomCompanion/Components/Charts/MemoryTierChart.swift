@@ -17,9 +17,9 @@ struct MemoryTierChart: View {
 
     private var tiers: [TierData] {
         [
-            TierData(id: "working", label: "Working", tokens: stats.workingMemory.tokens, items: stats.workingMemory.items, color: LoomColors.statusActive),
-            TierData(id: "short", label: "Short-term", tokens: stats.shortTermMemory.tokens, items: stats.shortTermMemory.items, color: LoomColors.statusDegraded),
-            TierData(id: "long", label: "Long-term", tokens: stats.longTermMemory.tokens, items: stats.longTermMemory.items, color: LoomColors.statusHealthy),
+            TierData(id: "working", label: "Working", tokens: stats.workingMemory.tokens, items: stats.workingMemory.items, color: LoomColors.tierWorking),
+            TierData(id: "short", label: "Short-term", tokens: stats.shortTermMemory.tokens, items: stats.shortTermMemory.items, color: LoomColors.tierShortTerm),
+            TierData(id: "long", label: "Long-term", tokens: stats.longTermMemory.tokens, items: stats.longTermMemory.items, color: LoomColors.tierLongTerm),
         ]
     }
 

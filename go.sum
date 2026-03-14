@@ -351,6 +351,8 @@ github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9dec
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
 gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel v0.0.0-20260308185316-26b85a3e3d55 h1:xtELdbM4HUFIY7L8JX2uT8n992Vjr7t3dXp0XDJ9m2w=
 gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel v0.0.0-20260308185316-26b85a3e3d55/go.mod h1:VJQRTLn0pxXI2MHqkjxtle3g0ec+5C1BEs6BUnZdvOY=
+gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel v0.0.0-20260314151339-a89f6d227a86 h1:FzaMWqoomh0OOsWjPEm3jOFIWXGBDzy5r6Qssq85W4I=
+gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel v0.0.0-20260314151339-a89f6d227a86/go.mod h1:VJQRTLn0pxXI2MHqkjxtle3g0ec+5C1BEs6BUnZdvOY=
 gitlab.flexinfer.ai/libs/fi-mcp-kit v0.2.1-0.20260308234252-a1c8b5e09f3d h1:AuZW1O96DZmTv5KsJwWS8cKDw59q5m14CiqtQMsCn3Y=
 gitlab.flexinfer.ai/libs/fi-mcp-kit v0.2.1-0.20260308234252-a1c8b5e09f3d/go.mod h1:7ffh/+hY0tkkUdAjeodVk5DlcwQNCrhNhLsS8nRKpo0=
 gitlab.flexinfer.ai/libs/mcp-go v0.2.1-0.20260303153918-d2e5fba8ab13 h1:bIefr2D8heG4FbTSiFB+U8y0+AE3yAEaGmhSwj75mV4=

@@ -2,7 +2,6 @@ package coordinator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -66,12 +65,11 @@ func (e *Extractor) ExtractFromEntries(ctx context.Context, entries []bridge.Con
 		return nil, nil, fmt.Errorf("entity extraction: %w", err)
 	}
 
-	raw = stripCodeFence(raw)
 	var result struct {
 		Entities  []ExtractedEntity   `json:"entities"`
 		Relations []ExtractedRelation `json:"relations"`
 	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := decodeStructuredJSON(raw, &result); err != nil {
 		return nil, nil, fmt.Errorf("parse extraction result: %w", err)
 	}
 

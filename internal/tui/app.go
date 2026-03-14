@@ -29,7 +29,8 @@ import (
 type Panel int
 
 const (
-	PanelFleet Panel = iota
+	PanelOverview Panel = iota
+	PanelFleet
 	PanelHealth
 	PanelTasks
 	PanelMemory
@@ -37,7 +38,7 @@ const (
 	PanelPresence
 )
 
-var panelNames = []string{"Fleet", "Health", "Tasks", "Memory", "Stream", "Presence"}
+var panelNames = []string{"Overview", "Fleet", "Health", "Tasks", "Memory", "Stream", "Presence"}
 
 // msgTick is sent on each refresh interval to trigger data fetches.
 type msgTick time.Time
@@ -56,6 +57,7 @@ type Model struct {
 	quitting bool
 
 	// Sub-models
+	overview panels.OverviewPanel
 	fleet    panels.FleetPanel
 	health   panels.HealthPanel
 	tasks    panels.TasksPanel
@@ -85,7 +87,8 @@ func New(client *Client) Model {
 
 	return Model{
 		client:   client,
-		active:   PanelFleet,
+		active:   PanelOverview,
+		overview: panels.NewOverviewPanel(),
 		fleet:    panels.NewFleetPanel(),
 		health:   panels.NewHealthPanel(),
 		tasks:    panels.NewTasksPanel(),
@@ -115,6 +118,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 
+		case key.Matches(msg, Keys.Overview):
+			m.active = PanelOverview
 		case key.Matches(msg, Keys.Fleet):
 			m.active = PanelFleet
 		case key.Matches(msg, Keys.Health):
@@ -147,6 +152,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Width:  m.layout.ContentW,
 			Height: m.layout.ContentH,
 		}
+		m.overview, _ = m.overview.Update(sizeMsg)
 		m.fleet, _ = m.fleet.Update(sizeMsg)
 		m.health, _ = m.health.Update(sizeMsg)
 		m.tasks, _ = m.tasks.Update(sizeMsg)
@@ -169,6 +175,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.memory, _ = m.memory.Update(msg.memory)
 		m.stream, _ = m.stream.Update(msg.stream)
 		m.presence, _ = m.presence.Update(msg.presence)
+		m.overview, _ = m.overview.Update(msg.overview)
 		m.refreshing = false
 		m.lastRefresh = time.Now()
 
@@ -180,6 +187,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case panels.MsgTasksData:
 		m.tasks, _ = m.tasks.Update(msg)
 	case panels.MsgMemoryData:
+		m.memory, _ = m.memory.Update(msg)
+	case panels.MsgMemoryItems:
 		m.memory, _ = m.memory.Update(msg)
 	case panels.MsgStreamData:
 		m.stream, _ = m.stream.Update(msg)
@@ -207,6 +216,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		var cmd tea.Cmd
 		switch m.active {
+		case PanelOverview:
+			m.overview, _ = m.overview.Update(keyMsg)
 		case PanelFleet:
 			m.fleet, cmd = m.fleet.Update(keyMsg)
 			cmds = append(cmds, cmd)
@@ -227,6 +238,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle task status cycle from the tasks panel.
 	if msg, ok := msg.(panels.MsgTaskStatusCycled); ok {
 		cmds = append(cmds, m.updateTaskStatus(msg.TaskID, msg.NewStatus))
+	}
+
+	// Handle memory tier expansion — fetch items for the requested tier.
+	if msg, ok := msg.(panels.MsgMemoryExpandTier); ok {
+		cmds = append(cmds, m.fetchMemoryItems(msg.Tier))
 	}
 
 	return m, tea.Batch(cmds...)
@@ -279,6 +295,8 @@ func (m Model) View() string {
 
 func (m Model) activeView() string {
 	switch m.active {
+	case PanelOverview:
+		return m.overview.View()
 	case PanelFleet:
 		return m.fleet.View()
 	case PanelHealth:
@@ -296,7 +314,7 @@ func (m Model) activeView() string {
 	}
 }
 
-var compactPanelNames = []string{"F", "H", "T", "M", "S", "P"}
+var compactPanelNames = []string{"O", "F", "H", "T", "M", "S", "P"}
 
 func (m Model) renderTabs() string {
 	compact := m.width < 60
@@ -453,14 +471,18 @@ func (m Model) fetchAll() tea.Cmd {
 		var memData panels.MsgMemoryData
 		if memStats != nil {
 			memData = panels.MsgMemoryData{
-				WorkingItems:  memStats.WorkingMemory.Items,
-				WorkingTokens: memStats.WorkingMemory.Tokens,
-				ShortItems:    memStats.ShortTermMemory.Items,
-				ShortTokens:   memStats.ShortTermMemory.Tokens,
-				LongItems:     memStats.LongTermMemory.Items,
-				LongTokens:    memStats.LongTermMemory.Tokens,
-				TotalItems:    memStats.TotalItems,
-				TotalTokens:   memStats.TotalTokens,
+				WorkingItems:       memStats.WorkingMemory.Items,
+				WorkingTokens:      memStats.WorkingMemory.Tokens,
+				ShortItems:         memStats.ShortTermMemory.Items,
+				ShortTokens:        memStats.ShortTermMemory.Tokens,
+				LongItems:          memStats.LongTermMemory.Items,
+				LongTokens:         memStats.LongTermMemory.Tokens,
+				TotalItems:         memStats.TotalItems,
+				TotalTokens:        memStats.TotalTokens,
+				History:            m.client.MemoryTokenHistory(),
+				CompressionRatio:   memStats.CompressionRatio,
+				ItemsAdded24h:      memStats.ItemsAddedLast24h,
+				ItemsCompressed24h: memStats.ItemsCompressedLast24h,
 			}
 		}
 
@@ -541,8 +563,42 @@ func (m Model) fetchAll() tea.Cmd {
 			}
 		}
 
+		// Build overview data by aggregating across monitors.
+		healthyCount := 0
+		downCount := 0
+		for _, s := range servers {
+			if s.Healthy {
+				healthyCount++
+			} else if s.Running && !s.Healthy {
+				downCount++
+			}
+		}
+		conflictCount := snap.Coordination.Summary.ConflictFiles
+		overviewData := panels.MsgOverviewData{
+			DaemonRunning:  snap.DaemonRunning,
+			ServerCount:    snap.ServerCount,
+			HealthyServers: healthyCount,
+			DownServers:    downCount,
+			ActiveSessions: snap.ActiveSessions,
+			ActiveAgents:   snap.ActiveAgents,
+			IdleAgents:     snap.IdleAgents,
+			TotalTokens:    snap.TotalTokens,
+			PendingTasks:   snap.PendingTasks,
+			ActiveTasks:    snap.ActiveTasks,
+			BlockedTasks:   snap.BlockedTasks,
+			StreamEntries:  len(entries),
+			Conflicts:      conflictCount,
+			Worktrees:      len(snap.Worktrees),
+			MemoryHistory:  m.client.MemoryTokenHistory(),
+		}
+		if memStats != nil {
+			overviewData.MemoryItems = memStats.TotalItems
+			overviewData.MemoryTokens = memStats.TotalTokens
+		}
+
 		// Return a batch message. We use a wrapper to send multiple messages.
 		return batchDataMsg{
+			overview: overviewData,
 			fleet: panels.MsgFleetData{
 				DaemonRunning:          snap.DaemonRunning,
 				ServerCount:            snap.ServerCount,
@@ -586,6 +642,27 @@ func (m Model) fetchAll() tea.Cmd {
 	}
 }
 
+// fetchMemoryItems fetches items for a memory tier and dispatches them as a panel message.
+func (m Model) fetchMemoryItems(tier string) tea.Cmd {
+	return func() tea.Msg {
+		items := m.client.MemoryItems(tier)
+		result := make([]panels.MemoryItemData, len(items))
+		for i, item := range items {
+			result[i] = panels.MemoryItemData{
+				ID:         item.ID,
+				Title:      item.Title,
+				Tier:       item.Tier,
+				Importance: item.Importance,
+				Tokens:     item.Tokens,
+			}
+		}
+		return panels.MsgMemoryItems{
+			Tier:  tier,
+			Items: result,
+		}
+	}
+}
+
 // updateTaskStatus sends a status update to the daemon and triggers a refresh.
 func (m Model) updateTaskStatus(taskID, status string) tea.Cmd {
 	return func() tea.Msg {
@@ -600,6 +677,7 @@ func (m Model) updateTaskStatus(taskID, status string) tea.Cmd {
 // batchDataMsg carries all panel data in a single message.
 // The Update loop unpacks it and routes to individual panels.
 type batchDataMsg struct {
+	overview panels.MsgOverviewData
 	fleet    panels.MsgFleetData
 	health   panels.MsgHealthData
 	tasks    panels.MsgTasksData

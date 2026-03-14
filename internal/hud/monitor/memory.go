@@ -15,8 +15,9 @@ type MemoryMonitor struct {
 	agent  *bridge.AgentBridge
 	logger *slog.Logger
 
-	mu    sync.RWMutex
-	stats *bridge.MemoryStatsResult
+	mu           sync.RWMutex
+	stats        *bridge.MemoryStatsResult
+	tokenHistory *RingBuffer // sparkline history of TotalTokens
 
 	onRefresh func(*bridge.MemoryStatsResult)
 
@@ -36,9 +37,10 @@ func NewMemoryMonitor(agent *bridge.AgentBridge, logger *slog.Logger) *MemoryMon
 		logger = slog.Default()
 	}
 	return &MemoryMonitor{
-		agent:  agent,
-		logger: logger.With("component", "memory-monitor"),
-		stopCh: make(chan struct{}),
+		agent:        agent,
+		logger:       logger.With("component", "memory-monitor"),
+		tokenHistory: NewRingBuffer(DefaultRingSize),
+		stopCh:       make(chan struct{}),
 	}
 }
 
@@ -73,6 +75,14 @@ func (m *MemoryMonitor) Stats() *bridge.MemoryStatsResult {
 	// Return a copy to avoid data races.
 	cp := *m.stats
 	return &cp
+}
+
+// TokenHistory returns the sparkline history of TotalTokens readings
+// (oldest first). Returns nil if no readings have been recorded yet.
+func (m *MemoryMonitor) TokenHistory() []float64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.tokenHistory.Values()
 }
 
 // Recall retrieves memory items from a specific tier and/or matching a query.
@@ -121,6 +131,7 @@ func (m *MemoryMonitor) Refresh() error {
 
 	m.mu.Lock()
 	m.stats = stats
+	m.tokenHistory.Push(float64(stats.TotalTokens))
 	m.mu.Unlock()
 
 	// Notify listeners (e.g., SSE hub) with the fresh stats (outside lock).

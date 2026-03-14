@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
@@ -191,16 +192,13 @@ func parseToolResult(raw json.RawMessage) (map[string]any, error) {
 			return map[string]any{"result": ""}, nil
 		}
 
-		// Try parsing text as JSON object.
-		var obj map[string]any
-		if err := json.Unmarshal([]byte(text), &obj); err == nil {
-			return obj, nil
-		}
-
-		// Try parsing text as JSON array.
-		var arr []any
-		if err := json.Unmarshal([]byte(text), &arr); err == nil {
-			return map[string]any{"result": arr}, nil
+		if value, ok := parseEmbeddedJSONText(text); ok {
+			switch typed := value.(type) {
+			case map[string]any:
+				return typed, nil
+			case []any:
+				return map[string]any{"result": typed}, nil
+			}
 		}
 
 		// Return raw text.
@@ -214,4 +212,16 @@ func parseToolResult(raw json.RawMessage) (map[string]any, error) {
 	}
 
 	return map[string]any{"raw": string(raw)}, nil
+}
+
+func parseEmbeddedJSONText(text string) (any, bool) {
+	raw, err := fiaccel.ExtractEmbeddedJSON([]byte(text))
+	if err != nil {
+		return nil, false
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, false
+	}
+	return value, true
 }

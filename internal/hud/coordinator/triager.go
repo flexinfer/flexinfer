@@ -2,7 +2,6 @@ package coordinator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -63,11 +62,10 @@ func (t *Triager) TriageEntries(ctx context.Context, entries []bridge.ContextEnt
 		return t.fallbackTriage(entries), nil
 	}
 
-	raw = stripCodeFence(raw)
 	var result struct {
 		Results []TriageResult `json:"results"`
 	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := decodeStructuredJSON(raw, &result); err != nil {
 		t.logger.Debug("triage parse failed, using fallback", "error", err)
 		return t.fallbackTriage(entries), nil
 	}

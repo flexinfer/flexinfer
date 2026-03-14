@@ -2,7 +2,6 @@ package coordinator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -219,11 +218,8 @@ func formatEntries(entries []bridge.ContextEntryInfo) string {
 
 // parseSummaryResponse parses the LLM JSON response into a SessionSummaryResult.
 func parseSummaryResponse(raw string) (*SessionSummaryResult, error) {
-	// Strip markdown code fences if present.
-	raw = stripCodeFence(raw)
-
 	var result SessionSummaryResult
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := decodeStructuredJSON(raw, &result); err != nil {
 		return nil, fmt.Errorf("parse summary JSON: %w", err)
 	}
 	if result.Summary == "" {
