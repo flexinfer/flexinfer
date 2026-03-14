@@ -285,6 +285,24 @@ spec:
                       type: string
                     type: array
                 type: object
+              runtime:
+                description: |-
+                  Runtime configures the persistent runtime container for this GPU architecture.
+                  When set, the controller deploys a DaemonSet with this image on matching nodes
+                  instead of creating per-model Deployments.
+                properties:
+                  image:
+                    description: |-
+                      Image is the unified runtime container image for this architecture.
+                      Example: "registry.harbor.lan/flexinfer/runtime:rocm-gfx1100"
+                    type: string
+                  port:
+                    description: Port is the runtime API port. Defaults to 8080.
+                    format: int32
+                    type: integer
+                required:
+                - image
+                type: object
               usableDeviceIndices:
                 description: |-
                   UsableDeviceIndices lists the HIP/CUDA device indices that are valid for inference.

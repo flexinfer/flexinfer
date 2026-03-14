@@ -36,6 +36,8 @@ spec:
       support: unsupported
     comfyui:
       support: unsupported
+  runtime:
+    image: registry.harbor.lan/flexinfer/runtime:cuda-maxwell
   quantization:
     supported:
       - gguf
