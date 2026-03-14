@@ -23,8 +23,6 @@ spec:
   source: pvc://qwen35-27b-opus-distill-gptq/qwen35-27b-opus-distill-gptq/gptq-w4-g128
   gpu:
     vendor: amd
-    shared: 7900xtx-textgen
-    priority: 200
     count: 2
     vramEstimateMB: 15000
   serverless:

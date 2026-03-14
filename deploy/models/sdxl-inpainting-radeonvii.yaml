@@ -8,8 +8,6 @@ spec:
   source: HF://diffusers/stable-diffusion-xl-1.0-inpainting-0.1
   gpu:
     vendor: amd
-    shared: radeonvii-image
-    priority: 200
     count: 1
     vramEstimateMB: 12000
   serverless:
