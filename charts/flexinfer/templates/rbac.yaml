@@ -105,6 +105,9 @@ rules:
       - gpugroups
       - gpugroups/status
       - gpugroups/finalizers
+      - gpuprofiles
+      - gpuprofiles/status
+      - gpuprofiles/finalizers
       - models
       - models/status
       - models/finalizers
