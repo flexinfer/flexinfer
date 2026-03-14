@@ -2,7 +2,6 @@ package coordinator
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -56,9 +55,8 @@ func (p *Planner) PlanFromGoal(ctx context.Context, goal, namespace string) (*Wo
 		return nil, fmt.Errorf("plan workflow: %w", err)
 	}
 
-	raw = stripCodeFence(raw)
 	var plan WorkflowPlan
-	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
+	if err := decodeStructuredJSON(raw, &plan); err != nil {
 		return nil, fmt.Errorf("parse workflow plan: %w", err)
 	}
 

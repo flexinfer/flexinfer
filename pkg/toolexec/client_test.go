@@ -187,6 +187,23 @@ func TestParseToolResult_TextArray(t *testing.T) {
 	}
 }
 
+func TestParseToolResult_FencedJSONObject(t *testing.T) {
+	envelope := mcp.CallToolResult{
+		Content: []mcp.Content{{Type: "text", Text: "```json\n{\"count\":42,\"ok\":true}\n```"}},
+	}
+	raw, _ := json.Marshal(envelope)
+	result, err := parseToolResult(raw)
+	if err != nil {
+		t.Fatalf("parseToolResult: %v", err)
+	}
+	if result["count"] != float64(42) {
+		t.Errorf("expected count=42, got %v", result["count"])
+	}
+	if result["ok"] != true {
+		t.Errorf("expected ok=true, got %v", result["ok"])
+	}
+}
+
 func TestParseToolResult_PlainText(t *testing.T) {
 	envelope := mcp.CallToolResult{
 		Content: []mcp.Content{{Type: "text", Text: "hello world"}},
