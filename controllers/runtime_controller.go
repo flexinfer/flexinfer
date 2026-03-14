@@ -124,7 +124,7 @@ func (r *RuntimeReconciler) LoadModel(ctx context.Context, endpoint *RuntimeEndp
 	if err != nil {
 		return fmt.Errorf("sending load request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
@@ -148,7 +148,7 @@ func (r *RuntimeReconciler) UnloadModel(ctx context.Context, endpoint *RuntimeEn
 	if err != nil {
 		return fmt.Errorf("sending unload request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotFound {
 		body, _ := io.ReadAll(resp.Body)
