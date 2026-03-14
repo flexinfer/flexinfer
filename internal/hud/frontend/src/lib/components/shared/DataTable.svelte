@@ -190,8 +190,11 @@
 
 <style>
   .data-table-wrap {
+    display: flex;
+    flex-direction: column;
     overflow-x: auto;
     flex: 1;
+    min-height: 0;
   }
 
   .data-table {

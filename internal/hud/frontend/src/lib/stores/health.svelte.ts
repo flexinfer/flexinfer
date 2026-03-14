@@ -25,6 +25,7 @@ export interface ServerInfo {
   categories: string[];
   description: string;
   running: boolean;
+  tool_count?: number;
 }
 
 export interface ServersResponse {
@@ -150,9 +151,7 @@ class HealthStore {
           latency,
           target: health?.target ?? '',
           error_message: health?.local?.errorMessage ?? '',
-          // tool_count is only available via SSE hud.health snapshots from the monitor.
-          // The REST /api/health endpoint doesn't include it, so default to 0 for fallback.
-          tool_count: 0,
+          tool_count: srv.tool_count ?? 0,
           consec_fails: health?.local?.consecFails ?? 0,
         };
       });

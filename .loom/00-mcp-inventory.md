@@ -1,6 +1,6 @@
 # MCP Inventory
 
-_Last verified: 2026-03-11_
+_Last verified: 2026-03-13_
 
 ## Why
 
@@ -27,8 +27,10 @@ Snapshot from `read_mcp_resource(server="loom", uri="loom://config")`:
 | active profile | `full` |
 | serverCount | `46` |
 | toolCount | `483` |
-| activeProxySessions | `7` |
-| running local servers | `agent_context`, `codebase_memory`, `devbox`, `k8s_harvester_infra`, `longhorn_k3s`, `ops_mcp`, `server_mgmt` |
+| activeProxySessions | `3` |
+| daemon running | `true` |
+| drainReady | `true` |
+| running local processes | `morph_embeddings`, `codebase_memory`, `prometheus`, `agent_context`, `devbox`, `git_worktree` |
 
 Snapshot from `read_mcp_resource(server="loom", uri="loom://tools/index")`:
 
@@ -43,32 +45,36 @@ Relevant planning tools confirmed available in this session:
 - `gitlab`
 - `codebase_memory`
 - `agent_context`
+- `git_worktree`
 - `k8s_apps_k3s`
 - `flux`
 - `quality`
 - `devbox`
+- `browserkit` (registered, currently idle until first use)
 
 ## Codebase Index Readiness
 
 Current session status:
 - `codebase_memory__codebase_stats(repo_id="loom-core")` returned `7861` indexed chunks.
 - Indexed chunk counts were `4533` functions, `1880` methods, `790` classes, and `626` modules.
-- The current index is Go-only (`7861` Go chunks, `0` TypeScript/JavaScript/Python/Rust chunks), which matches the primary backend scope of this repo.
+- The current index is Go-only (`7861` Go chunks, `0` TypeScript/JavaScript/Python/Rust chunks).
 
 Planning implication:
 - Semantic code search is available and healthy for Go backend work.
-- HUD frontend artifacts under `internal/hud/frontend/dist` should still be inspected with direct file reads and repo commands because the current index is not carrying TypeScript chunks.
+- HUD frontend work under `internal/hud/frontend/src` still requires direct file reads and repo commands because the current index is not carrying TypeScript/Svelte chunks.
+- For visual regression or layout verification, prefer activating `browserkit` on demand rather than assuming it is already warm.
 
 ## Constraints
 
 - Some servers are registered but idle until first use; `running: false` in `loom://servers` does not imply unavailable.
 - Deployment verification still requires live GitLab/Kubernetes calls because loom inventory only reports tool availability, not repo pipeline state.
+- HUD/UX planning in this session should assume mixed tooling: Go search through `codebase_memory`, frontend inspection through direct file reads, and optional browser screenshots when visual confirmation becomes necessary.
 
 ## Sources
 
-- Tool call: `list_mcp_resources` (2026-03-11)
-- Tool call: `list_mcp_resource_templates` (2026-03-11)
-- Tool call: `read_mcp_resource(server="loom", uri="loom://config")` (2026-03-11)
-- Tool call: `read_mcp_resource(server="loom", uri="loom://servers")` (2026-03-11)
-- Tool call: `read_mcp_resource(server="loom", uri="loom://tools/index")` (2026-03-11)
-- Tool call: `codebase_memory__codebase_stats(repo_id="loom-core")` (2026-03-11)
+- Tool call: `list_mcp_resources` (2026-03-13)
+- Tool call: `list_mcp_resource_templates` (2026-03-13)
+- Tool call: `read_mcp_resource(server="loom", uri="loom://config")` (2026-03-13)
+- Tool call: `read_mcp_resource(server="loom", uri="loom://servers")` (2026-03-13)
+- Tool call: `read_mcp_resource(server="loom", uri="loom://tools/index")` (2026-03-13)
+- Tool call: `codebase_memory__codebase_stats(repo_id="loom-core")` (2026-03-13)

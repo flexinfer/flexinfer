@@ -900,6 +900,7 @@ func (a *App) handleServers(w http.ResponseWriter, _ *http.Request) {
 			Categories:  s.Categories,
 			Description: s.Description,
 			Running:     s.Running,
+			ToolCount:   s.ToolCount,
 		}
 	}
 	a.writeJSON(w, http.StatusOK, &bridge.ServersResult{Servers: infos})

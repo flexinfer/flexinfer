@@ -103,7 +103,10 @@
   // Unique agents for filter dropdown
   let agentOptions = $derived.by(() => {
     const set = new Set();
-    tasks.forEach(t => { if (t.agent) set.add(t.agent); });
+    tasks.forEach((t) => {
+      const agentName = t.agent_id ?? t.agent;
+      if (agentName) set.add(agentName);
+    });
     return Array.from(set).sort().map(a => ({ value: a, label: a }));
   });
 
@@ -177,7 +180,7 @@
     }
 
     if (agentFilter) {
-      result = result.filter(t => t.agent === agentFilter);
+      result = result.filter((t) => (t.agent_id ?? t.agent) === agentFilter);
     }
 
     if (statusFilter) {
@@ -313,6 +316,10 @@
     return '⚪';
   }
 
+  function taskAgentName(task) {
+    return task.agent_id ?? task.agent ?? '---';
+  }
+
   function addBlockedBy(taskId) {
     if (taskId && !newBlockedBy.includes(taskId)) {
       newBlockedBy = [...newBlockedBy, taskId];
@@ -424,6 +431,12 @@
     if (!selectedTask?.id) return [];
     return coordinationBlockers.filter((blocker) => blocker.task_id === selectedTask.id);
   });
+  let activeBlockers = $derived(coordinationStore.activeBlockers);
+  let attentionAgents = $derived(coordinationStore.topAttentionAgents);
+  let unassignedCount = $derived(tasks.filter((task) => !task.agent_id && !task.agent).length);
+  let staleBlockedCount = $derived(
+    tasks.filter((task) => task.status === 'blocked' && task.blocked_by?.length).length
+  );
 
   function selectTask(task) {
     selectedTask = selectedTask?.id === task.id ? null : task;
@@ -472,200 +485,244 @@
     onFilter={handleFilter}
   />
 
-  <div class="dependency-radar">
-    <div class="radar-card">
-      <div class="radar-label">Dependency Radar</div>
-      <div class="radar-value">{coordinationSummary.cross_agent_blockers} cross-agent blockers</div>
-      <div class="radar-meta">{coordinationSummary.orphan_tasks} orphan tasks · {coordinationSummary.shared_branches} shared branches</div>
-    </div>
-    <div class="radar-card radar-list-card">
-      <div class="radar-label">Risky Namespaces</div>
-      {#if riskyNamespaces.length > 0}
-        {#each riskyNamespaces.slice(0, 3) as namespace}
-          <div class="radar-list-item">{namespace.namespace}: {namespace.blocked_tasks} blocked / {namespace.cross_agent_blockers} x-agent</div>
-        {/each}
-      {:else}
-        <div class="radar-meta">No risky namespaces</div>
-      {/if}
-    </div>
-  </div>
-
-  <!-- Content -->
-  <div class="task-content">
-    {#if viewMode === 'flat'}
-      {#if filtered.length === 0 && taskStore.lastUpdated}
-        <EmptyState
-          icon={'\u2611'}
-          heading="No tasks match filters"
-          description="Try adjusting your search or filter criteria."
-          compact
-        >
-          {#snippet action()}
-            {#if hasActiveFilters}
-              <button class="btn btn-ghost" onclick={clearFilters}>Clear filters</button>
-            {/if}
-          {/snippet}
-        </EmptyState>
-      {:else}
-        <DataTable
-          {columns}
-          rows={sorted}
-          {sortKey}
-          {sortDir}
-          loading={!taskStore.lastUpdated}
-          skeletonRows={3}
-          maxRows={VIRTUAL_SCROLL_THRESHOLD}
-          selectable={true}
-          selectedIds={selectedTaskIds}
-          onSelect={handleTaskSelect}
-          onSort={handleSort}
-          onRowClick={selectTask}
-        >
-          {#snippet row({ row: task })}
-            <td class="task-title" title={task.context || task.title}>
-              {@html parseIssueRefs(task.title)}
-              {#if task.context}
-                <span class="context-hint" title={task.context}>{'\uD83D\uDCCB'}</span>
-              {/if}
-            </td>
-            <td class="text-mono text-muted">{task.agent ?? '---'}</td>
-            <td>
-              <button class="priority-btn" onclick={() => cyclePriority(task)} title="Click to cycle priority">
-                <Badge text={task.priority ?? 'medium'} variant={priorityVariant(task.priority)} />
-              </button>
-            </td>
-            <td>
-              <select
-                class="status-select"
-                value={task.status ?? 'pending'}
-                onchange={(e) => changeStatus(task, e.target.value)}
-                onclick={(e) => e.stopPropagation()}
-              >
-                {#each STATUS_OPTIONS as s}
-                  <option value={s}>{s.replaceAll('_', ' ')}</option>
-                {/each}
-              </select>
-            </td>
-            <td class="text-mono">
-              <div class="blocked-col">
-                {#if task.blocked_by?.length}
-                  {#each task.blocked_by as dep}
-                    <span class="blocked-id" class:resolved={task.resolved_deps?.includes(dep)}>
-                      {dep.slice(0, 8)}
-                    </span>
-                  {/each}
-                {:else}
-                  <span class="text-muted">---</span>
+  <div class="tasks-layout">
+    <div class="task-main">
+      <div class="task-content">
+        {#if viewMode === 'flat'}
+          {#if filtered.length === 0 && taskStore.lastUpdated}
+            <EmptyState
+              icon={'\u2611'}
+              heading="No tasks match filters"
+              description="Try adjusting your search or filter criteria."
+              compact
+            >
+              {#snippet action()}
+                {#if hasActiveFilters}
+                  <button class="btn btn-ghost" onclick={clearFilters}>Clear filters</button>
+                {/if}
+              {/snippet}
+            </EmptyState>
+          {:else}
+            <DataTable
+              {columns}
+              rows={sorted}
+              {sortKey}
+              {sortDir}
+              stableLayout={true}
+              loading={!taskStore.lastUpdated}
+              skeletonRows={3}
+              maxRows={VIRTUAL_SCROLL_THRESHOLD}
+              selectable={true}
+              selectedIds={selectedTaskIds}
+              onSelect={handleTaskSelect}
+              onSort={handleSort}
+              onRowClick={selectTask}
+            >
+              {#snippet row({ row: task })}
+                <td class="task-title" title={task.context || task.title}>
+                  {@html parseIssueRefs(task.title)}
+                  {#if task.context}
+                    <span class="context-hint" title={task.context}>{'\uD83D\uDCCB'}</span>
+                  {/if}
+                </td>
+                <td class="text-mono text-muted">{taskAgentName(task)}</td>
+                <td>
+                  <button class="priority-btn" onclick={() => cyclePriority(task)} title="Click to cycle priority">
+                    <Badge text={task.priority ?? 'medium'} variant={priorityVariant(task.priority)} />
+                  </button>
+                </td>
+                <td>
+                  <select
+                    class="status-select"
+                    value={task.status ?? 'pending'}
+                    onchange={(e) => changeStatus(task, e.target.value)}
+                    onclick={(e) => e.stopPropagation()}
+                  >
+                    {#each STATUS_OPTIONS as s}
+                      <option value={s}>{s.replaceAll('_', ' ')}</option>
+                    {/each}
+                  </select>
+                </td>
+                <td class="text-mono">
+                  <div class="blocked-col">
+                    {#if task.blocked_by?.length}
+                      {#each task.blocked_by as dep}
+                        <span class="blocked-id" class:resolved={task.resolved_deps?.includes(dep)}>
+                          {dep.slice(0, 8)}
+                        </span>
+                      {/each}
+                    {:else}
+                      <span class="text-muted">---</span>
+                    {/if}
+                  </div>
+                </td>
+                <td class="text-mono text-muted">{relativeTime(task.created_at)}</td>
+                <td class="actions-col">
+                  {#if task.status !== 'completed' && task.status !== 'cancelled'}
+                    <button class="btn-resolve" onclick={(e) => { e.stopPropagation(); openResolve(task); }} title="Resolve task">{'\u2713'}</button>
+                  {/if}
+                </td>
+              {/snippet}
+            </DataTable>
+            <BulkToolbar
+              count={selectedTaskIds.size}
+              actions={bulkActions}
+              onClearSelection={() => { selectedTaskIds = new Set(); }}
+            />
+          {/if}
+        {:else}
+          <div class="grouped-view">
+            {#each grouped as [status, items] (status)}
+              <div class="group-section">
+                <button class="group-header" onclick={() => toggleGroup(status)}>
+                  <span class="group-chevron">{collapsedGroups.has(status) ? '\u25B6' : '\u25BC'}</span>
+                  <span class="group-status-label">{status.replaceAll('_', ' ')}</span>
+                  <span class="count-badge">{items.length}</span>
+                </button>
+                {#if !collapsedGroups.has(status)}
+                  <div class="group-body">
+                    <div class="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Title</th>
+                            <th>Agent</th>
+                            <th>Priority</th>
+                            <th>Status</th>
+                            <th>Blocked By</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {#each items as task (task.id)}
+                            <tr>
+                              <td class="task-title" title={task.context || task.title}>
+                                {@html parseIssueRefs(task.title)}
+                                {#if task.context}
+                                  <span class="context-hint" title={task.context}>{'\uD83D\uDCCB'}</span>
+                                {/if}
+                              </td>
+                              <td class="text-mono text-muted">{taskAgentName(task)}</td>
+                              <td>
+                                <button class="priority-btn" onclick={() => cyclePriority(task)} title="Click to cycle priority">
+                                  <Badge text={task.priority ?? 'medium'} variant={priorityVariant(task.priority)} />
+                                </button>
+                              </td>
+                              <td>
+                                <select
+                                  class="status-select"
+                                  value={task.status ?? 'pending'}
+                                  onchange={(e) => changeStatus(task, e.target.value)}
+                                >
+                                  {#each STATUS_OPTIONS as s}
+                                    <option value={s}>{s.replaceAll('_', ' ')}</option>
+                                  {/each}
+                                </select>
+                              </td>
+                              <td class="text-mono">
+                                <div class="blocked-col">
+                                  {#if task.blocked_by?.length}
+                                    {#each task.blocked_by as dep}
+                                      <span class="blocked-id" class:resolved={task.resolved_deps?.includes(dep)}>
+                                        {dep.slice(0, 8)}
+                                      </span>
+                                    {/each}
+                                  {:else}
+                                    <span class="text-muted">---</span>
+                                  {/if}
+                                </div>
+                              </td>
+                              <td class="text-mono text-muted">{relativeTime(task.created_at)}</td>
+                              <td class="actions-col">
+                                {#if task.status !== 'completed' && task.status !== 'cancelled'}
+                                  <button class="btn-resolve" onclick={() => openResolve(task)} title="Resolve task">{'\u2713'}</button>
+                                {/if}
+                              </td>
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 {/if}
               </div>
-            </td>
-            <td class="text-mono text-muted">{relativeTime(task.created_at)}</td>
-            <td class="actions-col">
-              {#if task.status !== 'completed' && task.status !== 'cancelled'}
-                <button class="btn-resolve" onclick={(e) => { e.stopPropagation(); openResolve(task); }} title="Resolve task">{'\u2713'}</button>
-              {/if}
-            </td>
-          {/snippet}
-        </DataTable>
-        <BulkToolbar
-          count={selectedTaskIds.size}
-          actions={bulkActions}
-          onClearSelection={() => { selectedTaskIds = new Set(); }}
-        />
-      {/if}
-    {:else}
-      <!-- Grouped view -->
-      <div class="grouped-view">
-        {#each grouped as [status, items] (status)}
-          <div class="group-section">
-            <button class="group-header" onclick={() => toggleGroup(status)}>
-              <span class="group-chevron">{collapsedGroups.has(status) ? '\u25B6' : '\u25BC'}</span>
-              <span class="group-status-label">{status.replaceAll('_', ' ')}</span>
-              <span class="count-badge">{items.length}</span>
-            </button>
-            {#if !collapsedGroups.has(status)}
-              <div class="group-body">
-                <div class="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Title</th>
-                        <th>Agent</th>
-                        <th>Priority</th>
-                        <th>Status</th>
-                        <th>Blocked By</th>
-                        <th>Created</th>
-                        <th>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {#each items as task (task.id)}
-                        <tr>
-                          <td class="task-title" title={task.context || task.title}>
-                            {@html parseIssueRefs(task.title)}
-                            {#if task.context}
-                              <span class="context-hint" title={task.context}>{'\uD83D\uDCCB'}</span>
-                            {/if}
-                          </td>
-                          <td class="text-mono text-muted">{task.agent ?? '---'}</td>
-                          <td>
-                            <button class="priority-btn" onclick={() => cyclePriority(task)} title="Click to cycle priority">
-                              <Badge text={task.priority ?? 'medium'} variant={priorityVariant(task.priority)} />
-                            </button>
-                          </td>
-                          <td>
-                            <select
-                              class="status-select"
-                              value={task.status ?? 'pending'}
-                              onchange={(e) => changeStatus(task, e.target.value)}
-                            >
-                              {#each STATUS_OPTIONS as s}
-                                <option value={s}>{s.replaceAll('_', ' ')}</option>
-                              {/each}
-                            </select>
-                          </td>
-                          <td class="text-mono">
-                            <div class="blocked-col">
-                              {#if task.blocked_by?.length}
-                                {#each task.blocked_by as dep}
-                                  <span class="blocked-id" class:resolved={task.resolved_deps?.includes(dep)}>
-                                    {dep.slice(0, 8)}
-                                  </span>
-                                {/each}
-                              {:else}
-                                <span class="text-muted">---</span>
-                              {/if}
-                            </div>
-                          </td>
-                          <td class="text-mono text-muted">{relativeTime(task.created_at)}</td>
-                          <td class="actions-col">
-                            {#if task.status !== 'completed' && task.status !== 'cancelled'}
-                              <button class="btn-resolve" onclick={() => openResolve(task)} title="Resolve task">{'\u2713'}</button>
-                            {/if}
-                          </td>
-                        </tr>
-                      {/each}
-                    </tbody>
-                  </table>
-                </div>
+            {:else}
+              <EmptyState
+                icon={'\u2611'}
+                heading="No tasks match filters"
+                compact
+              >
+                {#snippet action()}
+                  {#if hasActiveFilters}
+                    <button class="btn btn-ghost" onclick={clearFilters}>Clear filters</button>
+                  {/if}
+                {/snippet}
+              </EmptyState>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </div>
+
+    <aside class="tasks-rail">
+      <section class="radar-card">
+        <div class="radar-label">Dependency Radar</div>
+        <div class="radar-value">{coordinationSummary.cross_agent_blockers} cross-agent blockers</div>
+        <div class="radar-meta">{staleBlockedCount} dependency-bound · {unassignedCount} unassigned</div>
+      </section>
+
+      <section class="radar-card">
+        <div class="radar-label">Risky Namespaces</div>
+        {#if riskyNamespaces.length > 0}
+          <div class="radar-stack">
+            {#each riskyNamespaces.slice(0, 4) as namespace}
+              <div class="radar-list-item">
+                <span class="radar-item-title text-mono" title={namespace.namespace}>{namespace.namespace}</span>
+                <span class="radar-item-meta">{namespace.blocked_tasks} blocked · {namespace.cross_agent_blockers} x-agent</span>
               </div>
-            {/if}
+            {/each}
           </div>
         {:else}
-          <EmptyState
-            icon={'\u2611'}
-            heading="No tasks match filters"
-            compact
-          >
-            {#snippet action()}
-              {#if hasActiveFilters}
-                <button class="btn btn-ghost" onclick={clearFilters}>Clear filters</button>
-              {/if}
-            {/snippet}
-          </EmptyState>
-        {/each}
-      </div>
-    {/if}
+          <div class="radar-meta">No risky namespaces</div>
+        {/if}
+      </section>
+
+      <section class="radar-card">
+        <div class="radar-label">Active Blockers</div>
+        {#if activeBlockers.length > 0}
+          <div class="radar-stack">
+            {#each activeBlockers.slice(0, 5) as blocker}
+              <div class="radar-list-item">
+                <span class="radar-item-title" title={blocker.task_title}>{blocker.task_title}</span>
+                <span class="radar-item-meta">
+                  blocked by {blocker.blocked_by_task_title || blocker.blocked_by_task_id}
+                  {#if blocker.cross_agent} · cross-agent{/if}
+                </span>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="radar-meta">No active blockers</div>
+        {/if}
+      </section>
+
+      <section class="radar-card">
+        <div class="radar-label">Agent Pressure</div>
+        {#if attentionAgents.length > 0}
+          <div class="radar-stack">
+            {#each attentionAgents.slice(0, 4) as agent}
+              <div class="radar-list-item">
+                <span class="radar-item-title text-mono">{agent.agent_id}</span>
+                <span class="radar-item-meta">{agent.blocked_tasks} blocked · {agent.claim_count} claims</span>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="radar-meta">No agents need attention</div>
+        {/if}
+      </section>
+    </aside>
   </div>
 </div>
 
@@ -791,7 +848,7 @@
 <DetailDrawer
   open={!!selectedTask}
   title={selectedTask?.title ?? ''}
-  subtitle={selectedTask?.agent ?? 'Unassigned'}
+  subtitle={selectedTask ? taskAgentName(selectedTask) : 'Unassigned'}
   onClose={closeTaskDetail}
 >
   {#snippet header()}
@@ -934,18 +991,37 @@
 
   .task-content {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: var(--border-radius);
+  }
+
+  .tasks-layout {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 12px;
     margin-top: 8px;
   }
 
-  .dependency-radar {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 8px;
-    margin-top: 8px;
+  .task-main,
+  .tasks-rail {
+    min-height: 0;
+  }
+
+  .task-main {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .tasks-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
   }
 
   .radar-card {
@@ -956,10 +1032,6 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-  }
-
-  .radar-list-card {
-    justify-content: center;
   }
 
   .radar-label {
@@ -981,6 +1053,36 @@
     font-size: 11px;
     color: var(--fg-muted);
     font-family: var(--font-mono);
+  }
+
+  .radar-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .radar-list-item {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  }
+
+  .radar-list-item:first-child {
+    padding-top: 0;
+    border-top: none;
+  }
+
+  .radar-item-title {
+    color: var(--fg-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .radar-item-meta {
+    color: var(--fg-muted);
   }
 
   .relation-cards {
@@ -1300,5 +1402,11 @@
     display: flex;
     gap: var(--space-1, 4px);
     flex-wrap: wrap;
+  }
+
+  @media (max-width: 1200px) {
+    .tasks-layout {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

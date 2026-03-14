@@ -10,6 +10,10 @@ export default defineConfig({
         target: 'http://localhost:9800',
         changeOrigin: true,
       },
+      '/api/events': {
+        target: 'http://localhost:9800',
+        changeOrigin: true,
+      },
     },
   },
   build: {

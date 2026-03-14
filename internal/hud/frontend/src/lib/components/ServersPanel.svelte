@@ -190,8 +190,8 @@
     { key: 'consec_fails', label: 'Fails', sortable: true, width: '50px' },
     { key: 'latency', label: 'Latency', sortable: true, width: '80px' },
     { key: 'tool_count', label: 'Tools', sortable: true, width: '60px' },
-    { key: 'target', label: 'Target', width: '160px' },
-    { key: 'sparkline', label: 'Sparkline', width: '130px' },
+    { key: 'target', label: 'Target', width: '130px' },
+    { key: 'sparkline', label: 'Sparkline', width: '102px' },
   ];
 
   function percentile(data, p) {
@@ -261,6 +261,7 @@
     onFilter={handleFilter}
   />
 
+  <div class="servers-layout">
   <!-- Sortable table -->
   <div class="table-container">
     {#if filtered.length === 0 && healthStore.lastUpdated}
@@ -309,8 +310,8 @@
             {#if server.latencyHistory?.length}
               <SparkLine
                 data={server.latencyHistory}
-                width={120}
-                height={24}
+                width={92}
+                height={20}
                 color={server.status === 'healthy' ? 'var(--success)' : server.status === 'degraded' ? 'var(--warning)' : 'var(--error)'}
               />
             {:else}
@@ -322,6 +323,7 @@
     {/if}
   </div>
 
+  <aside class="servers-rail">
   <!-- Infrastructure cards row: Tunnels + Cache -->
   <div class="infra-cards">
     <!-- Tunnels Card -->
@@ -530,6 +532,8 @@
       </div>
     </div>
   {/if}
+  </aside>
+  </div>
 
 </div>
 
@@ -669,10 +673,27 @@
 
   .table-container {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: var(--border-radius);
+  }
+
+  .servers-layout {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 340px;
+    gap: 12px;
+  }
+
+  .servers-rail {
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 
   .server-name {
@@ -691,8 +712,8 @@
   }
 
   .sparkline-cell {
-    width: 130px;
-    padding: 4px 10px;
+    width: 102px;
+    padding: 4px 8px;
     display: flex;
     align-items: center;
     justify-content: flex-start;
@@ -703,9 +724,8 @@
 
   .infra-cards {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     gap: 12px;
-    margin-top: 12px;
   }
 
   .infra-card {
@@ -758,8 +778,9 @@
   }
 
   .cache-grid {
-    display: flex;
-    gap: 24px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
   }
 
   .cache-stat {
@@ -904,7 +925,7 @@
   /* --- Request Metrics table --- */
 
   .infra-card-wide {
-    flex: 1 1 100%;
+    width: 100%;
   }
 
   .metrics-table-wrap {
@@ -949,5 +970,11 @@
 
   .text-warning {
     color: var(--warning);
+  }
+
+  @media (max-width: 1280px) {
+    .servers-layout {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

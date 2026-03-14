@@ -440,6 +440,7 @@ type ServerInfo struct {
 	Categories  []string `json:"categories,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Running     bool     `json:"running"`
+	ToolCount   int      `json:"tool_count,omitempty"`
 }
 
 // ServersResult holds the response from loom/servers.

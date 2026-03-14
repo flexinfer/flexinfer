@@ -66,13 +66,17 @@
 
   <div class="filter-bar-spacer"></div>
 
-  {#if resultCount != null}
-    <span class="filter-bar-count">{resultCount} result{resultCount !== 1 ? 's' : ''}</span>
-  {/if}
+  <div class="filter-bar-meta">
+    {#if resultCount != null}
+      <span class="filter-bar-count">{resultCount} result{resultCount !== 1 ? 's' : ''}</span>
+    {/if}
 
-  {#if actions}
-    {@render actions()}
-  {/if}
+    {#if actions}
+      <div class="filter-bar-actions">
+        {@render actions()}
+      </div>
+    {/if}
+  </div>
 </div>
 
 <style>
@@ -83,14 +87,15 @@
     padding: var(--space-2) 0;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    flex-wrap: wrap;
   }
 
   .filter-bar-search {
     display: flex;
     align-items: center;
     gap: var(--space-1);
-    flex: 0 1 240px;
-    min-width: 120px;
+    flex: 1 1 260px;
+    min-width: 180px;
   }
 
   .filter-bar-search-icon {
@@ -116,6 +121,8 @@
   }
 
   .filter-bar-select {
+    flex: 0 1 180px;
+    min-width: 140px;
     font-size: var(--text-sm);
     padding: var(--space-1) var(--space-2);
     background: var(--bg-primary);
@@ -132,7 +139,16 @@
   }
 
   .filter-bar-spacer {
-    flex: 1;
+    flex: 1 1 auto;
+  }
+
+  .filter-bar-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-left: auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .filter-bar-count {
@@ -140,5 +156,25 @@
     color: var(--fg-muted);
     font-family: var(--font-mono);
     white-space: nowrap;
+  }
+
+  .filter-bar-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  @media (max-width: 900px) {
+    .filter-bar-meta {
+      width: 100%;
+      margin-left: 0;
+      justify-content: space-between;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .filter-bar-select {
+      flex: 1 1 160px;
+    }
   }
 </style>

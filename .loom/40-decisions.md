@@ -1,5 +1,27 @@
 # Decisions
 
+## 2026-03-13: Continue HUD/UX work in a fresh main-based worktree
+
+- Decision:
+  - Create a new sibling worktree at `/Users/cblevins/workspace/services/loom-core-hud-ux` on branch `codex/hud-ux`, starting from `main`.
+  - Treat `codex/hud-view-fixes` as reference material to review or cherry-pick selectively instead of continuing on that branch directly.
+- Rationale:
+  - The primary checkout already had unrelated local edits, so a clean worktree keeps HUD/UX work isolated.
+  - The existing `codex/hud-view-fixes` branch contains useful panel and shared-component changes, but it is not aligned closely enough with `main` to assume a straight continuation path.
+  - Current `.loom/10`, `.loom/20`, and `.loom/30` docs are serving the mobile companion thread, so HUD/UX continuation needed a fresh dated planning set.
+- Alternatives considered:
+  - Reusing the existing `codex/hud-view-fixes` worktree directly.
+  - Working from the dirty primary checkout.
+- Consequences:
+  - HUD/UX work now has an isolated continuation lane with updated planning artifacts.
+  - The next implementation pass should begin with carry-forward triage from `codex/hud-view-fixes`.
+- Sources:
+  - Command: `git worktree add -b codex/hud-ux ../loom-core-hud-ux main`
+  - Command: `git log --oneline --decorate --no-merges main..codex/hud-view-fixes`
+  - Command: `git diff --stat main..codex/hud-view-fixes`
+  - `ROADMAP.md:212`
+  - `ROADMAP.md:219`
+
 ## 2026-03-11: Make codebase benchmark artifacts valid under default MCP output mode
 
 - Decision:

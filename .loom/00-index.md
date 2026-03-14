@@ -4,83 +4,69 @@
 
 - Workspace snapshot: `00-workspace-snapshot.md`
 - MCP inventory: `00-mcp-inventory.md`
+- Research (HUD/UX continuation, 2026-03-13): `18-research-hud-ux-continuation-2026-03-13.md`
+- Product spec (HUD/UX continuation, 2026-03-13): `22-product-spec-hud-ux-continuation-2026-03-13.md`
+- Implementation plan (HUD/UX continuation, 2026-03-13): `41-implementation-plan-hud-ux-continuation-2026-03-13.md`
 - Research (codebase indexer benchmark operability, 2026-03-11): `17-research-codebase-indexer-benchmark-operability-2026-03-11.md`
-- Roadmap review + task carve-out (2026-03-07): `39-roadmap-review-and-task-carveout-2026-03-07.md`
 - Research (mobile companion): `10-research.md`
 - Research (OpenAI Responses + Loom tool/context integration): `15-research-openai-responses-tool-context-2026-03-04.md`
-- Research addendum (mobile roadmap/features, external): `13-research-mobile-roadmap-features-2026-02-19.md`
 - Product spec (mobile companion): `20-product-spec.md`
 - Product spec (OpenAI Responses orchestration): `21-product-spec-openai-responses-orchestration-2026-03-04.md`
 - Implementation plan (mobile companion): `30-implementation-plan.md`
 - Implementation plan (codebase indexer benchmark phase 2, 2026-03-11): `39-implementation-plan-codebase-indexer-benchmark-phase2-2026-03-11.md`
-- Implementation plan (agent trace + telemetry dashboards): `34-agent-trace-telemetry-dashboard-plan-2026-02-26.md`
-- Implementation plan (OpenAI Responses orchestration): `36-implementation-plan-openai-responses-orchestration-2026-03-04.md`
-- Mobile API draft: `../docs/MOBILE_COMPANION_API.md`
-- Mobile security draft: `../docs/MOBILE_COMPANION_SECURITY.md`
-- Historical roadmap mapping: `31-gap-to-backlog-map.md`
-- Mobile backlog mapping: `32-mobile-gap-to-backlog-map.md`
-- Simplification EPICs (3 EPICs, 21 issues): `35-simplification-epics.md`
+- Prior HUD/TUI slice plan: `54-ralph-iteration-plan-hud-tui-presence-2026-02-17.md`
+- Prior HUD/TUI slice handoff: `55-ralph-slice-handoff-hud-tui-presence-2026-02-17.md`
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
-- Tech debt inventory: `tech-debt-inventory.md` (all items resolved)
-- Tech debt plan: `tech-debt-plan.md` (all 3 waves complete)
-- Tech debt priority: `tech-debt-priority.md`
 
-## Current State (2026-03-11)
+## Current State (2026-03-13)
 
-**Branch**: `main` at `489f3a0`
+**Branch**: `codex/hud-ux` at `df5707b`
 
 **Current planning thread**:
-- Codebase indexer benchmark operability and next-slice latency work after the sprint 1-3 backlog landed on `main`.
-- Fresh evidence includes a successful watch-only benchmark artifact at `.loom/codebase-bench/codebase-bench-20260312-004421.json` and a harness fix for TOON/error-envelope decoding.
+- Fresh main-based worktree for continuing HUD and broader UX work without touching unrelated local edits in the primary checkout.
+- This branch starts from `main` and keeps `codex/hud-view-fixes` as a reference lane instead of reusing it blindly.
+- Immediate focus is shared HUD interaction polish plus roadmap-backed UX follow-through in fleet orchestration, server catalog, and HUD/TUI visibility parity.
+- HUD layout/data-alignment slice `db3aa85` is now carried into the `codex/hud-ux` working tree and has passed a frontend build plus focused `internal/hud` Go tests.
 
-**Worktree reconciliation (2026-03-11)**:
-- Cleaned 43 worktrees down to 6 (including main checkout and codex-tmp).
-- Removed 7 already-merged worktrees, 2 malformed-path worktrees, and 26 stale worktrees (100-335 commits behind main).
-- Deleted 39 merged local branches and 34 orphaned stale branches.
-- Pruned remote tracking refs.
+**HUD/UX reference branch**:
+- `codex/hud-view-fixes` remains available at `3b4949f` and is `10` commits ahead / `1` commit behind `main`.
+- Its current diff touches `KnowledgePanel`, `SandboxPanel`, `ServersPanel`, `TasksPanel`, shared `FilterBar`, shared `DataTable`, plus HUD CI/build files, so it is a useful cherry-pick/review pool rather than something to merge wholesale.
 
-**Active worktrees**:
-
-| Worktree | Branch | Ahead/Behind | Purpose |
-|----------|--------|-------------|---------|
-| `services/loom-core` | `codex/google-workspace-finish` | +2/−0 | Google Workspace MCP auth (current) |
-| `.worktrees/loom-core-53-rollout-20260309b` | `codex/backlog/53-rbac-audit-rollout2` | +5/−3 | RBAC audit rollout |
-| `.worktrees/loom-core-60` | `codex/backlog/21` | +3/−39 | Agent contract convergence |
-| `services/loom-core-codex-fi-accel-adoption` | `codex/fi-accel-adoption` | +2/−12 | FI accel adoption (original) |
-| `services/loom-core-codex-fi-accel-adoption-clean` | `codex/fi-accel-adoption-rebase` | +1/−0 | FI accel adoption (clean rebase) |
-| `.codex-tmp/loom-core-main` | detached HEAD | — | Codex working copy |
-
-**Local branch** `codex/agent-context-consistency` (+3/−0) preserved but not checked out.
-
-**Planning baseline** (carried from 2026-03-07):
-- HUD cost/RBAC/OTel visibility already implemented on `main`; stale worktrees for those items are now cleaned up.
-- Agent lifecycle contract/surface decomposition remains the highest-value refactor target.
-- Coverage at `39.7%` toward `40%+` goal.
+**Tooling baseline**:
+- Loom is running in loom-mode with `46` registered servers and `483` tools.
+- `codebase_memory` is healthy for Go (`7861` indexed chunks) but still has `0` TypeScript/JavaScript chunks, so HUD frontend work needs direct file reads in addition to semantic search.
 
 ## Active Workstreams
 
 | Track | Status | Key Docs |
 |-------|--------|----------|
-| Google Workspace MCP auth | In progress (current branch) | `codex/google-workspace-finish` |
-| Agent lifecycle contract convergence | Open, highest-value refactor | `39-roadmap-review-and-task-carveout-2026-03-07.md`, ROADMAP `#21`, `codex/backlog/21` |
-| RBAC audit rollout | Near-main, review pending | `codex/backlog/53-rbac-audit-rollout2` |
-| FI accel adoption | Clean rebase ready | `codex/fi-accel-adoption-rebase` |
-| Agent context consistency | Fresh branch, not checked out | `codex/agent-context-consistency` |
-| Daemon pipeline hardening | Narrow finish pass remains | `39-roadmap-review-and-task-carveout-2026-03-07.md`, ROADMAP `#20` |
-| Coverage push | Finish-line: `39.7%` toward `40%+` | ROADMAP `#2` |
-| OpenAI Responses M2 | Foundation shipped, bounded follow-up | `36-implementation-plan-openai-responses-orchestration-2026-03-04.md` |
+| HUD/UX continuation | New branch, planning ready | `18-research-hud-ux-continuation-2026-03-13.md`, `22-product-spec-hud-ux-continuation-2026-03-13.md`, `41-implementation-plan-hud-ux-continuation-2026-03-13.md` |
+| HUD/TUI presence follow-through | Prior slice completed, follow-ups open | `54-ralph-iteration-plan-hud-tui-presence-2026-02-17.md`, `55-ralph-slice-handoff-hud-tui-presence-2026-02-17.md` |
+| Agent lifecycle contract convergence | Open, highest-value refactor | `ROADMAP.md` issue `#21`, `codex/backlog/21` |
+| Fleet orchestration UX | Open roadmap slice | `ROADMAP.md`, issue `#13` |
+| Catalog/discovery UX | Open roadmap slice | `ROADMAP.md`, issue `#14` |
+| Unify visibility epic | Planned | `35-simplification-epics.md`, issue `#66` |
 
 ## Risks
 
-- `codex/backlog/21` is 39 commits behind main — needs rebase before merge.
-- `codex/fi-accel-adoption` (original) is 12 behind; prefer the clean rebase copy.
-- Codebase-memory MCP transport availability still needs follow-up.
-- Agent lifecycle surface (`cmd/loom/cmd_agent.go`, `internal/hud/api_agent.go`, `internal/hud/bridge/agent.go`) remains large and high-churn.
+- `codex/hud-view-fixes` is not merge-ready as-is; it needs selective carry-forward or a rebase/cherry-pick pass.
+- `ROADMAP.md` still points `.loom/10-research.md`, `.loom/20-product-spec.md`, and `.loom/30-implementation-plan.md` at HUD overhaul docs even though those files currently serve the mobile companion thread.
+- Current semantic code indexing does not cover the HUD frontend, which raises the cost of broad TypeScript refactors unless the indexer is refreshed for JS/TS.
 
 ## Sources
 
-- Worktree reconciliation: `git worktree list`, `git branch --merged/--no-merged main`, `git rev-list --left-right --count`
-- `39-roadmap-review-and-task-carveout-2026-03-07.md`
-- `ROADMAP.md`
-- `docs/IMPLEMENTATION_STATUS.md`
+- Command: `git worktree add -b codex/hud-ux ../loom-core-hud-ux main`
+- Command: `git log --oneline --decorate --no-merges main..codex/hud-view-fixes`
+- Command: `git diff --stat main..codex/hud-view-fixes`
+- Command: `git cherry-pick --no-commit db3aa85`
+- Command: `pnpm --dir internal/hud/frontend install --frozen-lockfile`
+- Command: `pnpm --dir internal/hud/frontend build`
+- Command: `go test ./internal/hud/... -count=1`
+- Command: `git rev-list --left-right --count main...codex/hud-view-fixes`
+- `ROADMAP.md:36`
+- `ROADMAP.md:212`
+- `ROADMAP.md:219`
+- `ROADMAP.md:237`
+- `internal/hud/frontend/src/App.svelte:35`
+- `internal/hud/frontend/src/App.svelte:148`

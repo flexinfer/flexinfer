@@ -1,5 +1,40 @@
 # Worklog
 
+## 2026-03-13 (session 26) — HUD/UX continuation worktree setup
+
+- What changed:
+  - Created a new sibling worktree at `/Users/cblevins/workspace/services/loom-core-hud-ux` on branch `codex/hud-ux` from `main`.
+  - Regenerated `.loom/00-workspace-snapshot.md` and refreshed `.loom/00-mcp-inventory.md` against the live loom-mode runtime for this branch.
+  - Added fresh HUD/UX continuation docs:
+    - `.loom/18-research-hud-ux-continuation-2026-03-13.md`
+    - `.loom/22-product-spec-hud-ux-continuation-2026-03-13.md`
+    - `.loom/41-implementation-plan-hud-ux-continuation-2026-03-13.md`
+  - Updated `.loom/00-index.md` and `.loom/40-decisions.md` so the new worktree is discoverable and its branching strategy is recorded.
+  - Preserved `codex/hud-view-fixes` as a reference branch after confirming it is still carrying unmerged HUD panel/layout work.
+  - Carried over HUD commit `db3aa85` into the `codex/hud-ux` working tree with `git cherry-pick --no-commit`, leaving unrelated CI/OpenAI/generator commits out of scope.
+  - Installed frontend dependencies in the new worktree and verified the integrated HUD slice with a production build and focused `internal/hud` Go tests.
+- Why:
+  - The main checkout already had unrelated local edits, and the existing top-level planning docs were aimed at the mobile companion thread rather than current HUD/UX continuation.
+  - A clean worktree plus fresh dated planning docs makes the next UX pass easier to resume and safer to coordinate across agents.
+- Verification:
+  - `git worktree add -b codex/hud-ux ../loom-core-hud-ux main`
+  - `python "$CODEX_HOME/skills/plan-loom-core/scripts/init_loom_context.py" --root .`
+  - `python "$CODEX_HOME/skills/plan-loom-core/scripts/workspace_snapshot.py" --root .`
+  - `git log --oneline --decorate --no-merges main..codex/hud-view-fixes`
+  - `git diff --stat main..codex/hud-view-fixes`
+  - `git cherry-pick --no-commit db3aa85`
+  - `pnpm --dir internal/hud/frontend install --frozen-lockfile`
+  - `pnpm --dir internal/hud/frontend build`
+  - `go test ./internal/hud/... -count=1`
+  - Tool call: `read_mcp_resource(server="loom", uri="loom://config")`
+  - Tool call: `codebase_memory__codebase_stats(repo_id="loom-core")`
+- Sources:
+  - [S1] `.loom/00-index.md`
+  - [S2] `.loom/00-mcp-inventory.md`
+  - [S3] `.loom/18-research-hud-ux-continuation-2026-03-13.md`
+  - [S4] `.loom/22-product-spec-hud-ux-continuation-2026-03-13.md`
+  - [S5] `.loom/41-implementation-plan-hud-ux-continuation-2026-03-13.md`
+
 ## 2026-03-11 (session 25) — Codebase benchmark harness recovery and watch baseline
 
 - What changed:

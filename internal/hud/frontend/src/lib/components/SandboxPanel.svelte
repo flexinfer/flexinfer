@@ -19,6 +19,7 @@
   let totalExecs = $derived(sandboxStore.totalExecs);
   let totalBuilds = $derived(sandboxStore.totalBuilds);
   let policy = $derived(sandboxStore.policy);
+  let latestEvent = $derived(events[0] ?? null);
 
   function formatUptime(seconds) {
     if (!seconds || seconds <= 0) return '---';
@@ -85,7 +86,7 @@
       </div>
     </div>
 
-    <!-- Main content: projects + policy + activity -->
+    <!-- Main content: projects + activity + summary rail -->
     <div class="sandbox-content">
       <!-- Project list -->
       <div class="projects-section">
@@ -120,41 +121,6 @@
             </button>
           </div>
         {/if}
-
-        <!-- Sandbox Policy -->
-        {#if policy?.configured}
-          <div class="section-title" style="margin-top: 8px;">Policy</div>
-          <div class="policy-section">
-            {#if policy.auto_provision}
-              <div class="policy-row">
-                <span class="policy-icon">{'\u2713'}</span>
-                <span class="policy-text">Auto-provision on session start</span>
-              </div>
-            {/if}
-            {#if policy.default_backend}
-              <div class="policy-row">
-                <span class="policy-icon">{'\u2B22'}</span>
-                <span class="policy-text">Backend: <span class="text-mono">{policy.default_backend}</span></span>
-              </div>
-            {/if}
-            {#if policy.require_sandbox?.length}
-              <div class="policy-group">
-                <span class="policy-group-label">Required</span>
-                {#each policy.require_sandbox as cmd}
-                  <span class="policy-tag policy-tag-require">{cmd}</span>
-                {/each}
-              </div>
-            {/if}
-            {#if policy.recommend_sandbox?.length}
-              <div class="policy-group">
-                <span class="policy-group-label">Recommended</span>
-                {#each policy.recommend_sandbox as cmd}
-                  <span class="policy-tag policy-tag-recommend">{cmd}</span>
-                {/each}
-              </div>
-            {/if}
-          </div>
-        {/if}
       </div>
 
       <!-- Recent activity -->
@@ -176,6 +142,80 @@
           </div>
         {/if}
       </div>
+
+      <aside class="sandbox-rail">
+        <section class="rail-card">
+          <div class="section-title">Sandbox Summary</div>
+          <div class="summary-grid">
+            <div class="summary-stat">
+              <span class="summary-value text-mono">{projects.length}</span>
+              <span class="summary-label">Projects</span>
+            </div>
+            <div class="summary-stat">
+              <span class="summary-value text-mono">{running}</span>
+              <span class="summary-label">Running</span>
+            </div>
+            <div class="summary-stat">
+              <span class="summary-value text-mono">{totalExecs}</span>
+              <span class="summary-label">Execs</span>
+            </div>
+            <div class="summary-stat">
+              <span class="summary-value text-mono">{totalBuilds}</span>
+              <span class="summary-label">Builds</span>
+            </div>
+          </div>
+          {#if latestEvent}
+            <div class="latest-event">
+              <div class="latest-event-label">Latest event</div>
+              <div class="latest-event-row">
+                <span class="activity-icon">{eventIcon(latestEvent.type)}</span>
+                <span class="latest-event-text">
+                  <strong>{latestEvent.project}</strong> {latestEvent.detail}
+                </span>
+              </div>
+              <div class="latest-event-time text-mono">{eventTime(latestEvent.timestamp)}</div>
+            </div>
+          {:else}
+            <div class="rail-empty">New exec and build activity will accumulate here as the daemon emits sandbox events.</div>
+          {/if}
+        </section>
+
+        {#if policy?.configured}
+          <section class="rail-card">
+            <div class="section-title">Policy</div>
+            <div class="policy-section">
+              {#if policy.auto_provision}
+                <div class="policy-row">
+                  <span class="policy-icon">{'\u2713'}</span>
+                  <span class="policy-text">Auto-provision on session start</span>
+                </div>
+              {/if}
+              {#if policy.default_backend}
+                <div class="policy-row">
+                  <span class="policy-icon">{'\u2B22'}</span>
+                  <span class="policy-text">Backend: <span class="text-mono">{policy.default_backend}</span></span>
+                </div>
+              {/if}
+              {#if policy.require_sandbox?.length}
+                <div class="policy-group">
+                  <span class="policy-group-label">Required</span>
+                  {#each policy.require_sandbox as cmd}
+                    <span class="policy-tag policy-tag-require">{cmd}</span>
+                  {/each}
+                </div>
+              {/if}
+              {#if policy.recommend_sandbox?.length}
+                <div class="policy-group">
+                  <span class="policy-group-label">Recommended</span>
+                  {#each policy.recommend_sandbox as cmd}
+                    <span class="policy-tag policy-tag-recommend">{cmd}</span>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </section>
+        {/if}
+      </aside>
     </div>
   {/if}
 </div>
@@ -281,10 +321,10 @@
   /* ---- Content Layout ---- */
   .sandbox-content {
     display: grid;
-    grid-template-columns: 260px 1fr;
+    grid-template-columns: 220px minmax(0, 1fr) 280px;
     flex: 1;
     overflow: hidden;
-    gap: 0;
+    gap: 12px;
   }
 
   .section-title {
@@ -455,8 +495,98 @@
 
   /* ---- Activity ---- */
   .activity-section {
-    padding-left: 12px;
+    min-width: 0;
     overflow-y: auto;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 0 12px 12px;
+  }
+
+  .sandbox-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+  }
+
+  .rail-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--border-radius);
+    padding: 0 12px 12px;
+  }
+
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding-top: 10px;
+  }
+
+  .summary-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .summary-value {
+    font-size: 18px;
+    color: var(--fg-primary);
+  }
+
+  .summary-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+  }
+
+  .latest-event {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  }
+
+  .latest-event-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    margin-bottom: 8px;
+  }
+
+  .latest-event-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  .latest-event-text {
+    font-size: 11px;
+    color: var(--fg-secondary);
+    line-height: 1.5;
+  }
+
+  .latest-event-text strong {
+    color: var(--fg-primary);
+  }
+
+  .latest-event-time {
+    margin-top: 8px;
+    font-size: 10px;
+    color: var(--fg-muted);
+  }
+
+  .rail-empty {
+    padding-top: 10px;
+    font-size: 11px;
+    color: var(--fg-muted);
+    line-height: 1.5;
   }
 
   .activity-list {
@@ -530,10 +660,28 @@
     white-space: nowrap;
   }
 
+  @media (max-width: 1220px) {
+    .sandbox-content {
+      grid-template-columns: 220px minmax(0, 1fr);
+    }
+
+    .sandbox-rail {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      overflow: visible;
+    }
+  }
+
   @media (max-width: 600px) {
     .sandbox-content {
       grid-template-columns: 1fr;
     }
+
+    .sandbox-rail {
+      grid-template-columns: 1fr;
+    }
+
     .projects-section {
       border-right: none;
       border-bottom: 1px solid var(--border);
@@ -542,7 +690,7 @@
       max-height: 200px;
     }
     .activity-section {
-      padding-left: 0;
+      padding-left: 12px;
     }
   }
 </style>
