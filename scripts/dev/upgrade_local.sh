@@ -34,6 +34,56 @@ dir_in_list() {
   return 1
 }
 
+list_proxy_pids() {
+  ps -Ao pid=,command= | awk -v self="$$" '
+    {
+      pid = $1
+      $1 = ""
+      sub(/^[[:space:]]+/, "", $0)
+      if (pid != self && $0 ~ /(^|\/)loom proxy([[:space:]]|$)/) {
+        print pid
+      }
+    }
+  '
+}
+
+reap_proxy_processes() {
+  local pids=()
+  local pid
+  local remaining=()
+  local attempt
+
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] && pids+=("$pid")
+  done < <(list_proxy_pids)
+
+  if [[ "${#pids[@]}" -eq 0 ]]; then
+    echo "No existing loom proxy clients to reap"
+    return 0
+  fi
+
+  echo "Reaping loom proxy clients: ${pids[*]}"
+  kill "${pids[@]}" 2>/dev/null || true
+
+  remaining=("${pids[@]}")
+  for attempt in 1 2 3 4 5; do
+    sleep 0.2
+    remaining=()
+    for pid in "${pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        remaining+=("$pid")
+      fi
+    done
+    if [[ "${#remaining[@]}" -eq 0 ]]; then
+      echo "Proxy cleanup complete"
+      return 0
+    fi
+  done
+
+  echo "Force-killing stubborn loom proxy clients: ${remaining[*]}"
+  kill -9 "${remaining[@]}" 2>/dev/null || true
+}
+
 echo "== Build =="
 make loom loomd mcp-hub-wrapper >/dev/null
 
@@ -95,12 +145,14 @@ echo "== Regen + Sync (loom mode) =="
 "$RUN_LOOM" sync all --regen --loom-mode --loom-binary "$RUN_LOOM"
 
 echo "== Daemon =="
+DAEMON_RESTARTED=false
 case "$RESTART_DAEMON" in
   never)
     echo "Skipping daemon restart (RESTART_DAEMON=never)"
     ;;
   always)
     "$RUN_LOOM" restart
+    DAEMON_RESTARTED=true
     ;;
   auto)
     # Prefer drain_ready field from status output (added in TD-SESSION-05).
@@ -109,6 +161,7 @@ case "$RESTART_DAEMON" in
       drain_ready="$(echo "$out" | awk -F'drain_ready=' '/drain_ready=/{print $2}' | tr -d '[:space:]' || true)"
       if [[ "$drain_ready" == "true" ]]; then
         "$RUN_LOOM" restart
+        DAEMON_RESTARTED=true
       elif [[ "$drain_ready" == "false" ]]; then
         echo "Daemon not drain-ready (in-flight RPCs); skipping restart (set RESTART_DAEMON=always to force)"
       else
@@ -116,6 +169,7 @@ case "$RESTART_DAEMON" in
         active="$(echo "$out" | awk '/^Connections:/{print $2}' | tr -d '[:space:]' || true)"
         if [[ -n "${active:-}" && "${active:-0}" =~ ^[0-9]+$ && "${active:-0}" -eq 0 ]]; then
           "$RUN_LOOM" restart
+          DAEMON_RESTARTED=true
         else
           echo "Daemon has active connections (${active:-unknown}); skipping restart (set RESTART_DAEMON=always to force)"
         fi
@@ -129,6 +183,11 @@ case "$RESTART_DAEMON" in
     exit 2
     ;;
 esac
+
+if [[ "$DAEMON_RESTARTED" == "true" ]]; then
+  echo "== Proxy Cleanup =="
+  reap_proxy_processes
+fi
 
 echo "== HUD =="
 HUD_PLIST="$HOME/Library/LaunchAgents/com.loom.hud.plist"
@@ -162,6 +221,11 @@ else
   else
     echo "No HUD process on port 3333 and no launchd plist; skipping"
   fi
+fi
+
+if [[ "$DAEMON_RESTARTED" == "true" ]]; then
+  echo "== Proxy Cleanup (post-restart check) =="
+  reap_proxy_processes
 fi
 
 echo "== Smoke (proxy initialize) =="

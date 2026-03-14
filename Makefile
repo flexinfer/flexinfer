@@ -387,11 +387,13 @@ install-all: build
 # - atomic install to ~/.local/bin
 # - regen+sync configs in loom mode
 # - restart daemon only when idle
+# - reap stale loom proxy clients when a restart happens
 dev-upgrade:
 	@chmod +x scripts/dev/upgrade_local.sh
 	@scripts/dev/upgrade_local.sh
 
 # Force rebuild + restart: always restarts daemon regardless of active connections.
+# Reaps existing loom proxy clients so stale app-held proxies do not outlive the reload.
 # Proxy connections (Claude, Codex, Zed, etc.) auto-reconnect on the next tool call.
 dev-reload:
 	@chmod +x scripts/dev/upgrade_local.sh
