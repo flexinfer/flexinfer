@@ -35,6 +35,7 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/observability"
 )
 
 // LoRAAdapterReconciler reconciles a LoRAAdapter object.
@@ -59,6 +60,8 @@ func (r *LoRAAdapterReconciler) httpClient() *http.Client {
 
 // Reconcile manages the lifecycle of a LoRA adapter.
 func (r *LoRAAdapterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	ctx, _, endSpan := observability.StartReconcileSpan(ctx, "lora", req.Namespace, req.Name)
+	defer endSpan()
 	log := log.FromContext(ctx)
 
 	adapter := &aiv1alpha2.LoRAAdapter{}
