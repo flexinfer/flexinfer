@@ -340,7 +340,16 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 
 func (p *callPipeline) releaseConnection() {
 	if p.conn != nil {
-		if p.target == router.TargetLocal {
+		// If the context was cancelled (client disconnect), the upstream
+		// connection may be in an indeterminate state (server still processing
+		// the request). Close it instead of returning it to the pool to avoid
+		// response corruption on subsequent callers.
+		cancelled := p.ctx != nil && p.ctx.Err() != nil
+		if cancelled {
+			if p.conn.Transport != nil {
+				_ = p.conn.Transport.Close()
+			}
+		} else if p.target == router.TargetLocal {
 			if p.daemon.pool != nil {
 				p.daemon.pool.Put(p.conn)
 			}

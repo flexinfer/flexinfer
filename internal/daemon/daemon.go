@@ -915,39 +915,75 @@ func (d *Daemon) handleConnection(ctx context.Context, conn net.Conn) {
 		go d.forwardNotifications(connCtx, events, transport, &writeMu, remoteAddr)
 	}
 
+	// Read messages in a dedicated goroutine so client disconnects are
+	// detected even while handleMessage blocks (e.g., long tool calls).
+	// On disconnect, connCancel fires and propagates to in-flight calls,
+	// releasing the per-server call lock immediately instead of waiting
+	// for the full routing timeout.
+	type recvResult struct {
+		msg *mcp.Message
+		err error
+	}
+	msgCh := make(chan recvResult, 1)
+	go func() {
+		defer close(msgCh)
+		for {
+			msg, err := transport.Recv(connCtx)
+			if err != nil {
+				connCancel() // cancel in-flight calls on disconnect
+				select {
+				case msgCh <- recvResult{nil, err}:
+				case <-connCtx.Done():
+				}
+				return
+			}
+			select {
+			case msgCh <- recvResult{msg, nil}:
+			case <-connCtx.Done():
+				return
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-d.done:
 			return
-		case <-ctx.Done():
+		case <-connCtx.Done():
 			return
-		default:
-		}
-
-		msg, err := transport.Recv(ctx)
-		if err != nil {
-			d.logger.Debug("client disconnected", "error", err)
-			connSpan.AddEvent("client_disconnected", trace.WithAttributes(attribute.String("error", err.Error())))
-			return
-		}
-		messageCount++
-
-		resp, err := d.handleMessage(ctx, msg)
-		if err != nil {
-			d.logger.Error("handle message error", "error", err)
-			connSpan.RecordError(err)
-			resp = mcp.NewErrorResponse(msg.ID, mcp.InternalError, err.Error())
-		}
-
-		if resp != nil {
-			writeMu.Lock()
-			sendErr := transport.Send(ctx, resp)
-			writeMu.Unlock()
-			if sendErr != nil {
-				d.logger.Error("send response error", "error", sendErr)
-				connSpan.RecordError(sendErr)
-				connSpan.SetStatus(codes.Error, sendErr.Error())
+		case recv, ok := <-msgCh:
+			if !ok {
 				return
+			}
+			if recv.err != nil {
+				d.logger.Debug("client disconnected", "error", recv.err)
+				connSpan.AddEvent("client_disconnected", trace.WithAttributes(attribute.String("error", recv.err.Error())))
+				return
+			}
+			messageCount++
+
+			resp, err := d.handleMessage(connCtx, recv.msg)
+			if err != nil {
+				if connCtx.Err() != nil {
+					// Client disconnected during handling; skip response.
+					d.logger.Debug("client disconnected during message handling", "error", err)
+					return
+				}
+				d.logger.Error("handle message error", "error", err)
+				connSpan.RecordError(err)
+				resp = mcp.NewErrorResponse(recv.msg.ID, mcp.InternalError, err.Error())
+			}
+
+			if resp != nil {
+				writeMu.Lock()
+				sendErr := transport.Send(connCtx, resp)
+				writeMu.Unlock()
+				if sendErr != nil {
+					d.logger.Error("send response error", "error", sendErr)
+					connSpan.RecordError(sendErr)
+					connSpan.SetStatus(codes.Error, sendErr.Error())
+					return
+				}
 			}
 		}
 	}

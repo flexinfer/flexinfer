@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
@@ -262,6 +263,7 @@ func newToolsCmd(socketPath string) *cobra.Command {
 	// Tools call subcommand
 	var toolsCallJSON bool
 	var toolsCallArgs string
+	var toolsCallTimeout string
 	toolsCallCmd := &cobra.Command{
 		Use:   "call <tool-name>",
 		Short: "Execute a tool and return the result",
@@ -269,7 +271,8 @@ func newToolsCmd(socketPath string) *cobra.Command {
 
 Examples:
   loom tools call tavily__search --args '{"query": "golang best practices"}'
-  loom tools call memory__search_nodes --args '{"query": "user preferences"}' --json`,
+  loom tools call memory__search_nodes --args '{"query": "user preferences"}' --json
+  loom tools call devbox__devbox_exec --args '{"project":"loom-core","command":"make test"}' --timeout 10m`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			toolName := args[0]
@@ -282,11 +285,21 @@ Examples:
 				}
 			}
 
+			// Resolve timeout: explicit flag > env > default (60s).
+			var callOpts []callOption
+			if toolsCallTimeout != "" {
+				if d, err := time.ParseDuration(toolsCallTimeout); err == nil && d > 0 {
+					callOpts = append(callOpts, withTimeout(d))
+				} else {
+					return fmt.Errorf("invalid --timeout value %q: %w", toolsCallTimeout, err)
+				}
+			}
+
 			// Call the tool via daemon
 			result, err := call(socketPath, "tools/call", map[string]interface{}{
 				"name":      toolName,
 				"arguments": toolArgs,
-			})
+			}, callOpts...)
 			if err != nil {
 				if toolsCallJSON {
 					out, _ := json.Marshal(map[string]string{"error": err.Error()})
@@ -313,6 +326,7 @@ Examples:
 	}
 	toolsCallCmd.Flags().BoolVar(&toolsCallJSON, "json", false, "Output raw JSON")
 	toolsCallCmd.Flags().StringVar(&toolsCallArgs, "args", "", "Tool arguments as JSON")
+	toolsCallCmd.Flags().StringVar(&toolsCallTimeout, "timeout", "", "Timeout for the tool call (e.g., 5m, 10m, 1h)")
 
 	toolsCmd.AddCommand(toolsListCmd, toolsSearchCmd, toolsGetCmd, toolsCallCmd)
 	return toolsCmd

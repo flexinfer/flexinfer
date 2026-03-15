@@ -31,8 +31,24 @@ func dial(socketPath string) (net.Conn, error) {
 	return d.DialContext(ctx, "unix", socketPath)
 }
 
+// callOption configures a call to the daemon.
+type callOption func(*callConfig)
+
+type callConfig struct {
+	timeout time.Duration
+}
+
+func withTimeout(d time.Duration) callOption {
+	return func(c *callConfig) { c.timeout = d }
+}
+
 // call makes a JSON-RPC request to the loom daemon and returns the result.
-func call(socketPath string, method string, params any) (json.RawMessage, error) {
+func call(socketPath string, method string, params any, opts ...callOption) (json.RawMessage, error) {
+	var cfg callConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	conn, err := dial(socketPath)
 	if err != nil {
 		dialTimeout := normalizePositiveDuration(env.Duration("LOOM_DAEMON_DIAL_TIMEOUT", defaultDaemonDialTimeout), defaultDaemonDialTimeout)
@@ -43,6 +59,9 @@ func call(socketPath string, method string, params any) (json.RawMessage, error)
 	transport := mcp.NewStdioTransport(conn, conn)
 	ctx := context.Background()
 	callTimeout := daemonRPCTimeout(method)
+	if cfg.timeout > 0 {
+		callTimeout = cfg.timeout
+	}
 
 	req, err := mcp.NewRequest(1, method, params)
 	if err != nil {
