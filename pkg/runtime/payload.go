@@ -20,11 +20,18 @@ type LoadPayload struct {
 
 // BuildLoadPayload constructs a serialized LoadPayload from model metadata.
 // Both the proxy and controller use this to build identical load requests.
-func BuildLoadPayload(backendName, source string, config map[string]interface{}) ([]byte, error) {
+// The modelBasePath is the runtime's model mount root (e.g. "/models").
+func BuildLoadPayload(backendName, source, modelBasePath string, config map[string]interface{}) ([]byte, error) {
+	model := ExtractModelFromSource(source)
 	payload := LoadPayload{
 		Backend: backendName,
-		Model:   ExtractModelFromSource(source),
+		Model:   model,
 		Config:  config,
+	}
+	// For pvc:// sources, resolve the full modelPath so the runtime doesn't
+	// fall back to its default (basePath/modelName) which may be wrong.
+	if strings.HasPrefix(source, "pvc://") && modelBasePath != "" {
+		payload.ModelPath = modelBasePath + model
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

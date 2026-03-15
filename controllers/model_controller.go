@@ -4447,8 +4447,8 @@ func (r *ModelReconciler) loadViaRuntime(ctx context.Context, model *aiv1alpha2.
 	runtimeLog := log.FromContext(ctx)
 
 	// Build the load request payload using shared builder.
-	// The controller adds modelPath from the storage plan.
-	data, err := pkgrt.BuildLoadPayload(b.Name(), model.Spec.Source, model.Spec.GetConfigMap())
+	// Pass /models as modelBasePath so PVC sources resolve to /models/{pvc-subpath}.
+	data, err := pkgrt.BuildLoadPayload(b.Name(), model.Spec.Source, "/models", model.Spec.GetConfigMap())
 	if err != nil {
 		return err
 	}

@@ -471,7 +471,8 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 	}
 
 	// Build the load payload (shared with controller).
-	payload, err := pkgrt.BuildLoadPayload(b.Name(), m.Spec.Source, m.Spec.GetConfigMap())
+	// Pass /models as modelBasePath so PVC sources resolve correctly.
+	payload, err := pkgrt.BuildLoadPayload(b.Name(), m.Spec.Source, "/models", m.Spec.GetConfigMap())
 	if err != nil {
 		slog.Warn("direct load: failed to build payload", "model", modelName, "error", err)
 		return false

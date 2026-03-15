@@ -72,6 +72,9 @@ spec:
             - name: dev-dri
               mountPath: /dev/dri
             {{- end }}
+            {{- with .extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           resources:
             {{- if .resources }}
             {{- toYaml .resources | nindent 12 }}
@@ -116,6 +119,9 @@ spec:
           hostPath:
             path: /dev/dri
             type: Directory
+        {{- end }}
+        {{- with .extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       tolerations:
         - key: dedicated
