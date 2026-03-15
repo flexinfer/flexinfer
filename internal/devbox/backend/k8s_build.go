@@ -269,7 +269,7 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, bui
 					Name: "buildah-storage",
 					VolumeSource: corev1.VolumeSource{
 						EmptyDir: &corev1.EmptyDirVolumeSource{
-							SizeLimit: resourcePtr(resource.MustParse("20Gi")),
+							SizeLimit: resourcePtr(resource.MustParse("40Gi")),
 						},
 					},
 				},
