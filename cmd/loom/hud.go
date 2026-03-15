@@ -51,6 +51,15 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var installShader bool
 	var tui bool
 
+	// Spawn orchestrator flags.
+	var spawnEnabled bool
+	var spawnKubeconfig string
+	var spawnNamespace string
+	var spawnRegistry string
+	var spawnSyncMode string
+	var spawnGitBaseURL string
+	var spawnGitSecret string
+
 	cmd := &cobra.Command{
 		Use:   "hud",
 		Short: "Launch the Agent HUD (command center)",
@@ -129,6 +138,18 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 			applyEnvString("cache-backend", "CACHE_BACKEND", &cacheBackend)
 			applyEnvInt("mobile-rate-limit-mutation", "HUD_MOBILE_RATE_LIMIT_MUTATION", &mobileRateLimitMutation)
 			applyEnvInt("mobile-rate-limit-read", "HUD_MOBILE_RATE_LIMIT_READ", &mobileRateLimitRead)
+			applyEnvString("spawn-kubeconfig", "SPAWN_KUBECONFIG", &spawnKubeconfig)
+			applyEnvString("spawn-namespace", "SPAWN_NAMESPACE", &spawnNamespace)
+			applyEnvString("spawn-registry", "SPAWN_REGISTRY", &spawnRegistry)
+			applyEnvString("spawn-sync-mode", "SPAWN_SYNC_MODE", &spawnSyncMode)
+			applyEnvString("spawn-git-base-url", "SPAWN_GIT_BASE_URL", &spawnGitBaseURL)
+			applyEnvString("spawn-git-secret", "SPAWN_GIT_SECRET", &spawnGitSecret)
+			// SPAWN_ENABLED env var (boolean).
+			if !cmd.Flags().Changed("spawn-enabled") {
+				if v := os.Getenv("SPAWN_ENABLED"); v == "true" || v == "1" {
+					spawnEnabled = true
+				}
+			}
 			// Launchd/mobile-dev compatibility: if no token is provided directly,
 			// fall back to the persisted token file used by make mobile-dev.
 			if !cmd.Flags().Changed("mobile-operator-token") && strings.TrimSpace(mobileOperatorToken) == "" {
@@ -187,6 +208,13 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 				TLSKey:                  tlsKey,
 				BindAddress:             bindAddress,
 				TUI:                     tui,
+				SpawnEnabled:            spawnEnabled,
+				SpawnKubeconfig:         spawnKubeconfig,
+				SpawnNamespace:          spawnNamespace,
+				SpawnRegistry:           spawnRegistry,
+				SpawnSyncMode:           spawnSyncMode,
+				SpawnGitBaseURL:         spawnGitBaseURL,
+				SpawnGitSecret:          spawnGitSecret,
 			})
 		},
 	}
@@ -231,6 +259,15 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 
 	// TUI mode.
 	cmd.Flags().BoolVar(&tui, "tui", false, "Launch terminal UI dashboard (bubbletea)")
+
+	// Spawn orchestrator (headless agent spawning via devbox K8s pods).
+	cmd.Flags().BoolVar(&spawnEnabled, "spawn-enabled", false, "Enable headless agent spawn endpoints [$SPAWN_ENABLED]")
+	cmd.Flags().StringVar(&spawnKubeconfig, "spawn-kubeconfig", os.Getenv("SPAWN_KUBECONFIG"), "Kubeconfig for spawn K8s backend [$SPAWN_KUBECONFIG]")
+	cmd.Flags().StringVar(&spawnNamespace, "spawn-namespace", os.Getenv("SPAWN_NAMESPACE"), "K8s namespace for spawn pods (default: devbox) [$SPAWN_NAMESPACE]")
+	cmd.Flags().StringVar(&spawnRegistry, "spawn-registry", os.Getenv("SPAWN_REGISTRY"), "Image registry for spawn builds [$SPAWN_REGISTRY]")
+	cmd.Flags().StringVar(&spawnSyncMode, "spawn-sync-mode", os.Getenv("SPAWN_SYNC_MODE"), "Workspace sync mode: git-clone or nfs [$SPAWN_SYNC_MODE]")
+	cmd.Flags().StringVar(&spawnGitBaseURL, "spawn-git-base-url", os.Getenv("SPAWN_GIT_BASE_URL"), "Git base URL for git-clone sync [$SPAWN_GIT_BASE_URL]")
+	cmd.Flags().StringVar(&spawnGitSecret, "spawn-git-secret", os.Getenv("SPAWN_GIT_SECRET"), "K8s secret with git token [$SPAWN_GIT_SECRET]")
 
 	// Service management subcommands.
 	cmd.AddCommand(

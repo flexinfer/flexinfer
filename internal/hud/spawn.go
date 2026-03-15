@@ -2,6 +2,8 @@ package hud
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -13,6 +15,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/crb2nu/loom/internal/devbox/backend"
+	"github.com/crb2nu/loom/internal/devbox/detect"
+	"github.com/crb2nu/loom/internal/devbox/dockerfile"
 	"github.com/crb2nu/loom/internal/hud/bridge"
 )
 
@@ -21,6 +25,7 @@ type SpawnStatus string
 
 const (
 	SpawnStatusCreating  SpawnStatus = "creating"
+	SpawnStatusBuilding  SpawnStatus = "building"
 	SpawnStatusRunning   SpawnStatus = "running"
 	SpawnStatusCompleted SpawnStatus = "completed"
 	SpawnStatusFailed    SpawnStatus = "failed"
@@ -69,6 +74,9 @@ type SpawnOrchestrator struct {
 	defaultTimeout time.Duration
 	defaultMemory  int
 	defaultCPUs    float64
+
+	// workspaceRoot is the local path to the workspace mount (for project detection).
+	workspaceRoot string
 }
 
 // SpawnOrchestratorConfig holds configuration for the spawn orchestrator.
@@ -77,6 +85,7 @@ type SpawnOrchestratorConfig struct {
 	DefaultTimeout time.Duration
 	DefaultMemory  int // MB
 	DefaultCPUs    float64
+	WorkspaceRoot  string // local path to workspace mount (for project detection)
 }
 
 // DefaultSpawnConfig returns sensible defaults.
@@ -86,6 +95,7 @@ func DefaultSpawnConfig() SpawnOrchestratorConfig {
 		DefaultTimeout: 60 * time.Minute,
 		DefaultMemory:  4096,
 		DefaultCPUs:    2.0,
+		WorkspaceRoot:  "/workspace",
 	}
 }
 
@@ -99,6 +109,10 @@ func NewSpawnOrchestrator(
 	logger *slog.Logger,
 	cfg SpawnOrchestratorConfig,
 ) *SpawnOrchestrator {
+	wsRoot := cfg.WorkspaceRoot
+	if wsRoot == "" {
+		wsRoot = "/workspace"
+	}
 	return &SpawnOrchestrator{
 		backend:        b,
 		agentBridge:    agentBridge,
@@ -111,6 +125,7 @@ func NewSpawnOrchestrator(
 		defaultTimeout: cfg.DefaultTimeout,
 		defaultMemory:  cfg.DefaultMemory,
 		defaultCPUs:    cfg.DefaultCPUs,
+		workspaceRoot:  wsRoot,
 	}
 }
 
@@ -153,7 +168,7 @@ func (o *SpawnOrchestrator) Spawn(ctx context.Context, req SpawnRequest) (string
 		return "", fmt.Errorf("max concurrent spawns reached (%d)", o.maxConcurrent)
 	}
 
-	spawnID := fmt.Sprintf("spawn-%d", time.Now().UnixMilli())
+	spawnID := newSpawnID()
 	agentID := fmt.Sprintf("spawn-%s-%s", req.AgentType, spawnID[6:])
 
 	state := &SpawnState{
@@ -200,11 +215,28 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	state := o.spawns[spawnID]
 	o.mu.RUnlock()
 
-	// Step 1: Build/reuse devbox image.
+	projectDir := o.workspaceRoot + "/" + req.Project
+
+	// Step 1: Detect project environment and generate Dockerfile.
+	o.mu.Lock()
+	state.Status = SpawnStatusBuilding
+	o.mu.Unlock()
+	o.broadcastSpawnEvent("agent.spawn.building", state)
+
 	_, buildSpan := o.tracer.Start(ctx, "agent.spawn.image_build")
+
+	df, dfErr := o.generateDockerfile(projectDir)
+	if dfErr != nil {
+		buildSpan.End()
+		o.failSpawn(ctx, state, fmt.Sprintf("dockerfile generation failed: %v", dfErr))
+		return
+	}
+
+	buildTag := fmt.Sprintf("%s-spawn-%s", req.Project, spawnID[6:])
 	buildResult, err := o.backend.Build(ctx, backend.BuildOpts{
-		Tag:        req.Project + "-spawn",
-		ContextDir: ".",
+		Tag:        buildTag,
+		Dockerfile: df,
+		ContextDir: projectDir,
 	})
 	buildSpan.End()
 	if err != nil {
@@ -247,18 +279,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	}
 	cfgSpan.End()
 
-	// Step 4: Execute agent CLI.
-	_, execSpan := o.tracer.Start(ctx, "agent.spawn.agent_start")
-	agentCmd := buildAgentCommand(req.AgentType, req.TaskDescription, state.AgentID)
-	_, err = o.backend.Exec(ctx, backend.ExecOpts{
-		ContainerID: startResult.ContainerID,
-		Command:     agentCmd,
-		WorkDir:     "/workspace/" + req.Project,
-		TimeoutSec:  req.TimeoutMinutes * 60,
-	})
-	execSpan.End()
-
-	// Step 5: Register session.
+	// Step 4: Register agent session (before exec so the agent has session context).
 	_, sessSpan := o.tracer.Start(ctx, "agent.spawn.session_register")
 	o.agentBridge.StartSession(bridge.SessionStartParams{
 		Namespace:   req.Namespace,
@@ -272,20 +293,50 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	o.mu.Lock()
 	state.Status = SpawnStatusRunning
 	o.mu.Unlock()
-
 	o.broadcastSpawnEvent("agent.spawn.running", state)
 
-	// Step 6: Monitor with timeout reaper.
-	timeout := time.Duration(req.TimeoutMinutes) * time.Minute
-	o.monitorSpawn(ctx, state, timeout)
+	// Step 5: Execute agent CLI (blocking until agent exits or timeout).
+	_, execSpan := o.tracer.Start(ctx, "agent.spawn.agent_exec")
+	agentCmd := buildAgentCommand(req.AgentType, req.TaskDescription, state.AgentID)
+	_, execErr := o.backend.Exec(ctx, backend.ExecOpts{
+		ContainerID: startResult.ContainerID,
+		Command:     agentCmd,
+		WorkDir:     "/workspace/" + req.Project,
+		TimeoutSec:  req.TimeoutMinutes * 60,
+	})
+	execSpan.End()
 
-	if err != nil {
-		o.failSpawn(ctx, state, fmt.Sprintf("agent execution failed: %v", err))
+	// Step 6: Finalize based on exec result.
+	if execErr != nil {
+		o.failSpawn(ctx, state, fmt.Sprintf("agent execution failed: %v", execErr))
 		return
 	}
-
-	// Agent completed successfully.
 	o.completeSpawn(ctx, state)
+}
+
+// generateDockerfile detects the project environment and generates a Dockerfile.
+// Falls back to a minimal Go-based Dockerfile if detection fails.
+func (o *SpawnOrchestrator) generateDockerfile(projectDir string) ([]byte, error) {
+	fp, err := detect.Fingerprint(projectDir)
+	if err != nil {
+		o.logger.Warn("project detection failed, using fallback Dockerfile", "dir", projectDir, "error", err)
+		return fallbackDockerfile(), nil
+	}
+
+	df, err := dockerfile.Generate(fp)
+	if err != nil {
+		o.logger.Warn("dockerfile generation failed, using fallback", "dir", projectDir, "error", err)
+		return fallbackDockerfile(), nil
+	}
+	return df, nil
+}
+
+// fallbackDockerfile returns a minimal Dockerfile for projects where detection fails.
+func fallbackDockerfile() []byte {
+	return []byte(`FROM golang:1.24-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends git make curl ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace
+`)
 }
 
 // injectAgentConfig writes platform-specific config files into the pod.
@@ -325,32 +376,13 @@ func buildAgentCommand(agentType, task, agentID string) string {
 	}
 }
 
-// monitorSpawn watches a running spawn for health and timeout.
-func (o *SpawnOrchestrator) monitorSpawn(ctx context.Context, state *SpawnState, timeout time.Duration) {
-	deadline := time.After(timeout)
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-deadline:
-			o.logger.Warn("spawn timeout reached, stopping", "spawn_id", state.SpawnID)
-			o.StopSpawn(context.Background(), state.SpawnID)
-			return
-		case <-ticker.C:
-			status, err := o.backend.Status(ctx, state.PodName)
-			if err != nil {
-				o.logger.Debug("spawn health check failed", "spawn_id", state.SpawnID, "error", err)
-				continue
-			}
-			if !status.Running {
-				o.logger.Info("spawn pod no longer running", "spawn_id", state.SpawnID, "status", status.Status)
-				return
-			}
-		}
+// newSpawnID generates a unique spawn ID using crypto/rand.
+func newSpawnID() string {
+	var buf [6]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return fmt.Sprintf("spawn-%d", time.Now().UnixNano())
 	}
+	return "spawn-" + hex.EncodeToString(buf[:])
 }
 
 // StopSpawn stops a running spawned agent.
@@ -453,7 +485,7 @@ func (o *SpawnOrchestrator) activeCount() int {
 	defer o.mu.RUnlock()
 	count := 0
 	for _, s := range o.spawns {
-		if s.Status == SpawnStatusCreating || s.Status == SpawnStatusRunning {
+		if s.Status == SpawnStatusCreating || s.Status == SpawnStatusBuilding || s.Status == SpawnStatusRunning {
 			count++
 		}
 	}
@@ -467,7 +499,7 @@ func (o *SpawnOrchestrator) broadcastSpawnEvent(eventType string, state *SpawnSt
 		return
 	}
 	o.sseHub.Broadcast(bridge.SSEEvent{
-		ID:        fmt.Sprintf("%s-%d", eventType, time.Now().UnixMilli()),
+		ID:        fmt.Sprintf("%s-%s-%d", eventType, state.SpawnID, time.Now().UnixMilli()),
 		Type:      eventType,
 		Timestamp: time.Now(),
 		Data:      data,

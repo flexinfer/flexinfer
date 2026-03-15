@@ -102,6 +102,16 @@ spec:
               value: /var/run/loom/loom.sock
             - name: CACHE_BACKEND
               value: memory
+            - name: SPAWN_ENABLED
+              value: "true"
+            - name: SPAWN_NAMESPACE
+              value: devbox
+            - name: SPAWN_SYNC_MODE
+              value: git-clone
+            - name: SPAWN_GIT_BASE_URL
+              value: https://gitlab.blevins.dev/homelab
+            - name: SPAWN_GIT_SECRET
+              value: gitlab-token
           ports:
             - containerPort: 3333
               name: http
@@ -133,6 +143,9 @@ spec:
           volumeMounts:
             - name: loom-socket
               mountPath: /var/run/loom
+            - name: workspace
+              mountPath: /workspace
+              readOnly: true
       securityContext:
         fsGroup: 1000
         runAsNonRoot: true
@@ -143,3 +156,6 @@ spec:
         - name: registry
           configMap:
             name: mobile-hud-registry
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: devbox-workspace-nfs

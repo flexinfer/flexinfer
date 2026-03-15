@@ -2292,3 +2292,71 @@ func (a *App) handleMobileSpawnStop(w http.ResponseWriter, r *http.Request) {
 	a.logMobileAudit(r, "agent_spawn_stop", map[string]string{"spawn_id": spawnID}, "success", nil)
 	a.writeMobileJSON(w, http.StatusOK, map[string]any{"stopped": true, "spawn_id": spawnID})
 }
+
+// handleMobileSpawnStream handles GET /api/mobile/v1/agent/spawn/{spawn_id}/stream.
+// SSE endpoint that streams spawn lifecycle events filtered by spawn_id.
+func (a *App) handleMobileSpawnStream(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	spawnID := r.PathValue("spawn_id")
+	if spawnID == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "missing_param", "spawn_id required")
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		a.writeMobileError(w, http.StatusInternalServerError, "streaming_unsupported", "streaming not supported")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	subID, ch := a.sseHub.Subscribe()
+	defer a.sseHub.Unsubscribe(subID)
+
+	// Send initial state if spawn exists.
+	if a.spawner != nil {
+		if state, exists := a.spawner.GetSpawn(spawnID); exists {
+			data, _ := json.Marshal(state)
+			fmt.Fprintf(w, "event: agent.spawn.state\ndata: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, open := <-ch:
+			if !open {
+				return
+			}
+			// Only forward spawn events matching this spawn_id.
+			if !strings.HasPrefix(event.Type, "agent.spawn.") {
+				continue
+			}
+			if !strings.Contains(event.ID, spawnID) {
+				continue
+			}
+			fmt.Fprintf(w, "id: %s\nevent: %s\ndata: %s\n\n", event.ID, event.Type, event.Data)
+			flusher.Flush()
+
+			// Close stream when spawn reaches a terminal state.
+			if event.Type == "agent.spawn.completed" || event.Type == "agent.spawn.failed" || event.Type == "agent.spawn.stopped" {
+				return
+			}
+		case t := <-ticker.C:
+			fmt.Fprintf(w, "event: heartbeat\ndata: {\"time\":%q}\n\n", t.Format(time.RFC3339))
+			flusher.Flush()
+		}
+	}
+}

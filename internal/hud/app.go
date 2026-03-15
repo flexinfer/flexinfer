@@ -30,6 +30,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	loomcache "github.com/crb2nu/loom/internal/cache"
+	"github.com/crb2nu/loom/internal/devbox/backend"
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/coordinator"
 	"github.com/crb2nu/loom/internal/hud/monitor"
@@ -90,6 +91,15 @@ type Config struct {
 
 	// TUI mode: launch a bubbletea terminal UI instead of the web dashboard.
 	TUI bool
+
+	// Spawn orchestrator (headless agent spawning via devbox K8s backend).
+	SpawnEnabled    bool   // Enable spawn endpoints (default: false).
+	SpawnKubeconfig string // Kubeconfig for spawn K8s backend.
+	SpawnNamespace  string // K8s namespace for spawn pods (default: "devbox").
+	SpawnRegistry   string // Image registry (default: "registry.harbor.lan").
+	SpawnSyncMode   string // Workspace sync: "git-clone" or "nfs".
+	SpawnGitBaseURL string // Git base URL for git-clone mode.
+	SpawnGitSecret  string // K8s secret with git token.
 }
 
 // App is the HUD application. It holds the daemon client, agent bridge,
@@ -239,6 +249,28 @@ func Run(cfg Config) error {
 
 	// Initialize timeline event log (ring buffer for activity timeline).
 	app.eventLog = NewEventLog(1000)
+
+	// Initialize spawn orchestrator when enabled.
+	if cfg.SpawnEnabled {
+		spawnBackend, spawnErr := backend.NewK8sBackend(backend.K8sBackendConfig{
+			Kubeconfig: cfg.SpawnKubeconfig,
+			Namespace:  cfg.SpawnNamespace,
+			Registry:   cfg.SpawnRegistry,
+			SyncMode:   cfg.SpawnSyncMode,
+			GitBaseURL: cfg.SpawnGitBaseURL,
+			GitSecret:  cfg.SpawnGitSecret,
+		})
+		if spawnErr != nil {
+			logger.Error("spawn backend init failed", "error", spawnErr)
+		} else {
+			app.spawner = NewSpawnOrchestrator(
+				spawnBackend, agent, app.sseHub, app.tracer, app.metrics, logger,
+				DefaultSpawnConfig(),
+			)
+			logger.Info("spawn orchestrator enabled",
+				"namespace", cfg.SpawnNamespace, "registry", cfg.SpawnRegistry, "sync_mode", cfg.SpawnSyncMode)
+		}
+	}
 
 	// Start session reaper — auto-ends orphaned sessions for offline agents.
 	reaperCtx, reaperCancel := context.WithCancel(context.Background())
@@ -787,6 +819,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mobile/v1/agent/spawns", a.withCORS(a.handleMobileSpawnList))
 	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/{spawn_id}", a.withCORS(a.handleMobileSpawnDetail))
 	mux.HandleFunc("POST /api/mobile/v1/agent/spawn/{spawn_id}/stop", a.withCORS(a.handleMobileSpawnStop))
+	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/{spawn_id}/stream", a.withCORS(a.handleMobileSpawnStream))
 
 	// API routes — topology graph.
 	mux.HandleFunc("GET /api/topology", a.withCORS(a.handleTopology))
