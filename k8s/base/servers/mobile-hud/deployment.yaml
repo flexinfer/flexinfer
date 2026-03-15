@@ -104,6 +104,8 @@ spec:
               value: memory
             - name: SPAWN_ENABLED
               value: "true"
+            - name: SPAWN_REGISTRY
+              value: registry.harbor.lan
             - name: SPAWN_NAMESPACE
               value: devbox
             - name: SPAWN_SYNC_MODE
