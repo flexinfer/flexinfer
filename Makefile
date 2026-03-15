@@ -10,7 +10,7 @@
 		deploy deploy-status \
 	browserkit-check browserkit-setup \
 	hud hud-dev hud-build hud-install hud-install-service hud-reload hud-frontend hud-dist-check hud-clean \
-		mobile-iphone-preflight mobile-gateway-sync-token mobile-gateway-preflight mobile-ios-project-sync mobile-hud mobile-app-open mobile-app-run-sim mobile-dev mobile-gateway-dev \
+		mobile-iphone-preflight mobile-gateway-sync-token mobile-gateway-preflight mobile-ios-project-sync mobile-hud mobile-app-open mobile-app-run-sim mobile-app-run-device mobile-dev mobile-gateway-dev \
 		mobile-signing-check mobile-signing-prepare mobile-signing-cleanup mobile-app-archive-export
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -133,6 +133,7 @@ help:
 	@echo "  make mobile-hud              - Launch HUD with mobile auth on 0.0.0.0:3333"
 	@echo "  make mobile-app-open         - Open iOS app project in Xcode"
 	@echo "  make mobile-app-run-sim      - Build/install/launch app in iOS Simulator"
+	@echo "  make mobile-app-run-device   - Build/install/launch app on connected iPhone"
 	@echo "  make mobile-dev              - Generate token, restart HUD, open app, print URL+token"
 	@echo "  make mobile-gateway-dev      - Rotate token, patch loom-hub secret, restart mobile-hud, verify gateway"
 	@echo "  make mobile-signing-check    - Check iOS signing variables and current Xcode signing state"
@@ -881,6 +882,71 @@ mobile-app-run-sim: mobile-ios-project-sync
 	xcrun simctl install "$$SIM_UDID" "$$APP_PATH"; \
 	echo "Launching $(MOBILE_IOS_BUNDLE_ID) on $$SIM_UDID"; \
 	xcrun simctl launch "$$SIM_UDID" "$(MOBILE_IOS_BUNDLE_ID)"
+
+# Build and install Loom Companion on a connected iPhone.
+# Requires: device in dev mode, trusted, and automatic signing configured in Xcode.
+# Optional overrides:
+#   MOBILE_IOS_CONFIGURATION=Release
+#   APPLE_TEAM_ID=XXXXXXXXXX
+mobile-app-run-device: mobile-ios-project-sync
+	@echo "== Loom Companion → iPhone =="
+	@DEVICE_LINE="$$(xcodebuild -project "$(MOBILE_IOS_PROJECT)" \
+		-scheme "$(MOBILE_IOS_SCHEME)" \
+		-showdestinations 2>/dev/null \
+		| grep 'platform:iOS,' | grep -v 'Simulator' | head -1)"; \
+	if [ -z "$$DEVICE_LINE" ]; then \
+		echo "ERROR: No connected iPhone found."; \
+		echo "Connect your iPhone via USB, unlock it, and ensure it is trusted."; \
+		exit 1; \
+	fi; \
+	DEVICE_ID="$$(echo "$$DEVICE_LINE" | sed -n 's/.*id:\([^,}]*\).*/\1/p' | tr -d ' ')"; \
+	DEVICE_NAME="$$(echo "$$DEVICE_LINE" | sed -n 's/.*name:\([^,}]*\).*/\1/p' | sed 's/^ *//;s/ *$$//')"; \
+	echo "Device: $$DEVICE_NAME ($$DEVICE_ID)"; \
+	echo "Building $(MOBILE_IOS_SCHEME) ($(MOBILE_IOS_CONFIGURATION))..."; \
+	TEAM_FLAG=""; \
+	if [ -n "$${APPLE_TEAM_ID:-}" ]; then \
+		TEAM_FLAG="DEVELOPMENT_TEAM=$$APPLE_TEAM_ID"; \
+	fi; \
+	xcodebuild -project "$(MOBILE_IOS_PROJECT)" \
+		-scheme "$(MOBILE_IOS_SCHEME)" \
+		-destination "id=$$DEVICE_ID" \
+		-configuration "$(MOBILE_IOS_CONFIGURATION)" \
+		-derivedDataPath "$(MOBILE_IOS_DERIVED_DATA)" \
+		-allowProvisioningUpdates \
+		$$TEAM_FLAG \
+		build 2>&1 | tail -n 20; \
+	BUILD_EXIT=$$?; \
+	if [ $$BUILD_EXIT -ne 0 ]; then \
+		echo ""; \
+		echo "ERROR: Build failed. Full log: /tmp/loom-mobile-app-build.log"; \
+		echo "Common fixes:"; \
+		echo "  - Set APPLE_TEAM_ID: make mobile-app-run-device APPLE_TEAM_ID=XXXXXXXXXX"; \
+		echo "  - Open Xcode and configure signing: make mobile-app-open"; \
+		exit 1; \
+	fi; \
+	echo ""; \
+	echo "Installing on $$DEVICE_NAME..."; \
+	APP_PATH="$(MOBILE_IOS_DERIVED_DATA)/Build/Products/$(MOBILE_IOS_CONFIGURATION)-iphoneos/$(MOBILE_IOS_APP_NAME).app"; \
+	if [ ! -d "$$APP_PATH" ]; then \
+		echo "ERROR: app bundle not found at $$APP_PATH"; \
+		exit 1; \
+	fi; \
+	ios-deploy --bundle "$$APP_PATH" --id "$$DEVICE_ID" --justlaunch 2>/dev/null && { \
+		echo "Launched $(MOBILE_IOS_BUNDLE_ID) on $$DEVICE_NAME"; \
+		exit 0; \
+	}; \
+	echo "ios-deploy not available, trying devicectl..."; \
+	xcrun devicectl device install app --device "$$DEVICE_ID" "$$APP_PATH" 2>&1 && \
+	xcrun devicectl device process launch --device "$$DEVICE_ID" "$(MOBILE_IOS_BUNDLE_ID)" 2>&1 && { \
+		echo "Launched $(MOBILE_IOS_BUNDLE_ID) on $$DEVICE_NAME"; \
+		exit 0; \
+	}; \
+	echo ""; \
+	echo "Build succeeded! App bundle: $$APP_PATH"; \
+	echo "Auto-install failed. Install manually:"; \
+	echo "  1) Open Xcode: make mobile-app-open"; \
+	echo "  2) Select $$DEVICE_NAME as the run destination"; \
+	echo "  3) Press Cmd+R to run"
 
 # One-command local mobile dev bootstrap:
 # - ensures bin/loom exists

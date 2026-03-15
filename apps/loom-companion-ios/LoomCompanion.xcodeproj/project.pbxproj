@@ -654,9 +654,11 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					206507807B35EBD83FDA7303 = {
+						DevelopmentTeam = BX8243HJHS;
 						ProvisioningStyle = Automatic;
 					};
 					6750481BF789286A3C05F0E6 = {
+						DevelopmentTeam = BX8243HJHS;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -818,6 +820,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Sources/LoomCompanionWidget/LoomCompanionWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = BX8243HJHS;
 				INFOPLIST_FILE = Sources/LoomCompanionWidget/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -862,6 +865,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = Sources/LoomCompanionWidget/LoomCompanionWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = BX8243HJHS;
 				INFOPLIST_FILE = Sources/LoomCompanionWidget/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -908,6 +912,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/LoomCompanion/LoomCompanion.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = BX8243HJHS;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Loom Companion";
 				INFOPLIST_KEY_NSBonjourServices = (
@@ -1056,6 +1061,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/LoomCompanion/LoomCompanion.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = BX8243HJHS;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Loom Companion";
 				INFOPLIST_KEY_NSBonjourServices = (

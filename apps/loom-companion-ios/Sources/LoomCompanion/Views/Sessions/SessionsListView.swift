@@ -97,13 +97,27 @@ struct SessionsListView: View {
                     .padding()
                 } else if let error = viewModel.error, viewModel.sessions.isEmpty {
                     ContentUnavailableView {
-                        Label("Error", systemImage: "exclamationmark.triangle")
+                        Label("Connection Error", systemImage: "wifi.exclamationmark")
                     } description: {
                         Text(error.description)
                     } actions: {
                         Button("Retry") {
                             Task { await viewModel.load() }
                         }
+                        .buttonStyle(.borderedProminent)
+                    }
+                } else if viewModel.sessions.isEmpty && !viewModel.isLoading {
+                    ContentUnavailableView {
+                        Label("No Sessions", systemImage: "person.2.circle")
+                    } description: {
+                        Text("Agent sessions appear here when coding agents connect. Start a session from the Ops tab or launch an agent from your terminal.")
+                    } actions: {
+                        Button {
+                            showingCreateSheet = true
+                        } label: {
+                            Label("Create Session", systemImage: "plus.circle")
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
                 } else if viewModel.filteredSessions.isEmpty && !viewModel.sessions.isEmpty {
                     ContentUnavailableView.search(text: viewModel.searchText)

@@ -21,6 +21,11 @@ struct OpsView: View {
     @State private var showCreateConfirmation = false
     @State private var showEndConfirmation = false
     @State private var showSandboxStartConfirmation = false
+    @State private var taskDisplayLimit = 8
+    @State private var workflowDisplayLimit = 8
+    @State private var agentDisplayLimit = 8
+    @State private var streamDisplayLimit = 8
+    @State private var chainDisplayLimit = 8
 
     enum OpsSegment: String, CaseIterable, Identifiable {
         case work = "Work"
@@ -50,6 +55,9 @@ struct OpsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .onChange(of: selectedSegment) { _, _ in
+                    HapticManager.light()
+                }
 
                 if let error = viewModel.error {
                     Text(error.description)
@@ -211,17 +219,24 @@ struct OpsView: View {
                             .font(LoomTypography.bodyRegular)
                             .foregroundStyle(LoomColors.textTertiary)
                     } else {
-                        ForEach(Array(viewModel.tasks.prefix(8))) { task in
+                        ForEach(Array(viewModel.tasks.prefix(taskDisplayLimit))) { task in
                             NavigationLink {
                                 OpsTaskDetailView(task: task)
                             } label: {
                                 HStack(spacing: LoomSpacing.sm) {
                                     StatusAccentBar(color: taskStatusColor(task.status))
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(task.title)
-                                            .font(LoomTypography.bodyMedium)
-                                            .foregroundStyle(LoomColors.textPrimary)
-                                        Text("\(task.agentId) \u{2022} \(task.status.rawValue)")
+                                        HStack(spacing: 6) {
+                                            Text(task.title)
+                                                .font(LoomTypography.bodyMedium)
+                                                .foregroundStyle(LoomColors.textPrimary)
+                                                .lineLimit(1)
+                                            StatusBadge(
+                                                task.status.rawValue,
+                                                color: taskStatusColor(task.status)
+                                            )
+                                        }
+                                        Text("\(task.agentId) \u{2022} \(task.priority)")
                                             .font(LoomTypography.caption)
                                             .foregroundStyle(LoomColors.textSecondary)
                                     }
@@ -236,6 +251,20 @@ struct OpsView: View {
                                     Label("Prefill End Session", systemImage: "arrowshape.turn.up.left")
                                 }
                                 .disabled(task.sessionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        }
+                        if viewModel.tasks.count > taskDisplayLimit {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    taskDisplayLimit += 8
+                                }
+                                HapticManager.light()
+                            } label: {
+                                Text("Show \(min(8, viewModel.tasks.count - taskDisplayLimit)) More")
+                                    .font(LoomTypography.caption)
+                                    .foregroundStyle(LoomColors.accent)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 6)
                             }
                         }
                     }
@@ -263,7 +292,7 @@ struct OpsView: View {
                             .font(LoomTypography.bodyRegular)
                             .foregroundStyle(LoomColors.textTertiary)
                     } else {
-                        ForEach(Array(viewModel.workflows.prefix(8))) { workflow in
+                        ForEach(Array(viewModel.workflows.prefix(workflowDisplayLimit))) { workflow in
                             NavigationLink {
                                 OpsWorkflowDetailView(
                                     workflow: workflow,
@@ -273,16 +302,37 @@ struct OpsView: View {
                                 HStack(spacing: LoomSpacing.sm) {
                                     StatusAccentBar(color: workflowStatusColor(workflow.status))
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(workflow.name ?? workflow.id)
-                                            .font(LoomTypography.bodyMedium)
-                                            .foregroundStyle(LoomColors.textPrimary)
-                                        Text("\(workflow.status.rawValue) \u{2022} \(workflow.currentStep ?? "No current step")")
+                                        HStack(spacing: 6) {
+                                            Text(workflow.name ?? workflow.id)
+                                                .font(LoomTypography.bodyMedium)
+                                                .foregroundStyle(LoomColors.textPrimary)
+                                                .lineLimit(1)
+                                            StatusBadge(
+                                                workflow.status.rawValue,
+                                                color: workflowStatusColor(workflow.status)
+                                            )
+                                        }
+                                        Text(workflow.currentStep ?? "No current step")
                                             .font(LoomTypography.caption)
                                             .foregroundStyle(LoomColors.textSecondary)
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 .padding(.vertical, 2)
+                            }
+                        }
+                        if viewModel.workflows.count > workflowDisplayLimit {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    workflowDisplayLimit += 8
+                                }
+                                HapticManager.light()
+                            } label: {
+                                Text("Show \(min(8, viewModel.workflows.count - workflowDisplayLimit)) More")
+                                    .font(LoomTypography.caption)
+                                    .foregroundStyle(LoomColors.accent)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 6)
                             }
                         }
                     }
@@ -418,20 +468,44 @@ struct OpsView: View {
                             .font(LoomTypography.bodyRegular)
                             .foregroundStyle(LoomColors.textTertiary)
                     } else {
-                        ForEach(Array(viewModel.presenceAgents.prefix(8))) { agent in
+                        ForEach(Array(viewModel.presenceAgents.prefix(agentDisplayLimit))) { agent in
                             HStack(spacing: LoomSpacing.sm) {
                                 PulsingDot(color: agentStatusColor(agent.status), isPulsing: agent.status.rawValue == "active")
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(agent.agentId)
-                                        .font(LoomTypography.bodyMedium)
-                                        .foregroundStyle(LoomColors.textPrimary)
-                                    Text("\(agent.status.rawValue) \u{2022} \(agent.currentTask)")
-                                        .font(LoomTypography.caption)
-                                        .foregroundStyle(LoomColors.textSecondary)
+                                    HStack(spacing: 6) {
+                                        Text(agent.agentId)
+                                            .font(LoomTypography.bodyMedium)
+                                            .foregroundStyle(LoomColors.textPrimary)
+                                            .lineLimit(1)
+                                        StatusBadge(
+                                            agent.status.rawValue,
+                                            color: agentStatusColor(agent.status)
+                                        )
+                                    }
+                                    if !agent.currentTask.isEmpty {
+                                        Text(agent.currentTask)
+                                            .font(LoomTypography.caption)
+                                            .foregroundStyle(LoomColors.textSecondary)
+                                            .lineLimit(1)
+                                    }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .padding(.vertical, 2)
+                        }
+                        if viewModel.presenceAgents.count > agentDisplayLimit {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    agentDisplayLimit += 8
+                                }
+                                HapticManager.light()
+                            } label: {
+                                Text("Show \(min(8, viewModel.presenceAgents.count - agentDisplayLimit)) More")
+                                    .font(LoomTypography.caption)
+                                    .foregroundStyle(LoomColors.accent)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 6)
+                            }
                         }
                     }
                 }
@@ -689,7 +763,7 @@ struct OpsView: View {
                             .font(LoomTypography.bodyRegular)
                             .foregroundStyle(LoomColors.textTertiary)
                     } else {
-                        ForEach(Array(viewModel.streamEntries.prefix(8).enumerated()), id: \.element.id) { index, entry in
+                        ForEach(Array(viewModel.streamEntries.prefix(streamDisplayLimit).enumerated()), id: \.element.id) { index, entry in
                             HStack(spacing: LoomSpacing.sm) {
                                 Image(systemName: streamEntryIcon(entry.entryType))
                                     .foregroundStyle(LoomColors.accent)
@@ -698,6 +772,7 @@ struct OpsView: View {
                                     Text(entry.title)
                                         .font(LoomTypography.bodyMedium)
                                         .foregroundStyle(LoomColors.textPrimary)
+                                        .lineLimit(1)
                                     Text("\(entry.entryType) \u{2022} \(entry.agentId)")
                                         .font(LoomTypography.caption)
                                         .foregroundStyle(LoomColors.textSecondary)
@@ -706,6 +781,20 @@ struct OpsView: View {
                             }
                             .padding(.vertical, 2)
                             .cardAppear(index: index)
+                        }
+                        if viewModel.streamEntries.count > streamDisplayLimit {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    streamDisplayLimit += 8
+                                }
+                                HapticManager.light()
+                            } label: {
+                                Text("Show \(min(8, viewModel.streamEntries.count - streamDisplayLimit)) More")
+                                    .font(LoomTypography.caption)
+                                    .foregroundStyle(LoomColors.accent)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 6)
+                            }
                         }
                     }
                 }
@@ -735,7 +824,7 @@ struct OpsView: View {
                             .font(LoomTypography.caption)
                             .foregroundStyle(LoomColors.textTertiary)
                     } else {
-                        ForEach(Array(viewModel.reasoningChains.prefix(8))) { chain in
+                        ForEach(Array(viewModel.reasoningChains.prefix(chainDisplayLimit))) { chain in
                             NavigationLink {
                                 OpsReasoningChainDetailView(
                                     chain: chain,
@@ -745,16 +834,37 @@ struct OpsView: View {
                                 HStack(spacing: LoomSpacing.sm) {
                                     StatusAccentBar(color: chainStatusColor(chain.status))
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(chain.title)
-                                            .font(LoomTypography.bodyMedium)
-                                            .foregroundStyle(LoomColors.textPrimary)
-                                        Text("\(chain.status.rawValue) \u{2022} \(chain.stepCount) steps")
+                                        HStack(spacing: 6) {
+                                            Text(chain.title)
+                                                .font(LoomTypography.bodyMedium)
+                                                .foregroundStyle(LoomColors.textPrimary)
+                                                .lineLimit(1)
+                                            StatusBadge(
+                                                "\(chain.stepCount) steps",
+                                                color: chainStatusColor(chain.status)
+                                            )
+                                        }
+                                        Text(chain.status.rawValue)
                                             .font(LoomTypography.caption)
                                             .foregroundStyle(LoomColors.textSecondary)
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 .padding(.vertical, 2)
+                            }
+                        }
+                        if viewModel.reasoningChains.count > chainDisplayLimit {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    chainDisplayLimit += 8
+                                }
+                                HapticManager.light()
+                            } label: {
+                                Text("Show \(min(8, viewModel.reasoningChains.count - chainDisplayLimit)) More")
+                                    .font(LoomTypography.caption)
+                                    .foregroundStyle(LoomColors.accent)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 6)
                             }
                         }
                     }

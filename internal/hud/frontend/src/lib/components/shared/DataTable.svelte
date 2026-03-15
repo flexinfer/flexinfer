@@ -47,6 +47,19 @@
 
   let colSpan = $derived((selectable ? 1 : 0) + columns.length);
 
+  // Restore persisted sort state on mount (keyed by first column label).
+  $effect(() => {
+    if (!onSort || !columns.length) return;
+    const storageKey = `dt-sort-${columns[0]?.label ?? 'default'}`;
+    try {
+      const saved = sessionStorage.getItem(storageKey);
+      if (saved) {
+        const { key, dir } = JSON.parse(saved);
+        if (key && dir && key !== sortKey) onSort(key, dir);
+      }
+    } catch { /* ignore */ }
+  });
+
   // Row pagination: show maxRows initially, expand on demand
   let displayCount = $state(Infinity);
 
@@ -67,6 +80,11 @@
   function handleHeaderClick(col) {
     if (!col.sortable || !onSort) return;
     const newDir = sortKey === col.key && sortDir === 'asc' ? 'desc' : 'asc';
+    // Persist sort preference.
+    try {
+      const storageKey = `dt-sort-${columns[0]?.label ?? 'default'}`;
+      sessionStorage.setItem(storageKey, JSON.stringify({ key: col.key, dir: newDir }));
+    } catch { /* ignore */ }
     onSort(col.key, newDir);
   }
 

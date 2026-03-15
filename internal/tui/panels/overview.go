@@ -39,6 +39,8 @@ type MsgOverviewData struct {
 type OverviewPanel struct {
 	width, height int
 	data          MsgOverviewData
+	prev          MsgOverviewData // previous snapshot for trend indicators
+	hasPrev       bool
 }
 
 // NewOverviewPanel creates a new overview panel.
@@ -54,9 +56,24 @@ func (p OverviewPanel) Update(msg tea.Msg) (OverviewPanel, tea.Cmd) {
 		p.width = msg.Width
 		p.height = msg.Height
 	case MsgOverviewData:
+		if p.hasPrev || p.data.ServerCount > 0 {
+			p.prev = p.data
+			p.hasPrev = true
+		}
 		p.data = msg
 	}
 	return p, nil
+}
+
+// trend returns a colored arrow indicator comparing current vs previous value.
+func (p OverviewPanel) trend(current, previous int) string {
+	if !p.hasPrev || current == previous {
+		return ""
+	}
+	if current > previous {
+		return lipgloss.NewStyle().Foreground(theme.ColorSuccess).Render("\u2191") // ↑
+	}
+	return lipgloss.NewStyle().Foreground(theme.ColorError).Render("\u2193") // ↓
 }
 
 func (p OverviewPanel) View() string {
@@ -82,8 +99,8 @@ func (p OverviewPanel) View() string {
 
 	kpiLine := daemonStatus + " " + labelStyle.Render(daemonLabel) +
 		"  " + kpiStyle.Render(fmt.Sprintf("%d", d.ServerCount)) + labelStyle.Render(" servers") +
-		"  " + kpiStyle.Render(fmt.Sprintf("%d", d.ActiveSessions)) + labelStyle.Render(" sessions") +
-		"  " + kpiStyle.Render(formatNumber(d.TotalTokens)) + labelStyle.Render(" tokens")
+		"  " + kpiStyle.Render(fmt.Sprintf("%d", d.ActiveSessions)) + p.trend(d.ActiveSessions, p.prev.ActiveSessions) + labelStyle.Render(" sessions") +
+		"  " + kpiStyle.Render(formatNumber(d.TotalTokens)) + p.trend(d.TotalTokens, p.prev.TotalTokens) + labelStyle.Render(" tokens")
 	b.WriteString(kpiLine)
 	b.WriteString("\n\n")
 
@@ -150,11 +167,11 @@ func (p OverviewPanel) View() string {
 	taskSection.WriteString(accentStyle.Render("☑ TASKS"))
 	taskSection.WriteString("\n")
 	taskSection.WriteString("  " +
-		lipgloss.NewStyle().Foreground(theme.ColorWarning).Render(fmt.Sprintf("%d pending", d.PendingTasks)) +
+		lipgloss.NewStyle().Foreground(theme.ColorWarning).Render(fmt.Sprintf("%d pending", d.PendingTasks)) + p.trend(d.PendingTasks, p.prev.PendingTasks) +
 		"  " +
-		lipgloss.NewStyle().Foreground(theme.ColorSuccess).Render(fmt.Sprintf("%d active", d.ActiveTasks)))
+		lipgloss.NewStyle().Foreground(theme.ColorSuccess).Render(fmt.Sprintf("%d active", d.ActiveTasks)) + p.trend(d.ActiveTasks, p.prev.ActiveTasks))
 	if d.BlockedTasks > 0 {
-		taskSection.WriteString("  " + lipgloss.NewStyle().Foreground(theme.ColorError).Render(fmt.Sprintf("%d blocked", d.BlockedTasks)))
+		taskSection.WriteString("  " + lipgloss.NewStyle().Foreground(theme.ColorError).Render(fmt.Sprintf("%d blocked", d.BlockedTasks)) + p.trend(d.BlockedTasks, p.prev.BlockedTasks))
 	}
 	taskSection.WriteString("\n")
 

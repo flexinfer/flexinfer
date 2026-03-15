@@ -32,6 +32,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.flexinfer.loom.companion
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: BX8243HJHS
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
@@ -66,6 +67,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.flexinfer.loom.companion.widget
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: BX8243HJHS
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     entitlements:

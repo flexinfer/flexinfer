@@ -80,13 +80,25 @@ struct DashboardView: View {
                     }
                 } else if let error = viewModel.error {
                     ContentUnavailableView {
-                        Label("Error", systemImage: "exclamationmark.triangle")
+                        Label("Connection Error", systemImage: "wifi.exclamationmark")
                     } description: {
                         Text(error.description)
                     } actions: {
                         Button("Retry") {
                             Task { await viewModel.load() }
                         }
+                        .buttonStyle(.borderedProminent)
+                    }
+                } else {
+                    ContentUnavailableView {
+                        Label("No Dashboard Data", systemImage: "square.grid.2x2")
+                    } description: {
+                        Text("Connect to a Loom server to view health, fleet, and task data. Check your connection settings in the Connection tab.")
+                    } actions: {
+                        Button("Refresh") {
+                            Task { await viewModel.load() }
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
                 }
             }

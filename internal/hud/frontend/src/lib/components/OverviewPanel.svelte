@@ -20,13 +20,19 @@
    * simultaneously as a compact mini-dashboard grid.
    */
 
+  // --- Loading state ---
+  let initialLoad = $state(true);
+
   // --- Daily KPIs ---
   let kpis = $state({ sessions_today: 0, tokens_today: 0, tasks_completed_today: 0, active_agents: 0, pending_approvals: 0, file_conflicts: 0, conflict_details: [] });
 
   async function fetchKPIs() {
     try {
       const res = await globalThis.fetch('/api/kpis');
-      if (res.ok) kpis = await res.json();
+      if (res.ok) {
+        kpis = await res.json();
+        initialLoad = false;
+      }
     } catch { /* non-critical */ }
   }
 
@@ -204,6 +210,25 @@
 </script>
 
 <div class="panel overview-panel">
+  {#if initialLoad}
+    <!-- Skeleton loading state -->
+    <div class="kpi-strip">
+      {#each Array(6) as _}
+        <div class="kpi-tile"><div class="skeleton skeleton-bar" style="width: 60%; margin: 0 auto;"></div><div class="skeleton skeleton-text" style="width: 80%; margin: 4px auto 0;"></div></div>
+      {/each}
+    </div>
+    <div class="overview-grid">
+      {#each Array(6) as _}
+        <div class="tile tile-skeleton">
+          <div class="tile-header"><div class="skeleton skeleton-text" style="width: 50%;"></div></div>
+          <div class="tile-body">
+            <div class="skeleton skeleton-bar" style="width: 40%;"></div>
+            <div class="skeleton skeleton-text" style="width: 70%; margin-top: 6px;"></div>
+          </div>
+        </div>
+      {/each}
+    </div>
+  {:else}
   <!-- Daily KPI Strip -->
   <div class="kpi-strip">
     <div class="kpi-tile">
@@ -480,6 +505,7 @@
       {#if agoText(graphStore.lastUpdated)}<div class="tile-footer">{agoText(graphStore.lastUpdated)}</div>{/if}
     </button>
   </div>
+  {/if}
 </div>
 
 <style>
@@ -791,6 +817,17 @@
   .badge-off {
     background: var(--bg-tertiary);
     color: var(--fg-muted);
+  }
+
+  .tile-skeleton {
+    cursor: default;
+    min-height: 80px;
+  }
+
+  .tile-skeleton:hover {
+    border-color: var(--border);
+    box-shadow: none;
+    transform: none;
   }
 
   @media (max-width: 600px) {

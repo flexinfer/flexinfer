@@ -75,6 +75,8 @@ type TasksPanel struct {
 	// Interactive state
 	selectedIdx int
 	flatTasks   []TaskData // ordered: pending, active, blocked
+	searchMode  bool
+	searchQuery string
 }
 
 // NewTasksPanel creates a new tasks panel.
@@ -110,6 +112,28 @@ func (p TasksPanel) Update(msg tea.Msg) (TasksPanel, tea.Cmd) {
 		p.blockers = msg.Blockers
 		p.rebuildFlatTasks()
 	case tea.KeyMsg:
+		if p.searchMode {
+			switch msg.String() {
+			case "esc":
+				p.searchMode = false
+				p.searchQuery = ""
+				p.rebuildFlatTasks()
+			case "enter":
+				p.searchMode = false
+				// Keep filter applied.
+			case "backspace":
+				if len(p.searchQuery) > 0 {
+					p.searchQuery = p.searchQuery[:len(p.searchQuery)-1]
+					p.rebuildFlatTasks()
+				}
+			default:
+				if len(msg.String()) == 1 {
+					p.searchQuery += msg.String()
+					p.rebuildFlatTasks()
+				}
+			}
+			return p, nil
+		}
 		switch msg.String() {
 		case "j", "down":
 			if p.selectedIdx < len(p.flatTasks)-1 {
@@ -118,6 +142,14 @@ func (p TasksPanel) Update(msg tea.Msg) (TasksPanel, tea.Cmd) {
 		case "k", "up":
 			if p.selectedIdx > 0 {
 				p.selectedIdx--
+			}
+		case "/":
+			p.searchMode = true
+			p.searchQuery = ""
+		case "esc":
+			if p.searchQuery != "" {
+				p.searchQuery = ""
+				p.rebuildFlatTasks()
 			}
 		case "enter":
 			if t := p.SelectedTask(); t != nil {
@@ -131,11 +163,16 @@ func (p TasksPanel) Update(msg tea.Msg) (TasksPanel, tea.Cmd) {
 	return p, nil
 }
 
-// rebuildFlatTasks orders tasks: pending → in_progress → blocked.
+// rebuildFlatTasks orders tasks: pending → in_progress → blocked, applying search filter.
 func (p *TasksPanel) rebuildFlatTasks() {
 	p.flatTasks = p.flatTasks[:0]
+	query := strings.ToLower(p.searchQuery)
 	var pending, active, blocked []TaskData
 	for _, t := range p.tasks {
+		if query != "" && !strings.Contains(strings.ToLower(t.Title), query) &&
+			!strings.Contains(strings.ToLower(t.AgentID), query) {
+			continue
+		}
 		switch strings.ToLower(t.Status) {
 		case "pending":
 			pending = append(pending, t)
@@ -175,7 +212,20 @@ func (p TasksPanel) View() string {
 
 	// Summary counts
 	b.WriteString(p.renderSummary())
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+
+	// Search mode indicator
+	if p.searchMode {
+		searchStyle := lipgloss.NewStyle().Foreground(theme.ColorAccent).Bold(true)
+		b.WriteString(searchStyle.Render(fmt.Sprintf("  / %s", p.searchQuery)))
+		b.WriteString(lipgloss.NewStyle().Foreground(theme.ColorAccent).Blink(true).Render("_"))
+		b.WriteString("\n")
+	} else if p.searchQuery != "" {
+		filterStyle := lipgloss.NewStyle().Foreground(theme.ColorInfo)
+		b.WriteString(filterStyle.Render(fmt.Sprintf("  filter: %q (%d matches)", p.searchQuery, len(p.flatTasks))))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 
 	if len(p.tasks) == 0 {
 		b.WriteString(theme.Styles.MutedText.Render("  No tasks"))
@@ -193,7 +243,11 @@ func (p TasksPanel) View() string {
 
 	// Navigation hint
 	hintStyle := lipgloss.NewStyle().Foreground(theme.ColorFgMuted)
-	b.WriteString(hintStyle.Render("  j/k:move  enter:cycle status"))
+	hint := "  j/k:move  enter:cycle status  /:search"
+	if p.searchQuery != "" {
+		hint += "  esc:clear"
+	}
+	b.WriteString(hintStyle.Render(hint))
 	b.WriteString("\n")
 
 	return b.String()
@@ -285,13 +339,27 @@ func (p TasksPanel) renderColumn(title string, tasks []TaskData, width int) stri
 	for _, t := range tasks {
 		isSelected := p.isTaskSelected(t.ID)
 		badge := priorityBadge(t.Priority)
-		taskTitle := truncate(t.Title, width-6) // cursor(2) + space(1) + badge(1) + space(1) + buffer(1)
+		maxTitleWidth := width - 6 // cursor(2) + space(1) + badge(1) + space(1) + buffer(1)
+		taskTitle := truncate(t.Title, maxTitleWidth)
 
 		cursor := " "
+		style := lipgloss.NewStyle()
 		if isSelected {
 			cursor = lipgloss.NewStyle().Foreground(theme.ColorAccent).Bold(true).Render("▸")
+			style = style.Bold(true)
 		}
-		line := fmt.Sprintf("%s %s %s", cursor, badge, taskTitle)
+		// Highlight matching search query in title.
+		if p.searchQuery != "" {
+			idx := strings.Index(strings.ToLower(taskTitle), strings.ToLower(p.searchQuery))
+			if idx >= 0 {
+				before := taskTitle[:idx]
+				match := taskTitle[idx : idx+len(p.searchQuery)]
+				after := taskTitle[idx+len(p.searchQuery):]
+				matchStyle := lipgloss.NewStyle().Foreground(theme.ColorAccent).Bold(true)
+				taskTitle = before + matchStyle.Render(match) + after
+			}
+		}
+		line := fmt.Sprintf("%s %s %s", cursor, badge, style.Render(taskTitle))
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
