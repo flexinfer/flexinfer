@@ -47,8 +47,6 @@ targets:
     entitlements:
       path: Sources/LoomCompanion/LoomCompanion.entitlements
       properties:
-        com.apple.security.application-groups:
-          - group.ai.flexinfer.loom.companion
         aps-environment: development
   LoomCompanionWidget:
     type: app-extension
@@ -59,17 +57,17 @@ targets:
       - target: LoomCompanionKit
       - sdk: WidgetKit.framework
       - sdk: SwiftUI.framework
+    info:
+      path: Sources/LoomCompanionWidget/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.flexinfer.loom.companion.widget
         CODE_SIGN_STYLE: Automatic
-        GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
-        INFOPLIST_KEY_NSExtension:
-          NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
       path: Sources/LoomCompanionWidget/LoomCompanionWidget.entitlements
-      properties:
-        com.apple.security.application-groups:
-          - group.ai.flexinfer.loom.companion
+      properties: {}
