@@ -26,17 +26,17 @@ gitlab.flexinfer.ai/
 
 Deployment (GitOps)
 
-MCP servers can be deployed to Kubernetes via Flux. Manifests live in:
+MCP servers deploy to Kubernetes via Flux. Manifests live in this repo:
 
-- `platform/gitops/k3s/mcp-hub/servers/` - Individual MCP server deployments
+- `k8s/base/` - All server deployment manifests (47 servers)
+- `platform/gitops/clusters/k3s/flux-system/kustomization-loom-hub-servers.yaml` - Image tags, patches
 
-To deploy an MCP server:
+To deploy: `make deploy` (builds, pushes, updates image tag in gitops, reconciles Flux)
 
-1. Build binaries: `make build`
-2. Build container: `docker build -t registry.harbor.lan/library/loom:TAG .`
-3. Push to Harbor
-4. Update image tag in `platform/gitops/k3s/mcp-hub/servers/<server>/`
-5. Commit and push to `platform/gitops`
+To update images only: `make deploy-update-images` (updates single Flux Kustomization CRD)
+
+To add a new server: create `k8s/base/servers/<name>/` with deployment.yaml, configmap.yaml, service.yaml,
+then add to `k8s/base/kustomization.yaml` and `k8s/base/servers/gateway/registry-configmap.yaml`.
 
 Local Usage
 
