@@ -46,6 +46,7 @@ WORKSPACE_ROOT ?= $(shell realpath ../.. 2>/dev/null || echo "$(HOME)/workspace"
 # GitOps settings
 GITOPS_DIR ?= $(shell realpath ../../platform/gitops 2>/dev/null || echo "$(HOME)/workspace/platform/gitops")
 LOOM_HUB_DIR := $(GITOPS_DIR)/k3s/loom-hub
+FLUX_KUST := $(GITOPS_DIR)/clusters/k3s/flux-system/kustomization-loom-hub-servers.yaml
 
 # MCP server binaries
 MCP_SERVERS := mcp-time mcp-git mcp-github mcp-gitlab mcp-memory mcp-sequentialthinking mcp-prometheus mcp-k8s mcp-tavily mcp-server-mgmt mcp-cloudflare mcp-loki mcp-asus-router mcp-git-worktree mcp-grafana mcp-k8s-ops mcp-minio mcp-morph-embeddings mcp-qdrant mcp-quality mcp-ops mcp-zep mcp-morph-fast-apply mcp-youtube mcp-godot mcp-alertmanager mcp-flux mcp-postgres mcp-helm mcp-docker mcp-codebase-memory mcp-agent-context mcp-redis mcp-neo4j mcp-confluence mcp-browserkit mcp-devbox mcp-itchio mcp-release mcp-substack mcp-linkedin mcp-google-workspace mcp-jobsearch mcp-mentatlab mcp-flexinfer
@@ -1135,46 +1136,43 @@ deploy: docker-push deploy-update-images deploy-reconcile
 	@echo "  Image tag: $(IMAGE_TAG)"
 	@echo "  Registry:  $(REGISTRY)"
 
-# Update image tags in gitops repo (only loom-hub/servers deployments)
+# Update image tags in Flux Kustomization CRD (single file in gitops)
 deploy-update-images:
-	@echo "Updating image tags in gitops repo..."
-	@if [ ! -d "$(LOOM_HUB_DIR)/servers" ]; then \
-		echo "ERROR: GitOps directory not found: $(LOOM_HUB_DIR)/servers"; \
+	@echo "Updating image tags in Flux Kustomization..."
+	@if [ ! -f "$(FLUX_KUST)" ]; then \
+		echo "ERROR: Flux Kustomization not found: $(FLUX_KUST)"; \
 		echo "Set GITOPS_DIR to override"; \
 		exit 1; \
 	fi
-	@echo "Updating kustomization.yaml newTag to $(IMAGE_TAG)"
-	@sed -i '' 's|newTag: [a-zA-Z0-9._-]*|newTag: $(IMAGE_TAG)|' "$(LOOM_HUB_DIR)/servers/kustomization.yaml"
-	@echo "Updating deployments to use $(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG)"
-	@for f in $(LOOM_HUB_DIR)/servers/*/deployment.yaml; do \
-		if [ -f "$$f" ]; then \
-			sed -i '' 's|$(REGISTRY)/mcp/custom-server:[a-zA-Z0-9._"]*|$(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG)|g' "$$f"; \
-			sed -i '' 's|$(REGISTRY)/mcp/loom-core:[a-zA-Z0-9._"]*|$(LOOM_CORE_IMAGE):$(IMAGE_TAG)|g' "$$f"; \
-		fi; \
-	done
-	@echo "✓ Image tags updated"
+	@sed -i '' 's|newTag: "[a-zA-Z0-9._-]*"  # custom-server|newTag: "$(IMAGE_TAG)"  # custom-server|' "$(FLUX_KUST)"
+	@sed -i '' 's|newTag: "[a-zA-Z0-9._-]*"  # loom-core|newTag: "$(IMAGE_TAG)"  # loom-core|' "$(FLUX_KUST)"
+	@echo "✓ Image tags updated to $(IMAGE_TAG)"
 	@echo ""
 	@echo "Changed files:"
-	@cd $(GITOPS_DIR) && git diff --name-only k3s/loom-hub/
+	@cd $(GITOPS_DIR) && git diff --name-only clusters/
 
-# Reconcile Flux
+# Reconcile Flux (both git sources + kustomizations)
 deploy-reconcile:
 	@echo "Reconciling Flux..."
 	@if command -v flux >/dev/null 2>&1; then \
+		flux reconcile source git loom-core -n flux-system && \
 		flux reconcile source git gitops-gitlab -n flux-system && \
-		flux reconcile kustomization apps -n flux-system; \
+		flux reconcile kustomization apps -n flux-system && \
+		flux reconcile kustomization loom-hub-servers -n flux-system; \
 	else \
 		echo "Warning: flux CLI not found, skipping reconcile"; \
 		echo "Run manually:"; \
+		echo "  flux reconcile source git loom-core -n flux-system"; \
 		echo "  flux reconcile source git gitops-gitlab -n flux-system"; \
 		echo "  flux reconcile kustomization apps -n flux-system"; \
+		echo "  flux reconcile kustomization loom-hub-servers -n flux-system"; \
 	fi
 
 # Commit gitops changes
 deploy-commit:
 	@echo "Committing gitops changes..."
 	@cd $(GITOPS_DIR) && \
-		git add k3s/loom-hub && \
+		git add clusters/k3s/flux-system/kustomization-loom-hub-servers.yaml && \
 		git commit -m "chore(loom-hub): update images to $(IMAGE_TAG)" && \
 		git push
 	@echo "✓ GitOps changes committed and pushed"
@@ -1188,13 +1186,12 @@ deploy-status:
 	@echo "  Image tag: $(IMAGE_TAG)"
 	@echo "  Registry:  $(REGISTRY)"
 	@echo ""
-	@echo "GitOps ($(LOOM_HUB_DIR)):"
-	@if [ -d "$(LOOM_HUB_DIR)" ]; then \
+	@echo "GitOps ($(FLUX_KUST)):"
+	@if [ -f "$(FLUX_KUST)" ]; then \
 		echo "  Current image tags:"; \
-		grep -r "$(REGISTRY)/mcp/\(custom-server\|loom-core\):" $(LOOM_HUB_DIR)/servers/*/deployment.yaml 2>/dev/null | \
-			sed 's|.*/servers/||' | sed 's|/deployment.yaml:.*image: | -> |' | sort -u | head -20; \
+		grep 'newTag:' "$(FLUX_KUST)" | sed 's/^[ ]*/  /'; \
 	else \
-		echo "  Directory not found"; \
+		echo "  Flux Kustomization not found"; \
 	fi
 	@echo ""
 	@echo "Kubernetes:"

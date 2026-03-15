@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcp-tavily
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-cloudflare
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+  labels:
+    app: mcp-tavily
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mcp-tavily.flexinfer.ai
+      secretName: mcp-tavily-tls
+  rules:
+    - host: mcp-tavily.flexinfer.ai
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-tavily
+                port:
+                  number: 8080

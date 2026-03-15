@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcp-sequentialthinking
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-cloudflare
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+  labels:
+    app: mcp-sequentialthinking
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mcp-thinking.flexinfer.ai
+      secretName: mcp-thinking-tls
+  rules:
+    - host: mcp-thinking.flexinfer.ai
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mcp-sequentialthinking
+                port:
+                  number: 8080

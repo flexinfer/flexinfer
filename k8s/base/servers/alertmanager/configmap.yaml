@@ -1,0 +1,21 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - am_list_alerts
+        - am_list_silences
+        - am_create_silence
+        - am_delete_silence
+        - am_status
+    categories:
+        - monitoring
+        - alerting
+    description: Alertmanager alert and silence management
+    name: alertmanager
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: alertmanager
+    component: mcp-server
+  name: alertmanager-config

@@ -1,0 +1,18 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - edit_file
+        - morph_edit_file
+    categories:
+        - ai
+        - code-editing
+    description: Apply Morph's fast code edit patches with high accuracy (Go native)
+    name: morph_fast_apply
+    timeout: 90
+kind: ConfigMap
+metadata:
+  labels:
+    app: morph-fast-apply
+    component: mcp-server
+  name: morph-fast-apply-config

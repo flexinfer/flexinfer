@@ -1,0 +1,42 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - k8s.apply
+        - k8s.get
+        - k8s.getPods
+        - k8s.logs
+        - k8s.describe
+        - k8s.exec
+        - k8s.listNamespaces
+        - k8s.listContexts
+    categories:
+        - kubernetes
+        - operations
+    description: Kubernetes operations for the k3s apps cluster (use for app deploys, logs, rollouts)
+    name: k8s_apps_k3s
+    timeout: 90
+  kubeconfig.yaml: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+      - name: in-cluster
+        cluster:
+          server: https://kubernetes.default.svc
+          certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    users:
+      - name: service-account
+        user:
+          tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    contexts:
+      - name: in-cluster
+        context:
+          cluster: in-cluster
+          user: service-account
+    current-context: in-cluster
+kind: ConfigMap
+metadata:
+  labels:
+    app: k8s-apps-k3s
+    component: mcp-server
+  name: k8s-apps-k3s-config

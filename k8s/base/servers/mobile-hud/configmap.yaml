@@ -1,0 +1,431 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mobile-hud-registry
+  labels:
+    app: mobile-hud
+    component: mobile-hud
+data:
+  registry.yaml: |
+    version: 1
+    servers:
+      - name: tavily
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - tavily
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: github
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - github
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: gitlab
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - gitlab
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: cloudflare
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - cloudflare
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: context7
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - context7
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: youtube
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - youtube
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: zep
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - zep
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: morph_fast_apply
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - morph_fast_apply
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: morph_embeddings
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - morph_embeddings
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: sequentialthinking
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - sequentialthinking
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: time
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - time
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: qdrant
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - qdrant
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: prometheus
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - prometheus
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: loki
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - loki
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: grafana
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - grafana
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: alertmanager
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - alertmanager
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: postgres
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - postgres
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: codebase_memory
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - codebase_memory
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: agent_context
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - agent_context
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: k8s_apps_k3s
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - k8s_apps_k3s
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: longhorn_k3s
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - longhorn_k3s
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: flux
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - flux
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: helm
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - helm
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: memory
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - memory
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: git
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - git
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: git_worktree
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - git_worktree
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: docker
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - docker
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: redis
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - redis
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: neo4j
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - neo4j
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: minio
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - minio
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: server_mgmt
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - server_mgmt
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: asus_router
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - asus_router
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: k8s_harvester_infra
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - k8s_harvester_infra
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: ops_mcp
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - ops_mcp
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: devbox
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - devbox
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: itchio
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - itchio
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: release
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - release
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: substack
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - substack
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: godot_debug
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - godot_debug
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: jira
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - jira
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: linkedin
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - linkedin
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60
+      - name: jobsearch
+        common:
+          command: /usr/local/bin/mcp-hub-wrapper
+          args:
+            - jobsearch
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --profile
+            - codex
+          timeout: 60

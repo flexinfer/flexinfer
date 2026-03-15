@@ -1,0 +1,27 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - list_repos
+        - get_repo
+        - list_issues
+        - get_issue
+        - create_issue
+        - list_prs
+        - get_pr
+        - list_commits
+        - search_repos
+        - search_code
+        - get_file_contents
+    categories:
+        - devops
+        - scm
+    description: GitHub repository operations and management (Go native)
+    name: github
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: github
+    component: mcp-server
+  name: github-config

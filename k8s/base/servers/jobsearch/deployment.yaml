@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: jobsearch
+    component: mcp-server
+    mcp.server/name: jobsearch
+    mcp.server/type: custom
+  name: jobsearch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jobsearch
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: productivity,workflow,crm,jobsearch
+        mcp.server/description: JobSearch backend API integration with explicit Workflow/CRM tools and a guarded full-route passthrough.
+      labels:
+        app: jobsearch
+        component: mcp-server
+        mcp.server/name: jobsearch
+    spec:
+      containers:
+        - env:
+            - name: CF_ACCESS_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  key: CF_ACCESS_CLIENT_ID
+                  name: loom-secrets
+            - name: CF_ACCESS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  key: CF_ACCESS_CLIENT_SECRET
+                  name: loom-secrets
+            - name: JOBSEARCH_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  key: JOBSEARCH_API_TOKEN
+                  name: loom-secrets
+            - name: JOBSEARCH_API_URL
+              value: https://jobsearch.flexinfer.ai/api
+            - name: JOBSEARCH_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  key: JOBSEARCH_BEARER_TOKEN
+                  name: loom-secrets
+            - name: JOBSEARCH_CF_ACCESS_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  key: JOBSEARCH_CF_ACCESS_CLIENT_ID
+                  name: loom-secrets
+            - name: JOBSEARCH_CF_ACCESS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  key: JOBSEARCH_CF_ACCESS_CLIENT_SECRET
+                  name: loom-secrets
+            - name: JOBSEARCH_MAX_RESPONSE_BYTES
+              value: "2097152"
+            - name: JOBSEARCH_TIMEOUT_SECONDS
+              value: "30"
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_SERVER_NAME
+              value: jobsearch
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-jobsearch
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: Always
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: jobsearch
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

@@ -1,0 +1,41 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - verify_token
+        - create_or_update_file
+        - push_files
+        - search_repositories
+        - create_repository
+        - get_file_contents
+        - create_issue
+        - list_issues
+        - create_merge_request
+        - list_merge_requests
+        - list_pipelines
+        - get_pipeline
+        - create_pipeline
+        - cancel_pipeline
+        - retry_pipeline
+        - list_pipeline_jobs
+        - get_job
+        - get_job_trace
+        - retry_job
+        - play_job
+        - cancel_job
+        - fork_repository
+        - create_branch
+        - get_project
+        - list_projects
+    categories:
+        - devops
+        - scm
+    description: GitLab repository operations and management (Go native)
+    name: gitlab
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: gitlab
+    component: mcp-server
+  name: gitlab-config

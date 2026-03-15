@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: redis
+    component: mcp-server
+    mcp.server/name: redis
+    mcp.server/type: custom
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: cache,database
+        mcp.server/description: Redis cache inspection and monitoring
+      labels:
+        app: redis
+        component: mcp-server
+        mcp.server/name: redis
+    spec:
+      containers:
+        - env:
+            - name: REDIS_URL
+              value: redis://localhost:6379
+            - name: MCP_SERVER_NAME
+              value: redis
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-redis
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: Always
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: redis
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mcpo
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-cloudflare
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+  labels:
+    app: mcpo
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mcpo.flexinfer.ai
+      secretName: mcpo-tls
+  rules:
+    - host: mcpo.flexinfer.ai
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mcpo
+                port:
+                  number: 8000

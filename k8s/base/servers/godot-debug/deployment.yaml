@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: godot-debug
+    component: mcp-server
+    mcp.server/name: godot_debug
+    mcp.server/type: custom
+  name: godot-debug
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: godot-debug
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: game,debugging,local
+        mcp.server/description: Local-only MCP server for Godot debugging (Go native)
+      labels:
+        app: godot-debug
+        component: mcp-server
+        mcp.server/name: godot_debug
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - env:
+            - name: GODOT_HOST
+              value: 127.0.0.1
+            - name: GODOT_LOG_PATH
+              value: ~/Library/Application Support/Godot/app_userdata/Kindred Keep (Slice)
+            - name: GODOT_PORT
+              value: "6550"
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_SERVER_NAME
+              value: godot_debug
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-godot
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: godot-debug
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

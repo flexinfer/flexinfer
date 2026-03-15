@@ -1,0 +1,23 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - list_workflows
+        - get_workflow
+        - list_workflow_runs
+        - get_workflow_run
+        - list_workflow_jobs
+        - get_job_logs
+        - list_artifacts
+    categories:
+        - devops
+        - ci
+    description: GitHub Actions workflow management (Go native)
+    name: github-actions
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: github-actions
+    component: mcp-server
+  name: github-actions-config

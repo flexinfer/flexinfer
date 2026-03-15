@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: server-mgmt
+    component: mcp-server
+    mcp.server/name: server_mgmt
+    mcp.server/type: custom
+  name: server-mgmt
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: server-mgmt
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: operations,ssh
+        mcp.server/description: SSH-based server management for system administration
+      labels:
+        app: server-mgmt
+        component: mcp-server
+        mcp.server/name: server_mgmt
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - env:
+            - name: CONTEXT_BROKER_HOST
+              value: 127.0.0.1
+            - name: CONTEXT_BROKER_PORT
+              value: "9876"
+            - name: CONTEXT_BROKER_PUBLISH
+              value: "1"
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: MCP_SERVER_NAME
+              value: server_mgmt
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-server-mgmt
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: server-mgmt
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

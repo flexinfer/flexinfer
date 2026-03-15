@@ -1,0 +1,680 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    app: loom-gateway
+    component: loom-gateway
+  name: loom-gateway-registry
+data:
+  registry.yaml: |
+    # Loom Hub Registry - Kubernetes Service Discovery Mode
+    # Servers are accessed via WebSocket to their in-cluster services
+    version: 1
+    hub:
+      mode: kubernetes
+      namespace: loom-hub
+    servers:
+      # === API-ONLY SERVERS ===
+      - name: tavily
+        url: ws://mcp-tavily.loom-hub.svc.cluster.local:8080
+        categories: [search, docs]
+        description: AI-powered web search and content extraction
+        timeout: 60
+        always_allow:
+          - search
+          - search_news
+          - extract
+          - search_context
+
+      - name: github
+        url: ws://mcp-github.loom-hub.svc.cluster.local:8080
+        categories: [devops, scm]
+        description: GitHub repository operations and management
+        timeout: 60
+        always_allow:
+          - list_repos
+          - get_repo
+          - list_issues
+          - get_issue
+          - create_issue
+          - list_prs
+          - get_pr
+          - list_commits
+          - search_repos
+          - search_code
+          - get_file_contents
+
+      - name: gitlab
+        url: ws://mcp-gitlab.loom-hub.svc.cluster.local:8080
+        categories: [devops, scm]
+        description: GitLab repository operations and management
+        timeout: 60
+        always_allow:
+          - verify_token
+          - create_or_update_file
+          - push_files
+          - search_repositories
+          - create_repository
+          - get_file_contents
+          - create_issue
+          - list_issues
+          - create_merge_request
+          - list_merge_requests
+          - list_pipelines
+          - get_pipeline
+          - create_pipeline
+          - cancel_pipeline
+          - retry_pipeline
+          - list_pipeline_jobs
+          - get_job
+          - get_job_trace
+          - retry_job
+          - play_job
+          - cancel_job
+          - fork_repository
+          - create_branch
+          - get_project
+          - list_projects
+          - pipeline_summary
+          - get_test_report
+          - get_artifacts
+          - poll_pipeline
+
+      - name: cloudflare
+        url: ws://mcp-cloudflare.loom-hub.svc.cluster.local:8080
+        categories: [networking, operations]
+        description: Cloudflare API utilities (DNS, zones, tunnels, cache)
+        timeout: 60
+        always_allow:
+          - cf_verify_token
+          - cf_list_zones
+          - cf_list_tunnels
+          - cf_list_dns_records
+          - cf_create_dns_record
+          - cf_update_dns_record
+          - cf_delete_dns_record
+          - cf_purge_cache
+
+      - name: context7
+        url: ws://mcp-context7.loom-hub.svc.cluster.local:8080
+        categories: [docs]
+        description: Library documentation retrieval
+        timeout: 90
+        always_allow:
+          - resolve-library-id
+          - get-library-docs
+
+      - name: youtube
+        url: ws://mcp-youtube.loom-hub.svc.cluster.local:8080
+        categories: [media, documentation]
+        description: YouTube video transcript extraction
+        timeout: 60
+        always_allow:
+          - get_transcript
+          - get_video_info
+
+      - name: zep
+        url: ws://mcp-zep.loom-hub.svc.cluster.local:8080
+        categories: [memory]
+        description: Zep Cloud memory (sessions/messages)
+        timeout: 60
+        always_allow:
+          - zep_health
+          - zep_add_messages
+          - zep_get_messages
+
+      - name: morph_fast_apply
+        url: ws://mcp-morph-fast-apply.loom-hub.svc.cluster.local:8080
+        categories: [ai, code-editing]
+        description: Apply Morph's fast code edit patches
+        timeout: 90
+        always_allow:
+          - edit_file
+          - morph_edit_file
+
+      - name: morph_embeddings
+        url: ws://mcp-morph-embeddings.loom-hub.svc.cluster.local:8080
+        categories: [ai, embeddings]
+        description: Generate embeddings and Qdrant vector search
+        timeout: 120
+        always_allow:
+          - morph_embeddings_embed
+          - morph_embeddings_upsert
+          - morph_embeddings_search
+
+      - name: sequentialthinking
+        url: ws://mcp-sequentialthinking.loom-hub.svc.cluster.local:8080
+        categories: [reasoning, planning]
+        description: Dynamic problem-solving through sequential thoughts
+        timeout: 60
+        always_allow:
+          - start_thinking
+          - add_thought
+          - get_chain
+          - list_chains
+          - set_active_chain
+          - complete_chain
+          - branch_thought
+          - delete_chain
+          - summarize_chain
+
+      - name: time
+        url: ws://mcp-time.loom-hub.svc.cluster.local:8080
+        categories: [utilities]
+        description: Timezone conversion and time operations
+        timeout: 30
+
+      # === NETWORK-ACCESSIBLE SERVERS ===
+      - name: qdrant
+        url: ws://mcp-qdrant.loom-hub.svc.cluster.local:8080
+        categories: [database, vector]
+        description: Qdrant vector database operations
+        timeout: 60
+        always_allow:
+          - qdrant_list_collections
+          - qdrant_get_collection
+          - qdrant_search
+          - qdrant_scroll
+          - qdrant_create_collection
+          - qdrant_delete_collection
+          - qdrant_upsert
+          - qdrant_delete
+
+      - name: prometheus
+        url: ws://mcp-prometheus.loom-hub.svc.cluster.local:8080
+        categories: [monitoring, observability]
+        description: Query and analyze Prometheus metrics
+        timeout: 60
+        always_allow:
+          - query
+          - query_range
+          - list_alerts
+          - list_rules
+          - list_targets
+          - list_metrics
+          - list_labels
+          - label_values
+          - runtime_info
+
+      - name: loki
+        url: ws://mcp-loki.loom-hub.svc.cluster.local:8080
+        categories: [logging, observability]
+        description: Query and analyze Loki log aggregation
+        timeout: 60
+        always_allow:
+          - loki_query
+          - loki_query_range
+          - loki_labels
+          - loki_label_values
+          - loki_series
+          - loki_stats
+          - loki_index_stats
+          - loki_detected_fields
+          - loki_ready
+
+      - name: grafana
+        url: ws://mcp-grafana.loom-hub.svc.cluster.local:8080
+        categories: [monitoring, dashboards]
+        description: Grafana dashboard search and retrieval
+        timeout: 60
+        always_allow:
+          - grafana_search
+          - grafana_get_dashboard
+          - grafana_list_datasources
+          - grafana_get_datasource
+          - grafana_list_alerts
+          - grafana_list_alert_instances
+          - grafana_list_annotations
+          - grafana_create_annotation
+          - grafana_list_folders
+
+      - name: alertmanager
+        url: ws://mcp-alertmanager.loom-hub.svc.cluster.local:8080
+        categories: [monitoring, alerting]
+        description: Alertmanager alert and silence management
+        timeout: 60
+        always_allow:
+          - am_list_alerts
+          - am_list_silences
+          - am_create_silence
+          - am_delete_silence
+          - am_status
+
+      - name: postgres
+        url: ws://mcp-postgres.loom-hub.svc.cluster.local:8080
+        categories: [database]
+        description: PostgreSQL database inspection and queries
+        timeout: 60
+        always_allow:
+          - pg_list_databases
+          - pg_list_tables
+          - pg_describe_table
+          - pg_query
+          - pg_explain
+          - pg_active_queries
+          - pg_table_stats
+
+      - name: codebase_memory
+        url: ws://mcp-codebase-memory.loom-hub.svc.cluster.local:8080
+        categories: [dev, code, search]
+        description: Semantic codebase indexing and search
+        timeout: 180
+        always_allow:
+          - codebase_index_poll
+          - codebase_watch_poll
+          - codebase_watch_stop
+          - codebase_stats
+          - codebase_search
+          - codebase_text_search
+          - codebase_get_definition
+          - codebase_get_references
+          - codebase_get_context
+          - codebase_find_callers
+          - codebase_find_callees
+          - codebase_call_graph
+          - codebase_module_graph
+
+      - name: agent_context
+        url: ws://mcp-agent-context.loom-hub.svc.cluster.local:8080
+        categories: [dev, context, memory]
+        description: Agent context management and cross-agent coordination
+        timeout: 120
+        always_allow:
+          - agent_code_annotate
+          - agent_code_annotations_get
+          - agent_context_add
+          - agent_context_search
+          - agent_context_summarize
+          - agent_entity_add
+          - agent_entity_delete
+          - agent_entity_find
+          - agent_entity_get
+          - agent_file_claim_acquire
+          - agent_file_claim_list
+          - agent_file_claim_query
+          - agent_file_claim_release
+          - agent_graph_query
+          - agent_graph_stats
+          - agent_handoff_accept
+          - agent_handoff_create
+          - agent_handoff_inbox
+          - agent_handoff_reject
+          - agent_memory_add
+          - agent_memory_delete
+          - agent_memory_get
+          - agent_memory_policy_get
+          - agent_memory_stats
+          - agent_presence_deregister
+          - agent_presence_heartbeat
+          - agent_presence_list
+          - agent_presence_register
+          - agent_recall
+          - agent_relation_add
+          - agent_relation_delete
+          - agent_relation_get
+          - agent_session_delete
+          - agent_session_start
+          - agent_session_end
+          - agent_session_list
+          - agent_session_prune
+          - agent_task_add
+          - agent_task_delete
+          - agent_task_list
+          - agent_task_update
+          - agent_workflow_approve
+          - agent_workflow_cancel
+          - agent_workflow_define
+          - agent_workflow_definitions
+          - agent_workflow_events
+          - agent_workflow_list
+          - agent_workflow_reject
+          - agent_workflow_start
+          - agent_workflow_status
+          - agent_worktree_allocate
+          - agent_worktree_cleanup
+          - agent_worktree_list
+          - agent_worktree_reconcile
+          - agent_worktree_release
+          - agent_worktree_status
+
+      # === IN-CLUSTER K8S SERVERS ===
+      - name: k8s_apps_k3s
+        url: ws://mcp-k8s-apps-k3s.loom-hub.svc.cluster.local:8080
+        categories: [kubernetes, operations]
+        description: Kubernetes operations for the k3s apps cluster
+        timeout: 90
+        always_allow:
+          - k8s_apply
+          - k8s_get
+          - k8s_getPods
+          - k8s_logs
+          - k8s_describe
+          - k8s_exec
+          - k8s_listNamespaces
+          - k8s_listContexts
+
+      - name: longhorn_k3s
+        url: ws://mcp-longhorn-k3s.loom-hub.svc.cluster.local:8080
+        categories: [storage, kubernetes, operations]
+        description: Longhorn storage operations on k3s cluster
+        timeout: 90
+        always_allow:
+          - k8s_get
+          - k8s_describe
+          - k8s_getPods
+          - k8s_logs
+          - k8s_apply
+
+      - name: flux
+        url: ws://mcp-flux.loom-hub.svc.cluster.local:8080
+        categories: [gitops, kubernetes]
+        description: Flux CD GitOps operations
+        timeout: 120
+        always_allow:
+          - flux_get_sources
+          - flux_get_kustomizations
+          - flux_get_helmreleases
+          - flux_reconcile
+          - flux_suspend
+          - flux_resume
+          - flux_logs
+          - flux_events
+          - flux_probe
+
+      - name: helm
+        url: ws://mcp-helm.loom-hub.svc.cluster.local:8080
+        categories: [kubernetes, deployment]
+        description: Helm chart management
+        timeout: 90
+        always_allow:
+          - helm_list
+          - helm_status
+          - helm_values
+          - helm_history
+          - helm_search
+          - helm_show
+          - helm_template
+          - helm_repo_list
+
+      # === SERVERS MIGRATED FROM MCP-HUB ===
+      - name: memory
+        url: ws://mcp-memory.loom-hub.svc.cluster.local:8080
+        categories: [memory, knowledge-graph]
+        description: Knowledge graph memory for persistent context
+        timeout: 60
+        always_allow:
+          - create_entities
+          - create_relations
+          - add_observations
+          - delete_entities
+          - delete_relations
+          - delete_observations
+          - read_graph
+          - search_nodes
+          - open_nodes
+
+      - name: git
+        url: ws://mcp-git.loom-hub.svc.cluster.local:8080
+        categories: [dev, scm]
+        description: Local Git repository operations
+        timeout: 60
+        always_allow:
+          - git_status
+          - git_diff
+          - git_log
+          - git_branch
+          - git_checkout
+          - git_add
+          - git_commit
+          - git_push
+          - git_pull
+          - git_stash
+          - git_show
+
+      - name: git_worktree
+        url: ws://mcp-git-worktree.loom-hub.svc.cluster.local:8080
+        categories: [dev, scm]
+        description: Manage git worktrees for parallel agent work
+        timeout: 60
+        always_allow:
+          - git_worktree_list
+          - git_worktree_add
+          - git_worktree_remove
+          - git_worktree_prune
+
+      - name: docker
+        url: ws://mcp-docker.loom-hub.svc.cluster.local:8080
+        categories: [containers, operations]
+        description: Docker CLI operations (containers, images, logs)
+        timeout: 60
+        always_allow:
+          - docker_version
+          - docker_info
+          - docker_ps
+          - docker_images
+          - docker_inspect
+          - docker_logs
+          - docker_exec
+
+      - name: redis
+        url: ws://mcp-redis.loom-hub.svc.cluster.local:8080
+        categories: [database, cache]
+        description: Redis cache inspection and monitoring
+        timeout: 60
+        always_allow:
+          - redis_info
+          - redis_keys
+          - redis_get
+          - redis_ttl
+          - redis_memory
+          - redis_dbsize
+          - redis_slowlog
+          - redis_client_list
+          - redis_pubsub_channels
+          - redis_config_get
+
+      - name: neo4j
+        url: ws://mcp-neo4j.loom-hub.svc.cluster.local:8080
+        categories: [database, graph]
+        description: Neo4j graph database queries and schema inspection
+        timeout: 60
+        always_allow:
+          - neo4j_query
+          - neo4j_schema
+          - neo4j_labels
+          - neo4j_relationship_types
+          - neo4j_indexes
+          - neo4j_constraints
+          - neo4j_count_nodes
+          - neo4j_count_relationships
+          - neo4j_node_properties
+          - neo4j_databases
+
+      - name: minio
+        url: ws://mcp-minio.loom-hub.svc.cluster.local:8080
+        categories: [storage, s3]
+        description: MinIO/S3 object storage operations
+        timeout: 60
+        always_allow:
+          - minio_list_buckets
+          - minio_list_objects
+          - minio_get_object_text
+          - minio_stat_object
+          - minio_presign_get
+          - minio_presign_put
+
+      - name: server_mgmt
+        url: ws://mcp-server-mgmt.loom-hub.svc.cluster.local:8080
+        categories: [operations, infrastructure]
+        description: SSH-based server management
+        timeout: 90
+        always_allow:
+          - server_listHosts
+          - server_getHost
+          - server_detectOS
+          - server_sshCommand
+          - server_execSafe
+
+      - name: asus_router
+        url: ws://mcp-asus-router.loom-hub.svc.cluster.local:8080
+        categories: [networking, operations]
+        description: ASUS router management via SSH
+        timeout: 60
+        always_allow:
+          - router_status
+          - router_logread
+          - router_kernelTail
+          - router_execCommand
+          - router_reboot
+          - router_wanStatus
+          - router_wifiStatus
+
+      - name: k8s_harvester_infra
+        url: ws://mcp-k8s-harvester-infra.loom-hub.svc.cluster.local:8080
+        categories: [kubernetes, infrastructure]
+        description: Kubernetes operations for the Harvester (RKE2) cluster
+        timeout: 90
+        always_allow:
+          - k8s_apply
+          - k8s_getPods
+          - k8s_logs
+          - k8s_get
+          - k8s_describe
+          - k8s_exec
+          - k8s_listNamespaces
+          - k8s_listContexts
+
+      - name: ops_mcp
+        url: ws://mcp-ops-mcp.loom-hub.svc.cluster.local:8080
+        categories: [operations, infrastructure]
+        description: Ops MCP server for k3s and Harvester operations
+        timeout: 90
+        always_allow:
+          - k8s_get_nodes
+          - k8s_scale_deploy
+          - k8s_delete_pods_by_phase
+          - vip_label_node
+          - harvester_vms_list
+          - harvester_vm_restart
+          - k3s_service_logs
+          - k3s_repair_server
+          - stabilize_cluster
+          - run_repo_script
+
+      - name: devbox
+        url: ws://mcp-devbox.loom-hub.svc.cluster.local:8080
+        categories: [sandbox, dev]
+        description: Project-aware dev sandbox executor
+        timeout: 120
+        always_allow:
+          - devbox_exec
+          - devbox_build
+          - devbox_status
+          - devbox_stop
+          - devbox_detect
+          - devbox_read_file
+          - devbox_write_file
+          - devbox_exec_async
+          - devbox_exec_poll
+          - devbox_metrics
+          - devbox_summary
+
+      - name: itchio
+        url: ws://mcp-itchio.loom-hub.svc.cluster.local:8080
+        categories: [distribution, gaming]
+        description: itch.io distribution management via Butler CLI
+        timeout: 60
+        always_allow:
+          - itchio_upload
+          - itchio_status
+          - itchio_version_history
+
+      - name: release
+        url: ws://mcp-release.loom-hub.svc.cluster.local:8080
+        categories: [ci, deployment]
+        description: Multi-channel release orchestration
+        timeout: 60
+        always_allow:
+          - release_validate
+          - release_changelog
+          - release_status
+
+      - name: substack
+        url: ws://mcp-substack.loom-hub.svc.cluster.local:8080
+        categories: [publishing, content]
+        description: Substack publication management
+        timeout: 60
+        always_allow:
+          - substack_list_drafts
+          - substack_create_draft
+          - substack_update_draft
+          - substack_publish
+          - substack_list_posts
+          - substack_get_post
+
+      - name: godot_debug
+        url: ws://mcp-godot-debug.loom-hub.svc.cluster.local:8080
+        categories: [gamedev, debug]
+        description: Godot engine debugging and inspection
+        timeout: 60
+        always_allow:
+          - godot_scene_tree
+          - godot_inspect
+          - godot_call
+          - godot_signal
+          - godot_eval
+          - godot_set
+          - godot_screenshot
+          - godot_logs
+          - godot_logs_stream
+
+      - name: jira
+        url: ws://mcp-jira.loom-hub.svc.cluster.local:8080
+        categories: [project-management, issues]
+        description: Atlassian Jira issue tracking
+        timeout: 60
+        always_allow:
+          - jira_get_issue
+          - jira_search
+          - jira_add_comment
+          - jira_get_transitions
+          - jira_transition_issue
+
+      - name: linkedin
+        url: ws://mcp-linkedin.loom-hub.svc.cluster.local:8080
+        categories: [social, professional]
+        description: LinkedIn personal account management
+        timeout: 60
+        always_allow:
+          - linkedin_auth_status
+          - linkedin_session_health
+          - linkedin_session_recover
+          - linkedin_get_profile
+          - linkedin_list_conversations
+          - linkedin_get_conversation_messages
+          - linkedin_send_message
+
+      - name: google-workspace
+        url: ws://mcp-google-workspace.loom-hub.svc.cluster.local:8080
+        categories: [productivity, google, workspace]
+        description: Google Workspace mailbox, calendar, docs, and drive metadata
+        timeout: 60
+        always_allow:
+          - google_workspace_auth_status
+          - google_workspace_gmail_list_messages
+          - google_workspace_gmail_get_message
+          - google_workspace_calendar_list_calendars
+          - google_workspace_calendar_list_events
+          - google_workspace_calendar_get_event
+          - google_workspace_docs_get_document
+          - google_workspace_drive_search_files
+          - google_workspace_drive_get_file
+
+      - name: jobsearch
+        url: ws://mcp-jobsearch.loom-hub.svc.cluster.local:8080
+        categories: [career, search]
+        description: JobSearch backend API integration
+        timeout: 60
+        always_allow:
+          - jobsearch_health_get
+          - jobsearch_auth_me

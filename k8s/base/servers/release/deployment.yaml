@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: release
+    component: mcp-server
+    mcp.server/name: release
+    mcp.server/type: custom
+  name: release
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: release
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: release,orchestration,ci
+        mcp.server/description: Multi-channel release orchestration. Validates version alignment, generates changelogs, and checks release status across GitHub and itch.io.
+      labels:
+        app: release
+        component: mcp-server
+        mcp.server/name: release
+    spec:
+      containers:
+        - env:
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_SERVER_NAME
+              value: release
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-release
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: Always
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: release
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

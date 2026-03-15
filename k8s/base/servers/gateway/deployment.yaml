@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: loom-gateway
+    component: loom-gateway
+  name: loom-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: loom-gateway
+  template:
+    metadata:
+      labels:
+        app: loom-gateway
+        component: loom-gateway
+    spec:
+      serviceAccountName: loom-hub
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - args:
+            - --registry
+            - /etc/loom/registry.yaml
+            - --listen
+            - :8080
+          env:
+            - name: FI_MCP_AUTH_MODE
+              value: none
+            - name: FI_MCP_POLICY_DEFAULT
+              value: allow
+            - name: MCP_HUB_NAMESPACE
+              value: loom-hub
+            - name: FI_MCP_LOG_LEVEL
+              value: info
+            # Workaround for typed-nil rate limiter panic path in older gateway binaries.
+            - name: FI_MCP_RATELIMIT_ENABLED
+              value: "true"
+            - name: FI_MCP_RATELIMIT_GLOBAL_RPS
+              value: "20000"
+            - name: FI_MCP_RATELIMIT_TENANT_RPS
+              value: "10000"
+            - name: FI_MCP_RATELIMIT_USER_RPS
+              value: "5000"
+            - name: FI_MCP_RATELIMIT_TOOL_RPS
+              value: "2000"
+            # Allow long-running tool calls (devbox builds ~15min) without
+            # the backend reaper closing the idle connection.
+            - name: FI_MCP_BACKEND_IDLE_TIMEOUT
+              value: "30m"
+          envFrom:
+            - secretRef:
+                name: loom-secrets
+                optional: true
+          image: registry.harbor.lan/mcp/fi-mcp-gateway:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: fi-mcp-gateway
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - mountPath: /etc/loom
+              name: registry
+              readOnly: true
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+      volumes:
+        - configMap:
+            name: loom-gateway-registry
+          name: registry

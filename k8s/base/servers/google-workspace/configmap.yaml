@@ -1,0 +1,30 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+      - google_workspace_auth_status
+      - google_workspace_gmail_list_messages
+      - google_workspace_gmail_get_message
+      - google_workspace_calendar_list_calendars
+      - google_workspace_calendar_list_events
+      - google_workspace_calendar_get_event
+      - google_workspace_docs_get_document
+      - google_workspace_drive_search_files
+      - google_workspace_drive_get_file
+    categories:
+      - productivity
+      - google
+      - workspace
+      - gmail
+      - calendar
+      - docs
+      - drive
+    description: Google Workspace integration for Gmail, Calendar, Docs, and Drive metadata.
+    name: google-workspace
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: google-workspace
+    component: mcp-server
+  name: google-workspace-config

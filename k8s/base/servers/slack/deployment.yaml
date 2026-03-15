@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: slack
+    component: mcp-server
+    mcp.server/name: slack
+    mcp.server/type: custom
+  name: slack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: slack
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: communication,chat
+        mcp.server/description: Slack messaging and search (Go native)
+      labels:
+        app: slack
+        component: mcp-server
+        mcp.server/name: slack
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - env:
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  key: SLACK_BOT_TOKEN
+                  name: loom-secrets
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_SERVER_NAME
+              value: slack
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-slack
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: slack
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

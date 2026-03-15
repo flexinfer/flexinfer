@@ -1,0 +1,16 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow: []
+    categories:
+        - automation
+        - web
+    description: Browser automation for web scraping and testing
+    name: puppeteer
+    timeout: 120
+kind: ConfigMap
+metadata:
+  labels:
+    app: puppeteer
+    component: mcp-server
+  name: puppeteer-config

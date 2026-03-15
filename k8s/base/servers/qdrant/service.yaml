@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: qdrant
+    component: mcp-server
+  name: mcp-qdrant
+spec:
+  ports:
+    - name: websocket
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+  selector:
+    app: qdrant
+  type: ClusterIP

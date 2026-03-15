@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: youtube
+    component: mcp-server
+  name: mcp-youtube
+spec:
+  ports:
+    - name: websocket
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+  selector:
+    app: youtube
+  type: ClusterIP

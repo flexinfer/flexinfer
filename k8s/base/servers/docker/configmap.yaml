@@ -1,0 +1,22 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - docker_version
+        - docker_info
+        - docker_ps
+        - docker_images
+        - docker_inspect
+        - docker_logs
+    categories:
+        - containers
+        - devops
+    description: Docker CLI operations (containers, images, logs, inspect, exec)
+    name: docker
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: docker
+    component: mcp-server
+  name: docker-config

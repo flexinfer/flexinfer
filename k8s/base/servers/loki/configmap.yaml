@@ -1,0 +1,25 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - loki_query
+        - loki_query_range
+        - loki_labels
+        - loki_label_values
+        - loki_series
+        - loki_stats
+        - loki_index_stats
+        - loki_detected_fields
+        - loki_ready
+    categories:
+        - logging
+        - observability
+    description: Query and analyze Loki log aggregation
+    name: loki
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: loki
+    component: mcp-server
+  name: loki-config

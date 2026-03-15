@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: morph-embeddings
+    component: mcp-server
+    mcp.server/name: morph_embeddings
+    mcp.server/type: custom
+  name: morph-embeddings
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: morph-embeddings
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: ai,embeddings
+        mcp.server/description: Generate Morph embeddings and coordinate Qdrant vector search
+      labels:
+        app: morph-embeddings
+        component: mcp-server
+        mcp.server/name: morph_embeddings
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - env:
+            - name: LOG_LEVEL
+              value: info
+            - name: MORPH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: MORPH_API_KEY
+                  name: loom-secrets
+            - name: MORPH_EMBED_MODEL
+              value: embedding-001
+            - name: MORPH_QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: MORPH_QDRANT_API_KEY
+                  name: loom-secrets
+            - name: MORPH_QDRANT_COLLECTION
+              value: codex
+            - name: MORPH_QDRANT_URL
+              value: http://192.168.50.176:6333
+            - name: MCP_SERVER_NAME
+              value: morph_embeddings
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-morph-embeddings
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: morph-embeddings
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

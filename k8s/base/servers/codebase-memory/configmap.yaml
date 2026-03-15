@@ -1,0 +1,30 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - codebase_index_poll
+        - codebase_watch_poll
+        - codebase_watch_stop
+        - codebase_stats
+        - codebase_search
+        - codebase_text_search
+        - codebase_get_definition
+        - codebase_get_references
+        - codebase_get_context
+        - codebase_find_callers
+        - codebase_find_callees
+        - codebase_call_graph
+        - codebase_module_graph
+    categories:
+        - dev
+        - code
+        - search
+    description: Semantic codebase indexing + search (Go native)
+    name: codebase_memory
+    timeout: 180
+kind: ConfigMap
+metadata:
+  labels:
+    app: codebase-memory
+    component: mcp-server
+  name: codebase-memory-config

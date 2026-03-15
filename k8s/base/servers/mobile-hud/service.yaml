@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: mobile-hud
+    component: mobile-hud
+  name: mobile-hud
+spec:
+  type: ClusterIP
+  selector:
+    app: mobile-hud
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 3333

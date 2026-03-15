@@ -1,0 +1,95 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - agent_code_annotate
+        - agent_code_annotations_get
+        - agent_compaction_status
+        - agent_compaction_trigger
+        - agent_context_add
+        - agent_context_delete
+        - agent_context_get
+        - agent_context_link_codebase
+        - agent_context_query_shared
+        - agent_context_recall
+        - agent_context_recall_enhanced
+        - agent_context_search
+        - agent_context_share
+        - agent_context_stats
+        - agent_context_summarize
+        - agent_entity_add
+        - agent_entity_delete
+        - agent_entity_find
+        - agent_entity_get
+        - agent_file_claim_acquire
+        - agent_file_claim_list
+        - agent_file_claim_query
+        - agent_file_claim_release
+        - agent_graph_find_path
+        - agent_graph_query
+        - agent_graph_stats
+        - agent_handoff_accept
+        - agent_handoff_create
+        - agent_handoff_inbox
+        - agent_handoff_reject
+        - agent_memory_add
+        - agent_memory_compress
+        - agent_memory_delete
+        - agent_memory_demote
+        - agent_memory_export
+        - agent_memory_get
+        - agent_memory_import
+        - agent_memory_merge
+        - agent_memory_policy_get
+        - agent_memory_policy_set
+        - agent_memory_promote
+        - agent_memory_recall
+        - agent_memory_stats
+        - agent_presence_deregister
+        - agent_presence_heartbeat
+        - agent_presence_list
+        - agent_presence_register
+        - agent_relation_add
+        - agent_relation_delete
+        - agent_relation_get
+        - agent_reasoning_chain_add
+        - agent_reasoning_chain_get
+        - agent_reasoning_chain_list
+        - agent_reconcile_trigger
+        - agent_session_end
+        - agent_session_list
+        - agent_session_start
+        - agent_task_add
+        - agent_task_delete
+        - agent_task_list
+        - agent_task_update
+        - agent_template_create
+        - agent_template_list
+        - agent_worktree_allocate
+        - agent_worktree_cleanup
+        - agent_worktree_list
+        - agent_worktree_reconcile
+        - agent_worktree_release
+        - agent_worktree_status
+        - agent_workflow_approve
+        - agent_workflow_cancel
+        - agent_workflow_define
+        - agent_workflow_definitions
+        - agent_workflow_events
+        - agent_workflow_list
+        - agent_workflow_reject
+        - agent_workflow_start
+        - agent_workflow_status
+    categories:
+        - memory
+        - agents
+        - context
+    description: Agent context for persistent memory across sessions - sessions, context entries, tasks, handoffs, workflows, knowledge graph, and long-term memory (Go native)
+    name: agent_context
+    timeout: 120
+kind: ConfigMap
+metadata:
+  labels:
+    app: agent-context
+    component: mcp-server
+  name: agent-context-config

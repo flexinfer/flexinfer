@@ -1,0 +1,18 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - get_transcript
+        - get_video_info
+    categories:
+        - media
+        - documentation
+    description: Download and process YouTube subtitles (Go native)
+    name: youtube
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: youtube
+    component: mcp-server
+  name: youtube-config

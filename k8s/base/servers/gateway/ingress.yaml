@@ -1,0 +1,37 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-cloudflare
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+  labels:
+    app: loom-gateway
+    component: loom-gateway
+  name: loom-gateway
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - mcp.flexinfer.ai
+      secretName: loom-gateway-tls
+  rules:
+    - host: mcp.flexinfer.ai
+      http:
+        paths:
+          - backend:
+              service:
+                name: mobile-hud
+                port:
+                  number: 80
+            path: /api/mobile/v1
+            pathType: Prefix
+          - backend:
+              service:
+                name: loom-gateway
+                port:
+                  number: 80
+            path: /
+            pathType: Prefix

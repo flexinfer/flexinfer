@@ -1,0 +1,38 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - server_listHosts
+        - server_getHost
+        - server_detectOS
+        - server_updateSystem
+        - server_installPackages
+        - server_removePackages
+        - server_serviceStatus
+        - server_restartService
+        - server_enableService
+        - server_disableService
+        - server_logs
+        - server_diagnose
+        - server_execSafe
+        - server_sshCommand
+        - server_reboot
+        - server_batch
+        - server_batchByTag
+        - server_configureAutoUpdates
+        - server_networkRouteInspect
+        - server_sysctlSet
+        - server_setSendRedirects
+        - server_setRpFilter
+    categories:
+        - operations
+        - ssh
+    description: SSH-based server management for system administration
+    name: server_mgmt
+    timeout: 90
+kind: ConfigMap
+metadata:
+  labels:
+    app: server-mgmt
+    component: mcp-server
+  name: server-mgmt-config

@@ -1,0 +1,145 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: mobile-hud
+    component: mobile-hud
+  name: mobile-hud
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mobile-hud
+  template:
+    metadata:
+      labels:
+        app: mobile-hud
+        component: mobile-hud
+    spec:
+      serviceAccountName: loom-hub
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: loomed
+          image: registry.harbor.lan/mcp/loom-core:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /usr/local/bin/loomd
+          args:
+            - --socket
+            - /var/run/loom/loom.sock
+            - --registry
+            - /etc/loom/registry.yaml
+            - --warm
+            - agent_context
+            - --target
+            - codex
+            - --hub-url
+            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
+            - --hub-prefer
+            - --hub-fallback=true
+            - --metrics-addr
+            - 0.0.0.0:9876
+          ports:
+            - containerPort: 9876
+              name: metrics
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9876
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9876
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+          volumeMounts:
+            - name: loom-socket
+              mountPath: /var/run/loom
+            - name: registry
+              mountPath: /etc/loom
+              readOnly: true
+        - name: hud
+          image: registry.harbor.lan/mcp/loom-core:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /usr/local/bin/loom
+          args:
+            - --socket
+            - /var/run/loom/loom.sock
+            - hud
+            - --port
+            - "3333"
+          env:
+            - name: HUD_BIND_ADDRESS
+              value: 0.0.0.0
+            - name: HUD_MOBILE_OPERATOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: loom-secrets
+                  key: HUD_MOBILE_OPERATOR_TOKEN
+            - name: HUD_MOBILE_OPERATOR_SCOPES
+              valueFrom:
+                secretKeyRef:
+                  name: loom-secrets
+                  key: HUD_MOBILE_OPERATOR_SCOPES
+            - name: LOOM_SOCKET
+              value: /var/run/loom/loom.sock
+            - name: CACHE_BACKEND
+              value: memory
+          ports:
+            - containerPort: 3333
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3333
+            initialDelaySeconds: 8
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3333
+            initialDelaySeconds: 12
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+          volumeMounts:
+            - name: loom-socket
+              mountPath: /var/run/loom
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+      volumes:
+        - name: loom-socket
+          emptyDir: {}
+        - name: registry
+          configMap:
+            name: mobile-hud-registry

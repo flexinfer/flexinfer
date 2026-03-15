@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: cloudflare
+    component: mcp-server
+    mcp.server/name: cloudflare
+    mcp.server/type: custom
+  name: cloudflare
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflare
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: networking,operations
+        mcp.server/description: Cloudflare API utilities (token verify, zones, tunnels, DNS management)
+      labels:
+        app: cloudflare
+        component: mcp-server
+        mcp.server/name: cloudflare
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - env:
+            - name: CF_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  key: CF_ACCOUNT_ID
+                  name: loom-secrets
+            - name: CF_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  key: CF_API_TOKEN
+                  name: loom-secrets
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_SERVER_NAME
+              value: cloudflare
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-cloudflare
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: cloudflare
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

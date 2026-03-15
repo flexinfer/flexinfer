@@ -1,0 +1,24 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - helm_list
+        - helm_status
+        - helm_values
+        - helm_history
+        - helm_search
+        - helm_show
+        - helm_template
+        - helm_repo_list
+    categories:
+        - kubernetes
+        - deployment
+    description: Helm chart management (list, status, values, search)
+    name: helm
+    timeout: 90
+kind: ConfigMap
+metadata:
+  labels:
+    app: helm
+    component: mcp-server
+  name: helm-config

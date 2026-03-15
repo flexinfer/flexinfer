@@ -1,0 +1,24 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - flux_get_sources
+        - flux_get_kustomizations
+        - flux_get_helmreleases
+        - flux_reconcile
+        - flux_suspend
+        - flux_resume
+        - flux_logs
+        - flux_events
+    categories:
+        - gitops
+        - kubernetes
+    description: Flux CD GitOps operations (sources, kustomizations, reconciliation)
+    name: flux
+    timeout: 120
+kind: ConfigMap
+metadata:
+  labels:
+    app: flux
+    component: mcp-server
+  name: flux-config

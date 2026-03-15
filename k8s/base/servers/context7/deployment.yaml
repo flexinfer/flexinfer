@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: context7
+    component: mcp-server
+    mcp.server/name: context7
+    mcp.server/type: python
+  name: context7
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: context7
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: docs
+        mcp.server/description: Library documentation retrieval
+      labels:
+        app: context7
+        component: mcp-server
+        mcp.server/name: context7
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - env:
+            - name: CONTEXT7_MAX_TOKENS
+              value: "20000"
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_TIMEOUT
+              value: "90"
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: MCP_SERVER_NAME
+              value: context7
+            - name: MCP_SERVER_COMMAND
+              value: python3 scripts/mcp/run_cached_node_server.py context7
+          image: registry.harbor.lan/mcp/python-server:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: context7
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

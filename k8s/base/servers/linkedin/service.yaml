@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: linkedin
+    component: mcp-server
+  name: mcp-linkedin
+spec:
+  ports:
+    - name: websocket
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+  selector:
+    app: linkedin
+  type: ClusterIP

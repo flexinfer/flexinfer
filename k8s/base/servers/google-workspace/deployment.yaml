@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: google-workspace
+    component: mcp-server
+    mcp.server/name: google-workspace
+    mcp.server/type: custom
+  name: google-workspace
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: google-workspace
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: productivity,google,workspace,gmail,calendar,docs,drive
+        mcp.server/description: Google Workspace integration for Gmail, Calendar, Docs, and Drive metadata.
+      labels:
+        app: google-workspace
+        component: mcp-server
+        mcp.server/name: google-workspace
+    spec:
+      containers:
+        - env:
+            - name: GOOGLE_WORKSPACE_ACCOUNT_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  key: GOOGLE_WORKSPACE_ACCOUNT_EMAIL
+                  name: loom-secrets
+            - name: GOOGLE_WORKSPACE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  key: GOOGLE_WORKSPACE_CLIENT_ID
+                  name: loom-secrets
+            - name: GOOGLE_WORKSPACE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  key: GOOGLE_WORKSPACE_CLIENT_SECRET
+                  name: loom-secrets
+            - name: GOOGLE_WORKSPACE_REFRESH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  key: GOOGLE_WORKSPACE_REFRESH_TOKEN
+                  name: loom-secrets
+            - name: GOOGLE_WORKSPACE_SCOPES
+              valueFrom:
+                secretKeyRef:
+                  key: GOOGLE_WORKSPACE_SCOPES
+                  name: loom-secrets
+            - name: GOOGLE_WORKSPACE_TIMEOUT_SECONDS
+              value: "30"
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_SERVER_NAME
+              value: google-workspace
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-google-workspace
+          image: registry.harbor.lan/mcp/custom-server-google-workspace:latest
+          imagePullPolicy: Always
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: google-workspace
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

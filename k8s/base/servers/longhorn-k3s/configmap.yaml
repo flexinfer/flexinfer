@@ -1,0 +1,22 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - k8s.get
+        - k8s.describe
+        - k8s.getPods
+        - k8s.logs
+        - k8s.apply
+    categories:
+        - storage
+        - kubernetes
+        - operations
+    description: Longhorn storage operations on the k3s cluster (volumes, replicas, attachments)
+    name: longhorn_k3s
+    timeout: 90
+kind: ConfigMap
+metadata:
+  labels:
+    app: longhorn-k3s
+    component: mcp-server
+  name: longhorn-k3s-config

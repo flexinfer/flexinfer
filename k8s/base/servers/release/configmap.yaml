@@ -1,0 +1,20 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - release_validate
+        - release_changelog
+        - release_status
+    categories:
+        - release
+        - orchestration
+        - ci
+    description: Multi-channel release orchestration. Validates version alignment, generates changelogs, and checks release status across GitHub and itch.io.
+    name: release
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: release
+    component: mcp-server
+  name: release-config

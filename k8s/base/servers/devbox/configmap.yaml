@@ -1,0 +1,29 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - devbox_exec
+        - devbox_build
+        - devbox_status
+        - devbox_stop
+        - devbox_detect
+        - devbox_read_file
+        - devbox_write_file
+        - devbox_exec_async
+        - devbox_exec_poll
+        - devbox_metrics
+        - devbox_summary
+    categories:
+        - sandbox
+        - dev
+        - docker
+        - kubernetes
+    description: Project-aware dev sandbox executor. Builds isolated containers with auto-detected runtimes and deps. Execute builds, tests, lints without host dependencies. Supports file read/write, async exec, metrics, and devcontainer.json.
+    name: devbox
+    timeout: 300
+kind: ConfigMap
+metadata:
+  labels:
+    app: devbox
+    component: mcp-server
+  name: devbox-config

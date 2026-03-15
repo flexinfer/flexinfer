@@ -1,0 +1,19 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - morph_embeddings_embed
+        - morph_embeddings_upsert
+        - morph_embeddings_search
+    categories:
+        - ai
+        - embeddings
+    description: Generate Morph embeddings and coordinate Qdrant vector search
+    name: morph_embeddings
+    timeout: 120
+kind: ConfigMap
+metadata:
+  labels:
+    app: morph-embeddings
+    component: mcp-server
+  name: morph-embeddings-config

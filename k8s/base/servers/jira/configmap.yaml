@@ -1,0 +1,20 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - jira_search
+        - jira_get_issue
+        - jira_list_projects
+        - jira_get_project
+    categories:
+        - devops
+        - collaboration
+    description: Atlassian Jira issue tracking (search, get, transition, comment)
+    name: jira
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: jira
+    component: mcp-server
+  name: jira-config

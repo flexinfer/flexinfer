@@ -1,0 +1,20 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - git_worktree_list
+        - git_worktree_add
+        - git_worktree_remove
+        - git_worktree_prune
+    categories:
+        - devops
+        - scm
+    description: Manage git worktrees for parallel agent work (list/add/remove/prune)
+    name: git_worktree
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: git-worktree
+    component: mcp-server
+  name: git-worktree-config

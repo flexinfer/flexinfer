@@ -1,0 +1,25 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - query
+        - query_range
+        - list_alerts
+        - list_rules
+        - list_targets
+        - list_metrics
+        - list_labels
+        - label_values
+        - runtime_info
+    categories:
+        - monitoring
+        - observability
+    description: Query and analyze Prometheus metrics (Go native)
+    name: prometheus
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: prometheus
+    component: mcp-server
+  name: prometheus-config

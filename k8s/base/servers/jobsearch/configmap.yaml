@@ -1,0 +1,35 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - jobsearch_health_get
+        - jobsearch_auth_me
+        - jobsearch_openapi_get
+        - jobsearch_routes_list
+        - jobsearch_endpoint_schema_get
+        - jobsearch_entities_list
+        - jobsearch_entities_get
+        - jobsearch_entities_search
+        - jobsearch_leads_list
+        - jobsearch_leads_get
+        - jobsearch_workflow_today
+        - jobsearch_workflow_followups
+        - jobsearch_workflow_drafts_list
+        - jobsearch_sources_list
+        - jobsearch_integrations_list
+        - jobsearch_feed_list
+        - jobsearch_jobs_list
+    categories:
+        - productivity
+        - workflow
+        - crm
+        - jobsearch
+    description: JobSearch backend API integration with explicit Workflow/CRM tools and a guarded full-route passthrough.
+    name: jobsearch
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: jobsearch
+    component: mcp-server
+  name: jobsearch-config

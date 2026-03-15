@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: grafana
+    component: mcp-server
+    mcp.server/name: grafana
+    mcp.server/type: custom
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: monitoring,dashboards
+        mcp.server/description: Grafana dashboard search and retrieval
+      labels:
+        app: grafana
+        component: mcp-server
+        mcp.server/name: grafana
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - env:
+            - name: CONTEXT_BROKER_HOST
+              value: 127.0.0.1
+            - name: CONTEXT_BROKER_PORT
+              value: "9876"
+            - name: CONTEXT_BROKER_PUBLISH
+              value: "1"
+            - name: GRAFANA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  key: GRAFANA_API_TOKEN
+                  name: loom-secrets
+            - name: GRAFANA_PORT_FORWARD
+              value: "false"
+            - name: GRAFANA_URL
+              value: http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local
+            - name: LOG_LEVEL
+              value: info
+            - name: TLS_SKIP_VERIFY
+              value: "true"
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: MCP_SERVER_NAME
+              value: grafana
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-grafana
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: grafana
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

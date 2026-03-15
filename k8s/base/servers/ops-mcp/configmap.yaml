@@ -1,0 +1,26 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - k8s_get_nodes
+        - k8s_scale_deploy
+        - k8s_delete_pods_by_phase
+        - vip_label_node
+        - harvester_vms_list
+        - harvester_vm_restart
+        - k3s_service_logs
+        - k3s_repair_server
+        - stabilize_cluster
+        - run_repo_script
+    categories:
+        - operations
+        - automation
+    description: Ops MCP server for k3s and Harvester operations (repair, VIP labels, VM lifecycle, scripted ops)
+    name: ops_mcp
+    timeout: 120
+kind: ConfigMap
+metadata:
+  labels:
+    app: ops-mcp
+    component: mcp-server
+  name: ops-mcp-config

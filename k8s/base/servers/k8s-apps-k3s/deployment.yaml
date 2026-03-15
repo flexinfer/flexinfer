@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: k8s-apps-k3s
+    component: mcp-server
+    mcp.server/name: k8s_apps_k3s
+    mcp.server/type: custom
+  name: k8s-apps-k3s
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: k8s-apps-k3s
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: kubernetes,operations
+        mcp.server/description: Kubernetes operations for the k3s apps cluster (use for app deploys, logs, rollouts)
+      labels:
+        app: k8s-apps-k3s
+        component: mcp-server
+        mcp.server/name: k8s_apps_k3s
+    spec:
+      serviceAccountName: mcp-k8s-ops
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - env:
+            - name: CONTEXT_BROKER_HOST
+              value: 127.0.0.1
+            - name: CONTEXT_BROKER_PORT
+              value: "9876"
+            - name: CONTEXT_BROKER_PUBLISH
+              value: "1"
+            - name: KUBECONFIG
+              value: /home/mcp/.kube/config
+            - name: MCP_K8S_DEBUG
+              value: ""
+            - name: MCP_K8S_KUBECONFIG
+              value: /home/mcp/.kube/config
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_SERVER_NAME
+              value: k8s_apps_k3s
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-k8s-ops
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: k8s-apps-k3s
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: kubeconfig
+              mountPath: /home/mcp/.kube/config
+              subPath: kubeconfig.yaml
+              readOnly: true
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      volumes:
+        - name: kubeconfig
+          configMap:
+            name: k8s-apps-k3s-config
+            items:
+              - key: kubeconfig.yaml
+                path: kubeconfig.yaml
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

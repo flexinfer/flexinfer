@@ -1,0 +1,20 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - substack_list_drafts
+        - substack_list_posts
+        - substack_get_post
+    categories:
+        - publishing
+        - newsletter
+        - substack
+    description: Substack publication management. Create drafts, publish posts, read archives.
+    name: substack
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: substack
+    component: mcp-server
+  name: substack-config

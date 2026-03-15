@@ -1,0 +1,16 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow: []
+    categories:
+        - network
+        - router
+    description: Manage ASUS router via SSH alias (asus-router in ~/.ssh/config)
+    name: asus_router
+    timeout: 30
+kind: ConfigMap
+metadata:
+  labels:
+    app: asus-router
+    component: mcp-server
+  name: asus-router-config

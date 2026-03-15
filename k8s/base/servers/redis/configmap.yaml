@@ -1,0 +1,21 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - redis_info
+        - redis_keys
+        - redis_get
+        - redis_type
+        - redis_ttl
+    categories:
+        - cache
+        - database
+    description: Redis cache inspection and monitoring
+    name: redis
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: redis
+    component: mcp-server
+  name: redis-config

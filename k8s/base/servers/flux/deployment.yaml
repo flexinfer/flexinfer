@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: flux
+    component: mcp-server
+    mcp.server/name: flux
+    mcp.server/type: custom
+  name: flux
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flux
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: gitops,kubernetes
+        mcp.server/description: Flux CD GitOps operations (sources, kustomizations, reconciliation)
+      labels:
+        app: flux
+        component: mcp-server
+        mcp.server/name: flux
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - env:
+            - name: FLUX_KUBECONFIG
+              value: /Users/cblevins/workspace/platform/gitops/.kube/k3s.yaml
+            - name: FLUX_NAMESPACE
+              value: flux-system
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: MCP_SERVER_NAME
+              value: flux
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-flux
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: flux
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

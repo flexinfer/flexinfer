@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: linkedin
+    component: mcp-server
+    mcp.server/name: linkedin
+    mcp.server/type: custom
+  name: linkedin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: linkedin
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: social,messaging,linkedin
+        mcp.server/description: LinkedIn personal account management. Profile lookup and messaging operations.
+      labels:
+        app: linkedin
+        component: mcp-server
+        mcp.server/name: linkedin
+    spec:
+      containers:
+        - env:
+            - name: LINKEDIN_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  key: LINKEDIN_ACCESS_TOKEN
+                  name: loom-secrets
+            - name: LINKEDIN_BROWSERKIT_MODE
+              value: auto
+            - name: LINKEDIN_BROWSERKIT_PYTHON
+              value: ${env:BROWSERKIT_PYTHON:-python3}
+            - name: LINKEDIN_BROWSERKIT_SESSION_ID
+              value: primary
+            - name: LINKEDIN_BROWSERKIT_STORAGE_DIR
+              value: /home/mcp/.config/loom/linkedin-browserkit
+            - name: LINKEDIN_JSESSIONID
+              valueFrom:
+                secretKeyRef:
+                  key: LINKEDIN_JSESSIONID
+                  name: loom-secrets
+            - name: LINKEDIN_LOGIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: LINKEDIN_LOGIN_PASSWORD
+                  name: loom-secrets
+            - name: LINKEDIN_LOGIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  key: LINKEDIN_LOGIN_USERNAME
+                  name: loom-secrets
+            - name: LINKEDIN_SESSION_COOKIE
+              valueFrom:
+                secretKeyRef:
+                  key: LINKEDIN_SESSION_COOKIE
+                  name: loom-secrets
+            - name: LINKEDIN_SESSION_HEALTH_TTL_SECONDS
+              value: "1200"
+            - name: LINKEDIN_SESSION_RECOVERY_COOLDOWN_SECONDS
+              value: "300"
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_SERVER_NAME
+              value: linkedin
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-linkedin
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: Always
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: linkedin
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

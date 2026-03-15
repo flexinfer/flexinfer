@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: morph-fast-apply
+    component: mcp-server
+    mcp.server/name: morph_fast_apply
+    mcp.server/type: custom
+  name: morph-fast-apply
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: morph-fast-apply
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: ai,code-editing
+        mcp.server/description: Apply Morph's fast code edit patches with high accuracy (Go native)
+      labels:
+        app: morph-fast-apply
+        component: mcp-server
+        mcp.server/name: morph_fast_apply
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - env:
+            - name: MORPH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: MORPH_API_KEY
+                  name: loom-secrets
+            - name: MORPH_BASE_URL
+              value: https://api.morphllm.com/v1
+            - name: MORPH_MODEL
+              value: morph-v3-large
+            - name: WORKSPACE_ROOT
+              value: /app
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_SERVER_NAME
+              value: morph_fast_apply
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-morph-fast-apply
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: morph-fast-apply
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpo
+  labels:
+    app: mcpo
+    component: mcpo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcpo
+  template:
+    metadata:
+      labels:
+        app: mcpo
+        component: mcpo
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: mcpo
+          image: ghcr.io/open-webui/mcpo:main@sha256:f2c86ef16fd12c6dbfd55caec817bc5d09114327ffed03301b6e339a66bf95ae
+          imagePullPolicy: IfNotPresent
+          args:
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --config
+            - /config/config.json
+            - --log-level
+            - INFO
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /docs
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /docs
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: mcpo-config
+            items:
+              - key: config.json
+                path: config.json

@@ -1,0 +1,26 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - godot_logs
+        - godot_logs_stream
+        - godot_scene_tree
+        - godot_inspect
+        - godot_call
+        - godot_signal
+        - godot_eval
+        - godot_set
+        - godot_screenshot
+    categories:
+        - game
+        - debugging
+        - local
+    description: Local-only MCP server for Godot debugging (Go native)
+    name: godot_debug
+    timeout: 120
+kind: ConfigMap
+metadata:
+  labels:
+    app: godot-debug
+    component: mcp-server
+  name: godot-debug-config

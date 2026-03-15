@@ -1,0 +1,20 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - neo4j_query
+        - neo4j_schema
+        - neo4j_labels
+        - neo4j_relationships
+    categories:
+        - database
+        - graph
+    description: Neo4j graph database queries and schema inspection
+    name: neo4j
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: neo4j
+    component: mcp-server
+  name: neo4j-config

@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: itchio
+    component: mcp-server
+    mcp.server/name: itchio
+    mcp.server/type: custom
+  name: itchio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: itchio
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: distribution,publishing,itchio
+        mcp.server/description: itch.io distribution management via Butler CLI. Upload builds, check channel status, and manage versions.
+      labels:
+        app: itchio
+        component: mcp-server
+        mcp.server/name: itchio
+    spec:
+      containers:
+        - env:
+            - name: BUTLER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: BUTLER_API_KEY
+                  name: loom-secrets
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_SERVER_NAME
+              value: itchio
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-itchio
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: Always
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: itchio
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

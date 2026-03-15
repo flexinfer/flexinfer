@@ -1,0 +1,219 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+commonLabels:
+  app.kubernetes.io/part-of: loom-hub
+  app.kubernetes.io/managed-by: kustomize
+
+resources:
+  # === GATEWAY (required) ===
+  - servers/gateway/deployment.yaml
+  - servers/gateway/hpa.yaml
+  - servers/gateway/hud-redirect-ingress.yaml
+  - servers/gateway/ingress.yaml
+  - servers/gateway/pdb.yaml
+  - servers/gateway/registry-configmap.yaml
+  - servers/gateway/service.yaml
+
+  # === MOBILE API BACKEND ===
+  - servers/mobile-hud/configmap.yaml
+  - servers/mobile-hud/deployment.yaml
+  - servers/mobile-hud/ingress.yaml
+  - servers/mobile-hud/service.yaml
+
+  # === OPENAPI PROXY (for Open WebUI tools) ===
+  - servers/mcpo/configmap.yaml
+  - servers/mcpo/deployment.yaml
+  - servers/mcpo/service.yaml
+  - servers/mcpo/ingress.yaml
+
+  # === API-ONLY SERVERS (work in hub mode) ===
+  - servers/tavily/configmap.yaml
+  - servers/tavily/deployment.yaml
+  - servers/tavily/service.yaml
+  - servers/tavily/ingress.yaml
+
+  - servers/github/configmap.yaml
+  - servers/github/deployment.yaml
+  - servers/github/service.yaml
+
+  - servers/github-actions/configmap.yaml
+  - servers/github-actions/deployment.yaml
+  - servers/github-actions/service.yaml
+
+  - servers/google-workspace/configmap.yaml
+  - servers/google-workspace/deployment.yaml
+  - servers/google-workspace/service.yaml
+
+  # slack: disabled until loom-secrets contains SLACK_BOT_TOKEN
+  # - servers/slack/configmap.yaml
+  # - servers/slack/deployment.yaml
+  # - servers/slack/service.yaml
+
+  - servers/gitlab/configmap.yaml
+  - servers/gitlab/deployment.yaml
+  - servers/gitlab/service.yaml
+  - servers/gitlab/ingress.yaml
+
+  - servers/cloudflare/configmap.yaml
+  - servers/cloudflare/deployment.yaml
+  - servers/cloudflare/service.yaml
+
+  - servers/context7/configmap.yaml
+  - servers/context7/deployment.yaml
+  - servers/context7/service.yaml
+
+  - servers/youtube/configmap.yaml
+  - servers/youtube/deployment.yaml
+  - servers/youtube/service.yaml
+
+  - servers/zep/configmap.yaml
+  - servers/zep/deployment.yaml
+  - servers/zep/service.yaml
+
+  - servers/morph-fast-apply/configmap.yaml
+  - servers/morph-fast-apply/deployment.yaml
+  - servers/morph-fast-apply/service.yaml
+
+  - servers/morph-embeddings/configmap.yaml
+  - servers/morph-embeddings/deployment.yaml
+  - servers/morph-embeddings/service.yaml
+
+  - servers/sequentialthinking/configmap.yaml
+  - servers/sequentialthinking/deployment.yaml
+  - servers/sequentialthinking/service.yaml
+  - servers/sequentialthinking/ingress.yaml
+
+  - servers/time/configmap.yaml
+  - servers/time/deployment.yaml
+  - servers/time/service.yaml
+
+  # === NETWORK-ACCESSIBLE SERVERS (work with proper URLs) ===
+  - servers/qdrant/configmap.yaml
+  - servers/qdrant/deployment.yaml
+  - servers/qdrant/service.yaml
+
+  - servers/prometheus/configmap.yaml
+  - servers/prometheus/deployment.yaml
+  - servers/prometheus/service.yaml
+
+  - servers/loki/configmap.yaml
+  - servers/loki/deployment.yaml
+  - servers/loki/service.yaml
+
+  - servers/grafana/configmap.yaml
+  - servers/grafana/deployment.yaml
+  - servers/grafana/service.yaml
+
+  - servers/alertmanager/configmap.yaml
+  - servers/alertmanager/deployment.yaml
+  - servers/alertmanager/service.yaml
+
+  - servers/postgres/configmap.yaml
+  - servers/postgres/deployment.yaml
+  - servers/postgres/service.yaml
+
+  - servers/codebase-memory/configmap.yaml
+  - servers/codebase-memory/deployment.yaml
+  - servers/codebase-memory/service.yaml
+  - servers/codebase-memory/ingress.yaml
+
+  - servers/agent-context/deployment.yaml
+  - servers/agent-context/service.yaml
+
+  # === SANDBOX (K8s backend, needs ServiceAccount for pod management) ===
+  - servers/devbox/configmap.yaml
+  - servers/devbox/deployment.yaml
+  - servers/devbox/service.yaml
+  - servers/devbox/serviceaccount.yaml
+
+  # === IN-CLUSTER K8S (using ServiceAccount, not kubeconfig files) ===
+  - servers/k8s-apps-k3s/configmap.yaml
+  - servers/k8s-apps-k3s/deployment.yaml
+  - servers/k8s-apps-k3s/rbac.yaml
+  - servers/k8s-apps-k3s/service.yaml
+
+  - servers/longhorn-k3s/configmap.yaml
+  - servers/longhorn-k3s/deployment.yaml
+  - servers/longhorn-k3s/service.yaml
+
+  - servers/flux/configmap.yaml
+  - servers/flux/deployment.yaml
+  - servers/flux/service.yaml
+
+  - servers/helm/configmap.yaml
+  - servers/helm/deployment.yaml
+  - servers/helm/service.yaml
+
+  # === SERVERS MIGRATED FROM MCP-HUB ===
+  - servers/git/configmap.yaml
+  - servers/git/deployment.yaml
+  - servers/git/service.yaml
+
+  - servers/git-worktree/configmap.yaml
+  - servers/git-worktree/deployment.yaml
+  - servers/git-worktree/service.yaml
+
+  - servers/docker/configmap.yaml
+  - servers/docker/deployment.yaml
+  - servers/docker/service.yaml
+
+  - servers/asus-router/configmap.yaml
+  - servers/asus-router/deployment.yaml
+  - servers/asus-router/service.yaml
+
+  - servers/server-mgmt/configmap.yaml
+  - servers/server-mgmt/deployment.yaml
+  - servers/server-mgmt/service.yaml
+
+  - servers/ops-mcp/configmap.yaml
+  - servers/ops-mcp/deployment.yaml
+  - servers/ops-mcp/service.yaml
+
+  - servers/k8s-harvester-infra/configmap.yaml
+  - servers/k8s-harvester-infra/deployment.yaml
+  - servers/k8s-harvester-infra/service.yaml
+
+  - servers/godot-debug/configmap.yaml
+  - servers/godot-debug/deployment.yaml
+  - servers/godot-debug/service.yaml
+
+  - servers/memory/configmap.yaml
+  - servers/memory/deployment.yaml
+  - servers/memory/service.yaml
+
+  - servers/redis/configmap.yaml
+  - servers/redis/deployment.yaml
+  - servers/redis/service.yaml
+
+  - servers/neo4j/configmap.yaml
+  - servers/neo4j/deployment.yaml
+  - servers/neo4j/service.yaml
+
+  - servers/minio/configmap.yaml
+  - servers/minio/deployment.yaml
+  - servers/minio/service.yaml
+
+  - servers/itchio/configmap.yaml
+  - servers/itchio/deployment.yaml
+  - servers/itchio/service.yaml
+
+  - servers/release/configmap.yaml
+  - servers/release/deployment.yaml
+  - servers/release/service.yaml
+
+  - servers/substack/configmap.yaml
+  - servers/substack/deployment.yaml
+  - servers/substack/service.yaml
+
+  - servers/jira/configmap.yaml
+  - servers/jira/deployment.yaml
+  - servers/jira/service.yaml
+
+  - servers/linkedin/configmap.yaml
+  - servers/linkedin/deployment.yaml
+  - servers/linkedin/service.yaml
+
+  - servers/jobsearch/configmap.yaml
+  - servers/jobsearch/deployment.yaml
+  - servers/jobsearch/service.yaml

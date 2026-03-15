@@ -1,0 +1,20 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - search
+        - search_news
+        - extract
+        - search_context
+    categories:
+        - search
+        - docs
+    description: AI-powered web search and content extraction (Go native)
+    name: tavily
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: tavily
+    component: mcp-server
+  name: tavily-config

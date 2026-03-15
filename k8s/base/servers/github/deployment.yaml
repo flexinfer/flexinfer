@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: github
+    component: mcp-server
+    mcp.server/name: github
+    mcp.server/type: custom
+  name: github
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: github
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: devops,scm
+        mcp.server/description: GitHub repository operations and management (Go native)
+      labels:
+        app: github
+        component: mcp-server
+        mcp.server/name: github
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  key: GITHUB_PERSONAL_ACCESS_TOKEN
+                  name: loom-secrets
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_SERVER_NAME
+              value: github
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-github
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: github
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

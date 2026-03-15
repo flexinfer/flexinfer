@@ -1,0 +1,24 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - cf_verify_token
+        - cf_list_zones
+        - cf_list_tunnels
+        - cf_list_dns_records
+        - cf_create_dns_record
+        - cf_update_dns_record
+        - cf_delete_dns_record
+        - cf_purge_cache
+    categories:
+        - networking
+        - operations
+    description: Cloudflare API utilities (token verify, zones, tunnels, DNS management)
+    name: cloudflare
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: cloudflare
+    component: mcp-server
+  name: cloudflare-config

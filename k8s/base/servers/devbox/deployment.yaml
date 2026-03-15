@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: devbox
+    component: mcp-server
+    mcp.server/name: devbox
+    mcp.server/type: custom
+  name: devbox
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devbox
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: sandbox,dev,docker,kubernetes
+        mcp.server/description: Project-aware dev sandbox executor. Builds isolated containers with auto-detected runtimes and deps. Execute builds, tests, lints without host dependencies. Supports file read/write, async exec, metrics, and devcontainer.json.
+      labels:
+        app: devbox
+        component: mcp-server
+        mcp.server/name: devbox
+    spec:
+      serviceAccountName: mcp-devbox
+      containers:
+        - env:
+            - name: DEVBOX_BACKEND
+              value: k8s
+            - name: DEVBOX_BUILDER_IMAGE
+              valueFrom:
+                secretKeyRef:
+                  key: DEVBOX_BUILDER_IMAGE
+                  name: loom-secrets
+            - name: DEVBOX_CACHE_DIR
+              value: /home/mcp/.cache/loom/devbox
+            - name: DEVBOX_DEFAULT_CPU
+              value: "2"
+            - name: DEVBOX_DEFAULT_MEMORY_MB
+              value: "1024"
+            - name: DEVBOX_HUD_ADDR
+              valueFrom:
+                secretKeyRef:
+                  key: DEVBOX_HUD_ADDR
+                  name: loom-secrets
+            - name: DEVBOX_IDLE_TIMEOUT
+              value: 30m
+            - name: DEVBOX_NFS_FLUSH
+              value: "false"
+            - name: DEVBOX_SYNC_MODE
+              value: git-clone
+            - name: DEVBOX_WARM_PROJECTS
+              value: ""
+            - name: DEVBOX_K8S_IMAGE_PULL_SECRET
+              value: harbor-creds
+            - name: DEVBOX_K8S_NAMESPACE
+              value: devbox
+            - name: DEVBOX_K8S_STORAGE_CLASS
+              value: longhorn
+            - name: DEVBOX_K8S_WORKSPACE_PVC
+              value: devbox-workspace-nfs
+            - name: DEVBOX_K8S_GIT_BASE_URL
+              value: https://gitlab.blevins.dev/homelab
+            - name: DEVBOX_K8S_GIT_SECRET
+              value: gitlab-creds
+            - name: DEVBOX_MAX_TAIL_LINES
+              value: "20"
+            - name: DEVBOX_REGISTRY
+              value: registry.harbor.lan
+            - name: DEVBOX_WORKSPACE_ROOT
+              value: /app
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: info
+            - name: MCP_SERVER_NAME
+              value: devbox
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-devbox
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: Always
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: devbox
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
