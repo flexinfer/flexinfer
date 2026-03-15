@@ -143,9 +143,6 @@ spec:
           volumeMounts:
             - name: loom-socket
               mountPath: /var/run/loom
-            - name: workspace
-              mountPath: /workspace
-              readOnly: true
       securityContext:
         fsGroup: 1000
         runAsNonRoot: true
@@ -156,6 +153,3 @@ spec:
         - name: registry
           configMap:
             name: mobile-hud-registry
-        - name: workspace
-          persistentVolumeClaim:
-            claimName: devbox-workspace-nfs
