@@ -14,7 +14,3 @@ spec:
       port: 8000
       protocol: TCP
       targetPort: http
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes
