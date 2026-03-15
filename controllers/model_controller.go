@@ -53,6 +53,7 @@ import (
 	"github.com/flexinfer/flexinfer/pkg/k8surl"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
+	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -4445,20 +4446,11 @@ echo "Copy complete."
 func (r *ModelReconciler) loadViaRuntime(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, endpoint *RuntimeEndpoint, gpuArch string) error {
 	runtimeLog := log.FromContext(ctx)
 
-	// Build the load request payload.
-	spec := r.buildBackendModelSpec(model, b, gpuVendor)
-	spec.GPUArch = gpuArch
-
-	payload := map[string]interface{}{
-		"backend":   b.Name(),
-		"model":     spec.Model,
-		"modelPath": spec.ModelPath,
-		"config":    model.Spec.GetConfigMap(),
-	}
-
-	data, err := json.Marshal(payload)
+	// Build the load request payload using shared builder.
+	// The controller adds modelPath from the storage plan.
+	data, err := pkgrt.BuildLoadPayload(b.Name(), model.Spec.Source, model.Spec.GetConfigMap())
 	if err != nil {
-		return fmt.Errorf("marshalling load request: %w", err)
+		return err
 	}
 
 	runtimeLog.Info("Sending load request to runtime",

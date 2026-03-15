@@ -1,0 +1,91 @@
+# Build matrix for flexinfer-runtime images.
+# Single source of truth for GPU profiles, base images, backends, and env vars.
+#
+# Usage:
+#   ./build/build-runtime.sh gfx1100          # build one profile
+#   ./build/build-runtime.sh all --push       # build + push all
+#   ./build/build-runtime.sh gfx1100 --dry-run  # print docker command
+#
+# Parsed by build-runtime.sh via yq.
+
+registry: registry.harbor.lan/flexinfer
+go_version: "1.26.0"
+llamacpp_version: "b8173"
+ollama_version: "v0.17.4"
+ollama_go_version: "1.25.7"
+
+profiles:
+  gfx1100:
+    tag: "runtime:rocm-gfx1100"
+    gpu_vendor: amd
+    gpu_arch: gfx1100
+    # Pre-built vLLM navi image — vLLM compiled for RDNA3.
+    # Source build fails: topKPerRowDecode exceeds 64KB LDS limit on RDNA3.
+    base_image: "rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0"
+    rocm_dev_image: "rocm/dev-ubuntu-24.04:6.4.4"
+    amdgpu_targets: gfx1100
+    backends:
+      vllm: true        # already in base image
+      llamacpp: true
+      ollama: true
+      diffusers: true
+      steam: true
+    # bitsandbytes pip wheel ships gfx1100 HIP kernels
+    include_bitsandbytes: true
+    transformers_constraint: ">=5.0"
+    env:
+      ROCM_PATH: /opt/rocm
+      HIP_PATH: /opt/rocm
+      HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+      PYTORCH_ROCM_ARCH: gfx1100
+      TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "1"
+      HIP_FORCE_DEV_KERNARG: "1"
+      TORCH_BLAS_PREFER_HIPBLASLT: "1"
+      VLLM_USE_V1: "0"
+      VLLM_USE_TRITON_FLASH_ATTN: "0"
+      VLLM_ROCM_USE_AITER: "0"
+      VLLM_TARGET_DEVICE: rocm
+      MIOPEN_FIND_MODE: "2"
+      PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512"
+    build_context: 7900xtx
+
+  gfx906:
+    tag: "runtime:rocm-gfx906"
+    gpu_vendor: amd
+    gpu_arch: gfx906
+    base_image: "rocm/pytorch:rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0"
+    rocm_dev_image: "rocm/dev-ubuntu-22.04:6.2"
+    amdgpu_targets: gfx906
+    backends:
+      vllm: false        # PyTorch 2.3 too old
+      llamacpp: true
+      ollama: true
+      diffusers: true
+    # bitsandbytes pip wheel lacks gfx906 HIP kernels — must build from source separately
+    include_bitsandbytes: false
+    # PyTorch 2.3 constraint: transformers 5.x requires PyTorch 2.4+
+    transformers_constraint: ">=4.57,<5"
+    env:
+      ROCM_PATH: /opt/rocm
+      HIP_PATH: /opt/rocm/hip
+      HSA_OVERRIDE_GFX_VERSION: "9.0.6"
+      HSA_ENABLE_SDMA: "0"
+      HSA_USE_SVM: "0"
+      PYTORCH_ROCM_ARCH: gfx906
+    build_context: 7900xtx
+
+  cuda-maxwell:
+    tag: "runtime:cuda-maxwell"
+    gpu_vendor: nvidia
+    gpu_arch: sm_52
+    base_image: "nvidia/cuda:11.8.0-runtime-ubuntu22.04"
+    cuda_dev_image: "nvidia/cuda:11.8.0-devel-ubuntu22.04"
+    backends:
+      vllm: false
+      llamacpp: true
+      ollama: true
+      diffusers: false
+    env:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+    build_context: 7900xtx

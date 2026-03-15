@@ -89,6 +89,7 @@ type Config struct {
 	RateLimitGlobalBurst             int
 	AuthEnabled                      bool
 	AuthToken                        string
+	DirectRuntimeEnabled             bool // Enable direct proxy-to-runtime fast path
 }
 
 // ConfigFromEnv constructs a Config from environment variables and the provided client/namespace.
@@ -116,6 +117,7 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		RateLimitGlobalBurst:             getEnvInt("PROXY_RATE_LIMIT_GLOBAL_BURST", 200),
 		AuthEnabled:                      getEnvBool("PROXY_AUTH_ENABLED", false),
 		AuthToken:                        os.Getenv("PROXY_AUTH_TOKEN"),
+		DirectRuntimeEnabled:             getEnvBool("PROXY_DIRECT_RUNTIME_ENABLED", true),
 	}
 
 	if cfg.AuthEnabled && cfg.AuthToken == "" {
@@ -186,6 +188,10 @@ type Proxy struct {
 	// Authentication
 	authEnabled bool   // Enable bearer token authentication
 	authToken   string // Expected bearer token (from Secret)
+
+	// Direct runtime communication (fast path)
+	runtimeCache         *RuntimeCache // cached runtime pod endpoints
+	directRuntimeEnabled bool          // enable direct proxy-to-runtime loading
 }
 
 // New creates a new Proxy from the given Config.
@@ -217,6 +223,11 @@ func New(cfg Config) *Proxy {
 		rateLimitGlobalBurst: cfg.RateLimitGlobalBurst,
 		authEnabled:          cfg.AuthEnabled,
 		authToken:            cfg.AuthToken,
+		directRuntimeEnabled: cfg.DirectRuntimeEnabled,
+	}
+
+	if cfg.DirectRuntimeEnabled {
+		p.runtimeCache = NewRuntimeCache(cfg.Client, cfg.Namespace, endpointWatchInterval)
 	}
 
 	// Initialize global rate limiter
@@ -235,6 +246,11 @@ func (p *Proxy) Run(port int) error {
 	// Start endpoint watcher for routing
 	if p.routingEnabled {
 		go p.watchEndpoints(context.Background())
+	}
+
+	// Start runtime cache for direct fast path
+	if p.runtimeCache != nil {
+		p.runtimeCache.StartRefreshLoop(context.Background())
 	}
 
 	mux := http.NewServeMux()
@@ -258,7 +274,8 @@ func (p *Proxy) Run(port int) error {
 		"backoff_enabled", p.backoffEnabled,
 		"rate_limit_enabled", p.rateLimitEnabled,
 		"rate_limit_per_model", p.rateLimitPerModel,
-		"rate_limit_global", p.rateLimitGlobal)
+		"rate_limit_global", p.rateLimitGlobal,
+		"direct_runtime_enabled", p.directRuntimeEnabled)
 
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
 }
@@ -291,6 +308,8 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		validation.WriteBadRequestWithCode(w, "X-Model-ID header, /model/<name> path, or 'model' field in request body required", validation.CodeMissingRequiredField)
 		return
 	}
+
+	span.SetAttributes(attribute.String("flexinfer.model", modelName))
 
 	// 1b. Rate limit check
 	if !p.checkRateLimit(modelName) {

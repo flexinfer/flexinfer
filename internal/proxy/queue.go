@@ -1,8 +1,11 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand"
 	"net/http"
@@ -10,7 +13,11 @@ import (
 	"time"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/backend"
+	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 	"github.com/flexinfer/flexinfer/pkg/validation"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -37,6 +44,10 @@ type RequestQueue struct {
 
 // handleColdStart handles requests when model is scaled to zero.
 func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *http.Request, modelName string, start time.Time) error {
+	ctx, coldSpan := otel.Tracer("flexinfer/proxy").Start(ctx, "proxy.cold_start")
+	defer coldSpan.End()
+	coldSpan.SetAttributes(attribute.String("flexinfer.model", modelName))
+
 	// Get or create queue for this model
 	queue := p.getOrCreateQueue(modelName)
 
@@ -129,9 +140,27 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 
 	slog.Info("starting queue processor", "model", modelName)
 
-	// Attempt activation with optional backoff
-	var lastErr error
 	activationStart := time.Now()
+
+	// Fast path: try direct runtime load (bypasses controller reconcile loop).
+	if p.directRuntimeEnabled && p.runtimeCache != nil {
+		if p.tryDirectRuntimeLoad(ctx, modelName) {
+			activationDurationSeconds.WithLabelValues(modelName, "direct", "success").Observe(time.Since(activationStart).Seconds())
+			slog.Info("model ready via direct runtime load, draining queue", "model", modelName)
+			queue.draining.Store(true)
+			p.drainQueue(queue)
+			p.queues.Delete(modelName)
+			slog.Info("queue processor finished (direct)", "model", modelName)
+
+			// Async: update LastActiveTime so controller backfills status.
+			go p.touchLastActiveTime(context.Background(), modelName)
+			return
+		}
+		slog.Debug("direct runtime load failed or unavailable, falling back to controller path", "model", modelName)
+	}
+
+	// Slow path: existing controller-based activation with optional backoff
+	var lastErr error
 	maxAttempts := 1
 	if p.backoffEnabled {
 		maxAttempts = p.backoffMaxRetries + 1 // Initial attempt + retries
@@ -413,4 +442,142 @@ func (p *Proxy) calculateBackoff(attempt int) time.Duration {
 	// Add jitter: random value between 0.5x and 1.5x of the backoff
 	jitter := float64(backoff) * (0.5 + rand.Float64())
 	return time.Duration(jitter)
+}
+
+// ── Direct runtime fast path ──────────────────────────────────────
+
+// tryDirectRuntimeLoad attempts to load a model directly on a runtime pod,
+// bypassing the controller reconcile loop. Returns true on success.
+func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool {
+	// Fetch the v1alpha2 Model CR to get backend/source/nodeSelector.
+	m, err := p.getModel(ctx, modelName)
+	if err != nil {
+		slog.Debug("direct load: cannot fetch model CR", "model", modelName, "error", err)
+		return false
+	}
+
+	// Resolve backend.
+	b, ok := backend.Get(m.Spec.Backend)
+	if !ok {
+		slog.Debug("direct load: unknown backend", "model", modelName, "backend", m.Spec.Backend)
+		return false
+	}
+
+	// Find a ready runtime pod matching the model's nodeSelector.
+	endpoint, err := p.runtimeCache.ForModel(ctx, m.Spec.NodeSelector)
+	if err != nil || endpoint == nil {
+		slog.Debug("direct load: no runtime endpoint found", "model", modelName, "error", err)
+		return false
+	}
+
+	// Build the load payload (shared with controller).
+	payload, err := pkgrt.BuildLoadPayload(b.Name(), m.Spec.Source, m.Spec.GetConfigMap())
+	if err != nil {
+		slog.Warn("direct load: failed to build payload", "model", modelName, "error", err)
+		return false
+	}
+
+	// Send load request to runtime pod.
+	if err := p.loadOnRuntime(ctx, endpoint, modelName, payload); err != nil {
+		slog.Warn("direct load: runtime load request failed", "model", modelName, "endpoint", endpoint.URL(), "error", err)
+		return false
+	}
+
+	// Poll runtime health until ready.
+	if err := p.waitForRuntimeReady(ctx, endpoint, modelName); err != nil {
+		slog.Warn("direct load: runtime health poll failed", "model", modelName, "error", err)
+		return false
+	}
+
+	return true
+}
+
+// loadOnRuntime sends POST /api/v1/models/{name}/load to a runtime pod.
+func (p *Proxy) loadOnRuntime(ctx context.Context, ep *pkgrt.RuntimeEndpoint, modelName string, payload []byte) error {
+	url := fmt.Sprintf("%s/api/v1/models/%s/load", ep.URL(), modelName)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("creating load request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending load request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("runtime load failed (status %d): %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// waitForRuntimeReady polls GET /api/v1/models/{name}/health on the runtime
+// pod until the model reaches "Ready" state or a timeout is exceeded.
+func (p *Proxy) waitForRuntimeReady(ctx context.Context, ep *pkgrt.RuntimeEndpoint, modelName string) error {
+	timeout := p.coldStartTimeout
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(readyPollInterval)
+	defer ticker.Stop()
+
+	healthURL := fmt.Sprintf("%s/api/v1/models/%s/health", ep.URL(), modelName)
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for runtime model to become ready (after %v)", timeout)
+		case <-ticker.C:
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+			if err != nil {
+				continue
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				continue
+			}
+			var status struct {
+				State string `json:"state"`
+				Error string `json:"error"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+				_ = resp.Body.Close()
+				continue
+			}
+			_ = resp.Body.Close()
+
+			switch status.State {
+			case "Ready":
+				return nil
+			case "Failed":
+				return fmt.Errorf("runtime model failed: %s", status.Error)
+			}
+			// "Loading" — keep polling
+		}
+	}
+}
+
+// touchLastActiveTime updates the model's LastActiveTime so the controller
+// can backfill Model.Status.Phase for observability. Fire-and-forget.
+func (p *Proxy) touchLastActiveTime(ctx context.Context, modelName string) {
+	for i := 0; i < 3; i++ {
+		m, err := p.getModel(ctx, modelName)
+		if err != nil {
+			return
+		}
+		now := metav1.Now()
+		m.Status.LastActiveTime = &now
+		if err := p.client.Status().Update(ctx, m); err != nil {
+			if errors.IsConflict(err) {
+				continue
+			}
+			slog.Debug("direct load: failed to touch lastActiveTime", "model", modelName, "error", err)
+		}
+		return
+	}
 }

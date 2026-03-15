@@ -54,6 +54,14 @@ type LoadedModel struct {
 	cancel    context.CancelFunc `json:"-"`
 }
 
+// NodeMode represents the operating mode of a GPU node.
+type NodeMode string
+
+const (
+	ModeInference NodeMode = "inference"
+	ModeGaming    NodeMode = "gaming"
+)
+
 // Manager controls backend subprocess lifecycle on a GPU node.
 // Only one backend subprocess runs at a time (single-GPU constraint).
 type Manager struct {
@@ -61,6 +69,9 @@ type Manager struct {
 
 	// active is the currently loaded model (nil if none).
 	active *LoadedModel
+
+	// mode tracks whether the node is in inference or gaming mode.
+	mode NodeMode
 
 	// gpuVendor and gpuArch describe the GPU on this node.
 	gpuVendor backend.GPUVendor
@@ -97,6 +108,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		cfg.ModelBasePath = "/models"
 	}
 	return &Manager{
+		mode:                ModeInference,
 		gpuVendor:           cfg.GPUVendor,
 		gpuArch:             cfg.GPUArch,
 		shutdownTimeout:     cfg.ShutdownTimeout,
@@ -308,6 +320,7 @@ func (m *Manager) Status() RuntimeStatus {
 	s := RuntimeStatus{
 		GPUVendor: string(m.gpuVendor),
 		GPUArch:   m.gpuArch,
+		Mode:      string(m.mode),
 	}
 
 	if m.active != nil {
@@ -333,10 +346,60 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	return m.unloadLocked(ctx)
 }
 
+// Mode returns the current node operating mode.
+func (m *Manager) Mode() NodeMode {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.mode
+}
+
+// SetMode switches the node between inference and gaming mode.
+// Gaming mode unloads any active model and starts the steam backend.
+// Inference mode unloads steam and leaves the node available for models.
+func (m *Manager) SetMode(ctx context.Context, target NodeMode) error {
+	logger := log.FromContext(ctx)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.mode == target {
+		logger.Info("Already in target mode", "mode", target)
+		return nil
+	}
+
+	// Unload whatever is currently running.
+	if m.active != nil {
+		logger.Info("Unloading active model for mode switch", "active", m.active.Name)
+		if err := m.unloadLocked(ctx); err != nil {
+			logger.Error(err, "Failed to unload during mode switch")
+		}
+	}
+
+	m.mode = target
+
+	if target == ModeGaming {
+		// Load steam backend. Release lock briefly to reuse Load()
+		// which acquires the lock itself.
+		m.mu.Unlock()
+		err := m.Load(ctx, "__gaming__", LoadRequest{
+			Backend: "steam",
+		})
+		m.mu.Lock()
+		if err != nil {
+			m.mode = ModeInference // revert on failure
+			return fmt.Errorf("failed to start gaming mode: %w", err)
+		}
+	}
+
+	logger.Info("Mode switch complete", "mode", target)
+	return nil
+}
+
 // RuntimeStatus is the serializable status of the runtime manager.
 type RuntimeStatus struct {
 	GPUVendor   string        `json:"gpuVendor"`
 	GPUArch     string        `json:"gpuArch"`
+	Mode        string        `json:"mode"`
 	ActiveModel *ModelSummary `json:"activeModel,omitempty"`
 }
 
@@ -492,6 +555,8 @@ func inferCommand(backendName string) (string, []string) {
 		return "ollama", nil
 	case "comfyui":
 		return "python", []string{"main.py"}
+	case "steam":
+		return "steam", nil
 	default:
 		return backendName, nil
 	}

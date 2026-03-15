@@ -35,6 +35,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("DELETE /api/v1/models/{name}", s.handleUnloadModel)
 	s.mux.HandleFunc("GET /api/v1/models/{name}/health", s.handleModelHealth)
 	s.mux.HandleFunc("GET /api/v1/status", s.handleStatus)
+	s.mux.HandleFunc("GET /api/v1/mode", s.handleGetMode)
+	s.mux.HandleFunc("PUT /api/v1/mode", s.handleSetMode)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
 	s.mux.Handle("GET /metrics", promhttp.Handler())
@@ -180,4 +182,43 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 
 func writeError(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+// handleGetMode returns the current node mode ("inference" or "gaming").
+func (s *Server) handleGetMode(w http.ResponseWriter, r *http.Request) {
+	mode := s.manager.Mode()
+	writeJSON(w, http.StatusOK, map[string]string{"mode": string(mode)})
+}
+
+// handleSetMode switches the node between inference and gaming mode.
+// PUT /api/v1/mode {"mode": "gaming"} — unloads current model, loads steam backend
+// PUT /api/v1/mode {"mode": "inference"} — unloads steam, makes node available
+func (s *Server) handleSetMode(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
+		return
+	}
+
+	target := NodeMode(req.Mode)
+	if target != ModeInference && target != ModeGaming {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid mode %q: must be %q or %q", req.Mode, ModeInference, ModeGaming))
+		return
+	}
+
+	logger := log.FromContext(r.Context())
+	logger.Info("Mode switch requested", "target", target, "current", s.manager.Mode())
+
+	if err := s.manager.SetMode(r.Context(), target); err != nil {
+		logger.Error(err, "Failed to switch mode")
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"mode":   string(target),
+		"status": "ok",
+	})
 }
