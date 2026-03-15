@@ -168,6 +168,19 @@ RUN if [ "${INCLUDE_DIFFUSERS}" = "true" ] && command -v pip >/dev/null 2>&1; th
         uvicorn; \
     fi
 
+# ── vLLM (conditional) ──────────────────────────────────────────────
+# Base images may not include vLLM pre-installed. Install it explicitly
+# when INCLUDE_VLLM=true. --no-deps prevents replacing ROCm PyTorch.
+RUN if [ "${INCLUDE_VLLM}" = "true" ] && command -v pip >/dev/null 2>&1; then \
+      pip install --no-cache-dir --no-deps "vllm==0.7.3"; \
+      pip install --no-cache-dir \
+        partial-json-parser msgspec gguf aiohttp \
+        lm-format-enforcer outlines mistral_common \
+        compressed-tensors depyf cloudpickle \
+        prometheus-client prometheus-fastapi-instrumentator \
+        py-cpuinfo psutil pyzmq uvloop; \
+    fi
+
 # ── Flash-linear-attention for Qwen3.5 (gfx1100 + vLLM only) ───────
 RUN if [ "${INCLUDE_VLLM}" = "true" ] && command -v pip >/dev/null 2>&1; then \
       pip install --no-cache-dir flash-linear-attention 2>/dev/null || true; \
