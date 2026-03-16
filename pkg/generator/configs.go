@@ -812,7 +812,9 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 		{
 			"type": "command",
 			"command": fmt.Sprintf(
-				`%s; PID_FILE="${TMPDIR:-/tmp}/loom-keepalive-${AGENT_ID}.pid"; [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; %s agent keepalive --agent-id "$AGENT_ID" --agent-type %s --quiet %s & printf '%%s' "$!" > "${PID_FILE}.tmp" && mv "${PID_FILE}.tmp" "$PID_FILE"`,
+				// Let keepalive own its PID file lifecycle so repeated SessionStart hooks
+				// (for example after compact/relaunch) do not race old/new helpers.
+				`%s; %s agent keepalive --agent-id "$AGENT_ID" --agent-type %s --quiet </dev/null >/dev/null %s &`,
 				bootstrap, loomCmd, hp.AgentType, log),
 		},
 	}
@@ -853,8 +855,8 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 					{
 						"type": "command",
 						"command": fmt.Sprintf(
-							`%s; %s agent heartbeat --agent-id "$AGENT_ID" --status active --ensure-session --agent-type %s --quiet %s || true`,
-							bootstrap, loomCmd, hp.AgentType, log),
+							`%s; %s agent heartbeat --agent-id "$AGENT_ID" --status active --ensure-session --infer-namespace --agent-type %s --description %q --quiet %s || true`,
+							bootstrap, loomCmd, hp.AgentType, hp.Description, log),
 					},
 				},
 			},
@@ -1146,7 +1148,7 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 	// The workspace hash from cksum matches the scheme used by hookAgentIDBootstrap
 	// for Claude/Gemini, avoiding cross-workspace agent ID collisions.
 	sb.WriteString("# Agent lifecycle: heartbeat on turn completion (self-bootstraps session/presence)\n")
-	fmt.Fprintf(sb, `notify = ["sh", "-c", "WS_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || printf '%%s' \"$PWD\")\"; WS_HASH=\"$(printf '%%s' \"$WS_ROOT\" | cksum | cut -d' ' -f1)\"; AGENT_ID_FILE=\"${HOME}/.cache/loom/agent-id-codex-${WS_HASH}\"; mkdir -p \"$(dirname \"$AGENT_ID_FILE\")\"; if [ -s \"$AGENT_ID_FILE\" ]; then AGENT_ID=\"$(cat \"$AGENT_ID_FILE\")\"; else AGENT_ID=\"codex-${WS_HASH}\"; printf '%%s' \"$AGENT_ID\" > \"$AGENT_ID_FILE\"; fi; exec %s agent heartbeat --agent-id \"$AGENT_ID\" --status active --ensure-session --infer-namespace --agent-type codex --quiet 2>>\"${TMPDIR:-/tmp}/loom-agent-hooks.log\" || true"]`, loomCmd)
+	fmt.Fprintf(sb, `notify = ["sh", "-c", "WS_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || printf '%%s' \"$PWD\")\"; WS_HASH=\"$(printf '%%s' \"$WS_ROOT\" | cksum | cut -d' ' -f1)\"; AGENT_ID_FILE=\"${HOME}/.cache/loom/agent-id-codex-${WS_HASH}\"; mkdir -p \"$(dirname \"$AGENT_ID_FILE\")\"; if [ -s \"$AGENT_ID_FILE\" ]; then AGENT_ID=\"$(cat \"$AGENT_ID_FILE\")\"; else AGENT_ID=\"codex-${WS_HASH}\"; printf '%%s' \"$AGENT_ID\" > \"$AGENT_ID_FILE\"; fi; exec %s agent heartbeat --agent-id \"$AGENT_ID\" --status active --ensure-session --infer-namespace --agent-type codex --description \"Codex notify session\" --quiet 2>>\"${TMPDIR:-/tmp}/loom-agent-hooks.log\" || true"]`, loomCmd)
 	sb.WriteString("\n\n")
 }
 
@@ -1276,7 +1278,9 @@ func hookAgentIDBootstrap(agentID string) string {
 	return fmt.Sprintf(
 		`WS_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || printf '%%s' "$PWD")"; `+
 			`WS_HASH="$(printf '%%s' "$WS_ROOT" | cksum | cut -d' ' -f1)"; `+
-			`AGENT_ID_FILE="${TMPDIR:-/tmp}/loom-agent-id-%s-${WS_HASH}"; `+
+			`AGENT_CACHE_DIR="${HOME:-${TMPDIR:-/tmp}}/.cache/loom"; `+
+			`mkdir -p "$AGENT_CACHE_DIR"; `+
+			`AGENT_ID_FILE="${AGENT_CACHE_DIR}/agent-id-%s-${WS_HASH}"; `+
 			`if [ -s "$AGENT_ID_FILE" ]; then `+
 			`AGENT_ID="$(cat "$AGENT_ID_FILE")"; `+
 			`else `+
