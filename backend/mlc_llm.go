@@ -191,12 +191,12 @@ func (b *MLCLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		if spec.GPUVendor == GPUVendorNVIDIA && strings.HasPrefix(spec.GPUArch, "sm_5") {
 			env = append(env, corev1.EnvVar{
 				Name:  "MLC_GPU_SIZE_BYTES",
-				Value: "5000000000",
+				Value: fmt.Sprintf("%d", DefaultMLCGPUBytesMaxwell),
 			})
 		} else {
 			env = append(env, corev1.EnvVar{
 				Name:  "MLC_GPU_SIZE_BYTES",
-				Value: "24696061952", // ~23GB
+				Value: fmt.Sprintf("%d", DefaultMLCGPUBytesLarge),
 			})
 		}
 	}

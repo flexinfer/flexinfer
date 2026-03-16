@@ -19,6 +19,7 @@ package v1alpha2
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -128,6 +129,13 @@ type KVCacheSpec struct {
 	// SwapSpace configures the vLLM --swap-space argument (GiB) for CPU-offloaded KV-cache.
 	// +optional
 	SwapSpace *resource.Quantity `json:"swapSpace,omitempty"`
+
+	// ReconfigureCooldown is how long after a reconfigure action before
+	// the controller considers restoring the original config.
+	// Prevents thrashing between reduced and original settings.
+	// Default: 5m.
+	// +optional
+	ReconfigureCooldown *metav1.Duration `json:"reconfigureCooldown,omitempty"`
 }
 
 // KVCacheStatus reports observed KV-cache metrics.
@@ -148,6 +156,32 @@ type KVCacheStatus struct {
 	// LastAction describes the most recent action taken in response to pressure.
 	// +optional
 	LastAction string `json:"lastAction,omitempty"`
+
+	// Reconfigured indicates whether the controller has applied config overrides
+	// to reduce KV-cache pressure.
+	// +optional
+	Reconfigured bool `json:"reconfigured,omitempty"`
+
+	// ReconfiguredAt is when the reconfigure action was applied.
+	// +optional
+	ReconfiguredAt *metav1.Time `json:"reconfiguredAt,omitempty"`
+
+	// OriginalMaxNumSeqs is the original maxNumSeqs value before reconfigure,
+	// used to restore the config when pressure subsides.
+	// +optional
+	OriginalMaxNumSeqs *int32 `json:"originalMaxNumSeqs,omitempty"`
+
+	// ReconfiguredMaxNumSeqs is the reduced maxNumSeqs value applied by reconfigure.
+	// +optional
+	ReconfiguredMaxNumSeqs *int32 `json:"reconfiguredMaxNumSeqs,omitempty"`
+
+	// Evicted indicates the controller has scaled down replicas due to KV-cache pressure.
+	// +optional
+	Evicted bool `json:"evicted,omitempty"`
+
+	// EvictedAt is when the eviction was triggered.
+	// +optional
+	EvictedAt *metav1.Time `json:"evictedAt,omitempty"`
 }
 
 // ModelCapabilities declares model capabilities for downstream consumers.
@@ -744,6 +778,14 @@ func (s *ModelSpec) GetKVCachePressurePolicy() KVCachePressurePolicy {
 		return s.KVCache.PressurePolicy
 	}
 	return KVCachePressurePolicyObserve
+}
+
+// GetKVCacheReconfigureCooldown returns the reconfigure cooldown, defaulting to 5m.
+func (s *ModelSpec) GetKVCacheReconfigureCooldown() time.Duration {
+	if s.KVCache != nil && s.KVCache.ReconfigureCooldown != nil {
+		return s.KVCache.ReconfigureCooldown.Duration
+	}
+	return 5 * time.Minute
 }
 
 // ConfigBool returns a config value as bool with default.

@@ -31,14 +31,14 @@ func (r *HuggingFaceRegistry) httpClient() *http.Client {
 	if r.client != nil {
 		return r.client
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return &http.Client{Timeout: DefaultHTTPTimeout}
 }
 
 func (r *HuggingFaceRegistry) baseURL() string {
 	if r.BaseURL != "" {
 		return r.BaseURL
 	}
-	return "https://huggingface.co"
+	return DefaultHuggingFaceBaseURL
 }
 
 func (r *HuggingFaceRegistry) List(ctx context.Context, filter ListFilter) ([]ModelEntry, error) {
@@ -50,27 +50,28 @@ func (r *HuggingFaceRegistry) List(ctx context.Context, filter ListFilter) ([]Mo
 	if filter.Limit > 0 {
 		params.Set("limit", fmt.Sprintf("%d", filter.Limit))
 	} else {
-		params.Set("limit", "20")
+		params.Set("limit", fmt.Sprintf("%d", DefaultListLimit))
 	}
 	if len(filter.Tags) > 0 {
 		params.Set("tags", strings.Join(filter.Tags, ","))
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL+"?"+params.Encode(), nil)
+	fullURL := apiURL + "?" + params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("registry/huggingface: create list request: %w", err)
 	}
 	r.setAuth(req)
 
 	resp, err := r.httpClient().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("HuggingFace API: %w", err)
+		return nil, fmt.Errorf("registry/huggingface: list models (query=%q): %w", filter.Query, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("HuggingFace API returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("registry/huggingface: list models (query=%q) returned %d: %s", filter.Query, resp.StatusCode, string(body))
 	}
 
 	var models []struct {
@@ -79,7 +80,7 @@ func (r *HuggingFaceRegistry) List(ctx context.Context, filter ListFilter) ([]Mo
 		LastModify string   `json:"lastModified"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&models); err != nil {
-		return nil, fmt.Errorf("decode HuggingFace response: %w", err)
+		return nil, fmt.Errorf("registry/huggingface: decode list response: %w", err)
 	}
 
 	entries := make([]ModelEntry, 0, len(models))
@@ -113,19 +114,19 @@ func (r *HuggingFaceRegistry) Resolve(ctx context.Context, ref string) (*ModelMe
 	apiURL := r.baseURL() + "/api/models/" + modelID
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("registry/huggingface: create resolve request for %q: %w", modelID, err)
 	}
 	r.setAuth(req)
 
 	resp, err := r.httpClient().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("HuggingFace API: %w", err)
+		return nil, fmt.Errorf("registry/huggingface: resolve model %q: %w", modelID, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("HuggingFace API returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("registry/huggingface: resolve model %q returned %d: %s", modelID, resp.StatusCode, string(body))
 	}
 
 	var model struct {
@@ -135,7 +136,7 @@ func (r *HuggingFaceRegistry) Resolve(ctx context.Context, ref string) (*ModelMe
 		LastModify string   `json:"lastModified"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&model); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("registry/huggingface: decode resolve response for %q: %w", modelID, err)
 	}
 
 	meta := &ModelMetadata{

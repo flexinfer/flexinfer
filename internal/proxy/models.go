@@ -8,6 +8,8 @@ import (
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/pkg/validation"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -33,7 +35,9 @@ func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx, span := otel.Tracer("flexinfer/proxy").Start(ctx, "proxy.list_models")
+	defer span.End()
 	var models []OpenAIModel
 
 	// List ModelDeployments (v1alpha1)

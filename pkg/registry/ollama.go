@@ -28,14 +28,14 @@ func (r *OllamaRegistry) httpClient() *http.Client {
 	if r.client != nil {
 		return r.client
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return &http.Client{Timeout: DefaultHTTPTimeout}
 }
 
 func (r *OllamaRegistry) baseURL() string {
 	if r.BaseURL != "" {
 		return r.BaseURL
 	}
-	return "https://ollama.com"
+	return DefaultOllamaBaseURL
 }
 
 func (r *OllamaRegistry) List(ctx context.Context, filter ListFilter) ([]ModelEntry, error) {
@@ -44,18 +44,18 @@ func (r *OllamaRegistry) List(ctx context.Context, filter ListFilter) ([]ModelEn
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("registry/ollama: create list request for %s: %w", apiURL, err)
 	}
 
 	resp, err := r.httpClient().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Ollama API: %w", err)
+		return nil, fmt.Errorf("registry/ollama: list models at %s: %w", apiURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Ollama API returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("registry/ollama: list models at %s returned %d: %s", apiURL, resp.StatusCode, string(body))
 	}
 
 	var result struct {
@@ -66,7 +66,7 @@ func (r *OllamaRegistry) List(ctx context.Context, filter ListFilter) ([]ModelEn
 		} `json:"models"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode Ollama response: %w", err)
+		return nil, fmt.Errorf("registry/ollama: decode list response from %s: %w", apiURL, err)
 	}
 
 	var entries []ModelEntry
@@ -105,19 +105,19 @@ func (r *OllamaRegistry) Resolve(ctx context.Context, ref string) (*ModelMetadat
 	body := fmt.Sprintf(`{"name": "%s"}`, modelName)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, strings.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("registry/ollama: create resolve request for %q: %w", modelName, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := r.httpClient().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Ollama API: %w", err)
+		return nil, fmt.Errorf("registry/ollama: resolve model %q at %s: %w", modelName, apiURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Ollama API returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("registry/ollama: resolve model %q returned %d: %s", modelName, resp.StatusCode, string(respBody))
 	}
 
 	var result struct {
@@ -127,7 +127,7 @@ func (r *OllamaRegistry) Resolve(ctx context.Context, ref string) (*ModelMetadat
 		} `json:"details"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("registry/ollama: decode resolve response for %q: %w", modelName, err)
 	}
 
 	return &ModelMetadata{

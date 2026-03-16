@@ -106,7 +106,7 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--n-gpu-layers", fmt.Sprintf("%d", nGPU))
 	} else {
 		// Default to using all layers on GPU
-		args = append(args, "--n-gpu-layers", "999")
+		args = append(args, "--n-gpu-layers", fmt.Sprintf("%d", DefaultGPULayersAll))
 	}
 
 	// Batch size

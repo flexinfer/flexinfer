@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	"github.com/flexinfer/flexinfer/pkg/observability"
 )
 
 var (
@@ -136,6 +137,8 @@ const (
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;update;patch
 
 func (r *GPUGroupReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	ctx, _, endSpan := observability.StartReconcileSpan(ctx, "gpugroup", req.Namespace, req.Name)
+	defer endSpan()
 	log := log.FromContext(ctx)
 
 	// Fetch the GPUGroup

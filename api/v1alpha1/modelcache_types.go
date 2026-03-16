@@ -291,6 +291,37 @@ type AbliterationStatus struct {
 	FailureMessage string `json:"failureMessage,omitempty"`
 }
 
+// DownloadSpec configures the model download job.
+// When nil, sensible defaults are applied (16Gi memory, hf_transfer auto-enabled).
+// +kubebuilder:object:generate=true
+type DownloadSpec struct {
+	// MaxMemoryGB limits the memory available to the download job container.
+	// Defaults to 16. Set higher for hf_transfer with very large models.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=128
+	// +optional
+	MaxMemoryGB *int32 `json:"maxMemoryGB,omitempty"`
+
+	// HFTransfer enables the hf_transfer Rust extension for faster parallel downloads.
+	// nil = auto (enabled when MaxMemoryGB >= 16), true/false = explicit override.
+	// hf_transfer uses ~4-8Gi for parallel connections on large models.
+	// +optional
+	HFTransfer *bool `json:"hfTransfer,omitempty"`
+
+	// BackoffLimit is the number of retries before marking the download as failed.
+	// Defaults to 3.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=10
+	// +optional
+	BackoffLimit *int32 `json:"backoffLimit,omitempty"`
+
+	// TimeoutSeconds overrides the default job deadline for downloads.
+	// +kubebuilder:validation:Minimum=300
+	// +kubebuilder:validation:Maximum=86400
+	// +optional
+	TimeoutSeconds *int64 `json:"timeoutSeconds,omitempty"`
+}
+
 // ModelCacheSpec defines the desired state of ModelCache
 // +kubebuilder:object:generate=true
 type ModelCacheSpec struct {
@@ -405,6 +436,11 @@ type ModelCacheSpec struct {
 	// direction" from transformer weights via contrastive activation analysis.
 	// +optional
 	Abliteration *AbliterationSpec `json:"abliteration,omitempty"`
+
+	// Download configures the model download job (memory, hf_transfer, retries).
+	// When nil, defaults are applied: 16Gi memory, hf_transfer auto-enabled, 3 retries.
+	// +optional
+	Download *DownloadSpec `json:"download,omitempty"`
 }
 
 // FlashLoaderSpec configures the flash-loader init container for fast model loading.

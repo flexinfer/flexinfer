@@ -48,6 +48,28 @@ func InitTracing(ctx context.Context, serviceName string) (func(context.Context)
 	return tp.Shutdown, nil
 }
 
+// StartReconcileSpan creates a span for a controller reconcile loop.
+// Returns the instrumented context, a function to record errors, and an End function.
+// Usage:
+//
+//	ctx, recordErr, endSpan := observability.StartReconcileSpan(ctx, "modelcache", req)
+//	defer endSpan()
+func StartReconcileSpan(ctx context.Context, controller string, namespace, name string) (context.Context, func(error), func()) {
+	ctx, span := otel.Tracer("flexinfer/controller").Start(ctx, controller+".reconcile")
+	span.SetAttributes(
+		attribute.String("k8s.namespace", namespace),
+		attribute.String("k8s.name", name),
+		attribute.String("controller", controller),
+	)
+	recordErr := func(err error) {
+		if err != nil {
+			span.RecordError(err)
+			span.SetAttributes(attribute.Bool("error", true))
+		}
+	}
+	return ctx, recordErr, func() { span.End() }
+}
+
 func envBool(name string, fallback bool) bool {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
