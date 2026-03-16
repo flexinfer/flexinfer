@@ -113,7 +113,7 @@ spec:
             - name: SPAWN_GIT_BASE_URL
               value: https://gitlab.blevins.dev/homelab
             - name: SPAWN_GIT_SECRET
-              value: gitlab-token
+              value: gitlab-creds
           ports:
             - containerPort: 3333
               name: http
