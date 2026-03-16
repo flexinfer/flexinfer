@@ -146,6 +146,22 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 	ablitJob := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: ablitJobName, Namespace: modelCache.Namespace}, ablitJob)
 	if err != nil && errors.IsNotFound(err) {
+		// If abliteration already completed, the job was GC'd by TTL — dispatch to next phase.
+		if modelCache.Status.Abliteration != nil && modelCache.Status.Abliteration.FailureMessage == "" {
+			log.Info("Abliteration job GC'd but abliteration already complete, skipping re-creation",
+				"cache", modelCache.Name)
+			if modelCache.Spec.Quantization != nil {
+				return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
+			}
+			if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
+				modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+				if err := r.Status().Update(ctx, modelCache); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			return ctrl.Result{}, nil
+		}
+
 		// Build tolerations for GPU nodes.
 		var tolerations []corev1.Toleration
 		if modelCache.Spec.Abliteration.UseGPU {
