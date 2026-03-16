@@ -4,6 +4,7 @@ import LoomCompanionKit
 /// View for spawning headless AI coding agents and monitoring active spawns.
 struct SpawnAgentView: View {
     @State var viewModel: SpawnViewModel
+    var sseClient: SSEClient?
 
     @State private var selectedAgentType: AgentType = .claudeCode
     @State private var project = ""
@@ -21,6 +22,9 @@ struct SpawnAgentView: View {
             async let config: () = viewModel.loadConfig()
             async let spawns: () = viewModel.loadSpawns()
             _ = await (config, spawns)
+            if let sseClient {
+                viewModel.startListening(sseClient: sseClient)
+            }
         }
         .refreshable {
             await viewModel.loadSpawns()
@@ -97,9 +101,11 @@ struct SpawnAgentView: View {
                 Text("No active spawns")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(viewModel.spawns) { spawn in
-                    SpawnRow(spawn: spawn) {
-                        Task { await viewModel.stopSpawn(id: spawn.spawnId) }
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    ForEach(viewModel.spawns) { spawn in
+                        SpawnRow(spawn: spawn) {
+                            Task { await viewModel.stopSpawn(id: spawn.spawnId) }
+                        }
                     }
                 }
             }
@@ -158,6 +164,12 @@ private struct SpawnRow: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 Spacer()
+                if spawn.isActive, let elapsed = elapsedString {
+                    Text(elapsed)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                }
                 if spawn.isActive {
                     Button("Stop", role: .destructive, action: onStop)
                         .font(.caption)
@@ -166,6 +178,14 @@ private struct SpawnRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private var elapsedString: String? {
+        guard let date = ISO8601DateFormatter().date(from: spawn.startedAt) else { return nil }
+        let elapsed = Date().timeIntervalSince(date)
+        let minutes = Int(elapsed) / 60
+        let seconds = Int(elapsed) % 60
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 

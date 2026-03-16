@@ -13,8 +13,43 @@ public final class SpawnViewModel {
     @ObservationIgnored
     private let apiClient: any LoomAPIClientProtocol
 
+    @ObservationIgnored
+    private var sseTask: Task<Void, Never>?
+
+    /// SSE event types that trigger a spawn list refresh.
+    private static let refreshEventTypes: Set<String> = [
+        "agent.spawn.building",
+        "agent.spawn.running",
+        "agent.spawn.completed",
+        "agent.spawn.failed",
+        "agent.spawn.stopped",
+    ]
+
     public init(apiClient: any LoomAPIClientProtocol) {
         self.apiClient = apiClient
+    }
+
+    /// Start listening to SSE events for real-time spawn updates.
+    public func startListening(sseClient: SSEClient) {
+        sseTask?.cancel()
+        sseTask = Task { [weak self] in
+            for await event in sseClient.events {
+                await self?.handleSSEEvent(event)
+            }
+        }
+    }
+
+    /// Stop listening to SSE events.
+    public func stopListening() {
+        sseTask?.cancel()
+        sseTask = nil
+    }
+
+    @MainActor
+    private func handleSSEEvent(_ event: SSEEvent) async {
+        if Self.refreshEventTypes.contains(event.type) {
+            await loadSpawns()
+        }
     }
 
     /// Load spawn configuration (projects, agent types, defaults).

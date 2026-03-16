@@ -106,6 +106,7 @@ struct ContentView: View {
             NavigationStack {
                 OpsView(
                     apiClient: connectionVM.buildAPIClient(),
+                    sseClient: sseClient,
                     deepLinkWorkflowID: $pendingWorkflowDeepLinkID,
                     prefillEndSessionID: $pendingEndSessionPrefillID
                 )
@@ -195,6 +196,7 @@ struct ContentView: View {
             case .ops:
                 OpsView(
                     apiClient: connectionVM.buildAPIClient(),
+                    sseClient: sseClient,
                     deepLinkWorkflowID: $pendingWorkflowDeepLinkID,
                     prefillEndSessionID: $pendingEndSessionPrefillID
                 )
