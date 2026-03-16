@@ -120,6 +120,41 @@ spec:
                 description: ClusterStorageClassName is the storage class to use for
                   SharedPVC strategy
                 type: string
+              download:
+                description: |-
+                  Download configures the model download job (memory, hf_transfer, retries).
+                  When nil, defaults are applied: 16Gi memory, hf_transfer auto-enabled, 3 retries.
+                properties:
+                  backoffLimit:
+                    description: |-
+                      BackoffLimit is the number of retries before marking the download as failed.
+                      Defaults to 3.
+                    format: int32
+                    maximum: 10
+                    minimum: 0
+                    type: integer
+                  hfTransfer:
+                    description: |-
+                      HFTransfer enables the hf_transfer Rust extension for faster parallel downloads.
+                      nil = auto (enabled when MaxMemoryGB >= 16), true/false = explicit override.
+                      hf_transfer uses ~4-8Gi for parallel connections on large models.
+                    type: boolean
+                  maxMemoryGB:
+                    description: |-
+                      MaxMemoryGB limits the memory available to the download job container.
+                      Defaults to 16. Set higher for hf_transfer with very large models.
+                    format: int32
+                    maximum: 128
+                    minimum: 1
+                    type: integer
+                  timeoutSeconds:
+                    description: TimeoutSeconds overrides the default job deadline
+                      for downloads.
+                    format: int64
+                    maximum: 86400
+                    minimum: 300
+                    type: integer
+                type: object
               evictionPolicy:
                 default: LRU
                 description: |-
@@ -148,6 +183,119 @@ spec:
                   When set, the controller skips PVC creation and uses the referenced claim.
                   The model will be downloaded to a subdirectory named after the ModelCache.
                 type: string
+              finetune:
+                description: |-
+                  Finetune configures post-abliteration finetuning of model weights.
+                  When set, the controller creates a finetune Job after abliteration (if set)
+                  or download completes (and before quantization if set).
+                  Pipeline: Download → [Abliterate] → [Finetune] → [Quantize] → Ready.
+                properties:
+                  batchSize:
+                    description: BatchSize is the per-device training batch size.
+                      Default 4.
+                    format: int32
+                    type: integer
+                  dataset:
+                    description: Dataset configures the training data source.
+                    properties:
+                      huggingFace:
+                        description: HuggingFace is a HF dataset ID (e.g., "tatsu-lab/alpaca").
+                        type: string
+                      maxSamples:
+                        description: MaxSamples limits the number of training samples
+                          (nil = all).
+                        format: int32
+                        type: integer
+                      pvcName:
+                        description: PVCName references a PVC containing the dataset.
+                        type: string
+                      pvcSubPath:
+                        description: PVCSubPath is the path within the dataset PVC.
+                        type: string
+                      split:
+                        description: Split selects the dataset split (default "train").
+                        type: string
+                    type: object
+                  epochs:
+                    description: Epochs is the number of training epochs. Default
+                      3.
+                    format: int32
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                  gradientCheckpointing:
+                    description: |-
+                      GradientCheckpointing enables gradient checkpointing to reduce VRAM.
+                      Default true.
+                    type: boolean
+                  learningRate:
+                    description: LearningRate (e.g., "2e-4"). Default "2e-4".
+                    type: string
+                  lora:
+                    description: |-
+                      LoRA configures LoRA/QLoRA adapter parameters.
+                      Ignored when mode is "full".
+                    properties:
+                      alpha:
+                        description: Alpha scaling factor. Default 32.
+                        format: int32
+                        type: integer
+                      dropout:
+                        description: Dropout probability. Default 0.05.
+                        type: string
+                      rank:
+                        description: Rank (r) for LoRA decomposition. Default 16.
+                        format: int32
+                        maximum: 256
+                        minimum: 1
+                        type: integer
+                      targetModules:
+                        description: |-
+                          TargetModules overrides which modules get LoRA adapters.
+                          Default: Unsloth auto-selection.
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  maxMemoryGB:
+                    description: |-
+                      MaxMemoryGB limits memory for the finetune job container.
+                      Default 56.
+                    format: int32
+                    type: integer
+                  maxSeqLen:
+                    description: MaxSeqLen for training. Default 2048.
+                    format: int32
+                    maximum: 32768
+                    minimum: 128
+                    type: integer
+                  mergeAdapter:
+                    description: |-
+                      MergeAdapter merges the LoRA adapter back into the base model after training.
+                      Required for quantization to see the finetuned weights. Default true.
+                    type: boolean
+                  mode:
+                    default: qlora
+                    description: Mode selects LoRA, QLoRA, or full finetuning. Default
+                      "qlora".
+                    enum:
+                    - lora
+                    - qlora
+                    - full
+                    type: string
+                  timeoutSeconds:
+                    description: TimeoutSeconds overrides the default 6-hour deadline.
+                    format: int64
+                    maximum: 86400
+                    minimum: 300
+                    type: integer
+                  useGPU:
+                    description: UseGPU enables GPU-accelerated finetuning. Default
+                      true.
+                    type: boolean
+                required:
+                - dataset
+                type: object
               flashLoader:
                 description: |-
                   FlashLoader configures the flash-loader init container for fast model loading.
@@ -482,6 +630,36 @@ spec:
                   Useful for identifying hot/cold models and tuning retention priorities.
                 format: int64
                 type: integer
+              finetune:
+                description: |-
+                  Finetune records the result of model finetuning.
+                  Only populated when spec.finetune is set and the job completes.
+                properties:
+                  epochsCompleted:
+                    description: EpochsCompleted is the number of epochs completed.
+                    format: int32
+                    type: integer
+                  failureMessage:
+                    description: FailureMessage on error.
+                    type: string
+                  finetuneTime:
+                    description: FinetuneTime is the wall-clock duration.
+                    type: string
+                  samplesPerSecond:
+                    description: SamplesPerSecond is the training throughput.
+                    type: string
+                  startedAt:
+                    description: StartedAt timestamp.
+                    format: date-time
+                    type: string
+                  totalSteps:
+                    description: TotalSteps is the total training steps completed.
+                    format: int32
+                    type: integer
+                  trainLoss:
+                    description: TrainLoss is the final training loss.
+                    type: string
+                type: object
               lastAccessTime:
                 description: |-
                   LastAccessTime is the most recent time this cache was accessed by a ModelDeployment.
