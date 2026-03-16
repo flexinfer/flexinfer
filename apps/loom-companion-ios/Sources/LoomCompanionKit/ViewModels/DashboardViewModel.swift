@@ -48,6 +48,7 @@ public final class DashboardViewModel {
     }
 
     /// Start listening to SSE events via the broadcaster for real-time updates.
+    @MainActor
     public func startListening(broadcaster: SSEEventBroadcaster) {
         sseRegistrationId = broadcaster.register { [weak self] event in
             await self?.handleSSEEvent(event)
@@ -55,6 +56,7 @@ public final class DashboardViewModel {
     }
 
     /// Stop listening to SSE events.
+    @MainActor
     public func stopListening(broadcaster: SSEEventBroadcaster) {
         if let id = sseRegistrationId {
             broadcaster.unregister(id)

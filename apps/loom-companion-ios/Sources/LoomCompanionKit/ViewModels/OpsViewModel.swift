@@ -66,6 +66,7 @@ public final class OpsViewModel {
     }
 
     /// Start listening to SSE events via the broadcaster for real-time agent updates.
+    @MainActor
     public func startListening(broadcaster: SSEEventBroadcaster) {
         sseRegistrationId = broadcaster.register { [weak self] event in
             await self?.handleSSEEvent(event)
@@ -73,6 +74,7 @@ public final class OpsViewModel {
     }
 
     /// Stop listening to SSE events.
+    @MainActor
     public func stopListening(broadcaster: SSEEventBroadcaster) {
         if let id = sseRegistrationId {
             broadcaster.unregister(id)

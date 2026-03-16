@@ -15,7 +15,7 @@ struct AgentRowView: View {
                         .foregroundStyle(LoomColors.presenceStatusColor(agent.status))
 
                     Text(agent.agentId)
-                        .font(LoomTypography.headlineSmall)
+                        .font(LoomTypography.headlineMedium)
                         .lineLimit(1)
 
                     Spacer()
@@ -25,12 +25,12 @@ struct AgentRowView: View {
 
                 if !agent.currentTask.isEmpty {
                     Text(agent.currentTask)
-                        .font(LoomTypography.bodySmall)
+                        .font(LoomTypography.caption)
                         .foregroundStyle(LoomColors.textSecondary)
                         .lineLimit(2)
                 } else if !agent.description.isEmpty {
                     Text(agent.description)
-                        .font(LoomTypography.bodySmall)
+                        .font(LoomTypography.caption)
                         .foregroundStyle(LoomColors.textSecondary)
                         .lineLimit(2)
                 }

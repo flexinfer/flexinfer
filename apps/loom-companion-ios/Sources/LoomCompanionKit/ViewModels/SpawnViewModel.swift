@@ -30,6 +30,7 @@ public final class SpawnViewModel {
     }
 
     /// Start listening to SSE events via the broadcaster for real-time spawn updates.
+    @MainActor
     public func startListening(broadcaster: SSEEventBroadcaster) {
         sseRegistrationId = broadcaster.register { [weak self] event in
             await self?.handleSSEEvent(event)
@@ -37,6 +38,7 @@ public final class SpawnViewModel {
     }
 
     /// Stop listening to SSE events.
+    @MainActor
     public func stopListening(broadcaster: SSEEventBroadcaster) {
         if let id = sseRegistrationId {
             broadcaster.unregister(id)

@@ -36,6 +36,7 @@ public final class AgentsViewModel {
     }
 
     /// Start listening to SSE events via the broadcaster.
+    @MainActor
     public func startListening(broadcaster: SSEEventBroadcaster) {
         sseRegistrationId = broadcaster.register { [weak self] event in
             await self?.handleSSEEvent(event)
@@ -43,6 +44,7 @@ public final class AgentsViewModel {
     }
 
     /// Stop listening to SSE events.
+    @MainActor
     public func stopListening(broadcaster: SSEEventBroadcaster) {
         if let id = sseRegistrationId {
             broadcaster.unregister(id)
