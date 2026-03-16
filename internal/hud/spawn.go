@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -90,12 +91,16 @@ type SpawnOrchestratorConfig struct {
 
 // DefaultSpawnConfig returns sensible defaults.
 func DefaultSpawnConfig() SpawnOrchestratorConfig {
+	wsRoot := "/workspace"
+	if home, err := os.UserHomeDir(); err == nil {
+		wsRoot = home + "/workspace"
+	}
 	return SpawnOrchestratorConfig{
 		MaxConcurrent:  3,
 		DefaultTimeout: 60 * time.Minute,
 		DefaultMemory:  4096,
 		DefaultCPUs:    2.0,
-		WorkspaceRoot:  "/workspace",
+		WorkspaceRoot:  wsRoot,
 	}
 }
 
@@ -225,6 +230,16 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 
 	_, buildSpan := o.tracer.Start(ctx, "agent.spawn.image_build")
 
+	// Use the project dir for detection if it exists locally (NFS/tar-pipe),
+	// otherwise fall back to workspace root (git-clone mode: source is cloned
+	// into the pod at start, so no local project files are available).
+	contextDir := projectDir
+	if _, statErr := os.Stat(projectDir); statErr != nil {
+		o.logger.Info("project dir not found locally, using workspace root as build context",
+			"project_dir", projectDir)
+		contextDir = o.workspaceRoot
+	}
+
 	df, dfErr := o.generateDockerfile(projectDir)
 	if dfErr != nil {
 		buildSpan.End()
@@ -236,7 +251,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	buildResult, err := o.backend.Build(ctx, backend.BuildOpts{
 		Tag:        buildTag,
 		Dockerfile: df,
-		ContextDir: projectDir,
+		ContextDir: contextDir,
 	})
 	buildSpan.End()
 	if err != nil {
