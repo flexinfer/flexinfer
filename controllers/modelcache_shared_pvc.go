@@ -200,9 +200,14 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 }
 
 func (r *ModelCacheReconciler) pvcForModelCache(m *aiv1alpha1.ModelCache) (*corev1.PersistentVolumeClaim, error) {
-	// Use ReadWriteOnce for node-local storage classes (e.g. local-path),
-	// ReadWriteMany for network-backed storage (e.g. NFS, Longhorn).
+	// Use ReadWriteOnce when all workloads are pinned to a single node via
+	// nodeSelector, or for node-local storage classes. RWO avoids the Longhorn
+	// NFS share manager layer, giving direct block device I/O. RWX is only
+	// needed when pods may be scheduled on different nodes.
 	modes := []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}
+	if len(m.Spec.NodeSelector) > 0 {
+		modes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
+	}
 	if m.Spec.ClusterStorageClassName != nil && *m.Spec.ClusterStorageClassName == "local-path" {
 		modes = []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}
 	}

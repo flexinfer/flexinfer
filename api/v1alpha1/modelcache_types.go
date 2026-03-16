@@ -28,7 +28,7 @@ const (
 	StorageStrategyAuto StorageStrategy = "Auto"
 	// StorageStrategyNodeLocal caches the model on each node's local disk
 	StorageStrategyNodeLocal StorageStrategy = "NodeLocal"
-	// StorageStrategySharedPVC uses a ReadWriteMany PVC (requires capable storage class)
+	// StorageStrategySharedPVC uses a shared PVC (RWO when nodeSelector is set, RWX otherwise)
 	StorageStrategySharedPVC StorageStrategy = "SharedPVC"
 	// StorageStrategyEphemeral downloads the model on pod startup (no persistent caching)
 	StorageStrategyEphemeral StorageStrategy = "Ephemeral"
