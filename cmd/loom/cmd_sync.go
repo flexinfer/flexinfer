@@ -529,5 +529,8 @@ Example:
 	}
 	syncCmd.AddCommand(syncStatusCmd)
 
+	// Agent token sync subcommand
+	syncCmd.AddCommand(newSyncAgentTokensCmd())
+
 	return syncCmd
 }

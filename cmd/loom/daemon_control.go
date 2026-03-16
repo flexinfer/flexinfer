@@ -175,11 +175,22 @@ func installService() error {
 		fmt.Printf("Warning: HUD service install failed: %v\n", err)
 	}
 
+	// Also install agent token sync (non-fatal).
+	fmt.Println()
+	if err := installAgentTokenSync(); err != nil {
+		fmt.Printf("Warning: agent token sync install failed: %v\n", err)
+	}
+
 	return nil
 }
 
 func uninstallService() error {
-	// Uninstall HUD service first (non-fatal).
+	// Uninstall agent token sync first (non-fatal).
+	if err := uninstallAgentTokenSync(); err != nil {
+		fmt.Printf("Warning: agent token sync uninstall failed: %v\n", err)
+	}
+
+	// Uninstall HUD service (non-fatal).
 	if err := uninstallHudService(); err != nil {
 		fmt.Printf("Warning: HUD service uninstall failed: %v\n", err)
 	}
@@ -299,6 +310,10 @@ func statusDaemon(socketPath string) error {
 	// Append HUD status.
 	fmt.Println()
 	_ = statusHudService()
+
+	// Append agent token sync status.
+	fmt.Println()
+	_ = agentTokenSyncStatus()
 
 	return nil
 }
