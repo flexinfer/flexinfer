@@ -183,6 +183,8 @@ TARGET_LAYERS="%s"
 WEIGHT_MATRICES="%s"
 SKIP_VISION="%s"
 DEVICE_MAP=%s
+SAFETENSORS_FAST_GPU=0
+HF_SAFETENSORS_MMAP=0
 
 echo "=== FlexInfer Abliteration ==="
 echo "Model: ${MODEL_DIR}"
@@ -228,7 +230,6 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map=device_map,
     trust_remote_code=True,
     low_cpu_mem_usage=True,
-    use_mmap=False,  # NFS mmap causes SIGBUS under I/O pressure
 )
 print(f"Model loaded in {time.time() - load_start:.1f}s")
 
