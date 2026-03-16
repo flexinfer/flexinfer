@@ -62,6 +62,8 @@ const (
 	ModelCachePhaseProvisioning ModelCachePhase = "Provisioning"
 	// ModelCachePhaseAbliterating means the model weights are being abliterated
 	ModelCachePhaseAbliterating ModelCachePhase = "Abliterating"
+	// ModelCachePhaseFinetuning means the model is being finetuned
+	ModelCachePhaseFinetuning ModelCachePhase = "Finetuning"
 	// ModelCachePhaseQuantizing means the model is being quantized
 	ModelCachePhaseQuantizing ModelCachePhase = "Quantizing"
 	// ModelCachePhaseReady means the model is ready to be used
@@ -291,6 +293,140 @@ type AbliterationStatus struct {
 	FailureMessage string `json:"failureMessage,omitempty"`
 }
 
+// FinetuneMode selects the finetuning approach.
+// +kubebuilder:validation:Enum=lora;qlora;full
+type FinetuneMode string
+
+const (
+	FinetuneModeLora  FinetuneMode = "lora"
+	FinetuneModeQLora FinetuneMode = "qlora"
+	FinetuneModeFull  FinetuneMode = "full"
+)
+
+// FinetuneDatasetSpec selects the training dataset.
+// +kubebuilder:object:generate=true
+type FinetuneDatasetSpec struct {
+	// HuggingFace is a HF dataset ID (e.g., "tatsu-lab/alpaca").
+	// +optional
+	HuggingFace *string `json:"huggingFace,omitempty"`
+	// PVCName references a PVC containing the dataset.
+	// +optional
+	PVCName *string `json:"pvcName,omitempty"`
+	// PVCSubPath is the path within the dataset PVC.
+	// +optional
+	PVCSubPath *string `json:"pvcSubPath,omitempty"`
+	// Split selects the dataset split (default "train").
+	// +optional
+	Split *string `json:"split,omitempty"`
+	// MaxSamples limits the number of training samples (nil = all).
+	// +optional
+	MaxSamples *int32 `json:"maxSamples,omitempty"`
+}
+
+// FinetuneLoRAConfig configures LoRA/QLoRA adapter parameters.
+// +kubebuilder:object:generate=true
+type FinetuneLoRAConfig struct {
+	// Rank (r) for LoRA decomposition. Default 16.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=256
+	// +optional
+	Rank *int32 `json:"rank,omitempty"`
+	// Alpha scaling factor. Default 32.
+	// +optional
+	Alpha *int32 `json:"alpha,omitempty"`
+	// Dropout probability. Default 0.05.
+	// +optional
+	Dropout *string `json:"dropout,omitempty"`
+	// TargetModules overrides which modules get LoRA adapters.
+	// Default: Unsloth auto-selection.
+	// +optional
+	TargetModules []string `json:"targetModules,omitempty"`
+}
+
+// FinetuneSpec configures post-abliteration finetuning of model weights.
+// +kubebuilder:object:generate=true
+type FinetuneSpec struct {
+	// Mode selects LoRA, QLoRA, or full finetuning. Default "qlora".
+	// +kubebuilder:default="qlora"
+	// +optional
+	Mode *FinetuneMode `json:"mode,omitempty"`
+
+	// Dataset configures the training data source.
+	// +kubebuilder:validation:Required
+	Dataset FinetuneDatasetSpec `json:"dataset"`
+
+	// LoRA configures LoRA/QLoRA adapter parameters.
+	// Ignored when mode is "full".
+	// +optional
+	LoRA *FinetuneLoRAConfig `json:"lora,omitempty"`
+
+	// Epochs is the number of training epochs. Default 3.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	Epochs *int32 `json:"epochs,omitempty"`
+
+	// BatchSize is the per-device training batch size. Default 4.
+	// +optional
+	BatchSize *int32 `json:"batchSize,omitempty"`
+
+	// LearningRate (e.g., "2e-4"). Default "2e-4".
+	// +optional
+	LearningRate *string `json:"learningRate,omitempty"`
+
+	// MaxSeqLen for training. Default 2048.
+	// +kubebuilder:validation:Minimum=128
+	// +kubebuilder:validation:Maximum=32768
+	// +optional
+	MaxSeqLen *int32 `json:"maxSeqLen,omitempty"`
+
+	// MergeAdapter merges the LoRA adapter back into the base model after training.
+	// Required for quantization to see the finetuned weights. Default true.
+	// +optional
+	MergeAdapter *bool `json:"mergeAdapter,omitempty"`
+
+	// UseGPU enables GPU-accelerated finetuning. Default true.
+	// +optional
+	UseGPU *bool `json:"useGPU,omitempty"`
+
+	// MaxMemoryGB limits memory for the finetune job container.
+	// Default 56.
+	// +optional
+	MaxMemoryGB *int32 `json:"maxMemoryGB,omitempty"`
+
+	// TimeoutSeconds overrides the default 6-hour deadline.
+	// +kubebuilder:validation:Minimum=300
+	// +kubebuilder:validation:Maximum=86400
+	// +optional
+	TimeoutSeconds *int64 `json:"timeoutSeconds,omitempty"`
+
+	// GradientCheckpointing enables gradient checkpointing to reduce VRAM.
+	// Default true.
+	// +optional
+	GradientCheckpointing *bool `json:"gradientCheckpointing,omitempty"`
+}
+
+// FinetuneStatus records the result of finetuning.
+// +kubebuilder:object:generate=true
+type FinetuneStatus struct {
+	// TrainLoss is the final training loss.
+	TrainLoss string `json:"trainLoss,omitempty"`
+	// SamplesPerSecond is the training throughput.
+	SamplesPerSecond string `json:"samplesPerSecond,omitempty"`
+	// EpochsCompleted is the number of epochs completed.
+	EpochsCompleted int32 `json:"epochsCompleted,omitempty"`
+	// TotalSteps is the total training steps completed.
+	TotalSteps int32 `json:"totalSteps,omitempty"`
+	// FinetuneTime is the wall-clock duration.
+	FinetuneTime string `json:"finetuneTime,omitempty"`
+	// StartedAt timestamp.
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+	// FailureMessage on error.
+	// +optional
+	FailureMessage string `json:"failureMessage,omitempty"`
+}
+
 // DownloadSpec configures the model download job.
 // When nil, sensible defaults are applied (16Gi memory, hf_transfer auto-enabled).
 // +kubebuilder:object:generate=true
@@ -437,6 +573,13 @@ type ModelCacheSpec struct {
 	// +optional
 	Abliteration *AbliterationSpec `json:"abliteration,omitempty"`
 
+	// Finetune configures post-abliteration finetuning of model weights.
+	// When set, the controller creates a finetune Job after abliteration (if set)
+	// or download completes (and before quantization if set).
+	// Pipeline: Download → [Abliterate] → [Finetune] → [Quantize] → Ready.
+	// +optional
+	Finetune *FinetuneSpec `json:"finetune,omitempty"`
+
 	// Download configures the model download job (memory, hf_transfer, retries).
 	// When nil, defaults are applied: 16Gi memory, hf_transfer auto-enabled, 3 retries.
 	// +optional
@@ -553,6 +696,11 @@ type ModelCacheStatus struct {
 	// Only populated when spec.abliteration is set and the job completes.
 	// +optional
 	Abliteration *AbliterationStatus `json:"abliteration,omitempty"`
+
+	// Finetune records the result of model finetuning.
+	// Only populated when spec.finetune is set and the job completes.
+	// +optional
+	Finetune *FinetuneStatus `json:"finetune,omitempty"`
 
 	// === OCI Registry Status ===
 

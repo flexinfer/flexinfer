@@ -357,6 +357,45 @@ var (
 		[]string{"controller"},
 	)
 
+	// === Finetune Metrics ===
+
+	// FinetuneDurationSeconds tracks finetune job duration.
+	FinetuneDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_finetune_duration_seconds",
+			Help:    "Duration of finetune jobs in seconds.",
+			Buckets: []float64{300, 600, 1200, 1800, 3600, 7200, 14400, 28800},
+		},
+		[]string{"model", "namespace", "mode"},
+	)
+
+	// FinetuneJobsTotal counts finetune jobs by status.
+	FinetuneJobsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_finetune_jobs_total",
+			Help: "Total number of finetune jobs by status.",
+		},
+		[]string{"model", "status"},
+	)
+
+	// FinetuneTrainLoss reports the final training loss from the most recent finetune job.
+	FinetuneTrainLoss = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_finetune_train_loss",
+			Help: "Final training loss from the most recent finetune job.",
+		},
+		[]string{"model", "namespace", "mode"},
+	)
+
+	// FinetuneSamplesPerSecond reports training throughput from the most recent finetune job.
+	FinetuneSamplesPerSecond = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_finetune_samples_per_second",
+			Help: "Training throughput (samples/sec) from the most recent finetune job.",
+		},
+		[]string{"model", "namespace", "mode"},
+	)
+
 	// === Benchmark Result Metrics ===
 
 	// BenchmarkTokensPerSecond publishes the latest benchmark TPS result.
@@ -433,6 +472,12 @@ func init() {
 	// Controller reconcile metrics
 	ctrlmetrics.Registry.MustRegister(ReconcileDurationSeconds)
 	ctrlmetrics.Registry.MustRegister(ReconcileErrorsTotal)
+
+	// Finetune metrics
+	ctrlmetrics.Registry.MustRegister(FinetuneDurationSeconds)
+	ctrlmetrics.Registry.MustRegister(FinetuneJobsTotal)
+	ctrlmetrics.Registry.MustRegister(FinetuneTrainLoss)
+	ctrlmetrics.Registry.MustRegister(FinetuneSamplesPerSecond)
 
 	// Benchmark result metrics
 	ctrlmetrics.Registry.MustRegister(BenchmarkTokensPerSecond)

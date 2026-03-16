@@ -124,12 +124,15 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		return ctrl.Result{}, nil
 	}
 
-	// If abliteration succeeded previously but quantization is pending, dispatch there.
+	// If abliteration succeeded previously but finetune/quantization is pending, dispatch there.
 	if modelCache.Status.Abliteration != nil && modelCache.Status.Abliteration.FailureMessage == "" {
+		if modelCache.Spec.Finetune != nil {
+			return r.reconcileFinetune(ctx, modelCache, pvcName, modelPath)
+		}
 		if modelCache.Spec.Quantization != nil {
 			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
 		}
-		// No quantization, just abliteration — mark Ready.
+		// No finetune or quantization, just abliteration — mark Ready.
 		if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 			if err := r.Status().Update(ctx, modelCache); err != nil {
@@ -150,6 +153,9 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		if modelCache.Status.Abliteration != nil && modelCache.Status.Abliteration.FailureMessage == "" {
 			log.Info("Abliteration job GC'd but abliteration already complete, skipping re-creation",
 				"cache", modelCache.Name)
+			if modelCache.Spec.Finetune != nil {
+				return r.reconcileFinetune(ctx, modelCache, pvcName, modelPath)
+			}
 			if modelCache.Spec.Quantization != nil {
 				return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
 			}
@@ -265,12 +271,15 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "AbliterationComplete",
 			fmt.Sprintf("Abliteration complete: %d layers modified", ablitStatus.LayersModified))
 
-		// Dispatch to quantization if spec is set.
+		// Dispatch to finetune or quantization if spec is set.
+		if modelCache.Spec.Finetune != nil {
+			return r.reconcileFinetune(ctx, modelCache, pvcName, modelPath)
+		}
 		if modelCache.Spec.Quantization != nil {
 			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
 		}
 
-		// No quantization — mark Ready.
+		// No finetune or quantization — mark Ready.
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err

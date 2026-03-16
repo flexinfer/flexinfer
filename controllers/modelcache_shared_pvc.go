@@ -92,6 +92,7 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 		// If download already completed, the job was GC'd by TTL — continue to next phase.
 		if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady ||
 			modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseQuantizing ||
+			modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseFinetuning ||
 			modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseAbliterating ||
 			(modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseProvisioning && modelCache.Status.Path != "") {
 			log.Info("Download job GC'd but download already complete, skipping re-creation",
@@ -99,6 +100,9 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			modelCache.Status.Path = fmt.Sprintf("%s:%s", pvcName, modelPath)
 			if modelCache.Spec.Abliteration != nil {
 				return r.reconcileAbliteration(ctx, modelCache, pvcName, modelPath)
+			}
+			if modelCache.Spec.Finetune != nil {
+				return r.reconcileFinetune(ctx, modelCache, pvcName, modelPath)
 			}
 			if modelCache.Spec.Quantization != nil {
 				return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
@@ -156,9 +160,14 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			modelCache.Status.OCIRegistry = extractOCIRegistry(modelCache.Spec.Source)
 		}
 
-		// If abliteration is requested, handle it before quantization
+		// If abliteration is requested, handle it before finetune/quantization
 		if modelCache.Spec.Abliteration != nil {
 			return r.reconcileAbliteration(ctx, modelCache, pvcName, modelPath)
+		}
+
+		// If finetuning is requested, handle it before quantization
+		if modelCache.Spec.Finetune != nil {
+			return r.reconcileFinetune(ctx, modelCache, pvcName, modelPath)
 		}
 
 		// If quantization is requested, handle it before marking Ready

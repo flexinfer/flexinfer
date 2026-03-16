@@ -50,6 +50,14 @@ const (
 	// The controller clears this annotation after initiating the re-abliteration.
 	annotationReabliterate = "flexinfer.ai/reabliterate"
 
+	// annotationFinetuneSpecHash stores a SHA-256 hash of the FinetuneSpec.
+	// When the hash changes, the controller triggers re-finetuning.
+	annotationFinetuneSpecHash = "flexinfer.ai/finetune-spec-hash"
+
+	// annotationRefinetune triggers re-finetuning when set to "true".
+	// The controller clears this annotation after initiating the re-finetuning.
+	annotationRefinetune = "flexinfer.ai/refinetune"
+
 	// DefaultDownloadMemoryGB is the default memory limit for download jobs (in GiB).
 	DefaultDownloadMemoryGB = 16
 	// DefaultDownloadBackoffLimit is the default number of retries for download jobs.
