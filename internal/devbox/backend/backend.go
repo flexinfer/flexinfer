@@ -57,17 +57,39 @@ type BuildResult struct {
 	Cached   bool   `json:"cached"`
 }
 
+// SecretEnvVar describes an environment variable sourced from a K8s Secret.
+type SecretEnvVar struct {
+	Name       string // env var name (e.g., "ANTHROPIC_API_KEY")
+	SecretName string // K8s secret name (e.g., "agent-api-keys")
+	SecretKey  string // key within the secret
+}
+
+// SecretMount mounts individual keys from a K8s Secret as files in the container.
+type SecretMount struct {
+	SecretName string // K8s secret name (e.g., "agent-auth-tokens")
+	MountPath  string // container directory to mount into (e.g., "/root/.codex")
+	Items      []SecretMountItem
+}
+
+// SecretMountItem maps a single key from a Secret to a file path within the mount.
+type SecretMountItem struct {
+	Key  string // key in the Secret (e.g., "codex-auth-json")
+	Path string // relative filename within MountPath (e.g., "auth.json")
+}
+
 // StartOpts configures a sandbox container start.
 type StartOpts struct {
-	Name     string            // container name (e.g., "devbox-loom-core")
-	ImageTag string            // image to use
-	WorkDir  string            // working directory inside container (default: "/workspace")
-	Mounts   []Mount           // bind mounts
-	Env      map[string]string // environment variables
-	MemoryMB int               // memory limit in MB (0 = no limit)
-	CPUs     float64           // CPU limit (0 = no limit)
-	Network  bool              // enable networking
-	AgentID  string            // owning agent ID (used as pod label in K8s backend)
+	Name         string            // container name (e.g., "devbox-loom-core")
+	ImageTag     string            // image to use
+	WorkDir      string            // working directory inside container (default: "/workspace")
+	Mounts       []Mount           // bind mounts
+	Env          map[string]string // environment variables
+	SecretEnv    []SecretEnvVar    // env vars sourced from K8s secrets (K8s backend only)
+	SecretMounts []SecretMount     // files from K8s secrets mounted into the container
+	MemoryMB     int               // memory limit in MB (0 = no limit)
+	CPUs         float64           // CPU limit (0 = no limit)
+	Network      bool              // enable networking
+	AgentID      string            // owning agent ID (used as pod label in K8s backend)
 }
 
 // Mount describes a bind mount.

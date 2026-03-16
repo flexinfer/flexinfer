@@ -2360,3 +2360,53 @@ func (a *App) handleMobileSpawnStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+// handleMobileSpawnConfig handles GET /api/mobile/v1/agent/spawn/config.
+// Returns available projects, agent types with availability flags, and spawn defaults.
+func (a *App) handleMobileSpawnConfig(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	type agentTypeInfo struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		Available bool   `json:"available"`
+	}
+	type projectInfo struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	type defaults struct {
+		AgentType      string  `json:"agent_type"`
+		BaseBranch     string  `json:"base_branch"`
+		MemoryMB       int     `json:"memory_mb"`
+		CPUs           float64 `json:"cpus"`
+		TimeoutMinutes int     `json:"timeout_minutes"`
+	}
+
+	agents := []agentTypeInfo{
+		{ID: "claude-code", Name: "Claude Code", Available: true},
+		{ID: "codex", Name: "Codex", Available: true},
+		{ID: "gemini", Name: "Gemini", Available: true},
+	}
+
+	var projects []projectInfo
+	if a.spawner != nil {
+		for _, p := range a.spawner.Projects() {
+			projects = append(projects, projectInfo{Name: p, Path: "services/" + p})
+		}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"agent_types": agents,
+		"projects":    projects,
+		"defaults": defaults{
+			AgentType:      "claude-code",
+			BaseBranch:     "main",
+			MemoryMB:       4096,
+			CPUs:           2.0,
+			TimeoutMinutes: 60,
+		},
+	})
+}

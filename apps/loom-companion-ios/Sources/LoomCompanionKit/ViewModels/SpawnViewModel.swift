@@ -4,7 +4,9 @@ import Foundation
 @Observable
 public final class SpawnViewModel {
     public var spawns: [MobileSpawnStatus] = []
+    public var config: SpawnConfig?
     public var isLoading = false
+    public var isLoadingConfig = false
     public var isSpawning = false
     public var error: LoomAPIError?
 
@@ -13,6 +15,17 @@ public final class SpawnViewModel {
 
     public init(apiClient: any LoomAPIClientProtocol) {
         self.apiClient = apiClient
+    }
+
+    /// Load spawn configuration (projects, agent types, defaults).
+    public func loadConfig() async {
+        isLoadingConfig = true
+        defer { isLoadingConfig = false }
+        do {
+            config = try await apiClient.request(.spawnConfig)
+        } catch {
+            // Config is optional — fall back to hardcoded defaults on failure.
+        }
     }
 
     /// Load the list of active and recent spawns.

@@ -11,9 +11,21 @@ import (
 
 // buildPodSpec creates a Pod spec for a devbox sandbox.
 func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
-	env := make([]corev1.EnvVar, 0, len(opts.Env))
+	env := make([]corev1.EnvVar, 0, len(opts.Env)+len(opts.SecretEnv))
 	for key, val := range opts.Env {
 		env = append(env, corev1.EnvVar{Name: key, Value: val})
+	}
+	for _, s := range opts.SecretEnv {
+		env = append(env, corev1.EnvVar{
+			Name: s.Name,
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: s.SecretName},
+					Key:                  s.SecretKey,
+					Optional:             boolPtr(true),
+				},
+			},
+		})
 	}
 
 	// Set only limits (not requests) so sandbox pods schedule as Burstable/BestEffort.
@@ -85,6 +97,31 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 		volumeMounts = []corev1.VolumeMount{
 			{Name: "workspace", MountPath: "/workspace"},
 		}
+	}
+
+	// Add secret volume mounts (e.g., auth token files for agent CLIs).
+	for i, sm := range opts.SecretMounts {
+		volName := fmt.Sprintf("secret-%d", i)
+		items := make([]corev1.KeyToPath, 0, len(sm.Items))
+		for _, item := range sm.Items {
+			items = append(items, corev1.KeyToPath{Key: item.Key, Path: item.Path})
+		}
+		volumes = append(volumes, corev1.Volume{
+			Name: volName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName:  sm.SecretName,
+					Items:       items,
+					Optional:    boolPtr(true),
+					DefaultMode: int32Ptr(0o600),
+				},
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      volName,
+			MountPath: sm.MountPath,
+			ReadOnly:  true,
+		})
 	}
 
 	// Add host-path mounts if requested (for additional bind mounts)
@@ -178,6 +215,7 @@ func (k *K8sBackend) registryTag(tag string) string {
 }
 
 func boolPtr(b bool) *bool                               { return &b }
+func int32Ptr(i int32) *int32                            { return &i }
 func resourcePtr(q resource.Quantity) *resource.Quantity { return &q }
 
 // workDir returns the working directory, defaulting to "/workspace".

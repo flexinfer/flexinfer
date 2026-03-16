@@ -18,7 +18,9 @@ struct SpawnAgentView: View {
         }
         .navigationTitle("Spawn Agent")
         .task {
-            await viewModel.loadSpawns()
+            async let config: () = viewModel.loadConfig()
+            async let spawns: () = viewModel.loadSpawns()
+            _ = await (config, spawns)
         }
         .refreshable {
             await viewModel.loadSpawns()
@@ -37,15 +39,32 @@ struct SpawnAgentView: View {
 
     private var spawnFormSection: some View {
         Section("New Agent") {
+            // Agent type picker — shows only available agents when config loaded.
             Picker("Agent Type", selection: $selectedAgentType) {
-                ForEach(AgentType.allCases) { type in
-                    Text(type.displayName).tag(type)
+                if let config = viewModel.config {
+                    ForEach(availableAgentTypes(from: config)) { info in
+                        Text(info.name).tag(agentTypeFromID(info.id))
+                    }
+                } else {
+                    ForEach(AgentType.allCases) { type in
+                        Text(type.displayName).tag(type)
+                    }
                 }
             }
 
-            TextField("Project", text: $project)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+            // Project picker — populated from config endpoint.
+            if let config = viewModel.config, !config.projects.isEmpty {
+                Picker("Project", selection: $project) {
+                    Text("Select project").tag("")
+                    ForEach(config.projects) { proj in
+                        Text(proj.name).tag(proj.name)
+                    }
+                }
+            } else {
+                TextField("Project", text: $project)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            }
 
             TextField("Branch (optional)", text: $branch)
                 .textInputAutocapitalization(.never)
@@ -104,6 +123,14 @@ struct SpawnAgentView: View {
         if viewModel.error == nil {
             taskDescription = ""
         }
+    }
+
+    private func availableAgentTypes(from config: SpawnConfig) -> [SpawnAgentTypeInfo] {
+        config.agentTypes.filter(\.available)
+    }
+
+    private func agentTypeFromID(_ id: String) -> AgentType {
+        AgentType(rawValue: id) ?? .claudeCode
     }
 }
 

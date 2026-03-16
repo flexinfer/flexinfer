@@ -33,6 +33,7 @@ public enum Endpoint: Sendable {
     case sandboxStop(project: String)
     case spawnAgent(request: MobileSpawnRequest)
     case spawnList
+    case spawnConfig
     case spawnDetail(id: String)
     case spawnStop(id: String)
 
@@ -42,7 +43,7 @@ public enum Endpoint: Sendable {
              .tasks, .workflows, .workflowDetail, .presence, .memoryStats,
              .memoryItems, .stream, .topology, .graphStats, .graphEntities,
              .graphPath, .reasoningChains, .reasoningChainDetail,
-             .eventsStream, .audit, .sandbox, .spawnList, .spawnDetail:
+             .eventsStream, .audit, .sandbox, .spawnList, .spawnConfig, .spawnDetail:
             return "GET"
         case .createSession, .endSession, .pushRegister, .pushUnregister,
              .sandboxStart, .sandboxStop, .spawnAgent, .spawnStop:
@@ -114,6 +115,8 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/agent/spawn"
         case .spawnList:
             return "/api/mobile/v1/agent/spawns"
+        case .spawnConfig:
+            return "/api/mobile/v1/agent/spawn/config"
         case let .spawnDetail(id):
             return "/api/mobile/v1/agent/spawn/\(id)"
         case let .spawnStop(id):

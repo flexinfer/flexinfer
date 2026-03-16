@@ -100,6 +100,7 @@ type Config struct {
 	SpawnSyncMode   string // Workspace sync: "git-clone" or "nfs".
 	SpawnGitBaseURL string // Git base URL for git-clone mode.
 	SpawnGitSecret  string // K8s secret with git token.
+	SpawnProjects   string // Comma-separated project names for spawn picker.
 }
 
 // App is the HUD application. It holds the daemon client, agent bridge,
@@ -263,12 +264,17 @@ func Run(cfg Config) error {
 		if spawnErr != nil {
 			logger.Error("spawn backend init failed", "error", spawnErr)
 		} else {
+			spawnCfg := DefaultSpawnConfig()
+			if cfg.SpawnProjects != "" {
+				spawnCfg.Projects = strings.Split(cfg.SpawnProjects, ",")
+			}
 			app.spawner = NewSpawnOrchestrator(
 				spawnBackend, agent, app.sseHub, app.tracer, app.metrics, logger,
-				DefaultSpawnConfig(),
+				spawnCfg,
 			)
 			logger.Info("spawn orchestrator enabled",
-				"namespace", cfg.SpawnNamespace, "registry", cfg.SpawnRegistry, "sync_mode", cfg.SpawnSyncMode)
+				"namespace", cfg.SpawnNamespace, "registry", cfg.SpawnRegistry,
+				"sync_mode", cfg.SpawnSyncMode, "projects", len(spawnCfg.Projects))
 		}
 	}
 
@@ -817,6 +823,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/mobile/v1/sandbox/stop", a.withCORS(a.handleMobileSandboxStop))
 	mux.HandleFunc("POST /api/mobile/v1/agent/spawn", a.withCORS(a.handleMobileSpawnAgent))
 	mux.HandleFunc("GET /api/mobile/v1/agent/spawns", a.withCORS(a.handleMobileSpawnList))
+	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/config", a.withCORS(a.handleMobileSpawnConfig))
 	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/{spawn_id}", a.withCORS(a.handleMobileSpawnDetail))
 	mux.HandleFunc("POST /api/mobile/v1/agent/spawn/{spawn_id}/stop", a.withCORS(a.handleMobileSpawnStop))
 	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/{spawn_id}/stream", a.withCORS(a.handleMobileSpawnStream))
@@ -833,6 +840,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	// API routes — headless agent spawn.
 	mux.HandleFunc("POST /api/agent/spawn", a.withCORS(a.handleAgentSpawn))
 	mux.HandleFunc("GET /api/agent/spawns", a.withCORS(a.handleAgentSpawnList))
+	mux.HandleFunc("GET /api/agent/spawn/config", a.withCORS(a.handleAgentSpawnConfig))
 	mux.HandleFunc("GET /api/agent/spawn/{spawn_id}", a.withCORS(a.handleAgentSpawnDetail))
 	mux.HandleFunc("POST /api/agent/spawn/{spawn_id}/stop", a.withCORS(a.handleAgentSpawnStop))
 

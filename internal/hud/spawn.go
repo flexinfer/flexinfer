@@ -78,6 +78,8 @@ type SpawnOrchestrator struct {
 
 	// workspaceRoot is the local path to the workspace mount (for project detection).
 	workspaceRoot string
+	// projects lists available project names for the spawn picker.
+	projects []string
 }
 
 // SpawnOrchestratorConfig holds configuration for the spawn orchestrator.
@@ -86,7 +88,8 @@ type SpawnOrchestratorConfig struct {
 	DefaultTimeout time.Duration
 	DefaultMemory  int // MB
 	DefaultCPUs    float64
-	WorkspaceRoot  string // local path to workspace mount (for project detection)
+	WorkspaceRoot  string   // local path to workspace mount (for project detection)
+	Projects       []string // available projects for spawn picker (from SPAWN_PROJECTS env)
 }
 
 // DefaultSpawnConfig returns sensible defaults.
@@ -131,6 +134,7 @@ func NewSpawnOrchestrator(
 		defaultMemory:  cfg.DefaultMemory,
 		defaultCPUs:    cfg.DefaultCPUs,
 		workspaceRoot:  wsRoot,
+		projects:       cfg.Projects,
 	}
 }
 
@@ -141,8 +145,11 @@ func (o *SpawnOrchestrator) Spawn(ctx context.Context, req SpawnRequest) (string
 	if req.AgentType == "" {
 		req.AgentType = "claude-code"
 	}
-	if req.AgentType != "claude-code" {
-		return "", fmt.Errorf("unsupported agent type: %s (only claude-code supported)", req.AgentType)
+	switch req.AgentType {
+	case "claude-code", "codex", "gemini":
+		// ok
+	default:
+		return "", fmt.Errorf("unsupported agent type: %s", req.AgentType)
 	}
 	if req.TaskDescription == "" {
 		return "", fmt.Errorf("task_description is required")
@@ -230,7 +237,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 
 	_, buildSpan := o.tracer.Start(ctx, "agent.spawn.image_build")
 
-	df, dfErr := o.generateDockerfile(projectDir)
+	df, dfErr := o.generateDockerfile(projectDir, req.AgentType)
 	if dfErr != nil {
 		buildSpan.End()
 		o.failSpawn(ctx, state, fmt.Sprintf("dockerfile generation failed: %v", dfErr))
@@ -264,10 +271,12 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 			"SPAWN_ID":  spawnID,
 			"NAMESPACE": req.Namespace,
 		},
-		MemoryMB: req.MemoryMB,
-		CPUs:     req.CPUs,
-		Network:  true,
-		AgentID:  state.AgentID,
+		SecretEnv:    agentSecretEnvVars(req.AgentType),
+		SecretMounts: agentSecretMounts(req.AgentType),
+		MemoryMB:     req.MemoryMB,
+		CPUs:         req.CPUs,
+		Network:      true,
+		AgentID:      state.AgentID,
 	})
 	podSpan.End()
 	if err != nil {
@@ -330,17 +339,27 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 
 // generateDockerfile detects the project environment and generates a Dockerfile.
 // Falls back to a minimal Go-based Dockerfile if detection fails.
-func (o *SpawnOrchestrator) generateDockerfile(projectDir string) ([]byte, error) {
+// Appends agent CLI install lines so the spawned pod has the right agent binary.
+func (o *SpawnOrchestrator) generateDockerfile(projectDir, agentType string) ([]byte, error) {
+	var df []byte
+
 	fp, err := detect.Fingerprint(projectDir)
 	if err != nil {
 		o.logger.Warn("project detection failed, using fallback Dockerfile", "dir", projectDir, "error", err)
-		return fallbackDockerfile(), nil
+		df = fallbackDockerfile()
+	} else {
+		generated, genErr := dockerfile.Generate(fp)
+		if genErr != nil {
+			o.logger.Warn("dockerfile generation failed, using fallback", "dir", projectDir, "error", genErr)
+			df = fallbackDockerfile()
+		} else {
+			df = generated
+		}
 	}
 
-	df, err := dockerfile.Generate(fp)
-	if err != nil {
-		o.logger.Warn("dockerfile generation failed, using fallback", "dir", projectDir, "error", err)
-		return fallbackDockerfile(), nil
+	// Append agent CLI installation lines.
+	if cliLines := agentCLIInstallLines(agentType); cliLines != "" {
+		df = append(df, []byte("\n"+cliLines+"\n")...)
 	}
 	return df, nil
 }
@@ -348,7 +367,9 @@ func (o *SpawnOrchestrator) generateDockerfile(projectDir string) ([]byte, error
 // fallbackDockerfile returns a minimal Dockerfile for projects where detection fails.
 func fallbackDockerfile() []byte {
 	return []byte(`FROM golang:1.24-bookworm
-RUN apt-get update && apt-get install -y --no-install-recommends git make curl ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git make curl ca-certificates nodejs npm && \
+    rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 `)
 }
@@ -517,6 +538,9 @@ func (o *SpawnOrchestrator) activeCount() int {
 	return count
 }
 
+// Projects returns the configured project list for spawn pickers.
+func (o *SpawnOrchestrator) Projects() []string { return o.projects }
+
 // broadcastSpawnEvent sends a spawn lifecycle event to the SSE hub.
 func (o *SpawnOrchestrator) broadcastSpawnEvent(eventType string, state *SpawnState) {
 	data, err := json.Marshal(state)
@@ -529,4 +553,77 @@ func (o *SpawnOrchestrator) broadcastSpawnEvent(eventType string, state *SpawnSt
 		Timestamp: time.Now(),
 		Data:      data,
 	})
+}
+
+// agentSecretEnvVars returns K8s secret env vars for the given agent type.
+// These provide API key fallback authentication when subscription auth tokens
+// aren't available.
+func agentSecretEnvVars(agentType string) []backend.SecretEnvVar {
+	const secretName = "agent-api-keys"
+	switch agentType {
+	case "claude-code":
+		return []backend.SecretEnvVar{
+			{Name: "ANTHROPIC_API_KEY", SecretName: secretName, SecretKey: "ANTHROPIC_API_KEY"},
+		}
+	case "codex":
+		return []backend.SecretEnvVar{
+			{Name: "OPENAI_API_KEY", SecretName: secretName, SecretKey: "OPENAI_API_KEY"},
+		}
+	case "gemini":
+		return []backend.SecretEnvVar{
+			{Name: "GEMINI_API_KEY", SecretName: secretName, SecretKey: "GEMINI_API_KEY"},
+			{Name: "GOOGLE_API_KEY", SecretName: secretName, SecretKey: "GEMINI_API_KEY"},
+		}
+	default:
+		return nil
+	}
+}
+
+// agentSecretMounts returns K8s secret volume mounts for subscription auth
+// token files. These are mounted at the CLI's expected home-dir config paths
+// so agents authenticate using existing subscription accounts.
+func agentSecretMounts(agentType string) []backend.SecretMount {
+	const secretName = "agent-auth-tokens"
+	switch agentType {
+	case "codex":
+		// Codex CLI reads ~/.codex/auth.json for OAuth subscription tokens.
+		return []backend.SecretMount{
+			{
+				SecretName: secretName,
+				MountPath:  "/root/.codex",
+				Items: []backend.SecretMountItem{
+					{Key: "codex-auth-json", Path: "auth.json"},
+				},
+			},
+		}
+	case "gemini":
+		// Gemini CLI reads ~/.gemini/oauth_creds.json and google_accounts.json.
+		return []backend.SecretMount{
+			{
+				SecretName: secretName,
+				MountPath:  "/root/.gemini",
+				Items: []backend.SecretMountItem{
+					{Key: "gemini-oauth-creds-json", Path: "oauth_creds.json"},
+					{Key: "gemini-google-accounts-json", Path: "google_accounts.json"},
+				},
+			},
+		}
+	default:
+		// Claude Code uses ANTHROPIC_API_KEY env var (no auth file on disk).
+		return nil
+	}
+}
+
+// agentCLIInstallLines returns Dockerfile RUN lines to install the agent CLI.
+func agentCLIInstallLines(agentType string) string {
+	switch agentType {
+	case "claude-code":
+		return "RUN npm install -g @anthropic-ai/claude-code@latest 2>/dev/null || true"
+	case "codex":
+		return "RUN npm install -g @openai/codex@latest 2>/dev/null || true"
+	case "gemini":
+		return "RUN npm install -g @anthropic-ai/claude-code@latest 2>/dev/null || true\nRUN pip install google-genai 2>/dev/null || true"
+	default:
+		return ""
+	}
 }

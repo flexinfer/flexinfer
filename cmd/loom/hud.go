@@ -59,6 +59,7 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var spawnSyncMode string
 	var spawnGitBaseURL string
 	var spawnGitSecret string
+	var spawnProjects string
 
 	cmd := &cobra.Command{
 		Use:   "hud",
@@ -144,6 +145,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 			applyEnvString("spawn-sync-mode", "SPAWN_SYNC_MODE", &spawnSyncMode)
 			applyEnvString("spawn-git-base-url", "SPAWN_GIT_BASE_URL", &spawnGitBaseURL)
 			applyEnvString("spawn-git-secret", "SPAWN_GIT_SECRET", &spawnGitSecret)
+			applyEnvString("spawn-projects", "SPAWN_PROJECTS", &spawnProjects)
 			// SPAWN_ENABLED env var (boolean).
 			if !cmd.Flags().Changed("spawn-enabled") {
 				if v := os.Getenv("SPAWN_ENABLED"); v == "true" || v == "1" {
@@ -215,6 +217,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 				SpawnSyncMode:           spawnSyncMode,
 				SpawnGitBaseURL:         spawnGitBaseURL,
 				SpawnGitSecret:          spawnGitSecret,
+				SpawnProjects:           spawnProjects,
 			})
 		},
 	}
@@ -268,6 +271,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().StringVar(&spawnSyncMode, "spawn-sync-mode", os.Getenv("SPAWN_SYNC_MODE"), "Workspace sync mode: git-clone or nfs [$SPAWN_SYNC_MODE]")
 	cmd.Flags().StringVar(&spawnGitBaseURL, "spawn-git-base-url", os.Getenv("SPAWN_GIT_BASE_URL"), "Git base URL for git-clone sync [$SPAWN_GIT_BASE_URL]")
 	cmd.Flags().StringVar(&spawnGitSecret, "spawn-git-secret", os.Getenv("SPAWN_GIT_SECRET"), "K8s secret with git token [$SPAWN_GIT_SECRET]")
+	cmd.Flags().StringVar(&spawnProjects, "spawn-projects", os.Getenv("SPAWN_PROJECTS"), "Comma-separated project names for spawn picker [$SPAWN_PROJECTS]")
 
 	// Service management subcommands.
 	cmd.AddCommand(

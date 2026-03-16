@@ -110,3 +110,48 @@ public struct MobileSpawnStatus: Codable, Sendable, Identifiable {
 public struct MobileSpawnListResponse: Codable, Sendable {
     public let spawns: [MobileSpawnStatus]
 }
+
+// MARK: - Spawn Config (picker data)
+
+/// Response from GET /api/mobile/v1/agent/spawn/config.
+public struct SpawnConfig: Codable, Sendable {
+    public let agentTypes: [SpawnAgentTypeInfo]
+    public let projects: [SpawnProjectInfo]
+    public let defaults: SpawnDefaults
+
+    enum CodingKeys: String, CodingKey {
+        case agentTypes = "agent_types"
+        case projects, defaults
+    }
+}
+
+/// Agent type with availability flag.
+public struct SpawnAgentTypeInfo: Codable, Sendable, Identifiable {
+    public let id: String
+    public let name: String
+    public let available: Bool
+}
+
+/// Project available for spawning.
+public struct SpawnProjectInfo: Codable, Sendable, Identifiable {
+    public let name: String
+    public let path: String
+    public var id: String { name }
+}
+
+/// Default spawn configuration values.
+public struct SpawnDefaults: Codable, Sendable {
+    public let agentType: String
+    public let baseBranch: String
+    public let memoryMB: Int
+    public let cpus: Double
+    public let timeoutMinutes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case agentType = "agent_type"
+        case baseBranch = "base_branch"
+        case memoryMB = "memory_mb"
+        case cpus
+        case timeoutMinutes = "timeout_minutes"
+    }
+}

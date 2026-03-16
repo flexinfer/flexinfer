@@ -114,6 +114,8 @@ spec:
               value: http://192.168.50.218/services
             - name: SPAWN_GIT_SECRET
               value: gitlab-creds
+            - name: SPAWN_PROJECTS
+              value: "loom-core,flexdeck,flexinfer,homelab-homepage,storyboard-generator,jobsearch-app"
           ports:
             - containerPort: 3333
               name: http
