@@ -1,6 +1,6 @@
 ---
 name: mcp-registry-ops
-description: "Edit and operate MCP registry.yaml (especially platform/gitops/mcp/context/registry.yaml): validate registry changes, manage per-server allowlists (always_allow), and generate MCP client configs and hub manifests via loom-core's loom CLI. Use when updating MCP servers, hub deployments, gateway registry, or Codex/VSCode/Kilo configs."
+description: "Edit and operate MCP registry.yaml (especially mcp/context/registry.yaml): validate registry changes, manage per-server allowlists (always_allow), and generate MCP client configs and hub manifests via loom-core's loom CLI. Use when updating MCP servers, hub deployments, gateway registry, or Codex/VSCode/Kilo configs."
 ---
 
 # MCP Registry Ops
@@ -29,40 +29,40 @@ Maintain the workspace's canonical MCP server registry and regenerate downstream
 ### 2) Update an Allowlist (always_allow)
 
 - Edit `common.always_allow`:
-  - `python $CODEX_HOME/skills/mcp-registry-ops/scripts/registry_allowlist_edit.py --registry platform/gitops/mcp/context/registry.yaml --server gitlab --scope common --add create_issue`
+  - `python $CODEX_HOME/skills/mcp-registry-ops/scripts/registry_allowlist_edit.py --registry mcp/context/registry.yaml --server gitlab --scope common --add create_issue`
 - Edit `targets.<target>.always_allow`:
-  - `python $CODEX_HOME/skills/mcp-registry-ops/scripts/registry_allowlist_edit.py --registry platform/gitops/mcp/context/registry.yaml --server gitlab --scope target:codex --set verify_token list_projects`
+  - `python $CODEX_HOME/skills/mcp-registry-ops/scripts/registry_allowlist_edit.py --registry mcp/context/registry.yaml --server gitlab --scope target:codex --set verify_token list_projects`
 
 Use `--dry-run` to preview and `--sort` to normalize.
 
 ### 3) Generate Configs / Manifests
 
 - Generate client configs:
-  - `services/loom-core/bin/loom generate configs --registry platform/gitops/mcp/context/registry.yaml --target all --output-dir generated/mcp --hub-mode`
+  - `bin/loom generate configs --registry mcp/context/registry.yaml --target all --output-dir generated/mcp --hub-mode`
 - Generate hub manifests:
-  - `services/loom-core/bin/loom generate manifests --registry platform/gitops/mcp/context/registry.yaml --output-dir platform/gitops/k3s/loom-hub/servers`
+  - `bin/loom generate manifests --registry mcp/context/registry.yaml --output-dir platform/gitops/k3s/loom-hub/servers`
 - Sync all platform configs (hub mode, all projects, skip nested worktrees):
-  - `for profile in vscode antigravity codex claude gemini kilocode; do services/loom-core/bin/loom sync "$profile" --regen --hub-mode --all-projects --skip-worktrees; done`
-  - `services/loom-core/bin/loom sync skills all`
+  - `for profile in vscode antigravity codex claude gemini kilocode; do bin/loom sync "$profile" --regen --hub-mode --all-projects --skip-worktrees; done`
+  - `bin/loom sync skills all`
 
-If `services/loom-core/bin/loom` doesn't exist, build it:
+If `bin/loom` doesn't exist, build it:
 - `cd services/loom-core && go build -o bin/loom ./cmd/loom`
 
 ### 4) Validate Generated Configs (Secrets Hygiene)
 
-- `services/loom-core/bin/loom validate configs --dir generated/mcp`
+- `bin/loom validate configs --dir generated/mcp`
 
 ### 5) Post-Sync Proxy Smoke Check
 
 When clients run in `loom proxy` mode (Codex/Claude default), verify the daemon surface directly after sync:
 
 - Reload daemon config:
-  - `services/loom-core/bin/loom reload`
+  - `bin/loom reload`
 - Confirm expected tools are exposed:
-  - `services/loom-core/bin/loom tools list | rg "agent_context__agent_workflow_start|agent_context__agent_entity_add|qdrant__qdrant_delete_collection"`
+  - `bin/loom tools list | rg "agent_context__agent_workflow_start|agent_context__agent_entity_add|qdrant__qdrant_delete_collection"`
 - Execute lightweight read calls:
-  - `services/loom-core/bin/loom tools call agent_context__agent_workflow_list --args '{"session_id":"<session-id>"}' --json`
-  - `services/loom-core/bin/loom tools call agent_context__agent_memory_policy_get --args '{"tier":"working"}' --json`
+  - `bin/loom tools call agent_context__agent_workflow_list --args '{"session_id":"<session-id>"}' --json`
+  - `bin/loom tools call agent_context__agent_memory_policy_get --args '{"tier":"working"}' --json`
 - Execute reversible vector lifecycle smoke:
   - create/get/delete a temporary collection via `qdrant__qdrant_create_collection`, `qdrant__qdrant_get_collection`, and `qdrant__qdrant_delete_collection`
 

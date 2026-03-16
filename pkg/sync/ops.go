@@ -39,6 +39,7 @@ func discoverWorkspaceContextFile(repoRoot, filename string) string {
 	for _, root := range ancestorRoots(repoRoot) {
 		candidates := []string{
 			filepath.Join(root, "mcp", "context", filename),
+			filepath.Join(root, "services", "loom-core", "mcp", "context", filename),
 			filepath.Join(root, "platform", "gitops", "mcp", "context", filename),
 		}
 		for _, candidate := range candidates {

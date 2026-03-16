@@ -69,15 +69,18 @@ func Load(path string) (*Registry, error) {
 // FindRegistry locates the skills registry file.
 // It searches in the following order:
 // 1. Current directory: mcp/context/skills-registry.yaml
-// 2. Platform gitops: platform/gitops/mcp/context/skills-registry.yaml
-// 3. Home config: ~/.config/loom/skills-registry.yaml
+// 2. Workspace root: services/loom-core/mcp/context/skills-registry.yaml
+// 3. Legacy GitOps path: platform/gitops/mcp/context/skills-registry.yaml
+// 4. Home workspace paths, then ~/.config/loom/skills-registry.yaml
 func FindRegistry() (string, bool) {
 	cwd, _ := os.Getwd()
 	home, _ := os.UserHomeDir()
 
 	paths := []string{
 		filepath.Join(cwd, "mcp", "context", "skills-registry.yaml"),
+		filepath.Join(cwd, "services", "loom-core", "mcp", "context", "skills-registry.yaml"),
 		filepath.Join(cwd, "platform", "gitops", "mcp", "context", "skills-registry.yaml"),
+		filepath.Join(home, "workspace", "services", "loom-core", "mcp", "context", "skills-registry.yaml"),
 		filepath.Join(home, "workspace", "platform", "gitops", "mcp", "context", "skills-registry.yaml"),
 		filepath.Join(home, ".config", "loom", "skills-registry.yaml"),
 	}
@@ -134,7 +137,7 @@ func (s *Skill) GetOutputFormat(target string) string {
 }
 
 // GetType returns the output type for a target, using platform-specific defaults.
-// Default types: claude → "command", codex → "skill", kilocode → "rule", gemini → "instruction".
+// Default types: claude → "command", codex → "skill", kilocode → "rule", gemini → "skill".
 func (s *Skill) GetType(target string) string {
 	if s.Targets != nil {
 		if spec, ok := s.Targets[target]; ok && spec.Type != "" {

@@ -1,0 +1,5268 @@
+# Skills Registry - Unified Cross-Agent Skill Definitions
+#
+# This registry provides a single source of truth for AI coding assistant skills
+# across different platforms (Codex CLI, Claude Code, Gemini, OpenCode, etc.)
+#
+# ## Structure
+# Each skill entry contains:
+# - name: Unique identifier (kebab-case)
+# - categories: Classification tags for organization
+# - common: Default configuration used across all platforms
+#   - description: When to use this skill (appears in YAML frontmatter for Codex)
+#   - instructions: Main workflow markdown content
+#   - scripts: List of bundled scripts with names and relative paths
+#   - references: Documentation files to include
+#   - assets: Templates and other assets
+#   - always_allow: Scripts auto-approved without confirmation (safety criteria below)
+#
+# ## always_allow Safety Criteria
+# A script qualifies for always_allow if it meets ONE of:
+#   1. Read-only (kubectl get, grep, stat, list)
+#   2. Write-capable BUT safe by default (--dry-run default, --apply to write;
+#      or skips existing files, --force opt-in)
+#   3. Verification scripts (pre-commit, test, lint) — auto-fixes are expected behavior
+# Scripts that unconditionally modify files without a safe default require
+# explicit confirmation and should NOT be in always_allow.
+# - targets: Platform-specific overrides
+#   - codex: Codex CLI specific settings
+#   - claude: Claude Code specific settings
+#   - kilocode: Kilocode specific settings
+#   - gemini: Gemini CLI specific settings
+#   - instructions_append: Optional additive markdown appended after common.instructions
+#
+# ## Variable Substitution
+# - ${SKILL_PATH}: Path to skill directory (Codex: $CODEX_HOME/skills/<name>, Claude: direct paths)
+# - ${CODEX_HOME}: Codex home directory (~/.codex)
+# - ${HOME}: User home directory
+# To emit a literal ${VARIABLE} in generated output, escape it: \${VARIABLE}
+#
+# ## Source Files
+# Skill source files (scripts, references, assets) are stored in:
+#   mcp/skills/<skill-name>/
+#     scripts/
+#     references/
+#     assets/
+#
+# ## Skill Types
+# Each target can specify a `type` that determines the output format:
+# - command: Slash command (Claude .claude/commands/, Kilocode workflows)
+# - skill: Full skill bundle (Codex ~/.codex/skills/)
+# - rule: Rule file (Claude .claude/rules/, Kilocode .kilocode/rules/)
+# - instruction: Included in composite instructions.md (Codex, Kilocode, Gemini)
+# - workflow: YAML workflow file (Kilocode .kilocode/workflows/)
+#
+# ## Composite Instruction Assembly Order
+# Skills with type=instruction are merged into a single composite file
+# (instructions.md or GEMINI.md). Assembly order is:
+#   1. Skills with explicit `priority` (lower number = first in output)
+#   2. Skills without priority (in registry YAML order)
+# Equal priorities preserve registry order (stable sort).
+# Context window priority favors content near the top.
+#
+# ## Generation
+# Run: loom generate skills --target <codex|claude|kilocode|gemini|all>
+# Sync: loom sync <profile> --regen --hub-mode --all-projects --skip-worktrees
+
+version: 1
+updated: 2026-03-16
+skills:
+  - name: flux-gitops-operator
+    categories: [kubernetes, gitops, operations]
+    common:
+      description: |
+        Operate Flux/Kustomize GitOps in platform/gitops: follow dev-env.sh context rules (kc-k3s/kc-harv), reconcile safely (no hot-edits), and verify rollouts with repeatable checklists and snapshots. Use when changing Kubernetes manifests, troubleshooting Flux drift, or validating deployments.
+      instructions: |
+        # Flux GitOps Operator
+
+        Standardize safe GitOps operations in `platform/gitops` (Flux-managed clusters), including reconcile workflows and rollout verification.
+
+        ## Quick Start
+
+        1. From workspace root:
+           - `cd platform/gitops`
+        2. Configure environment (required before cluster commands):
+           - `source dev-env.sh`
+        3. Run status / troubleshoot:
+           - `make status` / `make troubleshoot`
+
+        ## Specialized Workflows
+
+        - Longhorn storage lifecycle and recovery-by-GitOps:
+          - `longhorn-gitops-ops`
+        - Monitoring stack (Prometheus/Grafana/Alertmanager/Loki) operations:
+          - `monitoring-gitops-ops`
+        - Routine k3s/Harvester maintenance operations:
+          - `k3s-harvester-maintenance`
+
+        ## Guardrails (Non-Negotiable)
+
+        - Prefer Git changes + Flux reconciliation; avoid hot-editing live objects (`kubectl edit`, `kubectl set env`) unless handling an incident.
+        - If an emergency hotfix is applied live, mirror it back into `platform/gitops/**` and commit immediately so Flux stops fighting you.
+
+        ## Core Workflow
+
+        ### 1) Make a Change
+
+        - Edit manifests in `platform/gitops/**`
+        - Commit with a clear message
+        - Push
+
+        ### 2) Reconcile
+
+        - Reconcile the relevant kustomization (often `apps`):
+          - `flux reconcile kustomization apps -n flux-system`
+        - Or use the wrapper:
+          - `bash ${SKILL_PATH}/scripts/flux_reconcile_kustomization.sh apps flux-system`
+
+        ### 3) Verify Rollout
+
+        - Use the checklist: `assets/templates/rollout-checklist.md`
+        - Produce a quick namespace snapshot:
+          - `bash ${SKILL_PATH}/scripts/k8s_rollout_report.sh <namespace> > /tmp/rollout.md`
+
+        ## References / Templates
+
+        - Workflow notes: `references/workflow.md`
+        - Rollout checklist: `assets/templates/rollout-checklist.md`
+      scripts:
+        - name: ensure_dev_env.sh
+          path: scripts/ensure_dev_env.sh
+          description: Verify dev environment is configured
+        - name: flux_reconcile_kustomization.sh
+          path: scripts/flux_reconcile_kustomization.sh
+          description: Reconcile a Flux kustomization safely
+        - name: k8s_rollout_report.sh
+          path: scripts/k8s_rollout_report.sh
+          description: Generate namespace rollout status report
+      references:
+        - workflow.md
+      assets:
+        - templates/rollout-checklist.md
+      always_allow:
+        - flux_reconcile_kustomization.sh
+        - k8s_rollout_report.sh
+        - ensure_dev_env.sh
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: false
+
+  - name: longhorn-gitops-ops
+    categories: [kubernetes, gitops, operations]
+    common:
+      description: |
+        Operate Longhorn storage safely via GitOps in platform/gitops, including node/disk policy changes, recurring jobs, and recovery validation for k3s/Harvester environments.
+      instructions: |
+        # Longhorn GitOps Ops
+
+        Operate Longhorn through Git-backed manifests in this repository, with incident-safe handling when live mitigation is unavoidable.
+
+        ## Quick Start
+
+        1. From workspace root: `cd platform/gitops`
+        2. Load environment: `source dev-env.sh`
+        3. Capture baseline:
+           - `bash ${SKILL_PATH}/scripts/longhorn_health_snapshot.sh > /tmp/longhorn-before.md`
+
+        ## Guardrails
+
+        - Longhorn is reconciled from `k3s/longhorn/**` via `k3s/flux/apps/kustomization.yaml`; do not treat live edits as durable state.
+        - If an incident requires a live patch, mirror the same delta into Git immediately and reconcile Flux.
+        - Prefer explicit node/disk policy manifests (`k3s/longhorn/node-*.yaml`) and storage class manifests (`k3s/longhorn/storageclass-*.yaml`) over ad-hoc patching.
+
+        ## Core Workflow
+
+        ### 1) Scope + Baseline
+
+        - Confirm whether this is:
+          - policy tuning (`settings.yaml`, `storageclass-*`)
+          - node/disk scheduling (`node-*.yaml`)
+          - recurring jobs / backup policy (`recurring-jobs.yaml`, `settings-backup-target.yaml`)
+          - incident containment
+        - Run baseline snapshot script and keep output for before/after diff.
+
+        ### 2) Change in Git
+
+        - Edit only under `k3s/longhorn/**` (and related references if needed).
+        - If recurring-job selector behavior changes, verify corresponding StorageClass params and selectors stay aligned.
+        - Commit with storage-focused message and push.
+
+        ### 3) Reconcile
+
+        - Trigger:
+          - `flux reconcile kustomization apps -n flux-system --with-source`
+        - Verify reconciliation status:
+          - `kubectl -n flux-system get kustomizations`
+
+        ### 4) Validate Outcome
+
+        - Re-run:
+          - `bash ${SKILL_PATH}/scripts/longhorn_health_snapshot.sh > /tmp/longhorn-after.md`
+        - Confirm:
+          - volume robustness trend improves/stabilizes
+          - no repeated scheduler errors (`HardNodeAffinity`, `no available disk`)
+          - no repeated replica startup failures for missing directories
+        - For incident recovery, cross-check runbooks in `references/workflow.md`.
+
+        ### 5) Persist and Handoff
+
+        - Record decision + result in agent context.
+        - If residual risk exists, create explicit follow-up tasks with owning file/path.
+
+        ## References / Templates
+
+        - Workflow + source links: `references/workflow.md`
+        - Change checklist: `assets/templates/longhorn-change-checklist.md`
+      scripts:
+        - name: longhorn_health_snapshot.sh
+          path: scripts/longhorn_health_snapshot.sh
+          description: Generate a read-only Longhorn health snapshot for before/after verification
+      references:
+        - workflow.md
+      assets:
+        - templates/longhorn-change-checklist.md
+      always_allow:
+        - longhorn_health_snapshot.sh
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: monitoring-gitops-ops
+    categories: [kubernetes, gitops, operations]
+    common:
+      description: |
+        Operate monitoring stack (Prometheus/Grafana/Alertmanager/Loki) via GitOps in platform/gitops, including alert rule changes, dashboard rollouts, and verification workflows.
+      instructions: |
+        # Monitoring GitOps Ops
+
+        Manage monitoring changes through Git and Flux with explicit verification of alerting semantics and runtime health.
+
+        ## Quick Start
+
+        1. `cd platform/gitops && source dev-env.sh`
+        2. Baseline:
+           - `bash ${SKILL_PATH}/scripts/monitoring_health_snapshot.sh > /tmp/monitoring-before.md`
+        3. Optional rule lint (heuristic):
+           - `bash ${SKILL_PATH}/scripts/check_prometheus_rule_annotations.sh`
+
+        ## Guardrails
+
+        - Monitoring reconciliation is owned by Flux `Kustomization/monitoring` (`clusters/k3s/flux-system/kustomization-monitoring.yaml` -> `k3s/flux/monitoring`).
+        - Keep rule and dashboard changes in `k3s/monitoring/**`; avoid editing live PrometheusRule objects directly.
+        - Alert definitions should include operational context (`summary`, `description`, `runbook_url`) to reduce responder ambiguity.
+
+        ## Core Workflow
+
+        ### 1) Identify Change Type
+
+        - Rule tuning: `k3s/monitoring/prometheus-rules-*.yaml`
+        - Scrape topology: `*servicemonitor*`, `*podmonitor*`, exporter manifests
+        - Dashboards: `k3s/monitoring/dashboards/**`
+        - Stack configuration: `k3s/monitoring/kube-prometheus-stack.yaml`
+
+        ### 2) Apply Git Change
+
+        - Edit manifests and keep scope narrow.
+        - Run annotation check script for rule files.
+        - Commit and push.
+
+        ### 3) Reconcile + Observe
+
+        - `flux reconcile kustomization monitoring -n flux-system --with-source`
+        - Validate:
+          - `kubectl -n flux-system get kustomizations monitoring`
+          - `kubectl -n monitoring get pods`
+          - `kubectl -n monitoring get prometheusrules`
+
+        ### 4) Runtime Validation
+
+        - Use MCP when available:
+          - `prometheus__list_alerts`
+          - `grafana__grafana_list_alerts`
+          - `alertmanager__am_list_alerts`
+        - Ensure expected alerts fire/clear behavior and no rule-evaluation errors.
+
+        ### 5) Persist
+
+        - Capture after snapshot and summarize what changed, why, and residual risk.
+        - Add follow-ups for noisy/fatiguing alerts rather than leaving ad-hoc suppressions.
+
+        ## References / Templates
+
+        - Workflow + source links: `references/workflow.md`
+        - Change checklist: `assets/templates/monitoring-change-checklist.md`
+      scripts:
+        - name: monitoring_health_snapshot.sh
+          path: scripts/monitoring_health_snapshot.sh
+          description: Generate read-only monitoring stack status snapshot
+        - name: check_prometheus_rule_annotations.sh
+          path: scripts/check_prometheus_rule_annotations.sh
+          description: Heuristic check for summary/description/runbook_url coverage in rule files
+      references:
+        - workflow.md
+      assets:
+        - templates/monitoring-change-checklist.md
+      always_allow:
+        - monitoring_health_snapshot.sh
+        - check_prometheus_rule_annotations.sh
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: k3s-harvester-maintenance
+    categories: [kubernetes, gitops, operations]
+    common:
+      description: |
+        Run routine k3s and Harvester maintenance via GitOps-first workflows with explicit triage, validation, and rollback guardrails.
+      instructions: |
+        # K3s Harvester Maintenance
+
+        Routine operations workflow spanning k3s workloads and Harvester VM infrastructure with GitOps as default control plane.
+
+        ## Quick Start
+
+        1. `cd platform/gitops && source dev-env.sh`
+        2. Capture baseline:
+           - `bash ${SKILL_PATH}/scripts/cluster_maintenance_snapshot.sh > /tmp/maintenance-before.md`
+        3. Choose intent:
+           - routine upkeep (disk pressure cleanup, policy tuning, cron updates)
+           - VM/node recovery
+           - post-incident hardening
+
+        ## Guardrails
+
+        - Prefer Git changes under `k3s/**` and `harvester/**`; reconcile with Flux instead of live drift.
+        - If a VM is stuck in `Running` with unhealthy guest state, use Harvester guidance:
+          - `kubectl --kubeconfig .kube/harvester-admin.yaml -n default delete vmi <vm-name>`
+        - Keep one-off jobs in `k3s/ops/maintenance/` deliberate and short-lived.
+
+        ## Core Workflow
+
+        ### 1) Baseline and Scope
+
+        - Collect k3s node health, Harvester VM state, Flux kustomization readiness, and pressure signals.
+        - Identify if issue is node, VM, storage, or control-plane reconciliation.
+
+        ### 2) Apply Change in Git
+
+        - Maintenance manifests: `k3s/ops/maintenance/**`
+        - Harvester VM/infra manifests: `harvester/**`
+        - Cluster policy changes: relevant `k3s/**` components
+        - Commit and push with maintenance-focused message.
+
+        ### 3) Reconcile and Verify
+
+        - `flux reconcile kustomization apps -n flux-system --with-source`
+        - If monitoring/system kustomizations changed, reconcile those explicitly.
+        - Validate nodes, VMs, and affected namespaces return to healthy state.
+
+        ### 4) Closeout
+
+        - Capture after snapshot.
+        - Remove temporary mitigation manifests from Git once no longer needed.
+        - Record what was changed and rollback trigger conditions.
+
+        ## References / Templates
+
+        - Workflow + source links: `references/workflow.md`
+        - Maintenance checklist: `assets/templates/maintenance-window-checklist.md`
+      scripts:
+        - name: cluster_maintenance_snapshot.sh
+          path: scripts/cluster_maintenance_snapshot.sh
+          description: Read-only k3s plus Harvester maintenance health snapshot
+      references:
+        - workflow.md
+      assets:
+        - templates/maintenance-window-checklist.md
+      always_allow:
+        - cluster_maintenance_snapshot.sh
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: mcp-registry-ops
+    categories: [mcp, configuration, operations]
+    common:
+      description: |
+        Edit and operate MCP registry.yaml (especially mcp/context/registry.yaml): validate registry changes, manage per-server allowlists (always_allow), and generate MCP client configs and hub manifests via loom-core's loom CLI. Use when updating MCP servers, hub deployments, gateway registry, or Codex/VSCode/Kilo configs.
+      instructions: |
+        # MCP Registry Ops
+
+        Maintain the workspace's canonical MCP server registry and regenerate downstream artifacts (client configs + hub manifests) safely and repeatably.
+
+        ## Quick Start (Workspace Layout)
+
+        - Find the registry:
+          - `python ${SKILL_PATH}/scripts/registry_discover.py --root .`
+        - Generate client configs (preview by default, --apply to write):
+          - `bash ${SKILL_PATH}/scripts/loom_generate_configs.sh . --target all --output-dir generated/mcp --hub-mode`
+          - `bash ${SKILL_PATH}/scripts/loom_generate_configs.sh . --target all --output-dir generated/mcp --hub-mode --apply`
+        - Generate hub manifests (preview by default, --apply to write):
+          - `bash ${SKILL_PATH}/scripts/loom_generate_manifests.sh . --output-dir platform/gitops/k3s/loom-hub/servers`
+          - `bash ${SKILL_PATH}/scripts/loom_generate_manifests.sh . --output-dir platform/gitops/k3s/loom-hub/servers --apply`
+
+        ## Core Workflow
+
+        ### 1) Edit `registry.yaml`
+
+        - Prefer editing `common` first.
+        - Use `targets.<platform>` only for platform-specific overrides.
+        - Keep `always_allow` (auto-approve) lists minimal and intentional.
+
+        ### 2) Update an Allowlist (always_allow)
+
+        - Edit `common.always_allow`:
+          - `python ${SKILL_PATH}/scripts/registry_allowlist_edit.py --registry mcp/context/registry.yaml --server gitlab --scope common --add create_issue`
+        - Edit `targets.<target>.always_allow`:
+          - `python ${SKILL_PATH}/scripts/registry_allowlist_edit.py --registry mcp/context/registry.yaml --server gitlab --scope target:codex --set verify_token list_projects`
+
+        Use `--dry-run` to preview and `--sort` to normalize.
+
+        ### 3) Generate Configs / Manifests
+
+        - Generate client configs:
+          - `bin/loom generate configs --registry mcp/context/registry.yaml --target all --output-dir generated/mcp --hub-mode`
+        - Generate hub manifests:
+          - `bin/loom generate manifests --registry mcp/context/registry.yaml --output-dir platform/gitops/k3s/loom-hub/servers`
+        - Sync all platform configs (hub mode, all projects, skip nested worktrees):
+          - `for profile in vscode antigravity codex claude gemini kilocode; do bin/loom sync "$profile" --regen --hub-mode --all-projects --skip-worktrees; done`
+          - `bin/loom sync skills all`
+
+        If `bin/loom` doesn't exist, build it:
+        - `cd services/loom-core && go build -o bin/loom ./cmd/loom`
+
+        ### 4) Validate Generated Configs (Secrets Hygiene)
+
+        - `bin/loom validate configs --dir generated/mcp`
+
+        ### 5) Post-Sync Proxy Smoke Check
+
+        When clients run in `loom proxy` mode (Codex/Claude default), verify the daemon surface directly after sync:
+
+        - Reload daemon config:
+          - `bin/loom reload`
+        - Confirm expected tools are exposed:
+          - `bin/loom tools list | rg "agent_context__agent_workflow_start|agent_context__agent_entity_add|qdrant__qdrant_delete_collection"`
+        - Execute lightweight read calls:
+          - `bin/loom tools call agent_context__agent_workflow_list --args '{"session_id":"<session-id>"}' --json`
+          - `bin/loom tools call agent_context__agent_memory_policy_get --args '{"tier":"working"}' --json`
+        - Execute reversible vector lifecycle smoke:
+          - create/get/delete a temporary collection via `qdrant__qdrant_create_collection`, `qdrant__qdrant_get_collection`, and `qdrant__qdrant_delete_collection`
+
+        ## References / Templates
+
+        - Conventions: `references/workspace-conventions.md`
+        - Change checklist: `assets/templates/registry-change-checklist.md`
+      scripts:
+        - name: registry_discover.py
+          path: scripts/registry_discover.py
+          description: Find registry.yaml in workspace
+        - name: registry_allowlist_edit.py
+          path: scripts/registry_allowlist_edit.py
+          description: Edit always_allow lists in registry
+        - name: loom_generate_configs.sh
+          path: scripts/loom_generate_configs.sh
+          description: Generate MCP client configs via loom
+        - name: loom_generate_manifests.sh
+          path: scripts/loom_generate_manifests.sh
+          description: Generate K8s manifests for MCP hub
+      references:
+        - workspace-conventions.md
+      assets:
+        - templates/registry-change-checklist.md
+      always_allow:
+        - registry_discover.py
+        - loom_generate_configs.sh
+        - loom_generate_manifests.sh
+        # ^ Safe by default: both scripts run --dry-run unless --apply is passed.
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: browserkit-screenshots
+    categories: [tooling]
+    common:
+      description: |
+        Capture screenshots of apps/websites via Playwright for UI work. Uses the local-only MCP server `browserkit` (mcp-browserkit) backed by flexinfer-browser-kit.
+      instructions: |
+        # BrowserKit Screenshots
+
+        Capture reference screenshots for UX/UI work using the local-only MCP server `browserkit`.
+
+        ## Prereqs (Host)
+
+        - `pip install flexinfer-browser-kit playwright`
+        - `python3 -m playwright install chromium`
+
+        Verify:
+        - `bash ${SKILL_PATH}/scripts/check_browserkit_ready.sh`
+
+        ## Use
+
+        - Full page:
+          - `browserkit__screenshot({ url: "https://example.com", full_page: true })`
+        - Component-only:
+          - `browserkit__screenshot({ url: "http://localhost:3000", selector: ".hero" })`
+
+        See `references/usage.md` for recommended settings.
+      scripts:
+        - name: check_browserkit_ready.sh
+          path: scripts/check_browserkit_ready.sh
+          description: Verify Python deps and that Playwright Chromium can launch
+      references:
+        - usage.md
+        - troubleshooting.md
+      assets:
+        - templates/capture-checklist.md
+      always_allow:
+        - check_browserkit_ready.sh
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: false
+      gemini:
+        enabled: false
+
+  - name: plan-loom-core
+    categories: [planning, research]
+    common:
+      description: |
+        Planning + working-context workflow: gather workspace/repo information, validate MCP/runtime capabilities, establish codebase index/search readiness, and produce standardized Markdown context/spec/plan docs in `.loom/`.
+      instructions: |
+        # Plan Loom Core
+
+        ## Overview
+
+        Create and maintain an evidence-backed "Loom Context Pack" (usually in `.loom/`) so planning, research, specs, and implementation stay consistent, reviewable, and shareable across agents.
+
+        ## Quick Start
+
+        1. Initialize templates into `.loom/`:
+           - `python ${SKILL_PATH}/scripts/init_loom_context.py --root .`
+        2. Generate a workspace snapshot:
+           - `python ${SKILL_PATH}/scripts/workspace_snapshot.py --root .`
+        3. Validate codebase indexing/search baseline:
+           - `codebase_memory__codebase_stats`
+           - If missing/stale: `codebase_memory__codebase_index_start` + `codebase_memory__codebase_index_poll`
+           - Capture index state in `.loom/00-mcp-inventory.md` and `.loom/30-implementation-plan.md`
+        4. Detect runtime mode and inventory MCP tools (in `.loom/00-mcp-inventory.md`):
+           - Prefer loom-mode inventory via `loom://config`, `loom://servers`, and `loom://tools/*`
+           - Fallback to per-server MCP resource/template discovery when loom proxy is not present
+        5. Fill in the docs you need:
+           - Research: `.loom/10-research.md`
+           - Product spec: `.loom/20-product-spec.md`
+           - Implementation plan: `.loom/30-implementation-plan.md`
+
+        ## Workflow Decision Tree
+
+        - If the user asks for "plan this", "write a spec", "research approaches", or "establish context":
+          - Create/refresh `.loom/` templates and generate a workspace snapshot.
+          - Verify index/search readiness and note gaps.
+          - Add/refresh MCP inventory.
+          - Produce (or update) the relevant standardized doc(s) and keep sources updated.
+        - If the user asks "what's in this workspace/repo?":
+          - Generate/update `.loom/00-workspace-snapshot.md` first, then summarize.
+        - If the user asks to "use loom tools" / "use MCP tools":
+          - Start with `.loom/00-mcp-inventory.md` so tool choices are sourced.
+
+        ## Document Standards (Sourcing)
+
+        Follow `references/doc-standards.md`:
+        - Use sources for non-trivial claims: `path/to/file.ext:line`, exact commands run, and URLs.
+        - Prefer stable, reproducible references; separate facts from assumptions.
+
+        ## MCP Inventory Workflow (Loom-Mode Aware)
+
+        1. Detect runtime mode:
+           - Call `functions.list_mcp_resources` with no `server`.
+           - Call `functions.list_mcp_resource_templates` with no `server`.
+           - If top-level loom resources/templates are present (`loom://config`, `loom://servers`, `loom://tools/index`), treat this as loom-mode.
+        2. If loom-mode is active, inventory through loom proxy resources:
+           - `functions.read_mcp_resource(server="loom", uri="loom://config")`
+           - `functions.read_mcp_resource(server="loom", uri="loom://servers")`
+           - `functions.read_mcp_resource(server="loom", uri="loom://tools/index")`
+           - Use `totalPages` from index, then read each page:
+             - `loom://tools/page/{page}`
+           - For server-specific deep dives, read:
+             - `loom://tools/server/{server}/page/{page}`
+        3. If loom-mode is not active, inventory directly per server:
+           - `functions.list_mcp_resources(server=...)`
+           - `functions.list_mcp_resource_templates(server=...)`
+           - `functions.read_mcp_resource(server=..., uri=...)` for relevant entries.
+        4. If MCP resource APIs are restricted/unavailable, use CLI fallback:
+           - `loom tools list --json`
+           - `loom tools list --json --server <server> --page <n> --limit <n>`
+        5. Capture findings in `.loom/00-mcp-inventory.md`:
+           - Runtime mode detection, server inventory, tool counts by server, paged capture strategy, auth/permission constraints, codebase index readiness, and delegation plan rationale.
+
+        ## Core Workflow Packs to Design
+
+        When planning skill/workflow upgrades, explicitly cover:
+        1. Research loop (local index + external validation)
+        2. Technical writing loop (source-backed docs/specs)
+        3. Testing + ship loop (hooks/tests/lint, commit/push, CI monitor/fix)
+        4. Troubleshooting loop (triage/investigate/mitigate with handoff-ready context)
+        5. Coordination loop (agent presence, task lifecycle, session summaries)
+      scripts:
+        - name: init_loom_context.py
+          path: scripts/init_loom_context.py
+          description: Initialize .loom/ directory with templates
+        - name: workspace_snapshot.py
+          path: scripts/workspace_snapshot.py
+          description: Generate workspace structure snapshot
+      references:
+        - doc-standards.md
+      assets:
+        - templates/00-index.md
+        - templates/00-mcp-inventory.md
+        - templates/10-research.md
+        - templates/20-product-spec.md
+        - templates/30-implementation-plan.md
+        - templates/50-worklog.md
+      always_allow:
+        # init_loom_context.py is safe: skips existing files by default,
+        # only overwrites with explicit --force.
+        - init_loom_context.py
+        - workspace_snapshot.py
+    targets:
+      codex:
+        enabled: true
+        type: skill
+        instructions_append: |
+          ## Codex Delegation Addendum
+
+          - In collaboration mode, shard inventory work in parallel where safe:
+            - server groups, tool page ranges, or deep-dive sections.
+          - Use `multi_tool_use.parallel` for concurrent read-only inventory calls.
+          - Keep one coordinator thread that merges slices into `.loom/00-mcp-inventory.md` and de-duplicates findings.
+          - Prefer loom-mode paged endpoints to avoid truncation and top-level tool under-reporting.
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+        instructions_append: |
+          ## Claude Delegation Addendum
+
+          - Use `Task`-based subagent delegation for server-group sharding when inventory is large.
+          - Assign each subagent a bounded slice (specific servers or page ranges), then aggregate into one normalized inventory doc.
+          - Keep a short reconciliation pass to resolve overlaps and confirm permissions/auth constraints.
+      kilocode:
+        enabled: true
+        type: rule
+        instructions_append: |
+          ## Kilocode Delegation Addendum
+
+          - Prefer staged delegation through workflow/rule phases:
+            - Phase 1: runtime detection + server list
+            - Phase 2: paged tool capture by shard
+            - Phase 3: synthesis + decision notes
+          - Keep each phase checkpointed so a partial run can resume without redoing completed slices.
+      gemini:
+        enabled: true
+        type: skill
+        instructions_append: |
+          ## Gemini Planning Addendum
+
+          - Use checkpointed phased decomposition even when explicit subagent primitives are unavailable.
+          - Break inventory into deterministic slices (mode detection, summary, paged deep dives, constraints) and validate each checkpoint before proceeding.
+          - Record assumptions explicitly when delegation primitives are unavailable in the active runtime.
+
+  - name: polyglot-release-bumper
+    categories: [release, ci-cd]
+    common:
+      description: |
+        Prepare and ship releases across Go/Python/Node repos: detect project type, run the right test/lint/build commands, bump versions in pyproject.toml/package.json when applicable, and execute commit/tag/push with a standardized checklist. Use when asked to bump versions, cut a release, update changelogs, or publish.
+      instructions: |
+        # Polyglot Release Bumper
+
+        Standardize a safe release routine across repos that don't share one build system.
+
+        ## Quick Start
+
+        - Detect project type(s) and suggested commands:
+          - `python ${SKILL_PATH}/scripts/detect_project.py --root .`
+        - Bump versions (Python/Node only) with preview:
+          - `python ${SKILL_PATH}/scripts/bump_version.py --root . --bump patch --dry-run`
+        - Apply the bump:
+          - `python ${SKILL_PATH}/scripts/bump_version.py --root . --bump patch`
+
+        ## What Gets Updated
+
+        - `pyproject.toml`: first `version = "X.Y.Z"` found under `[project]` or `[tool.poetry]`
+        - `package.json`: top-level `"version"`
+        - Go modules (`go.mod`): usually tag-only (no file bump); ship via `git tag vX.Y.Z`
+
+        ## Core Workflow
+
+        1. Confirm clean working tree; pull latest.
+        2. Run tests/lint/build for the repo.
+        3. Bump version (if applicable).
+        4. Update changelog / release notes (repo conventions).
+        5. Commit, tag, push.
+        6. Verify CI pipeline.
+
+        ## References / Templates
+
+        - Workflow notes: `references/workflow.md`
+        - Checklist: `assets/templates/release-checklist.md`
+      scripts:
+        - name: detect_project.py
+          path: scripts/detect_project.py
+          description: Detect project types and suggest commands
+        - name: bump_version.py
+          path: scripts/bump_version.py
+          description: Bump version in pyproject.toml or package.json
+      references:
+        - workflow.md
+      assets:
+        - templates/release-checklist.md
+      always_allow:
+        - detect_project.py
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: workspace-branding-maintenance
+    categories: [branding, gitlab, operations]
+    common:
+      description: |
+        Standardize repo branding across a multi-repo workspace: ensure assets/banner.png + assets/icon.png and README banner references using libs/banner-kit, and keep the services public allowlist consistent. Use when repos are missing branding assets, banners drift, or GitLab metadata/visibility needs alignment.
+      instructions: |
+        # Workspace Branding Maintenance
+
+        Use `libs/banner-kit` as the canonical implementation for generating and fixing workspace branding and related GitLab metadata.
+
+        ## Quick Start
+
+        - Scan for missing assets / README banner drift:
+          - `python ${SKILL_PATH}/scripts/scan_branding.py --root .`
+        - Run banner-kit maintenance in dry-run mode (default):
+          - `bash ${SKILL_PATH}/scripts/run_workspace_branding.sh . --stash`
+        - Apply changes (explicit opt-in):
+          - `APPLY=1 bash ${SKILL_PATH}/scripts/run_workspace_branding.sh . --stash`
+
+        ## Core Workflow
+
+        1. Identify drift with `scan_branding.py` and/or banner-kit `--dry-run`.
+        2. Confirm allowlist behavior:
+           - `libs/banner-kit/scripts/workspace_public_services.txt`
+        3. Apply changes only after previewing.
+
+        ## Notes / Constraints
+
+        - The source script may commit/push and update GitLab project metadata; always start with `--dry-run`.
+        - `libs/*` repos are public by default; `services/*` repos are private by default unless allowlisted.
+      scripts:
+        - name: scan_branding.py
+          path: scripts/scan_branding.py
+          description: Scan for missing branding assets
+        - name: run_workspace_branding.sh
+          path: scripts/run_workspace_branding.sh
+          description: Run banner-kit workspace maintenance
+      references:
+        - notes.md
+      always_allow:
+        - scan_branding.py
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: platform-config-sync
+    categories: [mcp, configuration]
+    common:
+      description: |
+        Manage MCP configs and generated skills across Codex, Claude, Kilocode, Gemini, VS Code, and Antigravity. Use to prevent drift and ensure workflow changes propagate consistently across tools.
+      instructions: |
+        # Platform Configuration Sync
+
+        Manage MCP server configs and generated skills from a single registry source of truth.
+
+        ## Supported Platforms
+
+        | Platform | Config Format | Repo Path | Home Path |
+        |----------|---------------|-----------|-----------|
+        | VS Code | JSON | `.vscode/mcp.json` | `~/Library/.../Code/User/mcp.json` |
+        | Antigravity | JSON | `.antigravity/mcp.json` | `~/.antigravity/mcp.json` |
+        | Gemini | JSON | `.gemini/settings.json` | `~/.gemini/settings.json` |
+        | Claude | JSON | `.claude/mcp.json` | `~/.claude/mcp.json` |
+        | Codex | TOML | `.codex/config.toml` | `~/.codex/config.toml` |
+        | Kilocode | TOML | `.kilocode/config.toml` | `~/.kilocode/config.toml` |
+
+        ## Quick Commands
+
+        ### Check Sync Status
+        ```bash
+        loom sync status
+        ```
+        Shows sync status for all platforms: in-sync, drift, or missing.
+
+        ### Validate + Generate Skills
+        ```bash
+        loom generate skills --registry mcp/context/skills-registry.yaml --validate
+        loom generate skills --target all --registry mcp/context/skills-registry.yaml --workspace . --codex-home ./.codex
+        ```
+
+        ### Audit Skill Sources
+        ```bash
+        find mcp/skills -type f -path '*/scripts/*' -exec stat -f '%Sp %N' {} \;
+        find mcp/skills -type d -name '__pycache__'
+        ```
+        Every script with a shebang should be executable; compiled cache artifacts should not be kept in source-controlled skill trees.
+
+        ### Sync All Platforms
+        ```bash
+        for profile in vscode antigravity codex claude gemini kilocode opencode zed; do
+          loom sync "$profile" --regen --hub-mode --all-projects --skip-worktrees
+        done
+        loom sync skills all
+        ```
+
+        ### Sync Single Platform
+        ```bash
+        loom sync vscode --regen --hub-mode --all-projects --skip-worktrees       # VS Code
+        loom sync antigravity --regen --hub-mode --all-projects --skip-worktrees  # Antigravity/Windsurf
+        loom sync gemini --regen --hub-mode --all-projects --skip-worktrees       # Gemini CLI
+        loom sync claude --regen --hub-mode --all-projects --skip-worktrees       # Claude Code
+        loom sync codex --regen --hub-mode --all-projects --skip-worktrees        # Codex CLI
+        loom sync kilocode --regen --hub-mode --all-projects --skip-worktrees     # Kilocode
+        ```
+
+        ## VS Code Extension Commands (Loom)
+
+        If using VS Code or Antigravity with Loom extension:
+
+        | Command | Description |
+        |---------|-------------|
+        | `Loom: Show Platform Configs` | Refresh platform status view |
+        | `Loom: Sync Platform Config` | Sync single platform |
+        | `Loom: Sync All Platforms` | Sync all enabled platforms |
+        | `Loom: Show Sync Dashboard` | Visual sync status grid |
+        | `Loom: Diff Platform Config` | Compare repo vs home diff |
+
+        ## Workflow
+
+        1. **Validate registries** (`registry.yaml` and `skills-registry.yaml`)
+        2. **Audit skill-source hygiene** (scripts executable, no cache artifacts, paths resolve)
+        3. **Generate skills + configs**
+        4. **Sync profiles and repo-local project trees**
+        5. **Verify drift-free status**
+        6. **Smoke critical workflows** (agent context, codebase memory, gitlab CI polling)
+
+        ## Registry Location
+
+        Canonical MCP server definitions are in:
+        ```
+        mcp/context/registry.yaml
+        ```
+
+        Canonical skill definitions are in:
+        ```
+        mcp/context/skills-registry.yaml
+        ```
+
+        Edit registries, then regenerate + sync for all platforms.
+
+        ## Troubleshooting
+
+        ### Config Drift
+        If `loom sync status` shows drift:
+        ```bash
+        loom sync <profile> --regen --hub-mode --all-projects --skip-worktrees
+        ```
+
+        ### Skills Not Updated In One Platform
+        Regenerate + resync skills:
+        ```bash
+        loom generate skills --target all --registry mcp/context/skills-registry.yaml --workspace . --codex-home ./.codex
+        loom sync skills all
+        ```
+        If repo-local platform trees are also used, rerun:
+        ```bash
+        for profile in codex claude gemini kilocode opencode zed vscode antigravity; do
+          loom sync "$profile" --regen --hub-mode --all-projects --skip-worktrees
+        done
+        ```
+
+        ### Missing Secrets
+        Secrets use `${keychain:KEY}` or `${env:VAR}` patterns. Ensure:
+        - Environment variables are set in shell profile
+        - Keychain items exist: `security find-generic-password -a $USER -s KEY`
+
+        ### Binary Not Found
+        Build loom CLI if missing:
+        ```bash
+        cd services/loom-core && make build
+        ```
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: agent-context
+    categories: [memory, agents]
+    common:
+      description: |
+        Use mcp-agent-context for persistent memory across sessions: start sessions, record decisions/findings, track tasks, and hand off context between agents. Use for long-running tasks, resumable work, multi-agent coordination, or knowledge preservation.
+      instructions: |
+        # Agent Context (Persistent Memory)
+
+        Universal guidance for AI agents using the `mcp-agent-context` MCP server from loom-core.
+
+        ## When to Use Agent Context
+
+        Use agent context for:
+        - **Long-running tasks**: Multi-file refactors, feature implementations
+        - **Resumable work**: Tasks spanning multiple sessions
+        - **Multi-agent coordination**: Handing off work between agents
+        - **Knowledge preservation**: Recording decisions, findings, and rationale
+
+        Skip agent context for:
+        - Simple one-shot queries
+        - Quick fixes under 5 minutes
+        - Read-only exploration
+
+        ## Essential Workflow
+
+        ### 1. Start Session with Recall
+
+        ```
+        agent_session_start(
+            namespace="project/feature-x",
+            description="Implementing user auth"
+        )
+        → Returns session_id
+
+        agent_recall(
+            session_id="...",
+            query="user authentication implementation",
+            scope="context",
+            file_context="src/auth/handler.go",
+            include_tasks=true,
+            token_budget=3000
+        )
+        → Returns previous decisions, findings, tasks
+        ```
+
+        ### 2. Record Context as You Work
+
+        ```
+        agent_context_add(
+            session_id="...",
+            entries=[
+                {
+                    entry_type: "decision",
+                    title: "Use JWT for session tokens",
+                    content: "Chose JWT over session cookies because...",
+                    tags: ["auth", "security"]
+                },
+                {
+                    entry_type: "file_read",
+                    title: "Auth middleware",
+                    content: "Key functions: validateToken(), refreshToken()",
+                    file_path: "src/middleware/auth.go",
+                    line_start: 45,
+                    line_end: 120
+                }
+            ]
+        )
+        ```
+
+        ### 3. Track Tasks & Task Dispatch
+
+        Create tasks as you discover work. Use all fields to make tasks actionable in the HUD:
+
+        ```
+        agent_task_add(
+            session_id="...",
+            tasks=[{
+                title: "Refactor auth middleware",
+                context: "JWT refresh tokens need support. See issue #42.",
+                priority: "high",
+                file_path: "services/api/auth.go",
+                line_number: 89,
+                tags: ["auth", "refactor"],
+                blocked_by: ["task-abc-123"]
+            }]
+        )
+        ```
+
+        **Task Lifecycle**: `pending → in_progress → completed` (or `→ blocked` when dependencies are incomplete).
+
+        Update status and close with resolution:
+
+        ```
+        agent_task_update(task_id="...", status="in_progress")
+
+        agent_task_update(
+            task_id="...",
+            status="completed",
+            resolution="Implemented JWT refresh at auth.go:89-142. Added tests."
+        )
+        ```
+
+        List and filter tasks:
+
+        ```
+        agent_task_list(session_id="...", status=["pending", "in_progress"])
+        ```
+
+        Tasks created here appear in the HUD agent dashboard when you have registered presence.
+
+        ### 4. End Session
+
+        ```
+        agent_session_end(
+            session_id="...",
+            summarize=true
+        )
+        → Generates compressed summary for future recall
+        ```
+
+        ## Entry Types Reference
+
+        | Type | When to Use | Example |
+        |------|-------------|---------|
+        | `decision` | Architecture/implementation choices | "Chose gRPC over REST" |
+        | `finding` | Discoveries during exploration | "Found validation in utils.go" |
+        | `file_read` | Recording important file sections | "Key config at lines 45-80" |
+        | `question` | Open questions to revisit | "Should we support OAuth2?" |
+        | `note` | General observations | "Module uses singleton pattern" |
+        | `error` | Errors and resolutions | "Fixed nil pointer" |
+
+        ## Best Practices
+
+        1. **Recall before starting**: Check for previous context at session start
+        2. **Record decisions immediately**: Don't wait until end of session
+        3. **Use meaningful namespaces**: `project/feature`, `project/bugfix-123`
+        4. **Tag entries consistently**: Enables filtered recall later
+        5. **End sessions with summary**: Compresses context for future recall
+
+        ### Context Budget Hygiene
+
+        Keep context compact and retrieval-focused:
+
+        1. Start each new work chunk with token-limited recall (`token_budget`), not full-history dumps.
+        2. Prefer `decision` and `finding` entries over verbose freeform notes.
+        3. Summarize and end stale sessions instead of carrying everything forward:
+
+        ```
+        agent_session_end(session_id="...", summarize=true)
+        ```
+
+        ## Agent Coordination (Multi-Agent)
+
+        When multiple agents work concurrently, use presence, file claims, and worktrees to coordinate.
+
+        ### Presence Registry
+
+        Register presence so the HUD can assign tasks to your agent and show your status:
+
+        ```
+        agent_presence_register(
+            agent_id="claude-1",
+            session_id="...",
+            agent_type="claude-code",
+            description="Working on auth refactor"
+        )
+        ```
+
+        Send heartbeats to stay visible and detect file conflicts:
+
+        ```
+        agent_presence_heartbeat(
+            agent_id="claude-1",
+            active_files=["src/auth/handler.go", "src/auth/middleware.go"],
+            current_task="Refactoring auth middleware",
+            branch="feat/auth-refactor"
+        )
+        → Returns has_conflicts if another agent is editing the same files
+        ```
+
+        Discover other active agents:
+
+        ```
+        agent_presence_list()
+        → Returns active agents with their current tasks, files, and branches
+        ```
+
+        ### File Claims (Advisory Locks)
+
+        Claim files before editing to avoid conflicts:
+
+        ```
+        agent_file_claim_acquire(
+            agent_id="claude-1",
+            session_id="...",
+            file_path="src/auth/handler.go",
+            claim_type="edit",
+            reason="Refactoring auth handler"
+        )
+        → Returns has_conflicts if another agent holds a claim
+        ```
+
+        Check who holds claims on files:
+
+        ```
+        agent_file_claim_query(file_paths=["src/auth/handler.go"])
+        ```
+
+        ### Git Worktree Isolation
+
+        Request an isolated worktree for parallel work:
+
+        ```
+        agent_worktree_allocate(
+            agent_id="claude-1",
+            session_id="...",
+            branch_name="feat/auth-refactor",
+            base_branch="main",
+            purpose="Auth system refactor"
+        )
+        → Returns worktree_path to work in
+        ```
+
+        ### Sharing Context with Other Agents
+
+        Share specific entries with target agents using shared visibility:
+
+        ```
+        agent_context_add(
+            session_id="...",
+            entries=[
+                {
+                    entry_type: "note",
+                    title: "Auth implementation handoff context",
+                    content: "Token refresh logic is in middleware/auth.go and user lookup in service/user.go.",
+                    visibility: "shared",
+                    shared_with: ["codex-1", "claude-1"],
+                    tags: ["handoff-context", "auth"]
+                }
+            ]
+        )
+        ```
+
+        ### Handoff Inbox
+
+        Check for pending handoffs at session start:
+
+        ```
+        agent_handoff_inbox(agent_id="claude-1")
+        → Returns pending handoffs from other agents
+        ```
+      scripts: []
+      references: []
+      assets:
+        - templates/session-start.md
+        - templates/handoff.md
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: multi-agent-handoff
+    categories: [agents, memory]
+    common:
+      description: |
+        Hand off work between AI coding agents with context preservation. Use when transferring tasks between Claude, Codex, Gemini, or other agents, ensuring the receiving agent has full context of decisions, findings, and pending work.
+      instructions: |
+        # Multi-Agent Handoff
+
+        Transfer work between agents while preserving context and continuity.
+
+        ## When to Use
+
+        - Switching from Claude to Codex (or vice versa)
+        - Parallel agent work on different aspects
+        - Escalating complex tasks to specialized agents
+        - Sharing discoveries across agent sessions
+
+        ## Handoff Workflow
+
+        ### 1. Prepare Context (Source Agent)
+
+        Before creating handoff, ensure key context is recorded:
+
+        ```
+        agent_context_add(
+            session_id="...",
+            entries=[
+                {
+                    entry_type: "decision",
+                    title: "Summary of approach taken",
+                    content: "Detailed explanation...",
+                    tags: ["handoff-context"]
+                }
+            ]
+        )
+        ```
+
+        ### 2. Create Handoff
+
+        ```
+        agent_handoff_create(
+            session_id="current-session",
+            target_agent_id="codex-1",
+            handoff_type="selective",   # or "full"
+            entry_ids=["entry1", "entry2"],  # for selective
+            instructions="Continue implementing rate limiting. Key decision: using token bucket algorithm.",
+            token_budget=4000
+        )
+        → Returns handoff_id
+        ```
+
+        **Handoff Types:**
+        - `selective`: Only include specified entries (recommended for focused handoffs)
+        - `full`: Include all session context (use sparingly)
+
+        ### 3. Accept Handoff (Target Agent)
+
+        ```
+        agent_handoff_accept(
+            handoff_id="...",
+            session_id="new-session-id",
+            import_entries=true
+        )
+        → Imports context into target agent's session
+        ```
+
+        ### 4. Continue Work
+
+        The target agent now has:
+        - All shared context entries
+        - Source agent's instructions
+        - Task continuity
+
+        ## Sharing Without Full Handoff
+
+        For lighter coordination, write shared entries directly:
+
+        ```
+        agent_context_add(
+            session_id="current-session",
+            entries=[
+                {
+                    entry_type: "note",
+                    title: "Auth findings snapshot",
+                    content: "Rate limiting interceptor is in gateway/ratelimit.go; tests in gateway/ratelimit_test.go.",
+                    visibility: "shared",
+                    shared_with: ["claude-code", "codex-1"],
+                    tags: ["auth", "handoff-context"]
+                }
+            ]
+        )
+        ```
+
+        Target agents can retrieve this with:
+
+        ```
+        agent_recall(
+            query="auth findings snapshot",
+            scope="context",
+            cross_agent=true
+        )
+        ```
+
+        ## Best Practices
+
+        1. **Include clear instructions**: Tell the target agent what to do next
+        2. **Share decisions, not just findings**: Context about "why" is crucial
+        3. **Use selective handoffs**: Full handoffs can overwhelm
+        4. **Tag handoff entries**: Use `handoff-context` tag for filtering
+        5. **Verify acceptance**: Confirm target agent received context
+      scripts: []
+      references: []
+      assets:
+        - templates/handoff-brief.md
+        - templates/shared-context.md
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: codebase-exploration-memory
+    categories: [codebase, memory]
+    common:
+      description: |
+        Preserve codebase exploration findings across sessions with an index-first workflow. Use when mapping architecture, tracing behavior, or building reusable mental models across agents.
+      instructions: |
+        # Codebase Exploration Memory
+
+        Build persistent mental models of codebases that survive across sessions.
+
+        ## When to Use
+
+        - Onboarding to a new codebase
+        - Deep-diving into complex subsystems
+        - Mapping dependencies and call graphs
+        - Building architecture documentation
+
+        ## Exploration Workflow
+
+        ### 0. Ensure Code Index Is Ready
+
+        Before deep exploration, verify index coverage:
+
+        ```
+        codebase_stats(repo_id="my-project")
+        ```
+
+        If index is absent or stale:
+
+        ```
+        codebase_index_start(
+            repo_id="my-project",
+            root=".",
+            full_refresh=true
+        )
+        codebase_index_poll(job_id="...")
+        ```
+
+        Use watch mode for long exploration sessions:
+
+        ```
+        codebase_watch_start(repo_id="my-project", root=".")
+        ```
+
+        ### 1. Start Exploration Session
+
+        ```
+        agent_session_start(
+            namespace="project/codebase-exploration",
+            description="Mapping authentication subsystem"
+        )
+        ```
+
+        ### 2. Record File Reads
+
+        When you read important files, record key insights:
+
+        ```
+        agent_context_add(
+            session_id="...",
+            entries=[
+                {
+                    entry_type: "file_read",
+                    title: "Auth middleware entry point",
+                    content: "Main validation in validateToken(). Uses JWT with RS256. Refresh handled separately.",
+                    file_path: "src/middleware/auth.go",
+                    line_start: 45,
+                    line_end: 120,
+                    tags: ["auth", "middleware", "jwt"]
+                }
+            ]
+        )
+        ```
+
+        ### 3. Record Symbol-Level Code Context
+
+        Connect findings to indexed code with `code_context` entries:
+
+        ```
+        agent_context_add(
+            session_id="...",
+            entries=[
+                {
+                    entry_type: "code_context",
+                    title: "validateToken symbol context",
+                    content: "Main entry point for JWT validation.",
+                    file_path: "src/middleware/auth.go",
+                    line_start: 45,
+                    line_end: 90,
+                    metadata: {
+                        repo_id: "my-project",
+                        symbol: "validateToken"
+                    },
+                    tags: ["auth", "critical-path"]
+                }
+            ]
+        )
+        ```
+
+        ### 4. Record Architectural Findings
+
+        ```
+        agent_context_add(
+            session_id="...",
+            entries=[
+                {
+                    entry_type: "finding",
+                    title: "Auth flow architecture",
+                    content: "Request → AuthMiddleware → validateToken() → UserService.GetUser() → Handler",
+                    tags: ["architecture", "auth", "request-flow"]
+                }
+            ]
+        )
+        ```
+
+        ### 5. Future Recall
+
+        When returning to this codebase:
+
+        ```
+        agent_recall(
+            query="authentication implementation",
+            scope="context",
+            file_context="src/handlers/login.go",
+            token_budget=4000
+        )
+        ```
+
+        ## Building Knowledge Graph
+
+        For complex architectures, use the graph tools:
+
+        ```
+        agent_entity_add(
+            session_id="...",
+            entities=[
+                {
+                    name: "AuthMiddleware",
+                    entity_type: "component",
+                    properties: {
+                        file: "src/middleware/auth.go",
+                        responsibility: "JWT validation"
+                    }
+                }
+            ]
+        )
+
+        agent_relation_add(
+            session_id="...",
+            relations=[
+                {
+                    from_entity: "AuthMiddleware",
+                    to_entity: "UserService",
+                    relation_type: "calls",
+                    properties: { method: "GetUser" }
+                }
+            ]
+        )
+        ```
+
+        ## Best Practices
+
+        1. **Tag consistently**: Use domain tags (auth, database, api)
+        2. **Record the "why"**: Not just what code does, but why it matters
+        3. **Link symbols**: Record `code_context` entries for key functions
+        4. **Use structured codebase queries**: search/definition/references/context before ad-hoc scans
+        5. **Summarize sessions**: Let auto-summarize compress your findings
+        6. **Use file_context in recall**: Boosts relevance for current work
+
+        ## Workflow Automation
+
+        For structured codebase onboarding with session tracking:
+
+        ```
+        agent_workflow_start(definition_id="codebase-onboard", input={
+          namespace: "onboard/loom-core",
+          agent_id: "claude-code",
+          project: "loom-core",
+          focus_area: "HUD overlay and SSE pipeline"
+        })
+        ```
+
+        Workflow file: `.agents/workflows/codebase-onboard.yaml`
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: decision-journal
+    categories: [decisions, memory]
+    common:
+      description: |
+        Track architectural and implementation decisions with rationale. Use when making significant choices that future agents (or humans) need to understand. Creates a searchable decision log with context.
+      instructions: |
+        # Decision Journal
+
+        Maintain a persistent record of architectural decisions and their rationale.
+
+        ## When to Use
+
+        - Choosing between implementation approaches
+        - Selecting libraries or frameworks
+        - Defining API contracts
+        - Making trade-off decisions
+        - Establishing patterns or conventions
+
+        ## Recording Decisions
+
+        ### Standard Decision Entry
+
+        ```
+        agent_context_add(
+            session_id="...",
+            entries=[
+                {
+                    entry_type: "decision",
+                    title: "Use PostgreSQL over MongoDB",
+                    content: """
+        ## Context
+        Need a database for user data with complex relationships.
+
+        ## Decision
+        PostgreSQL with JSONB for flexible fields.
+
+        ## Rationale
+        - Strong consistency required for financial data
+        - Complex joins needed for reporting
+        - Team has PostgreSQL expertise
+        - JSONB provides NoSQL flexibility where needed
+
+        ## Alternatives Considered
+        - MongoDB: Rejected due to consistency requirements
+        - CockroachDB: Overkill for current scale
+
+        ## Consequences
+        - Need connection pooling (use PgBouncer)
+        - Schema migrations required
+        - JSONB queries may need optimization
+        """,
+                    tags: ["database", "architecture", "adr"]
+                }
+            ]
+        )
+        ```
+
+        ### Quick Decision
+
+        For smaller decisions:
+
+        ```
+        agent_context_add(
+            session_id="...",
+            entries=[
+                {
+                    entry_type: "decision",
+                    title: "Use zap for logging",
+                    content: "Chose zap over logrus for performance. Structured logging with JSON output.",
+                    tags: ["logging", "library-choice"]
+                }
+            ]
+        )
+        ```
+
+        ## Querying Decisions
+
+        ### Find All Decisions
+
+        ```
+        agent_context_search(
+            query="decisions",
+            entry_types=["decision"],
+            limit=20
+        )
+        ```
+
+        ### Decisions by Tag
+
+        ```
+        agent_context_search(
+            query="database choices",
+            entry_types=["decision"],
+            tags=["database", "architecture"]
+        )
+        ```
+
+        ### Recall with Context
+
+        ```
+        agent_recall(
+            query="why did we choose this database",
+            scope="context",
+            include_decisions=true,
+            token_budget=4000
+        )
+        ```
+
+        ## Decision Categories
+
+        Tag decisions consistently:
+
+        | Category | Tags | Examples |
+        |----------|------|----------|
+        | Architecture | `architecture`, `adr` | Service boundaries, data flow |
+        | Libraries | `library-choice`, `dependencies` | Framework selection |
+        | API Design | `api`, `contracts` | Endpoint design, versioning |
+        | Data | `database`, `schema` | Storage choices, migrations |
+        | Security | `security`, `auth` | Auth methods, encryption |
+        | Performance | `performance`, `optimization` | Caching, indexing |
+
+        ## Best Practices
+
+        1. **Record immediately**: Capture decisions when made, not later
+        2. **Include rationale**: Future you will thank present you
+        3. **Note alternatives**: What was considered and rejected
+        4. **Add consequences**: What this decision implies
+        5. **Link to code**: Reference implementation locations
+        6. **Review periodically**: Decisions may need revisiting
+      scripts: []
+      references: []
+      assets:
+        - templates/adr-template.md
+        - templates/quick-decision.md
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: agent-workflow-ops
+    categories: [workflow, agents]
+    common:
+      description: |
+        Define and execute multi-step agent workflows with approval gates. Use for complex operations requiring human oversight, multi-stage deployments, or coordinated agent actions.
+      instructions: |
+        # Agent Workflow Operations
+
+        Orchestrate multi-step workflows with approval gates and status tracking.
+
+        ## When to Use
+
+        - Multi-stage deployments requiring approval
+        - Complex refactoring with checkpoints
+        - Operations requiring human sign-off
+        - Coordinated multi-agent tasks
+
+        ## Workflow Concepts
+
+        - **Workflow Definition**: Template for a repeatable process
+        - **Workflow Instance**: Running execution of a definition
+        - **Steps**: Individual actions in sequence
+        - **Approval Gates**: Points requiring human confirmation
+        - **Events**: Audit trail of workflow progress
+
+        ## Defining Workflows
+
+        ### Create Definition
+
+        ```
+        agent_workflow_define(
+            name="production-deploy",
+            description="Deploy to production with approval",
+            steps=[
+                {
+                    name: "run-tests",
+                    description: "Execute test suite",
+                    action: "command",
+                    command: "make test"
+                },
+                {
+                    name: "build-image",
+                    description: "Build container image",
+                    action: "command",
+                    command: "make docker-build"
+                },
+                {
+                    name: "deploy-staging",
+                    description: "Deploy to staging",
+                    action: "command",
+                    command: "make deploy-staging"
+                },
+                {
+                    name: "approval-gate",
+                    description: "Human approval for production",
+                    action: "approval",
+                    approvers: ["cblevins"]
+                },
+                {
+                    name: "deploy-production",
+                    description: "Deploy to production",
+                    action: "command",
+                    command: "make deploy-production"
+                }
+            ]
+        )
+        ```
+
+        ## Running Workflows
+
+        ### Start Workflow
+
+        ```
+        agent_workflow_start(
+            definition_name="production-deploy",
+            parameters={
+                version: "1.2.3",
+                commit: "abc123"
+            }
+        )
+        → Returns workflow_id
+        ```
+
+        ### Check Status
+
+        ```
+        agent_workflow_status(
+            workflow_id="..."
+        )
+        → Returns current step, status, events
+        ```
+
+        ### Handle Approval Gate
+
+        When workflow reaches approval step:
+
+        ```
+        # Approve
+        agent_workflow_approve(
+            workflow_id="...",
+            step_name="approval-gate",
+            comment="Staging looks good, proceeding to prod"
+        )
+
+        # Or Reject
+        agent_workflow_reject(
+            workflow_id="...",
+            step_name="approval-gate",
+            reason="Found regression in staging"
+        )
+        ```
+
+        ### Cancel Workflow
+
+        ```
+        agent_workflow_cancel(
+            workflow_id="...",
+            reason="No longer needed"
+        )
+        ```
+
+        ## Monitoring Workflows
+
+        ### List Active Workflows
+
+        ```
+        agent_workflow_list(
+            status="running"
+        )
+        ```
+
+        ### View Events
+
+        ```
+        agent_workflow_events(
+            workflow_id="...",
+            limit=50
+        )
+        → Returns audit trail
+        ```
+
+        ### List Definitions
+
+        ```
+        agent_workflow_definitions()
+        ```
+
+        ## Common Workflow Patterns
+
+        ### Feature Release
+
+        1. Run tests
+        2. Build artifacts
+        3. Deploy to staging
+        4. **Approval gate**
+        5. Deploy to production
+        6. Verify health checks
+
+        ### Database Migration
+
+        1. Backup database
+        2. **Approval gate**
+        3. Apply migration
+        4. Verify data integrity
+        5. **Approval gate** (rollback window)
+        6. Mark complete
+
+        ### Multi-Agent Coordination
+
+        1. Agent A: Analyze codebase
+        2. **Handoff** to Agent B
+        3. Agent B: Implement changes
+        4. **Approval gate**
+        5. Agent C: Review and test
+
+        ## Best Practices
+
+        1. **Keep steps atomic**: Each step should do one thing
+        2. **Add approval gates**: For irreversible operations
+        3. **Include rollback steps**: Plan for failure
+        4. **Log parameters**: Track what was deployed
+        5. **Monitor events**: Audit trail is valuable
+      scripts: []
+      references: []
+      assets:
+        - templates/workflow-definition.yaml
+        - templates/approval-request.md
+        - templates/workflow-status.md
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: long-term-memory
+    categories: [memory, decisions, agents]
+    common:
+      description: |
+        Manage long-term agent memory with explicit tiered storage and recall. Use for preserving important knowledge beyond individual sessions and building institutional memory.
+      instructions: |
+        # Long-Term Memory Management
+
+        Build and maintain persistent knowledge that survives across sessions and agents.
+
+        ## Memory Tiers
+
+        The agent memory system has three tiers:
+
+        | Tier | Retention | Use Case |
+        |------|-----------|----------|
+        | **Working** | Session only | Current task context |
+        | **Short-term** | Days | Recent important findings |
+        | **Long-term** | Indefinite | Core knowledge, decisions |
+
+        ## Adding Memories
+
+        ### Add to Working Memory
+
+        ```
+        agent_memory_add(
+            session_id="...",
+            items=[
+                {
+                    title: "Preferred coding style",
+                    content: "User prefers functional programming style",
+                    category: "preference",
+                    tier: "working",
+                    importance: "high",
+                    tags: ["coding-style", "user-preference"]
+                }
+            ]
+        )
+        ```
+
+        ### Memory Categories
+
+        Suggested categories:
+        - `decision`: Architecture and implementation choices
+        - `preference`: User/project preferences
+        - `pattern`: Recurring practices and anti-patterns
+        - `context`: Domain or codebase background
+        - `task`: Task-specific reminders that should outlive one session
+
+        ## Persisting Durable Memories
+
+        Write important memories directly into long-term tier:
+
+        ```
+        agent_memory_add(
+            session_id="...",
+            items=[
+                {
+                    title: "Auth migration decision",
+                    content: "Moved token verification into gateway middleware for consistency across services.",
+                    category: "decision",
+                    tier: "long_term",
+                    importance: "high",
+                    tags: ["auth", "architecture"]
+                }
+            ]
+        )
+        ```
+
+        ## Recalling Memories
+
+        ### Basic Recall
+
+        ```
+        agent_recall(
+            query="coding style preferences",
+            scope="memory",
+            memory_categories=["preference", "pattern"],
+            memory_tiers=["short_term", "long_term"],
+            token_budget=3000
+        )
+        ```
+
+        ### Contextual Recall
+
+        ```
+        agent_recall(
+            query="error handling patterns",
+            session_id="...",
+            scope="memory",
+            memory_categories=["pattern", "decision"],
+            memory_tiers=["working", "short_term", "long_term"],
+            token_budget=2500
+        )
+        ```
+
+        ## Memory Lifecycle
+
+        Keep lifecycle explicit with retention audits and deletes:
+
+        ### Delete Memories
+
+        Remove obsolete memories:
+
+        ```
+        agent_memory_delete(
+            item_ids=["mem-wrong"],
+            confirm=true
+        )
+        ```
+
+        ## Memory Policies
+
+        ### Get Current Policy
+
+        ```
+        agent_memory_policy_get(tier="working")
+        → Returns retention rules, compression settings
+        ```
+
+        ## Memory Statistics
+
+        ```
+        agent_memory_stats()
+        → Returns counts by tier, total tokens, oldest/newest
+        ```
+
+        ## Best Practices
+
+        1. **Persist important memories directly**: Write key items to `long_term`
+        2. **Use appropriate types**: Helps with targeted recall
+        3. **Tag consistently**: Enables filtered queries
+        4. **Review long-term**: Occasionally audit for relevance
+        5. **Set importance scores**: Guides retrieval priority
+        6. **Include context**: Why is this memory important?
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+
+  # =========================================================================
+  # Migrated Skills - from existing manual rules/ and instructions.md files
+  # =========================================================================
+
+  - name: coding-standards
+    categories: [development]
+    common:
+      description: |
+        Coding standards for the workspace: language guidelines (JS/TS, Python, Go, Shell), function design, error handling, testing, performance, security, and code review checklists.
+      instructions: |
+        # Coding Standards
+
+        ## Core Principles
+
+        1. **Simplicity**: Favor simple solutions over complex ones
+        2. **Readability**: Code should be self-documenting
+        3. **Reliability**: Build robust systems that handle failures gracefully
+        4. **Efficiency**: Balance performance with maintainability
+
+        ## Language Guidelines
+
+        ### JavaScript/TypeScript
+        - TypeScript required for production code
+        - Use strict mode and strict TypeScript settings
+        - Functional programming preferred where appropriate
+        - Jest for testing framework
+
+        ### Python
+        - Python 3.9+ required
+        - Use type hints extensively
+        - Black for formatting; uv or Poetry for dependency management
+        - Pytest for testing
+
+        ### Go
+        - Follow Effective Go guidelines
+        - Error wrapping with context
+        - Context propagation for cancellation
+        - Structured logging; benchmark critical paths
+
+        ### Shell Scripts
+        - POSIX compliance when possible
+        - Defensive programming practices
+        - Idempotent operations; dry-run options for destructive operations
+
+        ## Coding Practices
+
+        - Single responsibility principle
+        - Maximum 20 lines per function (guideline), maximum 4 parameters
+        - Return early on errors; pure functions where possible
+        - Explicit error handling with structured error types
+        - Circuit breaker patterns for external services
+
+        ## Testing Requirements
+
+        - Unit tests for all business logic
+        - Integration tests for APIs
+        - Contract tests for services
+        - Property-based testing for algorithms
+
+        ## Security Standards
+
+        - Whitelist validation approach; SQL injection prevention; XSS protection
+        - OAuth 2.0/OIDC preferred; JWT with short expiration
+        - Encryption at rest; TLS 1.3 for transport
+        - PII handling compliance; secure secret storage
+
+        ## Code Review Checklist
+
+        - Input validation implemented
+        - Authentication and authorization checks in place
+        - Tests written and passing
+        - Documentation updated
+        - Error handling complete
+        - Performance acceptable
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: rule
+      claude:
+        enabled: true
+        type: rule
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: documentation-style
+    categories: [documentation]
+    common:
+      description: |
+        Documentation style guide for source-backed technical writing: templates, structure, architecture diagrams, changelog discipline, and documentation QA.
+      instructions: |
+        # Documentation Style Guide
+
+        ## Principles
+
+        - **Comprehensive**: Cover all aspects thoroughly
+        - **Structured**: Logical organization and flow
+        - **Accurate**: Keep synchronized with implementation
+        - **Discoverable**: Easy to find and navigate
+        - **Practical**: Include real-world examples
+
+        ## Documentation Hierarchy
+
+        ```
+        Level 1: README.md (Project Overview)
+        Level 2: docs/index.md (Documentation Hub)
+        Level 3: Category Documentation (API, Architecture, Operations)
+        Level 4: Detailed Guides and References
+        ```
+
+        ## Standard Templates
+
+        - **Service docs**: Overview, Architecture, API Reference, Configuration, Operations, Troubleshooting
+        - **Runbook**: Purpose, Prerequisites, Procedures (step-by-step), Rollback, Contacts
+        - **ADR**: Status, Context, Decision, Consequences
+        - **API Reference**: Endpoints, Parameters, Response codes, Examples
+
+        ## Architecture Documentation
+
+        - Use Architecture Decision Records (ADRs) for significant choices
+        - C4 model diagrams (Context, Containers, Components)
+        - Use Mermaid for inline diagrams (sequence, flowchart, class)
+
+        ## Writing Style
+
+        - Use active voice and present tense
+        - Keep sentences concise (under 25 words)
+        - Use code blocks with language hints for all examples
+        - Include expected output for commands
+        - Mark assumptions explicitly and separate them from verified facts
+
+        ## Evidence Requirements
+
+        - For non-trivial claims, include one of:
+          - workspace file reference with line number
+          - exact command used to validate behavior
+          - canonical URL for external fact
+        - Prefer reproducible references over narrative summaries.
+
+        ## Changelog Management
+
+        - Follow Keep a Changelog format
+        - Categories: Added, Changed, Deprecated, Removed, Fixed, Security
+        - Link version headers to diff URLs
+
+        ## Documentation QA
+
+        - Verify all code examples compile/run
+        - Check links are not broken
+        - Ensure diagrams match current architecture
+        - Review for outdated version references
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: rule
+      claude:
+        enabled: true
+        type: rule
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: project-patterns
+    categories: [architecture]
+    common:
+      description: |
+        Project structure patterns for the workspace: enterprise repository layout, service architecture (DDD, Event-Driven), Kubernetes deployment patterns, CI/CD pipelines, observability, and security patterns.
+      instructions: |
+        # Project Patterns
+
+        ## Repository Structure
+
+        Standard multi-project layout:
+        ```
+        project/
+        ├── infrastructure/      # IaC (Terraform, Ansible)
+        ├── kubernetes/          # K8s manifests, Helm charts
+        ├── services/            # Microservices
+        ├── libraries/           # Shared libraries
+        ├── tools/               # Development tools
+        └── docs/                # Documentation
+        ```
+
+        ## Service Architecture
+
+        - **Domain-Driven Design**: domain/, application/, infrastructure/ layers
+        - **Event-Driven**: Use event bus for cross-service communication
+        - **CQRS**: Separate read/write models where needed
+
+        ## Kubernetes Patterns
+
+        - **GitOps with Flux**: Edit manifests, commit, reconcile. Never kubectl edit.
+        - **Kustomize structure**: base/ + overlays/ per environment
+        - **Helm charts**: Chart.yaml + values.yaml + templates/
+        - Pin image versions (never :latest)
+        - Always set resource limits/requests
+        - Use `storageClass: longhorn` for PVCs
+
+        ## CI/CD Patterns
+
+        - Automated testing gates before deploy
+        - Security scanning in pipeline (container + dependency)
+        - Blue-green or canary deployments
+        - Rollback procedures documented
+
+        ## Observability
+
+        - Structured logging (JSON format)
+        - Prometheus metrics with ServiceMonitor CRDs
+        - Distributed tracing (OpenTelemetry)
+        - Grafana dashboards per service
+
+        ## Security Patterns
+
+        - Zero trust: authenticate all service-to-service calls
+        - Secrets via SOPS + age encryption or external secret operators
+        - Network policies for pod isolation
+        - RBAC with principle of least privilege
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: rule
+      claude:
+        enabled: true
+        type: rule
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: mcp-usage-core
+    priority: 10
+    categories: [agents, workflow]
+    common:
+      description: |
+        Core MCP usage directive: context-first, index-first, ship-to-green workflow for AI agents. Enforces repeatable delivery loops with hooks, commit/push, CI monitoring, and durable agent memory.
+      instructions: |
+        # MCP Usage Core Directive
+
+        ## Core Principle
+
+        Always run context-first and index-first:
+        1. recall what is already known
+        2. validate live/tooling state
+        3. execute to completion (including commit/push/CI) unless explicitly told not to
+
+        ## Default Execution Loop (Required)
+
+        ### 1) Context and Ownership
+        - Start/resume agent session: `agent_context__agent_session_start`
+        - Recall relevant prior work: `agent_context__agent_recall`
+        - Register presence and track task: `agent_context__agent_presence_register`, `agent_context__agent_task_add`, `agent_context__agent_task_update`
+
+        ### 2) Codebase Index Baseline
+        - Check index health first: `codebase_memory__codebase_stats`
+        - If index is missing/stale, rebuild before deep work:
+          - `codebase_memory__codebase_index_start`
+          - `codebase_memory__codebase_index_poll`
+        - Use indexed workflows over blind grep when possible:
+          - `codebase_memory__codebase_search`
+          - `codebase_memory__codebase_get_definition`
+          - `codebase_memory__codebase_get_references`
+          - `codebase_memory__codebase_get_context`
+
+        ### 3) Implement in Small Slices
+        - Keep changes scoped and reversible.
+        - Capture decisions/findings during execution: `agent_context__agent_context_add`
+        - Link important symbols/files with `code_context` entries via `agent_context__agent_context_add`
+
+        ### 4) Verify with Hooks + Tests
+        - Run repo hooks/checks as part of done criteria, not optional hygiene:
+          1. pre-commit / repo hooks
+          2. targeted tests
+          3. full test/lint checks
+        - If checks fail, fix and rerun until green or clearly blocked.
+
+        ### 5) Ship by Default
+        - Unless the user explicitly requests otherwise, complete the loop:
+          1. commit scoped changes
+          2. push branch
+          3. monitor CI to terminal state
+          4. fix failures and repush
+
+        ### 6) Close and Preserve Context
+        - Mark task complete with resolution: `agent_context__agent_task_update`
+        - End/summarize session: `agent_context__agent_session_end`
+        - Ensure next agent can resume without asking for recap.
+
+        ## Do / Don't
+
+        **Do:**
+        - Use MCP resources/tools to validate assumptions before coding
+        - Prefer structured tools (agent_context, codebase_memory, gitlab/github APIs) over ad-hoc manual workflows
+        - Keep status updates concise and tied to objective completion criteria
+        - Mirror any live hotfix back into Git immediately
+
+        **Don't:**
+        - Stop at "code written" when shipping steps are still pending
+        - Skip hooks/tests and rely on CI to find obvious local failures
+        - Store secrets in memory/context systems
+        - Bypass Flux with manual cluster edits outside incident handling
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: instruction
+      claude:
+        enabled: true
+        type: instruction
+      kilocode:
+        enabled: true
+        type: instruction
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: memory-practices
+    priority: 20
+    categories: [memory, agents]
+    common:
+      description: |
+        Knowledge graph and memory practices for AI agents: entity types, relationship patterns, proactive memory usage, and schema guidelines.
+      instructions: |
+        # Memory Practices
+
+        ## Knowledge Graph Usage
+
+        ### At the Start of Every Task
+        - **ALWAYS** check the knowledge graph first using `read_graph` or `search_nodes`
+        - Look for entities related to the current project, technologies, previous decisions, known issues, and user preferences
+
+        ### During Task Execution
+        - Store important findings as entities with observations
+        - Record configuration decisions, architecture choices, problem solutions, project structure insights
+
+        ### Before Task Completion
+        - Update the knowledge graph with new learnings, task outcomes, relationships between components
+
+        ## Entity Types
+
+        - `Project` — repositories and applications
+        - `Technology` — languages, frameworks, tools
+        - `Configuration` — settings and parameters
+        - `Issue` — problems and bugs
+        - `Solution` — fixes and workarounds
+        - `Decision` — architectural choices
+        - `Documentation` — important references
+
+        ## Relationship Types
+
+        - `uses` — Project uses Technology
+        - `configures` — Configuration configures Project
+        - `solves` — Solution solves Issue
+        - `depends_on` — dependency relationship
+        - `relates_to` — general relationship
+        - `contains` — parent-child relationship
+        - `implements` — implementation relationship
+
+        ## Best Practices
+
+        - Create/extend entities for Project, Configuration, Issue, Solution, Decision, Technology
+        - Link relationships (uses/configures/solves/depends_on/relates_to)
+        - Store concise observations; avoid secrets
+        - Don't duplicate entities — search first
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: instruction
+      claude:
+        enabled: true
+        type: instruction
+      kilocode:
+        enabled: true
+        type: instruction
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: k8s-ops-guardrails
+    priority: 30
+    categories: [kubernetes, operations]
+    common:
+      description: |
+        Kubernetes and ops guardrails: GitOps/Flux workflow rules, cluster conventions, image pinning, storage patterns, and Llama.cpp specifics.
+      instructions: |
+        # Kubernetes & Ops Guardrails
+
+        ## GitOps / Flux Rules
+        - Edit manifests under `k3s/**` (base first, overlays minimal); do not `kubectl edit` / `kubectl set env`
+        - Reconcile via Flux after changes; removing from kustomizations prunes live resources
+        - If an emergency hotfix is applied live, mirror it back into Git and commit immediately
+
+        ## Cluster Conventions
+        - **k3s**: Application workloads — use k3s MCP server set
+        - **harvester**: Infrastructure VMs — use harvester MCP server set
+        - Always use the matching MCP server set for the target cluster
+
+        ## Image Standards
+        - No `:latest` — pin versions/digests
+        - Set arch selectors for single-arch images
+        - Use minimal base images; non-root user
+
+        ## Storage
+        - Use `storageClass: longhorn` for PVCs
+        - Keep PVC names stable across redeployments
+
+        ## Llama.cpp Specifics
+        - Server already exposes API; omit `--api`/`--stop` flags
+        - Keep ROCm/GPU specifics in env vars
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: instruction
+      claude:
+        enabled: true
+        type: instruction
+      kilocode:
+        enabled: true
+        type: instruction
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: research-docs-workflow
+    priority: 40
+    categories: [planning, research]
+    common:
+      description: |
+        Evidence-based research and technical writing workflow that combines local codebase indexing, MCP tool inventory, Tavily web research, and Context7 docs into reproducible outputs.
+      instructions: |
+        # Research & Docs Workflow
+
+        ## Trigger Conditions
+        Use this workflow when work requires one or more of:
+        - external facts, recency-sensitive data, or vendor behavior
+        - unfamiliar libraries/frameworks
+        - architecture decisions that need durable rationale
+        - technical docs/specs that other agents will execute
+
+        ## Required Sequence
+
+        ### 1) Local Context First
+        - Start with agent recall: `agent_context__agent_recall`
+        - Verify indexed code context:
+          - `codebase_memory__codebase_stats`
+          - `codebase_memory__codebase_search`
+          - `codebase_memory__codebase_get_definition`
+        - Capture local findings before web research.
+
+        ### 2) External Research
+        - Web: `tavily__search`, `tavily__search_context`, `tavily__extract`
+        - Recency/news: `tavily__search_news`
+        - Library docs:
+          1. `context7__resolve-library-id`
+          2. `context7__get-library-docs`
+
+        ### 3) Produce Durable Output
+        - Write/update structured docs (for example `.loom/10-research.md`, `.loom/20-product-spec.md`, `.loom/30-implementation-plan.md`)
+        - Include reproducible sources:
+          - workspace file refs with lines
+          - exact commands
+          - URLs
+        - Separate facts from assumptions and note open questions.
+
+        ### 4) Persist for Reuse
+        - Record decisions/findings in `agent_context`
+        - Link key symbols/files via `agent_context__agent_context_add` (`entry_type: "code_context"`)
+        - End with session summary so future agents do not repeat discovery.
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: instruction
+      claude:
+        enabled: true
+        type: instruction
+      kilocode:
+        enabled: true
+        type: instruction
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: research
+    categories: [research]
+    common:
+      description: |
+        Perform repeatable research loops using codebase-memory, Tavily, and Context7, then produce source-backed technical outputs.
+      instructions: |
+        # Research Loop
+
+        Use this when the user needs evidence, not guesswork.
+
+        ## Outcome
+
+        Deliver a concise, source-backed brief with:
+        - current factual findings
+        - implications for the active codebase/workflow
+        - recommended next action
+
+        ## Standard Loop
+
+        1. **Frame the question**
+           - Define scope, success criteria, and unknowns.
+        2. **Check local context first**
+           - `agent_context__agent_recall`
+           - `codebase_memory__codebase_search`
+           - `codebase_memory__codebase_get_definition`
+        3. **Research external sources**
+           - `tavily__search` / `tavily__search_context`
+           - `tavily__search_news` for recency-sensitive topics
+           - `tavily__extract` for deep reads
+           - `context7__resolve-library-id` + `context7__get-library-docs` for library behavior
+        4. **Synthesize**
+           - Distinguish facts, assumptions, and risks.
+           - Prefer primary docs/specs over secondary commentary.
+        5. **Persist**
+           - Add key findings/decisions to agent context.
+           - Update `.loom/10-research.md` when the work impacts roadmap/spec/implementation.
+
+        ## Quality Bar
+
+        - Use at least two independent sources for non-trivial claims.
+        - Include exact URLs and file/line references where applicable.
+        - Flag uncertainty explicitly instead of over-claiming.
+
+        ## Workflow Automation
+
+        For structured research spikes with session tracking and decision recording:
+
+        ```
+        agent_workflow_start(definition_id="research-spike", input={
+          namespace: "project/spike-auth-strategy",
+          agent_id: "claude-code",
+          question: "Should we use JWT or session-based auth for the API?"
+        })
+        ```
+
+        Workflow file: `.agents/workflows/research-spike.yaml`
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: instruction
+
+  # =========================================================================
+  # New Skills - Phase 6
+  # =========================================================================
+
+  - name: k8s-debug
+    categories: [kubernetes, operations]
+    common:
+      description: |
+        Kubernetes troubleshooting loop: triage, isolate, verify fix, and capture reusable findings across k3s and harvester clusters.
+      instructions: |
+        # Kubernetes Debug
+
+        Systematic debugging workflow for Kubernetes clusters with repeatable evidence capture and GitOps-safe remediation.
+
+        ## Required Troubleshooting Loop
+
+        1. Start context session and create a task for the issue.
+        2. Run triage probes (pods, events, logs, resource status, Flux status).
+        3. Form one hypothesis at a time and test minimally.
+        4. Prefer Git + Flux fixes; only use live mitigations for incident containment.
+        5. Verify health after each change.
+        6. Record root cause and durable fix in agent context.
+
+        ## GitOps Debug Guardrails
+
+        - Before patching a workload, identify its manifest owner path under `k3s/**`.
+        - If you hotfix live state (`kubectl patch`/`edit`) during incident response, mirror that fix into Git immediately.
+        - Reconcile relevant Flux kustomization after committing.
+
+        ## Quick Triage
+
+        1. **Check pod status**: `k8s_getPods` for the target namespace
+        2. **Describe failing pods**: `k8s_describe` on pods in CrashLoopBackOff, Error, or Pending
+        3. **Check logs**: `k8s_logs` for recent container output (use `previous: true` for crashed containers)
+        4. **Check events**: `k8s_get` for Events sorted by lastTimestamp
+
+        ## Common Issues
+
+        ### Pod stuck in Pending
+        - Check node resources: `k8s_get` nodes with resource allocations
+        - Check PVC status: `k8s_get` PersistentVolumeClaims
+        - Check node selectors/tolerations match available nodes
+
+        ### CrashLoopBackOff
+        - Get previous logs: `k8s_logs` with `previous: true`
+        - Check resource limits: may be OOM killed
+        - Verify config maps and secrets exist
+        - Check readiness/liveness probe configuration
+
+        ### ImagePullBackOff
+        - Verify image name and tag exist
+        - Check image pull secrets
+        - Verify registry accessibility from nodes
+
+        ### Service Not Reachable
+        - Verify service selectors match pod labels
+        - Check endpoints: `k8s_get` endpoints for the service
+        - Verify network policies allow traffic
+        - Check ingress/gateway configuration
+
+        ## Verification Checklist (Do Not Skip)
+
+        - Workload state returns to expected replicas/ready status
+        - Error rate and latency metrics normalize
+        - No fresh warning/error events for the affected resource
+        - A short "what changed / why it worked" note is written to agent context
+
+        ## Cluster Selection
+
+        - **k3s apps cluster**: Application workloads — use `k8s_apps_k3s` MCP tools
+        - **harvester infra**: Infrastructure VMs — use `k8s_harvester_infra` MCP tools
+        - **longhorn**: Storage — use `longhorn_k3s` MCP tools
+
+        ## Domain-Specific Escalation
+
+        - Longhorn/storage-heavy failures:
+          - switch to `longhorn-gitops-ops`
+        - Monitoring/alerting stack failures:
+          - switch to `monitoring-gitops-ops`
+        - Cross-cluster VM/node maintenance:
+          - switch to `k3s-harvester-maintenance`
+
+        ## Advanced Debugging
+
+        - **Exec into pod**: `k8s_exec` for interactive troubleshooting
+        - **Check Flux**: `flux_get_kustomizations` for GitOps reconciliation status
+        - **Check Helm**: `helm_status` for Helm release status
+        - **Check Prometheus**: `query` for resource metrics
+        - **Check Loki logs**: `loki_query` for aggregated log analysis
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: code-review
+    categories: [development, quality]
+    common:
+      description: |
+        Code review workflow: prioritize defects/regressions, verify test coverage, and produce severity-ordered findings with clear evidence.
+      instructions: |
+        # Code Review
+
+        Use a findings-first review style focused on correctness and risk.
+
+        ## Output Contract
+
+        1. Findings first, ordered by severity.
+        2. Each finding includes file path + line reference + impact.
+        3. Summaries come after findings.
+        4. If no findings, state that explicitly and call out residual risk/testing gaps.
+
+        ## Review Loop
+
+        1. Understand intent (ticket/spec/PR description).
+        2. Diff scan for behavior changes and contract/API shifts.
+        3. Validate tests and hook coverage for changed paths.
+        4. Check security/performance/concurrency/error-handling risks.
+        5. Produce concise remediation guidance per finding.
+
+        ## Security Review
+
+        - [ ] Input validation on all user-supplied data
+        - [ ] No SQL injection vectors (parameterized queries used)
+        - [ ] No XSS vectors (output encoding in place)
+        - [ ] Authentication checks present where needed
+        - [ ] Authorization verified (not just authentication)
+        - [ ] No hardcoded secrets, tokens, or credentials
+        - [ ] Sensitive data not logged
+        - [ ] Rate limiting on public endpoints
+
+        ## Performance Review
+
+        - [ ] No N+1 query patterns
+        - [ ] Database queries use appropriate indexes
+        - [ ] Large result sets paginated
+        - [ ] Caching used where appropriate
+        - [ ] No unnecessary memory allocations in hot paths
+        - [ ] Connection pooling for external services
+        - [ ] Timeouts set on all external calls
+
+        ## Code Quality
+
+        - [ ] Functions follow single responsibility principle
+        - [ ] No code duplication (DRY principle)
+        - [ ] Clear, descriptive naming conventions
+        - [ ] Error handling is complete (no swallowed errors)
+        - [ ] Error messages are actionable
+        - [ ] No TODO/FIXME without tracking issue
+        - [ ] Dead code removed
+
+        ## Testing
+
+        - [ ] Unit tests cover new/changed logic
+        - [ ] Edge cases tested (empty, nil, boundary values)
+        - [ ] Error paths tested
+        - [ ] Integration tests for API changes
+        - [ ] Test assertions are specific (not just "no error")
+        - [ ] Existing hooks/lint checks would catch the same class of issue in future
+
+        ## Documentation
+
+        - [ ] Public APIs documented
+        - [ ] Complex logic has explanatory comments
+        - [ ] README updated if behavior changes
+        - [ ] CHANGELOG entry added
+
+        ## Go-Specific
+
+        - [ ] Errors wrapped with context (`fmt.Errorf("...: %w", err)`)
+        - [ ] Context propagated for cancellation
+        - [ ] Goroutine leaks prevented (proper cleanup)
+        - [ ] defer used for cleanup
+
+        ## Kubernetes-Specific
+
+        - [ ] Resource limits and requests set
+        - [ ] Image version pinned (not :latest)
+        - [ ] Liveness and readiness probes configured
+        - [ ] RBAC permissions minimal
+
+        ## Workflow Automation
+
+        For structured execution with session tracking and approval gates:
+
+        ```
+        agent_workflow_start(definition_id="code-review", input={
+          namespace: "project/pr-123",
+          agent_id: "claude-code",
+          description: "Review PR #123: Add user authentication"
+        })
+        ```
+
+        Workflow file: `.agents/workflows/code-review.yaml`
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: security-audit
+    categories: [security, operations]
+    common:
+      description: |
+        Security assessment workflow: OWASP top 10 checks, dependency vulnerability scanning, secret scanning, and container security review.
+      instructions: |
+        # Security Audit
+
+        Systematic security assessment for applications and infrastructure.
+
+        ## OWASP Top 10 Checks
+
+        1. **Broken Access Control**: Verify authorization on all endpoints, check RBAC configuration
+        2. **Cryptographic Failures**: Verify TLS configuration, check encryption at rest, review key management
+        3. **Injection**: Check for SQL, NoSQL, OS command, LDAP injection vectors
+        4. **Insecure Design**: Review threat model, check for security design patterns
+        5. **Security Misconfiguration**: Review default configs, check unnecessary features disabled
+        6. **Vulnerable Components**: Run dependency vulnerability scan
+        7. **Authentication Failures**: Check password policies, session management, MFA
+        8. **Data Integrity Failures**: Verify CI/CD pipeline integrity, check software supply chain
+        9. **Logging Failures**: Verify security events logged, check log integrity
+        10. **SSRF**: Check URL validation, verify network segmentation
+
+        ## Dependency Scanning
+
+        - **Go**: `govulncheck ./...`
+        - **Node.js**: `pnpm audit`
+        - **Python**: `pip-audit` or `safety check`
+        - **Container images**: `trivy image <image:tag>`
+
+        ## Secret Scanning
+
+        - Check for hardcoded secrets in source code
+        - Verify environment variables used for credentials
+        - Check `.env` files not committed
+        - Verify secrets use `${keychain:}`, `${env:}`, or `${secret:}` patterns
+
+        ## Container Security
+
+        - Non-root user in Dockerfile
+        - Minimal base image (distroless, alpine)
+        - No unnecessary packages installed
+        - Multi-stage build for minimal attack surface
+
+        ## Kubernetes Security
+
+        - Pod Security Standards enforced
+        - Network policies in place
+        - RBAC with least privilege
+        - Secrets encrypted at rest (SOPS + age)
+        - No privileged containers
+
+        ## Output Format
+
+        For each finding, record:
+        - **Severity**: Critical / High / Medium / Low / Info
+        - **Location**: File path and line number
+        - **Description**: What the issue is
+        - **Recommendation**: How to fix it
+        - **Reference**: OWASP/CWE identifier
+
+        ## Workflow Automation
+
+        For structured execution with session tracking and approval gates:
+
+        ```
+        agent_workflow_start(definition_id="security-audit", input={
+          namespace: "security/loom-core-audit",
+          agent_id: "claude-code",
+          audit_target: "loom-core",
+          scope: "full"
+        })
+        ```
+
+        Workflow file: `.agents/workflows/security-audit.yaml`
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: go-service-scaffold
+    categories: [development, go, scaffolding]
+    common:
+      description: |
+        Create a new Go service following workspace patterns: standard layout, Makefile, Dockerfile, K8s manifests, and CI pipeline.
+      instructions: |
+        # Go Service Scaffold
+
+        Create a new Go service following workspace conventions.
+
+        ## Standard Layout
+
+        ```
+        services/<name>/
+        ├── cmd/<name>/
+        │   └── main.go            # Entry point
+        ├── internal/
+        │   ├── server/            # HTTP/gRPC server setup
+        │   ├── handler/           # Request handlers
+        │   ├── service/           # Business logic
+        │   └── repository/        # Data access
+        ├── pkg/                   # Public API (if any)
+        ├── Makefile
+        ├── Dockerfile
+        ├── go.mod
+        ├── AGENTS.md
+        └── README.md
+        ```
+
+        ## Steps
+
+        1. **Initialize Go module**: `go mod init github.com/crb2nu/<name>`
+        2. **Create main.go**: Parse config, set up structured logging, HTTP server with graceful shutdown
+        3. **Create Makefile**: `build`, `test`, `lint`, `run`, `docker-build` targets
+        4. **Create Dockerfile**: Multi-stage (golang:1.23 builder, distroless runtime), non-root user
+        5. **Create K8s manifests** in `platform/gitops/k3s/apps/<name>/`: deployment, service, kustomization
+        6. **Create AGENTS.md**: Build commands, test commands, architecture overview
+
+        ## Patterns
+
+        - Error wrapping: `fmt.Errorf("op: %w", err)`
+        - Config: environment variables with struct binding
+        - Logging: structured JSON (zerolog or slog)
+        - Health: `/healthz` and `/readyz` endpoints
+        - Metrics: Prometheus on `/metrics`
+        - Shutdown: Handle SIGTERM/SIGINT gracefully
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: loom-go-mcp-scaffold
+    categories: [development, go, scaffolding]
+    common:
+      description: |
+        Create a new Loom Go MCP server under cmd/mcp-<name>, wire it into Makefile + mcp/context/registry.yaml, and regenerate/sync platform configs with loom.
+      instructions: |
+        # Loom Go MCP Scaffold
+
+        Build a new Loom-native Go MCP server with repo conventions, shared packages, and registry-driven config generation.
+
+        ## MCP Server Design Checklist
+
+        - Define tool surface first: read-only tools vs mutating tools, and expected caller permissions.
+        - Keep calls bounded for client deadlines (~60s is common); avoid unbounded network or shell operations.
+        - Name env vars clearly with service prefixes (for example `<SERVICE>_TOKEN`, `<SERVICE>_URL`) and define fallback behavior.
+        - Set conservative defaults for pagination, result size, and output truncation.
+        - Design errors for agents: user-actionable message + structured code path.
+
+        ## Scaffold Layout (loom-core)
+
+        Create:
+        - `cmd/mcp-<name>/main.go`
+        - optional split files (`tools.go`, `client.go`, etc.) when handlers become large
+        - `cmd/mcp-<name>/main_test.go`
+
+        Typical server shape:
+        1. `main()` delegates to `lifecycle.RunWithSignals(context.Background(), run)`
+        2. `run(ctx)` initializes logger, optional tracing, dependencies, and `mcp.NewServer("mcp-<name>", version)`
+        3. Register tools via `server.AddTool(...)`
+        4. Return `server.Run(ctx)`
+
+        ## Required Loom Package Usage
+
+        - `pkg/env`: env parsing and fallback chains
+        - `pkg/validate`: argument validation (`Required`, typed getters, pagination helpers)
+        - `pkg/mcperror`: structured, user-safe errors and API-status mapping
+        - `pkg/httpclient`: HTTP client with retries/timeouts from shared config
+        - `pkg/lifecycle`: signal-aware lifecycle wrapper
+        - `pkg/mcplog`: structured logger setup
+        - `pkg/mcpotel` (optional): per-tool tracing via `TracedToolHandler`
+
+        ## Tool Handler Pattern
+
+        - Parse and validate args early with `validate.NewArgs(args)`.
+        - Return validation issues as `mcp.ErrorResult(...)`, not panics.
+        - Convert upstream API failures using `mcperror.APIError(...)`.
+        - Use `mcperror.NotConfigured(...)` for missing credentials/config.
+        - Keep tool output compact and deterministic; trim or truncate large payloads.
+
+        ## Makefile Integration
+
+        1. Add `mcp-<name>` to `MCP_SERVERS` in `Makefile`.
+        2. Add build target:
+           - `mcp-<name>:` then `go build $(LDFLAGS) -o bin/mcp-<name> ./cmd/mcp-<name>`
+        3. Ensure `make servers` includes the new target via `MCP_SERVERS`.
+
+        ## MCP Registry Onboarding
+
+        Update:
+        - `mcp/context/registry.yaml`
+
+        Add a new `servers` entry with:
+        - `name`
+        - `categories`
+        - `common.description`
+        - `common.command` (usually `\${repo}/services/loom-core/bin/mcp-<name>`)
+        - `common.args`
+        - `common.env`
+        - `common.timeout`
+        - optional `common.always_allow` for low-risk read tools
+        - `targets.*` overrides only where needed (codex/kilocode/claude/gemini/vscode)
+
+        Keep `always_allow` minimal; default to explicit approval for mutating tools.
+
+        ## Config/Manifest Generation with loom
+
+        From `services/loom-core`:
+        - Build CLI if needed:
+          - `go build -o ./bin/loom ./cmd/loom`
+        - Regenerate client configs:
+          - `./bin/loom generate configs --registry ../mcp/context/registry.yaml --target all --output-dir generated/mcp --hub-mode`
+        - Regenerate MCP hub manifests (if deploying via hub):
+          - `./bin/loom generate manifests --registry ../mcp/context/registry.yaml --output-dir ../platform/gitops/k3s/loom-hub/servers`
+        - Sync local platform configs:
+          - `for profile in vscode antigravity codex claude gemini kilocode; do ./bin/loom sync "$profile" --regen --hub-mode --all-projects --skip-worktrees; done`
+          - `./bin/loom sync skills all`
+
+        ## Verification Checklist
+
+        - Targeted tests:
+          - `go test ./cmd/mcp-<name> -v`
+        - Repo tests:
+          - `go test ./...`
+        - Lint:
+          - `golangci-lint run`
+        - Build smoke:
+          - `make mcp-<name>`
+          - `make servers`
+        - Registry/config validation:
+          - `./bin/loom validate configs --dir generated/mcp`
+
+        ## Done Criteria
+
+        - New server builds and passes tests/lint.
+        - New server is listed in `Makefile` and emits `bin/mcp-<name>`.
+        - `mcp/context/registry.yaml` includes the server.
+        - `loom generate` and `loom sync` complete without errors.
+        - Expected tools appear in client configs after regen/sync.
+
+        ## Common Pitfalls
+
+        - Forgetting to add the Makefile target or `MCP_SERVERS` entry.
+        - Returning raw upstream errors without `mcperror` mapping.
+        - Missing required env vars or using inconsistent env names.
+        - Overly broad `always_allow` for mutating/destructive tools.
+        - Tool responses that exceed practical client size/time limits.
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: loom-skill-builder
+    categories: [development, scaffolding]
+    common:
+      description: |
+        Scaffold and evolve cross-platform Loom skills from skills-registry.yaml, with explicit vendor-specific overrides where needed, then regenerate/sync so behavior is consistent across Codex, Claude, Kilocode, and Gemini.
+      instructions: |
+        # Loom Skill Builder
+
+        Create new Loom skills quickly and consistently, then regenerate platform-specific outputs for all CLIs/apps.
+
+        ## Quick Start
+
+        Preview (default — no files written):
+        - `python ${SKILL_PATH}/scripts/skill_scaffold.py --root . --name my-skill --description "When to use this skill" --categories workflow,automation`
+
+        Apply (writes registry + creates directories):
+        - `python ${SKILL_PATH}/scripts/skill_scaffold.py --root . --name my-skill --description "When to use this skill" --categories workflow,automation --apply`
+
+        When `${SKILL_PATH}` is unavailable and `CODEX_HOME` is not exported, use the workspace-local path directly:
+        - `python services/loom-core/.codex/skills/loom-skill-builder/scripts/skill_scaffold.py --root . --name my-skill --description "When to use this skill" --apply`
+
+        ## What the Scaffold Script Does
+
+        - Finds `skills-registry.yaml` (workspace-first)
+        - Normalizes the skill name to kebab-case
+        - Appends (or replaces with `--force`) a skill entry with sane cross-platform defaults:
+          - codex=`skill`, claude=`command`, kilocode=`rule`, gemini=`skill`
+        - Creates source directories:
+          - `mcp/skills/<name>/scripts`
+          - `mcp/skills/<name>/references`
+          - `mcp/skills/<name>/assets/templates`
+        - Updates registry `updated:` date
+
+        ## Source Hygiene
+
+        Keep the source skill tree clean before regeneration:
+        - every file under `scripts/` with a shebang should be executable (`chmod +x`)
+        - do not keep `__pycache__/`, `.pyc`, or other compiled artifacts under `mcp/skills/**`
+        - validate all `scripts`, `references`, and `assets` paths from the registry before generating
+        - after changing source assets, regenerate first, then sync profiles; do not hand-edit generated outputs
+
+        ## End-to-End Workflow
+
+        1. Scaffold the skill entry and directories:
+           - `python ${SKILL_PATH}/scripts/skill_scaffold.py --root . --name <skill-name> --description "<when to use>" --apply`
+        2. Edit `common.instructions` in `mcp/context/skills-registry.yaml`.
+        3. Add optional reusable resources under `mcp/skills/<skill-name>/`.
+        4. Wire resources in the skill entry:
+           - `scripts`, `references`, `assets`, and optional `always_allow`.
+        5. Add vendor-specific deltas only when required:
+           - `targets.<platform>.instructions_append` for platform primitives/workarounds
+           - keep `common.instructions` as the canonical workflow
+        6. Validate registry:
+           - `bin/loom generate skills --registry mcp/context/skills-registry.yaml --validate`
+        7. Regenerate all platform outputs:
+           - `bin/loom generate skills --target all --registry mcp/context/skills-registry.yaml --workspace . --codex-home ./.codex`
+        8. Sync skills into home profiles:
+           - `bin/loom sync skills all`
+        9. If repo-local platform trees must be refreshed across the workspace:
+           - `for profile in codex claude gemini kilocode opencode zed vscode antigravity; do bin/loom sync "$profile" --regen --hub-mode --all-projects --skip-worktrees; done`
+
+        If `bin/loom` does not exist:
+        - `cd services/loom-core && go build -o ./bin/loom ./cmd/loom`
+
+        ## Design Guidelines
+
+        - Keep descriptions trigger-oriented: clearly state when to use the skill.
+        - Keep instruction body concise; move deep details to `references/`.
+        - Design for repeatable outcomes, not advisory checklists only.
+        - Use scripts for deterministic, repeatable steps.
+        - Keep `always_allow` minimal and safe (read-only operations by default).
+        - Prefer additive, non-breaking updates to existing skills.
+        - Make codebase indexing/search and agent context explicit in engineering workflows.
+
+        ## Done Criteria
+
+        - New skill appears in `skills-registry.yaml`.
+        - Generated outputs exist for at least codex/claude/kilocode and the appropriate Gemini artifact (`skills/<name>/SKILL.md` or `GEMINI.md`, depending on type).
+        - Manifests include the new generated file paths (platform-specific).
+        - At least one smoke check confirms the workflow behaves consistently in 2+ platforms.
+      scripts:
+        - name: skill_scaffold.py
+          path: scripts/skill_scaffold.py
+          description: Scaffold new skill registry entries and source directories
+      references: []
+      assets: []
+      always_allow:
+        - skill_scaffold.py
+        # ^ Safe by default: runs --dry-run unless --apply is passed.
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: incident-response
+    categories: [operations, kubernetes]
+    common:
+      description: |
+        Incident response workflow: triage, investigate, mitigate, verify, and preserve context/handoff for production issues across k3s and harvester clusters.
+      instructions: |
+        # Incident Response
+
+        Structured workflow for production incidents across k3s + Harvester, with GitOps-first recovery and explicit containment/rollback gates.
+
+        ## Response Contract
+
+        - Open/update agent context session at incident start.
+        - Track one explicit incident task with severity and owner.
+        - Keep an incident timeline (UTC timestamps + actions).
+        - Distinguish temporary containment from durable GitOps fix.
+        - End with root cause, resolution, and follow-up actions.
+
+        ## Phase 1: Triage
+
+        1. **Assess scope**: Single pod, service, node, or cluster-wide?
+        2. **Check dashboards**: `grafana_list_alerts` for active alerts
+        3. **Check Alertmanager**: `am_list_alerts` for firing alerts
+        4. **Check pods**: `k8s_getPods` across relevant namespaces
+        5. **Severity**: P1 (outage) / P2 (degraded) / P3 (non-critical) / P4 (minor)
+        6. **GitOps ownership**: identify source manifests before mitigation
+
+        ## Phase 2: Investigate
+
+        1. **Logs**: `loki_query_range` for affected services
+        2. **Metrics**: `query_range` for resource usage, error rates
+        3. **Recent changes**: `flux_events`, `git_log` for platform/gitops, `helm_history`
+        4. **Infrastructure**: `k8s_get_nodes`, `harvester_vms_list`, `router_status`
+        5. **Flux status**: `flux_get_kustomizations`, `flux_get_sources`
+
+        ## Phase 3: Mitigate
+
+        - **Restart**: `k8s_delete_pods_by_phase` for crashing pods
+        - **Scale up**: `k8s_scale_deploy` to add capacity
+        - **Rollback Helm**: check `helm_history`, rollback to last good release
+        - **Suspend Flux**: `flux_suspend` to stop problematic reconciliation
+        - **Network**: `router_wanStatus` for connectivity issues
+        - **Harvester VM stuck Running**: delete VMI to force recreation (`kubectl --kubeconfig .kube/harvester-admin.yaml -n default delete vmi <vm-name>`)
+
+        Containment rule:
+        - If live change is applied, open immediate follow-up to mirror in `platform/gitops` before incident closure.
+
+        ### Safe Rollback
+        1. Identify last known good state
+        2. Revert Git changes and push
+        3. `flux_reconcile` the affected kustomization
+        4. Verify rollback successful
+
+        ## Phase 4: Resolve
+
+        1. Confirm service restored
+        2. Monitor for recurrence
+        3. Remove temporary mitigations
+        4. Resume suspended Flux: `flux_resume`
+        5. Update incident task status with final resolution
+        6. Capture before/after evidence snapshots
+
+        ## Phase 5: Postmortem
+
+        Record in agent context:
+        - **Timeline**: Sequence of events with timestamps
+        - **Root cause**: What caused the incident
+        - **Resolution**: What fixed it
+        - **Impact**: Users/services affected, duration
+        - **Action items**: Preventive measures with owners
+
+        Useful local runbooks (repo):
+        - `docs/runbooks/widespread-vm-cluster-recovery.md`
+        - `docs/runbooks/longhorn-replica-directory-missing.md`
+        - `docs/runbooks/qdrant-vm-recovery.md`
+
+        If unresolved at handoff time:
+        - create explicit blocker notes
+        - package a handoff with current state, hypotheses, and exact next probe
+
+        ## Workflow Automation
+
+        For structured execution with session tracking and approval gates:
+
+        ```
+        agent_workflow_start(definition_id="incident-response", input={
+          namespace: "incidents/INC-2024-042",
+          agent_id: "claude-code",
+          incident_id: "INC-2024-042",
+          symptoms: "HTTP 503 on /api/users, p99 latency > 5s",
+          affected_service: "user-service",
+          severity: "P2"
+        })
+        ```
+
+        Workflow file: `.agents/workflows/incident-response.yaml`
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: devbox-sandbox
+    categories: [dev-environment, quality]
+    common:
+      description: |
+        Use devbox sandbox for running builds, tests, lints, and installs in isolated containers.
+        Prefer devbox_exec over direct shell commands for any operation that modifies dependencies
+        or produces build artifacts. Required for K8s backend where sandbox pods run on K3s cluster.
+      instructions: |
+        # Devbox Sandbox
+
+        Run builds, tests, and installs inside isolated project containers.
+
+        ## When to Use
+
+        **Always use devbox** for:
+        - `npm install`, `pip install`, `cargo build`, `go build ./...`, `make build`
+        - Any command that modifies node_modules, venv, or other dependency directories
+
+        **Prefer devbox** for:
+        - `go test`, `pytest`, `npm test`, `make test`, `make lint`, `cargo test`
+        - Any command that might fail and leave the host in a dirty state
+
+        ## Required Tools
+
+        | Tool | Purpose |
+        |------|---------|
+        | `devbox_exec` | Run a command in the sandbox (auto-builds if needed) |
+        | `devbox_build` | Pre-build the sandbox image |
+        | `devbox_status` | Check sandbox status |
+        | `devbox_stop` | Stop a running sandbox |
+
+        ## Recommended Tools
+
+        | Tool | Purpose |
+        |------|---------|
+        | `devbox_exec_async` | Long-running commands (>2min) |
+        | `devbox_exec_poll` | Poll async exec status |
+        | `devbox_read_file` | Read files from sandbox |
+        | `devbox_write_file` | Write files to sandbox |
+        | `devbox_detect` | Detect project environment fingerprint (languages, deps, tools) |
+        | `devbox_metrics` | Prometheus metrics for sandbox operations |
+        | `devbox_summary` | Aggregated sandbox summary for HUD display |
+
+        ## K8s Backend
+
+        When `DEVBOX_BACKEND=k8s`, sandbox pods run on the K3s cluster instead of local Docker.
+        The workspace is shared via NFS PVC (`devbox-workspace-nfs`).
+
+        - Pods get `devbox/agent-id` label from the `agent_id` parameter
+        - Pods target amd64 nodes via `nodeSelector`
+        - Images are pulled from `registry.harbor.lan` via `harbor-creds` secret
+
+        ## Agent ID
+
+        Pass `agent_id` to `devbox_exec`, `devbox_build`, and `devbox_exec_async` so the
+        sandbox pod is labeled with the owning agent. This enables HUD tracking and prevents
+        reaper conflicts in multi-agent scenarios.
+
+        ```
+        devbox_exec(project="loom-core", command="make test", agent_id="claude-code")
+        ```
+
+        ## Async Exec for Long Tasks
+
+        For commands that take more than 2 minutes, use async exec:
+
+        ```
+        result = devbox_exec_async(project="loom-core", command="make build-all", agent_id="claude-code")
+        # Later:
+        devbox_exec_poll(exec_id=result.exec_id)
+        ```
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: instruction
+      claude:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: backlog-delivery-loop
+    categories: [workflow, development, ci-cd]
+    common:
+      description: |
+        Run a full implementation loop from highest-priority backlog item to green CI: context recall, implementation, hooks/tests/lint, commit/push, CI watch/fix, and durable handoff-ready reporting.
+      instructions: |
+        # Backlog Delivery Loop
+
+        Use this when you want a consistent, CLI-agnostic "pick top item and ship to green" flow without extra prompting.
+
+        ## Loop Outcome
+
+        Deliver one high-priority backlog item with:
+        - code merged/pushed
+        - hooks + tests + lint passing
+        - CI status verified
+        - agent-context entries + task updates complete
+
+        ## Step 1: Pick Highest-Priority Item
+
+        Discover backlog source in this order:
+        1. Jira (`jira_search`) if project uses Jira
+        2. GitLab issues (`gitlab.list_issues`) if repo uses GitLab
+        3. GitHub issues (`github.list_issues`) if repo uses GitHub
+        4. Fallback to local backlog docs (`ROADMAP.md`, `docs/roadmap*`, `.loom/*.md`)
+
+        Selection rule:
+        - choose the highest-priority open item that is not blocked
+        - if priority ties, choose oldest updated item
+        - if still tied, choose smallest scoped item for fastest value
+
+        ## Step 1.5: Branch Isolation (Worktree)
+
+        Create an isolated worktree for this backlog item:
+        - call `agent_worktree_allocate(agent_id=<id>, session_id=<session>, branch_name="backlog/<item-id>", base_branch="main", purpose="Deliver <item-id>")`
+        - work exclusively in the returned `worktree_path`
+        - this prevents dirty-worktree conflicts with other agents or pre-existing changes
+        - the worktree is automatically cleaned up when the session ends (TTL/orphan reconciler)
+
+        ## Step 2: Start Agent Context Session
+
+        Use `mcp-agent-context` before coding:
+        - `agent_session_start(namespace="<repo>/backlog-loop", description="Deliver <item-id>")`
+        - `agent_recall(query="<item-id> <topic>", scope="context")`
+        - `agent_task_add(...)` with explicit title/context/priority/file_path/tags
+        - `agent_task_update(..., status="in_progress")`
+        - `agent_presence_register(...)` + periodic `agent_presence_heartbeat(...)`
+
+        ## Step 3: Implement Vertical Slice
+
+        - confirm acceptance criteria from backlog ticket/spec
+        - implement smallest complete slice first
+        - keep edits scoped; avoid unrelated refactors
+        - record key decisions/finding entries as you go (`agent_context_add`)
+
+        ## Step 4: Verify Locally (Hooks Are Mandatory)
+
+        Run checks in this order:
+        1. repository hooks (`pre-commit run -a` if configured)
+        2. targeted tests for touched package/module
+        3. broader suite (`go test ./...`, `npm test`, `pytest`, etc.)
+        4. lint (`golangci-lint run`, `eslint`, etc.)
+
+        Optional helper:
+        - `bash ${SKILL_PATH}/scripts/verify_local_loop.sh`
+
+        If any check fails, fix and rerun before committing.
+
+        Verification is not optional and not deferred to CI.
+
+        ## Step 4.5: Dirty Worktree Baseline (Non-Blocking)
+
+        If using a worktree from Step 1.5, the worktree starts clean and this step is unnecessary.
+
+        Fallback for agents that skip worktree allocation:
+        - treat pre-existing changes as baseline context (not a blocker)
+        - continue on the current branch/worktree by default
+        - stage/commit only files for the selected backlog item
+        - ask for direction only when new unexpected changes appear in files you edit, or when branch/worktree switching is required
+
+        ## Step 5: Commit and Push (Default Behavior)
+
+        Unless the user explicitly requests "no commit/push":
+        - stage only intended files
+        - commit with a concise, scoped message
+        - push branch to remote (branch already created by worktree step if used)
+        - include issue reference in commit/PR text if required by project policy
+
+        ## Step 6: Watch CI to Terminal State
+
+        Prefer MCP APIs over manual polling:
+        - GitLab: `list_pipelines` + `pipeline_summary` or `poll_pipeline`
+        - GitHub: inspect PR/commit checks through repo tooling or configured MCP path
+
+        Optional helper:
+        - `bash ${SKILL_PATH}/scripts/verify_ci_loop.sh --provider auto --ref <branch>`
+        - Override provider explicitly when needed:
+          - `--provider gitlab --project <group/project>`
+          - `--provider github --repo <owner/repo>`
+
+        CI loop:
+        1. find the latest pipeline for the pushed branch
+        2. run to terminal state
+        3. if failed, inspect logs/tests
+        4. implement minimal fix
+        5. rerun local hooks/tests/lint
+        6. push and repoll
+        7. repeat until green or blocked
+
+        If blocked by external dependency:
+        - update task status to `blocked` with concrete blocker details
+        - publish a short handoff note with exact next action
+
+        If in a sandboxed multi-agent environment, prefer devbox tools for builds/tests.
+
+        ## Step 7: Report + Session Close
+
+        - update backlog ticket with summary and links
+        - `agent_task_update(..., status="completed", resolution="...")`
+        - add final `decision`/`note` in agent context
+        - `agent_session_end(summarize=true)`
+
+        Use `assets/templates/status-report.md` for consistent completion reporting.
+      scripts:
+        - name: verify_local_loop.sh
+          path: scripts/verify_local_loop.sh
+          description: Run pre-commit/hooks plus language-aware local verification commands
+        - name: verify_ci_loop.sh
+          path: scripts/verify_ci_loop.sh
+          description: Auto-detect GitLab/GitHub for a repo and poll CI to terminal state with failure summary
+      references:
+        - workflow.md
+      assets:
+        - templates/status-report.md
+        - templates/task-selection.md
+      always_allow:
+        - verify_local_loop.sh
+        - verify_ci_loop.sh
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: tech-debt-planning
+    categories: [workflow, planning]
+    common:
+      description: |
+        Plan and prioritize technical debt: inventory debt items, score impact/risk/effort, produce a sequenced remediation plan, and track decisions and follow-up tasks.
+      instructions: |
+        # Tech Debt Planning
+
+        Build an evidence-backed, prioritized technical debt plan with explicit sequencing and backlog-ready slices.
+
+        ## Loop Outcome
+
+        Produce:
+        - normalized debt inventory
+        - deterministic priority ranking
+        - wave-based remediation plan
+        - backlog-ready implementation slices
+
+        ## Step 1: Gather Debt Signals
+
+        Pull evidence from:
+        - code markers: `rg -n "TODO|FIXME|HACK|XXX" --glob '!vendor/**' .`
+        - flaky/failing tests and CI instability
+        - recurring incidents / on-call pain points
+        - performance bottlenecks and high-change hotspots
+
+        Avoid "opinion-only" debt items; every item should include observed impact.
+
+        ## Step 2: Normalize Inventory
+
+        Use `assets/templates/debt-inventory.md` and capture each candidate debt item with:
+        - system/component ownership
+        - evidence and user/business impact
+        - risk if deferred
+        - estimated effort (S/M/L or points)
+        - proposed acceptance criteria
+
+        ## Step 3: Score Deterministically
+
+        Convert inventory to JSON and score with:
+        - `python ${SKILL_PATH}/scripts/debt_score.py --input <inventory.json> --output <priority.md>`
+
+        Use this weighted model:
+        - impact: 35%
+        - risk reduction: 30%
+        - delivery drag reduction: 20%
+        - effort (inverse): 15%
+
+        Keep raw inputs and computed scores so ranking decisions are auditable.
+
+        ## Step 4: Build Remediation Waves
+
+        Use `assets/templates/debt-plan.md` to produce:
+        - Wave 1 (quick wins/high leverage)
+        - Wave 2 (medium effort / high risk-reduction)
+        - Wave 3 (strategic refactors requiring coordination)
+
+        Each wave should include dependencies, constraints, and explicit "not in this wave" scope.
+
+        ## Step 5: Publish Backlog-Ready Slices
+
+        Turn each selected debt item into an implementation-ready backlog unit:
+        - clear problem statement
+        - acceptance criteria
+        - test/verification strategy
+        - rollback/safety notes
+
+        ## Step 6: Record Decisions and Tasks
+
+        Persist planning context:
+        - `agent_session_start(namespace="<repo>/tech-debt-planning", description="Debt planning cycle")`
+        - `agent_context_add(entry_type="decision" | "finding", ...)`
+        - `agent_task_add(...)` for follow-up execution items
+      scripts:
+        - name: debt_score.py
+          path: scripts/debt_score.py
+          description: Rank debt items from JSON inventory with weighted scoring
+      references:
+        - planning-workflow.md
+      assets:
+        - templates/debt-inventory.md
+        - templates/debt-plan.md
+      always_allow:
+        - debt_score.py
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: tech-debt-backlog-dev-loop
+    categories: [workflow, development]
+    common:
+      description: |
+        Execute technical debt backlog items in a repeatable dev loop: pick highest-value debt slice, implement safely, verify quality, and close with context-rich reporting.
+      instructions: |
+        # Tech Debt Backlog Dev Loop
+
+        Use this loop to execute one technical debt item at a time with strong safety rails and measurable outcomes.
+
+        ## Loop Outcome
+
+        Deliver one debt slice with:
+        - behavior preserved or intentionally changed with tests
+        - local quality gates passing
+        - CI status verified
+        - debt backlog item updated with before/after impact
+
+        ## Step 1: Select Next Debt Slice
+
+        Prefer ranking from `tech-debt-planning`; otherwise select by:
+        - highest `(priority_score / effort)` first
+        - if tied, choose item with highest operational risk
+        - if still tied, choose smallest shippable slice
+
+        Use `assets/templates/debt-item-checklist.md` to confirm scope and acceptance criteria before coding.
+
+        ## Step 1.5: Branch Isolation (Worktree)
+
+        Create an isolated worktree for this debt item:
+        - call `agent_worktree_allocate(agent_id=<id>, session_id=<session>, branch_name="debt/<item-id>", base_branch="main", purpose="Deliver debt item <id>")`
+        - work exclusively in the returned `worktree_path`
+        - this prevents dirty-worktree conflicts with other agents or pre-existing changes
+        - the worktree is automatically cleaned up when the session ends (TTL/orphan reconciler)
+
+        ## Step 2: Start Execution Context
+
+        - `agent_session_start(namespace="<repo>/tech-debt-loop", description="Deliver debt item <id>")`
+        - `agent_recall(query="<id> <component>", scope="context")`
+        - `agent_task_add(...)` + `agent_task_update(..., status="in_progress")`
+
+        ## Step 3: Implement Safely
+
+        - add a characterization/baseline test before risky refactors where possible
+        - prefer incremental refactor steps over big-bang rewrites
+        - avoid coupling debt cleanup with unrelated feature changes
+        - log key decisions/findings with `agent_context_add(...)`
+
+        ## Step 4: Verify Locally (Mandatory)
+
+        Run:
+        - `bash ${SKILL_PATH}/scripts/verify_local_loop.sh`
+
+        If checks fail, fix and rerun before commit.
+
+        ## Step 5: Commit + Push
+
+        Unless user asks otherwise:
+        - stage only debt-item-related files
+        - commit with scoped message (include debt item id)
+        - push branch
+
+        ## Step 6: Verify CI to Terminal State
+
+        Run:
+        - `bash ${SKILL_PATH}/scripts/verify_ci_loop.sh --provider auto --ref <branch>`
+
+        If failed:
+        - inspect failure details
+        - implement minimal fix
+        - rerun local verification
+        - push and repoll until green or blocked
+
+        ## Step 7: Close Item and Report
+
+        - update debt backlog item status and impact notes
+        - `agent_task_update(..., status="completed", resolution="...")`
+        - `agent_session_end(summarize=true)`
+
+        Use `assets/templates/implementation-report.md` for a consistent closure note.
+      scripts:
+        - name: verify_local_loop.sh
+          path: scripts/verify_local_loop.sh
+          description: Run pre-commit/hooks and language-aware local verification
+        - name: verify_ci_loop.sh
+          path: scripts/verify_ci_loop.sh
+          description: Poll GitLab/GitHub CI to terminal state with failure summary
+      references:
+        - workflow.md
+      assets:
+        - templates/debt-item-checklist.md
+        - templates/implementation-report.md
+      always_allow:
+        - verify_local_loop.sh
+        - verify_ci_loop.sh
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: roadmap-spec-ralph-loop
+    categories: [workflow, planning]
+    common:
+      description: |
+        Run a roadmap/spec execution loop ("RALPH") that repeatedly turns roadmap intent into shippable increments: review roadmap+specs, align on next slice, land implementation, prove quality/CI, and hand off context. Use for multi-session delivery programs and milestone-driven work.
+      instructions: |
+        # Roadmap Spec RALPH Loop
+
+        RALPH is a repeatable loop for executing roadmap/spec work in stable increments.
+
+        ## RALPH Phases
+
+        - **R**eview: Read roadmap, active specs, and recent decisions
+        - **A**lign: Select next slice with clear acceptance criteria
+        - **L**and: Implement the smallest end-to-end increment
+        - **P**rove: Run tests/lint/CI and validate behavior
+        - **H**andoff/Harvest: Record outcomes, update plans, queue next slice
+
+        ## Step 1: Review Inputs
+
+        Read these first:
+        - roadmap docs (`ROADMAP.md`, `docs/roadmap*`)
+        - active specs (`.loom/20-product-spec.md`, `.loom/30-implementation-plan.md`, ADRs)
+        - open decisions/questions from agent context recall
+
+        Start agent context session for the loop:
+        - `agent_session_start(namespace="<repo>/ralph-loop", description="Roadmap slice <milestone>")`
+        - `agent_recall(query="<milestone> <spec area>", scope="context")`
+
+        ## Step 2: Align Next Slice
+
+        Produce one iteration plan with:
+        - scope in/out
+        - acceptance criteria
+        - risk notes
+        - dependency/blocker map
+        - test plan
+
+        Use `assets/templates/iteration-plan.md`.
+
+        ## Step 3: Land Increment
+
+        - implement one vertical slice only
+        - prefer backward-compatible changes for mid-milestone safety
+        - keep docs/spec deltas in the same PR when possible
+        - record decisions immediately in agent context
+
+        ## Step 4: Prove Quality
+
+        - run targeted tests, then broader suite
+        - run lint/static checks
+        - run pre-commit if configured
+        - push and verify CI pipeline
+
+        If failures appear, loop on fixes before moving to next slice.
+
+        ## Step 5: Handoff and Harvest
+
+        At the end of each slice:
+        - update roadmap/spec progress markers
+        - add agent-context summary entries (`decision`, `finding`, `question`)
+        - close current task with `resolution`
+        - create follow-up task for the next slice
+        - if switching agents, create a focused handoff package
+
+        Use `assets/templates/slice-handoff.md` for consistent transfer notes.
+
+        ## Exit Criteria for a Slice
+
+        A slice is done only when:
+        1. acceptance criteria are met
+        2. tests/lint/pre-commit are clean (or exceptions documented)
+        3. CI status is verified
+        4. roadmap/spec artifacts are updated
+        5. agent context is summarized for the next loop
+      scripts: []
+      references:
+        - ralph-loop.md
+      assets:
+        - templates/iteration-plan.md
+        - templates/slice-handoff.md
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: recursive-context-strategy
+    categories: [agents]
+    common:
+      description: |
+        Teaches agents the four RLM (Recursive Language Model) strategies for processing
+        large or complex context: peeking, grepping, partition+map, and summarize/reduce.
+        Mapped to existing loom MCP tools.
+      instructions: |
+        # Recursive Context Strategy
+
+        Apply these four strategies when facing large codebases, long documents, or complex
+        analysis tasks. Each strategy maps to existing loom MCP tools.
+
+        ## Strategy 1: Peeking (Sample Structure)
+
+        Before deep-diving, probe the high-level structure to orient yourself.
+
+        ```
+        codebase_stats(repo_path=".")
+        → codebase_get_context(repo_path=".", path="/", max_depth=1)
+        → agent_recall(query="<topic>", scope="context", token_budget=2000)
+        ```
+
+        **When to use:** Starting a new analysis, unfamiliar codebase, or when the scope is unclear.
+        **Termination:** Move to Grepping once you have a structural mental model.
+
+        ## Strategy 2: Grepping (Keyword Narrowing)
+
+        Iteratively narrow the search space using keywords and patterns.
+
+        ```
+        codebase_text_search(repo_path=".", pattern="<keyword>")
+        → codebase_search(repo_path=".", query="<semantic query>")
+        → codebase_get_definition(repo_path=".", symbol="<symbol>")
+        ```
+
+        **When to use:** You know what you are looking for but not where it lives.
+        **Iterative pattern:** Broad search → filter by relevance → targeted definition lookup.
+        **Termination:** Stop when you have identified all relevant code locations.
+
+        ## Strategy 3: Partition + Map (Parallel Decomposition)
+
+        Decompose the problem into independent sub-problems and process each separately.
+
+        ```
+        start_thinking(title="Partition Plan", initial_thought="Decompose into N areas...")
+        → For each partition:
+            codebase_search(repo_path=".", query="<partition-specific query>")
+            agent_context_add(entries=[{entry_type: "finding", title: "Partition N result", ...}])
+        → add_thought(thought="Partition N complete, confidence: 0.X")
+        ```
+
+        **When to use:** The problem has natural divisions (by module, by file, by concern).
+        **Bounded parallelism:** Process at most 4-6 partitions before synthesizing.
+        **Termination:** All partitions processed or confidence threshold reached.
+
+        ## Strategy 4: Summarize / Reduce (Aggregate Results)
+
+        Combine findings from earlier strategies into a coherent answer.
+
+        ```
+        agent_context_summarize(session_id="<session>")
+        → agent_recall(query="<original question>", scope="all", token_budget=3000)
+        → agent_context_add(entries=[{entry_type: "note", title: "Final synthesis", content: "..."}])
+        ```
+
+        **When to use:** After Grepping or Partition+Map, when you have scattered findings.
+        **Output:** A reasoning chain with confidence score and traceable evidence.
+
+        ## Termination Heuristic
+
+        Use sequential-thinking confidence scores to decide when to stop recursing:
+
+        1. After each strategy application, assess confidence (0.0-1.0)
+        2. If confidence >= 0.8 → proceed to Summarize/Reduce
+        3. If confidence < 0.8 → identify the specific uncertainty
+        4. Recurse into the uncertain area using the most appropriate strategy
+        5. Maximum recursion depth: 3 levels (peek → grep → partition is typical)
+
+        ## Decision Tree
+
+        ```
+        Start
+        ├─ Unknown scope? → Peek first
+        ├─ Know what to find? → Grep
+        ├─ Multiple areas to cover? → Partition + Map
+        └─ Have scattered findings? → Summarize / Reduce
+        ```
+
+        ## Workflow Integration
+
+        For structured execution, use the `long-context-analysis` or `recursive-context`
+        workflow definitions via `agent_workflow_start`.
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: feature-dev
+    categories: [development, workflow]
+    common:
+      description: |
+        Standard feature development loop with session tracking, worktree allocation, sandbox testing, and commit/push gates. Use for any multi-file feature implementation.
+      instructions: |
+        # Feature Development
+
+        Standard feature development loop with enforced session tracking, worktree isolation, and quality gates.
+
+        ## When to Use
+
+        - Implementing a new feature that touches multiple files
+        - Any change that benefits from worktree isolation
+        - Work that should be tracked across sessions
+
+        ## Execution Guardrails
+
+        - Treat a dirty worktree as baseline context unless the current files conflict directly with your change.
+        - Stage and commit only the files for the active feature slice.
+        - Prefer non-interactive git commands and keep the branch/worktree naming aligned with the feature scope.
+        - Do not stop at code changes; carry the loop through validation, push, and CI verification unless the user explicitly pauses it.
+
+        ## Workflow Steps
+
+        1. **Initialize session** — start agent context session with namespace
+        2. **Allocate worktree** — isolated git worktree for the feature branch
+        3. **Recall context** — retrieve prior work and decisions
+        4. **Implement** — write code (approval gate)
+        5. **Sandbox test** — run tests via devbox
+        6. **Pre-commit checks** — lint, fmt, hooks
+        7. **Commit** — commit changes (approval gate)
+        8. **Push & CI** — push and verify CI passes
+        9. **End session** — summarize and persist context
+        10. **Release worktree** — clean up isolation
+
+        ## Quick Start
+
+        ```
+        agent_workflow_start(definition_id="feature-dev", input={
+          namespace: "project/feature-branch",
+          agent_id: "claude-code",
+          description: "Add user authentication",
+          branch_name: "feat/user-auth",
+          base_branch: "main"
+        })
+        ```
+
+        ## Input Parameters
+
+        | Parameter | Required | Description |
+        |-----------|----------|-------------|
+        | `namespace` | Yes | Session namespace (e.g., `project/feature-branch`) |
+        | `agent_id` | Yes | Agent identifier (e.g., `claude-code`) |
+        | `description` | Yes | Feature description |
+        | `branch_name` | Yes | Git branch name for the worktree |
+        | `base_branch` | No | Base branch (default: `main`) |
+
+        Workflow file: `.agents/workflows/feature-dev.yaml`
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: bugfix
+    categories: [development, workflow]
+    common:
+      description: |
+        Bug fix workflow with investigation step, regression testing, worktree isolation, and session bookends. Use when fixing bugs that need root cause analysis.
+      instructions: |
+        # Bug Fix
+
+        Bug fix workflow with explicit root cause investigation, regression testing, and session tracking.
+
+        ## When to Use
+
+        - Fixing a reported bug that needs investigation
+        - Any fix that should include a regression test
+        - Bugs that benefit from worktree isolation
+
+        ## Investigation Standard
+
+        - capture the symptom, expected behavior, and repro conditions before changing code
+        - add or identify a failing characterization/regression test when feasible
+        - confirm root cause before implementing the fix; avoid “speculative patch” loops
+        - keep the fix scoped to the defect unless adjacent cleanup is required for correctness
+
+        ## Workflow Steps
+
+        1. **Initialize session** — start agent context session
+        2. **Allocate worktree** — isolated git worktree for the fix branch
+        3. **Recall context** — retrieve prior context and similar bugs
+        4. **Investigate** — identify root cause (approval gate)
+        5. **Implement fix** — write the fix (approval gate)
+        6. **Sandbox test** — run tests via devbox
+        7. **Pre-commit checks** — lint, fmt, hooks
+        8. **Commit** — commit changes (approval gate)
+        9. **Push & CI** — push and verify CI passes
+        10. **End session** — summarize and persist context
+        11. **Release worktree** — clean up isolation
+
+        ## Quick Start
+
+        ```
+        agent_workflow_start(definition_id="bugfix", input={
+          namespace: "project/bugfix-branch",
+          agent_id: "claude-code",
+          description: "Fix login timeout on slow connections",
+          branch_name: "fix/login-timeout",
+          base_branch: "main"
+        })
+        ```
+
+        ## Input Parameters
+
+        | Parameter | Required | Description |
+        |-----------|----------|-------------|
+        | `namespace` | Yes | Session namespace (e.g., `project/bugfix-branch`) |
+        | `agent_id` | Yes | Agent identifier (e.g., `claude-code`) |
+        | `description` | Yes | Bug description |
+        | `branch_name` | Yes | Git branch name for the worktree |
+        | `base_branch` | No | Base branch (default: `main`) |
+
+        Workflow file: `.agents/workflows/bugfix.yaml`
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: dependency-upgrade
+    categories: [development, workflow]
+    common:
+      description: |
+        Dependency upgrade with breaking change detection, Tavily research, iterative migration, and validation. Use when upgrading libraries or frameworks across versions.
+      instructions: |
+        # Dependency Upgrade
+
+        Structured dependency upgrade with breaking change detection, impact analysis, and iterative migration.
+
+        ## When to Use
+
+        - Upgrading a major or minor dependency version
+        - Migrations that involve breaking API changes
+        - Multi-step upgrades that need research and validation
+
+        ## Research Standard
+
+        - prefer official changelogs, migration guides, and release notes before secondary summaries
+        - pin the exact `from_version` and `to_version`; avoid fuzzy “latest” targets
+        - map lockfiles, generated code, and transitive dependencies that may also shift during the upgrade
+        - if risk is high, land the migration in staged commits so regressions are easier to isolate
+
+        ## Workflow Steps
+
+        1. **Initialize session** — start agent context session
+        2. **Recall prior migrations** — retrieve lessons from past upgrades
+        3. **Inventory current state** — catalog versions, transitive deps, lock files
+        4. **Breaking changes analysis** — research changelogs via Tavily
+        5. **Impact assessment** — map affected files and usage patterns
+        6. **Approve migration plan** — human review gate
+        7. **Execute migration** — apply changes iteratively with compile/test
+        8. **Full validation** — test suite, linting, integration tests
+        9. **Commit & push** — commit and push changes
+        10. **End session** — summarize and persist migration lessons
+
+        ## Quick Start
+
+        ```
+        agent_workflow_start(definition_id="dependency-upgrade", input={
+          namespace: "upgrade/react-18-to-19",
+          agent_id: "claude-code",
+          dependency: "react",
+          from_version: "18.2",
+          to_version: "19.0"
+        })
+        ```
+
+        ## Input Parameters
+
+        | Parameter | Required | Description |
+        |-----------|----------|-------------|
+        | `namespace` | Yes | Session namespace (e.g., `upgrade/react-18-to-19`) |
+        | `agent_id` | Yes | Agent identifier |
+        | `dependency` | Yes | Dependency name (e.g., `react`, `client-go`) |
+        | `from_version` | Yes | Current version |
+        | `to_version` | Yes | Target version |
+
+        Workflow file: `.agents/workflows/dependency-upgrade.yaml`
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: refactor
+    categories: [development, workflow]
+    common:
+      description: |
+        Systematic refactoring with debt assessment, call-graph impact analysis, incremental execution, and validation gates. Use for planned technical debt reduction.
+      instructions: |
+        # Refactor
+
+        Systematic refactoring workflow with debt assessment, impact analysis, and incremental execution.
+
+        ## When to Use
+
+        - Planned refactoring of a module or subsystem
+        - Extracting packages or cleaning interfaces
+        - Technical debt reduction with measurable goals
+
+        ## Refactor Safety Rails
+
+        - add characterization tests or a baseline behavior check before invasive edits
+        - use call-graph / dependency analysis to identify downstream consumers before moving symbols
+        - split rename, extraction, and behavior-preserving cleanup into separate logical steps where possible
+        - verify public behavior did not drift unless the refactor explicitly includes a functional change
+
+        ## Workflow Steps
+
+        1. **Initialize session** — start agent context session
+        2. **Recall context** — retrieve prior refactoring notes and tech debt items
+        3. **Debt assessment** — catalog code smells, complexity hotspots, duplication
+        4. **Impact analysis** — call graph and dependency analysis, downstream consumers
+        5. **Approve refactoring plan** — human review gate
+        6. **Execute refactoring** — incremental changes, one logical change at a time
+        7. **Validate changes** — tests, lint, type checks, no regressions
+        8. **Commit** — commit and push changes
+        9. **End session** — summarize and persist rationale
+
+        ## Quick Start
+
+        ```
+        agent_workflow_start(definition_id="refactor", input={
+          namespace: "project/refactor-auth-module",
+          agent_id: "claude-code",
+          target: "auth module",
+          goal: "Extract auth into standalone package with clean interfaces"
+        })
+        ```
+
+        ## Input Parameters
+
+        | Parameter | Required | Description |
+        |-----------|----------|-------------|
+        | `namespace` | Yes | Session namespace (e.g., `project/refactor-auth-module`) |
+        | `agent_id` | Yes | Agent identifier |
+        | `target` | Yes | Refactoring target (e.g., `auth module`, `database layer`) |
+        | `goal` | Yes | Refactoring goal (e.g., `Extract auth into standalone package`) |
+
+        Workflow file: `.agents/workflows/refactor.yaml`
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: instruction
+
+  - name: repo-intake
+    categories: [workflow, discovery]
+    common:
+      description: |
+        Fast repository intake loop: establish repo context, current state, available loom/MCP capabilities, and the likely execution path before making changes.
+      instructions: |
+        # Repo Intake
+
+        Use this at the start of a session when the repo or task context is not fully loaded.
+
+        ## Outcome
+
+        Produce a compact intake summary covering:
+        - repository purpose and conventions
+        - current git/worktree state
+        - available loom/MCP capabilities
+        - likely code areas involved
+        - recommended next workflow (`feature-dev`, `bugfix`, `research`, `small-change-loop`, etc.)
+
+        ## Intake Sequence
+
+        1. **Read local repo instructions first**
+           - `AGENTS.md`
+           - `README*`
+           - task-specific docs (`ROADMAP.md`, `.loom/*.md`, `docs/**`) when present
+        2. **Check repo state**
+           - `git status`
+           - active branch / worktree
+           - note pre-existing changes as baseline context, not an automatic blocker
+        3. **Start or resume context**
+           - `agent_session_start`
+           - `agent_recall(query="<repo> <task>")`
+           - `agent_presence_register`
+        4. **Verify codebase search readiness**
+           - `codebase_memory__codebase_stats`
+           - if missing/stale: `codebase_memory__codebase_index_start` + `codebase_memory__codebase_index_poll`
+        5. **Map the likely surface area**
+           - `codebase_memory__codebase_search`
+           - `codebase_memory__codebase_get_definition`
+           - `codebase_memory__codebase_get_context`
+        6. **Inventory operational tooling if relevant**
+           - `loom sync status`
+           - `curl http://localhost:9876/health` when daemon state matters
+           - `loom tunnel status` when remote infra access may be needed
+
+        ## Decision Rule
+
+        - choose `small-change-loop` for tightly scoped edits that do not need backlog/worktree ceremony
+        - choose `feature-dev` for multi-file feature slices
+        - choose `bugfix` when root-cause analysis and regression proof matter
+        - choose `research` or `plan-loom-core` when uncertainty is still high
+
+        ## Done
+
+        Intake is complete when another agent could read your summary and start execution without re-discovering the repo.
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: workspace-daily-sweep
+    categories: [workflow, maintenance, operations]
+    common:
+      description: |
+        Daily workspace sweep for repo health, platform sync drift, daemon/HUD status, active agent coordination, and outstanding worktree/task pressure.
+      instructions: |
+        # Workspace Daily Sweep
+
+        Use this for a quick start-of-day or before-shipping health pass across the local loom workspace.
+
+        ## Outcome
+
+        Produce a short sweep report with:
+        - config/skill sync drift
+        - daemon/HUD health
+        - dirty repos or stale worktrees
+        - active agents, blocked tasks, or coordination pressure
+        - immediate actions worth taking today
+
+        ## Sweep Checklist
+
+        1. **Platform drift**
+           - `loom sync status`
+           - if drift exists, run targeted `loom sync <profile> --regen --hub-mode --all-projects --skip-worktrees`
+        2. **Daemon and proxy health**
+           - `curl http://localhost:9876/health`
+           - `loom tunnel status` when remote clusters are in scope
+        3. **HUD status**
+           - confirm local HUD responds on `http://127.0.0.1:3333` or the configured port
+           - use the HUD to spot lifecycle pressure, blocked tasks, and stale sessions
+        4. **Agent coordination state**
+           - `agent_presence_list`
+           - `agent_task_list`
+           - `agent_worktree_list`
+           - look for idle agents holding claims, blocked tasks without owners, and orphaned worktrees
+        5. **Repo hygiene**
+           - scan key repos for dirty trees and pending branches
+           - confirm the active branch matches the current task
+
+        ## Escalation Rules
+
+        - if config drift is widespread, use `platform-config-sync`
+        - if blocked tasks or claim conflicts dominate, update task ownership and session summaries before starting new work
+        - if daemon/HUD state is unhealthy, fix the local platform before attempting normal delivery
+
+        ## Reporting Format
+
+        Keep the sweep concise:
+        - green: safe to continue
+        - yellow: attention needed soon
+        - red: blocking issue that should be resolved first
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: quality-gate-loop
+    categories: [workflow, quality, development]
+    common:
+      description: |
+        Standard local quality loop: run repo hooks, targeted tests, broader validation, and summarize failures/fixes until the change is actually ready to ship.
+      instructions: |
+        # Quality Gate Loop
+
+        Use this whenever code has changed and the next question is "is this really ready?".
+
+        ## Outcome
+
+        End with one of:
+        - all required local gates passing
+        - a precise failure summary with the next fix to make
+        - a documented external blocker
+
+        ## Standard Order
+
+        1. **Hook layer**
+           - `pre-commit run -a` when configured
+           - repo-specific hooks or wrappers
+        2. **Targeted verification**
+           - run tests only for touched packages/modules first
+           - use `devbox_exec` when dependency or build isolation matters
+        3. **Broader verification**
+           - full unit/integration suite as appropriate
+           - lint/static checks
+           - build/compile checks
+        4. **Regression summary**
+           - record what failed, why, and whether the fix is local, flaky, or environmental
+
+        ## Preferred Loom Tooling
+
+        - `devbox_detect` to fingerprint the project
+        - `devbox_exec` / `devbox_exec_async` for safe isolated execution
+        - `quality_check`, `quality_lint`, `quality_test`, `quality_security`, `quality_coverage` for Go repos that expose those gates
+
+        ## Rules
+
+        - do not jump straight to the full suite if a smaller targeted check can fail faster
+        - do not stop after the first failure; identify the narrowest fix and rerun the affected gate
+        - do not claim "ready" while hooks, tests, or lint still have known failures
+
+        ## Handoff
+
+        If the loop ends blocked, leave:
+        - exact command that failed
+        - key failing output
+        - current hypothesis
+        - next command to run after the blocker clears
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: ci-failure-recovery
+    categories: [workflow, ci-cd, debugging]
+    common:
+      description: |
+        CI failure recovery loop: inspect the latest failing pipeline, classify the break, reproduce locally when possible, land the smallest fix, and re-poll to green.
+      instructions: |
+        # CI Failure Recovery
+
+        Use this when the code is pushed but the branch is not actually shippable because CI is failing.
+
+        ## Outcome
+
+        Resolve or classify the failure with:
+        - failing job and root-cause summary
+        - local reproduction status
+        - minimal corrective change or explicit external blocker
+        - updated pipeline status
+
+        ## Core Loop
+
+        1. **Find the right pipeline**
+           - GitLab: `gitlab__list_pipelines`, `gitlab__pipeline_summary`, `gitlab__poll_pipeline`
+           - GitHub: inspect PR/check status with the configured repo tooling
+        2. **Classify the failure**
+           - test regression
+           - lint/static failure
+           - packaging/build failure
+           - environment or runner problem
+           - flaky or infra-dependent behavior
+        3. **Pull the actionable logs**
+           - `gitlab__get_job_trace`
+           - `gitlab__get_test_report`
+           - failed job artifacts when available
+        4. **Reproduce locally**
+           - run the nearest local/devbox command to confirm the failure
+           - if exact reproduction is impossible, reproduce the smallest equivalent gate
+        5. **Fix minimally**
+           - avoid opportunistic cleanup while CI is red
+           - rerun the relevant local gate before pushing
+        6. **Repoll to terminal**
+           - push the fix
+           - `gitlab__poll_pipeline`
+           - repeat until green or externally blocked
+
+        ## Decision Rule
+
+        - if the failure is clearly repo-local, keep iterating in the same branch
+        - if the failure is platform-wide or runner-related, stop code churn and document the infra blocker
+        - if multiple jobs fail, fix the earliest causal failure first
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: small-change-loop
+    categories: [workflow, development]
+    common:
+      description: |
+        Lightweight coding loop for small, well-bounded changes: clarify the request, inspect the narrow code surface, implement, verify locally, and ship without heavyweight workflow overhead.
+      instructions: |
+        # Small Change Loop
+
+        Use this when the task is real code work but does not justify backlog selection, migration research, or a large feature branch ceremony.
+
+        ## Good Fit
+
+        - one to three files
+        - small bug, copy change, config tweak, test fix, or focused UI adjustment
+        - the user expects direct execution, not a planning phase
+
+        ## Not a Good Fit
+
+        - broad feature work across subsystems
+        - risky bugfixes without clear repro
+        - refactors that need impact analysis
+        - dependency upgrades or release work
+
+        ## Loop
+
+        1. **Load only the local context you need**
+           - read `AGENTS.md` and the touched file area
+           - use `codebase_memory__codebase_search` or `codebase_memory__codebase_get_context` for quick targeting
+        2. **Track the slice**
+           - `agent_session_start`
+           - `agent_task_add` when the work is non-trivial enough to revisit
+        3. **Implement directly**
+           - keep the diff narrow
+           - avoid unrelated cleanup unless correctness requires it
+        4. **Verify proportionally**
+           - run the smallest meaningful local checks first
+           - escalate to `quality-gate-loop` if the change grows or fails unexpectedly
+        5. **Ship by default**
+           - commit scoped files
+           - push if the user has not opted out
+           - verify CI when the repo policy requires it
+
+        ## Escalation
+
+        Switch to another skill if the task expands:
+        - `feature-dev` for larger implementation slices
+        - `bugfix` for investigation-heavy defects
+        - `refactor` for structural cleanup
+        - `ci-failure-recovery` when the branch is blocked by pipeline failures
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: backlog-triage
+    categories: [workflow, planning, coordination]
+    common:
+      description: |
+        Backlog triage loop: gather open work from Jira, GitLab, GitHub, and local plans, normalize priority and blockers, then produce a concrete ranked next-action list.
+      instructions: |
+        # Backlog Triage
+
+        Use this when the problem is not "write code now" but "decide what should move next".
+
+        ## Outcome
+
+        Produce a ranked backlog snapshot with:
+        - top candidate items
+        - blocker and dependency notes
+        - ownership gaps
+        - a recommended next slice to execute
+
+        ## Source Order
+
+        1. Jira issues if the repo/program uses Jira
+        2. GitLab issues / merge requests
+        3. GitHub issues / pull requests
+        4. Local planning docs (`ROADMAP.md`, `.loom/*.md`, `docs/**`)
+        5. Agent tasks already tracked in `agent-context`
+
+        ## Triage Loop
+
+        1. **Collect candidates**
+           - `jira__jira_search`
+           - `gitlab__list_issues`
+           - `github__list_issues`
+           - `agent_task_list`
+        2. **Normalize**
+           - one line summary
+           - owner
+           - status
+           - urgency / impact
+           - blocker state
+           - likely effort
+        3. **Cross-check coordination**
+           - `agent_presence_list`
+           - `agent_worktree_list`
+           - identify work already in progress before assigning new slices
+        4. **Rank**
+           - prioritize unblocked, high-impact, smallest-shippable items
+           - de-prioritize vague work that still needs research
+        5. **Publish next action**
+           - recommend a specific next item
+           - point to the right follow-on skill: `small-change-loop`, `feature-dev`, `bugfix`, or `research`
+
+        ## Rules
+
+        - do not treat backlog grooming as abstract strategy work; every recommendation should end in an executable next step
+        - avoid selecting blocked work unless the blocker itself is the next tractable item
+        - prefer items with crisp acceptance criteria and visible user or operational value
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: review-response-loop
+    categories: [workflow, development, collaboration]
+    common:
+      description: |
+        Review response loop: turn PR/MR feedback into a prioritized fix list, apply the smallest corrections, verify locally, and close the review cycle with clear responses.
+      instructions: |
+        # Review Response Loop
+
+        Use this when review feedback exists and the branch needs another clean pass before merge.
+
+        ## Outcome
+
+        Close the review cycle with:
+        - normalized review findings
+        - fixes applied or explicitly rebutted
+        - local verification rerun
+        - concise response summary for the reviewer
+
+        ## Intake Sources
+
+        - GitLab merge request discussions / notes
+        - GitHub PR review comments
+        - local review notes or inline findings
+        - user-provided review bullets
+
+        ## Loop
+
+        1. **Collect all findings**
+           - group duplicates and related comments
+           - separate correctness issues from style or optional suggestions
+        2. **Prioritize**
+           - correctness / regression risk first
+           - test gaps second
+           - maintainability and naming after that
+        3. **Map findings to code**
+           - `codebase_memory__codebase_get_context`
+           - `codebase_memory__codebase_get_references`
+           - confirm the current code still matches the comment
+        4. **Implement minimally**
+           - fix only what the feedback requires
+           - avoid turning a review pass into an opportunistic refactor
+        5. **Re-verify**
+           - rerun the narrowest meaningful local checks
+           - escalate to `quality-gate-loop` when the review touches broader behavior
+        6. **Respond clearly**
+           - state what changed
+           - if rejecting a suggestion, explain the concrete reason
+
+        ## Rules
+
+        - stale comments should be marked stale mentally before coding; do not "fix" already-resolved behavior
+        - if a review reveals a missing test, add the test close to the fix
+        - if feedback exposes a deeper defect, switch to `bugfix`
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: merge-readiness
+    categories: [workflow, ci-cd, quality]
+    common:
+      description: |
+        Merge readiness loop: confirm the branch diff, local validation, CI state, review status, and release notes/docs so a merge can happen without surprise follow-up churn.
+      instructions: |
+        # Merge Readiness
+
+        Use this right before asking for merge or performing merge/deploy work.
+
+        ## Outcome
+
+        Produce a merge-ready verdict:
+        - ready now
+        - ready after one concrete fix
+        - not ready, with blockers
+
+        ## Checklist
+
+        1. **Diff sanity**
+           - inspect staged or branch diff
+           - confirm the change scope still matches the task
+           - remove accidental unrelated edits
+        2. **Local validation**
+           - ensure required hooks/tests/lint/build checks were rerun after the last meaningful edit
+           - use `quality-gate-loop` if this is uncertain
+        3. **CI status**
+           - `gitlab__pipeline_summary` / `gitlab__poll_pipeline`
+           - or the equivalent GitHub checks view
+        4. **Review status**
+           - unresolved comments?
+           - requested changes still open?
+           - ownership/approval requirements satisfied?
+        5. **Operational/doc impact**
+           - docs/spec/changelog updated when the change affects usage or rollout
+           - follow-up tasks created for deliberate omissions
+
+        ## Decision Rule
+
+        - merge only if there are no unresolved correctness concerns and the latest required checks are green
+        - if CI is the only blocker, switch to `ci-failure-recovery`
+        - if the diff no longer matches the requested scope, tighten it before merge instead of explaining it away
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: docs-refresh-loop
+    categories: [workflow, documentation, maintenance]
+    common:
+      description: |
+        Documentation refresh loop: identify docs that drifted from code or operations, update the minimum necessary set with source-backed details, and leave the repo easier to resume.
+      instructions: |
+        # Docs Refresh Loop
+
+        Use this when implementation changed but docs, specs, or runbooks are now out of date.
+
+        ## Outcome
+
+        Deliver a small, accurate documentation refresh with:
+        - changed docs/specs/runbooks
+        - file-backed evidence for the update
+        - explicit open questions where behavior is still unsettled
+
+        ## Loop
+
+        1. **Identify likely drift**
+           - changed code paths
+           - user-facing behavior changes
+           - operational workflow changes
+           - stale `.loom` planning docs after implementation moved
+        2. **Source from the code first**
+           - `codebase_memory__codebase_search`
+           - `codebase_memory__codebase_get_context`
+           - exact commands and file refs for operational steps
+        3. **Update the minimum doc set**
+           - README / feature docs
+           - `.loom/20-product-spec.md` or `.loom/30-implementation-plan.md`
+           - runbooks or rollout notes when operations changed
+        4. **Check for consistency**
+           - no promises the code does not fulfill
+           - no obsolete flags, commands, or paths
+        5. **Preserve context**
+           - add a short `agent-context` note or decision when the doc change captures non-obvious rationale
+
+        ## Rules
+
+        - prefer smaller accurate updates over broad prose refreshes
+        - cite exact code or command evidence for non-trivial claims
+        - if external behavior is still in flux, document the uncertainty instead of inventing certainty
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: frontend-ux-craft
+    categories: [frontend, design, ux, workflow]
+    common:
+      description: |
+        Design and implement polished, consistent, and beautiful frontend experiences with strong UX judgment, accessible interaction states, responsive behavior, and an intentional visual language. Use when shaping new UI, upgrading rough interfaces, or pushing beyond functional-but-generic output.
+      instructions: |
+        # Frontend UX Craft
+
+        Shape frontend work into interfaces that feel deliberate, usable, and visually cohesive instead of merely functional.
+
+        ## Use This When
+
+        - the user asks for frontend, UI, UX, visual polish, responsive cleanup, design-system alignment, or a stronger product feel
+        - the feature works but feels generic, inconsistent, crowded, or hard to scan
+        - the task needs both implementation and design judgment
+
+        ## North Star
+
+        - Preserve the existing design system when one already exists.
+        - If no strong system exists, choose a clear visual direction before coding:
+          - typography, spacing rhythm, color story, component shapes, motion, and copy tone should reinforce one another
+        - Optimize for clarity first, delight second, ornament last.
+        - Always cover loading, empty, error, hover, focus, active, and disabled states.
+        - Ensure the result works on mobile and desktop.
+
+        ## Core Workflow
+
+        1. Read the surface before rewriting it.
+           - Identify the user goal, primary action, constraints, and current confusion points.
+           - Inventory existing tokens, patterns, and reusable components so improvements stay coherent.
+        2. Establish a design direction.
+           - Define or reuse CSS variables / tokens.
+           - Set type scale, spacing rhythm, containers, elevation, border treatment, and motion rules.
+           - Choose a single visual thesis instead of mixing styles.
+        3. Implement the experience, not just the happy path.
+           - Handle hierarchy, copy, affordances, feedback, edge states, and accessibility semantics.
+           - Avoid AI-slop defaults: generic card grids, flat white pages, random gradients, and interchangeable typography.
+           - Use purposeful motion, not decorative noise.
+        4. Review the result in context.
+           - If the app can run locally, capture screenshots with `browserkit-screenshots`.
+           - Compare before/after for hierarchy, density, spacing, contrast, and action clarity.
+        5. Close with proof.
+           - Summarize the visual direction, key UX improvements, and verification performed.
+           - Call out any intentionally deferred polish as explicit follow-up work.
+
+        ## Output Expectations
+
+        - A brief visual-direction statement
+        - A concrete implementation slice
+        - Evidence of responsive, accessibility, and state coverage
+
+        ## References / Templates
+
+        - Playbook: `references/playbook.md`
+        - Review rubric: `references/review-rubric.md`
+        - Design brief: `assets/templates/ui-implementation-brief.md`
+        - Polish checklist: `assets/templates/polish-checklist.md`
+      scripts: []
+      references:
+        - playbook.md
+        - review-rubric.md
+      assets:
+        - templates/ui-implementation-brief.md
+        - templates/polish-checklist.md
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: entropy-reduction-protocol
+    categories: [workflow, quality, coordination]
+    common:
+      description: |
+        Reduce agent drift and execution entropy by forcing tight scopes, explicit assumptions, checkpointed progress, and small verified loops. Use when work is sprawling, underspecified, or vulnerable to context-window thrash.
+      instructions: |
+        # Entropy Reduction Protocol
+
+        Keep agent work tight, cumulative, and recoverable when tasks are ambiguous, large, or easy to derail.
+
+        ## Use This When
+
+        - the task is sprawling, underspecified, or multi-step
+        - context-window pressure is rising and the work is starting to thrash
+        - multiple tempting paths exist and we need disciplined convergence
+        - the user wants fewer surprises and more deliberate execution
+
+        ## Operating Rules
+
+        - Hold one primary objective at a time.
+        - Keep a visible working set: goal, constraints, touched files, next action, verification plan, and exit criteria.
+        - Prefer the smallest reversible change that proves direction.
+        - Close or capture every open loop; do not carry fuzzy state in memory alone.
+        - Escalate only at real decision boundaries with non-obvious consequences.
+
+        ## Core Workflow
+
+        1. Compress the objective.
+           - Rewrite the task as one sentence and one shippable slice.
+        2. Build the working set.
+           - Record known facts, assumptions, files in play, verification steps, and stop condition.
+        3. Execute in micro-cycles.
+           - Inspect narrowly.
+           - Edit narrowly.
+           - Verify immediately.
+           - Summarize the delta before expanding scope again.
+        4. Run drift checks whenever progress stalls.
+           - What am I doing right now?
+           - Why does it serve the objective?
+           - What can be deleted, deferred, or explicitly tracked instead?
+        5. Externalize state.
+           - Use plan/progress primitives and agent context when available.
+           - Record decisions, follow-ups, and unresolved questions instead of relying on memory.
+        6. Finish cleanly.
+           - State what changed, what was verified, and what remains uncertain.
+
+        ## Anti-Entropy Guardrails
+
+        - Avoid parallel speculative edits across unrelated files.
+        - Do not mix refactor, feature, and cleanup work unless correctness requires it.
+        - Do not reopen settled decisions without new evidence.
+        - When new work appears, either capture it as follow-up or consciously swap goals.
+
+        ## References / Templates
+
+        - Protocol notes: `references/protocol.md`
+        - Drift signals: `references/drift-signals.md`
+        - Working set template: `assets/templates/working-set.md`
+        - Checkpoint log template: `assets/templates/checkpoint-log.md`
+      scripts: []
+      references:
+        - protocol.md
+        - drift-signals.md
+      assets:
+        - templates/working-set.md
+        - templates/checkpoint-log.md
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: multi-lens-product-review
+    categories: [product, design, review, workflow]
+    common:
+      description: |
+        Run a creative but grounded multi-lens critique across UX, copy, accessibility, performance, and implementation reality, then converge on the highest-leverage next slice. Use when we need structured taste, sharper product thinking, or a more inventive direction before building.
+      instructions: |
+        # Multi Lens Product Review
+
+        Use the Loom framework to run a creative but grounded critique from several angles, then converge on the best next move.
+
+        ## Use This When
+
+        - a vague product or UI concept needs shaping
+        - the current experience needs a stronger point of view
+        - we want structured critique instead of a single-agent taste take
+        - we need evidence-backed prioritization before implementation
+
+        ## Required Inputs
+
+        - the artifact under review: screenshot, running app, mock, code surface, or spec
+        - the intended user outcome
+        - relevant constraints: brand, platform, timeline, technical limits
+
+        ## Review Lenses
+
+        - User value and narrative
+        - Information hierarchy and scanability
+        - Interaction and state transitions
+        - Copy, tone, and comprehension
+        - Accessibility and inclusion
+        - Performance and implementation leverage
+
+        ## Core Workflow
+
+        1. Capture reality.
+           - Collect screenshots, code references, or specs.
+           - Write a plain-language statement of what the user is trying to do.
+        2. Diverge by lens.
+           - Assess the artifact through each lens.
+           - Generate bold but plausible alternatives, not just cosmetic nitpicks.
+        3. Converge.
+           - Identify the few changes that improve multiple lenses at once.
+           - Choose the smallest high-leverage slice to prototype or implement.
+        4. Package the review.
+           - Produce a recommendation matrix with severity, upside, effort, and confidence.
+           - Produce a proof pack with before/after notes or screenshots when available.
+        5. Preserve and coordinate.
+           - If multi-agent support exists, assign distinct lenses to different agents and merge results.
+           - If agent context exists, store the decision trail and follow-ups.
+
+        ## Framework Hooks
+
+        - `browserkit-screenshots` for evidence capture
+        - `agent-context` for durable findings and decisions
+        - `multi-agent-handoff` when splitting lenses across agents
+        - `frontend-ux-craft` when the selected slice becomes implementation work
+
+        ## Output Expectations
+
+        - 3-6 strongest findings
+        - 1 chosen direction
+        - An implementation-ready next slice
+        - Open risks or unanswered questions
+
+        ## References / Templates
+
+        - Lens guide: `references/lenses.md`
+        - Facilitation notes: `references/facilitation.md`
+        - Review matrix: `assets/templates/review-matrix.md`
+        - Recommendation pack: `assets/templates/recommendation-pack.md`
+      scripts: []
+      references:
+        - lenses.md
+        - facilitation.md
+      assets:
+        - templates/review-matrix.md
+        - templates/recommendation-pack.md
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill

@@ -60,6 +60,10 @@ func buildRegistryCandidates(cwd, home, workspaceRoot string) []registryCandidat
 			Label: "cwd:mcp/context/registry.yaml",
 		},
 		{
+			Path:  filepath.Join(home, "workspace", "services", "loom-core", "mcp", "context", "registry.yaml"),
+			Label: "~/workspace/services/loom-core/mcp/context/registry.yaml",
+		},
+		{
 			Path:  filepath.Join(home, ".config", "fi-mcp", "registry.yaml"),
 			Label: "~/.config/fi-mcp/registry.yaml",
 		},
@@ -78,6 +82,10 @@ func buildRegistryCandidates(cwd, home, workspaceRoot string) []registryCandidat
 	}
 
 	if workspaceRoot != "" {
+		candidates = append(candidates, registryCandidate{
+			Path:  filepath.Join(workspaceRoot, "services", "loom-core", "mcp", "context", "registry.yaml"),
+			Label: "workspace:services/loom-core/mcp/context/registry.yaml",
+		})
 		candidates = append(candidates, registryCandidate{
 			Path:  filepath.Join(workspaceRoot, "platform", "gitops", "mcp", "context", "registry.yaml"),
 			Label: "workspace:platform/gitops/mcp/context/registry.yaml (fallback)",
