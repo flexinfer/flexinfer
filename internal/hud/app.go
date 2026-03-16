@@ -272,6 +272,7 @@ func Run(cfg Config) error {
 				spawnBackend, agent, app.sseHub, app.tracer, app.metrics, logger,
 				spawnCfg,
 			)
+			app.fleetMonitor.SetSpawnLister(spawnAdapter{app.spawner})
 			logger.Info("spawn orchestrator enabled",
 				"namespace", cfg.SpawnNamespace, "registry", cfg.SpawnRegistry,
 				"sync_mode", cfg.SpawnSyncMode, "projects", len(spawnCfg.Projects))
@@ -2583,4 +2584,33 @@ func browserHost(bindAddr, listenHost string) string {
 	default:
 		return host
 	}
+}
+
+// spawnAdapter adapts SpawnOrchestrator to the monitor.SpawnLister interface.
+type spawnAdapter struct {
+	orch *SpawnOrchestrator
+}
+
+func (a spawnAdapter) ListSpawnInfos() []monitor.SpawnInfo {
+	states := a.orch.ListSpawns()
+	infos := make([]monitor.SpawnInfo, 0, len(states))
+	for _, s := range states {
+		info := monitor.SpawnInfo{
+			SpawnID:   s.SpawnID,
+			AgentID:   s.AgentID,
+			PodName:   s.PodName,
+			Status:    string(s.Status),
+			Project:   s.Request.Project,
+			Branch:    s.Request.Branch,
+			Task:      s.Request.TaskDescription,
+			AgentType: s.Request.AgentType,
+			StartedAt: s.StartedAt.Format(time.RFC3339),
+		}
+		if s.EndedAt != nil {
+			info.EndedAt = s.EndedAt.Format(time.RFC3339)
+		}
+		info.Error = s.Error
+		infos = append(infos, info)
+	}
+	return infos
 }

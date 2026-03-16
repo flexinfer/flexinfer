@@ -113,6 +113,9 @@ struct OpsView: View {
         .task {
             await viewModel.load()
             resolveDeepLinkWorkflow()
+            if let sseClient {
+                viewModel.startListening(sseClient: sseClient)
+            }
         }
         .refreshable {
             await viewModel.load()

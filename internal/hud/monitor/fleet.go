@@ -60,8 +60,31 @@ type FleetSnapshot struct {
 	Worktrees       []bridge.WorktreeInfo  `json:"worktrees"`
 	Coordination    coordination.Snapshot  `json:"coordination"`
 
+	// Spawned agents (K8s pods)
+	Spawns []SpawnInfo `json:"spawns"`
+
 	// Metadata
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// SpawnInfo is a flat representation of a spawned agent for fleet aggregation.
+type SpawnInfo struct {
+	SpawnID   string `json:"spawn_id"`
+	AgentID   string `json:"agent_id"`
+	PodName   string `json:"pod_name"`
+	Status    string `json:"status"`
+	Project   string `json:"project"`
+	Branch    string `json:"branch"`
+	Task      string `json:"task_description"`
+	AgentType string `json:"agent_type"`
+	StartedAt string `json:"started_at"`
+	EndedAt   string `json:"ended_at,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// SpawnLister provides active spawn states for fleet aggregation.
+type SpawnLister interface {
+	ListSpawnInfos() []SpawnInfo
 }
 
 // ConflictDetail describes a single file claimed by multiple agents.
@@ -88,6 +111,7 @@ type KPICounters struct {
 type FleetMonitor struct {
 	client *bridge.DaemonClient
 	agent  *bridge.AgentBridge
+	spawns SpawnLister // optional — nil when spawn orchestrator not configured
 	logger *slog.Logger
 
 	mu          sync.RWMutex
@@ -128,6 +152,12 @@ func NewFleetMonitor(client *bridge.DaemonClient, agent *bridge.AgentBridge, log
 		notifiedHandoffs: make(map[string]bool),
 		stopCh:           make(chan struct{}),
 	}
+}
+
+// SetSpawnLister injects a spawn source for fleet aggregation.
+// Call after both FleetMonitor and SpawnOrchestrator are initialized.
+func (m *FleetMonitor) SetSpawnLister(sl SpawnLister) {
+	m.spawns = sl
 }
 
 // Start begins the background polling goroutine at the given interval.
@@ -327,6 +357,11 @@ func (m *FleetMonitor) Refresh() error {
 	} else {
 		snap.Worktrees = worktrees
 		snap.ActiveWorktrees = len(worktrees)
+	}
+
+	// Fetch active spawns.
+	if m.spawns != nil {
+		snap.Spawns = m.spawns.ListSpawnInfos()
 	}
 
 	snap.Coordination = coordination.Build(

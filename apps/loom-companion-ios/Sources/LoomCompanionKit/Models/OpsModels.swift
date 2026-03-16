@@ -387,7 +387,54 @@ public struct MobilePresenceResponse: Decodable, Sendable {
     public let agents: [MobilePresenceAgent]
     public let claims: [MobileFileClaim]
     public let worktrees: [MobileWorktree]
+    public let spawns: [MobilePresenceSpawn]
     public let summary: MobilePresenceSummary
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        agents = try container.decode([MobilePresenceAgent].self, forKey: .agents)
+        claims = try container.decode([MobileFileClaim].self, forKey: .claims)
+        worktrees = try container.decode([MobileWorktree].self, forKey: .worktrees)
+        spawns = try container.decodeIfPresent([MobilePresenceSpawn].self, forKey: .spawns) ?? []
+        summary = try container.decode(MobilePresenceSummary.self, forKey: .summary)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case agents, claims, worktrees, spawns, summary
+    }
+}
+
+/// Lightweight spawn info returned alongside presence data.
+public struct MobilePresenceSpawn: Decodable, Sendable, Identifiable {
+    public let spawnId: String
+    public let agentId: String
+    public let podName: String?
+    public let status: String
+    public let project: String
+    public let branch: String
+    public let taskDescription: String
+    public let agentType: String
+    public let startedAt: String
+    public let endedAt: String?
+    public let error: String?
+
+    public var id: String { spawnId }
+
+    public var isActive: Bool {
+        status == "creating" || status == "building" || status == "running"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case spawnId = "spawn_id"
+        case agentId = "agent_id"
+        case podName = "pod_name"
+        case status, project, branch
+        case taskDescription = "task_description"
+        case agentType = "agent_type"
+        case startedAt = "started_at"
+        case endedAt = "ended_at"
+        case error
+    }
 }
 
 public struct MobileMemoryTierStats: Decodable, Sendable {

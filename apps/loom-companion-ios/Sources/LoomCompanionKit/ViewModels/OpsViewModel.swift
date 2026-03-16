@@ -43,8 +43,62 @@ public final class OpsViewModel {
     @ObservationIgnored
     public let apiClient: any LoomAPIClientProtocol
 
+    @ObservationIgnored
+    private var sseTask: Task<Void, Never>?
+
+    /// SSE event types that trigger a presence/agents refresh.
+    private static let refreshEventTypes: Set<String> = [
+        "hud.fleet",
+        "agent.heartbeat",
+        "agent.session.start",
+        "agent.session.end",
+        "agent.session.reaped",
+        "agent.spawn.building",
+        "agent.spawn.running",
+        "agent.spawn.completed",
+        "agent.spawn.failed",
+        "agent.spawn.stopped",
+        "hud.workflows",
+    ]
+
     public init(apiClient: any LoomAPIClientProtocol) {
         self.apiClient = apiClient
+    }
+
+    /// Start listening to SSE events for real-time agent updates.
+    public func startListening(sseClient: SSEClient) {
+        sseTask?.cancel()
+        sseTask = Task { [weak self] in
+            for await event in sseClient.events {
+                await self?.handleSSEEvent(event)
+            }
+        }
+    }
+
+    /// Stop listening to SSE events.
+    public func stopListening() {
+        sseTask?.cancel()
+        sseTask = nil
+    }
+
+    @MainActor
+    private func handleSSEEvent(_ event: SSEEvent) async {
+        if Self.refreshEventTypes.contains(event.type) {
+            await loadPresence()
+        }
+    }
+
+    /// Refresh just the presence/agents section (lightweight, called on SSE events).
+    public func loadPresence() async {
+        do {
+            let response: MobilePresenceResponse = try await apiClient.request(.presence(limit: 50))
+            presenceAgents = response.agents
+            presenceClaims = response.claims
+            presenceWorktrees = response.worktrees
+            presenceSummary = response.summary
+        } catch {
+            // Non-critical — keep existing data on transient failures.
+        }
     }
 
     public func load() async {

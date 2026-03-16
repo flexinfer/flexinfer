@@ -840,10 +840,17 @@ func (a *App) handleMobilePresence(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Include active spawns (K8s headless agents).
+	var spawns any = snap.Spawns
+	if snap.Spawns == nil {
+		spawns = []struct{}{}
+	}
+
 	a.writeMobileJSON(w, http.StatusOK, map[string]any{
 		"agents":    agents,
 		"claims":    claims,
 		"worktrees": worktrees,
+		"spawns":    spawns,
 		"summary":   summary,
 		"coordination": map[string]any{
 			"summary":          snap.Coordination.Summary,
