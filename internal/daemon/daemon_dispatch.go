@@ -718,7 +718,7 @@ type configHashResult struct {
 // handleConfigHash returns hash of current configuration for drift detection.
 func (d *Daemon) handleConfigHash(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	d.toolCache.mu.RLock()
-	toolCount := len(d.toolCache.tools)
+	toolCount := len(visibleTools(d.toolCache.tools))
 	d.toolCache.mu.RUnlock()
 
 	result := configHashResult{
@@ -767,7 +767,7 @@ func (d *Daemon) handleProfile(ctx context.Context, msg *mcp.Message) (*mcp.Mess
 	}
 
 	d.toolCache.mu.RLock()
-	toolCount := len(d.toolCache.tools)
+	toolCount := len(visibleTools(d.toolCache.tools))
 	d.toolCache.mu.RUnlock()
 
 	result := profileResult{

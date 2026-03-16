@@ -1,5 +1,31 @@
 # Decisions
 
+## 2026-03-16: Implement generic bulk mutations as daemon-generated synthetic tools
+
+- Decision:
+  - Add daemon-generated `server__bulk` tools for eligible mutation-oriented MCP servers instead of implementing separate native bulk handlers in each `cmd/mcp-*` server.
+  - Use a file-driven JSON/YAML manifest contract so agents can move repetitive arguments out of model context and into a local artifact.
+- Rationale:
+  - The daemon already owns aggregated tool discovery, schema validation, authorization, audit logging, metrics, and output scanning.
+  - Implementing bulk at the daemon layer lets one slice cover many servers while preserving the existing execution contract for each nested operation.
+  - A server-scoped synthetic surface like `gitlab__bulk` is easier to discover and reason about than a single cross-server mega-tool.
+- Alternatives considered:
+  - Add native bulk tools to each individual MCP server.
+  - Rely on agent-side macros that still emit repeated MCP calls.
+  - Add one universal cross-server `bulk` tool.
+- Consequences:
+  - Bulk eligibility is heuristic plus exclusion-list driven, so follow-up tuning is expected as more real usage appears.
+  - The daemon needs a nested-call path that bypasses semaphore reacquisition for internal bulk fan-out.
+  - The first slice intentionally keeps manifests single-server and forbids nested bulk.
+- Sources:
+  - `internal/daemon/bulk_tools.go:19`
+  - `internal/daemon/bulk_tools.go:168`
+  - `internal/daemon/bulk_tools.go:285`
+  - `internal/daemon/bulk_tools.go:638`
+  - `internal/daemon/daemon_call.go:26`
+  - `internal/daemon/daemon_toolcache.go:176`
+  - `internal/daemon/schema_validate.go:134`
+
 ## 2026-03-13: Continue HUD/UX work in a fresh main-based worktree
 
 - Decision:

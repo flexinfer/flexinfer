@@ -274,3 +274,125 @@ Codebase index readiness note:
 - `https://datatracker.ietf.org/doc/html/rfc8628`
 - `https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy`
 - `https://developer.apple.com/design/human-interface-guidelines/managing-notifications`
+
+---
+
+# 2026-03-16 Implementation Addendum: Synthetic Bulk MCP Operations
+
+## Scope
+
+Deliver a daemon-level bulk execution slice that adds `server__bulk` tools for eligible mutation-oriented MCP servers and executes manifest-driven same-server batches with compact responses.
+
+## Delivery Strategy
+
+Implement the feature entirely in daemon inventory and call-routing layers so existing MCP servers stay unchanged and immediately inherit the capability where eligible.
+
+## Milestones
+
+| Milestone | Description | Status |
+|---|---|---|
+| B0 | Choose integration point and manifest contract | Complete |
+| B1 | Add synthetic tool generation + schema visibility | Complete |
+| B2 | Add manifest loader + compact executor | Complete |
+| B3 | Add nested-call routing path and regression tests | Complete |
+| B4 | Broader daemon validation and follow-up docs/examples | In progress |
+
+## B0: Architecture Decision
+
+### Tasks
+
+- Compare per-server native bulk implementations vs daemon-generated synthetic tools.
+- Define the manifest contract and server-eligibility heuristic.
+- Record exclusions and non-goals.
+
+### Exit Criteria
+
+- Decision recorded in `.loom/40-decisions.md`.
+- Implementation can proceed without touching individual `cmd/mcp-*` servers.
+
+## B1: Synthetic Tool Exposure
+
+### Tasks
+
+- Add daemon helpers that derive visible bulk tools from cached/static tool inventory.
+- Surface those tools through `loom/tools`.
+- Ensure schema validation can resolve a synthetic `server__bulk` definition.
+
+### Status
+
+- Implemented in `internal/daemon/bulk_tools.go`, `internal/daemon/daemon_toolcache.go`, and `internal/daemon/schema_validate.go`.
+
+## B2: Manifest Execution
+
+### Tasks
+
+- Add manifest loading from absolute JSON/YAML file paths.
+- Add execution controls:
+  - `dry_run`
+  - `stop_on_error`
+  - `result_limit`
+  - `operation_limit`
+- Add compact summarization and truncation helpers.
+- Reject invalid cross-server or nested-bulk operations.
+
+### Status
+
+- Implemented in `internal/daemon/bulk_tools.go`.
+
+## B3: Nested Call Routing and Tests
+
+### Tasks
+
+- Add an internal daemon call path that can execute nested tool calls without reacquiring the top-level concurrency semaphore.
+- Route synthetic bulk execution through the existing daemon machinery so policy/audit/PII scanning still runs.
+- Add focused tests for:
+  - eligible server synthesis,
+  - JSON/YAML manifest parsing,
+  - continue-on-error semantics,
+  - stop-on-error semantics.
+
+### Status
+
+- Implemented in `internal/daemon/daemon_call.go` and `internal/daemon/bulk_tools_test.go`.
+
+## B4: Finish Pass
+
+### Remaining Tasks
+
+- Run broader test coverage beyond `./internal/daemon/...`.
+- Consider adding operator-facing examples or docs for common manifest shapes.
+- Evaluate whether tool-count/reporting endpoints should report visible-tool totals rather than raw cached-tool totals.
+
+### Verification Completed
+
+- `gofmt -w internal/daemon/bulk_tools.go internal/daemon/bulk_tools_test.go internal/daemon/daemon_call.go internal/daemon/daemon_toolcache.go internal/daemon/schema_validate.go`
+- `go test ./internal/daemon/...`
+
+### Planned Verification
+
+- `go test ./cmd/loom/...`
+- `go test ./...`
+
+## Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Bulk appears for the wrong server class | Medium | Conservative exclusion list plus mutating-token heuristic |
+| Nested daemon execution deadlocks or starves calls | High | Use `handleCallWithOptions(..., true)` for internal bulk fan-out |
+| Compact summaries hide too much detail | Medium | Keep counts, stop markers, IDs/titles/statuses/URLs in the returned summaries |
+| Agents accidentally recurse into bulk | Low | Explicitly reject nested bulk operations |
+
+## Sources
+
+- `internal/daemon/bulk_tools.go:19`
+- `internal/daemon/bulk_tools.go:168`
+- `internal/daemon/bulk_tools.go:264`
+- `internal/daemon/bulk_tools.go:285`
+- `internal/daemon/bulk_tools.go:407`
+- `internal/daemon/bulk_tools.go:558`
+- `internal/daemon/bulk_tools.go:590`
+- `internal/daemon/bulk_tools.go:638`
+- `internal/daemon/daemon_call.go:26`
+- `internal/daemon/daemon_toolcache.go:176`
+- `internal/daemon/schema_validate.go:134`
+- `internal/daemon/bulk_tools_test.go:13`

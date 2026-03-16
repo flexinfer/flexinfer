@@ -70,6 +70,36 @@ Planning implication:
 - Deployment verification still requires live GitLab/Kubernetes calls because loom inventory only reports tool availability, not repo pipeline state.
 - HUD/UX planning in this session should assume mixed tooling: Go search through `codebase_memory`, frontend inspection through direct file reads, and optional browser screenshots when visual confirmation becomes necessary.
 
+## 2026-03-16 Addendum: Bulk Mutation Inventory
+
+Goal:
+- Add a context-conserving bulk execution surface for MCP servers that expose meaningful mutating operations, without cloning the same batching code into every `cmd/mcp-*` entrypoint.
+
+Facts found:
+- The active loom daemon inventory at planning time reported `46` servers and `483` tools before the bulk work started.
+- Tool discovery is centralized in the daemon cache and already feeds `loom://tools`, tool search, and tool get flows, which makes the daemon the narrowest integration point for synthetic tool exposure.
+- Schema validation resolves tool definitions from the daemon cache before forwarding calls, so a synthetic tool needs to participate there as well to avoid validation failures.
+- The existing daemon call path already carries agent/session metadata, audit hooks, metrics, and output scanning, which are all desirable for bulk execution too.
+
+Planning implication:
+- The most leverage comes from a daemon-level synthetic tool pattern (`server__bulk`) that reads a manifest file and fans out to existing server tools internally.
+- Servers should opt in heuristically based on their discovered tool surfaces instead of a hand-maintained allowlist of every single mutating server.
+- A conservative exclusion list is still needed for servers where batching is low-value, risky, or already covered by richer domain-specific primitives.
+
+Expected server classes for bulk support:
+- API-style CRUD/integration servers such as `gitlab`, `github`, `jira`, `google-workspace`, `cloudflare`, `substack`, `linkedin`, `jobsearch`, and similar mutation-oriented integrations.
+
+Expected exclusions:
+- Low-level infrastructure/debug/search servers such as `git`, `git_worktree`, `k8s_*`, `prometheus`, `loki`, `grafana`, `time`, `devbox`, `codebase_memory`, and comparable tools where a file-driven bulk wrapper would either add little value or create unclear operational risk.
+
+Sources:
+- Command: `read_mcp_resource(server="loom", uri="loom://config")` -> active profile `full`, `46` servers, `483` tools
+- Command: `codebase_memory__codebase_stats(repo_id="loom-core")` -> `7861` indexed Go chunks
+- `internal/daemon/daemon_toolcache.go:176`
+- `internal/daemon/daemon_toolcache.go:244`
+- `internal/daemon/schema_validate.go:134`
+- `internal/daemon/daemon_call.go:26`
+
 ## Sources
 
 - Tool call: `list_mcp_resources` (2026-03-13)

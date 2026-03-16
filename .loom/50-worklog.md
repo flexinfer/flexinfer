@@ -1,5 +1,35 @@
 # Worklog
 
+## 2026-03-16 (session 27) — Synthetic bulk MCP server operations
+
+- What changed:
+  - Created a new sibling worktree at `/Users/cblevins/workspace/services/loom-core-bulk-server-ops` on branch `codex/bulk-server-ops` from `main`.
+  - Refreshed the planning baseline in this worktree with a generated workspace snapshot and updated `.loom` context pack addenda for bulk operations.
+  - Added daemon-level synthetic bulk tool support in `internal/daemon/bulk_tools.go`.
+  - Wired synthetic bulk discovery into normal tool inventory and schema validation paths.
+  - Added a nested daemon execution path so bulk operations can invoke existing tools internally without reacquiring the top-level concurrency semaphore.
+  - Added focused tests for tool synthesis, manifest parsing, continue-on-error, and stop-on-error behavior.
+  - Scrubbed regenerated workspace snapshot remotes back to `<redacted>` so the worktree docs stay safe to commit.
+- Why:
+  - Repeated same-server mutations waste context and protocol overhead when agents have to make many individual tool calls in sequence.
+  - A daemon-level synthetic tool model delivers the feature broadly without duplicating batch logic across dozens of MCP servers.
+- Verification:
+  - `git worktree add -b codex/bulk-server-ops ../loom-core-bulk-server-ops main`
+  - `python "$CODEX_HOME/skills/plan-loom-core/scripts/init_loom_context.py" --root .`
+  - `python "$CODEX_HOME/skills/plan-loom-core/scripts/workspace_snapshot.py" --root .`
+  - `gofmt -w internal/daemon/bulk_tools.go internal/daemon/bulk_tools_test.go internal/daemon/daemon_call.go internal/daemon/daemon_toolcache.go internal/daemon/schema_validate.go`
+  - `go test ./internal/daemon/...`
+  - Command: `read_mcp_resource(server="loom", uri="loom://config")`
+  - Command: `codebase_memory__codebase_stats(repo_id="loom-core")`
+- Sources:
+  - [S1] `.loom/00-mcp-inventory.md`
+  - [S2] `.loom/10-research.md`
+  - [S3] `.loom/20-product-spec.md`
+  - [S4] `.loom/30-implementation-plan.md`
+  - [S5] `.loom/40-decisions.md`
+  - [S6] `internal/daemon/bulk_tools.go`
+  - [S7] `internal/daemon/bulk_tools_test.go`
+
 ## 2026-03-13 (session 26) — HUD/UX continuation worktree setup
 
 - What changed:
