@@ -65,8 +65,6 @@ spec:
     enableToolCalling: true
     toolCallParser: hermes
     reasoningParser: qwen3
-    enablePrefixCaching: true
-    enableChunkedPrefill: true
     maxNumBatchedTokens: 8192
     # enablePrefillDecodeAttention: removed — env var VLLM_V1_USE_PREFILL_DECODE_ATTENTION
     # is reported as "Unknown" by vLLM; dead config, not used by the engine.

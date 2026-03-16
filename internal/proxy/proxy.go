@@ -291,6 +291,11 @@ func (p *Proxy) Run(port int) error {
 	// Start runtime cache for direct fast path
 	if p.runtimeCache != nil {
 		p.runtimeCache.StartRefreshLoop(context.Background())
+
+		// Recover direct load targets from running runtime pods.
+		recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		p.recoverDirectLoadTargets(recoveryCtx)
+		recoveryCancel()
 	}
 
 	mux := http.NewServeMux()

@@ -41,8 +41,6 @@ spec:
     servedModelName: qwen35-27b-opus-distill
     enableToolCalling: true
     toolCallParser: hermes
-    enablePrefixCaching: true
-    enableChunkedPrefill: true
     maxNumBatchedTokens: 4096
     disableLogStats: false
     hipVisibleDevices: "0"

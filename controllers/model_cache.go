@@ -132,10 +132,16 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 						return false, err
 					}
 					if err := r.Create(ctx, newJob); err != nil {
-						return false, err
+						if errors.IsAlreadyExists(err) {
+							jobPhase = "Running"
+							message = "cache copy job already exists"
+						} else {
+							return false, err
+						}
+					} else {
+						jobPhase = "Running"
+						message = "cache copy job started"
 					}
-					jobPhase = "Running"
-					message = "cache copy job started"
 				} else {
 					if job.Status.Succeeded > 0 {
 						ready = true
@@ -210,10 +216,16 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 					return false, err
 				}
 				if err := r.Create(ctx, newJob); err != nil {
-					return false, err
+					if errors.IsAlreadyExists(err) {
+						jobPhase = "Running"
+						message = "cache check job already exists"
+					} else {
+						return false, err
+					}
+				} else {
+					jobPhase = "Running"
+					message = "cache check job started"
 				}
-				jobPhase = "Running"
-				message = "cache check job started"
 			}
 		} else {
 			if job.Status.Succeeded > 0 {
@@ -409,7 +421,9 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 				return false, err
 			}
 			if err := r.Create(ctx, newJob); err != nil {
-				return false, err
+				if !errors.IsAlreadyExists(err) {
+					return false, err
+				}
 			}
 			model.Status.Cache.JobPhase = "Running"
 			model.Status.Cache.Message = "prefetch job started"
@@ -551,9 +565,14 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 			*metav1.NewControllerRef(model, aiv1alpha2.GroupVersion.WithKind("Model")),
 		}
 		if err := r.Create(ctx, newJob); err != nil {
-			return false, err
+			if errors.IsAlreadyExists(err) {
+				log.Info("quantization job already exists", "job", jobName)
+			} else {
+				return false, err
+			}
+		} else {
+			log.Info("created quantization job", "job", jobName, "format", spec.Format)
 		}
-		log.Info("created quantization job", "job", jobName, "format", spec.Format)
 
 		model.Status.Cache.Ready = false
 		model.Status.Cache.JobName = jobName

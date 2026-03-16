@@ -62,7 +62,6 @@ func TestVLLMOmniBackendArgs_MemoryTuning(t *testing.T) {
 	spec := &ModelSpec{
 		Model: "test-model",
 		Config: map[string]interface{}{
-			"cpuOffloadGb":         4,
 			"numGpuBlocksOverride": 20,
 		},
 	}
@@ -75,8 +74,11 @@ func TestVLLMOmniBackendArgs_MemoryTuning(t *testing.T) {
 		}
 	}
 
-	if v := argMap["--cpu-offload-gb"]; v != "4" {
-		t.Errorf("expected --cpu-offload-gb=4, got %q", v)
+	// CPU offload removed in vLLM V1 (0.17.0+)
+	for _, a := range args {
+		if a == "--cpu-offload-gb" {
+			t.Error("--cpu-offload-gb should not be emitted in V1")
+		}
 	}
 	if v := argMap["--num-gpu-blocks-override"]; v != "20" {
 		t.Errorf("expected --num-gpu-blocks-override=20, got %q", v)
@@ -103,6 +105,27 @@ func TestVLLMOmniBackendArgs_Tokenizer(t *testing.T) {
 
 	if v := argMap["--tokenizer"]; v != "org/base-model" {
 		t.Errorf("expected --tokenizer=org/base-model, got %q", v)
+	}
+}
+
+func TestVLLMOmniBackendArgs_PrefixCachingDefaultV1(t *testing.T) {
+	b := &VLLMOmniBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]interface{}{
+			"enablePrefixCaching": true,
+		},
+	}
+
+	args := b.Args(spec)
+	for _, a := range args {
+		if a == "--enable-prefix-caching" {
+			t.Error("--enable-prefix-caching should not be emitted (default in V1)")
+		}
+		if a == "--no-prefix-caching" {
+			t.Error("--no-prefix-caching should not be emitted when enabled")
+		}
 	}
 }
 
@@ -187,14 +210,13 @@ func TestVLLMOmniBackendArgs_ReasoningParser(t *testing.T) {
 	}
 }
 
-func TestVLLMOmniBackendEnv_EngineAndFA(t *testing.T) {
+func TestVLLMOmniBackendEnv_FAAndAiter(t *testing.T) {
 	b := &VLLMOmniBackend{}
 
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
 		Config: map[string]interface{}{
-			"vllmEngineVersion":    "v1",
 			"enableFlashAttention": true,
 			"enableAiter":          true,
 		},
@@ -206,8 +228,9 @@ func TestVLLMOmniBackendEnv_EngineAndFA(t *testing.T) {
 		envMap[e.Name] = e.Value
 	}
 
-	if v := envMap["VLLM_USE_V1"]; v != "1" {
-		t.Errorf("expected VLLM_USE_V1=1, got %q", v)
+	// vLLM 0.17.0+ is V1-only — VLLM_USE_V1 should not be set
+	if _, ok := envMap["VLLM_USE_V1"]; ok {
+		t.Error("VLLM_USE_V1 should not be set in V1-only mode")
 	}
 	if v := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; v != "1" {
 		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=1, got %q", v)
