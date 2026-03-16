@@ -32,6 +32,19 @@ struct StatusBadge: View {
         }
     }
 
+    init(presenceStatus: MobilePresenceStatus) {
+        switch presenceStatus {
+        case .active:
+            status = "Active"; color = .green; icon = "circle.fill"
+        case .idle:
+            status = "Idle"; color = .orange; icon = "moon.fill"
+        case .offline:
+            status = "Offline"; color = .gray; icon = "circle.dashed"
+        case .unknown:
+            status = "Unknown"; color = .secondary; icon = nil
+        }
+    }
+
     init(_ text: String, color: Color, icon: String? = nil) {
         self.status = text
         self.color = color

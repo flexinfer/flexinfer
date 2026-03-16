@@ -5,17 +5,13 @@ struct DashboardView: View {
     @State private var viewModel: DashboardViewModel
     let healthMonitor: ConnectionHealthMonitor
     let alertsViewModel: AlertsViewModel
-    let sseClient: SSEClient?
+    let broadcaster: SSEEventBroadcaster?
     @State private var showingAlerts = false
 
-    private var sseClientId: ObjectIdentifier? {
-        sseClient.map { ObjectIdentifier($0) }
-    }
-
-    init(apiClient: APIClient?, healthMonitor: ConnectionHealthMonitor, alertsViewModel: AlertsViewModel = AlertsViewModel(), sseClient: SSEClient? = nil) {
+    init(apiClient: APIClient?, healthMonitor: ConnectionHealthMonitor, alertsViewModel: AlertsViewModel = AlertsViewModel(), broadcaster: SSEEventBroadcaster? = nil) {
         let client: any LoomAPIClientProtocol = apiClient ?? NoOpAPIClient()
         self.alertsViewModel = alertsViewModel
-        self.sseClient = sseClient
+        self.broadcaster = broadcaster
         _viewModel = State(initialValue: DashboardViewModel(apiClient: client, alertsViewModel: alertsViewModel))
         self.healthMonitor = healthMonitor
     }
@@ -113,15 +109,15 @@ struct DashboardView: View {
             await viewModel.load()
             HapticManager.light()
         }
-        .task(id: sseClientId) {
+        .task {
             healthMonitor.onPollRefresh = { [weak viewModel] in
                 await viewModel?.load()
             }
 
             await viewModel.load()
 
-            if let sseClient {
-                viewModel.startListening(sseClient: sseClient)
+            if let broadcaster {
+                viewModel.startListening(broadcaster: broadcaster)
             }
         }
     }

@@ -64,4 +64,15 @@ enum LoomColors {
         case .unknown: return statusIdle
         }
     }
+
+    // MARK: - Presence Status Color
+
+    static func presenceStatusColor(_ status: MobilePresenceStatus) -> Color {
+        switch status {
+        case .active: return statusHealthy
+        case .idle: return statusDegraded
+        case .offline: return statusIdle
+        case .unknown: return statusIdle
+        }
+    }
 }
