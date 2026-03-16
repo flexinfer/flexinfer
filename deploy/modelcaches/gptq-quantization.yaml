@@ -39,7 +39,7 @@ spec:
     descAct: false
     useGPU: true
     maxMemoryGB: 48
-    timeoutSeconds: 7200
+    timeoutSeconds: 14400
     calibration:
       maxSeqLen: 4096
       maxSamples: 256

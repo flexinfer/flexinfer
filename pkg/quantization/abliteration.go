@@ -23,8 +23,8 @@ const (
 	// 27B BF16 ≈ 54 GB + activation overhead.
 	DefaultAbliterationMemoryGB = 56
 
-	// DefaultAbliterationDeadlineSeconds is the default 2-hour deadline.
-	DefaultAbliterationDeadlineSeconds = 7200
+	// DefaultAbliterationDeadlineSeconds is the default 4-hour deadline.
+	DefaultAbliterationDeadlineSeconds = 14400
 
 	// DefaultAbliterationNumSamples is the default number of contrastive prompt pairs.
 	DefaultAbliterationNumSamples = 128

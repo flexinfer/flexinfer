@@ -35,11 +35,11 @@ func (b *SteamBackend) Port() int32 {
 }
 
 func (b *SteamBackend) Command() []string {
-	return []string{"steam"}
+	return []string{"/opt/flexinfer/steam-headless.sh"}
 }
 
 func (b *SteamBackend) Args(spec *ModelSpec) []string {
-	return []string{"-no-browser", "-silent", "-tcp"}
+	return nil
 }
 
 func (b *SteamBackend) Env(spec *ModelSpec) []corev1.EnvVar {

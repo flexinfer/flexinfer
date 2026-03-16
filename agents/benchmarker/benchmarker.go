@@ -941,17 +941,31 @@ func (b *Benchmarker) generateOnceOllamaStream(ctx context.Context, model, promp
 	return s, true, nil
 }
 
-// generateOnceComfyUI performs a simple health check for ComfyUI.
-// Image generation benchmarking has different metrics (images/sec) than LLM (tokens/sec).
-// For now, this just verifies the server is responsive and returns placeholder metrics.
+// generateOnceComfyUI generates a single image via the ComfyUI API.
+// Returns 1 "token" per image so tokens_per_second becomes images_per_second.
 func (b *Benchmarker) generateOnceComfyUI(ctx context.Context, model string) (tokens int, duration time.Duration, usedBackendTiming bool, err error) {
 	start := b.now()
 
-	// Check system stats endpoint to verify server is responsive
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.buildModelURL("/api/system_stats"), nil)
+	// Minimal ComfyUI workflow: empty latent → KSampler → VAE decode
+	workflow := map[string]interface{}{
+		"prompt": map[string]interface{}{
+			"1": map[string]interface{}{
+				"class_type": "EmptyLatentImage",
+				"inputs":     map[string]interface{}{"width": 512, "height": 512, "batch_size": 1},
+			},
+		},
+	}
+
+	reqBody, err := json.Marshal(workflow)
 	if err != nil {
 		return 0, 0, false, err
 	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.buildModelURL("/api/prompt"), bytes.NewReader(reqBody))
+	if err != nil {
+		return 0, 0, false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
@@ -961,26 +975,40 @@ func (b *Benchmarker) generateOnceComfyUI(ctx context.Context, model string) (to
 
 	if resp.StatusCode != http.StatusOK {
 		body := b.readResponseBodyBestEffort(ctx, resp)
-		return 0, 0, false, fmt.Errorf("ComfyUI health check failed: status %d, body: %s", resp.StatusCode, body)
+		return 0, 0, false, fmt.Errorf("ComfyUI generation failed: status %d, body: %s", resp.StatusCode, body)
+	}
+
+	// Drain response body
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return 0, 0, false, err
 	}
 
 	duration = b.now().Sub(start)
-
-	// Return placeholder metrics - ComfyUI doesn't do token generation
-	// Using 1 "token" to represent one successful health check
+	// 1 "token" = 1 image generated. tokens_per_second becomes images_per_second.
 	return 1, duration, false, nil
 }
 
-// generateOnceDiffusers performs a health check for Diffusers API server.
-// Similar to ComfyUI, image generation has different metrics than LLM inference.
+// generateOnceDiffusers generates a single image via the OpenAI-compatible images API.
+// Returns 1 "token" per image so tokens_per_second becomes images_per_second.
 func (b *Benchmarker) generateOnceDiffusers(ctx context.Context, model string) (tokens int, duration time.Duration, usedBackendTiming bool, err error) {
 	start := b.now()
 
-	// Check health endpoint to verify server is responsive
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.buildModelURL("/health"), nil)
+	reqBody, err := json.Marshal(map[string]interface{}{
+		"model":           model,
+		"prompt":          "A solid blue square",
+		"n":               1,
+		"size":            "512x512",
+		"response_format": "b64_json",
+	})
 	if err != nil {
 		return 0, 0, false, err
 	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.buildModelURL("/v1/images/generations"), bytes.NewReader(reqBody))
+	if err != nil {
+		return 0, 0, false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := b.httpClient.Do(req)
 	if err != nil {
@@ -990,12 +1018,16 @@ func (b *Benchmarker) generateOnceDiffusers(ctx context.Context, model string) (
 
 	if resp.StatusCode != http.StatusOK {
 		body := b.readResponseBodyBestEffort(ctx, resp)
-		return 0, 0, false, fmt.Errorf("diffusers health check failed: status %d, body: %s", resp.StatusCode, body)
+		return 0, 0, false, fmt.Errorf("diffusers generation failed: status %d, body: %s", resp.StatusCode, body)
+	}
+
+	// Drain response body (contains base64 image data)
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return 0, 0, false, err
 	}
 
 	duration = b.now().Sub(start)
-
-	// Return placeholder metrics - Diffusers doesn't do token generation
+	// 1 "token" = 1 image generated. tokens_per_second becomes images_per_second.
 	return 1, duration, false, nil
 }
 

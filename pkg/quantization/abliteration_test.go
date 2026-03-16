@@ -49,9 +49,9 @@ func TestBuildAbliterationJob_Defaults(t *testing.T) {
 		t.Errorf("BackoffLimit = %d, want 2", *job.Spec.BackoffLimit)
 	}
 
-	// Default deadline (7200s)
-	if *job.Spec.ActiveDeadlineSeconds != 7200 {
-		t.Errorf("ActiveDeadlineSeconds = %d, want 7200", *job.Spec.ActiveDeadlineSeconds)
+	// Default deadline (14400s)
+	if *job.Spec.ActiveDeadlineSeconds != 14400 {
+		t.Errorf("ActiveDeadlineSeconds = %d, want 14400", *job.Spec.ActiveDeadlineSeconds)
 	}
 
 	// Container name

@@ -169,30 +169,36 @@ RUN if [ "${INCLUDE_DIFFUSERS}" = "true" ] && command -v pip >/dev/null 2>&1; th
     fi
 
 # ── vLLM (conditional) ──────────────────────────────────────────────
-# Base images may not include vLLM pre-installed. Install it explicitly
-# when INCLUDE_VLLM=true. --no-deps prevents replacing ROCm PyTorch.
+# vLLM 0.17.0 (V1-only engine) with ROCm 7.0 pre-built wheel.
+# --no-deps prevents replacing ROCm PyTorch from the base image.
+# transformers>=5.0 required for Qwen3.5 model_type recognition.
+# flash-linear-attention required for GatedDeltaNet (Qwen3.5 backbone).
 RUN if [ "${INCLUDE_VLLM}" = "true" ] && command -v pip >/dev/null 2>&1; then \
-      pip install --no-cache-dir --no-deps "vllm==0.7.3"; \
+      pip install --no-cache-dir --no-deps \
+        "vllm==0.17.0+rocm700" \
+        --extra-index-url https://wheels.vllm.ai/rocm/0.17.0/rocm700; \
       pip install --no-cache-dir \
+        "transformers>=5.0" \
         partial-json-parser msgspec gguf aiohttp \
         lm-format-enforcer outlines mistral_common \
         compressed-tensors depyf cloudpickle \
         prometheus-client prometheus-fastapi-instrumentator \
-        py-cpuinfo psutil pyzmq uvloop; \
-    fi
-
-# ── Flash-linear-attention for Qwen3.5 (gfx1100 + vLLM only) ───────
-RUN if [ "${INCLUDE_VLLM}" = "true" ] && command -v pip >/dev/null 2>&1; then \
-      pip install --no-cache-dir flash-linear-attention 2>/dev/null || true; \
+        py-cpuinfo psutil pyzmq uvloop \
+        flash-linear-attention; \
     fi
 
 # ── Steam headless (conditional) ──────────────────────────────────────
 RUN if [ "${INCLUDE_STEAM}" = "true" ]; then \
+      echo "steam steam/question select I AGREE" | debconf-set-selections && \
+      echo "steam steam/license note" | debconf-set-selections && \
       dpkg --add-architecture i386 && \
       apt-get update && apt-get install -y --no-install-recommends \
-        steamcmd lib32gcc-s1 && \
+        steamcmd lib32gcc-s1 \
+        xvfb x11-utils pulseaudio dbus-x11 && \
       rm -rf /var/lib/apt/lists/*; \
     fi
+COPY build/steam-headless.sh /opt/flexinfer/steam-headless.sh
+RUN chmod +x /opt/flexinfer/steam-headless.sh
 
 # ── Verify ROCm PyTorch was not replaced by CUDA ────────────────────
 RUN if [ "${GPU_VENDOR}" = "amd" ] && command -v python3 >/dev/null 2>&1; then \
