@@ -1249,10 +1249,31 @@ func geminiHooksConfigFromRegistry(reg *registry.Registry, profile *PlatformProf
 		if len(general) > 0 {
 			config["general"] = general
 		}
+		tools := map[string]any{}
 		if allowed := coerceStringSlice(pp.Settings["tools_allowed"]); len(allowed) > 0 {
-			config["tools"] = map[string]any{
-				"allowed": allowed,
+			tools["allowed"] = allowed
+		}
+		if core := coerceStringSlice(pp.Settings["tools_core"]); len(core) > 0 {
+			tools["core"] = core
+		}
+		if exclude := coerceStringSlice(pp.Settings["tools_exclude"]); len(exclude) > 0 {
+			tools["exclude"] = exclude
+		}
+		if len(tools) > 0 {
+			config["tools"] = tools
+		}
+
+		security := map[string]any{}
+		if v, ok := pp.Settings["enable_permanent_tool_approval"].(bool); ok {
+			security["enablePermanentToolApproval"] = v
+		}
+		if v, ok := pp.Settings["folder_trust_enabled"].(bool); ok {
+			security["folderTrust"] = map[string]any{
+				"enabled": v,
 			}
+		}
+		if len(security) > 0 {
+			config["security"] = security
 		}
 	}
 

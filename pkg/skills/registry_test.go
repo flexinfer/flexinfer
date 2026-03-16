@@ -324,6 +324,44 @@ func TestFindSkillsSourceDir_RelativePath(t *testing.T) {
 	}
 }
 
+func TestFindRegistry_FindsWorkspaceLoomCoreRegistry(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	registryPath := filepath.Join(workspaceRoot, "services", "loom-core", "mcp", "context", "skills-registry.yaml")
+	if err := os.MkdirAll(filepath.Dir(registryPath), 0755); err != nil {
+		t.Fatalf("mkdir registry dir: %v", err)
+	}
+	if err := os.WriteFile(registryPath, []byte("version: 1\nskills: []\n"), 0644); err != nil {
+		t.Fatalf("write registry: %v", err)
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(originalWD)
+	}()
+	if err := os.Chdir(workspaceRoot); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	got, found := FindRegistry()
+	if !found {
+		t.Fatal("expected FindRegistry to discover workspace loom-core registry")
+	}
+	gotReal, err := filepath.EvalSymlinks(got)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(got): %v", err)
+	}
+	wantReal, err := filepath.EvalSymlinks(registryPath)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(want): %v", err)
+	}
+	if gotReal != wantReal {
+		t.Fatalf("FindRegistry()=%q (%q), want %q (%q)", got, gotReal, registryPath, wantReal)
+	}
+}
+
 func TestLoad_ValidYAML(t *testing.T) {
 	tmpDir := t.TempDir()
 	registryPath := filepath.Join(tmpDir, "skills-registry.yaml")

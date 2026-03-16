@@ -240,7 +240,10 @@ Example:
 					// Try standard location
 					registryPath = filepath.Join(cwd, "mcp", "context", "skills-registry.yaml")
 					if _, err := os.Stat(registryPath); os.IsNotExist(err) {
-						registryPath = filepath.Join(cwd, "platform", "gitops", "mcp", "context", "skills-registry.yaml")
+						registryPath = filepath.Join(cwd, "services", "loom-core", "mcp", "context", "skills-registry.yaml")
+						if _, err := os.Stat(registryPath); os.IsNotExist(err) {
+							registryPath = filepath.Join(cwd, "platform", "gitops", "mcp", "context", "skills-registry.yaml")
+						}
 					}
 				}
 			}

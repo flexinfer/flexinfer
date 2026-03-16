@@ -1,0 +1,62 @@
+# Workflow Definition Template
+
+name: {workflow_name}
+description: {workflow_description}
+version: "1.0"
+
+parameters:
+  - name: version
+    description: Version to deploy
+    required: true
+  - name: environment
+    description: Target environment
+    default: staging
+
+steps:
+  - name: prepare
+    description: Prepare for deployment
+    action: command
+    command: make prepare VERSION={{version}}
+    timeout: 5m
+
+  - name: test
+    description: Run test suite
+    action: command
+    command: make test
+    timeout: 15m
+    depends_on: [prepare]
+
+  - name: build
+    description: Build deployment artifacts
+    action: command
+    command: make build VERSION={{version}}
+    timeout: 10m
+    depends_on: [test]
+
+  - name: deploy-staging
+    description: Deploy to staging environment
+    action: command
+    command: make deploy ENV=staging VERSION={{version}}
+    timeout: 10m
+    depends_on: [build]
+
+  - name: staging-approval
+    description: Approve staging deployment
+    action: approval
+    approvers: [team-lead]
+    timeout: 24h
+    depends_on: [deploy-staging]
+
+  - name: deploy-production
+    description: Deploy to production environment
+    action: command
+    command: make deploy ENV=production VERSION={{version}}
+    timeout: 10m
+    depends_on: [staging-approval]
+
+  - name: verify
+    description: Run post-deployment verification
+    action: command
+    command: make verify ENV=production
+    timeout: 5m
+    depends_on: [deploy-production]

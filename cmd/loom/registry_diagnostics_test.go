@@ -15,11 +15,14 @@ func TestBuildRegistryCandidates_IncludesWorkspaceFallback(t *testing.T) {
 		"/tmp/work",
 	)
 
-	if len(candidates) != 6 {
-		t.Fatalf("len(candidates) = %d, want 6", len(candidates))
+	if len(candidates) != 7 {
+		t.Fatalf("len(candidates) = %d, want 7 after dedupe", len(candidates))
 	}
 	if got := candidates[0].Label; got != "cwd:mcp/context/registry.yaml" {
 		t.Fatalf("first label = %q, want cwd candidate", got)
+	}
+	if got := candidates[1].Label; got != "~/workspace/services/loom-core/mcp/context/registry.yaml" {
+		t.Fatalf("second label = %q, want home loom-core candidate", got)
 	}
 	last := candidates[len(candidates)-1]
 	if got := filepath.Clean(last.Path); got != "/tmp/work/platform/gitops/mcp/context/registry.yaml" {

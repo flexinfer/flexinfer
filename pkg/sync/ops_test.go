@@ -790,6 +790,27 @@ func TestDiscoverSkillsRegistryPath_FindsAncestorWorkspacePlatformRegistry(t *te
 	}
 }
 
+func TestDiscoverSkillsRegistryPath_FindsAncestorWorkspaceLoomCoreRegistry(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	repoRoot := filepath.Join(workspaceRoot, "services", "other-repo")
+	if err := os.MkdirAll(repoRoot, 0755); err != nil {
+		t.Fatalf("mkdir repo root: %v", err)
+	}
+
+	skillsRegistry := filepath.Join(workspaceRoot, "services", "loom-core", "mcp", "context", "skills-registry.yaml")
+	if err := os.MkdirAll(filepath.Dir(skillsRegistry), 0755); err != nil {
+		t.Fatalf("mkdir skills dir: %v", err)
+	}
+	if err := os.WriteFile(skillsRegistry, []byte("version: 1\nskills: []\n"), 0644); err != nil {
+		t.Fatalf("write skills registry: %v", err)
+	}
+
+	got := discoverSkillsRegistryPath(repoRoot)
+	if got != skillsRegistry {
+		t.Fatalf("discoverSkillsRegistryPath()=%q, want %q", got, skillsRegistry)
+	}
+}
+
 func TestValidate_McpJson(t *testing.T) {
 	homeDir := t.TempDir()
 	profileDir := filepath.Join(homeDir, "test-profile")

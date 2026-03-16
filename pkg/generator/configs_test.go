@@ -49,6 +49,21 @@ func testRegistry() *registry.Registry {
 					},
 				},
 			},
+			"gemini": {
+				Settings: map[string]any{
+					"approval_mode":                  "auto_edit",
+					"checkpointing":                  true,
+					"enable_permanent_tool_approval": true,
+					"folder_trust_enabled":           true,
+					"tools_allowed": []any{
+						"run_shell_command(git)",
+						"run_shell_command(rg)",
+					},
+					"tools_exclude": []any{
+						"run_shell_command(rm)",
+					},
+				},
+			},
 		},
 	}
 }
@@ -782,6 +797,60 @@ func TestGeminiHooksConfig_IncludesDirtyWorktreeNudge(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected dirty-worktree nudge command in SessionStart hooks: %#v", entries)
+	}
+}
+
+func TestGeminiHooksConfig_EmitsApprovalAndSecuritySettings(t *testing.T) {
+	geminiProfile, _ := GetPlatformProfile("gemini")
+	config := geminiHooksConfigFromRegistry(testRegistry(), geminiProfile, "")
+
+	general, ok := config["general"].(map[string]any)
+	if !ok {
+		t.Fatal("expected general block in gemini config")
+	}
+	if got := general["defaultApprovalMode"]; got != "auto_edit" {
+		t.Fatalf("defaultApprovalMode=%v, want auto_edit", got)
+	}
+	checkpointing, ok := general["checkpointing"].(map[string]any)
+	if !ok || checkpointing["enabled"] != true {
+		t.Fatalf("expected checkpointing.enabled=true, got %#v", general["checkpointing"])
+	}
+
+	tools, ok := config["tools"].(map[string]any)
+	if !ok {
+		t.Fatal("expected tools block in gemini config")
+	}
+	allowed, ok := tools["allowed"].([]string)
+	if !ok {
+		t.Fatalf("expected tools.allowed []string, got %#v", tools["allowed"])
+	}
+	if len(allowed) != 2 || allowed[0] != "run_shell_command(git)" || allowed[1] != "run_shell_command(rg)" {
+		t.Fatalf("unexpected tools.allowed: %#v", allowed)
+	}
+	exclude, ok := tools["exclude"].([]string)
+	if !ok || len(exclude) != 1 || exclude[0] != "run_shell_command(rm)" {
+		t.Fatalf("unexpected tools.exclude: %#v", tools["exclude"])
+	}
+
+	security, ok := config["security"].(map[string]any)
+	if !ok {
+		t.Fatal("expected security block in gemini config")
+	}
+	if security["enablePermanentToolApproval"] != true {
+		t.Fatalf("expected enablePermanentToolApproval=true, got %#v", security["enablePermanentToolApproval"])
+	}
+	folderTrust, ok := security["folderTrust"].(map[string]any)
+	if !ok || folderTrust["enabled"] != true {
+		t.Fatalf("expected folderTrust.enabled=true, got %#v", security["folderTrust"])
+	}
+
+	data, err := json.Marshal(config)
+	if err != nil {
+		t.Fatalf("failed to marshal Gemini settings: %v", err)
+	}
+	result := validator.ValidateGeminiSettings("settings.json", data)
+	if result.HasErrors() {
+		t.Fatalf("expected generated Gemini settings to validate cleanly, got errors: %v", result.Errors)
 	}
 }
 
