@@ -253,6 +253,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	}
 
 	// Step 2: Start K8s pod.
+	o.logger.Info("build completed, starting pod", "spawn_id", spawnID, "image", buildResult.ImageTag)
 	_, podSpan := o.tracer.Start(ctx, "agent.spawn.pod_create")
 	startResult, err := o.backend.Start(ctx, backend.StartOpts{
 		Name:     "spawn-" + spawnID,
@@ -278,13 +279,17 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	state.PodName = startResult.ContainerID
 	o.mu.Unlock()
 
-	// Step 3: Inject pre-authed configs.
+	// Step 3: Inject pre-authed configs (with a short timeout to avoid hanging on SPDY issues).
 	_, cfgSpan := o.tracer.Start(ctx, "agent.spawn.config_inject")
-	if err := o.injectAgentConfig(ctx, startResult.ContainerID, req.AgentType); err != nil {
+	cfgCtx, cfgCancel := context.WithTimeout(ctx, 30*time.Second)
+	o.logger.Info("injecting agent config", "spawn_id", spawnID, "pod", startResult.ContainerID, "agent_type", req.AgentType)
+	if err := o.injectAgentConfig(cfgCtx, startResult.ContainerID, req.AgentType); err != nil {
+		cfgCancel()
 		cfgSpan.End()
 		o.failSpawn(ctx, state, fmt.Sprintf("config injection failed: %v", err))
 		return
 	}
+	cfgCancel()
 	cfgSpan.End()
 
 	// Step 4: Register agent session (before exec so the agent has session context).
@@ -304,6 +309,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	o.broadcastSpawnEvent("agent.spawn.running", state)
 
 	// Step 5: Execute agent CLI (blocking until agent exits or timeout).
+	o.logger.Info("executing agent", "spawn_id", spawnID, "agent_type", req.AgentType, "pod", startResult.ContainerID)
 	_, execSpan := o.tracer.Start(ctx, "agent.spawn.agent_exec")
 	agentCmd := buildAgentCommand(req.AgentType, req.TaskDescription, state.AgentID)
 	_, execErr := o.backend.Exec(ctx, backend.ExecOpts{
