@@ -105,7 +105,7 @@ spec:
             - name: SPAWN_ENABLED
               value: "true"
             - name: SPAWN_REGISTRY
-              value: registry.harbor.lan
+              value: registry.harbor.lan/mcp
             - name: SPAWN_NAMESPACE
               value: devbox
             - name: SPAWN_SYNC_MODE
