@@ -230,16 +230,6 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 
 	_, buildSpan := o.tracer.Start(ctx, "agent.spawn.image_build")
 
-	// Use the project dir for detection if it exists locally (NFS/tar-pipe),
-	// otherwise fall back to workspace root (git-clone mode: source is cloned
-	// into the pod at start, so no local project files are available).
-	contextDir := projectDir
-	if _, statErr := os.Stat(projectDir); statErr != nil {
-		o.logger.Info("project dir not found locally, using workspace root as build context",
-			"project_dir", projectDir)
-		contextDir = o.workspaceRoot
-	}
-
 	df, dfErr := o.generateDockerfile(projectDir)
 	if dfErr != nil {
 		buildSpan.End()
@@ -247,11 +237,14 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 		return
 	}
 
+	// ContextDir is used by the K8s backend for filepath.Rel (string-only,
+	// no local filesystem access needed). In git-clone mode the backend
+	// derives the project name from the path and clones the repo.
 	buildTag := fmt.Sprintf("%s-spawn-%s", req.Project, spawnID[6:])
 	buildResult, err := o.backend.Build(ctx, backend.BuildOpts{
 		Tag:        buildTag,
 		Dockerfile: df,
-		ContextDir: contextDir,
+		ContextDir: projectDir,
 	})
 	buildSpan.End()
 	if err != nil {
