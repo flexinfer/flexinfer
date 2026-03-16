@@ -292,7 +292,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	_, cfgSpan := o.tracer.Start(ctx, "agent.spawn.config_inject")
 	cfgCtx, cfgCancel := context.WithTimeout(ctx, 30*time.Second)
 	o.logger.Info("injecting agent config", "spawn_id", spawnID, "pod", startResult.ContainerID, "agent_type", req.AgentType)
-	if err := o.injectAgentConfig(cfgCtx, startResult.ContainerID, req.AgentType); err != nil {
+	if err := o.injectAgentConfig(cfgCtx, startResult.ContainerID, req.AgentType, req.Project); err != nil {
 		cfgCancel()
 		cfgSpan.End()
 		o.failSpawn(ctx, state, fmt.Sprintf("config injection failed: %v", err))
@@ -368,7 +368,7 @@ func (o *SpawnOrchestrator) generateDockerfile(projectDir, agentType string) ([]
 func fallbackDockerfile() []byte {
 	return []byte(`FROM golang:1.24-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git make curl ca-certificates nodejs npm && \
+    git make curl ca-certificates nodejs npm python3 python3-pip && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 `)
@@ -377,7 +377,7 @@ WORKDIR /workspace
 // injectAgentConfig writes platform-specific config files into the pod.
 // Uses Exec (stdout-only SPDY) instead of WriteFile (stdin SPDY) to avoid
 // in-cluster SPDY stdin stream hangs observed on K3s.
-func (o *SpawnOrchestrator) injectAgentConfig(ctx context.Context, containerID, agentType string) error {
+func (o *SpawnOrchestrator) injectAgentConfig(ctx context.Context, containerID, agentType, project string) error {
 	writeCmd := func(dir, file, content string) error {
 		cmd := fmt.Sprintf("mkdir -p %s && cat > %s/%s << 'AGENTCFG'\n%s\nAGENTCFG", dir, dir, file, content)
 		_, err := o.backend.Exec(ctx, backend.ExecOpts{
@@ -388,20 +388,24 @@ func (o *SpawnOrchestrator) injectAgentConfig(ctx context.Context, containerID, 
 		return err
 	}
 
+	projectDir := "/workspace/" + project
 	switch agentType {
 	case "claude-code":
+		// Claude Code reads project-level .claude/settings.json for permissions.
 		settings := `{"permissions":{"allow":["Bash","Read","Write","Edit","Glob","Grep"]}}`
-		if err := writeCmd("/workspace/.claude", "settings.json", settings); err != nil {
+		if err := writeCmd(projectDir+"/.claude", "settings.json", settings); err != nil {
 			return fmt.Errorf("write claude settings: %w", err)
 		}
 	case "codex":
+		// Codex reads ~/.codex/config.toml for agent approval mode.
 		config := "[agent]\napproval = \"auto-edit\"\n"
-		if err := writeCmd("/workspace/.codex", "config.toml", config); err != nil {
+		if err := writeCmd("/root/.codex", "config.toml", config); err != nil {
 			return fmt.Errorf("write codex config: %w", err)
 		}
 	case "gemini":
+		// Gemini reads ~/.gemini/settings.json for permissions.
 		settings := `{"permissions":{"allow_all":true}}`
-		if err := writeCmd("/workspace/.gemini", "settings.json", settings); err != nil {
+		if err := writeCmd("/root/.gemini", "settings.json", settings); err != nil {
 			return fmt.Errorf("write gemini settings: %w", err)
 		}
 	}
@@ -412,11 +416,11 @@ func (o *SpawnOrchestrator) injectAgentConfig(ctx context.Context, containerID, 
 func buildAgentCommand(agentType, task, agentID string) string {
 	switch agentType {
 	case "claude-code":
-		return fmt.Sprintf(`claude --headless --task %q --agent-id %q`, task, agentID)
+		return fmt.Sprintf(`claude -p %q --dangerously-skip-permissions --output-format json --max-turns 50`, task)
 	case "codex":
-		return fmt.Sprintf(`codex --approval auto-edit %q`, task)
+		return fmt.Sprintf(`codex exec --full-auto --json %q`, task)
 	case "gemini":
-		return fmt.Sprintf(`gemini --headless %q`, task)
+		return fmt.Sprintf(`gemini -p %q --yolo`, task)
 	default:
 		return fmt.Sprintf(`echo "Unsupported agent type: %s"`, agentType)
 	}
@@ -568,6 +572,7 @@ func agentSecretEnvVars(agentType string) []backend.SecretEnvVar {
 	case "codex":
 		return []backend.SecretEnvVar{
 			{Name: "OPENAI_API_KEY", SecretName: secretName, SecretKey: "OPENAI_API_KEY"},
+			{Name: "CODEX_API_KEY", SecretName: secretName, SecretKey: "OPENAI_API_KEY"},
 		}
 	case "gemini":
 		return []backend.SecretEnvVar{
@@ -618,11 +623,11 @@ func agentSecretMounts(agentType string) []backend.SecretMount {
 func agentCLIInstallLines(agentType string) string {
 	switch agentType {
 	case "claude-code":
-		return "RUN npm install -g @anthropic-ai/claude-code@latest 2>/dev/null || true"
+		return "RUN npm install -g @anthropic-ai/claude-code@latest"
 	case "codex":
-		return "RUN npm install -g @openai/codex@latest 2>/dev/null || true"
+		return "RUN npm install -g @openai/codex@latest"
 	case "gemini":
-		return "RUN npm install -g @anthropic-ai/claude-code@latest 2>/dev/null || true\nRUN pip install google-genai 2>/dev/null || true"
+		return "RUN npm install -g @google/gemini-cli@latest"
 	default:
 		return ""
 	}
