@@ -30,8 +30,14 @@ func BuildLoadPayload(backendName, source, modelBasePath string, config map[stri
 	}
 	// For pvc:// sources, resolve the full modelPath so the runtime doesn't
 	// fall back to its default (basePath/modelName) which may be wrong.
+	// The PVC is mounted at modelBasePath/<pvc-name> (e.g. /models/my-pvc),
+	// so include the PVC name in the path before the subpath.
 	if strings.HasPrefix(source, "pvc://") && modelBasePath != "" {
-		payload.ModelPath = modelBasePath + model
+		pvcParts := strings.SplitN(strings.TrimPrefix(source, "pvc://"), "/", 2)
+		if len(pvcParts) >= 1 {
+			pvcName := pvcParts[0]
+			payload.ModelPath = modelBasePath + "/" + pvcName + model
+		}
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

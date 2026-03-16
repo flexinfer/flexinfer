@@ -227,6 +227,7 @@ type Proxy struct {
 	// Direct runtime communication (fast path)
 	runtimeCache         *RuntimeCache // cached runtime pod endpoints
 	directRuntimeEnabled bool          // enable direct proxy-to-runtime loading
+	directLoadTargets    sync.Map      // map[string]string: modelName -> "http://podIP:backendPort"
 
 	// Stored config for debug endpoint (secrets redacted)
 	debugConfig debugConfigView
@@ -431,8 +432,16 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If model is ready, serve directly.
+	// If model is ready (via controller backfill or direct load), serve directly.
 	if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
+		p.trackAndServe(w, r, modelName, start)
+		return
+	}
+
+	// Check if this model was loaded via the direct runtime path — the
+	// controller hasn't backfilled the CRD status yet, but we know it's
+	// serving on the runtime pod.
+	if _, ok := p.directLoadTargets.Load(modelName); ok {
 		p.trackAndServe(w, r, modelName, start)
 		return
 	}

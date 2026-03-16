@@ -43,7 +43,16 @@ func (r *ModelReconciler) loadViaRuntime(ctx context.Context, model *aiv1alpha2.
 
 	// Build the load request payload using shared builder.
 	// Pass /models as modelBasePath so PVC sources resolve to /models/{pvc-subpath}.
-	data, err := pkgrt.BuildLoadPayload(b.Name(), model.Spec.Source, "/models", model.Spec.GetConfigMap())
+	// Inject startupTimeoutSeconds from the model's coldStartTimeout so the runtime
+	// uses a model-specific timeout instead of the backend default.
+	config := model.Spec.GetConfigMap()
+	if model.Spec.Serverless != nil && model.Spec.Serverless.ColdStartTimeout != nil {
+		if config == nil {
+			config = make(map[string]interface{})
+		}
+		config["startupTimeoutSeconds"] = model.Spec.Serverless.ColdStartTimeout.Duration.Seconds()
+	}
+	data, err := pkgrt.BuildLoadPayload(b.Name(), model.Spec.Source, "/models", config)
 	if err != nil {
 		return err
 	}

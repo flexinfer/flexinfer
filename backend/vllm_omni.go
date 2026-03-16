@@ -227,7 +227,7 @@ func (b *VLLMOmniBackend) StartupProbe() *corev1.Probe {
 }
 
 func (b *VLLMOmniBackend) StartupTimeout() time.Duration {
-	return 180 * time.Second
+	return 300 * time.Second
 }
 
 // IsImageGeneration returns true for vLLM-Omni.

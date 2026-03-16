@@ -134,7 +134,17 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Unload any active model first.
+	// Idempotency: if the same model+backend is already loaded and healthy,
+	// skip the unload/reload cycle.  This prevents the controller and proxy
+	// from fighting over the same model.
+	if m.active != nil && m.active.Name == name && m.active.Backend == req.Backend &&
+		(m.active.State == ModelStateReady || m.active.State == ModelStateLoading) {
+		logger.Info("Model already loaded, skipping reload",
+			"state", string(m.active.State))
+		return nil
+	}
+
+	// Unload any active model first (different model or failed state).
 	if m.active != nil {
 		logger.Info("Unloading active model before loading new one", "active", m.active.Name)
 		if err := m.unloadLocked(ctx); err != nil {
@@ -248,7 +258,20 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	go m.monitorProcess(subCtx, name, cmd)
 
 	// Start health checking in background.
-	go m.healthCheckLoop(subCtx, name, b)
+	// Allow the load request config to override the backend's default startup timeout
+	// so the proxy/controller can pass the model's coldStartTimeout.
+	startupTimeout := b.StartupTimeout()
+	if v, ok := req.Config["startupTimeoutSeconds"]; ok {
+		switch t := v.(type) {
+		case float64:
+			startupTimeout = time.Duration(t) * time.Second
+		case string:
+			if d, err := time.ParseDuration(t); err == nil {
+				startupTimeout = d
+			}
+		}
+	}
+	go m.healthCheckLoop(subCtx, name, b, startupTimeout)
 
 	return nil
 }
@@ -438,14 +461,14 @@ func (m *Manager) monitorProcess(ctx context.Context, name string, cmd *exec.Cmd
 }
 
 // healthCheckLoop polls the backend's health endpoint until ready or cancelled.
-func (m *Manager) healthCheckLoop(ctx context.Context, name string, b backend.Backend) {
-	logger := log.FromContext(ctx).WithValues("model", name)
+func (m *Manager) healthCheckLoop(ctx context.Context, name string, b backend.Backend, startupTimeout time.Duration) {
+	logger := log.FromContext(ctx).WithValues("model", name, "startupTimeout", startupTimeout)
 
 	probe := b.ReadinessProbe()
 	if probe == nil || probe.HTTPGet == nil {
 		// No HTTP probe defined — mark ready after startup timeout.
 		select {
-		case <-time.After(b.StartupTimeout()):
+		case <-time.After(startupTimeout):
 		case <-ctx.Done():
 			return
 		}
@@ -465,7 +488,7 @@ func (m *Manager) healthCheckLoop(ctx context.Context, name string, b backend.Ba
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	startupDeadline := time.After(b.StartupTimeout())
+	startupDeadline := time.After(startupTimeout)
 
 	for {
 		select {
