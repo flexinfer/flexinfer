@@ -47,6 +47,7 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
+	"github.com/flexinfer/flexinfer/pkg/observability"
 )
 
 const (
@@ -227,6 +228,8 @@ func (w *remoteModelWatch) snapshot() remoteModelWatchSnapshot {
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 
 func (r *ClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	ctx, _, endSpan := observability.StartReconcileSpan(ctx, "cluster", req.Namespace, req.Name)
+	defer endSpan()
 	logger := log.FromContext(ctx)
 
 	cluster := &aiv1alpha2.Cluster{}

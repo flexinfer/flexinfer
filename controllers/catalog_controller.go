@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/observability"
 	"github.com/flexinfer/flexinfer/pkg/registry"
 )
 
@@ -47,6 +48,8 @@ type ModelCatalogReconciler struct {
 
 // Reconcile syncs the catalog by querying all configured registries.
 func (r *ModelCatalogReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	ctx, _, endSpan := observability.StartReconcileSpan(ctx, "catalog", req.Namespace, req.Name)
+	defer endSpan()
 	log := log.FromContext(ctx)
 
 	catalog := &aiv1alpha2.ModelCatalog{}

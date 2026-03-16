@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/observability"
 )
 
 const federatedModelRequeueInterval = 30 * time.Second
@@ -55,6 +56,8 @@ type FederatedModelReconciler struct {
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 
 func (r *FederatedModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	ctx, _, endSpan := observability.StartReconcileSpan(ctx, "federatedmodel", req.Namespace, req.Name)
+	defer endSpan()
 	fm := &aiv1alpha2.FederatedModel{}
 	if err := r.Get(ctx, req.NamespacedName, fm); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
