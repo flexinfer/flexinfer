@@ -162,7 +162,7 @@ features = { apply_patch_freeform = true, include_apply_patch_tool = true, unifi
 sandbox_mode = "workspace-write"
 sandbox_workspace_write = { network_access = true, writable_roots = ["/tmp"] }
 
-notify = ["loom", "agent", "heartbeat", "--agent-id", "codex", "--status", "active", "--ensure-session", "--infer-namespace", "--agent-type", "codex", "--quiet"]
+notify = ["loom", "agent", "heartbeat", "--agent-id", "codex", "--status", "active", "--ensure-session", "--infer-namespace", "--agent-type", "codex", "--description", "Codex notify session", "--quiet"]
 
 [mcp_servers.loom]
 command = "loom"
@@ -206,6 +206,7 @@ func TestEmitCodexPreamble(t *testing.T) {
 		`.cache/loom/agent-id-codex-${WS_HASH}`,
 		`codex-${WS_HASH}`,
 		`--agent-id \"`,
+		`--description \"Codex notify session\"`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("expected Codex notify flow to contain %q", want)
@@ -695,13 +696,16 @@ func TestClaudeHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
 		if strings.Contains(cmd, `--agent-id "claude-code-$PPID"`) {
 			t.Fatalf("found hardcoded ppid in claude session-start hook: %s", cmd)
 		}
-		if strings.Contains(cmd, `--agent-id "$AGENT_ID"`) && strings.Contains(cmd, "loom-agent-id-claude-code") {
+		if strings.Contains(cmd, `--agent-id "$AGENT_ID"`) && strings.Contains(cmd, "agent-id-claude-code") {
 			// Verify workspace hash is part of the bootstrap.
 			if !strings.Contains(cmd, "WS_HASH") {
 				t.Fatalf("expected WS_HASH in agent ID bootstrap, got: %s", cmd)
 			}
 			if !strings.Contains(cmd, "cksum") {
 				t.Fatalf("expected cksum in agent ID bootstrap, got: %s", cmd)
+			}
+			if !strings.Contains(cmd, ".cache/loom") {
+				t.Fatalf("expected cache-backed AGENT_ID_FILE path, got: %s", cmd)
 			}
 			return
 		}
@@ -734,13 +738,16 @@ func TestGeminiHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
 		if strings.Contains(cmd, `--agent-id "gemini-cli-$PPID"`) {
 			t.Fatalf("found hardcoded ppid in gemini session-start hook: %s", cmd)
 		}
-		if strings.Contains(cmd, `--agent-id "$AGENT_ID"`) && strings.Contains(cmd, "loom-agent-id-gemini-cli") {
+		if strings.Contains(cmd, `--agent-id "$AGENT_ID"`) && strings.Contains(cmd, "agent-id-gemini-cli") {
 			// Verify workspace hash is part of the bootstrap.
 			if !strings.Contains(cmd, "WS_HASH") {
 				t.Fatalf("expected WS_HASH in agent ID bootstrap, got: %s", cmd)
 			}
 			if !strings.Contains(cmd, "cksum") {
 				t.Fatalf("expected cksum in agent ID bootstrap, got: %s", cmd)
+			}
+			if !strings.Contains(cmd, ".cache/loom") {
+				t.Fatalf("expected cache-backed AGENT_ID_FILE path, got: %s", cmd)
 			}
 			return
 		}
@@ -833,7 +840,9 @@ func TestHookAgentIDBootstrap_ContainsWorkspaceHash(t *testing.T) {
 		"WS_HASH=",
 		"cksum",
 		"git rev-parse --show-toplevel",
-		"loom-agent-id-claude-code-${WS_HASH}",
+		"AGENT_CACHE_DIR=",
+		"${HOME:-${TMPDIR:-/tmp}}/.cache/loom",
+		"agent-id-claude-code-${WS_HASH}",
 		`AGENT_ID="claude-code-${WS_HASH}-$PPID"`,
 	} {
 		if !strings.Contains(output, want) {
@@ -841,10 +850,9 @@ func TestHookAgentIDBootstrap_ContainsWorkspaceHash(t *testing.T) {
 		}
 	}
 
-	// Verify the old global file pattern is gone.
-	if strings.Contains(output, `loom-agent-id-claude-code"`) &&
-		!strings.Contains(output, `loom-agent-id-claude-code-$`) {
-		t.Error("expected workspace-scoped file name, found global pattern")
+	// Verify we no longer rely on a tempdir-only identity file.
+	if strings.Contains(output, `${TMPDIR:-/tmp}/loom-agent-id-claude-code`) {
+		t.Error("expected hook agent id bootstrap to prefer cache-backed identity storage")
 	}
 }
 
@@ -914,7 +922,7 @@ func TestBuildPlatformHooks_GeminiEventNames(t *testing.T) {
 	}
 }
 
-func TestBuildPlatformHooks_AtomicPIDWrite(t *testing.T) {
+func TestBuildPlatformHooks_KeepaliveIsDetached(t *testing.T) {
 	hooks := buildPlatformHooks(testRegistry(), HookProfile{
 		Enabled:          true,
 		AgentID:          "claude-code",
@@ -928,17 +936,18 @@ func TestBuildPlatformHooks_AtomicPIDWrite(t *testing.T) {
 	sessionStart := hooks["SessionStart"].([]map[string]any)
 	sessionHooks := sessionStart[0]["hooks"].([]map[string]any)
 
-	foundAtomicWrite := false
+	foundDetachedKeepalive := false
 	for _, h := range sessionHooks {
 		cmd, _ := h["command"].(string)
-		// Keepalive hook should use atomic mv pattern.
-		if strings.Contains(cmd, "keepalive") && strings.Contains(cmd, `"${PID_FILE}.tmp"`) && strings.Contains(cmd, `mv "${PID_FILE}.tmp" "$PID_FILE"`) {
-			foundAtomicWrite = true
+		if strings.Contains(cmd, "keepalive") &&
+			strings.Contains(cmd, "</dev/null") &&
+			strings.Contains(cmd, ">/dev/null") {
+			foundDetachedKeepalive = true
 			break
 		}
 	}
-	if !foundAtomicWrite {
-		t.Error("expected atomic PID write (mv .tmp pattern) in keepalive hook")
+	if !foundDetachedKeepalive {
+		t.Error("expected keepalive hook to detach stdio from the hook runner")
 	}
 }
 
@@ -972,6 +981,36 @@ func TestBuildPlatformHooks_StaleCleanupInSessionStart(t *testing.T) {
 	}
 	if !foundFastRecallStrategy {
 		t.Error("expected session-start hook to include --auto-recall-strategy fast")
+	}
+}
+
+func TestBuildPlatformHooks_HeartbeatBootstrapIncludesNamespaceInference(t *testing.T) {
+	hooks := buildPlatformHooks(testRegistry(), HookProfile{
+		Enabled:          true,
+		AgentID:          "claude-code",
+		AgentType:        "claude-code",
+		Description:      "Claude Code session",
+		SessionEndEvent:  "Stop",
+		HeartbeatEvent:   "PostToolUse",
+		HeartbeatMatcher: "Bash|Task",
+	}, "")
+
+	postToolUse := hooks["PostToolUse"].([]map[string]any)
+	entries := postToolUse[0]["hooks"].([]map[string]any)
+
+	found := false
+	for _, h := range entries {
+		cmd, _ := h["command"].(string)
+		if strings.Contains(cmd, "agent heartbeat") &&
+			strings.Contains(cmd, "--ensure-session") &&
+			strings.Contains(cmd, "--infer-namespace") &&
+			strings.Contains(cmd, `--description "Claude Code session"`) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected heartbeat hook bootstrap to include namespace inference and description")
 	}
 }
 

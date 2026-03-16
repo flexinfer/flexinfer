@@ -11,7 +11,10 @@
 #   agent_workflow_start(definition_id="feature-dev", input={
 #     namespace: "project/feature-branch",
 #     agent_id: "claude-code",
-#     description: "Add user authentication"
+#     description: "Add user authentication",
+#     branch_name: "codex/feature-user-auth",
+#     base_branch: "main",
+#     project: "loom-core"
 #   })
 
 name: "feature-dev"
@@ -28,6 +31,19 @@ steps:
       agent_id: "${input.agent_id}"
       description: "Feature: ${input.description}"
 
+  - id: worktree
+    name: "Allocate Worktree"
+    step_type: tool
+    tool_name: agent_worktree_allocate
+    server_name: agent-context
+    tool_args:
+      agent_id: "${input.agent_id}"
+      session_id: "${init.session_id}"
+      branch_name: "${input.branch_name}"
+      base_branch: "${input.base_branch}"
+      purpose: "${input.description}"
+    depends_on: [init]
+
   - id: recall
     name: "Recall Context"
     step_type: tool
@@ -37,7 +53,7 @@ steps:
       query: "${input.description}"
       session_id: "${init.session_id}"
       token_budget: 4000
-    depends_on: [init]
+    depends_on: [worktree]
 
   - id: implement
     name: "Implement Feature"
@@ -63,7 +79,7 @@ steps:
     tool_name: devbox_exec
     server_name: devbox
     tool_args:
-      project: "${input.namespace}"
+      project: "${input.project}"
       command: "make test"
       agent_id: "${input.agent_id}"
     depends_on: [apply-changes]
@@ -102,6 +118,16 @@ steps:
       summarize: true
     depends_on: [push]
 
+  - id: release-worktree
+    name: "Release Worktree"
+    step_type: tool
+    tool_name: agent_worktree_release
+    server_name: agent-context
+    tool_args:
+      assignment_id: "${worktree.assignment_id}"
+      remove_worktree: false
+    depends_on: [end]
+
 input_schema:
   namespace:
     type: string
@@ -115,6 +141,18 @@ input_schema:
     type: string
     required: true
     description: "Feature description"
+  branch_name:
+    type: string
+    required: true
+    description: "Git branch name for the managed worktree (use codex/ prefix for Codex branches)"
+  base_branch:
+    type: string
+    required: false
+    description: "Base branch for the managed worktree (default: main)"
+  project:
+    type: string
+    required: true
+    description: "Devbox project name to test (for example: loom-core)"
   file_path:
     type: string
     required: false
