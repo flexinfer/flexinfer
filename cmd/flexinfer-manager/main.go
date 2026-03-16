@@ -110,29 +110,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controllers.ModelDeploymentReconciler{
-		Client:      mgr.GetClient(),
-		Scheme:      mgr.GetScheme(),
-		GPUProfiles: gpuProfileReconciler,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "ModelDeployment")
-		os.Exit(1)
-	}
-
 	if err = (&controllers.ModelCacheReconciler{
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
 		GPUProfiles: gpuProfileReconciler,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ModelCache")
-		os.Exit(1)
-	}
-
-	if err = (&controllers.GPUGroupReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "GPUGroup")
 		os.Exit(1)
 	}
 

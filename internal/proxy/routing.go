@@ -231,22 +231,22 @@ func (p *Proxy) isModelInLabelGroup(modelName string) bool {
 
 // modelHasRoutingAnnotation checks if a model has the flexinfer.ai/routing annotation set.
 func (p *Proxy) modelHasRoutingAnnotation(ctx context.Context, modelName string) bool {
-	// Check v1alpha1 ModelDeployment
-	md := &aiv1alpha1.ModelDeployment{}
-	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
-		if md.Annotations != nil {
-			if _, ok := md.Annotations[AnnotationRouting]; ok {
+	// Check v1alpha2 Model first
+	m := &aiv1alpha2.Model{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err == nil {
+		if m.Annotations != nil {
+			if _, ok := m.Annotations[AnnotationRouting]; ok {
 				return true
 			}
 		}
 		return false
 	}
 
-	// Check v1alpha2 Model
-	m := &aiv1alpha2.Model{}
-	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err == nil {
-		if m.Annotations != nil {
-			if _, ok := m.Annotations[AnnotationRouting]; ok {
+	// Fallback: check v1alpha1 ModelDeployment (deprecated)
+	md := &aiv1alpha1.ModelDeployment{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
+		if md.Annotations != nil {
+			if _, ok := md.Annotations[AnnotationRouting]; ok {
 				return true
 			}
 		}
@@ -261,7 +261,22 @@ func (p *Proxy) getRoutingStrategy(ctx context.Context, modelName string) routin
 		return routing.StrategyDefault
 	}
 
-	// Check v1alpha1 ModelDeployment
+	// Check v1alpha2 Model first
+	m := &aiv1alpha2.Model{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err == nil {
+		if m.Annotations != nil {
+			if strategy, ok := m.Annotations[AnnotationRouting]; ok {
+				return routing.Strategy(strategy)
+			}
+		}
+		// Models in a label group default to least-loaded routing
+		if p.isModelInLabelGroup(modelName) {
+			return routing.StrategyLeastLoaded
+		}
+		return routing.StrategyDefault
+	}
+
+	// Fallback: check v1alpha1 ModelDeployment (deprecated)
 	md := &aiv1alpha1.ModelDeployment{}
 	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
 		if md.Annotations != nil {
@@ -270,16 +285,6 @@ func (p *Proxy) getRoutingStrategy(ctx context.Context, modelName string) routin
 			}
 		}
 		return routing.StrategyDefault
-	}
-
-	// Check v1alpha2 Model
-	m := &aiv1alpha2.Model{}
-	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err == nil {
-		if m.Annotations != nil {
-			if strategy, ok := m.Annotations[AnnotationRouting]; ok {
-				return routing.Strategy(strategy)
-			}
-		}
 	}
 
 	// Models in a label group default to least-loaded routing
@@ -395,37 +400,38 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 // Prefers servedModelName from config (used by vLLM --served-model-name), then
 // falls back to the HF source model ID (e.g., "Qwen/Qwen2.5-7B-Instruct").
 func (p *Proxy) getBackendModelName(ctx context.Context, modelName string) string {
-	md := &aiv1alpha1.ModelDeployment{}
-	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
-		return md.Spec.Model
+	// Check v1alpha2 Model first
+	m := &aiv1alpha2.Model{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err == nil {
+		// Use servedModelName if set (vLLM --served-model-name, llama.cpp alias, etc.)
+		if cfg := m.Spec.GetConfigMap(); cfg != nil {
+			if v, ok := cfg["servedModelName"]; ok {
+				if s, ok := v.(string); ok && s != "" {
+					return s
+				}
+			}
+		}
+		return extractModelFromSource(m.Spec.Source)
 	} else if !errors.IsNotFound(err) {
 		return ""
 	}
 
-	// v1alpha2 fallback
-	m := &aiv1alpha2.Model{}
-	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
-		return ""
+	// Fallback: v1alpha1 ModelDeployment (deprecated)
+	md := &aiv1alpha1.ModelDeployment{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
+		return md.Spec.Model
 	}
 
-	// Use servedModelName if set (vLLM --served-model-name, llama.cpp alias, etc.)
-	if cfg := m.Spec.GetConfigMap(); cfg != nil {
-		if v, ok := cfg["servedModelName"]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				return s
-			}
-		}
-	}
-
-	return extractModelFromSource(m.Spec.Source)
+	return ""
 }
 
 // getBackendPort returns the port for a model's backend service.
 // Returns the backend-specific port based on model spec, or 8000 as default.
 func (p *Proxy) getBackendPort(ctx context.Context, modelName string) int32 {
-	md := &aiv1alpha1.ModelDeployment{}
-	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
-		if b, ok := backend.Get(md.Spec.Backend); ok {
+	// Check v1alpha2 Model first
+	m := &aiv1alpha2.Model{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err == nil {
+		if b, ok := backend.Get(m.Spec.Backend); ok {
 			return b.Port()
 		}
 		return defaultBackendPort
@@ -433,12 +439,13 @@ func (p *Proxy) getBackendPort(ctx context.Context, modelName string) int32 {
 		return defaultBackendPort
 	}
 
-	m := &aiv1alpha2.Model{}
-	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
+	// Fallback: v1alpha1 ModelDeployment (deprecated)
+	md := &aiv1alpha1.ModelDeployment{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err == nil {
+		if b, ok := backend.Get(md.Spec.Backend); ok {
+			return b.Port()
+		}
 		return defaultBackendPort
-	}
-	if b, ok := backend.Get(m.Spec.Backend); ok {
-		return b.Port()
 	}
 	return defaultBackendPort
 }
@@ -529,22 +536,10 @@ func spliceModelField(body []byte, replacement string) []byte {
 func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 	// Optimization: Don't update on every request to avoid API spam.
 	// Only update if current LastAccessTime is old (> 1 minute ago).
-	// We'll need to fetch the object first.
 
-	md := &aiv1alpha1.ModelDeployment{}
-	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err != nil {
-		if !errors.IsNotFound(err) {
-			slog.Warn("error fetching modeldeployment for stats update", "model", modelName, "error", err)
-			return
-		}
-
-		// v1alpha2 fallback: update LastActiveTime
-		m := &aiv1alpha2.Model{}
-		if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
-			slog.Warn("error fetching model for stats update", "model", modelName, "error", err)
-			return
-		}
-
+	// Try v1alpha2 Model first
+	m := &aiv1alpha2.Model{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err == nil {
 		if m.Status.LastActiveTime != nil && time.Since(m.Status.LastActiveTime.Time) < lastAccessThrottleInterval {
 			return
 		}
@@ -555,6 +550,16 @@ func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 			slog.Debug("failed to update LastActiveTime", "model", modelName, "error", err)
 		}
 		return
+	} else if !errors.IsNotFound(err) {
+		slog.Warn("error fetching model for stats update", "model", modelName, "error", err)
+		return
+	}
+
+	// Fallback: v1alpha1 ModelDeployment (deprecated)
+	md := &aiv1alpha1.ModelDeployment{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err != nil {
+		slog.Warn("error fetching modeldeployment for stats update", "model", modelName, "error", err)
+		return
 	}
 
 	if md.Status.LastAccessTime != nil && time.Since(md.Status.LastAccessTime.Time) < lastAccessThrottleInterval {
@@ -562,10 +567,8 @@ func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 	}
 
 	now := metav1.Now()
-	// Update status directly
 	md.Status.LastAccessTime = &now
 	if err := p.client.Status().Update(ctx, md); err != nil {
-		// Log but don't fail, it's just stats
 		slog.Debug("failed to update LastAccessTime", "model", modelName, "error", err)
 	}
 }

@@ -74,23 +74,6 @@ var (
 		[]string{"model"},
 	)
 
-	// GPUGroup metrics
-	gpuGroupSwapSignalsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "flexinfer_proxy_gpugroup_swap_signals_total",
-			Help: "Total number of swap signals sent to GPUGroup controller.",
-		},
-		[]string{"gpugroup", "model"},
-	)
-
-	gpuGroupQueuedRequestsTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "flexinfer_proxy_gpugroup_queued_requests_total",
-			Help: "Total requests queued waiting for GPUGroup model swap.",
-		},
-		[]string{"gpugroup", "model"},
-	)
-
 	// Endpoint routing metrics
 	endpointChangesTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -226,8 +209,6 @@ func RegisterMetrics() {
 		prometheus.MustRegister(queueWaitDuration)
 		prometheus.MustRegister(activeConnections)
 		prometheus.MustRegister(queueDepth)
-		prometheus.MustRegister(gpuGroupSwapSignalsTotal)
-		prometheus.MustRegister(gpuGroupQueuedRequestsTotal)
 		prometheus.MustRegister(endpointChangesTotal)
 		prometheus.MustRegister(endpointCount)
 		prometheus.MustRegister(endpointRefreshDuration)

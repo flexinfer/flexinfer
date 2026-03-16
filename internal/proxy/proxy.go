@@ -49,12 +49,6 @@ const (
 	// defaultBackendPort is used when a model's backend port cannot be determined.
 	defaultBackendPort int32 = 8000
 
-	// gpuGroupMinTimeout is the minimum timeout for GPUGroup model swaps.
-	gpuGroupMinTimeout = 120 * time.Second
-
-	// gpuGroupPollInterval is the polling interval when waiting for GPUGroup activation.
-	gpuGroupPollInterval = 1 * time.Second
-
 	// readyPollInterval is the polling interval when waiting for a model to become ready.
 	readyPollInterval = 1 * time.Second
 )
@@ -384,60 +378,53 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		span.SetAttributes(attribute.String("flexinfer.model", modelName))
 	}
 
-	// 3. Fetch the model deployment
-	md, err := p.getModelDeployment(ctx, modelName)
+	// 3. Fetch v1alpha2 Model first (preferred)
+	m, err := p.getModel(ctx, modelName)
 	if err == nil {
-		// 4. Check if model belongs to a GPUGroup (v1alpha1 only)
-		if md.Spec.GPUGroupRef != nil && *md.Spec.GPUGroupRef != "" {
-			if err := p.handleGPUGroupRequest(ctx, w, r, modelName, md, start); err != nil {
-				slog.Error("GPUGroup request failed", "model", modelName, "error", err)
-				requestsTotal.WithLabelValues(modelName, "error").Inc()
-			}
-			return
-		}
-
-		// 5. If model is ready, serve directly (non-GPUGroup path)
-		if isReady(md) && (md.Spec.Replicas != nil && *md.Spec.Replicas > 0) {
+		// If model is ready, serve directly.
+		if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 			p.trackAndServe(w, r, modelName, start)
 			return
 		}
 
-		// 6. Model is scaled to zero or not ready - use queue
+		// Model is scaled to zero or not ready - use queue.
 		if err := p.handleColdStart(ctx, w, r, modelName, start); err != nil {
 			slog.Error("cold start failed", "model", modelName, "error", err)
 			requestsTotal.WithLabelValues(modelName, "error").Inc()
-			// Error response already sent by handleColdStart
 		}
 		return
 	}
 
 	if !errors.IsNotFound(err) {
-		slog.Error("error fetching model deployment", "model", modelName, "error", err)
-		validation.WriteInternalError(w, "Internal error fetching model deployment")
+		slog.Error("error fetching model", "model", modelName, "error", err)
+		validation.WriteInternalError(w, "Internal error fetching model")
 		requestsTotal.WithLabelValues(modelName, "error").Inc()
 		return
 	}
 
-	// v1alpha2 fallback
-	m, err := p.getModel(ctx, modelName)
+	// v1alpha1 fallback (deprecated)
+	md, err := p.getModelDeployment(ctx, modelName)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			validation.WriteModelNotFound(w, modelName)
 		} else {
-			slog.Error("error fetching model", "model", modelName, "error", err)
-			validation.WriteInternalError(w, "Internal error fetching model")
+			slog.Error("error fetching model deployment", "model", modelName, "error", err)
+			validation.WriteInternalError(w, "Internal error fetching model deployment")
 		}
 		requestsTotal.WithLabelValues(modelName, "error").Inc()
 		return
 	}
 
-	// If model is ready, serve directly.
-	if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
+	slog.Warn("serving request via deprecated v1alpha1 ModelDeployment, please migrate to v1alpha2 Model",
+		"model", modelName)
+
+	// If model is ready, serve directly
+	if isReady(md) && (md.Spec.Replicas != nil && *md.Spec.Replicas > 0) {
 		p.trackAndServe(w, r, modelName, start)
 		return
 	}
 
-	// Model is scaled to zero or not ready - use queue.
+	// Model is scaled to zero or not ready - use queue
 	if err := p.handleColdStart(ctx, w, r, modelName, start); err != nil {
 		slog.Error("cold start failed", "model", modelName, "error", err)
 		requestsTotal.WithLabelValues(modelName, "error").Inc()

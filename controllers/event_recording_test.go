@@ -174,19 +174,6 @@ func TestFakeEventRecorder(t *testing.T) {
 	})
 }
 
-func TestEventRecorderSetup(t *testing.T) {
-	// Test that event recorder can be properly initialized
-	recorder := &FakeEventRecorder{}
-
-	reconciler := &ModelDeploymentReconciler{
-		Recorder: recorder,
-	}
-
-	// Verify that the recorder is set
-	assert.NotNil(t, reconciler.Recorder, "Event recorder should be set")
-	assert.IsType(t, &FakeEventRecorder{}, reconciler.Recorder, "Should be FakeEventRecorder type")
-}
-
 func TestSpecificEventScenarios(t *testing.T) {
 	t.Run("reconcile start event", func(t *testing.T) {
 		md := &aiv1alpha1.ModelDeployment{
@@ -213,59 +200,6 @@ func TestSpecificEventScenarios(t *testing.T) {
 		assert.Equal(t, corev1.EventTypeNormal, event.EventType)
 		assert.Equal(t, "Starting ModelDeployment reconciliation", event.Message)
 		assert.Equal(t, md, event.Object)
-	})
-
-	t.Run("GPU validation success - no warning event", func(t *testing.T) {
-		md := &aiv1alpha1.ModelDeployment{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-gpu-success",
-				Namespace: "default",
-			},
-			Spec: aiv1alpha1.ModelDeploymentSpec{
-				Backend: "ollama",
-				Model:   "llama3:8b",
-			},
-		}
-
-		fakeRecorder := &FakeEventRecorder{}
-		reconciler := &ModelDeploymentReconciler{Recorder: fakeRecorder}
-
-		// Test GPU validation success (should not record warning event)
-		err := reconciler.validateGPUResources(md)
-		require.NoError(t, err)
-
-		// Should have no validation failed events
-		warningEvents := fakeRecorder.GetEventsByReason(aiv1alpha1.ReasonValidationFailed)
-		assert.Empty(t, warningEvents, "Should not record validation failed events on success")
-	})
-
-	t.Run("GPU validation failure", func(t *testing.T) {
-		md := &aiv1alpha1.ModelDeployment{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-gpu-failure",
-				Namespace: "default",
-			},
-			Spec: aiv1alpha1.ModelDeploymentSpec{
-				Backend: "unsupported-backend",
-				Model:   "some-model",
-			},
-		}
-
-		fakeRecorder := &FakeEventRecorder{}
-		reconciler := &ModelDeploymentReconciler{Recorder: fakeRecorder}
-
-		// Test GPU validation failure
-		err := reconciler.validateGPUResources(md)
-		require.Error(t, err)
-
-		// Simulate recording the validation failure event (as would happen in reconcile)
-		fakeRecorder.Event(md, corev1.EventTypeWarning, aiv1alpha1.ReasonValidationFailed, fmt.Sprintf("GPU validation failed: %v", err))
-
-		// Verify failure event was recorded
-		warningEvents := fakeRecorder.GetEventsByReason(aiv1alpha1.ReasonValidationFailed)
-		assert.Len(t, warningEvents, 1, "Should record validation failed event")
-		assert.Equal(t, corev1.EventTypeWarning, warningEvents[0].EventType)
-		assert.Contains(t, warningEvents[0].Message, "GPU validation failed")
 	})
 
 	t.Run("service creation events", func(t *testing.T) {

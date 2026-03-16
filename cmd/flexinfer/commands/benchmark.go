@@ -32,6 +32,7 @@ Examples:
 }
 
 func runBenchmark(cmd *cobra.Command, args []string) error {
+	fmt.Fprintln(cmd.ErrOrStderr(), "WARNING: v1alpha1 ModelDeployment is deprecated. Please migrate to v1alpha2 Model. See: flexinfer migrate generate")
 	out := cmd.OutOrStdout()
 
 	if getNamespace() == "" {
