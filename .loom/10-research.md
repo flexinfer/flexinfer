@@ -165,3 +165,85 @@ Exclude (defer):
 - `AGENTS.md:41`
 - `AGENTS.md:124`
 - `ROADMAP.md:48`
+
+---
+
+# 2026-03-16 Research Addendum: Context-Conserving Bulk MCP Mutations
+
+## Problem
+
+Agents currently pay repeated tool-call overhead when they need to perform many similar mutations against the same MCP server. For example, creating ten GitLab issues usually means ten separate `tools/call` requests, repeated argument scaffolding, and ten separate result payloads in context.
+
+## Research Questions
+
+- Q1: Where is the narrowest integration point for adding bulk support across many servers?
+- Q2: How do we keep the response compact enough to conserve context without hiding important failures?
+- Q3: Which servers should not receive generic bulk support?
+
+## Facts Found
+
+### F1: Tool aggregation already happens in the daemon
+
+`loom/tools`, tool search, and tool get all flow through daemon-side cached tool inventory. That means a synthetic bulk tool can be added once and become visible across the normal discovery surfaces.
+
+### F2: Validation and policy live on the daemon call path
+
+The daemon resolves tool schemas and applies authorization/request policy before forwarding the call. If bulk execution is implemented there, nested operations inherit the existing enforcement path rather than bypassing it.
+
+### F3: Nested daemon execution needs to avoid reacquiring the global call semaphore
+
+Generic bulk execution works by turning each manifest entry into another internal `tools/call`. Without a bypass path, the daemon would risk self-contention while it is already servicing the parent bulk call.
+
+### F4: A file manifest is the most context-efficient agent interface
+
+The agent can write a JSON or YAML file locally, reference it by absolute path once, and keep the request payload small. This pushes the verbose repeated argument structure out of the model context and onto disk.
+
+### F5: A generic bulk layer should return summaries, not full nested payloads
+
+The useful information after a bulk run is usually counts, success/failure state, identifiers, and URLs. Returning whole nested tool payloads would erase the context savings that motivated the feature.
+
+## Recommendation
+
+Implement daemon-level synthetic `server__bulk` tools that:
+- exist only for mutation-oriented servers,
+- load JSON or YAML manifests from an absolute path,
+- execute each operation through the normal daemon call machinery,
+- summarize results into a compact response with counts plus truncated per-operation output.
+
+## Rejected Alternatives
+
+### Per-server native bulk tools in every `cmd/mcp-*`
+
+- Too much duplication.
+- Hard to keep request/response conventions aligned across 40+ servers.
+- Raises the rollout cost high enough that many eligible servers would likely never get support.
+
+### Agent-side macros without daemon support
+
+- Still produces repeated MCP calls.
+- Does not reduce protocol overhead or response volume.
+- Makes validation/audit behavior less consistent.
+
+### One universal cross-server bulk tool
+
+- Makes authorization and tool discovery less intuitive.
+- Increases the chance of mixing unrelated operations in one manifest.
+- Loses the ergonomic benefit of a server-scoped surface like `gitlab__bulk`.
+
+## Open Questions
+
+- Should we later add optional manifest templates/examples under `docs/` or `contrib/` for common servers like GitLab and GitHub?
+- Should the exclusion list eventually move to registry metadata once the heuristic has proven itself?
+
+## Sources
+
+- `internal/daemon/bulk_tools.go:19`
+- `internal/daemon/bulk_tools.go:168`
+- `internal/daemon/bulk_tools.go:264`
+- `internal/daemon/bulk_tools.go:285`
+- `internal/daemon/bulk_tools.go:558`
+- `internal/daemon/bulk_tools.go:638`
+- `internal/daemon/daemon_call.go:26`
+- `internal/daemon/daemon_toolcache.go:176`
+- `internal/daemon/schema_validate.go:134`
+- `internal/daemon/bulk_tools_test.go:13`

@@ -133,6 +133,11 @@ func (p *callPipeline) handleSchemaFailure(span trace.Span, mode SchemaValidatio
 
 // findToolInCache looks up a tool from the daemon's tool cache.
 func (p *callPipeline) findToolInCache(serverName, toolName string) *mcp.Tool {
+	if toolName == syntheticBulkToolName && p.daemon.serverEligibleForBulk(serverName) {
+		tool := bulkSyntheticTool(serverName)
+		return &tool
+	}
+
 	cache := p.daemon.toolCache
 	if cache == nil {
 		return nil
@@ -143,9 +148,10 @@ func (p *callPipeline) findToolInCache(serverName, toolName string) *mcp.Tool {
 
 	// Tools in cache use compound names: server__tool or just tool.
 	compoundName := serverName + "__" + toolName
-	for i := range cache.tools {
-		if cache.tools[i].Name == compoundName || cache.tools[i].Name == toolName {
-			return &cache.tools[i]
+	visible := visibleTools(cache.tools)
+	for i := range visible {
+		if visible[i].Name == compoundName || visible[i].Name == toolName {
+			return &visible[i]
 		}
 	}
 	return nil

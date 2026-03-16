@@ -1,19 +1,14 @@
 # Workspace Snapshot
 
-- Generated: 2026-03-11T20:35:34-04:00
-- Root: `/Users/cblevins/workspace/services/loom-core`
-- Git toplevel: `/Users/cblevins/workspace/services/loom-core`
+- Generated: 2026-03-16T07:43:51-04:00
+- Root: `/Users/cblevins/workspace/services/loom-core-bulk-server-ops`
+- Git toplevel: `/Users/cblevins/workspace/services/loom-core-bulk-server-ops`
 - Platform: `macOS-26.4-arm64-arm-64bit`
 - Python: `3.12.11`
 
 ## Git
 ```
-## main...origin/main
-?? cmd/codebase-bench/
-?? docs/codebase-indexer-benchmarking.md
-?? docs/codebase-indexer-sprint-report.md
-?? pkg/codebase/schema/id_bench_test.go
-?? pkg/codebase/testdata/
+## codex/bulk-server-ops
 ```
 
 ### Remotes
@@ -28,39 +23,26 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 
 ### HEAD
 ```
-489f3a0 feat: ship sprint 1-3 backlog (catalog, HUD, OTLP, security, profiles)
+dbcaefd fix(spawn): preserve URL scheme in git-clone and use internal GitLab
 ```
 
 ## Top-Level Layout
 
 ### Directories
 - `.agents/`
-- `.antigravity/`
-- `.claude/`
 - `.codex/`
-- `.gemini/`
-- `.git/`
 - `.github/`
-- `.go/`
-- `.kilocode/`
 - `.loom/`
 - `.opencode/`
-- `.ruff_cache/`
-- `.vscode/`
-- `.vscode-mcp/`
-- `.worktrees/`
 - `.zed/`
 - `apps/`
 - `assets/`
-- `bin/`
-- `claude_desktop_config/`
 - `cmd/`
 - `contrib/`
 - `docs/`
-- `generated/`
 - `internal/`
+- `k8s/`
 - `launchd/`
-- `libs/`
 - `pkg/`
 - `scripts/`
 - `tools/`
@@ -69,23 +51,15 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 - `.changelog-ai.yaml`
 - `.dockerignore`
 - `.editorconfig`
+- `.git`
 - `.gitattributes`
 - `.gitignore`
 - `.gitlab-ci.yml`
 - `.golangci.yml`
 - `.mcp.json`
 - `.pre-commit-config.yaml`
-- `.sandbox-policy.json`
-- `.secrets.baseline`
 - `AGENTS.md`
-- `CHANGELOG.generated.md`
 - `CHANGELOG.md`
-- `coverage-internal.out`
-- `coverage.ci-sim.out`
-- `coverage.internal-pkg.out`
-- `coverage.tests-only.out`
-- `custom-server`
-- `daemon.test`
 - `Dockerfile`
 - `Dockerfile.custom-server`
 - `Dockerfile.custom-server.local`
@@ -94,59 +68,10 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 - `go.sum`
 - `go.work`
 - `go.work.sum`
-- `gosec-report.json`
-- `loom`
-- `loomd`
 - `Makefile`
-- `mcp-agent-context`
-- `mcp-alertmanager`
-- `mcp-argocd`
-- `mcp-asus-router`
-- `mcp-aws`
-- `mcp-browserkit`
-- `mcp-cloudflare`
-- `mcp-codebase-memory`
-- `mcp-confluence`
-- `mcp-crypto`
-- `mcp-devbox`
-- `mcp-docker`
-- `mcp-elasticsearch`
-- `mcp-filesystem`
-- `mcp-flexinfer`
-- `mcp-flux`
-- `mcp-gcp`
-- `mcp-git`
-- `mcp-git-worktree`
-- `mcp-github`
-- `mcp-github-actions`
-- `mcp-gitlab`
-- `mcp-grafana`
-- `mcp-helm`
-- `mcp-k8s`
-- `mcp-k8s-ops`
-- `mcp-linear`
-- `mcp-linkedin`
-- `mcp-loki`
-- `mcp-memory`
-- `mcp-minio`
-- `mcp-mongodb`
-- `mcp-morph-embeddings`
-- `mcp-morph-fast-apply`
-- `mcp-ops`
-- `mcp-pagerduty`
-- `mcp-postgres`
-- `mcp-prometheus`
-- `mcp-qdrant`
-- `mcp-quality`
-- `mcp-sentry`
-- `mcp-slack`
-- `mcp-tavily`
-- `mcp-terraform`
-- `mcp-vault`
-- `mcp-youtube`
-- `mcp-zep`
 - `MCP_CONVERSION_PLAN.md`
-- `…`
+- `README.md`
+- `ROADMAP.md`
 
 ## Key Files Detected
 - `README.md`
@@ -186,8 +111,11 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 - `.loom/14-research-mobile-signing-publish-2026-02-25.md`
 - `.loom/15-research-openai-responses-tool-context-2026-03-04.md`
 - `.loom/16-research-ci-pipeline-and-k3s-rollout-2026-03-06.md`
+- `.loom/17-research-codebase-indexer-benchmark-operability-2026-03-11.md`
+- `.loom/18-research-hud-ux-continuation-2026-03-13.md`
 - `.loom/20-product-spec.md`
 - `.loom/21-product-spec-openai-responses-orchestration-2026-03-04.md`
+- `.loom/22-product-spec-hud-ux-continuation-2026-03-13.md`
 - `.loom/30-implementation-plan.md`
 - `.loom/31-gap-to-backlog-map.md`
 - `.loom/32-mobile-gap-to-backlog-map.md`
@@ -198,7 +126,9 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 - `.loom/36-implementation-plan-openai-responses-orchestration-2026-03-04.md`
 - `.loom/37-iteration-plan-openai-responses-m1-runtime-2026-03-06.md`
 - `.loom/38-implementation-plan-ci-pipeline-and-k3s-rollout-2026-03-06.md`
+- `.loom/39-implementation-plan-codebase-indexer-benchmark-phase2-2026-03-11.md`
 - `.loom/40-decisions.md`
+- `.loom/41-implementation-plan-hud-ux-continuation-2026-03-13.md`
 - `.loom/50-worklog.md`
 - `.loom/52-ralph-iteration-plan-callpipeline-2026-02-17.md`
 - `.loom/53-ralph-slice-handoff-callpipeline-2026-02-17.md`
@@ -211,6 +141,7 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 - `.loom/60-ralph-iteration-plan-openai-responses-runtime-entrypoint-2026-03-04.md`
 - `.loom/61-ralph-slice-handoff-openai-responses-runtime-entrypoint-2026-03-04.md`
 - `.loom/arch-rules.yaml`
+- `.loom/codebase-bench/codebase-bench-20260312-004421.json`
 - `.loom/research/mcp-code-execution-with-mcp.md`
 - `.loom/tech-debt-inventory.json`
 - `.loom/tech-debt-inventory.md`
@@ -234,13 +165,16 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 - `ROADMAP.md`
 - `apps/loom-companion-ios/LoomCompanion.xcodeproj/project.pbxproj`
 - `apps/loom-companion-ios/Package.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/AppDelegate.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Components/AnimatedCounter.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Components/Charts/FleetCompositionChart.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Components/Charts/HealthGaugeChart.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Components/Charts/MemoryTierChart.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Components/Charts/SessionTimelineChart.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Components/Charts/TaskStatusChart.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Components/CompactSparkline.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Components/LoomCard.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Components/ProportionBar.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Components/PulsingDot.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Components/SkeletonView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Components/StatusAccentBar.swift`
@@ -255,6 +189,7 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 - `apps/loom-companion-ios/Sources/LoomCompanion/Intents/ListBlockedTasksIntent.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Intents/LoomShortcuts.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/LiveActivity/WorkflowLiveActivityView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/LoomCompanion.entitlements`
 - `apps/loom-companion-ios/Sources/LoomCompanion/LoomCompanionApp.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Navigation/DeepLinkRouter.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Utilities/DeviceInfo.swift`
@@ -265,6 +200,7 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Connection/ConnectionProfileView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Connection/LANPermissionView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Connection/LoginView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/ActiveWorkCard.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/DashboardView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/FleetSummaryCard.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/HealthStatusCard.swift`
@@ -282,6 +218,7 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Sessions/SessionsListView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Shared/ErrorBanner.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Shared/StatusBadge.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Spawn/SpawnAgentView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/APIEnvelope.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/APIError.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/AlertItem.swift`
@@ -294,6 +231,7 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/OpsModels.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/PushRegistration.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/SessionInfo.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/SpawnModels.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/TimelineEntry.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/WidgetData.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/WorkflowActivity.swift`
@@ -302,6 +240,7 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/SSEClient.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/TokenStore.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Services/ConnectionHealthMonitor.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/Services/LiveActivityManager.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/AlertsViewModel.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/ConnectionViewModel.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/DashboardViewModel.swift`
@@ -309,9 +248,12 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/PushNotificationsViewModel.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/SessionDetailViewModel.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/SessionsViewModel.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/SpawnViewModel.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionWidget/ActiveSessionsWidget.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionWidget/FleetHealthWidget.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionWidget/Info.plist`
 - `apps/loom-companion-ios/Sources/LoomCompanionWidget/LockScreenWidgets.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanionWidget/LoomCompanionWidget.entitlements`
 - `apps/loom-companion-ios/Sources/LoomCompanionWidget/LoomWidgetBundle.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionWidget/TasksWidget.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Fixtures.swift`
@@ -339,23 +281,6 @@ origin	https://oauth2:<redacted>@gitlab.flexinfer.ai/services/loom-core.git (pus
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/AlertsViewModelTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/ConnectionViewModelTests.swift`
 - `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/DashboardViewModelTests.swift`
-- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/OpsViewModelTests.swift`
-- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/PushNotificationsViewModelTests.swift`
-- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/SessionDetailViewModelTests.swift`
-- `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/SessionsViewModelTests.swift`
-- `apps/loom-companion-ios/project.yml`
-- `assets/banner.png`
-- `assets/header.svg`
-- `assets/icon.png`
-- `cmd/custom-server/main.go`
-- `cmd/custom-server/main_test.go`
-- `cmd/loom/auth.go`
-- `cmd/loom/auth_google.go`
-- `cmd/loom/check.go`
-- `cmd/loom/check_helpers_test.go`
-- `cmd/loom/cmd_agent.go`
-- `cmd/loom/cmd_agent_context.go`
-- `cmd/loom/cmd_agent_dispatch.go`
 - `…`
 
 ## AGENTS.md Files
@@ -393,17 +318,17 @@ gitlab.flexinfer.ai/
 
 Deployment (GitOps)
 
-MCP servers can be deployed to Kubernetes via Flux. Manifests live in:
+MCP servers deploy to Kubernetes via Flux. Manifests live in this repo:
 
-- `platform/gitops/k3s/mcp-hub/servers/` - Individual MCP server deployments
+- `k8s/base/` - All server deployment manifests (47 servers)
+- `platform/gitops/clusters/k3s/flux-system/kustomization-loom-hub-servers.yaml` - Image tags, patches
 
-To deploy an MCP server:
+To deploy: `make deploy` (builds, pushes, updates image tag in gitops, reconciles Flux)
 
-1. Build binaries: `make build`
-2. Build container: `docker build -t registry.harbor.lan/library/loom:TAG .`
-3. Push to Harbor
-4. Update image tag in `platform/gitops/k3s/mcp-hub/servers/<server>/`
-5. Commit and push to `platform/gitops`
+To update images only: `make deploy-update-images` (updates single Flux Kustomization CRD)
+
+To add a new server: create `k8s/base/servers/<name>/` with deployment.yaml, configmap.yaml, service.yaml,
+then add to `k8s/base/kustomization.yaml` and `k8s/base/servers/gateway/registry-configmap.yaml`.
 
 Local Usage
 

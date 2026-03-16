@@ -24,11 +24,15 @@ type callParams struct {
 }
 
 func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	return d.handleCallWithOptions(ctx, msg, false)
+}
+
+func (d *Daemon) handleCallWithOptions(ctx context.Context, msg *mcp.Message, skipSemaphore bool) (*mcp.Message, error) {
 	d.activeRPCs.Add(1)
 	defer d.activeRPCs.Add(-1)
 
 	// Acquire daemon-wide concurrency semaphore (before per-server lock).
-	if d.callSem != nil {
+	if !skipSemaphore && d.callSem != nil {
 		select {
 		case d.callSem <- struct{}{}:
 			defer func() { <-d.callSem }()
@@ -74,6 +78,14 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 	}
 
 	if resp := pipeline.enforceRequestPolicy(); resp != nil {
+		return resp, nil
+	}
+
+	if pipeline.isSyntheticBulkTool() {
+		resp := pipeline.executeSyntheticBulk()
+		if scanned := pipeline.scanOutputForPII(resp); scanned != nil {
+			return scanned, nil
+		}
 		return resp, nil
 	}
 
