@@ -336,6 +336,27 @@ var (
 		[]string{"model", "namespace", "reason"},
 	)
 
+	// === Controller Reconcile Metrics ===
+
+	// ReconcileDurationSeconds tracks the duration of each controller reconcile loop.
+	ReconcileDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_reconcile_duration_seconds",
+			Help:    "Duration of controller reconcile loops in seconds.",
+			Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30},
+		},
+		[]string{"controller"},
+	)
+
+	// ReconcileErrorsTotal counts reconcile errors by controller.
+	ReconcileErrorsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_reconcile_errors_total",
+			Help: "Total number of reconcile errors by controller.",
+		},
+		[]string{"controller"},
+	)
+
 	// === Benchmark Result Metrics ===
 
 	// BenchmarkTokensPerSecond publishes the latest benchmark TPS result.
@@ -408,6 +429,10 @@ func init() {
 	// Cache job metrics
 	ctrlmetrics.Registry.MustRegister(ModelCacheJobDurationSeconds)
 	ctrlmetrics.Registry.MustRegister(ModelCacheJobFailuresTotal)
+
+	// Controller reconcile metrics
+	ctrlmetrics.Registry.MustRegister(ReconcileDurationSeconds)
+	ctrlmetrics.Registry.MustRegister(ReconcileErrorsTotal)
 
 	// Benchmark result metrics
 	ctrlmetrics.Registry.MustRegister(BenchmarkTokensPerSecond)

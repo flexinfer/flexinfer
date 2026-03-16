@@ -36,8 +36,7 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
+	"github.com/flexinfer/flexinfer/pkg/observability"
 )
 
 // ---------------------------------------------------------------------------
@@ -94,12 +93,8 @@ type ModelReconciler struct {
 
 // Reconcile is the main reconciliation loop for Model resources.
 func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	ctx, span := otel.Tracer("flexinfer/controller").Start(ctx, "model.reconcile")
-	defer span.End()
-	span.SetAttributes(
-		attribute.String("k8s.namespace", req.Namespace),
-		attribute.String("k8s.name", req.Name),
-	)
+	ctx, recordErr, endSpan := observability.StartReconcileSpan(ctx, "model", req.Namespace, req.Name)
+	defer endSpan()
 
 	log := log.FromContext(ctx)
 
@@ -111,15 +106,10 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			log.Info("Model resource not found, ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
-		span.RecordError(err)
+		recordErr(err)
 		log.Error(err, "Failed to get Model")
 		return ctrl.Result{}, err
 	}
-	span.SetAttributes(
-		attribute.String("model.name", model.Name),
-		attribute.String("model.namespace", model.Namespace),
-		attribute.String("model.backend", model.Spec.Backend),
-	)
 
 	// Handle finalizer
 	if model.DeletionTimestamp.IsZero() {
