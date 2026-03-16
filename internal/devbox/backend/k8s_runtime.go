@@ -205,7 +205,7 @@ func (k *K8sBackend) WriteFile(ctx context.Context, id, path string, content []b
 	if mode == "" {
 		mode = "0644"
 	}
-	shellCmd := fmt.Sprintf("cat > %q && chmod %s %q", path, mode, path)
+	shellCmd := fmt.Sprintf("mkdir -p \"$(dirname %q)\" && cat > %q && chmod %s %q", path, path, mode, path)
 	req := k.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(id).
