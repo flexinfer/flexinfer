@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -92,6 +94,43 @@ type Config struct {
 	DirectRuntimeEnabled             bool // Enable direct proxy-to-runtime fast path
 }
 
+// Validate checks the Config for conflicting or invalid settings. Returns a
+// joined error describing all issues found, or nil if the config is valid.
+func (c Config) Validate() error {
+	var errs []error
+
+	if c.MaxQueueSize <= 0 {
+		errs = append(errs, fmt.Errorf("PROXY_MAX_QUEUE_SIZE must be > 0 (got %d)", c.MaxQueueSize))
+	}
+	if c.QueueTimeout <= 0 {
+		errs = append(errs, fmt.Errorf("PROXY_QUEUE_TIMEOUT must be > 0 (got %s)", c.QueueTimeout))
+	}
+	if c.ColdStartTimeout <= 0 {
+		errs = append(errs, fmt.Errorf("PROXY_COLD_START_TIMEOUT must be > 0 (got %s)", c.ColdStartTimeout))
+	}
+	if c.BackoffEnabled {
+		if c.BackoffMaxRetries <= 0 {
+			errs = append(errs, fmt.Errorf("PROXY_BACKOFF_MAX_RETRIES must be > 0 when backoff is enabled (got %d)", c.BackoffMaxRetries))
+		}
+		if c.BackoffInitialWait > c.BackoffMaxWait {
+			errs = append(errs, fmt.Errorf("PROXY_BACKOFF_INITIAL_WAIT (%s) must be <= PROXY_BACKOFF_MAX_WAIT (%s)", c.BackoffInitialWait, c.BackoffMaxWait))
+		}
+	}
+	if c.RateLimitEnabled {
+		if c.RateLimitPerModel <= 0 {
+			errs = append(errs, fmt.Errorf("PROXY_RATE_LIMIT_PER_MODEL must be > 0 when rate limiting is enabled (got %f)", c.RateLimitPerModel))
+		}
+		if c.RateLimitBurst <= 0 {
+			errs = append(errs, fmt.Errorf("PROXY_RATE_LIMIT_BURST must be > 0 when rate limiting is enabled (got %d)", c.RateLimitBurst))
+		}
+	}
+	if c.AuthEnabled && c.AuthToken == "" {
+		errs = append(errs, fmt.Errorf("PROXY_AUTH_TOKEN must be set when PROXY_AUTH_ENABLED=true"))
+	}
+
+	return stderrors.Join(errs...)
+}
+
 // ConfigFromEnv constructs a Config from environment variables and the provided client/namespace.
 func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 	defaultRoutingConfig := routing.DefaultPrefixKeyConfig()
@@ -118,10 +157,6 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		AuthEnabled:                      getEnvBool("PROXY_AUTH_ENABLED", false),
 		AuthToken:                        os.Getenv("PROXY_AUTH_TOKEN"),
 		DirectRuntimeEnabled:             getEnvBool("PROXY_DIRECT_RUNTIME_ENABLED", true),
-	}
-
-	if cfg.AuthEnabled && cfg.AuthToken == "" {
-		slog.Warn("PROXY_AUTH_ENABLED=true but PROXY_AUTH_TOKEN is empty — auth will reject all requests")
 	}
 
 	return cfg
@@ -192,6 +227,9 @@ type Proxy struct {
 	// Direct runtime communication (fast path)
 	runtimeCache         *RuntimeCache // cached runtime pod endpoints
 	directRuntimeEnabled bool          // enable direct proxy-to-runtime loading
+
+	// Stored config for debug endpoint (secrets redacted)
+	debugConfig debugConfigView
 }
 
 // New creates a new Proxy from the given Config.
@@ -224,6 +262,7 @@ func New(cfg Config) *Proxy {
 		authEnabled:          cfg.AuthEnabled,
 		authToken:            cfg.AuthToken,
 		directRuntimeEnabled: cfg.DirectRuntimeEnabled,
+		debugConfig:          newDebugConfigView(cfg),
 	}
 
 	if cfg.DirectRuntimeEnabled {
@@ -256,6 +295,7 @@ func (p *Proxy) Run(port int) error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/v1/models", p.handleModels)
+	mux.HandleFunc("/debug/config", p.handleDebugConfig)
 	mux.HandleFunc("/", p.handleRequest)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -412,6 +452,63 @@ func isReady(md *aiv1alpha1.ModelDeployment) bool {
 		}
 	}
 	return false
+}
+
+// debugConfigView is a JSON-safe, redacted view of the proxy configuration
+// exposed via the /debug/config endpoint.
+type debugConfigView struct {
+	Namespace            string  `json:"namespace"`
+	MaxQueueSize         int     `json:"maxQueueSize"`
+	QueueTimeout         string  `json:"queueTimeout"`
+	ColdStartTimeout     string  `json:"coldStartTimeout"`
+	RoutingEnabled       bool    `json:"routingEnabled"`
+	ValidateRequests     bool    `json:"validateRequests"`
+	BackoffEnabled       bool    `json:"backoffEnabled"`
+	BackoffMaxRetries    int     `json:"backoffMaxRetries"`
+	BackoffInitialWait   string  `json:"backoffInitialWait"`
+	BackoffMaxWait       string  `json:"backoffMaxWait"`
+	RateLimitEnabled     bool    `json:"rateLimitEnabled"`
+	RateLimitPerModel    float64 `json:"rateLimitPerModel"`
+	RateLimitBurst       int     `json:"rateLimitBurst"`
+	RateLimitGlobal      float64 `json:"rateLimitGlobal"`
+	RateLimitGlobalBurst int     `json:"rateLimitGlobalBurst"`
+	AuthEnabled          bool    `json:"authEnabled"`
+	AuthToken            string  `json:"authToken"` // always redacted
+	DirectRuntimeEnabled bool    `json:"directRuntimeEnabled"`
+}
+
+func newDebugConfigView(cfg Config) debugConfigView {
+	tokenDisplay := ""
+	if cfg.AuthToken != "" {
+		tokenDisplay = "***redacted***"
+	}
+	return debugConfigView{
+		Namespace:            cfg.Namespace,
+		MaxQueueSize:         cfg.MaxQueueSize,
+		QueueTimeout:         cfg.QueueTimeout.String(),
+		ColdStartTimeout:     cfg.ColdStartTimeout.String(),
+		RoutingEnabled:       cfg.RoutingEnabled,
+		ValidateRequests:     cfg.ValidateRequests,
+		BackoffEnabled:       cfg.BackoffEnabled,
+		BackoffMaxRetries:    cfg.BackoffMaxRetries,
+		BackoffInitialWait:   cfg.BackoffInitialWait.String(),
+		BackoffMaxWait:       cfg.BackoffMaxWait.String(),
+		RateLimitEnabled:     cfg.RateLimitEnabled,
+		RateLimitPerModel:    cfg.RateLimitPerModel,
+		RateLimitBurst:       cfg.RateLimitBurst,
+		RateLimitGlobal:      cfg.RateLimitGlobal,
+		RateLimitGlobalBurst: cfg.RateLimitGlobalBurst,
+		AuthEnabled:          cfg.AuthEnabled,
+		AuthToken:            tokenDisplay,
+		DirectRuntimeEnabled: cfg.DirectRuntimeEnabled,
+	}
+}
+
+func (p *Proxy) handleDebugConfig(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(p.debugConfig); err != nil {
+		slog.Warn("debug config write failed", "error", err)
+	}
 }
 
 // getEnvInt returns an integer from environment variable or default.

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/flexinfer/flexinfer/pkg/observability"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -56,6 +57,8 @@ const (
 
 // Reconcile handles runtime pod lifecycle events.
 func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	ctx, _, endSpan := observability.StartReconcileSpan(ctx, "runtime", req.Namespace, req.Name)
+	defer endSpan()
 	logger := log.FromContext(ctx)
 
 	pod := &corev1.Pod{}

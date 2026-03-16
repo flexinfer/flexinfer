@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/observability"
 )
 
 // GPUProfileReconciler watches GPUProfile CRs and caches them in memory
@@ -55,6 +56,8 @@ func (r *GPUProfileReconciler) Lookup(arch string) (*aiv1alpha2.GPUProfileSpec, 
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=gpuprofiles/status,verbs=get;update;patch
 
 func (r *GPUProfileReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	ctx, _, endSpan := observability.StartReconcileSpan(ctx, "gpuprofile", req.Namespace, req.Name)
+	defer endSpan()
 	log := log.FromContext(ctx)
 
 	var profile aiv1alpha2.GPUProfile

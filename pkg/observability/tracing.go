@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/flexinfer/flexinfer/pkg/metrics"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -48,13 +50,15 @@ func InitTracing(ctx context.Context, serviceName string) (func(context.Context)
 	return tp.Shutdown, nil
 }
 
-// StartReconcileSpan creates a span for a controller reconcile loop.
+// StartReconcileSpan creates a span for a controller reconcile loop and
+// automatically records reconcile duration and error metrics.
 // Returns the instrumented context, a function to record errors, and an End function.
 // Usage:
 //
-//	ctx, recordErr, endSpan := observability.StartReconcileSpan(ctx, "modelcache", req)
+//	ctx, recordErr, endSpan := observability.StartReconcileSpan(ctx, "modelcache", req.Namespace, req.Name)
 //	defer endSpan()
 func StartReconcileSpan(ctx context.Context, controller string, namespace, name string) (context.Context, func(error), func()) {
+	start := time.Now()
 	ctx, span := otel.Tracer("flexinfer/controller").Start(ctx, controller+".reconcile")
 	span.SetAttributes(
 		attribute.String("k8s.namespace", namespace),
@@ -65,9 +69,14 @@ func StartReconcileSpan(ctx context.Context, controller string, namespace, name 
 		if err != nil {
 			span.RecordError(err)
 			span.SetAttributes(attribute.Bool("error", true))
+			metrics.ReconcileErrorsTotal.WithLabelValues(controller).Inc()
 		}
 	}
-	return ctx, recordErr, func() { span.End() }
+	endSpan := func() {
+		metrics.ReconcileDurationSeconds.WithLabelValues(controller).Observe(time.Since(start).Seconds())
+		span.End()
+	}
+	return ctx, recordErr, endSpan
 }
 
 func envBool(name string, fallback bool) bool {

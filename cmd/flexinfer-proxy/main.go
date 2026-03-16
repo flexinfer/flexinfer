@@ -64,7 +64,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	p := proxy.New(proxy.ConfigFromEnv(k8sClient, namespace))
+	proxyCfg := proxy.ConfigFromEnv(k8sClient, namespace)
+	if err := proxyCfg.Validate(); err != nil {
+		slog.Error("invalid proxy configuration", "error", err)
+		os.Exit(1)
+	}
+	p := proxy.New(proxyCfg)
 	if err := p.Run(port); err != nil {
 		slog.Error("server failed", "error", err)
 		os.Exit(1)

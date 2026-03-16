@@ -38,6 +38,7 @@ import (
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/gpu"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
 )
@@ -157,7 +158,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			})
 		}
 
-		gpuArch := gpuArchFromNodeSelector(modelCache.Spec.NodeSelector)
+		gpuArch := gpu.ArchFromLabels(modelCache.Spec.NodeSelector)
 		params := quantization.JobParams{
 			Name:         modelCache.Name,
 			Namespace:    modelCache.Namespace,
@@ -166,7 +167,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			Spec:         modelCache.Spec.Quantization,
 			Tolerations:  tolerations,
 			NodeSelector: modelCache.Spec.NodeSelector,
-			GPUVendor:    gpuVendorFromNodeSelector(modelCache.Spec.NodeSelector),
+			GPUVendor:    gpu.VendorFromLabels(modelCache.Spec.NodeSelector),
 			GPUArch:      gpuArch,
 		}
 		// Look up GPUProfile for quantizer image override.
@@ -492,54 +493,13 @@ func quantizedPathFromMetadata(basePath string, meta *quantizationJobMetadata) (
 	return filepath.Clean(filepath.Join(basePath, cleanArtifact)), true
 }
 
-// gpuVendorFromNodeSelector infers the GPU vendor from well-known label keys
-// in the ModelCache's nodeSelector. Returns "amd" or "nvidia" when detectable,
-// or empty string for auto-detection by the job builder.
-func gpuVendorFromNodeSelector(sel map[string]string) string {
-	for k := range sel {
-		switch {
-		case strings.HasPrefix(k, "amd.com/gpu") ||
-			strings.Contains(k, "gpu.arch") && (sel[k] == "gfx1100" || strings.HasPrefix(sel[k], "gfx")):
-			return "amd"
-		case strings.HasPrefix(k, "nvidia.com/gpu"):
-			return "nvidia"
-		}
-	}
-	// Heuristic: known AMD GPU hostnames in this cluster.
-	if hostname, ok := sel["kubernetes.io/hostname"]; ok {
-		switch {
-		case strings.Contains(hostname, "7900xtx") ||
-			strings.Contains(hostname, "radeonvii") ||
-			strings.Contains(hostname, "5930k"):
-			return "amd"
-		case strings.Contains(hostname, "gtx") ||
-			strings.Contains(hostname, "rtx"):
-			return "nvidia"
-		}
-	}
-	return ""
-}
+// gpuVendorFromNodeSelector delegates to gpu.VendorFromLabels for backward compatibility.
+// Deprecated: use gpu.VendorFromLabels directly.
+var gpuVendorFromNodeSelector = gpu.VendorFromLabels
 
-// gpuArchFromNodeSelector infers the GPU microarchitecture from the node selector.
-// Returns e.g. "gfx1100", "gfx906", or "" if unknown.
-func gpuArchFromNodeSelector(sel map[string]string) string {
-	// Explicit label takes priority.
-	for k, v := range sel {
-		if strings.Contains(k, "gpu.arch") && v != "" {
-			return v
-		}
-	}
-	// Heuristic: known GPU hostnames in this cluster.
-	if hostname, ok := sel["kubernetes.io/hostname"]; ok {
-		switch {
-		case strings.Contains(hostname, "7900xtx") || strings.Contains(hostname, "5930k"):
-			return "gfx1100"
-		case strings.Contains(hostname, "radeonvii"):
-			return "gfx906"
-		}
-	}
-	return ""
-}
+// gpuArchFromNodeSelector delegates to gpu.ArchFromLabels for backward compatibility.
+// Deprecated: use gpu.ArchFromLabels directly.
+var gpuArchFromNodeSelector = gpu.ArchFromLabels
 
 func quantizationTypeFromSpec(spec *aiv1alpha1.QuantizationSpec) string {
 	if spec == nil {

@@ -25,10 +25,12 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/gpu"
 )
 
+// isMaxwellGPUArch delegates to gpu.IsMaxwellArch.
 func isMaxwellGPUArch(gpuArch string) bool {
-	return strings.HasPrefix(strings.TrimSpace(gpuArch), "sm_5")
+	return gpu.IsMaxwellArch(gpuArch)
 }
 
 // validateVRAMFit checks whether the model's declared VRAM estimate fits the GPU capacity.

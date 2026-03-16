@@ -1,12 +1,12 @@
 package quantization
 
 import (
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	"github.com/flexinfer/flexinfer/pkg/gpu"
 )
 
 var modelSizePattern = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*B\b`)
@@ -31,8 +31,12 @@ type Recommendation struct {
 // RecommendSpec returns a deterministic quantization recommendation based on
 // model footprint hints and target GPU constraints.
 func RecommendSpec(in RecommendationInput) Recommendation {
-	vendor := detectGPUVendor(in.NodeSelector)
-	arch := detectGPUArchitecture(in.NodeSelector)
+	rawVendor := gpu.VendorFromLabels(in.NodeSelector)
+	vendor := strings.ToUpper(rawVendor)
+	if vendor == "" {
+		vendor = "Unknown"
+	}
+	arch := gpu.ArchFromLabels(in.NodeSelector)
 	modelSizeB, hasModelSize := inferModelSizeBillions(in.Source)
 
 	rec := Recommendation{
@@ -43,7 +47,7 @@ func RecommendSpec(in RecommendationInput) Recommendation {
 	}
 
 	switch {
-	case isMaxwellGPUArch(arch):
+	case gpu.IsMaxwellArch(arch):
 		rec.Spec = &aiv1alpha1.QuantizationSpec{
 			Format:   aiv1alpha1.QuantizationFormatGGUF,
 			GGUFType: "Q3_K_M",
@@ -99,79 +103,6 @@ func recommendGGUFType(modelSizeB float64, hasModelSize bool) string {
 		return "Q3_K_M"
 	}
 	return DefaultGGUFType
-}
-
-func detectGPUVendor(selector map[string]string) string {
-	if len(selector) == 0 {
-		return "Unknown"
-	}
-
-	if vendor, ok := selector["flexinfer.ai/gpu.vendor"]; ok && strings.TrimSpace(vendor) != "" {
-		return strings.ToUpper(strings.TrimSpace(vendor))
-	}
-
-	arch := detectGPUArchitecture(selector)
-	archLower := strings.ToLower(arch)
-	if strings.HasPrefix(archLower, "gfx") {
-		return "AMD"
-	}
-	if strings.HasPrefix(archLower, "sm_") || archLower == "maxwell" {
-		return "NVIDIA"
-	}
-
-	for key := range selector {
-		switch {
-		case strings.HasPrefix(key, "amd.com/"), strings.HasPrefix(key, "gpu.amd.com/"):
-			return "AMD"
-		case strings.HasPrefix(key, "nvidia.com/"):
-			return "NVIDIA"
-		}
-	}
-
-	return "Unknown"
-}
-
-func detectGPUArchitecture(selector map[string]string) string {
-	if len(selector) == 0 {
-		return ""
-	}
-
-	for _, key := range []string{
-		"flexinfer.ai/gpu.arch",
-		"amd.com/gpu.arch",
-		"gpu.amd.com/gpu-architecture",
-		"nvidia.com/gpu.arch",
-	} {
-		if v, ok := selector[key]; ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-	}
-
-	if major, ok := selector["nvidia.com/gpu.compute.major"]; ok {
-		major = strings.TrimSpace(major)
-		if major == "" {
-			return ""
-		}
-		minor := strings.TrimSpace(selector["nvidia.com/gpu.compute.minor"])
-		if minor == "" {
-			minor = "0"
-		}
-		return fmt.Sprintf("sm_%s%s", major, minor)
-	}
-
-	return ""
-}
-
-func isMaxwellGPUArch(arch string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(arch))
-	if normalized == "maxwell" {
-		return true
-	}
-	if !strings.HasPrefix(normalized, "sm_") || len(normalized) < 5 {
-		return false
-	}
-	majorDigit := normalized[3]
-	return majorDigit == '5'
 }
 
 func isNvidiaDatacenterArch(arch string) bool {
