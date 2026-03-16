@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -70,11 +69,11 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 		// still being provisioned or is being deleted (Terminating).
 		if pvc.DeletionTimestamp != nil {
 			log.Info("PVC is terminating, waiting for cleanup", "pvc", pvcName)
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: requeueMedium}, nil
 		}
 		if pvc.Status.Phase != corev1.ClaimBound {
 			log.Info("PVC not yet bound, waiting", "pvc", pvcName, "phase", pvc.Status.Phase)
-			return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: requeueMedium}, nil
 		}
 	}
 
@@ -651,7 +650,7 @@ echo "Successfully cached model from $MODEL_REF"
 	}
 
 	// BackoffLimit controls Kubernetes-level job retries (in addition to in-script retries)
-	backoffLimit := int32(3)
+	backoffLimit := DefaultDownloadBackoffLimit
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

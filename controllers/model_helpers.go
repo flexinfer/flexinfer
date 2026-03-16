@@ -19,20 +19,14 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -41,54 +35,6 @@ import (
 	"github.com/flexinfer/flexinfer/pkg/k8surl"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
 )
-
-var managedModelAnnotations = []string{
-	"litellm.flexinfer.ai/served-model",
-	"litellm.flexinfer.ai/aliases",
-	"litellm.flexinfer.ai/copilot-model",
-	"litellm.flexinfer.ai/capabilities",
-	"flexinfer.ai/service-labels",
-}
-
-var managedModelPodAnnotations = []string{
-	"flexinfer.ai/model",
-	"flexinfer.ai/backend",
-	"flexinfer.ai/gpu.vram-estimate-mb",
-}
-
-func applyManagedAnnotations(existing map[string]string, desired map[string]string, managedKeys []string) map[string]string {
-	out := make(map[string]string, len(existing)+len(desired))
-	for k, v := range existing {
-		out[k] = v
-	}
-	for _, k := range managedKeys {
-		if desired != nil {
-			if v, ok := desired[k]; ok && v != "" {
-				out[k] = v
-				continue
-			}
-		}
-		delete(out, k)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func mergeStringMap(existing map[string]string, additional map[string]string) map[string]string {
-	if len(existing) == 0 && len(additional) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(existing)+len(additional))
-	for k, v := range existing {
-		out[k] = v
-	}
-	for k, v := range additional {
-		out[k] = v
-	}
-	return out
-}
 
 // desiredReplicas calculates the desired replica count for the model.
 // For serverless models, this is driven by LastActiveTime (written by the proxy) and idle timeout.
@@ -162,77 +108,6 @@ func (r *ModelReconciler) cleanupModel(ctx context.Context, model *aiv1alpha2.Mo
 	return nil
 }
 
-// cleanupFlashTmpfs creates a short-lived Job to remove the persistent
-// /dev/shm/flexinfer/{ns}/{model} directory on the target node.
-// Only applies to shared models that use hostPath-based flash-tmpfs.
-func (r *ModelReconciler) cleanupFlashTmpfs(ctx context.Context, model *aiv1alpha2.Model) error {
-	if !model.Spec.IsShared() {
-		return nil
-	}
-	if len(model.Spec.NodeSelector) == 0 {
-		return nil
-	}
-
-	log := log.FromContext(ctx)
-	flashDir := filepath.Join("/dev/shm/flexinfer", model.Namespace, model.Name)
-
-	// Tolerate dedicated GPU nodes so the cleanup pod can schedule on tainted nodes.
-	var tolerations []corev1.Toleration
-	if model.Spec.GetGPUCount() > 0 {
-		tolerations = append(tolerations, corev1.Toleration{
-			Key:      "dedicated",
-			Operator: corev1.TolerationOpEqual,
-			Value:    "gpu",
-			Effect:   corev1.TaintEffectNoSchedule,
-		})
-	}
-
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      model.Name + "-tmpfs-cleanup",
-			Namespace: model.Namespace,
-			Labels:    r.labelsForModel(model),
-		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit:            ptr.To(int32(1)),
-			TTLSecondsAfterFinished: ptr.To(int32(120)),
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy:                corev1.RestartPolicyNever,
-					NodeSelector:                 model.Spec.NodeSelector,
-					Tolerations:                  tolerations,
-					AutomountServiceAccountToken: ptr.To(false),
-					Containers: []corev1.Container{{
-						Name:    "cleanup",
-						Image:   "busybox:1.37",
-						Command: []string{"rm", "-rf", flashDir},
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("10m"),
-								corev1.ResourceMemory: resource.MustParse("16Mi"),
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse("32Mi"),
-							},
-						},
-					}},
-				},
-			},
-		},
-	}
-
-	// No owner reference — model is being deleted, so the Job must
-	// outlive the model. TTLSecondsAfterFinished handles auto-cleanup.
-	if err := r.Create(ctx, job); err != nil {
-		if errors.IsAlreadyExists(err) {
-			return nil
-		}
-		return fmt.Errorf("create flash-tmpfs cleanup job: %w", err)
-	}
-	log.Info("Created flash-tmpfs cleanup job", "path", flashDir)
-	return nil
-}
-
 // labelsForModel returns the labels to apply to resources for this model.
 func (r *ModelReconciler) labelsForModel(model *aiv1alpha2.Model) map[string]string {
 	labels := r.selectorLabelsForModel(model)
@@ -261,18 +136,6 @@ func (r *ModelReconciler) selectorLabelsForModel(model *aiv1alpha2.Model) map[st
 	}
 }
 
-func (r *ModelReconciler) podAnnotationsForModel(model *aiv1alpha2.Model) map[string]string {
-	ann := map[string]string{
-		"flexinfer.ai/model":   model.Name,
-		"flexinfer.ai/backend": model.Spec.Backend,
-	}
-	if model.Spec.GPU != nil && model.Spec.GPU.VRAMEstimateMB != nil && *model.Spec.GPU.VRAMEstimateMB > 0 {
-		ann["flexinfer.ai/gpu.vram-estimate-mb"] = fmt.Sprintf("%d", *model.Spec.GPU.VRAMEstimateMB)
-	}
-	return ann
-}
-
-// shouldScaleToZero checks if the model should be scaled to zero.
 // getIdleTimeout returns the idle timeout for the model.
 func getIdleTimeout(model *aiv1alpha2.Model, b backend.Backend) time.Duration {
 	if model.Spec.Serverless != nil && model.Spec.Serverless.IdleTimeout != nil {
@@ -281,161 +144,12 @@ func getIdleTimeout(model *aiv1alpha2.Model, b backend.Backend) time.Duration {
 	return b.DefaultIdleTimeout()
 }
 
-type flashLoaderRuntimeConfig struct {
-	Enabled         bool
-	Image           string
-	Concurrency     int
-	TmpfsSizeLimit  *resource.Quantity
-	BufferSizeKB    int
-	VerifyIntegrity bool
-	ExcludePatterns string
-}
-
-const (
-	defaultFlashLoaderImage       = "registry.harbor.lan/flexinfer/flash-loader:latest"
-	defaultFlashLoaderConcurrency = 4
-	defaultSHMSizeLimitRaw        = "8Gi"
-)
-
-func defaultSHMSizeLimit() resource.Quantity {
-	raw := strings.TrimSpace(os.Getenv("DEFAULT_SHM_SIZE_LIMIT"))
-	if raw == "" {
-		raw = defaultSHMSizeLimitRaw
-	}
-	if parsed, err := resource.ParseQuantity(raw); err == nil {
-		return parsed
-	}
-	return resource.MustParse(defaultSHMSizeLimitRaw)
-}
-
-func envStringOrDefault(name, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func envIntOrDefault(name string, fallback int) int {
-	v := strings.TrimSpace(os.Getenv(name))
-	if v == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return fallback
-	}
-	return n
-}
-
-func envBoolOrDefault(name string, fallback bool) bool {
-	v := strings.TrimSpace(os.Getenv(name))
-	if v == "" {
-		return fallback
-	}
-	switch strings.ToLower(v) {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return fallback
-	}
-}
-
-func parseOptionalQuantity(raw string) (*resource.Quantity, bool) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, false
-	}
-	q, err := resource.ParseQuantity(raw)
-	if err != nil {
-		return nil, false
-	}
-	return &q, true
-}
-
 func modelUsesPersistentVolume(model *aiv1alpha2.Model) bool {
 	if _, _, ok := parsePVCSource(model.Spec.Source); ok {
 		return true
 	}
 	s := cacheStrategy(model)
 	return s == "SharedPVC" || s == "Local"
-}
-
-// resolveFlashLoaderConfig decides if flash-loader should be injected and which runtime settings to use.
-// Resolution layers (lowest to highest priority): env vars -> v1alpha1 ModelCache -> v1alpha2 CacheSpec.FlashLoader.
-func (r *ModelReconciler) resolveFlashLoaderConfig(ctx context.Context, model *aiv1alpha2.Model) flashLoaderRuntimeConfig {
-	// Layer 1: Environment variable defaults
-	cfg := flashLoaderRuntimeConfig{
-		Enabled:         envBoolOrDefault("DEFAULT_FLASH_LOADER_ENABLED", false),
-		Image:           envStringOrDefault("DEFAULT_FLASH_LOADER_IMAGE", defaultFlashLoaderImage),
-		Concurrency:     envIntOrDefault("DEFAULT_FLASH_LOADER_CONCURRENCY", defaultFlashLoaderConcurrency),
-		BufferSizeKB:    envIntOrDefault("DEFAULT_FLASH_LOADER_BUFFER_KB", 4096),
-		VerifyIntegrity: envBoolOrDefault("DEFAULT_FLASH_LOADER_VERIFY", false),
-		ExcludePatterns: envStringOrDefault("DEFAULT_FLASH_LOADER_EXCLUDE", ""),
-	}
-	if tmpfs, ok := parseOptionalQuantity(os.Getenv("DEFAULT_FLASH_LOADER_TMPFS_SIZE_LIMIT")); ok {
-		cfg.TmpfsSizeLimit = tmpfs
-	}
-
-	// Layer 2: v1alpha1 ModelCache overrides
-	if mc := r.matchingModelCache(ctx, model); mc != nil && mc.Spec.FlashLoader != nil {
-		flash := mc.Spec.FlashLoader
-		cfg.Enabled = flash.Enabled
-		if strings.TrimSpace(flash.Image) != "" {
-			cfg.Image = strings.TrimSpace(flash.Image)
-		}
-		if flash.Concurrency > 0 {
-			cfg.Concurrency = flash.Concurrency
-		}
-		if flash.TmpfsSizeLimit != nil {
-			if tmpfs, ok := parseOptionalQuantity(*flash.TmpfsSizeLimit); ok {
-				cfg.TmpfsSizeLimit = tmpfs
-			}
-		}
-	}
-
-	// Layer 3: v1alpha2 Model.Spec.Cache.FlashLoader (highest priority)
-	if model.Spec.Cache != nil && model.Spec.Cache.FlashLoader != nil {
-		fl := model.Spec.Cache.FlashLoader
-		if fl.Enabled != nil {
-			cfg.Enabled = *fl.Enabled
-		}
-		if fl.Image != "" {
-			cfg.Image = fl.Image
-		}
-		if fl.Concurrency != nil && *fl.Concurrency > 0 {
-			cfg.Concurrency = int(*fl.Concurrency)
-		}
-		if fl.TmpfsSizeLimit != "" {
-			if tmpfs, ok := parseOptionalQuantity(fl.TmpfsSizeLimit); ok {
-				cfg.TmpfsSizeLimit = tmpfs
-			}
-		}
-		if fl.BufferSizeKB != nil {
-			cfg.BufferSizeKB = int(*fl.BufferSizeKB)
-		}
-		if fl.VerifyIntegrity != nil {
-			cfg.VerifyIntegrity = *fl.VerifyIntegrity
-		}
-	}
-
-	// Auto-enable for shared GPU models on Local strategy
-	if model.Spec.Cache != nil && model.Spec.Cache.FlashLoader == nil &&
-		model.Spec.IsShared() && cacheStrategy(model) == "Local" {
-		cfg.Enabled = true
-	}
-
-	if cfg.Concurrency < 1 {
-		cfg.Concurrency = defaultFlashLoaderConcurrency
-	}
-	if cfg.BufferSizeKB < 32 {
-		cfg.BufferSizeKB = 4096
-	}
-	if !modelUsesPersistentVolume(model) {
-		cfg.Enabled = false
-	}
-	return cfg
 }
 
 // checkAliasConflicts detects litellm.aliases and copilotAlias conflicts

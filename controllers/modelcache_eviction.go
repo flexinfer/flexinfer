@@ -50,7 +50,7 @@ func (r *ModelCacheReconciler) checkAndPerformEviction(ctx context.Context, curr
 	}
 
 	// Get eviction threshold (default 85%)
-	threshold := int32(85)
+	threshold := defaultEvictionThreshold
 	if currentCache.Spec.EvictionThresholdPercent != nil {
 		threshold = *currentCache.Spec.EvictionThresholdPercent
 	}
@@ -172,11 +172,11 @@ func (r *ModelCacheReconciler) selectEvictionCandidate(caches []aiv1alpha1.Model
 			}
 
 			// Secondary sort: lower retention priority first
-			iPriority := int32(50) // default
+			iPriority := defaultEvictionPriority // default
 			if candidates[i].Spec.RetentionPriority != nil {
 				iPriority = *candidates[i].Spec.RetentionPriority
 			}
-			jPriority := int32(50)
+			jPriority := defaultEvictionPriority
 			if candidates[j].Spec.RetentionPriority != nil {
 				jPriority = *candidates[j].Spec.RetentionPriority
 			}
@@ -189,11 +189,11 @@ func (r *ModelCacheReconciler) selectEvictionCandidate(caches []aiv1alpha1.Model
 			if candidates[i].Status.AccessCount != candidates[j].Status.AccessCount {
 				return candidates[i].Status.AccessCount < candidates[j].Status.AccessCount
 			}
-			iPriority := int32(50)
+			iPriority := defaultEvictionPriority
 			if candidates[i].Spec.RetentionPriority != nil {
 				iPriority = *candidates[i].Spec.RetentionPriority
 			}
-			jPriority := int32(50)
+			jPriority := defaultEvictionPriority
 			if candidates[j].Spec.RetentionPriority != nil {
 				jPriority = *candidates[j].Spec.RetentionPriority
 			}
@@ -206,11 +206,11 @@ func (r *ModelCacheReconciler) selectEvictionCandidate(caches []aiv1alpha1.Model
 			if !candidates[i].CreationTimestamp.Time.Equal(candidates[j].CreationTimestamp.Time) {
 				return candidates[i].CreationTimestamp.Time.Before(candidates[j].CreationTimestamp.Time)
 			}
-			iPriority := int32(50)
+			iPriority := defaultEvictionPriority
 			if candidates[i].Spec.RetentionPriority != nil {
 				iPriority = *candidates[i].Spec.RetentionPriority
 			}
-			jPriority := int32(50)
+			jPriority := defaultEvictionPriority
 			if candidates[j].Spec.RetentionPriority != nil {
 				jPriority = *candidates[j].Spec.RetentionPriority
 			}

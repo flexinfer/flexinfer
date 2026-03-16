@@ -113,7 +113,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			fmt.Sprintf("Re-quantization triggered (%s), old job deleted", reason))
 
 		// Requeue to let the deleted job disappear before creating a new one.
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	}
 
 	// If already Ready with quantization status and hash matches, nothing to do.
@@ -235,7 +235,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 				quantizationTypeFromSpec(modelCache.Spec.Quantization)))
 
 		// Requeue after 30s to check job status
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: requeueLong}, nil
 	} else if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -369,7 +369,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "QuantizationProgress",
 			fmt.Sprintf("Quantization in progress (elapsed %s)", elapsed))
 	}
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: requeueLong}, nil
 }
 
 type quantizationJobMetadata struct {

@@ -134,7 +134,7 @@ func (r *ModelReconciler) reconcileViaRuntime(
 			log.Error(err, "Failed to update phase after runtime load")
 		}
 		// Requeue quickly to poll for readiness.
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	}
 
 	// Model is loaded — update status based on runtime state.
@@ -160,7 +160,7 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseLoading); err != nil {
 			log.Error(err, "Failed to update phase")
 		}
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	case "Failed":
 		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, "RuntimeFailed", status.Error)

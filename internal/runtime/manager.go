@@ -124,7 +124,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 
 	b, ok := backend.Get(req.Backend)
 	if !ok {
-		return fmt.Errorf("unknown backend %q", req.Backend)
+		return fmt.Errorf("%w: %s", backend.ErrUnknownBackend, req.Backend)
 	}
 
 	if !b.SupportsGPUVendor(m.gpuVendor) {

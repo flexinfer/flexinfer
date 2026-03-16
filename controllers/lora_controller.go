@@ -55,7 +55,7 @@ func (r *LoRAAdapterReconciler) httpClient() *http.Client {
 	if r.HTTPClient != nil {
 		return r.HTTPClient
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return &http.Client{Timeout: httpClientTimeout}
 }
 
 // Reconcile manages the lifecycle of a LoRA adapter.
@@ -101,7 +101,7 @@ func (r *LoRAAdapterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			adapter.Status.Message = fmt.Sprintf("parent model %q not found", adapter.Spec.ModelRef)
 			r.Recorder.Event(adapter, corev1.EventTypeWarning, "ModelNotFound", adapter.Status.Message)
 			_ = r.Status().Update(ctx, adapter)
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			return ctrl.Result{RequeueAfter: requeueLong}, nil
 		}
 		return ctrl.Result{}, err
 	}
@@ -110,7 +110,7 @@ func (r *LoRAAdapterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	b, ok := backend.Get(model.Spec.Backend)
 	if !ok {
 		adapter.Status.Phase = aiv1alpha2.LoRAAdapterPhaseFailed
-		adapter.Status.Message = fmt.Sprintf("unknown backend %q on parent model", model.Spec.Backend)
+		adapter.Status.Message = fmt.Sprintf("%v: %s (on parent model)", backend.ErrUnknownBackend, model.Spec.Backend)
 		_ = r.Status().Update(ctx, adapter)
 		return ctrl.Result{}, nil
 	}
@@ -129,7 +129,7 @@ func (r *LoRAAdapterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		adapter.Status.Phase = aiv1alpha2.LoRAAdapterPhasePending
 		adapter.Status.Message = "waiting for parent model to be ready"
 		_ = r.Status().Update(ctx, adapter)
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: requeueMedium}, nil
 	}
 
 	// Get pod endpoints for the model
@@ -140,7 +140,7 @@ func (r *LoRAAdapterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		adapter.Status.Phase = aiv1alpha2.LoRAAdapterPhasePending
 		adapter.Status.Message = "no ready pods for parent model"
 		_ = r.Status().Update(ctx, adapter)
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: requeueMedium}, nil
 	}
 
 	// Load adapter on all replicas

@@ -28,7 +28,7 @@ func (r *OCIRegistry) List(ctx context.Context, filter ListFilter) ([]ModelEntry
 	// OCI registries don't natively support search without catalog API.
 	// Harbor provides a REST API for this; generic registries rely on the catalog endpoint.
 	if r.RegistryURL == "" {
-		return nil, fmt.Errorf("registry URL not configured")
+		return nil, ErrRegistryNotConfigured
 	}
 
 	// Use oras to discover tags for a repo when query looks like a repo ref.

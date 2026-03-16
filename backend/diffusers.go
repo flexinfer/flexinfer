@@ -52,7 +52,7 @@ func (b *DiffusersBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 }
 
 func (b *DiffusersBackend) Port() int32 {
-	return 8000
+	return PortDiffusers
 }
 
 func (b *DiffusersBackend) Args(spec *ModelSpec) []string {

@@ -121,13 +121,13 @@ func TestBackendPorts(t *testing.T) {
 		backend string
 		port    int32
 	}{
-		{"ollama", 11434},
-		{"vllm", 8000},
-		{"mlc-llm", 8000},
-		{"llamacpp", 8080},
-		{"diffusers", 8000},
-		{"comfyui", 8188},
-		{"vllm-omni", 8000},
+		{"ollama", PortOllama},
+		{"vllm", PortVLLM},
+		{"mlc-llm", PortMLCLLM},
+		{"llamacpp", PortLlamaCpp},
+		{"diffusers", PortDiffusers},
+		{"comfyui", PortComfyUI},
+		{"vllm-omni", PortVLLM},
 	}
 
 	for _, tt := range tests {

@@ -106,7 +106,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "ReabliterationTriggered",
 			fmt.Sprintf("Re-abliteration triggered (%s), all jobs deleted", reason))
 
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	}
 
 	// If already Ready with abliteration status and hash matches, dispatch to quantization.
@@ -236,7 +236,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "AbliterationStarted",
 			"Abliteration job created")
 
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: requeueLong}, nil
 	} else if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -318,7 +318,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "AbliterationProgress",
 			fmt.Sprintf("Abliteration in progress (elapsed %s)", elapsed))
 	}
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: requeueLong}, nil
 }
 
 // abliterationJobMetadata is parsed from the abliterator container's termination log.

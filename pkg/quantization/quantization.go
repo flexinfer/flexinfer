@@ -103,7 +103,7 @@ func GetBuilder(format aiv1alpha1.QuantizationFormat) (JobBuilder, error) {
 	case aiv1alpha1.QuantizationFormatFP8:
 		return &FP8JobBuilder{}, nil
 	default:
-		return nil, fmt.Errorf("quantization format %q not yet implemented", format)
+		return nil, fmt.Errorf("%w: %s", ErrUnsupportedFormat, format)
 	}
 }
 

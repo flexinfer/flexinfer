@@ -71,7 +71,7 @@ func (b *LlamaCppBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 }
 
 func (b *LlamaCppBackend) Port() int32 {
-	return 8080
+	return PortLlamaCpp
 }
 
 // Command returns the llama-server binary path.

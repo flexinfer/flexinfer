@@ -31,7 +31,7 @@ func (b *SteamBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 }
 
 func (b *SteamBackend) Port() int32 {
-	return 27036 // Steam Remote Play
+	return PortSteam
 }
 
 func (b *SteamBackend) Command() []string {

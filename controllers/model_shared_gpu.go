@@ -231,7 +231,7 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 
 	activeModel := chooseSharedGroupLeader(groupModels, time.Now())
 	if activeModel == nil {
-		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: requeueFast}, nil
 	}
 
 	// Update this model's shared group status
@@ -287,14 +287,14 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	r.syncActiveServiceLabels(ctx, activeModel, groupModels)
 
 	if origPhase == model.Status.Phase && sharedGroupStatusEqual(origShared, model.Status.SharedGroup) {
-		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: requeueFast}, nil
 	}
 
 	if err := r.Status().Update(ctx, model); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: requeueFast}, nil
 }
 
 // syncActiveServiceLabels sets the ai.flexinfer/active-services annotation on

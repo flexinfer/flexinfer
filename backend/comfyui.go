@@ -56,7 +56,7 @@ func (b *ComfyUIBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 }
 
 func (b *ComfyUIBackend) Port() int32 {
-	return 8188
+	return PortComfyUI
 }
 
 func (b *ComfyUIBackend) Command() []string {

@@ -115,7 +115,7 @@ func MustGet(name string) Backend {
 func GetOrError(name string) (Backend, error) {
 	b, ok := Get(name)
 	if !ok {
-		return nil, fmt.Errorf("backend %q not found", name)
+		return nil, fmt.Errorf("%w: %s", ErrUnknownBackend, name)
 	}
 	return b, nil
 }
@@ -168,7 +168,7 @@ func Canonicalize(name string) string {
 func GetImage(backendName string, gpuVendor GPUVendor, gpuArch string) (string, error) {
 	b, ok := Get(backendName)
 	if !ok {
-		return "", fmt.Errorf("unknown backend: %s", backendName)
+		return "", fmt.Errorf("%w: %s", ErrUnknownBackend, backendName)
 	}
 	return b.Image(gpuVendor, gpuArch), nil
 }
@@ -177,7 +177,7 @@ func GetImage(backendName string, gpuVendor GPUVendor, gpuArch string) (string, 
 func GetPort(backendName string) (int32, error) {
 	b, ok := Get(backendName)
 	if !ok {
-		return 0, fmt.Errorf("unknown backend: %s", backendName)
+		return 0, fmt.Errorf("%w: %s", ErrUnknownBackend, backendName)
 	}
 	return b.Port(), nil
 }
@@ -186,7 +186,7 @@ func GetPort(backendName string) (int32, error) {
 func SupportsGPU(backendName string, vendor GPUVendor) (bool, error) {
 	b, ok := Get(backendName)
 	if !ok {
-		return false, fmt.Errorf("unknown backend: %s", backendName)
+		return false, fmt.Errorf("%w: %s", ErrUnknownBackend, backendName)
 	}
 	return b.SupportsGPUVendor(vendor), nil
 }

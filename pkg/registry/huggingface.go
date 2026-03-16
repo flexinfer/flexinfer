@@ -104,7 +104,7 @@ func (r *HuggingFaceRegistry) List(ctx context.Context, filter ListFilter) ([]Mo
 func (r *HuggingFaceRegistry) Pull(ctx context.Context, ref string, destPath string, _ PullOptions) error {
 	// HuggingFace pull is handled by huggingface_hub CLI or snapshot_download.
 	// This is a metadata-only registry; actual download is done by the ModelCache controller.
-	return fmt.Errorf("HuggingFace pull is handled by ModelCache controller (use ModelCache CR instead)")
+	return fmt.Errorf("huggingface: %w (use ModelCache CR instead)", ErrPullNotSupported)
 }
 
 func (r *HuggingFaceRegistry) Resolve(ctx context.Context, ref string) (*ModelMetadata, error) {
