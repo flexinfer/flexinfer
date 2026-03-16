@@ -354,22 +354,33 @@ WORKDIR /workspace
 }
 
 // injectAgentConfig writes platform-specific config files into the pod.
+// Uses Exec (stdout-only SPDY) instead of WriteFile (stdin SPDY) to avoid
+// in-cluster SPDY stdin stream hangs observed on K3s.
 func (o *SpawnOrchestrator) injectAgentConfig(ctx context.Context, containerID, agentType string) error {
+	writeCmd := func(dir, file, content string) error {
+		cmd := fmt.Sprintf("mkdir -p %s && cat > %s/%s << 'AGENTCFG'\n%s\nAGENTCFG", dir, dir, file, content)
+		_, err := o.backend.Exec(ctx, backend.ExecOpts{
+			ContainerID: containerID,
+			Command:     cmd,
+			TimeoutSec:  30,
+		})
+		return err
+	}
+
 	switch agentType {
 	case "claude-code":
-		// Write minimal .claude/settings.json to enable headless mode.
 		settings := `{"permissions":{"allow":["Bash","Read","Write","Edit","Glob","Grep"]}}`
-		if err := o.backend.WriteFile(ctx, containerID, "/workspace/.claude/settings.json", []byte(settings), "0644"); err != nil {
+		if err := writeCmd("/workspace/.claude", "settings.json", settings); err != nil {
 			return fmt.Errorf("write claude settings: %w", err)
 		}
 	case "codex":
-		config := `[agent]\napproval = "auto-edit"\n`
-		if err := o.backend.WriteFile(ctx, containerID, "/workspace/.codex/config.toml", []byte(config), "0644"); err != nil {
+		config := "[agent]\napproval = \"auto-edit\"\n"
+		if err := writeCmd("/workspace/.codex", "config.toml", config); err != nil {
 			return fmt.Errorf("write codex config: %w", err)
 		}
 	case "gemini":
 		settings := `{"permissions":{"allow_all":true}}`
-		if err := o.backend.WriteFile(ctx, containerID, "/workspace/.gemini/settings.json", []byte(settings), "0644"); err != nil {
+		if err := writeCmd("/workspace/.gemini", "settings.json", settings); err != nil {
 			return fmt.Errorf("write gemini settings: %w", err)
 		}
 	}
