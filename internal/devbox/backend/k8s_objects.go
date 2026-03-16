@@ -210,14 +210,21 @@ func (k *K8sBackend) gitCloneInitContainer(workDirPath string) corev1.Container 
 	projectName := parts[len(parts)-1]
 	repoURL := strings.TrimSuffix(k.gitBaseURL, "/") + "/" + projectName + ".git"
 
-	// Clone script: shallow clone for speed, fall back to full clone on failure.
+	// Clone script: shallow clone for speed. Preserve the original URL
+	// scheme (http vs https) so internal HTTP-only registries work.
+	scheme := "https"
+	if strings.HasPrefix(repoURL, "http://") {
+		scheme = "http"
+	}
+	hostAndPath := strings.TrimPrefix(strings.TrimPrefix(repoURL, "https://"), "http://")
 	cloneScript := fmt.Sprintf(
 		`set -e
 mkdir -p "$(dirname %q)"
-git clone --depth 1 "https://token:${GIT_TOKEN}@%s" %q
+git clone --depth 1 "%s://token:${GIT_TOKEN}@%s" %q
 echo "git-clone: cloned %s into %s"`,
 		cloneDest,
-		strings.TrimPrefix(strings.TrimPrefix(repoURL, "https://"), "http://"),
+		scheme,
+		hostAndPath,
 		cloneDest,
 		projectName,
 		cloneDest,
