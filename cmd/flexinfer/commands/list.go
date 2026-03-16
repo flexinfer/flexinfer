@@ -46,7 +46,7 @@ Examples:
 }
 
 func runList(cmd *cobra.Command, args []string) error {
-	fmt.Fprintln(cmd.ErrOrStderr(), "WARNING: v1alpha1 ModelDeployment is deprecated. Please migrate to v1alpha2 Model. See: flexinfer migrate generate")
+	_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "WARNING: v1alpha1 ModelDeployment is deprecated. Please migrate to v1alpha2 Model. See: flexinfer migrate generate")
 	out := cmd.OutOrStdout()
 
 	k8sClient, err := getClient()
