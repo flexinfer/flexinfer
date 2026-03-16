@@ -31,7 +31,7 @@ func (b *FP8JobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
 		return fmt.Errorf("FP8JobBuilder only handles FP8 format, got %q", spec.Format)
 	}
 	if !spec.UseGPU {
-		return fmt.Errorf("FP8 quantization requires useGPU=true")
+		return fmt.Errorf("FP8: %w", ErrGPURequired)
 	}
 
 	bits := DefaultFP8Bits
@@ -39,7 +39,7 @@ func (b *FP8JobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
 		bits = int(*spec.Bits)
 	}
 	if bits != DefaultFP8Bits {
-		return fmt.Errorf("FP8 currently supports only %d-bit quantization, got %d", DefaultFP8Bits, bits)
+		return fmt.Errorf("FP8 %w: got %d, want %d", ErrInvalidBits, bits, DefaultFP8Bits)
 	}
 
 	if spec.GroupSize != nil {

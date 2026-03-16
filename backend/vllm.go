@@ -56,7 +56,7 @@ func (b *VLLMBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 }
 
 func (b *VLLMBackend) Port() int32 {
-	return 8000
+	return PortVLLM
 }
 
 func (b *VLLMBackend) Args(spec *ModelSpec) []string {

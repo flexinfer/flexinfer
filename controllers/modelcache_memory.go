@@ -22,7 +22,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -216,12 +215,12 @@ func (r *ModelCacheReconciler) reconcileMemory(ctx context.Context, m *aiv1alpha
 	}
 
 	if dsNeedsUpdate {
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	}
 
 	// Requeue to monitor DaemonSet status during provisioning
 	if m.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		return ctrl.Result{RequeueAfter: requeueLong}, nil
 	}
 	return ctrl.Result{}, nil
 }

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/flexinfer/flexinfer/pkg/observability"
+	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -52,7 +52,6 @@ func (e *RuntimeEndpoint) URL() string {
 
 const (
 	runtimeComponentLabel = "flexinfer-runtime"
-	runtimeAPIPort        = int32(8080)
 )
 
 // Reconcile handles runtime pod lifecycle events.
@@ -77,7 +76,7 @@ func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		"ready", isPodReady(pod),
 	)
 
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	return ctrl.Result{RequeueAfter: requeueLong}, nil
 }
 
 // FindRuntimeForNode returns the runtime endpoint for a node, if one exists.
@@ -114,7 +113,7 @@ func (r *RuntimeReconciler) FindRuntimeForNode(ctx context.Context, namespace st
 			return &RuntimeEndpoint{
 				PodName:  pod.Name,
 				PodIP:    pod.Status.PodIP,
-				Port:     runtimeAPIPort,
+				Port:     pkgrt.RuntimeAPIPort,
 				NodeName: nodeName,
 				Ready:    isPodReady(&pod),
 			}, nil
@@ -125,7 +124,7 @@ func (r *RuntimeReconciler) FindRuntimeForNode(ctx context.Context, namespace st
 			pendingMatch = &RuntimeEndpoint{
 				PodName:  pod.Name,
 				NodeName: nodeName,
-				Port:     runtimeAPIPort,
+				Port:     pkgrt.RuntimeAPIPort,
 				Ready:    false,
 			}
 		}
@@ -156,7 +155,7 @@ func (r *RuntimeReconciler) LoadModel(ctx context.Context, endpoint *RuntimeEndp
 	req.Header.Set("Content-Type", "application/json")
 	req.Body = io.NopCloser(toReader(payload))
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: httpClientTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("sending load request: %w", err)
@@ -180,7 +179,7 @@ func (r *RuntimeReconciler) UnloadModel(ctx context.Context, endpoint *RuntimeEn
 		return fmt.Errorf("creating unload request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: httpClientTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("sending unload request: %w", err)
@@ -212,7 +211,7 @@ func (r *RuntimeReconciler) CheckModelHealth(ctx context.Context, endpoint *Runt
 		return nil, fmt.Errorf("creating health request: %w", err)
 	}
 
-	httpClient := &http.Client{Timeout: 5 * time.Second}
+	httpClient := &http.Client{Timeout: httpClientShort}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("health request failed: %w", err)

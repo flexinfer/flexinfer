@@ -15,7 +15,6 @@ import (
 
 const (
 	runtimeComponentLabel = "flexinfer-runtime"
-	runtimeAPIPort        = int32(8080)
 )
 
 // RuntimeCache discovers and caches runtime pod endpoints.
@@ -114,7 +113,7 @@ func (rc *RuntimeCache) refresh(ctx context.Context) error {
 		ep := &pkgrt.RuntimeEndpoint{
 			PodName:  pod.Name,
 			PodIP:    pod.Status.PodIP,
-			Port:     runtimeAPIPort,
+			Port:     pkgrt.RuntimeAPIPort,
 			NodeName: pod.Spec.NodeName,
 			Ready:    isPodReadyFromConditions(&pod),
 		}

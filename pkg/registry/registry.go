@@ -104,7 +104,7 @@ func Register(name string, factory func() ModelRegistry) {
 func Get(name string) (ModelRegistry, error) {
 	factory, ok := registries[name]
 	if !ok {
-		return nil, fmt.Errorf("unknown registry type: %s", name)
+		return nil, fmt.Errorf("%w: %s", ErrUnknownRegistryType, name)
 	}
 	return factory(), nil
 }

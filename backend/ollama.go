@@ -70,7 +70,7 @@ func (b *OllamaBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 }
 
 func (b *OllamaBackend) Port() int32 {
-	return 11434
+	return PortOllama
 }
 
 func (b *OllamaBackend) Args(spec *ModelSpec) []string {

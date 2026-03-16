@@ -95,7 +95,7 @@ func (r *OllamaRegistry) List(ctx context.Context, filter ListFilter) ([]ModelEn
 
 func (r *OllamaRegistry) Pull(ctx context.Context, ref string, destPath string, _ PullOptions) error {
 	// Ollama models are pulled by the ollama backend itself at runtime.
-	return fmt.Errorf("Ollama pull is handled by the ollama backend at runtime (no external download needed)")
+	return fmt.Errorf("ollama: %w (handled by backend at runtime)", ErrPullNotSupported)
 }
 
 func (r *OllamaRegistry) Resolve(ctx context.Context, ref string) (*ModelMetadata, error) {

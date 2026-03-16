@@ -73,7 +73,7 @@ func (b *AWQJobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
 		return fmt.Errorf("AWQJobBuilder only handles AWQ format, got %q", spec.Format)
 	}
 	if !spec.UseGPU {
-		return fmt.Errorf("AWQ quantization requires useGPU=true")
+		return fmt.Errorf("AWQ: %w", ErrGPURequired)
 	}
 
 	bits := DefaultAWQBits
@@ -81,7 +81,7 @@ func (b *AWQJobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
 		bits = int(*spec.Bits)
 	}
 	if bits != 4 {
-		return fmt.Errorf("AWQ currently supports only 4-bit quantization, got %d", bits)
+		return fmt.Errorf("AWQ %w: got %d, want 4", ErrInvalidBits, bits)
 	}
 
 	groupSize := DefaultQuantizationGroupSize
@@ -89,7 +89,7 @@ func (b *AWQJobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
 		groupSize = int(*spec.GroupSize)
 	}
 	if groupSize <= 0 {
-		return fmt.Errorf("AWQ groupSize must be > 0, got %d", groupSize)
+		return fmt.Errorf("AWQ: %w (got %d)", ErrInvalidGroupSize, groupSize)
 	}
 
 	return nil
@@ -268,7 +268,7 @@ func (b *GPTQJobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
 		return fmt.Errorf("GPTQJobBuilder only handles GPTQ format, got %q", spec.Format)
 	}
 	if !spec.UseGPU {
-		return fmt.Errorf("GPTQ quantization requires useGPU=true")
+		return fmt.Errorf("GPTQ: %w", ErrGPURequired)
 	}
 
 	bits := DefaultGPTQBits
@@ -278,7 +278,7 @@ func (b *GPTQJobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
 	switch bits {
 	case 4, 8:
 	default:
-		return fmt.Errorf("GPTQ currently supports 4-bit or 8-bit quantization, got %d", bits)
+		return fmt.Errorf("GPTQ %w: got %d, want 4 or 8", ErrInvalidBits, bits)
 	}
 
 	groupSize := DefaultQuantizationGroupSize
@@ -286,7 +286,7 @@ func (b *GPTQJobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
 		groupSize = int(*spec.GroupSize)
 	}
 	if groupSize <= 0 {
-		return fmt.Errorf("GPTQ groupSize must be > 0, got %d", groupSize)
+		return fmt.Errorf("GPTQ: %w (got %d)", ErrInvalidGroupSize, groupSize)
 	}
 
 	return nil

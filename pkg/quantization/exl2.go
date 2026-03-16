@@ -37,7 +37,7 @@ func (b *EXL2JobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
 		return fmt.Errorf("EXL2JobBuilder only handles EXL2 format, got %q", spec.Format)
 	}
 	if !spec.UseGPU {
-		return fmt.Errorf("EXL2 quantization requires useGPU=true")
+		return fmt.Errorf("EXL2: %w", ErrGPURequired)
 	}
 
 	bits := DefaultEXL2Bits
@@ -45,11 +45,11 @@ func (b *EXL2JobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
 		bits = int(*spec.Bits)
 	}
 	if bits < MinEXL2Bits || bits > MaxEXL2Bits {
-		return fmt.Errorf("EXL2 currently supports %d-%d bit quantization, got %d", MinEXL2Bits, MaxEXL2Bits, bits)
+		return fmt.Errorf("EXL2 %w: got %d, want %d-%d", ErrInvalidBits, bits, MinEXL2Bits, MaxEXL2Bits)
 	}
 
 	if spec.GroupSize != nil && *spec.GroupSize <= 0 {
-		return fmt.Errorf("EXL2 groupSize must be > 0 when set, got %d", *spec.GroupSize)
+		return fmt.Errorf("EXL2: %w (got %d)", ErrInvalidGroupSize, *spec.GroupSize)
 	}
 
 	return nil

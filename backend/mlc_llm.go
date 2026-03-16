@@ -72,7 +72,7 @@ func (b *MLCLLMBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
 }
 
 func (b *MLCLLMBackend) Port() int32 {
-	return 8000
+	return PortMLCLLM
 }
 
 func (b *MLCLLMBackend) Command() []string {
