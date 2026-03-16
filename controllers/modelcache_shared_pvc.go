@@ -641,7 +641,7 @@ echo "Successfully cached model from $MODEL_REF"
 	}
 
 	// BackoffLimit controls Kubernetes-level job retries (in addition to in-script retries)
-	backoffLimit := int32(3)
+	backoffLimit := DefaultDownloadBackoffLimit
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

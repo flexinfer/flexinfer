@@ -1050,7 +1050,7 @@ echo "Download complete."
 			},
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit: ptr.To(int32(3)),
+			BackoffLimit: ptr.To(DefaultDownloadBackoffLimit),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy:                corev1.RestartPolicyOnFailure,

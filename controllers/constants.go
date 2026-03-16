@@ -30,8 +30,4 @@ const (
 	// defaultEvictionPriority is the default priority for KV-cache eviction
 	// ordering when multiple models share a GPU group.
 	defaultEvictionPriority = int32(50)
-
-	// defaultDownloadBackoffLimit is the default number of retries for
-	// download/quantization jobs before they are considered permanently failed.
-	defaultDownloadBackoffLimit = int32(3)
 )

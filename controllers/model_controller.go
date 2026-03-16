@@ -372,7 +372,7 @@ func (r *ModelReconciler) pruneFailedModelPods(ctx context.Context, model *aiv1a
 		return err
 	}
 
-	cutoff := time.Now().Add(-5 * time.Minute)
+	cutoff := time.Now().Add(-failedPodCutoff)
 	for i := range podList.Items {
 		pod := &podList.Items[i]
 		if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodFailed {
