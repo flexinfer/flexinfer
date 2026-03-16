@@ -477,7 +477,16 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 
 	// Build the load payload (shared with controller).
 	// Pass /models as modelBasePath so PVC sources resolve correctly.
-	payload, err := pkgrt.BuildLoadPayload(b.Name(), m.Spec.Source, "/models", m.Spec.GetConfigMap())
+	// Inject startupTimeoutSeconds from the model's coldStartTimeout so the runtime
+	// uses a model-specific timeout instead of the backend default.
+	config := m.Spec.GetConfigMap()
+	if m.Spec.Serverless != nil && m.Spec.Serverless.ColdStartTimeout != nil {
+		if config == nil {
+			config = make(map[string]interface{})
+		}
+		config["startupTimeoutSeconds"] = m.Spec.Serverless.ColdStartTimeout.Duration.Seconds()
+	}
+	payload, err := pkgrt.BuildLoadPayload(b.Name(), m.Spec.Source, "/models", config)
 	if err != nil {
 		slog.Warn("direct load: failed to build payload", "model", modelName, "error", err)
 		return false
@@ -494,6 +503,13 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 		slog.Warn("direct load: runtime health poll failed", "model", modelName, "error", err)
 		return false
 	}
+
+	// Store the direct routing target so serveProxy routes to the runtime pod
+	// instead of the (non-existent) K8s Service.
+	backendPort := b.Port()
+	targetURL := fmt.Sprintf("http://%s:%d", endpoint.PodIP, backendPort)
+	p.directLoadTargets.Store(modelName, targetURL)
+	slog.Info("direct load: registered routing target", "model", modelName, "target", targetURL)
 
 	return true
 }

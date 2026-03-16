@@ -221,6 +221,7 @@ type Proxy struct {
 	// Direct runtime communication (fast path)
 	runtimeCache         *RuntimeCache // cached runtime pod endpoints
 	directRuntimeEnabled bool          // enable direct proxy-to-runtime loading
+	directLoadTargets    sync.Map      // map[string]string: modelName -> "http://podIP:backendPort"
 
 	// Stored config for debug endpoint (secrets redacted)
 	debugConfig debugConfigView
@@ -284,6 +285,11 @@ func (p *Proxy) Run(port int) error {
 	// Start runtime cache for direct fast path
 	if p.runtimeCache != nil {
 		p.runtimeCache.StartRefreshLoop(context.Background())
+
+		// Recover direct load targets from running runtime pods.
+		recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		p.recoverDirectLoadTargets(recoveryCtx)
+		recoveryCancel()
 	}
 
 	mux := http.NewServeMux()
@@ -418,13 +424,21 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	slog.Warn("serving request via deprecated v1alpha1 ModelDeployment, please migrate to v1alpha2 Model",
 		"model", modelName)
 
-	// If model is ready, serve directly
+	// If model is ready, serve directly.
 	if isReady(md) && (md.Spec.Replicas != nil && *md.Spec.Replicas > 0) {
 		p.trackAndServe(w, r, modelName, start)
 		return
 	}
 
-	// Model is scaled to zero or not ready - use queue
+	// Check if this model was loaded via the direct runtime path — the
+	// controller hasn't backfilled the CRD status yet, but we know it's
+	// serving on the runtime pod.
+	if _, ok := p.directLoadTargets.Load(modelName); ok {
+		p.trackAndServe(w, r, modelName, start)
+		return
+	}
+
+	// Model is scaled to zero or not ready - use queue.
 	if err := p.handleColdStart(ctx, w, r, modelName, start); err != nil {
 		slog.Error("cold start failed", "model", modelName, "error", err)
 		requestsTotal.WithLabelValues(modelName, "error").Inc()

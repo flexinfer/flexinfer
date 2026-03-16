@@ -89,6 +89,29 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: modelCache.Namespace}, job)
 	if err != nil && errors.IsNotFound(err) {
+		// If download already completed, the job was GC'd by TTL — continue to next phase.
+		if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady ||
+			modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseQuantizing ||
+			modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseAbliterating ||
+			(modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseProvisioning && modelCache.Status.Path != "") {
+			log.Info("Download job GC'd but download already complete, skipping re-creation",
+				"cache", modelCache.Name, "phase", modelCache.Status.Phase)
+			modelCache.Status.Path = fmt.Sprintf("%s:%s", pvcName, modelPath)
+			if modelCache.Spec.Abliteration != nil {
+				return r.reconcileAbliteration(ctx, modelCache, pvcName, modelPath)
+			}
+			if modelCache.Spec.Quantization != nil {
+				return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
+			}
+			if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
+				modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+				if err := r.Status().Update(ctx, modelCache); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			return ctrl.Result{}, nil
+		}
+
 		// Create Downloader Job - use OCI job for OCI sources
 		var newJob *batchv1.Job
 		var jobErr error

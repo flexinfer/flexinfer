@@ -135,6 +135,19 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 	quantJob := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: quantJobName, Namespace: modelCache.Namespace}, quantJob)
 	if err != nil && errors.IsNotFound(err) {
+		// If quantization already completed, the job was GC'd by TTL — don't recreate.
+		if modelCache.Status.Quantization != nil && modelCache.Status.Quantization.FailureMessage == "" {
+			log.Info("Quantization job GC'd but quantization already complete, skipping re-creation",
+				"cache", modelCache.Name)
+			if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
+				modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+				if err := r.Status().Update(ctx, modelCache); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			return ctrl.Result{}, nil
+		}
+
 		// Build and create the quantization job
 		builder, builderErr := quantization.GetBuilder(modelCache.Spec.Quantization.Format)
 		if builderErr != nil {

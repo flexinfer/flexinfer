@@ -101,10 +101,7 @@ func (b *VLLMOmniBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--enforce-eager")
 	}
 
-	// CPU offload — move part of model weights to CPU to free VRAM for KV cache
-	if cpuOffload := spec.ConfigInt("cpuOffloadGb", 0); cpuOffload > 0 {
-		args = append(args, "--cpu-offload-gb", fmt.Sprintf("%d", cpuOffload))
-	}
+	// CPU offload removed in vLLM V1 (0.17.0+). Previously --cpu-offload-gb.
 
 	// Override KV cache blocks — bypasses the profiling step
 	if blocks := spec.ConfigInt("numGpuBlocksOverride", 0); blocks > 0 {
@@ -131,12 +128,11 @@ func (b *VLLMOmniBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--kv-cache-dtype", kvDtype)
 	}
 
-	// Prefix caching
+	// Prefix caching is ON by default in vLLM V1 (0.17.0+).
+	// Only emit --no-prefix-caching when explicitly disabled.
 	if spec.Config != nil {
 		if _, ok := spec.Config["enablePrefixCaching"]; ok {
-			if spec.ConfigBool("enablePrefixCaching", true) {
-				args = append(args, "--enable-prefix-caching")
-			} else {
+			if !spec.ConfigBool("enablePrefixCaching", true) {
 				args = append(args, "--no-prefix-caching")
 			}
 		}
@@ -175,16 +171,12 @@ func (b *VLLMOmniBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars(spec.GPUArch)...)
 
-		engineVersion := spec.ConfigString("vllmEngineVersion", "")
+		// vLLM 0.17.0+ is V1-only. VLLM_USE_V1 env var removed.
+		// Only inject flash attention and AITER controls when explicitly configured.
 		enableFA := spec.ConfigBool("enableFlashAttention", false)
 		enableAiter := spec.ConfigBool("enableAiter", false)
 
 		var vllmEnv []corev1.EnvVar
-		if engineVersion == "v1" {
-			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_V1", Value: "1"})
-		} else if engineVersion == "v0" {
-			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_V1", Value: "0"})
-		}
 		if enableFA {
 			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: "1"})
 		}
@@ -227,7 +219,7 @@ func (b *VLLMOmniBackend) StartupProbe() *corev1.Probe {
 }
 
 func (b *VLLMOmniBackend) StartupTimeout() time.Duration {
-	return 180 * time.Second
+	return 300 * time.Second
 }
 
 // IsImageGeneration returns true for vLLM-Omni.

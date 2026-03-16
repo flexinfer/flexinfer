@@ -42,8 +42,6 @@ spec:
     enableToolCalling: true
     toolCallParser: hermes
     reasoningParser: qwen3
-    enablePrefixCaching: true
-    enableChunkedPrefill: true
     maxNumBatchedTokens: 8192
     disableLogStats: false
     hipVisibleDevices: "0"

@@ -353,6 +353,13 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		p.recordRoutingObservability(resolvedModel, strategy, decision, targetPod)
 	}
 
+	// Check if this model was loaded via the direct runtime path.
+	if targetURL == "" {
+		if dt, ok := p.directLoadTargets.Load(resolvedModel); ok {
+			targetURL = dt.(string)
+		}
+	}
+
 	// Fall back to Service DNS if no routing target
 	if targetURL == "" {
 		targetURL = k8surl.ServiceURL(resolvedModel, p.namespace, port, true)

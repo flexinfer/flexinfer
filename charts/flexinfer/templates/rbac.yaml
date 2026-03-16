@@ -377,9 +377,6 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
-  - apiGroups: [""]
-    resources: ["nodes"]
-    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -395,6 +392,34 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
+  name: {{ $fullname }}-proxy
+---
+# ClusterRole for proxy — nodes are cluster-scoped, cannot be granted via a namespace Role.
+# Required by RuntimeCache.nodeMatches() for direct runtime load path.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-proxy
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}-proxy
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "flexinfer.proxyServiceAccountName" . }}
+    namespace: {{ $ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
   name: {{ $fullname }}-proxy
 ---
 {{- end }}

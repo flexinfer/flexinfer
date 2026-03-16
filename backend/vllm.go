@@ -260,7 +260,7 @@ func (b *VLLMBackend) ReadinessProbe() *corev1.Probe {
 }
 
 func (b *VLLMBackend) StartupTimeout() time.Duration {
-	return 120 * time.Second
+	return 300 * time.Second
 }
 
 // KVCacheArgs returns CLI arguments for KV-cache tuning.
