@@ -88,9 +88,11 @@ func (p *Proxy) modelDeploymentToOpenAI(md *aiv1alpha1.ModelDeployment) OpenAIMo
 
 	// Build metadata
 	metadata := map[string]interface{}{
-		"backend": md.Spec.Backend,
-		"ready":   ready,
-		"scaled":  replicas > 0,
+		"backend":    md.Spec.Backend,
+		"ready":      ready,
+		"scaled":     replicas > 0,
+		"version":    "v1alpha1",
+		"deprecated": true,
 	}
 
 	if md.Status.Phase != "" {

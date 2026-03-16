@@ -35,11 +35,10 @@ type QueuedRequest struct {
 
 // RequestQueue holds requests for a model during cold start.
 type RequestQueue struct {
-	model        string
-	gpuGroupName string // non-empty if this is a GPUGroup-managed model
-	items        chan *QueuedRequest
-	created      time.Time
-	draining     atomic.Bool
+	model    string
+	items    chan *QueuedRequest
+	created  time.Time
+	draining atomic.Bool
 }
 
 // handleColdStart handles requests when model is scaled to zero.
@@ -307,24 +306,26 @@ func (p *Proxy) waitForReady(ctx context.Context, modelName string) error {
 		case <-ctx.Done():
 			return fmt.Errorf("timeout waiting for model to become ready (after %v)", timeout)
 		case <-ticker.C:
-			md, err := p.getModelDeployment(ctx, modelName)
+			// Check v1alpha2 Model first
+			m, err := p.getModel(ctx, modelName)
 			if err == nil {
-				if isReady(md) {
+				if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 					return nil
 				}
 				continue
 			}
 			if !errors.IsNotFound(err) {
-				slog.Warn("error checking model deployment readiness", "model", modelName, "error", err)
-				continue
-			}
-
-			m, err := p.getModel(ctx, modelName)
-			if err != nil {
 				slog.Warn("error checking model readiness", "model", modelName, "error", err)
 				continue
 			}
-			if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
+
+			// Fallback: v1alpha1 ModelDeployment (deprecated)
+			md, err := p.getModelDeployment(ctx, modelName)
+			if err != nil {
+				slog.Warn("error checking model deployment readiness", "model", modelName, "error", err)
+				continue
+			}
+			if isReady(md) {
 				return nil
 			}
 		}
@@ -333,18 +334,16 @@ func (p *Proxy) waitForReady(ctx context.Context, modelName string) error {
 
 // triggerScaleUp scales the model to 1 replica.
 func (p *Proxy) triggerScaleUp(ctx context.Context, modelName string) error {
-	md, err := p.getModelDeployment(ctx, modelName)
-	if err != nil {
-		if !errors.IsNotFound(err) {
-			return err
-		}
-
-		// v1alpha2: update LastActiveTime to trigger controller scale-up.
+	// Try v1alpha2 Model first: update LastActiveTime to trigger controller scale-up.
+	m, err := p.getModel(ctx, modelName)
+	if err == nil {
 		// Retry on conflict since the controller may also be updating status.
 		for i := 0; i < 3; i++ {
-			m, err := p.getModel(ctx, modelName)
-			if err != nil {
-				return err
+			if i > 0 {
+				m, err = p.getModel(ctx, modelName)
+				if err != nil {
+					return err
+				}
 			}
 
 			now := metav1.Now()
@@ -360,6 +359,15 @@ func (p *Proxy) triggerScaleUp(ctx context.Context, modelName string) error {
 		}
 		return fmt.Errorf("failed to update Model lastActiveTime after 3 retries (conflict)")
 	}
+	if !errors.IsNotFound(err) {
+		return err
+	}
+
+	// Fallback: v1alpha1 ModelDeployment (deprecated)
+	md, err := p.getModelDeployment(ctx, modelName)
+	if err != nil {
+		return err
+	}
 
 	// Already scaled up?
 	if md.Spec.Replicas != nil && *md.Spec.Replicas > 0 {
@@ -371,13 +379,11 @@ func (p *Proxy) triggerScaleUp(ctx context.Context, modelName string) error {
 
 	// First, update LastAccessTime to prevent the controller from immediately
 	// scaling back down due to stale idle timeout.
-	// We need to update status first, then spec, to avoid race with controller.
 	now := metav1.Now()
 	slog.Debug("setting lastAccessTime", "model", modelName, "time", now.Time, "resourceVersion", md.ResourceVersion)
 	md.Status.LastAccessTime = &now
 	if err := p.client.Status().Update(ctx, md); err != nil {
 		slog.Warn("failed to update LastAccessTime before scale-up", "model", modelName, "error", err)
-		// Continue anyway - scale-up is more important
 	} else {
 		slog.Debug("updated lastAccessTime", "model", modelName)
 	}
@@ -397,7 +403,6 @@ func (p *Proxy) triggerScaleUp(ctx context.Context, modelName string) error {
 	md.Spec.Replicas = &one
 	if err := p.client.Update(ctx, md); err != nil {
 		if errors.IsConflict(err) {
-			// Someone else updated it, that's fine
 			return nil
 		}
 		return fmt.Errorf("failed to scale up: %w", err)
@@ -407,24 +412,24 @@ func (p *Proxy) triggerScaleUp(ctx context.Context, modelName string) error {
 }
 
 // getColdStartTimeout returns the cold start timeout for a model.
-// Uses per-model ColdStartTimeoutSeconds if specified, otherwise falls back to proxy default.
+// Uses per-model ColdStartTimeout if specified, otherwise falls back to proxy default.
 func (p *Proxy) getColdStartTimeout(ctx context.Context, modelName string) time.Duration {
-	md, err := p.getModelDeployment(ctx, modelName)
-	if err == nil && md.Spec.ColdStartTimeoutSeconds != nil {
-		return time.Duration(*md.Spec.ColdStartTimeoutSeconds) * time.Second
-	}
+	// Check v1alpha2 Model first
+	m, err := p.getModel(ctx, modelName)
 	if err == nil {
+		if m.Spec.Serverless != nil && m.Spec.Serverless.ColdStartTimeout != nil {
+			return m.Spec.Serverless.ColdStartTimeout.Duration
+		}
 		return p.coldStartTimeout
 	}
 	if !errors.IsNotFound(err) {
 		return p.coldStartTimeout
 	}
 
-	m, err := p.getModel(ctx, modelName)
-	if err == nil &&
-		m.Spec.Serverless != nil &&
-		m.Spec.Serverless.ColdStartTimeout != nil {
-		return m.Spec.Serverless.ColdStartTimeout.Duration
+	// Fallback: v1alpha1 ModelDeployment (deprecated)
+	md, err := p.getModelDeployment(ctx, modelName)
+	if err == nil && md.Spec.ColdStartTimeoutSeconds != nil {
+		return time.Duration(*md.Spec.ColdStartTimeoutSeconds) * time.Second
 	}
 	return p.coldStartTimeout
 }

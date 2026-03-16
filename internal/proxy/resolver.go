@@ -19,6 +19,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// Service label annotation constants for model routing.
+const (
+	// AnnotationActiveServiceLabels contains comma-separated service labels for an active model.
+	AnnotationActiveServiceLabels = "ai.flexinfer/active-services"
+	// AnnotationServiceLabels contains comma-separated service labels (static claim).
+	AnnotationServiceLabels = "flexinfer.ai/service-labels"
+)
+
 // getModelDeployment fetches the ModelDeployment resource.
 func (p *Proxy) getModelDeployment(ctx context.Context, modelName string) (*aiv1alpha1.ModelDeployment, error) {
 	md := &aiv1alpha1.ModelDeployment{}

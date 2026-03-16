@@ -99,6 +99,7 @@ func init() {
 	rootCmd.AddCommand(quantizeCmd)
 	rootCmd.AddCommand(benchmarkCmd)
 	rootCmd.AddCommand(autotuneCmd)
+	rootCmd.AddCommand(migrateCmd)
 }
 
 // Execute runs the root command
