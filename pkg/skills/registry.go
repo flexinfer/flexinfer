@@ -134,7 +134,7 @@ func (s *Skill) GetOutputFormat(target string) string {
 }
 
 // GetType returns the output type for a target, using platform-specific defaults.
-// Default types: claude → "command", codex → "skill", kilocode → "rule", gemini → "instruction".
+// Default types: claude → "command", codex → "skill", kilocode → "rule", gemini → "skill".
 func (s *Skill) GetType(target string) string {
 	if s.Targets != nil {
 		if spec, ok := s.Targets[target]; ok && spec.Type != "" {
