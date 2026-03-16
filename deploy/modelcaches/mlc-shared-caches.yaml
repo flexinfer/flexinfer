@@ -1,0 +1,79 @@
+# SharedPVC ModelCaches for MLC-LLM models stored on NFS (mlc-models-nfs PVC)
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-4b-mlc
+  namespace: flexinfer-system
+spec:
+  existingClaimName: mlc-models-nfs
+  modelPath: Qwen3-4B-q4f16_1-MLC
+  source: mlc://mlc-ai/Qwen3-4B-q4f16_1-MLC
+  storageSize: 50Gi
+  storageStrategy: SharedPVC
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-8b-mlc
+  namespace: flexinfer-system
+spec:
+  existingClaimName: mlc-models-nfs
+  modelPath: Qwen3-8B-abliterated-q4f32_1-MLC
+  source: mlc://mlc-ai/Qwen3-8B-abliterated-q4f32_1-MLC
+  storageSize: 50Gi
+  storageStrategy: SharedPVC
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-14b-mlc
+  namespace: flexinfer-system
+spec:
+  existingClaimName: mlc-models-nfs
+  modelPath: Qwen3-14B-q4f16_1-MLC
+  source: mlc://mlc-ai/Qwen3-14B-q4f16_1-MLC
+  storageSize: 50Gi
+  storageStrategy: SharedPVC
+---
+# Qwen3 14B abliterated (custom MLC build on the shared PVC).
+# The build job template lives at:
+#   k3s/ai/flexinfer/modelcaches/manual/build-qwen3-14b-abliterated-q4f16_1.yaml
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-14b-abliterated-mlc
+  namespace: flexinfer-system
+spec:
+  existingClaimName: mlc-models-nfs
+  modelPath: Qwen3-14B-abliterated-q4f16_1-MLC
+  # Custom build artifact is produced by the manual build job and written to modelPath.
+  # Use an MLC-style source so the controller treats this as a compiled artifact (checks for mlc-chat-config.json).
+  # If the directory is missing, fail fast rather than downloading raw HF weights into an MLC artifact path.
+  source: mlc://custom/Qwen3-14B-abliterated-q4f16_1-MLC
+  storageSize: 50Gi
+  storageStrategy: SharedPVC
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-32b-mlc
+  namespace: flexinfer-system
+spec:
+  existingClaimName: mlc-models-nfs
+  modelPath: Qwen3-32B-q4f16_1-MLC
+  source: mlc://mlc-ai/Qwen3-32B-q4f16_1-MLC
+  storageSize: 50Gi
+  storageStrategy: SharedPVC
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: deepseek-r1-14b-mlc
+  namespace: flexinfer-system
+spec:
+  existingClaimName: mlc-models-nfs
+  modelPath: DeepSeek-R1-Distill-Qwen-14B-q4f16_1-MLC
+  source: mlc://mlc-ai/DeepSeek-R1-Distill-Qwen-14B-q4f16_1-MLC
+  storageSize: 50Gi
+  storageStrategy: SharedPVC

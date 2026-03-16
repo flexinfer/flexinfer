@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: flexinfer-system
+resources:
+  # MLC compiled model references (shared NFS PVC)
+  - mlc-shared-caches.yaml
+  # GPTQ quantization pipeline (Download → Quantize)
+  - gptq-quantization.yaml
+  # Abliteration + GPTQ pipeline (Download → Abliterate → Quantize)
+  - abliteration-gptq.yaml
+  # Finetune pipeline test (Download → QLoRA Finetune → Quantize)
+  - finetune-test.yaml

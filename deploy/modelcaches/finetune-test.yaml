@@ -1,0 +1,59 @@
+# Finetune Pipeline Test: Qwen3-1.7B + QLoRA function-calling
+# Pipeline lifecycle:
+#   1. Download Qwen3-1.7B BF16 weights (~3.5 GB)
+#   2. QLoRA finetune on xlam-function-calling-60k (10K samples)
+#   3. Merge LoRA adapter back into base model
+#   4. GPTQ INT4 quantization on finetuned weights
+#   5. Ready
+#
+# Disk requirements: ~3.5 GB download + ~3.5 GB finetuned + ~1 GB GPTQ → 20 Gi PVC
+# GPU requirements: 1x gfx1100 (24 GB VRAM)
+# Expected time: ~30 min download + ~60 min finetune + ~30 min quantize
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-1.7b-funcall-gptq
+  namespace: flexinfer-system
+spec:
+  source: "Qwen/Qwen3-1.7B"
+  storageStrategy: SharedPVC
+  storageSize: "20Gi"
+  clusterStorageClassName: nvme-1r-gpu
+  secretRef: "hf-token"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  download:
+    maxMemoryGB: 8
+    hfTransfer: false
+    backoffLimit: 3
+  finetune:
+    mode: "qlora"
+    dataset:
+      huggingFace: "Salesforce/xlam-function-calling-60k"
+      split: "train"
+      maxSamples: 10000
+    lora:
+      rank: 16
+      alpha: 32
+    epochs: 1
+    batchSize: 4
+    learningRate: "2e-4"
+    maxSeqLen: 2048
+    mergeAdapter: true
+    gradientCheckpointing: true
+    useGPU: true
+    maxMemoryGB: 48
+    timeoutSeconds: 7200
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    useGPU: true
+    maxMemoryGB: 48
+    timeoutSeconds: 7200
+    calibration:
+      maxSeqLen: 2048
+      maxSamples: 128

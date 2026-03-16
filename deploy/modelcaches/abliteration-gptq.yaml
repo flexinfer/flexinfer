@@ -1,0 +1,56 @@
+# Abliteration + GPTQ Quantization ModelCaches
+# Downloads BF16 models, abliterates (removes refusal direction from weights),
+# then quantizes to GPTQ INT4.
+#
+# Pipeline lifecycle:
+#   1. Controller creates PVC and download job (Provisioning)
+#   2. After download, controller creates abliteration job (Abliterating)
+#   3. Abliteration modifies BF16 weights in-place on PVC
+#   4. After abliteration, controller creates GPTQ quantization job (Quantizing)
+#   5. Quantized files stored in gptq-w4-g128/ subdirectory on PVC (Ready)
+#
+# Disk requirements:
+#   27B BF16: ~54 GB download + ~15 GB GPTQ output → 120 GB PVC
+#
+# GPU requirements: 1x gfx1100 (24 GB VRAM) for abliteration + quantization
+---
+# Qwen3.5-27B Opus-Reasoning-Distilled → Abliterate → GPTQ INT4
+# SFT from Claude 4.6 Opus reasoning, BF16 ~54 GB.
+# Abliteration removes refusal alignment before quantization.
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen35-27b-opus-distill-gptq
+  namespace: flexinfer-system
+spec:
+  source: "Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled"
+  storageStrategy: SharedPVC
+  storageSize: "120Gi"
+  clusterStorageClassName: nvme-1r-gpu
+  secretRef: "hf-token"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  download:
+    maxMemoryGB: 16
+    hfTransfer: false
+    backoffLimit: 3
+  abliteration:
+    targetLayers: "auto"
+    numSamples: 128
+    useGPU: true
+    maxMemoryGB: 56
+    timeoutSeconds: 7200
+    skipVisionLayers: true
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    dynamicExclusion: "none"
+    useGPU: true
+    maxMemoryGB: 48
+    timeoutSeconds: 14400
+    calibration:
+      maxSeqLen: 2048
+      maxSamples: 128

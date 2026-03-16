@@ -3,5 +3,6 @@ kind: Kustomization
 namespace: flexinfer-system
 resources:
   - models/
+  - modelcaches/
   - gpuprofiles/
   - gpugroups.yaml

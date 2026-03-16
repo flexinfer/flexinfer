@@ -1,0 +1,45 @@
+# GPTQ Quantization ModelCaches
+# Downloads FP16 models from HuggingFace and quantizes to GPTQ INT4.
+# Uses GPTQModel on ROCm gfx1100 (7900 XTX).
+#
+# Lifecycle:
+#   1. Controller creates PVC and download job (Provisioning)
+#   2. After download, controller creates GPU quantization job (Quantizing)
+#   3. GPTQModel quantizes FP16 → GPTQ INT4 (sym=true for ExLlama v2 kernels)
+#   4. Quantized files stored in gptq-w4-g128/ subdirectory on PVC (Ready)
+#
+# Memory requirements:
+#   14B FP16: ~28 GB download + ~8 GB GPTQ output → 40 GB PVC
+#   27B FP16: ~54 GB download + ~15 GB GPTQ output → 120 GB PVC
+#     (dynamicExclusion=none: all modules quantized to INT4)
+#
+# GPU requirements: 1x gfx1100 (24 GB VRAM) per quantization job
+---
+# Qwen3-14B abliterated v2 → GPTQ INT4
+# Replaces pre-quantized JunHowie/Qwen3-14B-GPTQ-Int4 with freshly quantized
+# abliterated weights for best quality on ExLlama v2 kernels.
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-14b-abliterated-v2-gptq
+  namespace: flexinfer-system
+spec:
+  source: "huihui-ai/Huihui-Qwen3-14B-abliterated-v2"
+  storageStrategy: SharedPVC
+  storageSize: "50Gi"
+  clusterStorageClassName: nvme-1r-gpu
+  secretRef: "hf-token"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    useGPU: true
+    maxMemoryGB: 48
+    timeoutSeconds: 7200
+    calibration:
+      maxSeqLen: 4096
+      maxSamples: 256
