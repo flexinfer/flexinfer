@@ -27,8 +27,8 @@ spec:
     vramEstimateMB: 15000
   serverless:
     enabled: true
-    minReplicas: 0
-    idleTimeout: 30m
+    minReplicas: 1
+    idleTimeout: 60m
     coldStartTimeout: 15m
   config:
     quantization: gptq

@@ -3,20 +3,22 @@
 # Note: GPUGroup CRD is v1alpha1 and NOT required by v1alpha2 Model scheduling
 # (gpu.shared field works independently). These are documentation/future-proofing.
 ---
-# Text generation lane on cblevins-7900xtx (shared: opus-distill + 14B-abl-v2)
+# cblevins-5930k: imagegen (primary) + opus-distill text (fast swap secondary)
+# When idle, imagegen stays loaded. Text requests preempt imagegen,
+# then imagegen reclaims GPU after text idle timeout (5m).
 apiVersion: ai.flexinfer/v1alpha1
 kind: GPUGroup
 metadata:
-  name: 7900xtx-textgen
+  name: 5930k-imagegen-textgen
   namespace: flexinfer-system
 spec:
   models:
-    - name: qwen35-27b-opus-distill
+    - name: gonzalomo-fluxpony-imagegen
       priority: 200
-    - name: qwen3-14b-abliterated-v2
+    - name: qwen35-27b-opus-distill-5930k
       priority: 150
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-5930k
   scalingPolicy:
     strategy: Exclusive
     preemptionPolicy: Graceful

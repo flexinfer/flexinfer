@@ -159,7 +159,7 @@ func buildAbliterationScript(modelPath string, spec *aiv1alpha1.AbliterationSpec
 		targetLayers = *spec.TargetLayers
 	}
 
-	weightMatrices := "o_proj,down_proj"
+	weightMatrices := "o_proj,out_proj,down_proj"
 	if len(spec.WeightMatrices) > 0 {
 		weightMatrices = strings.Join(spec.WeightMatrices, ",")
 	}
@@ -325,8 +325,18 @@ for layer_idx in layer_indices:
         if any(wm in name for wm in weight_matrices):
             dev = param.device
             d = direction.to(dev)
-            proj = param.data.float() @ d
-            param.data -= torch.outer(proj, d).to(param.dtype)
+            W = param.data.float()
+            if W.shape[1] == d.shape[0]:
+                # d matches columns (input space) — remove input sensitivity
+                proj = W @ d
+                param.data -= torch.outer(proj, d).to(param.dtype)
+            elif W.shape[0] == d.shape[0]:
+                # d matches rows (output space) — remove output component
+                proj = W.t() @ d
+                param.data -= torch.outer(d, proj).to(param.dtype)
+            else:
+                print(f"  Skipping {name}: shape {tuple(W.shape)} incompatible with direction dim {d.shape[0]}")
+                continue
             modified_any = True
     if modified_any:
         layers_modified += 1

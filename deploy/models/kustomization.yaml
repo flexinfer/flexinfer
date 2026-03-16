@@ -5,9 +5,10 @@ resources:
   # === cblevins-7900xtx (24 GB gfx1100) — primary text generation ===
   - qwen35-27b-opus-distill.yaml    # vLLM, GPTQ INT4, ~15 GiB VRAM
 
-  # === cblevins-5930k (24 GB gfx1100) — image generation ===
-  - gonzalomo-fluxpony-source.yaml   # PVC + download job for Civitai checkpoint
-  - gonzalomo-fluxpony-imagegen.yaml # diffusers, FluxPipeline, cpu offload
+  # === cblevins-5930k (24 GB gfx1100) — image generation + fast swap text ===
+  - gonzalomo-fluxpony-source.yaml          # PVC + download job for Civitai checkpoint
+  - gonzalomo-fluxpony-imagegen.yaml        # diffusers, FluxPipeline, cpu offload (primary)
+  - qwen35-27b-opus-distill-5930k.yaml      # vLLM, GPTQ INT4, fast swap (secondary)
 
   # === cblevins-radeonvii (16 GB gfx906) — image editing / inpainting ===
   - sdxl-inpainting-radeonvii.yaml   # diffusers, SDXL inpainting, ~12 GiB VRAM

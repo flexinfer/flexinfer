@@ -259,6 +259,7 @@ func buildFinetuneScript(modelPath string, spec *aiv1alpha1.FinetuneSpec) string
 	}
 
 	return fmt.Sprintf(`set -euo pipefail
+set -a
 
 MODEL_DIR="/cache/%s"
 MODE="%s"

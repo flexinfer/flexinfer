@@ -1,0 +1,59 @@
+# Qwen3.5-27B Opus-Reasoning-Distilled — fast swap on cblevins-5930k
+#
+# Shares GPU with gonzalomo-fluxpony-imagegen (primary).
+# Scales up on demand when text requests arrive, preempts imagegen.
+# Scales back to 0 when idle, allowing imagegen to reclaim GPU.
+#
+# Same GPTQ INT4 weights as the 7900xtx variant.
+# gpu.count=1 (5930k has 1 discrete 7900 XTX, no iGPU).
+#
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen35-27b-opus-distill-5930k
+  namespace: flexinfer-system
+spec:
+  backend: vllm
+  source: pvc://qwen35-27b-opus-distill-gptq/qwen35-27b-opus-distill-gptq/gptq-w4-g128
+  gpu:
+    vendor: amd
+    count: 1
+    vramEstimateMB: 15000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 5m
+    coldStartTimeout: 15m
+  config:
+    quantization: gptq
+    dtype: "half"
+    maxModelLen: 8192
+    gpuMemoryUtilization: "0.95"
+    maxNumSeqs: 4
+    enforceEager: false
+    trustRemoteCode: true
+    servedModelName: qwen35-27b-opus-distill-5930k
+    enableToolCalling: true
+    toolCallParser: hermes
+    maxNumBatchedTokens: 4096
+    disableLogStats: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "2"
+      memory: 16Gi
+    limits:
+      cpu: "4"
+      memory: 56Gi
+  serviceLabels:
+    - qwen35-27b-opus-distill-5930k
+  litellm:
+    enabled: true
+    servedModelName: qwen35-27b-opus-distill-5930k
+    aliases:
+      - qwen35-opus-5930k
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
