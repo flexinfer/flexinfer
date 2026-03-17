@@ -104,12 +104,13 @@ build_profile() {
     build_context=$(pcfg "${profile}" "build_context" "default")
 
     # Backend flags
-    local include_vllm include_llamacpp include_ollama include_diffusers include_steam
+    local include_vllm include_llamacpp include_ollama include_diffusers include_steam include_quantizer
     include_vllm=$(pcfg "${profile}" "backends.vllm" "false")
     include_llamacpp=$(pcfg "${profile}" "backends.llamacpp" "true")
     include_ollama=$(pcfg "${profile}" "backends.ollama" "true")
     include_diffusers=$(pcfg "${profile}" "backends.diffusers" "false")
     include_steam=$(pcfg "${profile}" "backends.steam" "false")
+    include_quantizer=$(pcfg "${profile}" "include_quantizer" "false")
 
     # Diffusers-specific config
     local include_bitsandbytes transformers_constraint
@@ -168,6 +169,7 @@ build_profile() {
     cmd="${cmd} --build-arg INCLUDE_DIFFUSERS=${include_diffusers}"
     cmd="${cmd} --build-arg INCLUDE_BITSANDBYTES=${include_bitsandbytes}"
     cmd="${cmd} --build-arg INCLUDE_STEAM=${include_steam}"
+    cmd="${cmd} --build-arg INCLUDE_QUANTIZER=${include_quantizer}"
     cmd="${cmd} --build-arg TRANSFORMERS_CONSTRAINT=${transformers_constraint}"
     cmd="${cmd} --build-arg LLAMACPP_BUILD_IMAGE=${llamacpp_build_image}"
     cmd="${cmd} --build-arg CUDA_ARCHITECTURES=${cuda_architectures}"
@@ -179,7 +181,7 @@ build_profile() {
     echo "  Tag:    ${full_tag}"
     echo "  Base:   ${base_image}"
     echo "  Vendor: ${gpu_vendor} / ${gpu_arch}"
-    echo "  Backends: vllm=${include_vllm} llamacpp=${include_llamacpp} ollama=${include_ollama} diffusers=${include_diffusers} steam=${include_steam}"
+    echo "  Backends: vllm=${include_vllm} llamacpp=${include_llamacpp} ollama=${include_ollama} diffusers=${include_diffusers} steam=${include_steam} quantizer=${include_quantizer}"
     echo ""
 
     if [ "${DRY_RUN}" = "true" ]; then

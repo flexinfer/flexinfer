@@ -76,6 +76,7 @@ func (b *EXL2JobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		exl2QuantizerImage(),
 		b.buildScript(params.ModelPath, bits),
 		memoryGB,
+		nil,
 	)
 }
 

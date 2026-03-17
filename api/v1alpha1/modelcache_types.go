@@ -66,6 +66,8 @@ const (
 	ModelCachePhaseFinetuning ModelCachePhase = "Finetuning"
 	// ModelCachePhaseQuantizing means the model is being quantized
 	ModelCachePhaseQuantizing ModelCachePhase = "Quantizing"
+	// ModelCachePhasePublishing means the model is being published to an external registry
+	ModelCachePhasePublishing ModelCachePhase = "Publishing"
 	// ModelCachePhaseReady means the model is ready to be used
 	ModelCachePhaseReady ModelCachePhase = "Ready"
 	// ModelCachePhaseFailed means something went wrong
@@ -223,6 +225,14 @@ type QuantizationStatus struct {
 	// +optional
 	CalibrationParams *CalibrationSpec `json:"calibrationParams,omitempty"`
 
+	// Progress is the current job progress percentage (0-100), read from structured telemetry.
+	// +optional
+	Progress *int32 `json:"progress,omitempty"`
+
+	// ProgressDetail is a human-readable description of current progress (e.g., "layer 152/336").
+	// +optional
+	ProgressDetail string `json:"progressDetail,omitempty"`
+
 	// FailureMessage contains the last lines of pod logs on failure.
 	// +optional
 	FailureMessage string `json:"failureMessage,omitempty"`
@@ -287,6 +297,14 @@ type AbliterationStatus struct {
 	// StartedAt is the timestamp when the abliteration job started.
 	// +optional
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+
+	// Progress is the current job progress percentage (0-100), read from structured telemetry.
+	// +optional
+	Progress *int32 `json:"progress,omitempty"`
+
+	// ProgressDetail is a human-readable description of current progress.
+	// +optional
+	ProgressDetail string `json:"progressDetail,omitempty"`
 
 	// FailureMessage contains the last lines of pod logs on failure.
 	// +optional
@@ -422,7 +440,91 @@ type FinetuneStatus struct {
 	// StartedAt timestamp.
 	// +optional
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+	// Progress is the current job progress percentage (0-100), read from structured telemetry.
+	// +optional
+	Progress *int32 `json:"progress,omitempty"`
+	// ProgressDetail is a human-readable description of current progress.
+	// +optional
+	ProgressDetail string `json:"progressDetail,omitempty"`
 	// FailureMessage on error.
+	// +optional
+	FailureMessage string `json:"failureMessage,omitempty"`
+}
+
+// PublishTarget identifies where to publish the model.
+// +kubebuilder:validation:Enum=oci;huggingface
+type PublishTarget string
+
+const (
+	PublishTargetOCI         PublishTarget = "oci"
+	PublishTargetHuggingFace PublishTarget = "huggingface"
+)
+
+// PublishSpec configures post-pipeline publishing of model artifacts.
+// When set, the controller creates a publish Job after the last pipeline
+// phase (quantize/finetune/abliterate/download) succeeds.
+// Pipeline: Download → [Abliterate] → [Finetune] → [Quantize] → [Publish] → Ready.
+// +kubebuilder:object:generate=true
+type PublishSpec struct {
+	// Targets lists the publish destinations.
+	// +kubebuilder:validation:MinItems=1
+	Targets []PublishTarget `json:"targets"`
+
+	// OCIRef is the OCI artifact reference to push to (e.g. "registry.harbor.lan/models/qwen3:gptq-int4").
+	// Required when targets includes "oci".
+	// +optional
+	OCIRef *string `json:"ociRef,omitempty"`
+
+	// HuggingFaceRepo is the HuggingFace repository to upload to (e.g. "myorg/qwen3-gptq-int4").
+	// Required when targets includes "huggingface".
+	// +optional
+	HuggingFaceRepo *string `json:"huggingFaceRepo,omitempty"`
+
+	// SecretRef is the name of the K8s secret containing credentials.
+	// Expected keys: OCI_USERNAME, OCI_PASSWORD (for OCI), HF_TOKEN (for HuggingFace).
+	// +optional
+	SecretRef *string `json:"secretRef,omitempty"`
+
+	// MaxMemoryGB limits the memory for the publish job container.
+	// Publish is CPU+network only. Default 8.
+	// +optional
+	MaxMemoryGB *int32 `json:"maxMemoryGB,omitempty"`
+
+	// TimeoutSeconds overrides the default 2-hour deadline for publish jobs.
+	// +kubebuilder:validation:Minimum=300
+	// +kubebuilder:validation:Maximum=43200
+	// +optional
+	TimeoutSeconds *int64 `json:"timeoutSeconds,omitempty"`
+}
+
+// PublishStatus records the result of model publishing.
+// +kubebuilder:object:generate=true
+type PublishStatus struct {
+	// OCIDigest is the digest of the published OCI artifact.
+	// +optional
+	OCIDigest string `json:"ociDigest,omitempty"`
+
+	// HuggingFaceCommit is the commit hash from the HuggingFace upload.
+	// +optional
+	HuggingFaceCommit string `json:"huggingFaceCommit,omitempty"`
+
+	// PublishedAt is the timestamp when publishing completed.
+	// +optional
+	PublishedAt *metav1.Time `json:"publishedAt,omitempty"`
+
+	// StartedAt is the timestamp when the publish job started.
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+
+	// Progress is the current job progress percentage (0-100).
+	// +optional
+	Progress *int32 `json:"progress,omitempty"`
+
+	// ProgressDetail is a human-readable description of current progress.
+	// +optional
+	ProgressDetail string `json:"progressDetail,omitempty"`
+
+	// FailureMessage contains the error message on failure.
 	// +optional
 	FailureMessage string `json:"failureMessage,omitempty"`
 }
@@ -580,6 +682,12 @@ type ModelCacheSpec struct {
 	// +optional
 	Finetune *FinetuneSpec `json:"finetune,omitempty"`
 
+	// Publish configures post-pipeline publishing of model artifacts to OCI or HuggingFace.
+	// When set, the controller creates a publish Job after the last pipeline phase succeeds.
+	// Pipeline: Download → [Abliterate] → [Finetune] → [Quantize] → [Publish] → Ready.
+	// +optional
+	Publish *PublishSpec `json:"publish,omitempty"`
+
 	// Download configures the model download job (memory, hf_transfer, retries).
 	// When nil, defaults are applied: 16Gi memory, hf_transfer auto-enabled, 3 retries.
 	// +optional
@@ -701,6 +809,11 @@ type ModelCacheStatus struct {
 	// Only populated when spec.finetune is set and the job completes.
 	// +optional
 	Finetune *FinetuneStatus `json:"finetune,omitempty"`
+
+	// Publish records the result of model publishing.
+	// Only populated when spec.publish is set and the job completes.
+	// +optional
+	Publish *PublishStatus `json:"publish,omitempty"`
 
 	// === OCI Registry Status ===
 

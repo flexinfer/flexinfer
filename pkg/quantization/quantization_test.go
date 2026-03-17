@@ -186,11 +186,16 @@ func TestGGUFJobBuilder_BuildJob(t *testing.T) {
 		t.Fatal("expected quantizer container args to include the shell script")
 	}
 	script := container.Args[0]
-	if !contains(script, "/dev/termination-log") {
-		t.Error("script should write quantization metadata to /dev/termination-log")
+	if !contains(script, "quantize_gguf.sh") {
+		t.Error("expected GGUF wrapper script to invoke quantize_gguf.sh")
 	}
-	if !contains(script, "quantizationTimeSeconds") {
-		t.Error("script should include quantizationTimeSeconds metadata")
+	// Verify env vars are set correctly
+	env := containerEnvMap(container.Env)
+	if env["MODEL_DIR"] != "/cache/llama3-8b" {
+		t.Errorf("MODEL_DIR env = %q, want /cache/llama3-8b", env["MODEL_DIR"])
+	}
+	if env["GGUF_TYPE"] != "Q4_K_M" {
+		t.Errorf("GGUF_TYPE env = %q, want Q4_K_M", env["GGUF_TYPE"])
 	}
 
 	// Verify volumes (PVC + workspace)
@@ -248,10 +253,10 @@ func TestGGUFJobBuilder_BuildJob_DefaultType(t *testing.T) {
 		t.Fatalf("BuildJob() returned error: %v", err)
 	}
 
-	// The script should contain the default type
-	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	if !contains(script, "Q4_K_M") {
-		t.Error("script should contain default GGUF type Q4_K_M")
+	// Default type should be set in env var
+	env := containerEnvMap(job.Spec.Template.Spec.Containers[0].Env)
+	if env["GGUF_TYPE"] != "Q4_K_M" {
+		t.Errorf("GGUF_TYPE env = %q, want Q4_K_M", env["GGUF_TYPE"])
 	}
 }
 
@@ -345,11 +350,18 @@ func TestAWQJobBuilder_BuildJob(t *testing.T) {
 		t.Fatalf("GPU limit = %q, want 1", gpuLimit.String())
 	}
 	script := container.Args[0]
-	if !contains(script, "AutoAWQForCausalLM") {
-		t.Fatal("expected AWQ script to reference AutoAWQForCausalLM")
+	if !contains(script, "quantize_awq.py") {
+		t.Fatal("expected AWQ wrapper script to invoke quantize_awq.py")
 	}
 	if !contains(script, "/dev/termination-log") {
-		t.Fatal("expected AWQ script to write termination metadata")
+		t.Fatal("expected AWQ wrapper script to write termination metadata")
+	}
+	env := containerEnvMap(container.Env)
+	if env["BITS"] != "4" {
+		t.Errorf("BITS env = %q, want 4", env["BITS"])
+	}
+	if env["GROUP_SIZE"] != "128" {
+		t.Errorf("GROUP_SIZE env = %q, want 128", env["GROUP_SIZE"])
 	}
 }
 
@@ -429,11 +441,12 @@ func TestAWQJobBuilder_BuildJob_AMDVendor(t *testing.T) {
 	}
 
 	script := container.Args[0]
-	if !contains(script, "device_map=None") {
-		t.Fatal("expected AWQ script to use device_map=None for ROCm compatibility")
+	if !contains(script, "quantize_awq.py") {
+		t.Fatal("expected AWQ wrapper script to invoke quantize_awq.py")
 	}
-	if !contains(script, `"version": "GEMM"`) {
-		t.Fatal("expected AWQ script to use version GEMM for native AWQ format")
+	env := containerEnvMap(container.Env)
+	if env["MODEL_DIR"] != "/cache/qwen3-awq-amd" {
+		t.Errorf("MODEL_DIR env = %q, want /cache/qwen3-awq-amd", env["MODEL_DIR"])
 	}
 }
 
@@ -507,21 +520,19 @@ func TestGPTQJobBuilder_BuildJob(t *testing.T) {
 		t.Fatalf("container.Image = %q, want %q", container.Image, DefaultGPTQImage)
 	}
 	script := container.Args[0]
-	if !contains(script, "GPTQModel") {
-		t.Fatal("expected GPTQ script to reference GPTQModel")
-	}
-	if !contains(script, "QuantizeConfig") {
-		t.Fatal("expected GPTQ script to reference QuantizeConfig")
+	if !contains(script, "quantize_gptq.py") {
+		t.Fatal("expected GPTQ wrapper script to invoke quantize_gptq.py")
 	}
 	if !contains(script, "W${BITS}_G${GROUP_SIZE}") {
-		t.Fatal("expected GPTQ script type marker")
+		t.Fatal("expected GPTQ wrapper script type marker")
 	}
-	// Default sym=True, descAct=False
-	if !contains(script, "sym=True") {
-		t.Fatal("expected GPTQ script to have sym=True by default")
+	// Default sym=True, descAct=False via env vars
+	env := containerEnvMap(container.Env)
+	if env["SYM"] != "True" {
+		t.Fatalf("SYM env = %q, want True", env["SYM"])
 	}
-	if !contains(script, "desc_act=False") {
-		t.Fatal("expected GPTQ script to have desc_act=False by default")
+	if env["DESC_ACT"] != "False" {
+		t.Fatalf("DESC_ACT env = %q, want False", env["DESC_ACT"])
 	}
 }
 
@@ -551,12 +562,12 @@ func TestGPTQJobBuilder_BuildJob_SymFalse(t *testing.T) {
 		t.Fatalf("BuildJob() returned error: %v", err)
 	}
 
-	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	if !contains(script, "sym=False") {
-		t.Fatal("expected GPTQ script to have sym=False when spec.Sym=false")
+	env := containerEnvMap(job.Spec.Template.Spec.Containers[0].Env)
+	if env["SYM"] != "False" {
+		t.Fatalf("SYM env = %q, want False", env["SYM"])
 	}
-	if !contains(script, "desc_act=True") {
-		t.Fatal("expected GPTQ script to have desc_act=True when spec.DescAct=true")
+	if env["DESC_ACT"] != "True" {
+		t.Fatalf("DESC_ACT env = %q, want True", env["DESC_ACT"])
 	}
 }
 
@@ -629,8 +640,8 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor(t *testing.T) {
 	}
 
 	script := container.Args[0]
-	if !contains(script, "GPTQModel") {
-		t.Fatal("expected GPTQ script to reference GPTQModel")
+	if !contains(script, "quantize_gptq.py") {
+		t.Fatal("expected GPTQ wrapper script to invoke quantize_gptq.py")
 	}
 }
 
@@ -697,42 +708,27 @@ func TestGPTQJobBuilder_BuildJob_VLMConfigExtraction(t *testing.T) {
 		t.Fatalf("BuildJob() returned error: %v", err)
 	}
 
-	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	// VLM text_config extraction: extracts text_config but preserves native model_type.
-	if !contains(script, "text_config") {
-		t.Fatal("expected GPTQ script to contain VLM text_config extraction")
+	container := job.Spec.Template.Spec.Containers[0]
+	script := container.Args[0]
+	// Wrapper script delegates to external Python script.
+	if !contains(script, "quantize_gptq.py") {
+		t.Fatal("expected GPTQ wrapper script to invoke quantize_gptq.py")
 	}
-	if !contains(script, "import json") {
-		t.Fatal("expected GPTQ script to import json for config extraction")
-	}
-	// Must NOT remap model_type to a different architecture.
-	if contains(script, "type_map") {
-		t.Fatal("GPTQ script should NOT remap model_type (native type must be preserved)")
-	}
-	if !contains(script, "set_per_process_memory_fraction") {
-		t.Fatal("expected GPTQ script to contain GPU memory fraction cap")
-	}
-	if !contains(script, "MAX_MEMORY_GB=48") {
-		t.Fatal("expected GPTQ script to export MAX_MEMORY_GB matching default")
-	}
+	// Wrapper script handles ROCm gfx900 detection.
 	if !contains(script, "HSA_OVERRIDE_GFX_VERSION=9.0.6") {
-		t.Fatal("expected GPTQ script to auto-detect gfx900 and set HSA_OVERRIDE_GFX_VERSION")
+		t.Fatal("expected GPTQ wrapper script to auto-detect gfx900 and set HSA_OVERRIDE_GFX_VERSION")
 	}
-	// Hybrid architecture detection: script should re-read config and check layer_types.
-	if !contains(script, "layer_types") {
-		t.Fatal("expected GPTQ script to contain hybrid architecture detection via layer_types")
+	// Env vars control script behavior.
+	env := containerEnvMap(container.Env)
+	if env["GPU_MEMORY_FRACTION"] != DefaultGPUMemoryFraction {
+		t.Fatalf("GPU_MEMORY_FRACTION env = %q, want %q", env["GPU_MEMORY_FRACTION"], DefaultGPUMemoryFraction)
 	}
-	if !contains(script, "dynamic_config") {
-		t.Fatal("expected GPTQ script to contain dynamic_config for module exclusion")
+	if env["MAX_MEMORY_GB"] != "48" {
+		t.Fatalf("MAX_MEMORY_GB env = %q, want 48", env["MAX_MEMORY_GB"])
 	}
-	if !contains(script, `"-:.*attn.*"`) {
-		t.Fatal("expected GPTQ script to contain attention exclusion pattern")
-	}
-	if !contains(script, `"-:.*shared_expert.*"`) {
-		t.Fatal("expected GPTQ script to contain shared_expert exclusion pattern")
-	}
-	if !contains(script, "qcfg_kwargs") {
-		t.Fatal("expected GPTQ script to use qcfg_kwargs for QuantizeConfig construction")
+	// Dynamic exclusion defaults to "auto".
+	if env["DYNAMIC_EXCLUSION"] != "auto" {
+		t.Fatalf("DYNAMIC_EXCLUSION env = %q, want auto", env["DYNAMIC_EXCLUSION"])
 	}
 }
 
@@ -760,21 +756,16 @@ func TestGPTQJobBuilder_BuildJob_DynamicExclusionNone(t *testing.T) {
 		t.Fatalf("BuildJob() returned error: %v", err)
 	}
 
-	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	// "none" mode should NOT contain layer_types auto-detection or dynamic_config patterns
-	if contains(script, "layer_types") {
-		t.Error("script with dynamicExclusion=none should NOT contain layer_types detection")
+	container := job.Spec.Template.Spec.Containers[0]
+	env := containerEnvMap(container.Env)
+	// "none" mode is passed as env var; the Python script handles the logic.
+	if env["DYNAMIC_EXCLUSION"] != "none" {
+		t.Fatalf("DYNAMIC_EXCLUSION env = %q, want none", env["DYNAMIC_EXCLUSION"])
 	}
-	if contains(script, `"-:.*attn.*"`) {
-		t.Error("script with dynamicExclusion=none should NOT contain attention exclusion pattern")
-	}
-	// Should contain the mode log
-	if !contains(script, "Dynamic exclusion disabled") {
-		t.Error("script should log that dynamic exclusion is disabled")
-	}
-	// Should still contain GPTQModel and core functionality
-	if !contains(script, "GPTQModel") {
-		t.Error("script should still reference GPTQModel")
+	// Wrapper script should still invoke the Python script.
+	script := container.Args[0]
+	if !contains(script, "quantize_gptq.py") {
+		t.Fatal("expected GPTQ wrapper script to invoke quantize_gptq.py")
 	}
 }
 
@@ -802,16 +793,16 @@ func TestGPTQJobBuilder_BuildJob_DynamicExclusionAuto(t *testing.T) {
 		t.Fatalf("BuildJob() returned error: %v", err)
 	}
 
-	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	// "auto" mode should contain layer_types detection and dynamic_config patterns
-	if !contains(script, "layer_types") {
-		t.Error("script with dynamicExclusion=auto should contain layer_types detection")
+	container := job.Spec.Template.Spec.Containers[0]
+	env := containerEnvMap(container.Env)
+	// "auto" mode is passed as env var; the Python script handles the logic.
+	if env["DYNAMIC_EXCLUSION"] != "auto" {
+		t.Fatalf("DYNAMIC_EXCLUSION env = %q, want auto", env["DYNAMIC_EXCLUSION"])
 	}
-	if !contains(script, `"-:.*attn.*"`) {
-		t.Error("script with dynamicExclusion=auto should contain attention exclusion pattern")
-	}
-	if !contains(script, "dynamic_config") {
-		t.Error("script with dynamicExclusion=auto should contain dynamic_config")
+	// Wrapper script should still invoke the Python script.
+	script := container.Args[0]
+	if !contains(script, "quantize_gptq.py") {
+		t.Fatal("expected GPTQ wrapper script to invoke quantize_gptq.py")
 	}
 }
 
@@ -839,12 +830,9 @@ func TestGPTQJobBuilder_BuildJob_CustomGPUMemoryFraction(t *testing.T) {
 		t.Fatalf("BuildJob() returned error: %v", err)
 	}
 
-	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	if !contains(script, "gpu_fraction = 0.95") {
-		t.Error("script should contain custom GPU memory fraction 0.95")
-	}
-	if !contains(script, "GPU memory fraction: 0.95") {
-		t.Error("script should log custom GPU memory fraction")
+	env := containerEnvMap(job.Spec.Template.Spec.Containers[0].Env)
+	if env["GPU_MEMORY_FRACTION"] != "0.95" {
+		t.Errorf("GPU_MEMORY_FRACTION env = %q, want 0.95", env["GPU_MEMORY_FRACTION"])
 	}
 }
 
@@ -874,12 +862,9 @@ func TestGPTQJobBuilder_BuildJob_CustomCalibrationDataset(t *testing.T) {
 		t.Fatalf("BuildJob() returned error: %v", err)
 	}
 
-	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	if !contains(script, "wikitext/wikitext-2-raw-v1") {
-		t.Error("script should contain custom calibration dataset")
-	}
-	if contains(script, "mit-han-lab/pile-val-backup") {
-		t.Error("script should NOT contain default dataset when custom is set")
+	env := containerEnvMap(job.Spec.Template.Spec.Containers[0].Env)
+	if env["DATASET"] != "wikitext/wikitext-2-raw-v1" {
+		t.Errorf("DATASET env = %q, want wikitext/wikitext-2-raw-v1", env["DATASET"])
 	}
 }
 
@@ -909,10 +894,9 @@ func TestAWQJobBuilder_BuildJob_CustomCalibrationDataset(t *testing.T) {
 		t.Fatalf("BuildJob() returned error: %v", err)
 	}
 
-	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	// AWQ logs the dataset in the echo line
-	if !contains(script, "allenai/c4") {
-		t.Error("script should log custom calibration dataset")
+	env := containerEnvMap(job.Spec.Template.Spec.Containers[0].Env)
+	if env["DATASET"] != "allenai/c4" {
+		t.Errorf("DATASET env = %q, want allenai/c4", env["DATASET"])
 	}
 }
 
@@ -939,9 +923,9 @@ func TestGPTQJobBuilder_BuildJob_DefaultGPUMemoryFraction(t *testing.T) {
 		t.Fatalf("BuildJob() returned error: %v", err)
 	}
 
-	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	if !contains(script, "gpu_fraction = 0.80") {
-		t.Error("script should contain default GPU memory fraction 0.80")
+	env := containerEnvMap(job.Spec.Template.Spec.Containers[0].Env)
+	if env["GPU_MEMORY_FRACTION"] != "0.80" {
+		t.Errorf("GPU_MEMORY_FRACTION env = %q, want 0.80", env["GPU_MEMORY_FRACTION"])
 	}
 }
 
@@ -1255,18 +1239,15 @@ func TestAWQJobBuilder_BuildJob_Calibration(t *testing.T) {
 		t.Fatalf("BuildJob() returned error: %v", err)
 	}
 
-	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	if !contains(script, "max_calib_seq_len=2048") {
-		t.Error("expected AWQ script to contain max_calib_seq_len=2048")
+	env := containerEnvMap(job.Spec.Template.Spec.Containers[0].Env)
+	if env["MAX_SEQ_LEN"] != "2048" {
+		t.Errorf("MAX_SEQ_LEN env = %q, want 2048", env["MAX_SEQ_LEN"])
 	}
-	if !contains(script, "max_calib_samples=512") {
-		t.Error("expected AWQ script to contain max_calib_samples=512")
+	if env["MAX_SAMPLES"] != "512" {
+		t.Errorf("MAX_SAMPLES env = %q, want 512", env["MAX_SAMPLES"])
 	}
-	if !contains(script, "n_parallel_calib_samples=8") {
-		t.Error("expected AWQ script to contain n_parallel_calib_samples=8")
-	}
-	if !contains(script, "maxSeqLen=2048 maxSamples=512 nParallel=8") {
-		t.Error("expected AWQ script to log calibration params including nParallel")
+	if env["N_PARALLEL_CALIB_SAMPLES"] != "8" {
+		t.Errorf("N_PARALLEL_CALIB_SAMPLES env = %q, want 8", env["N_PARALLEL_CALIB_SAMPLES"])
 	}
 }
 
@@ -1294,18 +1275,16 @@ func TestAWQJobBuilder_BuildJob_DefaultCalibration(t *testing.T) {
 		t.Fatalf("BuildJob() returned error: %v", err)
 	}
 
-	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	if !contains(script, "max_calib_seq_len=4096") {
-		t.Error("expected AWQ script to contain default max_calib_seq_len=4096")
+	env := containerEnvMap(job.Spec.Template.Spec.Containers[0].Env)
+	if env["MAX_SEQ_LEN"] != "4096" {
+		t.Errorf("MAX_SEQ_LEN env = %q, want 4096", env["MAX_SEQ_LEN"])
 	}
-	if !contains(script, "max_calib_samples=256") {
-		t.Error("expected AWQ script to contain default max_calib_samples=256")
+	if env["MAX_SAMPLES"] != "256" {
+		t.Errorf("MAX_SAMPLES env = %q, want 256", env["MAX_SAMPLES"])
 	}
-	if contains(script, "n_parallel_calib_samples") {
-		t.Error("expected AWQ script to NOT contain n_parallel_calib_samples when not configured")
-	}
-	if !contains(script, "nParallel=None") {
-		t.Error("expected AWQ script to log nParallel=None when not configured")
+	// N_PARALLEL_CALIB_SAMPLES should not be present when not configured
+	if _, ok := env["N_PARALLEL_CALIB_SAMPLES"]; ok {
+		t.Error("N_PARALLEL_CALIB_SAMPLES should not be set when not configured")
 	}
 }
 
@@ -1338,21 +1317,21 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 		t.Fatalf("BuildJob() returned error: %v", err)
 	}
 
+	env := containerEnvMap(job.Spec.Template.Spec.Containers[0].Env)
+	if env["MAX_SEQ_LEN"] != "1024" {
+		t.Errorf("MAX_SEQ_LEN env = %q, want 1024", env["MAX_SEQ_LEN"])
+	}
+	if env["MAX_SAMPLES"] != "64" {
+		t.Errorf("MAX_SAMPLES env = %q, want 64", env["MAX_SAMPLES"])
+	}
+	if env["DATASET"] != DefaultCalibrationDataset {
+		t.Errorf("DATASET env = %q, want %q", env["DATASET"], DefaultCalibrationDataset)
+	}
+
+	// Wrapper script should invoke the Python script
 	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	if !contains(script, "max_seq_len = 1024") {
-		t.Error("expected GPTQ script to contain max_seq_len = 1024")
-	}
-	if !contains(script, "max_samples = 64") {
-		t.Error("expected GPTQ script to contain max_samples = 64")
-	}
-	if !contains(script, "load_dataset") {
-		t.Error("expected GPTQ script to load calibration dataset")
-	}
-	if !contains(script, "GPTQModel") {
-		t.Error("expected GPTQ script to use GPTQModel API")
-	}
-	if !contains(script, "input_ids") {
-		t.Error("expected GPTQ script to format examples with input_ids")
+	if !contains(script, "python3 /opt/flexinfer/scripts/quantize_gptq.py") {
+		t.Error("expected GPTQ wrapper script to invoke quantize_gptq.py")
 	}
 }
 
@@ -1452,6 +1431,14 @@ func TestCleanupTrapInScripts(t *testing.T) {
 }
 
 func int32Ptr(v int32) *int32 { return &v }
+
+func containerEnvMap(envVars []corev1.EnvVar) map[string]string {
+	m := make(map[string]string, len(envVars))
+	for _, e := range envVars {
+		m[e.Name] = e.Value
+	}
+	return m
+}
 
 func contains(s, substr string) bool {
 	return len(s) > 0 && len(substr) > 0 && containsStr([]string{s}, substr)

@@ -132,7 +132,10 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		if modelCache.Spec.Quantization != nil {
 			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
 		}
-		// No finetune or quantization, just abliteration — mark Ready.
+		if modelCache.Spec.Publish != nil {
+			return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+		}
+		// No finetune, quantization, or publish — mark Ready.
 		if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 			if err := r.Status().Update(ctx, modelCache); err != nil {
@@ -158,6 +161,9 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			}
 			if modelCache.Spec.Quantization != nil {
 				return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
+			}
+			if modelCache.Spec.Publish != nil {
+				return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
 			}
 			if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 				modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
@@ -244,6 +250,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 	// Check abliteration job status.
 	if ablitJob.Status.Succeeded > 0 {
 		log.Info("Abliteration job succeeded", "cache", modelCache.Name)
+		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "abliterate")
 
 		if ablitJob.Status.StartTime != nil && ablitJob.Status.CompletionTime != nil {
 			dur := ablitJob.Status.CompletionTime.Sub(ablitJob.Status.StartTime.Time).Seconds()
@@ -278,8 +285,11 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		if modelCache.Spec.Quantization != nil {
 			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
 		}
+		if modelCache.Spec.Publish != nil {
+			return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+		}
 
-		// No finetune or quantization — mark Ready.
+		// No finetune, quantization, or publish — mark Ready.
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
@@ -289,6 +299,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 
 	if ablitJob.Status.Failed > 0 {
 		log.Info("Abliteration job failed", "cache", modelCache.Name)
+		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "abliterate")
 		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "abliteration_failed").Inc()
 
 		failureMsg := captureAbliterationFailureLogs(ctx, r.Client, modelCache.Namespace, ablitJob.Name)
@@ -317,6 +328,27 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		elapsed := time.Since(ablitJob.Status.StartTime.Time).Truncate(time.Second)
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "AbliterationProgress",
 			fmt.Sprintf("Abliteration in progress (elapsed %s)", elapsed))
+
+		// Update time-based progress estimate.
+		deadline := effectiveAbliterationDeadline(modelCache.Spec.Abliteration)
+		if deadline > 0 {
+			pct := int32(float64(elapsed.Seconds()) / float64(deadline) * 100)
+			if pct > 99 {
+				pct = 99
+			}
+			if modelCache.Status.Abliteration == nil {
+				modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
+			}
+			modelCache.Status.Abliteration.Progress = &pct
+			modelCache.Status.Abliteration.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
+			if ablitJob.Status.StartTime != nil {
+				modelCache.Status.Abliteration.StartedAt = ablitJob.Status.StartTime
+			}
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				log.Error(err, "Failed to update abliteration progress")
+			}
+			metrics.JobProgressPercent.WithLabelValues(modelCache.Name, modelCache.Namespace, "abliterate").Set(float64(pct))
+		}
 	}
 	return ctrl.Result{RequeueAfter: requeueLong}, nil
 }
@@ -382,6 +414,14 @@ func captureAbliterationFailureLogs(ctx context.Context, c client.Client, namesp
 		}
 	}
 	return ""
+}
+
+// effectiveAbliterationDeadline returns the job deadline in seconds from spec or default.
+func effectiveAbliterationDeadline(spec *aiv1alpha1.AbliterationSpec) int64 {
+	if spec != nil && spec.TimeoutSeconds != nil && *spec.TimeoutSeconds >= 300 {
+		return *spec.TimeoutSeconds
+	}
+	return quantization.DefaultAbliterationDeadlineSeconds
 }
 
 // ablitSpecHash returns a stable SHA-256 hash of the AbliterationSpec.

@@ -176,7 +176,7 @@ func TestBuildAbliterationJob_NvidiaGPU(t *testing.T) {
 	}
 }
 
-func TestBuildAbliterationScript_Content(t *testing.T) {
+func TestAbliterationEnv_Content(t *testing.T) {
 	spec := &aiv1alpha1.AbliterationSpec{
 		NumSamples:       ablitInt32Ptr(64),
 		TargetLayers:     ablitStringPtr("10-55"),
@@ -185,46 +185,60 @@ func TestBuildAbliterationScript_Content(t *testing.T) {
 		SkipVisionLayers: ablitBoolPtr(true),
 	}
 
-	script := buildAbliterationScript("my-model", spec)
+	env := abliterationEnv("my-model", spec)
 
-	// Check key content
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
 	checks := []struct {
-		name    string
-		content string
+		name, key, want string
 	}{
-		{"model dir", `MODEL_DIR="/cache/my-model"`},
-		{"num samples", "NUM_SAMPLES=64"},
-		{"target layers", `TARGET_LAYERS="10-55"`},
-		{"weight matrices", `WEIGHT_MATRICES="o_proj,down_proj"`},
-		{"skip vision", `SKIP_VISION="true"`},
-		{"device map auto", `DEVICE_MAP="auto"`},
-		{"python script", "from transformers import AutoModelForCausalLM"},
-		{"harmful prompts", "HARMFUL_PROMPTS"},
-		{"harmless prompts", "HARMLESS_PROMPTS"},
-		{"termination log", "/dev/termination-log"},
-		{"save pretrained", "model.save_pretrained"},
-		{"orthogonalize", "torch.outer(proj, d)"},
-		{"abliteration status", ".abliteration-status.json"},
+		{"model dir", "MODEL_DIR", "/cache/my-model"},
+		{"num samples", "NUM_SAMPLES", "64"},
+		{"target layers", "TARGET_LAYERS", "10-55"},
+		{"weight matrices", "WEIGHT_MATRICES", "o_proj,down_proj"},
+		{"skip vision", "SKIP_VISION", "true"},
+		{"device map auto", "DEVICE_MAP", "auto"},
+		{"telemetry", "FLEXINFER_TELEMETRY", "true"},
 	}
 
 	for _, check := range checks {
 		t.Run(check.name, func(t *testing.T) {
-			if !strings.Contains(script, check.content) {
-				t.Errorf("script missing %q", check.content)
+			if got := envMap[check.key]; got != check.want {
+				t.Errorf("%s = %q, want %q", check.key, got, check.want)
 			}
 		})
 	}
 }
 
-func TestBuildAbliterationScript_CPUMode(t *testing.T) {
+func TestAbliterationEnv_CPUMode(t *testing.T) {
 	spec := &aiv1alpha1.AbliterationSpec{
 		UseGPU: false,
 	}
 
-	script := buildAbliterationScript("test-model", spec)
+	env := abliterationEnv("test-model", spec)
 
-	if !strings.Contains(script, `DEVICE_MAP="cpu"`) {
-		t.Error("script should use device_map=cpu when UseGPU=false")
+	for _, e := range env {
+		if e.Name == "DEVICE_MAP" {
+			if e.Value != "cpu" {
+				t.Errorf("DEVICE_MAP = %q, want cpu", e.Value)
+			}
+			return
+		}
+	}
+	t.Error("DEVICE_MAP env var not found")
+}
+
+func TestAbliterationWrapperScript(t *testing.T) {
+	script := abliterationWrapperScript()
+
+	if !strings.Contains(script, "python3 /opt/flexinfer/scripts/abliterate.py") {
+		t.Error("wrapper script should invoke abliterate.py")
+	}
+	if !strings.Contains(script, "set -euo pipefail") {
+		t.Error("wrapper script should use strict mode")
 	}
 }
 
@@ -318,26 +332,9 @@ func TestBuildAbliterationJob_Volumes(t *testing.T) {
 	}
 }
 
-func TestContrastivePrompts(t *testing.T) {
-	prompts := contrastivePrompts()
-
-	if !strings.Contains(prompts, "HARMFUL_PROMPTS") {
-		t.Error("contrastivePrompts() missing HARMFUL_PROMPTS")
-	}
-	if !strings.Contains(prompts, "HARMLESS_PROMPTS") {
-		t.Error("contrastivePrompts() missing HARMLESS_PROMPTS")
-	}
-
-	// Both lists should have 128 entries
-	harmfulCount := strings.Count(prompts, `"How do I`)
-	if harmfulCount < 100 {
-		t.Errorf("expected at least 100 prompt entries, got %d", harmfulCount)
-	}
-}
-
 func TestAbliterationImage_EnvOverride(t *testing.T) {
+	t.Setenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE", "")
 	t.Setenv("FLEXINFER_ABLITERATOR_IMAGE", "custom-registry.io/abliterator:v1")
-	defer t.Setenv("FLEXINFER_ABLITERATOR_IMAGE", "")
 
 	img := abliterationImage("amd", "gfx1100")
 	if img != "custom-registry.io/abliterator:v1" {
@@ -345,7 +342,19 @@ func TestAbliterationImage_EnvOverride(t *testing.T) {
 	}
 }
 
+func TestAbliterationImage_UnifiedRuntime(t *testing.T) {
+	t.Setenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE", "true")
+	t.Setenv("FLEXINFER_RUNTIME_IMAGE", "registry.harbor.lan/flexinfer/runtime:rocm-gfx1100")
+	t.Setenv("FLEXINFER_ABLITERATOR_IMAGE", "should-not-use-this")
+
+	img := abliterationImage("amd", "gfx1100")
+	if img != "registry.harbor.lan/flexinfer/runtime:rocm-gfx1100" {
+		t.Errorf("abliterationImage = %q, want unified runtime image", img)
+	}
+}
+
 func TestAbliterationImage_DefaultAMD(t *testing.T) {
+	t.Setenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE", "")
 	t.Setenv("FLEXINFER_ABLITERATOR_IMAGE", "")
 
 	img := abliterationImage("amd", "gfx1100")
@@ -355,6 +364,7 @@ func TestAbliterationImage_DefaultAMD(t *testing.T) {
 }
 
 func TestAbliterationImage_DefaultNvidia(t *testing.T) {
+	t.Setenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE", "")
 	t.Setenv("FLEXINFER_ABLITERATOR_IMAGE", "")
 
 	img := abliterationImage("nvidia", "")

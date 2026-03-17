@@ -72,7 +72,8 @@ controller:
 # separate Deployments for each model.
 runtime:
   enabled: false
-  imagePullPolicy: IfNotPresent
+  # Always pull runtime images since tags are mutable (e.g., :rocm-gfx1100).
+  imagePullPolicy: Always
   # Default host path for model storage (overridden per-profile via modelVolume).
   modelHostPath: "/var/lib/flexinfer/models"
   terminationGracePeriodSeconds: 60
@@ -333,6 +334,13 @@ benchmarker:
 # Quantization runtime images used by ModelCache quantization jobs.
 # Override these when publishing images to a private registry.
 quantization:
+  # Unified runtime: use the per-profile runtime image for quantization jobs
+  # instead of separate 60GB+ quantizer images.
+  # Requires INCLUDE_QUANTIZER=true in the runtime image build.
+  useRuntimeForQuantize: false
+  # Runtime image to use when useRuntimeForQuantize=true.
+  # Usually matches the profile runtime image (e.g., registry.harbor.lan/flexinfer/runtime:rocm-gfx1100).
+  runtimeImage: ""
   images:
     gguf: ghcr.io/flexinfer/quantizer:gguf
     awq: ghcr.io/flexinfer/quantizer:awq

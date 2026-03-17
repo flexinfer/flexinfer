@@ -159,7 +159,10 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		if modelCache.Spec.Quantization != nil {
 			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
 		}
-		// No quantization — mark Ready.
+		if modelCache.Spec.Publish != nil {
+			return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+		}
+		// No quantization or publish — mark Ready.
 		if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 			if err := r.Status().Update(ctx, modelCache); err != nil {
@@ -182,6 +185,9 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 				"cache", modelCache.Name)
 			if modelCache.Spec.Quantization != nil {
 				return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
+			}
+			if modelCache.Spec.Publish != nil {
+				return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
 			}
 			if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 				modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
@@ -269,6 +275,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 	// Check finetune job status.
 	if finetuneJob.Status.Succeeded > 0 {
 		log.Info("Finetune job succeeded", "cache", modelCache.Name)
+		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "finetune")
 
 		if finetuneJob.Status.StartTime != nil && finetuneJob.Status.CompletionTime != nil {
 			dur := finetuneJob.Status.CompletionTime.Sub(finetuneJob.Status.StartTime.Time).Seconds()
@@ -315,8 +322,11 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		if modelCache.Spec.Quantization != nil {
 			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
 		}
+		if modelCache.Spec.Publish != nil {
+			return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+		}
 
-		// No quantization — mark Ready.
+		// No quantization or publish — mark Ready.
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
@@ -326,6 +336,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 
 	if finetuneJob.Status.Failed > 0 {
 		log.Info("Finetune job failed", "cache", modelCache.Name)
+		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "finetune")
 		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "finetune_failed").Inc()
 		metrics.FinetuneJobsTotal.WithLabelValues(modelCache.Name, "failed").Inc()
 
@@ -355,6 +366,27 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		elapsed := time.Since(finetuneJob.Status.StartTime.Time).Truncate(time.Second)
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "FinetuneProgress",
 			fmt.Sprintf("Finetune in progress (elapsed %s)", elapsed))
+
+		// Update time-based progress estimate.
+		deadline := effectiveFinetuneDeadline(modelCache.Spec.Finetune)
+		if deadline > 0 {
+			pct := int32(float64(elapsed.Seconds()) / float64(deadline) * 100)
+			if pct > 99 {
+				pct = 99
+			}
+			if modelCache.Status.Finetune == nil {
+				modelCache.Status.Finetune = &aiv1alpha1.FinetuneStatus{}
+			}
+			modelCache.Status.Finetune.Progress = &pct
+			modelCache.Status.Finetune.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
+			if finetuneJob.Status.StartTime != nil {
+				modelCache.Status.Finetune.StartedAt = finetuneJob.Status.StartTime
+			}
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				log.Error(err, "Failed to update finetune progress")
+			}
+			metrics.JobProgressPercent.WithLabelValues(modelCache.Name, modelCache.Namespace, "finetune").Set(float64(pct))
+		}
 	}
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
@@ -421,6 +453,14 @@ func captureFinetuneFailureLogs(ctx context.Context, c client.Client, namespace,
 		}
 	}
 	return ""
+}
+
+// effectiveFinetuneDeadline returns the job deadline in seconds from spec or default.
+func effectiveFinetuneDeadline(spec *aiv1alpha1.FinetuneSpec) int64 {
+	if spec != nil && spec.TimeoutSeconds != nil && *spec.TimeoutSeconds >= 300 {
+		return *spec.TimeoutSeconds
+	}
+	return quantization.DefaultFinetuneDeadlineSeconds
 }
 
 // finetuneSpecHash returns a stable SHA-256 hash of the FinetuneSpec.

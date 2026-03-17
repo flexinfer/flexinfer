@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestGPTQJobBuilder_Validate_EdgeCases(t *testing.T) {
@@ -88,72 +89,78 @@ func TestGPTQJobBuilder_Validate_EdgeCases(t *testing.T) {
 	}
 }
 
-func TestGPTQJobBuilder_BuildScript_Content(t *testing.T) {
+func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 	builder := &GPTQJobBuilder{}
 
+	findEnv := func(env []corev1.EnvVar, name string) string {
+		for _, e := range env {
+			if e.Name == name {
+				return e.Value
+			}
+		}
+		return ""
+	}
+
 	t.Run("default values", func(t *testing.T) {
-		script := builder.buildScript("qwen3-14b", 4, 128, true, false, 48, "0.80", "auto", nil)
-		if !strings.Contains(script, `MODEL_DIR="/cache/qwen3-14b"`) {
-			t.Error("script missing MODEL_DIR")
+		env := builder.buildEnv("qwen3-14b", 4, 128, true, false, 48, "0.80", "auto", nil)
+		if v := findEnv(env, "MODEL_DIR"); v != "/cache/qwen3-14b" {
+			t.Errorf("MODEL_DIR = %q, want /cache/qwen3-14b", v)
 		}
-		if !strings.Contains(script, "BITS=4") {
-			t.Error("script missing BITS")
+		if v := findEnv(env, "BITS"); v != "4" {
+			t.Errorf("BITS = %q, want 4", v)
 		}
-		if !strings.Contains(script, "MAX_MEMORY_GB=48") {
-			t.Error("script missing MAX_MEMORY_GB")
+		if v := findEnv(env, "MAX_MEMORY_GB"); v != "48" {
+			t.Errorf("MAX_MEMORY_GB = %q, want 48", v)
 		}
-		if !strings.Contains(script, "sym=True") {
-			t.Error("script should have sym=True")
+		if v := findEnv(env, "SYM"); v != "True" {
+			t.Errorf("SYM = %q, want True", v)
 		}
-		if !strings.Contains(script, "descAct=False") {
-			t.Error("script should have descAct=False")
+		if v := findEnv(env, "DESC_ACT"); v != "False" {
+			t.Errorf("DESC_ACT = %q, want False", v)
 		}
-		if !strings.Contains(script, "text_config") {
-			t.Error("script missing VLM config extraction")
+		if v := findEnv(env, "GPU_MEMORY_FRACTION"); v != "0.80" {
+			t.Errorf("GPU_MEMORY_FRACTION = %q, want 0.80", v)
 		}
-		if !strings.Contains(script, "auto-detect hybrid") {
-			t.Error("script should contain auto dynamic exclusion")
+		if v := findEnv(env, "DYNAMIC_EXCLUSION"); v != "auto" {
+			t.Errorf("DYNAMIC_EXCLUSION = %q, want auto", v)
 		}
 	})
 
 	t.Run("sym false descAct true", func(t *testing.T) {
-		script := builder.buildScript("model", 4, 128, false, true, 48, "0.80", "auto", nil)
-		if !strings.Contains(script, "sym=False") {
-			t.Error("script should have sym=False")
+		env := builder.buildEnv("model", 4, 128, false, true, 48, "0.80", "auto", nil)
+		if v := findEnv(env, "SYM"); v != "False" {
+			t.Errorf("SYM = %q, want False", v)
 		}
-		if !strings.Contains(script, "descAct=True") {
-			t.Error("script should have descAct=True")
+		if v := findEnv(env, "DESC_ACT"); v != "True" {
+			t.Errorf("DESC_ACT = %q, want True", v)
 		}
 	})
 
 	t.Run("dynamic exclusion none", func(t *testing.T) {
-		script := builder.buildScript("model", 4, 128, true, false, 48, "0.80", "none", nil)
-		if !strings.Contains(script, "Dynamic exclusion: disabled") {
-			t.Error("script should disable dynamic exclusion")
-		}
-		if strings.Contains(script, "auto-detect hybrid") {
-			t.Error("script should NOT contain auto dynamic exclusion when mode=none")
-		}
-	})
-
-	t.Run("rocminfo gfx900 detection", func(t *testing.T) {
-		script := builder.buildScript("model", 4, 128, true, false, 48, "0.80", "auto", nil)
-		if !strings.Contains(script, "HSA_OVERRIDE_GFX_VERSION=9.0.6") {
-			t.Error("script missing gfx900 ISA override")
-		}
-	})
-
-	t.Run("GPTQModel writer.py patch", func(t *testing.T) {
-		script := builder.buildScript("model", 4, 128, true, false, 48, "0.80", "auto", nil)
-		if !strings.Contains(script, "Patched GPTQModel writer.py") {
-			t.Error("script missing writer.py patch")
+		env := builder.buildEnv("model", 4, 128, true, false, 48, "0.80", "none", nil)
+		if v := findEnv(env, "DYNAMIC_EXCLUSION"); v != "none" {
+			t.Errorf("DYNAMIC_EXCLUSION = %q, want none", v)
 		}
 	})
 
 	t.Run("custom GPU memory fraction", func(t *testing.T) {
-		script := builder.buildScript("model", 4, 128, true, false, 48, "0.95", "auto", nil)
-		if !strings.Contains(script, "GPU memory fraction: 0.95") {
-			t.Error("script should show custom GPU memory fraction")
+		env := builder.buildEnv("model", 4, 128, true, false, 48, "0.95", "auto", nil)
+		if v := findEnv(env, "GPU_MEMORY_FRACTION"); v != "0.95" {
+			t.Errorf("GPU_MEMORY_FRACTION = %q, want 0.95", v)
+		}
+	})
+
+	t.Run("wrapper script has ROCm detection", func(t *testing.T) {
+		script := builder.gptqWrapperScript()
+		if !strings.Contains(script, "HSA_OVERRIDE_GFX_VERSION=9.0.6") {
+			t.Error("wrapper missing gfx900 ISA override")
+		}
+	})
+
+	t.Run("wrapper script has GPTQModel patch", func(t *testing.T) {
+		script := builder.gptqWrapperScript()
+		if !strings.Contains(script, "Patched GPTQModel writer.py") {
+			t.Error("wrapper missing writer.py patch")
 		}
 	})
 }

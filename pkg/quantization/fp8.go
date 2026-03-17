@@ -70,6 +70,7 @@ func (b *FP8JobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		fp8QuantizerImage(),
 		b.buildScript(params.ModelPath, bits),
 		memoryGB,
+		nil,
 	)
 }
 

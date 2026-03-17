@@ -24,6 +24,7 @@ ARG INCLUDE_OLLAMA=true
 ARG INCLUDE_DIFFUSERS=false
 ARG INCLUDE_BITSANDBYTES=false
 ARG INCLUDE_STEAM=false
+ARG INCLUDE_QUANTIZER=false
 ARG TRANSFORMERS_CONSTRAINT=">=5.0"
 # Builder base image — ROCm dev or CUDA devel depending on vendor
 ARG LLAMACPP_BUILD_IMAGE=rocm/dev-ubuntu-24.04:6.4.4
@@ -121,6 +122,7 @@ ARG INCLUDE_OLLAMA
 ARG INCLUDE_DIFFUSERS
 ARG INCLUDE_BITSANDBYTES
 ARG INCLUDE_STEAM
+ARG INCLUDE_QUANTIZER
 ARG TRANSFORMERS_CONSTRAINT
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -199,6 +201,30 @@ RUN if [ "${INCLUDE_STEAM}" = "true" ]; then \
     fi
 COPY build/steam-headless.sh /opt/flexinfer/steam-headless.sh
 RUN chmod +x /opt/flexinfer/steam-headless.sh
+
+# ── Quantizer packages (conditional) ─────────────────────────────────
+# Adds GPTQModel, datasets, and oras CLI to the runtime image so that
+# quantization jobs can use the same image instead of separate 60GB+ quantizer images.
+RUN if [ "${INCLUDE_QUANTIZER}" = "true" ] && command -v pip >/dev/null 2>&1; then \
+      pip install -v "gptqmodel @ git+https://github.com/ModelCloud/GPTQModel.git@main" \
+        --no-build-isolation --no-deps; \
+      pip install --no-cache-dir \
+        datasets zstandard safetensors accelerate sentencepiece \
+        huggingface_hub protobuf pillow hf_transfer device-smi \
+        tokenizers logbar maturin pyarrow dill defuser; \
+      # numpy ABI fix for older ROCm bases (e.g. gfx906 with numpy <1.26)
+      if ! python3 -c "import numpy; exit(0 if tuple(map(int,numpy.__version__.split('.')[:2]))>=(1,26) else 1)" 2>/dev/null; then \
+        pip uninstall -y numba llvmlite 2>/dev/null || true; \
+        pip install --force-reinstall "numpy>=1.26,<2" pandas scipy scikit-learn; \
+      fi; \
+      # oras CLI for OCI artifact push (model publishing)
+      curl -fsSL https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz \
+        | tar -xz -C /usr/local/bin oras; \
+    fi
+
+# ── Quantization/abliteration/finetune scripts ──────────────────────
+COPY build/scripts/ /opt/flexinfer/scripts/
+RUN chmod +x /opt/flexinfer/scripts/*.sh /opt/flexinfer/scripts/*.py 2>/dev/null || true
 
 # ── Verify ROCm PyTorch was not replaced by CUDA ────────────────────
 RUN if [ "${GPU_VENDOR}" = "amd" ] && command -v python3 >/dev/null 2>&1; then \

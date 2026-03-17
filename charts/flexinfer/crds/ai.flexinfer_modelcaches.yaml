@@ -362,6 +362,53 @@ spec:
                   OCIRegistrySecretRef is the name of a kubernetes.io/dockerconfigjson secret
                   for authenticating to OCI registries. Used when source begins with oci:// or oras://
                 type: string
+              publish:
+                description: |-
+                  Publish configures post-pipeline publishing of model artifacts to OCI or HuggingFace.
+                  When set, the controller creates a publish Job after the last pipeline phase succeeds.
+                  Pipeline: Download → [Abliterate] → [Finetune] → [Quantize] → [Publish] → Ready.
+                properties:
+                  huggingFaceRepo:
+                    description: |-
+                      HuggingFaceRepo is the HuggingFace repository to upload to (e.g. "myorg/qwen3-gptq-int4").
+                      Required when targets includes "huggingface".
+                    type: string
+                  maxMemoryGB:
+                    description: |-
+                      MaxMemoryGB limits the memory for the publish job container.
+                      Publish is CPU+network only. Default 8.
+                    format: int32
+                    type: integer
+                  ociRef:
+                    description: |-
+                      OCIRef is the OCI artifact reference to push to (e.g. "registry.harbor.lan/models/qwen3:gptq-int4").
+                      Required when targets includes "oci".
+                    type: string
+                  secretRef:
+                    description: |-
+                      SecretRef is the name of the K8s secret containing credentials.
+                      Expected keys: OCI_USERNAME, OCI_PASSWORD (for OCI), HF_TOKEN (for HuggingFace).
+                    type: string
+                  targets:
+                    description: Targets lists the publish destinations.
+                    items:
+                      description: PublishTarget identifies where to publish the model.
+                      enum:
+                      - oci
+                      - huggingface
+                      type: string
+                    minItems: 1
+                    type: array
+                  timeoutSeconds:
+                    description: TimeoutSeconds overrides the default 2-hour deadline
+                      for publish jobs.
+                    format: int64
+                    maximum: 43200
+                    minimum: 300
+                    type: integer
+                required:
+                - targets
+                type: object
               quantization:
                 description: |-
                   Quantization configures post-download quantization of model weights.
@@ -539,6 +586,15 @@ spec:
                       were abliterated.
                     format: int32
                     type: integer
+                  progress:
+                    description: Progress is the current job progress percentage (0-100),
+                      read from structured telemetry.
+                    format: int32
+                    type: integer
+                  progressDetail:
+                    description: ProgressDetail is a human-readable description of
+                      current progress.
+                    type: string
                   refusalDirNorm:
                     description: RefusalDirNorm is the L2 norm of the mean refusal
                       direction vector (diagnostic).
@@ -645,6 +701,15 @@ spec:
                   finetuneTime:
                     description: FinetuneTime is the wall-clock duration.
                     type: string
+                  progress:
+                    description: Progress is the current job progress percentage (0-100),
+                      read from structured telemetry.
+                    format: int32
+                    type: integer
+                  progressDetail:
+                    description: ProgressDetail is a human-readable description of
+                      current progress.
+                    type: string
                   samplesPerSecond:
                     description: SamplesPerSecond is the training throughput.
                     type: string
@@ -689,6 +754,38 @@ spec:
               phase:
                 description: Phase represents the current lifecycle state
                 type: string
+              publish:
+                description: |-
+                  Publish records the result of model publishing.
+                  Only populated when spec.publish is set and the job completes.
+                properties:
+                  failureMessage:
+                    description: FailureMessage contains the error message on failure.
+                    type: string
+                  huggingFaceCommit:
+                    description: HuggingFaceCommit is the commit hash from the HuggingFace
+                      upload.
+                    type: string
+                  ociDigest:
+                    description: OCIDigest is the digest of the published OCI artifact.
+                    type: string
+                  progress:
+                    description: Progress is the current job progress percentage (0-100).
+                    format: int32
+                    type: integer
+                  progressDetail:
+                    description: ProgressDetail is a human-readable description of
+                      current progress.
+                    type: string
+                  publishedAt:
+                    description: PublishedAt is the timestamp when publishing completed.
+                    format: date-time
+                    type: string
+                  startedAt:
+                    description: StartedAt is the timestamp when the publish job started.
+                    format: date-time
+                    type: string
+                type: object
               quantization:
                 description: |-
                   Quantization records the result of model quantization.
@@ -755,6 +852,15 @@ spec:
                       quantization.
                     format: int64
                     type: integer
+                  progress:
+                    description: Progress is the current job progress percentage (0-100),
+                      read from structured telemetry.
+                    format: int32
+                    type: integer
+                  progressDetail:
+                    description: ProgressDetail is a human-readable description of
+                      current progress (e.g., "layer 152/336").
+                    type: string
                   quantizationTime:
                     description: QuantizationTime is the wall-clock duration of the
                       quantization job.

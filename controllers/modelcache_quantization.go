@@ -139,6 +139,9 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		if modelCache.Status.Quantization != nil && modelCache.Status.Quantization.FailureMessage == "" {
 			log.Info("Quantization job GC'd but quantization already complete, skipping re-creation",
 				"cache", modelCache.Name)
+			if modelCache.Spec.Publish != nil {
+				return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+			}
 			if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 				modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 				if err := r.Status().Update(ctx, modelCache); err != nil {
@@ -243,6 +246,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 	// Check quantization job status
 	if quantJob.Status.Succeeded > 0 {
 		log.Info("Quantization job succeeded", "cache", modelCache.Name)
+		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "quantize")
 
 		if quantJob.Status.StartTime != nil && quantJob.Status.CompletionTime != nil {
 			dur := quantJob.Status.CompletionTime.Sub(quantJob.Status.StartTime.Time).Seconds()
@@ -302,6 +306,18 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			quantStatus.CalibrationParams = modelCache.Spec.Quantization.Calibration.DeepCopy()
 		}
 		modelCache.Status.Quantization = quantStatus
+
+		// Dispatch to publish if configured, otherwise mark Ready.
+		if modelCache.Spec.Publish != nil {
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			r.Recorder.Event(modelCache, corev1.EventTypeNormal, "QuantizationComplete",
+				fmt.Sprintf("Model quantized (%s/%s), dispatching to publish",
+					modelCache.Spec.Quantization.Format, quantStatus.Type))
+			return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+		}
+
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
@@ -334,6 +350,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 	if quantJob.Status.Failed > 0 {
 		log.Info("Quantization job failed", "cache", modelCache.Name)
+		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "quantize")
 		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "quantization_failed").Inc()
 
 		failureMsg := captureQuantizationFailureLogs(ctx, r.Client, modelCache.Namespace, quantJob.Name)
@@ -368,6 +385,27 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		elapsed := time.Since(quantJob.Status.StartTime.Time).Truncate(time.Second)
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "QuantizationProgress",
 			fmt.Sprintf("Quantization in progress (elapsed %s)", elapsed))
+
+		// Update time-based progress estimate.
+		deadline := effectiveQuantizationDeadline(modelCache.Spec.Quantization)
+		if deadline > 0 {
+			pct := int32(float64(elapsed.Seconds()) / float64(deadline) * 100)
+			if pct > 99 {
+				pct = 99 // Cap at 99% until completion is confirmed
+			}
+			if modelCache.Status.Quantization == nil {
+				modelCache.Status.Quantization = &aiv1alpha1.QuantizationStatus{}
+			}
+			modelCache.Status.Quantization.Progress = &pct
+			modelCache.Status.Quantization.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
+			if quantJob.Status.StartTime != nil {
+				modelCache.Status.Quantization.StartedAt = quantJob.Status.StartTime
+			}
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				log.Error(err, "Failed to update quantization progress")
+			}
+			metrics.JobProgressPercent.WithLabelValues(modelCache.Name, modelCache.Namespace, "quantize").Set(float64(pct))
+		}
 	}
 	return ctrl.Result{RequeueAfter: requeueLong}, nil
 }
@@ -602,6 +640,14 @@ func truncateString(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// effectiveQuantizationDeadline returns the job deadline in seconds from spec or default.
+func effectiveQuantizationDeadline(spec *aiv1alpha1.QuantizationSpec) int64 {
+	if spec != nil && spec.TimeoutSeconds != nil && *spec.TimeoutSeconds >= 300 {
+		return *spec.TimeoutSeconds
+	}
+	return quantization.DefaultActiveDeadlineSeconds
 }
 
 // quantSpecHash returns a stable SHA-256 hash of the QuantizationSpec.

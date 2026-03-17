@@ -106,6 +106,9 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			if modelCache.Spec.Quantization != nil {
 				return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
 			}
+			if modelCache.Spec.Publish != nil {
+				return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+			}
 			if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 				modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 				if err := r.Status().Update(ctx, modelCache); err != nil {
@@ -172,6 +175,11 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 		// If quantization is requested, handle it before marking Ready
 		if modelCache.Spec.Quantization != nil {
 			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
+		}
+
+		// If publishing is requested, handle it before marking Ready
+		if modelCache.Spec.Publish != nil {
+			return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
 		}
 
 		if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {

@@ -73,11 +73,8 @@ func (b *GGUFJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	deadline := effectiveDeadline(params.Spec)
 	backoffLimit := int32(2)
 
-	// Build the quantization script.
-	// Step 1: Convert HF → FP16 GGUF (if not already GGUF)
-	// Step 2: Quantize FP16 → target type
-	// Step 3: Move output to final location on the PVC
-	script := b.buildScript(params.ModelPath, ggufType)
+	ggufEnv := b.buildEnv(params.ModelPath, ggufType)
+	script := b.ggufWrapperScript()
 
 	pvcVol, pvcMount := modelPVCVolume(params.PVCName)
 	wsVol, wsMount := workspaceVolume(fmt.Sprintf("%dGi", memoryGB*2))
@@ -96,6 +93,7 @@ func (b *GGUFJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 							Image:   image,
 							Command: []string{"/bin/sh", "-c"},
 							Args:    []string{script},
+							Env:     ggufEnv,
 							VolumeMounts: []corev1.VolumeMount{
 								pvcMount,
 								wsMount,
@@ -130,82 +128,19 @@ func (b *GGUFJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	return job, nil
 }
 
-// buildScript generates the shell script for GGUF quantization.
-func (b *GGUFJobBuilder) buildScript(modelPath, ggufType string) string {
-	// The script:
-	// 1. Converts HF safetensors/bin to FP16 GGUF
-	// 2. Quantizes FP16 to the target type
-	// 3. Moves the quantized file back to the PVC
-	// 4. Records sizes for status reporting
-	return fmt.Sprintf(`set -euo pipefail
-
-MODEL_DIR="/cache/%s"
-WORKSPACE="/workspace"
-GGUF_TYPE="%s"
-START_TS=$(date +%%s)
-
-echo "=== GGUF Quantization ==="
-echo "Model: ${MODEL_DIR}"
-echo "Type: ${GGUF_TYPE}"
-echo "Start: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
-
-# Record original size
-ORIGINAL_SIZE=$(du -sb "${MODEL_DIR}" | cut -f1)
-echo "Original size: ${ORIGINAL_SIZE} bytes"
-
-# Step 1: Convert HuggingFace to FP16 GGUF
-echo "--- Step 1: Converting to FP16 GGUF ---"
-python3 /opt/llama.cpp/convert_hf_to_gguf.py \
-  "${MODEL_DIR}" \
-  --outfile "${WORKSPACE}/model-fp16.gguf" \
-  --outtype f16
-
-# Step 2: Quantize to target type
-echo "--- Step 2: Quantizing to ${GGUF_TYPE} ---"
-/opt/llama.cpp/llama-quantize \
-  "${WORKSPACE}/model-fp16.gguf" \
-  "${WORKSPACE}/model-${GGUF_TYPE}.gguf" \
-  "${GGUF_TYPE}"
-
-# Step 3: Move quantized model to PVC
-QUANTIZED_FILE="${MODEL_DIR}/model-${GGUF_TYPE}.gguf"
-mv "${WORKSPACE}/model-${GGUF_TYPE}.gguf" "${QUANTIZED_FILE}"
-
-# Clean up intermediate FP16 file
-rm -f "${WORKSPACE}/model-fp16.gguf"
-
-# Record compressed size
-COMPRESSED_SIZE=$(stat -c %%s "${QUANTIZED_FILE}" 2>/dev/null || stat -f %%z "${QUANTIZED_FILE}")
-echo "Compressed size: ${COMPRESSED_SIZE} bytes"
-END_TS=$(date +%%s)
-DURATION_SEC=$((END_TS - START_TS))
-
-# Write metadata for the controller to read
-cat > "${MODEL_DIR}/.quantization-status.json" << METADATA
-{
-  "format": "GGUF",
-  "type": "${GGUF_TYPE}",
-  "originalSizeBytes": ${ORIGINAL_SIZE},
-  "compressedSizeBytes": ${COMPRESSED_SIZE},
-  "quantizationTimeSeconds": ${DURATION_SEC},
-  "outputFile": "model-${GGUF_TYPE}.gguf"
+// buildEnv returns environment variables for the GGUF quantization script.
+func (b *GGUFJobBuilder) buildEnv(modelPath, ggufType string) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
+		{Name: "GGUF_TYPE", Value: ggufType},
+		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
+	}
 }
-METADATA
 
-# Mirror metadata to container termination message so controller can read it.
-cat > /dev/termination-log << TERMINATION
-{
-  "type": "${GGUF_TYPE}",
-  "originalSizeBytes": ${ORIGINAL_SIZE},
-  "compressedSizeBytes": ${COMPRESSED_SIZE},
-  "quantizationTimeSeconds": ${DURATION_SEC}
-}
-TERMINATION
-
-echo "=== Quantization complete ==="
-echo "Output: ${QUANTIZED_FILE}"
-echo "End: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
-`, modelPath, ggufType)
+// ggufWrapperScript returns the shell wrapper for GGUF quantization.
+// It delegates to the script at /opt/flexinfer/scripts/quantize_gguf.sh.
+func (b *GGUFJobBuilder) ggufWrapperScript() string {
+	return `/opt/flexinfer/scripts/quantize_gguf.sh`
 }
 
 // quantizerImage returns the container image for GGUF quantization.

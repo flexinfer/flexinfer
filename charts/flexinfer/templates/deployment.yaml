@@ -267,4 +267,12 @@ spec:
             - name: FLEXINFER_QUANTIZER_FP8_IMAGE
               value: {{ .Values.quantization.images.fp8 | quote }}
             {{- end }}
+            {{- if .Values.quantization.useRuntimeForQuantize }}
+            - name: FLEXINFER_USE_RUNTIME_FOR_QUANTIZE
+              value: "true"
+            {{- end }}
+            {{- if .Values.quantization.runtimeImage }}
+            - name: FLEXINFER_RUNTIME_IMAGE
+              value: {{ .Values.quantization.runtimeImage | quote }}
+            {{- end }}
 {{- end }}

@@ -55,7 +55,7 @@ const (
 	DefaultQuantizationGroupSize = 128
 )
 
-func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB int32) (*batchv1.Job, error) {
+func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB int32, extraEnv []corev1.EnvVar) (*batchv1.Job, error) {
 	deadline := effectiveDeadline(params.Spec)
 	backoffLimit := int32(2)
 	pvcVol, pvcMount := modelPVCVolume(params.PVCName)
@@ -75,6 +75,7 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 			Value: "expandable_segments:True",
 		})
 	}
+	env = append(env, extraEnv...)
 
 	podSpec := corev1.PodSpec{
 		RestartPolicy: corev1.RestartPolicyNever,

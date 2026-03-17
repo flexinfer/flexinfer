@@ -5,6 +5,7 @@ import (
 	"os"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
@@ -71,19 +72,21 @@ func (b *AWQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		image = params.ProfileQuantizerImage
 	}
 
+	env := b.buildEnv(params.ModelPath, bits, groupSize, params.Spec.Calibration)
+
 	return buildGPUQuantizationJob(
 		params,
 		image,
-		b.buildScript(params.ModelPath, bits, groupSize, params.Spec.Calibration),
+		b.awqWrapperScript(),
 		memoryGB,
+		env,
 	)
 }
 
-// buildScript generates the shell script for AWQ quantization.
-func (b *AWQJobBuilder) buildScript(modelPath string, bits, groupSize int, calib *aiv1alpha1.CalibrationSpec) string {
+// buildEnv returns environment variables for the AWQ quantization script.
+func (b *AWQJobBuilder) buildEnv(modelPath string, bits, groupSize int, calib *aiv1alpha1.CalibrationSpec) []corev1.EnvVar {
 	maxSeqLen := int32(DefaultCalibrationMaxSeqLen)
 	maxSamples := int32(DefaultCalibrationMaxSamples)
-	var nParallel *int32
 	dataset := DefaultCalibrationDataset
 	if calib != nil {
 		if calib.MaxSeqLen != nil {
@@ -92,30 +95,43 @@ func (b *AWQJobBuilder) buildScript(modelPath string, bits, groupSize int, calib
 		if calib.MaxSamples != nil {
 			maxSamples = *calib.MaxSamples
 		}
-		nParallel = calib.NParallelCalibSamples
 		if calib.Dataset != nil {
 			dataset = *calib.Dataset
 		}
 	}
 
-	// Build the n_parallel_calib_samples kwarg line.
-	// When nil, AutoAWQ processes all samples on GPU (default behavior).
-	// When set, AutoAWQ offloads to CPU RAM between batches (higher CPU memory).
-	nParallelKwarg := ""
-	nParallelLog := "None"
-	if nParallel != nil {
-		nParallelKwarg = fmt.Sprintf("    n_parallel_calib_samples=%d,\n", *nParallel)
-		nParallelLog = fmt.Sprintf("%d", *nParallel)
+	env := []corev1.EnvVar{
+		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
+		{Name: "BITS", Value: fmt.Sprintf("%d", bits)},
+		{Name: "GROUP_SIZE", Value: fmt.Sprintf("%d", groupSize)},
+		{Name: "MAX_SEQ_LEN", Value: fmt.Sprintf("%d", maxSeqLen)},
+		{Name: "MAX_SAMPLES", Value: fmt.Sprintf("%d", maxSamples)},
+		{Name: "DATASET", Value: dataset},
+		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
 	}
 
-	return fmt.Sprintf(`set -euo pipefail
+	// OUT_DIR is derived from MODEL_DIR in the wrapper script.
+	env = append(env, corev1.EnvVar{
+		Name:  "OUT_DIR",
+		Value: fmt.Sprintf("/cache/%s/awq-w%d-g%d", modelPath, bits, groupSize),
+	})
 
-MODEL_DIR="/cache/%s"
-BITS=%d
-GROUP_SIZE=%d
+	if calib != nil && calib.NParallelCalibSamples != nil {
+		env = append(env, corev1.EnvVar{
+			Name:  "N_PARALLEL_CALIB_SAMPLES",
+			Value: fmt.Sprintf("%d", *calib.NParallelCalibSamples),
+		})
+	}
+
+	return env
+}
+
+// awqWrapperScript returns the shell wrapper for AWQ quantization.
+// It handles cleanup, size tracking, status files, and delegates to the Python script.
+func (b *AWQJobBuilder) awqWrapperScript() string {
+	return `set -euo pipefail
 TYPE="W${BITS}_G${GROUP_SIZE}"
-OUT_DIR="${MODEL_DIR}/awq-w${BITS}-g${GROUP_SIZE}"
-START_TS=$(date +%%s)
+START_TS=$(date +%s)
 
 cleanup() {
     local ec=$?
@@ -129,8 +145,7 @@ trap cleanup EXIT
 echo "=== AWQ Quantization ==="
 echo "Model: ${MODEL_DIR}"
 echo "Type: ${TYPE}"
-echo "Calibration: maxSeqLen=%d maxSamples=%d nParallel=%s dataset=%s"
-echo "Start: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
+echo "Start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 ORIGINAL_SIZE=$(du -sb "${MODEL_DIR}" | cut -f1)
 echo "Original size: ${ORIGINAL_SIZE} bytes"
@@ -138,44 +153,17 @@ echo "Original size: ${ORIGINAL_SIZE} bytes"
 rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
 
-export MODEL_DIR OUT_DIR BITS GROUP_SIZE
-python3 - <<'PY'
-import os
-from awq import AutoAWQForCausalLM
-from transformers import AutoTokenizer
-
-model_dir = os.environ["MODEL_DIR"]
-out_dir = os.environ["OUT_DIR"]
-bits = int(os.environ["BITS"])
-group_size = int(os.environ["GROUP_SIZE"])
-
-model = AutoAWQForCausalLM.from_pretrained(model_dir, safetensors=True, device_map=None)
-tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
-model.quantize(
-    tokenizer,
-    quant_config={
-        "w_bit": bits,
-        "q_group_size": group_size,
-        "zero_point": True,
-        "version": "GEMM",
-    },
-    max_calib_seq_len=%d,
-    max_calib_samples=%d,
-%s)
-model.save_quantized(out_dir)
-tokenizer.save_pretrained(out_dir)
-PY
+python3 /opt/flexinfer/scripts/quantize_awq.py
 
 trap - EXIT
 
-# Remove FP16 source weight files after successful save to reclaim disk space.
 find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) \
     ! -path "${OUT_DIR}/*" -print -delete 2>/dev/null || true
 echo "FP16 source files cleaned up"
 
 COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"
-END_TS=$(date +%%s)
+END_TS=$(date +%s)
 DURATION_SEC=$((END_TS - START_TS))
 
 cat > "${MODEL_DIR}/.quantization-status.json" << METADATA
@@ -200,8 +188,8 @@ TERMINATION
 
 echo "=== Quantization complete ==="
 echo "Output: ${OUT_DIR}"
-echo "End: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
-`, modelPath, bits, groupSize, maxSeqLen, maxSamples, nParallelLog, dataset, maxSeqLen, maxSamples, nParallelKwarg)
+echo "End: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+`
 }
 
 func awqQuantizerImage() string {

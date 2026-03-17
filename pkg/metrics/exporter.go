@@ -180,6 +180,15 @@ var (
 		[]string{"model", "format"},
 	)
 
+	// JobProgressPercent tracks live progress (0-100) of running pipeline jobs.
+	JobProgressPercent = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_job_progress_percent",
+			Help: "Current progress percentage (0-100) of running pipeline jobs.",
+		},
+		[]string{"model", "namespace", "job_type"},
+	)
+
 	// ModelColdStartDurationSeconds tracks time from activation/startup to Ready.
 	ModelColdStartDurationSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -444,6 +453,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(QuantizationCompressionRatio)
 	ctrlmetrics.Registry.MustRegister(QuantizationJobsTotal)
 	ctrlmetrics.Registry.MustRegister(QuantizationCacheSizeBytes)
+	ctrlmetrics.Registry.MustRegister(JobProgressPercent)
 	ctrlmetrics.Registry.MustRegister(ModelColdStartDurationSeconds)
 	ctrlmetrics.Registry.MustRegister(ModelSwapDurationSeconds)
 

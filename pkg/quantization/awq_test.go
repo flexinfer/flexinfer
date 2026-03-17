@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestAWQJobBuilder_Validate_EdgeCases(t *testing.T) {
@@ -87,55 +88,61 @@ func TestAWQJobBuilder_Validate_EdgeCases(t *testing.T) {
 	}
 }
 
-func TestAWQJobBuilder_BuildScript_Content(t *testing.T) {
+func TestAWQJobBuilder_BuildEnv_Content(t *testing.T) {
 	builder := &AWQJobBuilder{}
 
+	findEnv := func(env []corev1.EnvVar, name string) string {
+		for _, e := range env {
+			if e.Name == name {
+				return e.Value
+			}
+		}
+		return ""
+	}
+
 	t.Run("default calibration values", func(t *testing.T) {
-		script := builder.buildScript("my-model", 4, 128, nil)
-		if !strings.Contains(script, `MODEL_DIR="/cache/my-model"`) {
-			t.Error("script missing MODEL_DIR")
+		env := builder.buildEnv("my-model", 4, 128, nil)
+		if v := findEnv(env, "MODEL_DIR"); v != "/cache/my-model" {
+			t.Errorf("MODEL_DIR = %q, want /cache/my-model", v)
 		}
-		if !strings.Contains(script, "BITS=4") {
-			t.Error("script missing BITS=4")
+		if v := findEnv(env, "BITS"); v != "4" {
+			t.Errorf("BITS = %q, want 4", v)
 		}
-		if !strings.Contains(script, "GROUP_SIZE=128") {
-			t.Error("script missing GROUP_SIZE=128")
+		if v := findEnv(env, "GROUP_SIZE"); v != "128" {
+			t.Errorf("GROUP_SIZE = %q, want 128", v)
 		}
-		if !strings.Contains(script, "nParallel=None") {
-			t.Error("script should show nParallel=None for nil calibration")
+		if v := findEnv(env, "DATASET"); v != "mit-han-lab/pile-val-backup" {
+			t.Errorf("DATASET = %q, want default dataset", v)
 		}
-		if !strings.Contains(script, "mit-han-lab/pile-val-backup") {
-			t.Error("script missing default calibration dataset")
+		if v := findEnv(env, "N_PARALLEL_CALIB_SAMPLES"); v != "" {
+			t.Errorf("N_PARALLEL_CALIB_SAMPLES should not be set for nil calibration, got %q", v)
 		}
 	})
 
 	t.Run("custom calibration", func(t *testing.T) {
 		customDataset := "custom/dataset"
-		script := builder.buildScript("test-model", 4, 64, &aiv1alpha1.CalibrationSpec{
+		env := builder.buildEnv("test-model", 4, 64, &aiv1alpha1.CalibrationSpec{
 			MaxSeqLen:             int32Ptr(2048),
 			MaxSamples:            int32Ptr(64),
 			NParallelCalibSamples: int32Ptr(8),
 			Dataset:               &customDataset,
 		})
-		if !strings.Contains(script, "maxSeqLen=2048") {
-			t.Error("script missing custom maxSeqLen")
+		if v := findEnv(env, "MAX_SEQ_LEN"); v != "2048" {
+			t.Errorf("MAX_SEQ_LEN = %q, want 2048", v)
 		}
-		if !strings.Contains(script, "maxSamples=64") {
-			t.Error("script missing custom maxSamples")
+		if v := findEnv(env, "MAX_SAMPLES"); v != "64" {
+			t.Errorf("MAX_SAMPLES = %q, want 64", v)
 		}
-		if !strings.Contains(script, "nParallel=8") {
-			t.Error("script missing custom nParallel")
+		if v := findEnv(env, "N_PARALLEL_CALIB_SAMPLES"); v != "8" {
+			t.Errorf("N_PARALLEL_CALIB_SAMPLES = %q, want 8", v)
 		}
-		if !strings.Contains(script, "custom/dataset") {
-			t.Error("script missing custom dataset")
-		}
-		if !strings.Contains(script, "n_parallel_calib_samples=8") {
-			t.Error("script missing n_parallel_calib_samples kwarg")
+		if v := findEnv(env, "DATASET"); v != "custom/dataset" {
+			t.Errorf("DATASET = %q, want custom/dataset", v)
 		}
 	})
 
-	t.Run("cleanup trap present", func(t *testing.T) {
-		script := builder.buildScript("model", 4, 128, nil)
+	t.Run("cleanup trap present in wrapper", func(t *testing.T) {
+		script := builder.awqWrapperScript()
 		if !strings.Contains(script, "trap cleanup EXIT") {
 			t.Error("script missing cleanup trap")
 		}
