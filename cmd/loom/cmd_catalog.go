@@ -316,10 +316,7 @@ func runPostCatalogSync() error {
 	}
 
 	fmt.Println("Running loom sync all --regen...")
-	loomBinary := ""
-	if exe, lookErr := os.Executable(); lookErr == nil && exe != "" {
-		loomBinary = exe
-	}
+	loomBinary := resolveStableLoomBinary("")
 	if err := mgr.SyncAll(true, true, false, false, "", true, loomBinary, nil, false); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: sync failed: %v\n", err)
 	}
