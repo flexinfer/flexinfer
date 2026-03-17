@@ -190,15 +190,17 @@ data:
             - codex
           timeout: 60
       - name: agent_context
+        categories: [local-only]
         common:
-          command: /usr/local/bin/mcp-hub-wrapper
-          args:
-            - agent_context
-            - --hub-url
-            - ws://loom-gateway.loom-hub.svc.cluster.local/ws
-            - --profile
-            - codex
-          timeout: 60
+          command: /usr/local/bin/mcp-agent-context
+          args: []
+          timeout: 30
+          env:
+            AGENT_CONTEXT_QDRANT_URL: http://192.168.50.176:6333
+            AGENT_CONTEXT_COLLECTION: agent_context_v1
+            AGENT_CONTEXT_SESSIONS_COLLECTION: agent_sessions_v1
+            AGENT_CONTEXT_AUTO_SUMMARIZE: "true"
+            AGENT_CONTEXT_DEFAULT_TOKEN_BUDGET: "4000"
       - name: k8s_apps_k3s
         common:
           command: /usr/local/bin/mcp-hub-wrapper

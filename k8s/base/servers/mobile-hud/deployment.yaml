@@ -36,10 +36,24 @@ spec:
             - codex
             - --hub-url
             - ws://loom-gateway.loom-hub.svc.cluster.local/ws
-            - --hub-prefer
             - --hub-fallback=true
             - --metrics-addr
             - 0.0.0.0:9876
+          env:
+            - name: QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: loom-secrets
+                  key: QDRANT_API_KEY
+            - name: MORPH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: loom-secrets
+                  key: MORPH_API_KEY
+            - name: MORPH_BASE_URL
+              value: https://api.morphllm.com/v1
+            - name: MORPH_EMBED_MODEL
+              value: morph-embedding-v3
           ports:
             - containerPort: 9876
               name: metrics
