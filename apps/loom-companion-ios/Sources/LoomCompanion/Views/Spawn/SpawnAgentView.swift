@@ -4,7 +4,7 @@ import LoomCompanionKit
 /// View for spawning headless AI coding agents and monitoring active spawns.
 struct SpawnAgentView: View {
     @State var viewModel: SpawnViewModel
-    var sseClient: SSEClient?
+    var broadcaster: SSEEventBroadcaster?
 
     @State private var selectedAgentType: AgentType = .claudeCode
     @State private var project = ""
@@ -22,8 +22,8 @@ struct SpawnAgentView: View {
             async let config: () = viewModel.loadConfig()
             async let spawns: () = viewModel.loadSpawns()
             _ = await (config, spawns)
-            if let sseClient {
-                viewModel.startListening(sseClient: sseClient)
+            if let broadcaster {
+                viewModel.startListening(broadcaster: broadcaster)
             }
         }
         .refreshable {

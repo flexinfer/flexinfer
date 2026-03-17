@@ -14,7 +14,7 @@ public final class SpawnViewModel {
     private let apiClient: any LoomAPIClientProtocol
 
     @ObservationIgnored
-    private var sseTask: Task<Void, Never>?
+    private var sseRegistrationId: UUID?
 
     /// SSE event types that trigger a spawn list refresh.
     private static let refreshEventTypes: Set<String> = [
@@ -29,20 +29,21 @@ public final class SpawnViewModel {
         self.apiClient = apiClient
     }
 
-    /// Start listening to SSE events for real-time spawn updates.
-    public func startListening(sseClient: SSEClient) {
-        sseTask?.cancel()
-        sseTask = Task { [weak self] in
-            for await event in sseClient.events {
-                await self?.handleSSEEvent(event)
-            }
+    /// Start listening to SSE events via the broadcaster for real-time spawn updates.
+    @MainActor
+    public func startListening(broadcaster: SSEEventBroadcaster) {
+        sseRegistrationId = broadcaster.register { [weak self] event in
+            await self?.handleSSEEvent(event)
         }
     }
 
     /// Stop listening to SSE events.
-    public func stopListening() {
-        sseTask?.cancel()
-        sseTask = nil
+    @MainActor
+    public func stopListening(broadcaster: SSEEventBroadcaster) {
+        if let id = sseRegistrationId {
+            broadcaster.unregister(id)
+            sseRegistrationId = nil
+        }
     }
 
     @MainActor

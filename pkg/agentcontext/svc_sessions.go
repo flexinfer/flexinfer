@@ -40,6 +40,11 @@ type SessionSvc struct {
 
 	// Reaper callback — returns IDs of agents with live presence.
 	liveAgentIDs func() []string
+
+	// countContextEntries returns entry count + total tokens from the context
+	// collection for a given session ID. Used to recompute stats at list time
+	// when persisted values are stale (e.g. after HUD restart).
+	countContextEntries func(ctx context.Context, sessionID string) (entries int, tokens int)
 }
 
 // NewSessionSvc creates a new SessionSvc.
@@ -343,6 +348,24 @@ func (ss *SessionSvc) List(ctx context.Context, args map[string]any) (*mcp.CallT
 		sess, err := PayloadToSession(p.Payload)
 		if err != nil || sess == nil {
 			continue
+		}
+		// Overlay in-memory stats for active sessions (Qdrant has stale 0s
+		// because stats are only persisted on session end).
+		ss.mu.RLock()
+		live, inMem := ss.sessions[sess.ID]
+		if inMem {
+			sess.EntryCount = live.EntryCount
+			sess.TotalTokens = live.TotalTokens
+		}
+		ss.mu.RUnlock()
+		// For sessions not in memory with 0 entry count, recompute from
+		// the context collection (covers HUD-restart data loss).
+		if !inMem && sess.EntryCount == 0 && ss.countContextEntries != nil {
+			entries, tokens := ss.countContextEntries(ctx, sess.ID)
+			if entries > 0 {
+				sess.EntryCount = entries
+				sess.TotalTokens = tokens
+			}
 		}
 		sessions = append(sessions, *sess)
 	}

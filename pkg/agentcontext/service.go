@@ -224,6 +224,14 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 		session.EntryCount += entries
 		session.TotalTokens += tokens
 		svc.sess.mu.Unlock()
+		// Persist updated stats to Qdrant so they survive HUD restarts.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := svc.sess.Persist(ctx, session); err != nil {
+				svc.logger.Warn("failed to persist session stats", "session_id", session.ID, "error", err)
+			}
+		}()
 	}
 	svc.ctxSvc.readSessionStats = func(session *Session) (int, int, *time.Time) {
 		svc.sess.mu.RLock()
@@ -234,6 +242,22 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 		svc.sess.mu.Lock()
 		session.LastSummaryAt = &t
 		svc.sess.mu.Unlock()
+	}
+
+	// Wire context entry counter for session stats recomputation.
+	svc.sess.countContextEntries = func(ctx context.Context, sessionID string) (int, int) {
+		client := svc.qdrant.Get(CollContext)
+		if client == nil {
+			return 0, 0
+		}
+		filter := FilterMust(Match("session_id", sessionID))
+		count, err := client.Count(ctx, filter)
+		if err != nil {
+			return 0, 0
+		}
+		// Token count requires scrolling entries; use count as a proxy
+		// (tokens are not worth an extra scroll for the list endpoint).
+		return count, 0
 	}
 
 	// Initialize phase-2 domain sub-services.

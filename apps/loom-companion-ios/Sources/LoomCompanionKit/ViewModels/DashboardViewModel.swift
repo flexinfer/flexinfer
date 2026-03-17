@@ -15,7 +15,7 @@ public final class DashboardViewModel {
     private let apiClient: any LoomAPIClientProtocol
 
     @ObservationIgnored
-    private var sseTask: Task<Void, Never>?
+    private var sseRegistrationId: UUID?
 
     @ObservationIgnored
     public var alertsViewModel: AlertsViewModel?
@@ -47,20 +47,21 @@ public final class DashboardViewModel {
         }
     }
 
-    /// Start listening to SSE events for real-time updates.
-    public func startListening(sseClient: SSEClient) {
-        sseTask?.cancel()
-        sseTask = Task { [weak self] in
-            for await event in sseClient.events {
-                await self?.handleSSEEvent(event)
-            }
+    /// Start listening to SSE events via the broadcaster for real-time updates.
+    @MainActor
+    public func startListening(broadcaster: SSEEventBroadcaster) {
+        sseRegistrationId = broadcaster.register { [weak self] event in
+            await self?.handleSSEEvent(event)
         }
     }
 
     /// Stop listening to SSE events.
-    public func stopListening() {
-        sseTask?.cancel()
-        sseTask = nil
+    @MainActor
+    public func stopListening(broadcaster: SSEEventBroadcaster) {
+        if let id = sseRegistrationId {
+            broadcaster.unregister(id)
+            sseRegistrationId = nil
+        }
     }
 
     /// SSE event types that trigger a dashboard data refresh.

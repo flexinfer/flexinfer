@@ -802,6 +802,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mobile/v1/workflows", a.withCORS(a.handleMobileWorkflows))
 	mux.HandleFunc("GET /api/mobile/v1/workflows/{workflow_id}", a.withCORS(a.handleMobileWorkflowDetail))
 	mux.HandleFunc("GET /api/mobile/v1/presence", a.withCORS(a.handleMobilePresence))
+	mux.HandleFunc("GET /api/mobile/v1/agents", a.withCORS(a.handleMobileAgents))
 	mux.HandleFunc("GET /api/mobile/v1/memory/stats", a.withCORS(a.handleMobileMemoryStats))
 	mux.HandleFunc("GET /api/mobile/v1/memory/items", a.withCORS(a.handleMobileMemoryItems))
 	mux.HandleFunc("GET /api/mobile/v1/stream", a.withCORS(a.handleMobileStream))

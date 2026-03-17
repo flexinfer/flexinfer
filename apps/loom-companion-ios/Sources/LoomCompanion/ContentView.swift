@@ -8,13 +8,14 @@ struct ContentView: View {
     @State private var alertsViewModel = AlertsViewModel()
     @State private var selectedTab: AppTab = .dashboard
     @State private var sseClient: SSEClient?
+    @State private var sseBroadcaster = SSEEventBroadcaster()
     @State private var pendingSessionDeepLinkID: String?
     @State private var pendingWorkflowDeepLinkID: String?
     @State private var pendingEndSessionPrefillID: String?
 
     enum AppTab {
         case dashboard
-        case sessions
+        case agents
         case ops
         case alerts
         case connection
@@ -56,9 +57,9 @@ struct ContentView: View {
             selectedTab = .dashboard
         case .session(let id):
             pendingSessionDeepLinkID = id
-            selectedTab = .sessions
+            selectedTab = .agents
         case .sessions:
-            selectedTab = .sessions
+            selectedTab = .agents
         case .workflow(let id, _):
             pendingWorkflowDeepLinkID = id
             selectedTab = .ops
@@ -87,26 +88,27 @@ struct ContentView: View {
     private var iPhoneLayout: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
-                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, sseClient: sseClient)
+                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster)
             }
             .tabItem { Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent") }
             .tag(AppTab.dashboard)
 
-            SessionsListView(
+            AgentsListView(
                 apiClient: connectionVM.buildAPIClient(),
+                broadcaster: sseBroadcaster,
                 deepLinkSessionID: $pendingSessionDeepLinkID,
                 onPrefillEndSession: { sessionID in
                     pendingEndSessionPrefillID = sessionID
                     selectedTab = .ops
                 }
             )
-            .tabItem { Label("Sessions", systemImage: "list.bullet.rectangle") }
-            .tag(AppTab.sessions)
+            .tabItem { Label("Agents", systemImage: "person.2.wave.2") }
+            .tag(AppTab.agents)
 
             NavigationStack {
                 OpsView(
                     apiClient: connectionVM.buildAPIClient(),
-                    sseClient: sseClient,
+                    broadcaster: sseBroadcaster,
                     deepLinkWorkflowID: $pendingWorkflowDeepLinkID,
                     prefillEndSessionID: $pendingEndSessionPrefillID
                 )
@@ -119,7 +121,7 @@ struct ContentView: View {
                     switch action {
                     case .viewSession:
                         pendingSessionDeepLinkID = alert.relatedSessionId
-                        selectedTab = .sessions
+                        selectedTab = .agents
                     case .viewWorkflow:
                         pendingWorkflowDeepLinkID = alert.relatedWorkflowId
                         selectedTab = .ops
@@ -151,9 +153,9 @@ struct ContentView: View {
                 Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent")
                     .contentShape(Rectangle())
                     .onTapGesture { selectedTab = .dashboard }
-                Label("Sessions", systemImage: "list.bullet.rectangle")
+                Label("Agents", systemImage: "person.2.wave.2")
                     .contentShape(Rectangle())
-                    .onTapGesture { selectedTab = .sessions }
+                    .onTapGesture { selectedTab = .agents }
                 Label("Ops", systemImage: "square.grid.2x2")
                     .contentShape(Rectangle())
                     .onTapGesture { selectedTab = .ops }
@@ -183,10 +185,11 @@ struct ContentView: View {
         } detail: {
             switch selectedTab {
             case .dashboard:
-                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, sseClient: sseClient)
-            case .sessions:
-                SessionsListView(
+                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster)
+            case .agents:
+                AgentsListView(
                     apiClient: connectionVM.buildAPIClient(),
+                    broadcaster: sseBroadcaster,
                     deepLinkSessionID: $pendingSessionDeepLinkID,
                     onPrefillEndSession: { sessionID in
                         pendingEndSessionPrefillID = sessionID
@@ -196,7 +199,7 @@ struct ContentView: View {
             case .ops:
                 OpsView(
                     apiClient: connectionVM.buildAPIClient(),
-                    sseClient: sseClient,
+                    broadcaster: sseBroadcaster,
                     deepLinkWorkflowID: $pendingWorkflowDeepLinkID,
                     prefillEndSessionID: $pendingEndSessionPrefillID
                 )
@@ -205,7 +208,7 @@ struct ContentView: View {
                     switch action {
                     case .viewSession:
                         pendingSessionDeepLinkID = alert.relatedSessionId
-                        selectedTab = .sessions
+                        selectedTab = .agents
                     case .viewWorkflow:
                         pendingWorkflowDeepLinkID = alert.relatedWorkflowId
                         selectedTab = .ops
@@ -237,9 +240,11 @@ struct ContentView: View {
         }
         sseClient = client
         client.connect()
+        sseBroadcaster.start(sseClient: client)
     }
 
     private func teardownSSE() {
+        sseBroadcaster.stop()
         sseClient?.disconnect()
         sseClient = nil
     }

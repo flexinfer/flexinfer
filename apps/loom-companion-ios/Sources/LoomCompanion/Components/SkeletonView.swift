@@ -81,6 +81,33 @@ struct SkeletonSessionRow: View {
     }
 }
 
+struct SkeletonAgentRow: View {
+    var body: some View {
+        HStack(spacing: LoomSpacing.sm) {
+            SkeletonView(width: 4, height: 56, cornerRadius: 2)
+            VStack(alignment: .leading, spacing: LoomSpacing.xs) {
+                HStack {
+                    SkeletonView(width: 20, height: 16, cornerRadius: 4)
+                    SkeletonView(width: 110, height: 14)
+                    Spacer()
+                    SkeletonView(width: 56, height: 18, cornerRadius: 9)
+                }
+                SkeletonView(width: 180, height: 12)
+                HStack(spacing: LoomSpacing.sm) {
+                    SkeletonView(width: 90, height: 10)
+                    SkeletonView(width: 70, height: 10)
+                }
+                HStack {
+                    SkeletonView(width: 80, height: 16, cornerRadius: 8)
+                    Spacer()
+                    SkeletonView(width: 50, height: 10)
+                }
+            }
+        }
+        .padding(.vertical, LoomSpacing.xxs)
+    }
+}
+
 #Preview("Skeletons") {
     VStack(spacing: 16) {
         SkeletonDashboardCard()

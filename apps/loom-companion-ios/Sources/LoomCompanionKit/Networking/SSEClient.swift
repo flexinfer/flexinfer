@@ -21,6 +21,50 @@ public struct SSEEvent: Sendable {
     }
 }
 
+/// Fans out SSE events from a single `SSEClient` to multiple consumers.
+/// Solves the single-consumer `AsyncStream` problem: without this, only one
+/// `for await` loop receives each event.
+@MainActor
+public final class SSEEventBroadcaster {
+    private var task: Task<Void, Never>?
+    private var handlers: [UUID: @Sendable (SSEEvent) async -> Void] = [:]
+
+    public init() {}
+
+    /// Start consuming events from `sseClient` and fanning out to all handlers.
+    public func start(sseClient: SSEClient) {
+        task?.cancel()
+        task = Task { [weak self] in
+            for await event in sseClient.events {
+                guard let self else { return }
+                let snapshot = self.handlers
+                for (_, handler) in snapshot {
+                    await handler(event)
+                }
+            }
+        }
+    }
+
+    /// Stop consuming events.
+    public func stop() {
+        task?.cancel()
+        task = nil
+    }
+
+    /// Register a handler that receives every SSE event. Returns an ID for unregistration.
+    @discardableResult
+    public func register(_ handler: @escaping @Sendable (SSEEvent) async -> Void) -> UUID {
+        let id = UUID()
+        handlers[id] = handler
+        return id
+    }
+
+    /// Remove a previously registered handler.
+    public func unregister(_ id: UUID) {
+        handlers.removeValue(forKey: id)
+    }
+}
+
 /// AsyncStream-based SSE client with exponential backoff reconnection.
 /// Matches reconnect constants from bridge/events.go (1s base, 30s max, 2x).
 public final class SSEClient: Sendable {

@@ -1944,6 +1944,36 @@ func normalizeMobilePresenceStatus(status string) string {
 	}
 }
 
+// agentSortTime returns the best available timestamp for sorting: heartbeat, then session start.
+func agentSortTime(ua unifiedAgent) time.Time {
+	if ua.LastHeartbeat != "" {
+		if t := parseMobileTime(ua.LastHeartbeat); !t.IsZero() {
+			return t
+		}
+	}
+	if ua.SessionStarted != "" {
+		if t := parseMobileTime(ua.SessionStarted); !t.IsZero() {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+// inferAgentType derives an agent type from the agent ID prefix.
+// e.g. "claude-code-552019522-65136" → "claude-code",
+//
+//	"codex-gpt5" → "codex",  "gemini-cli-776159764-96152" → "gemini-cli".
+func inferAgentType(agentID string) string {
+	prefixes := []string{"claude-code", "gemini-cli", "codex"}
+	lower := strings.ToLower(agentID)
+	for _, p := range prefixes {
+		if lower == p || strings.HasPrefix(lower, p+"-") {
+			return p
+		}
+	}
+	return "unknown"
+}
+
 func filterMobileCoordinationAgents(agents []coordination.AgentSummary, agentFilter, statusFilter string) []coordination.AgentSummary {
 	filtered := make([]coordination.AgentSummary, 0, len(agents))
 	for _, agent := range agents {
@@ -2415,5 +2445,195 @@ func (a *App) handleMobileSpawnConfig(w http.ResponseWriter, r *http.Request) {
 			CPUs:           2.0,
 			TimeoutMinutes: 60,
 		},
+	})
+}
+
+// --- Unified Agents Endpoint ---
+
+type unifiedAgent struct {
+	AgentID         string `json:"agent_id"`
+	AgentType       string `json:"agent_type"`
+	Status          string `json:"status"`
+	Source          string `json:"source"` // "presence", "session_only", "spawn"
+	Description     string `json:"description"`
+	CurrentTask     string `json:"current_task"`
+	Branch          string `json:"branch"`
+	LastHeartbeat   string `json:"last_heartbeat"`
+	SessionID       string `json:"session_id,omitempty"`
+	Namespace       string `json:"namespace,omitempty"`
+	SessionStatus   string `json:"session_status,omitempty"`
+	SessionStarted  string `json:"session_started_at,omitempty"`
+	EntryCount      int    `json:"entry_count"`
+	TotalTokens     int    `json:"total_tokens"`
+	SpawnID         string `json:"spawn_id,omitempty"`
+	SpawnStatus     string `json:"spawn_status,omitempty"`
+	Project         string `json:"project,omitempty"`
+	ActiveFileCount int    `json:"active_file_count"`
+}
+
+type unifiedAgentsSummary struct {
+	TotalAgents   int `json:"total_agents"`
+	ActiveAgents  int `json:"active_agents"`
+	IdleAgents    int `json:"idle_agents"`
+	OfflineAgents int `json:"offline_agents"`
+	SpawnedAgents int `json:"spawned_agents"`
+	WithSessions  int `json:"with_sessions"`
+}
+
+func (a *App) handleMobileAgents(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	snap := a.fleetMonitor.Snapshot()
+	limit := parseMobileLimit(r, mobileDefaultLimit, mobileMaxLimit)
+	statusFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
+	typeFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+
+	// Build a map keyed by agent_id. Seed from presence (primary truth).
+	agentMap := make(map[string]*unifiedAgent)
+
+	for _, pa := range snap.Agents {
+		status := normalizeMobilePresenceStatus(pa.Status)
+		agentType := pa.AgentType
+		if agentType == "" || agentType == "unknown" {
+			agentType = inferAgentType(pa.AgentID)
+		}
+		ua := &unifiedAgent{
+			AgentID:         pa.AgentID,
+			AgentType:       agentType,
+			Status:          status,
+			Source:          "presence",
+			Description:     pa.Description,
+			CurrentTask:     pa.CurrentTask,
+			Branch:          pa.Branch,
+			LastHeartbeat:   pa.LastHeartbeat,
+			SessionID:       pa.SessionID,
+			ActiveFileCount: len(pa.ActiveFiles),
+		}
+		agentMap[pa.AgentID] = ua
+	}
+
+	// Enrich with session data.
+	for _, sess := range snap.Sessions {
+		if ua, ok := agentMap[sess.AgentID]; ok {
+			// Prefer active sessions; skip if we already have one.
+			if ua.SessionID != "" && ua.SessionStatus == "active" && sess.Status != "active" {
+				continue
+			}
+			ua.SessionID = sess.ID
+			ua.Namespace = sess.Namespace
+			ua.SessionStatus = sess.Status
+			ua.SessionStarted = sess.StartedAt
+			ua.EntryCount = sess.EntryCount
+			ua.TotalTokens = sess.TotalTokens
+			if ua.Description == "" {
+				ua.Description = sess.Description
+			}
+		} else {
+			// Session-only agent (no presence registration).
+			status := "offline"
+			if sess.Status == "active" {
+				status = "active"
+			}
+			ua := &unifiedAgent{
+				AgentID:        sess.AgentID,
+				AgentType:      inferAgentType(sess.AgentID),
+				Status:         status,
+				Source:         "session_only",
+				Description:    sess.Description,
+				SessionID:      sess.ID,
+				Namespace:      sess.Namespace,
+				SessionStatus:  sess.Status,
+				SessionStarted: sess.StartedAt,
+				EntryCount:     sess.EntryCount,
+				TotalTokens:    sess.TotalTokens,
+			}
+			agentMap[sess.AgentID] = ua
+		}
+	}
+
+	// Enrich with spawn data.
+	for _, sp := range snap.Spawns {
+		if ua, ok := agentMap[sp.AgentID]; ok {
+			ua.SpawnID = sp.SpawnID
+			ua.SpawnStatus = sp.Status
+			ua.Project = sp.Project
+			if ua.Branch == "" {
+				ua.Branch = sp.Branch
+			}
+			if ua.AgentType == "unknown" || ua.AgentType == "" {
+				ua.AgentType = sp.AgentType
+			}
+		} else {
+			ua := &unifiedAgent{
+				AgentID:     sp.AgentID,
+				AgentType:   sp.AgentType,
+				Status:      "active",
+				Source:      "spawn",
+				Description: sp.Task,
+				Branch:      sp.Branch,
+				SpawnID:     sp.SpawnID,
+				SpawnStatus: sp.Status,
+				Project:     sp.Project,
+			}
+			agentMap[sp.AgentID] = ua
+		}
+	}
+
+	// Collect and filter.
+	agents := make([]unifiedAgent, 0, len(agentMap))
+	for _, ua := range agentMap {
+		if statusFilter != "" && ua.Status != statusFilter {
+			continue
+		}
+		if typeFilter != "" && !strings.EqualFold(ua.AgentType, typeFilter) {
+			continue
+		}
+		agents = append(agents, *ua)
+	}
+
+	// Sort: active first, then idle, then offline.
+	// Within each group sort by most-recent activity (heartbeat, then session start).
+	statusOrder := map[string]int{"active": 0, "idle": 1, "offline": 2, "unknown": 3}
+	sort.SliceStable(agents, func(i, j int) bool {
+		oi, oj := statusOrder[agents[i].Status], statusOrder[agents[j].Status]
+		if oi != oj {
+			return oi < oj
+		}
+		ti := agentSortTime(agents[i])
+		tj := agentSortTime(agents[j])
+		if ti.Equal(tj) {
+			return agents[i].AgentID < agents[j].AgentID
+		}
+		return ti.After(tj)
+	})
+
+	if len(agents) > limit {
+		agents = agents[:limit]
+	}
+
+	// Build summary.
+	summary := unifiedAgentsSummary{TotalAgents: len(agents)}
+	for _, ua := range agents {
+		switch ua.Status {
+		case "active":
+			summary.ActiveAgents++
+		case "idle":
+			summary.IdleAgents++
+		case "offline":
+			summary.OfflineAgents++
+		}
+		if ua.SpawnID != "" {
+			summary.SpawnedAgents++
+		}
+		if ua.SessionID != "" {
+			summary.WithSessions++
+		}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"agents":  agents,
+		"summary": summary,
 	})
 }

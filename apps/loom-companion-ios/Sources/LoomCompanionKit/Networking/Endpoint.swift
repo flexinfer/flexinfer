@@ -36,6 +36,7 @@ public enum Endpoint: Sendable {
     case spawnConfig
     case spawnDetail(id: String)
     case spawnStop(id: String)
+    case agents(status: MobilePresenceStatus? = nil, type: String? = nil, limit: Int? = nil)
 
     var method: String {
         switch self {
@@ -43,7 +44,7 @@ public enum Endpoint: Sendable {
              .tasks, .workflows, .workflowDetail, .presence, .memoryStats,
              .memoryItems, .stream, .topology, .graphStats, .graphEntities,
              .graphPath, .reasoningChains, .reasoningChainDetail,
-             .eventsStream, .audit, .sandbox, .spawnList, .spawnConfig, .spawnDetail:
+             .eventsStream, .audit, .sandbox, .spawnList, .spawnConfig, .spawnDetail, .agents:
             return "GET"
         case .createSession, .endSession, .pushRegister, .pushUnregister,
              .sandboxStart, .sandboxStop, .spawnAgent, .spawnStop:
@@ -121,6 +122,8 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/agent/spawn/\(id)"
         case let .spawnStop(id):
             return "/api/mobile/v1/agent/spawn/\(id)/stop"
+        case .agents:
+            return "/api/mobile/v1/agents"
         }
     }
 
@@ -239,6 +242,18 @@ public enum Endpoint: Sendable {
             var items: [URLQueryItem] = []
             if let source { items.append(URLQueryItem(name: "source", value: source)) }
             if let limit { items.append(URLQueryItem(name: "limit", value: String(limit))) }
+            if !items.isEmpty { components.queryItems = items }
+        case let .agents(status, type, limit):
+            var items: [URLQueryItem] = []
+            if let status {
+                items.append(URLQueryItem(name: "status", value: status.rawValue))
+            }
+            if let type {
+                items.append(URLQueryItem(name: "type", value: type))
+            }
+            if let limit {
+                items.append(URLQueryItem(name: "limit", value: String(limit)))
+            }
             if !items.isEmpty { components.queryItems = items }
         default:
             break

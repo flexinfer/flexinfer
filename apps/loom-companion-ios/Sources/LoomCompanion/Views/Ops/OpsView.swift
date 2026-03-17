@@ -6,7 +6,7 @@ struct OpsView: View {
     @State private var selectedSegment: OpsSegment = .work
     @Binding private var deepLinkWorkflowID: String?
     @Binding private var prefillEndSessionID: String?
-    private var sseClient: SSEClient?
+    private var broadcaster: SSEEventBroadcaster?
     @State private var deepLinkedWorkflow: MobileWorkflow?
     @State private var pendingDeepLinkWorkflowID: String?
     @State private var toastMessage: String?
@@ -38,12 +38,12 @@ struct OpsView: View {
 
     init(
         apiClient: APIClient?,
-        sseClient: SSEClient? = nil,
+        broadcaster: SSEEventBroadcaster? = nil,
         deepLinkWorkflowID: Binding<String?> = .constant(nil),
         prefillEndSessionID: Binding<String?> = .constant(nil)
     ) {
         let client = apiClient ?? APIClient(baseURL: URL(string: "http://localhost")!, token: "mock-token")
-        self.sseClient = sseClient
+        self.broadcaster = broadcaster
         _deepLinkWorkflowID = deepLinkWorkflowID
         _prefillEndSessionID = prefillEndSessionID
         _viewModel = State(initialValue: OpsViewModel(apiClient: client))
@@ -113,8 +113,8 @@ struct OpsView: View {
         .task {
             await viewModel.load()
             resolveDeepLinkWorkflow()
-            if let sseClient {
-                viewModel.startListening(sseClient: sseClient)
+            if let broadcaster {
+                viewModel.startListening(broadcaster: broadcaster)
             }
         }
         .refreshable {
@@ -426,7 +426,7 @@ struct OpsView: View {
     private var agentsSection: some View {
         VStack(spacing: LoomSpacing.cardSpacing) {
             NavigationLink {
-                SpawnAgentView(viewModel: SpawnViewModel(apiClient: viewModel.apiClient), sseClient: sseClient)
+                SpawnAgentView(viewModel: SpawnViewModel(apiClient: viewModel.apiClient), broadcaster: broadcaster)
             } label: {
                 LoomCard {
                     HStack {
