@@ -54,3 +54,10 @@ spec:
     calibration:
       maxSeqLen: 2048
       maxSamples: 128
+  publish:
+    targets:
+      - oci
+    ociRef: "registry.harbor.lan/flexinfer/qwen35-27b-opus-distill:gptq-w4-g128"
+    secretRef: "harbor-oci-creds"
+    maxMemoryGB: 8
+    timeoutSeconds: 7200
