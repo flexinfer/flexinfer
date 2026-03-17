@@ -385,6 +385,9 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 			if modelCache.Status.Finetune == nil {
 				modelCache.Status.Finetune = &aiv1alpha1.FinetuneStatus{}
 			}
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFinetuning
+			modelCache.Status.Quantization = nil
+			modelCache.Status.Publish = nil
 			modelCache.Status.Finetune.Progress = &pct
 			modelCache.Status.Finetune.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
 			if finetuneJob.Status.StartTime != nil {

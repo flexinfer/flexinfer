@@ -347,6 +347,10 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			if modelCache.Status.Abliteration == nil {
 				modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
 			}
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseAbliterating
+			modelCache.Status.Finetune = nil
+			modelCache.Status.Quantization = nil
+			modelCache.Status.Publish = nil
 			modelCache.Status.Abliteration.Progress = &pct
 			modelCache.Status.Abliteration.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
 			if ablitJob.Status.StartTime != nil {
