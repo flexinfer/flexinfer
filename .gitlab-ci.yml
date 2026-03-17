@@ -4,6 +4,8 @@ include:
     file:
       - /k3s/ci/caches/gitlab-ci-cache.yml
 
+  - project: 'services/tech-radar'
+    file: '/ci/radar.yml'
 stages:
   - lint
   - test
@@ -1571,3 +1573,6 @@ trivy_scan_nightly:
     - if: $CI_PIPELINE_SOURCE == "schedule"
     - if: $CI_PIPELINE_SOURCE == "web"
       when: manual
+
+radar-scan:
+  extends: .radar-scan
