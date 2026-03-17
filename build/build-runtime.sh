@@ -153,29 +153,39 @@ build_profile() {
     trap "rm -f '${env_file}'" EXIT
 
     # Assemble docker build command
-    local cmd="docker ${context_flag} build"
-    cmd="${cmd} -f ${DOCKERFILE}"
-    cmd="${cmd} --build-arg BASE_IMAGE=${base_image}"
-    cmd="${cmd} --build-arg GO_VERSION=${go_version}"
-    cmd="${cmd} --build-arg LLAMACPP_VERSION=${llamacpp_version}"
-    cmd="${cmd} --build-arg OLLAMA_VERSION=${ollama_version}"
-    cmd="${cmd} --build-arg OLLAMA_GO_VERSION=${ollama_go_version}"
-    cmd="${cmd} --build-arg AMDGPU_TARGETS=${amdgpu_targets}"
-    cmd="${cmd} --build-arg GPU_VENDOR=${gpu_vendor}"
-    cmd="${cmd} --build-arg GPU_ARCH=${gpu_arch}"
-    cmd="${cmd} --build-arg INCLUDE_VLLM=${include_vllm}"
-    cmd="${cmd} --build-arg INCLUDE_LLAMACPP=${include_llamacpp}"
-    cmd="${cmd} --build-arg INCLUDE_OLLAMA=${include_ollama}"
-    cmd="${cmd} --build-arg INCLUDE_DIFFUSERS=${include_diffusers}"
-    cmd="${cmd} --build-arg INCLUDE_BITSANDBYTES=${include_bitsandbytes}"
-    cmd="${cmd} --build-arg INCLUDE_STEAM=${include_steam}"
-    cmd="${cmd} --build-arg INCLUDE_QUANTIZER=${include_quantizer}"
-    cmd="${cmd} --build-arg TRANSFORMERS_CONSTRAINT=${transformers_constraint}"
-    cmd="${cmd} --build-arg LLAMACPP_BUILD_IMAGE=${llamacpp_build_image}"
-    cmd="${cmd} --build-arg CUDA_ARCHITECTURES=${cuda_architectures}"
-    cmd="${cmd} ${NO_CACHE}"
-    cmd="${cmd} -t ${full_tag}"
-    cmd="${cmd} ${REPO_ROOT}"
+    local -a cmd=("docker")
+    if [ -n "${context_flag}" ]; then
+        cmd+=("--context" "${build_context}")
+    fi
+    cmd+=(
+        "build"
+        "-f" "${DOCKERFILE}"
+        "--build-arg" "BASE_IMAGE=${base_image}"
+        "--build-arg" "GO_VERSION=${go_version}"
+        "--build-arg" "LLAMACPP_VERSION=${llamacpp_version}"
+        "--build-arg" "OLLAMA_VERSION=${ollama_version}"
+        "--build-arg" "OLLAMA_GO_VERSION=${ollama_go_version}"
+        "--build-arg" "AMDGPU_TARGETS=${amdgpu_targets}"
+        "--build-arg" "GPU_VENDOR=${gpu_vendor}"
+        "--build-arg" "GPU_ARCH=${gpu_arch}"
+        "--build-arg" "INCLUDE_VLLM=${include_vllm}"
+        "--build-arg" "INCLUDE_LLAMACPP=${include_llamacpp}"
+        "--build-arg" "INCLUDE_OLLAMA=${include_ollama}"
+        "--build-arg" "INCLUDE_DIFFUSERS=${include_diffusers}"
+        "--build-arg" "INCLUDE_BITSANDBYTES=${include_bitsandbytes}"
+        "--build-arg" "INCLUDE_STEAM=${include_steam}"
+        "--build-arg" "INCLUDE_QUANTIZER=${include_quantizer}"
+        "--build-arg" "TRANSFORMERS_CONSTRAINT=${transformers_constraint}"
+        "--build-arg" "LLAMACPP_BUILD_IMAGE=${llamacpp_build_image}"
+        "--build-arg" "CUDA_ARCHITECTURES=${cuda_architectures}"
+    )
+    if [ -n "${NO_CACHE}" ]; then
+        cmd+=("${NO_CACHE}")
+    fi
+    cmd+=(
+        "-t" "${full_tag}"
+        "${REPO_ROOT}"
+    )
 
     echo "=== Building profile: ${profile} ==="
     echo "  Tag:    ${full_tag}"
@@ -185,7 +195,7 @@ build_profile() {
     echo ""
 
     if [ "${DRY_RUN}" = "true" ]; then
-        echo "[dry-run] ${cmd}"
+        printf '[dry-run]'; printf ' %q' "${cmd[@]}"; printf '\n'
         echo ""
         echo "[dry-run] runtime.env contents:"
         sed 's/^/  /' "${env_file}"
@@ -193,14 +203,18 @@ build_profile() {
         return 0
     fi
 
-    echo "$ ${cmd}"
-    eval "${cmd}"
+    printf '$'; printf ' %q' "${cmd[@]}"; printf '\n'
+    "${cmd[@]}"
 
     if [ "${PUSH}" = "true" ]; then
-        local push_cmd="docker ${context_flag} push ${full_tag}"
+        local -a push_cmd=("docker")
+        if [ -n "${context_flag}" ]; then
+            push_cmd+=("--context" "${build_context}")
+        fi
+        push_cmd+=("push" "${full_tag}")
         echo ""
-        echo "$ ${push_cmd}"
-        eval "${push_cmd}"
+        printf '$'; printf ' %q' "${push_cmd[@]}"; printf '\n'
+        "${push_cmd[@]}"
     fi
 
     echo ""
