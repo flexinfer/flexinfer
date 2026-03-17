@@ -57,7 +57,10 @@ func testRegistry() *registry.Registry {
 					"folder_trust_enabled":           true,
 					"tools_allowed": []any{
 						"run_shell_command(git)",
+						"run_shell_command(echo)",
+						"run_shell_command(printf)",
 						"run_shell_command(rg)",
+						"run_shell_command(tee)",
 					},
 					"tools_exclude": []any{
 						"run_shell_command(rm)",
@@ -824,8 +827,20 @@ func TestGeminiHooksConfig_EmitsApprovalAndSecuritySettings(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected tools.allowed []string, got %#v", tools["allowed"])
 	}
-	if len(allowed) != 2 || allowed[0] != "run_shell_command(git)" || allowed[1] != "run_shell_command(rg)" {
+	wantAllowed := []string{
+		"run_shell_command(git)",
+		"run_shell_command(echo)",
+		"run_shell_command(printf)",
+		"run_shell_command(rg)",
+		"run_shell_command(tee)",
+	}
+	if len(allowed) != len(wantAllowed) {
 		t.Fatalf("unexpected tools.allowed: %#v", allowed)
+	}
+	for i, want := range wantAllowed {
+		if allowed[i] != want {
+			t.Fatalf("tools.allowed[%d]=%q, want %q (full=%#v)", i, allowed[i], want, allowed)
+		}
 	}
 	exclude, ok := tools["exclude"].([]string)
 	if !ok || len(exclude) != 1 || exclude[0] != "run_shell_command(rm)" {

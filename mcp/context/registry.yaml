@@ -1811,6 +1811,9 @@ platform_permissions:
       folder_trust_enabled: true
       # Allowed tool patterns — bypass confirmation for common safe commands.
       # Uses Gemini CLI prefix matching (run_shell_command(git) matches git *).
+      # Include shell primitives commonly used in pipes and redirections so
+      # benign one-liners behave more like Claude/Codex without allowing broad
+      # shell wrappers such as bash/sh.
       tools_allowed:
         - "run_shell_command(git)"
         - "run_shell_command(go)"
@@ -1853,6 +1856,8 @@ platform_permissions:
         - "run_shell_command(docker)"
         - "run_shell_command(loom)"
         - "run_shell_command(ls)"
+        - "run_shell_command(echo)"
+        - "run_shell_command(printf)"
         - "run_shell_command(cat)"
         - "run_shell_command(grep)"
         - "run_shell_command(rg)"
@@ -1868,6 +1873,7 @@ platform_permissions:
         - "run_shell_command(cut)"
         - "run_shell_command(sort)"
         - "run_shell_command(uniq)"
+        - "run_shell_command(tee)"
         - "run_shell_command(xargs)"
         - "run_shell_command(stat)"
         - "run_shell_command(du)"
