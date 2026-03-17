@@ -299,6 +299,11 @@ echo "Gradient checkpointing: ${GRAD_CHECKPOINT}"
 echo "Dataset: ${DATASET_SOURCE:-$DATASET_PVC_PATH}"
 echo "Start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+# Remove torchvision if present — ROCm runtime ships a version compiled
+# against a different PyTorch ABI, causing "torchvision::nms does not exist"
+# on import. Finetune does not need torchvision.
+pip uninstall -y torchvision 2>/dev/null || true
+
 # Install unsloth if not already present.
 pip install --no-cache-dir --quiet "unsloth[cu124-ampere-torch250]" 2>/dev/null || \
 pip install --no-cache-dir --quiet unsloth 2>/dev/null || \
