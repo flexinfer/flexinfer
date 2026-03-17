@@ -1,0 +1,79 @@
+package controllers
+
+import (
+	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+)
+
+func TestAbliterationCompleted(t *testing.T) {
+	progress := int32(12)
+
+	if abliterationCompleted(nil) {
+		t.Fatal("nil status should not be complete")
+	}
+
+	if abliterationCompleted(&aiv1alpha1.AbliterationStatus{
+		Progress:       &progress,
+		ProgressDetail: "elapsed 3m",
+	}) {
+		t.Fatal("progress-only abliteration status should not be complete")
+	}
+
+	if !abliterationCompleted(&aiv1alpha1.AbliterationStatus{
+		AbliterationTime: "14m32s",
+	}) {
+		t.Fatal("abliteration with completion time should be complete")
+	}
+}
+
+func TestFinetuneCompleted(t *testing.T) {
+	progress := int32(24)
+
+	if finetuneCompleted(nil) {
+		t.Fatal("nil status should not be complete")
+	}
+
+	if finetuneCompleted(&aiv1alpha1.FinetuneStatus{
+		Progress:       &progress,
+		ProgressDetail: "elapsed 9m",
+	}) {
+		t.Fatal("progress-only finetune status should not be complete")
+	}
+
+	if !finetuneCompleted(&aiv1alpha1.FinetuneStatus{
+		FinetuneTime: "42m1s",
+	}) {
+		t.Fatal("finetune with completion time should be complete")
+	}
+}
+
+func TestQuantizationCompleted(t *testing.T) {
+	progress := int32(7)
+	now := metav1.Now()
+
+	if quantizationCompleted(nil) {
+		t.Fatal("nil status should not be complete")
+	}
+
+	if quantizationCompleted(&aiv1alpha1.QuantizationStatus{
+		Progress:       &progress,
+		ProgressDetail: "elapsed 2m",
+	}) {
+		t.Fatal("progress-only quantization status should not be complete")
+	}
+
+	if !quantizationCompleted(&aiv1alpha1.QuantizationStatus{
+		CompletedAt: &now,
+	}) {
+		t.Fatal("quantization with completedAt should be complete")
+	}
+
+	if !quantizationCompleted(&aiv1alpha1.QuantizationStatus{
+		QuantizationTime: "33m10s",
+	}) {
+		t.Fatal("quantization with completion time should be complete")
+	}
+}

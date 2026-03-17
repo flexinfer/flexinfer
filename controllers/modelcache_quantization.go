@@ -118,7 +118,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 	// If quantization completed and publishing is configured but not yet recorded,
 	// continue into publish instead of getting stuck in Ready.
-	if modelCache.Status.Quantization != nil && modelCache.Status.Quantization.FailureMessage == "" &&
+	if quantizationCompleted(modelCache.Status.Quantization) &&
 		modelCache.Spec.Publish != nil && modelCache.Status.Publish == nil {
 		return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
 	}
@@ -143,7 +143,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 	err := r.Get(ctx, types.NamespacedName{Name: quantJobName, Namespace: modelCache.Namespace}, quantJob)
 	if err != nil && errors.IsNotFound(err) {
 		// If quantization already completed, the job was GC'd by TTL — don't recreate.
-		if modelCache.Status.Quantization != nil && modelCache.Status.Quantization.FailureMessage == "" {
+		if quantizationCompleted(modelCache.Status.Quantization) {
 			log.Info("Quantization job GC'd but quantization already complete, skipping re-creation",
 				"cache", modelCache.Name)
 			if modelCache.Spec.Publish != nil {

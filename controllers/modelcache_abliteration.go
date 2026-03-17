@@ -111,7 +111,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 
 	// If abliteration completed and publishing is configured but not yet recorded,
 	// continue into publish instead of getting stuck in Ready.
-	if modelCache.Status.Abliteration != nil && modelCache.Status.Abliteration.FailureMessage == "" &&
+	if abliterationCompleted(modelCache.Status.Abliteration) &&
 		modelCache.Spec.Publish != nil && modelCache.Status.Publish == nil &&
 		modelCache.Spec.Finetune == nil && modelCache.Spec.Quantization == nil {
 		return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
@@ -133,7 +133,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 	}
 
 	// If abliteration succeeded previously but finetune/quantization is pending, dispatch there.
-	if modelCache.Status.Abliteration != nil && modelCache.Status.Abliteration.FailureMessage == "" {
+	if abliterationCompleted(modelCache.Status.Abliteration) {
 		if modelCache.Spec.Finetune != nil {
 			return r.reconcileFinetune(ctx, modelCache, pvcName, modelPath)
 		}
@@ -161,7 +161,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 	err := r.Get(ctx, types.NamespacedName{Name: ablitJobName, Namespace: modelCache.Namespace}, ablitJob)
 	if err != nil && errors.IsNotFound(err) {
 		// If abliteration already completed, the job was GC'd by TTL — dispatch to next phase.
-		if modelCache.Status.Abliteration != nil && modelCache.Status.Abliteration.FailureMessage == "" {
+		if abliterationCompleted(modelCache.Status.Abliteration) {
 			log.Info("Abliteration job GC'd but abliteration already complete, skipping re-creation",
 				"cache", modelCache.Name)
 			if modelCache.Spec.Finetune != nil {

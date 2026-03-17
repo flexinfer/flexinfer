@@ -141,7 +141,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 
 	// If finetuning completed and publishing is configured but not yet recorded,
 	// continue into publish instead of getting stuck in Ready.
-	if modelCache.Status.Finetune != nil && modelCache.Status.Finetune.FailureMessage == "" &&
+	if finetuneCompleted(modelCache.Status.Finetune) &&
 		modelCache.Spec.Publish != nil && modelCache.Status.Publish == nil &&
 		modelCache.Spec.Quantization == nil {
 		return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
@@ -163,7 +163,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 	}
 
 	// If finetune succeeded previously but quantization is pending, dispatch there.
-	if modelCache.Status.Finetune != nil && modelCache.Status.Finetune.FailureMessage == "" {
+	if finetuneCompleted(modelCache.Status.Finetune) {
 		if modelCache.Spec.Quantization != nil {
 			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
 		}
@@ -188,7 +188,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 	err := r.Get(ctx, types.NamespacedName{Name: finetuneJobName, Namespace: modelCache.Namespace}, finetuneJob)
 	if err != nil && errors.IsNotFound(err) {
 		// If finetune already completed, the job was GC'd by TTL — dispatch to next phase.
-		if modelCache.Status.Finetune != nil && modelCache.Status.Finetune.FailureMessage == "" {
+		if finetuneCompleted(modelCache.Status.Finetune) {
 			log.Info("Finetune job GC'd but finetune already complete, skipping re-creation",
 				"cache", modelCache.Name)
 			if modelCache.Spec.Quantization != nil {
