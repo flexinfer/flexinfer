@@ -182,7 +182,9 @@ servers:
         - create_issue
         - list_issues
         - create_merge_request
+        - get_merge_request
         - list_merge_requests
+        - merge_merge_request
         - list_pipelines
         - get_pipeline
         - create_pipeline

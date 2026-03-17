@@ -64,7 +64,7 @@
 # Sync: loom sync <profile> --regen --hub-mode --all-projects --skip-worktrees
 
 version: 1
-updated: 2026-03-16
+updated: 2026-03-17
 skills:
   - name: flux-gitops-operator
     categories: [kubernetes, gitops, operations]
@@ -4623,40 +4623,68 @@ skills:
         - local reproduction status
         - minimal corrective change or explicit external blocker
         - updated pipeline status
+        - clear next step: `ci-green-merge-loop`, flaky quarantine, or infra escalation
 
-        ## Core Loop
+        ## Guardrails Up Front
 
-        1. **Find the right pipeline**
+        - Treat pre-existing dirty-worktree changes as baseline context unless they overlap the failing area.
+        - Prefer the smallest decisive failing gate, not the full suite, for first reproduction.
+        - Do not hide a likely flaky test with blanket retries in the main gate.
+        - If the default branch or runners are already unhealthy, stop code churn and document the blocker.
+
+        ## Failure Taxonomy
+
+        Classify the failure before changing code:
+        1. test regression
+        2. lint/static check failure
+        3. build/package/toolchain failure
+        4. environment, runner, or dependency outage
+        5. confirmed or probable flake
+
+        ## Standard Loop
+
+        1. **Find the decisive pipeline**
            - GitLab: `gitlab__list_pipelines`, `gitlab__pipeline_summary`, `gitlab__poll_pipeline`
            - GitHub: inspect PR/check status with the configured repo tooling
-        2. **Classify the failure**
-           - test regression
-           - lint/static failure
-           - packaging/build failure
-           - environment or runner problem
-           - flaky or infra-dependent behavior
-        3. **Pull the actionable logs**
+           - If the repo runs both branch and merge-request pipelines, treat the MR pipeline as merge-deciding.
+        2. **Pick the earliest causal failure**
+           - start with the first failed or blocked job in dependency order
+           - do not fix downstream noise before the root failure
+        3. **Pull actionable evidence**
            - `gitlab__get_job_trace`
            - `gitlab__get_test_report`
            - failed job artifacts when available
-        4. **Reproduce locally**
+        4. **Decide repo-local vs flaky vs infra**
+           - repo-local: the failure follows the branch content and is reproducible or strongly explained by code/config
+           - flaky: reruns clear the failure without a code reason, or logs point to timing/shared-state instability
+           - infra: runners, package registries, external services, or the default branch are unhealthy
+        5. **Reproduce the narrowest equivalent gate locally**
            - run the nearest local/devbox command to confirm the failure
            - if exact reproduction is impossible, reproduce the smallest equivalent gate
-        5. **Fix minimally**
+        6. **Fix minimally**
            - avoid opportunistic cleanup while CI is red
            - rerun the relevant local gate before pushing
-        6. **Repoll to terminal**
-           - push the fix
-           - `gitlab__poll_pipeline`
-           - repeat until green or externally blocked
+        7. **Handle flakes explicitly**
+           - confirm with a focused rerun or recent pipeline history
+           - quarantine the flaky test or gate if the repo supports that pattern
+           - leave ownership plus a follow-up fix path instead of silently retrying forever
+        8. **Escalate into shipping mode**
+           - once the fix is repo-local and ready to land, switch to `ci-green-merge-loop`
+           - keep `ci-failure-recovery` focused on triage and the first corrective iteration
 
         ## Decision Rule
 
         - if the failure is clearly repo-local, keep iterating in the same branch
         - if the failure is platform-wide or runner-related, stop code churn and document the infra blocker
         - if multiple jobs fail, fix the earliest causal failure first
+        - if the failure is a real flake, quarantine or de-gate it with an owner and expiry plan
+
+        ## Research Notes
+
+        See `references/workflow.md` for current GitLab merge-safety patterns and flaky-test handling ideas.
       scripts: []
-      references: []
+      references:
+        - workflow.md
       assets: []
       always_allow: []
     targets:
@@ -4670,6 +4698,112 @@ skills:
       kilocode:
         enabled: true
         type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: ci-green-merge-loop
+    categories: [workflow, ci-cd, gitlab]
+    common:
+      description: |
+        Carry a repo-local CI fix all the way through commit, push, merge request creation or reuse, auto-merge, and final green status. Use after the failure is understood and the job is to land the repair end-to-end.
+      instructions: |
+        # CI Green Merge Loop
+
+        Use this when the important question is no longer "what failed?" but "how do we land the fix cleanly and get back to green?"
+
+        ## Outcome
+
+        Finish with one of:
+        - scoped fix committed, pushed, merged, and verified green
+        - scoped fix queued with auto-merge / merge train and awaiting final merge
+        - a precise blocker explaining why the fix cannot be merged yet
+
+        ## Best Fit
+
+        - the failing job is already understood as repo-local
+        - the code fix is in hand or nearly in hand
+        - you want a non-interactive path through commit, push, MR, and CI watch
+
+        ## Not a Fit
+
+        - infra-wide runner or registry outage
+        - default branch already broken
+        - suspected flake that has not been quarantined or explicitly accepted
+
+        ## Loop
+
+        1. **Start from a real fix**
+           - use `ci-failure-recovery` first if the cause is still unclear
+           - keep the diff tightly scoped to the causal failure
+        2. **Run local verification before shipping**
+           - targeted gate first, then broader checks as needed
+           - do not defer first validation to CI if you can reproduce locally
+        3. **Commit and push**
+           - stage only intended files
+           - use a narrow commit message that describes the CI repair
+           - push the branch before creating or updating the MR
+        4. **Create or reuse the MR**
+           - avoid duplicate MRs for the same source branch
+           - prefer updating the existing MR thread when one already exists
+        5. **Enable safe merge automation**
+           - on GitLab, prefer auto-merge or merge trains over manual "wait then click merge"
+           - use the current source `sha` when requesting merge so unseen commits do not slip through
+        6. **Poll the decisive pipeline**
+           - if red, loop back to the smallest fix
+           - if green, confirm the MR is merged or queued in the merge train as expected
+        7. **Close the loop**
+           - summarize the root cause and fix in the MR or handoff note
+           - leave an explicit blocker if approvals, branch policy, or infra status prevents merge
+
+        ## Native MCP Path
+
+        When you want a pure tool-driven flow inside the agent:
+        - `gitlab__list_merge_requests` with `source_branch` / `target_branch` filters to reuse an open MR
+        - `gitlab__get_merge_request` to poll merged state and detailed merge status
+        - `gitlab__merge_merge_request` with `auto_merge=true` and the current `sha` for a safe merge request handoff
+
+        ## GitLab Helper
+
+        Use the bundled helper for the non-interactive GitLab path:
+
+        - `bash ${SKILL_PATH}/scripts/gitlab_green_loop.sh --project <group/project> --target-branch main --verify-command "<targeted gate>" --commit-message "fix(ci): <summary>" --mr-title "fix(ci): <summary>" --stage-all`
+
+        Notes:
+        - omit `--commit-message` when the fix is already committed
+        - omit `--stage-all` if you want tracked-only staging or explicit file selection
+        - pass `--no-auto-merge` when approvals or project policy require a human checkpoint
+
+        ## Safety Rules
+
+        - do not auto-merge infra-only changes just to clear red CI
+        - do not rely on duplicate branch pipelines when MR pipelines exist
+        - do not open a fresh MR if the branch already has an active one
+        - do not keep retrying a flaky test in the main merge gate without a quarantine plan
+
+        ## Reference
+
+        `references/workflow.md` captures the current GitLab and flaky-test patterns this loop is based on.
+      scripts:
+        - name: gitlab_green_loop.sh
+          path: scripts/gitlab_green_loop.sh
+          description: Commit or reuse a fix, push, create or reuse a GitLab MR, request auto-merge, poll CI, and wait for merged state
+      references:
+        - workflow.md
+      assets: []
+      always_allow:
+        - gitlab_green_loop.sh
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: workflow
       gemini:
         enabled: true
         type: skill

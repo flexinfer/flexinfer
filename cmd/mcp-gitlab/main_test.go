@@ -711,10 +711,12 @@ func TestHandleUpdateIssue_MissingUpdateFields(t *testing.T) {
 }
 
 func TestHandleListMergeRequests(t *testing.T) {
+	var gotQuery string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
+		gotQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Total", "1")
 		io.WriteString(w, `[{"id":200,"iid":5,"title":"Feature PR","state":"opened","source_branch":"feature","target_branch":"main"}]`)
@@ -738,6 +740,154 @@ func TestHandleListMergeRequests(t *testing.T) {
 	mrs, ok := parsed["merge_requests"].([]any)
 	if !ok || len(mrs) != 1 {
 		t.Fatalf("expected 1 merge request, got %v", parsed["merge_requests"])
+	}
+	if !strings.Contains(gotQuery, "state=opened") {
+		t.Fatalf("expected state filter in query, got %q", gotQuery)
+	}
+}
+
+func TestHandleListMergeRequests_WithBranchFilters(t *testing.T) {
+	var gotQuery string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Total", "0")
+		io.WriteString(w, `[]`)
+	}))
+	defer ts.Close()
+
+	gl := newTestServer(ts)
+
+	_, err := gl.handleListMergeRequests(context.Background(), map[string]any{
+		"project":       "group/project",
+		"source_branch": "feature/ci-fix",
+		"target_branch": "main",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(gotQuery, "source_branch=feature%2Fci-fix") {
+		t.Fatalf("expected source_branch filter in query, got %q", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "target_branch=main") {
+		t.Fatalf("expected target_branch filter in query, got %q", gotQuery)
+	}
+}
+
+func TestHandleGetMergeRequest(t *testing.T) {
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		if r.Method != "GET" {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":200,"iid":5,"title":"Feature PR","state":"opened"}`)
+	}))
+	defer ts.Close()
+
+	gl := newTestServer(ts)
+
+	result, err := gl.handleGetMergeRequest(context.Background(), map[string]any{
+		"project":           "group/project",
+		"merge_request_iid": 5,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(gotPath, "/projects/group%2Fproject/merge_requests/5") {
+		t.Fatalf("unexpected path: %q", gotPath)
+	}
+
+	parsed := mustParseJSON(t, result)
+	if parsed["iid"] != float64(5) {
+		t.Fatalf("expected iid=5, got %v", parsed["iid"])
+	}
+}
+
+func TestHandleGetMergeRequest_InvalidIID(t *testing.T) {
+	gl := &gitlabServer{token: "x", apiURL: "http://unused"}
+
+	result, err := gl.handleGetMergeRequest(context.Background(), map[string]any{
+		"project":           "group/project",
+		"merge_request_iid": 0,
+	})
+	if err != nil {
+		t.Fatalf("expected nil error for validation failure, got: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatal("expected error result for invalid merge_request_iid")
+	}
+}
+
+func TestHandleMergeMergeRequest(t *testing.T) {
+	var gotMethod string
+	var gotPath string
+	var gotBody map[string]any
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.EscapedPath()
+		if r.Body != nil {
+			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+				t.Fatalf("decode request body: %v", err)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"id":200,"iid":5,"state":"opened","merge_when_pipeline_succeeds":true}`)
+	}))
+	defer ts.Close()
+
+	gl := newTestServer(ts)
+
+	result, err := gl.handleMergeMergeRequest(context.Background(), map[string]any{
+		"project":                     "group/project",
+		"merge_request_iid":           5,
+		"auto_merge":                  true,
+		"squash":                      true,
+		"should_remove_source_branch": true,
+		"sha":                         "abc123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != "PUT" {
+		t.Fatalf("expected PUT, got %s", gotMethod)
+	}
+	if !strings.Contains(gotPath, "/projects/group%2Fproject/merge_requests/5/merge") {
+		t.Fatalf("unexpected path: %q", gotPath)
+	}
+	if gotBody["auto_merge"] != true {
+		t.Fatalf("expected auto_merge=true, got %v", gotBody["auto_merge"])
+	}
+	if gotBody["squash"] != true {
+		t.Fatalf("expected squash=true, got %v", gotBody["squash"])
+	}
+	if gotBody["should_remove_source_branch"] != true {
+		t.Fatalf("expected should_remove_source_branch=true, got %v", gotBody["should_remove_source_branch"])
+	}
+	if gotBody["sha"] != "abc123" {
+		t.Fatalf("expected sha=abc123, got %v", gotBody["sha"])
+	}
+
+	parsed := mustParseJSON(t, result)
+	if parsed["iid"] != float64(5) {
+		t.Fatalf("expected iid=5, got %v", parsed["iid"])
+	}
+}
+
+func TestHandleMergeMergeRequest_InvalidIID(t *testing.T) {
+	gl := &gitlabServer{token: "x", apiURL: "http://unused"}
+
+	result, err := gl.handleMergeMergeRequest(context.Background(), map[string]any{
+		"project":           "group/project",
+		"merge_request_iid": 0,
+	})
+	if err != nil {
+		t.Fatalf("expected nil error for validation failure, got: %v", err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatal("expected error result for invalid merge_request_iid")
 	}
 }
 
