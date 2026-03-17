@@ -438,8 +438,9 @@ func (a *App) handleMobileSessionDetail(w http.ResponseWriter, r *http.Request) 
 	}
 
 	sessionID := strings.TrimSpace(r.PathValue("session_id"))
-	if sessionID == "" {
-		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "session_id is required")
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	if sessionID == "" && agentID == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "session_id or agent_id is required")
 		return
 	}
 
@@ -449,14 +450,130 @@ func (a *App) handleMobileSessionDetail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	for _, s := range sessions {
-		if strings.TrimSpace(s.ID) == sessionID {
-			a.writeMobileJSON(w, http.StatusOK, map[string]any{"session": s})
-			return
+	// Find session by ID or by agent_id (active session).
+	var found *bridge.SessionInfo
+	for i := range sessions {
+		s := &sessions[i]
+		if sessionID != "" && strings.TrimSpace(s.ID) == sessionID {
+			found = s
+			break
+		}
+		if agentID != "" && strings.TrimSpace(s.AgentID) == agentID && s.Status == "active" {
+			found = s
+			break
 		}
 	}
+	if found == nil {
+		a.writeMobileError(w, http.StatusNotFound, "not_found", "session not found")
+		return
+	}
 
-	a.writeMobileError(w, http.StatusNotFound, "not_found", "session not found")
+	result := map[string]any{"session": found}
+
+	// Enrich with context inspection data (entry breakdown, top entries, tasks).
+	inspect, err := a.agent.ContextInspect(found.AgentID, found.ID, true, 200)
+	if err == nil && inspect != nil {
+		result["entry_breakdown"] = inspect.ByEntryType
+		result["top_entries"] = inspect.TopEntries
+		result["tasks"] = inspect.Tasks
+
+		// Extract decisions and errors from top entries.
+		var decisions, errors []bridge.ContextInspectTopEntry
+		for _, e := range inspect.TopEntries {
+			switch e.EntryType {
+			case "decision":
+				decisions = append(decisions, e)
+			case "error":
+				errors = append(errors, e)
+			}
+		}
+		result["decisions"] = decisions
+		result["errors"] = errors
+
+		// Extract top files from file_read / code_context entries.
+		fileHits := make(map[string]int)
+		for _, e := range inspect.TopEntries {
+			if e.EntryType == "file_read" || e.EntryType == "code_context" {
+				if e.Title != "" {
+					fileHits[e.Title]++
+				}
+			}
+		}
+		type touchedFile struct {
+			FilePath   string `json:"file_path"`
+			TouchCount int    `json:"touch_count"`
+		}
+		topFiles := make([]touchedFile, 0, len(fileHits))
+		for fp, count := range fileHits {
+			topFiles = append(topFiles, touchedFile{FilePath: fp, TouchCount: count})
+		}
+		sort.Slice(topFiles, func(i, j int) bool {
+			return topFiles[i].TouchCount > topFiles[j].TouchCount
+		})
+		if len(topFiles) > 10 {
+			topFiles = topFiles[:10]
+		}
+		result["top_files"] = topFiles
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, result)
+}
+
+// handleAgentSessionDetail serves the same rich session detail for /api/agent/session-detail.
+func (a *App) handleAgentSessionDetail(w http.ResponseWriter, r *http.Request) {
+	// Reuse the mobile handler but without mobile auth requirement.
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	if sessionID == "" && agentID == "" {
+		a.writeError(w, http.StatusBadRequest, "session_id or agent_id query parameter required", nil)
+		return
+	}
+
+	sessions, err := a.agent.Sessions()
+	if err != nil {
+		a.writeError(w, http.StatusBadGateway, "failed to list sessions", err)
+		return
+	}
+
+	var found *bridge.SessionInfo
+	for i := range sessions {
+		s := &sessions[i]
+		if sessionID != "" && strings.TrimSpace(s.ID) == sessionID {
+			found = s
+			break
+		}
+		if agentID != "" && strings.TrimSpace(s.AgentID) == agentID && s.Status == "active" {
+			found = s
+			break
+		}
+	}
+	if found == nil {
+		a.writeError(w, http.StatusNotFound, "session not found", nil)
+		return
+	}
+
+	result := map[string]any{"session": found}
+
+	inspect, err := a.agent.ContextInspect(found.AgentID, found.ID, true, 200)
+	if err == nil && inspect != nil {
+		result["entry_breakdown"] = inspect.ByEntryType
+		result["top_entries"] = inspect.TopEntries
+		result["tasks"] = inspect.Tasks
+
+		var decisions, errors []bridge.ContextInspectTopEntry
+		for _, e := range inspect.TopEntries {
+			switch e.EntryType {
+			case "decision":
+				decisions = append(decisions, e)
+			case "error":
+				errors = append(errors, e)
+			}
+		}
+		result["decisions"] = decisions
+		result["errors"] = errors
+	}
+
+	a.writeJSON(w, http.StatusOK, result)
 }
 
 func (a *App) handleMobileSessionEvents(w http.ResponseWriter, r *http.Request) {
@@ -2451,24 +2568,29 @@ func (a *App) handleMobileSpawnConfig(w http.ResponseWriter, r *http.Request) {
 // --- Unified Agents Endpoint ---
 
 type unifiedAgent struct {
-	AgentID         string `json:"agent_id"`
-	AgentType       string `json:"agent_type"`
-	Status          string `json:"status"`
-	Source          string `json:"source"` // "presence", "session_only", "spawn"
-	Description     string `json:"description"`
-	CurrentTask     string `json:"current_task"`
-	Branch          string `json:"branch"`
-	LastHeartbeat   string `json:"last_heartbeat"`
-	SessionID       string `json:"session_id,omitempty"`
-	Namespace       string `json:"namespace,omitempty"`
-	SessionStatus   string `json:"session_status,omitempty"`
-	SessionStarted  string `json:"session_started_at,omitempty"`
-	EntryCount      int    `json:"entry_count"`
-	TotalTokens     int    `json:"total_tokens"`
-	SpawnID         string `json:"spawn_id,omitempty"`
-	SpawnStatus     string `json:"spawn_status,omitempty"`
-	Project         string `json:"project,omitempty"`
-	ActiveFileCount int    `json:"active_file_count"`
+	AgentID          string   `json:"agent_id"`
+	AgentType        string   `json:"agent_type"`
+	Status           string   `json:"status"`
+	Source           string   `json:"source"` // "presence", "session_only", "spawn"
+	Description      string   `json:"description"`
+	CurrentTask      string   `json:"current_task"`
+	Branch           string   `json:"branch"`
+	LastHeartbeat    string   `json:"last_heartbeat"`
+	SessionID        string   `json:"session_id,omitempty"`
+	Namespace        string   `json:"namespace,omitempty"`
+	SessionStatus    string   `json:"session_status,omitempty"`
+	SessionStarted   string   `json:"session_started_at,omitempty"`
+	EntryCount       int      `json:"entry_count"`
+	TotalTokens      int      `json:"total_tokens"`
+	SpawnID          string   `json:"spawn_id,omitempty"`
+	SpawnStatus      string   `json:"spawn_status,omitempty"`
+	Project          string   `json:"project,omitempty"`
+	ActiveFileCount  int      `json:"active_file_count"`
+	NeedsAttention   bool     `json:"needs_attention"`
+	AttentionReasons []string `json:"attention_reasons,omitempty"`
+	TaskCount        int      `json:"task_count"`
+	BlockedTasks     int      `json:"blocked_tasks"`
+	ClaimCount       int      `json:"claim_count"`
 }
 
 type unifiedAgentsSummary struct {
@@ -2578,6 +2700,17 @@ func (a *App) handleMobileAgents(w http.ResponseWriter, r *http.Request) {
 				Project:     sp.Project,
 			}
 			agentMap[sp.AgentID] = ua
+		}
+	}
+
+	// Overlay coordination data (needs_attention, task_count, etc.).
+	for _, ca := range snap.Coordination.Agents {
+		if ua, ok := agentMap[ca.AgentID]; ok {
+			ua.NeedsAttention = ca.NeedsAttention
+			ua.AttentionReasons = ca.AttentionReasons
+			ua.TaskCount = ca.TaskCount
+			ua.BlockedTasks = ca.BlockedTasks
+			ua.ClaimCount = ca.ClaimCount
 		}
 	}
 

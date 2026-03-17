@@ -69,12 +69,34 @@ public struct SessionsResponse: Decodable, Sendable {
     }
 }
 
-/// Response wrapper for single session endpoint.
+/// Response wrapper for single session endpoint with rich detail data.
 public struct SessionDetailResponse: Decodable, Sendable {
     public let session: SessionInfo
+    public let entryBreakdown: [EntryTypeBucket]?
+    public let topEntries: [SessionTopEntry]?
+    public let decisions: [SessionTopEntry]?
+    public let errors: [SessionTopEntry]?
+    public let topFiles: [TouchedFile]?
+    public let tasks: SessionTaskSummary?
+
+    enum CodingKeys: String, CodingKey {
+        case session
+        case entryBreakdown = "entry_breakdown"
+        case topEntries = "top_entries"
+        case decisions
+        case errors
+        case topFiles = "top_files"
+        case tasks
+    }
 
     public init(session: SessionInfo) {
         self.session = session
+        self.entryBreakdown = nil
+        self.topEntries = nil
+        self.decisions = nil
+        self.errors = nil
+        self.topFiles = nil
+        self.tasks = nil
     }
 }
 

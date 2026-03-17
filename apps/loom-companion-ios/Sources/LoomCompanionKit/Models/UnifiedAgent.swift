@@ -20,6 +20,11 @@ public struct UnifiedAgent: Decodable, Identifiable, Sendable {
     public let spawnStatus: String?
     public let project: String?
     public let activeFileCount: Int
+    public let needsAttention: Bool
+    public let attentionReasons: [String]
+    public let taskCount: Int
+    public let blockedTasks: Int
+    public let claimCount: Int
 
     public var id: String { agentId }
     public var hasSession: Bool { sessionId != nil && !(sessionId?.isEmpty ?? true) }
@@ -44,6 +49,11 @@ public struct UnifiedAgent: Decodable, Identifiable, Sendable {
         case spawnStatus = "spawn_status"
         case project
         case activeFileCount = "active_file_count"
+        case needsAttention = "needs_attention"
+        case attentionReasons = "attention_reasons"
+        case taskCount = "task_count"
+        case blockedTasks = "blocked_tasks"
+        case claimCount = "claim_count"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -66,6 +76,11 @@ public struct UnifiedAgent: Decodable, Identifiable, Sendable {
         self.spawnStatus = try container.decodeIfPresent(String.self, forKey: .spawnStatus)
         self.project = try container.decodeIfPresent(String.self, forKey: .project)
         self.activeFileCount = try container.decodeIfPresent(Int.self, forKey: .activeFileCount) ?? 0
+        self.needsAttention = try container.decodeIfPresent(Bool.self, forKey: .needsAttention) ?? false
+        self.attentionReasons = try container.decodeIfPresent([String].self, forKey: .attentionReasons) ?? []
+        self.taskCount = try container.decodeIfPresent(Int.self, forKey: .taskCount) ?? 0
+        self.blockedTasks = try container.decodeIfPresent(Int.self, forKey: .blockedTasks) ?? 0
+        self.claimCount = try container.decodeIfPresent(Int.self, forKey: .claimCount) ?? 0
     }
 }
 

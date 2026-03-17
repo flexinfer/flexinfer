@@ -856,6 +856,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/agent/session-prune", a.withCORS(a.handleAgentSessionPrune))
 	mux.HandleFunc("POST /api/agent/context/add", a.withCORS(a.handleAgentContextAdd))
 	mux.HandleFunc("GET /api/agent/context-inspect", a.withCORS(a.handleAgentContextInspect))
+	mux.HandleFunc("GET /api/agent/session-detail", a.withCORS(a.handleAgentSessionDetail))
 	mux.HandleFunc("POST /api/agent/nudge", a.withCORS(a.handleAgentNudge))
 	mux.HandleFunc("GET /api/agent/nudge-queue", a.withCORS(a.handleAgentNudgeQueue))
 	mux.HandleFunc("GET /api/agent/nudge-queue-policy", a.withCORS(a.handleAgentNudgeQueuePolicy))

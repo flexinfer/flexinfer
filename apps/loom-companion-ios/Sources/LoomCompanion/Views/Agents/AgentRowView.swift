@@ -58,6 +58,12 @@ struct AgentRowView: View {
                     if agent.isSpawned {
                         spawnPill
                     }
+                    if agent.taskCount > 0 {
+                        taskCountPill
+                    }
+                    if agent.needsAttention {
+                        attentionIndicator
+                    }
                     Spacer()
                     elapsedLabel
                 }
@@ -108,6 +114,30 @@ struct AgentRowView: View {
         .background(Color.purple.opacity(0.1))
         .foregroundStyle(.purple)
         .clipShape(Capsule())
+    }
+
+    private var taskCountPill: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "checklist")
+                .font(.system(size: 8))
+            Text("\(agent.taskCount)")
+            if agent.blockedTasks > 0 {
+                Text("(\(agent.blockedTasks) blocked)")
+                    .foregroundStyle(.orange)
+            }
+        }
+        .font(.caption2)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Color.gray.opacity(0.1))
+        .foregroundStyle(LoomColors.textSecondary)
+        .clipShape(Capsule())
+    }
+
+    private var attentionIndicator: some View {
+        Image(systemName: "exclamationmark.circle.fill")
+            .font(.system(size: 10))
+            .foregroundStyle(.orange)
     }
 
     private var elapsedLabel: some View {

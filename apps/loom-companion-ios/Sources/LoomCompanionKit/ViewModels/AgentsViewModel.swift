@@ -29,6 +29,8 @@ public final class AgentsViewModel {
         "agent.session.start", "agent.session.end", "agent.session.reaped",
         "agent.spawn.building", "agent.spawn.running",
         "agent.spawn.completed", "agent.spawn.failed", "agent.spawn.stopped",
+        "agent.context.added", "agent.session.stats.updated",
+        "agent.task.update",
     ]
 
     public init(apiClient: any LoomAPIClientProtocol) {

@@ -317,19 +317,39 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	o.mu.Unlock()
 	o.broadcastSpawnEvent("agent.spawn.running", state)
 
-	// Step 5: Execute agent CLI (blocking until agent exits or timeout).
+	// Step 5: Start heartbeat loop for spawn visibility.
+	heartbeatCtx, heartbeatCancel := context.WithCancel(ctx)
+	go o.runHeartbeatLoop(heartbeatCtx, state)
+
+	// Step 6: Execute agent CLI (blocking until agent exits or timeout).
 	o.logger.Info("executing agent", "spawn_id", spawnID, "agent_type", req.AgentType, "pod", startResult.ContainerID)
 	_, execSpan := o.tracer.Start(ctx, "agent.spawn.agent_exec")
 	agentCmd := buildAgentCommand(req.AgentType, req.TaskDescription, state.AgentID)
-	_, execErr := o.backend.Exec(ctx, backend.ExecOpts{
+	execResult, execErr := o.backend.Exec(ctx, backend.ExecOpts{
 		ContainerID: startResult.ContainerID,
 		Command:     agentCmd,
 		WorkDir:     "/workspace/" + req.Project,
 		TimeoutSec:  req.TimeoutMinutes * 60,
 	})
 	execSpan.End()
+	heartbeatCancel()
 
-	// Step 6: Finalize based on exec result.
+	// Capture agent output as a context entry for session visibility.
+	if execResult != nil && execResult.StdoutTail != "" {
+		go func() {
+			truncated := execResult.StdoutTail
+			if len(truncated) > 8000 {
+				truncated = truncated[:8000] + "\n... (truncated)"
+			}
+			_ = o.agentBridge.ContextAdd("", []map[string]any{{
+				"entry_type": "finding",
+				"title":      fmt.Sprintf("Agent output (%s)", state.SpawnID),
+				"content":    truncated,
+			}})
+		}()
+	}
+
+	// Step 7: Finalize based on exec result.
 	if execErr != nil {
 		o.failSpawn(ctx, state, fmt.Sprintf("agent execution failed: %v", execErr))
 		return
@@ -462,6 +482,12 @@ func (o *SpawnOrchestrator) StopSpawn(ctx context.Context, spawnID string) error
 	}
 
 	o.broadcastSpawnEvent("agent.spawn.stopped", state)
+
+	// End the agent session on manual stop.
+	go func() {
+		summarize := false
+		o.agentBridge.EndSession(bridge.SessionEndParams{AgentID: state.AgentID, Summarize: &summarize})
+	}()
 	return nil
 }
 
@@ -486,6 +512,17 @@ func (o *SpawnOrchestrator) failSpawn(ctx context.Context, state *SpawnState, re
 
 	o.logger.Error("spawn failed", "spawn_id", state.SpawnID, "reason", reason)
 	o.broadcastSpawnEvent("agent.spawn.failed", state)
+
+	// Record failure and end the agent session.
+	go func() {
+		_ = o.agentBridge.ContextAdd("", []map[string]any{{
+			"entry_type": "error",
+			"title":      "Spawn failed: " + state.SpawnID,
+			"content":    reason,
+		}})
+		summarize := false
+		o.agentBridge.EndSession(bridge.SessionEndParams{AgentID: state.AgentID, Summarize: &summarize})
+	}()
 }
 
 // completeSpawn marks a spawn as completed.
@@ -508,6 +545,15 @@ func (o *SpawnOrchestrator) completeSpawn(ctx context.Context, state *SpawnState
 
 	o.logger.Info("spawn completed", "spawn_id", state.SpawnID)
 	o.broadcastSpawnEvent("agent.spawn.completed", state)
+
+	// End the agent session with summarization.
+	go func() {
+		summarize := true
+		o.agentBridge.EndSession(bridge.SessionEndParams{
+			AgentID:   state.AgentID,
+			Summarize: &summarize,
+		})
+	}()
 }
 
 // ListSpawns returns all spawn states.
@@ -544,6 +590,30 @@ func (o *SpawnOrchestrator) activeCount() int {
 
 // Projects returns the configured project list for spawn pickers.
 func (o *SpawnOrchestrator) Projects() []string { return o.projects }
+
+// runHeartbeatLoop sends periodic heartbeats for a spawned agent while it's running.
+func (o *SpawnOrchestrator) runHeartbeatLoop(ctx context.Context, state *SpawnState) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			o.mu.RLock()
+			status := state.Status
+			o.mu.RUnlock()
+			if status != SpawnStatusRunning {
+				return
+			}
+			_, _ = o.agentBridge.PresenceHeartbeat(state.AgentID, bridge.PresenceHeartbeatParams{
+				Status:      "active",
+				CurrentTask: state.Request.TaskDescription,
+				Branch:      state.Request.Branch,
+			})
+		}
+	}
+}
 
 // broadcastSpawnEvent sends a spawn lifecycle event to the SSE hub.
 func (o *SpawnOrchestrator) broadcastSpawnEvent(eventType string, state *SpawnState) {

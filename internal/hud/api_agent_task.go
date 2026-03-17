@@ -33,7 +33,10 @@ func (a *App) handleAgentTaskUpdate(w http.ResponseWriter, r *http.Request) {
 
 	a.broadcastAgentEvent("agent.task.update", map[string]any{
 		"task_id":    body.ID,
+		"agent_id":   body.AgentID,
+		"session_id": body.SessionID,
 		"status":     body.Status,
+		"title":      body.Title,
 		"resolution": body.Resolution,
 	})
 

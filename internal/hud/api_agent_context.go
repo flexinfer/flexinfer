@@ -61,7 +61,34 @@ func (a *App) handleAgentContextAdd(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Broadcast context entry addition for live UX updates.
+	a.broadcastAgentEvent("agent.context.added", map[string]any{
+		"session_id":  body.SessionID,
+		"entry_count": len(body.Entries),
+		"entry_types": extractEntryTypes(body.Entries),
+		"timestamp":   time.Now().Format(time.RFC3339),
+	})
+	a.broadcastAgentEvent("agent.session.stats.updated", map[string]any{
+		"session_id":    body.SessionID,
+		"entries_added": len(body.Entries),
+	})
+
 	a.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// extractEntryTypes collects unique entry_type values from context entries.
+func extractEntryTypes(entries []map[string]any) []string {
+	seen := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
+		if t, ok := e["entry_type"].(string); ok && t != "" {
+			seen[t] = struct{}{}
+		}
+	}
+	types := make([]string, 0, len(seen))
+	for t := range seen {
+		types = append(types, t)
+	}
+	return types
 }
 
 // handleAgentContextInspect returns a context budget breakdown for an agent/session.

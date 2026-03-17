@@ -344,6 +344,19 @@ class FleetStore {
         );
         this.lastUpdated = new Date();
       }),
+      // Live entry count updates from context additions.
+      eventStore.on('agent.context.added', (e) => {
+        const data = e.data as Record<string, unknown>;
+        const sessionId = data.session_id as string;
+        const count = (data.entry_count as number) || 0;
+        if (sessionId && count > 0) {
+          this.sessions = this.sessions.map((s) =>
+            s.id === sessionId ? { ...s, entry_count: s.entry_count + count } : s,
+          );
+          this.lastUpdated = new Date();
+        }
+      }),
+      eventStore.on('agent.task.update', () => this.fetch()),
     );
   }
 

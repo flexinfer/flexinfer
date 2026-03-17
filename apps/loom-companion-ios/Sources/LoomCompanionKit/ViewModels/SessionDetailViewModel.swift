@@ -5,6 +5,12 @@ import Foundation
 public final class SessionDetailViewModel {
     public var session: SessionInfo?
     public var events: [TimelineEntry] = []
+    public var entryBreakdown: [EntryTypeBucket] = []
+    public var topEntries: [SessionTopEntry] = []
+    public var decisions: [SessionTopEntry] = []
+    public var errors: [SessionTopEntry] = []
+    public var topFiles: [TouchedFile] = []
+    public var tasks: SessionTaskSummary?
     public var isLoading = false
     public var error: LoomAPIError?
 
@@ -32,6 +38,12 @@ public final class SessionDetailViewModel {
             let (detail, sessionEvents) = try await (detailResult, eventsResult)
             session = detail.session
             events = sessionEvents.events
+            entryBreakdown = detail.entryBreakdown ?? []
+            topEntries = detail.topEntries ?? []
+            decisions = detail.decisions ?? []
+            self.errors = detail.errors ?? []
+            topFiles = detail.topFiles ?? []
+            tasks = detail.tasks
             error = nil
         } catch let err as LoomAPIError {
             error = err

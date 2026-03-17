@@ -245,19 +245,28 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	}
 
 	// Wire context entry counter for session stats recomputation.
+	// On post-restart recovery (stale sessions with EntryCount==0), scroll
+	// entries to recompute accurate entry count and token totals.
 	svc.sess.countContextEntries = func(ctx context.Context, sessionID string) (int, int) {
 		client := svc.qdrant.Get(CollContext)
 		if client == nil {
 			return 0, 0
 		}
 		filter := FilterMust(Match("session_id", sessionID))
-		count, err := client.Count(ctx, filter)
+		points, err := client.ScrollPoints(ctx, filter, 500, false)
 		if err != nil {
-			return 0, 0
+			count, _ := client.Count(ctx, filter)
+			return count, 0
 		}
-		// Token count requires scrolling entries; use count as a proxy
-		// (tokens are not worth an extra scroll for the list endpoint).
-		return count, 0
+		totalTokens := 0
+		for _, p := range points {
+			if tc, ok := p.Payload["token_count"]; ok {
+				if n, ok := tc.(float64); ok {
+					totalTokens += int(n)
+				}
+			}
+		}
+		return len(points), totalTokens
 	}
 
 	// Initialize phase-2 domain sub-services.
