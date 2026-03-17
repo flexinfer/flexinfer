@@ -479,7 +479,62 @@ emit_progress(
 
 print(f"Saving abliterated model to {model_dir}...")
 save_start = time.time()
-model.save_pretrained(model_dir)
+try:
+    model.save_pretrained(model_dir)
+except (AttributeError, KeyError) as e:
+    # Qwen3.5 VLM + accelerate offloading: save_pretrained fails because
+    # load_offloaded_parameter can't resolve 'language_model' submodule.
+    # Fall back to saving the state dict directly via safetensors.
+    print(f"save_pretrained failed ({e}), falling back to state_dict save")
+    from safetensors.torch import save_file
+
+    state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
+    # Save in shards matching HF convention
+    shard_size = 5 * 1024**3  # 5 GB per shard
+    current_shard = {}
+    current_size = 0
+    shard_idx = 1
+    index_map = {}
+    for key, tensor in state_dict.items():
+        tensor_size = tensor.numel() * tensor.element_size()
+        if current_size + tensor_size > shard_size and current_shard:
+            shard_name = f"model-{shard_idx:05d}-of-PLACEHOLDER.safetensors"
+            save_file(current_shard, os.path.join(model_dir, shard_name))
+            for k in current_shard:
+                index_map[k] = shard_name
+            print(f"  Saved shard {shard_idx} ({current_size / 1024**3:.1f} GB)")
+            shard_idx += 1
+            current_shard = {}
+            current_size = 0
+        current_shard[key] = tensor
+        current_size += tensor_size
+    if current_shard:
+        shard_name = f"model-{shard_idx:05d}-of-PLACEHOLDER.safetensors"
+        save_file(current_shard, os.path.join(model_dir, shard_name))
+        for k in current_shard:
+            index_map[k] = shard_name
+        print(f"  Saved shard {shard_idx} ({current_size / 1024**3:.1f} GB)")
+    total_shards = shard_idx
+    # Rename PLACEHOLDER to actual count
+    for i in range(1, total_shards + 1):
+        old = os.path.join(model_dir, f"model-{i:05d}-of-PLACEHOLDER.safetensors")
+        new = os.path.join(
+            model_dir, f"model-{i:05d}-of-{total_shards:05d}.safetensors"
+        )
+        os.rename(old, new)
+        for k in index_map:
+            if index_map[k] == f"model-{i:05d}-of-PLACEHOLDER.safetensors":
+                index_map[k] = f"model-{i:05d}-of-{total_shards:05d}.safetensors"
+    # Write index file
+    index_data = {
+        "metadata": {
+            "total_size": sum(t.numel() * t.element_size() for t in state_dict.values())
+        },
+        "weight_map": index_map,
+    }
+    with open(os.path.join(model_dir, "model.safetensors.index.json"), "w") as f:
+        json.dump(index_data, f, indent=2)
+    print(f"  Wrote {total_shards} shards + index")
 print(f"Save completed in {time.time() - save_start:.1f}s")
 
 # ── Write metadata ────────────────────────────────────────────────────
