@@ -12,6 +12,7 @@ Environment variables:
 import gc
 import json
 import os
+import shutil
 import sys
 import time
 
@@ -30,8 +31,49 @@ def emit_progress(event_type, **kwargs):
     print(json.dumps(msg), flush=True)
 
 
+def reset_dir(path):
+    if os.path.exists(path):
+        shutil.rmtree(path)
+    os.makedirs(path, exist_ok=True)
+
+
+def preserve_model_metadata(src_dir, dst_dir):
+    keep_files = [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "chat_template.jinja",
+        "preprocessor_config.json",
+        "processor_config.json",
+        "merges.txt",
+        "vocab.json",
+        "tokenizer.model",
+    ]
+    for name in keep_files:
+        src = os.path.join(src_dir, name)
+        if os.path.isfile(src):
+            shutil.copy2(src, os.path.join(dst_dir, name))
+
+
+def swap_staged_model(src_dir, staged_dir, backup_dir):
+    if os.path.exists(backup_dir):
+        shutil.rmtree(backup_dir)
+    os.rename(src_dir, backup_dir)
+    try:
+        os.rename(staged_dir, src_dir)
+    except Exception:
+        if not os.path.exists(src_dir) and os.path.exists(backup_dir):
+            os.rename(backup_dir, src_dir)
+        raise
+    shutil.rmtree(backup_dir)
+
+
 # ── Config ────────────────────────────────────────────────────────────
 model_dir = os.environ["MODEL_DIR"]
+staging_dir = model_dir + ".ablit-staging"
+backup_dir = model_dir + ".ablit-backup"
 num_samples = int(os.environ["NUM_SAMPLES"])
 target_layers = os.environ["TARGET_LAYERS"]
 weight_matrices = os.environ["WEIGHT_MATRICES"].split(",")
@@ -477,64 +519,34 @@ emit_progress(
     "progress", phase="saving", percent=90.0, detail="saving abliterated model"
 )
 
-print(f"Saving abliterated model to {model_dir}...")
+print(f"Saving abliterated model to staging dir {staging_dir}...")
 save_start = time.time()
+reset_dir(staging_dir)
+preserve_model_metadata(model_dir, staging_dir)
+gc.collect()
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
 try:
-    model.save_pretrained(model_dir)
+    model.save_pretrained(
+        staging_dir,
+        safe_serialization=True,
+        max_shard_size="2GB",
+    )
 except (AttributeError, KeyError) as e:
     # Qwen3.5 VLM + accelerate offloading: save_pretrained fails because
     # load_offloaded_parameter can't resolve 'language_model' submodule.
-    # Fall back to saving the state dict directly via safetensors.
-    print(f"save_pretrained failed ({e}), falling back to state_dict save")
-    from safetensors.torch import save_file
+    # Fall back to HF Hub's sharded saver without clobbering the source dir.
+    print(f"save_pretrained failed ({e}), falling back to staged sharded save")
+    from huggingface_hub import save_torch_model
 
-    state_dict = {k: v.cpu() for k, v in model.state_dict().items()}
-    # Save in shards matching HF convention
-    shard_size = 5 * 1024**3  # 5 GB per shard
-    current_shard = {}
-    current_size = 0
-    shard_idx = 1
-    index_map = {}
-    for key, tensor in state_dict.items():
-        tensor_size = tensor.numel() * tensor.element_size()
-        if current_size + tensor_size > shard_size and current_shard:
-            shard_name = f"model-{shard_idx:05d}-of-PLACEHOLDER.safetensors"
-            save_file(current_shard, os.path.join(model_dir, shard_name))
-            for k in current_shard:
-                index_map[k] = shard_name
-            print(f"  Saved shard {shard_idx} ({current_size / 1024**3:.1f} GB)")
-            shard_idx += 1
-            current_shard = {}
-            current_size = 0
-        current_shard[key] = tensor
-        current_size += tensor_size
-    if current_shard:
-        shard_name = f"model-{shard_idx:05d}-of-PLACEHOLDER.safetensors"
-        save_file(current_shard, os.path.join(model_dir, shard_name))
-        for k in current_shard:
-            index_map[k] = shard_name
-        print(f"  Saved shard {shard_idx} ({current_size / 1024**3:.1f} GB)")
-    total_shards = shard_idx
-    # Rename PLACEHOLDER to actual count
-    for i in range(1, total_shards + 1):
-        old = os.path.join(model_dir, f"model-{i:05d}-of-PLACEHOLDER.safetensors")
-        new = os.path.join(
-            model_dir, f"model-{i:05d}-of-{total_shards:05d}.safetensors"
-        )
-        os.rename(old, new)
-        for k in index_map:
-            if index_map[k] == f"model-{i:05d}-of-PLACEHOLDER.safetensors":
-                index_map[k] = f"model-{i:05d}-of-{total_shards:05d}.safetensors"
-    # Write index file
-    index_data = {
-        "metadata": {
-            "total_size": sum(t.numel() * t.element_size() for t in state_dict.values())
-        },
-        "weight_map": index_map,
-    }
-    with open(os.path.join(model_dir, "model.safetensors.index.json"), "w") as f:
-        json.dump(index_data, f, indent=2)
-    print(f"  Wrote {total_shards} shards + index")
+    save_torch_model(
+        model,
+        staging_dir,
+        max_shard_size="2GB",
+        safe_serialization=True,
+    )
+    print("  Saved staged shards with huggingface_hub.save_torch_model")
+swap_staged_model(model_dir, staging_dir, backup_dir)
 print(f"Save completed in {time.time() - save_start:.1f}s")
 
 # ── Write metadata ────────────────────────────────────────────────────
