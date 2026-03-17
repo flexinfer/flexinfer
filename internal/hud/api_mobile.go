@@ -471,7 +471,23 @@ func (a *App) handleMobileSessionDetail(w http.ResponseWriter, r *http.Request) 
 	result := map[string]any{"session": found}
 
 	// Enrich with context inspection data (entry breakdown, top entries, tasks).
-	inspect, err := a.agent.ContextInspect(found.AgentID, found.ID, true, 200)
+	// Use a short timeout so the endpoint stays responsive even when the backend is slow.
+	type inspectResult struct {
+		data *bridge.ContextInspectResult
+		err  error
+	}
+	ch := make(chan inspectResult, 1)
+	go func() {
+		d, e := a.agent.ContextInspect(found.AgentID, found.ID, true, 20)
+		ch <- inspectResult{d, e}
+	}()
+	var inspect *bridge.ContextInspectResult
+	select {
+	case res := <-ch:
+		inspect, err = res.data, res.err
+	case <-time.After(8 * time.Second):
+		err = fmt.Errorf("context inspect timed out")
+	}
 	if err == nil && inspect != nil {
 		result["entry_breakdown"] = inspect.ByEntryType
 		result["top_entries"] = inspect.TopEntries
