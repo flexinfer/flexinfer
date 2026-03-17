@@ -38,7 +38,7 @@ spec:
     targetLayers: "auto"
     numSamples: 128
     useGPU: true
-    maxMemoryGB: 56
+    maxMemoryGB: 60
     timeoutSeconds: 43200
     skipVisionLayers: true
   quantization:
