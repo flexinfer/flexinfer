@@ -408,17 +408,17 @@ print(
 
 
 # ── Collect activations ───────────────────────────────────────────────
-def collect_activations(prompts):
+def collect_activations(prompts, stage, base_percent):
     per_layer = [[] for _ in range(total_layers)]
     for i, prompt in enumerate(prompts):
         if i % 10 == 0:
             print(f"  Collecting activations: {i}/{len(prompts)}", flush=True)
-            pct = 10.0 + (i / len(prompts)) * 30.0
+            pct = base_percent + (i / len(prompts)) * 30.0
             emit_progress(
                 "progress",
                 phase="abliterating",
                 percent=round(pct, 1),
-                detail=f"activations {i}/{len(prompts)}",
+                detail=f"{stage} activations {i}/{len(prompts)}",
             )
         inputs = tokenizer(
             prompt, return_tensors="pt", truncation=True, max_length=256, padding=False
@@ -434,13 +434,13 @@ def collect_activations(prompts):
 
 
 print("Collecting harmful activations...")
-harmful_acts = collect_activations(harmful)
+harmful_acts = collect_activations(harmful, "harmful", 10.0)
 gc.collect()
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
 
 print("Collecting harmless activations...")
-harmless_acts = collect_activations(harmless)
+harmless_acts = collect_activations(harmless, "harmless", 40.0)
 gc.collect()
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
@@ -514,9 +514,14 @@ if hasattr(model, "lm_head"):
     lm.weight.data -= torch.outer(proj, d).to(lm.weight.dtype)
     print("Abliterated lm_head")
 
+del refusal_dirs, mean_refusal, decoder_layers
+gc.collect()
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+
 # ── Save ──────────────────────────────────────────────────────────────
 emit_progress(
-    "progress", phase="saving", percent=90.0, detail="saving abliterated model"
+    "progress", phase="saving", percent=88.0, detail="preparing staged save"
 )
 
 print(f"Saving abliterated model to staging dir {staging_dir}...")
@@ -527,10 +532,16 @@ gc.collect()
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
 try:
+    # Offloaded large models can spike memory during safetensors export because
+    # tensors are materialized and cloned before writing. PyTorch bin shards use
+    # a lower-overhead save path and are fine for the downstream GPTQ loader.
+    emit_progress(
+        "progress", phase="saving", percent=90.0, detail="writing pytorch bin shards"
+    )
     model.save_pretrained(
         staging_dir,
-        safe_serialization=True,
-        max_shard_size="2GB",
+        safe_serialization=False,
+        max_shard_size="1GB",
     )
 except (AttributeError, KeyError) as e:
     # Qwen3.5 VLM + accelerate offloading: save_pretrained fails because
@@ -542,8 +553,8 @@ except (AttributeError, KeyError) as e:
     save_torch_model(
         model,
         staging_dir,
-        max_shard_size="2GB",
-        safe_serialization=True,
+        max_shard_size="1GB",
+        safe_serialization=False,
     )
     print("  Saved staged shards with huggingface_hub.save_torch_model")
 swap_staged_model(model_dir, staging_dir, backup_dir)
