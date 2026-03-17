@@ -27,7 +27,7 @@ spec:
     vramEstimateMB: 15000
   serverless:
     enabled: true
-    minReplicas: 1
+    minReplicas: 0
     idleTimeout: 60m
     coldStartTimeout: 15m
   config:

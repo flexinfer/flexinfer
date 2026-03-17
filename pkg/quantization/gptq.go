@@ -196,6 +196,20 @@ echo "Type: ${TYPE}"
 echo "Container memory limit: ${MAX_MEMORY_GB}Gi"
 echo "Start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+if [ ! -d "${MODEL_DIR}" ]; then
+    echo "ERROR: MODEL_DIR does not exist: ${MODEL_DIR}"
+    echo "Download may not have completed. Listing /cache/:"
+    ls -la /cache/ 2>/dev/null || echo "(empty or inaccessible)"
+    exit 1
+fi
+
+if [ ! -f "${MODEL_DIR}/config.json" ]; then
+    echo "ERROR: No config.json in MODEL_DIR: ${MODEL_DIR}"
+    echo "Contents:"
+    ls -la "${MODEL_DIR}/" 2>/dev/null || echo "(empty)"
+    exit 1
+fi
+
 ORIGINAL_SIZE=$(du -sb "${MODEL_DIR}" | cut -f1)
 echo "Original size: ${ORIGINAL_SIZE} bytes"
 

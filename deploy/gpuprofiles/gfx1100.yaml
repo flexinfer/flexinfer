@@ -64,4 +64,4 @@ spec:
       - gguf
       - exl2
     images:
-      gptq: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100
+      gptq: registry.harbor.lan/flexinfer/runtime:rocm-gfx1100

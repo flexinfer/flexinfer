@@ -39,7 +39,7 @@ spec:
     numSamples: 128
     useGPU: true
     maxMemoryGB: 56
-    timeoutSeconds: 7200
+    timeoutSeconds: 57600
     skipVisionLayers: true
   quantization:
     format: GPTQ
