@@ -133,7 +133,7 @@ ENV GPU_ARCH=${GPU_ARCH}
 
 # ── System dependencies ──────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl tini \
+    ca-certificates curl tini jq lsof procps psmisc \
     $(if [ "${GPU_VENDOR}" = "amd" ]; then echo "hipblas rocblas"; fi) \
     && rm -rf /var/lib/apt/lists/*
 
@@ -187,6 +187,7 @@ RUN if [ "${INCLUDE_VLLM}" = "true" ] && command -v pip >/dev/null 2>&1; then \
         prometheus-client prometheus-fastapi-instrumentator \
         py-cpuinfo psutil pyzmq uvloop \
         flash-linear-attention; \
+      pip install --no-cache-dir causal-conv1d || echo "WARN: causal-conv1d install failed"; \
     fi
 
 # ── Steam headless (conditional) ──────────────────────────────────────
@@ -220,6 +221,11 @@ RUN if [ "${INCLUDE_QUANTIZER}" = "true" ] && command -v pip >/dev/null 2>&1; th
       # oras CLI for OCI artifact push (model publishing)
       curl -fsSL https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz \
         | tar -xz -C /usr/local/bin oras; \
+    fi
+
+# ── Profiling and diagnostics tooling ────────────────────────────────
+RUN if command -v pip >/dev/null 2>&1; then \
+      pip install --no-cache-dir py-spy memray; \
     fi
 
 # ── Quantization/abliteration/finetune scripts ──────────────────────

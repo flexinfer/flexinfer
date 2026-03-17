@@ -15,8 +15,14 @@ import os
 import shutil
 import sys
 import time
+from pathlib import Path
 
 import torch
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 
 # ── Telemetry helper ──────────────────────────────────────────────────
@@ -29,6 +35,70 @@ def emit_progress(event_type, **kwargs):
     }
     msg.update(kwargs)
     print(json.dumps(msg), flush=True)
+
+
+def rss_mb():
+    if psutil is None:
+        return None
+    try:
+        return int(psutil.Process().memory_info().rss / (1024 * 1024))
+    except Exception:
+        return None
+
+
+def gpu_mem_mb():
+    if not torch.cuda.is_available():
+        return None
+    try:
+        return int(torch.cuda.memory_allocated() / (1024 * 1024))
+    except Exception:
+        return None
+
+
+def write_json_atomic(path, payload):
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
+    os.replace(tmp, path)
+
+
+def write_checkpoint(stage, status="running", **kwargs):
+    payload = {
+        "stage": stage,
+        "status": status,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "modelDir": model_dir,
+        "numSamples": num_samples,
+        "rssMB": rss_mb(),
+        "gpuMemMB": gpu_mem_mb(),
+    }
+    payload.update(kwargs)
+    write_json_atomic(checkpoint_path, payload)
+
+
+def emit_snapshot(stage, **kwargs):
+    payload = {
+        "phase": stage,
+        "rss_mb": rss_mb(),
+        "gpu_mem_mb": gpu_mem_mb(),
+    }
+    payload.update(kwargs)
+    emit_progress("snapshot", **payload)
+
+
+def verify_saved_artifacts(path):
+    p = Path(path)
+    if not p.exists():
+        raise RuntimeError(f"saved model directory missing: {path}")
+    if not (p / "config.json").is_file():
+        raise RuntimeError("saved model missing config.json")
+    shard_files = list(p.glob("*.bin")) + list(p.glob("*.safetensors"))
+    index_files = list(p.glob("*.index.json"))
+    if not shard_files and not index_files:
+        raise RuntimeError("saved model missing shard files and index")
+    if not (p / ".abliteration-status.json").exists():
+        # This file is written later; absence is expected during save verification.
+        pass
 
 
 def reset_dir(path):
@@ -74,6 +144,7 @@ def swap_staged_model(src_dir, staged_dir, backup_dir):
 model_dir = os.environ["MODEL_DIR"]
 staging_dir = model_dir + ".ablit-staging"
 backup_dir = model_dir + ".ablit-backup"
+checkpoint_path = os.path.join(model_dir, ".abliteration-checkpoint.json")
 num_samples = int(os.environ["NUM_SAMPLES"])
 target_layers = os.environ["TARGET_LAYERS"]
 weight_matrices = os.environ["WEIGHT_MATRICES"].split(",")
@@ -81,6 +152,8 @@ skip_vision = os.environ["SKIP_VISION"] == "true"
 device_map = os.environ["DEVICE_MAP"]
 
 emit_progress("start", phase="abliterating", model=model_dir, num_samples=num_samples)
+write_checkpoint("starting", model=model_dir)
+emit_snapshot("starting")
 
 print(f"Loading config from {model_dir}...")
 cfg_path = os.path.join(model_dir, "config.json")
@@ -112,6 +185,8 @@ if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
 emit_progress("progress", phase="abliterating", percent=10.0, detail="model loaded")
+write_checkpoint("loaded_model", loadSeconds=round(time.time() - load_start, 1))
+emit_snapshot("loaded_model")
 
 # ── Contrastive prompt pairs ──────────────────────────────────────────
 HARMFUL_PROMPTS = [
@@ -420,6 +495,13 @@ def collect_activations(prompts, stage, base_percent):
                 percent=round(pct, 1),
                 detail=f"{stage} activations {i}/{len(prompts)}",
             )
+            write_checkpoint(
+                f"{stage}_activations",
+                promptIndex=i,
+                promptCount=len(prompts),
+                percent=round(pct, 1),
+            )
+            emit_snapshot(f"{stage}_activations", prompt_index=i, prompt_count=len(prompts))
         inputs = tokenizer(
             prompt, return_tensors="pt", truncation=True, max_length=256, padding=False
         )
@@ -438,12 +520,16 @@ harmful_acts = collect_activations(harmful, "harmful", 10.0)
 gc.collect()
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
+write_checkpoint("harmful_activations_complete")
+emit_snapshot("harmful_activations_complete")
 
 print("Collecting harmless activations...")
 harmless_acts = collect_activations(harmless, "harmless", 40.0)
 gc.collect()
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
+write_checkpoint("harmless_activations_complete")
+emit_snapshot("harmless_activations_complete")
 
 emit_progress(
     "progress",
@@ -464,8 +550,9 @@ for i in range(total_layers):
 
 del harmful_acts, harmless_acts
 gc.collect()
-
 max_norm_layer = max(range(total_layers), key=lambda i: norms[i])
+write_checkpoint("refusal_directions_computed", maxNormLayer=max_norm_layer)
+emit_snapshot("refusal_directions_computed", max_norm_layer=max_norm_layer)
 print(
     f"Max refusal direction norm: {norms[max_norm_layer]:.4f} at layer {max_norm_layer}"
 )
@@ -501,6 +588,8 @@ for layer_idx in layer_indices:
         layers_modified += 1
 
 print(f"Abliterated {layers_modified} layers")
+write_checkpoint("layers_abliterated", layersModified=layers_modified)
+emit_snapshot("layers_abliterated", layers_modified=layers_modified)
 
 # ── Abliterate lm_head ───────────────────────────────────────────────
 mean_refusal = torch.stack(refusal_dirs).mean(0)
@@ -523,6 +612,8 @@ if torch.cuda.is_available():
 emit_progress(
     "progress", phase="saving", percent=88.0, detail="preparing staged save"
 )
+write_checkpoint("saving", percent=88.0, stagingDir=staging_dir)
+emit_snapshot("saving_prepare")
 
 print(f"Saving abliterated model to staging dir {staging_dir}...")
 save_start = time.time()
@@ -557,6 +648,9 @@ except (AttributeError, KeyError) as e:
         safe_serialization=False,
     )
     print("  Saved staged shards with huggingface_hub.save_torch_model")
+verify_saved_artifacts(staging_dir)
+write_checkpoint("saved_staging", percent=96.0)
+emit_snapshot("saved_staging")
 swap_staged_model(model_dir, staging_dir, backup_dir)
 print(f"Save completed in {time.time() - save_start:.1f}s")
 
@@ -573,6 +667,8 @@ with open("/dev/termination-log", "w") as f:
     f.write(meta_json)
 with open(os.path.join(model_dir, ".abliteration-status.json"), "w") as f:
     f.write(meta_json)
+write_checkpoint("complete", status="complete", layersModified=layers_modified, metadata=meta)
+emit_snapshot("complete", layers_modified=layers_modified)
 
 emit_progress("complete", phase="abliterating", layers_modified=layers_modified)
 print("Abliteration complete!")

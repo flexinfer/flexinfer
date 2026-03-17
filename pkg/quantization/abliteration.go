@@ -201,6 +201,16 @@ func abliterationWrapperScript() string {
 	return `set -euo pipefail
 START_TS=$(date +%s)
 
+dump_checkpoint() {
+  local checkpoint="${MODEL_DIR}/.abliteration-checkpoint.json"
+  if [ -f "${checkpoint}" ]; then
+    echo "=== Last abliteration checkpoint ==="
+    cat "${checkpoint}" || true
+  fi
+}
+
+trap 'rc=$?; if [ $rc -ne 0 ]; then dump_checkpoint; fi; exit $rc' EXIT
+
 echo "=== FlexInfer Abliteration ==="
 echo "Model: ${MODEL_DIR}"
 echo "Samples: ${NUM_SAMPLES}"

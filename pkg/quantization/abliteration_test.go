@@ -240,6 +240,9 @@ func TestAbliterationWrapperScript(t *testing.T) {
 	if !strings.Contains(script, "set -euo pipefail") {
 		t.Error("wrapper script should use strict mode")
 	}
+	if !strings.Contains(script, ".abliteration-checkpoint.json") {
+		t.Error("wrapper script should dump the last checkpoint on failure")
+	}
 }
 
 func TestBuildAbliterationJob_Tolerations(t *testing.T) {
