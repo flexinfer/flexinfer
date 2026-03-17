@@ -19,6 +19,8 @@ include:
     ref: main
     file:
       - /k3s/ci/caches/gitlab-ci-cache.yml
+  - project: "services/tech-radar"
+    file: "/ci/radar.yml"
 
 # This GitLab instance intermittently creates detached MR pipelines with
 # refs/merge-requests/*/head that fail immediately with no jobs. Run the
@@ -999,3 +1001,6 @@ build:image:custom-server:
   rules:
     - if: '$CI_COMMIT_BRANCH'
     - if: '$CI_COMMIT_TAG'
+
+radar-scan:
+  extends: .radar-scan
