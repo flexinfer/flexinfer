@@ -17,11 +17,13 @@ limitations under the License.
 package controllers
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -334,35 +336,116 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 	// Job still running — emit progress and requeue.
 	if ablitJob.Status.StartTime != nil {
 		elapsed := time.Since(ablitJob.Status.StartTime.Time).Truncate(time.Second)
-		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "AbliterationProgress",
-			fmt.Sprintf("Abliteration in progress (elapsed %s)", elapsed))
+		progressMsg := fmt.Sprintf("Abliteration in progress (elapsed %s)", elapsed)
 
-		// Update time-based progress estimate.
+		if modelCache.Status.Abliteration == nil {
+			modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
+		}
+		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseAbliterating
+		modelCache.Status.Finetune = nil
+		modelCache.Status.Quantization = nil
+		modelCache.Status.Publish = nil
+		modelCache.Status.Abliteration.FailureMessage = ""
+		modelCache.Status.Abliteration.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
+		modelCache.Status.Abliteration.StartedAt = ablitJob.Status.StartTime
+
+		// Use deadline-based progress as a fallback, but prefer structured
+		// telemetry from the running pod logs when available.
 		deadline := effectiveAbliterationDeadline(modelCache.Spec.Abliteration)
 		if deadline > 0 {
 			pct := int32(float64(elapsed.Seconds()) / float64(deadline) * 100)
 			if pct > 99 {
 				pct = 99
 			}
-			if modelCache.Status.Abliteration == nil {
-				modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
-			}
-			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseAbliterating
-			modelCache.Status.Finetune = nil
-			modelCache.Status.Quantization = nil
-			modelCache.Status.Publish = nil
 			modelCache.Status.Abliteration.Progress = &pct
-			modelCache.Status.Abliteration.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
-			if ablitJob.Status.StartTime != nil {
-				modelCache.Status.Abliteration.StartedAt = ablitJob.Status.StartTime
+		}
+
+		if telem := r.readLatestAbliterationTelemetry(ctx, modelCache.Namespace, ablitJob.Name); telem != nil {
+			if telem.Percent != nil {
+				pct := int32(*telem.Percent)
+				if pct < 0 {
+					pct = 0
+				}
+				if pct > 99 && telem.Event != "complete" {
+					pct = 99
+				}
+				modelCache.Status.Abliteration.Progress = &pct
+				metrics.JobProgressPercent.WithLabelValues(modelCache.Name, modelCache.Namespace, "abliterate").Set(float64(pct))
 			}
-			if err := r.Status().Update(ctx, modelCache); err != nil {
-				log.Error(err, "Failed to update abliteration progress")
+			if telem.Detail != "" {
+				modelCache.Status.Abliteration.ProgressDetail = telem.Detail
+				progressMsg = fmt.Sprintf("Abliteration in progress: %s", telem.Detail)
 			}
-			metrics.JobProgressPercent.WithLabelValues(modelCache.Name, modelCache.Namespace, "abliterate").Set(float64(pct))
+		} else if modelCache.Status.Abliteration.Progress != nil {
+			metrics.JobProgressPercent.WithLabelValues(modelCache.Name, modelCache.Namespace, "abliterate").Set(float64(*modelCache.Status.Abliteration.Progress))
+		}
+
+		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "AbliterationProgress", progressMsg)
+		if err := r.Status().Update(ctx, modelCache); err != nil {
+			log.Error(err, "Failed to update abliteration progress")
 		}
 	}
 	return ctrl.Result{RequeueAfter: requeueLong}, nil
+}
+
+type abliterationTelemetryEvent struct {
+	Event   string   `json:"event,omitempty"`
+	Phase   string   `json:"phase,omitempty"`
+	Percent *float64 `json:"percent,omitempty"`
+	Detail  string   `json:"detail,omitempty"`
+}
+
+func (r *ModelCacheReconciler) readLatestAbliterationTelemetry(ctx context.Context, namespace, jobName string) *abliterationTelemetryEvent {
+	if r.KubeClient == nil {
+		return nil
+	}
+
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
+		return nil
+	}
+
+	for _, pod := range podList.Items {
+		req := r.KubeClient.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+			Container: "abliterator",
+			TailLines: func() *int64 { v := int64(200); return &v }(),
+		})
+		stream, err := req.Stream(ctx)
+		if err != nil {
+			continue
+		}
+		event := scanLatestAbliterationTelemetry(stream)
+		_ = stream.Close()
+		if event != nil {
+			return event
+		}
+	}
+
+	return nil
+}
+
+func scanLatestAbliterationTelemetry(r io.Reader) *abliterationTelemetryEvent {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	var latest *abliterationTelemetryEvent
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || !strings.HasPrefix(line, "{") {
+			continue
+		}
+
+		var evt abliterationTelemetryEvent
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			continue
+		}
+		if evt.Event == "" {
+			continue
+		}
+		latest = &evt
+	}
+
+	return latest
 }
 
 // abliterationJobMetadata is parsed from the abliterator container's termination log.
