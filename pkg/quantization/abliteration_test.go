@@ -66,10 +66,15 @@ func TestBuildAbliterationJob_Defaults(t *testing.T) {
 		t.Errorf("GPU request = %q, want 1", gpuReq.String())
 	}
 
-	// Memory default (56Gi)
+	// Memory request should leave headroom for node scheduling while retaining
+	// the full runtime limit.
 	memReq := container.Resources.Requests["memory"]
-	if memReq.String() != "56Gi" {
-		t.Errorf("memory request = %q, want 56Gi", memReq.String())
+	if memReq.String() != "44Gi" {
+		t.Errorf("memory request = %q, want 44Gi", memReq.String())
+	}
+	memLimit := container.Resources.Limits["memory"]
+	if memLimit.String() != "56Gi" {
+		t.Errorf("memory limit = %q, want 56Gi", memLimit.String())
 	}
 
 	// PYTORCH_HIP_ALLOC_CONF for AMD
@@ -115,11 +120,15 @@ func TestBuildAbliterationJob_CustomSpec(t *testing.T) {
 		t.Errorf("ActiveDeadlineSeconds = %d, want 3600", *job.Spec.ActiveDeadlineSeconds)
 	}
 
-	// Custom memory
+	// Custom memory should request less than the limit.
 	container := job.Spec.Template.Spec.Containers[0]
 	memReq := container.Resources.Requests["memory"]
-	if memReq.String() != "32Gi" {
-		t.Errorf("memory request = %q, want 32Gi", memReq.String())
+	if memReq.String() != "25Gi" {
+		t.Errorf("memory request = %q, want 25Gi", memReq.String())
+	}
+	memLimit := container.Resources.Limits["memory"]
+	if memLimit.String() != "32Gi" {
+		t.Errorf("memory limit = %q, want 32Gi", memLimit.String())
 	}
 
 	// No GPU resource when UseGPU=false
@@ -332,6 +341,25 @@ func TestBuildAbliterationJob_Volumes(t *testing.T) {
 	}
 	if container.VolumeMounts[1].MountPath != "/workspace" {
 		t.Errorf("mount 1 path = %q, want /workspace", container.VolumeMounts[1].MountPath)
+	}
+}
+
+func TestMemoryRequestForLimitGB(t *testing.T) {
+	tests := []struct {
+		limit int32
+		want  int32
+	}{
+		{limit: 56, want: 44},
+		{limit: 60, want: 48},
+		{limit: 32, want: 25},
+		{limit: 8, want: 8},
+		{limit: 0, want: 1},
+	}
+
+	for _, tt := range tests {
+		if got := memoryRequestForLimitGB(tt.limit); got != tt.want {
+			t.Errorf("memoryRequestForLimitGB(%d) = %d, want %d", tt.limit, got, tt.want)
+		}
 	}
 }
 

@@ -30,6 +30,22 @@ const (
 	DefaultAbliterationNumSamples = 128
 )
 
+// memoryRequestForLimitGB keeps large single-node jobs schedulable by requesting
+// less than their peak memory limit. We still enforce the full limit at runtime.
+func memoryRequestForLimitGB(limitGB int32) int32 {
+	if limitGB <= 0 {
+		return 1
+	}
+	requestGB := (limitGB * 4) / 5
+	if requestGB < 8 {
+		requestGB = limitGB
+	}
+	if requestGB > limitGB {
+		requestGB = limitGB
+	}
+	return requestGB
+}
+
 // BuildAbliterationJob creates a Kubernetes Job that abliterates model weights on the PVC.
 // It reuses the GPTQ quantizer ROCm image (which has transformers, torch, accelerate).
 func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSpec) (*batchv1.Job, error) {
@@ -63,10 +79,11 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 	wsVol, wsMount := workspaceVolume(fmt.Sprintf("%dGi", memoryGB*2))
 
 	var env []corev1.EnvVar
+	memoryRequestGB := memoryRequestForLimitGB(memoryGB)
 	resources := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
 			corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", DefaultGPUQuantizationCPU)),
-			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryGB)),
+			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryRequestGB)),
 		},
 		Limits: corev1.ResourceList{
 			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryGB)),
