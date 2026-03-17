@@ -231,6 +231,7 @@ except ImportError:
 
 _chol = torch.linalg.cholesky
 _eigh = torch.linalg.eigh
+_svd = torch.linalg.svd
 
 def safe_cholesky(input, *, upper=False, out=None):
     try:
@@ -271,9 +272,30 @@ def safe_eigh(input, UPLO='L'):
     v = torch.from_numpy(v_np).to(dtype=input.dtype, device=input.device)
     return w, v
 
+def safe_svd(input, full_matrices=True, *, driver=None, out=None):
+    try:
+        return _svd(input, full_matrices=full_matrices, driver=driver, out=out)
+    except RuntimeError as e:
+        if 'MAGMA' not in str(e) and 'LAPACK' not in str(e):
+            raise
+    try:
+        u, s, vh = _svd(input.cpu(), full_matrices=full_matrices, driver=driver)
+        return u.to(input.device), s.to(input.device), vh.to(input.device)
+    except RuntimeError:
+        pass
+    if not _HAS_SCIPY:
+        raise RuntimeError("torch.linalg.svd needs MAGMA/LAPACK; scipy not available")
+    arr = input.detach().cpu().to(torch.float64).numpy()
+    u_np, s_np, vh_np = _scipy_la.svd(arr, full_matrices=full_matrices)
+    u = torch.from_numpy(u_np).to(dtype=input.dtype, device=input.device)
+    s = torch.from_numpy(s_np).to(dtype=input.dtype, device=input.device)
+    vh = torch.from_numpy(vh_np).to(dtype=input.dtype, device=input.device)
+    return u, s, vh
+
 torch.linalg.cholesky = safe_cholesky
 torch.linalg.eigh = safe_eigh
-print("Patched torch.linalg.cholesky/eigh with MAGMA/LAPACK/scipy fallback")
+torch.linalg.svd = safe_svd
+print("Patched torch.linalg.cholesky/eigh/svd with MAGMA/LAPACK/scipy fallback")
 sys.argv = ['quantize_gptq.py']
 runpy.run_path('/opt/flexinfer/scripts/quantize_gptq.py', run_name='__main__')
 MAGMA_PATCH
