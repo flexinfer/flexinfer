@@ -60,7 +60,11 @@ func BuildFinetuneJob(params JobParams, spec *aiv1alpha1.FinetuneSpec) (*batchv1
 	}
 
 	image := finetuneImage(params.GPUVendor, params.GPUArch)
-	if params.ProfileQuantizerImage != "" {
+	// Prefer the unified runtime image whenever it is enabled. GPUProfile
+	// overrides are only for legacy dedicated quantizer images.
+	if img := runtimeImageForQuantization(); img != "" {
+		image = img
+	} else if params.ProfileQuantizerImage != "" {
 		image = params.ProfileQuantizerImage
 	}
 	ftEnv := finetuneEnv(params.ModelPath, spec)

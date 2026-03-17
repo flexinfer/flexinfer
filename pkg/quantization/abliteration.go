@@ -48,8 +48,11 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 	}
 
 	image := abliterationImage(params.GPUVendor, params.GPUArch)
-	// GPUProfile image override takes priority.
-	if params.ProfileQuantizerImage != "" {
+	// Prefer the unified runtime image whenever it is enabled. GPUProfile
+	// overrides are only for legacy dedicated quantizer images.
+	if img := runtimeImageForQuantization(); img != "" {
+		image = img
+	} else if params.ProfileQuantizerImage != "" {
 		image = params.ProfileQuantizerImage
 	}
 	ablitEnv := abliterationEnv(params.ModelPath, ablitSpec)

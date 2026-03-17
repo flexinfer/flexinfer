@@ -91,8 +91,11 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	if params.GPUVendor == "amd" {
 		image = gptqQuantizerROCmImage(params.GPUArch)
 	}
-	// GPUProfile image override takes priority.
-	if params.ProfileQuantizerImage != "" {
+	// Prefer the unified runtime image whenever it is enabled. GPUProfile
+	// overrides are only for legacy dedicated quantizer images.
+	if img := runtimeImageForQuantization(); img != "" {
+		image = img
+	} else if params.ProfileQuantizerImage != "" {
 		image = params.ProfileQuantizerImage
 	}
 
