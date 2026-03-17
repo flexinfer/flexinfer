@@ -217,7 +217,33 @@ rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
 mkdir -p /workspace/offload
 
-python3 /opt/flexinfer/scripts/quantize_gptq.py
+# MAGMA fallback: vllm-dev base images lack MAGMA, causing torch.linalg.cholesky
+# to fail on GPU. Patch to fall back to CPU for linalg ops (adds ~50s total).
+cat > /tmp/_magma_fallback.py << 'MAGMA_PATCH'
+import torch, sys, runpy
+_chol = torch.linalg.cholesky
+_eigh = torch.linalg.eigh
+def safe_cholesky(input, *, upper=False, out=None):
+    try: return _chol(input, upper=upper, out=out)
+    except RuntimeError as e:
+        if 'MAGMA' in str(e):
+            r = _chol(input.cpu(), upper=upper)
+            return r.to(input.device)
+        raise
+def safe_eigh(input, UPLO='L'):
+    try: return _eigh(input, UPLO=UPLO)
+    except RuntimeError as e:
+        if 'MAGMA' in str(e):
+            w, v = _eigh(input.cpu(), UPLO=UPLO)
+            return w.to(input.device), v.to(input.device)
+        raise
+torch.linalg.cholesky = safe_cholesky
+torch.linalg.eigh = safe_eigh
+sys.argv = ['quantize_gptq.py']
+runpy.run_path('/opt/flexinfer/scripts/quantize_gptq.py', run_name='__main__')
+MAGMA_PATCH
+
+python3 /tmp/_magma_fallback.py
 
 trap - EXIT
 
