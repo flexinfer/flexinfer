@@ -56,7 +56,7 @@ variables:
   GOPRIVATE: "gitlab.flexinfer.ai/*"
   # Athens is the preferred in-cluster proxy; fall back to public proxy then direct
   # to reduce transient infra outages breaking CI.
-  GOPROXY: "http://athens.ci.svc.cluster.local:3000|https://proxy.golang.org|direct"
+  GOPROXY: "https://proxy.golang.org|direct"
   # Work around occasional runner fetch failures for ephemeral pipeline refs by
   # disabling shallow clones (fetch full history).
   GIT_DEPTH: "0"
