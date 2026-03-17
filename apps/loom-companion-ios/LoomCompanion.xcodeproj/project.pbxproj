@@ -46,6 +46,8 @@
 		5B3AC9E61710949784CC61BB /* DashboardData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5336E3C4F0A0451AD7F4F7E /* DashboardData.swift */; };
 		5CBA7A390991726272361590 /* CheckFleetHealthIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41BD976B82B11491D10ECF8C /* CheckFleetHealthIntent.swift */; };
 		5CF5B5DB89BBB3A35F5BD427 /* UnifiedAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEF7CF71931F67C441B7105D /* UnifiedAgent.swift */; };
+		A1B2C3D4E5F60001ABCD0001 /* SessionDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002ABCD0001 /* SessionDetail.swift */; };
+		A1B2C3D4E5F60001ABCD0002 /* AgentDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002ABCD0002 /* AgentDetailView.swift */; };
 		5F1C81A230F9A17DEFF44944 /* LoomCompanionKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0965F79DE443186E70D59245 /* LoomCompanionKit.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		64D8DEEE394682735D328772 /* SessionsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ACB13956A25A11A5A18DDD3 /* SessionsViewModel.swift */; };
 		6AE2B81B2649BD1EAC446ACC /* AlertPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C261814FE4487CE9DFEF06B6 /* AlertPolicy.swift */; };
@@ -200,6 +202,8 @@
 		5CFF203EEBD1AF6A4A2AB4D2 /* AlertsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertsViewModel.swift; sourceTree = "<group>"; };
 		5E96EE11EC79E0AB9D4A62AF /* SessionEventsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionEventsView.swift; sourceTree = "<group>"; };
 		6061C1B1FD3CAEC4C1ACC226 /* SessionInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionInfo.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60002ABCD0001 /* SessionDetail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDetail.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60002ABCD0002 /* AgentDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentDetailView.swift; sourceTree = "<group>"; };
 		6062C007A1A6883CBBFA06DA /* TasksWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksWidget.swift; sourceTree = "<group>"; };
 		62324BA9DC53973102DF1B85 /* CompactSparkline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompactSparkline.swift; sourceTree = "<group>"; };
 		6232CC3FEFE373389E79C98A /* AgentsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentsViewModel.swift; sourceTree = "<group>"; };
@@ -347,6 +351,7 @@
 		3C10E1824C1DB7C7D463EB2F /* Agents */ = {
 			isa = PBXGroup;
 			children = (
+				A1B2C3D4E5F60002ABCD0002 /* AgentDetailView.swift */,
 				6CCA5BB226DF7900CF791225 /* AgentFilterView.swift */,
 				BF4DE6146E89D4E2AC20F664 /* AgentRowView.swift */,
 				F8EBAD7BBD75B088B1545875 /* AgentsListView.swift */,
@@ -500,6 +505,7 @@
 				258CB4A2EE68D95676AB445E /* HealthSummary.swift */,
 				4A87B4846EDF0FD1ED36EAA1 /* OpsModels.swift */,
 				7AD6F95E28AFA49A9FA77CF5 /* PushRegistration.swift */,
+				A1B2C3D4E5F60002ABCD0001 /* SessionDetail.swift */,
 				6061C1B1FD3CAEC4C1ACC226 /* SessionInfo.swift */,
 				EE16EC247A9EEC51CAF2B884 /* SpawnModels.swift */,
 				D8E876D98B58CECC44EB5E5E /* TimelineEntry.swift */,
@@ -713,6 +719,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				868D489610B9531A08BE2E38 /* ActiveWorkCard.swift in Sources */,
+				A1B2C3D4E5F60001ABCD0002 /* AgentDetailView.swift in Sources */,
 				218D4749741E3B72A64549FE /* AgentFilterView.swift in Sources */,
 				9EDC4E6ED1B9DA715E54F544 /* AgentRowView.swift in Sources */,
 				B636A47B4F338A2BFC9743F2 /* AgentsListView.swift in Sources */,
@@ -810,6 +817,7 @@
 				CEA20399E44A121B9F0A26F1 /* PushRegistration.swift in Sources */,
 				CA3E87BA5DCD0F9C63673CCD /* SSEClient.swift in Sources */,
 				DCF74D2FF639DB17590A1117 /* SessionDetailViewModel.swift in Sources */,
+				A1B2C3D4E5F60001ABCD0001 /* SessionDetail.swift in Sources */,
 				CDBAA8EAA0B67766D37F3607 /* SessionInfo.swift in Sources */,
 				64D8DEEE394682735D328772 /* SessionsViewModel.swift in Sources */,
 				0FFA87D12B463707665992C1 /* SpawnModels.swift in Sources */,
