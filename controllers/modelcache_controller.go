@@ -95,6 +95,7 @@ func (r *ModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 		return ctrl.Result{}, err
 	}
+	defer r.updateCacheMetrics(modelCache, "")
 
 	// Initialize status
 	if modelCache.Status.Phase == "" {

@@ -314,7 +314,17 @@ func (r *ModelCacheReconciler) updateCacheMetrics(cache *aiv1alpha1.ModelCache, 
 	}
 
 	// Update phase metric (set 1 for current phase, 0 for others)
-	phases := []string{"Pending", "Initializing", "Provisioning", "Quantizing", "Ready", "Failed"}
+	phases := []string{
+		string(aiv1alpha1.ModelCachePhasePending),
+		string(aiv1alpha1.ModelCachePhaseInitializing),
+		string(aiv1alpha1.ModelCachePhaseProvisioning),
+		string(aiv1alpha1.ModelCachePhaseAbliterating),
+		string(aiv1alpha1.ModelCachePhaseFinetuning),
+		string(aiv1alpha1.ModelCachePhaseQuantizing),
+		string(aiv1alpha1.ModelCachePhasePublishing),
+		string(aiv1alpha1.ModelCachePhaseReady),
+		string(aiv1alpha1.ModelCachePhaseFailed),
+	}
 	for _, phase := range phases {
 		val := 0.0
 		if string(cache.Status.Phase) == phase {

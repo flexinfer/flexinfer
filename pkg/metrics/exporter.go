@@ -136,7 +136,7 @@ var (
 	ModelCachePhase = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "flexinfer_modelcache_phase",
-			Help: "Current phase of the model cache (1=Pending, 2=Initializing, 3=Provisioning, 4=Quantizing, 5=Ready, 6=Failed).",
+			Help: "Current phase of the model cache as a one-hot gauge per phase label.",
 		},
 		[]string{"cache", "namespace", "phase"},
 	)
