@@ -1944,6 +1944,36 @@ func normalizeMobilePresenceStatus(status string) string {
 	}
 }
 
+// agentSortTime returns the best available timestamp for sorting: heartbeat, then session start.
+func agentSortTime(ua unifiedAgent) time.Time {
+	if ua.LastHeartbeat != "" {
+		if t := parseMobileTime(ua.LastHeartbeat); !t.IsZero() {
+			return t
+		}
+	}
+	if ua.SessionStarted != "" {
+		if t := parseMobileTime(ua.SessionStarted); !t.IsZero() {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+// inferAgentType derives an agent type from the agent ID prefix.
+// e.g. "claude-code-552019522-65136" → "claude-code",
+//
+//	"codex-gpt5" → "codex",  "gemini-cli-776159764-96152" → "gemini-cli".
+func inferAgentType(agentID string) string {
+	prefixes := []string{"claude-code", "gemini-cli", "codex"}
+	lower := strings.ToLower(agentID)
+	for _, p := range prefixes {
+		if lower == p || strings.HasPrefix(lower, p+"-") {
+			return p
+		}
+	}
+	return "unknown"
+}
+
 func filterMobileCoordinationAgents(agents []coordination.AgentSummary, agentFilter, statusFilter string) []coordination.AgentSummary {
 	filtered := make([]coordination.AgentSummary, 0, len(agents))
 	for _, agent := range agents {
@@ -2465,9 +2495,13 @@ func (a *App) handleMobileAgents(w http.ResponseWriter, r *http.Request) {
 
 	for _, pa := range snap.Agents {
 		status := normalizeMobilePresenceStatus(pa.Status)
+		agentType := pa.AgentType
+		if agentType == "" || agentType == "unknown" {
+			agentType = inferAgentType(pa.AgentID)
+		}
 		ua := &unifiedAgent{
 			AgentID:         pa.AgentID,
-			AgentType:       pa.AgentType,
+			AgentType:       agentType,
 			Status:          status,
 			Source:          "presence",
 			Description:     pa.Description,
@@ -2504,7 +2538,7 @@ func (a *App) handleMobileAgents(w http.ResponseWriter, r *http.Request) {
 			}
 			ua := &unifiedAgent{
 				AgentID:        sess.AgentID,
-				AgentType:      "unknown",
+				AgentType:      inferAgentType(sess.AgentID),
 				Status:         status,
 				Source:         "session_only",
 				Description:    sess.Description,
@@ -2559,15 +2593,16 @@ func (a *App) handleMobileAgents(w http.ResponseWriter, r *http.Request) {
 		agents = append(agents, *ua)
 	}
 
-	// Sort: active first, then idle, then offline; within each group by last heartbeat desc.
+	// Sort: active first, then idle, then offline.
+	// Within each group sort by most-recent activity (heartbeat, then session start).
 	statusOrder := map[string]int{"active": 0, "idle": 1, "offline": 2, "unknown": 3}
 	sort.SliceStable(agents, func(i, j int) bool {
 		oi, oj := statusOrder[agents[i].Status], statusOrder[agents[j].Status]
 		if oi != oj {
 			return oi < oj
 		}
-		ti := parseMobileTime(agents[i].LastHeartbeat)
-		tj := parseMobileTime(agents[j].LastHeartbeat)
+		ti := agentSortTime(agents[i])
+		tj := agentSortTime(agents[j])
 		if ti.Equal(tj) {
 			return agents[i].AgentID < agents[j].AgentID
 		}
