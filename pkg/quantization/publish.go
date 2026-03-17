@@ -5,6 +5,7 @@ package quantization
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -143,6 +144,9 @@ func publishEnv(modelPath string, spec *aiv1alpha1.PublishSpec) []corev1.EnvVar 
 
 	if spec.OCIRef != nil && *spec.OCIRef != "" {
 		env = append(env, corev1.EnvVar{Name: "OCI_REF", Value: *spec.OCIRef})
+		if shouldUsePlainHTTP(*spec.OCIRef) {
+			env = append(env, corev1.EnvVar{Name: "OCI_PLAIN_HTTP", Value: "true"})
+		}
 	}
 	if spec.HuggingFaceRepo != nil && *spec.HuggingFaceRepo != "" {
 		env = append(env, corev1.EnvVar{Name: "HF_REPO", Value: *spec.HuggingFaceRepo})
@@ -167,6 +171,19 @@ func publishEnv(modelPath string, spec *aiv1alpha1.PublishSpec) []corev1.EnvVar 
 	}
 
 	return env
+}
+
+func shouldUsePlainHTTP(ociRef string) bool {
+	host := ociRef
+	if strings.Contains(ociRef, "://") {
+		if parsed, err := url.Parse(ociRef); err == nil && parsed.Host != "" {
+			host = parsed.Host
+		}
+	} else if idx := strings.IndexRune(ociRef, '/'); idx >= 0 {
+		host = ociRef[:idx]
+	}
+	host = strings.TrimSpace(strings.ToLower(host))
+	return strings.HasSuffix(host, ".lan")
 }
 
 // publishWrapperScript returns a bash script that runs the appropriate

@@ -16,6 +16,11 @@ import sys
 import time
 
 
+def env_truthy(name: str) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def emit_progress(event_type, **kwargs):
     msg = {
         "event": event_type,
@@ -37,10 +42,13 @@ def main():
         print(f"ERROR: MODEL_DIR does not exist: {model_dir}", file=sys.stderr)
         sys.exit(1)
 
+    registry = oci_ref.split("/")[0]
+    plain_http = env_truthy("OCI_PLAIN_HTTP") or registry.endswith(".lan")
+
     # Calculate total size for progress reporting.
     total_bytes = 0
     file_count = 0
-    for root, _, files in os.walk(model_dir):
+    for root, _, files in os.walk(model_dir, followlinks=True):
         for f in files:
             total_bytes += os.path.getsize(os.path.join(root, f))
             file_count += 1
@@ -54,14 +62,21 @@ def main():
     )
 
     # Build oras push command.
-    cmd = ["oras", "push", oci_ref]
+    cmd = ["oras", "push"]
+    if plain_http:
+        cmd.append("--plain-http")
+    # MODEL_DIR is absolute, so disable path validation for the source side.
+    cmd.append("--disable-path-validation")
+    cmd.append(oci_ref)
 
     # Login if credentials provided.
     username = os.environ.get("OCI_USERNAME", "")
     password = os.environ.get("OCI_PASSWORD", "")
     if username and password:
-        registry = oci_ref.split("/")[0]
-        login_cmd = ["oras", "login", registry, "-u", username, "-p", password]
+        login_cmd = ["oras", "login"]
+        if plain_http:
+            login_cmd.append("--plain-http")
+        login_cmd.extend([registry, "-u", username, "-p", password])
         result = subprocess.run(login_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             print(f"ERROR: oras login failed: {result.stderr}", file=sys.stderr)
@@ -70,11 +85,11 @@ def main():
 
     # Collect files to push (relative paths from model_dir).
     artifacts = []
-    for root, _, files in os.walk(model_dir):
+    for root, _, files in os.walk(model_dir, followlinks=True):
         for f in files:
             full_path = os.path.join(root, f)
             rel_path = os.path.relpath(full_path, model_dir)
-            artifacts.append(f"{full_path}:{rel_path}")
+            artifacts.append(f"{os.path.realpath(full_path)}:{rel_path}")
 
     cmd.extend(artifacts)
     cmd.extend(["--artifact-type", "application/vnd.flexinfer.model.v1"])

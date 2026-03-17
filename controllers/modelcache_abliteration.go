@@ -109,6 +109,14 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	}
 
+	// If abliteration completed and publishing is configured but not yet recorded,
+	// continue into publish instead of getting stuck in Ready.
+	if modelCache.Status.Abliteration != nil && modelCache.Status.Abliteration.FailureMessage == "" &&
+		modelCache.Spec.Publish != nil && modelCache.Status.Publish == nil &&
+		modelCache.Spec.Finetune == nil && modelCache.Spec.Quantization == nil {
+		return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+	}
+
 	// If already Ready with abliteration status and hash matches, dispatch to quantization.
 	if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady && modelCache.Status.Abliteration != nil {
 		if storedHash == "" {

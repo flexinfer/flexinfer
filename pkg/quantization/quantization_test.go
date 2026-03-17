@@ -1330,7 +1330,7 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 
 	// Wrapper script should invoke the Python script
 	script := job.Spec.Template.Spec.Containers[0].Args[0]
-	if !contains(script, "python3 /opt/flexinfer/scripts/quantize_gptq.py") {
+	if !contains(script, "/opt/flexinfer/scripts/quantize_gptq.py") {
 		t.Error("expected GPTQ wrapper script to invoke quantize_gptq.py")
 	}
 }

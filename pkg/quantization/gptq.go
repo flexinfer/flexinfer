@@ -217,28 +217,63 @@ rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
 mkdir -p /workspace/offload
 
-# MAGMA fallback: vllm-dev base images lack MAGMA, causing torch.linalg.cholesky
-# to fail on GPU. Patch to fall back to CPU for linalg ops (adds ~50s total).
+# MAGMA fallback: vllm-dev base images lack MAGMA (GPU) and LAPACK (CPU),
+# causing torch.linalg.cholesky/eigh to fail. Patch to use scipy as final
+# fallback for linalg ops needed by GPTQ Hessian inverse.
 cat > /tmp/_magma_fallback.py << 'MAGMA_PATCH'
 import torch, sys, runpy
+import numpy as np
+try:
+    import scipy.linalg as _scipy_la
+    _HAS_SCIPY = True
+except ImportError:
+    _HAS_SCIPY = False
+
 _chol = torch.linalg.cholesky
 _eigh = torch.linalg.eigh
+
 def safe_cholesky(input, *, upper=False, out=None):
-    try: return _chol(input, upper=upper, out=out)
+    try:
+        return _chol(input, upper=upper, out=out)
     except RuntimeError as e:
-        if 'MAGMA' in str(e):
-            r = _chol(input.cpu(), upper=upper)
-            return r.to(input.device)
-        raise
+        if 'MAGMA' not in str(e) and 'LAPACK' not in str(e):
+            raise
+    # GPU/CPU torch failed, try CPU torch first
+    try:
+        r = _chol(input.cpu(), upper=upper)
+        return r.to(input.device) if out is None else out.copy_(r.to(input.device))
+    except RuntimeError:
+        pass
+    # Final fallback: scipy
+    if not _HAS_SCIPY:
+        raise RuntimeError("torch.linalg.cholesky needs MAGMA/LAPACK; scipy not available")
+    arr = input.detach().cpu().to(torch.float64).numpy()
+    result = _scipy_la.cholesky(arr, lower=not upper)
+    t = torch.from_numpy(result).to(dtype=input.dtype, device=input.device)
+    return t
+
 def safe_eigh(input, UPLO='L'):
-    try: return _eigh(input, UPLO=UPLO)
+    try:
+        return _eigh(input, UPLO=UPLO)
     except RuntimeError as e:
-        if 'MAGMA' in str(e):
-            w, v = _eigh(input.cpu(), UPLO=UPLO)
-            return w.to(input.device), v.to(input.device)
-        raise
+        if 'MAGMA' not in str(e) and 'LAPACK' not in str(e):
+            raise
+    try:
+        w, v = _eigh(input.cpu(), UPLO=UPLO)
+        return w.to(input.device), v.to(input.device)
+    except RuntimeError:
+        pass
+    if not _HAS_SCIPY:
+        raise RuntimeError("torch.linalg.eigh needs MAGMA/LAPACK; scipy not available")
+    arr = input.detach().cpu().to(torch.float64).numpy()
+    w_np, v_np = _scipy_la.eigh(arr, lower=(UPLO == 'L'))
+    w = torch.from_numpy(w_np).to(dtype=input.dtype, device=input.device)
+    v = torch.from_numpy(v_np).to(dtype=input.dtype, device=input.device)
+    return w, v
+
 torch.linalg.cholesky = safe_cholesky
 torch.linalg.eigh = safe_eigh
+print("Patched torch.linalg.cholesky/eigh with MAGMA/LAPACK/scipy fallback")
 sys.argv = ['quantize_gptq.py']
 runpy.run_path('/opt/flexinfer/scripts/quantize_gptq.py', run_name='__main__')
 MAGMA_PATCH

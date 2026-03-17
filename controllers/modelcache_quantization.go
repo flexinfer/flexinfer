@@ -116,6 +116,13 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	}
 
+	// If quantization completed and publishing is configured but not yet recorded,
+	// continue into publish instead of getting stuck in Ready.
+	if modelCache.Status.Quantization != nil && modelCache.Status.Quantization.FailureMessage == "" &&
+		modelCache.Spec.Publish != nil && modelCache.Status.Publish == nil {
+		return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+	}
+
 	// If already Ready with quantization status and hash matches, nothing to do.
 	if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady && modelCache.Status.Quantization != nil {
 		// Seed the hash annotation if this is an existing cache without one.

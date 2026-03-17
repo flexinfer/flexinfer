@@ -299,17 +299,50 @@ echo "Gradient checkpointing: ${GRAD_CHECKPOINT}"
 echo "Dataset: ${DATASET_SOURCE:-$DATASET_PVC_PATH}"
 echo "Start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# Remove torchvision if present — ROCm runtime ships a version compiled
-# against a different PyTorch ABI, causing "torchvision::nms does not exist"
-# on import. Finetune does not need torchvision.
-pip uninstall -y torchvision 2>/dev/null || true
+PYTHON_BIN=python3
 
-# Install unsloth if not already present.
-pip install --no-cache-dir --quiet "unsloth[cu124-ampere-torch250]" 2>/dev/null || \
-pip install --no-cache-dir --quiet unsloth 2>/dev/null || \
-echo "WARN: unsloth install failed, falling back to transformers SFTTrainer"
+if python3 -c "import torch,sys; sys.exit(0 if getattr(torch.version, 'hip', None) else 1)" 2>/dev/null; then
+    echo "ROCm runtime detected; preparing isolated Unsloth AMD environment"
+    UNSLOTH_VENV=/workspace/unsloth-amd-venv
+    rm -rf "${UNSLOTH_VENV}"
+    if python3 -m venv "${UNSLOTH_VENV}" && \
+       . "${UNSLOTH_VENV}/bin/activate" && \
+       python -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
+       python -m pip install --no-cache-dir --upgrade \
+         torch==2.8.0 pytorch-triton-rocm torchvision torchaudio \
+         torchao==0.13.0 xformers \
+         --index-url https://download.pytorch.org/whl/rocm6.4 && \
+       python -m pip install --no-cache-dir --no-deps unsloth unsloth-zoo && \
+       python -m pip install --no-cache-dir --no-deps \
+         git+https://github.com/unslothai/unsloth-zoo.git && \
+       python -m pip install --no-cache-dir \
+         "unsloth[amd] @ git+https://github.com/unslothai/unsloth" && \
+       python -c "import torch, unsloth; print('Unsloth AMD ready:', torch.__version__, getattr(torch.version, 'hip', None))"; then
+        PYTHON_BIN=python
+    else
+        echo "WARN: Unsloth AMD environment setup failed; falling back to base runtime"
+        deactivate 2>/dev/null || true
+        rm -rf "${UNSLOTH_VENV}"
+        PYTHON_BIN=python3
+    fi
+else
+    # Remove packages that frequently break the runtime image in-place.
+    # torchvision is unnecessary for text finetuning and is often ABI-mismatched.
+    pip uninstall -y torchvision 2>/dev/null || true
 
-python3 /opt/flexinfer/scripts/finetune.py
+    pip install --no-cache-dir --quiet "unsloth[cu124-ampere-torch250]" 2>/dev/null || \
+    pip install --no-cache-dir --quiet unsloth 2>/dev/null || \
+    echo "WARN: unsloth install failed, falling back to transformers SFTTrainer"
+    CURRENT_TF=$(python3 -c "import transformers; print(transformers.__version__)" 2>/dev/null || echo "0")
+    echo "transformers ${CURRENT_TF}"
+    if ! python3 -c "import transformers.models.qwen3.modeling_qwen3" 2>/dev/null; then
+        echo "Qwen3 import failed; reinstalling compatible transformers stack"
+        pip uninstall -y torchao 2>/dev/null || true
+        pip install --no-cache-dir --quiet "transformers>=5.0" 2>/dev/null || true
+    fi
+fi
+
+${PYTHON_BIN} /opt/flexinfer/scripts/finetune.py
 
 END_TS=$(date +%s)
 DURATION=$((END_TS - START_TS))

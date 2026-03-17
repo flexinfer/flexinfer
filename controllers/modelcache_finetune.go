@@ -139,6 +139,14 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
+	// If finetuning completed and publishing is configured but not yet recorded,
+	// continue into publish instead of getting stuck in Ready.
+	if modelCache.Status.Finetune != nil && modelCache.Status.Finetune.FailureMessage == "" &&
+		modelCache.Spec.Publish != nil && modelCache.Status.Publish == nil &&
+		modelCache.Spec.Quantization == nil {
+		return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+	}
+
 	// If already Ready with finetune status and hash matches, dispatch to quantization.
 	if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady && modelCache.Status.Finetune != nil {
 		if storedHash == "" {
