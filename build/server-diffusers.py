@@ -9,6 +9,7 @@ import gc
 import os
 import io
 import base64
+import json
 import uuid
 import time
 import sys
@@ -417,6 +418,33 @@ def _detect_model_format(model_path: str) -> tuple:
     return "unknown", model_path
 
 
+def _read_model_index_class_name(model_path: str) -> Optional[str]:
+    """Return the diffusers pipeline class declared in model_index.json, if present."""
+    if not model_path or not os.path.isdir(model_path):
+        return None
+
+    model_index = os.path.join(model_path, "model_index.json")
+    if not os.path.isfile(model_index):
+        return None
+
+    try:
+        with open(model_index, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        class_name = payload.get("_class_name")
+        if isinstance(class_name, str) and class_name.strip():
+            return class_name.strip()
+    except Exception as exc:
+        print(f"WARNING: failed to read model_index.json from {model_path}: {exc}")
+        sys.stdout.flush()
+    return None
+
+
+def _model_index_is_flux(class_name: Optional[str]) -> bool:
+    if not class_name:
+        return False
+    return class_name in ("FluxPipeline", "FluxFillPipeline")
+
+
 def _load_single_file(checkpoint_path: str, model_id: str, dtype, vae=None):
     """Load a pipeline from a single safetensors checkpoint (CivitAI format).
 
@@ -564,6 +592,13 @@ def load_pipeline(model_id: str):
     print(f"Detected model format: {model_format}")
     sys.stdout.flush()
 
+    model_index_class = None
+    if model_format == "diffusers":
+        model_index_class = _read_model_index_class_name(resolved_path)
+        if model_index_class:
+            print(f"Detected diffusers pipeline class: {model_index_class}")
+            sys.stdout.flush()
+
     if model_format == "single_file":
         # Single safetensors checkpoint (CivitAI, etc.)
         pipeline = _load_single_file(resolved_path, model_id, dtype, vae=vae)
@@ -593,9 +628,14 @@ def load_pipeline(model_id: str):
         # Prevents NameError when non-FLUX pipelines check quant_mode for offload decisions.
         quant_mode = os.environ.get("QUANTIZATION", "").lower()
 
-        # FLUX pipelines: detect from model_id and use explicit pipeline classes.
-        # FLUX doesn't use safety_checker or custom VAE overrides.
-        if _is_flux(model_id):
+        # Prefer the cached diffusers metadata when present; repo-name heuristics are only
+        # a fallback for remote or legacy layouts without model_index.json.
+        is_flux_pipeline = _model_index_is_flux(model_index_class) or (
+            model_index_class is None and _is_flux(model_id)
+        )
+
+        # FLUX pipelines use explicit classes and do not use safety_checker or custom VAE overrides.
+        if is_flux_pipeline:
             flux_kwargs = {
                 k: v
                 for k, v in pipeline_kwargs.items()
