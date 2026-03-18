@@ -16,6 +16,7 @@ import os
 import shutil
 import sys
 import time
+import ctypes
 from pathlib import Path
 
 import torch
@@ -85,6 +86,19 @@ def emit_snapshot(stage, **kwargs):
     }
     payload.update(kwargs)
     emit_progress("snapshot", **payload)
+
+
+def release_memory(stage=None, **kwargs):
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except Exception:
+        pass
+    if stage is not None:
+        emit_snapshot(stage, **kwargs)
 
 
 def verify_saved_artifacts(path):
@@ -624,8 +638,8 @@ print(
 
 
 # ── Collect activations ───────────────────────────────────────────────
-def collect_activations(prompts, stage, base_percent):
-    per_layer = [[] for _ in range(total_layers)]
+def collect_activation_means(prompts, stage, base_percent):
+    per_layer_sum = [None for _ in range(total_layers)]
     for i, prompt in enumerate(prompts):
         if i % 10 == 0:
             print(f"  Collecting activations: {i}/{len(prompts)}", flush=True)
@@ -650,27 +664,27 @@ def collect_activations(prompts, stage, base_percent):
         with torch.no_grad():
             out = model(**inputs, output_hidden_states=True)
         for layer_idx in range(total_layers):
-            h = out.hidden_states[layer_idx + 1]
-            per_layer[layer_idx].append(h[0, -1, :].cpu().float())
-        del out, inputs
-    return [torch.stack(acts) for acts in per_layer]
+            h = out.hidden_states[layer_idx + 1][0, -1, :].detach().to(
+                device="cpu", dtype=torch.float32
+            )
+            if per_layer_sum[layer_idx] is None:
+                per_layer_sum[layer_idx] = h.clone()
+            else:
+                per_layer_sum[layer_idx].add_(h)
+        del out, inputs, h
+    count = float(len(prompts))
+    return [tensor.div_(count) for tensor in per_layer_sum]
 
 
 print("Collecting harmful activations...")
-harmful_acts = collect_activations(harmful, "harmful", 10.0)
-gc.collect()
-if torch.cuda.is_available():
-    torch.cuda.empty_cache()
+harmful_means = collect_activation_means(harmful, "harmful", 10.0)
+release_memory("harmful_activations_complete")
 write_checkpoint("harmful_activations_complete")
-emit_snapshot("harmful_activations_complete")
 
 print("Collecting harmless activations...")
-harmless_acts = collect_activations(harmless, "harmless", 40.0)
-gc.collect()
-if torch.cuda.is_available():
-    torch.cuda.empty_cache()
+harmless_means = collect_activation_means(harmless, "harmless", 40.0)
+release_memory("harmless_activations_complete")
 write_checkpoint("harmless_activations_complete")
-emit_snapshot("harmless_activations_complete")
 
 emit_progress(
     "progress",
@@ -684,13 +698,13 @@ print("Computing refusal directions...")
 refusal_dirs = []
 norms = []
 for i in range(total_layers):
-    diff = harmful_acts[i].mean(0) - harmless_acts[i].mean(0)
+    diff = harmful_means[i] - harmless_means[i]
     norm = diff.norm().item()
     norms.append(norm)
     refusal_dirs.append(diff / diff.norm())
 
-del harmful_acts, harmless_acts
-gc.collect()
+del harmful_means, harmless_means
+release_memory("refusal_directions_ready")
 max_norm_layer = max(range(total_layers), key=lambda i: norms[i])
 write_checkpoint("refusal_directions_computed", maxNormLayer=max_norm_layer)
 emit_snapshot("refusal_directions_computed", max_norm_layer=max_norm_layer)
@@ -745,9 +759,7 @@ if hasattr(model, "lm_head"):
     print("Abliterated lm_head")
 
 del refusal_dirs, mean_refusal, decoder_layers
-gc.collect()
-if torch.cuda.is_available():
-    torch.cuda.empty_cache()
+release_memory("saving_prerelease")
 
 # ── Save ──────────────────────────────────────────────────────────────
 emit_progress(
