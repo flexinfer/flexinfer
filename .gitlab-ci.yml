@@ -428,6 +428,9 @@ test:unit:
   stage: test
   variables:
     GO_WARM_MOD_CACHE: "false"
+    # Disable CGo so packages importing fi-accel use the pure-Go fallback
+    # (the fi-accel C header is not installed on CI runners).
+    CGO_ENABLED: "0"
     KUBERNETES_CPU_REQUEST: "2"
     KUBERNETES_CPU_LIMIT: "4"
     KUBERNETES_MEMORY_REQUEST: "4Gi"
@@ -517,6 +520,11 @@ test:integration:
 test:enterprise-smoke:
   <<: *go-template
   stage: test
+  variables:
+    GO_WARM_MOD_CACHE: "false"
+    # Disable CGo so packages importing fi-accel use the pure-Go fallback
+    # (the fi-accel C header is not installed on CI runners).
+    CGO_ENABLED: "0"
   script:
     - bash scripts/ci/enterprise_smoke_suite.sh
 
