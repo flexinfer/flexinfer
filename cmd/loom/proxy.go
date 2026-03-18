@@ -104,6 +104,12 @@ type proxyTransportError struct {
 func (e *proxyTransportError) Error() string { return e.err.Error() }
 func (e *proxyTransportError) Unwrap() error { return e.err }
 
+type proxyDaemonErrorData struct {
+	Code      string `json:"code"`
+	Stage     string `json:"stage"`
+	Retryable bool   `json:"retryable"`
+}
+
 // runProxyWithHint wraps runProxy with agent-hint and remote support.
 // When agentHint is set, the proxy fires async heartbeats to the HUD
 // on each tool call, providing universal presence for hookless platforms.
@@ -1107,6 +1113,9 @@ func proxyRPCRecvSkipNotifications(ctx context.Context, daemon mcp.Transport, op
 			proxyForwardNotification(ctx, resp)
 			continue
 		}
+		if err := proxyRetryableDaemonResponse(resp); err != nil {
+			return nil, err
+		}
 		return resp, nil
 	}
 }
@@ -1160,6 +1169,9 @@ func proxyDaemonRoundTripWithTimeout(ctx context.Context, daemon mcp.Transport, 
 		if resp.ID == nil && resp.Method != "" {
 			proxyForwardNotification(ctx, resp)
 			continue
+		}
+		if err := proxyRetryableDaemonResponse(resp); err != nil {
+			return nil, err
 		}
 		return resp, nil
 	}
@@ -1261,6 +1273,86 @@ func proxyRPCPhaseError(operation, phase string, timeout time.Duration, err erro
 		inner = fmt.Errorf("%s failed during %s: %w", op, phase, err)
 	}
 	return &proxyTransportError{err: inner}
+}
+
+func proxyRetryableDaemonResponse(resp *mcp.Message) error {
+	if resp == nil || resp.Error == nil || resp.Error.Data == nil {
+		return nil
+	}
+
+	meta, ok := proxyParseDaemonErrorData(resp.Error.Data)
+	if !ok || !meta.Retryable {
+		return nil
+	}
+
+	switch meta.Code {
+	case "TRANSPORT_FAILURE", "TRANSPORT_CORRUPTION":
+		return &proxyTransportError{err: fmt.Errorf("daemon reported retryable %s: %s",
+			strings.ToLower(strings.ReplaceAll(meta.Code, "_", " ")),
+			resp.Error.Message)}
+	default:
+		return nil
+	}
+}
+
+func proxyParseDaemonErrorData(data any) (proxyDaemonErrorData, bool) {
+	switch typed := data.(type) {
+	case proxyDaemonErrorData:
+		return typed, true
+	case *proxyDaemonErrorData:
+		if typed != nil {
+			return *typed, true
+		}
+		return proxyDaemonErrorData{}, false
+	case map[string]any:
+		return proxyDaemonErrorData{
+			Code:      proxyDaemonErrorString(typed["code"]),
+			Stage:     proxyDaemonErrorString(typed["stage"]),
+			Retryable: proxyDaemonErrorBool(typed["retryable"]),
+		}, true
+	case json.RawMessage:
+		var meta proxyDaemonErrorData
+		if err := json.Unmarshal(typed, &meta); err == nil {
+			return meta, true
+		}
+	case []byte:
+		var meta proxyDaemonErrorData
+		if err := json.Unmarshal(typed, &meta); err == nil {
+			return meta, true
+		}
+	default:
+		raw, err := json.Marshal(data)
+		if err == nil {
+			var meta proxyDaemonErrorData
+			if err := json.Unmarshal(raw, &meta); err == nil {
+				return meta, true
+			}
+		}
+	}
+
+	return proxyDaemonErrorData{}, false
+}
+
+func proxyDaemonErrorString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case fmt.Stringer:
+		return typed.String()
+	default:
+		return ""
+	}
+}
+
+func proxyDaemonErrorBool(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(typed, "true")
+	default:
+		return false
+	}
 }
 
 func shouldResetDaemonTransport(err error) bool {

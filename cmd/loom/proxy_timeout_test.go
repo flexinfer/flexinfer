@@ -203,6 +203,60 @@ func TestProxyDaemonRoundTripSendFailureReturnsTransportError(t *testing.T) {
 	}
 }
 
+func TestProxyDaemonRoundTrip_RetryableDaemonTransportFailureBecomesTransportError(t *testing.T) {
+	req, _ := mcp.NewRequest(1, "tools/call", map[string]any{"name": "noop"})
+	_, err := proxyDaemonRoundTrip(context.Background(), &stubTransport{
+		recvMsg: &mcp.Message{
+			JSONRPC: mcp.JSONRPCVersion,
+			ID:      json.RawMessage(`1`),
+			Error: &mcp.Error{
+				Code:    mcp.InternalError,
+				Message: "transport closed",
+				Data: map[string]any{
+					"code":      "TRANSPORT_FAILURE",
+					"stage":     "execute",
+					"retryable": true,
+				},
+			},
+		},
+	}, req, "tools/call")
+	if err == nil {
+		t.Fatal("expected retryable daemon transport failure to surface as error")
+	}
+	var transportErr *proxyTransportError
+	if !errors.As(err, &transportErr) {
+		t.Fatalf("expected proxyTransportError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "daemon reported retryable transport failure") {
+		t.Fatalf("unexpected error message: %q", err.Error())
+	}
+}
+
+func TestProxyDaemonRoundTrip_RetryableTimeoutDaemonErrorPassesThrough(t *testing.T) {
+	req, _ := mcp.NewRequest(1, "tools/call", map[string]any{"name": "noop"})
+	resp, err := proxyDaemonRoundTrip(context.Background(), &stubTransport{
+		recvMsg: &mcp.Message{
+			JSONRPC: mcp.JSONRPCVersion,
+			ID:      json.RawMessage(`1`),
+			Error: &mcp.Error{
+				Code:    mcp.InternalError,
+				Message: "timed out",
+				Data: map[string]any{
+					"code":      "TIMEOUT",
+					"stage":     "execute",
+					"retryable": true,
+				},
+			},
+		},
+	}, req, "tools/call")
+	if err != nil {
+		t.Fatalf("expected timeout response to pass through, got error: %v", err)
+	}
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected daemon error response")
+	}
+}
+
 func TestProxyDeriveTimeoutFromArguments(t *testing.T) {
 	tests := []struct {
 		name string
