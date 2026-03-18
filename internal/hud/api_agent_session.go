@@ -40,24 +40,24 @@ func (a *App) handleAgentSessionStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Broadcast a granular SSE event immediately so the overlay reacts in <100ms.
-	a.broadcastAgentEvent("agent.session.start", map[string]any{
-		"session_id": result.SessionID,
-		"agent_id":   body.AgentID,
-		"agent_type": body.AgentType,
-		"namespace":  body.Namespace,
-	})
-
-	// Increment daily KPI counter.
 	if !result.AlreadyExisted {
+		// Broadcast a granular SSE event immediately so the overlay reacts in <100ms.
+		a.broadcastAgentEvent("agent.session.start", map[string]any{
+			"session_id": result.SessionID,
+			"agent_id":   body.AgentID,
+			"agent_type": body.AgentType,
+			"namespace":  body.Namespace,
+		})
+
+		// Increment daily KPI counter.
 		a.fleetMonitor.IncrementKPI("sessions", 1)
+
+		// Async fleet refresh for full snapshot consistency (non-blocking).
+		go a.fleetMonitor.Refresh()
+
+		// Async sandbox auto-provision: if policy says auto_provision, detect + build sandbox.
+		go a.maybeAutoProvisionSandbox(body.Namespace)
 	}
-
-	// Async fleet refresh for full snapshot consistency (non-blocking).
-	go a.fleetMonitor.Refresh()
-
-	// Async sandbox auto-provision: if policy says auto_provision, detect + build sandbox.
-	go a.maybeAutoProvisionSandbox(body.Namespace)
 
 	a.writeJSON(w, http.StatusOK, result)
 }

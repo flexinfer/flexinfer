@@ -137,6 +137,18 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 	// Bound this lookup to avoid delaying startup if agent-context is slow.
 	if existing, err := a.getActiveSession(p.AgentID, sessionStartActiveLookupTimeout); err == nil && existing != nil {
 		if existing.Namespace == p.Namespace && existing.Status == "active" {
+			presenceArgs := map[string]any{
+				"agent_id":   p.AgentID,
+				"session_id": existing.ID,
+			}
+			if p.AgentType != "" {
+				presenceArgs["agent_type"] = p.AgentType
+			}
+			if p.Description != "" {
+				presenceArgs["description"] = p.Description
+			}
+			go func() { _ = a.callAgentTool("agent_presence_register", presenceArgs, nil) }()
+
 			return &SessionStartResult{
 				SessionID:      existing.ID,
 				AlreadyExisted: true,

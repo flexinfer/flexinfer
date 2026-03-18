@@ -1218,6 +1218,7 @@ func TestAgentBridge_StartSession_AutoRecallUsesStrategyArgs(t *testing.T) {
 func TestAgentBridge_StartSession_IdempotentForSameNamespace(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 	sessionStartCalls := 0
+	presenceRegisterCalls := make(chan map[string]any, 1)
 
 	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
 		var req struct {
@@ -1234,6 +1235,17 @@ func TestAgentBridge_StartSession_IdempotentForSameNamespace(t *testing.T) {
 				"isError": false,
 				"content": []map[string]any{
 					{"type": "text", "text": `{"sessions":[{"id":"sess-existing","agent_id":"codex-gpt5","namespace":"loom-core/main","status":"active"}]}`},
+				},
+			}, nil
+		case "agent_context__agent_presence_register":
+			select {
+			case presenceRegisterCalls <- req.Arguments:
+			default:
+			}
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"ok":true}`},
 				},
 			}, nil
 		case "agent_context__agent_session_start":
@@ -1276,6 +1288,14 @@ func TestAgentBridge_StartSession_IdempotentForSameNamespace(t *testing.T) {
 	}
 	if sessionStartCalls != 0 {
 		t.Fatalf("session_start calls = %d, want 0", sessionStartCalls)
+	}
+	select {
+	case args := <-presenceRegisterCalls:
+		if got, _ := args["session_id"].(string); got != "sess-existing" {
+			t.Fatalf("presence register session_id = %q, want sess-existing", got)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected presence register call for reused session")
 	}
 }
 

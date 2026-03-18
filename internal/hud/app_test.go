@@ -1056,8 +1056,9 @@ func TestHandler_MobileToken_DeniedOnDirectAgentMutationRoute(t *testing.T) {
 }
 
 func TestHandler_AgentSessionStart_IdempotentForSameNamespace(t *testing.T) {
-	_, mux, handlers := newTestAppWithHandlers(t)
+	app, mux, handlers := newTestAppWithHandlers(t)
 	sessionStartCalls := 0
+	initialEvents := app.eventLog.Len()
 
 	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
 		var req struct {
@@ -1103,6 +1104,9 @@ func TestHandler_AgentSessionStart_IdempotentForSameNamespace(t *testing.T) {
 	}
 	if sessionStartCalls != 0 {
 		t.Fatalf("session_start calls = %d, want 0", sessionStartCalls)
+	}
+	if got := app.eventLog.Len(); got != initialEvents {
+		t.Fatalf("eventLog.Len() = %d, want %d for already_existed session start", got, initialEvents)
 	}
 }
 
