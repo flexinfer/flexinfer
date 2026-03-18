@@ -14,6 +14,8 @@
     idleCount = 0,
     offlineCount = 0,
     claimedFilesCount = 0,
+    showOfflineAgents = false,
+    hiddenOfflineCount = 0,
     agentView = 'cards',
     onOpenDispatch = () => {},
     onOpenNudge = () => {},
@@ -98,6 +100,18 @@
     return result;
   });
 
+  let sortedAgents = $derived.by(() => {
+    const statusOrder = { active: 0, idle: 1, offline: 2 };
+    return [...agents].sort((left, right) => {
+      const statusDelta = (statusOrder[left.status] ?? 9) - (statusOrder[right.status] ?? 9);
+      if (statusDelta !== 0) return statusDelta;
+      const leftHeartbeat = new Date(left.last_heartbeat || 0).getTime();
+      const rightHeartbeat = new Date(right.last_heartbeat || 0).getTime();
+      if (leftHeartbeat !== rightHeartbeat) return rightHeartbeat - leftHeartbeat;
+      return (left.agent_id || '').localeCompare(right.agent_id || '');
+    });
+  });
+
   function presenceStatus(status) {
     const map = {
       active: 'healthy',
@@ -119,6 +133,17 @@
 </script>
 
 {#if agentView === 'cards'}
+  {#if hiddenOfflineCount > 0}
+    <div class="status-banner">
+      <span class="status-banner-label">Showing live agents</span>
+      <span class="status-banner-copy">{hiddenOfflineCount} offline {hiddenOfflineCount === 1 ? 'entry is' : 'entries are'} hidden to keep this view focused.</span>
+    </div>
+  {:else if showOfflineAgents && offlineCount > 0}
+    <div class="status-banner status-banner-muted">
+      <span class="status-banner-label">Showing all agents</span>
+      <span class="status-banner-copy">Offline entries are included for lifecycle tracing.</span>
+    </div>
+  {/if}
   {#if branchCollisions.length > 0}
     <div class="conflict-banner">
       <span class="conflict-icon">⚠</span>
@@ -132,7 +157,7 @@
     </div>
   {/if}
   <div class="cards-grid">
-    {#each agents as agent (agent.agent_id)}
+    {#each sortedAgents as agent (agent.agent_id)}
       <AgentCard
         {agent}
         heartbeatData={heartbeatDataMap.get(agent.agent_id) ?? []}
@@ -149,8 +174,19 @@
     <div class="card agents-card">
       <div class="card-header">
         <span class="card-title">Agent Presence</span>
-        <span class="count-badge">{activeCount + idleCount}</span>
+        <span class="count-badge">{sortedAgents.length}</span>
       </div>
+      {#if hiddenOfflineCount > 0}
+        <div class="status-banner">
+          <span class="status-banner-label">Live focus</span>
+          <span class="status-banner-copy">{hiddenOfflineCount} offline {hiddenOfflineCount === 1 ? 'entry is' : 'entries are'} hidden from the table.</span>
+        </div>
+      {:else if showOfflineAgents && offlineCount > 0}
+        <div class="status-banner status-banner-muted">
+          <span class="status-banner-label">Lifecycle view</span>
+          <span class="status-banner-copy">Offline agents stay visible here for cleanup and churn debugging.</span>
+        </div>
+      {/if}
       {#if branchCollisions.length > 0}
         <div class="conflict-banner">
           <span class="conflict-icon">⚠</span>
@@ -163,12 +199,12 @@
           {/each}
         </div>
       {/if}
-      {#if agents.length === 0}
+      {#if sortedAgents.length === 0}
         <EmptyState icon={'\u25A3'} heading="No registered agents" compact />
       {:else}
         <DataTable
           columns={agentColumns}
-          rows={agents}
+          rows={sortedAgents}
           idKey="agent_id"
         >
           {#snippet row({ row: agent })}
@@ -309,6 +345,40 @@
     margin: 8px 0;
     font-size: 12px;
     color: var(--warning);
+  }
+
+  .status-banner {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 10px 14px;
+    margin: 8px 0;
+    border-radius: var(--border-radius);
+    border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+
+  .status-banner-muted {
+    border-color: color-mix(in srgb, var(--fg-muted) 18%, var(--border));
+    background: color-mix(in srgb, var(--fg-muted) 8%, transparent);
+  }
+
+  .status-banner-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .status-banner-muted .status-banner-label {
+    color: var(--fg-secondary);
+  }
+
+  .status-banner-copy {
+    font-size: 12px;
+    color: var(--fg-secondary);
   }
 
   .conflict-icon {

@@ -21,6 +21,10 @@
   let claims = $derived(presenceStore.claims ?? []);
   let worktrees = $derived(presenceStore.worktrees ?? []);
   let fileConflicts = $derived(presenceStore.fileConflicts);
+  let showOfflineAgents = $state(false);
+  let visibleAgents = $derived(
+    showOfflineAgents ? agents : agents.filter((agent) => agent.status !== 'offline')
+  );
 
   // --- Tab management ---
   let activeTab = $state('agents');
@@ -69,6 +73,26 @@
       </span>
     {/if}
     {#if activeTab === 'agents'}
+      <div class="agent-filter-toggle">
+        <button
+          class="filter-chip"
+          class:active={!showOfflineAgents}
+          onclick={() => { showOfflineAgents = false; }}
+          title="Show active and idle agents"
+        >
+          Live
+          <span class="filter-chip-count">{presenceStore.activeCount + presenceStore.idleCount}</span>
+        </button>
+        <button
+          class="filter-chip"
+          class:active={showOfflineAgents}
+          onclick={() => { showOfflineAgents = true; }}
+          title="Include offline agents"
+        >
+          All
+          <span class="filter-chip-count">{agents.length}</span>
+        </button>
+      </div>
       <div class="view-toggle">
         <button class="toggle-btn" class:active={agentView === 'cards'} onclick={() => { agentView = 'cards'; }} title="Card view">{'\u25A3'}</button>
         <button class="toggle-btn" class:active={agentView === 'table'} onclick={() => { agentView = 'table'; }} title="Table view">{'\u2261'}</button>
@@ -79,13 +103,15 @@
   <div class="tab-content">
     {#if activeTab === 'agents'}
       <PresenceAgentsTab
-        {agents}
+        agents={visibleAgents}
         {claims}
         {worktrees}
         activeCount={presenceStore.activeCount}
         idleCount={presenceStore.idleCount}
         offlineCount={presenceStore.offlineCount}
         claimedFilesCount={presenceStore.claimedFiles.length}
+        showOfflineAgents={showOfflineAgents}
+        hiddenOfflineCount={showOfflineAgents ? 0 : presenceStore.offlineCount}
         {agentView}
         onOpenDispatch={(agentId) => presenceActionsStore.onOpenDispatch(agentId)}
         onOpenNudge={(agentId) => presenceActionsStore.onOpenNudge(agentId)}
@@ -201,6 +227,47 @@
   }
 
   .tab-spacer { flex: 1; }
+
+  .agent-filter-toggle {
+    display: flex;
+    gap: 4px;
+    margin-right: 6px;
+    padding: 2px;
+    background: var(--bg-primary);
+    border-radius: var(--radius-sm);
+  }
+
+  .filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    font-size: 11px;
+    color: var(--fg-muted);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    line-height: 1;
+  }
+
+  .filter-chip:hover {
+    color: var(--fg-primary);
+    background: var(--bg-tertiary);
+  }
+
+  .filter-chip.active {
+    color: var(--fg-primary);
+    background: var(--bg-tertiary);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+
+  .filter-chip-count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: inherit;
+    opacity: 0.85;
+  }
 
   .view-toggle {
     display: flex;
