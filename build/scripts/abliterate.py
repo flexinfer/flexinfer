@@ -230,6 +230,39 @@ def verify_saved_artifacts(path):
         pass
 
 
+def materialize_state_dict_for_save(model):
+    meta_device = torch.device("meta")
+    try:
+        from accelerate.utils.modeling import get_state_dict_offloaded_model
+
+        state_dict = get_state_dict_offloaded_model(model)
+        source = "accelerate-offload"
+    except Exception as exc:
+        print(
+            f"Offload-aware state_dict export unavailable ({exc}), falling back to model.state_dict()"
+        )
+        state_dict = model.state_dict()
+        source = "model.state_dict"
+
+    materialized = {}
+    meta_keys = []
+    for key, value in state_dict.items():
+        if getattr(value, "device", None) == meta_device or getattr(value, "is_meta", False):
+            meta_keys.append(key)
+            continue
+        materialized[key] = value.detach().to("cpu") if hasattr(value, "detach") else value
+
+    if meta_keys:
+        preview = ", ".join(meta_keys[:8])
+        if len(meta_keys) > 8:
+            preview += ", ..."
+        raise RuntimeError(
+            f"state_dict export left {len(meta_keys)} meta tensors unsaved: {preview}"
+        )
+
+    return materialized, source
+
+
 def free_bytes(path):
     stat = os.statvfs(path)
     return stat.f_bavail * stat.f_frsize
@@ -1065,7 +1098,7 @@ if save_format == "safetensors":
     print(
         f"Using {save_format} save path for model_type={model_type or 'unknown'}"
     )
-    from huggingface_hub import save_torch_model
+    from huggingface_hub import save_torch_state_dict
 
     emit_progress(
         "progress",
@@ -1077,53 +1110,51 @@ if save_format == "safetensors":
         removed = remove_weight_artifacts(model_dir)
         print(f"Removed {len(removed)} old weight artifacts for in-place save")
         emit_snapshot("saving_inplace_prepare", removed_artifacts=len(removed))
-    save_torch_model(
-        model,
+    state_dict, state_dict_source = materialize_state_dict_for_save(model)
+    emit_snapshot(
+        "saving_state_dict_materialized",
+        source=state_dict_source,
+        tensors=len(state_dict),
+    )
+    save_torch_state_dict(
+        state_dict,
         save_dir,
         max_shard_size=save_max_shard_size,
         safe_serialization=True,
         shared_tensors_to_discard=tied_weights,
     )
-    print("  Saved staged shards with huggingface_hub.save_torch_model")
+    del state_dict
+    gc.collect()
+    print(f"  Saved staged shards from {state_dict_source}")
 else:
-    try:
-        # Offloaded large models can spike memory during safetensors export because
-        # tensors are materialized and cloned before writing. PyTorch bin shards use
-        # a lower-overhead save path and are fine for the downstream GPTQ loader.
-        emit_progress(
-            "progress",
-            phase="saving",
-            percent=90.0,
-            detail=f"writing pytorch bin shards ({save_policy})",
-        )
-        if save_policy == "inplace":
-            removed = remove_weight_artifacts(model_dir)
-            print(f"Removed {len(removed)} old weight artifacts for in-place save")
-            emit_snapshot("saving_inplace_prepare", removed_artifacts=len(removed))
-        model.save_pretrained(
-            save_dir,
-            safe_serialization=False,
-            max_shard_size=save_max_shard_size,
-        )
-    except (AttributeError, KeyError, RuntimeError) as e:
-        # Accelerate offloading can fail in save_pretrained when load_offloaded_parameter
-        # cannot resolve nested submodules. Fall back to HF Hub's sharded saver without
-        # clobbering the source dir.
-        print(f"save_pretrained failed ({e}), falling back to staged safetensors save")
-        from huggingface_hub import save_torch_model
+    from huggingface_hub import save_torch_state_dict
 
-        if save_policy == "inplace":
-            removed = remove_weight_artifacts(model_dir)
-            print(f"Removed {len(removed)} old weight artifacts for in-place fallback")
-            emit_snapshot("saving_inplace_prepare", removed_artifacts=len(removed))
-        save_torch_model(
-            model,
-            save_dir,
-            max_shard_size=save_max_shard_size,
-            safe_serialization=True,
-            shared_tensors_to_discard=tied_weights,
-        )
-        print("  Saved staged shards with huggingface_hub.save_torch_model")
+    emit_progress(
+        "progress",
+        phase="saving",
+        percent=90.0,
+        detail=f"writing pytorch bin shards ({save_policy})",
+    )
+    if save_policy == "inplace":
+        removed = remove_weight_artifacts(model_dir)
+        print(f"Removed {len(removed)} old weight artifacts for in-place save")
+        emit_snapshot("saving_inplace_prepare", removed_artifacts=len(removed))
+    state_dict, state_dict_source = materialize_state_dict_for_save(model)
+    emit_snapshot(
+        "saving_state_dict_materialized",
+        source=state_dict_source,
+        tensors=len(state_dict),
+    )
+    save_torch_state_dict(
+        state_dict,
+        save_dir,
+        max_shard_size=save_max_shard_size,
+        safe_serialization=False,
+        shared_tensors_to_discard=tied_weights,
+    )
+    del state_dict
+    gc.collect()
+    print(f"  Saved staged shards from {state_dict_source}")
 verify_saved_artifacts(save_dir)
 write_checkpoint("saved_staging", percent=96.0)
 emit_snapshot("saved_staging")
