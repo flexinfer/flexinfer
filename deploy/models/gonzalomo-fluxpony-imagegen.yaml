@@ -24,9 +24,15 @@ spec:
     # Use the canonical diffusers repo directly so the unified runtime loads a
     # verified multi-folder pipeline instead of a brittle single-file export.
     cpuOffload: "true"
+    # SDXL on ROCm is visibly noisy in fp16 unless we pair it with the
+    # madebyollin fixed VAE.
     useFp16: "1"
-    guidanceScale: "3.5"
-    numInferenceSteps: "28"
+    vaeRepo: "madebyollin/sdxl-vae-fp16-fix"
+    vaePath: "/models/.vae/sdxl-vae-fp16-fix"
+    guidanceScale: "7.0"
+    numInferenceSteps: "36"
+    scheduler: "dpm++sde-karras"
+    negativePrompt: "(worst quality, low quality, normal quality:2), blurry, noisy, grainy, jpeg artifacts, watermark, text, logo, signature, deformed, disfigured, bad anatomy, extra limbs, extra fingers, duplicate, oversaturated"
     warmupResolutions: "512x512"
     warmPolicy: primary
     hipVisibleDevices: "0"
