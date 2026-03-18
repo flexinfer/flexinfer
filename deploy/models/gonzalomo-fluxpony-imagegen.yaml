@@ -6,6 +6,8 @@ metadata:
 spec:
   backend: diffusers
   source: pvc://gonzalomo-fluxpony-source/gonzalomoXLFluxPony_v30FluxDAIO.safetensors
+  cache:
+    strategy: Local
   gpu:
     vendor: amd
     count: 1

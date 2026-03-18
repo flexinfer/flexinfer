@@ -430,6 +430,139 @@ echo "Local cache verified: $DIR ($COUNT+ model files found)"
 	return job, nil
 }
 
+func (r *ModelReconciler) jobForLocalCacheStage(model *aiv1alpha2.Model, sourcePVCName, subPath string) (*batchv1.Job, error) {
+	subPath = strings.Trim(subPath, "/")
+	src := "/src"
+	dst := "/models"
+	if subPath != "" {
+		src = "/src/" + subPath
+		dst = "/models/" + subPath
+	}
+
+	var nodeSelector map[string]string
+	if len(model.Spec.NodeSelector) > 0 {
+		nodeSelector = model.Spec.NodeSelector
+	}
+	var tolerations []corev1.Toleration
+	if model.Spec.GetGPUCount() > 0 {
+		tolerations = append(tolerations, corev1.Toleration{
+			Key:      "dedicated",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "gpu",
+			Effect:   corev1.TaintEffectNoSchedule,
+		})
+	}
+
+	sum := sha256.Sum256([]byte(model.Spec.Source))
+	marker := "/models/.flexinfer_cached_" + hex.EncodeToString(sum[:])
+
+	script := fmt.Sprintf(`
+set -ex
+SRC="%s"
+DST="%s"
+MARKER="%s"
+
+if [ -f "$MARKER" ]; then
+  echo "Already staged: $MARKER"
+  exit 0
+fi
+
+if [ ! -e "$SRC" ]; then
+  echo "Missing source path: $SRC"
+  exit 1
+fi
+
+mkdir -p /models
+find /models -mindepth 1 -maxdepth 1 ! -name "$(basename "$MARKER")" -exec rm -rf {} +
+
+if [ -d "$SRC" ]; then
+  mkdir -p "$DST"
+  cp -a "$SRC/." "$DST/"
+else
+  mkdir -p "$(dirname "$DST")"
+  cp -a "$SRC" "$DST"
+fi
+
+touch "$MARKER"
+echo "Local staging complete."
+`, src, dst, marker)
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      model.Name + "-cache-stage",
+			Namespace: model.Namespace,
+			Labels:    r.labelsForModel(model),
+			Annotations: map[string]string{
+				"flexinfer.ai/source":        model.Spec.Source,
+				"flexinfer.ai/cache-kind":    "local-stage",
+				"flexinfer.ai/cache-src-pvc": sourcePVCName,
+				"flexinfer.ai/cache-path":    subPath,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: ptr.To(int32(1)),
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy:                corev1.RestartPolicyOnFailure,
+					NodeSelector:                 nodeSelector,
+					Tolerations:                  tolerations,
+					AutomountServiceAccountToken: ptr.To(false),
+					Containers: []corev1.Container{{
+						Name:    "stager",
+						Image:   "alpine:3.20",
+						Command: []string{"/bin/sh", "-c"},
+						Args:    []string{script},
+						VolumeMounts: []corev1.VolumeMount{
+							{
+								Name:      "source",
+								MountPath: "/src",
+								ReadOnly:  true,
+							},
+							{
+								Name:      "model-store",
+								MountPath: "/models",
+							},
+						},
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("256Mi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceMemory: resource.MustParse("2Gi"),
+							},
+						},
+					}},
+					Volumes: []corev1.Volume{
+						{
+							Name: "source",
+							VolumeSource: corev1.VolumeSource{
+								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+									ClaimName: sourcePVCName,
+								},
+							},
+						},
+						{
+							Name: "model-store",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{
+									Path: resolveLocalCachePath(model),
+									Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := ctrl.SetControllerReference(model, job, r.Scheme); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
 func (r *ModelReconciler) jobForCacheCopy(model *aiv1alpha2.Model, sourcePVCName, cachePVCName, subPath string) (*batchv1.Job, error) {
 	subPath = strings.Trim(subPath, "/")
 	src := "/src"

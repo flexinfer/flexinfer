@@ -133,14 +133,38 @@ func TestDirectRuntimeLoadEligibility(t *testing.T) {
 			wantReason: "model is nil",
 		},
 		{
-			name: "raw pvc source is not eligible",
+			name: "raw pvc source without staged local cache is not eligible",
 			model: &aiv1alpha2.Model{
 				Spec: aiv1alpha2.ModelSpec{
 					Source: "pvc://gonzalomo-fluxpony-source/gonzalomoXLFluxPony_v30FluxDAIO.safetensors",
 				},
 			},
 			wantOK:     false,
-			wantReason: "raw pvc:// sources require a dedicated pod PVC mount",
+			wantReason: "raw pvc:// sources require staged Local cache for runtime loads",
+		},
+		{
+			name: "pvc source with local cache but not ready is not eligible",
+			model: &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "pvc://gonzalomo-fluxpony-source/gonzalomoXLFluxPony_v30FluxDAIO.safetensors",
+					Cache:  &aiv1alpha2.CacheSpec{Strategy: "Local"},
+				},
+			},
+			wantOK:     false,
+			wantReason: "staged Local cache is not ready",
+		},
+		{
+			name: "pvc source with ready local cache is eligible",
+			model: &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "pvc://gonzalomo-fluxpony-source/gonzalomoXLFluxPony_v30FluxDAIO.safetensors",
+					Cache:  &aiv1alpha2.CacheSpec{Strategy: "Local"},
+				},
+				Status: aiv1alpha2.ModelStatus{
+					Cache: &aiv1alpha2.CacheStatus{Strategy: "Local", Ready: true},
+				},
+			},
+			wantOK: true,
 		},
 		{
 			name: "hf source is eligible",
@@ -160,4 +184,34 @@ func TestDirectRuntimeLoadEligibility(t *testing.T) {
 			assert.Equal(t, tt.wantReason, reason)
 		})
 	}
+}
+
+func TestBuildLoadPayloadForModelUsesRuntimeLocalCacheForPVCSources(t *testing.T) {
+	b, ok := backend.Get("diffusers")
+	require.True(t, ok)
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gonzalomo-fluxpony-imagegen",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			Source:  "pvc://gonzalomo-fluxpony-source/gonzalomoXLFluxPony_v30FluxDAIO.safetensors",
+			Cache:   &aiv1alpha2.CacheSpec{Strategy: "Local"},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Cache: &aiv1alpha2.CacheStatus{Strategy: "Local", Ready: true},
+		},
+	}
+
+	data, err := BuildLoadPayloadForModel(model, b, BuildLoadOptions{
+		ModelBasePath: "/models",
+		GPUVendor:     backend.GPUVendorAMD,
+	})
+	require.NoError(t, err)
+
+	var payload LoadPayload
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, "/models/flexinfer-system/gonzalomo-fluxpony-imagegen/gonzalomoXLFluxPony_v30FluxDAIO.safetensors", payload.ModelPath)
 }

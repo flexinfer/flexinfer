@@ -666,11 +666,13 @@ spec:
                 - source
                 type: object
                 x-kubernetes-validations:
-                - message: spec.cache.strategy must be SharedPVC when spec.source
-                    is pvc://... (cache stages into a PVC)
+                - message: spec.cache.strategy must be SharedPVC or None when spec.source
+                    is pvc://... (SharedPVC copies to a cache PVC; Local stages onto
+                    node-local storage for unified runtimes; None mounts the source directly)
                   rule: '!self.source.startsWith(''pvc://'') || !has(self.cache) ||
                     !has(self.cache.strategy) || size(self.cache.strategy) == 0 ||
-                    self.cache.strategy == ''SharedPVC'''
+                    self.cache.strategy == ''SharedPVC'' || self.cache.strategy ==
+                    ''Local'' || self.cache.strategy == ''None'''
                 - message: Do not set GPU limits in spec.resources.limits; use spec.gpu.vendor/spec.gpu.count
                     instead
                   rule: '!has(self.resources) || !has(self.resources.limits) || (!(''nvidia.com/gpu''

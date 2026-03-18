@@ -152,6 +152,19 @@ func TestResolveBackendStoragePlan(t *testing.T) {
 			wantPlan: backendStoragePlan{ModelPath: "/models/weights/v1"},
 		},
 		{
+			name: "pvc:// Local cache stages under mounted cache root",
+			model: &aiv1alpha2.Model{
+				ObjectMeta: metav1.ObjectMeta{Name: "fluxpony"},
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "pvc://mypvc/weights/model.safetensors",
+					Cache:  &aiv1alpha2.CacheSpec{Strategy: "Local"},
+				},
+			},
+			backend:  &fakeBackend{name: "diffusers", needsVolume: true},
+			config:   nil,
+			wantPlan: backendStoragePlan{ModelPath: "/models/weights/model.safetensors"},
+		},
+		{
 			name: "pvc:// no subpath",
 			model: &aiv1alpha2.Model{
 				ObjectMeta: metav1.ObjectMeta{Name: "pvc-only"},
@@ -505,6 +518,16 @@ func TestShouldStagePVCSourceToCache(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "pvc source with Local strategy returns true",
+			model: &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "pvc://my-pvc/weights/model.safetensors",
+					Cache:  &aiv1alpha2.CacheSpec{Strategy: "Local"},
+				},
+			},
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -512,6 +535,30 @@ func TestShouldStagePVCSourceToCache(t *testing.T) {
 			got := shouldStagePVCSourceToCache(tt.model)
 			assert.Equal(t, tt.want, got)
 		})
+	}
+}
+
+func TestGetVolumeSource_PVCSourceLocalCache(t *testing.T) {
+	r := &ModelReconciler{}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "fluxpony", Namespace: "flexinfer-system"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			Source:  "pvc://gonzalomo-fluxpony-source/gonzalomoXLFluxPony_v30FluxDAIO.safetensors",
+			Cache: &aiv1alpha2.CacheSpec{
+				Strategy: "Local",
+			},
+		},
+	}
+
+	vs := r.getVolumeSource(model)
+	if vs.HostPath == nil {
+		t.Fatal("expected hostPath volume source for pvc:// + Local strategy")
+	}
+	want := "/var/lib/flexinfer/models/flexinfer-system/fluxpony"
+	if vs.HostPath.Path != want {
+		t.Fatalf("hostPath = %q, want %q", vs.HostPath.Path, want)
 	}
 }
 

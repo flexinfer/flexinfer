@@ -62,6 +62,7 @@ func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, confi
 	source := model.Spec.Source
 	modelValue := extractModelFromSource(source)
 	strategy := cacheStrategy(model)
+	pvcStageMode := pvcSourceStageMode(model)
 
 	backendName := ""
 	needsVolume := false
@@ -86,7 +87,14 @@ func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, confi
 
 	// pvc://<pvc>/<subpath> is mounted at /models.
 	if strings.HasPrefix(source, "pvc://") {
-		if strings.HasPrefix(modelValue, "/") {
+		if pvcStageMode == pvcSourceCacheModeLocal {
+			subPath := strings.TrimLeft(modelValue, "/")
+			if subPath != "" {
+				plan.ModelPath = "/models/" + subPath
+			} else {
+				plan.ModelPath = "/models"
+			}
+		} else if strings.HasPrefix(modelValue, "/") {
 			plan.ModelPath = "/models" + modelValue
 		} else {
 			plan.ModelPath = "/models"
@@ -215,11 +223,19 @@ func extractModelFromSource(source string) string {
 // getVolumeSource returns the appropriate volume source based on cache strategy.
 func (r *ModelReconciler) getVolumeSource(model *aiv1alpha2.Model) corev1.VolumeSource {
 	if pvcName, _, ok := parsePVCSource(model.Spec.Source); ok {
-		if shouldStagePVCSourceToCache(model) {
+		switch pvcSourceStageMode(model) {
+		case pvcSourceCacheModeSharedPVC:
 			cacheName, _ := cachePVCName(model)
 			return corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 					ClaimName: cacheName,
+				},
+			}
+		case pvcSourceCacheModeLocal:
+			return corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: resolveLocalCachePath(model),
+					Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
 				},
 			}
 		}
@@ -282,18 +298,35 @@ func cacheStrategy(model *aiv1alpha2.Model) string {
 }
 
 func shouldStagePVCSourceToCache(model *aiv1alpha2.Model) bool {
+	return pvcSourceStageMode(model) != pvcSourceCacheModeNone
+}
+
+type pvcSourceCacheMode string
+
+const (
+	pvcSourceCacheModeNone      pvcSourceCacheMode = "none"
+	pvcSourceCacheModeSharedPVC pvcSourceCacheMode = "shared-pvc"
+	pvcSourceCacheModeLocal     pvcSourceCacheMode = "local"
+)
+
+func pvcSourceStageMode(model *aiv1alpha2.Model) pvcSourceCacheMode {
 	if !strings.HasPrefix(model.Spec.Source, "pvc://") {
-		return false
+		return pvcSourceCacheModeNone
 	}
 	if model.Spec.Cache == nil {
-		return false
+		return pvcSourceCacheModeNone
 	}
-	// If cache is specified for a pvc:// source, treat it as a request to stage/copy
-	// the artifact into the cache PVC (typically NVMe-backed) before starting.
 	if model.Spec.Cache.Strategy == "" {
-		return true
+		return pvcSourceCacheModeSharedPVC
 	}
-	return model.Spec.Cache.Strategy == "SharedPVC"
+	switch model.Spec.Cache.Strategy {
+	case "SharedPVC":
+		return pvcSourceCacheModeSharedPVC
+	case "Local":
+		return pvcSourceCacheModeLocal
+	default:
+		return pvcSourceCacheModeNone
+	}
 }
 
 func cachePVCName(model *aiv1alpha2.Model) (string, bool) {

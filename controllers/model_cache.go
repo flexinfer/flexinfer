@@ -52,9 +52,10 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 		if err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: model.Namespace}, sourcePVC); err != nil {
 			return false, err
 		}
+		stageMode := pvcSourceStageMode(model)
 
 		// If cache is requested, stage/copy the source path into the cache PVC before starting.
-		if shouldStagePVCSourceToCache(model) {
+		if stageMode == pvcSourceCacheModeSharedPVC {
 			cachePVCName, autoCreate := cachePVCName(model)
 			cachePVC := &corev1.PersistentVolumeClaim{}
 			cacheErr := r.Get(ctx, types.NamespacedName{Name: cachePVCName, Namespace: model.Namespace}, cachePVC)
@@ -174,6 +175,76 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 			}
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheCopy", message)
 
+			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+				return false, err
+			}
+			return ready, nil
+		}
+
+		if stageMode == pvcSourceCacheModeLocal {
+			jobName := model.Name + "-cache-stage"
+			ready := false
+			jobPhase := "Pending"
+			message := "waiting for local cache staging job"
+
+			if sourcePVC.Status.Phase != corev1.ClaimBound {
+				message = "waiting for source PVC to bind"
+			} else {
+				job := &batchv1.Job{}
+				err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
+				if err != nil && !errors.IsNotFound(err) {
+					return false, err
+				}
+				if err == nil && job.Annotations != nil && job.Annotations["flexinfer.ai/source"] != model.Spec.Source {
+					if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
+						return false, delErr
+					}
+					err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+				}
+				if errors.IsNotFound(err) {
+					subPath := ""
+					if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
+						subPath = sp
+					}
+					newJob, err := r.jobForLocalCacheStage(model, pvcName, subPath)
+					if err != nil {
+						return false, err
+					}
+					if err := r.Create(ctx, newJob); err != nil {
+						if errors.IsAlreadyExists(err) {
+							jobPhase = "Running"
+							message = "local cache staging job already exists"
+						} else {
+							return false, err
+						}
+					} else {
+						jobPhase = "Running"
+						message = "local cache staging job started"
+					}
+				} else {
+					if job.Status.Succeeded > 0 {
+						ready = true
+						jobPhase = "Succeeded"
+						message = "artifact staged to local cache"
+					} else if job.Status.Failed > 0 {
+						jobPhase = "Failed"
+						message = "local cache staging job failed"
+					} else if job.Status.Active > 0 {
+						jobPhase = "Running"
+						message = "local cache staging job running"
+					}
+				}
+			}
+
+			model.Status.Cache = &aiv1alpha2.CacheStatus{
+				Strategy:  cacheStrategy(model),
+				JobName:   jobName,
+				JobPhase:  jobPhase,
+				Message:   message,
+				Ready:     ready,
+				SizeBytes: 0,
+			}
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheStage", message)
 			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
 				return false, err
 			}

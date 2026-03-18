@@ -6,6 +6,7 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -72,7 +73,12 @@ func DirectRuntimeLoadEligibility(model *aiv1alpha2.Model) (bool, string) {
 		return false, "model is nil"
 	}
 	if strings.HasPrefix(model.Spec.Source, "pvc://") {
-		return false, "raw pvc:// sources require a dedicated pod PVC mount"
+		if !usesLocalCacheForPVC(model) {
+			return false, "raw pvc:// sources require staged Local cache for runtime loads"
+		}
+		if model.Status.Cache == nil || !model.Status.Cache.Ready {
+			return false, "staged Local cache is not ready"
+		}
 	}
 	return true, ""
 }
@@ -99,9 +105,13 @@ func BuildLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts B
 		Config:  config,
 	}
 	if strings.HasPrefix(model.Spec.Source, "pvc://") && opts.ModelBasePath != "" {
-		pvcParts := strings.SplitN(strings.TrimPrefix(model.Spec.Source, "pvc://"), "/", 2)
-		if len(pvcParts) >= 1 {
-			payload.ModelPath = opts.ModelBasePath + "/" + pvcParts[0] + payload.Model
+		if usesLocalCacheForPVC(model) {
+			payload.ModelPath = runtimeLocalCacheModelPath(model, opts.ModelBasePath)
+		} else {
+			pvcParts := strings.SplitN(strings.TrimPrefix(model.Spec.Source, "pvc://"), "/", 2)
+			if len(pvcParts) >= 1 {
+				payload.ModelPath = opts.ModelBasePath + "/" + pvcParts[0] + payload.Model
+			}
 		}
 	}
 
@@ -131,6 +141,36 @@ func ResolveCompilationCachePath(model *aiv1alpha2.Model) (string, bool) {
 		basePath = cc.HostPath
 	}
 	return filepath.Join(basePath, model.Namespace, model.Name), true
+}
+
+func usesLocalCacheForPVC(model *aiv1alpha2.Model) bool {
+	if model == nil || !strings.HasPrefix(model.Spec.Source, "pvc://") {
+		return false
+	}
+	if model.Spec.Cache == nil {
+		return false
+	}
+	return model.Spec.Cache.Strategy == "Local"
+}
+
+func runtimeLocalCacheModelPath(model *aiv1alpha2.Model, modelBasePath string) string {
+	root := path.Join(strings.TrimRight(modelBasePath, "/"), model.Namespace, model.Name)
+	subPath := pvcSubPath(model.Spec.Source)
+	if subPath == "" {
+		return root
+	}
+	return path.Join(root, subPath)
+}
+
+func pvcSubPath(source string) string {
+	if !strings.HasPrefix(source, "pvc://") {
+		return ""
+	}
+	parts := strings.SplitN(strings.TrimPrefix(source, "pvc://"), "/", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	return strings.TrimLeft(parts[1], "/")
 }
 
 func marshalLoadPayload(payload LoadPayload) ([]byte, error) {
