@@ -56,7 +56,7 @@ spec:
     - name: PYTORCH_ROCM_ARCH
       value: gfx1100
   runtime:
-    image: registry.harbor.lan/flexinfer/runtime@sha256:872a46d46c3577f39c087b12d3b8603ab556769c4b1d2800eaa8868a9e484d55
+    image: registry.harbor.lan/flexinfer/runtime@sha256:1a296d008173ff3f0dd9ee1dc5a172b50e7b0af2142bacdf340dac870784aa33
   quantization:
     supported:
       - gptq
@@ -64,4 +64,4 @@ spec:
       - gguf
       - exl2
     images:
-      gptq: registry.harbor.lan/flexinfer/runtime@sha256:872a46d46c3577f39c087b12d3b8603ab556769c4b1d2800eaa8868a9e484d55
+      gptq: registry.harbor.lan/flexinfer/runtime@sha256:1a296d008173ff3f0dd9ee1dc5a172b50e7b0af2142bacdf340dac870784aa33
