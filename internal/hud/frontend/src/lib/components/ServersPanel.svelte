@@ -119,10 +119,6 @@
     statusFilter = '';
   }
 
-  let hasActiveFilters = $derived(
-    searchQuery.trim() !== '' || categoryFilter !== '' || statusFilter !== ''
-  );
-
   let healthyCt = $derived(servers.filter(s => s.status === 'healthy').length);
   let idleCt = $derived(servers.filter(s => s.status === 'idle').length);
   let degradedCt = $derived(servers.filter(s => s.status === 'degraded').length);
@@ -259,6 +255,7 @@
     resultCount={filtered.length}
     onSearch={handleSearch}
     onFilter={handleFilter}
+    onClear={clearFilters}
   />
 
   <div class="servers-layout">
@@ -270,13 +267,7 @@
         heading="No servers match filters"
         description="Try adjusting your search or filter criteria."
         compact
-      >
-        {#snippet action()}
-          {#if hasActiveFilters}
-            <button class="btn btn-ghost" onclick={clearFilters}>Clear filters</button>
-          {/if}
-        {/snippet}
-      </EmptyState>
+      />
     {:else}
       <DataTable
         {columns}

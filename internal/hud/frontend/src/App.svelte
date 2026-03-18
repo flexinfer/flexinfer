@@ -46,11 +46,33 @@
     eventStore.disconnect();
   });
 
+  function isVisibleElement(node) {
+    return !!node && !!(node.offsetWidth || node.offsetHeight || node.getClientRects?.().length);
+  }
+
+  function focusPrimaryPanelSearch() {
+    const main = document.getElementById('main-content');
+    if (!main) return false;
+    const candidates = main.querySelectorAll('[data-panel-search="primary"], .panel-search-input');
+    for (const candidate of candidates) {
+      if (candidate instanceof HTMLInputElement && isVisibleElement(candidate)) {
+        candidate.focus();
+        candidate.select();
+        return true;
+      }
+    }
+    return false;
+  }
+
   // Keyboard shortcuts — view switching + sub-view switching
   function handleKeydown(e) {
     if (overlayStore.enabled) return;
     const tag = e.target?.tagName;
-    const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    const isInput =
+      tag === 'INPUT' ||
+      tag === 'TEXTAREA' ||
+      tag === 'SELECT' ||
+      e.target?.isContentEditable;
 
     if (e.key === 'Escape') {
       if (showCommandPalette) { showCommandPalette = false; return; }
@@ -69,8 +91,7 @@
       // / → focus search
       if (e.key === '/') {
         e.preventDefault();
-        const searchInput = document.querySelector('.panel-search-input');
-        if (searchInput) searchInput.focus();
+        focusPrimaryPanelSearch();
         return;
       }
       // r → refresh

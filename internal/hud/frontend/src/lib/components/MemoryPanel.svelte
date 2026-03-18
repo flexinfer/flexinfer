@@ -105,6 +105,11 @@
     memoryStore.recall(activeTier, searchQuery, 100);
   }
 
+  function clearFilters() {
+    searchQuery = '';
+    memoryStore.recall(activeTier, '', 100);
+  }
+
   function promoteItem(id) {
     memoryStore.promote(id);
     toastStore.info('Memory promoted');
@@ -438,6 +443,7 @@
       placeholder="Search memories..."
       resultCount={filteredItems.length}
       onSearch={(val) => { searchQuery = val; handleSearch(); }}
+      onClear={clearFilters}
     >
       {#snippet actions()}
         <button class="btn btn-success" onclick={openAddModal}>+ Add Memory</button>

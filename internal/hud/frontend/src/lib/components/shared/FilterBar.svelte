@@ -9,6 +9,9 @@
    *   resultCount?: number | null,
    *   onSearch?: (value: string) => void,
    *   onFilter?: (key: string, value: string) => void,
+   *   onClear?: () => void,
+   *   showShortcutHint?: boolean,
+   *   shortcutKey?: string,
    *   actions?: import('svelte').Snippet,
    * }}
    */
@@ -19,10 +22,24 @@
     resultCount = null,
     onSearch,
     onFilter,
+    onClear,
+    showShortcutHint = true,
+    shortcutKey = '/',
     actions,
   } = $props();
 
   let debounceTimer;
+  let activeFilterCount = $derived.by(() => {
+    let count = search.trim() ? 1 : 0;
+    for (const filter of filters) {
+      const value = filter.value;
+      if (typeof value === 'string' ? value.trim() !== '' : Boolean(value)) {
+        count += 1;
+      }
+    }
+    return count;
+  });
+  let canClear = $derived(!!onClear && activeFilterCount > 0);
 
   function handleSearchInput(e) {
     const val = e.target.value;
@@ -40,14 +57,23 @@
 <div class="filter-bar" role="search" aria-label="Filter">
   <div class="filter-bar-search">
     <span class="filter-bar-search-icon">{'\u{1F50D}'}</span>
-    <input
-      class="filter-bar-input panel-search-input"
-      type="text"
-      value={search}
-      {placeholder}
-      oninput={handleSearchInput}
-      aria-label={placeholder}
-    />
+    <div class="filter-bar-search-field">
+      <input
+        class="filter-bar-input panel-search-input"
+        type="text"
+        value={search}
+        {placeholder}
+        oninput={handleSearchInput}
+        aria-label={placeholder}
+        autocomplete="off"
+        spellcheck="false"
+        enterkeyhint="search"
+        data-panel-search="primary"
+      />
+      {#if showShortcutHint}
+        <kbd class="filter-bar-shortcut">{shortcutKey}</kbd>
+      {/if}
+    </div>
   </div>
 
   {#each filters as filter}
@@ -67,8 +93,17 @@
   <div class="filter-bar-spacer"></div>
 
   <div class="filter-bar-meta">
+    {#if activeFilterCount > 0}
+      <span class="filter-bar-active">{activeFilterCount} active</span>
+    {/if}
     {#if resultCount != null}
       <span class="filter-bar-count">{resultCount} result{resultCount !== 1 ? 's' : ''}</span>
+    {/if}
+
+    {#if canClear}
+      <button class="btn btn-ghost btn-sm filter-bar-clear" onclick={onClear}>
+        Clear filters
+      </button>
     {/if}
 
     {#if actions}
@@ -98,6 +133,12 @@
     min-width: 180px;
   }
 
+  .filter-bar-search-field {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }
+
   .filter-bar-search-icon {
     font-size: var(--text-sm);
     opacity: 0.5;
@@ -105,9 +146,9 @@
   }
 
   .filter-bar-input {
-    flex: 1;
+    width: 100%;
     font-size: var(--text-sm);
-    padding: var(--space-1) var(--space-2);
+    padding: var(--space-1) calc(var(--space-2) + 2.5rem) var(--space-1) var(--space-2);
     background: var(--bg-primary);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
@@ -118,6 +159,21 @@
   .filter-bar-input:focus {
     border-color: var(--border-focus);
     outline: none;
+  }
+
+  .filter-bar-shortcut {
+    position: absolute;
+    right: var(--space-2);
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    line-height: 1;
+    color: var(--fg-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 3px 5px;
+    background: color-mix(in srgb, var(--bg-secondary) 85%, transparent);
+    pointer-events: none;
   }
 
   .filter-bar-select {
@@ -158,10 +214,25 @@
     white-space: nowrap;
   }
 
+  .filter-bar-active {
+    font-size: var(--text-xs);
+    color: var(--fg-secondary);
+    font-family: var(--font-mono);
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--border-focus) 45%, var(--border));
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    white-space: nowrap;
+  }
+
   .filter-bar-actions {
     display: flex;
     align-items: center;
     gap: var(--space-2);
+  }
+
+  .filter-bar-clear {
+    white-space: nowrap;
   }
 
   @media (max-width: 900px) {
@@ -173,8 +244,16 @@
   }
 
   @media (max-width: 640px) {
+    .filter-bar-search {
+      flex-basis: 100%;
+    }
+
     .filter-bar-select {
       flex: 1 1 160px;
+    }
+
+    .filter-bar-shortcut {
+      display: none;
     }
   }
 </style>

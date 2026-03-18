@@ -160,10 +160,6 @@
     statusFilter = '';
   }
 
-  let hasActiveFilters = $derived(
-    searchQuery.trim() !== '' || priorityFilter !== '' || agentFilter !== '' || statusFilter !== ''
-  );
-
   // Filtered tasks
   let filtered = $derived.by(() => {
     let result = tasks;
@@ -503,6 +499,7 @@
     resultCount={filtered.length}
     onSearch={handleSearch}
     onFilter={handleFilter}
+    onClear={clearFilters}
   />
 
   <div class="tasks-layout">
@@ -528,6 +525,7 @@
               rows={sorted}
               {sortKey}
               {sortDir}
+              rowLabel="task"
               stableLayout={true}
               loading={!taskStore.lastUpdated}
               skeletonRows={3}
@@ -672,13 +670,7 @@
                 icon={'\u2611'}
                 heading="No tasks match filters"
                 compact
-              >
-                {#snippet action()}
-                  {#if hasActiveFilters}
-                    <button class="btn btn-ghost" onclick={clearFilters}>Clear filters</button>
-                  {/if}
-                {/snippet}
-              </EmptyState>
+              />
             {/each}
           </div>
         {/if}

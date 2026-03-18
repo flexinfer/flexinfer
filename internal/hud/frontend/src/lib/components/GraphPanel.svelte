@@ -84,6 +84,12 @@
     searchResults = graphStore.entities ?? [];
   }
 
+  function clearFilters() {
+    searchQuery = '';
+    typeFilter = 'all';
+    searchResults = [];
+  }
+
   function handleSearchKey(e) {
     if (e.key === 'Enter') doSearch();
   }
@@ -354,6 +360,7 @@
       resultCount={displayEntities.length}
       onSearch={(val) => { searchQuery = val; }}
       onFilter={(key, val) => { typeFilter = val || 'all'; }}
+      onClear={clearFilters}
     >
       {#snippet actions()}
         <button class="btn btn-primary" onclick={doSearch}>Search</button>

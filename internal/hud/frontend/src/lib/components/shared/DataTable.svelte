@@ -15,6 +15,7 @@
    *   expandedIds?: Set<string>,
    *   idKey?: string,
    *   maxRows?: number,
+   *   rowLabel?: string,
    *   stableLayout?: boolean,
    *   onSort?: (key: string, dir: 'asc' | 'desc') => void,
    *   onSelect?: (ids: Set<string>) => void,
@@ -36,6 +37,7 @@
     expandedIds = new Set(),
     idKey = 'id',
     maxRows = undefined,
+    rowLabel = 'row',
     stableLayout = false,
     onSort,
     onSelect,
@@ -72,6 +74,16 @@
   let displayRows = $derived(maxRows ? rows.slice(0, displayCount) : rows);
   let hasMore = $derived(maxRows ? rows.length > displayCount : false);
   let remainingCount = $derived(rows.length - displayCount);
+  let showFooter = $derived(!loading && rows.length > 0 && maxRows !== undefined);
+  let summaryText = $derived.by(() => {
+    const visible = displayRows.length;
+    const total = rows.length;
+    const label = total === 1 ? rowLabel : `${rowLabel}s`;
+    if (visible === total) {
+      return `Showing ${visible} ${label}`;
+    }
+    return `Showing ${visible} of ${total} ${label}`;
+  });
 
   function showMore() {
     displayCount = Math.min(displayCount + (maxRows ?? 50), rows.length);
@@ -197,11 +209,14 @@
       {/if}
     </tbody>
   </table>
-  {#if hasMore}
-    <div class="data-table-show-more">
-      <button class="btn btn-ghost btn-sm" onclick={showMore}>
-        Show {Math.min(maxRows ?? 50, remainingCount)} more ({remainingCount} remaining)
-      </button>
+  {#if showFooter}
+    <div class="data-table-footer">
+      <span class="data-table-summary">{summaryText}</span>
+      {#if hasMore}
+        <button class="btn btn-ghost btn-sm" onclick={showMore}>
+          Show {Math.min(maxRows ?? 50, remainingCount)} more
+        </button>
+      {/if}
     </div>
   {/if}
 </div>
@@ -330,10 +345,26 @@
     color: inherit;
   }
 
-  .data-table-show-more {
+  .data-table-footer {
     display: flex;
-    justify-content: center;
-    padding: var(--space-2);
-    border-top: 1px solid var(--border);
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-2) 0 0;
+    border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    margin-top: var(--space-2);
+  }
+
+  .data-table-summary {
+    font-size: var(--text-xs);
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+  }
+
+  @media (max-width: 640px) {
+    .data-table-footer {
+      flex-direction: column;
+      align-items: stretch;
+    }
   }
 </style>

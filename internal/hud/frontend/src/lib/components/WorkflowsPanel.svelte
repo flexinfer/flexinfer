@@ -119,6 +119,11 @@
       workflowStore.rejectStep(selected.id, step.id ?? step.name);
     }
   }
+
+  function clearFilters() {
+    searchQuery = '';
+    filterStatus = '';
+  }
 </script>
 
 <div class="panel workflows-panel">
@@ -141,6 +146,7 @@
         resultCount={filteredWorkflows.length + filteredDefinitions.length}
         onSearch={(q) => { searchQuery = q; }}
         onFilter={(key, val) => { if (key === 'status') filterStatus = val; }}
+        onClear={clearFilters}
       />
     </div>
     {#if workflowStore.loading}

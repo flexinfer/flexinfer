@@ -266,6 +266,7 @@
           rows={sortedSessions}
           sortKey={fleetSortKey}
           sortDir={fleetSortDir}
+          rowLabel="agent"
           stableLayout={true}
           loading={!fleetStore.lastUpdated}
           skeletonRows={4}

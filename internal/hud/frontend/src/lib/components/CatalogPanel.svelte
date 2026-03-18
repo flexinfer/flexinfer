@@ -47,6 +47,11 @@
     }
   }
 
+  function clearFilters() {
+    catalogStore.search('');
+    catalogStore.filterByCategory('all');
+  }
+
   function handleSort(key) {
     if (sortKey === key) {
       sortDir = sortDir === 'asc' ? 'desc' : 'asc';
@@ -79,6 +84,7 @@
       resultCount={sorted.length}
       onSearch={handleSearch}
       onFilter={handleFilter}
+      onClear={clearFilters}
     />
     <div class="catalog-stats">
       <span class="stat-chip enabled">{catalogStore.enabledCount} enabled</span>
