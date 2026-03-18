@@ -342,6 +342,39 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		return ctrl.Result{}, nil
 	}
 
+	if finetuneJob.Status.Active > 0 {
+		elapsed := time.Duration(0)
+		if finetuneJob.Status.StartTime != nil {
+			elapsed = time.Since(finetuneJob.Status.StartTime.Time).Truncate(time.Second)
+		}
+		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "FinetuneProgress",
+			fmt.Sprintf("Finetune in progress (elapsed %s)", elapsed))
+
+		// Update time-based progress estimate.
+		deadline := effectiveFinetuneDeadline(modelCache.Spec.Finetune)
+		if deadline > 0 {
+			pct := int32(float64(elapsed.Seconds()) / float64(deadline) * 100)
+			if pct > 99 {
+				pct = 99
+			}
+			if modelCache.Status.Finetune == nil {
+				modelCache.Status.Finetune = &aiv1alpha1.FinetuneStatus{}
+			}
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFinetuning
+			modelCache.Status.Quantization = nil
+			modelCache.Status.Publish = nil
+			modelCache.Status.Finetune.FailureMessage = ""
+			modelCache.Status.Finetune.Progress = &pct
+			modelCache.Status.Finetune.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
+			modelCache.Status.Finetune.StartedAt = finetuneJob.Status.StartTime
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				log.Error(err, "Failed to update finetune progress")
+			}
+			metrics.JobProgressPercent.WithLabelValues(modelCache.Name, modelCache.Namespace, "finetune").Set(float64(pct))
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
 	if finetuneJob.Status.Failed > 0 {
 		log.Info("Finetune job failed", "cache", modelCache.Name)
 		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "finetune")
@@ -369,36 +402,6 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		return ctrl.Result{}, nil
 	}
 
-	// Job still running — emit progress and requeue.
-	if finetuneJob.Status.StartTime != nil {
-		elapsed := time.Since(finetuneJob.Status.StartTime.Time).Truncate(time.Second)
-		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "FinetuneProgress",
-			fmt.Sprintf("Finetune in progress (elapsed %s)", elapsed))
-
-		// Update time-based progress estimate.
-		deadline := effectiveFinetuneDeadline(modelCache.Spec.Finetune)
-		if deadline > 0 {
-			pct := int32(float64(elapsed.Seconds()) / float64(deadline) * 100)
-			if pct > 99 {
-				pct = 99
-			}
-			if modelCache.Status.Finetune == nil {
-				modelCache.Status.Finetune = &aiv1alpha1.FinetuneStatus{}
-			}
-			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFinetuning
-			modelCache.Status.Quantization = nil
-			modelCache.Status.Publish = nil
-			modelCache.Status.Finetune.Progress = &pct
-			modelCache.Status.Finetune.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
-			if finetuneJob.Status.StartTime != nil {
-				modelCache.Status.Finetune.StartedAt = finetuneJob.Status.StartTime
-			}
-			if err := r.Status().Update(ctx, modelCache); err != nil {
-				log.Error(err, "Failed to update finetune progress")
-			}
-			metrics.JobProgressPercent.WithLabelValues(modelCache.Name, modelCache.Namespace, "finetune").Set(float64(pct))
-		}
-	}
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 

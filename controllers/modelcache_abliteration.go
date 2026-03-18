@@ -307,35 +307,11 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		return ctrl.Result{}, nil
 	}
 
-	if ablitJob.Status.Failed > 0 {
-		log.Info("Abliteration job failed", "cache", modelCache.Name)
-		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "abliterate")
-		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "abliteration_failed").Inc()
-
-		failureMsg := captureAbliterationFailureLogs(ctx, r.Client, modelCache.Namespace, ablitJob.Name)
-		ablitStatus := &aiv1alpha1.AbliterationStatus{
-			FailureMessage: failureMsg,
-		}
+	if ablitJob.Status.Active > 0 {
+		elapsed := time.Duration(0)
 		if ablitJob.Status.StartTime != nil {
-			ablitStatus.StartedAt = ablitJob.Status.StartTime
+			elapsed = time.Since(ablitJob.Status.StartTime.Time).Truncate(time.Second)
 		}
-		modelCache.Status.Abliteration = ablitStatus
-		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
-		if err := r.Status().Update(ctx, modelCache); err != nil {
-			return ctrl.Result{}, err
-		}
-
-		eventMsg := "Abliteration job failed"
-		if failureMsg != "" {
-			eventMsg = fmt.Sprintf("Abliteration job failed: %s", truncateString(failureMsg, 200))
-		}
-		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "AbliterationFailed", eventMsg)
-		return ctrl.Result{}, nil
-	}
-
-	// Job still running — emit progress and requeue.
-	if ablitJob.Status.StartTime != nil {
-		elapsed := time.Since(ablitJob.Status.StartTime.Time).Truncate(time.Second)
 		progressMsg := fmt.Sprintf("Abliteration in progress (elapsed %s)", elapsed)
 
 		if modelCache.Status.Abliteration == nil {
@@ -384,7 +360,35 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			log.Error(err, "Failed to update abliteration progress")
 		}
+		return ctrl.Result{RequeueAfter: requeueLong}, nil
 	}
+
+	if ablitJob.Status.Failed > 0 {
+		log.Info("Abliteration job failed", "cache", modelCache.Name)
+		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "abliterate")
+		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "abliteration_failed").Inc()
+
+		failureMsg := captureAbliterationFailureLogs(ctx, r.Client, modelCache.Namespace, ablitJob.Name)
+		ablitStatus := &aiv1alpha1.AbliterationStatus{
+			FailureMessage: failureMsg,
+		}
+		if ablitJob.Status.StartTime != nil {
+			ablitStatus.StartedAt = ablitJob.Status.StartTime
+		}
+		modelCache.Status.Abliteration = ablitStatus
+		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+		if err := r.Status().Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		eventMsg := "Abliteration job failed"
+		if failureMsg != "" {
+			eventMsg = fmt.Sprintf("Abliteration job failed: %s", truncateString(failureMsg, 200))
+		}
+		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "AbliterationFailed", eventMsg)
+		return ctrl.Result{}, nil
+	}
+
 	return ctrl.Result{RequeueAfter: requeueLong}, nil
 }
 

@@ -166,6 +166,77 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 				return cache.Status.Phase
 			}, time.Minute, time.Second).Should(Equal(aiv1alpha1.ModelCachePhaseFailed))
 		})
+
+		It("Should treat an active retry as Quantizing even when failed history exists", func() {
+			ctx := context.Background()
+			cacheName := "test-quant-active-retry"
+
+			modelCache := &aiv1alpha1.ModelCache{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      cacheName,
+					Namespace: CacheNamespace,
+				},
+				Spec: aiv1alpha1.ModelCacheSpec{
+					Source:          "some-model/retrying",
+					StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+					Quantization: &aiv1alpha1.QuantizationSpec{
+						Format:   aiv1alpha1.QuantizationFormatGGUF,
+						GGUFType: "Q4_K_M",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, modelCache)).To(Succeed())
+
+			dlJobKey := types.NamespacedName{
+				Name:      fmt.Sprintf("%s-downloader", cacheName),
+				Namespace: CacheNamespace,
+			}
+			dlJob := &batchv1.Job{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, dlJobKey, dlJob)
+			}, time.Minute, time.Second).Should(Succeed())
+			dlJob.Status.Succeeded = 1
+			Expect(k8sClient.Status().Update(ctx, dlJob)).To(Succeed())
+
+			quantJobKey := types.NamespacedName{
+				Name:      fmt.Sprintf("%s-quantize", cacheName),
+				Namespace: CacheNamespace,
+			}
+			quantJob := &batchv1.Job{}
+			Eventually(func() error {
+				return k8sClient.Get(ctx, quantJobKey, quantJob)
+			}, time.Minute, time.Second).Should(Succeed())
+
+			cacheKey := types.NamespacedName{Name: cacheName, Namespace: CacheNamespace}
+			Eventually(func() error {
+				cache := &aiv1alpha1.ModelCache{}
+				if err := k8sClient.Get(ctx, cacheKey, cache); err != nil {
+					return err
+				}
+				cache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+				cache.Status.Quantization = &aiv1alpha1.QuantizationStatus{
+					Format:         "GGUF",
+					Type:           "Q4_K_M",
+					FailureMessage: "old failure",
+				}
+				return k8sClient.Status().Update(ctx, cache)
+			}, time.Minute, time.Second).Should(Succeed())
+
+			start := metav1.NewTime(time.Now().Add(-45 * time.Second))
+			quantJob.Status.StartTime = &start
+			quantJob.Status.Failed = 1
+			quantJob.Status.Active = 1
+			Expect(k8sClient.Status().Update(ctx, quantJob)).To(Succeed())
+
+			Eventually(func(g Gomega) {
+				cache := &aiv1alpha1.ModelCache{}
+				g.Expect(k8sClient.Get(ctx, cacheKey, cache)).To(Succeed())
+				g.Expect(cache.Status.Phase).To(Equal(aiv1alpha1.ModelCachePhaseQuantizing))
+				g.Expect(cache.Status.Quantization).NotTo(BeNil())
+				g.Expect(cache.Status.Quantization.FailureMessage).To(BeEmpty())
+				g.Expect(cache.Status.Quantization.Progress).NotTo(BeNil())
+			}, time.Minute, time.Second).Should(Succeed())
+		})
 	})
 
 	Context("When a ModelCache uses AWQ quantization", func() {

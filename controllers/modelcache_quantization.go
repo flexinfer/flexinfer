@@ -355,6 +355,38 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		return ctrl.Result{}, nil
 	}
 
+	if quantJob.Status.Active > 0 {
+		elapsed := time.Duration(0)
+		if quantJob.Status.StartTime != nil {
+			elapsed = time.Since(quantJob.Status.StartTime.Time).Truncate(time.Second)
+		}
+		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "QuantizationProgress",
+			fmt.Sprintf("Quantization in progress (elapsed %s)", elapsed))
+
+		// Update time-based progress estimate.
+		deadline := effectiveQuantizationDeadline(modelCache.Spec.Quantization)
+		if deadline > 0 {
+			pct := int32(float64(elapsed.Seconds()) / float64(deadline) * 100)
+			if pct > 99 {
+				pct = 99 // Cap at 99% until completion is confirmed
+			}
+			if modelCache.Status.Quantization == nil {
+				modelCache.Status.Quantization = &aiv1alpha1.QuantizationStatus{}
+			}
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseQuantizing
+			modelCache.Status.Publish = nil
+			modelCache.Status.Quantization.FailureMessage = ""
+			modelCache.Status.Quantization.Progress = &pct
+			modelCache.Status.Quantization.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
+			modelCache.Status.Quantization.StartedAt = quantJob.Status.StartTime
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				log.Error(err, "Failed to update quantization progress")
+			}
+			metrics.JobProgressPercent.WithLabelValues(modelCache.Name, modelCache.Namespace, "quantize").Set(float64(pct))
+		}
+		return ctrl.Result{RequeueAfter: requeueLong}, nil
+	}
+
 	if quantJob.Status.Failed > 0 {
 		log.Info("Quantization job failed", "cache", modelCache.Name)
 		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "quantize")
@@ -387,33 +419,6 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		return ctrl.Result{}, nil
 	}
 
-	// Job still running — emit progress and requeue to check later.
-	if quantJob.Status.StartTime != nil {
-		elapsed := time.Since(quantJob.Status.StartTime.Time).Truncate(time.Second)
-		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "QuantizationProgress",
-			fmt.Sprintf("Quantization in progress (elapsed %s)", elapsed))
-
-		// Update time-based progress estimate.
-		deadline := effectiveQuantizationDeadline(modelCache.Spec.Quantization)
-		if deadline > 0 {
-			pct := int32(float64(elapsed.Seconds()) / float64(deadline) * 100)
-			if pct > 99 {
-				pct = 99 // Cap at 99% until completion is confirmed
-			}
-			if modelCache.Status.Quantization == nil {
-				modelCache.Status.Quantization = &aiv1alpha1.QuantizationStatus{}
-			}
-			modelCache.Status.Quantization.Progress = &pct
-			modelCache.Status.Quantization.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
-			if quantJob.Status.StartTime != nil {
-				modelCache.Status.Quantization.StartedAt = quantJob.Status.StartTime
-			}
-			if err := r.Status().Update(ctx, modelCache); err != nil {
-				log.Error(err, "Failed to update quantization progress")
-			}
-			metrics.JobProgressPercent.WithLabelValues(modelCache.Name, modelCache.Namespace, "quantize").Set(float64(pct))
-		}
-	}
 	return ctrl.Result{RequeueAfter: requeueLong}, nil
 }
 
