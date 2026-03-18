@@ -80,7 +80,6 @@ spec:
             {{- toYaml .resources | nindent 12 }}
             {{- else }}
             limits:
-              {{ if eq .gpuVendor "amd" }}amd.com/gpu{{ else }}nvidia.com/gpu{{ end }}: {{ .gpuCount | default 1 }}
               memory: {{ .memoryLimit | default "4Gi" }}
             requests:
               memory: {{ .memoryRequest | default "1Gi" }}
