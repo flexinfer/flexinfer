@@ -47,7 +47,7 @@ public final class DashboardViewModel {
         }
 
         #if os(iOS)
-        syncWidgets()
+        await MainActor.run { syncWidgets() }
         #endif
     }
 
