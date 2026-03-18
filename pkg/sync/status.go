@@ -83,13 +83,19 @@ func (m *Manager) GetSyncStatus(profileName string) (*SyncStatus, error) {
 	}
 
 	// If either doesn't exist, not in sync
-	if !status.RepoExists || !status.HomeExists {
+	requiresRepo := !profile.GeneratedDirectToHome
+	if profile.SkillsManifest != "" && !profile.SkillsDirectToHome {
+		requiresRepo = true
+	}
+	if (requiresRepo && !status.RepoExists) || !status.HomeExists {
 		status.InSync = false
 		return status, nil
 	}
 
 	// Compare files
-	if profile.SyncGeneratedOnly {
+	if profile.GeneratedDirectToHome {
+		status.DriftDetails = compareHomeGeneratedFiles(homePath, profile)
+	} else if profile.SyncGeneratedOnly {
 		status.DriftDetails = compareGeneratedFile(repoPath, homePath, profile)
 	} else {
 		status.DriftDetails = m.compareDirectories(repoPath, homePath, profile)
@@ -306,6 +312,31 @@ func compareHomeSkillFiles(homePath string) []DriftItem {
 		} else {
 			items = append(items, DriftItem{File: relPath, Status: DriftMissing})
 		}
+	}
+	return items
+}
+
+func compareHomeGeneratedFiles(homePath string, profile *Profile) []DriftItem {
+	if profile.GeneratedFile == "" {
+		return []DriftItem{{File: "", Status: DriftOutOfSync}}
+	}
+
+	files := []string{primaryHomeGeneratedFile(profile)}
+	files = append(files, profile.ExtraGeneratedFiles...)
+
+	var items []DriftItem
+	for _, rel := range files {
+		path := filepath.Join(homePath, rel)
+		if Exists(path) {
+			homeHash, _ := hashFile(path)
+			items = append(items, DriftItem{File: rel, HomeHash: homeHash, Status: DriftInSync})
+		} else if rel == primaryHomeGeneratedFile(profile) {
+			items = append(items, DriftItem{File: rel, Status: DriftMissing})
+		}
+	}
+
+	if len(items) == 0 {
+		return []DriftItem{{File: primaryHomeGeneratedFile(profile), Status: DriftMissing}}
 	}
 	return items
 }

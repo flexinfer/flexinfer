@@ -24,6 +24,9 @@ type Profile struct {
 	// (e.g. "settings.json" for lifecycle hooks). These are synced alongside
 	// GeneratedFile but are optional — missing extras are silently skipped.
 	ExtraGeneratedFiles []string
+	// GeneratedDirectToHome writes generated config files directly into the home
+	// profile directory and treats the repo mirror as stale cache to be cleaned.
+	GeneratedDirectToHome bool
 	// SyncGeneratedOnly limits sync/backup/status to GeneratedFile only.
 	// This is important for profiles whose HomeDir points at large application
 	// directories (e.g. VS Code/Claude Desktop) where we only manage mcp.json.
@@ -83,9 +86,12 @@ func (m *Manager) registerProfiles() {
 		SecretFiles:           []string{"auth.json"},
 		GeneratorTarget:       "codex",
 		GeneratedFile:         "config.toml",
+		GeneratedDirectToHome: true,
 		SyncGeneratedOnly:     true,
 		SkillsTarget:          "codex",
 		SkillsManifest:        ".loom-skills-manifest.json",
+		SkillsDirectToHome:    true,
+		SkillsHomePath:        "$HOME/.codex/skills",
 		DefaultLoomMode:       true,
 		DefaultResolveSecrets: true,
 	}

@@ -349,6 +349,27 @@ func TestAntigravityProfile_HomePathAndFilenameOverride(t *testing.T) {
 	}
 }
 
+func TestCodexProfile_GeneratesDirectlyToHome(t *testing.T) {
+	m, err := NewManager("/tmp/test-repo")
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	p := m.Get("codex")
+	if p == nil {
+		t.Fatal("codex profile not found")
+	}
+	if !p.GeneratedDirectToHome {
+		t.Fatal("expected GeneratedDirectToHome=true for codex")
+	}
+	if !p.SkillsDirectToHome {
+		t.Fatal("expected SkillsDirectToHome=true for codex")
+	}
+	if p.SkillsHomePath != "$HOME/.codex/skills" {
+		t.Fatalf("SkillsHomePath = %q, want %q", p.SkillsHomePath, "$HOME/.codex/skills")
+	}
+}
+
 // Test that the manager uses the actual user home directory
 func TestNewManager_UsesRealHomeDir(t *testing.T) {
 	m, err := NewManager("/tmp/repo")

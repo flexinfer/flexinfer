@@ -470,6 +470,47 @@ func TestGetSyncStatus_UsesHomeGeneratedFileOverride(t *testing.T) {
 	}
 }
 
+func TestGetSyncStatus_HomeOnlyGeneratedProfile(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	homeProfileDir := filepath.Join(homeDir, ".codex")
+	if err := os.MkdirAll(homeProfileDir, 0o755); err != nil {
+		t.Fatalf("mkdir home profile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeProfileDir, "config.toml"), []byte("content"), 0o644); err != nil {
+		t.Fatalf("write home config: %v", err)
+	}
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+	m.Profiles["test"] = &Profile{
+		Name:                  "test",
+		RepoDir:               "unused-repo-dir",
+		HomeDir:               ".codex",
+		GeneratedFile:         "config.toml",
+		GeneratedDirectToHome: true,
+		SyncGeneratedOnly:     true,
+	}
+
+	status, err := m.GetSyncStatus("test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !status.HomeExists {
+		t.Fatal("expected HomeExists = true")
+	}
+	if status.RepoExists {
+		t.Fatal("expected RepoExists = false for missing repo mirror")
+	}
+	if !status.InSync {
+		t.Fatalf("expected InSync = true, got false (drift=%v)", status.DriftDetails)
+	}
+	if len(status.DriftDetails) != 1 || status.DriftDetails[0].File != "config.toml" || status.DriftDetails[0].Status != DriftInSync {
+		t.Fatalf("expected single in-sync home item, got %v", status.DriftDetails)
+	}
+}
+
 func TestGetSyncStatus_OutOfSync(t *testing.T) {
 	repoDir := t.TempDir()
 	homeDir := t.TempDir()

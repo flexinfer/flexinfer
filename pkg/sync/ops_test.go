@@ -1446,6 +1446,67 @@ func TestSyncAll_PerProfileDefaults(t *testing.T) {
 }
 
 // =============================================================================
+// GeneratedDirectToHome Tests
+// =============================================================================
+
+func TestCleanRepoGenerated_RemovesStaleFiles(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+
+	p := &Profile{
+		Name:                  "codex",
+		RepoDir:               ".codex",
+		GeneratedFile:         "config.toml",
+		ExtraGeneratedFiles:   []string{"settings.json"},
+		GeneratedDirectToHome: true,
+	}
+
+	repoCodex := filepath.Join(repoDir, ".codex")
+	if err := os.MkdirAll(repoCodex, 0o755); err != nil {
+		t.Fatalf("mkdir repo codex: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoCodex, "config.toml"), []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write stale config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoCodex, "settings.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write stale settings: %v", err)
+	}
+
+	m.cleanRepoGenerated(p)
+
+	if Exists(filepath.Join(repoCodex, "config.toml")) {
+		t.Error("expected stale config.toml to be removed")
+	}
+	if Exists(filepath.Join(repoCodex, "settings.json")) {
+		t.Error("expected stale settings.json to be removed")
+	}
+}
+
+func TestSyncToHome_RepoOnlySkipsHomeOnlyCodex(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+
+	homeCodex := filepath.Join(homeDir, ".codex")
+	if err := os.MkdirAll(homeCodex, 0o755); err != nil {
+		t.Fatalf("mkdir home codex: %v", err)
+	}
+
+	if err := m.SyncToHome("codex", false, false, true, false, "", false, "", false); err != nil {
+		t.Fatalf("SyncToHome failed: %v", err)
+	}
+
+	if Exists(filepath.Join(homeCodex, "config.toml")) {
+		t.Error("did not expect repo-only sync to write home config")
+	}
+}
+
+// =============================================================================
 // SkillsDirectToHome Tests
 // =============================================================================
 
@@ -1749,10 +1810,25 @@ func TestGeminiAndAntigravityProfiles_HaveSkillsDirectToHome(t *testing.T) {
 	}
 
 	// Other profiles should NOT have it
-	for _, name := range []string{"claude", "codex", "kilocode"} {
+	for _, name := range []string{"claude", "kilocode"} {
 		p := m.Get(name)
 		if p != nil && p.SkillsDirectToHome {
 			t.Errorf("%s profile should not have SkillsDirectToHome=true", name)
 		}
+	}
+}
+
+func TestCodexProfile_HasHomeOnlySkills(t *testing.T) {
+	m, _ := NewManager(t.TempDir())
+
+	codex := m.Get("codex")
+	if codex == nil {
+		t.Fatal("codex profile not found")
+	}
+	if !codex.SkillsDirectToHome {
+		t.Error("codex profile should have SkillsDirectToHome=true")
+	}
+	if codex.SkillsHomePath != "$HOME/.codex/skills" {
+		t.Errorf("codex SkillsHomePath = %q, want %q", codex.SkillsHomePath, "$HOME/.codex/skills")
 	}
 }

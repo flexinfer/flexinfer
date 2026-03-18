@@ -71,6 +71,11 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 		return err
 	}
 
+	if repoOnly && (p.GeneratedDirectToHome || p.SkillsDirectToHome) {
+		fmt.Printf("Skipping %s (repo-only incompatible with home-only generation)\n", profileName)
+		return nil
+	}
+
 	repoPath := m.ResolveRepoPath(p)
 	homePath := m.ResolveHomePath(p)
 	var geminiSnapshot geminiConfigSnapshot
@@ -98,13 +103,48 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 		return nil
 	}
 
+	configBasePath := repoPath
+	if p.GeneratedDirectToHome {
+		configBasePath = homePath
+	}
+
+	// Direct-to-home profiles are already updated by Regenerate; skip repo->home copy.
+	if p.GeneratedDirectToHome {
+		if p.GeneratorTarget != "" {
+			configPath := filepath.Join(configBasePath, primaryHomeGeneratedFile(p))
+			if Exists(configPath) {
+				v := validator.New(m.RepoRoot, m.HomeDir)
+				result, err := v.ValidateFile(p.GeneratorTarget, configPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: validation failed for %s: %v\n", configPath, err)
+				} else if result.HasErrors() || result.HasWarnings() {
+					for _, verr := range result.Errors {
+						if verr.Severity == validator.SeverityError {
+							fmt.Fprintf(os.Stderr, "ERROR [%s] %s: %s\n", p.Name, verr.Field, verr.Message)
+						} else {
+							fmt.Fprintf(os.Stderr, "WARN  [%s] %s: %s\n", p.Name, verr.Field, verr.Message)
+						}
+					}
+				}
+			}
+		}
+
+		if p.SkillsDirectToHome {
+			manifest, _ := skills.ReadManifest(homePath)
+			if manifest != nil && len(manifest.Generated) > 0 {
+				fmt.Printf("Generated %d skill files directly to %s\n", len(manifest.Generated), homePath)
+			}
+		}
+		return nil
+	}
+
 	if !Exists(repoPath) {
 		return fmt.Errorf("repo directory not found: %s", repoPath)
 	}
 
 	// Validate config before sync
 	if p.GeneratorTarget != "" {
-		configPath := filepath.Join(repoPath, p.GeneratedFile)
+		configPath := filepath.Join(configBasePath, p.GeneratedFile)
 		if Exists(configPath) {
 			v := validator.New(m.RepoRoot, m.HomeDir)
 			result, err := v.ValidateFile(p.GeneratorTarget, configPath)
@@ -914,7 +954,7 @@ func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode b
 		return err
 	}
 
-	// Copy generated file to repo dir
+	// Copy generated file to the profile destination.
 	genPath := filepath.Join(tmpDir, p.GeneratorTarget, p.GeneratedFile)
 	if !Exists(genPath) {
 		// Try without target subdir (some generators might behave differently? No, configs.go uses target subdir)
@@ -922,12 +962,18 @@ func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode b
 		return fmt.Errorf("generated file not found: %s", genPath)
 	}
 
-	repoPath := m.ResolveRepoPath(p)
-	if err := os.MkdirAll(repoPath, 0755); err != nil {
+	destRoot := m.ResolveRepoPath(p)
+	primaryDestName := p.GeneratedFile
+	if p.GeneratedDirectToHome {
+		m.cleanRepoGenerated(p)
+		destRoot = m.ResolveHomePath(p)
+		primaryDestName = primaryHomeGeneratedFile(p)
+	}
+	if err := os.MkdirAll(destRoot, 0755); err != nil {
 		return err
 	}
 
-	destFile := filepath.Join(repoPath, p.GeneratedFile)
+	destFile := filepath.Join(destRoot, primaryDestName)
 	if err := CopyFile(genPath, destFile); err != nil {
 		return err
 	}
@@ -938,7 +984,7 @@ func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode b
 	for _, extra := range p.ExtraGeneratedFiles {
 		extraGen := filepath.Join(tmpDir, p.GeneratorTarget, extra)
 		if Exists(extraGen) {
-			extraDest := filepath.Join(repoPath, extra)
+			extraDest := filepath.Join(destRoot, extra)
 			if err := CopyFile(extraGen, extraDest); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not copy extra file %s: %v\n", extra, err)
 			} else {
@@ -977,6 +1023,9 @@ func (m *Manager) regenerateSkills(p *Profile) error {
 	outputDir := ""
 	if p.SkillsDirectToHome {
 		outputDir = m.ResolveHomePath(p)
+		if p.SkillsTarget == "codex" {
+			outputDir = ""
+		}
 	}
 
 	gen, err := skills.NewGenerator(skills.GeneratorOptions{
@@ -991,11 +1040,14 @@ func (m *Manager) regenerateSkills(p *Profile) error {
 			}
 			return p.SkillsHomePath
 		}(),
-		// Codex normally generates directly into ~/.codex/skills; for sync we generate
-		// into the repo's .codex/ so status + sync can verify and propagate changes.
+		// Codex defaults to ~/.codex/skills, but callers can still override the
+		// skills root when they explicitly need a repo-local mirror.
 		CodexSkillsDir: func() string {
 			if p.SkillsTarget != "codex" {
 				return ""
+			}
+			if p.SkillsDirectToHome {
+				return filepath.Join(m.ResolveHomePath(p), "skills")
 			}
 			return filepath.Join(repoPath, "skills")
 		}(),
@@ -1051,6 +1103,28 @@ func (m *Manager) cleanRepoSkills(p *Profile) {
 			if err := os.Remove(p); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not remove stale %s %s: %v\n", f, p, err)
 			}
+		}
+	}
+}
+
+// cleanRepoGenerated removes stale generated config files from the repo
+// directory when a profile now writes them directly to home.
+func (m *Manager) cleanRepoGenerated(p *Profile) {
+	repoPath := m.ResolveRepoPath(p)
+
+	files := []string{p.GeneratedFile}
+	files = append(files, p.ExtraGeneratedFiles...)
+
+	for _, rel := range files {
+		if rel == "" {
+			continue
+		}
+		path := filepath.Join(repoPath, rel)
+		if !Exists(path) {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove stale generated file %s: %v\n", path, err)
 		}
 	}
 }
@@ -1182,6 +1256,11 @@ func (m *Manager) SyncSkills(profileName string, repoOnly bool) error {
 	}
 	if p.SkillsTarget == "" {
 		return fmt.Errorf("profile %s does not have a skills target", profileName)
+	}
+
+	if repoOnly && p.SkillsDirectToHome {
+		fmt.Printf("Skipping skill sync for %s (repo-only incompatible with home-only skills)\n", profileName)
+		return nil
 	}
 
 	// Generate skills
