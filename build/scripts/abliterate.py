@@ -7,7 +7,8 @@ against this direction. Weights are modified in-place on the PVC.
 
 Environment variables:
   MODEL_DIR, NUM_SAMPLES, TARGET_LAYERS, WEIGHT_MATRICES, SKIP_VISION,
-  DEVICE_MAP, FLEXINFER_TELEMETRY (optional)
+  DEVICE_MAP, FLEXINFER_TELEMETRY, ABLITERATION_SAVE_POLICY,
+  ABLITERATION_SAVE_BUFFER_GB, ABLITERATION_STAGING_ROOT (optional)
 """
 import gc
 import json
@@ -101,6 +102,77 @@ def verify_saved_artifacts(path):
         pass
 
 
+def free_bytes(path):
+    stat = os.statvfs(path)
+    return stat.f_bavail * stat.f_frsize
+
+
+def tree_bytes(path):
+    total = 0
+    for root, _, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return total
+
+
+def artifact_size_bytes(paths):
+    total = 0
+    for path in paths:
+        try:
+            total += path.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def weight_artifact_paths(path):
+    p = Path(path)
+    if not p.exists():
+        return []
+    artifacts = []
+    for item in p.iterdir():
+        if not item.is_file():
+            continue
+        name = item.name
+        if name.startswith("pytorch_model"):
+            artifacts.append(item)
+            continue
+        if name.startswith("model") and (
+            name.endswith(".safetensors")
+            or name.endswith(".bin")
+            or name.endswith(".index.json")
+        ):
+            artifacts.append(item)
+            continue
+        if name.endswith(".safetensors") and name != "tokenizer.safetensors":
+            artifacts.append(item)
+    return sorted(artifacts, key=lambda item: item.name)
+
+
+def remove_weight_artifacts(path):
+    removed = []
+    for item in weight_artifact_paths(path):
+        item.unlink(missing_ok=True)
+        removed.append(str(item))
+    return removed
+
+
+def copy_tree_contents(src_dir, dst_dir):
+    os.makedirs(dst_dir, exist_ok=True)
+    for entry in os.scandir(src_dir):
+        src = entry.path
+        dst = os.path.join(dst_dir, entry.name)
+        if entry.is_dir():
+            if os.path.exists(dst):
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
+
+
 def reset_dir(path):
     if os.path.exists(path):
         shutil.rmtree(path)
@@ -140,9 +212,63 @@ def swap_staged_model(src_dir, staged_dir, backup_dir):
     shutil.rmtree(backup_dir)
 
 
+def cutover_workspace_staging(src_dir, staged_dir):
+    removed = remove_weight_artifacts(src_dir)
+    print(f"Removed {len(removed)} old weight artifacts from source dir")
+    copy_tree_contents(staged_dir, src_dir)
+    shutil.rmtree(staged_dir, ignore_errors=True)
+
+
+def resolve_save_target():
+    policy = os.environ.get("ABLITERATION_SAVE_POLICY", "auto").strip().lower() or "auto"
+    buffer_gb = int(os.environ.get("ABLITERATION_SAVE_BUFFER_GB", "8"))
+    workspace_root = os.environ.get("ABLITERATION_STAGING_ROOT", "/workspace").strip() or "/workspace"
+
+    weight_bytes = artifact_size_bytes(weight_artifact_paths(model_dir))
+    model_bytes = tree_bytes(model_dir)
+    pvc_free = free_bytes(model_dir)
+    workspace_free = free_bytes(workspace_root) if os.path.exists(workspace_root) else 0
+    buffer_bytes = buffer_gb * 1024 * 1024 * 1024
+    required_bytes = max(weight_bytes, model_bytes) + buffer_bytes
+    workspace_staging_dir = os.path.join(workspace_root, f"{Path(model_dir).name}.ablit-staging")
+
+    selected = policy
+    if policy == "auto":
+        if pvc_free >= required_bytes:
+            selected = "staged"
+        elif workspace_free >= required_bytes:
+            selected = "workspace"
+        else:
+            selected = "inplace"
+    elif policy not in {"staged", "workspace", "inplace"}:
+        raise RuntimeError(f"unknown ABLITERATION_SAVE_POLICY={policy}")
+
+    if selected == "workspace" and workspace_free <= 0:
+        raise RuntimeError("workspace staging requested but /workspace has no free space")
+
+    target_dir = {
+        "staged": pvc_staging_dir,
+        "workspace": workspace_staging_dir,
+        "inplace": model_dir,
+    }[selected]
+
+    details = {
+        "selected": selected,
+        "requested": policy,
+        "targetDir": target_dir,
+        "bufferGB": buffer_gb,
+        "weightBytes": weight_bytes,
+        "modelBytes": model_bytes,
+        "requiredBytes": required_bytes,
+        "pvcFreeBytes": pvc_free,
+        "workspaceFreeBytes": workspace_free,
+    }
+    return selected, target_dir, details
+
+
 def cleanup_stale_save_dirs():
     removed = []
-    for path in (staging_dir, backup_dir):
+    for path in (pvc_staging_dir, workspace_staging_dir, backup_dir):
         if os.path.exists(path):
             print(f"Removing stale save directory: {path}")
             shutil.rmtree(path, ignore_errors=True)
@@ -152,7 +278,11 @@ def cleanup_stale_save_dirs():
 
 # ── Config ────────────────────────────────────────────────────────────
 model_dir = os.environ["MODEL_DIR"]
-staging_dir = model_dir + ".ablit-staging"
+pvc_staging_dir = model_dir + ".ablit-staging"
+workspace_staging_dir = os.path.join(
+    os.environ.get("ABLITERATION_STAGING_ROOT", "/workspace").strip() or "/workspace",
+    f"{Path(model_dir).name}.ablit-staging",
+)
 backup_dir = model_dir + ".ablit-backup"
 checkpoint_path = os.path.join(model_dir, ".abliteration-checkpoint.json")
 num_samples = int(os.environ["NUM_SAMPLES"])
@@ -621,15 +751,35 @@ if torch.cuda.is_available():
 
 # ── Save ──────────────────────────────────────────────────────────────
 emit_progress(
-    "progress", phase="saving", percent=88.0, detail="preparing staged save"
+    "progress", phase="saving", percent=88.0, detail="preparing save"
 )
-write_checkpoint("saving", percent=88.0, stagingDir=staging_dir)
-emit_snapshot("saving_prepare")
-
-print(f"Saving abliterated model to staging dir {staging_dir}...")
 save_start = time.time()
-reset_dir(staging_dir)
-preserve_model_metadata(model_dir, staging_dir)
+save_policy, save_dir, save_details = resolve_save_target()
+print(f"Saving abliterated model with policy={save_policy} via {save_dir}...")
+print(
+    "Selected save policy="
+    f"{save_policy} target={save_dir} pvc_free={save_details['pvcFreeBytes'] / (1024**3):.1f}Gi "
+    f"workspace_free={save_details['workspaceFreeBytes'] / (1024**3):.1f}Gi "
+    f"required={save_details['requiredBytes'] / (1024**3):.1f}Gi"
+)
+emit_progress(
+    "progress",
+    phase="saving",
+    percent=89.0,
+    detail=f"save policy {save_policy}",
+)
+write_checkpoint(
+    "saving",
+    percent=88.0,
+    stagingDir=save_dir,
+    savePolicy=save_policy,
+    saveDetails=save_details,
+)
+emit_snapshot("saving_prepare", save_policy=save_policy)
+
+if save_policy != "inplace":
+    reset_dir(save_dir)
+    preserve_model_metadata(model_dir, save_dir)
 gc.collect()
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
@@ -645,11 +795,15 @@ if needs_safe_fallback:
         "progress",
         phase="saving",
         percent=90.0,
-        detail="writing safetensors shards",
+        detail=f"writing safetensors shards ({save_policy})",
     )
+    if save_policy == "inplace":
+        removed = remove_weight_artifacts(model_dir)
+        print(f"Removed {len(removed)} old weight artifacts for in-place save")
+        emit_snapshot("saving_inplace_prepare", removed_artifacts=len(removed))
     save_torch_model(
         model,
-        staging_dir,
+        save_dir,
         max_shard_size="1GB",
         safe_serialization=True,
         shared_tensors_to_discard=tied_weights,
@@ -661,10 +815,17 @@ else:
         # tensors are materialized and cloned before writing. PyTorch bin shards use
         # a lower-overhead save path and are fine for the downstream GPTQ loader.
         emit_progress(
-            "progress", phase="saving", percent=90.0, detail="writing pytorch bin shards"
+            "progress",
+            phase="saving",
+            percent=90.0,
+            detail=f"writing pytorch bin shards ({save_policy})",
         )
+        if save_policy == "inplace":
+            removed = remove_weight_artifacts(model_dir)
+            print(f"Removed {len(removed)} old weight artifacts for in-place save")
+            emit_snapshot("saving_inplace_prepare", removed_artifacts=len(removed))
         model.save_pretrained(
-            staging_dir,
+            save_dir,
             safe_serialization=False,
             max_shard_size="1GB",
         )
@@ -675,18 +836,25 @@ else:
         print(f"save_pretrained failed ({e}), falling back to staged safetensors save")
         from huggingface_hub import save_torch_model
 
+        if save_policy == "inplace":
+            removed = remove_weight_artifacts(model_dir)
+            print(f"Removed {len(removed)} old weight artifacts for in-place fallback")
+            emit_snapshot("saving_inplace_prepare", removed_artifacts=len(removed))
         save_torch_model(
             model,
-            staging_dir,
+            save_dir,
             max_shard_size="1GB",
             safe_serialization=True,
             shared_tensors_to_discard=tied_weights,
         )
         print("  Saved staged shards with huggingface_hub.save_torch_model")
-verify_saved_artifacts(staging_dir)
+verify_saved_artifacts(save_dir)
 write_checkpoint("saved_staging", percent=96.0)
 emit_snapshot("saved_staging")
-swap_staged_model(model_dir, staging_dir, backup_dir)
+if save_policy == "staged":
+    swap_staged_model(model_dir, save_dir, backup_dir)
+elif save_policy == "workspace":
+    cutover_workspace_staging(model_dir, save_dir)
 print(f"Save completed in {time.time() - save_start:.1f}s")
 
 # ── Write metadata ────────────────────────────────────────────────────
