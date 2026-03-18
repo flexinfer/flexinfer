@@ -220,6 +220,14 @@ rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
 mkdir -p /workspace/offload
 
+# GPTQModel pulls in tokenicer lazily via its auto model registry. The unified
+# runtime does not guarantee that extra package is present, so bootstrap it here.
+if ! python3 -c "import tokenicer" >/dev/null 2>&1; then
+    echo "Installing missing tokenicer dependency for GPTQModel..."
+    python3 -m pip install --no-cache-dir --quiet tokenicer >/dev/null
+    python3 -c "import tokenicer" >/dev/null
+fi
+
 # MAGMA fallback: vllm-dev base images lack MAGMA (GPU) and LAPACK (CPU),
 # causing torch.linalg.{cholesky,eigh,svd,qr} to fail. Patch to use scipy as
 # final fallback for linalg ops needed by GPTQ warmup and Hessian inverse.

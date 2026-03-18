@@ -1339,6 +1339,9 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "cholesky/eigh/svd/qr") {
 		t.Error("expected GPTQ wrapper script patch banner to mention qr fallback")
 	}
+	if !contains(script, "import tokenicer") {
+		t.Error("expected GPTQ wrapper script to bootstrap tokenicer when missing")
+	}
 }
 
 func TestGPUQuantizationJob_CustomTimeout(t *testing.T) {
