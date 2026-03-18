@@ -61,6 +61,13 @@ spec:
             {{- with .env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- if .securityContext }}
+          securityContext:
+            {{- toYaml .securityContext | nindent 12 }}
+          {{- else if eq .gpuVendor "amd" }}
+          securityContext:
+            privileged: true
+          {{- end }}
           volumeMounts:
             - name: models
               mountPath: /models
