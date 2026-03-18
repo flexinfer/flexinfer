@@ -14,6 +14,7 @@ import (
 	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -571,6 +572,104 @@ func TestTouchLastActiveTime(t *testing.T) {
 	}
 
 	p.touchLastActiveTime(context.Background(), "test-model")
+
+	updated := &aiv1alpha2.Model{}
+	require.NoError(t, k8sClient.Get(context.Background(), client.ObjectKeyFromObject(model), updated))
+	assert.NotNil(t, updated.Status.LastActiveTime)
+}
+
+func TestProcessQueueTouchesLastActiveTimeBeforeDirectRuntimeLoad(t *testing.T) {
+	RegisterMetrics()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha1.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha2.AddToScheme(scheme))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/models/test-model/load":
+			w.WriteHeader(http.StatusAccepted)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/models/test-model/health":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"state": "Loading"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	host, port := splitHostPort(server.Listener.Addr().String())
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://org/model",
+			NodeSelector: map[string]string{
+				"kubernetes.io/hostname": "test-node",
+			},
+		},
+	}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "test-node",
+			Labels: map[string]string{"kubernetes.io/hostname": "test-node"},
+		},
+	}
+	runtimePod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-pod",
+			Namespace: "default",
+			Labels: map[string]string{
+				"app.kubernetes.io/component": "flexinfer-runtime",
+				"flexinfer.ai/gpu-arch":       "gfx1100",
+			},
+		},
+		Spec: corev1.PodSpec{
+			NodeName: "test-node",
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			PodIP: host,
+			Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+			},
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(model, node, runtimePod).
+		WithStatusSubresource(model).
+		Build()
+
+	p := &Proxy{
+		client:               k8sClient,
+		namespace:            "default",
+		coldStartTimeout:     25 * time.Millisecond,
+		directRuntimeEnabled: true,
+		runtimeCache:         NewRuntimeCache(k8sClient, "default", time.Hour),
+	}
+	p.runtimeCache.endpoints = []*pkgrt.RuntimeEndpoint{{
+		PodName:  "runtime-pod",
+		PodIP:    host,
+		Port:     int32(port),
+		NodeName: "test-node",
+		GPUArch:  "gfx1100",
+		Ready:    true,
+	}}
+	p.runtimeCache.lastFetch = time.Now()
+
+	queue := &RequestQueue{
+		model: "test-model",
+		items: make(chan *QueuedRequest, 1),
+	}
+
+	p.processQueue(queue)
 
 	updated := &aiv1alpha2.Model{}
 	require.NoError(t, k8sClient.Get(context.Background(), client.ObjectKeyFromObject(model), updated))

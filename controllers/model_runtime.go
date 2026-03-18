@@ -103,6 +103,20 @@ func (r *ModelReconciler) reconcileViaRuntime(
 
 	// If we don't want the model running, unload it from the runtime.
 	if desiredReplicas == 0 || !cacheReady {
+		// Direct runtime activation can race the controller's serverless reconcile
+		// loop. If the runtime already reports this model as Loading, preserve it
+		// long enough for LastActiveTime/phase updates to catch up.
+		if cacheReady && desiredReplicas == 0 && model.Spec.IsServerless() {
+			status, err := r.Runtime.CheckModelHealth(ctx, endpoint, model.Name)
+			if err != nil {
+				log.V(1).Info("Failed to check runtime model health before unload", "error", err)
+			} else if status != nil && status.State == "Loading" {
+				if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseLoading); err != nil {
+					log.Error(err, "Failed to preserve loading phase for runtime-managed model")
+				}
+				return ctrl.Result{RequeueAfter: requeueShort}, nil
+			}
+		}
 		r.unloadFromRuntime(ctx, model, endpoint)
 		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
 			phase := aiv1alpha2.ModelPhaseIdle

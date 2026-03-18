@@ -143,6 +143,10 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 
 	activationStart := time.Now()
 
+	// Record demand before attempting activation so the controller's
+	// serverless reconcile loop does not immediately reap a direct-loaded model.
+	p.touchLastActiveTime(ctx, modelName)
+
 	// Fast path: try direct runtime load (bypasses controller reconcile loop).
 	if p.directRuntimeEnabled && p.runtimeCache != nil {
 		if p.tryDirectRuntimeLoad(ctx, modelName) {
