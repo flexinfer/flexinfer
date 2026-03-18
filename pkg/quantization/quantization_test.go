@@ -1333,6 +1333,12 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "/opt/flexinfer/scripts/quantize_gptq.py") {
 		t.Error("expected GPTQ wrapper script to invoke quantize_gptq.py")
 	}
+	if !contains(script, "torch.linalg.qr = safe_qr") {
+		t.Error("expected GPTQ wrapper script to patch torch.linalg.qr")
+	}
+	if !contains(script, "cholesky/eigh/svd/qr") {
+		t.Error("expected GPTQ wrapper script patch banner to mention qr fallback")
+	}
 }
 
 func TestGPUQuantizationJob_CustomTimeout(t *testing.T) {

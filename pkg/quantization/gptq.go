@@ -221,8 +221,8 @@ mkdir -p "${OUT_DIR}"
 mkdir -p /workspace/offload
 
 # MAGMA fallback: vllm-dev base images lack MAGMA (GPU) and LAPACK (CPU),
-# causing torch.linalg.cholesky/eigh to fail. Patch to use scipy as final
-# fallback for linalg ops needed by GPTQ Hessian inverse.
+# causing torch.linalg.{cholesky,eigh,svd,qr} to fail. Patch to use scipy as
+# final fallback for linalg ops needed by GPTQ warmup and Hessian inverse.
 cat > /tmp/_magma_fallback.py << 'MAGMA_PATCH'
 import torch, sys, runpy
 import numpy as np
@@ -235,6 +235,7 @@ except ImportError:
 _chol = torch.linalg.cholesky
 _eigh = torch.linalg.eigh
 _svd = torch.linalg.svd
+_qr = torch.linalg.qr
 
 def safe_cholesky(input, *, upper=False, out=None):
     try:
@@ -295,10 +296,39 @@ def safe_svd(input, full_matrices=True, *, driver=None, out=None):
     vh = torch.from_numpy(vh_np).to(dtype=input.dtype, device=input.device)
     return u, s, vh
 
+def safe_qr(input, mode='reduced', *, out=None):
+    try:
+        return _qr(input, mode=mode, out=out)
+    except RuntimeError as e:
+        if 'MAGMA' not in str(e) and 'LAPACK' not in str(e):
+            raise
+    try:
+        q, r = _qr(input.cpu(), mode=mode)
+        return q.to(input.device), r.to(input.device)
+    except RuntimeError:
+        pass
+    if not _HAS_SCIPY:
+        raise RuntimeError("torch.linalg.qr needs MAGMA/LAPACK; scipy not available")
+    arr = input.detach().cpu().to(torch.float64).numpy()
+    mode_map = {'reduced': 'economic', 'complete': 'full', 'r': 'r', 'raw': 'raw'}
+    scipy_mode = mode_map.get(mode, mode)
+    result = _scipy_la.qr(arr, mode=scipy_mode)
+    if mode == 'r':
+        r = torch.from_numpy(result).to(dtype=input.dtype, device=input.device)
+        return r
+    if mode == 'raw':
+        # scipy raw mode returns (Q, TAU); let torch handle uncommon modes if possible.
+        raise RuntimeError("torch.linalg.qr raw mode needs MAGMA/LAPACK; scipy raw fallback unsupported")
+    q_np, r_np = result
+    q = torch.from_numpy(q_np).to(dtype=input.dtype, device=input.device)
+    r = torch.from_numpy(r_np).to(dtype=input.dtype, device=input.device)
+    return q, r
+
 torch.linalg.cholesky = safe_cholesky
 torch.linalg.eigh = safe_eigh
 torch.linalg.svd = safe_svd
-print("Patched torch.linalg.cholesky/eigh/svd with MAGMA/LAPACK/scipy fallback")
+torch.linalg.qr = safe_qr
+print("Patched torch.linalg.cholesky/eigh/svd/qr with MAGMA/LAPACK/scipy fallback")
 sys.argv = ['quantize_gptq.py']
 runpy.run_path('/opt/flexinfer/scripts/quantize_gptq.py', run_name='__main__')
 MAGMA_PATCH
