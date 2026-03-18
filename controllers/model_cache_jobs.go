@@ -101,10 +101,15 @@ set -ex
 MODEL_ID="%s"
 DEST_DIR="%s"
 MARKER="$DEST_DIR/.flexinfer_cached"
+VAE_REPO="${VAE_REPO:-}"
+VAE_DEST_DIR="${VAE_DEST_DIR:-}"
 
 if [ -f "$MARKER" ]; then
-    echo "Model already cached at $DEST_DIR"
-    exit 0
+    if [ -z "$VAE_REPO" ] || [ -d "$VAE_DEST_DIR" ]; then
+        echo "Model already cached at $DEST_DIR"
+        exit 0
+    fi
+    echo "Marker exists but VAE cache is incomplete; downloading VAE assets"
 fi
 
 apt-get update && apt-get install -y git git-lfs ca-certificates
@@ -622,10 +627,15 @@ set -ex
 MODEL_ID="%s"
 DEST_DIR="/models"
 MARKER="/models/%s"
+VAE_REPO="${VAE_REPO:-}"
+VAE_DEST_DIR="${VAE_DEST_DIR:-}"
 
 if [ -f "$MARKER" ]; then
-  echo "Model already cached at $DEST_DIR"
-  exit 0
+  if [ -z "$VAE_REPO" ] || [ -d "$VAE_DEST_DIR" ]; then
+    echo "Model already cached at $DEST_DIR"
+    exit 0
+  fi
+  echo "Marker exists but VAE cache is incomplete; downloading VAE assets"
 fi
 
 mkdir -p "$DEST_DIR" /models/.cache/huggingface
