@@ -390,10 +390,11 @@ def _detect_model_format(model_path: str) -> tuple:
     return "unknown", model_path
 
 
-def _load_single_file(checkpoint_path: str, dtype, vae=None):
+def _load_single_file(checkpoint_path: str, model_id: str, dtype, vae=None):
     """Load a pipeline from a single safetensors checkpoint (CivitAI format).
 
-    Tries SDXL first (most CivitAI checkpoints are SDXL), then falls back to SD 1.5.
+    Tries a FLUX pipeline first when the model id indicates FLUX; otherwise falls
+    back to the SDXL / SD 1.5 heuristics used for CivitAI-style checkpoints.
     """
     file_size_gb = os.path.getsize(checkpoint_path) / (1024**3)
     print(
@@ -402,35 +403,47 @@ def _load_single_file(checkpoint_path: str, dtype, vae=None):
     sys.stdout.flush()
 
     sf_kwargs = {"torch_dtype": dtype, "use_safetensors": True}
+    flux_kwargs = dict(sf_kwargs)
     if vae is not None:
         sf_kwargs["vae"] = vae
+
+    order = []
+    if _is_flux(model_id):
+        if PIPELINE_MODE == "inpainting":
+            order.append(("FLUX Fill", FluxFillPipeline, flux_kwargs))
+        else:
+            order.append(("FLUX", FluxPipeline, flux_kwargs))
 
     # SDXL checkpoints are typically 6-7GB (fp16 pruned). SD 1.5 is ~2-4GB.
     # Try SDXL first if file > 4GB, otherwise try SD 1.5 first.
     if file_size_gb > 4.0:
-        order = [
-            ("SDXL", StableDiffusionXLPipeline),
-            ("SD 1.5", StableDiffusionPipeline),
-        ]
+        order.extend(
+            [
+                ("SDXL", StableDiffusionXLPipeline, sf_kwargs),
+                ("SD 1.5", StableDiffusionPipeline, sf_kwargs),
+            ]
+        )
     else:
-        order = [
-            ("SD 1.5", StableDiffusionPipeline),
-            ("SDXL", StableDiffusionXLPipeline),
-        ]
+        order.extend(
+            [
+                ("SD 1.5", StableDiffusionPipeline, sf_kwargs),
+                ("SDXL", StableDiffusionXLPipeline, sf_kwargs),
+            ]
+        )
 
     last_err = None
-    for label, pipeline_cls in order:
+    for label, pipeline_cls, load_kwargs in order:
         try:
             print(f"  Trying {label} pipeline ({pipeline_cls.__name__})...")
             sys.stdout.flush()
-            pipe = pipeline_cls.from_single_file(checkpoint_path, **sf_kwargs)
+            pipe = pipeline_cls.from_single_file(checkpoint_path, **load_kwargs)
             print(f"  Loaded as {label} pipeline")
             return pipe
         except Exception as e:
             print(f"  {label} failed: {e}")
             last_err = e
 
-    raise RuntimeError(f"Could not load checkpoint as SDXL or SD 1.5: {last_err}")
+    raise RuntimeError(f"Could not load single-file checkpoint: {last_err}")
 
 
 def load_pipeline(model_id: str):
@@ -443,9 +456,15 @@ def load_pipeline(model_id: str):
     # Check for local model path first (e.g., /models mounted from PVC)
     local_model_path = os.environ.get("LOCAL_MODEL_PATH", "/models")
     resolved_model_id = model_id
-    if os.path.isdir(local_model_path) and os.listdir(local_model_path):
+    use_local = False
+    if os.path.isfile(local_model_path):
+        print(f"Found local single-file model at: {local_model_path}")
+        resolved_model_id = local_model_path
+        use_local = True
+    elif os.path.isdir(local_model_path) and os.listdir(local_model_path):
         print(f"Found local model at: {local_model_path}")
         resolved_model_id = local_model_path
+        use_local = True
 
     print(f"Loading model: {resolved_model_id} (id: {model_id})")
     sys.stdout.flush()
@@ -495,13 +514,16 @@ def load_pipeline(model_id: str):
 
     if model_format == "single_file":
         # Single safetensors checkpoint (CivitAI, etc.)
-        pipeline = _load_single_file(resolved_path, dtype, vae=vae)
+        pipeline = _load_single_file(resolved_path, model_id, dtype, vae=vae)
     else:
         # Standard diffusers format (from_pretrained)
+        # When model files are local, skip network access for speed and offline safety.
+        # When resolved_model_id is a HF repo ID (no local files), allow downloading.
+        local_only = use_local or os.environ.get("LOCAL_FILES_ONLY", "0") == "1"
         pipeline_kwargs = {
             "torch_dtype": dtype,
             "use_safetensors": True,
-            "local_files_only": True,
+            "local_files_only": local_only,
             "safety_checker": None,
             "low_cpu_mem_usage": True,
         }
