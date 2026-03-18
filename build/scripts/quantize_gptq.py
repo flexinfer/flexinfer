@@ -49,7 +49,8 @@ emit_progress(
 cfg_path = os.path.join(model_dir, "config.json")
 with open(cfg_path) as f:
     cfg = json.load(f)
-if "text_config" in cfg and "model_type" in cfg.get("text_config", {}):
+composite_text_model = "text_config" in cfg and "model_type" in cfg.get("text_config", {})
+if composite_text_model:
     text_cfg = cfg["text_config"]
     for key in ["bos_token_id", "eos_token_id", "pad_token_id"]:
         if key in cfg and key not in text_cfg:
@@ -101,6 +102,12 @@ tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
 qcfg_kwargs = dict(bits=bits, group_size=group_size, sym=sym, desc_act=desc_act)
 if dynamic_config is not None:
     qcfg_kwargs["dynamic"] = dynamic_config
+# GPTQModel's offload-to-disk path uses a meta-device "turtle model" load. On
+# composite Qwen3.5 text configs that path currently trips a transformers
+# meta-tensor materialization bug, so force direct load for stability.
+if composite_text_model:
+    qcfg_kwargs["offload_to_disk"] = False
+    print("Disabled GPTQ offload_to_disk for composite text_config model")
 quantize_config = QuantizeConfig(**qcfg_kwargs)
 model = GPTQModel.load(
     model_dir,

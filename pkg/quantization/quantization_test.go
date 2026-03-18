@@ -1345,6 +1345,9 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "import tokenicer, pcre, kernels, torchao") {
 		t.Error("expected GPTQ wrapper script to verify GPTQModel runtime dependencies")
 	}
+	if !contains(script, "Disabled GPTQ offload_to_disk for composite text_config model") {
+		t.Error("expected GPTQ wrapper script to patch composite text_config offload behavior")
+	}
 }
 
 func TestGPUQuantizationJob_CustomTimeout(t *testing.T) {

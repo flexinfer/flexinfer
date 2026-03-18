@@ -182,6 +182,29 @@ if [ -n "${WRITER_PY}" ] && grep -q "pre_quantized_size_mb) \* 100" "${WRITER_PY
     echo "Patched GPTQModel writer.py for ZeroDivisionError"
 fi
 
+# Patch the bundled quantize script so composite text_config models avoid
+# GPTQModel's meta-device turtle-load path, which currently crashes in
+# transformers when materializing Qwen3.5 weights from meta tensors.
+GPTQ_SCRIPT=/opt/flexinfer/scripts/quantize_gptq.py
+if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "Disabled GPTQ offload_to_disk for composite text_config model" "${GPTQ_SCRIPT}" 2>/dev/null; then
+    python3 - <<'PY'
+from pathlib import Path
+
+path = Path("/opt/flexinfer/scripts/quantize_gptq.py")
+src = path.read_text()
+src = src.replace(
+    'with open(cfg_path) as f:\n    cfg = json.load(f)\nif "text_config" in cfg and "model_type" in cfg.get("text_config", {}):',
+    'with open(cfg_path) as f:\n    cfg = json.load(f)\ncomposite_text_model = "text_config" in cfg and "model_type" in cfg.get("text_config", {})\nif composite_text_model:',
+)
+src = src.replace(
+    'qcfg_kwargs = dict(bits=bits, group_size=group_size, sym=sym, desc_act=desc_act)\nif dynamic_config is not None:\n    qcfg_kwargs["dynamic"] = dynamic_config',
+    'qcfg_kwargs = dict(bits=bits, group_size=group_size, sym=sym, desc_act=desc_act)\nif dynamic_config is not None:\n    qcfg_kwargs["dynamic"] = dynamic_config\nif composite_text_model:\n    qcfg_kwargs["offload_to_disk"] = False\n    print("Disabled GPTQ offload_to_disk for composite text_config model")',
+)
+path.write_text(src)
+PY
+    echo "Patched quantize_gptq.py to disable GPTQ offload_to_disk for composite text models"
+fi
+
 # Auto-detect gfx900 (Radeon VII).
 if command -v rocminfo &>/dev/null; then
     GPU_GFX=$(rocminfo 2>/dev/null | grep -oP 'gfx\d+' | head -1 || true)
