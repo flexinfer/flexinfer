@@ -14,7 +14,7 @@ Environment variables:
   ABLITERATION_SAVE_MAX_SHARD_SIZE, ABLITERATION_CPU_MAX_MEMORY_GB,
   ABLITERATION_GPU_MAX_MEMORY_GB, ABLITERATION_OFFLOAD_DIR,
   ABLITERATION_MEMORY_TRIM_INTERVAL, ABLITERATION_FORWARD_USE_CACHE,
-  ABLITERATION_SAVE_IMPL, ABLITERATION_MODEL_POLICIES (optional)
+  ABLITERATION_SAVE_IMPL, ABLITERATION_RESUME, ABLITERATION_MODEL_POLICIES (optional)
 """
 import gc
 import importlib.util
@@ -170,6 +170,24 @@ def write_checkpoint(stage, status="running", **kwargs):
     }
     payload.update(kwargs)
     write_json_atomic(checkpoint_path, payload)
+
+
+def tensor_cache_path(name):
+    return os.path.join(checkpoint_dir, name)
+
+
+def save_tensor_payload(name, payload):
+    path = tensor_cache_path(name)
+    tmp = f"{path}.tmp"
+    torch.save(payload, tmp)
+    os.replace(tmp, path)
+
+
+def load_tensor_payload(name):
+    path = tensor_cache_path(name)
+    if not os.path.exists(path):
+        return None
+    return torch.load(path, map_location="cpu")
 
 
 def emit_snapshot(stage, **kwargs):
@@ -605,6 +623,7 @@ workspace_staging_dir = os.path.join(
 )
 backup_dir = model_dir + ".ablit-backup"
 checkpoint_path = os.path.join(model_dir, ".abliteration-checkpoint.json")
+checkpoint_dir = os.path.join(model_dir, ".abliteration-cache")
 num_samples = int(os.environ["NUM_SAMPLES"])
 target_layers = os.environ["TARGET_LAYERS"]
 weight_matrices = os.environ["WEIGHT_MATRICES"].split(",")
@@ -619,10 +638,12 @@ activation_capture_mode = env_str("ABLITERATION_ACTIVATION_CAPTURE_MODE", "hooks
 configured_offload_dir = env_str("ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload")
 memory_trim_interval = max(0, env_int("ABLITERATION_MEMORY_TRIM_INTERVAL", 1))
 forward_use_cache = env_bool("ABLITERATION_FORWARD_USE_CACHE", False)
+resume_enabled = env_bool("ABLITERATION_RESUME", True)
 model_policies = load_model_policies()
 
 emit_progress("start", phase="abliterating", model=model_dir, num_samples=num_samples)
 cleanup_stale_save_dirs()
+os.makedirs(checkpoint_dir, exist_ok=True)
 write_checkpoint("starting", model=model_dir)
 emit_snapshot("starting")
 emit_runtime_capabilities()
@@ -1125,14 +1146,42 @@ def collect_activation_means(prompts, stage, base_percent):
 
 
 print("Collecting harmful activations...")
-harmful_means = collect_activation_means(harmful, "harmful", 10.0)
-release_memory("harmful_activations_complete")
-write_checkpoint("harmful_activations_complete")
+harmful_payload = load_tensor_payload("harmful_means.pt") if resume_enabled else None
+if harmful_payload is not None:
+    harmful_means = harmful_payload["means"]
+    emit_progress(
+        "progress",
+        phase="abliterating",
+        percent=40.0,
+        detail="resumed harmful activations",
+    )
+    write_checkpoint("harmful_activations_complete", resumed=True)
+    emit_snapshot("harmful_activations_resumed", tensor_count=len(harmful_means))
+    print("Resumed harmful activations from checkpoint")
+else:
+    harmful_means = collect_activation_means(harmful, "harmful", 10.0)
+    save_tensor_payload("harmful_means.pt", {"means": harmful_means})
+    release_memory("harmful_activations_complete")
+    write_checkpoint("harmful_activations_complete")
 
 print("Collecting harmless activations...")
-harmless_means = collect_activation_means(harmless, "harmless", 40.0)
-release_memory("harmless_activations_complete")
-write_checkpoint("harmless_activations_complete")
+harmless_payload = load_tensor_payload("harmless_means.pt") if resume_enabled else None
+if harmless_payload is not None:
+    harmless_means = harmless_payload["means"]
+    emit_progress(
+        "progress",
+        phase="abliterating",
+        percent=70.0,
+        detail="resumed harmless activations",
+    )
+    write_checkpoint("harmless_activations_complete", resumed=True)
+    emit_snapshot("harmless_activations_resumed", tensor_count=len(harmless_means))
+    print("Resumed harmless activations from checkpoint")
+else:
+    harmless_means = collect_activation_means(harmless, "harmless", 40.0)
+    save_tensor_payload("harmless_means.pt", {"means": harmless_means})
+    release_memory("harmless_activations_complete")
+    write_checkpoint("harmless_activations_complete")
 
 emit_progress(
     "progress",
@@ -1143,13 +1192,27 @@ emit_progress(
 
 # ── Compute refusal directions ────────────────────────────────────────
 print("Computing refusal directions...")
-refusal_dirs = []
-norms = []
-for i in range(total_layers):
-    diff = harmful_means[i] - harmless_means[i]
-    norm = diff.norm().item()
-    norms.append(norm)
-    refusal_dirs.append(diff / diff.norm())
+refusal_payload = load_tensor_payload("refusal_dirs.pt") if resume_enabled else None
+if refusal_payload is not None:
+    refusal_dirs = refusal_payload["refusal_dirs"]
+    norms = refusal_payload["norms"]
+    emit_progress(
+        "progress",
+        phase="abliterating",
+        percent=75.0,
+        detail="resumed refusal directions",
+    )
+    emit_snapshot("refusal_directions_resumed", tensor_count=len(refusal_dirs))
+    print("Resumed refusal directions from checkpoint")
+else:
+    refusal_dirs = []
+    norms = []
+    for i in range(total_layers):
+        diff = harmful_means[i] - harmless_means[i]
+        norm = diff.norm().item()
+        norms.append(norm)
+        refusal_dirs.append(diff / diff.norm())
+    save_tensor_payload("refusal_dirs.pt", {"refusal_dirs": refusal_dirs, "norms": norms})
 
 del harmful_means, harmless_means
 release_memory("refusal_directions_ready")
@@ -1234,6 +1297,7 @@ write_checkpoint(
     stagingDir=save_dir,
     savePolicy=save_policy,
     saveDetails=save_details,
+    saveImpl=configured_save_impl,
 )
 emit_snapshot("saving_prepare", save_policy=save_policy)
 

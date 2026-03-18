@@ -218,6 +218,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"forward use cache", "ABLITERATION_FORWARD_USE_CACHE", "false"},
 		{"save shard size", "ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB"},
 		{"save impl", "ABLITERATION_SAVE_IMPL", "streaming"},
+		{"resume", "ABLITERATION_RESUME", "true"},
 		{"cpu max memory", "ABLITERATION_CPU_MAX_MEMORY_GB", "20"},
 		{"gpu max memory", "ABLITERATION_GPU_MAX_MEMORY_GB", "20"},
 		{"offload dir", "ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload"},
@@ -241,11 +242,13 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	t.Setenv("FLEXINFER_ABLITERATION_PROGRESS_INTERVAL", "5")
 	t.Setenv("FLEXINFER_ABLITERATION_PROMPT_MAX_LENGTH", "384")
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_FORMAT", "safetensors")
+	t.Setenv("FLEXINFER_ABLITERATION_DEVICE_MAP", "sequential")
 	t.Setenv("FLEXINFER_ABLITERATION_ACTIVATION_CAPTURE_MODE", "hidden_states")
 	t.Setenv("FLEXINFER_ABLITERATION_MEMORY_TRIM_INTERVAL", "3")
 	t.Setenv("FLEXINFER_ABLITERATION_FORWARD_USE_CACHE", "true")
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_MAX_SHARD_SIZE", "2GB")
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_IMPL", "materialized")
+	t.Setenv("FLEXINFER_ABLITERATION_RESUME", "false")
 	t.Setenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB", "28")
 	t.Setenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB", "18")
 	t.Setenv("FLEXINFER_ABLITERATION_OFFLOAD_DIR", "/tmp/ablit-offload")
@@ -266,6 +269,9 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	if got := envMap["ABLITERATION_SAVE_FORMAT"]; got != "safetensors" {
 		t.Errorf("ABLITERATION_SAVE_FORMAT = %q, want safetensors", got)
 	}
+	if got := envMap["DEVICE_MAP"]; got != "sequential" {
+		t.Errorf("DEVICE_MAP = %q, want sequential", got)
+	}
 	if got := envMap["ABLITERATION_ACTIVATION_CAPTURE_MODE"]; got != "hidden_states" {
 		t.Errorf("ABLITERATION_ACTIVATION_CAPTURE_MODE = %q, want hidden_states", got)
 	}
@@ -280,6 +286,9 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	}
 	if got := envMap["ABLITERATION_SAVE_IMPL"]; got != "materialized" {
 		t.Errorf("ABLITERATION_SAVE_IMPL = %q, want materialized", got)
+	}
+	if got := envMap["ABLITERATION_RESUME"]; got != "false" {
+		t.Errorf("ABLITERATION_RESUME = %q, want false", got)
 	}
 	if got := envMap["ABLITERATION_CPU_MAX_MEMORY_GB"]; got != "28" {
 		t.Errorf("ABLITERATION_CPU_MAX_MEMORY_GB = %q, want 28", got)
