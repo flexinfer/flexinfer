@@ -53,17 +53,10 @@ RUN --mount=type=secret,id=ci_job_token,required=false \
 # Copy source
 COPY . .
 
-# Build all binaries
+# Build only the binaries required by the mobile-hud deployment.
 ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loomd ./cmd/loomd
 RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loom ./cmd/loom
-
-# Build all MCP servers
-RUN mkdir -p /bin && \
-    for d in cmd/mcp-*; do \
-      name="$(basename "$d")"; \
-      CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w" -o "/bin/$name" "./$d"; \
-    done
 
 # Runtime stage - minimal image
 FROM ${RUNTIME_REGISTRY}/dockerhub-cache/library/alpine:3.21
@@ -74,8 +67,8 @@ RUN apk add --no-cache ca-certificates git
 RUN adduser -D -u 1000 mcp
 USER mcp
 
-# Copy binaries
-COPY --from=builder /bin/loomd /bin/loom /bin/mcp-* /usr/local/bin/
+# Copy only the mobile-hud binaries.
+COPY --from=builder /bin/loomd /bin/loom /usr/local/bin/
 
 # Default to running the daemon
 ENTRYPOINT ["/usr/local/bin/loomd"]
