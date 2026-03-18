@@ -126,6 +126,9 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 		if m.Status.LastActiveTime == nil {
 			continue
 		}
+		if !sharedModelCanTakeDemand(m) {
+			continue
+		}
 		if now.Sub(m.Status.LastActiveTime.Time) < 5*time.Minute {
 			recentLeader = better(recentLeader, m)
 		}
@@ -155,6 +158,19 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 		return warmPrimaryLeader
 	}
 	return fallbackLeader
+}
+
+func sharedModelCanTakeDemand(model *aiv1alpha2.Model) bool {
+	if model == nil {
+		return false
+	}
+	if model.Status.Phase == aiv1alpha2.ModelPhaseFailed {
+		return false
+	}
+	if model.Status.Cache != nil && !model.Status.Cache.Ready {
+		return false
+	}
+	return true
 }
 
 func queuePositionForSharedModel(modelName string, activeModel *aiv1alpha2.Model, groupModels []*aiv1alpha2.Model) int32 {

@@ -214,6 +214,28 @@ func TestChooseSharedGroupLeader_Comprehensive(t *testing.T) {
 			wantName: "imagegen-primary",
 		},
 		{
+			name: "demanded model with cache miss does not preempt warm primary",
+			models: func() []*aiv1alpha2.Model {
+				qwen := makeSharedModel("qwen-demand", 200, aiv1alpha2.ModelPhasePending, timePtr(recent), nil)
+				qwen.Status.Cache = &aiv1alpha2.CacheStatus{Ready: false}
+				imagegen := markWarmPrimary(makeSharedModel("imagegen-primary", 100, aiv1alpha2.ModelPhaseReady, timePtr(past), nil))
+				imagegen.Status.Cache = &aiv1alpha2.CacheStatus{Ready: true}
+				return []*aiv1alpha2.Model{qwen, imagegen}
+			}(),
+			wantName: "imagegen-primary",
+		},
+		{
+			name: "demanded model with ready cache can preempt idle ready leader",
+			models: func() []*aiv1alpha2.Model {
+				qwen := makeSharedModel("qwen-demand", 200, aiv1alpha2.ModelPhasePending, timePtr(recent), nil)
+				qwen.Status.Cache = &aiv1alpha2.CacheStatus{Ready: true}
+				imagegen := markWarmPrimary(makeSharedModel("imagegen-primary", 100, aiv1alpha2.ModelPhaseReady, timePtr(past), nil))
+				imagegen.Status.Cache = &aiv1alpha2.CacheStatus{Ready: true}
+				return []*aiv1alpha2.Model{qwen, imagegen}
+			}(),
+			wantName: "qwen-demand",
+		},
+		{
 			name: "recent leader within 5min preferred over fallback",
 			models: []*aiv1alpha2.Model{
 				makeSharedModel("fallback", 100, aiv1alpha2.ModelPhasePending, nil, nil),
