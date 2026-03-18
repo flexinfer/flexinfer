@@ -622,32 +622,56 @@ preserve_model_metadata(model_dir, staging_dir)
 gc.collect()
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
-try:
-    # Offloaded large models can spike memory during safetensors export because
-    # tensors are materialized and cloned before writing. PyTorch bin shards use
-    # a lower-overhead save path and are fine for the downstream GPTQ loader.
-    emit_progress(
-        "progress", phase="saving", percent=90.0, detail="writing pytorch bin shards"
+tied_weights = getattr(model, "_tied_weights_keys", None)
+needs_safe_fallback = model_type.startswith("qwen3_5") or is_vlm
+if needs_safe_fallback:
+    print(
+        f"Using staged safetensors save path for model_type={model_type or 'unknown'}"
     )
-    model.save_pretrained(
-        staging_dir,
-        safe_serialization=False,
-        max_shard_size="1GB",
-    )
-except (AttributeError, KeyError) as e:
-    # Qwen3.5 VLM + accelerate offloading: save_pretrained fails because
-    # load_offloaded_parameter can't resolve 'language_model' submodule.
-    # Fall back to HF Hub's sharded saver without clobbering the source dir.
-    print(f"save_pretrained failed ({e}), falling back to staged sharded save")
     from huggingface_hub import save_torch_model
 
+    emit_progress(
+        "progress",
+        phase="saving",
+        percent=90.0,
+        detail="writing safetensors shards",
+    )
     save_torch_model(
         model,
         staging_dir,
         max_shard_size="1GB",
-        safe_serialization=False,
+        safe_serialization=True,
+        shared_tensors_to_discard=tied_weights,
     )
     print("  Saved staged shards with huggingface_hub.save_torch_model")
+else:
+    try:
+        # Offloaded large models can spike memory during safetensors export because
+        # tensors are materialized and cloned before writing. PyTorch bin shards use
+        # a lower-overhead save path and are fine for the downstream GPTQ loader.
+        emit_progress(
+            "progress", phase="saving", percent=90.0, detail="writing pytorch bin shards"
+        )
+        model.save_pretrained(
+            staging_dir,
+            safe_serialization=False,
+            max_shard_size="1GB",
+        )
+    except (AttributeError, KeyError, RuntimeError) as e:
+        # Accelerate offloading can fail in save_pretrained when load_offloaded_parameter
+        # cannot resolve nested submodules. Fall back to HF Hub's sharded saver without
+        # clobbering the source dir.
+        print(f"save_pretrained failed ({e}), falling back to staged safetensors save")
+        from huggingface_hub import save_torch_model
+
+        save_torch_model(
+            model,
+            staging_dir,
+            max_shard_size="1GB",
+            safe_serialization=True,
+            shared_tensors_to_discard=tied_weights,
+        )
+        print("  Saved staged shards with huggingface_hub.save_torch_model")
 verify_saved_artifacts(staging_dir)
 write_checkpoint("saved_staging", percent=96.0)
 emit_snapshot("saved_staging")
