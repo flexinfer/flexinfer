@@ -215,6 +215,9 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"save format", "ABLITERATION_SAVE_FORMAT", "auto"},
 		{"activation capture mode", "ABLITERATION_ACTIVATION_CAPTURE_MODE", "hooks"},
 		{"save shard size", "ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB"},
+		{"cpu max memory", "ABLITERATION_CPU_MAX_MEMORY_GB", "20"},
+		{"gpu max memory", "ABLITERATION_GPU_MAX_MEMORY_GB", "20"},
+		{"offload dir", "ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload"},
 		{"telemetry", "FLEXINFER_TELEMETRY", "true"},
 	}
 
@@ -237,6 +240,9 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_FORMAT", "safetensors")
 	t.Setenv("FLEXINFER_ABLITERATION_ACTIVATION_CAPTURE_MODE", "hidden_states")
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_MAX_SHARD_SIZE", "2GB")
+	t.Setenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB", "28")
+	t.Setenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB", "18")
+	t.Setenv("FLEXINFER_ABLITERATION_OFFLOAD_DIR", "/tmp/ablit-offload")
 	t.Setenv("FLEXINFER_ABLITERATION_MODEL_POLICIES", `[{"name":"custom"}]`)
 
 	env := abliterationEnv("my-model", &aiv1alpha1.AbliterationSpec{})
@@ -259,6 +265,15 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	}
 	if got := envMap["ABLITERATION_SAVE_MAX_SHARD_SIZE"]; got != "2GB" {
 		t.Errorf("ABLITERATION_SAVE_MAX_SHARD_SIZE = %q, want 2GB", got)
+	}
+	if got := envMap["ABLITERATION_CPU_MAX_MEMORY_GB"]; got != "28" {
+		t.Errorf("ABLITERATION_CPU_MAX_MEMORY_GB = %q, want 28", got)
+	}
+	if got := envMap["ABLITERATION_GPU_MAX_MEMORY_GB"]; got != "18" {
+		t.Errorf("ABLITERATION_GPU_MAX_MEMORY_GB = %q, want 18", got)
+	}
+	if got := envMap["ABLITERATION_OFFLOAD_DIR"]; got != "/tmp/ablit-offload" {
+		t.Errorf("ABLITERATION_OFFLOAD_DIR = %q, want /tmp/ablit-offload", got)
 	}
 	if got := envMap["ABLITERATION_MODEL_POLICIES"]; got != `[{"name":"custom"}]` {
 		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want custom JSON", got)
@@ -403,6 +418,21 @@ func TestMemoryRequestForLimitGB(t *testing.T) {
 		if got := memoryRequestForLimitGB(tt.limit); got != tt.want {
 			t.Errorf("memoryRequestForLimitGB(%d) = %d, want %d", tt.limit, got, tt.want)
 		}
+	}
+}
+
+func TestAbliterationMemoryBudgets(t *testing.T) {
+	if got := abliterationCPUMaxMemoryGB(56); got != 20 {
+		t.Errorf("abliterationCPUMaxMemoryGB(56) = %d, want 20", got)
+	}
+	if got := abliterationCPUMaxMemoryGB(60); got != 24 {
+		t.Errorf("abliterationCPUMaxMemoryGB(60) = %d, want 24", got)
+	}
+	if got := abliterationGPUMaxMemoryGB(true); got != 20 {
+		t.Errorf("abliterationGPUMaxMemoryGB(true) = %d, want 20", got)
+	}
+	if got := abliterationGPUMaxMemoryGB(false); got != 0 {
+		t.Errorf("abliterationGPUMaxMemoryGB(false) = %d, want 0", got)
 	}
 }
 

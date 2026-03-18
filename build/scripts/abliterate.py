@@ -11,7 +11,9 @@ Environment variables:
   ABLITERATION_SAVE_BUFFER_GB, ABLITERATION_STAGING_ROOT,
   ABLITERATION_PROGRESS_INTERVAL, ABLITERATION_PROMPT_MAX_LENGTH,
   ABLITERATION_ACTIVATION_CAPTURE_MODE, ABLITERATION_SAVE_FORMAT,
-  ABLITERATION_SAVE_MAX_SHARD_SIZE, ABLITERATION_MODEL_POLICIES (optional)
+  ABLITERATION_SAVE_MAX_SHARD_SIZE, ABLITERATION_CPU_MAX_MEMORY_GB,
+  ABLITERATION_GPU_MAX_MEMORY_GB, ABLITERATION_OFFLOAD_DIR,
+  ABLITERATION_MODEL_POLICIES (optional)
 """
 import gc
 import json
@@ -64,6 +66,28 @@ def env_int(name, default):
 def env_str(name, default):
     raw = os.environ.get(name, "").strip()
     return raw or default
+
+
+def detect_container_memory_gb():
+    candidates = [
+        "/sys/fs/cgroup/memory.max",
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+    ]
+    for path in candidates:
+        try:
+            raw = Path(path).read_text().strip()
+        except OSError:
+            continue
+        if not raw or raw == "max":
+            continue
+        try:
+            limit_bytes = int(raw)
+        except ValueError:
+            continue
+        if limit_bytes <= 0 or limit_bytes >= (1 << 60):
+            continue
+        return max(1, limit_bytes // (1024**3))
+    return None
 
 
 def load_model_policies():
@@ -366,6 +390,7 @@ prompt_max_length = max(32, env_int("ABLITERATION_PROMPT_MAX_LENGTH", 256))
 configured_save_format = env_str("ABLITERATION_SAVE_FORMAT", "auto").lower()
 configured_save_max_shard_size = env_str("ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB")
 activation_capture_mode = env_str("ABLITERATION_ACTIVATION_CAPTURE_MODE", "hooks").lower()
+configured_offload_dir = env_str("ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload")
 model_policies = load_model_policies()
 
 emit_progress("start", phase="abliterating", model=model_dir, num_samples=num_samples)
@@ -392,13 +417,32 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 print(f"Loading model with device_map={device_map}...")
 load_start = time.time()
-model = AutoModelForCausalLM.from_pretrained(
-    model_dir,
-    torch_dtype=torch.bfloat16,
-    device_map=device_map,
-    trust_remote_code=True,
-    low_cpu_mem_usage=True,
-)
+load_kwargs = {
+    "torch_dtype": torch.bfloat16,
+    "device_map": device_map,
+    "trust_remote_code": True,
+    "low_cpu_mem_usage": True,
+}
+if device_map != "cpu":
+    detected_limit_gb = detect_container_memory_gb()
+    cpu_max_memory_gb = env_int(
+        "ABLITERATION_CPU_MAX_MEMORY_GB",
+        max(12, min(32, (detected_limit_gb or 60) - 36)),
+    )
+    gpu_max_memory_gb = env_int("ABLITERATION_GPU_MAX_MEMORY_GB", 20)
+    offload_dir = configured_offload_dir
+    os.makedirs(offload_dir, exist_ok=True)
+    load_kwargs["max_memory"] = {
+        "cpu": f"{cpu_max_memory_gb}GiB",
+        0: f"{gpu_max_memory_gb}GiB",
+    }
+    load_kwargs["offload_folder"] = offload_dir
+    load_kwargs["offload_state_dict"] = True
+    load_kwargs["offload_buffers"] = True
+    print(
+        f"Using constrained max_memory: gpu={gpu_max_memory_gb}GiB cpu={cpu_max_memory_gb}GiB offload={offload_dir}"
+    )
+model = AutoModelForCausalLM.from_pretrained(model_dir, **load_kwargs)
 print(f"Model loaded in {time.time() - load_start:.1f}s")
 
 tokenizer_kwargs = {"trust_remote_code": True}

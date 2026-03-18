@@ -56,6 +56,27 @@ func memoryRequestForLimitGB(limitGB int32) int32 {
 	return requestGB
 }
 
+func abliterationCPUMaxMemoryGB(limitGB int32) int32 {
+	if limitGB <= 0 {
+		return 12
+	}
+	cpuGB := limitGB - 36
+	if cpuGB < 12 {
+		cpuGB = 12
+	}
+	if cpuGB > 32 {
+		cpuGB = 32
+	}
+	return cpuGB
+}
+
+func abliterationGPUMaxMemoryGB(useGPU bool) int32 {
+	if !useGPU {
+		return 0
+	}
+	return 20
+}
+
 // BuildAbliterationJob creates a Kubernetes Job that abliterates model weights on the PVC.
 // It reuses the GPTQ quantizer ROCm image (which has transformers, torch, accelerate).
 func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSpec) (*batchv1.Job, error) {
@@ -185,8 +206,12 @@ func abliterationImage(gpuVendor, gpuArch string) string {
 // abliterationEnv returns environment variables for the abliteration script.
 func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []corev1.EnvVar {
 	numSamples := int32(DefaultAbliterationNumSamples)
+	maxMemoryGB := int32(DefaultAbliterationMemoryGB)
 	if spec.NumSamples != nil && *spec.NumSamples > 0 {
 		numSamples = *spec.NumSamples
+	}
+	if spec.MaxMemoryGB != nil && *spec.MaxMemoryGB > 0 {
+		maxMemoryGB = *spec.MaxMemoryGB
 	}
 
 	targetLayers := "auto"
@@ -229,6 +254,18 @@ func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []core
 	if saveMaxShardSize == "" {
 		saveMaxShardSize = "1GB"
 	}
+	cpuMaxMemoryGB := os.Getenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB")
+	if cpuMaxMemoryGB == "" {
+		cpuMaxMemoryGB = fmt.Sprintf("%d", abliterationCPUMaxMemoryGB(maxMemoryGB))
+	}
+	gpuMaxMemoryGB := os.Getenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB")
+	if gpuMaxMemoryGB == "" {
+		gpuMaxMemoryGB = fmt.Sprintf("%d", abliterationGPUMaxMemoryGB(spec.UseGPU))
+	}
+	offloadDir := os.Getenv("FLEXINFER_ABLITERATION_OFFLOAD_DIR")
+	if offloadDir == "" {
+		offloadDir = "/workspace/abliteration-offload"
+	}
 	modelPolicies := os.Getenv("FLEXINFER_ABLITERATION_MODEL_POLICIES")
 	if modelPolicies == "" {
 		modelPolicies = defaultAbliterationModelPoliciesJSON()
@@ -246,6 +283,9 @@ func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []core
 		{Name: "ABLITERATION_SAVE_FORMAT", Value: saveFormat},
 		{Name: "ABLITERATION_ACTIVATION_CAPTURE_MODE", Value: activationCaptureMode},
 		{Name: "ABLITERATION_SAVE_MAX_SHARD_SIZE", Value: saveMaxShardSize},
+		{Name: "ABLITERATION_CPU_MAX_MEMORY_GB", Value: cpuMaxMemoryGB},
+		{Name: "ABLITERATION_GPU_MAX_MEMORY_GB", Value: gpuMaxMemoryGB},
+		{Name: "ABLITERATION_OFFLOAD_DIR", Value: offloadDir},
 		{Name: "ABLITERATION_MODEL_POLICIES", Value: modelPolicies},
 		{Name: "SAFETENSORS_FAST_GPU", Value: "0"},
 		{Name: "HF_SAFETENSORS_MMAP", Value: "0"},
