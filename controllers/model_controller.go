@@ -151,7 +151,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// This is a warning condition, not a blocker — the model still reconciles.
 	r.checkAliasConflicts(ctx, model)
 
-	desiredReplicas := r.desiredReplicas(model, b)
+	desiredReplicas := r.desiredReplicasForContext(ctx, model, b)
 	requeueAfter := requeueLong
 
 	// Initialize status based on desired state.
@@ -175,7 +175,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			return result, err
 		}
 		// Continue reconciliation even if queued/preempted; desiredReplicas will keep it at 0.
-		desiredReplicas = r.desiredReplicas(model, b)
+		desiredReplicas = r.desiredReplicasForContext(ctx, model, b)
 		if result.Requeue {
 			return result, nil
 		}

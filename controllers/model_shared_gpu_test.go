@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
@@ -61,6 +62,11 @@ func makeSharedModel(
 
 // timePtr returns a pointer to a time.Time value.
 func timePtr(t time.Time) *time.Time { return &t }
+
+func markWarmPrimary(m *aiv1alpha2.Model) *aiv1alpha2.Model {
+	m.Spec.Config = &apiextensionsv1.JSON{Raw: []byte(`{"warmPolicy":"primary"}`)}
+	return m
+}
 
 // --------------------------------------------------------------------------
 // chooseSharedGroupLeader
@@ -198,6 +204,14 @@ func TestChooseSharedGroupLeader_Comprehensive(t *testing.T) {
 				makeSharedModel("mid-pend", 100, aiv1alpha2.ModelPhasePending, nil, nil),
 			},
 			wantName: "high-pend",
+		},
+		{
+			name: "warm primary wins idle fallback even with lower priority",
+			models: []*aiv1alpha2.Model{
+				makeSharedModel("qwen-demand", 200, aiv1alpha2.ModelPhasePending, nil, nil),
+				markWarmPrimary(makeSharedModel("imagegen-primary", 100, aiv1alpha2.ModelPhasePending, nil, nil)),
+			},
+			wantName: "imagegen-primary",
 		},
 		{
 			name: "recent leader within 5min preferred over fallback",

@@ -43,6 +43,7 @@ spec:
     toolCallParser: hermes
     maxNumBatchedTokens: 4096
     disableLogStats: false
+    warmPolicy: primary
     hipVisibleDevices: "0"
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx

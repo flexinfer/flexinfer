@@ -124,6 +124,65 @@ func TestDesiredReplicasServerless(t *testing.T) {
 	}
 }
 
+func TestDesiredReplicasWarmPrimaryPolicy(t *testing.T) {
+	vllmBackend, _ := backend.Get("vllm")
+	s := runtime.NewScheme()
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("keeps primary warm when node idle", func(t *testing.T) {
+		model := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{Name: "primary", Namespace: "flexinfer-system"},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "vllm",
+				Config:  &apiextensionsv1.JSON{Raw: []byte(`{"warmPolicy":"primary"}`)},
+				Serverless: &aiv1alpha2.ServerlessSpec{
+					Enabled: boolRef(true),
+				},
+				NodeSelector: map[string]string{"kubernetes.io/hostname": "node-a"},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().WithScheme(s).Build()
+		r := &ModelReconciler{Client: fakeClient}
+		if got := r.desiredReplicasForContext(context.Background(), model, vllmBackend); got != 1 {
+			t.Fatalf("desiredReplicasForContext() = %d, want 1 for warm primary", got)
+		}
+	})
+
+	t.Run("does not keep primary warm while pipeline work is running", func(t *testing.T) {
+		model := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{Name: "primary", Namespace: "flexinfer-system"},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "vllm",
+				Config:  &apiextensionsv1.JSON{Raw: []byte(`{"warmPolicy":"primary"}`)},
+				Serverless: &aiv1alpha2.ServerlessSpec{
+					Enabled: boolRef(true),
+				},
+				NodeSelector: map[string]string{"kubernetes.io/hostname": "node-a"},
+			},
+		}
+		jobPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "cache-quantize-abc",
+				Namespace: "flexinfer-system",
+				Labels:    map[string]string{"job-name": "cache-quantize"},
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "node-a",
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		}
+		fakeClient := fake.NewClientBuilder().WithScheme(s).WithObjects(jobPod).Build()
+		r := &ModelReconciler{Client: fakeClient}
+		if got := r.desiredReplicasForContext(context.Background(), model, vllmBackend); got != 0 {
+			t.Fatalf("desiredReplicasForContext() = %d, want 0 while pipeline job is active", got)
+		}
+	})
+}
+
+func boolRef(v bool) *bool { return &v }
+
 func TestChooseSharedGroupLeader(t *testing.T) {
 	now := time.Now()
 	shared := "test-shared"

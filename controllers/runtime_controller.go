@@ -201,6 +201,10 @@ type RuntimeModelStatus struct {
 	Error string `json:"error"`
 }
 
+type RuntimeModeStatus struct {
+	Mode string `json:"mode"`
+}
+
 // CheckModelHealth queries the runtime for a model's current state.
 // Returns nil if the model is not loaded on the runtime.
 func (r *RuntimeReconciler) CheckModelHealth(ctx context.Context, endpoint *RuntimeEndpoint, name string) (*RuntimeModelStatus, error) {
@@ -228,6 +232,28 @@ func (r *RuntimeReconciler) CheckModelHealth(ctx context.Context, endpoint *Runt
 	}
 
 	return &status, nil
+}
+
+func (r *RuntimeReconciler) GetMode(ctx context.Context, endpoint *RuntimeEndpoint) (string, error) {
+	url := fmt.Sprintf("%s/api/v1/mode", endpoint.URL())
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("creating mode request: %w", err)
+	}
+
+	httpClient := &http.Client{Timeout: httpClientShort}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("mode request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var status RuntimeModeStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return "", fmt.Errorf("decoding mode response: %w", err)
+	}
+	return status.Mode, nil
 }
 
 // isPodReady returns true if all containers in the pod are ready.

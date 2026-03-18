@@ -18,6 +18,8 @@ spec:
   gpu:
     vendor: amd
     count: 1
+    shared: gfx1100-5930k-primary
+    priority: 200
     vramEstimateMB: 15000
   serverless:
     enabled: true

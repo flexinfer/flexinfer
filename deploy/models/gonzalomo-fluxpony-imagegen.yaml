@@ -11,6 +11,8 @@ spec:
   gpu:
     vendor: amd
     count: 1
+    shared: gfx1100-5930k-primary
+    priority: 100
     vramEstimateMB: 22000
   serverless:
     enabled: true
@@ -26,6 +28,7 @@ spec:
     guidanceScale: "3.5"
     numInferenceSteps: "28"
     warmupResolutions: "512x512"
+    warmPolicy: primary
     hipVisibleDevices: "0"
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k

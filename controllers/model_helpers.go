@@ -36,9 +36,18 @@ import (
 	"github.com/flexinfer/flexinfer/pkg/metrics"
 )
 
+const (
+	warmPolicyPrimary = "primary"
+	nodeModeGaming    = "gaming"
+)
+
 // desiredReplicas calculates the desired replica count for the model.
 // For serverless models, this is driven by LastActiveTime (written by the proxy) and idle timeout.
 func (r *ModelReconciler) desiredReplicas(model *aiv1alpha2.Model, b backend.Backend) int32 {
+	return r.desiredReplicasForContext(context.Background(), model, b)
+}
+
+func (r *ModelReconciler) desiredReplicasForContext(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend) int32 {
 	// KV-cache eviction: override to 0 replicas while evicted.
 	if model.Status.KVCache != nil && model.Status.KVCache.Evicted {
 		return 0
@@ -56,6 +65,9 @@ func (r *ModelReconciler) desiredReplicas(model *aiv1alpha2.Model, b backend.Bac
 	}
 
 	minReplicas := model.Spec.GetMinReplicas()
+	if minReplicas < 1 && r.shouldKeepWarmPrimary(ctx, model) {
+		minReplicas = 1
+	}
 	if model.Status.LastActiveTime == nil {
 		return minReplicas
 	}
@@ -76,6 +88,94 @@ func (r *ModelReconciler) desiredReplicas(model *aiv1alpha2.Model, b backend.Bac
 		return 1
 	}
 	return minReplicas
+}
+
+func (r *ModelReconciler) shouldKeepWarmPrimary(ctx context.Context, model *aiv1alpha2.Model) bool {
+	if warmPolicy(model) != warmPolicyPrimary {
+		return false
+	}
+
+	nodeName := ""
+	if model.Spec.NodeSelector != nil {
+		nodeName = model.Spec.NodeSelector["kubernetes.io/hostname"]
+	}
+	if nodeName != "" && r.nodeHasActivePipelineWork(ctx, model.Namespace, nodeName) {
+		return false
+	}
+
+	if r.Runtime == nil {
+		return true
+	}
+
+	endpoint, err := r.Runtime.FindRuntimeForNode(ctx, model.Namespace, model.Spec.NodeSelector)
+	if err != nil || endpoint == nil || !endpoint.Ready {
+		return true
+	}
+	mode, err := r.Runtime.GetMode(ctx, endpoint)
+	if err != nil {
+		return true
+	}
+	return mode != nodeModeGaming
+}
+
+func warmPolicy(model *aiv1alpha2.Model) string {
+	if model == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(model.Spec.ConfigString("warmPolicy", "")))
+}
+
+func isWarmPrimaryModel(model *aiv1alpha2.Model) bool {
+	return warmPolicy(model) == warmPolicyPrimary
+}
+
+func (r *ModelReconciler) nodeHasActivePipelineWork(ctx context.Context, namespace, nodeName string) bool {
+	if nodeName == "" || r.Client == nil {
+		return false
+	}
+
+	pods := &corev1.PodList{}
+	if err := r.List(ctx, pods, client.InNamespace(namespace)); err != nil {
+		return false
+	}
+
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Spec.NodeName != nodeName {
+			continue
+		}
+		switch pod.Status.Phase {
+		case corev1.PodPending, corev1.PodRunning:
+		default:
+			continue
+		}
+		if isActivePipelinePod(pod) {
+			return true
+		}
+	}
+	return false
+}
+
+func isActivePipelinePod(pod *corev1.Pod) bool {
+	if pod == nil {
+		return false
+	}
+	switch pod.Labels["flexinfer.ai/component"] {
+	case "abliterator", "quantizer", "finetuner", "publisher":
+		return true
+	}
+
+	name := pod.Name
+	jobName := pod.Labels["job-name"]
+	for _, v := range []string{name, jobName} {
+		if strings.Contains(v, "-abliterate") ||
+			strings.Contains(v, "-quantize") ||
+			strings.Contains(v, "-finetune") ||
+			strings.Contains(v, "-publish") {
+			return true
+		}
+	}
+	return false
 }
 
 // cleanupModel removes all resources created for the model.

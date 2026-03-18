@@ -113,8 +113,12 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	var recentLeader *aiv1alpha2.Model
 	var fallbackLeader *aiv1alpha2.Model
 	var demandedLeader *aiv1alpha2.Model
+	var warmPrimaryLeader *aiv1alpha2.Model
 	for _, m := range groupModels {
 		fallbackLeader = better(fallbackLeader, m)
+		if isWarmPrimaryModel(m) {
+			warmPrimaryLeader = better(warmPrimaryLeader, m)
+		}
 		if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 			readyLeader = better(readyLeader, m)
 			continue
@@ -146,6 +150,9 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	}
 	if recentLeader != nil {
 		return recentLeader
+	}
+	if warmPrimaryLeader != nil {
+		return warmPrimaryLeader
 	}
 	return fallbackLeader
 }
