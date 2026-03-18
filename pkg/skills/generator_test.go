@@ -576,6 +576,102 @@ func TestValidate_NilScriptSkipped(t *testing.T) {
 	}
 }
 
+func TestValidate_AlwaysAllowWriteScriptWithoutDryRunFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	skillDir := filepath.Join(sourceDir, "unsafe-allow")
+
+	scriptPath := filepath.Join(skillDir, "scripts", "mutate.sh")
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\nmkdir -p .loom\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	skill := newTestSkill("unsafe-allow", "Unsafe always_allow")
+	skill.Common.Scripts = []*Script{{Name: "mutate", Path: "scripts/mutate.sh"}}
+	skill.Common.AlwaysAllow = []string{"mutate"}
+
+	g := &Generator{
+		Registry:  &Registry{Skills: []*Skill{skill}},
+		SourceDir: sourceDir,
+		Target:    "all",
+		CodexHome: "/tmp/codex",
+	}
+
+	errs := g.Validate()
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 validation error, got %d: %v", len(errs), errs)
+	}
+	if errs[0].ResourceType != "always_allow" {
+		t.Fatalf("expected always_allow validation error, got %q", errs[0].ResourceType)
+	}
+}
+
+func TestValidate_AlwaysAllowWriteScriptWithDryRunAllowed(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	skillDir := filepath.Join(sourceDir, "safe-allow")
+
+	scriptPath := filepath.Join(skillDir, "scripts", "generate.sh")
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	content := "#!/usr/bin/env bash\n# defaults to --dry-run unless --apply is passed\nif [[ \"$1\" == \"--apply\" ]]; then echo apply; else echo --dry-run; fi\n"
+	if err := os.WriteFile(scriptPath, []byte(content), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	skill := newTestSkill("safe-allow", "Safe always_allow")
+	skill.Common.Scripts = []*Script{{Name: "generate", Path: "scripts/generate.sh"}}
+	skill.Common.AlwaysAllow = []string{"generate"}
+
+	g := &Generator{
+		Registry:  &Registry{Skills: []*Skill{skill}},
+		SourceDir: sourceDir,
+		Target:    "all",
+		CodexHome: "/tmp/codex",
+	}
+
+	errs := g.Validate()
+	if len(errs) != 0 {
+		t.Fatalf("expected no validation errors, got %d: %v", len(errs), errs)
+	}
+}
+
+func TestValidate_AlwaysAllowScriptMustExistInScripts(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	skillDir := filepath.Join(sourceDir, "bad-allow")
+	scriptPath := filepath.Join(skillDir, "scripts", "read.sh")
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\necho read-only\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	skill := newTestSkill("bad-allow", "Bad always_allow reference")
+	skill.Common.Scripts = []*Script{{Name: "read", Path: "scripts/read.sh"}}
+	skill.Common.AlwaysAllow = []string{"missing-script-name"}
+
+	g := &Generator{
+		Registry:  &Registry{Skills: []*Skill{skill}},
+		SourceDir: sourceDir,
+		Target:    "all",
+		CodexHome: "/tmp/codex",
+	}
+
+	errs := g.Validate()
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 validation error, got %d: %v", len(errs), errs)
+	}
+	if errs[0].ResourceType != "always_allow" {
+		t.Fatalf("expected always_allow validation error, got %q", errs[0].ResourceType)
+	}
+}
+
 // =========================================================================
 // UpdateRegistryDate tests
 // =========================================================================

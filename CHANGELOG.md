@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mobile HUD API**: Sandbox/devbox tab exposing `devbox_summary`, `devbox_build`, and `devbox_stop`; control-plane read APIs with auto-sync gateway token.
 - **HUD enterprise dashboard** (`web/`): Cost dashboard (CostMonitor, SSE `hud.cost`, OverviewPanel KPI tile), RBAC visibility (denied-calls ring buffer, ServersPanel RBAC card), OTel status (traced/total coverage, ServersPanel Observability card).
 - **Skills generation improvements** (`cmd/loom`): Priority-based composite instruction assembly (#59), `\${VAR}` escaping in instructions (#57), auto-update registry date (#56), and validation of script/reference/asset existence (#55).
+- **`always_allow` safety validation** (`pkg/skills`): Skill generation now rejects `always_allow` entries that point at write-capable scripts unless those scripts advertise a `--dry-run` default (#58).
 - Atomic local upgrade workflow via `make dev-upgrade`, `scripts/dev/upgrade_local.sh`, and `scripts/install_atomic.sh`.
 - `docs/DEV_BUILD_LIFECYCLE.md` for agent-safe local upgrade and rollback procedures.
 - `docs/FLEXINFER_SITE_INTEGRATION.md` runbook describing how Loom Core docs are synced/published through `services/flexinfer-site` to `flexinfer.ai`.
