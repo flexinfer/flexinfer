@@ -104,12 +104,12 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	if params.GPUVendor == "amd" {
 		image = gptqQuantizerROCmImage(params.GPUArch)
 	}
-	// Prefer the unified runtime image whenever it is enabled. GPUProfile
-	// overrides are only for legacy dedicated quantizer images.
-	if img := runtimeImageForQuantization(); img != "" {
-		image = img
-	} else if params.ProfileQuantizerImage != "" {
+	// Prefer GPUProfile-specific runtime images first so per-arch/per-node
+	// immutable digests can override the global fallback cleanly.
+	if params.ProfileQuantizerImage != "" {
 		image = params.ProfileQuantizerImage
+	} else if img := runtimeImageForQuantization(); img != "" {
+		image = img
 	}
 
 	env := b.buildEnv(params.ModelPath, bits, groupSize, sym, descAct, memoryGB, gpuMemFraction, dynamicExclusion, params.Spec.Calibration)
