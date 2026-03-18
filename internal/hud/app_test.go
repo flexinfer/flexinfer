@@ -1157,6 +1157,101 @@ func TestHandler_AgentSessionStart_NewNamespaceStartsNewSession(t *testing.T) {
 	}
 }
 
+func TestHandler_AgentHeartbeat_EnsureSessionFailureDoesNotRegisterBarePresence(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+
+	var sessionStartCalls int
+	var presenceRegisterCalls int
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[]}"}]}`), nil
+		case "agent_context__agent_session_start":
+			sessionStartCalls++
+			return json.RawMessage(`{"isError":true,"content":[{"type":"text","text":"transport closed"}]}`), nil
+		case "agent_context__agent_presence_heartbeat":
+			return json.RawMessage(`{"isError":true,"content":[{"type":"text","text":"agent claude-code-552019522-12350 not registered; call agent_presence_register first"}]}`), nil
+		case "agent_context__agent_presence_register":
+			presenceRegisterCalls++
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true}"}]}`), nil
+		default:
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+	})
+
+	req := httptest.NewRequest("POST", "/api/agent/heartbeat", strings.NewReader(`{"agent_id":"claude-code-552019522-12350","agent_type":"claude-code","namespace":"loom-core/main","description":"Claude Code session","status":"active","ensure_session":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d: %s", w.Code, w.Body.String())
+	}
+	if sessionStartCalls == 0 {
+		t.Fatal("expected heartbeat ensure-session to attempt session bootstrap")
+	}
+	if presenceRegisterCalls != 0 {
+		t.Fatalf("expected no bare presence registration on ensure_session failure, got %d calls", presenceRegisterCalls)
+	}
+	if !strings.Contains(w.Body.String(), "failed to bootstrap session for heartbeat") {
+		t.Fatalf("expected bootstrap failure message, got %s", w.Body.String())
+	}
+}
+
+func TestHandler_AgentHeartbeat_RegistersBarePresenceWithoutEnsureSession(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+
+	var heartbeatCalls int
+	var presenceRegisterCalls int
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_presence_heartbeat":
+			heartbeatCalls++
+			if heartbeatCalls == 1 {
+				return json.RawMessage(`{"isError":true,"content":[{"type":"text","text":"agent codex-552019522 not registered; call agent_presence_register first"}]}`), nil
+			}
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true,\"last_heartbeat\":\"2026-03-18T12:10:00Z\"}"}]}`), nil
+		case "agent_context__agent_presence_register":
+			presenceRegisterCalls++
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true}"}]}`), nil
+		default:
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+	})
+
+	req := httptest.NewRequest("POST", "/api/agent/heartbeat", strings.NewReader(`{"agent_id":"codex-552019522","agent_type":"codex","status":"active"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if presenceRegisterCalls != 1 {
+		t.Fatalf("expected 1 presence register call, got %d", presenceRegisterCalls)
+	}
+	if heartbeatCalls != 2 {
+		t.Fatalf("expected 2 heartbeat attempts, got %d", heartbeatCalls)
+	}
+}
+
 func TestHandler_MobileSessionEnd_PathRoute(t *testing.T) {
 	app, mux := newTestApp(t)
 	app.config.MobileOperatorToken = "mobile-secret"

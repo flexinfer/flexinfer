@@ -164,9 +164,11 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		a.writeError(w, http.StatusBadRequest, "agent_id is required", nil)
 		return
 	}
+	var ensureSessionErr error
 	if body.EnsureSession {
 		namespace := strings.TrimSpace(body.Namespace)
 		if err := a.ensureHeartbeatSession(body.AgentID, namespace, body.AgentType, body.Description); err != nil {
+			ensureSessionErr = err
 			a.logger.Warn("heartbeat ensure-session failed", "agent_id", body.AgentID, "error", err)
 		}
 	}
@@ -205,6 +207,48 @@ func (a *App) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// presence-register. Make this endpoint resilient by self-registering
 		// presence once, then retrying the heartbeat.
 		if isPresenceNotRegisteredErr(err) {
+			if body.EnsureSession {
+				if ensureSessionErr == nil {
+					namespace := strings.TrimSpace(body.Namespace)
+					ensureSessionErr = a.ensureHeartbeatSession(body.AgentID, namespace, body.AgentType, body.Description)
+				}
+				if ensureSessionErr != nil {
+					a.writeError(w, http.StatusBadGateway, "failed to bootstrap session for heartbeat", ensureSessionErr)
+					return
+				}
+
+				result, err = a.agent.PresenceHeartbeat(body.AgentID, body.HeartbeatParams())
+				if err == nil {
+					a.cache.Set(cacheKey, fp, 10*time.Second)
+					a.broadcastAgentEvent("agent.heartbeat", map[string]any{
+						"agent_id":     body.AgentID,
+						"status":       body.Status,
+						"current_task": body.CurrentTask,
+						"active_files": body.ActiveFiles,
+						"branch":       body.Branch,
+						"timestamp":    time.Now().Format(time.RFC3339),
+					})
+
+					go a.fleetMonitor.Refresh()
+
+					resp := map[string]any{"ok": true}
+					if result != nil && result.HasConflicts {
+						resp["has_conflicts"] = true
+						resp["conflicts"] = result.Conflicts
+					}
+					if pending := a.nudgeQueue.Count(body.AgentID); pending > 0 {
+						resp["nudge_queue"] = a.nudgeQueue.Status(body.AgentID)
+					}
+					a.writeJSON(w, http.StatusOK, resp)
+					return
+				}
+
+				if isPresenceNotRegisteredErr(err) {
+					a.writeError(w, http.StatusBadGateway, "failed to bootstrap session for heartbeat", err)
+					return
+				}
+			}
+
 			_ = a.agent.PresenceRegister(body.AgentID, body.SessionID, body.AgentType, body.Description, body.HeartbeatTTLSeconds)
 			result, err = a.agent.PresenceHeartbeat(body.AgentID, body.HeartbeatParams())
 			if err == nil {
