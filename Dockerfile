@@ -4,30 +4,7 @@ ARG RUNTIME_REGISTRY=registry.harbor.lan
 FROM golang:1.25.8-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
-
-# This repo uses local `replace` directives to `../../libs/*`.
-# In Docker builds, create those sibling directories at /libs/*.
-RUN mkdir -p /libs
-RUN --mount=type=secret,id=ci_job_token,required=false \
-    --mount=type=secret,id=gitlab_token,required=false \
-    set -eu; \
-    token=""; \
-    token_user=""; \
-    if [ -s /run/secrets/ci_job_token ]; then \
-      token="$(cat /run/secrets/ci_job_token)"; \
-      token_user="gitlab-ci-token"; \
-    elif [ -s /run/secrets/gitlab_token ]; then \
-      token="$(cat /run/secrets/gitlab_token)"; \
-      token_user="oauth2"; \
-    fi; \
-    if [ -n "$token" ]; then \
-      base_url="https://${token_user}:${token}@gitlab.flexinfer.ai/libs"; \
-    else \
-      base_url="https://gitlab.flexinfer.ai/libs"; \
-    fi; \
-    git clone --depth 1 "${base_url}/mcp-go.git" /libs/mcp-go && \
-    git clone --depth 1 "${base_url}/fi-mcp-kit.git" /libs/fi-mcp-kit && \
-    git clone --depth 1 "${base_url}/fi-accel.git" /libs/fi-accel
+ENV GOWORK=off
 
 WORKDIR /src
 
