@@ -49,6 +49,9 @@ spec:
             # the backend reaper closing the idle connection.
             - name: FI_MCP_BACKEND_IDLE_TIMEOUT
               value: "30m"
+            # OpenTelemetry trace export to Langfuse (in-cluster)
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://langfuse-web.ai.svc.cluster.local:3000/api/public/otel"
           envFrom:
             - secretRef:
                 name: loom-secrets

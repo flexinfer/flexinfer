@@ -21,6 +21,32 @@ struct SessionDetailView: View {
             VStack(spacing: 16) {
                 if let session = viewModel.session {
                     SessionMetadataView(session: session)
+
+                    // Tasks summary
+                    if let tasks = viewModel.tasks, tasks.total > 0 {
+                        SessionTasksView(tasks: tasks)
+                    }
+
+                    // Context entry breakdown
+                    if !viewModel.entryBreakdown.isEmpty {
+                        SessionEntryBreakdownView(buckets: viewModel.entryBreakdown)
+                    }
+
+                    // Decisions
+                    if !viewModel.decisions.isEmpty {
+                        SessionEntriesSection(title: "Decisions", icon: "lightbulb", entries: viewModel.decisions)
+                    }
+
+                    // Errors
+                    if !viewModel.errors.isEmpty {
+                        SessionEntriesSection(title: "Errors", icon: "exclamationmark.triangle", entries: viewModel.errors)
+                    }
+
+                    // Top files
+                    if !viewModel.topFiles.isEmpty {
+                        SessionTopFilesView(files: viewModel.topFiles)
+                    }
+
                     SessionEventsView(events: viewModel.events)
                 } else if viewModel.isLoading {
                     ProgressView("Loading session...")

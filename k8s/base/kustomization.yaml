@@ -217,3 +217,25 @@ resources:
   - servers/jobsearch/configmap.yaml
   - servers/jobsearch/deployment.yaml
   - servers/jobsearch/service.yaml
+
+patches:
+  # JSON logging for all MCP servers
+  - patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: MCP_LOG_FORMAT
+          value: json
+    target:
+      kind: Deployment
+      labelSelector: component=mcp-server
+  # OpenTelemetry trace export for all MCP servers
+  - patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://langfuse-web.ai.svc.cluster.local:3000/api/public/otel"
+    target:
+      kind: Deployment
+      labelSelector: component=mcp-server
