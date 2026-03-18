@@ -72,12 +72,14 @@ func DirectRuntimeLoadEligibility(model *aiv1alpha2.Model) (bool, string) {
 	if model == nil {
 		return false, "model is nil"
 	}
-	if strings.HasPrefix(model.Spec.Source, "pvc://") {
-		if !usesLocalCacheForPVC(model) {
-			return false, "raw pvc:// sources require staged Local cache for runtime loads"
-		}
+	if usesLocalCache(model) {
 		if model.Status.Cache == nil || !model.Status.Cache.Ready {
 			return false, "staged Local cache is not ready"
+		}
+	}
+	if strings.HasPrefix(model.Spec.Source, "pvc://") {
+		if !usesLocalCache(model) {
+			return false, "raw pvc:// sources require staged Local cache for runtime loads"
 		}
 	}
 	return true, ""
@@ -104,10 +106,10 @@ func BuildLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts B
 		Model:   ExtractModelFromSource(model.Spec.Source),
 		Config:  config,
 	}
-	if strings.HasPrefix(model.Spec.Source, "pvc://") && opts.ModelBasePath != "" {
-		if usesLocalCacheForPVC(model) {
+	if opts.ModelBasePath != "" {
+		if usesLocalCache(model) {
 			payload.ModelPath = runtimeLocalCacheModelPath(model, opts.ModelBasePath)
-		} else {
+		} else if strings.HasPrefix(model.Spec.Source, "pvc://") {
 			pvcParts := strings.SplitN(strings.TrimPrefix(model.Spec.Source, "pvc://"), "/", 2)
 			if len(pvcParts) >= 1 {
 				payload.ModelPath = opts.ModelBasePath + "/" + pvcParts[0] + payload.Model
@@ -143,11 +145,8 @@ func ResolveCompilationCachePath(model *aiv1alpha2.Model) (string, bool) {
 	return filepath.Join(basePath, model.Namespace, model.Name), true
 }
 
-func usesLocalCacheForPVC(model *aiv1alpha2.Model) bool {
-	if model == nil || !strings.HasPrefix(model.Spec.Source, "pvc://") {
-		return false
-	}
-	if model.Spec.Cache == nil {
+func usesLocalCache(model *aiv1alpha2.Model) bool {
+	if model == nil || model.Spec.Cache == nil {
 		return false
 	}
 	return model.Spec.Cache.Strategy == "Local"
