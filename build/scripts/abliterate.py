@@ -140,6 +140,16 @@ def swap_staged_model(src_dir, staged_dir, backup_dir):
     shutil.rmtree(backup_dir)
 
 
+def cleanup_stale_save_dirs():
+    removed = []
+    for path in (staging_dir, backup_dir):
+        if os.path.exists(path):
+            print(f"Removing stale save directory: {path}")
+            shutil.rmtree(path, ignore_errors=True)
+            removed.append(path)
+    return removed
+
+
 # ── Config ────────────────────────────────────────────────────────────
 model_dir = os.environ["MODEL_DIR"]
 staging_dir = model_dir + ".ablit-staging"
@@ -152,6 +162,7 @@ skip_vision = os.environ["SKIP_VISION"] == "true"
 device_map = os.environ["DEVICE_MAP"]
 
 emit_progress("start", phase="abliterating", model=model_dir, num_samples=num_samples)
+cleanup_stale_save_dirs()
 write_checkpoint("starting", model=model_dir)
 emit_snapshot("starting")
 
