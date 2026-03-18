@@ -1342,6 +1342,9 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "import tokenicer") {
 		t.Error("expected GPTQ wrapper script to bootstrap tokenicer when missing")
 	}
+	if !contains(script, "import tokenicer, pcre, kernels, torchao") {
+		t.Error("expected GPTQ wrapper script to verify GPTQModel runtime dependencies")
+	}
 }
 
 func TestGPUQuantizationJob_CustomTimeout(t *testing.T) {

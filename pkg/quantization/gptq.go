@@ -220,12 +220,21 @@ rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
 mkdir -p /workspace/offload
 
-# GPTQModel pulls in tokenicer lazily via its auto model registry. The unified
-# runtime does not guarantee that extra package is present, so bootstrap it here.
-if ! python3 -c "import tokenicer" >/dev/null 2>&1; then
-    echo "Installing missing tokenicer dependency for GPTQModel..."
-    python3 -m pip install --no-cache-dir --quiet tokenicer >/dev/null
-    python3 -c "import tokenicer" >/dev/null
+# GPTQModel 5.8.x in the runtime image can be present without its newer Python
+# dependency set. Bootstrap the minimum compatible import/runtime deps here so
+# the quantize job is self-contained even when the base image lags.
+if ! python3 -c "import tokenicer, pcre, kernels, torchao" >/dev/null 2>&1; then
+    echo "Installing missing GPTQModel runtime dependencies..."
+    python3 -m pip install --no-cache-dir --quiet \
+        "tokenicer>=0.0.10" \
+        "pypcre>=0.2.13" \
+        "kernels>=0.12.2" \
+        "torchao>=0.16.0" \
+        "accelerate>=1.13.0" \
+        "numpy==2.2.6" \
+        "pillow>=11.3.0" \
+        "protobuf>=7.34.0" >/dev/null
+    python3 -c "import tokenicer, pcre, kernels, torchao" >/dev/null
 fi
 
 # MAGMA fallback: vllm-dev base images lack MAGMA (GPU) and LAPACK (CPU),
