@@ -39,12 +39,13 @@ spec:
     # Keep VAE resolution relative to the cache root so unified runtimes can
     # load it correctly from node-local model storage.
     vaePath: ".vae/sdxl-vae-fp16-fix"
-    guidanceScale: "7.0"
-    numInferenceSteps: "40"
-    # DPM++ SDE Karras: recommended by RealVisXL V5.0 model card for best quality.
-    scheduler: "dpm++sde-karras"
+    guidanceScale: "6.5"
+    numInferenceSteps: "45"
+    # Prefer the multistep SDE/Karras solver for SDXL quality. The single-step
+    # variant is faster but tends to preserve more grain and distortion.
+    scheduler: "dpm++2m-sde-karras"
     # Default negative prompt for quality filtering. Callers can override per-request.
-    negativePrompt: "(worst quality, low quality, normal quality:2), blurry, jpeg artifacts, watermark, text, logo, signature, deformed, disfigured, bad anatomy, extra limbs"
+    negativePrompt: "(worst quality, low quality, normal quality:2), blurry, noisy, grainy, jpeg artifacts, watermark, text, logo, signature, deformed, disfigured, bad anatomy, bad eyes, extra limbs, distorted proportions"
     hipVisibleDevices: "0"
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k

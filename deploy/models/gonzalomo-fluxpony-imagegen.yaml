@@ -31,10 +31,12 @@ spec:
     # Resolve from the model cache root so the same manifest works for the
     # unified runtime's node-local layout instead of assuming a global /models/.vae mount.
     vaePath: ".vae/sdxl-vae-fp16-fix"
-    guidanceScale: "7.0"
-    numInferenceSteps: "40"
-    scheduler: "dpm++sde-karras"
-    negativePrompt: "(worst quality, low quality, normal quality:2), blurry, noisy, grainy, jpeg artifacts, watermark, text, logo, signature, deformed, disfigured, bad anatomy, extra limbs, extra fingers, duplicate, oversaturated"
+    # The single-step DPM++ SDE path is faster but leaves this SDXL model
+    # noticeably grainier on ROCm. Prefer the multistep SDE/Karras variant.
+    guidanceScale: "6.5"
+    numInferenceSteps: "45"
+    scheduler: "dpm++2m-sde-karras"
+    negativePrompt: "(worst quality, low quality, normal quality:2), blurry, noisy, grainy, jpeg artifacts, watermark, text, logo, signature, deformed, disfigured, bad anatomy, bad eyes, extra limbs, extra fingers, duplicate, distorted proportions, oversaturated"
     warmupResolutions: "512x512"
     warmPolicy: primary
     hipVisibleDevices: "0"
