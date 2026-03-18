@@ -1331,6 +1331,18 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if env["DATASET"] != DefaultCalibrationDataset {
 		t.Errorf("DATASET env = %q, want %q", env["DATASET"], DefaultCalibrationDataset)
 	}
+	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"name\":\"qwen3.5-text\"") {
+		t.Errorf("QUANTIZE_MODEL_POLICIES missing qwen3.5 policy: %q", env["QUANTIZE_MODEL_POLICIES"])
+	}
+	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"loader\":\"manual_sharded_state_dict\"") {
+		t.Errorf("QUANTIZE_MODEL_POLICIES missing manual_sharded_state_dict loader override: %q", env["QUANTIZE_MODEL_POLICIES"])
+	}
+	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"match_path_substrings\":[\"qwen35\",\"qwen3.5\"]") {
+		t.Errorf("QUANTIZE_MODEL_POLICIES missing path-based matcher for remapped retries: %q", env["QUANTIZE_MODEL_POLICIES"])
+	}
+	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"offload_to_disk\":false") {
+		t.Errorf("QUANTIZE_MODEL_POLICIES missing offload_to_disk override: %q", env["QUANTIZE_MODEL_POLICIES"])
+	}
 
 	// Wrapper script should invoke the Python script
 	script := job.Spec.Template.Spec.Containers[0].Args[0]
@@ -1349,8 +1361,14 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "import tokenicer, pcre, kernels, torchao") {
 		t.Error("expected GPTQ wrapper script to verify GPTQModel runtime dependencies")
 	}
-	if !contains(script, "Disabled GPTQ offload_to_disk for composite text_config model") {
-		t.Error("expected GPTQ wrapper script to patch composite text_config offload behavior")
+	if !contains(script, "direct_init_kwargs.pop(\"device_map\", None)") {
+		t.Error("expected GPTQ wrapper script to patch GPTQModel direct CPU loader to drop device_map")
+	}
+	if !contains(script, "direct_init_kwargs[\"low_cpu_mem_usage\"] = False") {
+		t.Error("expected GPTQ wrapper script to force low_cpu_mem_usage=false on patched direct CPU loader")
+	}
+	if !contains(script, "Patched quantize_gptq.py to disable GPTQ offload_to_disk for Qwen3.5 direct load") {
+		t.Error("expected GPTQ wrapper script to retain bundled-script fallback patch for stale runtime images")
 	}
 }
 

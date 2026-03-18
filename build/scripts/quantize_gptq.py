@@ -6,10 +6,29 @@ All configuration is read from environment variables set by the controller:
   SYM, DESC_ACT, GPU_MEMORY_FRACTION, DYNAMIC_EXCLUSION, DATASET,
   FLEXINFER_TELEMETRY (optional, "true" enables JSON progress lines)
 """
+import copy
+import gc
 import json
 import os
 import sys
 import time
+
+POLICY_STATE_FILE = ".flexinfer-gptq-policy.json"
+DEFAULT_MODEL_POLICIES = [
+    {
+        "name": "qwen3.5-text",
+        "match_model_types": ["qwen3_5_text"],
+        "match_path_substrings": ["qwen35", "qwen3.5"],
+        "extract_text_config": True,
+        "copy_root_keys": ["bos_token_id", "eos_token_id", "pad_token_id"],
+        "remap_model_type": "qwen3",
+        "architectures": ["Qwen3ForCausalLM"],
+        "loader": "manual_sharded_state_dict",
+        "quantize_config_overrides": {
+            "offload_to_disk": False,
+        },
+    },
+]
 
 
 # ── Telemetry helper ──────────────────────────────────────────────────
@@ -23,6 +42,93 @@ def emit_progress(event_type, **kwargs):
     }
     msg.update(kwargs)
     print(json.dumps(msg), flush=True)
+
+
+def load_model_policies():
+    raw = os.environ.get("QUANTIZE_MODEL_POLICIES", "").strip()
+    if not raw:
+        return copy.deepcopy(DEFAULT_MODEL_POLICIES)
+    policies = json.loads(raw)
+    if not isinstance(policies, list):
+        raise ValueError("QUANTIZE_MODEL_POLICIES must decode to a list")
+    return policies
+
+
+def load_policy_state(model_dir):
+    path = os.path.join(model_dir, POLICY_STATE_FILE)
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        state = json.load(f)
+    if not isinstance(state, dict):
+        raise ValueError(f"{POLICY_STATE_FILE} must contain an object")
+    return state
+
+
+def persist_policy_state(model_dir, state):
+    path = os.path.join(model_dir, POLICY_STATE_FILE)
+    with open(path, "w") as f:
+        json.dump(state, f, indent=2, sort_keys=True)
+
+
+def select_model_policy(model_dir, cfg, policy_state, policies):
+    root_model_type = cfg.get("model_type", "")
+    text_model_type = cfg.get("text_config", {}).get("model_type", "")
+    candidates = {
+        policy_state.get("original_model_type", ""),
+        policy_state.get("applied_model_type", ""),
+        root_model_type,
+        text_model_type,
+    }
+    path_candidates = {
+        model_dir,
+        os.path.basename(model_dir),
+        cfg.get("_name_or_path", ""),
+    }
+    selected_name = policy_state.get("policy_name", "")
+    for policy in policies:
+        if selected_name and policy.get("name") == selected_name:
+            return policy
+        for model_type in policy.get("match_model_types", []):
+            if model_type and model_type in candidates:
+                return policy
+        for token in policy.get("match_path_substrings", []):
+            if token and any(token in candidate.lower() for candidate in path_candidates if candidate):
+                return policy
+    return None
+
+
+def apply_model_policy(cfg, policy, policy_state):
+    root_model_type = cfg.get("model_type", "")
+    text_model_type = cfg.get("text_config", {}).get("model_type", "")
+    original_model_type = (
+        policy_state.get("original_model_type")
+        or text_model_type
+        or root_model_type
+    )
+    active_cfg = cfg
+    if policy.get("extract_text_config") and text_model_type:
+        active_cfg = copy.deepcopy(cfg["text_config"])
+        for key in policy.get("copy_root_keys", []):
+            if key in cfg and key not in active_cfg:
+                active_cfg[key] = cfg[key]
+        print(f"Extracted text_config: model_type={text_model_type}")
+
+    remapped_type = policy.get("remap_model_type", "")
+    if remapped_type:
+        active_cfg["model_type"] = remapped_type
+        print(f"Remapped model_type to {remapped_type}")
+    remapped_architectures = policy.get("architectures")
+    if remapped_architectures:
+        active_cfg["architectures"] = remapped_architectures
+        print(f"Set architectures={remapped_architectures}")
+
+    next_state = {
+        "policy_name": policy.get("name", ""),
+        "original_model_type": original_model_type,
+        "applied_model_type": active_cfg.get("model_type", ""),
+    }
+    return active_cfg, next_state
 
 
 # ── Read config from environment ──────────────────────────────────────
@@ -49,15 +155,30 @@ emit_progress(
 cfg_path = os.path.join(model_dir, "config.json")
 with open(cfg_path) as f:
     cfg = json.load(f)
-composite_text_model = "text_config" in cfg and "model_type" in cfg.get("text_config", {})
-if composite_text_model:
-    text_cfg = cfg["text_config"]
-    for key in ["bos_token_id", "eos_token_id", "pad_token_id"]:
-        if key in cfg and key not in text_cfg:
-            text_cfg[key] = cfg[key]
-    with open(cfg_path, "w") as f:
-        json.dump(text_cfg, f, indent=2)
-    print(f"Extracted text_config: model_type={text_cfg.get('model_type')}")
+policies = load_model_policies()
+policy_state = load_policy_state(model_dir)
+policy = select_model_policy(model_dir, cfg, policy_state, policies)
+active_policy = None
+if policy is not None:
+    cfg, policy_state = apply_model_policy(cfg, policy, policy_state)
+    active_policy = policy.get("name", "")
+    persist_policy_state(model_dir, policy_state)
+    print(f"Applied quantization model policy: {active_policy}")
+elif policy_state:
+    # Persisted state without a known policy means the runtime config is stale.
+    # Preserve the state file for debugging but avoid silently reusing it.
+    print(f"No active model policy matched persisted state: {policy_state}")
+
+with open(cfg_path, "w") as f:
+    json.dump(cfg, f, indent=2)
+
+model_type = cfg.get("model_type", "")
+load_strategy = (policy or {}).get("loader", "gptqmodel")
+force_direct_load = load_strategy == "manual_sharded_state_dict"
+if force_direct_load:
+    print(
+        f"Using direct GPTQ load path for policy={active_policy or 'none'} model_type={model_type or 'unknown'}"
+    )
 
 # ── Dynamic exclusion ──────────────────────────────────────────────────
 if dynamic_exclusion == "none":
@@ -86,7 +207,18 @@ else:
 import torch
 from datasets import load_dataset
 from gptqmodel import GPTQModel, QuantizeConfig
+from gptqmodel.models.auto import check_and_get_model_definition
+from gptqmodel.models.loader import resolve_loader_config
+from gptqmodel.utils.hf import (
+    normalize_hf_config_compat,
+    prepare_remote_model_init_compat,
+    resolve_trust_remote_code,
+)
+from gptqmodel.utils.importer import auto_select_device
+from gptqmodel.utils.model import auto_dtype
+from transformers import AutoConfig
 from transformers import AutoTokenizer
+from transformers.modeling_utils import get_checkpoint_shard_files, load_state_dict
 
 total_vram = torch.cuda.get_device_properties(0).total_memory
 try:
@@ -97,23 +229,111 @@ print(
     f"Memory: GPU fraction={gpu_memory_fraction} ({int(total_vram * gpu_memory_fraction / (1024**3))}GiB of {total_vram // (1024**3)}GiB), container={max_memory_gb}Gi"
 )
 
+
+def resolve_checkpoint_index(model_dir):
+    candidates = [
+        os.path.join(model_dir, name)
+        for name in sorted(os.listdir(model_dir))
+        if name.endswith(".index.json")
+    ]
+    if not candidates:
+        raise FileNotFoundError(f"no checkpoint index found under {model_dir}")
+    return candidates[0]
+
+
+def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
+    import defuser
+
+    trust_remote_code = resolve_trust_remote_code(model_dir, trust_remote_code=True)
+    model_definition = check_and_get_model_definition(model_dir, trust_remote_code=trust_remote_code)
+    config = AutoConfig.from_pretrained(model_dir, trust_remote_code=trust_remote_code)
+
+    defuser.replace_fused_blocks(config.model_type)
+    normalize_hf_config_compat(config, trust_remote_code=trust_remote_code)
+    prepare_remote_model_init_compat(model_dir, config)
+    config = resolve_loader_config(model_definition, config, trust_remote_code=trust_remote_code)
+
+    if quantize_config.device is None:
+        quantize_config.device = auto_select_device(None, None)
+    dtype = auto_dtype(config=config, device=quantize_config.device, quant_inference=False)
+
+    def skip(*args, **kwargs):
+        pass
+
+    torch.nn.init.kaiming_uniform_ = skip
+    torch.nn.init.uniform_ = skip
+    torch.nn.init.normal_ = skip
+
+    init_kwargs = {"torch_dtype": dtype}
+    before_model_load = getattr(model_definition, "before_model_load", None)
+    if callable(before_model_load):
+        before_model_load(model_definition, load_quantized_model=False)
+
+    print(f"Instantiating HF model from config for GPTQ with dtype={dtype}")
+    model = model_definition.loader.from_config(config, **init_kwargs)
+    index_filename = resolve_checkpoint_index(model_dir)
+    shard_files, shard_metadata = get_checkpoint_shard_files(
+        model_dir,
+        index_filename,
+        local_files_only=True,
+    )
+    expected_keys = set((shard_metadata or {}).get("weight_map", {}).keys())
+    loaded_keys = set()
+    unexpected_keys = set()
+    print(f"Loading {len(shard_files)} checkpoint shards from {os.path.basename(index_filename)}")
+    for idx, shard_file in enumerate(shard_files, start=1):
+        emit_progress(
+            "progress",
+            phase="quantizing",
+            percent=min(4.5, 1.0 + (idx / max(len(shard_files), 1)) * 3.0),
+            detail=f"loading shard {idx}/{len(shard_files)}",
+        )
+        state_dict = load_state_dict(shard_file, map_location="cpu")
+        incompatible = model.load_state_dict(state_dict, strict=False)
+        loaded_keys.update(state_dict.keys())
+        unexpected_keys.update(incompatible.unexpected_keys)
+        del state_dict
+        gc.collect()
+    print(
+        "Loaded checkpoint shards into instantiated model: "
+        f"expected={len(expected_keys)} loaded={len(loaded_keys)} "
+        f"missing={len(expected_keys - loaded_keys)} unexpected={len(unexpected_keys)}"
+    )
+    if getattr(model, "config", None) is config:
+        model.config = copy.deepcopy(config)
+    defuser.convert_model(model, cleanup_original=False)
+    model._model_init_kwargs = init_kwargs.copy()
+    model.eval()
+
+    return model_definition(
+        model,
+        turtle_model=None,
+        quantized=False,
+        quantize_config=quantize_config,
+        tokenizer=tokenizer,
+        trust_remote_code=trust_remote_code,
+        model_local_path=model_dir,
+    )
+
 # ── Tokenizer + model ──────────────────────────────────────────────────
 tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
 qcfg_kwargs = dict(bits=bits, group_size=group_size, sym=sym, desc_act=desc_act)
 if dynamic_config is not None:
     qcfg_kwargs["dynamic"] = dynamic_config
-# GPTQModel's offload-to-disk path uses a meta-device "turtle model" load. On
-# composite Qwen3.5 text configs that path currently trips a transformers
-# meta-tensor materialization bug, so force direct load for stability.
-if composite_text_model:
-    qcfg_kwargs["offload_to_disk"] = False
-    print("Disabled GPTQ offload_to_disk for composite text_config model")
+for key, value in (policy or {}).get("quantize_config_overrides", {}).items():
+    qcfg_kwargs[key] = value
+    print(
+        f"Applied QuantizeConfig override from policy={active_policy or 'none'}: {key}={value}"
+    )
 quantize_config = QuantizeConfig(**qcfg_kwargs)
-model = GPTQModel.load(
-    model_dir,
-    quantize_config=quantize_config,
-    trust_remote_code=True,
-)
+if force_direct_load:
+    model = load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config)
+else:
+    model = GPTQModel.load(
+        model_dir,
+        quantize_config=quantize_config,
+        trust_remote_code=True,
+    )
 
 emit_progress("progress", phase="quantizing", percent=5.0, detail="model loaded")
 

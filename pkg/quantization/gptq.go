@@ -1,6 +1,7 @@
 package quantization
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -13,6 +14,18 @@ import (
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}
+
+type gptqModelPolicy struct {
+	Name                   string                 `json:"name"`
+	MatchModelTypes        []string               `json:"match_model_types,omitempty"`
+	MatchPathSubstrings    []string               `json:"match_path_substrings,omitempty"`
+	ExtractTextConfig      bool                   `json:"extract_text_config,omitempty"`
+	CopyRootKeys           []string               `json:"copy_root_keys,omitempty"`
+	RemapModelType         string                 `json:"remap_model_type,omitempty"`
+	Architectures          []string               `json:"architectures,omitempty"`
+	Loader                 string                 `json:"loader,omitempty"`
+	QuantizeConfigOverride map[string]interface{} `json:"quantize_config_overrides,omitempty"`
+}
 
 // Format returns the GPTQ quantization format.
 func (b *GPTQJobBuilder) Format() aiv1alpha1.QuantizationFormat {
@@ -149,8 +162,32 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 		{Name: "GPU_MEMORY_FRACTION", Value: gpuMemFraction},
 		{Name: "DYNAMIC_EXCLUSION", Value: dynamicExclusion},
 		{Name: "DATASET", Value: dataset},
+		{Name: "QUANTIZE_MODEL_POLICIES", Value: defaultGPTQModelPoliciesJSON()},
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
 	}
+}
+
+func defaultGPTQModelPoliciesJSON() string {
+	policies := []gptqModelPolicy{
+		{
+			Name:                "qwen3.5-text",
+			MatchModelTypes:     []string{"qwen3_5_text"},
+			MatchPathSubstrings: []string{"qwen35", "qwen3.5"},
+			ExtractTextConfig:   true,
+			CopyRootKeys:        []string{"bos_token_id", "eos_token_id", "pad_token_id"},
+			RemapModelType:      "qwen3",
+			Architectures:       []string{"Qwen3ForCausalLM"},
+			Loader:              "manual_sharded_state_dict",
+			QuantizeConfigOverride: map[string]interface{}{
+				"offload_to_disk": false,
+			},
+		},
+	}
+	data, err := json.Marshal(policies)
+	if err != nil {
+		panic(fmt.Sprintf("marshal default GPTQ model policies: %v", err))
+	}
+	return string(data)
 }
 
 // gptqWrapperScript returns the shell wrapper for GPTQ quantization.
@@ -182,11 +219,54 @@ if [ -n "${WRITER_PY}" ] && grep -q "pre_quantized_size_mb) \* 100" "${WRITER_PY
     echo "Patched GPTQModel writer.py for ZeroDivisionError"
 fi
 
+# GPTQModel's direct CPU path still injects device_map=cpu_device_map. In
+# transformers, any device_map enables meta-device loading/dispatch, which is
+# exactly the path failing for Qwen3.5 here. Strip device_map and force
+# low_cpu_mem_usage=False on the direct path.
+LOADER_PY=$(python3 -c "import gptqmodel.models.loader as l; print(l.__file__)" 2>/dev/null || true)
+if [ -n "${LOADER_PY}" ] && ! grep -q 'direct_init_kwargs.pop("device_map", None)' "${LOADER_PY}" 2>/dev/null; then
+    python3 - <<'PY'
+from pathlib import Path
+
+path = Path("/opt/venv/lib/python3.12/site-packages/gptqmodel/models/loader.py")
+src = path.read_text()
+old = '''        else:
+            print("loading model directly to CPU (not using meta device or turtle_model)-----------")
+            model = cls.loader.from_pretrained(model_local_path, config=config, **model_init_kwargs)
+            if getattr(model, "config", None) is config:
+                model.config = copy.deepcopy(config)
+            defuser.convert_model(model, cleanup_original=False)
+            model._model_init_kwargs = model_init_kwargs
+            print_module_tree(model=model)
+
+            turtle_model = None'''
+new = '''        else:
+            print("loading model directly to CPU (not using meta device or turtle_model)-----------")
+            direct_init_kwargs = model_init_kwargs.copy()
+            direct_init_kwargs.pop("device_map", None)
+            direct_init_kwargs["low_cpu_mem_usage"] = False
+            model = cls.loader.from_pretrained(model_local_path, config=config, **direct_init_kwargs)
+            if getattr(model, "config", None) is config:
+                model.config = copy.deepcopy(config)
+            defuser.convert_model(model, cleanup_original=False)
+            model._model_init_kwargs = direct_init_kwargs
+            print_module_tree(model=model)
+
+            turtle_model = None'''
+if old in src:
+    src = src.replace(old, new)
+else:
+    raise SystemExit("expected GPTQModel direct CPU load block not found in loader.py")
+path.write_text(src)
+PY
+    echo "Patched GPTQModel loader.py direct CPU path to disable device_map/meta loading"
+fi
+
 # Patch the bundled quantize script so composite text_config models avoid
 # GPTQModel's meta-device turtle-load path, which currently crashes in
 # transformers when materializing Qwen3.5 weights from meta tensors.
 GPTQ_SCRIPT=/opt/flexinfer/scripts/quantize_gptq.py
-if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "Disabled GPTQ offload_to_disk for composite text_config model" "${GPTQ_SCRIPT}" 2>/dev/null; then
+if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "Disabled GPTQ offload_to_disk for model_type=" "${GPTQ_SCRIPT}" 2>/dev/null; then
     python3 - <<'PY'
 from pathlib import Path
 
@@ -194,15 +274,19 @@ path = Path("/opt/flexinfer/scripts/quantize_gptq.py")
 src = path.read_text()
 src = src.replace(
     'with open(cfg_path) as f:\n    cfg = json.load(f)\nif "text_config" in cfg and "model_type" in cfg.get("text_config", {}):',
-    'with open(cfg_path) as f:\n    cfg = json.load(f)\ncomposite_text_model = "text_config" in cfg and "model_type" in cfg.get("text_config", {})\nif composite_text_model:',
+    'with open(cfg_path) as f:\n    cfg = json.load(f)\nmodel_type = cfg.get("model_type") or cfg.get("text_config", {}).get("model_type", "")\ncomposite_text_model = "text_config" in cfg and "model_type" in cfg.get("text_config", {})\nif composite_text_model:',
+)
+src = src.replace(
+    '    print(f"Extracted text_config: model_type={text_cfg.get(\'model_type\')}")',
+    '    print(f"Extracted text_config: model_type={text_cfg.get(\'model_type\')}")\n    model_type = text_cfg.get("model_type", model_type)\nforce_direct_load = composite_text_model or model_type.startswith("qwen3_5")\nif force_direct_load:\n    print(f"Using direct GPTQ load path for model_type={model_type or \'unknown\'}")',
 )
 src = src.replace(
     'qcfg_kwargs = dict(bits=bits, group_size=group_size, sym=sym, desc_act=desc_act)\nif dynamic_config is not None:\n    qcfg_kwargs["dynamic"] = dynamic_config',
-    'qcfg_kwargs = dict(bits=bits, group_size=group_size, sym=sym, desc_act=desc_act)\nif dynamic_config is not None:\n    qcfg_kwargs["dynamic"] = dynamic_config\nif composite_text_model:\n    qcfg_kwargs["offload_to_disk"] = False\n    print("Disabled GPTQ offload_to_disk for composite text_config model")',
+    'qcfg_kwargs = dict(bits=bits, group_size=group_size, sym=sym, desc_act=desc_act)\nif dynamic_config is not None:\n    qcfg_kwargs["dynamic"] = dynamic_config\nif force_direct_load:\n    qcfg_kwargs["offload_to_disk"] = False\n    print(f"Disabled GPTQ offload_to_disk for model_type={model_type or \'unknown\'}")',
 )
 path.write_text(src)
 PY
-    echo "Patched quantize_gptq.py to disable GPTQ offload_to_disk for composite text models"
+    echo "Patched quantize_gptq.py to disable GPTQ offload_to_disk for Qwen3.5 direct load"
 fi
 
 # Auto-detect gfx900 (Radeon VII).
