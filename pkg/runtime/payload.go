@@ -116,6 +116,7 @@ func BuildLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts B
 			}
 		}
 	}
+	payload.Config = normalizeRuntimeConfigPaths(payload.Config, payload.ModelPath, opts.ModelBasePath)
 
 	if cachePath, enabled := ResolveCompilationCachePath(model); enabled {
 		if cc, ok := b.(backend.CompilationCacheConfigurer); ok {
@@ -159,6 +160,54 @@ func runtimeLocalCacheModelPath(model *aiv1alpha2.Model, modelBasePath string) s
 		return root
 	}
 	return path.Join(root, subPath)
+}
+
+func runtimeArtifactRoot(modelPath string) string {
+	if modelPath == "" {
+		return ""
+	}
+	base := path.Base(modelPath)
+	if strings.Contains(base, ".") {
+		return path.Dir(modelPath)
+	}
+	return modelPath
+}
+
+func normalizeRuntimeConfigPaths(config map[string]interface{}, modelPath, modelBasePath string) map[string]interface{} {
+	if len(config) == 0 {
+		return config
+	}
+
+	root := runtimeArtifactRoot(modelPath)
+	if root == "" {
+		return config
+	}
+
+	vaeRepo, _ := config["vaeRepo"].(string)
+	vaePath, hasVAEPath := config["vaePath"].(string)
+	if !hasVAEPath || strings.TrimSpace(vaePath) == "" {
+		if strings.TrimSpace(vaeRepo) == "" {
+			return config
+		}
+		out := cloneConfig(config)
+		out["vaePath"] = path.Join(root, ".vae", path.Base(strings.TrimSpace(vaeRepo)))
+		return out
+	}
+
+	trimmed := strings.TrimSpace(vaePath)
+	if !strings.HasPrefix(trimmed, "/") {
+		out := cloneConfig(config)
+		out["vaePath"] = path.Join(root, trimmed)
+		return out
+	}
+
+	if modelBasePath != "" && strings.HasPrefix(trimmed, strings.TrimRight(modelBasePath, "/")+"/.vae/") && root != strings.TrimRight(modelBasePath, "/") {
+		out := cloneConfig(config)
+		out["vaePath"] = path.Join(root, ".vae", path.Base(trimmed))
+		return out
+	}
+
+	return config
 }
 
 func pvcSubPath(source string) string {

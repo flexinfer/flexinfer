@@ -256,3 +256,67 @@ func TestBuildLoadPayloadForModelUsesRuntimeLocalCacheForHFSources(t *testing.T)
 	require.NoError(t, json.Unmarshal(data, &payload))
 	assert.Equal(t, "/models/flexinfer-system/gonzalomo-fluxpony-imagegen", payload.ModelPath)
 }
+
+func TestBuildLoadPayloadForModelRewritesLocalCacheAbsoluteVAEPath(t *testing.T) {
+	b, ok := backend.Get("diffusers")
+	require.True(t, ok)
+
+	rawConfig := []byte(`{"vaeRepo":"madebyollin/sdxl-vae-fp16-fix","vaePath":"/models/.vae/sdxl-vae-fp16-fix"}`)
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gonzalomo-fluxpony-imagegen",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			Source:  "HF://stablediffusionapi/gonzalomoxlfluxpony-v30unitydmd",
+			Config:  &apiextensionsv1.JSON{Raw: rawConfig},
+			Cache:   &aiv1alpha2.CacheSpec{Strategy: "Local"},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Cache: &aiv1alpha2.CacheStatus{Strategy: "Local", Ready: true},
+		},
+	}
+
+	data, err := BuildLoadPayloadForModel(model, b, BuildLoadOptions{
+		ModelBasePath: "/models",
+		GPUVendor:     backend.GPUVendorAMD,
+	})
+	require.NoError(t, err)
+
+	var payload LoadPayload
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, "/models/flexinfer-system/gonzalomo-fluxpony-imagegen/.vae/sdxl-vae-fp16-fix", payload.Config["vaePath"])
+}
+
+func TestBuildLoadPayloadForModelResolvesRelativeVAEPathAgainstModelRoot(t *testing.T) {
+	b, ok := backend.Get("diffusers")
+	require.True(t, ok)
+
+	rawConfig := []byte(`{"vaeRepo":"madebyollin/sdxl-vae-fp16-fix","vaePath":".vae/sdxl-vae-fp16-fix"}`)
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gonzalomo-fluxpony-imagegen",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			Source:  "HF://stablediffusionapi/gonzalomoxlfluxpony-v30unitydmd",
+			Config:  &apiextensionsv1.JSON{Raw: rawConfig},
+			Cache:   &aiv1alpha2.CacheSpec{Strategy: "Local"},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Cache: &aiv1alpha2.CacheStatus{Strategy: "Local", Ready: true},
+		},
+	}
+
+	data, err := BuildLoadPayloadForModel(model, b, BuildLoadOptions{
+		ModelBasePath: "/models",
+		GPUVendor:     backend.GPUVendorAMD,
+	})
+	require.NoError(t, err)
+
+	var payload LoadPayload
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, "/models/flexinfer-system/gonzalomo-fluxpony-imagegen/.vae/sdxl-vae-fp16-fix", payload.Config["vaePath"])
+}

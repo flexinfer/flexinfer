@@ -28,9 +28,11 @@ spec:
     # madebyollin fixed VAE.
     useFp16: "1"
     vaeRepo: "madebyollin/sdxl-vae-fp16-fix"
-    vaePath: "/models/.vae/sdxl-vae-fp16-fix"
+    # Resolve from the model cache root so the same manifest works for the
+    # unified runtime's node-local layout instead of assuming a global /models/.vae mount.
+    vaePath: ".vae/sdxl-vae-fp16-fix"
     guidanceScale: "7.0"
-    numInferenceSteps: "36"
+    numInferenceSteps: "40"
     scheduler: "dpm++sde-karras"
     negativePrompt: "(worst quality, low quality, normal quality:2), blurry, noisy, grainy, jpeg artifacts, watermark, text, logo, signature, deformed, disfigured, bad anatomy, extra limbs, extra fingers, duplicate, oversaturated"
     warmupResolutions: "512x512"

@@ -36,7 +36,9 @@ spec:
     # decode artifacts while halving VRAM usage vs fp32.
     useFp16: "1"
     vaeRepo: "madebyollin/sdxl-vae-fp16-fix"
-    vaePath: "/models/.vae/sdxl-vae-fp16-fix"
+    # Keep VAE resolution relative to the cache root so unified runtimes can
+    # load it correctly from node-local model storage.
+    vaePath: ".vae/sdxl-vae-fp16-fix"
     guidanceScale: "7.0"
     numInferenceSteps: "40"
     # DPM++ SDE Karras: recommended by RealVisXL V5.0 model card for best quality.
