@@ -191,6 +191,33 @@ def _is_flux_schnell(model_id: str) -> bool:
     return _is_flux(model_id) and "schnell" in (model_id or "").lower()
 
 
+def _single_file_pipeline_override() -> str:
+    return os.environ.get("SINGLE_FILE_PIPELINE", "").strip().lower()
+
+
+def _single_file_config_override() -> Optional[str]:
+    value = os.environ.get("SINGLE_FILE_CONFIG", "").strip()
+    return value or None
+
+
+def _single_file_strict() -> bool:
+    return os.environ.get("SINGLE_FILE_STRICT", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _pipeline_is_flux_like(pipe=None, model_id: Optional[str] = None) -> bool:
+    if pipe is not None:
+        return isinstance(pipe, (FluxPipeline, FluxFillPipeline))
+    override = _single_file_pipeline_override()
+    if override in ("flux", "flux-fill"):
+        return True
+    return _is_flux(model_id or current_model)
+
+
 def _default_steps(model_id: str) -> int:
     # Per-deployment override via env
     steps = _env_int("DEFAULT_NUM_INFERENCE_STEPS")
@@ -270,7 +297,7 @@ def _resize_for_pipeline(
             pass
     w, h = img.size
     # FLUX needs 64px alignment (16x16 patches * 4x VAE); others need 8px.
-    align = 64 if _is_flux(current_model) else 8
+    align = 64 if _pipeline_is_flux_like(pipeline, current_model) else 8
     w = (w // align) * align
     h = (h // align) * align
     if (w, h) != img.size:
@@ -406,30 +433,55 @@ def _load_single_file(checkpoint_path: str, model_id: str, dtype, vae=None):
     flux_kwargs = dict(sf_kwargs)
     if vae is not None:
         sf_kwargs["vae"] = vae
+    config_override = _single_file_config_override()
+    if config_override:
+        sf_kwargs["config"] = config_override
+        flux_kwargs["config"] = config_override
+        print(f"Using single-file config override: {config_override}")
 
     order = []
-    if _is_flux(model_id):
+    override = _single_file_pipeline_override()
+    strict = _single_file_strict()
+
+    explicit_map = {
+        "flux": ("FLUX", FluxPipeline, flux_kwargs),
+        "flux-fill": ("FLUX Fill", FluxFillPipeline, flux_kwargs),
+        "sdxl": ("SDXL", StableDiffusionXLPipeline, sf_kwargs),
+        "sd15": ("SD 1.5", StableDiffusionPipeline, sf_kwargs),
+    }
+    if override:
+        selected = explicit_map.get(override)
+        if selected is None:
+            raise RuntimeError(
+                "Unsupported SINGLE_FILE_PIPELINE="
+                f"{override!r}; expected one of {sorted(explicit_map.keys())}"
+            )
+        order.append(selected)
+        print(f"Using single-file pipeline override: {override}")
+
+    if not order and _is_flux(model_id):
         if PIPELINE_MODE == "inpainting":
             order.append(("FLUX Fill", FluxFillPipeline, flux_kwargs))
         else:
             order.append(("FLUX", FluxPipeline, flux_kwargs))
 
-    # SDXL checkpoints are typically 6-7GB (fp16 pruned). SD 1.5 is ~2-4GB.
-    # Try SDXL first if file > 4GB, otherwise try SD 1.5 first.
-    if file_size_gb > 4.0:
-        order.extend(
-            [
+    if not strict:
+        seen = {item[1] for item in order}
+        if file_size_gb > 4.0:
+            heuristic = [
                 ("SDXL", StableDiffusionXLPipeline, sf_kwargs),
                 ("SD 1.5", StableDiffusionPipeline, sf_kwargs),
             ]
-        )
-    else:
-        order.extend(
-            [
+        else:
+            heuristic = [
                 ("SD 1.5", StableDiffusionPipeline, sf_kwargs),
                 ("SDXL", StableDiffusionXLPipeline, sf_kwargs),
             ]
-        )
+        for item in heuristic:
+            if item[1] not in seen:
+                order.append(item)
+    elif len(order) == 0:
+        raise RuntimeError("SINGLE_FILE_STRICT requires SINGLE_FILE_PIPELINE")
 
     last_err = None
     for label, pipeline_cls, load_kwargs in order:
@@ -907,7 +959,7 @@ def warmup_inference():
             if PIPELINE_MODE == "inpainting":
                 kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
                 kw["mask_image"] = Image.new("L", (w, h), 255)
-                if not _is_flux(current_model):
+                if not _pipeline_is_flux_like(pipeline, current_model):
                     kw["strength"] = 0.5
             elif PIPELINE_MODE == "instruct":
                 kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
@@ -1033,7 +1085,7 @@ async def generate_images(request: ImageGenerationRequest):
                         "height": height,
                     }
                     # FLUX doesn't support negative_prompt
-                    if not _is_flux(model_id) and negative_prompt:
+                    if not _pipeline_is_flux_like(pipe, model_id) and negative_prompt:
                         gen_kwargs["negative_prompt"] = negative_prompt
                 result = pipe(**gen_kwargs)
             img = result.images[0]
@@ -1122,7 +1174,7 @@ async def edit_images(
             results = []
             for _ in range(n):
                 with torch.inference_mode():
-                    if _is_flux(model_id):
+                    if _pipeline_is_flux_like(pipe, model_id):
                         result = pipe(
                             prompt=prompt,
                             image=blank,
@@ -1164,7 +1216,7 @@ async def edit_images(
                     if mask_bytes is None:
                         raise ValueError("Inpainting mode requires a mask image")
                     mask_img = _decode_mask(mask_bytes, src_img.size)
-                    if _is_flux(model_id):
+                    if _pipeline_is_flux_like(pipe, model_id):
                         # FluxFillPipeline: no strength, no negative_prompt
                         result = pipe(
                             prompt=prompt,

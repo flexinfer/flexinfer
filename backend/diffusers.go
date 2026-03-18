@@ -113,6 +113,24 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			Value: vaePath,
 		})
 	}
+	if singleFileConfig := spec.ConfigString("singleFileConfig", ""); singleFileConfig != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "SINGLE_FILE_CONFIG",
+			Value: singleFileConfig,
+		})
+	}
+	if singleFilePipeline := spec.ConfigString("singleFilePipeline", ""); singleFilePipeline != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "SINGLE_FILE_PIPELINE",
+			Value: singleFilePipeline,
+		})
+	}
+	if singleFileStrict := spec.ConfigString("singleFileStrict", ""); singleFileStrict != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "SINGLE_FILE_STRICT",
+			Value: singleFileStrict,
+		})
+	}
 
 	// Quantization mode (e.g. "nf4" for bitsandbytes NF4 on FLUX models)
 	if quant := spec.ConfigString("quantization", ""); quant != "" {

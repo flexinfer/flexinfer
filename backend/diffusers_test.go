@@ -58,6 +58,19 @@ func TestDiffusersBackendEnv(t *testing.T) {
 				"DEFAULT_IMAGE_GUIDANCE_SCALE",
 			},
 		},
+		{
+			name: "single-file overrides map to env",
+			config: map[string]interface{}{
+				"singleFileConfig":   "stablediffusionapi/example",
+				"singleFilePipeline": "sdxl",
+				"singleFileStrict":   "true",
+			},
+			wantEnv: map[string]string{
+				"SINGLE_FILE_CONFIG":   "stablediffusionapi/example",
+				"SINGLE_FILE_PIPELINE": "sdxl",
+				"SINGLE_FILE_STRICT":   "true",
+			},
+		},
 	}
 
 	for _, tt := range tests {

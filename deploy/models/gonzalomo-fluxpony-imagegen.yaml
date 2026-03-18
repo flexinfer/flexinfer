@@ -18,15 +18,18 @@ spec:
     idleTimeout: 10m
     coldStartTimeout: 30m
   config:
-    # Civitai single-file FLUX Dev checkpoint (fp8 AIO).
-    # Run with CPU offload on gfx1100 to stay inside 24 GB VRAM while keeping
-    # the model warm enough for interactive use.
+    # Gonzalomo FluxPony is packaged as a single-file SDXL checkpoint.
+    # Declare the pipeline/config explicitly so the unified runtime doesn't
+    # guess from the model name and accidentally take the FLUX loader path.
     cpuOffload: "true"
     useFp16: "1"
     guidanceScale: "3.5"
     numInferenceSteps: "28"
     warmupResolutions: "512x512"
     hipVisibleDevices: "0"
+    singleFilePipeline: "sdxl"
+    singleFileConfig: "stablediffusionapi/gonzalomoxlfluxpony-v30unitydmd"
+    singleFileStrict: "true"
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
   resources:
