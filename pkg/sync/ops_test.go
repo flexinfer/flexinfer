@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crb2nu/loom/pkg/skills"
 )
@@ -808,6 +809,66 @@ func TestDiscoverSkillsRegistryPath_FindsAncestorWorkspaceLoomCoreRegistry(t *te
 	got := discoverSkillsRegistryPath(repoRoot)
 	if got != skillsRegistry {
 		t.Fatalf("discoverSkillsRegistryPath()=%q, want %q", got, skillsRegistry)
+	}
+}
+
+func TestRegenerateSkills_UpdatesRegistryDate(t *testing.T) {
+	repoRoot := t.TempDir()
+	homeDir := t.TempDir()
+
+	// Create local skills registry with a stale updated date.
+	registryPath := filepath.Join(repoRoot, "mcp", "context", "skills-registry.yaml")
+	if err := os.MkdirAll(filepath.Dir(registryPath), 0755); err != nil {
+		t.Fatalf("mkdir registry dir: %v", err)
+	}
+	registry := `version: 1
+updated: "2026-01-01"
+skills:
+  - name: test-skill
+    categories: [test]
+    common:
+      description: "test"
+      instructions: "Do test work."
+    targets:
+      codex:
+        enabled: true
+        type: skill
+`
+	if err := os.WriteFile(registryPath, []byte(registry), 0644); err != nil {
+		t.Fatalf("write skills registry: %v", err)
+	}
+
+	m, err := NewManager(repoRoot)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	m.HomeDir = homeDir
+
+	p := &Profile{
+		Name:         "codex",
+		RepoDir:      ".codex",
+		HomeDir:      filepath.Join(homeDir, ".codex"),
+		SkillsTarget: "codex",
+	}
+
+	if err := m.regenerateSkills(p); err != nil {
+		t.Fatalf("regenerateSkills: %v", err)
+	}
+
+	updatedBytes, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatalf("read updated registry: %v", err)
+	}
+	updated := string(updatedBytes)
+
+	today := time.Now().Format("2006-01-02")
+	wantQuoted := `updated: "` + today + `"`
+	wantBare := "updated: " + today
+	if !strings.Contains(updated, wantQuoted) && !strings.Contains(updated, wantBare) {
+		t.Fatalf("expected registry to contain %q or %q, got:\n%s", wantQuoted, wantBare, updated)
+	}
+	if strings.Contains(updated, `updated: "2026-01-01"`) {
+		t.Fatalf("expected stale updated date to be replaced, got:\n%s", updated)
 	}
 }
 
