@@ -563,6 +563,175 @@ echo "Local staging complete."
 	return job, nil
 }
 
+func (r *ModelReconciler) jobForLocalHFPrefetch(model *aiv1alpha2.Model) (*batchv1.Job, error) {
+	modelID := extractModelFromSource(model.Spec.Source)
+	hfOpts := resolveHFDownloadOptions(model)
+	cachePath := resolveLocalCachePath(model)
+	markerSum := sha256.Sum256([]byte(model.Spec.Source))
+	markerName := ".flexinfer_cached_" + hex.EncodeToString(markerSum[:])
+
+	envVars := []corev1.EnvVar{
+		{Name: "HF_HUB_ENABLE_HF_TRANSFER", Value: "0"},
+		{Name: "HF_HOME", Value: "/models/.cache/huggingface"},
+		{Name: "HF_HUB_CACHE", Value: "/models/.cache/huggingface/hub"},
+		{Name: "HUGGINGFACE_HUB_CACHE", Value: "/models/.cache/huggingface/hub"},
+		{Name: "TRANSFORMERS_CACHE", Value: "/models/.cache/huggingface/transformers"},
+	}
+	if len(hfOpts.allowPatterns) > 0 {
+		allowJSON, err := json.Marshal(hfOpts.allowPatterns)
+		if err != nil {
+			return nil, fmt.Errorf("marshal HF allow patterns: %w", err)
+		}
+		envVars = append(envVars, corev1.EnvVar{Name: "HF_ALLOW_PATTERNS", Value: string(allowJSON)})
+	}
+	if len(hfOpts.ignorePatterns) > 0 {
+		ignoreJSON, err := json.Marshal(hfOpts.ignorePatterns)
+		if err != nil {
+			return nil, fmt.Errorf("marshal HF ignore patterns: %w", err)
+		}
+		envVars = append(envVars, corev1.EnvVar{Name: "HF_IGNORE_PATTERNS", Value: string(ignoreJSON)})
+	}
+	if hfOpts.revision != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "HF_REVISION", Value: hfOpts.revision})
+	}
+
+	if vaeRepo := model.Spec.ConfigString("vaeRepo", ""); vaeRepo != "" {
+		vaeDest := "/models/.vae/" + filepath.Base(vaeRepo)
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "VAE_REPO", Value: vaeRepo},
+			corev1.EnvVar{Name: "VAE_DEST_DIR", Value: vaeDest},
+		)
+	}
+
+	var nodeSelector map[string]string
+	if len(model.Spec.NodeSelector) > 0 {
+		nodeSelector = model.Spec.NodeSelector
+	}
+	var tolerations []corev1.Toleration
+	if model.Spec.GetGPUCount() > 0 {
+		tolerations = append(tolerations, corev1.Toleration{
+			Key:      "dedicated",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "gpu",
+			Effect:   corev1.TaintEffectNoSchedule,
+		})
+	}
+
+	script := fmt.Sprintf(`
+set -ex
+MODEL_ID="%s"
+DEST_DIR="/models"
+MARKER="/models/%s"
+
+if [ -f "$MARKER" ]; then
+  echo "Model already cached at $DEST_DIR"
+  exit 0
+fi
+
+mkdir -p "$DEST_DIR" /models/.cache/huggingface
+find "$DEST_DIR" -mindepth 1 -maxdepth 1 ! -name ".cache" -exec rm -rf {} +
+
+pip install --no-cache-dir huggingface_hub hf_transfer
+MODEL_ID="$MODEL_ID" DEST_DIR="$DEST_DIR" python - <<'PY'
+import json
+import os
+
+from huggingface_hub import snapshot_download
+
+repo_id = os.environ["MODEL_ID"]
+local_dir = os.environ["DEST_DIR"]
+token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+cache_dir = os.environ.get("HF_HOME")
+allow_patterns = json.loads(os.environ.get("HF_ALLOW_PATTERNS", "[]") or "[]")
+ignore_patterns = json.loads(os.environ.get("HF_IGNORE_PATTERNS", "[]") or "[]")
+revision = (os.environ.get("HF_REVISION") or "").strip() or None
+
+download_kwargs = {
+    "repo_id": repo_id,
+    "local_dir": local_dir,
+    "local_dir_use_symlinks": False,
+    "cache_dir": cache_dir,
+    "token": token,
+}
+if allow_patterns:
+    download_kwargs["allow_patterns"] = allow_patterns
+if ignore_patterns:
+    download_kwargs["ignore_patterns"] = ignore_patterns
+if revision:
+    download_kwargs["revision"] = revision
+
+snapshot_download(**download_kwargs)
+
+vae_repo = os.environ.get("VAE_REPO", "").strip()
+if vae_repo:
+    vae_dir = os.environ.get("VAE_DEST_DIR", "")
+    print(f"Downloading VAE: {vae_repo} -> {vae_dir}")
+    snapshot_download(repo_id=vae_repo, local_dir=vae_dir, local_dir_use_symlinks=False, cache_dir=cache_dir, token=token)
+PY
+touch "$MARKER"
+echo "Local HF staging complete."
+`, modelID, markerName)
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      model.Name + "-cache-stage",
+			Namespace: model.Namespace,
+			Labels:    r.labelsForModel(model),
+			Annotations: map[string]string{
+				"flexinfer.ai/source":     model.Spec.Source,
+				"flexinfer.ai/cache-kind": "local-prefetch",
+				"flexinfer.ai/cache-path": cachePath,
+			},
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit:            ptr.To(DefaultDownloadBackoffLimit),
+			TTLSecondsAfterFinished: ptr.To(int32(300)),
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy:                corev1.RestartPolicyOnFailure,
+					NodeSelector:                 nodeSelector,
+					Tolerations:                  tolerations,
+					AutomountServiceAccountToken: ptr.To(false),
+					Containers: []corev1.Container{{
+						Name:    "downloader",
+						Image:   "python:3.10-slim",
+						Command: []string{"/bin/sh", "-c"},
+						Args:    []string{script},
+						Env:     envVars,
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "model-store",
+							MountPath: "/models",
+						}},
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("100m"),
+								corev1.ResourceMemory: resource.MustParse("1Gi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceMemory: resource.MustParse("8Gi"),
+							},
+						},
+					}},
+					Volumes: []corev1.Volume{{
+						Name: "model-store",
+						VolumeSource: corev1.VolumeSource{
+							HostPath: &corev1.HostPathVolumeSource{
+								Path: cachePath,
+								Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
+							},
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	if err := ctrl.SetControllerReference(model, job, r.Scheme); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
 func (r *ModelReconciler) jobForCacheCopy(model *aiv1alpha2.Model, sourcePVCName, cachePVCName, subPath string) (*batchv1.Job, error) {
 	subPath = strings.Trim(subPath, "/")
 	src := "/src"

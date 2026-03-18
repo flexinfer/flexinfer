@@ -344,6 +344,59 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 	// This prevents pods from scheduling with empty hostPath volumes
 	// (e.g. when a model is moved to a new node that lacks the cache).
 	if strategy == "Local" && len(model.Spec.NodeSelector) > 0 {
+		if strings.HasPrefix(model.Spec.Source, "HF://") {
+			jobName := model.Name + "-cache-stage"
+			job := &batchv1.Job{}
+			err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
+			if errors.IsNotFound(err) {
+				newJob, err := r.jobForLocalHFPrefetch(model)
+				if err != nil {
+					return false, fmt.Errorf("build local HF cache stage job: %w", err)
+				}
+				if err := r.Create(ctx, newJob); err != nil {
+					if !errors.IsAlreadyExists(err) {
+						return false, fmt.Errorf("create local HF cache stage job: %w", err)
+					}
+				}
+				model.Status.Cache.Ready = false
+				model.Status.Cache.JobName = jobName
+				model.Status.Cache.JobPhase = "Pending"
+				model.Status.Cache.Message = "staging HF model into local cache"
+				setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "CacheStage", "staging HF model into local cache")
+				if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+					return false, err
+				}
+				return false, nil
+			} else if err != nil {
+				return false, err
+			}
+
+			ready := false
+			jobPhase := "Unknown"
+			message := "staging HF model into local cache"
+			if job.Status.Succeeded > 0 {
+				ready = true
+				jobPhase = "Succeeded"
+				message = "artifact staged to local cache"
+			} else if job.Status.Failed > 0 {
+				jobPhase = "Failed"
+				message = "local cache staging job failed"
+			} else if job.Status.Active > 0 {
+				jobPhase = "Running"
+				message = "local cache staging job running"
+			}
+
+			model.Status.Cache.Ready = ready
+			model.Status.Cache.JobName = jobName
+			model.Status.Cache.JobPhase = jobPhase
+			model.Status.Cache.Message = message
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheStage", message)
+			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+				return false, err
+			}
+			return ready, nil
+		}
+
 		log := log.FromContext(ctx)
 		jobName := model.Name + "-cache-check"
 		job := &batchv1.Job{}
