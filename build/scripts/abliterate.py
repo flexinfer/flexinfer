@@ -14,7 +14,7 @@ Environment variables:
   ABLITERATION_SAVE_MAX_SHARD_SIZE, ABLITERATION_CPU_MAX_MEMORY_GB,
   ABLITERATION_GPU_MAX_MEMORY_GB, ABLITERATION_OFFLOAD_DIR,
   ABLITERATION_MEMORY_TRIM_INTERVAL, ABLITERATION_FORWARD_USE_CACHE,
-  ABLITERATION_MODEL_POLICIES (optional)
+  ABLITERATION_SAVE_IMPL, ABLITERATION_MODEL_POLICIES (optional)
 """
 import gc
 import importlib.util
@@ -263,6 +263,165 @@ def materialize_state_dict_for_save(model):
     return materialized, source
 
 
+def parse_size_to_bytes(value):
+    if isinstance(value, int):
+        return value
+    raw = str(value).strip().upper()
+    multipliers = {
+        "KB": 1024,
+        "MB": 1024**2,
+        "GB": 1024**3,
+        "TB": 1024**4,
+    }
+    for suffix, multiplier in multipliers.items():
+        if raw.endswith(suffix):
+            return int(float(raw[: -len(suffix)].strip()) * multiplier)
+    return int(raw)
+
+
+def iter_module_state_tensors(model, discard_keys=None):
+    discard = set(discard_keys or [])
+    meta_device = torch.device("meta")
+    seen = set()
+    meta_keys = []
+    source = "module-local-offload"
+    try:
+        from accelerate.utils.modeling import align_module_device
+    except Exception as exc:
+        raise RuntimeError(f"accelerate align_module_device unavailable: {exc}") from exc
+
+    def _full_key(prefix, name):
+        return f"{prefix}.{name}" if prefix else name
+
+    for module_name, module in model.named_modules():
+        try:
+            with align_module_device(module, "cpu"):
+                for name, param in module.named_parameters(recurse=False):
+                    key = _full_key(module_name, name)
+                    if key in discard or key in seen:
+                        continue
+                    if getattr(param, "device", None) == meta_device or getattr(param, "is_meta", False):
+                        meta_keys.append(key)
+                        continue
+                    seen.add(key)
+                    yield key, param.detach().to("cpu").contiguous(), source
+                for name, buf in module.named_buffers(recurse=False):
+                    key = _full_key(module_name, name)
+                    if key in discard or key in seen:
+                        continue
+                    if getattr(buf, "device", None) == meta_device or getattr(buf, "is_meta", False):
+                        meta_keys.append(key)
+                        continue
+                    seen.add(key)
+                    yield key, buf.detach().to("cpu").contiguous(), source
+        except MemoryError:
+            raise MemoryError(
+                f"Offloaded module {module_name or '<root>'} must fit in CPU memory to save"
+            ) from None
+        gc.collect()
+
+    if meta_keys:
+        preview = ", ".join(meta_keys[:8])
+        if len(meta_keys) > 8:
+            preview += ", ..."
+        raise RuntimeError(
+            f"streaming export left {len(meta_keys)} meta tensors unsaved: {preview}"
+        )
+
+
+def build_streaming_shard_plan(model, max_shard_size, discard_keys=None):
+    max_bytes = parse_size_to_bytes(max_shard_size)
+    shards = []
+    current = []
+    current_bytes = 0
+    total_bytes = 0
+    for key, tensor, _source in iter_module_state_tensors(model, discard_keys):
+        size = tensor.numel() * tensor.element_size()
+        total_bytes += size
+        if current and current_bytes + size > max_bytes:
+            shards.append(current)
+            current = []
+            current_bytes = 0
+        current.append((key, size))
+        current_bytes += size
+        del tensor
+        gc.collect()
+    if current:
+        shards.append(current)
+    if not shards:
+        raise RuntimeError("no tensors available to save")
+    return shards, total_bytes
+
+
+def save_streaming_safetensors(model, save_dir, max_shard_size, discard_keys=None):
+    from safetensors.torch import save_file
+
+    shard_plan, total_bytes = build_streaming_shard_plan(model, max_shard_size, discard_keys)
+    shard_count = len(shard_plan)
+    tensor_to_filename = {}
+    shard_key_maps = []
+    for idx, entries in enumerate(shard_plan, start=1):
+        filename = f"model-{idx:05d}-of-{shard_count:05d}.safetensors"
+        keys = {key for key, _size in entries}
+        shard_key_maps.append((filename, keys))
+        for key, _size in entries:
+            tensor_to_filename[key] = filename
+
+    emit_snapshot(
+        "saving_stream_plan",
+        shard_count=shard_count,
+        total_size_bytes=total_bytes,
+    )
+
+    current_idx = 0
+    current_filename, current_keys = shard_key_maps[current_idx]
+    current_tensors = {}
+    source = None
+
+    def flush_current():
+        nonlocal current_tensors, current_filename
+        if not current_tensors:
+            return
+        save_file(current_tensors, os.path.join(save_dir, current_filename), metadata={"format": "pt"})
+        current_tensors.clear()
+        gc.collect()
+        emit_snapshot("saving_stream_shard_written", filename=current_filename)
+
+    for key, tensor, tensor_source in iter_module_state_tensors(model, discard_keys):
+        target_filename = tensor_to_filename.get(key)
+        if target_filename is None:
+            del tensor
+            continue
+        while current_filename != target_filename:
+            flush_current()
+            current_idx += 1
+            current_filename, current_keys = shard_key_maps[current_idx]
+        current_tensors[key] = tensor
+        source = tensor_source
+        if len(current_tensors) == len(current_keys):
+            flush_current()
+            if current_idx + 1 < shard_count:
+                current_idx += 1
+                current_filename, current_keys = shard_key_maps[current_idx]
+
+    flush_current()
+
+    if shard_count > 1:
+        index_path = os.path.join(save_dir, "model.safetensors.index.json")
+        with open(index_path, "w") as f:
+            json.dump(
+                {
+                    "metadata": {"total_size": total_bytes},
+                    "weight_map": tensor_to_filename,
+                },
+                f,
+                indent=2,
+                sort_keys=True,
+            )
+
+    return source or "module-local-offload", shard_count
+
+
 def free_bytes(path):
     stat = os.statvfs(path)
     return stat.f_bavail * stat.f_frsize
@@ -455,6 +614,7 @@ progress_interval = max(1, env_int("ABLITERATION_PROGRESS_INTERVAL", 10))
 prompt_max_length = max(32, env_int("ABLITERATION_PROMPT_MAX_LENGTH", 256))
 configured_save_format = env_str("ABLITERATION_SAVE_FORMAT", "auto").lower()
 configured_save_max_shard_size = env_str("ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB")
+configured_save_impl = env_str("ABLITERATION_SAVE_IMPL", "streaming").lower()
 activation_capture_mode = env_str("ABLITERATION_ACTIVATION_CAPTURE_MODE", "hooks").lower()
 configured_offload_dir = env_str("ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload")
 memory_trim_interval = max(0, env_int("ABLITERATION_MEMORY_TRIM_INTERVAL", 1))
@@ -1094,11 +1254,12 @@ if active_policy and active_policy.get("save_max_shard_size"):
     save_max_shard_size = str(active_policy["save_max_shard_size"]).strip()
 if save_format not in {"bin", "safetensors"}:
     raise RuntimeError(f"unknown ABLITERATION_SAVE_FORMAT={save_format}")
+if configured_save_impl not in {"streaming", "materialized"}:
+    raise RuntimeError(f"unknown ABLITERATION_SAVE_IMPL={configured_save_impl}")
 if save_format == "safetensors":
     print(
         f"Using {save_format} save path for model_type={model_type or 'unknown'}"
     )
-    from huggingface_hub import save_torch_state_dict
 
     emit_progress(
         "progress",
@@ -1110,22 +1271,38 @@ if save_format == "safetensors":
         removed = remove_weight_artifacts(model_dir)
         print(f"Removed {len(removed)} old weight artifacts for in-place save")
         emit_snapshot("saving_inplace_prepare", removed_artifacts=len(removed))
-    state_dict, state_dict_source = materialize_state_dict_for_save(model)
-    emit_snapshot(
-        "saving_state_dict_materialized",
-        source=state_dict_source,
-        tensors=len(state_dict),
-    )
-    save_torch_state_dict(
-        state_dict,
-        save_dir,
-        max_shard_size=save_max_shard_size,
-        safe_serialization=True,
-        shared_tensors_to_discard=tied_weights,
-    )
-    del state_dict
-    gc.collect()
-    print(f"  Saved staged shards from {state_dict_source}")
+    if configured_save_impl == "streaming":
+        state_dict_source, shard_count = save_streaming_safetensors(
+            model,
+            save_dir,
+            save_max_shard_size,
+            tied_weights,
+        )
+        emit_snapshot(
+            "saving_stream_complete",
+            source=state_dict_source,
+            shard_count=shard_count,
+        )
+        print(f"  Saved staged shards from {state_dict_source} in {shard_count} shards")
+    else:
+        from huggingface_hub import save_torch_state_dict
+
+        state_dict, state_dict_source = materialize_state_dict_for_save(model)
+        emit_snapshot(
+            "saving_state_dict_materialized",
+            source=state_dict_source,
+            tensors=len(state_dict),
+        )
+        save_torch_state_dict(
+            state_dict,
+            save_dir,
+            max_shard_size=save_max_shard_size,
+            safe_serialization=True,
+            shared_tensors_to_discard=tied_weights,
+        )
+        del state_dict
+        gc.collect()
+        print(f"  Saved staged shards from {state_dict_source}")
 else:
     from huggingface_hub import save_torch_state_dict
 

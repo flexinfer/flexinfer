@@ -217,6 +217,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"memory trim interval", "ABLITERATION_MEMORY_TRIM_INTERVAL", "1"},
 		{"forward use cache", "ABLITERATION_FORWARD_USE_CACHE", "false"},
 		{"save shard size", "ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB"},
+		{"save impl", "ABLITERATION_SAVE_IMPL", "streaming"},
 		{"cpu max memory", "ABLITERATION_CPU_MAX_MEMORY_GB", "20"},
 		{"gpu max memory", "ABLITERATION_GPU_MAX_MEMORY_GB", "20"},
 		{"offload dir", "ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload"},
@@ -244,6 +245,7 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	t.Setenv("FLEXINFER_ABLITERATION_MEMORY_TRIM_INTERVAL", "3")
 	t.Setenv("FLEXINFER_ABLITERATION_FORWARD_USE_CACHE", "true")
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_MAX_SHARD_SIZE", "2GB")
+	t.Setenv("FLEXINFER_ABLITERATION_SAVE_IMPL", "materialized")
 	t.Setenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB", "28")
 	t.Setenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB", "18")
 	t.Setenv("FLEXINFER_ABLITERATION_OFFLOAD_DIR", "/tmp/ablit-offload")
@@ -275,6 +277,9 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	}
 	if got := envMap["ABLITERATION_SAVE_MAX_SHARD_SIZE"]; got != "2GB" {
 		t.Errorf("ABLITERATION_SAVE_MAX_SHARD_SIZE = %q, want 2GB", got)
+	}
+	if got := envMap["ABLITERATION_SAVE_IMPL"]; got != "materialized" {
+		t.Errorf("ABLITERATION_SAVE_IMPL = %q, want materialized", got)
 	}
 	if got := envMap["ABLITERATION_CPU_MAX_MEMORY_GB"]; got != "28" {
 		t.Errorf("ABLITERATION_CPU_MAX_MEMORY_GB = %q, want 28", got)

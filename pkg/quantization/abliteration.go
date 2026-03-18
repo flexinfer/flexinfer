@@ -262,6 +262,10 @@ func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []core
 	if saveMaxShardSize == "" {
 		saveMaxShardSize = "1GB"
 	}
+	saveImpl := os.Getenv("FLEXINFER_ABLITERATION_SAVE_IMPL")
+	if saveImpl == "" {
+		saveImpl = "streaming"
+	}
 	cpuMaxMemoryGB := os.Getenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB")
 	if cpuMaxMemoryGB == "" {
 		cpuMaxMemoryGB = fmt.Sprintf("%d", abliterationCPUMaxMemoryGB(maxMemoryGB))
@@ -293,6 +297,7 @@ func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []core
 		{Name: "ABLITERATION_MEMORY_TRIM_INTERVAL", Value: memoryTrimInterval},
 		{Name: "ABLITERATION_FORWARD_USE_CACHE", Value: forwardUseCache},
 		{Name: "ABLITERATION_SAVE_MAX_SHARD_SIZE", Value: saveMaxShardSize},
+		{Name: "ABLITERATION_SAVE_IMPL", Value: saveImpl},
 		{Name: "ABLITERATION_CPU_MAX_MEMORY_GB", Value: cpuMaxMemoryGB},
 		{Name: "ABLITERATION_GPU_MAX_MEMORY_GB", Value: gpuMaxMemoryGB},
 		{Name: "ABLITERATION_OFFLOAD_DIR", Value: offloadDir},
