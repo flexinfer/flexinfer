@@ -519,6 +519,10 @@ func TestGPTQJobBuilder_BuildJob(t *testing.T) {
 	if container.Image != DefaultGPTQImage {
 		t.Fatalf("container.Image = %q, want %q", container.Image, DefaultGPTQImage)
 	}
+	memReq := container.Resources.Requests.Memory()
+	if memReq.String() != "38Gi" {
+		t.Fatalf("memory request = %q, want %q", memReq.String(), "38Gi")
+	}
 	script := container.Args[0]
 	if !contains(script, "quantize_gptq.py") {
 		t.Fatal("expected GPTQ wrapper script to invoke quantize_gptq.py")

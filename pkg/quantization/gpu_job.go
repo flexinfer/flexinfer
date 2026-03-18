@@ -94,7 +94,7 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 				Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{
 						corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", DefaultGPUQuantizationCPU)),
-						corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryGB)),
+						corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryRequestForLimitGB(memoryGB))),
 						gpuResource:           resource.MustParse("1"),
 					},
 					Limits: corev1.ResourceList{
