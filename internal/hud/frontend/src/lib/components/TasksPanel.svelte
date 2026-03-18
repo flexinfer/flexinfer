@@ -67,6 +67,7 @@
   let searchQuery = $state('');
   let priorityFilter = $state('');
   let agentFilter = $state('');
+  let ownershipFilter = $state('');
   let statusFilter = $state('');
   let viewMode = $state('flat'); // 'flat' | 'grouped'
   let collapsedGroups = $state(new Set());
@@ -100,6 +101,8 @@
   let inProgressCt = $derived(tasks.filter(t => t.status === 'in_progress').length);
   let blockedCt = $derived(tasks.filter(t => t.status === 'blocked').length);
   let completedCt = $derived(tasks.filter(t => t.status === 'completed').length);
+  let unassignedCount = $derived(tasks.filter((task) => !task.agent_id && !task.agent).length);
+  let crossAgentBlockedCount = $derived(coordinationSummary.cross_agent_blockers ?? 0);
 
   // Unique agents for filter dropdown
   let agentOptions = $derived.by(() => {
@@ -122,6 +125,15 @@
         { value: 'high', label: 'High' },
         { value: 'medium', label: 'Medium' },
         { value: 'low', label: 'Low' },
+      ],
+    },
+    {
+      key: 'ownership',
+      label: 'All Ownership',
+      value: ownershipFilter,
+      options: [
+        { value: 'assigned', label: 'Assigned' },
+        { value: 'unassigned', label: 'Unassigned' },
       ],
     },
     {
@@ -149,6 +161,7 @@
 
   function handleFilter(key, val) {
     if (key === 'priority') priorityFilter = val;
+    else if (key === 'ownership') ownershipFilter = val;
     else if (key === 'agent') agentFilter = val;
     else if (key === 'status') statusFilter = val;
   }
@@ -156,8 +169,34 @@
   function clearFilters() {
     searchQuery = '';
     priorityFilter = '';
+    ownershipFilter = '';
     agentFilter = '';
     statusFilter = '';
+  }
+
+  function setStatusQuickFilter(nextStatus) {
+    statusFilter = statusFilter === nextStatus ? '' : nextStatus;
+  }
+
+  function isStatusQuickFilterActive(nextStatus) {
+    return statusFilter === nextStatus;
+  }
+
+  function applyFocusPreset(preset) {
+    searchQuery = '';
+    priorityFilter = '';
+    agentFilter = '';
+    viewMode = 'flat';
+    if (preset === 'blocked') {
+      ownershipFilter = '';
+      statusFilter = 'blocked';
+      return;
+    }
+    if (preset === 'unassigned') {
+      ownershipFilter = 'unassigned';
+      statusFilter = '';
+      return;
+    }
   }
 
   // Filtered tasks
@@ -178,6 +217,12 @@
 
     if (agentFilter) {
       result = result.filter((t) => (t.agent_id ?? t.agent) === agentFilter);
+    }
+
+    if (ownershipFilter === 'assigned') {
+      result = result.filter((t) => !!(t.agent_id ?? t.agent));
+    } else if (ownershipFilter === 'unassigned') {
+      result = result.filter((t) => !(t.agent_id ?? t.agent));
     }
 
     if (statusFilter) {
@@ -430,7 +475,6 @@
   });
   let activeBlockers = $derived(coordinationStore.activeBlockers);
   let attentionAgents = $derived(coordinationStore.topAttentionAgents);
-  let unassignedCount = $derived(tasks.filter((task) => !task.agent_id && !task.agent).length);
   let staleBlockedCount = $derived(
     tasks.filter((task) => task.status === 'blocked' && task.blocked_by?.length).length
   );
@@ -469,10 +513,34 @@
   <div class="header-bar">
     <div class="header-stats">
       <span class="header-total text-mono">{tasks.length} tasks</span>
-      <Badge text="{pendingCt} pending" variant="warning" />
-      <Badge text="{inProgressCt} in-progress" variant="info" />
-      <Badge text="{blockedCt} blocked" variant="error" />
-      <Badge text="{completedCt} completed" variant="success" />
+      <button
+        class="header-filter-pill"
+        class:header-filter-pill-active={isStatusQuickFilterActive('pending')}
+        onclick={() => setStatusQuickFilter('pending')}
+      >
+        <Badge text="{pendingCt} pending" variant="warning" />
+      </button>
+      <button
+        class="header-filter-pill"
+        class:header-filter-pill-active={isStatusQuickFilterActive('in_progress')}
+        onclick={() => setStatusQuickFilter('in_progress')}
+      >
+        <Badge text="{inProgressCt} in-progress" variant="info" />
+      </button>
+      <button
+        class="header-filter-pill"
+        class:header-filter-pill-active={isStatusQuickFilterActive('blocked')}
+        onclick={() => setStatusQuickFilter('blocked')}
+      >
+        <Badge text="{blockedCt} blocked" variant="error" />
+      </button>
+      <button
+        class="header-filter-pill"
+        class:header-filter-pill-active={isStatusQuickFilterActive('completed')}
+        onclick={() => setStatusQuickFilter('completed')}
+      >
+        <Badge text="{completedCt} completed" variant="success" />
+      </button>
     </div>
     <div class="header-actions">
       <button class="btn btn-success" onclick={openCreateModal}>+ New Task</button>
@@ -501,6 +569,32 @@
     onFilter={handleFilter}
     onClear={clearFilters}
   />
+
+  {#if crossAgentBlockedCount > 0 || unassignedCount > 0 || riskyNamespaces.length > 0}
+    <div class="task-alert-strip">
+      {#if crossAgentBlockedCount > 0}
+        <button class="task-alert-card task-alert-card-warning" onclick={() => applyFocusPreset('blocked')}>
+          <span class="task-alert-label">Cross-agent blockers</span>
+          <span class="task-alert-value">{crossAgentBlockedCount}</span>
+          <span class="task-alert-meta">Focus blocked tasks</span>
+        </button>
+      {/if}
+      {#if unassignedCount > 0}
+        <button class="task-alert-card" onclick={() => applyFocusPreset('unassigned')}>
+          <span class="task-alert-label">Unassigned tasks</span>
+          <span class="task-alert-value">{unassignedCount}</span>
+          <span class="task-alert-meta">Filter ownership</span>
+        </button>
+      {/if}
+      {#if riskyNamespaces.length > 0}
+        <div class="task-alert-card task-alert-card-muted">
+          <span class="task-alert-label">Risky namespaces</span>
+          <span class="task-alert-value">{riskyNamespaces.length}</span>
+          <span class="task-alert-meta">{riskyNamespaces.slice(0, 2).join(' · ')}</span>
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   <div class="tasks-layout">
     <div class="task-main">
@@ -979,6 +1073,7 @@
     align-items: center;
     gap: 10px;
     font-size: 12px;
+    flex-wrap: wrap;
   }
 
   .header-total {
@@ -990,6 +1085,30 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+
+  .header-filter-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+    border: none;
+    background: transparent;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }
+
+  .header-filter-pill:hover {
+    transform: translateY(-1px);
+  }
+
+  .header-filter-pill-active {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--border-focus) 55%, transparent);
+  }
+
+  .header-filter-pill:focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
   }
 
   .view-toggle {
@@ -1021,6 +1140,74 @@
     grid-template-columns: minmax(0, 1fr) 300px;
     gap: 12px;
     margin-top: 8px;
+  }
+
+  .task-alert-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .task-alert-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    text-align: left;
+    border-radius: var(--border-radius);
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+    color: inherit;
+  }
+
+  button.task-alert-card {
+    cursor: pointer;
+    transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
+  }
+
+  button.task-alert-card:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--border-focus) 40%, var(--border));
+    background: color-mix(in srgb, var(--bg-secondary) 96%, transparent);
+  }
+
+  button.task-alert-card:focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
+  }
+
+  .task-alert-card-warning {
+    border-color: color-mix(in srgb, var(--warning) 35%, var(--border));
+    background: color-mix(in srgb, var(--warning) 10%, var(--bg-secondary));
+  }
+
+  .task-alert-card-muted {
+    background: color-mix(in srgb, var(--bg-tertiary) 92%, transparent);
+  }
+
+  .task-alert-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-secondary);
+  }
+
+  .task-alert-value {
+    font-size: 18px;
+    line-height: 1.1;
+    font-family: var(--font-mono);
+    color: var(--fg-primary);
+  }
+
+  .task-alert-meta {
+    font-size: 11px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .task-main,
