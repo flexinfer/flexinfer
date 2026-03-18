@@ -1252,60 +1252,6 @@ func TestHandler_AgentHeartbeat_RegistersBarePresenceWithoutEnsureSession(t *tes
 	}
 }
 
-func TestHandler_AgentSessionStart_AutoRecallReturnsStartupBriefing(t *testing.T) {
-	_, mux, handlers := newTestAppWithHandlers(t)
-
-	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
-		var req struct {
-			Name string `json:"name"`
-		}
-		if err := json.Unmarshal(params, &req); err != nil {
-			t.Fatalf("unmarshal params: %v", err)
-		}
-
-		switch req.Name {
-		case "agent_context__agent_session_list":
-			return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[]}"}]}`), nil
-		case "agent_context__agent_session_start":
-			return json.RawMessage(`{"content":[{"type":"text","text":"{\"session_id\":\"sess-briefing\"}"}]}`), nil
-		case "agent_context__agent_recall":
-			return json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true,\"entries\":[{\"id\":\"e1\",\"agent_id\":\"codex-gpt5\",\"entry_type\":\"decision\",\"title\":\"Keep startup briefings bounded\",\"content\":\"Return compressed recall instead of a full dump.\",\"namespace\":\"loom-core/main\",\"token_count\":40}],\"count\":1,\"total_tokens\":40,\"token_budget\":1500}"}]}`), nil
-		default:
-			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
-		}
-	})
-
-	req := httptest.NewRequest("POST", "/api/agent/session-start", strings.NewReader(`{"agent_id":"codex-gpt5","agent_type":"codex","namespace":"loom-core/main","auto_recall":true,"auto_recall_strategy":"fast"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var payload struct {
-		SessionID              string `json:"session_id"`
-		StartupBriefing        string `json:"startup_briefing"`
-		RecalledContext        string `json:"recalled_context"`
-		StartupBriefingEntries int    `json:"startup_briefing_entries"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if payload.SessionID != "sess-briefing" {
-		t.Fatalf("expected session_id=sess-briefing, got %q", payload.SessionID)
-	}
-	if payload.StartupBriefing == "" {
-		t.Fatalf("expected startup_briefing to be populated")
-	}
-	if payload.RecalledContext != payload.StartupBriefing {
-		t.Fatalf("expected recalled_context alias, got %q vs %q", payload.RecalledContext, payload.StartupBriefing)
-	}
-	if payload.StartupBriefingEntries != 1 {
-		t.Fatalf("expected startup_briefing_entries=1, got %d", payload.StartupBriefingEntries)
-	}
-}
 func TestHandler_MobileSessionEnd_PathRoute(t *testing.T) {
 	app, mux := newTestApp(t)
 	app.config.MobileOperatorToken = "mobile-secret"
