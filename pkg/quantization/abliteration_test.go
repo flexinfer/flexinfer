@@ -214,6 +214,8 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"prompt max length", "ABLITERATION_PROMPT_MAX_LENGTH", "256"},
 		{"save format", "ABLITERATION_SAVE_FORMAT", "auto"},
 		{"activation capture mode", "ABLITERATION_ACTIVATION_CAPTURE_MODE", "hooks"},
+		{"memory trim interval", "ABLITERATION_MEMORY_TRIM_INTERVAL", "1"},
+		{"forward use cache", "ABLITERATION_FORWARD_USE_CACHE", "false"},
 		{"save shard size", "ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB"},
 		{"cpu max memory", "ABLITERATION_CPU_MAX_MEMORY_GB", "20"},
 		{"gpu max memory", "ABLITERATION_GPU_MAX_MEMORY_GB", "20"},
@@ -239,6 +241,8 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	t.Setenv("FLEXINFER_ABLITERATION_PROMPT_MAX_LENGTH", "384")
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_FORMAT", "safetensors")
 	t.Setenv("FLEXINFER_ABLITERATION_ACTIVATION_CAPTURE_MODE", "hidden_states")
+	t.Setenv("FLEXINFER_ABLITERATION_MEMORY_TRIM_INTERVAL", "3")
+	t.Setenv("FLEXINFER_ABLITERATION_FORWARD_USE_CACHE", "true")
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_MAX_SHARD_SIZE", "2GB")
 	t.Setenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB", "28")
 	t.Setenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB", "18")
@@ -262,6 +266,12 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	}
 	if got := envMap["ABLITERATION_ACTIVATION_CAPTURE_MODE"]; got != "hidden_states" {
 		t.Errorf("ABLITERATION_ACTIVATION_CAPTURE_MODE = %q, want hidden_states", got)
+	}
+	if got := envMap["ABLITERATION_MEMORY_TRIM_INTERVAL"]; got != "3" {
+		t.Errorf("ABLITERATION_MEMORY_TRIM_INTERVAL = %q, want 3", got)
+	}
+	if got := envMap["ABLITERATION_FORWARD_USE_CACHE"]; got != "true" {
+		t.Errorf("ABLITERATION_FORWARD_USE_CACHE = %q, want true", got)
 	}
 	if got := envMap["ABLITERATION_SAVE_MAX_SHARD_SIZE"]; got != "2GB" {
 		t.Errorf("ABLITERATION_SAVE_MAX_SHARD_SIZE = %q, want 2GB", got)

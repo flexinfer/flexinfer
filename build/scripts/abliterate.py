@@ -13,9 +13,11 @@ Environment variables:
   ABLITERATION_ACTIVATION_CAPTURE_MODE, ABLITERATION_SAVE_FORMAT,
   ABLITERATION_SAVE_MAX_SHARD_SIZE, ABLITERATION_CPU_MAX_MEMORY_GB,
   ABLITERATION_GPU_MAX_MEMORY_GB, ABLITERATION_OFFLOAD_DIR,
+  ABLITERATION_MEMORY_TRIM_INTERVAL, ABLITERATION_FORWARD_USE_CACHE,
   ABLITERATION_MODEL_POLICIES (optional)
 """
 import gc
+import importlib.util
 import json
 import os
 import shutil
@@ -66,6 +68,17 @@ def env_int(name, default):
 def env_str(name, default):
     raw = os.environ.get(name, "").strip()
     return raw or default
+
+
+def env_bool(name, default):
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean string, got {raw!r}")
 
 
 def detect_container_memory_gb():
@@ -167,6 +180,26 @@ def emit_snapshot(stage, **kwargs):
     }
     payload.update(kwargs)
     emit_progress("snapshot", **payload)
+
+
+def has_module(module_name):
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except Exception:
+        return False
+
+
+def emit_runtime_capabilities():
+    capabilities = {
+        "fla": has_module("fla"),
+        "causal_conv1d": has_module("causal_conv1d"),
+        "psutil": psutil is not None,
+    }
+    print(
+        "Runtime capabilities: "
+        + ", ".join(f"{name}={'yes' if enabled else 'no'}" for name, enabled in capabilities.items())
+    )
+    emit_progress("runtime_capabilities", phase="starting", **capabilities)
 
 
 def release_memory(stage=None, **kwargs):
@@ -391,12 +424,15 @@ configured_save_format = env_str("ABLITERATION_SAVE_FORMAT", "auto").lower()
 configured_save_max_shard_size = env_str("ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB")
 activation_capture_mode = env_str("ABLITERATION_ACTIVATION_CAPTURE_MODE", "hooks").lower()
 configured_offload_dir = env_str("ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload")
+memory_trim_interval = max(0, env_int("ABLITERATION_MEMORY_TRIM_INTERVAL", 1))
+forward_use_cache = env_bool("ABLITERATION_FORWARD_USE_CACHE", False)
 model_policies = load_model_policies()
 
 emit_progress("start", phase="abliterating", model=model_dir, num_samples=num_samples)
 cleanup_stale_save_dirs()
 write_checkpoint("starting", model=model_dir)
 emit_snapshot("starting")
+emit_runtime_capabilities()
 
 print(f"Loading config from {model_dir}...")
 cfg_path = os.path.join(model_dir, "config.json")
@@ -443,6 +479,7 @@ if device_map != "cpu":
         f"Using constrained max_memory: gpu={gpu_max_memory_gb}GiB cpu={cpu_max_memory_gb}GiB offload={offload_dir}"
     )
 model = AutoModelForCausalLM.from_pretrained(model_dir, **load_kwargs)
+model.eval()
 print(f"Model loaded in {time.time() - load_start:.1f}s")
 
 tokenizer_kwargs = {"trust_remote_code": True}
@@ -765,6 +802,14 @@ def output_tensor(output):
     return output
 
 
+def maybe_trim_prompt_memory(i):
+    if memory_trim_interval <= 0:
+        return
+    if (i + 1) % memory_trim_interval != 0:
+        return
+    release_memory()
+
+
 def collect_activation_means_from_hidden_states(prompts, stage, base_percent):
     per_layer_sum = [None for _ in range(total_layers)]
     for i, prompt in enumerate(prompts):
@@ -792,8 +837,12 @@ def collect_activation_means_from_hidden_states(prompts, stage, base_percent):
             padding=False,
         )
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
-        with torch.no_grad():
-            out = model(**inputs, output_hidden_states=True)
+        with torch.inference_mode():
+            out = model(
+                **inputs,
+                output_hidden_states=True,
+                use_cache=forward_use_cache,
+            )
         for layer_idx in range(total_layers):
             h = out.hidden_states[layer_idx + 1][0, -1, :].detach().to(
                 device="cpu", dtype=torch.float32
@@ -803,6 +852,7 @@ def collect_activation_means_from_hidden_states(prompts, stage, base_percent):
             else:
                 per_layer_sum[layer_idx].add_(h)
         del out, inputs, h
+        maybe_trim_prompt_memory(i)
     count = float(len(prompts))
     return [tensor.div_(count) for tensor in per_layer_sum]
 
@@ -846,8 +896,12 @@ def collect_activation_means_with_hooks(prompts, stage, base_percent):
             )
             inputs = {k: v.to(model.device) for k, v in inputs.items()}
             captured.clear()
-            with torch.no_grad():
-                _ = model(**inputs)
+            with torch.inference_mode():
+                outputs = model(
+                    **inputs,
+                    use_cache=forward_use_cache,
+                    return_dict=False,
+                )
             if len(captured) != total_layers:
                 missing = sorted(set(range(total_layers)) - set(captured))
                 raise RuntimeError(f"missing activation captures for layers: {missing[:8]}")
@@ -857,7 +911,9 @@ def collect_activation_means_with_hooks(prompts, stage, base_percent):
                     per_layer_sum[layer_idx] = h.clone()
                 else:
                     per_layer_sum[layer_idx].add_(h)
-            del inputs, h
+            captured.clear()
+            del outputs, inputs, h
+            maybe_trim_prompt_memory(i)
         count = float(len(prompts))
         return [tensor.div_(count) for tensor in per_layer_sum]
     finally:

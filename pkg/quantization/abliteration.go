@@ -250,6 +250,14 @@ func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []core
 	if activationCaptureMode == "" {
 		activationCaptureMode = "hooks"
 	}
+	memoryTrimInterval := os.Getenv("FLEXINFER_ABLITERATION_MEMORY_TRIM_INTERVAL")
+	if memoryTrimInterval == "" {
+		memoryTrimInterval = "1"
+	}
+	forwardUseCache := os.Getenv("FLEXINFER_ABLITERATION_FORWARD_USE_CACHE")
+	if forwardUseCache == "" {
+		forwardUseCache = "false"
+	}
 	saveMaxShardSize := os.Getenv("FLEXINFER_ABLITERATION_SAVE_MAX_SHARD_SIZE")
 	if saveMaxShardSize == "" {
 		saveMaxShardSize = "1GB"
@@ -282,6 +290,8 @@ func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []core
 		{Name: "ABLITERATION_PROMPT_MAX_LENGTH", Value: promptMaxLength},
 		{Name: "ABLITERATION_SAVE_FORMAT", Value: saveFormat},
 		{Name: "ABLITERATION_ACTIVATION_CAPTURE_MODE", Value: activationCaptureMode},
+		{Name: "ABLITERATION_MEMORY_TRIM_INTERVAL", Value: memoryTrimInterval},
+		{Name: "ABLITERATION_FORWARD_USE_CACHE", Value: forwardUseCache},
 		{Name: "ABLITERATION_SAVE_MAX_SHARD_SIZE", Value: saveMaxShardSize},
 		{Name: "ABLITERATION_CPU_MAX_MEMORY_GB", Value: cpuMaxMemoryGB},
 		{Name: "ABLITERATION_GPU_MAX_MEMORY_GB", Value: gpuMaxMemoryGB},
