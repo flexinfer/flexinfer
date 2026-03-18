@@ -148,6 +148,10 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 	if descAct {
 		descActStr = "True"
 	}
+	modelPolicies := os.Getenv("FLEXINFER_GPTQ_MODEL_POLICIES")
+	if modelPolicies == "" {
+		modelPolicies = defaultGPTQModelPoliciesJSON()
+	}
 
 	return []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
@@ -162,7 +166,7 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 		{Name: "GPU_MEMORY_FRACTION", Value: gpuMemFraction},
 		{Name: "DYNAMIC_EXCLUSION", Value: dynamicExclusion},
 		{Name: "DATASET", Value: dataset},
-		{Name: "QUANTIZE_MODEL_POLICIES", Value: defaultGPTQModelPoliciesJSON()},
+		{Name: "QUANTIZE_MODEL_POLICIES", Value: modelPolicies},
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
 	}
 }

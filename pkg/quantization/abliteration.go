@@ -6,6 +6,7 @@
 package quantization
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -29,6 +30,15 @@ const (
 	// DefaultAbliterationNumSamples is the default number of contrastive prompt pairs.
 	DefaultAbliterationNumSamples = 128
 )
+
+type abliterationModelPolicy struct {
+	Name                     string   `json:"name"`
+	MatchModelTypes          []string `json:"match_model_types,omitempty"`
+	MatchPathSubstrings      []string `json:"match_path_substrings,omitempty"`
+	TokenizerFixMistralRegex *bool    `json:"tokenizer_fix_mistral_regex,omitempty"`
+	SaveFormat               string   `json:"save_format,omitempty"`
+	SaveMaxShardSize         string   `json:"save_max_shard_size,omitempty"`
+}
 
 // memoryRequestForLimitGB keeps large single-node jobs schedulable by requesting
 // less than their peak memory limit. We still enforce the full limit at runtime.
@@ -199,6 +209,31 @@ func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []core
 		deviceMap = "auto"
 	}
 
+	progressInterval := os.Getenv("FLEXINFER_ABLITERATION_PROGRESS_INTERVAL")
+	if progressInterval == "" {
+		progressInterval = "10"
+	}
+	promptMaxLength := os.Getenv("FLEXINFER_ABLITERATION_PROMPT_MAX_LENGTH")
+	if promptMaxLength == "" {
+		promptMaxLength = "256"
+	}
+	saveFormat := os.Getenv("FLEXINFER_ABLITERATION_SAVE_FORMAT")
+	if saveFormat == "" {
+		saveFormat = "auto"
+	}
+	activationCaptureMode := os.Getenv("FLEXINFER_ABLITERATION_ACTIVATION_CAPTURE_MODE")
+	if activationCaptureMode == "" {
+		activationCaptureMode = "hooks"
+	}
+	saveMaxShardSize := os.Getenv("FLEXINFER_ABLITERATION_SAVE_MAX_SHARD_SIZE")
+	if saveMaxShardSize == "" {
+		saveMaxShardSize = "1GB"
+	}
+	modelPolicies := os.Getenv("FLEXINFER_ABLITERATION_MODEL_POLICIES")
+	if modelPolicies == "" {
+		modelPolicies = defaultAbliterationModelPoliciesJSON()
+	}
+
 	return []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
 		{Name: "NUM_SAMPLES", Value: fmt.Sprintf("%d", numSamples)},
@@ -206,10 +241,35 @@ func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []core
 		{Name: "WEIGHT_MATRICES", Value: weightMatrices},
 		{Name: "SKIP_VISION", Value: skipVision},
 		{Name: "DEVICE_MAP", Value: deviceMap},
+		{Name: "ABLITERATION_PROGRESS_INTERVAL", Value: progressInterval},
+		{Name: "ABLITERATION_PROMPT_MAX_LENGTH", Value: promptMaxLength},
+		{Name: "ABLITERATION_SAVE_FORMAT", Value: saveFormat},
+		{Name: "ABLITERATION_ACTIVATION_CAPTURE_MODE", Value: activationCaptureMode},
+		{Name: "ABLITERATION_SAVE_MAX_SHARD_SIZE", Value: saveMaxShardSize},
+		{Name: "ABLITERATION_MODEL_POLICIES", Value: modelPolicies},
 		{Name: "SAFETENSORS_FAST_GPU", Value: "0"},
 		{Name: "HF_SAFETENSORS_MMAP", Value: "0"},
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
 	}
+}
+
+func defaultAbliterationModelPoliciesJSON() string {
+	trueVal := true
+	policies := []abliterationModelPolicy{
+		{
+			Name:                     "qwen3.5-save-safetensors",
+			MatchModelTypes:          []string{"qwen3_5", "qwen3_5_text"},
+			MatchPathSubstrings:      []string{"qwen35", "qwen3.5"},
+			TokenizerFixMistralRegex: &trueVal,
+			SaveFormat:               "safetensors",
+			SaveMaxShardSize:         "1GB",
+		},
+	}
+	data, err := json.Marshal(policies)
+	if err != nil {
+		panic(fmt.Sprintf("marshal default abliteration model policies: %v", err))
+	}
+	return string(data)
 }
 
 // abliterationWrapperScript returns the shell wrapper for abliteration.

@@ -210,6 +210,11 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"weight matrices", "WEIGHT_MATRICES", "o_proj,down_proj"},
 		{"skip vision", "SKIP_VISION", "true"},
 		{"device map auto", "DEVICE_MAP", "auto"},
+		{"progress interval", "ABLITERATION_PROGRESS_INTERVAL", "10"},
+		{"prompt max length", "ABLITERATION_PROMPT_MAX_LENGTH", "256"},
+		{"save format", "ABLITERATION_SAVE_FORMAT", "auto"},
+		{"activation capture mode", "ABLITERATION_ACTIVATION_CAPTURE_MODE", "hooks"},
+		{"save shard size", "ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB"},
 		{"telemetry", "FLEXINFER_TELEMETRY", "true"},
 	}
 
@@ -219,6 +224,44 @@ func TestAbliterationEnv_Content(t *testing.T) {
 				t.Errorf("%s = %q, want %q", check.key, got, check.want)
 			}
 		})
+	}
+
+	if got := envMap["ABLITERATION_MODEL_POLICIES"]; !strings.Contains(got, "qwen3.5-save-safetensors") {
+		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want default qwen3.5 policy JSON", got)
+	}
+}
+
+func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
+	t.Setenv("FLEXINFER_ABLITERATION_PROGRESS_INTERVAL", "5")
+	t.Setenv("FLEXINFER_ABLITERATION_PROMPT_MAX_LENGTH", "384")
+	t.Setenv("FLEXINFER_ABLITERATION_SAVE_FORMAT", "safetensors")
+	t.Setenv("FLEXINFER_ABLITERATION_ACTIVATION_CAPTURE_MODE", "hidden_states")
+	t.Setenv("FLEXINFER_ABLITERATION_SAVE_MAX_SHARD_SIZE", "2GB")
+	t.Setenv("FLEXINFER_ABLITERATION_MODEL_POLICIES", `[{"name":"custom"}]`)
+
+	env := abliterationEnv("my-model", &aiv1alpha1.AbliterationSpec{})
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if got := envMap["ABLITERATION_PROGRESS_INTERVAL"]; got != "5" {
+		t.Errorf("ABLITERATION_PROGRESS_INTERVAL = %q, want 5", got)
+	}
+	if got := envMap["ABLITERATION_PROMPT_MAX_LENGTH"]; got != "384" {
+		t.Errorf("ABLITERATION_PROMPT_MAX_LENGTH = %q, want 384", got)
+	}
+	if got := envMap["ABLITERATION_SAVE_FORMAT"]; got != "safetensors" {
+		t.Errorf("ABLITERATION_SAVE_FORMAT = %q, want safetensors", got)
+	}
+	if got := envMap["ABLITERATION_ACTIVATION_CAPTURE_MODE"]; got != "hidden_states" {
+		t.Errorf("ABLITERATION_ACTIVATION_CAPTURE_MODE = %q, want hidden_states", got)
+	}
+	if got := envMap["ABLITERATION_SAVE_MAX_SHARD_SIZE"]; got != "2GB" {
+		t.Errorf("ABLITERATION_SAVE_MAX_SHARD_SIZE = %q, want 2GB", got)
+	}
+	if got := envMap["ABLITERATION_MODEL_POLICIES"]; got != `[{"name":"custom"}]` {
+		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want custom JSON", got)
 	}
 }
 

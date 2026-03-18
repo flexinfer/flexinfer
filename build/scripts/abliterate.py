@@ -8,7 +8,10 @@ against this direction. Weights are modified in-place on the PVC.
 Environment variables:
   MODEL_DIR, NUM_SAMPLES, TARGET_LAYERS, WEIGHT_MATRICES, SKIP_VISION,
   DEVICE_MAP, FLEXINFER_TELEMETRY, ABLITERATION_SAVE_POLICY,
-  ABLITERATION_SAVE_BUFFER_GB, ABLITERATION_STAGING_ROOT (optional)
+  ABLITERATION_SAVE_BUFFER_GB, ABLITERATION_STAGING_ROOT,
+  ABLITERATION_PROGRESS_INTERVAL, ABLITERATION_PROMPT_MAX_LENGTH,
+  ABLITERATION_ACTIVATION_CAPTURE_MODE, ABLITERATION_SAVE_FORMAT,
+  ABLITERATION_SAVE_MAX_SHARD_SIZE, ABLITERATION_MODEL_POLICIES (optional)
 """
 import gc
 import json
@@ -27,6 +30,18 @@ except ImportError:
     psutil = None
 
 
+DEFAULT_MODEL_POLICIES = [
+    {
+        "name": "qwen3.5-save-safetensors",
+        "match_model_types": ["qwen3_5", "qwen3_5_text"],
+        "match_path_substrings": ["qwen35", "qwen3.5"],
+        "tokenizer_fix_mistral_regex": True,
+        "save_format": "safetensors",
+        "save_max_shard_size": "1GB",
+    },
+]
+
+
 # ── Telemetry helper ──────────────────────────────────────────────────
 def emit_progress(event_type, **kwargs):
     if os.environ.get("FLEXINFER_TELEMETRY") != "true":
@@ -37,6 +52,48 @@ def emit_progress(event_type, **kwargs):
     }
     msg.update(kwargs)
     print(json.dumps(msg), flush=True)
+
+
+def env_int(name, default):
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    return int(raw)
+
+
+def env_str(name, default):
+    raw = os.environ.get(name, "").strip()
+    return raw or default
+
+
+def load_model_policies():
+    raw = os.environ.get("ABLITERATION_MODEL_POLICIES", "").strip()
+    if not raw:
+        return list(DEFAULT_MODEL_POLICIES)
+    policies = json.loads(raw)
+    if not isinstance(policies, list):
+        raise ValueError("ABLITERATION_MODEL_POLICIES must decode to a list")
+    return policies
+
+
+def select_model_policy(model_dir, cfg, policies):
+    candidates = {
+        cfg.get("model_type", ""),
+        cfg.get("text_config", {}).get("model_type", ""),
+    }
+    path_candidates = {
+        model_dir,
+        os.path.basename(model_dir),
+        cfg.get("_name_or_path", ""),
+    }
+    for policy in policies:
+        for model_type in policy.get("match_model_types", []):
+            if model_type and model_type in candidates:
+                return policy
+        for token in policy.get("match_path_substrings", []):
+            if token and any(token in candidate.lower() for candidate in path_candidates if candidate):
+                return policy
+    return None
 
 
 def rss_mb():
@@ -304,6 +361,12 @@ target_layers = os.environ["TARGET_LAYERS"]
 weight_matrices = os.environ["WEIGHT_MATRICES"].split(",")
 skip_vision = os.environ["SKIP_VISION"] == "true"
 device_map = os.environ["DEVICE_MAP"]
+progress_interval = max(1, env_int("ABLITERATION_PROGRESS_INTERVAL", 10))
+prompt_max_length = max(32, env_int("ABLITERATION_PROMPT_MAX_LENGTH", 256))
+configured_save_format = env_str("ABLITERATION_SAVE_FORMAT", "auto").lower()
+configured_save_max_shard_size = env_str("ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB")
+activation_capture_mode = env_str("ABLITERATION_ACTIVATION_CAPTURE_MODE", "hooks").lower()
+model_policies = load_model_policies()
 
 emit_progress("start", phase="abliterating", model=model_dir, num_samples=num_samples)
 cleanup_stale_save_dirs()
@@ -321,6 +384,9 @@ if is_vlm:
 
 model_type = cfg.get("model_type", "")
 print(f"Model type: {model_type}")
+active_policy = select_model_policy(model_dir, cfg, model_policies)
+if active_policy:
+    print(f"Applied abliteration model policy: {active_policy.get('name', 'unnamed')}")
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -335,7 +401,10 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 print(f"Model loaded in {time.time() - load_start:.1f}s")
 
-tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
+tokenizer_kwargs = {"trust_remote_code": True}
+if active_policy and active_policy.get("tokenizer_fix_mistral_regex") is not None:
+    tokenizer_kwargs["fix_mistral_regex"] = bool(active_policy["tokenizer_fix_mistral_regex"])
+tokenizer = AutoTokenizer.from_pretrained(model_dir, **tokenizer_kwargs)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
@@ -610,6 +679,7 @@ HARMLESS_PROMPTS = [
 harmful = HARMFUL_PROMPTS[:num_samples]
 harmless = HARMLESS_PROMPTS[:num_samples]
 print(f"Using {len(harmful)} harmful and {len(harmless)} harmless prompts")
+print(f"Activation capture mode: {activation_capture_mode}")
 
 # ── Identify decoder layers ───────────────────────────────────────────
 if hasattr(model, "model") and hasattr(model.model, "layers"):
@@ -638,10 +708,16 @@ print(
 
 
 # ── Collect activations ───────────────────────────────────────────────
-def collect_activation_means(prompts, stage, base_percent):
+def output_tensor(output):
+    if isinstance(output, (tuple, list)):
+        return output[0]
+    return output
+
+
+def collect_activation_means_from_hidden_states(prompts, stage, base_percent):
     per_layer_sum = [None for _ in range(total_layers)]
     for i, prompt in enumerate(prompts):
-        if i % 10 == 0:
+        if i % progress_interval == 0:
             print(f"  Collecting activations: {i}/{len(prompts)}", flush=True)
             pct = base_percent + (i / len(prompts)) * 30.0
             emit_progress(
@@ -658,7 +734,11 @@ def collect_activation_means(prompts, stage, base_percent):
             )
             emit_snapshot(f"{stage}_activations", prompt_index=i, prompt_count=len(prompts))
         inputs = tokenizer(
-            prompt, return_tensors="pt", truncation=True, max_length=256, padding=False
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=prompt_max_length,
+            padding=False,
         )
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
         with torch.no_grad():
@@ -674,6 +754,74 @@ def collect_activation_means(prompts, stage, base_percent):
         del out, inputs, h
     count = float(len(prompts))
     return [tensor.div_(count) for tensor in per_layer_sum]
+
+
+def collect_activation_means_with_hooks(prompts, stage, base_percent):
+    per_layer_sum = [None for _ in range(total_layers)]
+    captured = {}
+
+    def make_hook(layer_idx):
+        def hook(_module, _inputs, output):
+            hidden = output_tensor(output)
+            captured[layer_idx] = hidden[0, -1, :].detach().to(device="cpu", dtype=torch.float32)
+
+        return hook
+
+    handles = [layer.register_forward_hook(make_hook(idx)) for idx, layer in enumerate(decoder_layers)]
+    try:
+        for i, prompt in enumerate(prompts):
+            if i % progress_interval == 0:
+                print(f"  Collecting activations: {i}/{len(prompts)}", flush=True)
+                pct = base_percent + (i / len(prompts)) * 30.0
+                emit_progress(
+                    "progress",
+                    phase="abliterating",
+                    percent=round(pct, 1),
+                    detail=f"{stage} activations {i}/{len(prompts)}",
+                )
+                write_checkpoint(
+                    f"{stage}_activations",
+                    promptIndex=i,
+                    promptCount=len(prompts),
+                    percent=round(pct, 1),
+                )
+                emit_snapshot(f"{stage}_activations", prompt_index=i, prompt_count=len(prompts))
+            inputs = tokenizer(
+                prompt,
+                return_tensors="pt",
+                truncation=True,
+                max_length=prompt_max_length,
+                padding=False,
+            )
+            inputs = {k: v.to(model.device) for k, v in inputs.items()}
+            captured.clear()
+            with torch.no_grad():
+                _ = model(**inputs)
+            if len(captured) != total_layers:
+                missing = sorted(set(range(total_layers)) - set(captured))
+                raise RuntimeError(f"missing activation captures for layers: {missing[:8]}")
+            for layer_idx in range(total_layers):
+                h = captured[layer_idx]
+                if per_layer_sum[layer_idx] is None:
+                    per_layer_sum[layer_idx] = h.clone()
+                else:
+                    per_layer_sum[layer_idx].add_(h)
+            del inputs, h
+        count = float(len(prompts))
+        return [tensor.div_(count) for tensor in per_layer_sum]
+    finally:
+        for handle in handles:
+            handle.remove()
+
+
+def collect_activation_means(prompts, stage, base_percent):
+    if activation_capture_mode == "hooks":
+        return collect_activation_means_with_hooks(prompts, stage, base_percent)
+    if activation_capture_mode == "hidden_states":
+        return collect_activation_means_from_hidden_states(prompts, stage, base_percent)
+    raise RuntimeError(
+        f"unknown ABLITERATION_ACTIVATION_CAPTURE_MODE={activation_capture_mode}"
+    )
 
 
 print("Collecting harmful activations...")
@@ -796,10 +944,19 @@ gc.collect()
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
 tied_weights = getattr(model, "_tied_weights_keys", None)
-needs_safe_fallback = model_type.startswith("qwen3_5") or is_vlm
-if needs_safe_fallback:
+save_format = configured_save_format
+if active_policy and active_policy.get("save_format"):
+    save_format = str(active_policy["save_format"]).strip().lower()
+if save_format == "auto":
+    save_format = "safetensors" if is_vlm else "bin"
+save_max_shard_size = configured_save_max_shard_size
+if active_policy and active_policy.get("save_max_shard_size"):
+    save_max_shard_size = str(active_policy["save_max_shard_size"]).strip()
+if save_format not in {"bin", "safetensors"}:
+    raise RuntimeError(f"unknown ABLITERATION_SAVE_FORMAT={save_format}")
+if save_format == "safetensors":
     print(
-        f"Using staged safetensors save path for model_type={model_type or 'unknown'}"
+        f"Using {save_format} save path for model_type={model_type or 'unknown'}"
     )
     from huggingface_hub import save_torch_model
 
@@ -816,7 +973,7 @@ if needs_safe_fallback:
     save_torch_model(
         model,
         save_dir,
-        max_shard_size="1GB",
+        max_shard_size=save_max_shard_size,
         safe_serialization=True,
         shared_tensors_to_discard=tied_weights,
     )
@@ -839,7 +996,7 @@ else:
         model.save_pretrained(
             save_dir,
             safe_serialization=False,
-            max_shard_size="1GB",
+            max_shard_size=save_max_shard_size,
         )
     except (AttributeError, KeyError, RuntimeError) as e:
         # Accelerate offloading can fail in save_pretrained when load_offloaded_parameter
@@ -855,7 +1012,7 @@ else:
         save_torch_model(
             model,
             save_dir,
-            max_shard_size="1GB",
+            max_shard_size=save_max_shard_size,
             safe_serialization=True,
             shared_tensors_to_discard=tied_weights,
         )

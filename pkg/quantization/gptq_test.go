@@ -124,6 +124,9 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		if v := findEnv(env, "DYNAMIC_EXCLUSION"); v != "auto" {
 			t.Errorf("DYNAMIC_EXCLUSION = %q, want auto", v)
 		}
+		if v := findEnv(env, "QUANTIZE_MODEL_POLICIES"); !strings.Contains(v, "qwen3.5-text") {
+			t.Errorf("QUANTIZE_MODEL_POLICIES = %q, want default qwen3.5 policy JSON", v)
+		}
 	})
 
 	t.Run("sym false descAct true", func(t *testing.T) {
@@ -147,6 +150,14 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		env := builder.buildEnv("model", 4, 128, true, false, 48, "0.95", "auto", nil)
 		if v := findEnv(env, "GPU_MEMORY_FRACTION"); v != "0.95" {
 			t.Errorf("GPU_MEMORY_FRACTION = %q, want 0.95", v)
+		}
+	})
+
+	t.Run("operator model policy override", func(t *testing.T) {
+		t.Setenv("FLEXINFER_GPTQ_MODEL_POLICIES", `[{"name":"custom"}]`)
+		env := builder.buildEnv("model", 4, 128, true, false, 48, "0.80", "auto", nil)
+		if v := findEnv(env, "QUANTIZE_MODEL_POLICIES"); v != `[{"name":"custom"}]` {
+			t.Errorf("QUANTIZE_MODEL_POLICIES = %q, want custom JSON", v)
 		}
 	})
 
