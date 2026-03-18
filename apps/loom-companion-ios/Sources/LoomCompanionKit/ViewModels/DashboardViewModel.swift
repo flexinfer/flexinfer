@@ -45,6 +45,10 @@ public final class DashboardViewModel {
         } catch {
             // Non-critical — dashboard works without task counts
         }
+
+        #if os(iOS)
+        syncWidgets()
+        #endif
     }
 
     /// Start listening to SSE events via the broadcaster for real-time updates.
@@ -76,13 +80,6 @@ public final class DashboardViewModel {
         "hud.workflows",
     ]
 
-    /// SSE event types that trigger widget timeline refresh.
-    private static let widgetRefreshEventTypes: Set<String> = [
-        "hud.fleet",
-        "hud.health",
-        "hud.workflows",
-    ]
-
     /// SSE event types that are notification-worthy (forwarded to AlertsViewModel).
     private static let notificationEventTypes: Set<String> = [
         "hud.health",
@@ -110,16 +107,78 @@ public final class DashboardViewModel {
                 handleWorkflowLiveActivities(event)
             }
         }
-
-        // Refresh widget timelines on relevant state changes.
-        if Self.widgetRefreshEventTypes.contains(event.type) {
-            WidgetCenter.shared.reloadAllTimelines()
-        }
         #endif
 
         // Refresh dashboard data for relevant events.
         if Self.refreshEventTypes.contains(event.type) {
             await load()
+        }
+    }
+
+    @MainActor
+    private func syncWidgets() {
+        guard let dashboard else { return }
+
+        let counts = taskCounts ?? MobileTaskCounts(
+            pending: 0,
+            inProgress: 0,
+            blocked: 0,
+            completed: 0
+        )
+
+        SharedDataStore.save(
+            WidgetData(
+                fleet: FleetWidgetData(
+                    daemonRunning: dashboard.daemonRunning,
+                    serverCount: dashboard.serverCount,
+                    sessionCount: dashboard.activeSessions,
+                    activeAgents: dashboard.activeAgents,
+                    idleAgents: dashboard.idleAgents,
+                    offlineAgents: dashboard.offlineAgents,
+                    healthyServers: dashboard.health.healthyServers,
+                    degradedServers: dashboard.health.degradedServers,
+                    downServers: dashboard.health.downServers
+                ),
+                tasks: TaskWidgetData(
+                    pending: counts.pending,
+                    inProgress: counts.inProgress,
+                    blocked: counts.blocked,
+                    completed: counts.completed,
+                    recentTitles: recentTaskTitles(from: dashboard.recentTimeline)
+                ),
+                sessions: SessionWidgetData(
+                    activeCount: dashboard.activeSessions,
+                    topSessions: recentSessions(from: dashboard.recentTimeline)
+                )
+            )
+        )
+
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    private func recentTaskTitles(from timeline: [TimelineEntry]) -> [String] {
+        timeline.compactMap { entry in
+            guard
+                entry.eventType.contains("task"),
+                let title = entry.data?["title"]?.stringValue,
+                !title.isEmpty
+            else {
+                return nil
+            }
+            return title
+        }
+    }
+
+    private func recentSessions(from timeline: [TimelineEntry]) -> [SessionWidgetEntry] {
+        timeline.compactMap { entry in
+            guard entry.eventType.contains("session") else { return nil }
+
+            return SessionWidgetEntry(
+                id: entry.id,
+                namespace: entry.data?["namespace"]?.stringValue ?? entry.eventType,
+                agentId: entry.agentId ?? entry.data?["agent_id"]?.stringValue ?? "unknown",
+                startedAt: entry.timestamp
+            )
         }
     }
 

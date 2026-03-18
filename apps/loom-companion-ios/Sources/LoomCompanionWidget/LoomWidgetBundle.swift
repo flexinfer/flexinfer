@@ -8,5 +8,6 @@ struct LoomWidgetBundle: WidgetBundle {
         TasksWidget()
         ActiveSessionsWidget()
         LockScreenWidgets()
+        WorkflowLiveActivityView()
     }
 }

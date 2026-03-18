@@ -49,6 +49,8 @@ targets:
       path: Sources/LoomCompanion/LoomCompanion.entitlements
       properties:
         aps-environment: development
+        com.apple.security.application-groups:
+          - group.ai.flexinfer.loom.companion
   LoomCompanionWidget:
     type: app-extension
     platform: iOS
@@ -72,4 +74,6 @@ targets:
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     entitlements:
       path: Sources/LoomCompanionWidget/LoomCompanionWidget.entitlements
-      properties: {}
+      properties:
+        com.apple.security.application-groups:
+          - group.ai.flexinfer.loom.companion
