@@ -1,6 +1,6 @@
 .PHONY: all build clean test install servers lint fmt vet check setup hooks git-setup dev help \
 		loom loomd \
-		install-core install-all bootstrap-local dev-sync dev-upgrade dev-reload \
+		install-core install-all bootstrap-local dev-sync dev-sync-repo dev-upgrade dev-reload \
 	ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-enterprise-smoke ci-test-race ci-benchmark ci-security ci-baseline \
 	codebase-bench-baseline codebase-bench-full codebase-bench-incremental codebase-bench-watch \
 		security security-gosec security-vuln \
@@ -65,6 +65,7 @@ help:
 	@echo "  make git-setup  - Repair worktree-aware git config and install shared hooks"
 	@echo "  make dev        - Build and run daemon in debug mode"
 	@echo "  make dev-sync   - Regen configs and sync all profiles + skills using the repo-built loom"
+	@echo "  make dev-sync-repo - Regen configs + skills in-repo only (skip home sync/install)"
 	@echo "  make dev-upgrade - Build, install, sync configs+skills, restart daemon (safe when idle)"
 	@echo "  make dev-reload  - Build, install, sync configs+skills, force-restart daemon"
 	@echo "  make bootstrap-local - Build + install core binaries + sync configs+skills + check setup"
@@ -390,6 +391,12 @@ install-all: build
 dev-sync: loom
 	@./bin/loom sync all --regen --loom-mode --loom-binary "$(PWD)/bin/loom"
 	@./bin/loom sync skills all
+
+# Regenerate configs and skills in-repo only. Useful in sandboxes or when home sync/install
+# would fail, while still keeping repo-local generated artifacts fresh.
+dev-sync-repo: loom
+	@./bin/loom sync all --regen --repo-only --loom-mode --loom-binary "$(PWD)/bin/loom"
+	@./bin/loom sync skills all --repo-only
 
 # One-command local dev upgrade:
 # - rebuild loom/loomd

@@ -1175,7 +1175,7 @@ func filterPrunedExtensions(snapshot geminiConfigSnapshot, pruned []string) gemi
 }
 
 // SyncSkills generates and syncs skill files for a profile.
-func (m *Manager) SyncSkills(profileName string) error {
+func (m *Manager) SyncSkills(profileName string, repoOnly bool) error {
 	p, err := m.GetProfile(profileName)
 	if err != nil {
 		return err
@@ -1187,6 +1187,11 @@ func (m *Manager) SyncSkills(profileName string) error {
 	// Generate skills
 	if err := m.regenerateSkills(p); err != nil {
 		return err
+	}
+
+	if repoOnly {
+		fmt.Printf("Skipping skill sync to home for %s (repo-only)\n", profileName)
+		return nil
 	}
 
 	// When skills are generated directly to home, no copy step needed.

@@ -457,10 +457,12 @@ func newSyncCmd() *cobra.Command {
 
 Example:
   loom sync skills claude     # Generate + sync skills for Claude
-  loom sync skills all        # Generate + sync skills for all profiles`,
+  loom sync skills all        # Generate + sync skills for all profiles
+  loom sync skills all --repo-only  # Regenerate repo-local skills only`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			profile := args[0]
+			repoOnly, _ := cmd.Flags().GetBool("repo-only")
 
 			cwd, _ := os.Getwd()
 			mgr, err := sync.NewManager(cwd)
@@ -475,15 +477,16 @@ Example:
 						continue
 					}
 					fmt.Printf("=== %s ===\n", name)
-					if err := mgr.SyncSkills(name); err != nil {
+					if err := mgr.SyncSkills(name, repoOnly); err != nil {
 						fmt.Fprintf(os.Stderr, "Warning: skills sync failed for %s: %v\n", name, err)
 					}
 				}
 				return nil
 			}
-			return mgr.SyncSkills(profile)
+			return mgr.SyncSkills(profile, repoOnly)
 		},
 	}
+	syncSkillsCmd.Flags().Bool("repo-only", false, "Only update repository skill files, do not sync to home")
 	syncCmd.AddCommand(syncSkillsCmd)
 
 	// Sync status subcommand
