@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // QueuedRequest represents a request waiting in queue during cold start.
@@ -460,6 +462,10 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 		slog.Debug("direct load: cannot fetch model CR", "model", modelName, "error", err)
 		return false
 	}
+	if ok, reason := pkgrt.DirectRuntimeLoadEligibility(m); !ok {
+		slog.Debug("direct load: skipping runtime path", "model", modelName, "reason", reason)
+		return false
+	}
 
 	// Resolve backend.
 	b, ok := backend.Get(m.Spec.Backend)
@@ -476,17 +482,13 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 	}
 
 	// Build the load payload (shared with controller).
-	// Pass /models as modelBasePath so PVC sources resolve correctly.
-	// Inject startupTimeoutSeconds from the model's coldStartTimeout so the runtime
-	// uses a model-specific timeout instead of the backend default.
-	config := m.Spec.GetConfigMap()
-	if m.Spec.Serverless != nil && m.Spec.Serverless.ColdStartTimeout != nil {
-		if config == nil {
-			config = make(map[string]interface{})
-		}
-		config["startupTimeoutSeconds"] = m.Spec.Serverless.ColdStartTimeout.Duration.Seconds()
-	}
-	payload, err := pkgrt.BuildLoadPayload(b.Name(), m.Spec.Source, "/models", config)
+	// Pass /models as modelBasePath so PVC sources resolve correctly and
+	// enrich the request with GPUProfile defaults plus compile-cache env.
+	payload, err := pkgrt.BuildLoadPayloadForModel(m, b, pkgrt.BuildLoadOptions{
+		ModelBasePath: "/models",
+		GPUVendor:     backend.GPUVendor(m.Spec.GetGPUVendor()),
+		GPUProfile:    p.lookupGPUProfile(ctx, endpoint.GPUArch),
+	})
 	if err != nil {
 		slog.Warn("direct load: failed to build payload", "model", modelName, "error", err)
 		return false
@@ -512,6 +514,26 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 	slog.Info("direct load: registered routing target", "model", modelName, "target", targetURL)
 
 	return true
+}
+
+func (p *Proxy) lookupGPUProfile(ctx context.Context, arch string) *aiv1alpha2.GPUProfileSpec {
+	if arch == "" {
+		return nil
+	}
+
+	list := &aiv1alpha2.GPUProfileList{}
+	if err := p.client.List(ctx, list, client.InNamespace(p.namespace)); err != nil {
+		slog.Debug("direct load: failed to list GPUProfiles", "arch", arch, "error", err)
+		return nil
+	}
+
+	for i := range list.Items {
+		if strings.EqualFold(list.Items[i].Spec.Architecture, arch) {
+			profile := list.Items[i].Spec.DeepCopy()
+			return profile
+		}
+	}
+	return nil
 }
 
 // loadOnRuntime sends POST /api/v1/models/{name}/load to a runtime pod.

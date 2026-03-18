@@ -37,6 +37,7 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/observability"
+	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 )
 
 // ---------------------------------------------------------------------------
@@ -319,22 +320,26 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// If so, manage the model via the runtime API instead of creating a Deployment.
 	// The runtime pod already holds the GPU device, so Deployment creation is skipped.
 	if r.Runtime != nil {
-		runtimeEndpoint, err := r.Runtime.FindRuntimeForNode(ctx, model.Namespace, model.Spec.NodeSelector)
-		if err != nil {
-			log.V(1).Info("Runtime discovery failed, falling back to Deployment", "error", err)
-		}
-		if runtimeEndpoint != nil {
-			if runtimeEndpoint.Ready {
-				return r.reconcileViaRuntime(ctx, model, b, gpuVendor, gpuArch, runtimeEndpoint, desiredReplicas, cacheReady, requeueAfter)
+		if ok, reason := pkgrt.DirectRuntimeLoadEligibility(model); !ok {
+			log.V(1).Info("Skipping runtime-managed flow for model", "reason", reason)
+		} else {
+			runtimeEndpoint, err := r.Runtime.FindRuntimeForNode(ctx, model.Namespace, model.Spec.NodeSelector)
+			if err != nil {
+				log.V(1).Info("Runtime discovery failed, falling back to Deployment", "error", err)
 			}
-			// Runtime pod exists but isn't ready yet (starting up). Wait instead
-			// of falling back to Deployment, which would claim the GPU and prevent
-			// the runtime pod from scheduling (deadlock).
-			log.Info("Runtime pod exists but not ready, waiting for it to start",
-				"model", model.Name,
-				"runtimePod", runtimeEndpoint.PodName,
-			)
-			return ctrl.Result{RequeueAfter: requeueMedium}, nil
+			if runtimeEndpoint != nil {
+				if runtimeEndpoint.Ready {
+					return r.reconcileViaRuntime(ctx, model, b, gpuVendor, gpuArch, runtimeEndpoint, desiredReplicas, cacheReady, requeueAfter)
+				}
+				// Runtime pod exists but isn't ready yet (starting up). Wait instead
+				// of falling back to Deployment, which would claim the GPU and prevent
+				// the runtime pod from scheduling (deadlock).
+				log.Info("Runtime pod exists but not ready, waiting for it to start",
+					"model", model.Name,
+					"runtimePod", runtimeEndpoint.PodName,
+				)
+				return ctrl.Result{RequeueAfter: requeueMedium}, nil
+			}
 		}
 	}
 
