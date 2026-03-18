@@ -1389,6 +1389,91 @@ func TestEnsureServicePreservesClusterIP(t *testing.T) {
 	}
 }
 
+func TestRemoveRuntimeServiceSelector(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-model",
+			Namespace: "default",
+		},
+	}
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      model.Name,
+			Namespace: model.Namespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"flexinfer.ai/model": model.Name},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithRuntimeObjects(model, svc).
+		Build()
+
+	r := &ModelReconciler{Client: fakeClient, Scheme: s}
+	ctx := context.Background()
+	if err := r.removeRuntimeServiceSelector(ctx, model); err != nil {
+		t.Fatalf("removeRuntimeServiceSelector() error: %v", err)
+	}
+
+	updated := &corev1.Service{}
+	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(svc), updated); err != nil {
+		t.Fatalf("failed to fetch updated service: %v", err)
+	}
+	if updated.Spec.Selector != nil {
+		t.Fatalf("expected selector to be removed, got %v", updated.Spec.Selector)
+	}
+}
+
+func TestDeleteLegacyDeploymentForRuntime(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-model",
+			Namespace: "default",
+		},
+	}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      model.Name,
+			Namespace: model.Namespace,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithRuntimeObjects(model, deployment).
+		Build()
+
+	r := &ModelReconciler{Client: fakeClient, Scheme: s}
+	ctx := context.Background()
+	if err := r.deleteLegacyDeploymentForRuntime(ctx, model); err != nil {
+		t.Fatalf("deleteLegacyDeploymentForRuntime() error: %v", err)
+	}
+
+	updated := &appsv1.Deployment{}
+	err := fakeClient.Get(ctx, client.ObjectKeyFromObject(deployment), updated)
+	if !errors.IsNotFound(err) {
+		t.Fatalf("expected deployment to be deleted, got err=%v", err)
+	}
+}
+
 func TestEnsureDeploymentPreservesSelectorAndMatchesTemplate(t *testing.T) {
 	s := runtime.NewScheme()
 	if err := scheme.AddToScheme(s); err != nil {

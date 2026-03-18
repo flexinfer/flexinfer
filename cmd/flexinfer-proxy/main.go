@@ -9,8 +9,10 @@ import (
 
 	"github.com/flexinfer/flexinfer/internal/proxy"
 	"github.com/flexinfer/flexinfer/pkg/observability"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 func main() {
@@ -34,6 +36,7 @@ func main() {
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(logger)
+	ctrl.SetLogger(zap.New(zap.UseDevMode(level == slog.LevelDebug)))
 
 	shutdownTracing, err := observability.InitTracing(context.Background(), "flexinfer-proxy")
 	if err != nil {

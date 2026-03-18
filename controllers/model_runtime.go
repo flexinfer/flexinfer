@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -41,18 +42,20 @@ import (
 func (r *ModelReconciler) loadViaRuntime(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, endpoint *RuntimeEndpoint, gpuArch string) error {
 	runtimeLog := log.FromContext(ctx)
 
-	// Build the load request payload using shared builder.
-	// Pass /models as modelBasePath so PVC sources resolve to /models/{pvc-subpath}.
-	// Inject startupTimeoutSeconds from the model's coldStartTimeout so the runtime
-	// uses a model-specific timeout instead of the backend default.
-	config := model.Spec.GetConfigMap()
-	if model.Spec.Serverless != nil && model.Spec.Serverless.ColdStartTimeout != nil {
-		if config == nil {
-			config = make(map[string]interface{})
+	var profile *aiv1alpha2.GPUProfileSpec
+	if r.GPUProfiles != nil {
+		if cached, ok := r.GPUProfiles.Lookup(gpuArch); ok {
+			profile = cached
 		}
-		config["startupTimeoutSeconds"] = model.Spec.Serverless.ColdStartTimeout.Duration.Seconds()
 	}
-	data, err := pkgrt.BuildLoadPayload(b.Name(), model.Spec.Source, "/models", config)
+
+	// Build the load request payload using the shared runtime launch builder.
+	// This keeps the reconcile path aligned with the proxy fast path.
+	data, err := pkgrt.BuildLoadPayloadForModel(model, b, pkgrt.BuildLoadOptions{
+		ModelBasePath: "/models",
+		GPUVendor:     gpuVendor,
+		GPUProfile:    profile,
+	})
 	if err != nil {
 		return err
 	}
@@ -89,9 +92,12 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		"cacheReady", cacheReady,
 	)
 
-	// Ensure a Service exists for proxy routing (annotations for LiteLLM, etc.).
-	if err := r.ensureService(ctx, model, b); err != nil {
-		log.Error(err, "Failed to ensure Service for runtime model")
+	if err := r.ensureRuntimeNetworking(ctx, model, b); err != nil {
+		log.Error(err, "Failed to ensure runtime networking for model")
+		return ctrl.Result{}, err
+	}
+	if err := r.deleteLegacyDeploymentForRuntime(ctx, model); err != nil {
+		log.Error(err, "Failed to remove legacy Deployment for runtime-managed model")
 		return ctrl.Result{}, err
 	}
 
@@ -176,6 +182,51 @@ func (r *ModelReconciler) reconcileViaRuntime(
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
+func (r *ModelReconciler) ensureRuntimeNetworking(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend) error {
+	if err := r.ensureService(ctx, model, b); err != nil {
+		return err
+	}
+	return r.removeRuntimeServiceSelector(ctx, model)
+}
+
+func (r *ModelReconciler) removeRuntimeServiceSelector(ctx context.Context, model *aiv1alpha2.Model) error {
+	log := log.FromContext(ctx)
+
+	svc := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, svc); err != nil {
+		return fmt.Errorf("getting service for runtime management: %w", err)
+	}
+	if svc.Spec.Selector == nil {
+		return nil
+	}
+
+	svc.Spec.Selector = nil
+	if err := r.Update(ctx, svc); err != nil {
+		return fmt.Errorf("removing selector from service: %w", err)
+	}
+	log.Info("Removed selector from Service for runtime management", "service", svc.Name)
+	return nil
+}
+
+func (r *ModelReconciler) deleteLegacyDeploymentForRuntime(ctx context.Context, model *aiv1alpha2.Model) error {
+	log := log.FromContext(ctx)
+
+	deployment := &appsv1.Deployment{}
+	key := types.NamespacedName{Name: model.Name, Namespace: model.Namespace}
+	if err := r.Get(ctx, key, deployment); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("getting legacy deployment: %w", err)
+	}
+
+	if err := r.Delete(ctx, deployment); err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("deleting legacy deployment: %w", err)
+	}
+	log.Info("Deleted legacy Deployment for runtime-managed model", "deployment", deployment.Name)
+	return nil
+}
+
 // unloadFromRuntime sends an unload request to the runtime if the model is loaded.
 func (r *ModelReconciler) unloadFromRuntime(ctx context.Context, model *aiv1alpha2.Model, endpoint *RuntimeEndpoint) {
 	log := log.FromContext(ctx)
@@ -202,16 +253,8 @@ func (r *ModelReconciler) ensureRuntimeEndpoints(ctx context.Context, model *aiv
 	log := log.FromContext(ctx)
 
 	// First, ensure the Service has no selector (runtime manages endpoints manually).
-	svc := &corev1.Service{}
-	if err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, svc); err != nil {
-		return fmt.Errorf("getting service for runtime endpoints: %w", err)
-	}
-	if svc.Spec.Selector != nil {
-		svc.Spec.Selector = nil
-		if err := r.Update(ctx, svc); err != nil {
-			return fmt.Errorf("removing selector from service: %w", err)
-		}
-		log.Info("Removed selector from Service for runtime management", "service", svc.Name)
+	if err := r.removeRuntimeServiceSelector(ctx, model); err != nil {
+		return fmt.Errorf("ensuring runtime service selector removed: %w", err)
 	}
 
 	// Build desired Endpoints.

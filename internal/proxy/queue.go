@@ -456,30 +456,33 @@ func (p *Proxy) calculateBackoff(attempt int) time.Duration {
 // tryDirectRuntimeLoad attempts to load a model directly on a runtime pod,
 // bypassing the controller reconcile loop. Returns true on success.
 func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool {
+	slog.Info("direct load: evaluating runtime fast path", "model", modelName)
+
 	// Fetch the v1alpha2 Model CR to get backend/source/nodeSelector.
 	m, err := p.getModel(ctx, modelName)
 	if err != nil {
-		slog.Debug("direct load: cannot fetch model CR", "model", modelName, "error", err)
+		slog.Info("direct load: cannot fetch model CR", "model", modelName, "error", err)
 		return false
 	}
 	if ok, reason := pkgrt.DirectRuntimeLoadEligibility(m); !ok {
-		slog.Debug("direct load: skipping runtime path", "model", modelName, "reason", reason)
+		slog.Info("direct load: skipping runtime path", "model", modelName, "reason", reason)
 		return false
 	}
 
 	// Resolve backend.
 	b, ok := backend.Get(m.Spec.Backend)
 	if !ok {
-		slog.Debug("direct load: unknown backend", "model", modelName, "backend", m.Spec.Backend)
+		slog.Warn("direct load: unknown backend", "model", modelName, "backend", m.Spec.Backend)
 		return false
 	}
 
 	// Find a ready runtime pod matching the model's nodeSelector.
 	endpoint, err := p.runtimeCache.ForModel(ctx, m.Spec.NodeSelector)
 	if err != nil || endpoint == nil {
-		slog.Debug("direct load: no runtime endpoint found", "model", modelName, "error", err)
+		slog.Info("direct load: no runtime endpoint found", "model", modelName, "error", err)
 		return false
 	}
+	slog.Info("direct load: matched runtime endpoint", "model", modelName, "runtimePod", endpoint.PodName, "node", endpoint.NodeName, "runtimeURL", endpoint.URL())
 
 	// Build the load payload (shared with controller).
 	// Pass /models as modelBasePath so PVC sources resolve correctly and
@@ -495,12 +498,14 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 	}
 
 	// Send load request to runtime pod.
+	slog.Info("direct load: sending runtime load request", "model", modelName, "endpoint", endpoint.URL(), "backend", b.Name())
 	if err := p.loadOnRuntime(ctx, endpoint, modelName, payload); err != nil {
 		slog.Warn("direct load: runtime load request failed", "model", modelName, "endpoint", endpoint.URL(), "error", err)
 		return false
 	}
 
 	// Poll runtime health until ready.
+	slog.Info("direct load: waiting for runtime health", "model", modelName, "endpoint", endpoint.URL())
 	if err := p.waitForRuntimeReady(ctx, endpoint, modelName); err != nil {
 		slog.Warn("direct load: runtime health poll failed", "model", modelName, "error", err)
 		return false
