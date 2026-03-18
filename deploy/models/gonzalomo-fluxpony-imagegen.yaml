@@ -5,7 +5,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: diffusers
-  source: pvc://gonzalomo-fluxpony-source/gonzalomoXLFluxPony_v30FluxDAIO.safetensors
+  source: HF://stablediffusionapi/gonzalomoxlfluxpony-v30unitydmd
   cache:
     strategy: Local
   gpu:
@@ -18,18 +18,15 @@ spec:
     idleTimeout: 10m
     coldStartTimeout: 30m
   config:
-    # Gonzalomo FluxPony is packaged as a single-file SDXL checkpoint.
-    # Declare the pipeline/config explicitly so the unified runtime doesn't
-    # guess from the model name and accidentally take the FLUX loader path.
+    # Gonzalomo FluxPony is an SDXL model despite the FLUX-like name.
+    # Use the canonical diffusers repo directly so the unified runtime loads a
+    # verified multi-folder pipeline instead of a brittle single-file export.
     cpuOffload: "true"
     useFp16: "1"
     guidanceScale: "3.5"
     numInferenceSteps: "28"
     warmupResolutions: "512x512"
     hipVisibleDevices: "0"
-    singleFilePipeline: "sdxl"
-    singleFileConfig: "stablediffusionapi/gonzalomoxlfluxpony-v30unitydmd"
-    singleFileStrict: "true"
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
   resources:
