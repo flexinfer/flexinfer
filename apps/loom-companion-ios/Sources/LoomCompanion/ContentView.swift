@@ -60,7 +60,11 @@ struct ContentView: View {
             selectedTab = .agents
         case .sessions:
             selectedTab = .agents
-        case .workflow(let id, _):
+        case .workflow(let id, let approve):
+            if approve {
+                // Trigger approval via API, then navigate to ops.
+                Task { await approveWorkflowFromDeepLink(workflowId: id) }
+            }
             pendingWorkflowDeepLinkID = id
             selectedTab = .ops
         case .tasks:
@@ -69,6 +73,21 @@ struct ContentView: View {
             selectedTab = .alerts
         case .connection:
             selectedTab = .connection
+        }
+    }
+
+    private func approveWorkflowFromDeepLink(workflowId: String) async {
+        guard let apiClient = connectionVM.buildAPIClient() else { return }
+        // Fetch workflow detail to find the pending step.
+        do {
+            let detail: MobileWorkflowDetail = try await apiClient.request(.workflowDetail(id: workflowId))
+            guard let pendingStep = detail.steps?.first(where: { $0.status == "waiting_approval" }) else { return }
+            let _: [String: Any] = try await apiClient.request(
+                .workflowApprove(id: workflowId, stepId: pendingStep.id)
+            )
+        } catch {
+            // Best-effort — user can manually approve in the ops view.
+            print("[DeepLink] Workflow approval failed: \(error)")
         }
     }
 

@@ -63,9 +63,9 @@ struct ActiveSessionsWidgetView: View {
             } else {
                 ForEach(entry.data.topSessions.prefix(3)) { session in
                     HStack(spacing: 8) {
-                        RoundedRectangle(cornerRadius: 2)
+                        Circle()
                             .fill(.green)
-                            .frame(width: 3)
+                            .frame(width: 6, height: 6)
 
                         VStack(alignment: .leading, spacing: 1) {
                             Text(session.agentId)
@@ -83,6 +83,12 @@ struct ActiveSessionsWidgetView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(.green.opacity(0.06))
+                    )
                 }
                 Spacer()
             }

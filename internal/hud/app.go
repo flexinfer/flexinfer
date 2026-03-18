@@ -101,6 +101,9 @@ type Config struct {
 	SpawnGitBaseURL string // Git base URL for git-clone mode.
 	SpawnGitSecret  string // K8s secret with git token.
 	SpawnProjects   string // Comma-separated project names for spawn picker.
+
+	// Pipeline monitoring (GitLab CI).
+	PipelineProjects string // Comma-separated GitLab project paths to monitor.
 }
 
 // App is the HUD application. It holds the daemon client, agent bridge,
@@ -122,6 +125,7 @@ type App struct {
 	streamMonitor   *monitor.StreamMonitor
 	sandboxMonitor  *monitor.SandboxMonitor
 	costMonitor     *monitor.CostMonitor
+	pipelineMonitor *monitor.PipelineMonitor
 
 	// SSE streaming — daemon events → browser clients.
 	sseHub *SSEHub
@@ -238,6 +242,15 @@ func Run(cfg Config) error {
 	app.costMonitor = monitor.NewCostMonitor(client, logger)
 	app.costMonitor.Start(10 * time.Second)
 	defer app.costMonitor.Stop()
+
+	// Initialize pipeline monitor when project paths are configured.
+	if cfg.PipelineProjects != "" {
+		projects := strings.Split(cfg.PipelineProjects, ",")
+		app.pipelineMonitor = monitor.NewPipelineMonitor(agent, projects, logger)
+		app.pipelineMonitor.Start(10 * time.Second)
+		defer app.pipelineMonitor.Stop()
+		logger.Info("pipeline monitor enabled", "projects", len(projects))
+	}
 
 	logger.Info("background monitors started",
 		"fleet", "15s", "health", "5s", "memory", "10s", "workflow", "5s", "stream", "5s", "sandbox", "10s", "cost", "10s")
@@ -433,6 +446,20 @@ func Run(cfg Config) error {
 			Data:      data,
 		})
 	})
+	if app.pipelineMonitor != nil {
+		app.pipelineMonitor.OnRefresh(func(pipelines []bridge.PipelineInfo) {
+			data, err := json.Marshal(map[string]any{"pipelines": pipelines})
+			if err != nil {
+				return
+			}
+			app.sseHub.Broadcast(bridge.SSEEvent{
+				ID:        fmt.Sprintf("hud-pipeline-%d", time.Now().UnixMilli()),
+				Type:      "hud.pipeline",
+				Timestamp: time.Now(),
+				Data:      data,
+			})
+		})
+	}
 
 	// Initialize coordinator if FlexInfer URL is configured.
 	if cfg.FlexInferURL != "" {
@@ -823,6 +850,10 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mobile/v1/sandbox", a.withCORS(a.handleMobileSandbox))
 	mux.HandleFunc("POST /api/mobile/v1/sandbox/start", a.withCORS(a.handleMobileSandboxStart))
 	mux.HandleFunc("POST /api/mobile/v1/sandbox/stop", a.withCORS(a.handleMobileSandboxStop))
+	mux.HandleFunc("GET /api/mobile/v1/pipelines", a.withCORS(a.handleMobilePipelines))
+	mux.HandleFunc("POST /api/mobile/v1/workflows/{workflow_id}/approve", a.withCORS(a.handleMobileWorkflowApprove))
+	mux.HandleFunc("POST /api/mobile/v1/workflows/{workflow_id}/reject", a.withCORS(a.handleMobileWorkflowReject))
+	mux.HandleFunc("GET /api/mobile/v1/handoffs", a.withCORS(a.handleMobileHandoffs))
 	mux.HandleFunc("POST /api/mobile/v1/agent/spawn", a.withCORS(a.handleMobileSpawnAgent))
 	mux.HandleFunc("GET /api/mobile/v1/agent/spawns", a.withCORS(a.handleMobileSpawnList))
 	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/config", a.withCORS(a.handleMobileSpawnConfig))

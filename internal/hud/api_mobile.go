@@ -2786,3 +2786,165 @@ func (a *App) handleMobileAgents(w http.ResponseWriter, r *http.Request) {
 		"summary": summary,
 	})
 }
+
+// --- Pipeline endpoints ---
+
+func (a *App) handleMobilePipelines(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	if a.pipelineMonitor == nil {
+		a.writeMobileJSON(w, http.StatusOK, map[string]any{
+			"pipelines": []any{},
+			"available": false,
+		})
+		return
+	}
+
+	pipelines := a.pipelineMonitor.Pipelines()
+
+	// Optionally enrich with detail for each active pipeline.
+	type pipelineResponse struct {
+		ID              int    `json:"id"`
+		Project         string `json:"project"`
+		Ref             string `json:"ref"`
+		Status          string `json:"status"`
+		Source          string `json:"source,omitempty"`
+		CreatedAt       string `json:"created_at"`
+		WebURL          string `json:"web_url,omitempty"`
+		CurrentStage    string `json:"current_stage,omitempty"`
+		CompletedStages int    `json:"completed_stages"`
+		TotalStages     int    `json:"total_stages"`
+		FailedJobCount  int    `json:"failed_job_count"`
+	}
+
+	results := make([]pipelineResponse, 0, len(pipelines))
+	for _, p := range pipelines {
+		resp := pipelineResponse{
+			ID:        p.ID,
+			Project:   p.Project,
+			Ref:       p.Ref,
+			Status:    p.Status,
+			Source:    p.Source,
+			CreatedAt: p.CreatedAt,
+			WebURL:    p.WebURL,
+		}
+
+		// Try to enrich with stage detail (best-effort).
+		if detail, err := a.pipelineMonitor.Detail(p.Project, p.ID); err == nil {
+			resp.CurrentStage = detail.CurrentStage
+			resp.CompletedStages = detail.CompletedStages
+			resp.TotalStages = detail.TotalStages
+			resp.FailedJobCount = detail.FailedJobCount
+		}
+
+		results = append(results, resp)
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"pipelines": results,
+		"available": true,
+	})
+}
+
+// --- Workflow approval/rejection endpoints ---
+
+func (a *App) handleMobileWorkflowApprove(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	workflowID := r.PathValue("workflow_id")
+	if workflowID == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "MISSING_WORKFLOW_ID", "workflow_id is required")
+		return
+	}
+
+	var body struct {
+		StepID string `json:"step_id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
+		a.writeMobileError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	if body.StepID == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "MISSING_STEP_ID", "step_id is required")
+		return
+	}
+
+	if err := a.workflowMonitor.ApproveStep(workflowID, body.StepID); err != nil {
+		a.writeMobileError(w, http.StatusInternalServerError, "APPROVE_FAILED", err.Error())
+		return
+	}
+
+	a.logger.Info("workflow approved via mobile", "workflow_id", workflowID, "step_id", body.StepID)
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"workflow_id": workflowID,
+		"step_id":     body.StepID,
+		"action":      "approved",
+	})
+}
+
+func (a *App) handleMobileWorkflowReject(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	workflowID := r.PathValue("workflow_id")
+	if workflowID == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "MISSING_WORKFLOW_ID", "workflow_id is required")
+		return
+	}
+
+	var body struct {
+		StepID string `json:"step_id"`
+		Reason string `json:"reason,omitempty"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
+		a.writeMobileError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+		return
+	}
+	if body.StepID == "" {
+		a.writeMobileError(w, http.StatusBadRequest, "MISSING_STEP_ID", "step_id is required")
+		return
+	}
+
+	if err := a.workflowMonitor.RejectStep(workflowID, body.StepID); err != nil {
+		a.writeMobileError(w, http.StatusInternalServerError, "REJECT_FAILED", err.Error())
+		return
+	}
+
+	a.logger.Info("workflow rejected via mobile", "workflow_id", workflowID, "step_id", body.StepID)
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"workflow_id": workflowID,
+		"step_id":     body.StepID,
+		"action":      "rejected",
+	})
+}
+
+// --- Handoff inbox endpoint ---
+
+func (a *App) handleMobileHandoffs(w http.ResponseWriter, r *http.Request) {
+	if !a.requireMobileScope(w, r, mobileScopeRead) {
+		return
+	}
+
+	limit := parseMobileLimit(r, mobileDefaultLimit, mobileMaxLimit)
+	_ = limit // Used for future pagination.
+
+	handoffs, err := a.agent.HandoffList()
+	if err != nil {
+		a.writeMobileError(w, http.StatusInternalServerError, "HANDOFF_LIST_FAILED", err.Error())
+		return
+	}
+
+	if handoffs == nil {
+		handoffs = []bridge.HandoffInfo{}
+	}
+
+	a.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"handoffs": handoffs,
+		"total":    len(handoffs),
+	})
+}

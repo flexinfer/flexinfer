@@ -7,7 +7,10 @@ struct LoomWidgetBundle: WidgetBundle {
         FleetHealthWidget()
         TasksWidget()
         ActiveSessionsWidget()
+        SessionSummaryWidget()
         LockScreenWidgets()
         WorkflowLiveActivityView()
+        SessionLiveActivityView()
+        PipelineLiveActivityView()
     }
 }

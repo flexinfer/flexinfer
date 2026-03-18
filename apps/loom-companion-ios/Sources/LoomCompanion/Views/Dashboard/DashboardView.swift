@@ -7,6 +7,10 @@ struct DashboardView: View {
     let alertsViewModel: AlertsViewModel
     let broadcaster: SSEEventBroadcaster?
     @State private var showingAlerts = false
+    @State private var showingAgents = false
+    @State private var showingConnection = false
+    @State private var updatedAgo: String?
+    @State private var refreshTimer: Timer?
 
     init(apiClient: APIClient?, healthMonitor: ConnectionHealthMonitor, alertsViewModel: AlertsViewModel = AlertsViewModel(), broadcaster: SSEEventBroadcaster? = nil) {
         let client: any LoomAPIClientProtocol = apiClient ?? NoOpAPIClient()
@@ -26,11 +30,27 @@ struct DashboardView: View {
                         .transition(.slideInFromTop)
                 }
 
+                #if os(iOS)
+                if #available(iOS 16.2, *) {
+                    let lam = LiveActivityManager.shared
+                    if lam.activeCount > 0 {
+                        LiveActivityBanner(activeCount: lam.activeCount)
+                    }
+                }
+                #endif
+
                 if let dashboard = viewModel.dashboard {
-                    HealthStatusCard(health: dashboard.health)
-                        .cardAppear(index: 0)
-                    FleetSummaryCard(dashboard: dashboard)
-                        .cardAppear(index: 1)
+                    Button { showingConnection = true } label: {
+                        HealthStatusCard(health: dashboard.health)
+                    }
+                    .buttonStyle(.plain)
+                    .cardAppear(index: 0)
+
+                    Button { showingAgents = true } label: {
+                        FleetSummaryCard(dashboard: dashboard)
+                    }
+                    .buttonStyle(.plain)
+                    .cardAppear(index: 1)
 
                     if let counts = viewModel.taskCounts,
                        counts.pending + counts.inProgress + counts.blocked > 0 {
@@ -55,12 +75,13 @@ struct DashboardView: View {
                     TimelineListView(entries: dashboard.recentTimeline)
                         .cardAppear(index: 4)
 
-                    if let agoText = Self.relativeTime(dashboard.updatedAt) {
+                    if let agoText = updatedAgo {
                         HStack {
                             Spacer()
                             Text("Updated \(agoText)")
                                 .font(LoomTypography.monoCaption)
                                 .foregroundStyle(LoomColors.textTertiary)
+                                .contentTransition(.numericText())
                             Spacer()
                         }
                         .padding(.top, LoomSpacing.xs)
@@ -104,6 +125,25 @@ struct DashboardView: View {
         .navigationTitle("Dashboard")
         .navigationDestination(isPresented: $showingAlerts) {
             AlertsListView(viewModel: alertsViewModel)
+        }
+        .onChange(of: viewModel.dashboard?.updatedAt) { _, newValue in
+            if let ts = newValue {
+                withAnimation { updatedAgo = Self.relativeTime(ts) }
+            }
+        }
+        .onAppear {
+            // Auto-refresh the "Updated Xs ago" label every 5 seconds.
+            refreshTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+                Task { @MainActor in
+                    if let ts = viewModel.dashboard?.updatedAt {
+                        withAnimation { updatedAgo = Self.relativeTime(ts) }
+                    }
+                }
+            }
+        }
+        .onDisappear {
+            refreshTimer?.invalidate()
+            refreshTimer = nil
         }
         .refreshable {
             await viewModel.load()
