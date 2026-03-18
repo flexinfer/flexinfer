@@ -1,6 +1,6 @@
 .PHONY: all build clean test install servers lint fmt vet check setup hooks git-setup dev help \
 		loom loomd \
-		install-core install-all bootstrap-local dev-upgrade dev-reload \
+		install-core install-all bootstrap-local dev-sync dev-upgrade dev-reload \
 	ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-enterprise-smoke ci-test-race ci-benchmark ci-security ci-baseline \
 	codebase-bench-baseline codebase-bench-full codebase-bench-incremental codebase-bench-watch \
 		security security-gosec security-vuln \
@@ -64,9 +64,10 @@ help:
 	@echo "  make hooks      - Install git pre-commit hooks"
 	@echo "  make git-setup  - Repair worktree-aware git config and install shared hooks"
 	@echo "  make dev        - Build and run daemon in debug mode"
-	@echo "  make dev-upgrade - Build, install, sync, restart daemon (safe: skips if active connections)"
-	@echo "  make dev-reload  - Build, install, sync, force-restart daemon (all proxies auto-reconnect)"
-	@echo "  make bootstrap-local - Build + install core binaries + sync configs + check setup"
+	@echo "  make dev-sync   - Regen configs and sync all profiles + skills using the repo-built loom"
+	@echo "  make dev-upgrade - Build, install, sync configs+skills, restart daemon (safe when idle)"
+	@echo "  make dev-reload  - Build, install, sync configs+skills, force-restart daemon"
+	@echo "  make bootstrap-local - Build + install core binaries + sync configs+skills + check setup"
 	@echo "  make check      - Run all checks (fmt, vet, lint, test)"
 	@echo ""
 	@echo "Building:"
@@ -384,10 +385,16 @@ install-all: build
 	@echo "  Run: make browserkit-check"
 	@echo "  Or:  make browserkit-setup"
 
+# Regenerate configs and sync all profiles + skills from the repo-built loom binary.
+# This avoids PATH drift when the installed loom binary is stale.
+dev-sync: loom
+	@./bin/loom sync all --regen --loom-mode --loom-binary "$(PWD)/bin/loom"
+	@./bin/loom sync skills all
+
 # One-command local dev upgrade:
 # - rebuild loom/loomd
 # - atomic install to ~/.local/bin
-# - regen+sync configs in loom mode
+# - regen+sync configs + skills in loom mode
 # - restart daemon only when idle
 # - reap stale loom proxy clients when a restart happens
 dev-upgrade:
@@ -403,10 +410,11 @@ dev-reload:
 
 # First-run/local onboarding:
 # - build + atomic install loom/loomd
-# - regenerate and sync loom-mode configs
+# - regenerate and sync loom-mode configs + skills
 # - run environment checks
 bootstrap-local: git-setup install-core
 	@"$(INSTALL_DIR)/loom" sync all --regen --loom-mode --loom-binary "$(INSTALL_DIR)/loom"
+	@"$(INSTALL_DIR)/loom" sync skills all
 	@"$(INSTALL_DIR)/loom" check
 	@echo ""
 	@echo "Bootstrap complete."

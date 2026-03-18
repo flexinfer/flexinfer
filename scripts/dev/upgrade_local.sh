@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Dev upgrade routine: build, atomically install binaries, regen+sync configs in loom mode,
-# and (optionally) restart the daemon only when idle.
+# Dev upgrade routine: build, atomically install binaries, regen+sync configs and skills
+# in loom mode, and (optionally) restart the daemon only when idle.
 #
 # Path safety:
 # - Always installs to INSTALL_DIR (default ~/.local/bin)
@@ -143,6 +143,7 @@ fi
 
 echo "== Regen + Sync (loom mode) =="
 "$RUN_LOOM" sync all --regen --loom-mode --loom-binary "$RUN_LOOM"
+"$RUN_LOOM" sync skills all
 
 echo "== Daemon =="
 DAEMON_RESTARTED=false
