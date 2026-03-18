@@ -8,6 +8,8 @@ spec:
   source: HF://diffusers/stable-diffusion-xl-1.0-inpainting-0.1
   gpu:
     vendor: amd
+    shared: radeonvii-models
+    priority: 250
     count: 1
     vramEstimateMB: 12000
   serverless:
@@ -29,6 +31,7 @@ spec:
     strength: '0.75'
     guidanceScale: '7.5'
     numInferenceSteps: '30'
+    warmPolicy: primary
     hipVisibleDevices: '0'
   nodeSelector:
     kubernetes.io/hostname: cblevins-radeonvii
