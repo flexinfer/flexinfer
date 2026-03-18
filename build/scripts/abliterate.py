@@ -404,7 +404,14 @@ print(f"Model loaded in {time.time() - load_start:.1f}s")
 tokenizer_kwargs = {"trust_remote_code": True}
 if active_policy and active_policy.get("tokenizer_fix_mistral_regex") is not None:
     tokenizer_kwargs["fix_mistral_regex"] = bool(active_policy["tokenizer_fix_mistral_regex"])
-tokenizer = AutoTokenizer.from_pretrained(model_dir, **tokenizer_kwargs)
+try:
+    tokenizer = AutoTokenizer.from_pretrained(model_dir, **tokenizer_kwargs)
+except TypeError as exc:
+    if "fix_mistral_regex" not in str(exc) or "fix_mistral_regex" not in tokenizer_kwargs:
+        raise
+    print("Tokenizer backend already manages fix_mistral_regex; retrying without explicit kwarg")
+    tokenizer_kwargs.pop("fix_mistral_regex", None)
+    tokenizer = AutoTokenizer.from_pretrained(model_dir, **tokenizer_kwargs)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
