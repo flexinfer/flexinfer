@@ -160,7 +160,13 @@ func QuantizerImageFromProfile(profile *aiv1alpha2.GPUProfileSpec, format string
 	if profile == nil || profile.Quantization == nil || profile.Quantization.Images == nil {
 		return "", false
 	}
+	if format == "" {
+		return "", false
+	}
 	img, ok := profile.Quantization.Images[format]
+	if !ok {
+		img, ok = profile.Quantization.Images[strings.ToLower(format)]
+	}
 	if !ok || img == "" {
 		return "", false
 	}

@@ -1,6 +1,10 @@
 package backend
 
-import "testing"
+import (
+	"testing"
+
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+)
 
 func TestLookupGPUArchSupport_PrefixMatching(t *testing.T) {
 	tests := []struct {
@@ -167,6 +171,24 @@ func TestLookupGPUArchSupport_PrefixMatching(t *testing.T) {
 				t.Errorf("MaxVRAMMB = %d, want %d", got.MaxVRAMMB, tt.wantVRAM)
 			}
 		})
+	}
+}
+
+func TestQuantizerImageFromProfile_NormalizesFormatCase(t *testing.T) {
+	profile := &aiv1alpha2.GPUProfileSpec{
+		Quantization: &aiv1alpha2.QuantizationProfile{
+			Images: map[string]string{
+				"gptq": "registry.harbor.lan/flexinfer/runtime@sha256:test",
+			},
+		},
+	}
+
+	got, ok := QuantizerImageFromProfile(profile, "GPTQ")
+	if !ok {
+		t.Fatal("QuantizerImageFromProfile() ok = false, want true")
+	}
+	if got != "registry.harbor.lan/flexinfer/runtime@sha256:test" {
+		t.Fatalf("QuantizerImageFromProfile() = %q, want %q", got, "registry.harbor.lan/flexinfer/runtime@sha256:test")
 	}
 }
 
