@@ -180,7 +180,7 @@ func defaultGPTQModelPoliciesJSON() string {
 			MatchPathSubstrings: []string{"qwen35", "qwen3.5"},
 			ExtractTextConfig:   true,
 			CopyRootKeys:        []string{"bos_token_id", "eos_token_id", "pad_token_id"},
-			RemapModelType:      "qwen3_5",
+			RemapModelType:      "qwen3_5_text",
 			Architectures:       []string{"Qwen3_5ForCausalLM"},
 			Loader:              "manual_sharded_state_dict",
 			PythonPackages: []string{

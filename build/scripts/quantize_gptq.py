@@ -22,7 +22,7 @@ DEFAULT_MODEL_POLICIES = [
         "match_path_substrings": ["qwen35", "qwen3.5"],
         "extract_text_config": True,
         "copy_root_keys": ["bos_token_id", "eos_token_id", "pad_token_id"],
-        "remap_model_type": "qwen3_5",
+        "remap_model_type": "qwen3_5_text",
         "architectures": ["Qwen3_5ForCausalLM"],
         "loader": "manual_sharded_state_dict",
         "python_packages": [
