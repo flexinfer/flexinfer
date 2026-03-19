@@ -6,16 +6,24 @@ struct DashboardView: View {
     let healthMonitor: ConnectionHealthMonitor
     let alertsViewModel: AlertsViewModel
     let broadcaster: SSEEventBroadcaster?
+    var onNavigate: ((DashboardNavAction) -> Void)?
     @State private var showingAlerts = false
     @State private var showingAgents = false
     @State private var showingConnection = false
     @State private var updatedAgo: String?
     @State private var refreshTimer: Timer?
 
-    init(apiClient: APIClient?, healthMonitor: ConnectionHealthMonitor, alertsViewModel: AlertsViewModel = AlertsViewModel(), broadcaster: SSEEventBroadcaster? = nil) {
+    enum DashboardNavAction {
+        case agents
+        case connection
+        case liveActivities
+    }
+
+    init(apiClient: APIClient?, healthMonitor: ConnectionHealthMonitor, alertsViewModel: AlertsViewModel = AlertsViewModel(), broadcaster: SSEEventBroadcaster? = nil, onNavigate: ((DashboardNavAction) -> Void)? = nil) {
         let client: any LoomAPIClientProtocol = apiClient ?? NoOpAPIClient()
         self.alertsViewModel = alertsViewModel
         self.broadcaster = broadcaster
+        self.onNavigate = onNavigate
         _viewModel = State(initialValue: DashboardViewModel(apiClient: client, alertsViewModel: alertsViewModel))
         self.healthMonitor = healthMonitor
     }
@@ -34,19 +42,27 @@ struct DashboardView: View {
                 if #available(iOS 16.2, *) {
                     let lam = LiveActivityManager.shared
                     if lam.activeCount > 0 {
-                        LiveActivityBanner(activeCount: lam.activeCount)
+                        LiveActivityBanner(activeCount: lam.activeCount) {
+                            onNavigate?(.agents)
+                        }
                     }
                 }
                 #endif
 
                 if let dashboard = viewModel.dashboard {
-                    Button { showingConnection = true } label: {
+                    Button {
+                        HapticManager.selection()
+                        onNavigate?(.connection)
+                    } label: {
                         HealthStatusCard(health: dashboard.health)
                     }
                     .buttonStyle(.plain)
                     .cardAppear(index: 0)
 
-                    Button { showingAgents = true } label: {
+                    Button {
+                        HapticManager.selection()
+                        onNavigate?(.agents)
+                    } label: {
                         FleetSummaryCard(dashboard: dashboard)
                     }
                     .buttonStyle(.plain)

@@ -136,12 +136,13 @@ public final class LiveActivityManager {
     ) {
         guard let activity = workflowActivities.removeValue(forKey: workflowId) else { return }
 
+        let currentState = activity.content.state
         let finalState = WorkflowActivityAttributes.ContentState(
             currentStepName: finalStatus == "completed" ? "Done" : "Failed",
-            currentStepIndex: (try? activity.content.state.totalSteps) ?? 1,
-            totalSteps: (try? activity.content.state.totalSteps) ?? 1,
+            currentStepIndex: currentState.totalSteps,
+            totalSteps: currentState.totalSteps,
             status: finalStatus,
-            elapsedSeconds: (try? activity.content.state.elapsedSeconds) ?? 0
+            elapsedSeconds: currentState.elapsedSeconds
         )
 
         Task {

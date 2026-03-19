@@ -478,7 +478,7 @@ func (a *App) handleMobileSessionDetail(w http.ResponseWriter, r *http.Request) 
 	}
 	ch := make(chan inspectResult, 1)
 	go func() {
-		d, e := a.agent.ContextInspect(found.AgentID, found.ID, true, 20)
+		d, e := a.agent.ContextInspect(found.AgentID, found.ID, true, 200)
 		ch <- inspectResult{d, e}
 	}()
 	var inspect *bridge.ContextInspectResult
@@ -615,6 +615,27 @@ func (a *App) handleMobileSessionEvents(w http.ResponseWriter, r *http.Request) 
 		for _, evt := range a.eventLog.All(1000) {
 			if eventHasSessionID(evt.Data, sessionID) {
 				events = append(events, evt)
+				if len(events) >= limit {
+					break
+				}
+			}
+		}
+	}
+
+	// Fall back to persisted context entries when the ring buffer has
+	// no events for this session (e.g., HUD restarted since session start).
+	if len(events) == 0 && a.agent != nil {
+		if entries, err := a.agent.SessionEntries(sessionID, limit); err == nil {
+			for _, e := range entries {
+				ts, _ := time.Parse(time.RFC3339, e.Entry.Timestamp)
+				if ts.IsZero() {
+					ts = time.Now().UTC()
+				}
+				events = append(events, TimelineEntry{
+					Timestamp: ts,
+					EventType: e.Entry.EntryType,
+					Data:      json.RawMessage(fmt.Sprintf(`{"title":%q,"content":%q,"entry_type":%q}`, e.Entry.Title, e.Entry.Content, e.Entry.EntryType)),
+				})
 				if len(events) >= limit {
 					break
 				}

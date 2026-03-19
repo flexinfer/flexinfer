@@ -108,7 +108,13 @@ struct ContentView: View {
     private var iPhoneLayout: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
-                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster)
+                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster) { action in
+                    switch action {
+                    case .agents: selectedTab = .agents
+                    case .connection: selectedTab = .connection
+                    case .liveActivities: selectedTab = .agents
+                    }
+                }
             }
             .tabItem { Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent") }
             .tag(AppTab.dashboard)
@@ -205,7 +211,13 @@ struct ContentView: View {
         } detail: {
             switch selectedTab {
             case .dashboard:
-                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster)
+                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster) { action in
+                    switch action {
+                    case .agents: selectedTab = .agents
+                    case .connection: selectedTab = .connection
+                    case .liveActivities: selectedTab = .agents
+                    }
+                }
             case .agents:
                 AgentsListView(
                     apiClient: connectionVM.buildAPIClient(),
