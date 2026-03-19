@@ -1343,6 +1343,21 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"offload_to_disk\":false") {
 		t.Errorf("QUANTIZE_MODEL_POLICIES missing offload_to_disk override: %q", env["QUANTIZE_MODEL_POLICIES"])
 	}
+	if env["GPTQ_HESSIAN_REPAIR"] != "true" {
+		t.Errorf("GPTQ_HESSIAN_REPAIR env = %q, want true", env["GPTQ_HESSIAN_REPAIR"])
+	}
+	if env["GPTQ_HESSIAN_SANITIZE_NONFINITE"] != "true" {
+		t.Errorf("GPTQ_HESSIAN_SANITIZE_NONFINITE env = %q, want true", env["GPTQ_HESSIAN_SANITIZE_NONFINITE"])
+	}
+	if env["GPTQ_HESSIAN_DIAG_FLOOR_SCALE"] != "1e-6" {
+		t.Errorf("GPTQ_HESSIAN_DIAG_FLOOR_SCALE env = %q, want 1e-6", env["GPTQ_HESSIAN_DIAG_FLOOR_SCALE"])
+	}
+	if env["GPTQ_HESSIAN_FLOOR_MULTIPLIER"] != "10" {
+		t.Errorf("GPTQ_HESSIAN_FLOOR_MULTIPLIER env = %q, want 10", env["GPTQ_HESSIAN_FLOOR_MULTIPLIER"])
+	}
+	if env["GPTQ_HESSIAN_MAX_FLOOR_ATTEMPTS"] != "6" {
+		t.Errorf("GPTQ_HESSIAN_MAX_FLOOR_ATTEMPTS env = %q, want 6", env["GPTQ_HESSIAN_MAX_FLOOR_ATTEMPTS"])
+	}
 
 	// Wrapper script should invoke the Python script
 	script := job.Spec.Template.Spec.Containers[0].Args[0]

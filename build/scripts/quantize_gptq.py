@@ -9,6 +9,7 @@ All configuration is read from environment variables set by the controller:
 import copy
 import gc
 import json
+import math
 import os
 import subprocess
 import sys
@@ -56,6 +57,27 @@ def load_model_policies():
     if not isinstance(policies, list):
         raise ValueError("QUANTIZE_MODEL_POLICIES must decode to a list")
     return policies
+
+
+def env_bool(name, default):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_float(name, default):
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    return float(raw)
+
+
+def env_int(name, default):
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    return int(raw)
 
 
 def load_policy_state(model_dir):
@@ -160,6 +182,16 @@ desc_act = os.environ.get("DESC_ACT", "False") == "True"
 gpu_memory_fraction = float(os.environ.get("GPU_MEMORY_FRACTION", "0.80"))
 dynamic_exclusion = os.environ.get("DYNAMIC_EXCLUSION", "auto")
 dataset_name = os.environ.get("DATASET", "mit-han-lab/pile-val-backup")
+hessian_repair_enabled = env_bool("GPTQ_HESSIAN_REPAIR", True)
+hessian_sanitize_nonfinite = env_bool("GPTQ_HESSIAN_SANITIZE_NONFINITE", True)
+hessian_diag_floor_scale = env_float("GPTQ_HESSIAN_DIAG_FLOOR_SCALE", 1e-6)
+hessian_floor_multiplier = env_float("GPTQ_HESSIAN_FLOOR_MULTIPLIER", 10.0)
+hessian_max_floor_attempts = env_int("GPTQ_HESSIAN_MAX_FLOOR_ATTEMPTS", 6)
+hessian_clamp_abs = env_float("GPTQ_HESSIAN_CLAMP_ABS", 0.0)
+qcfg_damp_percent_override = os.environ.get("GPTQ_DAMP_PERCENT_OVERRIDE", "").strip()
+qcfg_damp_auto_increment_override = os.environ.get(
+    "GPTQ_DAMP_AUTO_INCREMENT_OVERRIDE", ""
+).strip()
 
 emit_progress(
     "start", phase="quantizing", model=model_dir, bits=bits, group_size=group_size
@@ -227,6 +259,7 @@ from datasets import load_dataset
 from gptqmodel import GPTQModel, QuantizeConfig
 from gptqmodel.models.auto import check_and_get_model_definition
 from gptqmodel.models.loader import resolve_loader_config
+from gptqmodel.quantization.gptq import GPTQ
 from gptqmodel.utils.hf import (
     normalize_hf_config_compat,
     prepare_remote_model_init_compat,
@@ -246,6 +279,112 @@ except RuntimeError:
 print(
     f"Memory: GPU fraction={gpu_memory_fraction} ({int(total_vram * gpu_memory_fraction / (1024**3))}GiB of {total_vram // (1024**3)}GiB), container={max_memory_gb}Gi"
 )
+
+
+def patch_gptq_hessian_inverse():
+    if not hessian_repair_enabled:
+        return
+
+    def _patched_hessian_inverse(self, H: torch.Tensor):
+        H = H.clone()
+
+        if hessian_sanitize_nonfinite:
+            nonfinite_mask = ~torch.isfinite(H)
+            nonfinite_count = int(nonfinite_mask.sum().item())
+            if nonfinite_count:
+                fill_value = hessian_clamp_abs if hessian_clamp_abs > 0 else 0.0
+                H = torch.nan_to_num(
+                    H,
+                    nan=0.0,
+                    posinf=fill_value,
+                    neginf=-fill_value,
+                )
+                print(
+                    f"Patched GPTQ Hessian for module={getattr(self, 'name', 'unknown')}: "
+                    f"replaced {nonfinite_count} non-finite entries"
+                )
+        H = 0.5 * (H + H.T)
+
+        diag_view = H.diagonal()
+        orig_diag = diag_view.clone()
+        finite_diag = torch.nan_to_num(orig_diag.abs(), nan=0.0, posinf=0.0, neginf=0.0)
+        base_abs_max = torch.max(finite_diag).item()
+        if not math.isfinite(base_abs_max) or base_abs_max == 0.0:
+            base_abs_max = 1.0
+        floor_base = base_abs_max * hessian_diag_floor_scale
+        used_damp = getattr(self.qcfg, "damp_percent", 0.01)
+        damp_step = getattr(self.qcfg, "damp_auto_increment", 0.0015)
+        last_error = None
+
+        for attempt in range(hessian_max_floor_attempts + 1):
+            current_diag = torch.nan_to_num(orig_diag, nan=0.0, posinf=0.0, neginf=0.0)
+            if attempt > 0:
+                floor_increment = floor_base * math.pow(hessian_floor_multiplier, attempt - 1)
+                current_diag = torch.clamp(current_diag + floor_increment, min=floor_increment)
+                print(
+                    f"GPTQ Hessian recovery for module={getattr(self, 'name', 'unknown')}: "
+                    f"diagonal floor +{floor_increment:.2e} (attempt {attempt}/{hessian_max_floor_attempts})"
+                )
+            diag_view.copy_(current_diag)
+
+            mean = torch.mean(current_diag)
+            damp = getattr(self.qcfg, "damp_percent", 0.01)
+            recovery_started = False
+            recovery_initial = None
+            recovery_last = None
+
+            while 0 < damp < 1:
+                try:
+                    diag_view.copy_(current_diag)
+                    diag_view.add_(damp * mean)
+                    H2 = torch.linalg.cholesky(H)
+                    Hinv_result = torch.linalg.cholesky(
+                        torch.cholesky_inverse(H2), upper=True
+                    )
+                    diag_view.copy_(current_diag)
+                    del H2
+                    used_damp = damp
+                    if recovery_started:
+                        print(
+                            f"GPTQ Hessian recovery for module={getattr(self, 'name', 'unknown')}: "
+                            f"damp recovery succeeded at {damp:.5f} (started at {recovery_initial:.5f})"
+                        )
+                    return Hinv_result, used_damp
+                except Exception as exc:
+                    last_error = exc
+                    diag_view.copy_(current_diag)
+                    if damp_step == 0:
+                        break
+                    if not recovery_started:
+                        recovery_started = True
+                        recovery_initial = damp
+                        print(
+                            f"GPTQ Hessian recovery for module={getattr(self, 'name', 'unknown')}: "
+                            f"starting damp recovery at {damp:.5f} with step {damp_step:.5f}"
+                        )
+                    damp += damp_step
+                    recovery_last = damp
+
+            if recovery_started:
+                final_damp = recovery_last if recovery_last is not None else damp
+                print(
+                    f"GPTQ Hessian recovery for module={getattr(self, 'name', 'unknown')}: "
+                    f"damp recovery failed at {final_damp:.5f}"
+                )
+
+        print(
+            f"GPTQ Hessian recovery exhausted for module={getattr(self, 'name', 'unknown')} "
+            f"after {hessian_max_floor_attempts + 1} attempts; last_error={last_error}"
+        )
+        return None, 1.0
+
+    GPTQ.hessian_inverse = _patched_hessian_inverse
+    print(
+        "Patched GPTQ.hessian_inverse with configurable non-finite sanitation and diagonal-floor recovery"
+    )
+
+
+patch_gptq_hessian_inverse()
 
 
 def resolve_checkpoint_index(model_dir):
@@ -344,6 +483,15 @@ for key, value in (policy or {}).get("quantize_config_overrides", {}).items():
         f"Applied QuantizeConfig override from policy={active_policy or 'none'}: {key}={value}"
     )
 quantize_config = QuantizeConfig(**qcfg_kwargs)
+if qcfg_damp_percent_override:
+    quantize_config.damp_percent = float(qcfg_damp_percent_override)
+    print(f"Applied QuantizeConfig damp_percent override: {quantize_config.damp_percent}")
+if qcfg_damp_auto_increment_override and hasattr(quantize_config, "damp_auto_increment"):
+    quantize_config.damp_auto_increment = float(qcfg_damp_auto_increment_override)
+    print(
+        "Applied QuantizeConfig damp_auto_increment override: "
+        f"{quantize_config.damp_auto_increment}"
+    )
 if force_direct_load:
     model = load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config)
 else:
