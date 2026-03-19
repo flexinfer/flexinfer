@@ -1,0 +1,226 @@
+# FlexInfer Helm values override for K3s cluster
+# Uses Harbor registry instead of ghcr.io defaults
+
+controller:
+  enabled: true
+  replicas: 1
+  image:
+    repository: registry.harbor.lan/flexinfer/flexinfer-controller
+    tag: "master"
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  # Only run on amd64 control-plane nodes
+  nodeSelector:
+    kubernetes.io/arch: amd64
+    node.flexstack.io/class: control-plane
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+
+agent:
+  enabled: true
+  image:
+    repository: registry.harbor.lan/flexinfer/flexinfer-agent
+    tag: "master"
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  # Tolerate GPU node taints so agents can label GPU nodes
+  tolerations:
+    - key: "dedicated"
+      operator: "Equal"
+      value: "gpu"
+      effect: "NoSchedule"
+  # Only run on amd64 nodes (no ARM64 images available)
+  nodeSelector:
+    kubernetes.io/arch: amd64
+    flexinfer.ai/gpu-present: "true"
+
+proxy:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: registry.harbor.lan/flexinfer/flexinfer-proxy
+    tag: "master"
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+  # Large models (18GB+ GGUF via Longhorn mmap) need 15-20min to load.
+  # Set proxy timeouts above worst-case load time.
+  timeouts:
+    queue: "25m"
+    coldStart: "25m"
+  # Only run on amd64 nodes (no ARM64 images available)
+  nodeSelector:
+    kubernetes.io/arch: amd64
+    node.flexstack.io/class: control-plane
+
+# Backend images are now auto-detected by the controller based on GPU vendor:
+# - AMD (amd.com/gpu): ollama/ollama:rocm
+# - NVIDIA (nvidia.com/gpu): ollama/ollama:latest
+# - Intel (intel.com/gpu): ollama/ollama:latest
+# To override, set DEFAULT_BACKEND_IMAGE_{AMD,NVIDIA,INTEL} env vars
+
+# Ollama backend images
+# Custom Maxwell image built with CUDA 11.8 + sm_52 (pre-built binaries lack sm_52)
+ollama:
+  maxwellImage: registry.harbor.lan/flexinfer/ollama:cuda-maxwell
+
+scheduler:
+  enabled: true
+  replicas: 1
+  port: 8082
+  image:
+    repository: registry.harbor.lan/flexinfer/flexinfer-scheduler
+    tag: "master"
+  # kube-scheduler sidecar uses upstream k8s image (keep as-is)
+  kubeScheduler:
+    image:
+      repository: registry.k8s.io/kube-scheduler
+      tag: "v1.28.0"
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  # Only run on amd64 nodes (no ARM64 images available)
+  nodeSelector:
+    kubernetes.io/arch: amd64
+    node.flexstack.io/class: control-plane
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  weights:
+    tps: 0.7
+    util: 0.2
+    cost: 0.1
+    cache: 0.3
+
+benchmarker:
+  enabled: true
+  image:
+    repository: registry.harbor.lan/flexinfer/flexinfer-bench
+    tag: "master"
+  postgresDsn: "postgres://langgraph:changeme-app@langgraph-postgres-postgresql.ai.svc:5432/flexinfer_benchmarks?sslmode=disable"
+
+mlcllm:
+  rocmImage: registry.harbor.lan/library/mlc-llm:rocm64-llvm19
+  defaults:
+    jitPolicy: "READONLY"
+
+llamacpp:
+  rocmImage: registry.harbor.lan/flexinfer/llamacpp:rocm6.4.4-gfx1100-b8173-v2
+  gfx1100Image: registry.harbor.lan/flexinfer/llamacpp:rocm6.4.4-gfx1100-b8173-v2
+  gfx906Image: registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3
+
+vllm:
+  rocmImage: registry.harbor.lan/library/vllm-api:rocm-navi-fp8e5-v2
+  gfx1100Image: registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-nightly-v2
+
+diffusers:
+  rocmImage: registry.harbor.lan/library/diffusers-api:rocm-0cbf9b7
+  gfx1100Image: registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
+  cudaImage: registry.harbor.lan/library/diffusers-api@sha256:a2f768a4205870422929fbba0da2dc5cb195033ccb16275fb63d888ce271cd40
+
+quantization:
+  useRuntimeForQuantize: true
+  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:dc2a6c02b9677abe00ed4ed8419d4e4c89f31043058486e94d3f475b9081c403"
+  gptqModelPolicies:
+    - name: qwen3.5-text
+      match_model_types:
+        - qwen3_5_text
+      match_path_substrings:
+        - qwen35
+        - qwen3.5
+      extract_text_config: true
+      copy_root_keys:
+        - bos_token_id
+        - eos_token_id
+        - pad_token_id
+      remap_model_type: qwen3_5_text
+      architectures:
+        - Qwen3_5ForCausalLM
+      loader: manual_sharded_state_dict
+      python_packages:
+        - git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea
+      quantize_config_overrides:
+        offload_to_disk: false
+      calibration_overrides:
+        max_samples: 16
+        max_seq_len: 512
+        max_tokens: 8192
+  images:
+    awq: registry.harbor.lan/flexinfer/quantizer:awq-rocm-gfx1100
+    gptqRocm: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100
+
+runtime:
+  enabled: true
+  imagePullPolicy: IfNotPresent
+  modelHostPath: "/var/lib/flexinfer/models"
+  terminationGracePeriodSeconds: 60
+  profiles:
+    - name: gfx1100
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:dc2a6c02b9677abe00ed4ed8419d4e4c89f31043058486e94d3f475b9081c403"
+      gpuVendor: amd
+      gpuArch: gfx1100
+      gpuCount: 2
+      shmSize: "8Gi"
+      memoryLimit: "48Gi"
+      memoryRequest: "8Gi"
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-7900xtx
+      env:
+        - name: HIP_VISIBLE_DEVICES
+          value: "0"
+        - name: ROCR_VISIBLE_DEVICES
+          value: "0"
+      extraVolumeMounts:
+        - name: qwen35-gptq
+          mountPath: /models/qwen35-27b-opus-distill-gptq
+      extraVolumes:
+        - name: qwen35-gptq
+          persistentVolumeClaim:
+            claimName: qwen35-27b-opus-distill-gptq
+    - name: gfx1100-5930k
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:dc2a6c02b9677abe00ed4ed8419d4e4c89f31043058486e94d3f475b9081c403"
+      gpuVendor: amd
+      gpuArch: gfx1100
+      gpuCount: 1
+      shmSize: "8Gi"
+      memoryLimit: "48Gi"
+      memoryRequest: "8Gi"
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-5930k
+    - name: gfx906
+      image: "registry.harbor.lan/flexinfer/runtime:rocm-gfx906"
+      gpuVendor: amd
+      gpuArch: gfx906
+      gpuCount: 1
+      shmSize: "8Gi"
+      memoryLimit: "24Gi"
+      memoryRequest: "4Gi"
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-radeonvii
+
+grafanaDashboard:
+  enabled: true
