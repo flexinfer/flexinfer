@@ -58,34 +58,43 @@ Create the name of the service account to use
 {{- end }}
 
 {{- define "flexinfer.controllerServiceAccountName" -}}
-{{- if .Values.serviceAccounts.controller.create -}}
-{{- default (default (printf "%s-controller" (include "flexinfer.fullname" .)) .Values.serviceAccount.name) .Values.serviceAccounts.controller.name -}}
+{{- $serviceAccounts := default (dict) .Values.serviceAccounts -}}
+{{- $controller := default (dict) (get $serviceAccounts "controller") -}}
+{{- $legacy := default (dict) .Values.serviceAccount -}}
+{{- if default true (get $controller "create") -}}
+{{- default (default (printf "%s-controller" (include "flexinfer.fullname" .)) (get $legacy "name")) (get $controller "name") -}}
 {{- else -}}
-{{- default "default" .Values.serviceAccounts.controller.name -}}
+{{- default "default" (get $controller "name") -}}
 {{- end -}}
 {{- end -}}
 
 {{- define "flexinfer.agentServiceAccountName" -}}
-{{- if .Values.serviceAccounts.agent.create -}}
-{{- default (printf "%s-agent" (include "flexinfer.fullname" .)) .Values.serviceAccounts.agent.name -}}
+{{- $serviceAccounts := default (dict) .Values.serviceAccounts -}}
+{{- $agent := default (dict) (get $serviceAccounts "agent") -}}
+{{- if default true (get $agent "create") -}}
+{{- default (printf "%s-agent" (include "flexinfer.fullname" .)) (get $agent "name") -}}
 {{- else -}}
-{{- default "default" .Values.serviceAccounts.agent.name -}}
+{{- default "default" (get $agent "name") -}}
 {{- end -}}
 {{- end -}}
 
 {{- define "flexinfer.schedulerServiceAccountName" -}}
-{{- if .Values.serviceAccounts.scheduler.create -}}
-{{- default (printf "%s-scheduler" (include "flexinfer.fullname" .)) .Values.serviceAccounts.scheduler.name -}}
+{{- $serviceAccounts := default (dict) .Values.serviceAccounts -}}
+{{- $scheduler := default (dict) (get $serviceAccounts "scheduler") -}}
+{{- if default true (get $scheduler "create") -}}
+{{- default (printf "%s-scheduler" (include "flexinfer.fullname" .)) (get $scheduler "name") -}}
 {{- else -}}
-{{- default "default" .Values.serviceAccounts.scheduler.name -}}
+{{- default "default" (get $scheduler "name") -}}
 {{- end -}}
 {{- end -}}
 
 {{- define "flexinfer.proxyServiceAccountName" -}}
-{{- if .Values.serviceAccounts.proxy.create -}}
-{{- default (printf "%s-proxy" (include "flexinfer.fullname" .)) .Values.serviceAccounts.proxy.name -}}
+{{- $serviceAccounts := default (dict) .Values.serviceAccounts -}}
+{{- $proxy := default (dict) (get $serviceAccounts "proxy") -}}
+{{- if default true (get $proxy "create") -}}
+{{- default (printf "%s-proxy" (include "flexinfer.fullname" .)) (get $proxy "name") -}}
 {{- else -}}
-{{- default "default" .Values.serviceAccounts.proxy.name -}}
+{{- default "default" (get $proxy "name") -}}
 {{- end -}}
 {{- end -}}
 
@@ -110,9 +119,11 @@ Usage: {{ include "flexinfer.imagePullPolicy" .Values.controller.image }}
 {{- end -}}
 
 {{- define "flexinfer.benchmarkerServiceAccountName" -}}
-{{- if .Values.serviceAccounts.benchmarker.create -}}
-{{- default (printf "%s-benchmarker" (include "flexinfer.fullname" .)) .Values.serviceAccounts.benchmarker.name -}}
+{{- $serviceAccounts := default (dict) .Values.serviceAccounts -}}
+{{- $benchmarker := default (dict) (get $serviceAccounts "benchmarker") -}}
+{{- if default true (get $benchmarker "create") -}}
+{{- default (printf "%s-benchmarker" (include "flexinfer.fullname" .)) (get $benchmarker "name") -}}
 {{- else -}}
-{{- default "default" .Values.serviceAccounts.benchmarker.name -}}
+{{- default "default" (get $benchmarker "name") -}}
 {{- end -}}
 {{- end -}}

@@ -6,19 +6,24 @@ Tenant baseline resources (M1 foundation):
 - Optional default-deny NetworkPolicy pattern
 - Namespaced least-privilege Role + optional RoleBinding subjects
 */ -}}
-{{- if and .Values.tenancy.enabled (gt (len .Values.tenancy.tenants) 0) }}
+{{- $tenancy := default (dict) .Values.tenancy -}}
+{{- $tenants := default (list) $tenancy.tenants -}}
+{{- $podSecurity := default (dict) $tenancy.podSecurity -}}
+{{- $networkPolicy := default (dict) $tenancy.networkPolicy -}}
+{{- $rbac := default (dict) $tenancy.rbac -}}
+{{- if and (default false $tenancy.enabled) (gt (len $tenants) 0) }}
 {{- $root := . -}}
-{{- range $tenant := .Values.tenancy.tenants }}
+{{- range $tenant := $tenants }}
 {{- $ns := required "tenancy.tenants[].namespace is required" $tenant.namespace }}
-{{- $createNamespace := default $root.Values.tenancy.createNamespaces $tenant.createNamespace }}
+{{- $createNamespace := default $tenancy.createNamespaces $tenant.createNamespace }}
 {{- $tenantPodSecurity := default (dict) $tenant.podSecurity }}
-{{- $psEnforce := default $root.Values.tenancy.podSecurity.enforce (get $tenantPodSecurity "enforce") }}
-{{- $psWarn := default $root.Values.tenancy.podSecurity.warn (get $tenantPodSecurity "warn") }}
-{{- $psAudit := default $root.Values.tenancy.podSecurity.audit (get $tenantPodSecurity "audit") }}
-{{- $quotaHard := default $root.Values.tenancy.quotaHard $tenant.quotaHard }}
-{{- $limitRangeLimits := default $root.Values.tenancy.limitRangeLimits $tenant.limitRangeLimits }}
-{{- $networkPolicyMode := default $root.Values.tenancy.networkPolicy.mode $tenant.networkPolicyMode }}
-{{- $nsLabels := merge (deepCopy (default (dict) $root.Values.tenancy.namespaceLabels)) (deepCopy (default (dict) $tenant.labels)) }}
+{{- $psEnforce := default $podSecurity.enforce (get $tenantPodSecurity "enforce") }}
+{{- $psWarn := default $podSecurity.warn (get $tenantPodSecurity "warn") }}
+{{- $psAudit := default $podSecurity.audit (get $tenantPodSecurity "audit") }}
+{{- $quotaHard := default $tenancy.quotaHard $tenant.quotaHard }}
+{{- $limitRangeLimits := default $tenancy.limitRangeLimits $tenant.limitRangeLimits }}
+{{- $networkPolicyMode := default $networkPolicy.mode $tenant.networkPolicyMode }}
+{{- $nsLabels := merge (deepCopy (default (dict) $tenancy.namespaceLabels)) (deepCopy (default (dict) $tenant.labels)) }}
 {{- if $createNamespace }}
 apiVersion: v1
 kind: Namespace
@@ -97,7 +102,7 @@ spec:
     - to:
         - podSelector: {}
 ---
-{{- if $root.Values.tenancy.networkPolicy.allowDNS }}
+{{- if $networkPolicy.allowDNS }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -127,7 +132,7 @@ spec:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ $root.Values.tenancy.rbac.roleName }}
+  name: {{ $rbac.roleName }}
   namespace: {{ $ns }}
   labels:
     {{- include "flexinfer.labels" $root | nindent 4 }}
@@ -157,7 +162,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ $root.Values.tenancy.rbac.roleName }}-binding
+  name: {{ $rbac.roleName }}-binding
   namespace: {{ $ns }}
   labels:
     {{- include "flexinfer.labels" $root | nindent 4 }}
@@ -175,7 +180,7 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ $root.Values.tenancy.rbac.roleName }}
+  name: {{ $rbac.roleName }}
 ---
 {{- end }}
 {{- end }}

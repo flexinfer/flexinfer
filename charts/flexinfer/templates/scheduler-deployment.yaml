@@ -1,4 +1,12 @@
-{{- if .Values.scheduler.enabled }}
+{{- $scheduler := default (dict) .Values.scheduler -}}
+{{- $schedulerImage := default (dict) $scheduler.image -}}
+{{- $weights := default (dict) $scheduler.weights -}}
+{{- $tenantFairShare := default (dict) $scheduler.tenantFairShare -}}
+{{- $kubeScheduler := default (dict) $scheduler.kubeScheduler -}}
+{{- $kubeSchedulerImage := default (dict) $kubeScheduler.image -}}
+{{- $kubeconfigInit := default (dict) $scheduler.kubeconfigInit -}}
+{{- $kubeconfigInitImage := default (dict) $kubeconfigInit.image -}}
+{{- if $scheduler.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -8,7 +16,7 @@ metadata:
     {{- include "flexinfer.labels" . | nindent 4 }}
     app.kubernetes.io/component: scheduler
 spec:
-  replicas: {{ .Values.scheduler.replicas }}
+  replicas: {{ default 1 $scheduler.replicas }}
   selector:
     matchLabels:
       {{- include "flexinfer.selectorLabels" . | nindent 6 }}
@@ -25,22 +33,22 @@ spec:
         app.kubernetes.io/component: scheduler
     spec:
       serviceAccountName: {{ include "flexinfer.schedulerServiceAccountName" . }}
-      {{- with .Values.scheduler.nodeSelector }}
+      {{- with $scheduler.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.scheduler.tolerations }}
+      {{- with $scheduler.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.scheduler.affinity }}
+      {{- with $scheduler.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       initContainers:
         - name: kubeconfig-init
-          image: "{{ .Values.scheduler.kubeconfigInit.image.repository }}:{{ .Values.scheduler.kubeconfigInit.image.tag }}"
-          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" .Values.scheduler.kubeconfigInit.image }}
+          image: "{{ default "busybox" $kubeconfigInitImage.repository }}:{{ default "1.37" $kubeconfigInitImage.tag }}"
+          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" $kubeconfigInitImage }}
           command:
             - /bin/sh
             - -ec
@@ -69,13 +77,13 @@ spec:
               mountPath: /etc/kubernetes
       containers:
         - name: flexinfer-scheduler
-          image: "{{ .Values.scheduler.image.repository }}:{{ .Values.scheduler.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" .Values.scheduler.image }}
+          image: "{{ $schedulerImage.repository }}:{{ $schedulerImage.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" $schedulerImage }}
           args:
-            - --port={{ .Values.scheduler.port }}
+            - --port={{ default 8082 $scheduler.port }}
           ports:
             - name: http
-              containerPort: {{ .Values.scheduler.port }}
+              containerPort: {{ default 8082 $scheduler.port }}
               protocol: TCP
           livenessProbe:
             httpGet:
@@ -84,29 +92,29 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 20
           resources:
-            {{- toYaml .Values.scheduler.resources | nindent 12 }}
+            {{- toYaml $scheduler.resources | nindent 12 }}
           env:
             - name: SCHED_TPS_WEIGHT
-              value: "{{ .Values.scheduler.weights.tps }}"
+              value: "{{ default 0.7 $weights.tps }}"
             - name: SCHED_UTIL_WEIGHT
-              value: "{{ .Values.scheduler.weights.util }}"
+              value: "{{ default 0.2 $weights.util }}"
             - name: SCHED_COST_WEIGHT
-              value: "{{ .Values.scheduler.weights.cost }}"
+              value: "{{ default 0.1 $weights.cost }}"
             - name: SCHED_CACHE_WEIGHT
-              value: "{{ .Values.scheduler.weights.cache }}"
+              value: "{{ default 0.3 $weights.cache }}"
             - name: SCHED_VRAM_FREE_WEIGHT
-              value: "{{ .Values.scheduler.weights.vramFree }}"
+              value: "{{ default 10.0 $weights.vramFree }}"
             - name: SCHED_TENANT_FAIRSHARE_ENABLED
-              value: "{{ .Values.scheduler.tenantFairShare.enabled }}"
+              value: "{{ default false $tenantFairShare.enabled }}"
             - name: SCHED_TENANT_FAIRSHARE_WEIGHT
-              value: "{{ .Values.scheduler.tenantFairShare.weight }}"
+              value: "{{ default 5.0 $tenantFairShare.weight }}"
             - name: SCHED_TENANT_FAIRSHARE_BUDGET_GPUS
-              value: "{{ .Values.scheduler.tenantFairShare.gpuBudget }}"
+              value: "{{ default 1.0 $tenantFairShare.gpuBudget }}"
             - name: SCHED_TENANT_LABEL_KEY
-              value: "{{ .Values.scheduler.tenantFairShare.tenantLabelKey }}"
+              value: "{{ default "" $tenantFairShare.tenantLabelKey }}"
         - name: kube-scheduler
-          image: "{{ .Values.scheduler.kubeScheduler.image.repository }}:{{ .Values.scheduler.kubeScheduler.image.tag }}"
-          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" .Values.scheduler.kubeScheduler.image }}
+          image: "{{ default "registry.k8s.io/kube-scheduler" $kubeSchedulerImage.repository }}:{{ default "v1.35.2" $kubeSchedulerImage.tag }}"
+          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" $kubeSchedulerImage }}
           command:
             - kube-scheduler
           args:

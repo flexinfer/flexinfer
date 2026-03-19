@@ -5,8 +5,14 @@ Each component runs under its own ServiceAccount to support least-privilege defa
 
 {{- $ns := .Release.Namespace -}}
 {{- $fullname := include "flexinfer.fullname" . -}}
+{{- $serviceAccounts := default (dict) .Values.serviceAccounts -}}
+{{- $controllerSA := default (dict) (get $serviceAccounts "controller") -}}
+{{- $agentSA := default (dict) (get $serviceAccounts "agent") -}}
+{{- $schedulerSA := default (dict) (get $serviceAccounts "scheduler") -}}
+{{- $proxySA := default (dict) (get $serviceAccounts "proxy") -}}
+{{- $benchmarkerSA := default (dict) (get $serviceAccounts "benchmarker") -}}
 
-{{- if and .Values.controller.enabled .Values.serviceAccounts.controller.create }}
+{{- if and .Values.controller.enabled (default true (get $controllerSA "create")) }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -15,14 +21,14 @@ metadata:
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
-  {{- with .Values.serviceAccounts.controller.annotations }}
+  {{- with (get $controllerSA "annotations") }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 ---
 {{- end }}
 
-{{- if and .Values.agent.enabled .Values.serviceAccounts.agent.create }}
+{{- if and .Values.agent.enabled (default true (get $agentSA "create")) }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -31,14 +37,14 @@ metadata:
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
     app.kubernetes.io/component: agent
-  {{- with .Values.serviceAccounts.agent.annotations }}
+  {{- with (get $agentSA "annotations") }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 ---
 {{- end }}
 
-{{- if and .Values.scheduler.enabled .Values.serviceAccounts.scheduler.create }}
+{{- if and .Values.scheduler.enabled (default true (get $schedulerSA "create")) }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -47,14 +53,14 @@ metadata:
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
     app.kubernetes.io/component: scheduler
-  {{- with .Values.serviceAccounts.scheduler.annotations }}
+  {{- with (get $schedulerSA "annotations") }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 ---
 {{- end }}
 
-{{- if and .Values.proxy.enabled .Values.serviceAccounts.proxy.create }}
+{{- if and .Values.proxy.enabled (default true (get $proxySA "create")) }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -63,14 +69,14 @@ metadata:
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
     app.kubernetes.io/component: proxy
-  {{- with .Values.serviceAccounts.proxy.annotations }}
+  {{- with (get $proxySA "annotations") }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 ---
 {{- end }}
 
-{{- if and .Values.controller.enabled .Values.serviceAccounts.benchmarker.create }}
+{{- if and .Values.controller.enabled (default true (get $benchmarkerSA "create")) }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -79,7 +85,7 @@ metadata:
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
     app.kubernetes.io/component: benchmarker
-  {{- with .Values.serviceAccounts.benchmarker.annotations }}
+  {{- with (get $benchmarkerSA "annotations") }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

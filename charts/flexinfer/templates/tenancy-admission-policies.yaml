@@ -2,15 +2,17 @@
 MT-2: Admission policy guardrails (opt-in).
 Requires Kubernetes support for ValidatingAdmissionPolicy.
 */ -}}
-{{- if and .Values.tenancy.enabled .Values.tenancy.admission.enabled (.Capabilities.APIVersions.Has "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy") }}
+{{- $tenancy := default (dict) .Values.tenancy -}}
+{{- $admission := default (dict) $tenancy.admission -}}
+{{- if and (default false $tenancy.enabled) (default false $admission.enabled) (.Capabilities.APIVersions.Has "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy") }}
 {{- $root := . -}}
-{{- $namespaceGuard := default (dict) .Values.tenancy.admission.namespaceGuard -}}
+{{- $namespaceGuard := default (dict) $admission.namespaceGuard -}}
 {{- $enforceTenantNamespaces := default true $namespaceGuard.enforceTenantNamespaces -}}
 {{- $tenantLabelKey := default "flexinfer.ai/tenant" $namespaceGuard.tenantLabelKey -}}
 {{- $tenantLabelValue := default "true" $namespaceGuard.tenantLabelValue -}}
-{{- $validationActions := default (list "Deny") .Values.tenancy.admission.validationActions -}}
+{{- $validationActions := default (list "Deny") $admission.validationActions -}}
 {{- $allowedNamespaces := deepCopy (default (list) $namespaceGuard.allowedNamespaces) -}}
-{{- range $tenant := .Values.tenancy.tenants }}
+{{- range $tenant := default (list) $tenancy.tenants }}
 {{- if $tenant.namespace }}
 {{- $allowedNamespaces = append $allowedNamespaces $tenant.namespace }}
 {{- end }}
@@ -29,7 +31,7 @@ metadata:
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
 spec:
-  failurePolicy: {{ default "Fail" .Values.tenancy.admission.failurePolicy }}
+  failurePolicy: {{ default "Fail" $admission.failurePolicy }}
   matchConstraints:
     resourceRules:
       - apiGroups: ["ai.flexinfer"]
@@ -62,7 +64,7 @@ metadata:
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
 spec:
-  failurePolicy: {{ default "Fail" .Values.tenancy.admission.failurePolicy }}
+  failurePolicy: {{ default "Fail" $admission.failurePolicy }}
   matchConstraints:
     resourceRules:
       - apiGroups: ["ai.flexinfer"]
