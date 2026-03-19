@@ -4,9 +4,11 @@ package sync
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/crb2nu/loom/pkg/skills"
@@ -125,6 +127,39 @@ func (m *Manager) GetSyncStatus(profileName string) (*SyncStatus, error) {
 	}
 
 	return status, nil
+}
+
+// DriftSummary returns aggregate drift counts across all profiles. Useful for
+// HUD status display and quick health checks.
+func (m *Manager) DriftSummary() (inSync int, outOfSync int, missing int, err error) {
+	for _, name := range m.List() {
+		status, e := m.GetSyncStatus(name)
+		if e != nil {
+			err = e
+			return
+		}
+		if status == nil {
+			continue
+		}
+		if status.InSync {
+			inSync++
+		} else {
+			// Classify why it's out of sync.
+			hasMissing := false
+			for _, item := range status.DriftDetails {
+				if item.Status == DriftMissing {
+					hasMissing = true
+					break
+				}
+			}
+			if hasMissing || !status.RepoExists || !status.HomeExists {
+				missing++
+			} else {
+				outOfSync++
+			}
+		}
+	}
+	return
 }
 
 // GetAllSyncStatus returns sync status for all profiles.
@@ -379,7 +414,17 @@ func compareGeneratedFile(repoPath, homePath string, profile *Profile) []DriftIt
 			repoHash, _ := hashFile(repoFile)
 			homeHash, _ := hashFile(homeFile)
 			if repoHash != homeHash {
-				items = append(items, DriftItem{File: rel, RepoHash: repoHash, HomeHash: homeHash, Status: DriftOutOfSync})
+				// For settings.json, hooks are stripped from repo but preserved in
+				// home via merge. Compare non-hooks keys only to avoid false drift.
+				if rel == "settings.json" && settingsInSyncIgnoringHooks(repoFile, homeFile) {
+					items = append(items, DriftItem{File: rel, RepoHash: repoHash, HomeHash: homeHash, Status: DriftInSync})
+				} else if strings.HasSuffix(rel, ".toml") && tomlInSyncIgnoringKeys(repoFile, homeFile, []string{"notify"}) {
+					// For TOML configs, the [notify] section may exist in home
+					// (added by lifecycle hooks) but not in repo. Treat as in-sync.
+					items = append(items, DriftItem{File: rel, RepoHash: repoHash, HomeHash: homeHash, Status: DriftInSync})
+				} else {
+					items = append(items, DriftItem{File: rel, RepoHash: repoHash, HomeHash: homeHash, Status: DriftOutOfSync})
+				}
 			} else {
 				items = append(items, DriftItem{File: rel, RepoHash: repoHash, HomeHash: homeHash, Status: DriftInSync})
 			}
@@ -390,4 +435,93 @@ func compareGeneratedFile(repoPath, homePath string, profile *Profile) []DriftIt
 		return []DriftItem{{File: profile.GeneratedFile, Status: DriftMissing}}
 	}
 	return items
+}
+
+// configInSyncIgnoringKeys compares two JSON config files, treating them as
+// in-sync if they differ only in the specified keys. This accounts for
+// intentional design where certain keys are stripped from the repo copy but
+// preserved in home via merge operations.
+func configInSyncIgnoringKeys(repoFile, homeFile string, ignoreKeys []string) bool {
+	repoData, err := os.ReadFile(repoFile)
+	if err != nil {
+		return false
+	}
+	homeData, err := os.ReadFile(homeFile)
+	if err != nil {
+		return false
+	}
+
+	var repoMap, homeMap map[string]json.RawMessage
+	if json.Unmarshal(repoData, &repoMap) != nil || json.Unmarshal(homeData, &homeMap) != nil {
+		return false
+	}
+
+	for _, key := range ignoreKeys {
+		delete(repoMap, key)
+		delete(homeMap, key)
+	}
+
+	repoNorm, _ := json.Marshal(repoMap)
+	homeNorm, _ := json.Marshal(homeMap)
+	return string(repoNorm) == string(homeNorm)
+}
+
+// settingsInSyncIgnoringHooks compares two settings.json files, treating them
+// as in-sync if they differ only in the "hooks" key.
+func settingsInSyncIgnoringHooks(repoFile, homeFile string) bool {
+	return configInSyncIgnoringKeys(repoFile, homeFile, []string{"hooks"})
+}
+
+// tomlInSyncIgnoringKeys compares two TOML config files, treating them as
+// in-sync if they differ only in the specified top-level sections. Uses a
+// simple line-based approach to strip [key] sections rather than importing
+// a TOML library, since the config files are simple.
+func tomlInSyncIgnoringKeys(repoFile, homeFile string, ignoreKeys []string) bool {
+	repoData, err := os.ReadFile(repoFile)
+	if err != nil {
+		return false
+	}
+	homeData, err := os.ReadFile(homeFile)
+	if err != nil {
+		return false
+	}
+
+	repoFiltered := filterTOMLSections(string(repoData), ignoreKeys)
+	homeFiltered := filterTOMLSections(string(homeData), ignoreKeys)
+	return repoFiltered == homeFiltered
+}
+
+// filterTOMLSections removes top-level sections matching the given keys from
+// TOML content. A section starts with [key] and extends until the next
+// top-level section header or end of file.
+func filterTOMLSections(content string, ignoreKeys []string) string {
+	ignore := make(map[string]bool, len(ignoreKeys))
+	for _, k := range ignoreKeys {
+		ignore[k] = true
+	}
+
+	lines := strings.Split(content, "\n")
+	var result []string
+	skipping := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Detect top-level section headers like [notify] or [notify.hooks]
+		if strings.HasPrefix(trimmed, "[") && !strings.HasPrefix(trimmed, "[[") {
+			section := strings.TrimPrefix(trimmed, "[")
+			section = strings.TrimSuffix(section, "]")
+			section = strings.TrimSpace(section)
+			// Extract the top-level key (before any dot)
+			topKey := section
+			if idx := strings.Index(section, "."); idx >= 0 {
+				topKey = section[:idx]
+			}
+			skipping = ignore[topKey]
+		}
+		if !skipping {
+			result = append(result, line)
+		}
+	}
+
+	return strings.Join(result, "\n")
 }

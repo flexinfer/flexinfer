@@ -482,12 +482,20 @@ struct OpsView: View {
                     } else {
                         ForEach(Array(viewModel.presenceAgents.prefix(agentDisplayLimit))) { agent in
                             HStack(spacing: LoomSpacing.sm) {
-                                PulsingDot(color: agentStatusColor(agent.status), isPulsing: agent.status.rawValue == "active")
+                                ZStack {
+                                    Image(systemName: LoomColors.agentTypeIcon(agent.agentType))
+                                        .font(.caption)
+                                        .foregroundStyle(LoomColors.agentTypeColor(agent.agentType))
+                                        .frame(width: 20, height: 20)
+                                    PulsingDot(color: agentStatusColor(agent.status), isPulsing: agent.status.rawValue == "active")
+                                        .offset(x: 8, y: 8)
+                                }
+                                .frame(width: 24, height: 24)
                                 VStack(alignment: .leading, spacing: 2) {
                                     HStack(spacing: 6) {
                                         Text(agent.agentId)
                                             .font(LoomTypography.bodyMedium)
-                                            .foregroundStyle(LoomColors.textPrimary)
+                                            .foregroundStyle(LoomColors.agentTypeColor(agent.agentType))
                                             .lineLimit(1)
                                         StatusBadge(
                                             agent.status.rawValue,

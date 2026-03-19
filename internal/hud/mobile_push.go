@@ -118,8 +118,9 @@ func (c PushBackoffConfig) BackoffDelay(attempt int) time.Duration {
 type PushPayload struct {
 	Title    string            `json:"title"`
 	Body     string            `json:"body"`
-	Category string            `json:"category,omitempty"` // Maps to APNs category / FCM click_action.
-	Data     map[string]string `json:"data,omitempty"`     // Custom key-value pairs.
+	Category string            `json:"category,omitempty"`  // Maps to APNs category / FCM click_action.
+	ThreadID string            `json:"thread_id,omitempty"` // Groups notifications in iOS notification center.
+	Data     map[string]string `json:"data,omitempty"`      // Custom key-value pairs.
 }
 
 // APNsEnvelope wraps a PushPayload into the APNs JSON structure.
@@ -128,6 +129,9 @@ func (p PushPayload) APNsEnvelope() map[string]any {
 	aps := map[string]any{"alert": alert, "sound": "default"}
 	if p.Category != "" {
 		aps["category"] = p.Category
+	}
+	if p.ThreadID != "" {
+		aps["thread-id"] = p.ThreadID
 	}
 	env := map[string]any{"aps": aps}
 	for k, v := range p.Data {

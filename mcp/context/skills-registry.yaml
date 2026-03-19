@@ -5316,24 +5316,33 @@ skills:
            - End with `Co-Authored-By: <agent> <noreply@anthropic.com>`
            - Use a HEREDOC for multi-line messages
 
-        4. **Push the branch**
+        4. **Stamp agent provenance**
+           - If using `git_commit` MCP tool: pass `agent_id` and `session_id` parameters
+             to auto-add `Agent-ID` and `Agent-Session` git trailers
+           - If committing via shell: append trailers manually:
+             `--trailer "Agent-ID: <agent-id>" --trailer "Agent-Session: <session-id>"`
+           - These trailers enable thread tracking and pipeline correlation in the HUD
+           - The `agent_id` should match the agent's registered presence ID
+           - The `session_id` should match the active agent-context session
+
+        5. **Push the branch**
            - `git push origin <branch>` (with `-u` if first push)
            - Never force-push without explicit user approval
 
-        5. **Monitor CI**
+        6. **Monitor CI**
            - Poll the triggered pipeline to terminal state
            - GitLab: `gitlab__poll_pipeline` or `gitlab__pipeline_summary`
            - GitHub: `gh run watch` or `gh run list`
            - If red: diagnose → fix → re-commit → re-push → re-poll
            - If green: report success
 
-        6. **Create or reuse MR/PR**
+        7. **Create or reuse MR/PR**
            - Check for existing MR on the same source branch before creating a new one
            - GitLab: `gitlab__list_merge_requests(source_branch=..., target_branch=main)`
            - GitHub: `gh pr list --head <branch>`
            - If on a feature branch and no MR exists, ask user before creating
 
-        7. **Request auto-merge** (when user approves and project policy allows)
+        8. **Request auto-merge** (when user approves and project policy allows)
            - GitLab: `gitlab__merge_merge_request(auto_merge=true, sha=<HEAD>)`
            - GitHub: `gh pr merge --auto --squash`
 

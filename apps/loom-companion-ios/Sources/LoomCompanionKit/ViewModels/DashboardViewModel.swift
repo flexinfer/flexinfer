@@ -125,9 +125,14 @@ public final class DashboardViewModel {
             }
         }
 
-        // Trigger widget refresh on session lifecycle events.
-        if event.type == "agent.session.end" || event.type == "hud.fleet" {
+        // Trigger widget refresh on session/pipeline lifecycle events.
+        if event.type == "agent.session.end" || event.type == "hud.fleet" || event.type == "hud.pipeline" {
             WidgetCenter.shared.reloadAllTimelines()
+        }
+
+        // Save completed session data for widget display.
+        if event.type == "agent.session.end" {
+            saveCompletedSession(event)
         }
         #endif
 
@@ -195,11 +200,14 @@ public final class DashboardViewModel {
         timeline.compactMap { entry in
             guard entry.eventType.contains("session") else { return nil }
 
+            let agentId = entry.agentId ?? entry.data?["agent_id"]?.stringValue ?? "unknown"
             return SessionWidgetEntry(
                 id: entry.id,
                 namespace: entry.data?["namespace"]?.stringValue ?? entry.eventType,
-                agentId: entry.agentId ?? entry.data?["agent_id"]?.stringValue ?? "unknown",
-                startedAt: entry.timestamp
+                agentId: agentId,
+                agentType: entry.data?["agent_type"]?.stringValue ?? Self.inferAgentType(from: agentId),
+                startedAt: entry.timestamp,
+                lastHeartbeat: Date()
             )
         }
     }
@@ -225,7 +233,7 @@ public final class DashboardViewModel {
               let sessionId = payload.session_id,
               let agentId = payload.agent_id else { return }
 
-        let agentType = payload.agent_type ?? inferAgentType(from: agentId)
+        let agentType = payload.agent_type ?? Self.inferAgentType(from: agentId)
         let namespace = payload.namespace ?? agentId
 
         let lam = LiveActivityManager.shared
@@ -317,7 +325,7 @@ public final class DashboardViewModel {
     }
 
     /// Infer agent type from agent ID string.
-    private func inferAgentType(from agentId: String) -> String {
+    private static func inferAgentType(from agentId: String) -> String {
         let id = agentId.lowercased()
         if id.contains("claude") { return "claude-code" }
         if id.contains("gemini") { return "gemini" }
@@ -325,6 +333,46 @@ public final class DashboardViewModel {
         if id.contains("kilo") { return "kilocode" }
         if id.contains("antigravity") { return "antigravity" }
         return "unknown"
+    }
+
+    // MARK: - Completed Session Persistence
+
+    @MainActor
+    private func saveCompletedSession(_ event: SSEEvent) {
+        guard let data = event.data.data(using: .utf8) else { return }
+
+        struct SessionEndPayload: Decodable {
+            let session_id: String?
+            let agent_id: String?
+            let agent_type: String?
+            let namespace: String?
+            let summary: String?
+            let duration_seconds: Int?
+            let total_tokens: Int?
+            let entry_count: Int?
+        }
+
+        guard let payload = try? JSONDecoder().decode(SessionEndPayload.self, from: data) else { return }
+
+        let completed = CompletedSessionWidgetData(
+            agentId: payload.agent_id ?? "unknown",
+            agentType: payload.agent_type ?? Self.inferAgentType(from: payload.agent_id ?? ""),
+            namespace: payload.namespace ?? "",
+            durationSeconds: payload.duration_seconds ?? 0,
+            tokenCount: payload.total_tokens ?? 0,
+            entryCount: payload.entry_count ?? 0,
+            endedAt: ISO8601DateFormatter().string(from: Date())
+        )
+
+        if let existing = SharedDataStore.load() {
+            let updated = WidgetData(
+                fleet: existing.fleet,
+                tasks: existing.tasks,
+                sessions: existing.sessions,
+                lastCompletedSession: completed
+            )
+            SharedDataStore.save(updated)
+        }
     }
 
     // MARK: - Pipeline Live Activity Handlers
@@ -346,6 +394,7 @@ public final class DashboardViewModel {
             let completed_stages: Int?
             let total_stages: Int?
             let failed_job_count: Int?
+            let started_at: String?
         }
 
         guard let payload = try? JSONDecoder().decode(PipelinePayload.self, from: data),
@@ -359,7 +408,7 @@ public final class DashboardViewModel {
 
             switch pipeline.status {
             case "running", "pending":
-                if lam.activePipelineCount == 0 || completed == 0 {
+                if !lam.hasPipelineActivity(pipelineId: pipeline.id) {
                     lam.startPipelineActivity(
                         pipelineId: pipeline.id,
                         project: pipeline.project,
@@ -407,6 +456,7 @@ public final class DashboardViewModel {
             let completed_steps: Int?
             let total_steps: Int?
             let progress: Double?
+            let started_at: String?
         }
 
         guard let payload = try? JSONDecoder().decode(WorkflowPayload.self, from: data),
@@ -420,7 +470,7 @@ public final class DashboardViewModel {
 
             switch wf.status {
             case "running", "in_progress":
-                if lam.activeWorkflowCount == 0 || completed == 0 {
+                if !lam.hasWorkflowActivity(workflowId: wf.workflow_id) {
                     lam.startWorkflowActivity(
                         workflowId: wf.workflow_id,
                         name: wf.name ?? wf.workflow_id,
@@ -429,13 +479,20 @@ public final class DashboardViewModel {
                         totalSteps: total
                     )
                 } else {
+                    let elapsed: Int
+                    if let startedStr = wf.started_at,
+                       let startDate = ISO8601DateFormatter().date(from: startedStr) {
+                        elapsed = Int(Date().timeIntervalSince(startDate))
+                    } else {
+                        elapsed = 0
+                    }
                     lam.updateWorkflowActivity(
                         workflowId: wf.workflow_id,
                         stepName: step,
                         stepIndex: completed,
                         totalSteps: total,
                         status: wf.status,
-                        elapsedSeconds: 0
+                        elapsedSeconds: elapsed
                     )
                 }
             case "completed", "failed", "cancelled":

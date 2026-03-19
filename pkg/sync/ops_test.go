@@ -1842,40 +1842,39 @@ func TestFilterPrunedExtensions_NoPrunedIsNoop(t *testing.T) {
 	}
 }
 
-func TestGeminiAndAntigravityProfiles_HaveSkillsDirectToHome(t *testing.T) {
+func TestAllSkillProfiles_HaveSkillsDirectToHome(t *testing.T) {
 	m, _ := NewManager(t.TempDir())
 
-	gemini := m.Get("gemini")
-	if gemini == nil {
-		t.Fatal("gemini profile not found")
-	}
-	if !gemini.SkillsDirectToHome {
-		t.Error("gemini profile should have SkillsDirectToHome=true")
-	}
-	if gemini.SkillsHomePath != "$HOME/.gemini/skills" {
-		t.Errorf("gemini SkillsHomePath = %q, want %q", gemini.SkillsHomePath, "$HOME/.gemini/skills")
+	tests := []struct {
+		name     string
+		homePath string
+	}{
+		{"gemini", "$HOME/.gemini/skills"},
+		{"antigravity", "$HOME/.gemini/antigravity/skills"},
+		{"claude", "$HOME/.claude/commands"},
+		{"kilocode", "$HOME/.kilocode/skills"},
+		{"codex", "$HOME/.codex/skills"},
+		{"opencode", "$HOME/.config/opencode/skills"},
+		{"zed", "$HOME/.config/zed/skills"},
 	}
 
+	for _, tt := range tests {
+		p := m.Get(tt.name)
+		if p == nil {
+			t.Fatalf("%s profile not found", tt.name)
+		}
+		if !p.SkillsDirectToHome {
+			t.Errorf("%s profile should have SkillsDirectToHome=true", tt.name)
+		}
+		if p.SkillsHomePath != tt.homePath {
+			t.Errorf("%s SkillsHomePath = %q, want %q", tt.name, p.SkillsHomePath, tt.homePath)
+		}
+	}
+
+	// Verify antigravity uses gemini skills target
 	antigravity := m.Get("antigravity")
-	if antigravity == nil {
-		t.Fatal("antigravity profile not found")
-	}
-	if !antigravity.SkillsDirectToHome {
-		t.Error("antigravity profile should have SkillsDirectToHome=true")
-	}
 	if antigravity.SkillsTarget != "gemini" {
 		t.Errorf("antigravity SkillsTarget = %q, want %q", antigravity.SkillsTarget, "gemini")
-	}
-	if antigravity.SkillsHomePath != "$HOME/.gemini/antigravity/skills" {
-		t.Errorf("antigravity SkillsHomePath = %q, want %q", antigravity.SkillsHomePath, "$HOME/.gemini/antigravity/skills")
-	}
-
-	// Other profiles should NOT have it
-	for _, name := range []string{"claude", "kilocode"} {
-		p := m.Get(name)
-		if p != nil && p.SkillsDirectToHome {
-			t.Errorf("%s profile should not have SkillsDirectToHome=true", name)
-		}
 	}
 }
 
@@ -1891,5 +1890,248 @@ func TestCodexProfile_HasHomeOnlySkills(t *testing.T) {
 	}
 	if codex.SkillsHomePath != "$HOME/.codex/skills" {
 		t.Errorf("codex SkillsHomePath = %q, want %q", codex.SkillsHomePath, "$HOME/.codex/skills")
+	}
+}
+
+// =============================================================================
+// Drift Detection Tests
+// =============================================================================
+
+func TestConfigInSyncIgnoringKeys_HooksDifferOnly(t *testing.T) {
+	tests := []struct {
+		name       string
+		repo       string
+		home       string
+		ignoreKeys []string
+		wantSync   bool
+	}{
+		{
+			name:       "differ only in hooks — in sync",
+			repo:       `{"theme":"dark"}`,
+			home:       `{"theme":"dark","hooks":{"preToolUse":"echo hi"}}`,
+			ignoreKeys: []string{"hooks"},
+			wantSync:   true,
+		},
+		{
+			name:       "differ in other keys — out of sync",
+			repo:       `{"theme":"dark"}`,
+			home:       `{"theme":"light","hooks":{"preToolUse":"echo hi"}}`,
+			ignoreKeys: []string{"hooks"},
+			wantSync:   false,
+		},
+		{
+			name:       "identical — in sync",
+			repo:       `{"theme":"dark"}`,
+			home:       `{"theme":"dark"}`,
+			ignoreKeys: []string{"hooks"},
+			wantSync:   true,
+		},
+		{
+			name:       "multiple ignored keys",
+			repo:       `{"theme":"dark"}`,
+			home:       `{"theme":"dark","hooks":{},"notify":{"url":"http://example.com"}}`,
+			ignoreKeys: []string{"hooks", "notify"},
+			wantSync:   true,
+		},
+		{
+			name:       "invalid JSON repo — not in sync",
+			repo:       `not json`,
+			home:       `{"theme":"dark"}`,
+			ignoreKeys: []string{"hooks"},
+			wantSync:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			repoFile := filepath.Join(dir, "repo.json")
+			homeFile := filepath.Join(dir, "home.json")
+
+			os.WriteFile(repoFile, []byte(tt.repo), 0644)
+			os.WriteFile(homeFile, []byte(tt.home), 0644)
+
+			got := configInSyncIgnoringKeys(repoFile, homeFile, tt.ignoreKeys)
+			if got != tt.wantSync {
+				t.Errorf("configInSyncIgnoringKeys() = %v, want %v", got, tt.wantSync)
+			}
+		})
+	}
+}
+
+func TestTomlInSyncIgnoringKeys_NotifyDiffers(t *testing.T) {
+	tests := []struct {
+		name       string
+		repo       string
+		home       string
+		ignoreKeys []string
+		wantSync   bool
+	}{
+		{
+			name:       "differ only in notify — in sync",
+			repo:       "[mcp_servers.test]\ncommand = \"echo\"\n",
+			home:       "[mcp_servers.test]\ncommand = \"echo\"\n\n[notify]\nurl = \"http://localhost:3333\"\n",
+			ignoreKeys: []string{"notify"},
+			wantSync:   true,
+		},
+		{
+			name:       "differ in mcp_servers — out of sync",
+			repo:       "[mcp_servers.test]\ncommand = \"echo\"\n",
+			home:       "[mcp_servers.other]\ncommand = \"node\"\n\n[notify]\nurl = \"http://localhost:3333\"\n",
+			ignoreKeys: []string{"notify"},
+			wantSync:   false,
+		},
+		{
+			name:       "identical — in sync",
+			repo:       "[mcp_servers.test]\ncommand = \"echo\"\n",
+			home:       "[mcp_servers.test]\ncommand = \"echo\"\n",
+			ignoreKeys: []string{"notify"},
+			wantSync:   true,
+		},
+		{
+			name:       "nested notify section — in sync",
+			repo:       "[mcp_servers.test]\ncommand = \"echo\"\n",
+			home:       "[mcp_servers.test]\ncommand = \"echo\"\n\n[notify]\nurl = \"http://localhost\"\n\n[notify.hooks]\non_start = true\n",
+			ignoreKeys: []string{"notify"},
+			wantSync:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			repoFile := filepath.Join(dir, "repo.toml")
+			homeFile := filepath.Join(dir, "home.toml")
+
+			os.WriteFile(repoFile, []byte(tt.repo), 0644)
+			os.WriteFile(homeFile, []byte(tt.home), 0644)
+
+			got := tomlInSyncIgnoringKeys(repoFile, homeFile, tt.ignoreKeys)
+			if got != tt.wantSync {
+				t.Errorf("tomlInSyncIgnoringKeys() = %v, want %v", got, tt.wantSync)
+			}
+		})
+	}
+}
+
+func TestDriftSummary(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+
+	// Clear default profiles.
+	m.Profiles = map[string]*Profile{}
+
+	// Profile 1: in-sync (both dirs exist with matching generated file)
+	repo1 := filepath.Join(repoDir, "p1")
+	home1 := filepath.Join(homeDir, "p1")
+	os.MkdirAll(repo1, 0755)
+	os.MkdirAll(home1, 0755)
+	os.WriteFile(filepath.Join(repo1, "mcp.json"), []byte("content"), 0644)
+	os.WriteFile(filepath.Join(home1, "mcp.json"), []byte("content"), 0644)
+	m.Profiles["p1"] = &Profile{
+		Name:              "p1",
+		RepoDir:           "p1",
+		HomeDir:           filepath.Join(homeDir, "p1"),
+		GeneratedFile:     "mcp.json",
+		SyncGeneratedOnly: true,
+	}
+
+	// Profile 2: out-of-sync (content differs)
+	repo2 := filepath.Join(repoDir, "p2")
+	home2 := filepath.Join(homeDir, "p2")
+	os.MkdirAll(repo2, 0755)
+	os.MkdirAll(home2, 0755)
+	os.WriteFile(filepath.Join(repo2, "config.toml"), []byte("repo"), 0644)
+	os.WriteFile(filepath.Join(home2, "config.toml"), []byte("home-different"), 0644)
+	m.Profiles["p2"] = &Profile{
+		Name:              "p2",
+		RepoDir:           "p2",
+		HomeDir:           filepath.Join(homeDir, "p2"),
+		GeneratedFile:     "config.toml",
+		SyncGeneratedOnly: true,
+	}
+
+	// Profile 3: missing (home dir doesn't exist)
+	repo3 := filepath.Join(repoDir, "p3")
+	os.MkdirAll(repo3, 0755)
+	os.WriteFile(filepath.Join(repo3, "mcp.json"), []byte("content"), 0644)
+	m.Profiles["p3"] = &Profile{
+		Name:              "p3",
+		RepoDir:           "p3",
+		HomeDir:           filepath.Join(homeDir, "p3-nonexistent"),
+		GeneratedFile:     "mcp.json",
+		SyncGeneratedOnly: true,
+	}
+
+	inSync, outOfSync, missing, err := m.DriftSummary()
+	if err != nil {
+		t.Fatalf("DriftSummary failed: %v", err)
+	}
+
+	if inSync != 1 {
+		t.Errorf("inSync = %d, want 1", inSync)
+	}
+	if outOfSync != 1 {
+		t.Errorf("outOfSync = %d, want 1", outOfSync)
+	}
+	if missing != 1 {
+		t.Errorf("missing = %d, want 1", missing)
+	}
+}
+
+func TestSkillsDirectToHome_AllProfiles_HaveHomePath(t *testing.T) {
+	m, _ := NewManager(t.TempDir())
+
+	for _, name := range m.List() {
+		p := m.Get(name)
+		if p.SkillsDirectToHome && p.SkillsHomePath == "" {
+			t.Errorf("profile %q has SkillsDirectToHome=true but empty SkillsHomePath", name)
+		}
+	}
+}
+
+func TestCompareHomeGeneratedFiles_OptionalExtras(t *testing.T) {
+	homeDir := t.TempDir()
+
+	// Create profile with primary and extra generated files.
+	profile := &Profile{
+		Name:                  "test",
+		GeneratedFile:         "config.toml",
+		ExtraGeneratedFiles:   []string{"settings.json"},
+		GeneratedDirectToHome: true,
+	}
+
+	// Only the primary exists, extras are missing — should not report drift.
+	homeProfile := filepath.Join(homeDir, "test")
+	os.MkdirAll(homeProfile, 0755)
+	os.WriteFile(filepath.Join(homeProfile, "config.toml"), []byte("content"), 0644)
+
+	items := compareHomeGeneratedFiles(homeProfile, profile)
+
+	// Should have exactly 1 item (the primary), and it should be in-sync.
+	if len(items) != 1 {
+		t.Fatalf("expected 1 drift item, got %d: %+v", len(items), items)
+	}
+	if items[0].Status != DriftInSync {
+		t.Errorf("primary file status = %v, want DriftInSync", items[0].Status)
+	}
+	if items[0].File != "config.toml" {
+		t.Errorf("primary file = %q, want %q", items[0].File, "config.toml")
+	}
+
+	// Now also create the extra file — should report 2 in-sync items.
+	os.WriteFile(filepath.Join(homeProfile, "settings.json"), []byte("{}"), 0644)
+
+	items = compareHomeGeneratedFiles(homeProfile, profile)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 drift items, got %d: %+v", len(items), items)
+	}
+	for _, item := range items {
+		if item.Status != DriftInSync {
+			t.Errorf("file %q status = %v, want DriftInSync", item.File, item.Status)
+		}
 	}
 }

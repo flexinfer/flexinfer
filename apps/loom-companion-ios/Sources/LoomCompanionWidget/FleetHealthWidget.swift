@@ -128,15 +128,20 @@ struct FleetHealthWidgetView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(entry.data.healthyServers)/\(entry.data.serverCount)")
                         .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .contentTransition(.numericText())
                     Text("servers healthy")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
+                healthBar
+                    .frame(height: 4)
+
                 Spacer()
             }
 
             Divider()
+                .foregroundStyle(.secondary.opacity(0.3))
 
             VStack(alignment: .leading, spacing: 6) {
                 MetricRow(icon: "rectangle.stack", label: "Sessions", value: entry.data.sessionCount, color: .blue)

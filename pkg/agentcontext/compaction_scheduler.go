@@ -539,10 +539,13 @@ func (cs *CompactionScheduler) sortItemsForCompaction(items []MemoryItem) []Memo
 	sorted := make([]MemoryItem, len(items))
 	copy(sorted, items)
 
+	// Build title-prefix frequency map for duplicate detection.
+	titlePrefixCounts := buildTitlePrefixCounts(sorted)
+
 	// Pre-compute scores to avoid redundant calls during sort
 	scores := make([]float64, len(sorted))
 	for i := range sorted {
-		scores[i] = cs.compactionScore(sorted[i])
+		scores[i] = cs.compactionScore(sorted[i], titlePrefixCounts)
 	}
 
 	sort.Slice(sorted, func(i, j int) bool {
@@ -552,8 +555,31 @@ func (cs *CompactionScheduler) sortItemsForCompaction(items []MemoryItem) []Memo
 	return sorted
 }
 
-// compactionScore calculates a score for compaction priority (higher = compact first)
-func (cs *CompactionScheduler) compactionScore(item MemoryItem) float64 {
+// buildTitlePrefixCounts returns a map of title prefix -> count for duplicate
+// content detection. Prefix is the first 30 characters of the title.
+func buildTitlePrefixCounts(items []MemoryItem) map[string]int {
+	counts := make(map[string]int, len(items))
+	for _, item := range items {
+		prefix := titlePrefix(item.Title)
+		if prefix != "" {
+			counts[prefix]++
+		}
+	}
+	return counts
+}
+
+// titlePrefix returns the first 30 characters of a title for grouping.
+func titlePrefix(title string) string {
+	if len(title) > 30 {
+		return title[:30]
+	}
+	return title
+}
+
+// compactionScore calculates a score for compaction priority (higher = compact first).
+// It considers age, access recency, importance, token size, entry type, and
+// duplicate content detection.
+func (cs *CompactionScheduler) compactionScore(item MemoryItem, titlePrefixCounts map[string]int) float64 {
 	// Age factor (older = higher score)
 	ageDays := time.Since(item.CreatedAt).Hours() / 24
 	ageScore := ageDays / 30.0 // Normalize to roughly 0-1 for a month
@@ -572,8 +598,36 @@ func (cs *CompactionScheduler) compactionScore(item MemoryItem) float64 {
 	}
 	tokenScore := float64(tokenCount) / 1000.0
 
-	// Combine factors
-	return ageScore*0.3 + accessScore*0.3 + priorityScore*0.2 + tokenScore*0.2
+	// Base score from original factors
+	score := ageScore*0.3 + accessScore*0.3 + priorityScore*0.2 + tokenScore*0.2
+
+	// Entry type compaction boost
+	score += entryTypeCompactionBoost(item.Category)
+
+	// Duplicate content detection: items sharing a title prefix with others
+	// are more likely redundant and should compact sooner.
+	if titlePrefixCounts != nil {
+		prefix := titlePrefix(item.Title)
+		if prefix != "" && titlePrefixCounts[prefix] > 1 {
+			score += 0.3
+		}
+	}
+
+	return score
+}
+
+// entryTypeCompactionBoost returns a compaction score modifier based on
+// entry type. Positive values make items compact sooner; negative values
+// make them compact later (i.e., they are preserved longer).
+func entryTypeCompactionBoost(entryType string) float64 {
+	switch EntryType(entryType) {
+	case EntryTypeFileRead:
+		return 0.2
+	case EntryTypeDecision:
+		return -0.3
+	default:
+		return 0.0
+	}
 }
 
 // estimateTokenCount estimates tokens from content length
@@ -719,6 +773,95 @@ func (cs *CompactionScheduler) runPromotionDemotion(ctx context.Context) int {
 	}
 
 	return promoted
+}
+
+// CompactSession compresses memory items older than 30 minutes within a
+// specific session. This is useful for long-running sessions that accumulate
+// lots of context and can be called independently from the global tier-based
+// compaction cycle.
+func (cs *CompactionScheduler) CompactSession(ctx context.Context, sessionID string) (*CompactionStats, error) {
+	if cs.hierarchy == nil {
+		return nil, nil
+	}
+
+	startTime := time.Now()
+	stats := CompactionStats{
+		StartTime: startTime,
+		TierStats: make(map[string]TierCompactionStats),
+	}
+
+	// Recall all items for this session across all tiers.
+	recallReq := MemoryRecallRequest{
+		SessionID: sessionID,
+		Limit:     10000,
+	}
+	result, err := cs.hierarchy.Recall(recallReq)
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Items) == 0 {
+		stats.Duration = time.Since(startTime)
+		return &stats, nil
+	}
+
+	stats.TokensBefore = int64(result.TotalTokens)
+	ageThreshold := 30 * time.Minute
+
+	for _, item := range result.Items {
+		if time.Since(item.CreatedAt) < ageThreshold {
+			continue
+		}
+		stats.ItemsProcessed++
+
+		if cs.compressFunc == nil {
+			continue
+		}
+
+		compressedContent, err := cs.compressFunc(ctx, item.Content)
+		if err != nil {
+			stats.Errors++
+			continue
+		}
+
+		item.Content = compressedContent
+		if item.Metadata == nil {
+			item.Metadata = make(map[string]any)
+		}
+
+		compressionCount := 0
+		if cc, ok := item.Metadata["compression_count"].(float64); ok {
+			compressionCount = int(cc)
+		}
+		item.Metadata["compression_count"] = compressionCount + 1
+		item.Metadata["last_compressed"] = time.Now().Format(time.RFC3339)
+		item.Metadata["original_tokens"] = item.OriginalTokens
+		item.CompressedTokens = estimateTokenCount(compressedContent)
+		now := time.Now()
+		item.CompressedAt = &now
+
+		if err := cs.updateItem(ctx, &item); err != nil {
+			cs.logger.Warn("session compaction: failed to update item",
+				"item_id", item.ID, "session_id", sessionID, "error", err)
+			stats.Errors++
+			continue
+		}
+		stats.ItemsCompressed++
+	}
+
+	// Recalculate token savings.
+	finalResult, err := cs.hierarchy.Recall(recallReq)
+	if err == nil {
+		stats.TokensAfter = int64(finalResult.TotalTokens)
+	}
+	stats.TokensSaved = stats.TokensBefore - stats.TokensAfter
+	stats.Duration = time.Since(startTime)
+
+	if cs.metrics != nil {
+		cs.metrics.CompressionJobs.Add(1)
+		cs.metrics.CompressionTokensSaved.Add(stats.TokensSaved)
+	}
+
+	return &stats, nil
 }
 
 // Status returns the current scheduler status

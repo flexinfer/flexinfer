@@ -46,7 +46,7 @@ targets:
         INFOPLIST_KEY_NSSupportsLiveActivities: YES
         INFOPLIST_KEY_UIBackgroundModes: remote-notification
     entitlements:
-      path: Sources/LoomCompanion/LoomCompanion.entitlements
+      path: Entitlements/LoomCompanion.entitlements
       properties:
         aps-environment: development
         com.apple.security.application-groups:
@@ -73,7 +73,7 @@ targets:
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     entitlements:
-      path: Sources/LoomCompanionWidget/LoomCompanionWidget.entitlements
+      path: Entitlements/LoomCompanionWidget.entitlements
       properties:
         com.apple.security.application-groups:
           - group.ai.flexinfer.loom.companion

@@ -107,6 +107,8 @@ func (m *Manager) registerProfiles() {
 		SyncGeneratedOnly:     true,
 		SkillsTarget:          "kilocode",
 		SkillsManifest:        ".loom-skills-manifest.json",
+		SkillsDirectToHome:    true,
+		SkillsHomePath:        "$HOME/.kilocode/skills",
 		DefaultLoomMode:       true,
 		DefaultResolveSecrets: true,
 	}
@@ -123,6 +125,8 @@ func (m *Manager) registerProfiles() {
 		SyncGeneratedOnly:   true,
 		SkillsTarget:        "claude",
 		SkillsManifest:      ".loom-skills-manifest.json",
+		SkillsDirectToHome:  true,
+		SkillsHomePath:      "$HOME/.claude/commands",
 		DefaultLoomMode:     true,
 	}
 
@@ -200,13 +204,17 @@ func (m *Manager) registerProfiles() {
 	}
 
 	m.Profiles["zed"] = &Profile{
-		Name:              "zed",
-		RepoDir:           ".zed",
-		HomeDir:           "Library/Application Support/Zed",
-		GeneratorTarget:   "zed",
-		GeneratedFile:     "mcp.json",
-		SyncGeneratedOnly: true,
-		DefaultLoomMode:   true,
+		Name:               "zed",
+		RepoDir:            ".zed",
+		HomeDir:            "Library/Application Support/Zed",
+		GeneratorTarget:    "zed",
+		GeneratedFile:      "mcp.json",
+		SyncGeneratedOnly:  true,
+		SkillsTarget:       "zed",
+		SkillsManifest:     ".loom-skills-manifest.json",
+		SkillsDirectToHome: true,
+		SkillsHomePath:     "$HOME/.config/zed/skills",
+		DefaultLoomMode:    true,
 	}
 
 	m.Profiles["opencode"] = &Profile{
@@ -217,6 +225,10 @@ func (m *Manager) registerProfiles() {
 		GeneratedFile:       "opencode.json",
 		ExtraGeneratedFiles: []string{filepath.Join("plugins", "loom-hooks.ts")},
 		SyncGeneratedOnly:   true,
+		SkillsTarget:        "opencode",
+		SkillsManifest:      ".loom-skills-manifest.json",
+		SkillsDirectToHome:  true,
+		SkillsHomePath:      "$HOME/.config/opencode/skills",
 		DefaultLoomMode:     true,
 	}
 }
