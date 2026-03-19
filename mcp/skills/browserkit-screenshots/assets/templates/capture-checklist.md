@@ -5,7 +5,3 @@
 - Apply UX/UI changes.
 - Capture matching "after" screenshots with identical inputs (URL, selector, viewport, wait settings).
 - If diffs are noisy, switch to `selector` screenshots to focus on the component.
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

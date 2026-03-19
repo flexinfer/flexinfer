@@ -24,7 +24,3 @@ When doing structured work, prefer producing (or updating) these files:
 - `30-implementation-plan.md` (when defining “how”)
 - `40-decisions.md` (when choosing)
 - `50-worklog.md` (while executing)
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

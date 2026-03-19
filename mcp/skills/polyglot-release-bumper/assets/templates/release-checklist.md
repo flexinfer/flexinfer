@@ -23,7 +23,3 @@
 - [ ] Tag `vX.Y.Z`
 - [ ] Push branch + tag
 - [ ] Confirm CI/publish jobs
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

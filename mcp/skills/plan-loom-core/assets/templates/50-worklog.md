@@ -11,7 +11,3 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
 - What’s next:
 - Sources:
   - [S1] …
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

@@ -22,7 +22,3 @@
 ## Risks
 
 - [ ] List major risks and mitigations.
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

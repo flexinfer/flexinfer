@@ -37,7 +37,3 @@
 ## Notes
 
 <!-- General observations and findings -->
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

@@ -40,12 +40,4 @@
 
 ## Deferred / Not In Scope
 
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-- 
-=======
 -
->>>>>>> Stashed changes
-=======
--
->>>>>>> Stashed changes

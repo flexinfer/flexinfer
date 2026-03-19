@@ -49,7 +49,3 @@ except Exception as e:
 PY
 
 echo "Ready: BrowserKit screenshots should work."
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

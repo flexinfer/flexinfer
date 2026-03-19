@@ -20,7 +20,3 @@
 ## Sources
 
 - [S1] …
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes
