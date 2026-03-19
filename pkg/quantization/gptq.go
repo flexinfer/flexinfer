@@ -27,6 +27,7 @@ type gptqModelPolicy struct {
 	PythonPackages         []string               `json:"python_packages,omitempty"`
 	QuantizeConfigOverride map[string]interface{} `json:"quantize_config_overrides,omitempty"`
 	CalibrationOverrides   map[string]int         `json:"calibration_overrides,omitempty"`
+	RuntimeOverrides       map[string]interface{} `json:"runtime_overrides,omitempty"`
 }
 
 // Format returns the GPTQ quantization format.
@@ -221,6 +222,11 @@ func defaultGPTQModelPoliciesJSON() string {
 				"max_samples": 16,
 				"max_seq_len": 512,
 				"max_tokens":  8192,
+			},
+			RuntimeOverrides: map[string]interface{}{
+				"attn_implementation": "eager",
+				"disable_qwen35_fla":  true,
+				"fix_mistral_regex":   true,
 			},
 		},
 	}

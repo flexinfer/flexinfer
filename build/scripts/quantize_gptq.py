@@ -42,6 +42,11 @@ DEFAULT_MODEL_POLICIES = [
             "max_seq_len": 512,
             "max_tokens": 8192,
         },
+        "runtime_overrides": {
+            "attn_implementation": "eager",
+            "disable_qwen35_fla": True,
+            "fix_mistral_regex": True,
+        },
     },
 ]
 
@@ -248,6 +253,53 @@ def policy_python_packages_satisfied(policy, packages):
     except Exception:
         return False
     return True
+
+
+def runtime_overrides_for_policy(policy):
+    overrides = (policy or {}).get("runtime_overrides", {})
+    return dict(overrides) if isinstance(overrides, dict) else {}
+
+
+def load_tokenizer_with_runtime_overrides(model_dir, runtime_overrides):
+    kwargs = {"trust_remote_code": True}
+    if runtime_overrides.get("fix_mistral_regex"):
+        kwargs["fix_mistral_regex"] = True
+    try:
+        return AutoTokenizer.from_pretrained(model_dir, **kwargs)
+    except TypeError:
+        if "fix_mistral_regex" not in kwargs:
+            raise
+        kwargs.pop("fix_mistral_regex", None)
+        print("Tokenizer does not support fix_mistral_regex; retrying without it")
+        return AutoTokenizer.from_pretrained(model_dir, **kwargs)
+
+
+def apply_runtime_overrides(policy, config=None):
+    overrides = runtime_overrides_for_policy(policy)
+    if not overrides:
+        return overrides
+
+    attn_implementation = overrides.get("attn_implementation", "")
+    if attn_implementation and config is not None:
+        config._attn_implementation = attn_implementation
+        if hasattr(config, "attn_implementation"):
+            config.attn_implementation = attn_implementation
+        print(f"Applied runtime override: attn_implementation={attn_implementation}")
+
+    if overrides.get("disable_qwen35_fla"):
+        try:
+            from transformers.models.qwen3_5 import modeling_qwen3_5 as qwen35_modeling
+
+            qwen35_modeling.causal_conv1d_fn = None
+            qwen35_modeling.causal_conv1d_update = None
+            qwen35_modeling.chunk_gated_delta_rule = None
+            qwen35_modeling.fused_recurrent_gated_delta_rule = None
+            qwen35_modeling.is_fast_path_available = False
+            print("Disabled Qwen3.5 FLA fast path for quantization; using torch fallback")
+        except Exception as exc:
+            print(f"WARN: failed to disable Qwen3.5 FLA fast path: {exc}")
+
+    return overrides
 
 
 # ── Read config from environment ──────────────────────────────────────
@@ -727,6 +779,7 @@ def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
     normalize_hf_config_compat(config, trust_remote_code=trust_remote_code)
     prepare_remote_model_init_compat(model_dir, config)
     config = resolve_loader_config(model_definition, config, trust_remote_code=trust_remote_code)
+    apply_runtime_overrides(policy, config)
 
     if quantize_config.device is None:
         quantize_config.device = auto_select_device(None, None)
@@ -791,7 +844,8 @@ def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
     )
 
 # ── Tokenizer + model ──────────────────────────────────────────────────
-tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
+runtime_overrides = runtime_overrides_for_policy(policy)
+tokenizer = load_tokenizer_with_runtime_overrides(model_dir, runtime_overrides)
 qcfg_kwargs = dict(bits=bits, group_size=group_size, sym=sym, desc_act=desc_act)
 if dynamic_config is not None:
     qcfg_kwargs["dynamic"] = dynamic_config

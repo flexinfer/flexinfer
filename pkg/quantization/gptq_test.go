@@ -148,6 +148,19 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 			if got := int(overrides["max_tokens"].(float64)); got != 8192 {
 				t.Fatalf("default max_tokens override = %d, want 8192", got)
 			}
+			runtimeOverrides, ok := policies[0]["runtime_overrides"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected runtime_overrides in default policy JSON")
+			}
+			if got := runtimeOverrides["attn_implementation"]; got != "eager" {
+				t.Fatalf("default attn_implementation override = %v, want eager", got)
+			}
+			if got := runtimeOverrides["disable_qwen35_fla"]; got != true {
+				t.Fatalf("default disable_qwen35_fla override = %v, want true", got)
+			}
+			if got := runtimeOverrides["fix_mistral_regex"]; got != true {
+				t.Fatalf("default fix_mistral_regex override = %v, want true", got)
+			}
 		}
 	})
 

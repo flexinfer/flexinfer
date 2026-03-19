@@ -175,7 +175,7 @@ diffusers:
 
 quantization:
   useRuntimeForQuantize: true
-  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:cf142af522f1c58b050a5477c7287ca3853ba85a8be64049e4cbed480e525901"
+  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:1c50638ffb316a1acf4fb8327b577a391ffe71e44a123e41406801065a3e7172"
   gptqModelPolicies:
     - name: qwen3.5-text
       match_model_types:
@@ -200,6 +200,10 @@ quantization:
         max_samples: 16
         max_seq_len: 512
         max_tokens: 8192
+      runtime_overrides:
+        attn_implementation: eager
+        disable_qwen35_fla: true
+        fix_mistral_regex: true
   images:
     awq: registry.harbor.lan/flexinfer/quantizer:awq-rocm-gfx1100
     gptqRocm: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100
@@ -211,7 +215,7 @@ runtime:
   terminationGracePeriodSeconds: 60
   profiles:
     - name: gfx1100
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:cf142af522f1c58b050a5477c7287ca3853ba85a8be64049e4cbed480e525901"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:1c50638ffb316a1acf4fb8327b577a391ffe71e44a123e41406801065a3e7172"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
@@ -233,7 +237,7 @@ runtime:
           persistentVolumeClaim:
             claimName: qwen35-27b-opus-distill-gptq
     - name: gfx1100-5930k
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:5b49d54ff45c3822cd796c93f8ca06f5e51ac4c21d8dd63ff7f8214005033295"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:1c50638ffb316a1acf4fb8327b577a391ffe71e44a123e41406801065a3e7172"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 1
