@@ -72,6 +72,9 @@ proxy:
     kubernetes.io/arch: amd64
     node.flexstack.io/class: control-plane
 
+tenancy:
+  enabled: false
+
 # Backend images are now auto-detected by the controller based on GPU vendor:
 # - AMD (amd.com/gpu): ollama/ollama:rocm
 # - NVIDIA (nvidia.com/gpu): ollama/ollama:latest
