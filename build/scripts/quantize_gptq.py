@@ -596,6 +596,35 @@ def resolve_checkpoint_index(model_dir):
     return candidates[0]
 
 
+def patch_defuser_transformers_prerelease_gate():
+    import defuser.defuser as defuser_impl
+    import transformers
+    from packaging import version as packaging_version
+
+    original = defuser_impl.is_supported_transformers_version
+    current = packaging_version.parse(transformers.__version__)
+    minimum = packaging_version.parse(defuser_impl.MIN_SUPPORTED_TRANSFORMERS_VERSION)
+
+    if original():
+        return
+
+    # Defuser's public API gate treats 5.3.0.dev* as older than 5.3.0 and
+    # skips replace_fused_blocks()/convert_model() entirely. We only need the
+    # model-class patch path here; the newer conversion-mapping path remains
+    # guarded by Defuser's own stricter version check inside replace_fused_blocks.
+    if current.base_version != minimum.base_version:
+        return
+
+    def _allow_same_base_prerelease():
+        return True
+
+    defuser_impl.is_supported_transformers_version = _allow_same_base_prerelease
+    print(
+        "Patched Defuser public API gate to allow transformers prerelease "
+        f"{transformers.__version__} for base version {current.base_version}"
+    )
+
+
 def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
     import defuser
 
@@ -603,6 +632,7 @@ def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
     model_definition = check_and_get_model_definition(model_dir, trust_remote_code=trust_remote_code)
     config = AutoConfig.from_pretrained(model_dir, trust_remote_code=trust_remote_code)
 
+    patch_defuser_transformers_prerelease_gate()
     defuser.replace_fused_blocks(config.model_type)
     normalize_hf_config_compat(config, trust_remote_code=trust_remote_code)
     prepare_remote_model_init_compat(model_dir, config)
