@@ -161,6 +161,28 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 	})
 
+	t.Run("resume defaults enabled", func(t *testing.T) {
+		env := builder.buildEnv("model", 4, 128, true, false, 48, "0.80", "auto", nil)
+		if v := findEnv(env, "GPTQ_RESUME"); v != "true" {
+			t.Errorf("GPTQ_RESUME = %q, want true", v)
+		}
+		if v := findEnv(env, "GPTQ_CALIBRATION_CACHE"); v != "true" {
+			t.Errorf("GPTQ_CALIBRATION_CACHE = %q, want true", v)
+		}
+	})
+
+	t.Run("resume env overrides", func(t *testing.T) {
+		t.Setenv("FLEXINFER_GPTQ_RESUME", "false")
+		t.Setenv("FLEXINFER_GPTQ_CALIBRATION_CACHE", "false")
+		env := builder.buildEnv("model", 4, 128, true, false, 48, "0.80", "auto", nil)
+		if v := findEnv(env, "GPTQ_RESUME"); v != "false" {
+			t.Errorf("GPTQ_RESUME = %q, want false", v)
+		}
+		if v := findEnv(env, "GPTQ_CALIBRATION_CACHE"); v != "false" {
+			t.Errorf("GPTQ_CALIBRATION_CACHE = %q, want false", v)
+		}
+	})
+
 	t.Run("wrapper script has ROCm detection", func(t *testing.T) {
 		script := builder.gptqWrapperScript()
 		if !strings.Contains(script, "HSA_OVERRIDE_GFX_VERSION=9.0.6") {

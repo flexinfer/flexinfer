@@ -161,6 +161,8 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 	hessianClampAbs := getenvDefault("FLEXINFER_GPTQ_HESSIAN_CLAMP_ABS", "0")
 	dampPercentOverride := os.Getenv("FLEXINFER_GPTQ_DAMP_PERCENT_OVERRIDE")
 	dampAutoIncrementOverride := os.Getenv("FLEXINFER_GPTQ_DAMP_AUTO_INCREMENT_OVERRIDE")
+	resumeEnabled := getenvDefault("FLEXINFER_GPTQ_RESUME", "true")
+	calibrationCacheEnabled := getenvDefault("FLEXINFER_GPTQ_CALIBRATION_CACHE", "true")
 
 	return []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
@@ -184,6 +186,8 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 		{Name: "GPTQ_HESSIAN_CLAMP_ABS", Value: hessianClampAbs},
 		{Name: "GPTQ_DAMP_PERCENT_OVERRIDE", Value: dampPercentOverride},
 		{Name: "GPTQ_DAMP_AUTO_INCREMENT_OVERRIDE", Value: dampAutoIncrementOverride},
+		{Name: "GPTQ_RESUME", Value: resumeEnabled},
+		{Name: "GPTQ_CALIBRATION_CACHE", Value: calibrationCacheEnabled},
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
 	}
 }

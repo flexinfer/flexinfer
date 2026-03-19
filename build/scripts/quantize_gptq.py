@@ -16,6 +16,9 @@ import sys
 import time
 
 POLICY_STATE_FILE = ".flexinfer-gptq-policy.json"
+CHECKPOINT_DIR_NAME = ".flexinfer-gptq-cache"
+CHECKPOINT_STATE_FILE = "checkpoint.json"
+CALIBRATION_CACHE_FILE = "calibration-examples.pt"
 DEFAULT_MODEL_POLICIES = [
     {
         "name": "qwen3.5-text",
@@ -192,10 +195,165 @@ qcfg_damp_percent_override = os.environ.get("GPTQ_DAMP_PERCENT_OVERRIDE", "").st
 qcfg_damp_auto_increment_override = os.environ.get(
     "GPTQ_DAMP_AUTO_INCREMENT_OVERRIDE", ""
 ).strip()
+gptq_resume_enabled = env_bool("GPTQ_RESUME", True)
+gptq_calibration_cache_enabled = env_bool("GPTQ_CALIBRATION_CACHE", True)
 
 emit_progress(
     "start", phase="quantizing", model=model_dir, bits=bits, group_size=group_size
 )
+
+
+def checkpoint_dir(model_dir):
+    return os.path.join(model_dir, CHECKPOINT_DIR_NAME)
+
+
+def checkpoint_state_path(model_dir):
+    return os.path.join(checkpoint_dir(model_dir), CHECKPOINT_STATE_FILE)
+
+
+def calibration_cache_path(model_dir):
+    return os.path.join(checkpoint_dir(model_dir), CALIBRATION_CACHE_FILE)
+
+
+def load_quant_checkpoint(model_dir):
+    path = checkpoint_state_path(model_dir)
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        state = json.load(f)
+    return state if isinstance(state, dict) else {}
+
+
+def persist_quant_checkpoint(model_dir, state):
+    os.makedirs(checkpoint_dir(model_dir), exist_ok=True)
+    path = checkpoint_state_path(model_dir)
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w") as f:
+        json.dump(state, f, indent=2, sort_keys=True)
+    os.replace(tmp_path, path)
+
+
+def calibration_cache_fingerprint():
+    return {
+        "dataset": dataset_name,
+        "max_seq_len": max_seq_len,
+        "max_samples": max_samples,
+        "model_dir": os.path.basename(model_dir.rstrip("/")),
+    }
+
+
+def load_cached_examples(model_dir):
+    if not (gptq_resume_enabled and gptq_calibration_cache_enabled):
+        return None
+    cache_path = calibration_cache_path(model_dir)
+    if not os.path.exists(cache_path):
+        return None
+    state = load_quant_checkpoint(model_dir)
+    if state.get("calibration_cache") != calibration_cache_fingerprint():
+        return None
+    try:
+        payload = torch.load(cache_path, map_location="cpu", weights_only=False)
+    except TypeError:
+        payload = torch.load(cache_path, map_location="cpu")
+    if not isinstance(payload, list):
+        return None
+    print(f"Loaded cached calibration examples: {len(payload)} samples")
+    emit_progress(
+        "progress",
+        phase="quantizing",
+        percent=9.0,
+        detail=f"loaded cached calibration data ({len(payload)} samples)",
+    )
+    return payload
+
+
+def persist_cached_examples(model_dir, examples, state):
+    if not (gptq_resume_enabled and gptq_calibration_cache_enabled):
+        return
+    os.makedirs(checkpoint_dir(model_dir), exist_ok=True)
+    torch.save(examples, calibration_cache_path(model_dir))
+    state = dict(state)
+    state["calibration_cache"] = calibration_cache_fingerprint()
+    persist_quant_checkpoint(model_dir, state)
+
+
+def infer_total_layers(gptq_model):
+    config = getattr(getattr(gptq_model, "model", None), "config", None)
+    for attr in ("num_hidden_layers", "n_layer", "num_layers"):
+        value = getattr(config, attr, None)
+        if isinstance(value, int) and value > 0:
+            return value
+    nodes = getattr(gptq_model, "extract_layers_node", lambda: [])()
+    current = getattr(gptq_model, "model", None)
+    if current is None or not nodes:
+        return None
+    try:
+        for part in nodes[0].split("."):
+            current = getattr(current, part)
+        return len(current)
+    except Exception:
+        return None
+
+
+class QuantizationCheckpointCallback:
+    def __init__(self, model_dir, total_layers, state):
+        self.model_dir = model_dir
+        self.total_layers = total_layers
+        self.state = dict(state)
+        self.state.setdefault("completed_layers", [])
+
+    def _persist(self):
+        persist_quant_checkpoint(self.model_dir, self.state)
+
+    def subset_event(self, stage, layer_idx, subset_index, subset_total, module_names, processor):
+        self.state["stage"] = "quantizing"
+        self.state["active"] = {
+            "layer_idx": layer_idx,
+            "subset_index": subset_index,
+            "subset_total": subset_total,
+            "module_names": module_names,
+            "processor": processor,
+            "stage": stage,
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        percent = 10.0
+        if self.total_layers:
+            layer_fraction = max(layer_idx, 0) / max(self.total_layers, 1)
+            subset_fraction = 0.0
+            if subset_total:
+                subset_fraction = max(subset_index - 1, 0) / max(subset_total, 1)
+            percent = min(89.0, 10.0 + ((layer_fraction + (subset_fraction / max(self.total_layers, 1))) * 80.0))
+        detail = (
+            f"layer {layer_idx + 1}"
+            + (f" subset {subset_index}/{subset_total}" if subset_total else "")
+            + (f" via {processor}" if processor else "")
+        )
+        emit_progress("progress", phase="quantizing", percent=round(percent, 1), detail=detail)
+        self._persist()
+
+    def layer_complete(self, layer_idx, submodule_finalized):
+        completed = self.state.setdefault("completed_layers", [])
+        if submodule_finalized and layer_idx not in completed:
+            completed.append(layer_idx)
+            completed.sort()
+        self.state["stage"] = "quantizing"
+        self.state["last_completed_layer"] = layer_idx
+        self.state["last_completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        detail = f"completed layer {layer_idx + 1}"
+        percent = 10.0
+        if self.total_layers:
+            percent = min(89.0, 10.0 + (((layer_idx + 1) / max(self.total_layers, 1)) * 80.0))
+        emit_progress("progress", phase="quantizing", percent=round(percent, 1), detail=detail)
+        self._persist()
+
+
+quant_checkpoint_state = load_quant_checkpoint(model_dir) if gptq_resume_enabled else {}
+if quant_checkpoint_state:
+    print(
+        "Loaded quantization checkpoint state: "
+        f"stage={quant_checkpoint_state.get('stage', 'unknown')} "
+        f"completed_layers={len(quant_checkpoint_state.get('completed_layers', []))}"
+    )
 
 # ── VLM config extraction ─────────────────────────────────────────────
 # Models like Qwen3.5 have a composite VLM config wrapping text_config.
@@ -504,26 +662,48 @@ else:
 emit_progress("progress", phase="quantizing", percent=5.0, detail="model loaded")
 
 # ── Calibration dataset ────────────────────────────────────────────────
-dataset = load_dataset(dataset_name, split="validation")
-examples = []
-for sample in dataset.select(range(min(max_samples, len(dataset)))):
-    tok = tokenizer(
-        sample["text"], return_tensors="pt", max_length=max_seq_len, truncation=True
-    )
-    examples.append({"input_ids": tok.input_ids, "attention_mask": tok.attention_mask})
+examples = load_cached_examples(model_dir)
+if examples is None:
+    dataset = load_dataset(dataset_name, split="validation")
+    examples = []
+    for sample in dataset.select(range(min(max_samples, len(dataset)))):
+        tok = tokenizer(
+            sample["text"], return_tensors="pt", max_length=max_seq_len, truncation=True
+        )
+        examples.append({"input_ids": tok.input_ids, "attention_mask": tok.attention_mask})
+    checkpoint_state = dict(quant_checkpoint_state)
+    checkpoint_state["stage"] = "calibration_ready"
+    checkpoint_state["calibration_samples"] = len(examples)
+    checkpoint_state["calibration_cached_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    persist_cached_examples(model_dir, examples, checkpoint_state)
+    quant_checkpoint_state = checkpoint_state
 
 emit_progress(
     "progress", phase="quantizing", percent=10.0, detail="calibration data ready"
 )
 
 # ── Quantize ───────────────────────────────────────────────────────────
+total_layers = infer_total_layers(model)
+checkpoint_callback = QuantizationCheckpointCallback(model_dir, total_layers, quant_checkpoint_state)
+model.layer_callback = checkpoint_callback
+model.subset_callback = checkpoint_callback
+checkpoint_callback.state["stage"] = "quantizing"
+checkpoint_callback.state["total_layers"] = total_layers
+checkpoint_callback.state["resume_enabled"] = gptq_resume_enabled
+checkpoint_callback._persist()
 model.quantize(examples)
 
 emit_progress("progress", phase="saving", percent=90.0, detail="saving quantized model")
+checkpoint_callback.state["stage"] = "saving"
+checkpoint_callback.state["save_started_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+checkpoint_callback._persist()
 
 # ── Save ───────────────────────────────────────────────────────────────
 model.save(out_dir)
 tokenizer.save_pretrained(out_dir)
 
+checkpoint_callback.state["stage"] = "complete"
+checkpoint_callback.state["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+checkpoint_callback._persist()
 emit_progress("complete", phase="quantizing")
 print("Quantization complete")
