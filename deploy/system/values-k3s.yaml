@@ -110,6 +110,11 @@ scheduler:
     image:
       repository: registry.k8s.io/kube-scheduler
       tag: "v1.28.0"
+  kubeconfigInit:
+    image:
+      repository: busybox
+      tag: "1.37"
+      pullPolicy: IfNotPresent
   resources:
     limits:
       cpu: 500m
@@ -130,6 +135,12 @@ scheduler:
     util: 0.2
     cost: 0.1
     cache: 0.3
+    vramFree: 10.0
+  tenantFairShare:
+    enabled: false
+    weight: 5.0
+    gpuBudget: 1.0
+    tenantLabelKey: ""
 
 benchmarker:
   enabled: true
