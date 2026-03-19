@@ -1,4 +1,23 @@
-{{- if .Values.controller.enabled }}
+{{- $controller := default (dict) .Values.controller -}}
+{{- $controllerImage := default (dict) $controller.image -}}
+{{- $controllerRuntime := default (dict) $controller.runtime -}}
+{{- $flashLoader := default (dict) $controllerRuntime.flashLoader -}}
+{{- $backend := default (dict) .Values.backend -}}
+{{- $backendImage := default (dict) $backend.image -}}
+{{- $benchmarker := default (dict) .Values.benchmarker -}}
+{{- $benchmarkerImage := default (dict) $benchmarker.image -}}
+{{- $observability := default (dict) .Values.observability -}}
+{{- $tracing := default (dict) $observability.tracing -}}
+{{- $mlcllm := default (dict) .Values.mlcllm -}}
+{{- $mlcllmDefaults := default (dict) $mlcllm.defaults -}}
+{{- $vllm := default (dict) .Values.vllm -}}
+{{- $vllmDefaults := default (dict) $vllm.defaults -}}
+{{- $llamacpp := default (dict) .Values.llamacpp -}}
+{{- $llamacppDefaults := default (dict) $llamacpp.defaults -}}
+{{- $quantization := default (dict) .Values.quantization -}}
+{{- $quantizationImages := default (dict) $quantization.images -}}
+{{- $oras := default (dict) .Values.oras -}}
+{{- if $controller.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -8,7 +27,7 @@ metadata:
     {{- include "flexinfer.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
 spec:
-  replicas: {{ .Values.controller.replicas }}
+  replicas: {{ default 1 $controller.replicas }}
   selector:
     matchLabels:
       {{- include "flexinfer.selectorLabels" . | nindent 6 }}
@@ -25,22 +44,22 @@ spec:
         app.kubernetes.io/component: controller
     spec:
       serviceAccountName: {{ include "flexinfer.controllerServiceAccountName" . }}
-      {{- with .Values.controller.nodeSelector }}
+      {{- with $controller.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.controller.tolerations }}
+      {{- with $controller.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.controller.affinity }}
+      {{- with $controller.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: manager
-          image: "{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" .Values.controller.image }}
+          image: "{{ $controllerImage.repository }}:{{ $controllerImage.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" $controllerImage }}
           command:
             - /manager
           args:
@@ -65,109 +84,109 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
-            {{- toYaml .Values.controller.resources | nindent 12 }}
+            {{- toYaml $controller.resources | nindent 12 }}
           env:
             - name: DEFAULT_BACKEND_IMAGE
-              value: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+              value: "{{ $backendImage.repository }}:{{ $backendImage.tag }}"
             - name: BENCHMARKER_IMAGE
-              value: "{{ .Values.benchmarker.image.repository }}:{{ .Values.benchmarker.image.tag }}"
+              value: "{{ $benchmarkerImage.repository }}:{{ $benchmarkerImage.tag }}"
             - name: BENCHMARK_SERVICE_ACCOUNT
               value: {{ include "flexinfer.benchmarkerServiceAccountName" . | quote }}
-            {{- if .Values.benchmarker.postgresDsn }}
+            {{- if $benchmarker.postgresDsn }}
             - name: POSTGRES_DSN
-              value: {{ .Values.benchmarker.postgresDsn | quote }}
+              value: {{ $benchmarker.postgresDsn | quote }}
             {{- end }}
-            {{- if .Values.controller.runtime.shmSizeLimit }}
+            {{- if $controllerRuntime.shmSizeLimit }}
             - name: DEFAULT_SHM_SIZE_LIMIT
-              value: {{ .Values.controller.runtime.shmSizeLimit | quote }}
+              value: {{ $controllerRuntime.shmSizeLimit | quote }}
             {{- end }}
-            {{- if .Values.controller.runtime.flashLoader }}
+            {{- if $controllerRuntime.flashLoader }}
             - name: DEFAULT_FLASH_LOADER_ENABLED
-              value: {{ .Values.controller.runtime.flashLoader.enabled | quote }}
-            {{- if .Values.controller.runtime.flashLoader.image }}
+              value: {{ default false $flashLoader.enabled | quote }}
+            {{- if $flashLoader.image }}
             - name: DEFAULT_FLASH_LOADER_IMAGE
-              value: {{ .Values.controller.runtime.flashLoader.image | quote }}
+              value: {{ $flashLoader.image | quote }}
             {{- end }}
-            {{- if .Values.controller.runtime.flashLoader.concurrency }}
+            {{- if $flashLoader.concurrency }}
             - name: DEFAULT_FLASH_LOADER_CONCURRENCY
-              value: {{ .Values.controller.runtime.flashLoader.concurrency | quote }}
+              value: {{ $flashLoader.concurrency | quote }}
             {{- end }}
-            {{- if .Values.controller.runtime.flashLoader.tmpfsSizeLimit }}
+            {{- if $flashLoader.tmpfsSizeLimit }}
             - name: DEFAULT_FLASH_LOADER_TMPFS_SIZE_LIMIT
-              value: {{ .Values.controller.runtime.flashLoader.tmpfsSizeLimit | quote }}
+              value: {{ $flashLoader.tmpfsSizeLimit | quote }}
             {{- end }}
             {{- end }}
-            {{- if .Values.observability.tracing.enabled }}
+            {{- if $tracing.enabled }}
             - name: FLEXINFER_OTEL_ENABLED
               value: "true"
-            {{- if .Values.observability.tracing.otlpEndpoint }}
+            {{- if $tracing.otlpEndpoint }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: {{ .Values.observability.tracing.otlpEndpoint | quote }}
+              value: {{ $tracing.otlpEndpoint | quote }}
             {{- end }}
-            {{- if .Values.observability.tracing.serviceNamespace }}
+            {{- if $tracing.serviceNamespace }}
             - name: FLEXINFER_OTEL_SERVICE_NAMESPACE
-              value: {{ .Values.observability.tracing.serviceNamespace | quote }}
+              value: {{ $tracing.serviceNamespace | quote }}
             {{- end }}
             {{- end }}
-            {{- if .Values.mlcllm.cudaImage }}
+            {{- if $mlcllm.cudaImage }}
             - name: DEFAULT_MLC_LLM_IMAGE
-              value: {{ .Values.mlcllm.cudaImage | quote }}
+              value: {{ $mlcllm.cudaImage | quote }}
             {{- end }}
-            {{- if .Values.mlcllm.rocmImage }}
+            {{- if $mlcllm.rocmImage }}
             - name: DEFAULT_MLC_LLM_IMAGE_AMD
-              value: {{ .Values.mlcllm.rocmImage | quote }}
+              value: {{ $mlcllm.rocmImage | quote }}
             {{- end }}
-            {{- if .Values.mlcllm.maxwellImage }}
+            {{- if $mlcllm.maxwellImage }}
             - name: DEFAULT_MLC_LLM_IMAGE_MAXWELL
-              value: {{ .Values.mlcllm.maxwellImage | quote }}
+              value: {{ $mlcllm.maxwellImage | quote }}
             {{- end }}
-            {{- if .Values.mlcllm.gfx1100Image }}
+            {{- if $mlcllm.gfx1100Image }}
             - name: DEFAULT_MLC_LLM_IMAGE_GFX1100
-              value: {{ .Values.mlcllm.gfx1100Image | quote }}
+              value: {{ $mlcllm.gfx1100Image | quote }}
             {{- end }}
-            {{- if .Values.mlcllm.gfx906Image }}
+            {{- if $mlcllm.gfx906Image }}
             - name: DEFAULT_MLC_LLM_IMAGE_GFX906
-              value: {{ .Values.mlcllm.gfx906Image | quote }}
+              value: {{ $mlcllm.gfx906Image | quote }}
             {{- end }}
-            {{- if .Values.mlcllm.defaults.mode }}
+            {{- if $mlcllmDefaults.mode }}
             - name: DEFAULT_MLC_LLM_MODE
-              value: {{ .Values.mlcllm.defaults.mode | quote }}
+              value: {{ $mlcllmDefaults.mode | quote }}
             {{- end }}
-            {{- if .Values.mlcllm.defaults.gpuMemoryBytes }}
+            {{- if $mlcllmDefaults.gpuMemoryBytes }}
             - name: DEFAULT_MLC_GPU_SIZE_BYTES
-              value: {{ .Values.mlcllm.defaults.gpuMemoryBytes | quote }}
+              value: {{ $mlcllmDefaults.gpuMemoryBytes | quote }}
             {{- end }}
-            {{- if .Values.mlcllm.defaults.jitPolicy }}
+            {{- if $mlcllmDefaults.jitPolicy }}
             - name: DEFAULT_MLC_JIT_POLICY
-              value: {{ .Values.mlcllm.defaults.jitPolicy | quote }}
+              value: {{ $mlcllmDefaults.jitPolicy | quote }}
             {{- end }}
-            {{- if .Values.mlcllm.defaults.modelLibPath }}
+            {{- if $mlcllmDefaults.modelLibPath }}
             - name: DEFAULT_MLC_LLM_MODEL_LIB
-              value: {{ .Values.mlcllm.defaults.modelLibPath | quote }}
+              value: {{ $mlcllmDefaults.modelLibPath | quote }}
             {{- end }}
-            {{- if .Values.mlcllm.defaults.args }}
+            {{- if $mlcllmDefaults.args }}
             - name: DEFAULT_MLC_LLM_ARGS
-              value: {{ .Values.mlcllm.defaults.args | quote }}
+              value: {{ $mlcllmDefaults.args | quote }}
             {{- end }}
-            {{- if .Values.vllm.cudaImage }}
+            {{- if $vllm.cudaImage }}
             - name: DEFAULT_VLLM_IMAGE
-              value: {{ .Values.vllm.cudaImage | quote }}
+              value: {{ $vllm.cudaImage | quote }}
             {{- end }}
-            {{- if .Values.vllm.rocmImage }}
+            {{- if $vllm.rocmImage }}
             - name: DEFAULT_VLLM_IMAGE_AMD
-              value: {{ .Values.vllm.rocmImage | quote }}
+              value: {{ $vllm.rocmImage | quote }}
             {{- end }}
-            {{- if .Values.vllm.gfx1100Image }}
+            {{- if $vllm.gfx1100Image }}
             - name: DEFAULT_VLLM_IMAGE_GFX1100
-              value: {{ .Values.vllm.gfx1100Image | quote }}
+              value: {{ $vllm.gfx1100Image | quote }}
             {{- end }}
-            {{- if .Values.vllm.gfx906Image }}
+            {{- if $vllm.gfx906Image }}
             - name: DEFAULT_VLLM_IMAGE_GFX906
-              value: {{ .Values.vllm.gfx906Image | quote }}
+              value: {{ $vllm.gfx906Image | quote }}
             {{- end }}
-            {{- if .Values.vllm.defaults.args }}
+            {{- if $vllmDefaults.args }}
             - name: DEFAULT_VLLM_ARGS
-              value: {{ .Values.vllm.defaults.args | quote }}
+              value: {{ $vllmDefaults.args | quote }}
             {{- end }}
             {{- if .Values.ollama }}
             {{- if .Values.ollama.maxwellImage }}
@@ -183,29 +202,29 @@ spec:
               value: {{ .Values.ollama.gfx906Image | quote }}
             {{- end }}
             {{- end }}
-            {{- if .Values.llamacpp.cudaImage }}
+            {{- if $llamacpp.cudaImage }}
             - name: DEFAULT_LLAMA_CPP_IMAGE
-              value: {{ .Values.llamacpp.cudaImage | quote }}
+              value: {{ $llamacpp.cudaImage | quote }}
             {{- end }}
-            {{- if .Values.llamacpp.rocmImage }}
+            {{- if $llamacpp.rocmImage }}
             - name: DEFAULT_LLAMA_CPP_IMAGE_AMD
-              value: {{ .Values.llamacpp.rocmImage | quote }}
+              value: {{ $llamacpp.rocmImage | quote }}
             {{- end }}
-            {{- if .Values.llamacpp.gfx1100Image }}
+            {{- if $llamacpp.gfx1100Image }}
             - name: DEFAULT_LLAMA_CPP_IMAGE_GFX1100
-              value: {{ .Values.llamacpp.gfx1100Image | quote }}
+              value: {{ $llamacpp.gfx1100Image | quote }}
             {{- end }}
-            {{- if .Values.llamacpp.gfx906Image }}
+            {{- if $llamacpp.gfx906Image }}
             - name: DEFAULT_LLAMA_CPP_IMAGE_GFX906
-              value: {{ .Values.llamacpp.gfx906Image | quote }}
+              value: {{ $llamacpp.gfx906Image | quote }}
             {{- end }}
-            {{- if .Values.llamacpp.maxwellImage }}
+            {{- if $llamacpp.maxwellImage }}
             - name: DEFAULT_LLAMA_CPP_IMAGE_MAXWELL
-              value: {{ .Values.llamacpp.maxwellImage | quote }}
+              value: {{ $llamacpp.maxwellImage | quote }}
             {{- end }}
-            {{- if .Values.llamacpp.defaults.args }}
+            {{- if $llamacppDefaults.args }}
             - name: DEFAULT_LLAMA_CPP_ARGS
-              value: {{ .Values.llamacpp.defaults.args | quote }}
+              value: {{ $llamacppDefaults.args | quote }}
             {{- end }}
             {{- if .Values.diffusers }}
             {{- if .Values.diffusers.cudaImage }}
@@ -239,44 +258,44 @@ spec:
               value: {{ .Values.comfyui.gfx906Image | quote }}
             {{- end }}
             {{- end }}
-            {{- if .Values.oras.image }}
+            {{- if $oras.image }}
             - name: ORAS_DOWNLOADER_IMAGE
-              value: {{ .Values.oras.image | quote }}
+              value: {{ $oras.image | quote }}
             {{- end }}
-            {{- if .Values.quantization.images.gguf }}
+            {{- if $quantizationImages.gguf }}
             - name: FLEXINFER_QUANTIZER_GGUF_IMAGE
-              value: {{ .Values.quantization.images.gguf | quote }}
+              value: {{ $quantizationImages.gguf | quote }}
             {{- end }}
-            {{- if .Values.quantization.images.awq }}
+            {{- if $quantizationImages.awq }}
             - name: FLEXINFER_QUANTIZER_AWQ_IMAGE
-              value: {{ .Values.quantization.images.awq | quote }}
+              value: {{ $quantizationImages.awq | quote }}
             {{- end }}
-            {{- if .Values.quantization.images.gptq }}
+            {{- if $quantizationImages.gptq }}
             - name: FLEXINFER_QUANTIZER_GPTQ_IMAGE
-              value: {{ .Values.quantization.images.gptq | quote }}
+              value: {{ $quantizationImages.gptq | quote }}
             {{- end }}
-            {{- if .Values.quantization.images.gptqRocm }}
+            {{- if $quantizationImages.gptqRocm }}
             - name: FLEXINFER_QUANTIZER_GPTQ_ROCM_IMAGE
-              value: {{ .Values.quantization.images.gptqRocm | quote }}
+              value: {{ $quantizationImages.gptqRocm | quote }}
             {{- end }}
-            {{- if .Values.quantization.images.exl2 }}
+            {{- if $quantizationImages.exl2 }}
             - name: FLEXINFER_QUANTIZER_EXL2_IMAGE
-              value: {{ .Values.quantization.images.exl2 | quote }}
+              value: {{ $quantizationImages.exl2 | quote }}
             {{- end }}
-            {{- if .Values.quantization.images.fp8 }}
+            {{- if $quantizationImages.fp8 }}
             - name: FLEXINFER_QUANTIZER_FP8_IMAGE
-              value: {{ .Values.quantization.images.fp8 | quote }}
+              value: {{ $quantizationImages.fp8 | quote }}
             {{- end }}
-            {{- if .Values.quantization.useRuntimeForQuantize }}
+            {{- if $quantization.useRuntimeForQuantize }}
             - name: FLEXINFER_USE_RUNTIME_FOR_QUANTIZE
               value: "true"
             {{- end }}
-            {{- if .Values.quantization.runtimeImage }}
+            {{- if $quantization.runtimeImage }}
             - name: FLEXINFER_RUNTIME_IMAGE
-              value: {{ .Values.quantization.runtimeImage | quote }}
+              value: {{ $quantization.runtimeImage | quote }}
             {{- end }}
-            {{- if .Values.quantization.gptqModelPolicies }}
+            {{- if $quantization.gptqModelPolicies }}
             - name: FLEXINFER_GPTQ_MODEL_POLICIES
-              value: {{ .Values.quantization.gptqModelPolicies | toJson | quote }}
+              value: {{ $quantization.gptqModelPolicies | toJson | quote }}
             {{- end }}
 {{- end }}
