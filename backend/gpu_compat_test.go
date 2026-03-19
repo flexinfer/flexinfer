@@ -56,10 +56,10 @@ func TestLookupGPUArchSupport_PrefixMatching(t *testing.T) {
 			wantFound: true,
 		},
 		{
-			name:      "diffusers gfx906 experimental",
+			name:      "diffusers gfx906 full",
 			backend:   "diffusers",
 			arch:      "gfx906",
-			wantLevel: SupportExperimental,
+			wantLevel: SupportFull,
 			wantVRAM:  16384,
 			wantFound: true,
 		},

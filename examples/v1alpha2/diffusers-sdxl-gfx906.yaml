@@ -1,0 +1,54 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: sdxl-diffusers-gfx906
+  namespace: flexinfer-system
+spec:
+  backend: diffusers
+  source: HF://stabilityai/stable-diffusion-xl-base-1.0
+  cache:
+    strategy: Local
+  gpu:
+    vendor: amd
+    count: 1
+    # Radeon VII has 16GB VRAM — tight for SDXL, CPU offload is recommended
+    vramEstimateMB: 14000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 10m
+    coldStartTimeout: 20m
+  config:
+    modelFamily: "sdxl"
+    # CPU offload is critical on 16GB VRAM GPUs to avoid OOM with SDXL
+    cpuOffload: "true"
+    useFp16: "1"
+    vaeRepo: "madebyollin/sdxl-vae-fp16-fix"
+    vaePath: ".vae/sdxl-vae-fp16-fix"
+    # Quality defaults for SDXL on gfx906
+    guidanceScale: "7.5"
+    numInferenceSteps: "25"
+    scheduler: "euler"
+    negativePrompt: "painting, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, deformed, ugly, blurry, bad anatomy, bad proportions, extra limbs, cloned face"
+    # gfx906 auto-defaults to 512x512 warmup only (1024 risks OOM)
+    compilationCache: "true"
+    hipVisibleDevices: "0"
+    # Enable attention slicing by default for 16GB cards
+    # (also auto-applied by the Go backend for gfx906)
+  nodeSelector:
+    flexinfer.ai/gpu.vendor: AMD
+    flexinfer.ai/gpu.arch: gfx906
+  resources:
+    requests:
+      cpu: "2"
+      memory: 16Gi
+    limits:
+      cpu: "4"
+      memory: 32Gi
+  serviceLabels:
+    - image-gen
+    - text-to-image
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

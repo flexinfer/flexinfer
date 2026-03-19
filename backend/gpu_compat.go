@@ -66,7 +66,7 @@ var BackendGPUCompatibility = map[string]map[string]GPUArchSupport{
 		"gfx110": {SupportFull, 24576},
 		"gfx90a": {SupportFull, 65536},
 		"gfx942": {SupportFull, 196608},
-		"gfx906": {SupportExperimental, 16384},
+		"gfx906": {SupportFull, 16384},
 		"sm_5":   {SupportUnsupported, 0},
 	},
 	"comfyui": {

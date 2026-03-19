@@ -160,6 +160,8 @@ class ImageGenerationRequest(BaseModel):
     # This keeps SDXL Turbo fast by default (few steps, low/zero guidance).
     num_inference_steps: Optional[int] = Field(default=None, ge=1, le=100)
     guidance_scale: Optional[float] = Field(default=None, ge=0.0, le=20.0)
+    # Optional seed for reproducible generation. If None, uses random seed.
+    seed: Optional[int] = None
 
 
 def _env_int(name: str) -> Optional[int]:
@@ -1457,7 +1459,13 @@ async def generate_images(request: ImageGenerationRequest):
         # /v1/images/generations and /v1/images/edits endpoints.
         is_fill = isinstance(pipe, FluxFillPipeline)
         results = []
-        for _ in range(request.n):
+        for i in range(request.n):
+            # Seed handling: if seed is provided, use it for reproducibility.
+            # For multi-image (n>1), increment seed per image to get variation.
+            gen = None
+            if request.seed is not None:
+                img_seed = request.seed + i
+                gen = torch.Generator(device="cpu").manual_seed(img_seed)
             with torch.inference_mode():
                 if is_fill:
                     # Text2image via fill: blank canvas + full mask = generate from scratch
@@ -1483,6 +1491,8 @@ async def generate_images(request: ImageGenerationRequest):
                     # FLUX doesn't support negative_prompt
                     if not _pipeline_is_flux_like(pipe, model_id) and negative_prompt:
                         gen_kwargs["negative_prompt"] = negative_prompt
+                if gen is not None:
+                    gen_kwargs["generator"] = gen
                 result = pipe(**gen_kwargs)
             img = result.images[0]
             buffer = io.BytesIO()
