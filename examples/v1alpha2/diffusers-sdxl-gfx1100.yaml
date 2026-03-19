@@ -1,0 +1,51 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: sdxl-diffusers-gfx1100
+  namespace: flexinfer-system
+spec:
+  backend: diffusers
+  source: HF://stabilityai/stable-diffusion-xl-base-1.0
+  cache:
+    strategy: Local
+  gpu:
+    vendor: amd
+    count: 1
+    vramEstimateMB: 18000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 10m
+    coldStartTimeout: 15m
+  config:
+    modelFamily: "sdxl"
+    cpuOffload: "true"
+    useFp16: "1"
+    # Use the madebyollin fixed VAE to eliminate fp16 noise on ROCm
+    vaeRepo: "madebyollin/sdxl-vae-fp16-fix"
+    vaePath: ".vae/sdxl-vae-fp16-fix"
+    # Quality defaults for SDXL
+    guidanceScale: "7.5"
+    numInferenceSteps: "25"
+    scheduler: "euler"
+    negativePrompt: "painting, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, deformed, ugly, blurry, bad anatomy, bad proportions, extra limbs, cloned face"
+    warmupResolutions: "512x512,1024x1024"
+    compilationCache: "true"
+    hipVisibleDevices: "0"
+  nodeSelector:
+    flexinfer.ai/gpu.vendor: AMD
+    flexinfer.ai/gpu.arch: gfx1100
+  resources:
+    requests:
+      cpu: "2"
+      memory: 16Gi
+    limits:
+      cpu: "4"
+      memory: 32Gi
+  serviceLabels:
+    - image-gen
+    - text-to-image
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
