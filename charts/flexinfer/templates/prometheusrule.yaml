@@ -1,11 +1,13 @@
-{{- if .Values.alerting.enabled }}
+{{- $alerting := default (dict) .Values.alerting -}}
+{{- $thresholds := default (dict) $alerting.thresholds -}}
+{{- if default false $alerting.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: {{ include "flexinfer.fullname" . }}
   labels:
     {{- include "flexinfer.labels" . | nindent 4 }}
-    {{- with .Values.alerting.labels }}
+    {{- with $alerting.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
@@ -19,8 +21,8 @@ spec:
               sum(rate(flexinfer_proxy_requests_total{status="error"}[5m])) by (model)
               /
               sum(rate(flexinfer_proxy_requests_total[5m])) by (model)
-            ) > {{ .Values.alerting.thresholds.errorRatePercent | default 0.05 }}
-          for: {{ .Values.alerting.thresholds.errorRateFor | default "5m" }}
+            ) > {{ default 0.05 $thresholds.errorRatePercent }}
+          for: {{ default "5m" $thresholds.errorRateFor }}
           labels:
             severity: warning
           annotations:
@@ -30,8 +32,8 @@ spec:
         # Request queue depth too high (requests waiting for cold start)
         - alert: FlexInferProxyQueueDepthHigh
           expr: |
-            flexinfer_proxy_queue_depth > {{ .Values.alerting.thresholds.queueDepth | default 50 }}
-          for: {{ .Values.alerting.thresholds.queueDepthFor | default "2m" }}
+            flexinfer_proxy_queue_depth > {{ default 50 $thresholds.queueDepth }}
+          for: {{ default "2m" $thresholds.queueDepthFor }}
           labels:
             severity: warning
           annotations:
@@ -42,8 +44,8 @@ spec:
         - alert: FlexInferColdStartTimeouts
           expr: |
             sum(rate(flexinfer_proxy_requests_total{status="error"}[10m])) by (model)
-            > {{ .Values.alerting.thresholds.coldStartTimeoutRate | default 0.1 }}
-          for: {{ .Values.alerting.thresholds.coldStartTimeoutFor | default "5m" }}
+            > {{ default 0.1 $thresholds.coldStartTimeoutRate }}
+          for: {{ default "5m" $thresholds.coldStartTimeoutFor }}
           labels:
             severity: critical
           annotations:
@@ -77,8 +79,8 @@ spec:
         # GPU temperature too high
         - alert: FlexInferGPUTemperatureHigh
           expr: |
-            flexinfer_gpu_temperature_celsius > {{ .Values.alerting.thresholds.gpuTempCelsius | default 85 }}
-          for: {{ .Values.alerting.thresholds.gpuTempFor | default "5m" }}
+            flexinfer_gpu_temperature_celsius > {{ default 85 $thresholds.gpuTempCelsius }}
+          for: {{ default "5m" $thresholds.gpuTempFor }}
           labels:
             severity: warning
           annotations:
@@ -88,7 +90,7 @@ spec:
         # GPU temperature critical
         - alert: FlexInferGPUTemperatureCritical
           expr: |
-            flexinfer_gpu_temperature_celsius > {{ .Values.alerting.thresholds.gpuTempCriticalCelsius | default 95 }}
+            flexinfer_gpu_temperature_celsius > {{ default 95 $thresholds.gpuTempCriticalCelsius }}
           for: 1m
           labels:
             severity: critical
@@ -103,8 +105,8 @@ spec:
               flexinfer_gpu_vram_free_bytes
               /
               flexinfer_gpu_vram_total_bytes
-            ) < {{ .Values.alerting.thresholds.vramFreeRatio | default 0.1 }}
-          for: {{ .Values.alerting.thresholds.vramLowFor | default "5m" }}
+            ) < {{ default 0.1 $thresholds.vramFreeRatio }}
+          for: {{ default "5m" $thresholds.vramLowFor }}
           labels:
             severity: warning
           annotations:
