@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import time
+import threading
 from importlib import metadata as importlib_metadata
 
 POLICY_STATE_FILE = ".flexinfer-gptq-policy.json"
@@ -43,6 +44,55 @@ DEFAULT_MODEL_POLICIES = [
         },
     },
 ]
+
+
+def patch_triton_autotuner_cache_compat():
+    """Backfill GPTQModel's thread-safe autotuner state on Triton 3.5 instances.
+
+    GPTQModel monkey-patches Triton's Autotuner class to use _cache/_cache_lock/
+    _cache_futures, but some Autotuner instances in the Qwen3.5 FLA path can still
+    reach the patched methods without those fields initialized. Patch lazily on first
+    use so quantization falls back to the intended thread-safe path instead of dying.
+    """
+
+    try:
+        from triton.runtime.autotuner import Autotuner
+    except Exception:
+        return
+
+    if getattr(Autotuner, "_flexinfer_cache_compat", False):
+        return
+
+    original_get_config_for_key = getattr(Autotuner, "_get_config_for_key", None)
+    original_run = getattr(Autotuner, "run", None)
+    if original_get_config_for_key is None or original_run is None:
+        return
+
+    def ensure_threadsafe_cache_state(instance):
+        cache_map = getattr(instance, "cache", {})
+        if not hasattr(instance, "_cache"):
+            instance._cache = dict(cache_map)
+            instance.cache = instance._cache
+        if not hasattr(instance, "_cache_lock"):
+            instance._cache_lock = threading.RLock()
+        if not hasattr(instance, "_cache_futures"):
+            instance._cache_futures = {}
+
+    def wrapped_get_config_for_key(self, *args, **kwargs):
+        ensure_threadsafe_cache_state(self)
+        return original_get_config_for_key(self, *args, **kwargs)
+
+    def wrapped_run(self, *args, **kwargs):
+        ensure_threadsafe_cache_state(self)
+        return original_run(self, *args, **kwargs)
+
+    Autotuner._get_config_for_key = wrapped_get_config_for_key
+    Autotuner.run = wrapped_run
+    Autotuner._flexinfer_cache_compat = True
+    print("Patched Triton Autotuner cache compatibility for GPTQModel", flush=True)
+
+
+patch_triton_autotuner_cache_compat()
 
 
 # ── Telemetry helper ──────────────────────────────────────────────────

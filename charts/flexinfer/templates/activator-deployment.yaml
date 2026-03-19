@@ -1,4 +1,8 @@
-{{- if .Values.proxy.enabled }}
+{{- $proxy := default (dict) .Values.proxy -}}
+{{- $proxyImage := default (dict) $proxy.image -}}
+{{- $observability := default (dict) .Values.observability -}}
+{{- $tracing := default (dict) $observability.tracing -}}
+{{- if $proxy.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7,7 +11,7 @@ metadata:
     {{- include "flexinfer.labels" . | nindent 4 }}
     app: flexinfer-proxy
 spec:
-  replicas: {{ .Values.proxy.replicaCount }}
+  replicas: {{ default 1 $proxy.replicaCount }}
   selector:
     matchLabels:
       {{- include "flexinfer.selectorLabels" . | nindent 6 }}
@@ -23,8 +27,8 @@ spec:
       serviceAccountName: {{ include "flexinfer.proxyServiceAccountName" . }}
       containers:
         - name: proxy
-          image: "{{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" .Values.proxy.image }}
+          image: "{{ $proxyImage.repository }}:{{ $proxyImage.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ include "flexinfer.imagePullPolicy" $proxyImage }}
           ports:
             - name: http
               containerPort: 8080
@@ -34,77 +38,77 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            {{- if .Values.observability.tracing.enabled }}
+            {{- if $tracing.enabled }}
             - name: FLEXINFER_OTEL_ENABLED
               value: "true"
-            {{- if .Values.observability.tracing.otlpEndpoint }}
+            {{- if $tracing.otlpEndpoint }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
-              value: {{ .Values.observability.tracing.otlpEndpoint | quote }}
+              value: {{ $tracing.otlpEndpoint | quote }}
             {{- end }}
-            {{- if .Values.observability.tracing.serviceNamespace }}
+            {{- if $tracing.serviceNamespace }}
             - name: FLEXINFER_OTEL_SERVICE_NAMESPACE
-              value: {{ .Values.observability.tracing.serviceNamespace | quote }}
+              value: {{ $tracing.serviceNamespace | quote }}
             {{- end }}
             {{- end }}
-            {{- if .Values.proxy.timeouts }}
-            {{- if .Values.proxy.timeouts.queue }}
+            {{- if $proxy.timeouts }}
+            {{- if $proxy.timeouts.queue }}
             - name: PROXY_QUEUE_TIMEOUT
-              value: {{ .Values.proxy.timeouts.queue | quote }}
+              value: {{ $proxy.timeouts.queue | quote }}
             {{- end }}
-            {{- if .Values.proxy.timeouts.coldStart }}
+            {{- if $proxy.timeouts.coldStart }}
             - name: PROXY_COLD_START_TIMEOUT
-              value: {{ .Values.proxy.timeouts.coldStart | quote }}
+              value: {{ $proxy.timeouts.coldStart | quote }}
             {{- end }}
             {{- end }}
-            {{- if .Values.proxy.routing }}
-            {{- if .Values.proxy.routing.explicitKeyMaxLength }}
+            {{- if $proxy.routing }}
+            {{- if $proxy.routing.explicitKeyMaxLength }}
             - name: PROXY_ROUTING_EXPLICIT_KEY_MAX_LENGTH
-              value: {{ .Values.proxy.routing.explicitKeyMaxLength | quote }}
+              value: {{ $proxy.routing.explicitKeyMaxLength | quote }}
             {{- end }}
-            {{- if .Values.proxy.routing.systemSegmentMaxLength }}
+            {{- if $proxy.routing.systemSegmentMaxLength }}
             - name: PROXY_ROUTING_SYSTEM_SEGMENT_MAX_LENGTH
-              value: {{ .Values.proxy.routing.systemSegmentMaxLength | quote }}
+              value: {{ $proxy.routing.systemSegmentMaxLength | quote }}
             {{- end }}
-            {{- if .Values.proxy.routing.documentSegmentMaxLength }}
+            {{- if $proxy.routing.documentSegmentMaxLength }}
             - name: PROXY_ROUTING_DOCUMENT_SEGMENT_MAX_LENGTH
-              value: {{ .Values.proxy.routing.documentSegmentMaxLength | quote }}
+              value: {{ $proxy.routing.documentSegmentMaxLength | quote }}
             {{- end }}
             {{- end }}
-            {{- if .Values.proxy.rateLimit }}
-            {{- if .Values.proxy.rateLimit.enabled }}
+            {{- if $proxy.rateLimit }}
+            {{- if $proxy.rateLimit.enabled }}
             - name: PROXY_RATE_LIMIT_ENABLED
               value: "true"
             {{- end }}
-            {{- if .Values.proxy.rateLimit.perModelRPS }}
+            {{- if $proxy.rateLimit.perModelRPS }}
             - name: PROXY_RATE_LIMIT_PER_MODEL
-              value: {{ .Values.proxy.rateLimit.perModelRPS | quote }}
+              value: {{ $proxy.rateLimit.perModelRPS | quote }}
             {{- end }}
-            {{- if .Values.proxy.rateLimit.burst }}
+            {{- if $proxy.rateLimit.burst }}
             - name: PROXY_RATE_LIMIT_BURST
-              value: {{ .Values.proxy.rateLimit.burst | quote }}
+              value: {{ $proxy.rateLimit.burst | quote }}
             {{- end }}
-            {{- if .Values.proxy.rateLimit.globalRPS }}
+            {{- if $proxy.rateLimit.globalRPS }}
             - name: PROXY_RATE_LIMIT_GLOBAL
-              value: {{ .Values.proxy.rateLimit.globalRPS | quote }}
+              value: {{ $proxy.rateLimit.globalRPS | quote }}
             {{- end }}
-            {{- if .Values.proxy.rateLimit.globalBurst }}
+            {{- if $proxy.rateLimit.globalBurst }}
             - name: PROXY_RATE_LIMIT_GLOBAL_BURST
-              value: {{ .Values.proxy.rateLimit.globalBurst | quote }}
+              value: {{ $proxy.rateLimit.globalBurst | quote }}
             {{- end }}
             {{- end }}
-            {{- if .Values.proxy.auth }}
-            {{- if .Values.proxy.auth.enabled }}
+            {{- if $proxy.auth }}
+            {{- if $proxy.auth.enabled }}
             - name: PROXY_AUTH_ENABLED
               value: "true"
-            {{- if .Values.proxy.auth.tokenSecretName }}
+            {{- if $proxy.auth.tokenSecretName }}
             - name: PROXY_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.proxy.auth.tokenSecretName }}
-                  key: {{ .Values.proxy.auth.tokenSecretKey | default "token" }}
+                  name: {{ $proxy.auth.tokenSecretName }}
+                  key: {{ $proxy.auth.tokenSecretKey | default "token" }}
             {{- end }}
             {{- end }}
             {{- end }}
           resources:
-            {{- toYaml .Values.proxy.resources | nindent 12 }}
+            {{- toYaml $proxy.resources | nindent 12 }}
 {{- end }}
