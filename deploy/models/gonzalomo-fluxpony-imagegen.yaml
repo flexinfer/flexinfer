@@ -28,6 +28,9 @@ spec:
     # SDXL on ROCm is visibly noisy in fp16 unless we pair it with the
     # madebyollin fixed VAE.
     useFp16: "1"
+    # Disable the lower-precision ROCm Aiter fused-RoPE backend; the runtime
+    # warns that it is lower precision and it has been producing noisier output.
+    useRocmAiterRopeBackend: "0"
     vaeRepo: "madebyollin/sdxl-vae-fp16-fix"
     # Resolve from the model cache root so the same manifest works for the
     # unified runtime's node-local layout instead of assuming a global /models/.vae mount.

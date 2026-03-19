@@ -94,6 +94,7 @@ pipeline = None
 current_model = None
 current_model_family = None
 gpu_info = None
+warmup_complete = False
 
 # Pipeline mode: "text2image" (default), "inpainting", or "instruct"
 PIPELINE_MODE = os.environ.get("PIPELINE_MODE", "text2image")
@@ -816,7 +817,7 @@ def _load_single_file(checkpoint_path: str, model_id: str, dtype, vae=None):
 
 def load_pipeline(model_id: str):
     """Load or reload the diffusion pipeline."""
-    global pipeline, current_model, current_model_family
+    global pipeline, current_model, current_model_family, warmup_complete
 
     if pipeline is not None and current_model == model_id:
         return pipeline
@@ -836,6 +837,7 @@ def load_pipeline(model_id: str):
 
     print(f"Loading model: {resolved_model_id} (id: {model_id})")
     sys.stdout.flush()
+    warmup_complete = False
 
     # FP16 is faster and uses less VRAM, but the default SDXL VAE can produce NaN
     # artifacts (graininess) in fp16 without the madebyollin/sdxl-vae-fp16-fix.
@@ -1311,8 +1313,9 @@ def warmup_inference():
     recompilation penalty. With a persistent compilation cache, subsequent
     container starts skip recompilation entirely.
     """
-    global pipeline
+    global pipeline, warmup_complete
     if pipeline is None or os.environ.get("SKIP_WARMUP", "0") == "1":
+        warmup_complete = True
         return
 
     resolutions = _parse_warmup_resolutions()
@@ -1361,6 +1364,7 @@ def warmup_inference():
         sys.stdout.flush()
 
     print("All warmup passes complete")
+    warmup_complete = True
     sys.stdout.flush()
 
 
@@ -1386,7 +1390,18 @@ _generation_lock = asyncio.Lock()
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "model": current_model, "gpu": gpu_info}
+    ready = bool(current_model) and warmup_complete
+    status = "healthy" if ready else ("warming" if current_model else "starting")
+    code = 200 if ready else 503
+    return JSONResponse(
+        status_code=code,
+        content={
+            "status": status,
+            "ready": ready,
+            "model": current_model,
+            "gpu": gpu_info,
+        },
+    )
 
 
 @app.get("/v1/models")

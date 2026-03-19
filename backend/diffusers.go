@@ -192,6 +192,12 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	if imgScale := spec.ConfigString("imageGuidanceScale", ""); imgScale != "" {
 		env = append(env, corev1.EnvVar{Name: "DEFAULT_IMAGE_GUIDANCE_SCALE", Value: imgScale})
 	}
+	if aiterRope := spec.ConfigString("useRocmAiterRopeBackend", ""); aiterRope != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "USE_ROCM_AITER_ROPE_BACKEND",
+			Value: aiterRope,
+		})
+	}
 
 	// Warmup inference control: skip the startup warmup pass if requested.
 	if skip := spec.ConfigString("skipWarmup", ""); skip != "" {

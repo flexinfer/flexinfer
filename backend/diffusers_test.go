@@ -106,6 +106,15 @@ func TestDiffusersBackendEnv(t *testing.T) {
 			},
 		},
 		{
+			name: "rocm aiter rope override maps to env",
+			config: map[string]interface{}{
+				"useRocmAiterRopeBackend": "0",
+			},
+			wantEnv: map[string]string{
+				"USE_ROCM_AITER_ROPE_BACKEND": "0",
+			},
+		},
+		{
 			name: "vae settings map to env",
 			config: map[string]interface{}{
 				"vaeRepo": "madebyollin/sdxl-vae-fp16-fix",
