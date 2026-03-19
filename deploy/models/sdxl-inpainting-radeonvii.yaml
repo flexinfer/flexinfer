@@ -29,7 +29,9 @@ spec:
     # staged cache path so we do not rely on the base model's decoder.
     useFp16: '0'
     vaeRepo: "madebyollin/sdxl-vae-fp16-fix"
-    vaePath: ".vae/sdxl-vae-fp16-fix"
+    # SharedPVC diffusers models stage the auxiliary VAE under the shared model
+    # root, not the per-model local-cache root used by unified runtime locals.
+    vaePath: "/models/.vae/sdxl-vae-fp16-fix"
     strength: '0.75'
     guidanceScale: '7.5'
     numInferenceSteps: '30'
