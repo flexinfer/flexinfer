@@ -35,6 +35,10 @@ DEFAULT_MODEL_POLICIES = [
         "quantize_config_overrides": {
             "offload_to_disk": False,
         },
+        "calibration_overrides": {
+            "max_samples": 64,
+            "max_seq_len": 1024,
+        },
     },
 ]
 
@@ -233,11 +237,25 @@ def persist_quant_checkpoint(model_dir, state):
     os.replace(tmp_path, path)
 
 
+def effective_calibration_setting(policy, key, default):
+    overrides = (policy or {}).get("calibration_overrides", {})
+    value = overrides.get(key, default)
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        value = default
+    return value if value > 0 else default
+
+
+effective_max_seq_len = max_seq_len
+effective_max_samples = max_samples
+
+
 def calibration_cache_fingerprint():
     return {
         "dataset": dataset_name,
-        "max_seq_len": max_seq_len,
-        "max_samples": max_samples,
+        "max_seq_len": effective_max_seq_len,
+        "max_samples": effective_max_samples,
         "model_dir": os.path.basename(model_dir.rstrip("/")),
     }
 
@@ -379,6 +397,15 @@ with open(cfg_path, "w") as f:
     json.dump(cfg, f, indent=2)
 
 ensure_policy_python_packages(policy)
+
+effective_max_seq_len = effective_calibration_setting(policy, "max_seq_len", max_seq_len)
+effective_max_samples = effective_calibration_setting(policy, "max_samples", max_samples)
+if effective_max_seq_len != max_seq_len or effective_max_samples != max_samples:
+    print(
+        "Applied calibration overrides from "
+        f"policy={active_policy or 'none'}: "
+        f"max_seq_len={effective_max_seq_len} max_samples={effective_max_samples}"
+    )
 
 model_type = cfg.get("model_type", "")
 load_strategy = (policy or {}).get("loader", "gptqmodel")
@@ -666,14 +693,15 @@ examples = load_cached_examples(model_dir)
 if examples is None:
     dataset = load_dataset(dataset_name, split="validation")
     examples = []
-    for sample in dataset.select(range(min(max_samples, len(dataset)))):
+    for sample in dataset.select(range(min(effective_max_samples, len(dataset)))):
         tok = tokenizer(
-            sample["text"], return_tensors="pt", max_length=max_seq_len, truncation=True
+            sample["text"], return_tensors="pt", max_length=effective_max_seq_len, truncation=True
         )
         examples.append({"input_ids": tok.input_ids, "attention_mask": tok.attention_mask})
     checkpoint_state = dict(quant_checkpoint_state)
     checkpoint_state["stage"] = "calibration_ready"
     checkpoint_state["calibration_samples"] = len(examples)
+    checkpoint_state["calibration_max_seq_len"] = effective_max_seq_len
     checkpoint_state["calibration_cached_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     persist_cached_examples(model_dir, examples, checkpoint_state)
     quant_checkpoint_state = checkpoint_state

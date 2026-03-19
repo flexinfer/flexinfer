@@ -343,7 +343,29 @@ quantization:
   runtimeImage: ""
   # Optional controller-side policy overrides serialized into
   # FLEXINFER_GPTQ_MODEL_POLICIES for quantize jobs.
-  gptqModelPolicies: []
+  gptqModelPolicies:
+    - name: qwen3.5-text
+      match_model_types:
+        - qwen3_5_text
+      match_path_substrings:
+        - qwen35
+        - qwen3.5
+      extract_text_config: true
+      copy_root_keys:
+        - bos_token_id
+        - eos_token_id
+        - pad_token_id
+      remap_model_type: qwen3_5_text
+      architectures:
+        - Qwen3_5ForCausalLM
+      loader: manual_sharded_state_dict
+      python_packages:
+        - git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea
+      quantize_config_overrides:
+        offload_to_disk: false
+      calibration_overrides:
+        max_samples: 64
+        max_seq_len: 1024
   images:
     gguf: ghcr.io/flexinfer/quantizer:gguf
     awq: ghcr.io/flexinfer/quantizer:awq

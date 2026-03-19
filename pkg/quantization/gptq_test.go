@@ -1,6 +1,7 @@
 package quantization
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -126,6 +127,24 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 		if v := findEnv(env, "QUANTIZE_MODEL_POLICIES"); !strings.Contains(v, "qwen3.5-text") {
 			t.Errorf("QUANTIZE_MODEL_POLICIES = %q, want default qwen3.5 policy JSON", v)
+		} else {
+			var policies []map[string]any
+			if err := json.Unmarshal([]byte(v), &policies); err != nil {
+				t.Fatalf("unmarshal policy JSON: %v", err)
+			}
+			if len(policies) == 0 {
+				t.Fatalf("expected at least one default policy")
+			}
+			overrides, ok := policies[0]["calibration_overrides"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected calibration_overrides in default policy JSON")
+			}
+			if got := int(overrides["max_samples"].(float64)); got != 64 {
+				t.Fatalf("default max_samples override = %d, want 64", got)
+			}
+			if got := int(overrides["max_seq_len"].(float64)); got != 1024 {
+				t.Fatalf("default max_seq_len override = %d, want 1024", got)
+			}
 		}
 	})
 

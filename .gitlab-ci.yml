@@ -26,6 +26,7 @@ variables:
   # Prefer the public proxy for reliability; keep Athens as a warm cache/fallback.
   # Use "|" so transient Athens 5xx errors do not block the pipeline.
   GOPROXY: "https://proxy.golang.org|http://athens.ci.svc.cluster.local:3000|direct"
+  GOLANGCI_LINT_TIMEOUT: "20m"
   BUILDKIT_HOST: "tcp://buildkitd-central.ci-build.svc.cluster.local:1234"
   # Set to "1" to additionally push OCI images to the GitLab Container Registry.
   PUBLISH_GITLAB_IMAGES: "0"
@@ -77,7 +78,7 @@ lint:
         fi
       fi
   script:
-    - golangci-lint run -v --timeout=10m ./...
+    - golangci-lint run -v --timeout=${GOLANGCI_LINT_TIMEOUT} ./...
 
 fmt:
   stage: lint
