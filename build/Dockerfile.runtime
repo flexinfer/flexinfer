@@ -135,6 +135,7 @@ ENV GPU_ARCH=${GPU_ARCH}
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl tini jq lsof procps psmisc \
     $(if [ "${GPU_VENDOR}" = "amd" ]; then echo "hipblas rocblas"; fi) \
+    $(if [ "${INCLUDE_VLLM}" = "true" ]; then echo "build-essential git pkg-config python3-dev"; fi) \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Fix urllib3 (DEFAULT_CIPHERS removed in 2.0, breaks ROCm base) ──
@@ -174,7 +175,9 @@ RUN if [ "${INCLUDE_DIFFUSERS}" = "true" ] && command -v pip >/dev/null 2>&1; th
 # vLLM 0.17.0 (V1-only engine) with ROCm 7.0 pre-built wheel.
 # --no-deps prevents replacing ROCm PyTorch from the base image.
 # transformers>=5.0 required for Qwen3.5 model_type recognition.
-# flash-linear-attention required for GatedDeltaNet (Qwen3.5 backbone).
+# Qwen3.5's fast path needs both flash-linear-attention and causal-conv1d.
+# Do not silently swallow causal-conv1d failures; otherwise the unified runtime
+# ships a guaranteed slow path for this model family.
 RUN if [ "${INCLUDE_VLLM}" = "true" ] && command -v pip >/dev/null 2>&1; then \
       pip install --no-cache-dir --no-deps \
         "vllm==0.17.0+rocm700" \
@@ -187,7 +190,9 @@ RUN if [ "${INCLUDE_VLLM}" = "true" ] && command -v pip >/dev/null 2>&1; then \
         prometheus-client prometheus-fastapi-instrumentator \
         py-cpuinfo psutil pyzmq uvloop \
         flash-linear-attention; \
-      pip install --no-cache-dir causal-conv1d || echo "WARN: causal-conv1d install failed"; \
+      export ROCM_PATH="${ROCM_PATH:-/opt/rocm}" HIP_PATH="${HIP_PATH:-/opt/rocm}" MAX_JOBS="${MAX_JOBS:-$(nproc)}"; \
+      pip install --no-cache-dir --no-build-isolation "causal-conv1d>=1.5.0.post8"; \
+      python3 -c 'import importlib.util; missing=[name for name in ("fla","causal_conv1d") if importlib.util.find_spec(name) is None]; assert not missing, f"missing Qwen3.5 fast-path deps: {missing}"; print("Qwen3.5 fast-path deps installed")'; \
     fi
 
 # ── Steam headless (conditional) ──────────────────────────────────────

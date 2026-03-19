@@ -228,12 +228,22 @@ def load_quant_checkpoint(model_dir):
     return state if isinstance(state, dict) else {}
 
 
+def json_safe(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [json_safe(v) for v in value]
+    return str(value)
+
+
 def persist_quant_checkpoint(model_dir, state):
     os.makedirs(checkpoint_dir(model_dir), exist_ok=True)
     path = checkpoint_state_path(model_dir)
     tmp_path = f"{path}.tmp"
     with open(tmp_path, "w") as f:
-        json.dump(state, f, indent=2, sort_keys=True)
+        json.dump(json_safe(state), f, indent=2, sort_keys=True)
     os.replace(tmp_path, path)
 
 
@@ -324,13 +334,16 @@ class QuantizationCheckpointCallback:
         persist_quant_checkpoint(self.model_dir, self.state)
 
     def subset_event(self, stage, layer_idx, subset_index, subset_total, module_names, processor):
+        processor_name = processor
+        if callable(processor_name):
+            processor_name = getattr(processor_name, "__name__", str(processor_name))
         self.state["stage"] = "quantizing"
         self.state["active"] = {
             "layer_idx": layer_idx,
             "subset_index": subset_index,
             "subset_total": subset_total,
-            "module_names": module_names,
-            "processor": processor,
+            "module_names": list(module_names or []),
+            "processor": processor_name,
             "stage": stage,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
@@ -344,7 +357,7 @@ class QuantizationCheckpointCallback:
         detail = (
             f"layer {layer_idx + 1}"
             + (f" subset {subset_index}/{subset_total}" if subset_total else "")
-            + (f" via {processor}" if processor else "")
+            + (f" via {processor_name}" if processor_name else "")
         )
         emit_progress("progress", phase="quantizing", percent=round(percent, 1), detail=detail)
         self._persist()
