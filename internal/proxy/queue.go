@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -94,10 +95,13 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 		// Success metrics recorded by the processing goroutine
 		return nil
 	case <-queueCtx.Done():
-		// Timeout waiting in queue
+		// Distinguish an actual queue timeout from caller cancellation.
 		queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
-		if qr.responded.CompareAndSwap(false, true) {
+		if stderrors.Is(queueCtx.Err(), context.DeadlineExceeded) && qr.responded.CompareAndSwap(false, true) {
 			validation.WriteColdStartTimeout(w, timeout.String())
+		}
+		if stderrors.Is(queueCtx.Err(), context.Canceled) {
+			return fmt.Errorf("queue canceled for model %s: %w", modelName, queueCtx.Err())
 		}
 		return fmt.Errorf("queue timeout for model %s", modelName)
 	}
