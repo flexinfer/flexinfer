@@ -175,7 +175,7 @@ diffusers:
 
 quantization:
   useRuntimeForQuantize: true
-  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:5b49d54ff45c3822cd796c93f8ca06f5e51ac4c21d8dd63ff7f8214005033295"
+  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:cf142af522f1c58b050a5477c7287ca3853ba85a8be64049e4cbed480e525901"
   gptqModelPolicies:
     - name: qwen3.5-text
       match_model_types:
@@ -211,7 +211,7 @@ runtime:
   terminationGracePeriodSeconds: 60
   profiles:
     - name: gfx1100
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:5b49d54ff45c3822cd796c93f8ca06f5e51ac4c21d8dd63ff7f8214005033295"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:cf142af522f1c58b050a5477c7287ca3853ba85a8be64049e4cbed480e525901"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
