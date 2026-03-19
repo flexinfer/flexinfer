@@ -10,6 +10,7 @@ import copy
 import gc
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -21,9 +22,12 @@ DEFAULT_MODEL_POLICIES = [
         "match_path_substrings": ["qwen35", "qwen3.5"],
         "extract_text_config": True,
         "copy_root_keys": ["bos_token_id", "eos_token_id", "pad_token_id"],
-        "remap_model_type": "qwen3",
-        "architectures": ["Qwen3ForCausalLM"],
+        "remap_model_type": "qwen3_5",
+        "architectures": ["Qwen3_5ForCausalLM"],
         "loader": "manual_sharded_state_dict",
+        "python_packages": [
+            "git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea",
+        ],
         "quantize_config_overrides": {
             "offload_to_disk": False,
         },
@@ -131,6 +135,18 @@ def apply_model_policy(cfg, policy, policy_state):
     return active_cfg, next_state
 
 
+def ensure_policy_python_packages(policy):
+    packages = list((policy or {}).get("python_packages") or [])
+    if not packages:
+        return
+    print(f"Installing policy python packages: {packages}")
+    subprocess.check_call(
+        [sys.executable, "-m", "pip", "install", "--no-cache-dir", *packages],
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
+
+
 # ── Read config from environment ──────────────────────────────────────
 model_dir = os.environ["MODEL_DIR"]
 out_dir = os.environ["OUT_DIR"]
@@ -171,6 +187,8 @@ elif policy_state:
 
 with open(cfg_path, "w") as f:
     json.dump(cfg, f, indent=2)
+
+ensure_policy_python_packages(policy)
 
 model_type = cfg.get("model_type", "")
 load_strategy = (policy or {}).get("loader", "gptqmodel")

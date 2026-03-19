@@ -24,6 +24,7 @@ type gptqModelPolicy struct {
 	RemapModelType         string                 `json:"remap_model_type,omitempty"`
 	Architectures          []string               `json:"architectures,omitempty"`
 	Loader                 string                 `json:"loader,omitempty"`
+	PythonPackages         []string               `json:"python_packages,omitempty"`
 	QuantizeConfigOverride map[string]interface{} `json:"quantize_config_overrides,omitempty"`
 }
 
@@ -179,9 +180,12 @@ func defaultGPTQModelPoliciesJSON() string {
 			MatchPathSubstrings: []string{"qwen35", "qwen3.5"},
 			ExtractTextConfig:   true,
 			CopyRootKeys:        []string{"bos_token_id", "eos_token_id", "pad_token_id"},
-			RemapModelType:      "qwen3",
-			Architectures:       []string{"Qwen3ForCausalLM"},
+			RemapModelType:      "qwen3_5",
+			Architectures:       []string{"Qwen3_5ForCausalLM"},
 			Loader:              "manual_sharded_state_dict",
+			PythonPackages: []string{
+				"git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea",
+			},
 			QuantizeConfigOverride: map[string]interface{}{
 				"offload_to_disk": false,
 			},
