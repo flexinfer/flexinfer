@@ -1796,8 +1796,20 @@ platform_permissions:
       sandbox_mode: "workspace-write"
       web_search: "live"
       features:
+        multi_agent: true
         unified_exec: true
+        shell_tool: true
         collaboration_modes: true
+      # Agent definitions emitted as [agents.<name>] TOML sections.
+      agents:
+        max_threads: 4
+        max_depth: 1
+        job_max_runtime_seconds: 1800
+        definitions:
+          slice-implementer:
+            description: "Implements a single feature slice in an isolated worktree."
+          reviewer:
+            description: "Reviews code for correctness, security, and test coverage."
 
   gemini:
     settings:

@@ -64,7 +64,7 @@
 # Sync: loom sync <profile> --regen --hub-mode --all-projects --skip-worktrees
 
 version: 1
-updated: 2026-03-18
+updated: 2026-03-19
 skills:
   - name: flux-gitops-operator
     categories: [kubernetes, gitops, operations]
@@ -155,6 +155,10 @@ skills:
         type: workflow
       gemini:
         enabled: false
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: longhorn-gitops-ops
     categories: [kubernetes, gitops, operations]
@@ -246,6 +250,10 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: monitoring-gitops-ops
     categories: [kubernetes, gitops, operations]
@@ -339,6 +347,10 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: k3s-harvester-maintenance
     categories: [kubernetes, gitops, operations]
@@ -421,6 +433,10 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: mcp-registry-ops
     categories: [mcp, configuration, operations]
@@ -531,6 +547,10 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: browserkit-screenshots
     categories: [tooling]
@@ -581,6 +601,10 @@ skills:
         enabled: false
       gemini:
         enabled: false
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: plan-loom-core
     categories: [planning, research]
@@ -721,13 +745,17 @@ skills:
         type: skill
         instructions_append: |
           ## Gemini Planning Addendum
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
           - Use checkpointed phased decomposition even when explicit subagent primitives are unavailable.
           - Break inventory into deterministic slices (mode detection, summary, paged deep dives, constraints) and validate each checkpoint before proceeding.
           - Record assumptions explicitly when delegation primitives are unavailable in the active runtime.
 
   - name: polyglot-release-bumper
-    categories: [release, ci-cd]
+    categories: [ci-cd, development]
     common:
       description: |
         Prepare and ship releases across Go/Python/Node repos: detect project type, run the right test/lint/build commands, bump versions in pyproject.toml/package.json when applicable, and execute commit/tag/push with a standardized checklist. Use when asked to bump versions, cut a release, update changelogs, or publish.
@@ -791,9 +819,13 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: workspace-branding-maintenance
-    categories: [branding, gitlab, operations]
+    categories: [operations, gitlab]
     common:
       description: |
         Standardize repo branding across a multi-repo workspace: ensure assets/banner.png + assets/icon.png and README banner references using libs/banner-kit, and keep the services public allowlist consistent. Use when repos are missing branding assets, banners drift, or GitLab metadata/visibility needs alignment.
@@ -847,6 +879,10 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: platform-config-sync
     categories: [mcp, configuration]
@@ -992,6 +1028,10 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: agent-context
     categories: [memory, agents]
@@ -1264,6 +1304,10 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: multi-agent-handoff
     categories: [agents, memory]
@@ -1395,9 +1439,13 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: codebase-exploration-memory
-    categories: [codebase, memory]
+    categories: [memory, agents]
     common:
       description: |
         Preserve codebase exploration findings across sessions with an index-first workflow. Use when mapping architecture, tracing behavior, or building reusable mental models across agents.
@@ -1597,6 +1645,10 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: decision-journal
     categories: [decisions, memory]
@@ -1747,6 +1799,10 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: agent-workflow-ops
     categories: [workflow, agents]
@@ -1951,6 +2007,10 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: long-term-memory
     categories: [memory, decisions, agents]
@@ -2105,6 +2165,10 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   # =========================================================================
   # Migrated Skills - from existing manual rules/ and instructions.md files
@@ -2197,6 +2261,9 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: rule
 
   - name: documentation-style
     categories: [documentation]
@@ -2281,9 +2348,12 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: rule
 
   - name: project-patterns
-    categories: [architecture]
+    categories: [development]
     common:
       description: |
         Project structure patterns for the workspace: enterprise repository layout, service architecture (DDD, Event-Driven), Kubernetes deployment patterns, CI/CD pipelines, observability, and security patterns.
@@ -2355,6 +2425,9 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: rule
 
   - name: mcp-usage-core
     priority: 10
@@ -2444,6 +2517,9 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: instruction
 
   - name: memory-practices
     priority: 20
@@ -2510,6 +2586,9 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: instruction
 
   - name: k8s-ops-guardrails
     priority: 30
@@ -2557,6 +2636,9 @@ skills:
         enabled: true
         type: instruction
       gemini:
+        enabled: true
+        type: instruction
+      antigravity:
         enabled: true
         type: instruction
 
@@ -2620,6 +2702,9 @@ skills:
         enabled: true
         type: instruction
       gemini:
+        enabled: true
+        type: instruction
+      antigravity:
         enabled: true
         type: instruction
 
@@ -2696,6 +2781,9 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: command
 
   # =========================================================================
   # New Skills - Phase 6
@@ -2803,6 +2891,9 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
 
   - name: code-review
     categories: [development, quality]
@@ -2920,6 +3011,9 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
 
   - name: security-audit
     categories: [security, operations]
@@ -3013,6 +3107,9 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
 
   - name: go-service-scaffold
     categories: [development, go, scaffolding]
@@ -3077,6 +3174,9 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
 
   - name: loom-go-mcp-scaffold
     categories: [development, go, scaffolding]
@@ -3211,6 +3311,9 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: command
 
   - name: loom-skill-builder
     categories: [development, scaffolding]
@@ -3314,6 +3417,9 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
 
   - name: incident-response
     categories: [operations, kubernetes]
@@ -3428,6 +3534,9 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
 
   - name: devbox-sandbox
     categories: [dev-environment, quality]
@@ -3514,6 +3623,9 @@ skills:
       gemini:
         enabled: true
         type: instruction
+      antigravity:
+        enabled: true
+        type: rule
 
   - name: backlog-delivery-loop
     categories: [workflow, development, ci-cd]
@@ -3595,13 +3707,20 @@ skills:
         - stage/commit only files for the selected backlog item
         - ask for direction only when new unexpected changes appear in files you edit, or when branch/worktree switching is required
 
-        ## Step 5: Commit and Push (Default Behavior)
+        ## Step 5: Landing Procedure
 
         Unless the user explicitly requests "no commit/push":
-        - stage only intended files
-        - commit with a concise, scoped message
-        - push branch to remote (branch already created by worktree step if used)
-        - include issue reference in commit/PR text if required by project policy
+
+        1. **Stage scoped files** — only files for the selected backlog item (never `.env`, credentials, or unrelated changes)
+        2. **Commit with conventional format** — `type(scope): description` + `Co-Authored-By` trailer; include issue reference if required by project policy
+        3. **Push branch** — `git push origin <branch>` (`-u` if first push)
+        4. **Create or reuse MR/PR**
+           - Check for existing MR on the same source branch before creating a new one
+           - GitLab: `gitlab__list_merge_requests(source_branch=..., target_branch=main)`
+           - GitHub: `gh pr list --head <branch>`
+        5. **Request auto-merge** (when project policy allows)
+           - GitLab: `gitlab__merge_merge_request(auto_merge=true, sha=<HEAD>)`
+           - GitHub: `gh pr merge --auto --squash`
 
         ## Step 6: Watch CI to Terminal State
 
@@ -3630,11 +3749,13 @@ skills:
 
         If in a sandboxed multi-agent environment, prefer devbox tools for builds/tests.
 
-        ## Step 7: Report + Session Close
+        ## Step 7: Confirm Merged + Report + Session Close
 
+        - confirm MR is merged or queued in merge train
         - update backlog ticket with summary and links
         - `agent_task_update(..., status="completed", resolution="...")`
         - add final `decision`/`note` in agent context
+        - release worktree if allocated: `agent_worktree_release(...)`
         - `agent_session_end(summarize=true)`
 
         Use `assets/templates/status-report.md` for consistent completion reporting.
@@ -3657,16 +3778,36 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent backlog source queries (Jira, GitLab, GitHub)
+          - Use `spawn_agent` for parallel implementation when multiple items are selected
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `subagent_type="Explore"` for parallel backlog source queries
+          - Delegate CI polling to a background `Task` agent when waiting
       kilocode:
         enabled: true
         type: workflow
+        instructions_append: |
+          ## Kilocode Notes
+          - This workflow maps to `.kilocode/workflows/backlog-delivery-loop.yaml`
+          - Use staged phases with checkpoints between selection and implementation
       gemini:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Gemini Notes
+          - Use checkpointed phased decomposition for the delivery loop
+          - Record progress markers between major steps for resumability
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: tech-debt-planning
     categories: [workflow, planning]
@@ -3766,6 +3907,10 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: tech-debt-backlog-dev-loop
     categories: [workflow, development]
@@ -3822,12 +3967,20 @@ skills:
 
         If checks fail, fix and rerun before commit.
 
-        ## Step 5: Commit + Push
+        ## Step 5: Landing Procedure
 
         Unless user asks otherwise:
-        - stage only debt-item-related files
-        - commit with scoped message (include debt item id)
-        - push branch
+
+        1. **Stage scoped files** — only debt-item-related files (never `.env`, credentials, or unrelated changes)
+        2. **Commit with conventional format** — `fix(scope): resolve debt item <id>` or `refactor(scope): ...` + `Co-Authored-By` trailer
+        3. **Push branch** — `git push origin <branch>` (`-u` if first push)
+        4. **Create or reuse MR/PR**
+           - Check for existing MR on the same source branch before creating a new one
+           - GitLab: `gitlab__list_merge_requests(source_branch=..., target_branch=main)`
+           - GitHub: `gh pr list --head <branch>`
+        5. **Request auto-merge** (when project policy allows)
+           - GitLab: `gitlab__merge_merge_request(auto_merge=true, sha=<HEAD>)`
+           - GitHub: `gh pr merge --auto --squash`
 
         ## Step 6: Verify CI to Terminal State
 
@@ -3840,10 +3993,12 @@ skills:
         - rerun local verification
         - push and repoll until green or blocked
 
-        ## Step 7: Close Item and Report
+        ## Step 7: Confirm Merged + Close Item + Report
 
+        - confirm MR is merged or queued in merge train
         - update debt backlog item status and impact notes
         - `agent_task_update(..., status="completed", resolution="...")`
+        - release worktree: `agent_worktree_release(...)`
         - `agent_session_end(summarize=true)`
 
         Use `assets/templates/implementation-report.md` for a consistent closure note.
@@ -3866,16 +4021,35 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Bundled scripts available at `${SKILL_PATH}/scripts/`
+          - Use `multi_tool_use.parallel` for concurrent debt-item research
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Delegate CI polling to a background `Task` agent when waiting
       kilocode:
         enabled: true
         type: workflow
+        instructions_append: |
+          ## Kilocode Notes
+          - This workflow maps to `.kilocode/workflows/tech-debt-backlog-dev-loop.yaml`
+          - Use staged phases with checkpoints between selection and implementation
       gemini:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Gemini Notes
+          - Use checkpointed phased decomposition for the debt delivery loop
+          - Record progress markers between major steps for resumability
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: roadmap-spec-ralph-loop
     categories: [workflow, planning]
@@ -3929,17 +4103,27 @@ skills:
         - run targeted tests, then broader suite
         - run lint/static checks
         - run pre-commit if configured
-        - push and verify CI pipeline
 
-        If failures appear, loop on fixes before moving to next slice.
+        If failures appear, loop on fixes before moving to the landing procedure.
 
-        ## Step 5: Handoff and Harvest
+        ## Step 5: Landing Procedure
+
+        1. **Stage scoped files** — only files for the active slice (never `.env`, credentials, or unrelated changes)
+        2. **Commit with conventional format** — `feat(scope): <slice description>` + `Co-Authored-By` trailer
+        3. **Push branch** — `git push origin <branch>` (`-u` if first push)
+        4. **Create or reuse MR/PR** — check for existing MR on the same source branch first
+        5. **Request auto-merge** when project policy allows
+        6. **Poll pipeline to terminal state** — if red → fix → re-commit → re-push → re-poll
+        7. **Confirm merged** or document blocker
+
+        ## Step 6: Handoff and Harvest
 
         At the end of each slice:
         - update roadmap/spec progress markers
         - add agent-context summary entries (`decision`, `finding`, `question`)
         - close current task with `resolution`
         - create follow-up task for the next slice
+        - release worktree if allocated: `agent_worktree_release(...)`
         - if switching agents, create a focused handoff package
 
         Use `assets/templates/slice-handoff.md` for consistent transfer notes.
@@ -3949,7 +4133,7 @@ skills:
         A slice is done only when:
         1. acceptance criteria are met
         2. tests/lint/pre-commit are clean (or exceptions documented)
-        3. CI status is verified
+        3. MR is merged or queued (not just pushed)
         4. roadmap/spec artifacts are updated
         5. agent context is summarized for the next loop
       scripts: []
@@ -3963,16 +4147,36 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent spec and roadmap reading
+          - Bundled scripts available at `${SKILL_PATH}/scripts/`
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `subagent_type="Plan"` for slice decomposition
+          - Delegate CI polling to a background `Task` agent when waiting
       kilocode:
         enabled: true
         type: workflow
+        instructions_append: |
+          ## Kilocode Notes
+          - This workflow maps to `.kilocode/workflows/roadmap-spec-ralph-loop.yaml`
+          - Use staged RALPH phases with checkpoints between each
       gemini:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Gemini Notes
+          - Use checkpointed RALPH phases for multi-session delivery
+          - Record progress markers between Review, Align, Land, Prove, Handoff
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: recursive-context-strategy
     categories: [agents]
@@ -4085,6 +4289,10 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: feature-dev
     categories: [development, workflow]
@@ -4111,16 +4319,21 @@ skills:
 
         ## Workflow Steps
 
-        1. **Initialize session** — start agent context session with namespace
-        2. **Allocate worktree** — isolated git worktree for the feature branch
-        3. **Recall context** — retrieve prior work and decisions
-        4. **Implement** — write code (approval gate)
-        5. **Sandbox test** — run tests via devbox
-        6. **Pre-commit checks** — lint, fmt, hooks
-        7. **Commit** — commit changes (approval gate)
-        8. **Push & CI** — push and verify CI passes
-        9. **End session** — summarize and persist context
-        10. **Release worktree** — clean up isolation
+        1. **Initialize session** — `agent_session_start(namespace="<repo>/feat/<name>", description="...")`; recall prior context with `agent_recall`
+        2. **Allocate worktree** — `agent_worktree_allocate(branch_name="feat/<name>", base_branch="main", purpose="...")`
+        3. **Implement** — write code in the worktree (approval gate)
+        4. **Sandbox test** — run tests via devbox
+        5. **Pre-commit checks** — lint, fmt, hooks
+        6. **Landing Procedure**
+           a. Stage only files for the active task (never `.env`, credentials, or unrelated changes)
+           b. Commit with conventional format: `feat(scope): description` + `Co-Authored-By` trailer
+           c. Push branch (`-u` if first push)
+           d. Create or reuse MR/PR (check existing MRs for same source branch first)
+           e. Request auto-merge when project policy allows
+           f. Poll pipeline to terminal state; if red → fix → re-commit → re-push → re-poll
+           g. Confirm merged or document blocker
+        7. **Release worktree** — `agent_worktree_release(...)`
+        8. **End session** — `agent_session_end(summarize=true)`
 
         ## Quick Start
 
@@ -4141,7 +4354,7 @@ skills:
         | `namespace` | Yes | Session namespace (e.g., `project/feature-branch`) |
         | `agent_id` | Yes | Agent identifier (e.g., `claude-code`) |
         | `description` | Yes | Feature description |
-        | `branch_name` | Yes | Git branch name for the worktree |
+        | `branch_name` | Yes | Git branch name (`feat/<name>`) |
         | `base_branch` | No | Base branch (default: `main`) |
 
         Workflow file: `.agents/workflows/feature-dev.yaml`
@@ -4153,15 +4366,35 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent research calls during context recall
+          - Bundled scripts available at `${SKILL_PATH}/scripts/`
+          - For parallel sub-work, use `spawn_agent` with `max_threads` config
       claude:
         enabled: true
         type: command
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `isolation: "worktree"` for parallel sub-work
+          - Delegate CI polling to a background `Task` agent when waiting
       kilocode:
         enabled: true
         type: workflow
+        instructions_append: |
+          ## Kilocode Notes
+          - This workflow maps to `.kilocode/workflows/feature-dev.yaml`
+          - Use staged phases with checkpoints between major steps
       gemini:
         enabled: true
         type: instruction
+        instructions_append: |
+          ## Gemini Notes
+          - Use checkpointed phased decomposition for multi-step workflows
+          - Record progress markers between major steps for resumability
+      antigravity:
+        enabled: true
+        type: command
 
   - name: bugfix
     categories: [development, workflow]
@@ -4188,17 +4421,22 @@ skills:
 
         ## Workflow Steps
 
-        1. **Initialize session** — start agent context session
-        2. **Allocate worktree** — isolated git worktree for the fix branch
-        3. **Recall context** — retrieve prior context and similar bugs
-        4. **Investigate** — identify root cause (approval gate)
-        5. **Implement fix** — write the fix (approval gate)
-        6. **Sandbox test** — run tests via devbox
-        7. **Pre-commit checks** — lint, fmt, hooks
-        8. **Commit** — commit changes (approval gate)
-        9. **Push & CI** — push and verify CI passes
-        10. **End session** — summarize and persist context
-        11. **Release worktree** — clean up isolation
+        1. **Initialize session** — `agent_session_start(namespace="<repo>/fix/<name>", description="...")`; recall prior context and similar bugs with `agent_recall`
+        2. **Allocate worktree** — `agent_worktree_allocate(branch_name="fix/<name>", base_branch="main", purpose="...")`
+        3. **Investigate** — identify root cause; capture symptom, expected behavior, and repro conditions (approval gate)
+        4. **Implement fix** — write the fix with a regression test (approval gate)
+        5. **Sandbox test** — run tests via devbox
+        6. **Pre-commit checks** — lint, fmt, hooks
+        7. **Landing Procedure**
+           a. Stage only files for the active fix (never `.env`, credentials, or unrelated changes)
+           b. Commit with conventional format: `fix(scope): description` + `Co-Authored-By` trailer
+           c. Push branch (`-u` if first push)
+           d. Create or reuse MR/PR (check existing MRs for same source branch first)
+           e. Request auto-merge when project policy allows
+           f. Poll pipeline to terminal state; if red → fix → re-commit → re-push → re-poll
+           g. Confirm merged or document blocker
+        8. **Release worktree** — `agent_worktree_release(...)`
+        9. **End session** — `agent_session_end(summarize=true)`
 
         ## Quick Start
 
@@ -4219,7 +4457,7 @@ skills:
         | `namespace` | Yes | Session namespace (e.g., `project/bugfix-branch`) |
         | `agent_id` | Yes | Agent identifier (e.g., `claude-code`) |
         | `description` | Yes | Bug description |
-        | `branch_name` | Yes | Git branch name for the worktree |
+        | `branch_name` | Yes | Git branch name (`fix/<name>`) |
         | `base_branch` | No | Base branch (default: `main`) |
 
         Workflow file: `.agents/workflows/bugfix.yaml`
@@ -4231,15 +4469,34 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent research calls during investigation
+          - Bundled scripts available at `${SKILL_PATH}/scripts/`
       claude:
         enabled: true
         type: command
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `isolation: "worktree"` for parallel investigation
+          - Delegate CI polling to a background `Task` agent when waiting
       kilocode:
         enabled: true
         type: workflow
+        instructions_append: |
+          ## Kilocode Notes
+          - This workflow maps to `.kilocode/workflows/bugfix.yaml`
+          - Use staged phases with checkpoints between investigation and fix
       gemini:
         enabled: true
         type: instruction
+        instructions_append: |
+          ## Gemini Notes
+          - Use checkpointed phased decomposition for investigation and fix
+          - Record progress markers between major steps for resumability
+      antigravity:
+        enabled: true
+        type: command
 
   - name: dependency-upgrade
     categories: [development, workflow]
@@ -4266,16 +4523,24 @@ skills:
 
         ## Workflow Steps
 
-        1. **Initialize session** — start agent context session
-        2. **Recall prior migrations** — retrieve lessons from past upgrades
+        1. **Initialize session** — `agent_session_start(namespace="upgrade/<dep>-<version>", description="...")`; recall prior migrations with `agent_recall`
+        2. **Allocate worktree** — `agent_worktree_allocate(branch_name="upgrade/<dep>-<version>", base_branch="main", purpose="...")`
         3. **Inventory current state** — catalog versions, transitive deps, lock files
         4. **Breaking changes analysis** — research changelogs via Tavily
         5. **Impact assessment** — map affected files and usage patterns
         6. **Approve migration plan** — human review gate
         7. **Execute migration** — apply changes iteratively with compile/test
         8. **Full validation** — test suite, linting, integration tests
-        9. **Commit & push** — commit and push changes
-        10. **End session** — summarize and persist migration lessons
+        9. **Landing Procedure**
+           a. Stage only upgrade-related files (never `.env`, credentials, or unrelated changes)
+           b. Commit with conventional format: `upgrade(scope): bump <dep> from <old> to <new>` + `Co-Authored-By` trailer
+           c. Push branch (`-u` if first push)
+           d. Create or reuse MR/PR (check existing MRs for same source branch first)
+           e. Request auto-merge when project policy allows
+           f. Poll pipeline to terminal state; if red → fix → re-commit → re-push → re-poll
+           g. Confirm merged or document blocker
+        10. **Release worktree** — `agent_worktree_release(...)`
+        11. **End session** — `agent_session_end(summarize=true)` with migration lessons
 
         ## Quick Start
 
@@ -4308,15 +4573,34 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent changelog research
+          - Bundled scripts available at `${SKILL_PATH}/scripts/`
       claude:
         enabled: true
         type: command
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `subagent_type="Explore"` for parallel changelog research
+          - Delegate CI polling to a background `Task` agent when waiting
       kilocode:
         enabled: true
         type: workflow
+        instructions_append: |
+          ## Kilocode Notes
+          - This workflow maps to `.kilocode/workflows/dependency-upgrade.yaml`
+          - Use staged phases: research → plan → migrate → validate → ship
       gemini:
         enabled: true
         type: instruction
+        instructions_append: |
+          ## Gemini Notes
+          - Use checkpointed phases: research, plan approval, staged migration, validation
+          - Record progress markers so migration can resume after interruption
+      antigravity:
+        enabled: true
+        type: command
 
   - name: refactor
     categories: [development, workflow]
@@ -4343,15 +4627,23 @@ skills:
 
         ## Workflow Steps
 
-        1. **Initialize session** — start agent context session
-        2. **Recall context** — retrieve prior refactoring notes and tech debt items
+        1. **Initialize session** — `agent_session_start(namespace="<repo>/refactor/<scope>", description="...")`; recall prior refactoring notes with `agent_recall`
+        2. **Allocate worktree** — `agent_worktree_allocate(branch_name="refactor/<scope>", base_branch="main", purpose="...")`
         3. **Debt assessment** — catalog code smells, complexity hotspots, duplication
         4. **Impact analysis** — call graph and dependency analysis, downstream consumers
         5. **Approve refactoring plan** — human review gate
         6. **Execute refactoring** — incremental changes, one logical change at a time
         7. **Validate changes** — tests, lint, type checks, no regressions
-        8. **Commit** — commit and push changes
-        9. **End session** — summarize and persist rationale
+        8. **Landing Procedure**
+           a. Stage only refactoring-related files (never `.env`, credentials, or unrelated changes)
+           b. Commit with conventional format: `refactor(scope): description` + `Co-Authored-By` trailer
+           c. Push branch (`-u` if first push)
+           d. Create or reuse MR/PR (check existing MRs for same source branch first)
+           e. Request auto-merge when project policy allows
+           f. Poll pipeline to terminal state; if red → fix → re-commit → re-push → re-poll
+           g. Confirm merged or document blocker
+        9. **Release worktree** — `agent_worktree_release(...)`
+        10. **End session** — `agent_session_end(summarize=true)` with refactoring rationale
 
         ## Quick Start
 
@@ -4382,18 +4674,37 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent call-graph and dependency analysis
+          - Bundled scripts available at `${SKILL_PATH}/scripts/`
       claude:
         enabled: true
         type: command
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `subagent_type="Explore"` for parallel impact analysis
+          - Delegate CI polling to a background `Task` agent when waiting
       kilocode:
         enabled: true
         type: workflow
+        instructions_append: |
+          ## Kilocode Notes
+          - This workflow maps to `.kilocode/workflows/refactor.yaml`
+          - Use staged phases: assess → plan → execute → validate → ship
       gemini:
         enabled: true
         type: instruction
+        instructions_append: |
+          ## Gemini Notes
+          - Use checkpointed phases for incremental refactoring steps
+          - Record progress markers so refactoring can resume after interruption
+      antigravity:
+        enabled: true
+        type: command
 
   - name: repo-intake
-    categories: [workflow, discovery]
+    categories: [workflow, development]
     common:
       description: |
         Fast repository intake loop: establish repo context, current state, available loom/MCP capabilities, and the likely execution path before making changes.
@@ -4455,16 +4766,26 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent codebase stats + git status + loom sync status
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `subagent_type="Explore"` for fast codebase exploration
       kilocode:
         enabled: true
         type: rule
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: workspace-daily-sweep
     categories: [workflow, maintenance, operations]
@@ -4484,6 +4805,12 @@ skills:
         - dirty repos or stale worktrees
         - active agents, blocked tasks, or coordination pressure
         - immediate actions worth taking today
+
+        ## Session Tracking
+
+        Start a session for the sweep:
+        - `agent_session_start(namespace="workspace/daily-sweep", description="Daily sweep <date>")`
+        - `agent_presence_register(agent_id="<id>", agent_type="<platform>")`
 
         ## Sweep Checklist
 
@@ -4505,6 +4832,8 @@ skills:
            - scan key repos for dirty trees and pending branches
            - confirm the active branch matches the current task
 
+        Close the sweep: `agent_session_end(summarize=true)`
+
         ## Escalation Rules
 
         - if config drift is widespread, use `platform-config-sync`
@@ -4525,16 +4854,26 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent status checks across repos
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `subagent_type="Explore"` for parallel repo health checks
       kilocode:
         enabled: true
         type: rule
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: quality-gate-loop
     categories: [workflow, quality, development]
@@ -4580,6 +4919,12 @@ skills:
         - do not stop after the first failure; identify the narrowest fix and rerun the affected gate
         - do not claim "ready" while hooks, tests, or lint still have known failures
 
+        ## Session Tracking
+
+        Record quality gate results for resumability:
+        - `agent_context_add(entries=[{entry_type: "finding", title: "Quality gate result", content: "..."}])`
+        - If blocked, update task status: `agent_task_update(..., status="blocked", ...)`
+
         ## Handoff
 
         If the loop ends blocked, leave:
@@ -4595,16 +4940,26 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Bundled scripts available at `${SKILL_PATH}/scripts/`
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `run_in_background: true` for parallel test suites
       kilocode:
         enabled: true
         type: rule
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: ci-failure-recovery
     categories: [workflow, ci-cd, debugging]
@@ -4679,6 +5034,13 @@ skills:
         - if multiple jobs fail, fix the earliest causal failure first
         - if the failure is a real flake, quarantine or de-gate it with an owner and expiry plan
 
+        ## Session Tracking
+
+        Record failure analysis for resumability:
+        - `agent_session_start(namespace="<repo>/ci-recovery", description="CI failure triage on <branch>")`
+        - `agent_context_add(entries=[{entry_type: "finding", title: "CI failure classification", content: "..."}])`
+        - `agent_session_end(summarize=true)` when handing off to `ci-green-merge-loop`
+
         ## Research Notes
 
         See `references/workflow.md` for current GitLab merge-safety patterns and flaky-test handling ideas.
@@ -4691,19 +5053,30 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent pipeline job inspection
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `subagent_type="Explore"` for parallel job log analysis
+          - Delegate CI polling to a background `Task` agent when waiting
       kilocode:
         enabled: true
         type: rule
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: ci-green-merge-loop
-    categories: [workflow, ci-cd, gitlab]
+    categories: [workflow, ci-cd]
     common:
       description: |
         Carry a repo-local CI fix all the way through commit, push, merge request creation or reuse, auto-merge, and final green status. Use after the failure is understood and the job is to land the repair end-to-end.
@@ -4781,6 +5154,12 @@ skills:
         - do not open a fresh MR if the branch already has an active one
         - do not keep retrying a flaky test in the main merge gate without a quarantine plan
 
+        ## Cleanup
+
+        After the MR is merged (or blocker documented):
+        - release worktree if allocated: `agent_worktree_release(...)`
+        - `agent_session_end(summarize=true)` if a session is active
+
         ## Reference
 
         `references/workflow.md` captures the current GitLab and flaky-test patterns this loop is based on.
@@ -4797,16 +5176,34 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Bundled scripts available at `${SKILL_PATH}/scripts/`
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Delegate CI polling to a background `Task` agent when waiting
       kilocode:
         enabled: true
         type: workflow
+        instructions_append: |
+          ## Kilocode Notes
+          - This workflow maps to `.kilocode/workflows/ci-green-merge-loop.yaml`
+          - Use staged phases: commit → push → MR → CI watch → merge
       gemini:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Gemini Notes
+          - Use checkpointed phased execution for the merge loop
+          - Record progress markers so the loop can resume after interruption
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: small-change-loop
     categories: [workflow, development]
@@ -4845,10 +5242,13 @@ skills:
         4. **Verify proportionally**
            - run the smallest meaningful local checks first
            - escalate to `quality-gate-loop` if the change grows or fails unexpectedly
-        5. **Ship by default**
-           - commit scoped files
-           - push if the user has not opted out
-           - verify CI when the repo policy requires it
+        5. **Ship (Landing Procedure lite)**
+           a. Stage only files for the active task
+           b. Commit with conventional format: `type(scope): description` + `Co-Authored-By` trailer
+           c. Push if the user has not opted out (`-u` if first push)
+           d. Create or reuse MR/PR when on a feature branch
+           e. Verify CI when the repo policy requires it; if red → fix → re-push
+           f. Confirm merged or document blocker
 
         ## Escalation
 
@@ -4865,16 +5265,290 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Bundled scripts available at `${SKILL_PATH}/scripts/`
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Delegate CI polling to a background `Task` agent when waiting
       kilocode:
         enabled: true
         type: rule
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
+
+  - name: commit
+    categories: [workflow, development, git]
+    common:
+      description: |
+        Ship scoped changes: stage files, commit with a conventional message, push the branch, monitor CI to terminal state, and fix failures. Use when the user says "ship it", "commit", "push this", or any variant of "land these changes".
+      instructions: |
+        # Commit & Ship
+
+        Use this when code changes are ready to land. This is the shipping step — not a full dev workflow.
+
+        ## Trigger Words
+
+        Respond to: "ship it", "commit", "push this", "land it", "send it", "commit and push", or `/commit`.
+
+        ## Steps
+
+        1. **Assess what changed**
+           - `git status` and `git diff --stat` to understand the scope
+           - `git log --oneline -5` to match the repo's commit message style
+
+        2. **Stage scoped files**
+           - Stage only files related to the current task
+           - Never stage `.env`, credentials, or large binaries
+           - Prefer explicit file names over `git add -A`
+
+        3. **Commit with a conventional message**
+           - Format: `type(scope): description` (e.g., `fix(ci): expand race test exclusion`)
+           - End with `Co-Authored-By: <agent> <noreply@anthropic.com>`
+           - Use a HEREDOC for multi-line messages
+
+        4. **Push the branch**
+           - `git push origin <branch>` (with `-u` if first push)
+           - Never force-push without explicit user approval
+
+        5. **Monitor CI**
+           - Poll the triggered pipeline to terminal state
+           - GitLab: `gitlab__poll_pipeline` or `gitlab__pipeline_summary`
+           - GitHub: `gh run watch` or `gh run list`
+           - If red: diagnose → fix → re-commit → re-push → re-poll
+           - If green: report success
+
+        6. **Create or reuse MR/PR**
+           - Check for existing MR on the same source branch before creating a new one
+           - GitLab: `gitlab__list_merge_requests(source_branch=..., target_branch=main)`
+           - GitHub: `gh pr list --head <branch>`
+           - If on a feature branch and no MR exists, ask user before creating
+
+        7. **Request auto-merge** (when user approves and project policy allows)
+           - GitLab: `gitlab__merge_merge_request(auto_merge=true, sha=<HEAD>)`
+           - GitHub: `gh pr merge --auto --squash`
+
+        ## Safety
+
+        - Never amend published commits without user approval
+        - Never skip hooks (`--no-verify`) unless explicitly asked
+        - Never push to main/master without confirmation
+        - If pre-commit hooks fail, fix the issue and create a NEW commit
+
+        ## When to Escalate
+
+        - CI failures beyond the current change scope → `ci-failure-recovery`
+        - Merge conflicts → ask user for resolution strategy
+        - Branch protection rules blocking push → inform user
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Bundled scripts available at `${SKILL_PATH}/scripts/`
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Delegate CI polling to a background `Task` agent when waiting
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
+
+  - name: parallel-slice-ship
+    categories: [workflow, development, coordination, planning]
+    common:
+      description: |
+        Plan multiple simultaneous implementation slices from a prompt, spawn parallel sub-agents to implement each slice in isolated worktrees, then integrate into a single MR and ship. Use for large features that decompose into independent parallel work streams.
+      instructions: |
+        # Parallel Slice Ship
+
+        Decompose a feature into independent slices, implement them in parallel using sub-agents, merge results, and ship.
+
+        ## When to Use
+
+        - Feature naturally splits into 2-5 independent implementation slices
+        - Each slice touches different files/packages (minimal merge conflicts)
+        - Total work exceeds what one agent can do efficiently in sequence
+        - User wants maximum throughput on a well-understood task
+
+        ## When NOT to Use
+
+        - Slices have tight interdependencies (use sequential `feature-dev` instead)
+        - Fewer than 2 slices (use `small-change-loop`)
+        - Requirements are unclear (use `plan-loom-core` first)
+        - Single-file changes (overkill)
+
+        ## Phase 1: Plan Slices
+
+        1. **Understand the prompt**
+           - Recall prior context: `agent_context__agent_recall`
+           - Check codebase state: `codebase_memory__codebase_search`
+           - Read relevant files to understand boundaries
+
+        2. **Decompose into slices**
+           - Each slice MUST be independently implementable and testable
+           - Each slice gets its own branch and worktree
+           - Document per-slice: goal, files to touch, acceptance criteria, estimated complexity
+           - Identify shared interfaces (types, APIs) that must be agreed upon before parallel work
+
+        3. **Write the plan**
+           - Output a structured plan with numbered slices
+           - For each slice: title, description, files, branch name, test strategy
+           - Identify the integration order (which slices merge first)
+           - Get user approval before spawning agents
+
+        ## Phase 2: Spawn Parallel Agents
+
+        Each slice gets an isolated agent with its own worktree:
+
+        ```
+        For each slice:
+          1. agent_worktree_allocate(branch_name="feat/<feature>-slice-<N>", base_branch=main)
+          2. Spawn sub-agent with slice context:
+             - Slice goal and acceptance criteria
+             - Files to modify
+             - Shared interface contracts
+             - Test requirements
+          3. Sub-agent implements, tests locally, commits
+        ```
+
+        ### Waiting and Monitoring
+
+        - Monitor all sub-agents for completion
+        - If a sub-agent fails: diagnose, provide guidance, or reassign
+        - Collect results as each agent completes
+
+        ## Phase 3: Integrate and Land
+
+        1. **Merge slices into integration branch**
+           - Create `feat/<feature>` integration branch from main
+           - Merge each slice branch in dependency order
+           - Resolve any merge conflicts (should be minimal if slices were independent)
+
+        2. **Run full test suite**
+           - Verify combined changes pass all tests
+           - Fix integration issues in the integration branch
+
+        3. **Landing Procedure**
+           a. Push integration branch (`-u` if first push)
+           b. Create MR/PR from integration branch to main with all slice summaries in description
+           c. Request auto-merge when project policy allows
+              - GitLab: `gitlab__merge_merge_request(auto_merge=true, sha=<HEAD>)`
+              - GitHub: `gh pr merge --auto --squash`
+           d. Poll pipeline to terminal state; if red → fix → re-push → re-poll
+           e. Confirm merged or document blocker
+
+        ## Phase 4: Cleanup
+
+        - Release all worktrees: `agent_worktree_release(...)` for each slice
+        - End sub-agent sessions
+        - Record decisions and outcomes in agent context
+        - `agent_session_end(summarize=true)`
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+        instructions_append: |
+          ## Codex Sub-Agent Delegation
+
+          Use Codex's native multi-agent system for parallel slice execution:
+
+          ```toml
+          # Each slice runs as a named agent thread
+          [agents]
+          max_threads = 6
+
+          [agents.slice-1]
+          description = "Implement <slice-1-goal>"
+          ```
+
+          - Use `spawn_agent` to launch each slice agent
+          - Pass slice context via the agent description and instructions
+          - Use `wait_agent` to collect results
+          - Maximum 6 concurrent threads (configurable)
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+        instructions_append: |
+          ## Claude Sub-Agent Delegation
+
+          Use the Task tool for parallel slice execution:
+
+          ```
+          # Launch all slice agents in a SINGLE message with multiple Task tool calls:
+          Task(subagent_type="general-purpose", prompt="Implement slice 1: ...", isolation="worktree")
+          Task(subagent_type="general-purpose", prompt="Implement slice 2: ...", isolation="worktree")
+          Task(subagent_type="general-purpose", prompt="Implement slice 3: ...", isolation="worktree")
+          ```
+
+          - Use `isolation: "worktree"` so each agent gets its own git worktree
+          - Launch ALL slice agents in a single message for true parallelism
+          - Each agent returns its worktree path and branch name
+          - After all complete, integrate branches in the main conversation
+          - Use `subagent_type="general-purpose"` for implementation work
+          - Use `subagent_type="Plan"` for the initial slice decomposition if complex
+      kilocode:
+        enabled: true
+        type: workflow
+        instructions_append: |
+          ## Kilocode Phased Execution
+
+          Execute slices as sequential phases with checkpoints:
+
+          1. **Phase 1**: Plan all slices (checkpoint: plan approved)
+          2. **Phase 2-N**: Implement each slice sequentially with worktree isolation
+          3. **Phase N+1**: Integrate and ship
+
+          Use `agent_worktree_allocate` for isolation between phases.
+          Checkpoint between each phase for partial-run resumption.
+      gemini:
+        enabled: true
+        type: skill
+        instructions_append: |
+          ## Gemini Phased Execution
+
+          Without native sub-agent delegation, execute slices as checkpointed phases:
+
+          1. Plan all slices with explicit boundaries
+          2. Implement each slice sequentially in its own worktree
+          3. Validate each slice checkpoint before proceeding
+          4. Integrate all slices and ship
+
+          Use `agent_worktree_allocate` for branch isolation.
+          Record progress explicitly so each phase can resume independently.
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: backlog-triage
     categories: [workflow, planning, coordination]
@@ -4927,6 +5601,15 @@ skills:
            - recommend a specific next item
            - point to the right follow-on skill: `small-change-loop`, `feature-dev`, `bugfix`, or `research`
 
+        ## Handoff to Implementation
+
+        When the next item is selected:
+        - Use `small-change-loop` for tightly scoped edits
+        - Use `feature-dev` for multi-file feature slices
+        - Use `bugfix` for investigation-heavy defects
+        - Use `backlog-delivery-loop` for full pick-and-ship automation
+        - Each implementation skill follows the standard Landing Procedure (commit → MR → CI → merge)
+
         ## Rules
 
         - do not treat backlog grooming as abstract strategy work; every recommendation should end in an executable next step
@@ -4940,16 +5623,26 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent backlog source queries
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `subagent_type="Explore"` for parallel backlog source queries
       kilocode:
         enabled: true
         type: rule
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: review-response-loop
     categories: [workflow, development, collaboration]
@@ -4999,6 +5692,13 @@ skills:
            - state what changed
            - if rejecting a suggestion, explain the concrete reason
 
+        ## Landing After Review
+
+        When all review findings are addressed and local verification passes:
+        1. Commit fixes with conventional format: `fix(review): address <reviewer> feedback` + `Co-Authored-By` trailer
+        2. Push the branch
+        3. Proceed to `merge-readiness` → `ci-green-merge-loop` for the merge
+
         ## Rules
 
         - stale comments should be marked stale mentally before coding; do not "fix" already-resolved behavior
@@ -5012,16 +5712,26 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent review comment fetching
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `subagent_type="Explore"` to gather all review comments in parallel
       kilocode:
         enabled: true
         type: rule
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: merge-readiness
     categories: [workflow, ci-cd, quality]
@@ -5060,11 +5770,17 @@ skills:
            - docs/spec/changelog updated when the change affects usage or rollout
            - follow-up tasks created for deliberate omissions
 
+        ## Session Tracking
+
+        Record the readiness verdict:
+        - `agent_context_add(entries=[{entry_type: "finding", title: "Merge readiness: <verdict>", content: "..."}])`
+
         ## Decision Rule
 
         - merge only if there are no unresolved correctness concerns and the latest required checks are green
         - if CI is the only blocker, switch to `ci-failure-recovery`
         - if the diff no longer matches the requested scope, tighten it before merge instead of explaining it away
+        - when ready: proceed to `ci-green-merge-loop` for the actual merge execution
       scripts: []
       references: []
       assets: []
@@ -5083,6 +5799,10 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: docs-refresh-loop
     categories: [workflow, documentation, maintenance]
@@ -5122,6 +5842,16 @@ skills:
         5. **Preserve context**
            - add a short `agent-context` note or decision when the doc change captures non-obvious rationale
 
+        ## Landing Procedure
+
+        1. **Stage scoped files** — only changed docs (never `.env`, credentials, or unrelated code changes)
+        2. **Commit with conventional format** — `docs(scope): update <what changed>` + `Co-Authored-By` trailer
+        3. **Push branch** — `git push origin <branch>` (`-u` if first push)
+        4. **Create or reuse MR/PR** — check for existing MR on the same source branch first
+        5. **Request auto-merge** when project policy allows
+        6. **Poll pipeline to terminal state** — if red → fix → re-push
+        7. **Confirm merged** or document blocker
+
         ## Rules
 
         - prefer smaller accurate updates over broad prose refreshes
@@ -5135,19 +5865,29 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent codebase search across doc targets
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `subagent_type="Explore"` for parallel doc drift detection
       kilocode:
         enabled: true
         type: rule
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: frontend-ux-craft
-    categories: [frontend, design, ux, workflow]
+    categories: [frontend, design, workflow]
     common:
       description: |
         Design and implement polished, consistent, and beautiful frontend experiences with strong UX judgment, accessible interaction states, responsive behavior, and an intentional visual language. Use when shaping new UI, upgrading rough interfaces, or pushing beyond functional-but-generic output.
@@ -5197,6 +5937,13 @@ skills:
         - A concrete implementation slice
         - Evidence of responsive, accessibility, and state coverage
 
+        ## Handoff to Implementation
+
+        When design direction is established and ready to build:
+        - Use `feature-dev` for multi-file frontend implementation
+        - Use `small-change-loop` for targeted CSS/component tweaks
+        - Each implementation slice follows the standard Landing Procedure (commit → MR → CI → merge)
+
         ## References / Templates
 
         - Playbook: `references/playbook.md`
@@ -5215,16 +5962,27 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent component and token inventory
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `browserkit-screenshots` MCP tool for before/after evidence capture
+          - Use `Task` tool with `subagent_type="Explore"` for parallel component audit
       kilocode:
         enabled: true
         type: rule
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: entropy-reduction-protocol
     categories: [workflow, quality, coordination]
@@ -5279,6 +6037,13 @@ skills:
         - Do not reopen settled decisions without new evidence.
         - When new work appears, either capture it as follow-up or consciously swap goals.
 
+        ## Handoff to Implementation
+
+        Once scope is compressed and direction is clear:
+        - Use `small-change-loop` for the narrowest possible slice
+        - Use `feature-dev` for multi-file implementation
+        - Each implementation slice follows the standard Landing Procedure (commit → MR → CI → merge)
+
         ## References / Templates
 
         - Protocol notes: `references/protocol.md`
@@ -5307,9 +6072,13 @@ skills:
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
 
   - name: multi-lens-product-review
-    categories: [product, design, review, workflow]
+    categories: [planning, design, workflow]
     common:
       description: |
         Run a creative but grounded multi-lens critique across UX, copy, accessibility, performance, and implementation reality, then converge on the highest-leverage next slice. Use when we need structured taste, sharper product thinking, or a more inventive direction before building.
@@ -5372,6 +6141,14 @@ skills:
         - An implementation-ready next slice
         - Open risks or unanswered questions
 
+        ## Handoff to Implementation
+
+        When the review converges on an actionable next slice:
+        - Use `frontend-ux-craft` for UI/UX implementation work
+        - Use `feature-dev` for broader feature implementation
+        - Use `small-change-loop` for targeted adjustments
+        - Each implementation slice follows the standard Landing Procedure (commit → MR → CI → merge)
+
         ## References / Templates
 
         - Lens guide: `references/lenses.md`
@@ -5390,13 +6167,25 @@ skills:
       codex:
         enabled: true
         type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent lens analysis
+          - Use `spawn_agent` to assign distinct lenses to different agents
       claude:
         enabled: true
         type: command
         output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool to assign distinct lenses to parallel sub-agents
+          - Use `browserkit-screenshots` MCP tool for evidence capture
       kilocode:
         enabled: true
         type: rule
       gemini:
         enabled: true
         type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown

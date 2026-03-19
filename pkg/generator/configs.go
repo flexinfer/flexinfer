@@ -786,6 +786,7 @@ func validateSettingsAgainstUpstream(target, filePath string, content []byte) {
 // they are structural (event names, matcher groups) rather than data.
 func claudeHooksConfig(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
 	return map[string]any{
+		"$schema":     "https://json.schemastore.org/claude-code-settings.json",
 		"permissions": claudePermissions(reg),
 		"hooks":       claudeHooks(reg, profile, loomBinary),
 	}
@@ -1147,9 +1148,60 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 	// AGENT_ID_FILE to avoid per-hook process-ID churn that fragments identity.
 	// The workspace hash from cksum matches the scheme used by hookAgentIDBootstrap
 	// for Claude/Gemini, avoiding cross-workspace agent ID collisions.
+	// Emit [agents] section for multi-agent support if configured in registry.
+	emitCodexAgents(sb, pp)
+
 	sb.WriteString("# Agent lifecycle: heartbeat on turn completion (self-bootstraps session/presence)\n")
 	fmt.Fprintf(sb, `notify = ["sh", "-c", "WS_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || printf '%%s' \"$PWD\")\"; WS_HASH=\"$(printf '%%s' \"$WS_ROOT\" | cksum | cut -d' ' -f1)\"; AGENT_ID_FILE=\"${HOME}/.cache/loom/agent-id-codex-${WS_HASH}\"; mkdir -p \"$(dirname \"$AGENT_ID_FILE\")\"; if [ -s \"$AGENT_ID_FILE\" ]; then AGENT_ID=\"$(cat \"$AGENT_ID_FILE\")\"; else AGENT_ID=\"codex-${WS_HASH}\"; printf '%%s' \"$AGENT_ID\" > \"$AGENT_ID_FILE\"; fi; exec %s agent heartbeat --agent-id \"$AGENT_ID\" --status active --ensure-session --infer-namespace --agent-type codex --description \"Codex notify session\" --quiet 2>>\"${TMPDIR:-/tmp}/loom-agent-hooks.log\" || true"]`, loomCmd)
 	sb.WriteString("\n\n")
+}
+
+// emitCodexAgents writes the [agents] TOML section for Codex multi-agent support.
+func emitCodexAgents(sb *strings.Builder, pp *registry.PlatformPermission) {
+	if pp == nil || pp.Settings == nil {
+		return
+	}
+	agents, ok := pp.Settings["agents"].(map[string]any)
+	if !ok || len(agents) == 0 {
+		return
+	}
+
+	sb.WriteString("[agents]\n")
+
+	// Emit top-level agent settings.
+	for _, key := range []string{"max_threads", "max_depth", "job_max_runtime_seconds"} {
+		if v, exists := agents[key]; exists {
+			switch val := v.(type) {
+			case int:
+				fmt.Fprintf(sb, "%s = %d\n", key, val)
+			case float64:
+				fmt.Fprintf(sb, "%s = %d\n", key, int(val))
+			}
+		}
+	}
+	sb.WriteString("\n")
+
+	// Emit named agent definitions as [agents.<name>] sections.
+	if defs, ok := agents["definitions"].(map[string]any); ok {
+		// Sort keys for deterministic output.
+		names := make([]string, 0, len(defs))
+		for name := range defs {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		for _, name := range names {
+			def, ok := defs[name].(map[string]any)
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(sb, "[agents.%s]\n", name)
+			if desc, ok := def["description"].(string); ok {
+				fmt.Fprintf(sb, "description = %q\n", desc)
+			}
+			sb.WriteString("\n")
+		}
+	}
 }
 
 // registryPlatformPerms returns the PlatformPermission for a given platform,
@@ -1233,7 +1285,8 @@ func geminiHooksConfig() map[string]any {
 // platform_permissions.gemini section.
 func geminiHooksConfigFromRegistry(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
 	config := map[string]any{
-		"hooks": geminiHooks(reg, profile, loomBinary),
+		"hooks":        geminiHooks(reg, profile, loomBinary),
+		"experimental": map[string]any{"enableAgents": true},
 	}
 
 	// Merge auto-approve and tool settings from registry.
