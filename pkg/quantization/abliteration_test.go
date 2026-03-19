@@ -77,18 +77,18 @@ func TestBuildAbliterationJob_Defaults(t *testing.T) {
 		t.Errorf("memory limit = %q, want 56Gi", memLimit.String())
 	}
 
-	// PYTORCH_HIP_ALLOC_CONF for AMD
-	foundHipConf := false
+	// PYTORCH_ALLOC_CONF for AMD
+	foundAllocConf := false
 	for _, env := range container.Env {
-		if env.Name == "PYTORCH_HIP_ALLOC_CONF" {
-			foundHipConf = true
-			if env.Value != "expandable_segments:True" {
-				t.Errorf("PYTORCH_HIP_ALLOC_CONF = %q, want expandable_segments:True", env.Value)
+		if env.Name == "PYTORCH_ALLOC_CONF" {
+			foundAllocConf = true
+			if env.Value != rocmAllocatorConfig {
+				t.Errorf("PYTORCH_ALLOC_CONF = %q, want %q", env.Value, rocmAllocatorConfig)
 			}
 		}
 	}
-	if !foundHipConf {
-		t.Error("missing PYTORCH_HIP_ALLOC_CONF env var for AMD GPU")
+	if !foundAllocConf {
+		t.Error("missing PYTORCH_ALLOC_CONF env var for AMD GPU")
 	}
 }
 
@@ -179,8 +179,8 @@ func TestBuildAbliterationJob_NvidiaGPU(t *testing.T) {
 
 	// Should NOT have HIP alloc conf for NVIDIA
 	for _, env := range container.Env {
-		if env.Name == "PYTORCH_HIP_ALLOC_CONF" {
-			t.Error("PYTORCH_HIP_ALLOC_CONF should not be set for NVIDIA")
+		if env.Name == "PYTORCH_ALLOC_CONF" {
+			t.Error("PYTORCH_ALLOC_CONF should not be set for NVIDIA")
 		}
 	}
 }

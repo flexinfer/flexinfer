@@ -70,10 +70,7 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 	// Set memory allocator config for AMD GPUs to reduce fragmentation.
 	var env []corev1.EnvVar
 	if params.GPUVendor == "amd" {
-		env = append(env, corev1.EnvVar{
-			Name:  "PYTORCH_HIP_ALLOC_CONF",
-			Value: "expandable_segments:True",
-		})
+		env = append(env, rocmAllocatorEnv())
 	}
 	env = append(env, extraEnv...)
 

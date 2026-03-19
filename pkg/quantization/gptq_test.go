@@ -332,17 +332,17 @@ func TestGPTQJobBuilder_BuildJob_AMDImage(t *testing.T) {
 		t.Errorf("image = %q, want AMD ROCm image %q", image, DefaultGPTQROCmImage)
 	}
 
-	// Verify AMD HIP alloc conf env var is set
+	// Verify AMD allocator env var is set.
 	found := false
 	for _, env := range job.Spec.Template.Spec.Containers[0].Env {
-		if env.Name == "PYTORCH_HIP_ALLOC_CONF" {
+		if env.Name == "PYTORCH_ALLOC_CONF" {
 			found = true
-			if env.Value != "expandable_segments:True" {
-				t.Errorf("PYTORCH_HIP_ALLOC_CONF = %q, want expandable_segments:True", env.Value)
+			if env.Value != rocmAllocatorConfig {
+				t.Errorf("PYTORCH_ALLOC_CONF = %q, want %q", env.Value, rocmAllocatorConfig)
 			}
 		}
 	}
 	if !found {
-		t.Error("missing PYTORCH_HIP_ALLOC_CONF env var for AMD")
+		t.Error("missing PYTORCH_ALLOC_CONF env var for AMD")
 	}
 }

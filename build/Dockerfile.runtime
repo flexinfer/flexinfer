@@ -220,6 +220,7 @@ RUN if [ "${INCLUDE_QUANTIZER}" = "true" ] && command -v pip >/dev/null 2>&1; th
       pip install -v "gptqmodel @ git+https://github.com/ModelCloud/GPTQModel.git@main" \
         --no-build-isolation --no-deps; \
       pip install --no-cache-dir \
+        tokenicer pypcre kernels torchao \
         datasets zstandard safetensors accelerate sentencepiece \
         huggingface_hub protobuf pillow hf_transfer device-smi \
         tokenizers logbar maturin pyarrow dill defuser; \
@@ -231,6 +232,8 @@ RUN if [ "${INCLUDE_QUANTIZER}" = "true" ] && command -v pip >/dev/null 2>&1; th
       # oras CLI for OCI artifact push (model publishing)
       curl -fsSL https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz \
         | tar -xz -C /usr/local/bin oras; \
+      mkdir -p /etc/flexinfer && touch /etc/flexinfer/quantizer-deps-baked; \
+      python3 -c "import tokenicer, pcre, kernels, torchao"; \
     fi
 
 # ── Profiling and diagnostics tooling ────────────────────────────────

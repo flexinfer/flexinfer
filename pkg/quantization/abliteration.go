@@ -125,10 +125,7 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 		gpuResourceName := "nvidia.com/gpu"
 		if params.GPUVendor == "amd" {
 			gpuResourceName = "amd.com/gpu"
-			env = append(env, corev1.EnvVar{
-				Name:  "PYTORCH_HIP_ALLOC_CONF",
-				Value: "expandable_segments:True",
-			})
+			env = append(env, rocmAllocatorEnv())
 		}
 		gpuResource := corev1.ResourceName(gpuResourceName)
 		resources.Requests[gpuResource] = resource.MustParse("1")

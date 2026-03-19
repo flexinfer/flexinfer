@@ -429,15 +429,15 @@ func TestAWQJobBuilder_BuildJob_AMDVendor(t *testing.T) {
 		t.Fatalf("unexpected toleration: %+v", podSpec.Tolerations[0])
 	}
 
-	// PYTORCH_HIP_ALLOC_CONF should be set for AMD GPUs
-	var hipAllocConf string
+	// PYTORCH_ALLOC_CONF should be set for AMD GPUs.
+	var allocConf string
 	for _, e := range container.Env {
-		if e.Name == "PYTORCH_HIP_ALLOC_CONF" {
-			hipAllocConf = e.Value
+		if e.Name == "PYTORCH_ALLOC_CONF" {
+			allocConf = e.Value
 		}
 	}
-	if hipAllocConf != "expandable_segments:True" {
-		t.Fatalf("PYTORCH_HIP_ALLOC_CONF = %q, want expandable_segments:True", hipAllocConf)
+	if allocConf != rocmAllocatorConfig {
+		t.Fatalf("PYTORCH_ALLOC_CONF = %q, want %q", allocConf, rocmAllocatorConfig)
 	}
 
 	script := container.Args[0]
@@ -632,15 +632,15 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor(t *testing.T) {
 		t.Fatal("nvidia.com/gpu should not be set for AMD vendor")
 	}
 
-	// PYTORCH_HIP_ALLOC_CONF should be set for AMD GPUs
-	var hipAllocConf string
+	// PYTORCH_ALLOC_CONF should be set for AMD GPUs.
+	var allocConf string
 	for _, e := range container.Env {
-		if e.Name == "PYTORCH_HIP_ALLOC_CONF" {
-			hipAllocConf = e.Value
+		if e.Name == "PYTORCH_ALLOC_CONF" {
+			allocConf = e.Value
 		}
 	}
-	if hipAllocConf != "expandable_segments:True" {
-		t.Fatalf("PYTORCH_HIP_ALLOC_CONF = %q, want expandable_segments:True", hipAllocConf)
+	if allocConf != rocmAllocatorConfig {
+		t.Fatalf("PYTORCH_ALLOC_CONF = %q, want %q", allocConf, rocmAllocatorConfig)
 	}
 
 	script := container.Args[0]

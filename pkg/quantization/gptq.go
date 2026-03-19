@@ -368,10 +368,15 @@ rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
 mkdir -p /workspace/offload
 
-# GPTQModel 5.8.x in the runtime image can be present without its newer Python
-# dependency set. Bootstrap the minimum compatible import/runtime deps here so
-# the quantize job is self-contained even when the base image lags.
+# GPTQModel runtime dependencies are baked into the unified runtime image for
+# quantizer-enabled profiles. Keep this fast-fail guard so older images still
+# self-heal, but do not pay the install penalty when the image is already baked.
 if ! python3 -c "import tokenicer, pcre, kernels, torchao" >/dev/null 2>&1; then
+    if [ -f /etc/flexinfer/quantizer-deps-baked ]; then
+        echo "ERROR: GPTQModel runtime deps are expected in the image but imports are missing"
+        python3 -c "import tokenicer, pcre, kernels, torchao"
+        exit 1
+    fi
     echo "Installing missing GPTQModel runtime dependencies..."
     python3 -m pip install --no-cache-dir --quiet \
         "tokenicer>=0.0.10" \
