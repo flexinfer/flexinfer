@@ -191,6 +191,7 @@ RUN if [ "${INCLUDE_VLLM}" = "true" ] && command -v pip >/dev/null 2>&1; then \
         py-cpuinfo psutil pyzmq uvloop \
         flash-linear-attention; \
       export ROCM_PATH="${ROCM_PATH:-/opt/rocm}" HIP_PATH="${HIP_PATH:-/opt/rocm}" MAX_JOBS="${MAX_JOBS:-$(nproc)}"; \
+      export HIP_ARCHITECTURES="${GPU_ARCH}" HCC_AMDGPU_TARGET="${GPU_ARCH}" PYTORCH_ROCM_ARCH="${GPU_ARCH}"; \
       pip install --no-cache-dir --no-build-isolation "causal-conv1d>=1.5.0.post8"; \
       python3 -c 'import importlib.util; missing=[name for name in ("fla","causal_conv1d") if importlib.util.find_spec(name) is None]; assert not missing, f"missing Qwen3.5 fast-path deps: {missing}"; print("Qwen3.5 fast-path deps installed")'; \
     fi
