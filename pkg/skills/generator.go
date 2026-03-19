@@ -18,6 +18,9 @@ type Generator struct {
 	SourceDir    string // Where skill source files live (mcp/skills/)
 	Target       string // "codex" | "claude" | "kilocode" | "gemini" | "all"
 	OutputDir    string // Where to generate skills (overrides platform defaults)
+	// CodexRootDir overrides the Codex platform root (normally ~/.codex) for
+	// instructions.md and manifest generation.
+	CodexRootDir string
 	// CodexSkillsDir overrides the default Codex skills directory (normally ~/.codex/skills).
 	// This is intentionally separate from OutputDir so callers (like `loom sync`) can
 	// generate Codex skills into the repo while keeping manifest/instructions rooted
@@ -40,6 +43,7 @@ type GeneratorOptions struct {
 	OutputDir        string
 	RepoRoot         string
 	CodexHome        string
+	CodexRootDir     string
 	GeminiSkillsHome string
 	CodexSkillsDir   string
 	WorkspaceRoot    string
@@ -87,6 +91,7 @@ func NewGenerator(opts GeneratorOptions) (*Generator, error) {
 		SourceDir:        sourceDir,
 		Target:           opts.Target,
 		OutputDir:        opts.OutputDir,
+		CodexRootDir:     opts.CodexRootDir,
 		CodexSkillsDir:   opts.CodexSkillsDir,
 		RepoRoot:         repoRoot,
 		CodexHome:        codexHome,
@@ -378,6 +383,17 @@ func (g *Generator) generateForTarget(target string) error {
 
 // resolveTargetDir returns the platform repo directory for writing generated files.
 func (g *Generator) resolveTargetDir(target string) string {
+	if target == "codex" {
+		if g.CodexRootDir != "" {
+			return g.CodexRootDir
+		}
+		if g.RepoRoot != "" {
+			return filepath.Join(g.RepoRoot, ".codex")
+		}
+		if g.CodexHome != "" {
+			return g.CodexHome
+		}
+	}
 	if g.OutputDir != "" {
 		return g.OutputDir
 	}
@@ -385,8 +401,6 @@ func (g *Generator) resolveTargetDir(target string) string {
 		switch target {
 		case "claude":
 			return filepath.Join(g.RepoRoot, ".claude")
-		case "codex":
-			return filepath.Join(g.RepoRoot, ".codex")
 		case "kilocode":
 			return filepath.Join(g.RepoRoot, ".kilocode")
 		case "gemini":

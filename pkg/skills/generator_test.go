@@ -342,6 +342,60 @@ func TestGenerateForTarget_GeminiSkillCreatesBundle(t *testing.T) {
 	}
 }
 
+func TestGenerateForTarget_CodexDirectToHomeWritesRootFilesToCodexHome(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	sourceSkillDir := filepath.Join(sourceDir, "ops-helper")
+	if err := os.MkdirAll(sourceSkillDir, 0o755); err != nil {
+		t.Fatalf("mkdir source skill dir: %v", err)
+	}
+
+	enabled := true
+	skill := &Skill{
+		Name: "ops-helper",
+		Common: &SkillSpec{
+			Description:  "Ops helper skill",
+			Instructions: "# Ops Helper\n\nDo ops work.",
+		},
+		Targets: map[string]*TargetSpec{
+			"codex": {Enabled: &enabled, Type: "instruction"},
+		},
+	}
+
+	codexRoot := filepath.Join(tmpDir, "home", ".codex")
+	g := &Generator{
+		Registry:       &Registry{Skills: []*Skill{skill}},
+		SourceDir:      sourceDir,
+		Target:         "codex",
+		RepoRoot:       tmpDir,
+		CodexHome:      codexRoot,
+		CodexRootDir:   codexRoot,
+		CodexSkillsDir: filepath.Join(codexRoot, "skills"),
+	}
+
+	if err := g.generateForTarget("codex"); err != nil {
+		t.Fatalf("generateForTarget(codex): %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(codexRoot, "instructions.md")); err != nil {
+		t.Fatalf("expected instructions.md in codex home root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".codex", "instructions.md")); !os.IsNotExist(err) {
+		t.Fatalf("did not expect instructions.md in repo .codex, err=%v", err)
+	}
+
+	manifest, err := ReadManifest(codexRoot)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if manifest == nil {
+		t.Fatal("expected manifest to be written in codex home root")
+	}
+	if !containsString(manifest.Generated, "instructions.md") {
+		t.Fatalf("expected manifest to include instructions.md, got %#v", manifest.Generated)
+	}
+}
+
 func TestGenerateGeminiSkillMD_UsesConfiguredSkillsHomePath(t *testing.T) {
 	g := &Generator{
 		CodexHome:        "/tmp/codex",

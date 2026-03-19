@@ -1051,6 +1051,15 @@ func (m *Manager) regenerateSkills(p *Profile) error {
 			}
 			return filepath.Join(repoPath, "skills")
 		}(),
+		CodexRootDir: func() string {
+			if p.SkillsTarget != "codex" {
+				return ""
+			}
+			if p.SkillsDirectToHome {
+				return m.ResolveHomePath(p)
+			}
+			return repoPath
+		}(),
 	})
 	if err != nil {
 		return fmt.Errorf("create skills generator: %w", err)
