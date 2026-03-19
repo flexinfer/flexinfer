@@ -4,14 +4,13 @@
 # Temporary: using official GPTQ while self-quantization pipeline is fixed.
 # TODO: switch back to abliterated source once quantization OOM is resolved.
 #
-# 27B dense at INT4 = ~15 GB model weights. On 24GB gfx1100:
-#   Model weights:  ~15 GiB
-#   CUDA graphs:    ~0.8 GiB
-#   KV cache:       ~6 GiB → limited context window
-#   Total:          ~22 GiB / 24 GiB
+# Dynamic quantization: attn layers FP16, MoE experts INT4.
+# Total model weights: ~29 GiB on disk.
+# moe_wna16 not supported on ROCm — using gptq (ExllamaV2 HIP kernels).
+# May OOM on 24GB gfx1100 — monitor VRAM usage.
 #
-# maxModelLen=8192 to fit KV cache budget (tighter than 14B setup).
-# maxNumSeqs=4 to avoid KV cache pressure.
+# maxModelLen=4096 to minimize KV cache budget.
+# maxNumSeqs=2 to reduce concurrent memory pressure.
 #
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -31,17 +30,17 @@ spec:
     idleTimeout: 60m
     coldStartTimeout: 15m
   config:
-    quantization: moe_wna16
+    quantization: gptq
     dtype: "half"
-    maxModelLen: 8192
+    maxModelLen: 4096
     gpuMemoryUtilization: "0.95"
-    maxNumSeqs: 4
-    enforceEager: false
+    maxNumSeqs: 2
+    enforceEager: true
     trustRemoteCode: true
     servedModelName: qwen35-27b-opus-distill
     enableToolCalling: true
     toolCallParser: hermes
-    maxNumBatchedTokens: 4096
+    maxNumBatchedTokens: 2048
     disableLogStats: false
     warmPolicy: primary
     hipVisibleDevices: "0"
