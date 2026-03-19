@@ -13,7 +13,3 @@ Use `libs/banner-kit/scripts/workspace_branding_maintenance.sh` as the canonical
 
 - `libs/*` repos are public by default.
 - `services/*` repos are private by default unless allowlisted in `libs/banner-kit/scripts/workspace_public_services.txt`.
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

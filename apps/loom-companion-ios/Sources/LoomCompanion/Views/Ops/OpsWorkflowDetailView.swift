@@ -36,9 +36,9 @@ struct OpsWorkflowDetailView: View {
                 }
             }
 
-            if let detail, !detail.steps.isEmpty {
+            if let detail, let steps = detail.steps, !steps.isEmpty {
                 Section("Steps") {
-                    ForEach(detail.steps) { step in
+                    ForEach(steps) { step in
                         HStack(spacing: LoomSpacing.sm) {
                             Image(systemName: stepIcon(step.status))
                                 .foregroundStyle(statusColor(step.status))

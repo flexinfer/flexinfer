@@ -27,7 +27,3 @@
 
 - [ ] Revert commit and push
 - [ ] Reconcile again
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

@@ -24,7 +24,3 @@ if [[ "$current" != "$expected" ]]; then
 fi
 
 echo "OK: dev env configured (KUBECONFIG=$current)"
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

@@ -4,6 +4,9 @@
 
 - Workspace snapshot: `00-workspace-snapshot.md`
 - MCP inventory: `00-mcp-inventory.md`
+- Research (developer setup flow, 2026-03-18): `19-research-developer-setup-flow-2026-03-18.md`
+- Product spec (developer setup flow, 2026-03-18): `23-product-spec-developer-setup-flow-2026-03-18.md`
+- Implementation plan (developer setup flow, 2026-03-18): `42-implementation-plan-developer-setup-flow-2026-03-18.md`
 - Research (HUD/UX continuation, 2026-03-13): `18-research-hud-ux-continuation-2026-03-13.md`
 - Product spec (HUD/UX continuation, 2026-03-13): `22-product-spec-hud-ux-continuation-2026-03-13.md`
 - Implementation plan (HUD/UX continuation, 2026-03-13): `41-implementation-plan-hud-ux-continuation-2026-03-13.md`
@@ -18,6 +21,15 @@
 - Prior HUD/TUI slice handoff: `55-ralph-slice-handoff-hud-tui-presence-2026-02-17.md`
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
+
+## Current Planning Addendum (2026-03-18)
+
+- Active planning slice: developer setup/onboarding improvement centered on a proposed first-class `loom setup` command.
+- New planning docs:
+  - `19-research-developer-setup-flow-2026-03-18.md`
+  - `23-product-spec-developer-setup-flow-2026-03-18.md`
+  - `42-implementation-plan-developer-setup-flow-2026-03-18.md`
+- This session used CLI fallback for tool/runtime inventory because top-level MCP resource discovery returned empty results.
 
 ## Current State (2026-03-13)
 

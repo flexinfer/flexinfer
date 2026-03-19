@@ -20,7 +20,3 @@ if [[ "${APPLY:-0}" != "1" ]]; then
 fi
 
 exec bash "$SCRIPT" "$@"
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

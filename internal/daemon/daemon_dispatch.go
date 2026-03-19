@@ -559,6 +559,10 @@ func (d *Daemon) handleRBACSimulate(ctx context.Context, msg *mcp.Message) (*mcp
 // handleOTelStatus returns observability configuration status.
 func (d *Daemon) handleOTelStatus(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	// Fall back to file config if env var is not set.
+	if endpoint == "" && d.fileCfg.OTel.Endpoint != "" {
+		endpoint = d.fileCfg.OTel.Endpoint
+	}
 	logFormat := os.Getenv("MCP_LOG_FORMAT")
 	if logFormat == "" {
 		logFormat = "text"

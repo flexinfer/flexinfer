@@ -55,11 +55,11 @@ struct FleetHealthWidgetView: View {
     }
 
     private var smallView: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: entry.data.daemonRunning ? "checkmark.circle.fill" : "xmark.circle.fill")
                     .foregroundStyle(entry.data.daemonRunning ? .green : .red)
-                    .font(.title2)
+                    .font(.title3)
                 Spacer()
                 Text("Loom")
                     .font(.caption2)
@@ -69,25 +69,47 @@ struct FleetHealthWidgetView: View {
             Spacer()
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(entry.data.healthyServers)")
-                    .font(.system(size: 34, weight: .bold, design: .rounded))
-                Text("healthy servers")
+                Text("\(entry.data.healthyServers)/\(entry.data.serverCount)")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                Text("servers healthy")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
 
-            if entry.data.degradedServers > 0 || entry.data.downServers > 0 {
-                HStack(spacing: 6) {
-                    if entry.data.degradedServers > 0 {
-                        Label("\(entry.data.degradedServers)", systemImage: "exclamationmark.triangle")
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                    if entry.data.downServers > 0 {
-                        Label("\(entry.data.downServers)", systemImage: "xmark.circle")
-                            .font(.caption2)
-                            .foregroundStyle(.red)
-                    }
+            // Proportional health bar
+            healthBar
+                .frame(height: 4)
+
+            // Compact agent summary
+            HStack(spacing: 8) {
+                Label("\(entry.data.activeAgents)", systemImage: "person.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+                Label("\(entry.data.sessionCount)", systemImage: "rectangle.stack")
+                    .font(.caption2)
+                    .foregroundStyle(.blue)
+            }
+        }
+    }
+
+    private var healthBar: some View {
+        GeometryReader { geo in
+            let total = max(entry.data.serverCount, 1)
+            HStack(spacing: 1) {
+                if entry.data.healthyServers > 0 {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(.green)
+                        .frame(width: geo.size.width * CGFloat(entry.data.healthyServers) / CGFloat(total))
+                }
+                if entry.data.degradedServers > 0 {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(.orange)
+                        .frame(width: geo.size.width * CGFloat(entry.data.degradedServers) / CGFloat(total))
+                }
+                if entry.data.downServers > 0 {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(.red)
+                        .frame(width: geo.size.width * CGFloat(entry.data.downServers) / CGFloat(total))
                 }
             }
         }

@@ -1,6 +1,6 @@
 # MCP Inventory
 
-_Last verified: 2026-03-13_
+_Last verified: 2026-03-18_
 
 ## Why
 
@@ -8,38 +8,37 @@ Capture the MCP/runtime baseline used for planning so later decisions are ground
 
 ## Runtime Mode Detection
 
-This session is exposing top-level loom-mode MCP resources.
+This planning session did not expose top-level loom-mode MCP resources through the desktop resource APIs.
 
 Observed behavior:
-- `list_mcp_resources` returned `loom://config`, `loom://servers`, `loom://tools/index`, `loom://tools`, and `loom://health`.
-- `list_mcp_resource_templates` returned paged loom templates including `loom://tools/page/{page}` and `loom://tools/server/{server}/page/{page}`.
+- `list_mcp_resources` returned an empty result.
+- `list_mcp_resource_templates` returned an empty result.
+- A direct `codebase_memory__codebase_stats(repo_id="loom-core")` probe failed with `Transport closed`.
 
 Planning implication:
-- Prefer loom resource pagination over CLI fallback for inventory.
-- Treat loom daemon state and tool counts as directly inspectable in-session.
+- Prefer the CLI fallback path (`loom ...`) for current-session inventory claims.
+- Do not assume in-session MCP resource/template discovery is healthy just because the daemon is up.
 
 ## Loom Inventory Snapshot
 
-Snapshot from `read_mcp_resource(server="loom", uri="loom://config")`:
+Snapshot from `loom status --json`:
 
 | Field | Value |
 |---|---|
-| active profile | `full` |
-| serverCount | `46` |
-| toolCount | `483` |
-| activeProxySessions | `3` |
 | daemon running | `true` |
-| drainReady | `true` |
-| running local processes | `morph_embeddings`, `codebase_memory`, `prometheus`, `agent_context`, `devbox`, `git_worktree` |
+| serverCount | `46` |
+| activeProxySessions | `1` |
+| HUD reachable | `false` |
+| running local processes | `neo4j`, `docker`, `k8s_apps_k3s`, `agent_context`, `devbox`, `flux`, `git` |
 
-Snapshot from `read_mcp_resource(server="loom", uri="loom://tools/index")`:
+Snapshot from `loom tools list --json --page 1 --limit 5`:
 
 | Field | Value |
 |---|---|
 | server | `all` |
-| totalTools | `483` |
-| totalPages | `5` |
-| pageSize | `100` |
+| totalTools | `498` |
+| totalPages | `50` |
+| pageSize | `10` |
 
 Relevant planning tools confirmed available in this session:
 - `gitlab`
@@ -50,25 +49,25 @@ Relevant planning tools confirmed available in this session:
 - `flux`
 - `quality`
 - `devbox`
-- `browserkit` (registered, currently idle until first use)
+- `browserkit`
 
 ## Codebase Index Readiness
 
 Current session status:
-- `codebase_memory__codebase_stats(repo_id="loom-core")` returned `7861` indexed chunks.
-- Indexed chunk counts were `4533` functions, `1880` methods, `790` classes, and `626` modules.
-- The current index is Go-only (`7861` Go chunks, `0` TypeScript/JavaScript/Python/Rust chunks).
+- The `codebase_memory` server is registered in tool inventory and exposes indexing/stat/search tools through `loom tools list --json --server codebase_memory --page 1 --limit 20`.
+- A direct in-session `codebase_memory__codebase_stats(repo_id="loom-core")` call failed with `Transport closed`, so current index-health claims should be treated as unavailable in this session unless revalidated later.
 
 Planning implication:
-- Semantic code search is available and healthy for Go backend work.
-- HUD frontend work under `internal/hud/frontend/src` still requires direct file reads and repo commands because the current index is not carrying TypeScript/Svelte chunks.
+- Use direct file reads and CLI commands as the default evidence source for current planning work.
+- Before codebase-index-dependent implementation work, revalidate `codebase_memory` health explicitly.
 - For visual regression or layout verification, prefer activating `browserkit` on demand rather than assuming it is already warm.
 
 ## Constraints
 
 - Some servers are registered but idle until first use; `running: false` in `loom://servers` does not imply unavailable.
 - Deployment verification still requires live GitLab/Kubernetes calls because loom inventory only reports tool availability, not repo pipeline state.
-- HUD/UX planning in this session should assume mixed tooling: Go search through `codebase_memory`, frontend inspection through direct file reads, and optional browser screenshots when visual confirmation becomes necessary.
+- In this session specifically, resource/template discovery is unavailable through the desktop MCP resource APIs, so CLI fallback is the reliable inventory mechanism.
+- Setup/onboarding planning should assume mixed tooling: direct file reads plus local `loom` CLI commands first, and MCP tool calls only after verifying transport health.
 
 ## 2026-03-16 Addendum: Bulk Mutation Inventory
 
@@ -102,9 +101,9 @@ Sources:
 
 ## Sources
 
-- Tool call: `list_mcp_resources` (2026-03-13)
-- Tool call: `list_mcp_resource_templates` (2026-03-13)
-- Tool call: `read_mcp_resource(server="loom", uri="loom://config")` (2026-03-13)
-- Tool call: `read_mcp_resource(server="loom", uri="loom://servers")` (2026-03-13)
-- Tool call: `read_mcp_resource(server="loom", uri="loom://tools/index")` (2026-03-13)
-- Tool call: `codebase_memory__codebase_stats(repo_id="loom-core")` (2026-03-13)
+- Tool call: `list_mcp_resources` (2026-03-18)
+- Tool call: `list_mcp_resource_templates` (2026-03-18)
+- Tool call error: `codebase_memory__codebase_stats(repo_id="loom-core")` -> `Transport closed` (2026-03-18)
+- Command: `loom status --json` (2026-03-18)
+- Command: `loom tools list --json --page 1 --limit 5` (2026-03-18)
+- Command: `loom tools list --json --server codebase_memory --page 1 --limit 20` (2026-03-18)

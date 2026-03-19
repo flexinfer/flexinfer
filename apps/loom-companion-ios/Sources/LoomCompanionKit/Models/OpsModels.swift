@@ -220,7 +220,7 @@ public struct MobileWorkflowDetail: Decodable, Sendable {
     public let startedAt: String
     public let completedAt: String?
     public let error: String?
-    public let steps: [MobileWorkflowStep]
+    public let steps: [MobileWorkflowStep]?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -918,4 +918,68 @@ public struct MobileSandboxStopResponse: Decodable, Sendable {
         self.stopped = stopped
         self.project = project
     }
+}
+
+// MARK: - Handoff Models
+
+public struct MobileHandoff: Decodable, Identifiable, Sendable {
+    public let id: String
+    public let fromAgent: String
+    public let toAgent: String
+    public let targetAgentId: String
+    public let status: String
+    public let summary: String
+    public let context: String
+    public let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case fromAgent = "from_agent"
+        case toAgent = "to_agent"
+        case targetAgentId = "target_agent_id"
+        case status
+        case summary
+        case context
+        case createdAt = "created_at"
+    }
+}
+
+public struct MobileHandoffsResponse: Decodable, Sendable {
+    public let handoffs: [MobileHandoff]
+    public let total: Int
+}
+
+// MARK: - Pipeline Models
+
+public struct MobilePipeline: Decodable, Identifiable, Sendable {
+    public var id: Int
+    public let project: String
+    public let ref: String
+    public let status: String
+    public let source: String?
+    public let createdAt: String
+    public let webURL: String?
+    public let currentStage: String?
+    public let completedStages: Int
+    public let totalStages: Int
+    public let failedJobCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case project
+        case ref
+        case status
+        case source
+        case createdAt = "created_at"
+        case webURL = "web_url"
+        case currentStage = "current_stage"
+        case completedStages = "completed_stages"
+        case totalStages = "total_stages"
+        case failedJobCount = "failed_job_count"
+    }
+}
+
+public struct MobilePipelinesResponse: Decodable, Sendable {
+    public let pipelines: [MobilePipeline]
+    public let available: Bool
 }

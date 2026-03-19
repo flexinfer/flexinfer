@@ -12,7 +12,3 @@ Record decisions as they are made, with date, rationale, and sources.
 - Consequences:
 - Sources:
   - [S1] …
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

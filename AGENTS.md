@@ -29,7 +29,10 @@ Deployment (GitOps)
 MCP servers deploy to Kubernetes via Flux. Manifests live in this repo:
 
 - `k8s/base/` - All server deployment manifests (47 servers)
-- `platform/gitops/clusters/k3s/flux-system/kustomization-loom-hub-servers.yaml` - Image tags, patches
+- `k8s/base/kustomization.yaml` - Shared kustomize patches (JSON logging, OTel export for all `component=mcp-server` deployments)
+- `platform/gitops/clusters/k3s/flux-system/kustomization-loom-hub-servers.yaml` - Image tags, node affinity
+
+The base kustomization injects `MCP_LOG_FORMAT=json` and `OTEL_EXPORTER_OTLP_ENDPOINT` (Langfuse in-cluster) into all MCP server pods. Keep cross-cutting env vars in `k8s/base/kustomization.yaml` patches to avoid drift across repos.
 
 To deploy: `make deploy` (builds, pushes, updates image tag in gitops, reconciles Flux)
 
@@ -131,6 +134,23 @@ The daemon includes a HealthMonitor that:
 - Auto-restarts failed servers with exponential backoff
 - Tracks uptime, restart counts, and error messages
 - Exposes status via `/health` HTTP endpoint and `loom/health` IPC
+
+### OTel Status
+
+The daemon reports observability configuration via `loom/otel-status` IPC.
+Resolution order for the OTLP endpoint:
+1. `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable
+2. `otel.endpoint` in `~/.config/loom/config.yaml`
+
+Example `config.yaml`:
+```yaml
+otel:
+  endpoint: "https://langfuse.flexinfer.ai/api/public/otel"
+  protocol: "http"
+  service_name: "loomd"
+```
+
+The companion app and HUD read this to display OTel on/off status.
 
 ### SSH Tunnel Management
 
@@ -435,6 +455,8 @@ The middleware automatically:
 - Extracts `agent_id`, `session_id`, `namespace` from args as span attributes
 - Records errors and sets span status on failure
 - Compatible with Jaeger, Langfuse, and any OTLP-compatible collector
+
+In k8s, `OTEL_EXPORTER_OTLP_ENDPOINT` is injected into all MCP server pods via the kustomize patch in `k8s/base/kustomization.yaml`. Locally, the daemon reads `otel.endpoint` from `~/.config/loom/config.yaml` as a fallback (see Daemon Features → OTel Status above).
 
 Agent Tips
 

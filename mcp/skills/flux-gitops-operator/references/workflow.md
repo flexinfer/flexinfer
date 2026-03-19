@@ -15,7 +15,3 @@
 - Rollout checks:
   - `kubectl -n <ns> get pods`
   - `kubectl -n <ns> rollout status deploy/<name>`
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

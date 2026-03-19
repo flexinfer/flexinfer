@@ -60,7 +60,11 @@ struct ContentView: View {
             selectedTab = .agents
         case .sessions:
             selectedTab = .agents
-        case .workflow(let id, _):
+        case .workflow(let id, let approve):
+            if approve {
+                // Trigger approval via API, then navigate to ops.
+                Task { await approveWorkflowFromDeepLink(workflowId: id) }
+            }
             pendingWorkflowDeepLinkID = id
             selectedTab = .ops
         case .tasks:
@@ -69,6 +73,22 @@ struct ContentView: View {
             selectedTab = .alerts
         case .connection:
             selectedTab = .connection
+        }
+    }
+
+    private func approveWorkflowFromDeepLink(workflowId: String) async {
+        guard let apiClient = connectionVM.buildAPIClient() else { return }
+        // Fetch workflow detail to find the pending step.
+        do {
+            let detail: MobileWorkflowDetail = try await apiClient.request(.workflowDetail(id: workflowId))
+            guard let pendingStep = detail.steps?.first(where: { $0.status == .waitingApproval }) else { return }
+            // Approve returns the workflow detail; discard it.
+            let _: MobileWorkflowDetail = try await apiClient.request(
+                .workflowApprove(id: workflowId, stepId: pendingStep.id)
+            )
+        } catch {
+            // Best-effort — user can manually approve in the ops view.
+            print("[DeepLink] Workflow approval failed: \(error)")
         }
     }
 
@@ -88,7 +108,13 @@ struct ContentView: View {
     private var iPhoneLayout: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
-                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster)
+                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster) { action in
+                    switch action {
+                    case .agents: selectedTab = .agents
+                    case .connection: selectedTab = .connection
+                    case .liveActivities: selectedTab = .agents
+                    }
+                }
             }
             .tabItem { Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent") }
             .tag(AppTab.dashboard)
@@ -185,7 +211,13 @@ struct ContentView: View {
         } detail: {
             switch selectedTab {
             case .dashboard:
-                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster)
+                DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster) { action in
+                    switch action {
+                    case .agents: selectedTab = .agents
+                    case .connection: selectedTab = .connection
+                    case .liveActivities: selectedTab = .agents
+                    }
+                }
             case .agents:
                 AgentsListView(
                     apiClient: connectionVM.buildAPIClient(),

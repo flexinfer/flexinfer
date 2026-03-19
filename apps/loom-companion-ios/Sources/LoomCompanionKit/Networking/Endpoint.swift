@@ -37,6 +37,10 @@ public enum Endpoint: Sendable {
     case spawnDetail(id: String)
     case spawnStop(id: String)
     case agents(status: MobilePresenceStatus? = nil, type: String? = nil, limit: Int? = nil)
+    case pipelines
+    case workflowApprove(id: String, stepId: String)
+    case workflowReject(id: String, stepId: String, reason: String? = nil)
+    case handoffs(limit: Int? = nil)
 
     var method: String {
         switch self {
@@ -44,10 +48,12 @@ public enum Endpoint: Sendable {
              .tasks, .workflows, .workflowDetail, .presence, .memoryStats,
              .memoryItems, .stream, .topology, .graphStats, .graphEntities,
              .graphPath, .reasoningChains, .reasoningChainDetail,
-             .eventsStream, .audit, .sandbox, .spawnList, .spawnConfig, .spawnDetail, .agents:
+             .eventsStream, .audit, .sandbox, .spawnList, .spawnConfig, .spawnDetail, .agents,
+             .pipelines, .handoffs:
             return "GET"
         case .createSession, .endSession, .pushRegister, .pushUnregister,
-             .sandboxStart, .sandboxStop, .spawnAgent, .spawnStop:
+             .sandboxStart, .sandboxStop, .spawnAgent, .spawnStop,
+             .workflowApprove, .workflowReject:
             return "POST"
         }
     }
@@ -124,11 +130,26 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/agent/spawn/\(id)/stop"
         case .agents:
             return "/api/mobile/v1/agents"
+        case .pipelines:
+            return "/api/mobile/v1/pipelines"
+        case let .workflowApprove(id, _):
+            return "/api/mobile/v1/workflows/\(id)/approve"
+        case let .workflowReject(id, _, _):
+            return "/api/mobile/v1/workflows/\(id)/reject"
+        case .handoffs:
+            return "/api/mobile/v1/handoffs"
         }
     }
 
     var isMutation: Bool {
-        method == "POST"
+        switch self {
+        case .workflowApprove, .workflowReject, .createSession, .endSession,
+             .pushRegister, .pushUnregister, .sandboxStart, .sandboxStop,
+             .spawnAgent, .spawnStop:
+            return true
+        default:
+            return false
+        }
     }
 
     func urlRequest(baseURL: URL) throws -> URLRequest {
@@ -255,6 +276,10 @@ public enum Endpoint: Sendable {
                 items.append(URLQueryItem(name: "limit", value: String(limit)))
             }
             if !items.isEmpty { components.queryItems = items }
+        case let .handoffs(limit):
+            if let limit {
+                components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+            }
         default:
             break
         }
@@ -311,6 +336,17 @@ public enum Endpoint: Sendable {
         case .spawnStop:
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: [:] as [String: Any])
+
+        case let .workflowApprove(_, stepId):
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let body: [String: Any] = ["step_id": stepId]
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        case let .workflowReject(_, stepId, reason):
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            var body: [String: Any] = ["step_id": stepId]
+            if let reason { body["reason"] = reason }
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         default:
             break

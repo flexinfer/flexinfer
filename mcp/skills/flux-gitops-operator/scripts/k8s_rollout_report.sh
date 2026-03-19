@@ -37,7 +37,3 @@ echo "## Events (last 80)"
 echo '```'
 kubectl -n "$NS" get events --sort-by=.lastTimestamp | tail -n 80 || true
 echo '```'
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

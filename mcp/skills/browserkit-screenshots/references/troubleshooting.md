@@ -24,7 +24,3 @@ python3 -m playwright install chromium
 ## Corporate DNS / SSL / Proxies
 
 BrowserKit runs locally; use host network configuration. For internal services, prefer `http://localhost:...` or your VPN DNS name.
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

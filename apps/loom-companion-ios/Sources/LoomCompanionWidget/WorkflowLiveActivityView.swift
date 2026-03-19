@@ -1,6 +1,4 @@
 import SwiftUI
-
-#if os(iOS)
 import WidgetKit
 import ActivityKit
 import LoomCompanionKit
@@ -9,12 +7,10 @@ import LoomCompanionKit
 struct WorkflowLiveActivityView: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: WorkflowActivityAttributes.self) { context in
-            // Lock screen presentation
             lockScreenView(context: context)
                 .activityBackgroundTint(.black.opacity(0.7))
         } dynamicIsland: { context in
             DynamicIsland {
-                // Expanded regions
                 DynamicIslandExpandedRegion(.leading) {
                     Image(systemName: statusIcon(context.state.status))
                         .foregroundStyle(statusColor(context.state.status))
@@ -148,4 +144,3 @@ struct WorkflowLiveActivityView: Widget {
         return "\(secs)s"
     }
 }
-#endif

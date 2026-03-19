@@ -54,7 +54,3 @@ browserkit__screenshot({
 - Prefer fixed viewports (e.g. `1440x900`) so comparisons are consistent.
 - Use `wait_ms` sparingly; prefer `wait_until: "networkidle"` on SPAs when you can.
 - Use `session_id` + `storage_dir` for authenticated flows you need to screenshot repeatedly.
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

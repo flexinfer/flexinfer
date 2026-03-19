@@ -15,7 +15,3 @@ Standardize a safe, repeatable release routine across Go/Python/Node repos witho
 4. Update changelog / release notes (repo conventions).
 5. Commit, tag, push.
 6. Verify CI pipeline.
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

@@ -37,7 +37,3 @@ Use stable references: workspace file paths with line numbers when possible (e.g
 
 - [S1] …
 - [S2] …
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes

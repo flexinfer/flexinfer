@@ -51,6 +51,9 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var installShader bool
 	var tui bool
 
+	// Pipeline monitor flags.
+	var pipelineProjects string
+
 	// Spawn orchestrator flags.
 	var spawnEnabled bool
 	var spawnKubeconfig string
@@ -124,6 +127,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 					}
 				}
 			}
+			applyEnvString("metrics-addr", "DAEMON_METRICS_ADDR", &metricsAddr)
 			applyEnvString("flexinfer-url", "FLEXINFER_URL", &flexinferURL)
 			applyEnvString("flexinfer-key", "FLEXINFER_API_KEY", &flexinferKey)
 			applyEnvString("coordinator-model", "COORDINATOR_MODEL", &coordinatorModel)
@@ -210,6 +214,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 				TLSKey:                  tlsKey,
 				BindAddress:             bindAddress,
 				TUI:                     tui,
+				PipelineProjects:        pipelineProjects,
 				SpawnEnabled:            spawnEnabled,
 				SpawnKubeconfig:         spawnKubeconfig,
 				SpawnNamespace:          spawnNamespace,
@@ -224,7 +229,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 
 	cmd.Flags().BoolVar(&dev, "dev", false, "Development mode (CORS enabled, no embed)")
 	cmd.Flags().IntVar(&port, "port", 0, "Port to listen on (0 = random)")
-	cmd.Flags().StringVar(&metricsAddr, "metrics-addr", "", "Daemon metrics/events address (e.g., 127.0.0.1:9090)")
+	cmd.Flags().StringVar(&metricsAddr, "metrics-addr", os.Getenv("DAEMON_METRICS_ADDR"), "Daemon metrics/events address (e.g., 127.0.0.1:9090) [$DAEMON_METRICS_ADDR]")
 	cmd.Flags().BoolVar(&overlay, "overlay", false, "Enable native macOS overlay panel (Cmd+Shift+L to toggle)")
 	cmd.Flags().StringVar(&overlayEdge, "edge", "right", "Screen edge for overlay panel: 'right' or 'left'")
 	cmd.Flags().IntVar(&overlayWidth, "width", 380, "Overlay panel width in points")
@@ -264,6 +269,9 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().BoolVar(&tui, "tui", false, "Launch terminal UI dashboard (bubbletea)")
 
 	// Spawn orchestrator (headless agent spawning via devbox K8s pods).
+	// Pipeline monitoring (GitLab CI via mcp-gitlab).
+	cmd.Flags().StringVar(&pipelineProjects, "pipeline-projects", os.Getenv("HUD_PIPELINE_PROJECTS"), "Comma-separated GitLab project paths to monitor pipelines (e.g., group/project1,group/project2) [$HUD_PIPELINE_PROJECTS]")
+
 	cmd.Flags().BoolVar(&spawnEnabled, "spawn-enabled", false, "Enable headless agent spawn endpoints [$SPAWN_ENABLED]")
 	cmd.Flags().StringVar(&spawnKubeconfig, "spawn-kubeconfig", os.Getenv("SPAWN_KUBECONFIG"), "Kubeconfig for spawn K8s backend [$SPAWN_KUBECONFIG]")
 	cmd.Flags().StringVar(&spawnNamespace, "spawn-namespace", os.Getenv("SPAWN_NAMESPACE"), "K8s namespace for spawn pods (default: devbox) [$SPAWN_NAMESPACE]")

@@ -75,4 +75,30 @@ enum LoomColors {
         case .unknown: return statusIdle
         }
     }
+
+    // MARK: - Agent Type Color
+
+    static func agentTypeColor(_ type: String) -> Color {
+        switch type.lowercased() {
+        case "claude-code", "claude": return Color(red: 0.85, green: 0.55, blue: 0.25) // warm amber
+        case "gemini": return Color(red: 0.3, green: 0.65, blue: 0.95)                 // sky blue
+        case "codex": return Color(red: 0.4, green: 0.8, blue: 0.4)                    // soft green
+        case "kilocode": return Color(red: 0.7, green: 0.4, blue: 0.9)                 // purple
+        case "antigravity": return Color(red: 0.95, green: 0.4, blue: 0.4)             // coral
+        default: return statusInfo
+        }
+    }
+
+    // MARK: - Agent Type Icon
+
+    static func agentTypeIcon(_ type: String) -> String {
+        switch type.lowercased() {
+        case "claude-code", "claude": return "terminal.fill"
+        case "gemini": return "wand.and.sparkles"
+        case "codex": return "chevron.left.forwardslash.chevron.right"
+        case "kilocode": return "ruler.fill"
+        case "antigravity": return "arrow.up.circle.fill"
+        default: return "cpu.fill"
+        }
+    }
 }

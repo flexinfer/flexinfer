@@ -6,6 +6,8 @@ struct SessionDetailView: View {
     @State private var viewModel: SessionDetailViewModel
     @State private var showingEndConfirmation = false
     @State private var showingEndError = false
+    @State private var entriesExpanded = true
+    @State private var eventsExpanded = true
 
     init(sessionId: String, apiClient: any LoomAPIClientProtocol) {
         self.sessionId = sessionId
@@ -21,7 +23,51 @@ struct SessionDetailView: View {
             VStack(spacing: 16) {
                 if let session = viewModel.session {
                     SessionMetadataView(session: session)
-                    SessionEventsView(events: viewModel.events)
+                        .cardAppear(index: 0)
+
+                    // Tasks summary
+                    if let tasks = viewModel.tasks, tasks.total > 0 {
+                        SessionTasksView(tasks: tasks)
+                            .cardAppear(index: 1)
+                    }
+
+                    // Context entry breakdown (collapsible)
+                    if !viewModel.entryBreakdown.isEmpty {
+                        DisclosureGroup(isExpanded: $entriesExpanded) {
+                            SessionEntryBreakdownView(buckets: viewModel.entryBreakdown)
+                        } label: {
+                            Label("Entry Breakdown", systemImage: "chart.bar")
+                                .font(.headline)
+                        }
+                        .cardAppear(index: 2)
+                    }
+
+                    // Decisions
+                    if !viewModel.decisions.isEmpty {
+                        SessionEntriesSection(title: "Decisions", icon: "lightbulb", entries: viewModel.decisions)
+                            .cardAppear(index: 3)
+                    }
+
+                    // Errors
+                    if !viewModel.errors.isEmpty {
+                        SessionEntriesSection(title: "Errors", icon: "exclamationmark.triangle", entries: viewModel.errors)
+                            .cardAppear(index: 4)
+                    }
+
+                    // Top files
+                    if !viewModel.topFiles.isEmpty {
+                        SessionTopFilesView(files: viewModel.topFiles)
+                            .cardAppear(index: 5)
+                    }
+
+                    // Events timeline (collapsible)
+                    DisclosureGroup(isExpanded: $eventsExpanded) {
+                        SessionEventsView(events: viewModel.events)
+                    } label: {
+                        Label("Events (\(viewModel.events.count))", systemImage: "clock.arrow.circlepath")
+                            .font(.headline)
+                    }
+                    .cardAppear(index: 6)
                 } else if viewModel.isLoading {
                     ProgressView("Loading session...")
                         .padding(.top, 40)
@@ -41,8 +87,18 @@ struct SessionDetailView: View {
         }
         .navigationTitle("Session")
         .toolbar {
-            if isActive {
-                ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                if isActive {
+                    #if os(iOS)
+                    if #available(iOS 16.2, *) {
+                        Button {
+                            startLiveActivity()
+                        } label: {
+                            Label("Live Activity", systemImage: "dot.radiowaves.left.and.right")
+                        }
+                    }
+                    #endif
+
                     if viewModel.isEnding {
                         ProgressView()
                     } else {
@@ -83,4 +139,26 @@ struct SessionDetailView: View {
             await viewModel.load(sessionId: sessionId)
         }
     }
+
+    #if os(iOS)
+    @available(iOS 16.2, *)
+    private func startLiveActivity() {
+        guard let session = viewModel.session else { return }
+
+        let agentType: String
+        let agentId = session.agentId
+        let lowered = agentId.lowercased()
+        if lowered.contains("claude") { agentType = "claude-code" }
+        else if lowered.contains("gemini") { agentType = "gemini" }
+        else if lowered.contains("codex") { agentType = "codex" }
+        else { agentType = "unknown" }
+
+        LiveActivityManager.shared.startSessionActivity(
+            sessionId: session.id,
+            agentId: agentId,
+            agentType: agentType,
+            namespace: session.namespace
+        )
+    }
+    #endif
 }

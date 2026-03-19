@@ -7,12 +7,20 @@ public struct WidgetData: Codable, Sendable {
     public let fleet: FleetWidgetData
     public let tasks: TaskWidgetData
     public let sessions: SessionWidgetData
+    public let lastCompletedSession: CompletedSessionWidgetData?
     public let lastUpdated: Date
 
-    public init(fleet: FleetWidgetData, tasks: TaskWidgetData, sessions: SessionWidgetData, lastUpdated: Date = .now) {
+    public init(
+        fleet: FleetWidgetData,
+        tasks: TaskWidgetData,
+        sessions: SessionWidgetData,
+        lastCompletedSession: CompletedSessionWidgetData? = nil,
+        lastUpdated: Date = .now
+    ) {
         self.fleet = fleet
         self.tasks = tasks
         self.sessions = sessions
+        self.lastCompletedSession = lastCompletedSession
         self.lastUpdated = lastUpdated
     }
 }
@@ -78,6 +86,26 @@ public struct SessionWidgetEntry: Codable, Sendable, Identifiable {
         self.namespace = namespace
         self.agentId = agentId
         self.startedAt = startedAt
+    }
+}
+
+public struct CompletedSessionWidgetData: Codable, Sendable {
+    public let agentId: String
+    public let agentType: String
+    public let namespace: String
+    public let durationSeconds: Int
+    public let tokenCount: Int
+    public let entryCount: Int
+    public let endedAt: String
+
+    public init(agentId: String, agentType: String, namespace: String, durationSeconds: Int, tokenCount: Int, entryCount: Int, endedAt: String) {
+        self.agentId = agentId
+        self.agentType = agentType
+        self.namespace = namespace
+        self.durationSeconds = durationSeconds
+        self.tokenCount = tokenCount
+        self.entryCount = entryCount
+        self.endedAt = endedAt
     }
 }
 

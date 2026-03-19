@@ -71,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Daemon retries local tool calls once after a transport-closed send failure before returning an error.
 
 ### Fixed
+- Loom Companion iOS widgets and Live Activities now share App Group data correctly, persist dashboard snapshots before timeline reloads, and register the workflow Live Activity view from the widget extension target.
 - `mcp-alertmanager` now detects HTML error responses and returns a clear error message instead of an unmarshal panic.
 - TasksPanel row shifting caused by `display: flex` on `<td>` elements in the blocked-by column.
 - `mcp-devbox` lifecycle hardening around sandbox state, async execution, and backend reliability.

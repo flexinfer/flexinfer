@@ -27,6 +27,7 @@ struct OpsView: View {
     @State private var agentDisplayLimit = 8
     @State private var streamDisplayLimit = 8
     @State private var chainDisplayLimit = 8
+    @State private var pipelineDisplayLimit = 8
 
     enum OpsSegment: String, CaseIterable, Identifiable {
         case work = "Work"
@@ -345,6 +346,11 @@ struct OpsView: View {
                 }
             }
             .cardAppear(index: 1)
+
+            if viewModel.pipelinesAvailable {
+                pipelinesCard
+                    .cardAppear(index: 2)
+            }
 
             LoomCard {
                 VStack(alignment: .leading, spacing: LoomSpacing.md) {
@@ -898,6 +904,90 @@ struct OpsView: View {
             Text(label)
                 .font(LoomTypography.caption)
                 .foregroundStyle(LoomColors.textSecondary)
+        }
+    }
+
+    private var pipelinesCard: some View {
+        LoomCard {
+            VStack(alignment: .leading, spacing: LoomSpacing.sm) {
+                HStack {
+                    Image(systemName: "arrow.triangle.branch")
+                        .foregroundStyle(LoomColors.accent)
+                    Text("CI Pipelines")
+                        .font(LoomTypography.headlineMedium)
+                        .foregroundStyle(LoomColors.textPrimary)
+                }
+
+                if viewModel.pipelines.isEmpty {
+                    Text("No active pipelines")
+                        .font(LoomTypography.bodyRegular)
+                        .foregroundStyle(LoomColors.textTertiary)
+                } else {
+                    ForEach(Array(viewModel.pipelines.prefix(pipelineDisplayLimit))) { pipeline in
+                        HStack(spacing: LoomSpacing.sm) {
+                            StatusAccentBar(color: pipelineStatusColor(pipeline.status))
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(pipeline.project.components(separatedBy: "/").last ?? pipeline.project)
+                                        .font(LoomTypography.bodyMedium)
+                                        .foregroundStyle(LoomColors.textPrimary)
+                                        .lineLimit(1)
+                                    StatusBadge(pipeline.status, color: pipelineStatusColor(pipeline.status))
+                                }
+                                HStack(spacing: 4) {
+                                    Text(pipeline.ref)
+                                        .font(LoomTypography.monoCaption)
+                                        .foregroundStyle(LoomColors.accent)
+                                    if let stage = pipeline.currentStage {
+                                        Text("\u{2022} \(stage)")
+                                            .font(LoomTypography.caption)
+                                            .foregroundStyle(LoomColors.textSecondary)
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                            if pipeline.totalStages > 0 {
+                                Text("\(pipeline.completedStages)/\(pipeline.totalStages)")
+                                    .font(LoomTypography.monoCaption)
+                                    .foregroundStyle(LoomColors.textTertiary)
+                            }
+
+                            if pipeline.failedJobCount > 0 {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(LoomColors.statusCritical)
+                                    .font(.caption)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    if viewModel.pipelines.count > pipelineDisplayLimit {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                pipelineDisplayLimit += 8
+                            }
+                            HapticManager.light()
+                        } label: {
+                            Text("Show \(min(8, viewModel.pipelines.count - pipelineDisplayLimit)) More")
+                                .font(LoomTypography.caption)
+                                .foregroundStyle(LoomColors.accent)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 6)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func pipelineStatusColor(_ status: String) -> Color {
+        switch status {
+        case "running": return LoomColors.statusActive
+        case "success": return LoomColors.statusHealthy
+        case "failed": return LoomColors.statusCritical
+        case "pending": return LoomColors.statusIdle
+        case "canceled", "cancelled": return LoomColors.statusIdle
+        default: return LoomColors.textTertiary
         }
     }
 
