@@ -42,8 +42,12 @@ struct DashboardView: View {
                 if #available(iOS 16.2, *) {
                     let lam = LiveActivityManager.shared
                     if lam.activeCount > 0 {
-                        LiveActivityBanner(activeCount: lam.activeCount) {
-                            onNavigate?(.agents)
+                        LiveActivityBanner(
+                            sessionCount: lam.activeSessionCount,
+                            workflowCount: lam.activeWorkflowCount,
+                            pipelineCount: lam.activePipelineCount
+                        ) {
+                            onNavigate?(.liveActivities)
                         }
                     }
                 }

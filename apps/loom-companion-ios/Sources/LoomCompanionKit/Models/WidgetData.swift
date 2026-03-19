@@ -79,13 +79,23 @@ public struct SessionWidgetEntry: Codable, Sendable, Identifiable {
     public let id: String
     public let namespace: String
     public let agentId: String
+    public let agentType: String
     public let startedAt: String
+    public let lastHeartbeat: Date?
 
-    public init(id: String, namespace: String, agentId: String, startedAt: String) {
+    public init(id: String, namespace: String, agentId: String, agentType: String = "", startedAt: String, lastHeartbeat: Date? = nil) {
         self.id = id
         self.namespace = namespace
         self.agentId = agentId
+        self.agentType = agentType
         self.startedAt = startedAt
+        self.lastHeartbeat = lastHeartbeat
+    }
+
+    /// Whether the session had a heartbeat within the last 30 seconds.
+    public var isRecentlyActive: Bool {
+        guard let hb = lastHeartbeat else { return false }
+        return Date().timeIntervalSince(hb) < 30
     }
 }
 
@@ -133,7 +143,7 @@ public enum SharedDataStore {
             fleet: FleetWidgetData(daemonRunning: true, serverCount: 12, sessionCount: 3, activeAgents: 2, idleAgents: 1, offlineAgents: 0, healthyServers: 10, degradedServers: 1, downServers: 0),
             tasks: TaskWidgetData(pending: 3, inProgress: 2, blocked: 1, completed: 8, recentTitles: ["Implement auth flow", "Fix SSE reconnect"]),
             sessions: SessionWidgetData(activeCount: 3, topSessions: [
-                SessionWidgetEntry(id: "s1", namespace: "loom-core/feature", agentId: "claude-code", startedAt: "10m ago"),
+                SessionWidgetEntry(id: "s1", namespace: "loom-core/feature", agentId: "claude-code", agentType: "claude-code", startedAt: "10m ago", lastHeartbeat: Date()),
             ])
         )
     }

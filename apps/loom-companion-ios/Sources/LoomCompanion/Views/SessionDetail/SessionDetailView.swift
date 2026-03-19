@@ -8,6 +8,7 @@ struct SessionDetailView: View {
     @State private var showingEndError = false
     @State private var entriesExpanded = true
     @State private var eventsExpanded = true
+    @State private var liveActivityStarted = false
 
     init(sessionId: String, apiClient: any LoomAPIClientProtocol) {
         self.sessionId = sessionId
@@ -39,6 +40,7 @@ struct SessionDetailView: View {
                             Label("Entry Breakdown", systemImage: "chart.bar")
                                 .font(.headline)
                         }
+                        .animation(.spring(duration: 0.35), value: entriesExpanded)
                         .cardAppear(index: 2)
                     }
 
@@ -66,7 +68,9 @@ struct SessionDetailView: View {
                     } label: {
                         Label("Events (\(viewModel.events.count))", systemImage: "clock.arrow.circlepath")
                             .font(.headline)
+                            .contentTransition(.numericText())
                     }
+                    .animation(.spring(duration: 0.35), value: eventsExpanded)
                     .cardAppear(index: 6)
                 } else if viewModel.isLoading {
                     ProgressView("Loading session...")
@@ -92,10 +96,18 @@ struct SessionDetailView: View {
                     #if os(iOS)
                     if #available(iOS 16.2, *) {
                         Button {
+                            HapticManager.light()
                             startLiveActivity()
                         } label: {
-                            Label("Live Activity", systemImage: "dot.radiowaves.left.and.right")
+                            Label(
+                                liveActivityStarted ? "Activity Running" : "Live Activity",
+                                systemImage: liveActivityStarted
+                                    ? "dot.radiowaves.left.and.right"
+                                    : "dot.radiowaves.left.and.right"
+                            )
+                            .symbolEffect(.pulse, isActive: liveActivityStarted)
                         }
+                        .tint(liveActivityStarted ? .green : nil)
                     }
                     #endif
 
@@ -137,7 +149,16 @@ struct SessionDetailView: View {
         }
         .task {
             await viewModel.load(sessionId: sessionId)
+            updateLiveActivityState()
         }
+    }
+
+    private func updateLiveActivityState() {
+        #if os(iOS)
+        if #available(iOS 16.2, *) {
+            liveActivityStarted = LiveActivityManager.shared.hasSessionActivity(sessionId: sessionId)
+        }
+        #endif
     }
 
     #if os(iOS)
@@ -159,6 +180,11 @@ struct SessionDetailView: View {
             agentType: agentType,
             namespace: session.namespace
         )
+
+        withAnimation(.spring(duration: 0.3)) {
+            liveActivityStarted = true
+        }
+        HapticManager.success()
     }
     #endif
 }

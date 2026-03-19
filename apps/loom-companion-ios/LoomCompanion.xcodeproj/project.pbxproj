@@ -335,7 +335,6 @@
 				7B34ABB0F4EB13226360A9DB /* FleetHealthWidget.swift */,
 				69611C28D852731CE58ABE15 /* Info.plist */,
 				1FDABA6D332038DFBF9D6B31 /* LockScreenWidgets.swift */,
-				5544EB0FFF37D42886F0F019 /* LoomCompanionWidget.entitlements */,
 				531CFBE30C35AB55DC6366E8 /* LoomWidgetBundle.swift */,
 				351DF692E793E5470B23617D /* PipelineLiveActivityView.swift */,
 				ABD30CC7930CFA14D3DB2836 /* SessionLiveActivityView.swift */,
@@ -380,10 +379,20 @@
 		4DDCF8E9200D33074DEB19BC = {
 			isa = PBXGroup;
 			children = (
+				AAEE11110000ENTITLEMENTS00 /* Entitlements */,
 				1D9D9E79E6A89BB4FE624947 /* Sources */,
 				A01FBEBC772BA1D92BF59C6C /* Frameworks */,
 				D262802FE3DF614BBC4E2868 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		AAEE11110000ENTITLEMENTS00 /* Entitlements */ = {
+			isa = PBXGroup;
+			children = (
+				15F8B18107C14CB1B53193DF /* LoomCompanion.entitlements */,
+				5544EB0FFF37D42886F0F019 /* LoomCompanionWidget.entitlements */,
+			);
+			path = Entitlements;
 			sourceTree = "<group>";
 		};
 		5B5C969B517E14D8E56AA2A2 /* Spawn */ = {
@@ -411,7 +420,6 @@
 			children = (
 				12B1DCFD032943745B95EAED /* AppDelegate.swift */,
 				678EE9DDABB8C2F74E417932 /* ContentView.swift */,
-				15F8B18107C14CB1B53193DF /* LoomCompanion.entitlements */,
 				88F2FE450A41EBC1375D96E2 /* LoomCompanionApp.swift */,
 				FF004545B6ED4262B66A78D8 /* Components */,
 				7C0185E86B5B88DAC95F5BD1 /* DesignSystem */,
@@ -890,7 +898,7 @@
 		057E2A88C2CF4B25FE593867 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = Sources/LoomCompanionWidget/LoomCompanionWidget.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Entitlements/LoomCompanionWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = BX8243HJHS;
 				INFOPLIST_FILE = Sources/LoomCompanionWidget/Info.plist;
@@ -935,7 +943,7 @@
 		224A70603621F93178EA1BB6 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = Sources/LoomCompanionWidget/LoomCompanionWidget.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Entitlements/LoomCompanionWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = BX8243HJHS;
 				INFOPLIST_FILE = Sources/LoomCompanionWidget/Info.plist;
@@ -981,7 +989,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Sources/LoomCompanion/LoomCompanion.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Entitlements/LoomCompanion.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = BX8243HJHS;
@@ -1130,7 +1138,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = Sources/LoomCompanion/LoomCompanion.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Entitlements/LoomCompanion.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = BX8243HJHS;

@@ -79,7 +79,7 @@ func (b *PushEventBridge) HandleEvent(event bridge.SSEEvent) {
 	if !b.allowPush(classification.EventType) {
 		b.logger.Debug("push rate limited",
 			"event_type", classification.EventType,
-			"interval", b.rateLimitInterval,
+			"interval", pushRateInterval(classification.EventType),
 		)
 		return
 	}
@@ -97,6 +97,7 @@ func (b *PushEventBridge) HandleEvent(event bridge.SSEEvent) {
 		Title:    classification.Title,
 		Body:     classification.Body,
 		Category: classification.Category,
+		ThreadID: threadIDForCategory(classification.Category),
 		Data: map[string]string{
 			"event_type": classification.EventType,
 			"deep_link":  classification.DeepLink,
@@ -146,19 +147,52 @@ func (b *PushEventBridge) HandleEvent(event bridge.SSEEvent) {
 	)
 }
 
+// pushRateInterval returns a custom rate limit interval per event type.
+// Time-sensitive events get shorter cooldowns; less urgent events get longer ones.
+func pushRateInterval(eventType string) time.Duration {
+	switch eventType {
+	case "hud.pipeline.failed", "hud.workflow.waiting_approval":
+		return 30 * time.Second // Time-sensitive events get shorter cooldown.
+	case "agent.session.start", "agent.session.end":
+		return 120 * time.Second // Session events are less urgent.
+	default:
+		return 60 * time.Second
+	}
+}
+
 // allowPush checks and updates the per-event-type rate limit.
 func (b *PushEventBridge) allowPush(eventType string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	interval := pushRateInterval(eventType)
 	now := time.Now()
 	if last, ok := b.lastPush[eventType]; ok {
-		if now.Sub(last) < b.rateLimitInterval {
+		if now.Sub(last) < interval {
 			return false
 		}
 	}
 	b.lastPush[eventType] = now
 	return true
+}
+
+// threadIDForCategory returns an iOS thread-id for notification grouping
+// based on the push category.
+func threadIDForCategory(category string) string {
+	switch category {
+	case "pipeline":
+		return "loom-pipeline"
+	case "agent_session":
+		return "loom-sessions"
+	case "workflow", "workflow_approval":
+		return "loom-workflows"
+	case "health":
+		return "loom-health"
+	case "handoff":
+		return "loom-handoffs"
+	default:
+		return ""
+	}
 }
 
 // classifyPushEvent determines if an SSE event should trigger a push notification.
@@ -188,9 +222,101 @@ func classifyPushEvent(event bridge.SSEEvent) PushClassification {
 		}
 	case "hud.workflow.waiting_approval":
 		return classifyWorkflowApproval(event)
+	case "hud.pipeline":
+		return classifyPipelineEvent(event)
+	case "agent.session.start":
+		return classifySessionStartEvent(event)
+	case "agent.session.end":
+		return classifySessionEndEvent(event)
+	case "hud.handoff.created":
+		return classifyHandoffEvent(event)
+	case "coordinator.plan.complete":
+		return classifyPlanCompleteEvent(event)
 	default:
 		return PushClassification{Worthy: false}
 	}
+}
+
+// classifyPipelineEvent checks pipeline status for push-worthy events.
+// When multiple pipelines have the same status, it aggregates them into
+// a summary notification instead of returning only the first match.
+func classifyPipelineEvent(event bridge.SSEEvent) PushClassification {
+	var payload struct {
+		Pipelines []struct {
+			ID      int    `json:"id"`
+			Project string `json:"project"`
+			Ref     string `json:"ref"`
+			Status  string `json:"status"`
+		} `json:"pipelines"`
+	}
+	if err := json.Unmarshal(event.Data, &payload); err != nil {
+		return PushClassification{Worthy: false}
+	}
+
+	var failedProjects, successProjects []string
+
+	for _, p := range payload.Pipelines {
+		switch p.Status {
+		case "failed":
+			failedProjects = append(failedProjects, p.Project)
+		case "success":
+			successProjects = append(successProjects, p.Project)
+		}
+	}
+
+	// Failures take priority over successes.
+	if len(failedProjects) > 0 {
+		var body, deepLink string
+		if len(failedProjects) == 1 {
+			// Find the matching pipeline for ref info.
+			for _, p := range payload.Pipelines {
+				if p.Status == "failed" {
+					body = fmt.Sprintf("%s (%s) failed", p.Project, p.Ref)
+					deepLink = fmt.Sprintf("loom://pipeline/%d", p.ID)
+					break
+				}
+			}
+		} else {
+			body = fmt.Sprintf("%d pipelines failed: %s", len(failedProjects), joinStrings(failedProjects, ", "))
+			deepLink = "loom://dashboard"
+		}
+		return PushClassification{
+			Worthy:    true,
+			EventType: "hud.pipeline.failed",
+			Level:     PushLevelTimeSensitive,
+			Title:     "Pipeline Failed",
+			Body:      body,
+			Category:  "pipeline",
+			DeepLink:  deepLink,
+		}
+	}
+
+	if len(successProjects) > 0 {
+		var body, deepLink string
+		if len(successProjects) == 1 {
+			for _, p := range payload.Pipelines {
+				if p.Status == "success" {
+					body = fmt.Sprintf("%s (%s) passed", p.Project, p.Ref)
+					deepLink = fmt.Sprintf("loom://pipeline/%d", p.ID)
+					break
+				}
+			}
+		} else {
+			body = fmt.Sprintf("%d pipelines passed: %s", len(successProjects), joinStrings(successProjects, ", "))
+			deepLink = "loom://dashboard"
+		}
+		return PushClassification{
+			Worthy:    true,
+			EventType: "hud.pipeline.success",
+			Level:     PushLevelActive,
+			Title:     "Pipeline Succeeded",
+			Body:      body,
+			Category:  "pipeline",
+			DeepLink:  deepLink,
+		}
+	}
+
+	return PushClassification{Worthy: false}
 }
 
 // classifyHealthEvent checks if a health event contains down servers.
@@ -256,6 +382,122 @@ func classifyWorkflowApproval(event bridge.SSEEvent) PushClassification {
 		Body:      fmt.Sprintf("Workflow %q is waiting for your approval.", name),
 		Category:  "workflow_approval",
 		DeepLink:  fmt.Sprintf("loom://workflow/%s/approve", payload.WorkflowID),
+	}
+}
+
+// classifySessionStartEvent extracts agent session start details.
+func classifySessionStartEvent(event bridge.SSEEvent) PushClassification {
+	var payload struct {
+		AgentID   string `json:"agent_id"`
+		AgentType string `json:"agent_type"`
+		Namespace string `json:"namespace"`
+	}
+	if err := json.Unmarshal(event.Data, &payload); err != nil {
+		return PushClassification{Worthy: false}
+	}
+
+	agentType := payload.AgentType
+	if agentType == "" {
+		agentType = payload.AgentID
+	}
+	ns := payload.Namespace
+	if ns == "" {
+		ns = "unknown"
+	}
+
+	return PushClassification{
+		Worthy:    true,
+		EventType: event.Type,
+		Level:     PushLevelActive,
+		Title:     "Agent Session Started",
+		Body:      fmt.Sprintf("%s started on %s", agentType, ns),
+		Category:  "agent_session",
+		DeepLink:  "loom://sessions",
+	}
+}
+
+// classifySessionEndEvent extracts agent session end details.
+func classifySessionEndEvent(event bridge.SSEEvent) PushClassification {
+	var payload struct {
+		AgentID   string `json:"agent_id"`
+		SessionID string `json:"session_id"`
+		Summary   string `json:"summary"`
+	}
+	if err := json.Unmarshal(event.Data, &payload); err != nil {
+		return PushClassification{Worthy: false}
+	}
+
+	body := payload.Summary
+	if body == "" {
+		agentID := payload.AgentID
+		if agentID == "" {
+			agentID = "agent"
+		}
+		body = fmt.Sprintf("%s session completed", agentID)
+	}
+
+	deepLink := "loom://sessions"
+	if payload.SessionID != "" {
+		deepLink = fmt.Sprintf("loom://sessions/%s", payload.SessionID)
+	}
+
+	return PushClassification{
+		Worthy:    true,
+		EventType: event.Type,
+		Level:     PushLevelActive,
+		Title:     "Agent Session Ended",
+		Body:      body,
+		Category:  "agent_session",
+		DeepLink:  deepLink,
+	}
+}
+
+// classifyHandoffEvent extracts handoff details for push notification.
+func classifyHandoffEvent(event bridge.SSEEvent) PushClassification {
+	var payload struct {
+		FromAgent string `json:"from_agent"`
+		ToAgent   string `json:"to_agent"`
+		Title     string `json:"title"`
+	}
+	if err := json.Unmarshal(event.Data, &payload); err != nil {
+		return PushClassification{Worthy: false}
+	}
+
+	return PushClassification{
+		Worthy:    true,
+		EventType: event.Type,
+		Level:     PushLevelTimeSensitive,
+		Title:     "Handoff Ready",
+		Body:      fmt.Sprintf("%s → %s: %s", payload.FromAgent, payload.ToAgent, payload.Title),
+		Category:  "handoff",
+		DeepLink:  "loom://handoffs",
+	}
+}
+
+// classifyPlanCompleteEvent extracts plan completion details.
+func classifyPlanCompleteEvent(event bridge.SSEEvent) PushClassification {
+	var payload struct {
+		WorkflowID string `json:"workflow_id"`
+		Name       string `json:"name"`
+		Result     string `json:"result"`
+	}
+	if err := json.Unmarshal(event.Data, &payload); err != nil {
+		return PushClassification{Worthy: false}
+	}
+
+	name := payload.Name
+	if name == "" {
+		name = payload.WorkflowID
+	}
+
+	return PushClassification{
+		Worthy:    true,
+		EventType: event.Type,
+		Level:     PushLevelActive,
+		Title:     "Plan Complete",
+		Body:      fmt.Sprintf("%s: %s", name, payload.Result),
+		Category:  "workflow",
+		DeepLink:  fmt.Sprintf("loom://workflow/%s", payload.WorkflowID),
 	}
 }
 

@@ -48,6 +48,58 @@ public final class LiveActivityManager {
         sessionActivities[sessionId] != nil
     }
 
+    /// Whether a specific workflow has an active Live Activity.
+    public func hasWorkflowActivity(workflowId: String) -> Bool {
+        workflowActivities[workflowId] != nil
+    }
+
+    // MARK: - Stale Activity Reaping
+
+    /// Reap activities that haven't been updated within their staleness window.
+    /// Sessions: 5 minutes. Workflows/Pipelines: 10 minutes.
+    public func reapStaleActivities() {
+        let sessionStaleThreshold: TimeInterval = 300
+        let otherStaleThreshold: TimeInterval = 600
+
+        for (id, activity) in sessionActivities {
+            if let staleDate = activity.content.staleDate, Date() > staleDate {
+                endSessionActivity(sessionId: id, finalStatus: "stale")
+            } else if activity.content.state.status == "active",
+                      activity.content.state.elapsedSeconds == 0 {
+                // Heuristic: if the state hasn't been updated and staleness date isn't set,
+                // check via the activity's content date.
+                if let date = activity.content.staleDate, Date().timeIntervalSince(date) > sessionStaleThreshold {
+                    endSessionActivity(sessionId: id, finalStatus: "stale")
+                }
+            }
+        }
+
+        for (id, activity) in workflowActivities {
+            if let staleDate = activity.content.staleDate, Date().timeIntervalSince(staleDate) > otherStaleThreshold {
+                endWorkflowActivity(workflowId: id, finalStatus: "stale")
+            }
+        }
+
+        for (id, activity) in pipelineActivities {
+            if let staleDate = activity.content.staleDate, Date().timeIntervalSince(staleDate) > otherStaleThreshold {
+                endPipelineActivity(pipelineId: id, finalStatus: "stale")
+            }
+        }
+    }
+
+    /// End all activities. Used when the app disconnects or enters background.
+    public func endAllActivities() {
+        for id in Array(sessionActivities.keys) {
+            endSessionActivity(sessionId: id, finalStatus: "disconnected")
+        }
+        for id in Array(workflowActivities.keys) {
+            endWorkflowActivity(workflowId: id, finalStatus: "disconnected")
+        }
+        for id in Array(pipelineActivities.keys) {
+            endPipelineActivity(pipelineId: id, finalStatus: "disconnected")
+        }
+    }
+
     // MARK: - Agent → Session Mapping
 
     /// Register an agent→session mapping from a session.start event.
@@ -265,6 +317,11 @@ public final class LiveActivityManager {
 
     /// Number of active pipeline Live Activities.
     public var activePipelineCount: Int { pipelineActivities.count }
+
+    /// Whether a specific pipeline has an active Live Activity.
+    public func hasPipelineActivity(pipelineId: Int) -> Bool {
+        pipelineActivities[pipelineId] != nil
+    }
 
     /// Start a new Live Activity for a CI pipeline.
     public func startPipelineActivity(

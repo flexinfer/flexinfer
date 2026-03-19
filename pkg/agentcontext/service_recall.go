@@ -234,7 +234,82 @@ func (s *Service) enhancedRecallContext(ctx context.Context, opts EnhancedRecall
 		}
 	}
 
+	// Re-sort all results by priority score for better token budget utilization.
+	// This ensures high-value entries (decisions, active tasks) surface first
+	// regardless of which phase collected them.
+	results = prioritySortEntries(results)
+
+	// Re-apply budget constraint after reordering: entries may have been
+	// collected within budget but reordering can push lower-priority items
+	// past the limit when higher-priority items are promoted.
+	results = trimToBudget(results, opts.TokenBudget)
+
 	return results, sourceCounts, nil
+}
+
+// recallPriorityScore returns a priority score for a recall entry.
+// Higher scores surface first. The score combines an entry-type weight
+// with a recency boost.
+func recallPriorityScore(entry ContextEntry) float64 {
+	// Entry-type base weight
+	weight := entryTypePriorityWeight(entry.EntryType)
+
+	// Recency boost: last hour 1.5x, last 24h 1.2x, older 1.0x
+	age := time.Since(entry.Timestamp)
+	switch {
+	case age <= 1*time.Hour:
+		weight *= 1.5
+	case age <= 24*time.Hour:
+		weight *= 1.2
+	}
+
+	return weight
+}
+
+// entryTypePriorityWeight returns the base priority weight for an entry type.
+func entryTypePriorityWeight(et EntryType) float64 {
+	switch et {
+	case EntryTypeDecision:
+		return 1.0
+	case EntryTypeTask:
+		return 0.9
+	case EntryTypeSummary:
+		return 0.85
+	case EntryTypeAnnotation:
+		return 0.7
+	case EntryTypeFinding:
+		return 0.6
+	case "entity":
+		return 0.5
+	case EntryTypeFileRead:
+		return 0.3
+	default:
+		return 0.4
+	}
+}
+
+// prioritySortEntries sorts entries by descending priority score.
+func prioritySortEntries(entries []ContextEntry) []ContextEntry {
+	scores := make([]float64, len(entries))
+	for i := range entries {
+		scores[i] = recallPriorityScore(entries[i])
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return scores[i] > scores[j]
+	})
+	return entries
+}
+
+// trimToBudget removes trailing entries that exceed the token budget.
+func trimToBudget(entries []ContextEntry, budget int) []ContextEntry {
+	used := 0
+	for i, e := range entries {
+		used += e.TokenCount
+		if used > budget && budget > 0 {
+			return entries[:i]
+		}
+	}
+	return entries
 }
 
 // contextSemanticSearch runs the context-backend vector search with recency weighting.
@@ -271,17 +346,65 @@ func (s *Service) contextSemanticSearch(ctx context.Context, vector []float64, a
 	return entries
 }
 
+// allocateBudget distributes a total token budget across enabled backends.
+// Context gets 50%, memory gets 30%, graph gets 20%. If a backend is
+// disabled, its share is redistributed equally to the remaining backends.
+func allocateBudget(total int, contextEnabled, memoryEnabled, graphEnabled bool) (contextBudget, memoryBudget, graphBudget int) {
+	type share struct {
+		enabled bool
+		pct     float64
+		out     *int
+	}
+	shares := []share{
+		{contextEnabled, 0.50, &contextBudget},
+		{memoryEnabled, 0.30, &memoryBudget},
+		{graphEnabled, 0.20, &graphBudget},
+	}
+
+	enabledCount := 0
+	disabledPct := 0.0
+	for _, s := range shares {
+		if s.enabled {
+			enabledCount++
+		} else {
+			disabledPct += s.pct
+		}
+	}
+	if enabledCount == 0 {
+		return 0, 0, 0
+	}
+
+	redistribution := disabledPct / float64(enabledCount)
+	for _, s := range shares {
+		if s.enabled {
+			*s.out = int(float64(total) * (s.pct + redistribution))
+		}
+	}
+	return
+}
+
 // memoryRecallToEntries converts memory hierarchy recall results to ContextEntry.
 func (s *Service) memoryRecallToEntries(opts EnhancedRecallOptions, agentID, sessionID string) []ContextEntry {
 	if s.memoryHierarchy == nil {
 		return nil
 	}
+
+	_, memBudget, _ := allocateBudget(
+		opts.TokenBudget,
+		true, // context is always enabled when we reach this path
+		true, // memory is enabled (we are in memoryRecallToEntries)
+		opts.IncludeGraph,
+	)
+	if memBudget < 256 {
+		memBudget = 256
+	}
+
 	req := MemoryRecallRequest{
 		Query:       opts.Query,
 		Namespace:   opts.Namespace,
 		SessionID:   sessionID,
 		AgentID:     agentID,
-		TokenBudget: opts.TokenBudget / 3, // allocate ~1/3 of budget per backend
+		TokenBudget: memBudget,
 		Limit:       10,
 	}
 

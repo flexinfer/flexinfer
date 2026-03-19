@@ -2,7 +2,7 @@ import SwiftUI
 import WidgetKit
 import LoomCompanionKit
 
-/// Shows the most recently completed session: agent name, namespace, duration, token count.
+/// Shows the most recently completed session: agent name, namespace, duration, token count, entry count.
 struct SessionSummaryWidget: Widget {
     let kind = "SessionSummaryWidget"
 
@@ -76,13 +76,19 @@ struct SessionSummaryWidgetView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
 
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
                     Label(formatDuration(session.durationSeconds), systemImage: "clock")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
                     if session.tokenCount > 0 {
                         Label(formatTokens(session.tokenCount), systemImage: "textformat.abc")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if session.entryCount > 0 {
+                        Label("\(session.entryCount)", systemImage: "doc.text")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -105,6 +111,8 @@ struct SessionSummaryWidgetView: View {
         case "claude-code", "claude": return "terminal.fill"
         case "gemini": return "wand.and.sparkles"
         case "codex": return "chevron.left.forwardslash.chevron.right"
+        case "kilocode": return "ruler.fill"
+        case "antigravity": return "arrow.up.circle.fill"
         default: return "cpu.fill"
         }
     }
@@ -114,6 +122,8 @@ struct SessionSummaryWidgetView: View {
         case "claude-code", "claude": return Color(red: 0.85, green: 0.55, blue: 0.25)
         case "gemini": return Color(red: 0.3, green: 0.65, blue: 0.95)
         case "codex": return Color(red: 0.4, green: 0.8, blue: 0.4)
+        case "kilocode": return Color(red: 0.7, green: 0.4, blue: 0.9)
+        case "antigravity": return Color(red: 0.95, green: 0.4, blue: 0.4)
         default: return .indigo
         }
     }

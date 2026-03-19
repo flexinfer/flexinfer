@@ -106,8 +106,8 @@ func TestCompactionScore(t *testing.T) {
 		OriginalTokens:  100,
 	}
 
-	oldScore := cs.compactionScore(oldItem)
-	newScore := cs.compactionScore(newItem)
+	oldScore := cs.compactionScore(oldItem, nil)
+	newScore := cs.compactionScore(newItem, nil)
 
 	if oldScore <= newScore {
 		t.Errorf("expected old/low-importance item to score higher (%f) than new/high-importance (%f)", oldScore, newScore)
@@ -127,7 +127,7 @@ func TestCompactionScore_CompressedTokens(t *testing.T) {
 		CompressedTokens: 200,
 	}
 
-	score := cs.compactionScore(item)
+	score := cs.compactionScore(item, nil)
 	// With compressed tokens, should use CompressedTokens (200) not OriginalTokens (1000)
 	// tokenScore = 200/1000 = 0.2
 	if score <= 0 {

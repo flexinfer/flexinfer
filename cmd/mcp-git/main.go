@@ -209,7 +209,7 @@ func run(ctx context.Context) error {
 	// git_commit
 	server.AddTool(mcp.Tool{
 		Name:        "git_commit",
-		Description: "Create a commit",
+		Description: "Create a commit. Supports optional agent_id trailer for provenance tracking.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
@@ -224,6 +224,14 @@ func run(ctx context.Context) error {
 				"all": map[string]any{
 					"type":        "boolean",
 					"description": "Stage all modified files (-a)",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Agent identifier to stamp as Agent-ID git trailer for provenance and pipeline correlation",
+				},
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Session identifier to stamp as Agent-Session git trailer for thread tracking",
 				},
 			},
 			Required: []string{"message"},
@@ -643,6 +651,8 @@ func handleGitCommit(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 	path := v.String("path", "")
 	message := v.Required("message")
 	all := v.Bool("all", false)
+	agentID := v.String("agent_id", "")
+	sessionID := v.String("session_id", "")
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
@@ -651,13 +661,26 @@ func handleGitCommit(ctx context.Context, args map[string]any) (*mcp.CallToolRes
 	if all {
 		gitArgs = append(gitArgs, "-a")
 	}
+	if agentID != "" {
+		gitArgs = append(gitArgs, "--trailer", fmt.Sprintf("Agent-ID: %s", agentID))
+	}
+	if sessionID != "" {
+		gitArgs = append(gitArgs, "--trailer", fmt.Sprintf("Agent-Session: %s", sessionID))
+	}
 
 	output, err := runGit(ctx, path, gitArgs...)
 	if err != nil {
 		return nil, err
 	}
 
-	return mcp.JSONResult(map[string]any{"status": "committed", "message": message, "output": output})
+	result := map[string]any{"status": "committed", "message": message, "output": output}
+	if agentID != "" {
+		result["agent_id"] = agentID
+	}
+	if sessionID != "" {
+		result["session_id"] = sessionID
+	}
+	return mcp.JSONResult(result)
 }
 
 func handleGitPush(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
