@@ -77,3 +77,16 @@ targets:
       properties:
         com.apple.security.application-groups:
           - group.ai.flexinfer.loom.companion
+schemes:
+  LoomCompanion:
+    build:
+      targets:
+        LoomCompanion: all
+        LoomCompanionKit: all
+        LoomCompanionWidget: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    archive:
+      config: Release
