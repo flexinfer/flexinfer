@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import time
+from importlib import metadata as importlib_metadata
 
 POLICY_STATE_FILE = ".flexinfer-gptq-policy.json"
 CHECKPOINT_DIR_NAME = ".flexinfer-gptq-cache"
@@ -169,12 +170,34 @@ def ensure_policy_python_packages(policy):
     packages = list((policy or {}).get("python_packages") or [])
     if not packages:
         return
+    if policy_python_packages_satisfied(policy, packages):
+        print(f"Policy python packages already satisfied for {policy.get('name', 'unnamed-policy')}")
+        return
     print(f"Installing policy python packages: {packages}")
     subprocess.check_call(
         [sys.executable, "-m", "pip", "install", "--no-cache-dir", *packages],
         stdout=sys.stdout,
         stderr=sys.stderr,
     )
+
+
+def policy_python_packages_satisfied(policy, packages):
+    name = (policy or {}).get("name", "")
+    if name != "qwen3.5-text":
+        return False
+    if len(packages) != 1 or "transformers.git@" not in packages[0]:
+        return False
+    try:
+        version = importlib_metadata.version("transformers")
+    except importlib_metadata.PackageNotFoundError:
+        return False
+    if version != "5.3.0.dev0":
+        return False
+    try:
+        from transformers import Qwen3_5ForCausalLM  # noqa: F401
+    except Exception:
+        return False
+    return True
 
 
 # ── Read config from environment ──────────────────────────────────────

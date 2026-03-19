@@ -213,6 +213,10 @@ RUN chmod +x /opt/flexinfer/steam-headless.sh
 # Adds GPTQModel, datasets, and oras CLI to the runtime image so that
 # quantization jobs can use the same image instead of separate 60GB+ quantizer images.
 RUN if [ "${INCLUDE_QUANTIZER}" = "true" ] && command -v pip >/dev/null 2>&1; then \
+      # Bake the Qwen3.5-compatible transformers build into the runtime so GPTQ
+      # jobs do not need to mutate the environment on every start.
+      pip install --no-cache-dir --no-deps \
+        "git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea"; \
       pip install -v "gptqmodel @ git+https://github.com/ModelCloud/GPTQModel.git@main" \
         --no-build-isolation --no-deps; \
       pip install --no-cache-dir \
