@@ -117,6 +117,19 @@ spec:
     maxNumSequence: 4
 ```
 
+For image-generation models, prefer explicit family routing instead of relying
+on the source string alone:
+
+- `flux` for FLUX.1 and FluxFill pipelines
+- `sdxl` for SDXL and SDXL-derived models, including historical names like
+  Gonzalomo/FluxPony or RealVisXL
+- `sd3` for Stable Diffusion 3 / 3.5 families
+- `sd15` for Stable Diffusion 1.5-derived pipelines such as InstructPix2Pix
+
+Common imagegen knobs in this repo include `pipelineMode`, `modelFamily`,
+`cpuOffload`, `quantization`, `useFp16`, `vaeRepo`, `vaePath`, `guidanceScale`,
+`numInferenceSteps`, `warmupResolutions`, and `warmPolicy`.
+
 #### Maxwell (sm_5x) notes
 
 On NVIDIA Maxwell GPUs (compute capability 5.x, e.g. GTX 980 Ti `sm_52`), FlexInfer enforces backend compatibility:

@@ -2,7 +2,9 @@
 #
 # Node: cblevins-gtx980ti (single dGPU, 6 GB GDDR5)
 #
-# Maxwell GPUs only support ollama and llamacpp backends.
+# Maxwell GPUs only support ollama and llamacpp backends in the current
+# unified runtime matrix. Image generation stays unsupported here until a
+# separate compatibility path is added.
 # CUDA compute capability 5.2 — no FP16 tensor cores, no INT8/INT4 acceleration.
 # vLLM, diffusers, comfyui all require higher compute capability.
 apiVersion: ai.flexinfer/v1alpha2

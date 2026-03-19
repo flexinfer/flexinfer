@@ -13,6 +13,7 @@ import json
 import uuid
 import time
 import sys
+import re
 from typing import Optional, List
 from contextlib import asynccontextmanager
 
@@ -91,6 +92,7 @@ def _lazy_auto_pipeline_text2image():
 # Global pipeline cache
 pipeline = None
 current_model = None
+current_model_family = None
 gpu_info = None
 
 # Pipeline mode: "text2image" (default), "inpainting", or "instruct"
@@ -179,13 +181,102 @@ def _env_float(name: str) -> Optional[float]:
         return None
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _is_sdxl_turbo(model_id: str) -> bool:
     model_id = (model_id or "").lower()
     return "sdxl-turbo" in model_id or "sdxl_turbo" in model_id
 
 
+def _normalize_model_family(value: Optional[str]) -> Optional[str]:
+    value = (value or "").strip().lower()
+    aliases = {
+        "fluxfill": "flux",
+        "flux-fill": "flux",
+        "flux.fill": "flux",
+        "sdxl-turbo": "sdxl",
+        "stable-diffusion-xl": "sdxl",
+        "stable-diffusion-3": "sd3",
+        "stable-diffusion-3.5": "sd3",
+        "stable-diffusion-1.5": "sd15",
+        "stable-diffusion-v1-5": "sd15",
+        "sd-1.5": "sd15",
+    }
+    value = aliases.get(value, value)
+    return value if value in {"flux", "sdxl", "sd3", "sd15"} else None
+
+
+def _configured_model_family() -> Optional[str]:
+    return _normalize_model_family(os.environ.get("MODEL_FAMILY"))
+
+
+def _class_name_model_family(class_name: Optional[str]) -> Optional[str]:
+    class_name = (class_name or "").strip()
+    if not class_name:
+        return None
+    if class_name in ("FluxPipeline", "FluxFillPipeline"):
+        return "flux"
+    if "StableDiffusion3" in class_name:
+        return "sd3"
+    if "StableDiffusionXL" in class_name:
+        return "sdxl"
+    if class_name.startswith("StableDiffusion"):
+        return "sd15"
+    return None
+
+
+def _looks_like_flux_id(model_id: Optional[str]) -> bool:
+    return bool(
+        re.search(r"(^|[\/_-])flux(?:[._-]?1)?($|[\/._-])", (model_id or "").lower())
+    )
+
+
+def _heuristic_model_family(model_id: Optional[str]) -> Optional[str]:
+    lower = (model_id or "").lower()
+    if not lower:
+        return None
+    if "stable-diffusion-3.5" in lower or "stable-diffusion-3" in lower:
+        return "sd3"
+    if "sdxl" in lower or "stable-diffusion-xl" in lower:
+        return "sdxl"
+    if (
+        "stable-diffusion-v1-5" in lower
+        or "stable-diffusion-1.5" in lower
+        or re.search(r"(^|[\/_-])sd15($|[\/._-])", lower)
+    ):
+        return "sd15"
+    if _looks_like_flux_id(lower):
+        return "flux"
+    return None
+
+
+def _model_family(
+    model_id: Optional[str] = None,
+    pipe=None,
+    model_index_class: Optional[str] = None,
+) -> Optional[str]:
+    explicit = _configured_model_family()
+    if explicit is not None:
+        return explicit
+    if pipe is not None:
+        family = _class_name_model_family(type(pipe).__name__)
+        if family is not None:
+            return family
+    if current_model == model_id and current_model_family is not None:
+        return current_model_family
+    family = _class_name_model_family(model_index_class)
+    if family is not None:
+        return family
+    return _heuristic_model_family(model_id)
+
+
 def _is_flux(model_id: str) -> bool:
-    return "flux" in (model_id or "").lower()
+    return _model_family(model_id=model_id) == "flux"
 
 
 def _is_flux_schnell(model_id: str) -> bool:
@@ -216,7 +307,7 @@ def _pipeline_is_flux_like(pipe=None, model_id: Optional[str] = None) -> bool:
     override = _single_file_pipeline_override()
     if override in ("flux", "flux-fill"):
         return True
-    return _is_flux(model_id or current_model)
+    return _model_family(model_id=model_id or current_model) == "flux"
 
 
 def _default_steps(model_id: str) -> int:
@@ -224,11 +315,14 @@ def _default_steps(model_id: str) -> int:
     steps = _env_int("DEFAULT_NUM_INFERENCE_STEPS")
     if steps is not None and steps > 0:
         return steps
+    family = _model_family(model_id=model_id)
     if _is_sdxl_turbo(model_id):
         return 4
-    if _is_flux_schnell(model_id):
+    if family == "flux" and _is_flux_schnell(model_id):
         return 4
-    if _is_flux(model_id):
+    if family == "flux":
+        return 28
+    if family == "sd3":
         return 28
     return 20
 
@@ -237,12 +331,15 @@ def _default_guidance_scale(model_id: str) -> float:
     scale = _env_float("DEFAULT_GUIDANCE_SCALE")
     if scale is not None and scale >= 0.0:
         return scale
+    family = _model_family(model_id=model_id)
     if _is_sdxl_turbo(model_id):
         return 0.0
-    if _is_flux_schnell(model_id):
+    if family == "flux" and _is_flux_schnell(model_id):
         return 0.0
-    if _is_flux(model_id):
+    if family == "flux":
         return 3.5
+    if family == "sd3":
+        return 4.5
     return 7.5
 
 
@@ -351,6 +448,197 @@ def _apply_scheduler(pipe, scheduler_name: Optional[str]):
             f"WARNING: Unknown scheduler '{scheduler_name}', keeping default. Options: {list(scheduler_map.keys())}"
         )
     sys.stdout.flush()
+
+
+def _compile_mode() -> Optional[str]:
+    """Return the requested torch.compile mode, or None if disabled."""
+    raw = os.environ.get("COMPILE_MODE", "").strip()
+    if not raw or raw.lower() in ("0", "false", "no", "off", "disabled", "none"):
+        return None
+    lowered = raw.lower()
+    if lowered in ("1", "true", "yes", "on", "auto"):
+        return "reduce-overhead"
+    return raw
+
+
+def _compile_target_name(pipe, family: Optional[str]) -> Optional[str]:
+    """Choose the module attribute to compile for the loaded pipeline."""
+    if family == "sd3" and hasattr(pipe, "transformer"):
+        return "transformer"
+    if hasattr(pipe, "unet"):
+        return "unet"
+    if hasattr(pipe, "transformer"):
+        return "transformer"
+    return None
+
+
+def _apply_startup_lora(pipe, family: Optional[str]) -> None:
+    """Load an optional LoRA adapter at startup, failing soft on any error."""
+    lora_path = os.environ.get("LORA_PATH", "").strip()
+    lora_repo = os.environ.get("LORA_REPO", "").strip()
+    if not lora_path and not lora_repo:
+        return
+
+    if family not in {"sdxl", "sd3", "sd15"}:
+        print(
+            f"Skipping startup LoRA for unsupported family: {family or 'unknown'}"
+        )
+        return
+
+    if not hasattr(pipe, "load_lora_weights"):
+        print("WARNING: pipeline does not support load_lora_weights; skipping LoRA")
+        return
+
+    adapter_name = os.environ.get("LORA_ADAPTER_NAME", "startup").strip() or "startup"
+    weight_name = os.environ.get("LORA_WEIGHT_NAME", "").strip() or None
+    lora_scale = _env_float("LORA_SCALE")
+    sources = []
+    if lora_path:
+        sources.append(("local", lora_path))
+    if lora_repo and lora_repo != lora_path:
+        sources.append(("repo", lora_repo))
+
+    for source_kind, source in sources:
+        try:
+            print(f"Loading startup LoRA from {source_kind} source: {source}")
+            sys.stdout.flush()
+            load_kwargs = {"adapter_name": adapter_name}
+            if weight_name:
+                load_kwargs["weight_name"] = weight_name
+            pipe.load_lora_weights(source, **load_kwargs)
+            print(f"Loaded startup LoRA adapter: {adapter_name}")
+
+            if lora_scale is not None:
+                scale_applied = False
+                if hasattr(pipe, "set_adapters"):
+                    try:
+                        pipe.set_adapters(adapter_name, lora_scale)
+                        print(f"Applied startup LoRA scale via set_adapters: {lora_scale}")
+                        scale_applied = True
+                    except Exception as exc:
+                        print(f"WARNING: set_adapters failed for LoRA scale: {exc}")
+                elif hasattr(pipe, "fuse_lora"):
+                    try:
+                        pipe.fuse_lora(lora_scale=lora_scale)
+                        print(f"Applied startup LoRA scale via fuse_lora: {lora_scale}")
+                        scale_applied = True
+                    except Exception as exc:
+                        print(f"WARNING: fuse_lora failed for LoRA scale: {exc}")
+                if not scale_applied and hasattr(pipe, "fuse_lora"):
+                    try:
+                        pipe.fuse_lora(lora_scale=lora_scale)
+                        print(f"Applied startup LoRA scale via fuse_lora fallback: {lora_scale}")
+                        scale_applied = True
+                    except Exception as exc:
+                        print(f"WARNING: fuse_lora fallback failed for LoRA scale: {exc}")
+                if not scale_applied:
+                    print(
+                        "WARNING: LoRA scale requested but pipeline exposes no scaling hook"
+                    )
+            return
+        except Exception as exc:
+            print(f"WARNING: failed to load startup LoRA from {source}: {exc}")
+
+    print("WARNING: startup LoRA requested but could not be loaded; continuing")
+
+
+def _apply_compile_controls(pipe, family: Optional[str], cpu_offload: bool) -> None:
+    """Optionally compile the most expensive pipeline module, failing soft."""
+    raw_compile_mode = os.environ.get("COMPILE_MODE", "").strip()
+    compile_requested = any(
+        os.environ.get(name, "").strip() != ""
+        for name in (
+            "COMPILE_MODE",
+            "COMPILE_FULLGRAPH",
+            "COMPILE_DYNAMIC",
+            "COMPILE_REPEATED_BLOCKS",
+        )
+    )
+    if raw_compile_mode.lower() in ("0", "false", "no", "off", "disabled", "none"):
+        return
+    if not compile_requested:
+        return
+    compile_mode = _compile_mode() or "reduce-overhead"
+
+    if cpu_offload:
+        print("Skipping torch.compile because CPU offload is enabled")
+        return
+
+    if family not in {"sdxl", "sd3", "sd15"}:
+        print(f"Skipping torch.compile for unsupported family: {family or 'unknown'}")
+        return
+
+    if not hasattr(torch, "compile"):
+        print("WARNING: torch.compile is unavailable; skipping compile controls")
+        return
+
+    target_name = _compile_target_name(pipe, family)
+    if target_name is None:
+        print("WARNING: no compile target found on pipeline; skipping compile")
+        return
+
+    target = getattr(pipe, target_name, None)
+    if target is None:
+        print(f"WARNING: pipeline target '{target_name}' missing; skipping compile")
+        return
+
+    fullgraph = _env_bool("COMPILE_FULLGRAPH", True)
+    dynamic = _env_bool("COMPILE_DYNAMIC", False)
+    repeated_blocks = _env_bool("COMPILE_REPEATED_BLOCKS", False)
+    compile_kwargs = {"mode": compile_mode, "fullgraph": fullgraph, "dynamic": dynamic}
+
+    try:
+        if repeated_blocks:
+            repeated_error = None
+            compiled_target = None
+            if hasattr(target, "compile_repeated_blocks"):
+                try:
+                    compiled_target = target.compile_repeated_blocks(
+                        fullgraph=fullgraph, dynamic=dynamic
+                    )
+                    if compiled_target is None:
+                        compiled_target = target
+                    print(
+                        f"Compiled repeated blocks on {target_name} via native hook (fullgraph={fullgraph}, dynamic={dynamic})"
+                    )
+                except Exception as exc:
+                    repeated_error = exc
+            if compiled_target is None:
+                try:
+                    from accelerate.utils import compile_regions
+
+                    compiled_target = compile_regions(
+                        target, fullgraph=fullgraph, dynamic=dynamic
+                    )
+                    print(
+                        f"Compiled repeated blocks on {target_name} via accelerate.compile_regions (fullgraph={fullgraph}, dynamic={dynamic})"
+                    )
+                except Exception as exc:
+                    if repeated_error is not None:
+                        print(
+                            f"WARNING: repeated-block compilation failed on {target_name}: {repeated_error}"
+                        )
+                    raise exc
+        else:
+            compiled_target = torch.compile(target, **compile_kwargs)
+            print(
+                f"Compiled {target_name} with torch.compile (mode={compile_mode}, fullgraph={fullgraph}, dynamic={dynamic})"
+            )
+    except Exception as exc:
+        print(f"WARNING: compile controls failed for {target_name}: {exc}")
+        return
+
+    if compiled_target is not target:
+        setattr(pipe, target_name, compiled_target)
+        print(f"Replaced pipeline.{target_name} with compiled module")
+    else:
+        print(f"Kept pipeline.{target_name} in place after compilation")
+
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.synchronize()
+        except Exception:
+            pass
 
 
 class ImageData(BaseModel):
@@ -528,7 +816,7 @@ def _load_single_file(checkpoint_path: str, model_id: str, dtype, vae=None):
 
 def load_pipeline(model_id: str):
     """Load or reload the diffusion pipeline."""
-    global pipeline, current_model
+    global pipeline, current_model, current_model_family
 
     if pipeline is not None and current_model == model_id:
         return pipeline
@@ -668,9 +956,11 @@ def load_pipeline(model_id: str):
 
         # Prefer the cached diffusers metadata when present; repo-name heuristics are only
         # a fallback for remote or legacy layouts without model_index.json.
-        is_flux_pipeline = _model_index_is_flux(model_index_class) or (
-            model_index_class is None and _is_flux(model_id)
+        detected_family = _model_family(
+            model_id=model_id,
+            model_index_class=model_index_class,
         )
+        is_flux_pipeline = detected_family == "flux"
 
         # FLUX pipelines use explicit classes and do not use safety_checker or custom VAE overrides.
         if is_flux_pipeline:
@@ -822,8 +1112,16 @@ def load_pipeline(model_id: str):
                     **pipeline_kwargs,
                 )
 
+    loaded_family = _model_family(
+        model_id=model_id,
+        pipe=pipeline,
+        model_index_class=model_index_class,
+    )
+
     print("Pipeline loaded to CPU, preparing GPU transfer...")
     sys.stdout.flush()
+
+    _apply_startup_lora(pipeline, loaded_family)
 
     # Now that model is safely on CPU, we can initialize GPU context
     if torch.cuda.is_available():
@@ -957,11 +1255,16 @@ def load_pipeline(model_id: str):
         except Exception as e:
             print(f"Could not enable VAE slicing: {e}")
 
+    _apply_compile_controls(pipeline, loaded_family, use_cpu_offload)
+
     # Apply scheduler override if configured
     _apply_scheduler(pipeline, None)
 
     current_model = model_id
+    current_model_family = loaded_family
     print(f"Model loaded successfully: {resolved_model_id} (id: {model_id})")
+    if current_model_family:
+        print(f"  Model family: {current_model_family}")
     print(f"  Scheduler: {type(pipeline.scheduler).__name__}")
     print(f"  Default steps: {_default_steps(model_id)}")
     print(f"  Default guidance: {_default_guidance_scale(model_id)}")

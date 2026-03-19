@@ -73,6 +73,23 @@ func TestLoadUnknownBackend(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown backend")
 }
 
+func TestLoadRejectsComfyUIInUnifiedRuntime(t *testing.T) {
+	m := NewManager(ManagerConfig{
+		GPUVendor: backend.GPUVendorAMD,
+		GPUArch:   "gfx1100",
+	})
+
+	ctx := context.Background()
+	err := m.Load(ctx, "test-comfy", LoadRequest{
+		Backend: "comfy",
+		Model:   "test/model",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not bundled in flexinfer-runtime images")
+	assert.Nil(t, m.Active())
+}
+
 func TestUnloadNotLoaded(t *testing.T) {
 	m := NewManager(ManagerConfig{})
 	ctx := context.Background()
@@ -101,7 +118,6 @@ func TestInferCommand(t *testing.T) {
 		{"llamacpp", "llama-server", nil},
 		{"ollama", "ollama", nil},
 		{"diffusers", "python", []string{"/opt/flexinfer/server-diffusers.py"}},
-		{"comfyui", "python", []string{"main.py"}},
 		{"unknown", "unknown", nil},
 	}
 

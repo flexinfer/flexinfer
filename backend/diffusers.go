@@ -137,6 +137,39 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			Value: singleFileStrict,
 		})
 	}
+	if modelFamily := spec.ConfigString("modelFamily", ""); modelFamily != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "MODEL_FAMILY",
+			Value: modelFamily,
+		})
+	}
+	if compileMode := spec.ConfigString("compileMode", ""); compileMode != "" {
+		env = append(env, corev1.EnvVar{Name: "COMPILE_MODE", Value: compileMode})
+	}
+	if compileFullgraph := spec.ConfigString("compileFullgraph", ""); compileFullgraph != "" {
+		env = append(env, corev1.EnvVar{Name: "COMPILE_FULLGRAPH", Value: compileFullgraph})
+	}
+	if compileDynamic := spec.ConfigString("compileDynamic", ""); compileDynamic != "" {
+		env = append(env, corev1.EnvVar{Name: "COMPILE_DYNAMIC", Value: compileDynamic})
+	}
+	if compileRepeatedBlocks := spec.ConfigString("compileRepeatedBlocks", ""); compileRepeatedBlocks != "" {
+		env = append(env, corev1.EnvVar{Name: "COMPILE_REPEATED_BLOCKS", Value: compileRepeatedBlocks})
+	}
+	if loraPath := spec.ConfigString("loraPath", ""); loraPath != "" {
+		env = append(env, corev1.EnvVar{Name: "LORA_PATH", Value: loraPath})
+	}
+	if loraRepo := spec.ConfigString("loraRepo", ""); loraRepo != "" {
+		env = append(env, corev1.EnvVar{Name: "LORA_REPO", Value: loraRepo})
+	}
+	if loraWeightName := spec.ConfigString("loraWeightName", ""); loraWeightName != "" {
+		env = append(env, corev1.EnvVar{Name: "LORA_WEIGHT_NAME", Value: loraWeightName})
+	}
+	if loraAdapterName := spec.ConfigString("loraAdapterName", ""); loraAdapterName != "" {
+		env = append(env, corev1.EnvVar{Name: "LORA_ADAPTER_NAME", Value: loraAdapterName})
+	}
+	if loraScale := spec.ConfigString("loraScale", ""); loraScale != "" {
+		env = append(env, corev1.EnvVar{Name: "LORA_SCALE", Value: loraScale})
+	}
 
 	// Quantization mode (e.g. "nf4" for bitsandbytes NF4 on FLUX models)
 	if quant := spec.ConfigString("quantization", ""); quant != "" {

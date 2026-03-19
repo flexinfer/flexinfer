@@ -72,6 +72,40 @@ func TestDiffusersBackendEnv(t *testing.T) {
 			},
 		},
 		{
+			name: "model family override maps to env",
+			config: map[string]interface{}{
+				"modelFamily": "sdxl",
+			},
+			wantEnv: map[string]string{
+				"MODEL_FAMILY": "sdxl",
+			},
+		},
+		{
+			name: "compile controls and startup LoRA map to env",
+			config: map[string]interface{}{
+				"compileMode":           "reduce-overhead",
+				"compileFullgraph":      "true",
+				"compileDynamic":        "false",
+				"compileRepeatedBlocks": "1",
+				"loraPath":              "/models/lora.safetensors",
+				"loraRepo":              "my-org/my-lora",
+				"loraWeightName":        "adapter.safetensors",
+				"loraAdapterName":       "startup",
+				"loraScale":             "0.75",
+			},
+			wantEnv: map[string]string{
+				"COMPILE_MODE":            "reduce-overhead",
+				"COMPILE_FULLGRAPH":       "true",
+				"COMPILE_DYNAMIC":         "false",
+				"COMPILE_REPEATED_BLOCKS": "1",
+				"LORA_PATH":               "/models/lora.safetensors",
+				"LORA_REPO":               "my-org/my-lora",
+				"LORA_WEIGHT_NAME":        "adapter.safetensors",
+				"LORA_ADAPTER_NAME":       "startup",
+				"LORA_SCALE":              "0.75",
+			},
+		},
+		{
 			name: "vae settings map to env",
 			config: map[string]interface{}{
 				"vaeRepo": "madebyollin/sdxl-vae-fp16-fix",

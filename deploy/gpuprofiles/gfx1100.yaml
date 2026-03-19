@@ -36,11 +36,17 @@ spec:
     llamacpp:
       support: full
     diffusers:
+      # Full support for family-tagged FLUX / SDXL / SD1.5 manifests.
+      # SD3.x is represented in this branch via the separate vLLM-Omni example.
+      # Keep the 1024px warmup cache enabled on gfx1100 to avoid first-request
+      # MIOpen/Triton compile stalls.
       support: full
       image: registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100
     ollama:
       support: full
     comfyui:
+      # ComfyUI is a separate backend image; this profile only says the GPU is
+      # capable when that image is present in the runtime matrix.
       support: full
     mlc-llm:
       support: full
