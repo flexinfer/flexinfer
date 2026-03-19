@@ -275,4 +275,8 @@ spec:
             - name: FLEXINFER_RUNTIME_IMAGE
               value: {{ .Values.quantization.runtimeImage | quote }}
             {{- end }}
+            {{- if .Values.quantization.gptqModelPolicies }}
+            - name: FLEXINFER_GPTQ_MODEL_POLICIES
+              value: {{ .Values.quantization.gptqModelPolicies | toJson | quote }}
+            {{- end }}
 {{- end }}
