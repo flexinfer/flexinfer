@@ -32,6 +32,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
@@ -401,5 +402,45 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.requestsForRuntimePod)).
 		Complete(r)
+}
+
+func (r *ModelReconciler) requestsForRuntimePod(ctx context.Context, obj client.Object) []ctrl.Request {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return nil
+	}
+	if pod.Labels["app.kubernetes.io/component"] != runtimeComponentLabel {
+		return nil
+	}
+
+	models := &aiv1alpha2.ModelList{}
+	if err := r.List(ctx, models, client.InNamespace(pod.Namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to list models for runtime pod event", "pod", pod.Name)
+		return nil
+	}
+
+	requests := make([]ctrl.Request, 0, len(models.Items))
+	for i := range models.Items {
+		model := &models.Items[i]
+		if !runtimePodTargetsModel(ctx, r.Client, pod, model) {
+			continue
+		}
+		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(model)})
+	}
+	return requests
+}
+
+func runtimePodTargetsModel(ctx context.Context, c client.Client, pod *corev1.Pod, model *aiv1alpha2.Model) bool {
+	if pod == nil || model == nil {
+		return false
+	}
+	if len(model.Spec.NodeSelector) == 0 {
+		return true
+	}
+	if pod.Spec.NodeName != "" {
+		return nodeMatchesSelector(ctx, c, pod.Spec.NodeName, model.Spec.NodeSelector)
+	}
+	return podNodeSelectorMatches(pod.Spec.NodeSelector, model.Spec.NodeSelector)
 }
