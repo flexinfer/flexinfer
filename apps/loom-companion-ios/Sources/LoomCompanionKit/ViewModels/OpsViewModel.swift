@@ -91,6 +91,20 @@ public final class OpsViewModel {
         if Self.refreshEventTypes.contains(event.type) {
             await loadPresence()
         }
+        if event.type == "hud.pipeline" {
+            await loadPipelines()
+        }
+    }
+
+    /// Refresh just the pipelines section (called on hud.pipeline SSE events).
+    public func loadPipelines() async {
+        do {
+            let response: MobilePipelinesResponse = try await apiClient.request(.pipelines)
+            pipelines = response.pipelines
+            pipelinesAvailable = response.available
+        } catch {
+            // Non-critical — keep existing data on transient failures.
+        }
     }
 
     /// Refresh just the presence/agents section (lightweight, called on SSE events).
