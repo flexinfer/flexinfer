@@ -36,28 +36,3 @@ struct LiveActivityBanner: View {
         }
     }
 }
-
-// MARK: - Pulse animation extension for the banner dot
-
-private struct BannerPulse: ViewModifier {
-    @State private var isPulsing = false
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(isPulsing ? 0.4 : 1.0)
-            .onAppear {
-                withAnimation(
-                    .easeInOut(duration: 1.2)
-                    .repeatForever(autoreverses: true)
-                ) {
-                    isPulsing = true
-                }
-            }
-    }
-}
-
-private extension View {
-    func pulse() -> some View {
-        modifier(BannerPulse())
-    }
-}

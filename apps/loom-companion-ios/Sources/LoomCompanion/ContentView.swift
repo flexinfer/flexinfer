@@ -81,8 +81,9 @@ struct ContentView: View {
         // Fetch workflow detail to find the pending step.
         do {
             let detail: MobileWorkflowDetail = try await apiClient.request(.workflowDetail(id: workflowId))
-            guard let pendingStep = detail.steps?.first(where: { $0.status == "waiting_approval" }) else { return }
-            let _: [String: Any] = try await apiClient.request(
+            guard let pendingStep = detail.steps?.first(where: { $0.status == .waitingApproval }) else { return }
+            // Approve returns the workflow detail; discard it.
+            let _: MobileWorkflowDetail = try await apiClient.request(
                 .workflowApprove(id: workflowId, stepId: pendingStep.id)
             )
         } catch {
