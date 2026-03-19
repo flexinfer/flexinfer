@@ -1,6 +1,11 @@
 # FlexInfer Helm values override for K3s cluster
 # Uses Harbor registry instead of ghcr.io defaults
 
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
 serviceAccounts:
   controller:
     create: true
