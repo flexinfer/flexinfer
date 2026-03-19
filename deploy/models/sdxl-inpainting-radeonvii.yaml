@@ -24,10 +24,12 @@ spec:
   config:
     pipelineMode: inpainting
     cpuOffload: 'true'
-    # SDXL inpainting on gfx906 returns gray/NaN decodes in fp16 without the
-    # fp16-fix VAE. Keep this path in fp32 until the VAE is staged alongside
-    # the model cache.
+    # gfx906 still needs the fixed SDXL VAE or decodes trend gray/washed out.
+    # Keep the main pipeline in fp32 for stability, but load the VAE from the
+    # staged cache path so we do not rely on the base model's decoder.
     useFp16: '0'
+    vaeRepo: "madebyollin/sdxl-vae-fp16-fix"
+    vaePath: ".vae/sdxl-vae-fp16-fix"
     strength: '0.75'
     guidanceScale: '7.5'
     numInferenceSteps: '30'

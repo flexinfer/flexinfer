@@ -31,12 +31,13 @@ spec:
     # Resolve from the model cache root so the same manifest works for the
     # unified runtime's node-local layout instead of assuming a global /models/.vae mount.
     vaePath: ".vae/sdxl-vae-fp16-fix"
-    # The single-step DPM++ SDE path is faster but leaves this SDXL model
-    # noticeably grainier on ROCm. Prefer the multistep SDE/Karras variant.
-    guidanceScale: "6.5"
-    numInferenceSteps: "45"
-    scheduler: "dpm++2m-sde-karras"
-    negativePrompt: "(worst quality, low quality, normal quality:2), blurry, noisy, grainy, jpeg artifacts, watermark, text, logo, signature, deformed, disfigured, bad anatomy, bad eyes, extra limbs, extra fingers, duplicate, distorted proportions, oversaturated"
+    # This Unity DMD checkpoint ships with Euler + ~30 steps as its published
+    # inference recipe. Generic SDXL DPM++/45-step defaults oversoften the
+    # image and can produce a washed-out "negative" look on ROCm.
+    guidanceScale: "7.5"
+    numInferenceSteps: "30"
+    scheduler: "euler"
+    negativePrompt: "painting, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, deformed, ugly, blurry, bad anatomy, bad proportions, extra limbs, cloned face, skinny, glitchy, double torso, extra arms, extra hands, mangled fingers, missing lips, ugly face, distorted face, extra legs, anime"
     warmupResolutions: "512x512"
     warmPolicy: primary
     hipVisibleDevices: "0"
