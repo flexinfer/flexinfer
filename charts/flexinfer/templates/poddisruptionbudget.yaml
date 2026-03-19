@@ -1,4 +1,10 @@
-{{- if .Values.podDisruptionBudget.enabled }}
+{{- $pdb := default (dict) .Values.podDisruptionBudget -}}
+{{- $controllerPDB := default (dict) $pdb.controller -}}
+{{- $proxyPDB := default (dict) $pdb.proxy -}}
+{{- $schedulerPDB := default (dict) $pdb.scheduler -}}
+{{- $proxy := default (dict) .Values.proxy -}}
+{{- $scheduler := default (dict) .Values.scheduler -}}
+{{- if default false $pdb.enabled }}
 {{- if .Values.controller.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -9,10 +15,10 @@ metadata:
     {{- include "flexinfer.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
 spec:
-  {{- if .Values.podDisruptionBudget.controller.minAvailable }}
-  minAvailable: {{ .Values.podDisruptionBudget.controller.minAvailable }}
-  {{- else if .Values.podDisruptionBudget.controller.maxUnavailable }}
-  maxUnavailable: {{ .Values.podDisruptionBudget.controller.maxUnavailable }}
+  {{- if $controllerPDB.minAvailable }}
+  minAvailable: {{ $controllerPDB.minAvailable }}
+  {{- else if $controllerPDB.maxUnavailable }}
+  maxUnavailable: {{ $controllerPDB.maxUnavailable }}
   {{- else }}
   maxUnavailable: 1
   {{- end }}
@@ -22,8 +28,8 @@ spec:
       app.kubernetes.io/component: controller
 {{- end }}
 ---
-{{- if .Values.proxy.enabled }}
-{{- if gt (int .Values.proxy.replicaCount) 1 }}
+{{- if $proxy.enabled }}
+{{- if gt (int (default 1 $proxy.replicaCount)) 1 }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -33,10 +39,10 @@ metadata:
     {{- include "flexinfer.labels" . | nindent 4 }}
     app.kubernetes.io/component: proxy
 spec:
-  {{- if .Values.podDisruptionBudget.proxy.minAvailable }}
-  minAvailable: {{ .Values.podDisruptionBudget.proxy.minAvailable }}
-  {{- else if .Values.podDisruptionBudget.proxy.maxUnavailable }}
-  maxUnavailable: {{ .Values.podDisruptionBudget.proxy.maxUnavailable }}
+  {{- if $proxyPDB.minAvailable }}
+  minAvailable: {{ $proxyPDB.minAvailable }}
+  {{- else if $proxyPDB.maxUnavailable }}
+  maxUnavailable: {{ $proxyPDB.maxUnavailable }}
   {{- else }}
   minAvailable: 1
   {{- end }}
@@ -47,8 +53,8 @@ spec:
 {{- end }}
 {{- end }}
 ---
-{{- if .Values.scheduler.enabled }}
-{{- if gt (int .Values.scheduler.replicas) 1 }}
+{{- if $scheduler.enabled }}
+{{- if gt (int (default 1 $scheduler.replicas)) 1 }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -58,10 +64,10 @@ metadata:
     {{- include "flexinfer.labels" . | nindent 4 }}
     app.kubernetes.io/component: scheduler
 spec:
-  {{- if .Values.podDisruptionBudget.scheduler.minAvailable }}
-  minAvailable: {{ .Values.podDisruptionBudget.scheduler.minAvailable }}
-  {{- else if .Values.podDisruptionBudget.scheduler.maxUnavailable }}
-  maxUnavailable: {{ .Values.podDisruptionBudget.scheduler.maxUnavailable }}
+  {{- if $schedulerPDB.minAvailable }}
+  minAvailable: {{ $schedulerPDB.minAvailable }}
+  {{- else if $schedulerPDB.maxUnavailable }}
+  maxUnavailable: {{ $schedulerPDB.maxUnavailable }}
   {{- else }}
   minAvailable: 1
   {{- end }}
