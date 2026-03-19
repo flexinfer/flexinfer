@@ -139,11 +139,14 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected calibration_overrides in default policy JSON")
 			}
-			if got := int(overrides["max_samples"].(float64)); got != 64 {
-				t.Fatalf("default max_samples override = %d, want 64", got)
+			if got := int(overrides["max_samples"].(float64)); got != 16 {
+				t.Fatalf("default max_samples override = %d, want 16", got)
 			}
-			if got := int(overrides["max_seq_len"].(float64)); got != 1024 {
-				t.Fatalf("default max_seq_len override = %d, want 1024", got)
+			if got := int(overrides["max_seq_len"].(float64)); got != 512 {
+				t.Fatalf("default max_seq_len override = %d, want 512", got)
+			}
+			if got := int(overrides["max_tokens"].(float64)); got != 8192 {
+				t.Fatalf("default max_tokens override = %d, want 8192", got)
 			}
 		}
 	})

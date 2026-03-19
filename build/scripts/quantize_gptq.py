@@ -36,8 +36,9 @@ DEFAULT_MODEL_POLICIES = [
             "offload_to_disk": False,
         },
         "calibration_overrides": {
-            "max_samples": 64,
-            "max_seq_len": 1024,
+            "max_samples": 16,
+            "max_seq_len": 512,
+            "max_tokens": 8192,
         },
     },
 ]
@@ -259,6 +260,7 @@ def effective_calibration_setting(policy, key, default):
 
 effective_max_seq_len = max_seq_len
 effective_max_samples = max_samples
+effective_max_tokens = max_samples * max_seq_len
 
 
 def calibration_cache_fingerprint():
@@ -413,11 +415,22 @@ ensure_policy_python_packages(policy)
 
 effective_max_seq_len = effective_calibration_setting(policy, "max_seq_len", max_seq_len)
 effective_max_samples = effective_calibration_setting(policy, "max_samples", max_samples)
-if effective_max_seq_len != max_seq_len or effective_max_samples != max_samples:
+effective_max_tokens = effective_calibration_setting(
+    policy,
+    "max_tokens",
+    effective_max_samples * effective_max_seq_len,
+)
+if (
+    effective_max_seq_len != max_seq_len
+    or effective_max_samples != max_samples
+    or effective_max_tokens != (max_samples * max_seq_len)
+):
     print(
         "Applied calibration overrides from "
         f"policy={active_policy or 'none'}: "
-        f"max_seq_len={effective_max_seq_len} max_samples={effective_max_samples}"
+        f"max_seq_len={effective_max_seq_len} "
+        f"max_samples={effective_max_samples} "
+        f"max_tokens={effective_max_tokens}"
     )
 
 model_type = cfg.get("model_type", "")
@@ -740,15 +753,36 @@ examples = load_cached_examples(model_dir)
 if examples is None:
     dataset = load_dataset(dataset_name, split="validation")
     examples = []
+    total_tokens = 0
     for sample in dataset.select(range(min(effective_max_samples, len(dataset)))):
         tok = tokenizer(
             sample["text"], return_tensors="pt", max_length=effective_max_seq_len, truncation=True
         )
-        examples.append({"input_ids": tok.input_ids, "attention_mask": tok.attention_mask})
+        sample_tokens = int(tok.input_ids.shape[-1])
+        if total_tokens >= effective_max_tokens:
+            break
+        remaining_tokens = effective_max_tokens - total_tokens
+        if sample_tokens > remaining_tokens:
+            truncated = max(1, remaining_tokens)
+            tok = {
+                "input_ids": tok.input_ids[:, :truncated],
+                "attention_mask": tok.attention_mask[:, :truncated],
+            }
+            sample_tokens = truncated
+        else:
+            tok = {"input_ids": tok.input_ids, "attention_mask": tok.attention_mask}
+        if sample_tokens <= 0:
+            break
+        examples.append(tok)
+        total_tokens += sample_tokens
+        if total_tokens >= effective_max_tokens:
+            break
     checkpoint_state = dict(quant_checkpoint_state)
     checkpoint_state["stage"] = "calibration_ready"
     checkpoint_state["calibration_samples"] = len(examples)
     checkpoint_state["calibration_max_seq_len"] = effective_max_seq_len
+    checkpoint_state["calibration_max_tokens"] = effective_max_tokens
+    checkpoint_state["calibration_total_tokens"] = total_tokens
     checkpoint_state["calibration_cached_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     persist_cached_examples(model_dir, examples, checkpoint_state)
     quant_checkpoint_state = checkpoint_state

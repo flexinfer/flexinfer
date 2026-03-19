@@ -218,8 +218,9 @@ func defaultGPTQModelPoliciesJSON() string {
 				"offload_to_disk": false,
 			},
 			CalibrationOverrides: map[string]int{
-				"max_samples": 64,
-				"max_seq_len": 1024,
+				"max_samples": 16,
+				"max_seq_len": 512,
+				"max_tokens":  8192,
 			},
 		},
 	}
