@@ -1,8 +1,8 @@
-# Qwen3.5-27B Opus-Reasoning-Distilled via vLLM on AMD gfx1100
+# Qwen3.5-27B via vLLM on AMD gfx1100
 #
-# Model: Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled
-# Pipeline: Download → Abliterate → GPTQ INT4 (sym=true, desc_act=false, group_size=128)
-# Source: ModelCache qwen35-27b-opus-distill-gptq → gptq-w4-g128/ on PVC
+# Model: Qwen/Qwen3.5-27B-GPTQ-Int4 (official GPTQ, not abliterated)
+# Temporary: using official GPTQ while self-quantization pipeline is fixed.
+# TODO: switch back to abliterated source once quantization OOM is resolved.
 #
 # 27B dense at INT4 = ~15 GB model weights. On 24GB gfx1100:
 #   Model weights:  ~15 GiB
@@ -20,7 +20,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  source: pvc://qwen35-27b-opus-distill-gptq/qwen35-27b-opus-distill-gptq/gptq-w4-g128
+  source: pvc://qwen35-27b-opus-distill-gptq/qwen35-27b-gptq-int4
   gpu:
     vendor: amd
     count: 2
@@ -31,7 +31,7 @@ spec:
     idleTimeout: 60m
     coldStartTimeout: 15m
   config:
-    quantization: gptq
+    quantization: moe_wna16
     dtype: "half"
     maxModelLen: 8192
     gpuMemoryUtilization: "0.95"
