@@ -23,7 +23,9 @@ variables:
   # Disable CGO for static binaries where possible
   CGO_ENABLED: "0"
   REGISTRY: "registry.harbor.lan/flexinfer"
-  GOPROXY: "http://athens.ci.svc.cluster.local:3000,direct"
+  # Prefer the public proxy for reliability; keep Athens as a warm cache/fallback.
+  # Use "|" so transient Athens 5xx errors do not block the pipeline.
+  GOPROXY: "https://proxy.golang.org|http://athens.ci.svc.cluster.local:3000|direct"
   BUILDKIT_HOST: "tcp://buildkitd-central.ci-build.svc.cluster.local:1234"
   # Set to "1" to additionally push OCI images to the GitLab Container Registry.
   PUBLISH_GITLAB_IMAGES: "0"
@@ -70,7 +72,7 @@ lint:
           https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
           | sh -s -- -b "$GOPATH/bin" v2.10.1; then
           echo "WARN: installer script failed; falling back to go install via module proxies"
-          GOPROXY="http://athens.ci.svc.cluster.local:3000,https://proxy.golang.org,direct" \
+          GOPROXY="https://proxy.golang.org|http://athens.ci.svc.cluster.local:3000|direct" \
             go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1
         fi
       fi
@@ -82,8 +84,8 @@ fmt:
   <<: *go-cache
   script:
     - |
-      dirs="$(go list -f '{{.Dir}}' ./... | tr '\n' ' ')"
-      unformatted="$(gofmt -l $dirs)"
+      files="$(git ls-files '*.go')"
+      unformatted="$(gofmt -l $files)"
       if [ -n "$unformatted" ]; then
         echo "Go code is not formatted:"
         echo "$unformatted"
