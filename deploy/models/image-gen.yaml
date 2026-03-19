@@ -1,6 +1,7 @@
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
+  # Historical name retained for compatibility; the current source is SDXL.
   name: sdxl-turbo-imagegen
   namespace: flexinfer-system
 spec:
@@ -14,7 +15,7 @@ spec:
     vramEstimateMB: 10000
   serverless:
     enabled: true
-    # Scaled to 0 for vLLM FA smoke test — restore to 1 after testing
+    # Keep at 0 until the model/runtime pair is validated on the target GPU.
     minReplicas: 0
     idleTimeout: 10m
     coldStartTimeout: 10m
@@ -31,6 +32,7 @@ spec:
     # RealVisXL V5.0 is a full SDXL model (~6.5GB fp16). Bulk .to("cuda")
     # triggers ROCm memory access faults on gfx1100. CPU offload transfers
     # components one at a time, avoiding the fault with ~20-30% overhead.
+    modelFamily: "sdxl"
     cpuOffload: "true"
     # Use fp16 with the madebyollin/sdxl-vae-fp16-fix VAE to avoid NaN
     # decode artifacts while halving VRAM usage vs fp32.
@@ -44,6 +46,9 @@ spec:
     # Prefer the multistep SDE/Karras solver for SDXL quality. The single-step
     # variant is faster but tends to preserve more grain and distortion.
     scheduler: "dpm++2m-sde-karras"
+    warmupResolutions: "512x512,1024x1024"
+    warmPolicy: primary
+    compilationCache: "true"
     # Default negative prompt for quality filtering. Callers can override per-request.
     negativePrompt: "(worst quality, low quality, normal quality:2), blurry, noisy, grainy, jpeg artifacts, watermark, text, logo, signature, deformed, disfigured, bad anatomy, bad eyes, extra limbs, distorted proportions"
     hipVisibleDevices: "0"

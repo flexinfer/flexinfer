@@ -27,6 +27,7 @@ spec:
     # FLUX.1 Fill Dev: 12B param model — inpainting only
     # Text2image served by flux-schnell-imagegen on 5930k (FluxPipeline)
     # Running on Radeon VII (gfx906, 16GB HBM2) — CPU offload required
+    modelFamily: "flux"
     pipelineMode: "inpainting"
     # NF4 transformer ~6GB fits in 16GB VRAM, T5 stays on CPU via offload.
     # Offload adds ~20-30% step overhead but avoids OOM on 16GB GPU.

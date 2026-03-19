@@ -1,5 +1,7 @@
 # Build matrix for flexinfer-runtime images.
 # Single source of truth for GPU profiles, base images, backends, and env vars.
+# ComfyUI is intentionally kept on its dedicated image path; this matrix only
+# bundles the backends that the unified runtime actually ships.
 #
 # Usage:
 #   ./build/build-runtime.sh gfx1100          # build one profile

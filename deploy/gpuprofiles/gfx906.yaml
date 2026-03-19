@@ -7,8 +7,9 @@
 # SDMA disabled for stability. SVM disabled to avoid hipMemGetInfo crash
 # (VMM not supported on Vega20, ROCm/ROCm#2433).
 #
-# diffusers/comfyui are experimental — ROCm images bake gfx1100 env vars,
-# runtime ROCmEnvVars overrides them but may have quirks.
+# diffusers/comfyui are experimental — the unified runtime can run FLUX/SDXL
+# family manifests here, but keep warmups conservative (512px) and expect
+# CPU-offload to be mandatory for larger models.
 apiVersion: ai.flexinfer/v1alpha2
 kind: GPUProfile
 metadata:

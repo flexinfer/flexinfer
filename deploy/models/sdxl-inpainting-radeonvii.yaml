@@ -24,6 +24,7 @@ spec:
     strategy: Local
   config:
     pipelineMode: inpainting
+    modelFamily: "sdxl"
     cpuOffload: 'true'
     # gfx906 still needs the fixed SDXL VAE or decodes trend gray/washed out.
     # Keep the main pipeline in fp32 for stability, but load the VAE from the
@@ -35,6 +36,8 @@ spec:
     guidanceScale: '7.5'
     numInferenceSteps: '30'
     warmPolicy: primary
+    warmupResolutions: "512x512"
+    compilationCache: "true"
     hipVisibleDevices: '0'
   nodeSelector:
     kubernetes.io/hostname: cblevins-radeonvii

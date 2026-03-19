@@ -27,6 +27,7 @@ spec:
       bufferSizeKB: 4096
       verifyIntegrity: true
   config:
+    modelFamily: "sd15"
     pipelineMode: "instruct"
     cpuOffload: "false"
     useFp16: "1"

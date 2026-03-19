@@ -23,6 +23,7 @@ spec:
     # Gonzalomo FluxPony is an SDXL model despite the FLUX-like name.
     # Use the canonical diffusers repo directly so the unified runtime loads a
     # verified multi-folder pipeline instead of a brittle single-file export.
+    modelFamily: "sdxl"
     cpuOffload: "true"
     # SDXL on ROCm is visibly noisy in fp16 unless we pair it with the
     # madebyollin fixed VAE.
@@ -38,8 +39,9 @@ spec:
     numInferenceSteps: "30"
     scheduler: "euler"
     negativePrompt: "painting, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, deformed, ugly, blurry, bad anatomy, bad proportions, extra limbs, cloned face, skinny, glitchy, double torso, extra arms, extra hands, mangled fingers, missing lips, ugly face, distorted face, extra legs, anime"
-    warmupResolutions: "512x512"
+    warmupResolutions: "512x512,1024x1024"
     warmPolicy: primary
+    compilationCache: "true"
     hipVisibleDevices: "0"
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k

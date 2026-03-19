@@ -250,6 +250,7 @@ COPY build/.runtime-env /etc/flexinfer/runtime.env
 
 COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py
 COPY build/runtime-entrypoint.sh /usr/local/bin/runtime-entrypoint.sh
+RUN chmod +x /usr/local/bin/runtime-entrypoint.sh
 
 # ── Copy llama.cpp binary ────────────────────────────────────────────
 COPY --from=llamacpp-builder /opt/src/llama.cpp/build/bin/ /opt/llamacpp/bin/
@@ -272,5 +273,5 @@ EXPOSE 8080 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8080/healthz || exit 1
 
-ENTRYPOINT ["tini", "--", "runtime-entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/runtime-entrypoint.sh"]
 CMD ["flexinfer-runtime", "--listen", ":8080"]

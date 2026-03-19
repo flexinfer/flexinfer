@@ -32,8 +32,14 @@ spec:
   serviceLabels:
     - imagegen
     - flux
+  config:
+    modelFamily: flux
+    warmupResolutions: "512x512,1024x1024"
+    warmPolicy: primary
 ---
 # vLLM-Omni - Diffusion models with vLLM backend
+# SD3.x still rides this backend path in the branch; the family tag keeps the
+# manifest explicit even though the unified diffusers server does not serve SD3.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -44,3 +50,29 @@ spec:
   gpu:
     shared: image-gen-gpu
     priority: 60
+  config:
+    modelFamily: sd3
+---
+# Diffusers - SD1.5 family example for image-to-image/editing
+# InstructPix2Pix is a Stable Diffusion 1.5-derived pipeline, so modelFamily
+# needs to be pinned explicitly instead of inferred from the model name.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: instruct-pix2pix
+spec:
+  backend: diffusers
+  source: HF://timbrooks/instruct-pix2pix
+  gpu:
+    shared: image-gen-gpu
+    priority: 50
+  serviceLabels:
+    - image-edit
+    - sd15
+  config:
+    modelFamily: sd15
+    pipelineMode: instruct
+    useFp16: "1"
+    guidanceScale: "7.5"
+    imageGuidanceScale: "1.5"
+    numInferenceSteps: "20"

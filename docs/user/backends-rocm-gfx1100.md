@@ -357,6 +357,18 @@ Key differences between pipelines:
 - **FluxFillPipeline** (Fill): inpainting only, no `negative_prompt`, no `strength`, requires explicit `height`/`width` and mask image
 - FLUX has **no FP16 variant files** — do not pass `variant="fp16"` to pipeline loaders
 
+For the unified runtime manifests, set `modelFamily` explicitly instead of
+trusting the repo name:
+
+- `flux` for FLUX.1 and FluxFill
+- `sdxl` for SDXL and SDXL-derived models like Gonzalomo/FluxPony or RealVisXL
+- `sd3` for Stable Diffusion 3 / 3.5 families
+- `sd15` for Stable Diffusion 1.5-derived pipelines like InstructPix2Pix
+
+Use `warmupResolutions` to precompile the resolutions you actually serve.
+Keep gfx906 warmups conservative (`512x512`) and enable `1024x1024` warmups on
+gfx1100 when the model and VRAM budget can absorb it.
+
 ### NF4 Quantization and Memory
 
 FLUX.1 models are 12B parameters. At FP16, the transformer alone uses ~24GB — too large for a single 24GB GPU when combined with the T5-XXL text encoder (~9GB).

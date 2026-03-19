@@ -28,11 +28,15 @@ spec:
       verifyIntegrity: true
   config:
     pipelineMode: "inpainting"
+    modelFamily: "sdxl"
     cpuOffload: "true"
     useFp16: "1"
     strength: "0.75"
     guidanceScale: "7.5"
     numInferenceSteps: "30"
+    warmupResolutions: "512x512,1024x1024"
+    warmPolicy: primary
+    compilationCache: "true"
     hipVisibleDevices: "0"
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k

@@ -112,7 +112,7 @@ The project has moved from code-complete to production-ready with the completion
 
 ### Recent Improvements (Feb-Mar 2026) ✅
 
-- **FLUX.1 Image Generation**: Schnell (text-to-image) and Fill (inpainting) pipelines via diffusers backend with NF4 quantization on ROCm gfx1100 (three-layer dtype strategy, bitsandbytes >= 0.49.2)
+- **Unified Image Generation**: family-aware manifests for FLUX, SDXL, SD3.x, and SD1.5 via diffusers/vLLM imagegen backends, with ROCm warmup and NF4 tuning on gfx1100/gfx906
 - **Diffusers OOM Fix**: `gc.collect()` before `torch.cuda.empty_cache()` for consecutive image generations
 - **Multipart Proxy**: `multipart/form-data` model extraction for `/v1/images/edits` endpoint
 - **Configurable Tolerations**: User-specified `spec.tolerations` on v1alpha1/v1alpha2 CRDs ([#24](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/24))

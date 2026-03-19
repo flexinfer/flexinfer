@@ -131,6 +131,10 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		return fmt.Errorf("backend %q does not support GPU vendor %q", req.Backend, m.gpuVendor)
 	}
 
+	if b.Name() == "comfyui" {
+		return fmt.Errorf("backend %q is not bundled in flexinfer-runtime images; use the dedicated ComfyUI image", req.Backend)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -576,8 +580,6 @@ func inferCommand(backendName string) (string, []string) {
 		return "llama-server", nil
 	case "ollama":
 		return "ollama", nil
-	case "comfyui":
-		return "python", []string{"main.py"}
 	case "steam":
 		return "steam", nil
 	default:
