@@ -113,6 +113,12 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			Value: vaePath,
 		})
 	}
+	if vaeRepo := spec.ConfigString("vaeRepo", ""); vaeRepo != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "VAE_REPO",
+			Value: vaeRepo,
+		})
+	}
 	if singleFileConfig := spec.ConfigString("singleFileConfig", ""); singleFileConfig != "" {
 		env = append(env, corev1.EnvVar{
 			Name:  "SINGLE_FILE_CONFIG",

@@ -71,6 +71,19 @@ func TestDiffusersBackendEnv(t *testing.T) {
 				"SINGLE_FILE_STRICT":   "true",
 			},
 		},
+		{
+			name: "vae settings map to env",
+			config: map[string]interface{}{
+				"vaeRepo": "madebyollin/sdxl-vae-fp16-fix",
+				"vaePath": ".vae/sdxl-vae-fp16-fix",
+				"useFp16": "1",
+			},
+			wantEnv: map[string]string{
+				"VAE_REPO": "madebyollin/sdxl-vae-fp16-fix",
+				"VAE_PATH": ".vae/sdxl-vae-fp16-fix",
+				"USE_FP16": "1",
+			},
+		},
 	}
 
 	for _, tt := range tests {

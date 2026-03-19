@@ -559,27 +559,65 @@ def load_pipeline(model_id: str):
     print(f"Using dtype: {dtype}")
     print(f"USE_FP16 env: {os.environ.get('USE_FP16', 'not set')}")
 
-    # Load fixed VAE if path provided (madebyollin/sdxl-vae-fp16-fix)
-    # This VAE was finetuned to work correctly in fp16 without generating NaNs
-    # See: https://huggingface.co/madebyollin/sdxl-vae-fp16-fix
+    # Load fixed VAE when available. Prefer a staged local directory beside the
+    # model root, but fall back to the configured repo id when the local path is
+    # absent. This keeps unified runtimes robust across Local/SharedPVC layout
+    # differences and avoids gray/washed-out SDXL decodes on AMD.
     vae = None
-    vae_path = os.environ.get("VAE_PATH")
-    if vae_path:
-        if os.path.isdir(vae_path):
-            print(f"Loading fixed VAE from: {vae_path}")
-            sys.stdout.flush()
-            try:
-                vae = AutoencoderKL.from_pretrained(
-                    vae_path,
-                    torch_dtype=dtype,
-                    local_files_only=True,
-                )
-                print("Fixed VAE loaded successfully")
-            except Exception as e:
-                print(f"WARNING: Failed to load fixed VAE: {e}")
-                print("Falling back to model's default VAE (may crash in fp16)")
+    vae_path = os.environ.get("VAE_PATH", "").strip()
+    vae_repo = os.environ.get("VAE_REPO", "").strip()
+
+    def _candidate_vae_paths(raw_path: str, model_root: str) -> list[str]:
+        candidates = []
+        if not raw_path:
+            return candidates
+
+        trimmed = raw_path.strip()
+        if os.path.isabs(trimmed):
+            candidates.append(trimmed)
+            if model_root:
+                candidates.append(os.path.join(model_root, ".vae", os.path.basename(trimmed)))
         else:
-            print(f"WARNING: VAE_PATH set but directory not found: {vae_path}")
+            if model_root:
+                candidates.append(os.path.join(model_root, trimmed))
+            candidates.append(trimmed)
+        return candidates
+
+    local_vae_path = None
+    for candidate in _candidate_vae_paths(vae_path, local_model_path):
+        if os.path.isdir(candidate):
+            local_vae_path = candidate
+            break
+
+    if local_vae_path:
+        print(f"Loading fixed VAE from staged path: {local_vae_path}")
+        sys.stdout.flush()
+        try:
+            vae = AutoencoderKL.from_pretrained(
+                local_vae_path,
+                torch_dtype=dtype,
+                local_files_only=True,
+            )
+            print("Fixed VAE loaded successfully from local path")
+        except Exception as e:
+            print(f"WARNING: Failed to load fixed VAE from local path: {e}")
+            print("Will try repo fallback if configured")
+            vae = None
+    elif vae_path:
+        print(f"WARNING: VAE_PATH set but no staged directory found: {vae_path}")
+
+    if vae is None and vae_repo:
+        print(f"Loading fixed VAE from repo fallback: {vae_repo}")
+        sys.stdout.flush()
+        try:
+            vae = AutoencoderKL.from_pretrained(
+                vae_repo,
+                torch_dtype=dtype,
+            )
+            print("Fixed VAE loaded successfully from repo fallback")
+        except Exception as e:
+            print(f"WARNING: Failed to load fixed VAE from repo fallback: {e}")
+            print("Falling back to model's default VAE (may crash in fp16)")
 
     # CRITICAL: On ROCm gfx1100, do NOT call any torch.cuda operations before
     # the model is fully loaded on CPU. Early GPU context initialization causes
