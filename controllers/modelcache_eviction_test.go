@@ -116,12 +116,6 @@ func withResidentSince(t time.Time) func(*aiv1alpha1.ModelCache) {
 	}
 }
 
-func withPhase(p aiv1alpha1.ModelCachePhase) func(*aiv1alpha1.ModelCache) {
-	return func(mc *aiv1alpha1.ModelCache) {
-		mc.Status.Phase = p
-	}
-}
-
 // newFakeReconciler builds a ModelCacheReconciler backed by a fake client.
 // Any objects passed are pre-populated in the fake store.
 func newFakeReconciler(objs ...runtime.Object) *ModelCacheReconciler {
