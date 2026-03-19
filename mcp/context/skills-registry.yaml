@@ -64,7 +64,7 @@
 # Sync: loom sync <profile> --regen --hub-mode --all-projects --skip-worktrees
 
 version: 1
-updated: 2026-03-18
+updated: 2026-03-19
 skills:
   - name: flux-gitops-operator
     categories: [kubernetes, gitops, operations]
@@ -4875,6 +4875,244 @@ skills:
       gemini:
         enabled: true
         type: skill
+
+  - name: commit
+    categories: [workflow, development, git]
+    common:
+      description: |
+        Ship scoped changes: stage files, commit with a conventional message, push the branch, monitor CI to terminal state, and fix failures. Use when the user says "ship it", "commit", "push this", or any variant of "land these changes".
+      instructions: |
+        # Commit & Ship
+
+        Use this when code changes are ready to land. This is the shipping step — not a full dev workflow.
+
+        ## Trigger Words
+
+        Respond to: "ship it", "commit", "push this", "land it", "send it", "commit and push", or `/commit`.
+
+        ## Steps
+
+        1. **Assess what changed**
+           - `git status` and `git diff --stat` to understand the scope
+           - `git log --oneline -5` to match the repo's commit message style
+
+        2. **Stage scoped files**
+           - Stage only files related to the current task
+           - Never stage `.env`, credentials, or large binaries
+           - Prefer explicit file names over `git add -A`
+
+        3. **Commit with a conventional message**
+           - Format: `type(scope): description` (e.g., `fix(ci): expand race test exclusion`)
+           - End with `Co-Authored-By: <agent> <noreply@anthropic.com>`
+           - Use a HEREDOC for multi-line messages
+
+        4. **Push the branch**
+           - `git push origin <branch>` (with `-u` if first push)
+           - Never force-push without explicit user approval
+
+        5. **Monitor CI**
+           - Poll the triggered pipeline to terminal state
+           - Use `glab ci view` or `gh run list` depending on the repo host
+           - If red: diagnose → fix → re-commit → re-push → re-poll
+           - If green: report success
+
+        6. **Create MR/PR if needed**
+           - If on a feature branch and no MR exists, ask user before creating
+           - If MR already exists, just push and let CI run
+
+        ## Safety
+
+        - Never amend published commits without user approval
+        - Never skip hooks (`--no-verify`) unless explicitly asked
+        - Never push to main/master without confirmation
+        - If pre-commit hooks fail, fix the issue and create a NEW commit
+
+        ## When to Escalate
+
+        - CI failures beyond the current change scope → `ci-failure-recovery`
+        - Merge conflicts → ask user for resolution strategy
+        - Branch protection rules blocking push → inform user
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
+
+  - name: parallel-slice-ship
+    categories: [workflow, development, coordination, planning]
+    common:
+      description: |
+        Plan multiple simultaneous implementation slices from a prompt, spawn parallel sub-agents to implement each slice in isolated worktrees, then integrate into a single MR and ship. Use for large features that decompose into independent parallel work streams.
+      instructions: |
+        # Parallel Slice Ship
+
+        Decompose a feature into independent slices, implement them in parallel using sub-agents, merge results, and ship.
+
+        ## When to Use
+
+        - Feature naturally splits into 2-5 independent implementation slices
+        - Each slice touches different files/packages (minimal merge conflicts)
+        - Total work exceeds what one agent can do efficiently in sequence
+        - User wants maximum throughput on a well-understood task
+
+        ## When NOT to Use
+
+        - Slices have tight interdependencies (use sequential `feature-dev` instead)
+        - Fewer than 2 slices (use `small-change-loop`)
+        - Requirements are unclear (use `plan-loom-core` first)
+        - Single-file changes (overkill)
+
+        ## Phase 1: Plan Slices
+
+        1. **Understand the prompt**
+           - Recall prior context: `agent_context__agent_recall`
+           - Check codebase state: `codebase_memory__codebase_search`
+           - Read relevant files to understand boundaries
+
+        2. **Decompose into slices**
+           - Each slice MUST be independently implementable and testable
+           - Each slice gets its own branch and worktree
+           - Document per-slice: goal, files to touch, acceptance criteria, estimated complexity
+           - Identify shared interfaces (types, APIs) that must be agreed upon before parallel work
+
+        3. **Write the plan**
+           - Output a structured plan with numbered slices
+           - For each slice: title, description, files, branch name, test strategy
+           - Identify the integration order (which slices merge first)
+           - Get user approval before spawning agents
+
+        ## Phase 2: Spawn Parallel Agents
+
+        Each slice gets an isolated agent with its own worktree:
+
+        ```
+        For each slice:
+          1. agent_worktree_allocate(branch_name="feat/<feature>-slice-<N>", base_branch=main)
+          2. Spawn sub-agent with slice context:
+             - Slice goal and acceptance criteria
+             - Files to modify
+             - Shared interface contracts
+             - Test requirements
+          3. Sub-agent implements, tests locally, commits
+        ```
+
+        ### Waiting and Monitoring
+
+        - Monitor all sub-agents for completion
+        - If a sub-agent fails: diagnose, provide guidance, or reassign
+        - Collect results as each agent completes
+
+        ## Phase 3: Integrate
+
+        1. **Merge slices into integration branch**
+           - Create `feat/<feature>` integration branch from main
+           - Merge each slice branch in dependency order
+           - Resolve any merge conflicts (should be minimal if slices were independent)
+
+        2. **Run full test suite**
+           - Verify combined changes pass all tests
+           - Fix integration issues in the integration branch
+
+        3. **Create MR and ship**
+           - Single MR from integration branch to main
+           - Include all slice summaries in MR description
+           - Push, monitor CI, fix if needed
+
+        ## Phase 4: Cleanup
+
+        - Release all worktrees
+        - End sub-agent sessions
+        - Record decisions and outcomes in agent context
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+        instructions_append: |
+          ## Codex Sub-Agent Delegation
+
+          Use Codex's native multi-agent system for parallel slice execution:
+
+          ```toml
+          # Each slice runs as a named agent thread
+          [agents]
+          max_threads = 6
+
+          [agents.slice-1]
+          description = "Implement <slice-1-goal>"
+          ```
+
+          - Use `spawn_agent` to launch each slice agent
+          - Pass slice context via the agent description and instructions
+          - Use `wait_agent` to collect results
+          - Maximum 6 concurrent threads (configurable)
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+        instructions_append: |
+          ## Claude Sub-Agent Delegation
+
+          Use the Task tool for parallel slice execution:
+
+          ```
+          # Launch all slice agents in a SINGLE message with multiple Task tool calls:
+          Task(subagent_type="general-purpose", prompt="Implement slice 1: ...", isolation="worktree")
+          Task(subagent_type="general-purpose", prompt="Implement slice 2: ...", isolation="worktree")
+          Task(subagent_type="general-purpose", prompt="Implement slice 3: ...", isolation="worktree")
+          ```
+
+          - Use `isolation: "worktree"` so each agent gets its own git worktree
+          - Launch ALL slice agents in a single message for true parallelism
+          - Each agent returns its worktree path and branch name
+          - After all complete, integrate branches in the main conversation
+          - Use `subagent_type="general-purpose"` for implementation work
+          - Use `subagent_type="Plan"` for the initial slice decomposition if complex
+      kilocode:
+        enabled: true
+        type: workflow
+        instructions_append: |
+          ## Kilocode Phased Execution
+
+          Execute slices as sequential phases with checkpoints:
+
+          1. **Phase 1**: Plan all slices (checkpoint: plan approved)
+          2. **Phase 2-N**: Implement each slice sequentially with worktree isolation
+          3. **Phase N+1**: Integrate and ship
+
+          Use `agent_worktree_allocate` for isolation between phases.
+          Checkpoint between each phase for partial-run resumption.
+      gemini:
+        enabled: true
+        type: skill
+        instructions_append: |
+          ## Gemini Phased Execution
+
+          Without native sub-agent delegation, execute slices as checkpointed phases:
+
+          1. Plan all slices with explicit boundaries
+          2. Implement each slice sequentially in its own worktree
+          3. Validate each slice checkpoint before proceeding
+          4. Integrate all slices and ship
+
+          Use `agent_worktree_allocate` for branch isolation.
+          Record progress explicitly so each phase can resume independently.
 
   - name: backlog-triage
     categories: [workflow, planning, coordination]
