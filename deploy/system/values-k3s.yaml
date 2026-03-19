@@ -1,6 +1,18 @@
 # FlexInfer Helm values override for K3s cluster
 # Uses Harbor registry instead of ghcr.io defaults
 
+serviceAccounts:
+  controller:
+    create: true
+  agent:
+    create: true
+  scheduler:
+    create: true
+  proxy:
+    create: true
+  benchmarker:
+    create: true
+
 controller:
   enabled: true
   replicas: 1
