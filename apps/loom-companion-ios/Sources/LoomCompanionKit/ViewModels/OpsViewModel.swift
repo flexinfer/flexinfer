@@ -35,6 +35,9 @@ public final class OpsViewModel {
     public var reasoningChains: [MobileReasoningChain] = []
     public var controlPlane: MobileControlPlaneResponse?
 
+    public var pipelines: [MobilePipeline] = []
+    public var pipelinesAvailable = false
+
     public var sandboxSummary: MobileSandboxSummary?
     public var isMutatingSandbox = false
     public var sandboxMutationMessage: String?
@@ -59,6 +62,7 @@ public final class OpsViewModel {
         "agent.spawn.failed",
         "agent.spawn.stopped",
         "hud.workflows",
+        "hud.pipeline",
     ]
 
     public init(apiClient: any LoomAPIClientProtocol) {
@@ -251,6 +255,17 @@ public final class OpsViewModel {
         } catch {
             sandboxSummary = nil
             markFailure("sandbox", error)
+        }
+
+        attemptedSections += 1
+        do {
+            let response: MobilePipelinesResponse = try await apiClient.request(.pipelines)
+            pipelines = response.pipelines
+            pipelinesAvailable = response.available
+        } catch {
+            pipelines = []
+            pipelinesAvailable = false
+            markFailure("pipelines", error)
         }
 
         if failedSections.count == attemptedSections, let firstError {
