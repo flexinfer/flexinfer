@@ -2,11 +2,30 @@
 
 ## Overview
 
-The Loom Companion iOS app uses a traditional `.xcodeproj` (not Swift Package Manager). When files are created outside of Xcode (e.g., by AI agents, CLI scripts, or text editors), they must be manually registered in `LoomCompanion.xcodeproj/project.pbxproj` to be compiled.
+The Loom Companion iOS app uses a `.xcodeproj` managed by **xcodegen** from `project.yml`. When files are created outside of Xcode, the project must be regenerated to pick them up.
 
-**If you create a new `.swift` file on disk but don't add it to the pbxproj, Xcode will not compile it, and you'll get "Cannot find type in scope" errors.**
+**If you create a new `.swift` file on disk but don't regenerate the project, Xcode will not compile it, and you'll get "Cannot find type in scope" errors.**
 
-## pbxproj Anatomy
+## Primary Method: xcodegen (Recommended)
+
+The project uses `project.yml` with `createIntermediateGroups: true`, which means xcodegen **auto-discovers all `.swift` files** in the `Sources/` directory tree. Simply run:
+
+```bash
+make mobile-ios-project-sync
+```
+
+This regenerates `project.pbxproj` from `project.yml`. No manual ID management needed.
+
+### When to use xcodegen
+- After creating any new `.swift` file
+- After moving/renaming files
+- After modifying `project.yml` (e.g., adding a new target, changing settings)
+
+### When xcodegen is NOT enough
+- If you need custom build phase scripts or per-file compiler flags
+- In those rare cases, use the manual approach or `scripts/add_to_xcodeproj.py`
+
+## Fallback: pbxproj Anatomy
 
 The `project.pbxproj` file is a NeXT-style property list with these key sections:
 

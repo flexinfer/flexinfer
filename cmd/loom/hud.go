@@ -51,6 +51,9 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var installShader bool
 	var tui bool
 
+	// Pipeline monitor flags.
+	var pipelineProjects string
+
 	// Spawn orchestrator flags.
 	var spawnEnabled bool
 	var spawnKubeconfig string
@@ -210,6 +213,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 				TLSKey:                  tlsKey,
 				BindAddress:             bindAddress,
 				TUI:                     tui,
+				PipelineProjects:        pipelineProjects,
 				SpawnEnabled:            spawnEnabled,
 				SpawnKubeconfig:         spawnKubeconfig,
 				SpawnNamespace:          spawnNamespace,
@@ -264,6 +268,9 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().BoolVar(&tui, "tui", false, "Launch terminal UI dashboard (bubbletea)")
 
 	// Spawn orchestrator (headless agent spawning via devbox K8s pods).
+	// Pipeline monitoring (GitLab CI via mcp-gitlab).
+	cmd.Flags().StringVar(&pipelineProjects, "pipeline-projects", os.Getenv("HUD_PIPELINE_PROJECTS"), "Comma-separated GitLab project paths to monitor pipelines (e.g., group/project1,group/project2) [$HUD_PIPELINE_PROJECTS]")
+
 	cmd.Flags().BoolVar(&spawnEnabled, "spawn-enabled", false, "Enable headless agent spawn endpoints [$SPAWN_ENABLED]")
 	cmd.Flags().StringVar(&spawnKubeconfig, "spawn-kubeconfig", os.Getenv("SPAWN_KUBECONFIG"), "Kubeconfig for spawn K8s backend [$SPAWN_KUBECONFIG]")
 	cmd.Flags().StringVar(&spawnNamespace, "spawn-namespace", os.Getenv("SPAWN_NAMESPACE"), "K8s namespace for spawn pods (default: devbox) [$SPAWN_NAMESPACE]")
