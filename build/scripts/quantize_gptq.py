@@ -618,7 +618,11 @@ def patch_defuser_transformers_prerelease_gate():
     def _allow_same_base_prerelease():
         return True
 
+    def _suppress_same_base_prerelease_warning(api_name: str, logger) -> bool:
+        return False
+
     defuser_impl.is_supported_transformers_version = _allow_same_base_prerelease
+    defuser_impl.warn_if_public_api_transformers_unsupported = _suppress_same_base_prerelease_warning
     print(
         "Patched Defuser public API gate to allow transformers prerelease "
         f"{transformers.__version__} for base version {current.base_version}"
