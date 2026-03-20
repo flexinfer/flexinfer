@@ -57,6 +57,9 @@ spec:
       - image-gen
       - dall-e-3
       - text-to-image
+      # Checkpoint hot-swap aliases (auto-swap when requested via /v1/images/generations)
+      - gonzalomo-v70-photo-xl
+      - realityboundxl-soulgrip-v10
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"
