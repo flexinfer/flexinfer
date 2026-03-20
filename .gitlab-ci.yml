@@ -486,6 +486,7 @@ test:integration:
     - build:binaries
   variables:
     GO_WARM_MOD_CACHE: "false"
+    CGO_ENABLED: "1"
     KUBERNETES_CPU_REQUEST: "2"
     KUBERNETES_CPU_LIMIT: "4"
     KUBERNETES_MEMORY_REQUEST: "4Gi"
@@ -523,6 +524,7 @@ test:race:
   stage: test
   variables:
     GO_WARM_MOD_CACHE: "false"
+    CGO_ENABLED: "1"
     KUBERNETES_CPU_REQUEST: "2"
     KUBERNETES_CPU_LIMIT: "4"
     KUBERNETES_MEMORY_REQUEST: "4Gi"
