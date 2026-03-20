@@ -371,7 +371,41 @@ echo "Skip vision: ${SKIP_VISION}"
 echo "Device map: ${DEVICE_MAP}"
 echo "Start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-python3 /opt/flexinfer/scripts/abliterate.py
+# Short-circuit: if abliteration already completed (status file + weight files exist),
+# re-emit the metadata and exit 0. This handles the case where the Job is recreated
+# (TTL GC + controller restart) after a successful abliteration.
+ABLIT_STATUS="${MODEL_DIR}/.abliteration-status.json"
+if [ -f "${ABLIT_STATUS}" ]; then
+    ABLIT_COMPLETE=$(python3 -c "import json; d=json.load(open('${ABLIT_STATUS}')); print('yes' if d.get('status')=='complete' else 'no')" 2>/dev/null || echo "no")
+    WEIGHT_COUNT=$(find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) 2>/dev/null | wc -l | tr -d ' ')
+    if [ "${ABLIT_COMPLETE}" = "yes" ] && [ "${WEIGHT_COUNT}" -gt 0 ]; then
+        echo "Abliteration already complete (${WEIGHT_COUNT} weight files present)"
+        echo "Status: $(cat ${ABLIT_STATUS})"
+        # Re-emit termination metadata for controller capture
+        cat "${ABLIT_STATUS}" > /dev/termination-log 2>/dev/null || true
+        exit 0
+    fi
+    echo "WARNING: Status file exists but abliteration may be incomplete (status=${ABLIT_COMPLETE}, weights=${WEIGHT_COUNT})"
+fi
+
+# Monkey-patch torch.cuda.mem_get_info for gfx906 (hipMemGetInfo not supported
+# on Vega20 — VMM not available). Without this, device_map=auto crashes during
+# caching_allocator_warmup in transformers 5.x. Returns hardcoded VRAM size
+# so accelerate can still distribute the model across GPU+CPU.
+python3 -c "
+import torch.cuda, os
+_orig = torch.cuda.mem_get_info
+def _patched(device=None):
+    try:
+        return _orig(device)
+    except RuntimeError:
+        vram_gb = int(os.environ.get('ABLITERATION_GPU_MAX_MEMORY_GB', '16'))
+        total = vram_gb * 1024**3
+        used = int(torch.cuda.memory_allocated(device) if torch.cuda.is_available() else 0)
+        return (max(total - used, 0), total)
+torch.cuda.mem_get_info = _patched
+exec(open('/opt/flexinfer/scripts/abliterate.py').read())
+"
 
 END_TS=$(date +%s)
 DURATION=$((END_TS - START_TS))

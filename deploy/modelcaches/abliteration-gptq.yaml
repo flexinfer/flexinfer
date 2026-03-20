@@ -12,7 +12,8 @@
 # Disk requirements:
 #   27B BF16: ~54 GB download + ~15 GB GPTQ output → 120 GB PVC
 #
-# GPU requirements: 1x AMD GPU for abliteration + quantization
+# GPU requirements: 1x AMD GPU for quantization only
+# Abliteration runs CPU-only (gfx906 GPU alloc broken on ROCm 6.4)
 # Currently targeting radeonvii (gfx906, 16 GB VRAM, 128 GB RAM) for large models
 ---
 # Qwen3.5-27B Opus-Reasoning-Distilled → Abliterate → GPTQ INT4
@@ -38,7 +39,7 @@ spec:
   abliteration:
     targetLayers: "auto"
     numSamples: 128
-    useGPU: true
+    useGPU: false
     maxMemoryGB: 96
     timeoutSeconds: 43200
     skipVisionLayers: true
