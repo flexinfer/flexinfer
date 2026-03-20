@@ -2,12 +2,23 @@ package backend
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
+
+// vllmImageRules defines the image resolution precedence for vLLM.
+// Order: arch-specific (env → default) → vendor (env → default) → global.
+var vllmImageRules = []ImageRule{
+	// AMD arch-specific
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_VLLM_IMAGE_GFX1100", Default: "registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-fa"},
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_VLLM_IMAGE_GFX906", Default: "registry.harbor.lan/flexinfer/vllm:rocm-gfx906"},
+	// AMD generic
+	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_VLLM_IMAGE_AMD", Default: "rocm/vllm:latest"},
+	// Global default (NVIDIA, unknown, etc.)
+	{EnvVar: "DEFAULT_VLLM_IMAGE", Default: "vllm/vllm-openai:latest"},
+}
 
 // VLLMBackend implements the Backend interface for vLLM.
 // vLLM provides an OpenAI-compatible API for LLM inference.
@@ -24,35 +35,7 @@ func (b *VLLMBackend) Name() string {
 }
 
 func (b *VLLMBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
-	switch gpuVendor {
-	case GPUVendorAMD:
-		// Check for gfx1100 (RX 7900 series, RDNA3) which needs specialized image
-		if strings.HasPrefix(gpuArch, "gfx110") {
-			if img := os.Getenv("DEFAULT_VLLM_IMAGE_GFX1100"); img != "" {
-				return img
-			}
-			// GFX1100-specific image with ROCm 7.2 and flash attention (V1 engine)
-			return "registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-fa"
-		}
-		// Check for gfx906 (Radeon VII, Vega20) which needs specialized image
-		if strings.HasPrefix(gpuArch, "gfx906") {
-			if img := os.Getenv("DEFAULT_VLLM_IMAGE_GFX906"); img != "" {
-				return img
-			}
-			// GFX906-specific image built without flash attention
-			return "registry.harbor.lan/flexinfer/vllm:rocm-gfx906"
-		}
-		if img := os.Getenv("DEFAULT_VLLM_IMAGE_AMD"); img != "" {
-			return img
-		}
-		// Generic ROCm image for other AMD GPUs (MI300X, etc.)
-		return "rocm/vllm:latest"
-	default:
-		if img := os.Getenv("DEFAULT_VLLM_IMAGE"); img != "" {
-			return img
-		}
-		return "vllm/vllm-openai:latest"
-	}
+	return ResolveImage(vllmImageRules, gpuVendor, gpuArch)
 }
 
 func (b *VLLMBackend) Port() int32 {

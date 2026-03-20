@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"strconv"
 	"strings"
@@ -51,6 +52,10 @@ const (
 
 	// readyPollInterval is the polling interval when waiting for a model to become ready.
 	readyPollInterval = 1 * time.Second
+
+	// proxyTTL is how long a cached httputil.ReverseProxy is valid before eviction.
+	// After this duration, the proxy is recreated to pick up backend pod IP changes.
+	proxyTTL = 5 * time.Minute
 )
 
 // Scheme is the runtime scheme used by the proxy for K8s API types.
@@ -156,48 +161,55 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 	return cfg
 }
 
+// proxyEntry holds a cached httputil.ReverseProxy with its creation timestamp
+// so stale entries can be evicted after proxyTTL.
+type proxyEntry struct {
+	proxy   *httputil.ReverseProxy
+	created time.Time
+}
+
 // Proxy is the flexinfer reverse proxy that routes requests to model backends.
 type Proxy struct {
 	client       client.Client
 	namespace    string
-	proxyMap     sync.Map           // cache of httputil.ReverseProxy by model name
-	requestGroup singleflight.Group // coalescing activation requests
+	proxyMap     TypedSyncMap[string, proxyEntry] // cache of ReverseProxy by target URL, with TTL
+	requestGroup singleflight.Group               // coalescing activation requests
 
 	// Request queues per model during cold start
-	queues   sync.Map // map[string]*RequestQueue
+	queues   TypedSyncMap[string, *RequestQueue]
 	queuesMu sync.Mutex
 
 	// Service label to model name cache
-	serviceLabelCache   sync.Map // map[string]string: service label -> model name
+	serviceLabelCache   TypedSyncMap[string, string]
 	serviceLabelCacheMu sync.Mutex
 	lastCacheRefresh    time.Time
 
 	// Label group routing: labels shared by multiple models
-	labelGroupCache  sync.Map // map[string][]string: label -> []modelName (all claimants)
-	labelGroupModels sync.Map // map[string][]string: modelName -> []relatedModelNames (reverse index)
+	labelGroupCache  TypedSyncMap[string, []string] // label -> []modelName (all claimants)
+	labelGroupModels TypedSyncMap[string, []string] // modelName -> []relatedModelNames (reverse index)
 
 	// Model alias cache: servedModelName/aliases -> K8s resource name
-	modelAliasCache   sync.Map // map[string]string: alias -> K8s model name
+	modelAliasCache   TypedSyncMap[string, string]
 	modelAliasCacheMu sync.Mutex
 	lastAliasRefresh  time.Time
 
 	// Configuration (can be overridden by env vars)
-	maxQueueSize       int           // Default: 100
-	queueTimeout       time.Duration // Default: 60s (how long request can wait in queue)
-	coldStartTimeout   time.Duration // Default: 60s (how long to wait for model to become ready)
-	connectionTracking sync.Map      // map[string]*int64 for tracking active connections per model
+	maxQueueSize       int                          // Default: 100
+	queueTimeout       time.Duration                // Default: 60s (how long request can wait in queue)
+	coldStartTimeout   time.Duration                // Default: 60s (how long to wait for model to become ready)
+	connectionTracking TypedSyncMap[string, *int64] // tracking active connections per model
 
 	// Routing for multi-replica models
 	router             *routing.Router
-	routingEnabled     bool     // Enable advanced routing (session affinity, prefix-based)
-	podConnectionCount sync.Map // map[string]*int64 for tracking connections per pod address
+	routingEnabled     bool                         // Enable advanced routing (session affinity, prefix-based)
+	podConnectionCount TypedSyncMap[string, *int64] // tracking connections per pod address
 
 	// Request validation
 	validateRequests bool // Enable OpenAI request schema validation
 
 	// Endpoint tracking for metrics
-	endpointCache sync.Map // map[string][]string - model name -> list of endpoint addresses
-	routingKeySet sync.Map // map[string]*routingKeyTracker keyed by model|strategy|key_source
+	endpointCache TypedSyncMap[string, []string]           // model name -> list of endpoint addresses
+	routingKeySet TypedSyncMap[string, *routingKeyTracker] // model|strategy|key_source -> tracker
 
 	// Backoff configuration for failed activations
 	backoffEnabled     bool          // Enable exponential backoff for failed activations
@@ -206,22 +218,26 @@ type Proxy struct {
 	backoffMaxWait     time.Duration // Maximum wait time (default: 30s)
 
 	// Rate limiting
-	rateLimitEnabled     bool          // Enable per-model rate limiting
-	rateLimitPerModel    float64       // Requests per second per model (0 = unlimited)
-	rateLimitBurst       int           // Max burst size per model
-	rateLimitGlobal      float64       // Global requests per second (0 = unlimited)
-	rateLimitGlobalBurst int           // Global burst size
-	modelLimiters        sync.Map      // map[string]*rate.Limiter per-model rate limiters
-	globalLimiter        *rate.Limiter // global rate limiter (nil if disabled)
+	rateLimitEnabled     bool                                // Enable per-model rate limiting
+	rateLimitPerModel    float64                             // Requests per second per model (0 = unlimited)
+	rateLimitBurst       int                                 // Max burst size per model
+	rateLimitGlobal      float64                             // Global requests per second (0 = unlimited)
+	rateLimitGlobalBurst int                                 // Global burst size
+	modelLimiters        TypedSyncMap[string, *rate.Limiter] // per-model rate limiters
+	globalLimiter        *rate.Limiter                       // global rate limiter (nil if disabled)
 
 	// Authentication
 	authEnabled bool   // Enable bearer token authentication
 	authToken   string // Expected bearer token (from Secret)
 
 	// Direct runtime communication (fast path)
-	runtimeCache         *RuntimeCache // cached runtime pod endpoints
-	directRuntimeEnabled bool          // enable direct proxy-to-runtime loading
-	directLoadTargets    sync.Map      // map[string]string: modelName -> "http://podIP:backendPort"
+	runtimeCache         *RuntimeCache                // cached runtime pod endpoints
+	directRuntimeEnabled bool                         // enable direct proxy-to-runtime loading
+	directLoadTargets    TypedSyncMap[string, string] // modelName -> "http://podIP:backendPort"
+
+	// Lifecycle context for background goroutines
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	// Stored config for debug endpoint (secrets redacted)
 	debugConfig debugConfigView
@@ -235,6 +251,8 @@ func New(cfg Config) *Proxy {
 		SystemSegmentMaxLength:    cfg.RoutingSystemSegmentMaxLength,
 		DocSegmentMaxLength:       cfg.RoutingDocSegmentMaxLength,
 	})
+
+	ctx, cancel := context.WithCancel(context.Background())
 
 	p := &Proxy{
 		client:               cfg.Client,
@@ -257,6 +275,8 @@ func New(cfg Config) *Proxy {
 		authEnabled:          cfg.AuthEnabled,
 		authToken:            cfg.AuthToken,
 		directRuntimeEnabled: cfg.DirectRuntimeEnabled,
+		ctx:                  ctx,
+		cancel:               cancel,
 		debugConfig:          newDebugConfigView(cfg),
 	}
 
@@ -272,6 +292,13 @@ func New(cfg Config) *Proxy {
 	return p
 }
 
+// Shutdown cancels all background goroutines started by Run.
+func (p *Proxy) Shutdown() {
+	if p.cancel != nil {
+		p.cancel()
+	}
+}
+
 // Run starts the proxy HTTP server and background goroutines.
 func (p *Proxy) Run(port int) error {
 	// Start queue cleanup goroutine
@@ -279,15 +306,15 @@ func (p *Proxy) Run(port int) error {
 
 	// Start endpoint watcher for routing
 	if p.routingEnabled {
-		go p.watchEndpoints(context.Background())
+		go p.watchEndpoints(p.ctx)
 	}
 
 	// Start runtime cache for direct fast path
 	if p.runtimeCache != nil {
-		p.runtimeCache.StartRefreshLoop(context.Background())
+		p.runtimeCache.StartRefreshLoop(p.ctx)
 
 		// Recover direct load targets from running runtime pods.
-		recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		recoveryCtx, recoveryCancel := context.WithTimeout(p.ctx, 10*time.Second)
 		p.recoverDirectLoadTargets(recoveryCtx)
 		recoveryCancel()
 	}

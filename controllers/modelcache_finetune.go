@@ -415,29 +415,7 @@ type finetuneJobMetadata struct {
 
 // readFinetuneMetadataFromPods reads finetune metadata from pod termination logs.
 func (r *ModelCacheReconciler) readFinetuneMetadataFromPods(ctx context.Context, namespace, jobName string) *finetuneJobMetadata {
-	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
-		return nil
-	}
-	for _, pod := range podList.Items {
-		for _, cs := range pod.Status.ContainerStatuses {
-			if cs.Name != "finetuner" {
-				continue
-			}
-			terminated := cs.State.Terminated
-			if terminated == nil {
-				terminated = cs.LastTerminationState.Terminated
-			}
-			if terminated == nil || terminated.Message == "" {
-				continue
-			}
-			var meta finetuneJobMetadata
-			if err := json.Unmarshal([]byte(strings.TrimSpace(terminated.Message)), &meta); err == nil {
-				return &meta
-			}
-		}
-	}
-	return nil
+	return ReadJobMetadata[finetuneJobMetadata](ctx, r.Client, namespace, jobName, "finetuner")
 }
 
 // captureFinetuneFailureLogs reads the termination message from the finetuner container.

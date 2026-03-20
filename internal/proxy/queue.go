@@ -110,8 +110,8 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 // getOrCreateQueue returns an existing queue or creates a new one.
 func (p *Proxy) getOrCreateQueue(modelName string) *RequestQueue {
 	// Fast path: check if queue exists
-	if val, ok := p.queues.Load(modelName); ok {
-		return val.(*RequestQueue)
+	if queue, ok := p.queues.Load(modelName); ok {
+		return queue
 	}
 
 	// Slow path: create new queue (with lock to prevent duplicates)
@@ -119,8 +119,8 @@ func (p *Proxy) getOrCreateQueue(modelName string) *RequestQueue {
 	defer p.queuesMu.Unlock()
 
 	// Double-check after acquiring lock
-	if val, ok := p.queues.Load(modelName); ok {
-		return val.(*RequestQueue)
+	if queue, ok := p.queues.Load(modelName); ok {
+		return queue
 	}
 
 	// Create new queue
@@ -141,7 +141,10 @@ func (p *Proxy) getOrCreateQueue(modelName string) *RequestQueue {
 // processQueue handles scale-up and drains the queue when model is ready.
 func (p *Proxy) processQueue(queue *RequestQueue) {
 	modelName := queue.model
-	ctx := context.Background()
+	ctx := p.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	slog.Info("starting queue processor", "model", modelName)
 
@@ -162,7 +165,7 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 			slog.Info("queue processor finished (direct)", "model", modelName)
 
 			// Async: update LastActiveTime so controller backfills status.
-			go p.touchLastActiveTime(context.Background(), modelName)
+			go p.touchLastActiveTime(ctx, modelName)
 			return
 		}
 		slog.Debug("direct runtime load failed or unavailable, falling back to controller path", "model", modelName)
@@ -286,17 +289,26 @@ func (p *Proxy) cleanupStaleQueues() {
 	ticker := time.NewTicker(staleQueueCleanupInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		now := time.Now()
-		p.queues.Range(func(key, value interface{}) bool {
-			queue := value.(*RequestQueue)
-			// Remove queues older than 2x queue timeout that are empty
-			if now.Sub(queue.created) > 2*p.queueTimeout && len(queue.items) == 0 {
-				slog.Debug("cleaning up stale queue", "model", key.(string))
-				p.queues.Delete(key)
-			}
-			return true
-		})
+	ctx := p.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			now := time.Now()
+			p.queues.Range(func(key string, queue *RequestQueue) bool {
+				// Remove queues older than 2x queue timeout that are empty
+				if now.Sub(queue.created) > 2*p.queueTimeout && len(queue.items) == 0 {
+					slog.Debug("cleaning up stale queue", "model", key)
+					p.queues.Delete(key)
+				}
+				return true
+			})
+		}
 	}
 }
 

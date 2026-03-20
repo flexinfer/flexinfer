@@ -10,7 +10,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
@@ -179,7 +178,7 @@ func (p *Proxy) resolveLoRAAdapter(ctx context.Context, modelName string) (paren
 func (p *Proxy) resolveServiceLabel(ctx context.Context, labelOrModelName string) string {
 	// First check cache
 	if modelName, ok := p.serviceLabelCache.Load(labelOrModelName); ok {
-		return modelName.(string)
+		return modelName
 	}
 
 	// Refresh cache if stale (>5 seconds old) or first time
@@ -187,7 +186,7 @@ func (p *Proxy) resolveServiceLabel(ctx context.Context, labelOrModelName string
 
 	// Check cache again after refresh
 	if modelName, ok := p.serviceLabelCache.Load(labelOrModelName); ok {
-		return modelName.(string)
+		return modelName
 	}
 
 	// Not a service label, return as-is (it's probably a model name)
@@ -241,9 +240,9 @@ func (p *Proxy) refreshServiceLabelCache(ctx context.Context) {
 	}
 
 	// Clear the caches
-	p.serviceLabelCache = sync.Map{}
-	p.labelGroupCache = sync.Map{}
-	p.labelGroupModels = sync.Map{}
+	p.serviceLabelCache.Clear()
+	p.labelGroupCache.Clear()
+	p.labelGroupModels.Clear()
 
 	// Second pass: build caches
 	// - serviceLabelCache: first claimant per label (backward compat for resolveServiceLabel)
@@ -295,7 +294,7 @@ const modelAliasCacheTTL = 5 * time.Second
 func (p *Proxy) resolveModelAlias(ctx context.Context, nameOrAlias string) string {
 	// Check cache first
 	if k8sName, ok := p.modelAliasCache.Load(nameOrAlias); ok {
-		return k8sName.(string)
+		return k8sName
 	}
 
 	// Refresh cache if stale
@@ -303,7 +302,7 @@ func (p *Proxy) resolveModelAlias(ctx context.Context, nameOrAlias string) strin
 
 	// Check again after refresh
 	if k8sName, ok := p.modelAliasCache.Load(nameOrAlias); ok {
-		return k8sName.(string)
+		return k8sName
 	}
 
 	return nameOrAlias
@@ -345,7 +344,7 @@ func (p *Proxy) refreshModelAliasCache(ctx context.Context) {
 	}
 
 	// Clear and rebuild cache
-	p.modelAliasCache = sync.Map{}
+	p.modelAliasCache.Clear()
 
 	for alias, claimants := range aliasClaims {
 		if len(claimants) > 1 {

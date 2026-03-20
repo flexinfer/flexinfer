@@ -53,10 +53,9 @@ func (p *Proxy) recordRoutingObservability(modelName string, strategy routing.St
 
 func (p *Proxy) observeRoutingKeyCardinality(modelName string, strategy routing.Strategy, source, key string) int {
 	cacheKey := modelName + "|" + string(strategy) + "|" + source
-	value, _ := p.routingKeySet.LoadOrStore(cacheKey, &routingKeyTracker{
+	tracker, _ := p.routingKeySet.LoadOrStore(cacheKey, &routingKeyTracker{
 		keys: make(map[string]struct{}),
 	})
-	tracker := value.(*routingKeyTracker)
 	fingerprint := fingerprintRoutingKey(key)
 
 	tracker.mu.Lock()

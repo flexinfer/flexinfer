@@ -2,12 +2,26 @@ package backend
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
+
+// mlcLLMImageRules defines the image resolution precedence for MLC-LLM.
+var mlcLLMImageRules = []ImageRule{
+	// AMD arch-specific
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_MLC_LLM_IMAGE_GFX1100", Default: "registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100"},
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_MLC_LLM_IMAGE_GFX906", Default: "registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx906"},
+	// AMD generic
+	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_MLC_LLM_IMAGE_AMD", Default: "ghcr.io/mlc-ai/mlc-llm:rocm"},
+	// NVIDIA Maxwell sub-arch
+	{Vendor: GPUVendorNVIDIA, ArchPrefix: "sm_5", EnvVar: "DEFAULT_MLC_LLM_IMAGE_MAXWELL", Default: "registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7"},
+	// NVIDIA generic
+	{Vendor: GPUVendorNVIDIA, EnvVar: "DEFAULT_MLC_LLM_IMAGE", Default: "ghcr.io/mlc-ai/mlc-llm:cuda"},
+	// Global default
+	{EnvVar: "DEFAULT_MLC_LLM_IMAGE", Default: "ghcr.io/mlc-ai/mlc-llm:cuda"},
+}
 
 // MLCLLMBackend implements the Backend interface for MLC-LLM.
 // MLC-LLM provides high-performance LLM inference with pre-compiled models.
@@ -28,47 +42,7 @@ func (b *MLCLLMBackend) Aliases() []string {
 }
 
 func (b *MLCLLMBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
-	switch gpuVendor {
-	case GPUVendorAMD:
-		// Check for gfx1100 (RX 7900 series, RDNA3) which needs specialized image
-		if strings.HasPrefix(gpuArch, "gfx110") {
-			if img := os.Getenv("DEFAULT_MLC_LLM_IMAGE_GFX1100"); img != "" {
-				return img
-			}
-			// GFX1100-specific image built with ROCm 6.4 and RDNA3 optimizations
-			return "registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100"
-		}
-		// Check for gfx906 (Radeon VII, Vega20) which needs specialized image
-		if strings.HasPrefix(gpuArch, "gfx906") {
-			if img := os.Getenv("DEFAULT_MLC_LLM_IMAGE_GFX906"); img != "" {
-				return img
-			}
-			// GFX906-specific image built with ROCm 6.4 and Vega20 optimizations
-			return "registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx906"
-		}
-		if img := os.Getenv("DEFAULT_MLC_LLM_IMAGE_AMD"); img != "" {
-			return img
-		}
-		return "ghcr.io/mlc-ai/mlc-llm:rocm"
-	case GPUVendorNVIDIA:
-		// Check for Maxwell architecture (sm_52)
-		if strings.HasPrefix(gpuArch, "sm_5") {
-			if img := os.Getenv("DEFAULT_MLC_LLM_IMAGE_MAXWELL"); img != "" {
-				return img
-			}
-			// Maxwell-specific image built with CUDA 11.8
-			return "registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7"
-		}
-		if img := os.Getenv("DEFAULT_MLC_LLM_IMAGE"); img != "" {
-			return img
-		}
-		return "ghcr.io/mlc-ai/mlc-llm:cuda"
-	default:
-		if img := os.Getenv("DEFAULT_MLC_LLM_IMAGE"); img != "" {
-			return img
-		}
-		return "ghcr.io/mlc-ai/mlc-llm:cuda"
-	}
+	return ResolveImage(mlcLLMImageRules, gpuVendor, gpuArch)
 }
 
 func (b *MLCLLMBackend) Port() int32 {

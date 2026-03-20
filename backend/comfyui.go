@@ -1,12 +1,22 @@
 package backend
 
 import (
-	"os"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
+
+// comfyUIImageRules defines the image resolution precedence for ComfyUI.
+var comfyUIImageRules = []ImageRule{
+	// AMD arch-specific
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_COMFYUI_IMAGE_GFX1100", Default: "registry.harbor.lan/flexinfer/comfyui:rocm-gfx1100"},
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_COMFYUI_IMAGE_GFX906", Default: "registry.harbor.lan/flexinfer/comfyui:rocm-gfx906"},
+	// AMD generic
+	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_COMFYUI_IMAGE_AMD", Default: "registry.harbor.lan/library/comfyui:rocm6.2.3-v8"},
+	// Global default
+	{EnvVar: "DEFAULT_COMFYUI_IMAGE", Default: "comfyanonymous/comfyui:latest"},
+}
 
 // ComfyUIBackend implements the Backend interface for ComfyUI.
 // ComfyUI provides workflow-based image generation with a web UI.
@@ -27,32 +37,7 @@ func (b *ComfyUIBackend) Aliases() []string {
 }
 
 func (b *ComfyUIBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
-	switch gpuVendor {
-	case GPUVendorAMD:
-		// Check for arch-specific overrides before built-in defaults
-		if strings.HasPrefix(gpuArch, "gfx110") {
-			if img := os.Getenv("DEFAULT_COMFYUI_IMAGE_GFX1100"); img != "" {
-				return img
-			}
-			return "registry.harbor.lan/flexinfer/comfyui:rocm-gfx1100"
-		}
-		if strings.HasPrefix(gpuArch, "gfx906") {
-			if img := os.Getenv("DEFAULT_COMFYUI_IMAGE_GFX906"); img != "" {
-				return img
-			}
-			return "registry.harbor.lan/flexinfer/comfyui:rocm-gfx906"
-		}
-		if img := os.Getenv("DEFAULT_COMFYUI_IMAGE_AMD"); img != "" {
-			return img
-		}
-		// Fallback: use generic rocm tag for other AMD GPUs
-		return "registry.harbor.lan/library/comfyui:rocm6.2.3-v8"
-	default:
-		if img := os.Getenv("DEFAULT_COMFYUI_IMAGE"); img != "" {
-			return img
-		}
-		return "comfyanonymous/comfyui:latest"
-	}
+	return ResolveImage(comfyUIImageRules, gpuVendor, gpuArch)
 }
 
 func (b *ComfyUIBackend) Port() int32 {

@@ -462,29 +462,7 @@ type abliterationJobMetadata struct {
 
 // readAbliterationMetadataFromPods reads abliteration metadata from pod termination logs.
 func (r *ModelCacheReconciler) readAbliterationMetadataFromPods(ctx context.Context, namespace, jobName string) *abliterationJobMetadata {
-	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
-		return nil
-	}
-	for _, pod := range podList.Items {
-		for _, cs := range pod.Status.ContainerStatuses {
-			if cs.Name != "abliterator" {
-				continue
-			}
-			terminated := cs.State.Terminated
-			if terminated == nil {
-				terminated = cs.LastTerminationState.Terminated
-			}
-			if terminated == nil || terminated.Message == "" {
-				continue
-			}
-			var meta abliterationJobMetadata
-			if err := json.Unmarshal([]byte(terminated.Message), &meta); err == nil {
-				return &meta
-			}
-		}
-	}
-	return nil
+	return ReadJobMetadata[abliterationJobMetadata](ctx, r.Client, namespace, jobName, "abliterator")
 }
 
 // captureAbliterationFailureLogs reads the termination message from the abliterator container.

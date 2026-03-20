@@ -134,15 +134,12 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 	// Aggregation pass: for models in label groups, combine endpoints from all group members.
 	// This overwrites each model's router ring with the union of all group members' endpoints,
 	// enabling cross-node load balancing for models sharing service labels.
-	p.labelGroupModels.Range(func(key, value any) bool {
-		modelName := key.(string)
-		groupMembers := value.([]string)
-
+	p.labelGroupModels.Range(func(modelName string, groupMembers []string) bool {
 		seen := make(map[string]bool)
 		var aggregated []string
 		for _, member := range groupMembers {
 			if cached, ok := p.endpointCache.Load(member); ok {
-				for _, ep := range cached.([]string) {
+				for _, ep := range cached {
 					if !seen[ep] {
 						seen[ep] = true
 						aggregated = append(aggregated, ep)
@@ -192,7 +189,7 @@ func (p *Proxy) trackEndpointChanges(modelName string, newEndpoints []string) {
 	// Get previous endpoints from cache
 	var oldEndpoints []string
 	if cached, ok := p.endpointCache.Load(modelName); ok {
-		oldEndpoints = cached.([]string)
+		oldEndpoints = cached
 	}
 
 	// Create sets for comparison
@@ -356,7 +353,7 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 	// Check if this model was loaded via the direct runtime path.
 	if targetURL == "" {
 		if dt, ok := p.directLoadTargets.Load(resolvedModel); ok {
-			targetURL = dt.(string)
+			targetURL = dt
 		}
 	}
 
@@ -383,21 +380,12 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		defer p.decrementPodConnections(targetPod)
 	}
 
-	// Create or get cached proxy for this target
-	var rp *httputil.ReverseProxy
+	// Create or get cached proxy for this target, with TTL-based eviction.
 	proxyKey := targetURL // Use full URL as key for pod-specific proxies
-	if val, ok := p.proxyMap.Load(proxyKey); ok {
-		rp = val.(*httputil.ReverseProxy)
-	} else {
-		// Create new proxy
-		u, err := url.Parse(targetURL)
-		if err != nil {
-			slog.Error("invalid proxy target URL", "targetURL", targetURL, "error", err)
-			validation.WriteInternalError(w, "Internal error routing request")
-			return
-		}
-		rp = httputil.NewSingleHostReverseProxy(u)
-		p.proxyMap.Store(proxyKey, rp)
+	rp, ok := p.loadOrCreateProxy(proxyKey)
+	if !ok {
+		validation.WriteInternalError(w, "Internal error routing request")
+		return
 	}
 
 	rp.ServeHTTP(w, r)
@@ -537,6 +525,28 @@ func spliceModelField(body []byte, replacement string) []byte {
 	result = append(result, newVal...)
 	result = append(result, body[valEnd:]...)
 	return result
+}
+
+// loadOrCreateProxy returns a cached httputil.ReverseProxy for the target URL,
+// creating a new one if the entry is missing or has expired past proxyTTL.
+// Returns false if the URL cannot be parsed.
+func (p *Proxy) loadOrCreateProxy(targetURL string) (*httputil.ReverseProxy, bool) {
+	if entry, ok := p.proxyMap.Load(targetURL); ok {
+		if time.Since(entry.created) < proxyTTL {
+			return entry.proxy, true
+		}
+		// Entry expired — delete and recreate below.
+		p.proxyMap.Delete(targetURL)
+	}
+
+	u, err := url.Parse(targetURL)
+	if err != nil {
+		slog.Error("invalid proxy target URL", "targetURL", targetURL, "error", err)
+		return nil, false
+	}
+	rp := httputil.NewSingleHostReverseProxy(u)
+	p.proxyMap.Store(targetURL, proxyEntry{proxy: rp, created: time.Now()})
+	return rp, true
 }
 
 // updateLastAccess updates the LastAccessTime for a model.

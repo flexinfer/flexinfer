@@ -2,12 +2,21 @@ package backend
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
+
+// vllmOmniImageRules defines the image resolution precedence for vLLM-Omni.
+var vllmOmniImageRules = []ImageRule{
+	// AMD gfx1100 arch-specific
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_VLLM_OMNI_IMAGE_GFX1100", Default: "registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100"},
+	// AMD generic
+	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_VLLM_OMNI_IMAGE_AMD", Default: "registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100"},
+	// Global default
+	{EnvVar: "DEFAULT_VLLM_OMNI_IMAGE", Default: "vllm/vllm-openai:latest"},
+}
 
 // VLLMOmniBackend implements the Backend interface for vLLM-Omni.
 // vLLM-Omni extends vLLM with multimodal generation (image, audio, video).
@@ -29,24 +38,7 @@ func (b *VLLMOmniBackend) Aliases() []string {
 }
 
 func (b *VLLMOmniBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
-	switch gpuVendor {
-	case GPUVendorAMD:
-		if strings.HasPrefix(gpuArch, "gfx110") {
-			if img := os.Getenv("DEFAULT_VLLM_OMNI_IMAGE_GFX1100"); img != "" {
-				return img
-			}
-			return "registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100"
-		}
-		if img := os.Getenv("DEFAULT_VLLM_OMNI_IMAGE_AMD"); img != "" {
-			return img
-		}
-		return "registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100"
-	default:
-		if img := os.Getenv("DEFAULT_VLLM_OMNI_IMAGE"); img != "" {
-			return img
-		}
-		return "vllm/vllm-openai:latest"
-	}
+	return ResolveImage(vllmOmniImageRules, gpuVendor, gpuArch)
 }
 
 func (b *VLLMOmniBackend) Port() int32 {

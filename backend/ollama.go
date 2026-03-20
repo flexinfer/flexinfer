@@ -1,12 +1,30 @@
 package backend
 
 import (
-	"os"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
+
+// ollamaImageRules defines the image resolution precedence for Ollama.
+// Arch-specific rules have env-only overrides (no built-in default) so they
+// fall through to the vendor-level default when unset.
+var ollamaImageRules = []ImageRule{
+	// AMD arch-specific (env-only, fall through to AMD generic)
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_OLLAMA_IMAGE_GFX1100"},
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_OLLAMA_IMAGE_GFX906"},
+	// AMD generic
+	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_BACKEND_IMAGE_AMD", Default: "ollama/ollama:rocm"},
+	// Intel
+	{Vendor: GPUVendorIntel, EnvVar: "DEFAULT_BACKEND_IMAGE_INTEL", Default: "ollama/ollama:latest"},
+	// NVIDIA Maxwell sub-arch (env-only, fall through to NVIDIA generic)
+	{Vendor: GPUVendorNVIDIA, ArchPrefix: "sm_5", EnvVar: "DEFAULT_BACKEND_IMAGE_MAXWELL"},
+	// NVIDIA generic
+	{Vendor: GPUVendorNVIDIA, EnvVar: "DEFAULT_BACKEND_IMAGE_NVIDIA"},
+	{Vendor: GPUVendorNVIDIA, EnvVar: "DEFAULT_BACKEND_IMAGE", Default: "ollama/ollama:latest"},
+	// Global default (CPU, unknown, etc.)
+	{EnvVar: "DEFAULT_BACKEND_IMAGE", Default: "ollama/ollama:latest"},
+}
 
 // OllamaBackend implements the Backend interface for Ollama.
 // Ollama downloads models on-demand, so it doesn't require a volume mount.
@@ -23,50 +41,7 @@ func (b *OllamaBackend) Name() string {
 }
 
 func (b *OllamaBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
-	// Check for environment variable overrides
-	switch gpuVendor {
-	case GPUVendorAMD:
-		// Check for arch-specific overrides before generic AMD fallback
-		if strings.HasPrefix(gpuArch, "gfx110") {
-			if img := os.Getenv("DEFAULT_OLLAMA_IMAGE_GFX1100"); img != "" {
-				return img
-			}
-		}
-		if strings.HasPrefix(gpuArch, "gfx906") {
-			if img := os.Getenv("DEFAULT_OLLAMA_IMAGE_GFX906"); img != "" {
-				return img
-			}
-		}
-		if img := os.Getenv("DEFAULT_BACKEND_IMAGE_AMD"); img != "" {
-			return img
-		}
-		return "ollama/ollama:rocm"
-	case GPUVendorIntel:
-		if img := os.Getenv("DEFAULT_BACKEND_IMAGE_INTEL"); img != "" {
-			return img
-		}
-		return "ollama/ollama:latest"
-	case GPUVendorNVIDIA:
-		// Check for Maxwell architecture (sm_52) — pre-built ollama CUDA 12.x
-		// binaries do not include sm_52 support.
-		if strings.HasPrefix(gpuArch, "sm_5") {
-			if img := os.Getenv("DEFAULT_BACKEND_IMAGE_MAXWELL"); img != "" {
-				return img
-			}
-		}
-		if img := os.Getenv("DEFAULT_BACKEND_IMAGE_NVIDIA"); img != "" {
-			return img
-		}
-		if img := os.Getenv("DEFAULT_BACKEND_IMAGE"); img != "" {
-			return img
-		}
-		return "ollama/ollama:latest"
-	default:
-		if img := os.Getenv("DEFAULT_BACKEND_IMAGE"); img != "" {
-			return img
-		}
-		return "ollama/ollama:latest"
-	}
+	return ResolveImage(ollamaImageRules, gpuVendor, gpuArch)
 }
 
 func (b *OllamaBackend) Port() int32 {
