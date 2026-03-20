@@ -42,6 +42,9 @@ func TestGenerateCodexSkillMD_BasicFrontmatter(t *testing.T) {
 	if !strings.Contains(got, `description: "A simple skill"`) {
 		t.Errorf("output should contain quoted description, got:\n%s", got)
 	}
+	if !strings.Contains(got, "metadata:\n  short-description: \"A simple skill\"") {
+		t.Errorf("output should contain metadata.short-description, got:\n%s", got)
+	}
 	if !strings.Contains(got, "\n---\n") {
 		t.Error("output should contain closing frontmatter delimiter")
 	}
@@ -351,7 +354,7 @@ func TestGenerateForTarget_CodexDirectToHomeWritesRootFilesToCodexHome(t *testin
 	}
 
 	enabled := true
-	skill := &Skill{
+	instructionSkill := &Skill{
 		Name: "ops-helper",
 		Common: &SkillSpec{
 			Description:  "Ops helper skill",
@@ -361,10 +364,20 @@ func TestGenerateForTarget_CodexDirectToHomeWritesRootFilesToCodexHome(t *testin
 			"codex": {Enabled: &enabled, Type: "instruction"},
 		},
 	}
+	bundleSkill := &Skill{
+		Name: "bundle-helper",
+		Common: &SkillSpec{
+			Description:  "Bundle helper skill",
+			Instructions: "# Bundle Helper\n\nUse bundled workflows.",
+		},
+		Targets: map[string]*TargetSpec{
+			"codex": {Enabled: &enabled, Type: "skill"},
+		},
+	}
 
 	codexRoot := filepath.Join(tmpDir, "home", ".codex")
 	g := &Generator{
-		Registry:       &Registry{Skills: []*Skill{skill}},
+		Registry:       &Registry{Skills: []*Skill{instructionSkill, bundleSkill}},
 		SourceDir:      sourceDir,
 		Target:         "codex",
 		RepoRoot:       tmpDir,
@@ -393,6 +406,105 @@ func TestGenerateForTarget_CodexDirectToHomeWritesRootFilesToCodexHome(t *testin
 	}
 	if !containsString(manifest.Generated, "instructions.md") {
 		t.Fatalf("expected manifest to include instructions.md, got %#v", manifest.Generated)
+	}
+
+	data, err := os.ReadFile(filepath.Join(codexRoot, "instructions.md"))
+	if err != nil {
+		t.Fatalf("read instructions.md: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "### Available skills") {
+		t.Fatalf("expected available skills section in instructions.md:\n%s", text)
+	}
+	if !strings.Contains(text, filepath.Join(codexRoot, "skills", "bundle-helper", "SKILL.md")) {
+		t.Fatalf("expected generated skill path in instructions.md:\n%s", text)
+	}
+}
+
+func TestGenerateForTarget_CodexAvailableSkillsIncludesExistingHomeSkills(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "mcp", "skills")
+	sourceSkillDir := filepath.Join(sourceDir, "ops-helper")
+	if err := os.MkdirAll(sourceSkillDir, 0o755); err != nil {
+		t.Fatalf("mkdir source skill dir: %v", err)
+	}
+
+	enabled := true
+	instructionSkill := &Skill{
+		Name: "ops-helper",
+		Common: &SkillSpec{
+			Description:  "Ops helper skill",
+			Instructions: "# Ops Helper\n\nDo ops work.",
+		},
+		Targets: map[string]*TargetSpec{
+			"codex": {Enabled: &enabled, Type: "instruction"},
+		},
+	}
+	bundleSkill := &Skill{
+		Name: "bundle-helper",
+		Common: &SkillSpec{
+			Description:  "Bundle helper skill",
+			Instructions: "# Bundle Helper\n\nUse bundled workflows.",
+		},
+		Targets: map[string]*TargetSpec{
+			"codex": {Enabled: &enabled, Type: "skill"},
+		},
+	}
+
+	codexRoot := filepath.Join(tmpDir, "home", ".codex")
+	existingSkills := map[string]string{
+		filepath.Join(codexRoot, "skills", ".system", "openai-docs", "SKILL.md"): `---
+name: "openai-docs"
+description: "Use current OpenAI docs with citations."
+---
+
+# OpenAI Docs
+`,
+		filepath.Join(codexRoot, "skills", "speech", "SKILL.md"): `---
+name: "speech"
+description: "Generate text-to-speech output."
+---
+
+# Speech
+`,
+	}
+	for path, content := range existingSkills {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir existing skill dir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write existing skill: %v", err)
+		}
+	}
+
+	g := &Generator{
+		Registry:       &Registry{Skills: []*Skill{instructionSkill, bundleSkill}},
+		SourceDir:      sourceDir,
+		Target:         "codex",
+		RepoRoot:       tmpDir,
+		CodexHome:      codexRoot,
+		CodexRootDir:   codexRoot,
+		CodexSkillsDir: filepath.Join(codexRoot, "skills"),
+	}
+
+	if err := g.generateForTarget("codex"); err != nil {
+		t.Fatalf("generateForTarget(codex): %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(codexRoot, "instructions.md"))
+	if err != nil {
+		t.Fatalf("read instructions.md: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"- openai-docs: Use current OpenAI docs with citations.",
+		"- speech: Generate text-to-speech output.",
+		filepath.Join(codexRoot, "skills", ".system", "openai-docs", "SKILL.md"),
+		filepath.Join(codexRoot, "skills", "speech", "SKILL.md"),
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected instructions.md to contain %q:\n%s", want, text)
+		}
 	}
 }
 

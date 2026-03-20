@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -306,6 +307,7 @@ func (g *Generator) Generate() error {
 func (g *Generator) generateForTarget(target string) error {
 	var generatedFiles []string
 	var instructionSkills []*Skill
+	var bundleSkills []*Skill
 
 	for _, skill := range g.Registry.Skills {
 		if !skill.IsEnabled(target) {
@@ -322,6 +324,7 @@ func (g *Generator) generateForTarget(target string) error {
 			instructionSkills = append(instructionSkills, skill)
 			continue
 		}
+		bundleSkills = append(bundleSkills, skill)
 
 		var files []string
 		var err error
@@ -359,7 +362,7 @@ func (g *Generator) generateForTarget(target string) error {
 		if target == "gemini" {
 			filename = "GEMINI.md"
 		}
-		files, err := g.generateInstructionsFile(target, instructionSkills)
+		files, err := g.generateInstructionsFile(target, instructionSkills, bundleSkills)
 		if err != nil {
 			return fmt.Errorf("generate %s %s: %w", target, filename, err)
 		}
@@ -659,6 +662,11 @@ func (g *Generator) generateCodexSkillMD(skill *Skill) string {
 	desc := strings.TrimSpace(skill.Common.Description)
 	desc = strings.ReplaceAll(desc, "\n", " ")
 	sb.WriteString(fmt.Sprintf("description: \"%s\"\n", escapeYAMLString(desc)))
+	shortDesc := shortSkillDescription(desc)
+	if shortDesc != "" {
+		sb.WriteString("metadata:\n")
+		sb.WriteString(fmt.Sprintf("  short-description: \"%s\"\n", escapeYAMLString(shortDesc)))
+	}
 	sb.WriteString("---\n\n")
 
 	// Instructions body with resolved paths
@@ -685,6 +693,31 @@ func (g *Generator) generateCodexSkillMD(skill *Skill) string {
 	}
 
 	return sb.String()
+}
+
+func shortSkillDescription(desc string) string {
+	desc = strings.TrimSpace(strings.Join(strings.Fields(desc), " "))
+	if desc == "" {
+		return ""
+	}
+
+	for _, sep := range []string{". ", "! ", "? "} {
+		if idx := strings.Index(desc, sep); idx > 0 {
+			return strutilTrim(desc[:idx+1], 120)
+		}
+	}
+
+	return strutilTrim(desc, 120)
+}
+
+func strutilTrim(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return strings.TrimSpace(s[:max-3]) + "..."
 }
 
 // =========================================================================
@@ -985,7 +1018,7 @@ func (g *Generator) generateKilocodeWorkflow(skill *Skill) ([]string, error) {
 // Composite instructions.md / GEMINI.md Generation
 
 // generateInstructionsFile assembles instructions.md (or GEMINI.md for Gemini) from all instruction-type skills for a platform.
-func (g *Generator) generateInstructionsFile(target string, skills []*Skill) ([]string, error) {
+func (g *Generator) generateInstructionsFile(target string, skills []*Skill, bundleSkills []*Skill) ([]string, error) {
 	baseDir := g.resolveTargetDir(target)
 	if baseDir == "" {
 		return nil, nil
@@ -1025,6 +1058,11 @@ func (g *Generator) generateInstructionsFile(target string, skills []*Skill) ([]
 		sb.WriteString("\n\n")
 	}
 
+	if section := g.generateAvailableSkillsSection(target, bundleSkills); section != "" {
+		sb.WriteString(section)
+		sb.WriteString("\n")
+	}
+
 	// Append custom instructions sidecar if it exists
 	customPath := filepath.Join(baseDir, "_custom_instructions.md")
 	if data, err := os.ReadFile(customPath); err == nil {
@@ -1039,6 +1077,172 @@ func (g *Generator) generateInstructionsFile(target string, skills []*Skill) ([]
 	}
 
 	return []string{filename}, nil
+}
+
+func (g *Generator) generateAvailableSkillsSection(target string, skills []*Skill) string {
+	basePath := g.skillHomePath(target)
+	if basePath == "" {
+		return ""
+	}
+
+	entries := g.availableSkillEntries(basePath, skills)
+	if len(entries) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("## Skills\n")
+	sb.WriteString("A skill is a set of local instructions stored in a `SKILL.md` file.\n")
+	sb.WriteString("Below is the list of skills available in this environment.\n")
+	sb.WriteString("### Available skills\n")
+
+	for _, entry := range entries {
+		sb.WriteString(fmt.Sprintf("- %s: %s (file: %s)\n", entry.Name, entry.Description, entry.Path))
+	}
+
+	sb.WriteString("### How to use skills\n")
+	sb.WriteString("- Discovery: The list above is the skills available in this session. Skill bodies live at the listed paths.\n")
+	sb.WriteString("- Trigger rules: If the user names a skill or the task clearly matches one, use it for that turn.\n")
+	sb.WriteString("- How to use a skill: Open its `SKILL.md`, read only what you need, and prefer bundled `scripts/`, `references/`, and `assets/` over re-creating content.\n")
+	sb.WriteString("- Safety and fallback: If a skill is missing or blocked, say so briefly and continue with the best fallback.\n")
+
+	return sb.String()
+}
+
+type availableSkillEntry struct {
+	Name        string
+	Description string
+	Path        string
+}
+
+func (g *Generator) availableSkillEntries(basePath string, skills []*Skill) []availableSkillEntry {
+	seen := make(map[string]bool)
+	entries := make([]availableSkillEntry, 0, len(skills))
+
+	addEntry := func(name, desc, skillPath string) {
+		name = strings.TrimSpace(name)
+		desc = strings.Join(strings.Fields(strings.TrimSpace(desc)), " ")
+		skillPath = strings.TrimSpace(skillPath)
+		if name == "" || desc == "" || skillPath == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		entries = append(entries, availableSkillEntry{
+			Name:        name,
+			Description: desc,
+			Path:        skillPath,
+		})
+	}
+
+	for _, skill := range skills {
+		if skill == nil || skill.Common == nil {
+			continue
+		}
+		addEntry(skill.Name, skill.Common.Description, filepath.Join(basePath, skill.Name, "SKILL.md"))
+	}
+
+	diskEntries, _ := discoverSkillEntries(basePath)
+	sort.SliceStable(diskEntries, func(i, j int) bool {
+		return diskEntries[i].Name < diskEntries[j].Name
+	})
+	for _, entry := range diskEntries {
+		addEntry(entry.Name, entry.Description, entry.Path)
+	}
+
+	return entries
+}
+
+func discoverSkillEntries(basePath string) ([]availableSkillEntry, error) {
+	entries := make([]availableSkillEntry, 0)
+	err := filepath.Walk(basePath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info == nil || info.IsDir() || info.Name() != "SKILL.md" {
+			return nil
+		}
+
+		name, desc, ok := readSkillFrontmatter(path)
+		if !ok {
+			return nil
+		}
+		entries = append(entries, availableSkillEntry{
+			Name:        name,
+			Description: desc,
+			Path:        path,
+		})
+		return nil
+	})
+	return entries, err
+}
+
+func readSkillFrontmatter(path string) (name string, desc string, ok bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", false
+	}
+
+	text := string(data)
+	if !strings.HasPrefix(text, "---\n") {
+		return "", "", false
+	}
+	rest := text[len("---\n"):]
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		return "", "", false
+	}
+
+	var shortDesc string
+	for _, rawLine := range strings.Split(rest[:end], "\n") {
+		line := strings.TrimSpace(rawLine)
+		switch {
+		case strings.HasPrefix(line, "name:"):
+			name = parseSkillFrontmatterValue(strings.TrimSpace(strings.TrimPrefix(line, "name:")))
+		case strings.HasPrefix(line, "description:"):
+			desc = parseSkillFrontmatterValue(strings.TrimSpace(strings.TrimPrefix(line, "description:")))
+		case strings.HasPrefix(line, "short-description:"):
+			shortDesc = parseSkillFrontmatterValue(strings.TrimSpace(strings.TrimPrefix(line, "short-description:")))
+		}
+	}
+
+	if shortDesc != "" {
+		desc = shortDesc
+	}
+	name = strings.TrimSpace(name)
+	desc = strings.Join(strings.Fields(strings.TrimSpace(desc)), " ")
+	return name, desc, name != "" && desc != ""
+}
+
+func parseSkillFrontmatterValue(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if unquoted, err := strconv.Unquote(raw); err == nil {
+		return unquoted
+	}
+	return strings.Trim(raw, `"'`)
+}
+
+func (g *Generator) skillHomePath(target string) string {
+	switch target {
+	case "codex":
+		if g.CodexSkillsDir != "" {
+			return g.CodexSkillsDir
+		}
+		if g.CodexHome != "" {
+			return filepath.Join(g.CodexHome, "skills")
+		}
+	case "gemini":
+		if strings.TrimSpace(g.GeminiSkillsHome) != "" {
+			return strings.TrimRight(g.GeminiSkillsHome, "/")
+		}
+		home, err := os.UserHomeDir()
+		if err == nil && home != "" {
+			return filepath.Join(home, ".gemini", "skills")
+		}
+	}
+	return ""
 }
 
 // =========================================================================

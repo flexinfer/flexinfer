@@ -38,8 +38,10 @@ spec:
             - ws://loom-gateway.loom-hub.svc.cluster.local/ws
             - --hub-fallback=true
             - --metrics-addr
-            - 0.0.0.0:9876
+            - 127.0.0.1:9876
           env:
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://langfuse-web.ai.svc.cluster.local:3000/api/public/otel"
             - name: QDRANT_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -59,12 +61,14 @@ spec:
               name: metrics
           readinessProbe:
             httpGet:
+              host: 127.0.0.1
               path: /health
               port: 9876
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
+              host: 127.0.0.1
               path: /health
               port: 9876
             initialDelaySeconds: 10

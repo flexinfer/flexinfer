@@ -58,18 +58,21 @@ func (a *AgentBridge) ListActivePipelines(projects []string) ([]PipelineInfo, er
 
 	for _, project := range projects {
 		raw, err := a.client.CallTool("gitlab__list_pipelines", map[string]any{
-			"project_id": project,
-			"status":     "running",
+			"project": project,
+			"status":  "running",
 		})
 		if err != nil {
 			// Try pending pipelines too, but don't fail on individual project errors.
 			continue
 		}
 
-		var pipelines []PipelineInfo
-		if err := unmarshalGitLabResult(raw, &pipelines); err != nil {
+		var listResult struct {
+			Pipelines []PipelineInfo `json:"pipelines"`
+		}
+		if err := unmarshalGitLabResult(raw, &listResult); err != nil {
 			continue
 		}
+		pipelines := listResult.Pipelines
 		for i := range pipelines {
 			pipelines[i].Project = project
 		}
@@ -77,12 +80,15 @@ func (a *AgentBridge) ListActivePipelines(projects []string) ([]PipelineInfo, er
 
 		// Also fetch pending pipelines.
 		raw, err = a.client.CallTool("gitlab__list_pipelines", map[string]any{
-			"project_id": project,
-			"status":     "pending",
+			"project": project,
+			"status":  "pending",
 		})
 		if err == nil {
-			var pending []PipelineInfo
-			if err := unmarshalGitLabResult(raw, &pending); err == nil {
+			var pendingResult struct {
+				Pipelines []PipelineInfo `json:"pipelines"`
+			}
+			if err := unmarshalGitLabResult(raw, &pendingResult); err == nil {
+				pending := pendingResult.Pipelines
 				for i := range pending {
 					pending[i].Project = project
 				}
@@ -98,7 +104,7 @@ func (a *AgentBridge) ListActivePipelines(projects []string) ([]PipelineInfo, er
 func (a *AgentBridge) GetPipelineDetail(project string, pipelineID int) (*PipelineDetail, error) {
 	// Get pipeline info.
 	raw, err := a.client.CallTool("gitlab__get_pipeline", map[string]any{
-		"project_id":  project,
+		"project":     project,
 		"pipeline_id": pipelineID,
 	})
 	if err != nil {
@@ -113,7 +119,7 @@ func (a *AgentBridge) GetPipelineDetail(project string, pipelineID int) (*Pipeli
 
 	// Get pipeline jobs to build stage breakdown.
 	raw, err = a.client.CallTool("gitlab__list_pipeline_jobs", map[string]any{
-		"project_id":  project,
+		"project":     project,
 		"pipeline_id": pipelineID,
 	})
 	if err != nil {
@@ -121,10 +127,13 @@ func (a *AgentBridge) GetPipelineDetail(project string, pipelineID int) (*Pipeli
 		return &PipelineDetail{PipelineInfo: info}, nil
 	}
 
-	var jobs []PipelineJob
-	if err := unmarshalGitLabResult(raw, &jobs); err != nil {
+	var jobsResult struct {
+		Jobs []PipelineJob `json:"jobs"`
+	}
+	if err := unmarshalGitLabResult(raw, &jobsResult); err != nil {
 		return &PipelineDetail{PipelineInfo: info}, nil
 	}
+	jobs := jobsResult.Jobs
 
 	// Build stages from jobs.
 	stageOrder := []string{}
