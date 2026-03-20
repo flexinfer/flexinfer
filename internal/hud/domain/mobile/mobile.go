@@ -3,7 +3,6 @@
 package mobile
 
 import (
-	"context"
 	"net/http"
 )
 
@@ -112,9 +111,3 @@ func (d *MobileDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFu
 	mux.HandleFunc("POST /api/mobile/v1/agent/spawn", mw(d.app.HandleMobileSpawnAgent))
 	mux.HandleFunc("POST /api/mobile/v1/agent/spawn/{spawn_id}/stop", mw(d.app.HandleMobileSpawnStop))
 }
-
-// Start is a no-op; mobile lifecycle resources are managed by *App.
-func (d *MobileDomain) Start(_ context.Context) error { return nil }
-
-// Stop is a no-op.
-func (d *MobileDomain) Stop() error { return nil }

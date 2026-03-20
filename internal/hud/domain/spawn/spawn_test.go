@@ -1,7 +1,6 @@
 package spawn
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -56,15 +55,5 @@ func TestSpawnDomainRouteRegistration(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Errorf("%s %s: expected 200, got %d", rt.method, rt.path, rec.Code)
 		}
-	}
-}
-
-func TestSpawnDomainLifecycle(t *testing.T) {
-	d := New(&mockAppHandlers{})
-	if err := d.Start(context.TODO()); err != nil {
-		t.Fatalf("Start: unexpected error: %v", err)
-	}
-	if err := d.Stop(); err != nil {
-		t.Fatalf("Stop: unexpected error: %v", err)
 	}
 }

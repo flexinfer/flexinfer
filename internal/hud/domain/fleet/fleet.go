@@ -1,4 +1,4 @@
-// Package fleet implements the fleet domain — agent session lifecycle,
+// Package fleet implements the fleet domain -- agent session lifecycle,
 // context management, nudge queue, task updates, and knowledge handlers.
 //
 // The FleetDomain delegates to the HUD App via the AppHandlers interface,
@@ -7,7 +7,6 @@
 package fleet
 
 import (
-	"context"
 	"net/http"
 )
 
@@ -88,9 +87,3 @@ func (d *FleetDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFun
 	mux.HandleFunc("POST /api/agent/dispatch", mw(d.app.HandleAgentDispatch))
 	mux.HandleFunc("DELETE /api/claims/{agent_id}/{file_path...}", mw(d.app.HandleClaimRelease))
 }
-
-// Start is a no-op; fleet lifecycle is managed by monitors on *App.
-func (d *FleetDomain) Start(_ context.Context) error { return nil }
-
-// Stop is a no-op.
-func (d *FleetDomain) Stop() error { return nil }

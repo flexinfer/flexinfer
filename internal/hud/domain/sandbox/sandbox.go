@@ -3,7 +3,6 @@
 package sandbox
 
 import (
-	"context"
 	"net/http"
 )
 
@@ -35,9 +34,3 @@ func (d *SandboxDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerF
 	mux.HandleFunc("POST /api/sandbox/start", mw(d.app.HandleSandboxStart))
 	mux.HandleFunc("POST /api/sandbox/stop", mw(d.app.HandleSandboxStop))
 }
-
-// Start is a no-op; sandbox monitor lifecycle is managed by *App.
-func (d *SandboxDomain) Start(_ context.Context) error { return nil }
-
-// Stop is a no-op.
-func (d *SandboxDomain) Stop() error { return nil }

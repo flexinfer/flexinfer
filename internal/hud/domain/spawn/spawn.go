@@ -3,7 +3,6 @@
 package spawn
 
 import (
-	"context"
 	"net/http"
 )
 
@@ -37,9 +36,3 @@ func (d *SpawnDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFun
 	mux.HandleFunc("GET /api/agent/spawn/{spawn_id}", mw(d.app.HandleAgentSpawnDetail))
 	mux.HandleFunc("POST /api/agent/spawn/{spawn_id}/stop", mw(d.app.HandleAgentSpawnStop))
 }
-
-// Start is a no-op; spawn orchestrator lifecycle is managed by *App.
-func (d *SpawnDomain) Start(_ context.Context) error { return nil }
-
-// Stop is a no-op.
-func (d *SpawnDomain) Stop() error { return nil }

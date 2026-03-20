@@ -1,8 +1,6 @@
 package domain
 
 import (
-	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,10 +9,6 @@ import (
 // stubDomain is a minimal Domain implementation for testing.
 type stubDomain struct {
 	name       string
-	started    bool
-	stopped    bool
-	startErr   error
-	stopErr    error
 	registered bool
 }
 
@@ -25,19 +19,6 @@ func (d *stubDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFunc
 	mux.HandleFunc("GET /test/"+d.name, mw(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
-}
-
-func (d *stubDomain) Start(_ context.Context) error {
-	if d.startErr != nil {
-		return d.startErr
-	}
-	d.started = true
-	return nil
-}
-
-func (d *stubDomain) Stop() error {
-	d.stopped = true
-	return d.stopErr
 }
 
 func TestNewRegistry(t *testing.T) {
@@ -115,77 +96,6 @@ func TestRegisterAll(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("route /test/%s returned %d, expected 200", name, rec.Code)
 		}
-	}
-}
-
-func TestStartAllSuccess(t *testing.T) {
-	reg := NewRegistry()
-	d1 := &stubDomain{name: "a"}
-	d2 := &stubDomain{name: "b"}
-	reg.Register(d1)
-	reg.Register(d2)
-
-	if err := reg.StartAll(context.Background()); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !d1.started || !d2.started {
-		t.Fatal("expected both domains to be started")
-	}
-}
-
-func TestStartAllRollback(t *testing.T) {
-	reg := NewRegistry()
-	d1 := &stubDomain{name: "ok"}
-	d2 := &stubDomain{name: "fail", startErr: errors.New("boot failure")}
-	reg.Register(d1)
-	reg.Register(d2)
-
-	err := reg.StartAll(context.Background())
-	if err == nil {
-		t.Fatal("expected error from StartAll")
-	}
-	if !d1.stopped {
-		t.Fatal("expected d1 to be rolled back (stopped)")
-	}
-	if d2.started {
-		t.Fatal("d2 should not have been started")
-	}
-}
-
-func TestStopAll(t *testing.T) {
-	reg := NewRegistry()
-	d1 := &stubDomain{name: "x"}
-	d2 := &stubDomain{name: "y"}
-	reg.Register(d1)
-	reg.Register(d2)
-
-	_ = reg.StartAll(context.Background())
-	if err := reg.StopAll(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !d1.stopped || !d2.stopped {
-		t.Fatal("expected both domains to be stopped")
-	}
-}
-
-func TestStopAllReturnsFirstError(t *testing.T) {
-	reg := NewRegistry()
-	d1 := &stubDomain{name: "a", stopErr: errors.New("stop-a")}
-	d2 := &stubDomain{name: "b", stopErr: errors.New("stop-b")}
-	reg.Register(d1)
-	reg.Register(d2)
-
-	err := reg.StopAll()
-	if err == nil {
-		t.Fatal("expected error from StopAll")
-	}
-	// StopAll iterates in reverse, so d2 stops first.
-	if err.Error() != "stop-b" {
-		t.Fatalf("expected first error 'stop-b', got %q", err.Error())
-	}
-	// Both should still be stopped.
-	if !d1.stopped || !d2.stopped {
-		t.Fatal("expected both domains to attempt stop")
 	}
 }
 

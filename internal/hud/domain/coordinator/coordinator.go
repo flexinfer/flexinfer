@@ -3,7 +3,6 @@
 package coordinator
 
 import (
-	"context"
 	"net/http"
 )
 
@@ -43,9 +42,3 @@ func (d *CoordinatorDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.Hand
 		mux.Handle("GET /api/coordinator/metrics", h)
 	}
 }
-
-// Start is a no-op; coordinator lifecycle is managed by *App.
-func (d *CoordinatorDomain) Start(_ context.Context) error { return nil }
-
-// Stop is a no-op.
-func (d *CoordinatorDomain) Stop() error { return nil }
