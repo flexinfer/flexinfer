@@ -80,6 +80,11 @@ type FileConfig struct {
 	// OTel configures OpenTelemetry trace export for daemon lifecycle and call pipeline.
 	OTel OTelConfig `yaml:"otel,omitempty"`
 
+	// HubDelegate controls which servers are delegated to the hub instead of
+	// running as local subprocesses. When the hub is healthy and a server is
+	// in the delegate list, calls are routed through the hub automatically.
+	HubDelegate HubDelegateConfig `yaml:"hub_delegate,omitempty"`
+
 	// Debug enables debug logging
 	Debug bool `yaml:"debug"`
 }
@@ -497,7 +502,10 @@ func DefaultFileConfig() FileConfig {
 		Policy: DefaultGatewayPolicyConfig(),
 		Audit:  DefaultAuditConfig(),
 		Cost:   DefaultCostConfig(),
-		Debug:  false,
+		HubDelegate: HubDelegateConfig{
+			Servers: DefaultHubDelegateServers(),
+		},
+		Debug: false,
 	}
 }
 

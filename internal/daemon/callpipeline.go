@@ -274,6 +274,18 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 	p.routingPreference = RoutingHealthBased
 	p.preferHubRetryEligible = false
 
+	// Hub delegation: when the server is in the delegate list and the hub is
+	// healthy, override the routing decision to TargetHub so the daemon
+	// relays the call to the in-cluster service instead of spawning a local
+	// subprocess. This is the key "thin daemon" optimisation.
+	if p.daemon.hubDelegateEligible(p.serverName) {
+		decision.Target = router.TargetHub
+		p.daemon.logger.Debug("hub delegation active", "server", p.serverName)
+		span.AddEvent("daemon.pipeline.route.hub_delegate", trace.WithAttributes(
+			attribute.String("mcp.server", p.serverName),
+		))
+	}
+
 	if pref, ok := p.daemon.routingPreferences[p.serverName]; ok && pref != RoutingHealthBased {
 		p.routingPreference = pref
 		hasHub := p.daemon.hubPool != nil
