@@ -294,6 +294,10 @@ spec:
             - name: FLEXINFER_RUNTIME_IMAGE
               value: {{ $quantization.runtimeImage | quote }}
             {{- end }}
+            {{- if $quantization.gptqDeviceMap }}
+            - name: FLEXINFER_GPTQ_DEVICE_MAP
+              value: {{ $quantization.gptqDeviceMap | quote }}
+            {{- end }}
             {{- if $quantization.gptqModelPolicies }}
             - name: FLEXINFER_GPTQ_MODEL_POLICIES
               value: {{ $quantization.gptqModelPolicies | toJson | quote }}

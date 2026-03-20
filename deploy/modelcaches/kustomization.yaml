@@ -7,8 +7,6 @@ resources:
   # GPTQ quantization pipeline (Download → Quantize)
   - gptq-quantization.yaml
   # Abliteration + GPTQ pipeline (Download → Abliterate → Quantize)
-  # Temporarily disabled: OOM during 27B quantization on 7900xtx (62GiB node).
-  # TODO: Re-enable after device_map=auto fix lands.
-  # - abliteration-gptq.yaml
+  - abliteration-gptq.yaml
   # Finetune pipeline test (Download → QLoRA Finetune → Quantize)
   - finetune-test.yaml

@@ -341,6 +341,10 @@ quantization:
   # Runtime image to use when useRuntimeForQuantize=true.
   # Usually matches the profile runtime image (e.g., registry.harbor.lan/flexinfer/runtime:rocm-gfx1100).
   runtimeImage: ""
+  # Device map strategy for GPTQ quantize jobs.
+  # "cpu" = load entire model on CPU (default, needs enough RAM).
+  # "auto" = split model across GPU+CPU via accelerate (reduces CPU memory).
+  gptqDeviceMap: ""
   # Optional controller-side policy overrides serialized into
   # FLEXINFER_GPTQ_MODEL_POLICIES for quantize jobs.
   gptqModelPolicies:
