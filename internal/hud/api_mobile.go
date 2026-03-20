@@ -1539,6 +1539,12 @@ func (a *App) handleMobileSessionCreate(w http.ResponseWriter, r *http.Request) 
 		a.writeMobileError(w, http.StatusBadRequest, "bad_request", "agent_id is required")
 		return
 	}
+	if strings.TrimSpace(body.AgentType) == "" {
+		body.AgentType = "mobile"
+	}
+	if strings.TrimSpace(body.Description) == "" {
+		body.Description = "Mobile session"
+	}
 
 	a.logMobileAudit(r, "session_create", map[string]string{
 		"agent_id":  body.AgentID,

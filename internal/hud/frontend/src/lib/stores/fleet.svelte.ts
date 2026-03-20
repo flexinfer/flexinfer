@@ -103,6 +103,13 @@ function extractProject(namespace: string | undefined): string {
   return seg || '(ungrouped)';
 }
 
+function isPinnedMobileSession(session: { agentType?: string; description?: string }): boolean {
+  const agentType = (session.agentType ?? '').trim().toLowerCase();
+  if (agentType === 'mobile') return true;
+  const description = (session.description ?? '').trim().toLowerCase();
+  return description.startsWith('mobile session');
+}
+
 class FleetStore {
   status = $state<StatusResponse>({
     running: false,
@@ -191,7 +198,7 @@ class FleetStore {
       const orphans = orphansByProject.get(project) ?? [];
       const totalTasks = sessions.reduce((s, sess) => s + sess.tasks.length, 0) + orphans.length;
       const hasActive = sessions.some(
-        (s) => s.agentStatus === 'active' || s.tasks.some((t) => t.status === 'in_progress'),
+        (s) => s.agentStatus === 'active' || isPinnedMobileSession(s) || s.tasks.some((t) => t.status === 'in_progress'),
       );
 
       groups.push({

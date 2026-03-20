@@ -90,6 +90,10 @@ func NotifyApproval(count int) error {
 
 // sendNotification executes osascript to display a macOS notification.
 func sendNotification(title, subtitle, message, sound string) error {
+	if !desktopNotificationsEnabled() {
+		return nil
+	}
+
 	// Escape double quotes in all user-provided strings.
 	title = escapeAppleScript(title)
 	subtitle = escapeAppleScript(subtitle)

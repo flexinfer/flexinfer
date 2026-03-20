@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
-	"github.com/crb2nu/loom/internal/hud/notify"
 )
 
 // cachedDetail wraps a WorkflowDetail with an expiration timestamp for
@@ -192,22 +191,16 @@ func (m *WorkflowMonitor) Refresh() error {
 		}
 	}
 
-	// Notify for new pending approvals (deduped by workflow+step).
+	// Track waiting-approval workflow keys so the HUD UI and future consumers can
+	// still diff approval state without emitting noisy desktop notifications.
 	for _, w := range workflows {
 		if w.Status == "waiting_approval" {
 			key := w.ID + ":" + w.CurrentStep
-			if !m.notifiedApprovals[key] {
-				m.notifiedApprovals[key] = true
-				go func(name, step string) {
-					if err := notify.NotifyWorkflowApproval(name, step); err != nil {
-						m.logger.Debug("workflow-approval notification failed", "workflow", name, "error", err)
-					}
-				}(w.Name, w.CurrentStep)
-			}
+			m.notifiedApprovals[key] = true
 		}
 	}
 
-	// Prune approval dedup entries for workflows no longer waiting.
+	// Prune approval-tracking entries for workflows no longer waiting.
 	for key := range m.notifiedApprovals {
 		wID := key[:strings.Index(key, ":")]
 		found := false

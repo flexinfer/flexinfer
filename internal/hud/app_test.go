@@ -11,10 +11,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	loomcache "github.com/crb2nu/loom/internal/cache"
 	"github.com/crb2nu/loom/internal/hud/bridge"
@@ -3497,5 +3499,128 @@ func TestMobilePushUnregister_Success(t *testing.T) {
 
 	if app.deviceTokenStore.Count() != 0 {
 		t.Error("expected token store to be empty after unregister")
+	}
+}
+
+func TestHandleSessions_FallsBackToFleetSnapshotOnUpstreamError(t *testing.T) {
+	app, mux, handlers := newTestAppWithHandlers(t)
+	setFleetSnapshotForTest(t, app.fleetMonitor, monitor.FleetSnapshot{
+		Sessions: []bridge.SessionInfo{{
+			ID:        "sess-cache",
+			AgentID:   "mobile-agent",
+			Namespace: "services/flexinfer",
+			Status:    "active",
+		}},
+	})
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		if req.Name == "agent_context__agent_session_list" {
+			return json.RawMessage(`{"isError":true,"content":[{"type":"text","text":"transport closed"}]}`), nil
+		}
+		return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+	})
+
+	req := httptest.NewRequest("GET", "/api/sessions", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var env struct {
+		Sessions []bridge.SessionInfo `json:"sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Sessions) != 1 || env.Sessions[0].ID != "sess-cache" {
+		t.Fatalf("expected cached session fallback, got %#v", env.Sessions)
+	}
+}
+
+func TestHandler_MobileSessionCreate_DefaultsMobilePresenceMetadata(t *testing.T) {
+	app, mux, handlers := newTestAppWithHandlers(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:session:create"
+
+	presenceArgsCh := make(chan map[string]any, 1)
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[]}"}]}`), nil
+		case "agent_context__agent_session_start":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"session_id\":\"sess-mobile\"}"}]}`), nil
+		case "agent_context__agent_presence_register":
+			select {
+			case presenceArgsCh <- req.Arguments:
+			default:
+			}
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true}"}]}`), nil
+		default:
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+	})
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions", strings.NewReader(`{"agent_id":"claude-code","namespace":"services/flexinfer"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	select {
+	case args := <-presenceArgsCh:
+		if got := fmt.Sprint(args["agent_type"]); got != "mobile" {
+			t.Fatalf("expected agent_type=mobile, got %q", got)
+		}
+		if got := fmt.Sprint(args["description"]); got != "Mobile session" {
+			t.Fatalf("expected description to default to Mobile session, got %q", got)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for async presence register")
+	}
+}
+
+func setFleetSnapshotForTest(t *testing.T, fm *monitor.FleetMonitor, snap monitor.FleetSnapshot) {
+	t.Helper()
+	v := reflect.ValueOf(fm).Elem().FieldByName("snapshot")
+	reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem().Set(reflect.ValueOf(snap))
+}
+
+func TestIsMobileManagedPresence(t *testing.T) {
+	cases := []struct {
+		name  string
+		agent bridge.PresenceInfo
+		want  bool
+	}{
+		{name: "agent type mobile", agent: bridge.PresenceInfo{AgentType: "mobile"}, want: true},
+		{name: "mobile session description", agent: bridge.PresenceInfo{Description: "Mobile session"}, want: true},
+		{name: "non mobile", agent: bridge.PresenceInfo{AgentType: "claude-code", Description: "Claude session"}, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isMobileManagedPresence(tc.agent); got != tc.want {
+				t.Fatalf("got %v want %v", got, tc.want)
+			}
+		})
 	}
 }

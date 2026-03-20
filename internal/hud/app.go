@@ -1331,8 +1331,8 @@ func (a *App) handleMemoryDemote(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleSessions(w http.ResponseWriter, r *http.Request) {
 	sessions, err := a.agent.Sessions()
 	if err != nil {
-		a.writeError(w, http.StatusBadGateway, "failed to list sessions", err)
-		return
+		a.logger.Warn("sessions upstream error, falling back to fleet snapshot", "error", err)
+		sessions = a.fleetMonitor.Snapshot().Sessions
 	}
 
 	// Optional time filter: ?since=<RFC3339> — return only sessions started
@@ -2225,6 +2225,14 @@ func (a *App) handleAnnotationCreate(w http.ResponseWriter, r *http.Request) {
 // sessionReaper periodically checks for offline agents with active sessions
 // and auto-ends them. This ensures heartbeat-only agents (like Codex) get
 // reliable session cleanup without native session-end hooks.
+func isMobileManagedPresence(agent bridge.PresenceInfo) bool {
+	if strings.EqualFold(strings.TrimSpace(agent.AgentType), "mobile") {
+		return true
+	}
+	desc := strings.ToLower(strings.TrimSpace(agent.Description))
+	return strings.HasPrefix(desc, "mobile session")
+}
+
 func (a *App) sessionReaper(ctx context.Context) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -2241,6 +2249,9 @@ func (a *App) sessionReaper(ctx context.Context) {
 
 			for _, agent := range snap.Agents {
 				if agent.Status != "offline" {
+					continue
+				}
+				if isMobileManagedPresence(agent) {
 					continue
 				}
 				// Check if agent has been offline long enough.

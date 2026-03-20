@@ -399,19 +399,9 @@ func (m *FleetMonitor) Refresh() error {
 		}()
 	}
 
-	// --- Proactive notifications: pending approvals ---
-	if snap.PendingApprovals > 0 {
-		m.mu.RLock()
-		prevApprovals := m.prevApprovals
-		m.mu.RUnlock()
-		if snap.PendingApprovals > prevApprovals {
-			go func() {
-				if err := notify.NotifyApproval(snap.PendingApprovals); err != nil {
-					m.logger.Debug("approval notification failed", "error", err)
-				}
-			}()
-		}
-	}
+	// Intentionally skip desktop notifications for pending approvals. Workflow
+	// churn makes them too noisy in practice, and the HUD/app surfaces the state
+	// directly.
 
 	// Check for new handoffs and send desktop notifications.
 	if handoffs, err := m.agent.HandoffList(); err != nil {
