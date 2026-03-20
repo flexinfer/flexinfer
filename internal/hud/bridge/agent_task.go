@@ -3,6 +3,7 @@ package bridge
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -202,6 +203,22 @@ func (a *AgentBridge) resolveDispatchSourceSessionID(sourceSessionID string) (st
 	if sourceSessionID != "" {
 		return sourceSessionID, nil
 	}
+
+	// Try to reuse a cached HUD dispatcher session.
+	if cached, ok := a.cache.Get("hud_dispatch_session"); ok {
+		if sid, ok := cached.(string); ok && sid != "" {
+			return sid, nil
+		}
+	}
+
+	// Look for an existing active session for the HUD dispatcher agent.
+	session, err := a.GetActiveSession(hudDispatchAgentID)
+	if err == nil && session != nil && session.ID != "" {
+		a.cache.Set("hud_dispatch_session", session.ID, 5*time.Minute)
+		return session.ID, nil
+	}
+
+	// Create new session only if none exists.
 	result, err := a.StartSession(SessionStartParams{
 		Namespace:   hudDispatchNamespace,
 		AgentID:     hudDispatchAgentID,
@@ -215,7 +232,9 @@ func (a *AgentBridge) resolveDispatchSourceSessionID(sourceSessionID string) (st
 	if result == nil || strings.TrimSpace(result.SessionID) == "" {
 		return "", fmt.Errorf("dispatcher session start returned empty session_id")
 	}
-	return strings.TrimSpace(result.SessionID), nil
+	sid := strings.TrimSpace(result.SessionID)
+	a.cache.Set("hud_dispatch_session", sid, 5*time.Minute)
+	return sid, nil
 }
 
 func mergeDispatchTags(tags []string) []string {

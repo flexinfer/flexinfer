@@ -1,7 +1,11 @@
 package bridge
 
 import (
+	"context"
 	"strings"
+	"sync"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // --- Workflow methods ---
@@ -240,13 +244,15 @@ func (a *AgentBridge) handoffInbox(agentID string, includeViewed bool) ([]Handof
 }
 
 // HandoffList returns pending/viewed handoffs across active/offline agents
-// by querying each agent's inbox via agent_handoff_inbox.
+// by querying each agent's inbox via agent_handoff_inbox concurrently.
 func (a *AgentBridge) HandoffList() ([]HandoffInfo, error) {
 	agents, err := a.PresenceList(true)
 	if err != nil {
 		return nil, err
 	}
 
+	g, _ := errgroup.WithContext(context.Background())
+	var mu sync.Mutex
 	seen := make(map[string]struct{})
 	combined := make([]HandoffInfo, 0)
 	var inboxErr error
@@ -256,25 +262,38 @@ func (a *AgentBridge) HandoffList() ([]HandoffInfo, error) {
 		if agentID == "" {
 			continue
 		}
-		handoffs, err := a.handoffInbox(agentID, true)
-		if err != nil {
-			if isUnknownToolErr(err, "agent_handoff_inbox") {
-				return nil, nil // tool unavailable, return empty
+		g.Go(func() error {
+			handoffs, err := a.handoffInbox(agentID, true)
+			if err != nil {
+				if isUnknownToolErr(err, "agent_handoff_inbox") {
+					return err // signal tool unavailable
+				}
+				mu.Lock()
+				if inboxErr == nil {
+					inboxErr = err
+				}
+				mu.Unlock()
+				return nil // partial failure OK
 			}
-			if inboxErr == nil {
-				inboxErr = err
+			mu.Lock()
+			for _, h := range handoffs {
+				if strings.TrimSpace(h.ID) == "" {
+					continue
+				}
+				if _, ok := seen[h.ID]; ok {
+					continue
+				}
+				seen[h.ID] = struct{}{}
+				combined = append(combined, h)
 			}
-			continue
-		}
-		for _, h := range handoffs {
-			if strings.TrimSpace(h.ID) == "" {
-				continue
-			}
-			if _, ok := seen[h.ID]; ok {
-				continue
-			}
-			seen[h.ID] = struct{}{}
-			combined = append(combined, h)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		if isUnknownToolErr(err, "agent_handoff_inbox") {
+			return nil, nil
 		}
 	}
 

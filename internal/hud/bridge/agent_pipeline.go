@@ -1,8 +1,12 @@
 package bridge
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // --- Pipeline DTOs ---
@@ -52,51 +56,60 @@ type PipelineDetail struct {
 // --- Pipeline bridge methods ---
 
 // ListActivePipelines fetches active pipelines from the mcp-gitlab server
-// for the given project paths. Returns pipelines with status running or pending.
+// for the given project paths concurrently. Returns pipelines with status
+// running or pending. Concurrency is capped at 4 to avoid overwhelming GitLab.
 func (a *AgentBridge) ListActivePipelines(projects []string) ([]PipelineInfo, error) {
+	g, _ := errgroup.WithContext(context.Background())
+	g.SetLimit(4) // cap concurrency to avoid overwhelming GitLab
+	var mu sync.Mutex
 	var allPipelines []PipelineInfo
 
 	for _, project := range projects {
-		raw, err := a.client.CallTool("gitlab__list_pipelines", map[string]any{
-			"project": project,
-			"status":  "running",
-		})
-		if err != nil {
-			// Try pending pipelines too, but don't fail on individual project errors.
-			continue
-		}
-
-		var listResult struct {
-			Pipelines []PipelineInfo `json:"pipelines"`
-		}
-		if err := unmarshalGitLabResult(raw, &listResult); err != nil {
-			continue
-		}
-		pipelines := listResult.Pipelines
-		for i := range pipelines {
-			pipelines[i].Project = project
-		}
-		allPipelines = append(allPipelines, pipelines...)
-
-		// Also fetch pending pipelines.
-		raw, err = a.client.CallTool("gitlab__list_pipelines", map[string]any{
-			"project": project,
-			"status":  "pending",
-		})
-		if err == nil {
-			var pendingResult struct {
-				Pipelines []PipelineInfo `json:"pipelines"`
-			}
-			if err := unmarshalGitLabResult(raw, &pendingResult); err == nil {
-				pending := pendingResult.Pipelines
-				for i := range pending {
-					pending[i].Project = project
+		g.Go(func() error {
+			// Fetch running pipelines.
+			raw, err := a.client.CallTool("gitlab__list_pipelines", map[string]any{
+				"project": project,
+				"status":  "running",
+			})
+			if err == nil {
+				var listResult struct {
+					Pipelines []PipelineInfo `json:"pipelines"`
 				}
-				allPipelines = append(allPipelines, pending...)
+				if err := unmarshalGitLabResult(raw, &listResult); err == nil {
+					pipelines := listResult.Pipelines
+					for i := range pipelines {
+						pipelines[i].Project = project
+					}
+					mu.Lock()
+					allPipelines = append(allPipelines, pipelines...)
+					mu.Unlock()
+				}
 			}
-		}
+
+			// Fetch pending pipelines.
+			raw, err = a.client.CallTool("gitlab__list_pipelines", map[string]any{
+				"project": project,
+				"status":  "pending",
+			})
+			if err == nil {
+				var pendingResult struct {
+					Pipelines []PipelineInfo `json:"pipelines"`
+				}
+				if err := unmarshalGitLabResult(raw, &pendingResult); err == nil {
+					pending := pendingResult.Pipelines
+					for i := range pending {
+						pending[i].Project = project
+					}
+					mu.Lock()
+					allPipelines = append(allPipelines, pending...)
+					mu.Unlock()
+				}
+			}
+			return nil
+		})
 	}
 
+	g.Wait()
 	return allPipelines, nil
 }
 
