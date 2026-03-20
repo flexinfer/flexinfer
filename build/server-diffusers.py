@@ -1680,22 +1680,24 @@ async def refresh_checkpoints():
 async def generate_images(request: ImageGenerationRequest):
     global pipeline
 
+    # Check if request.model refers to a hot-swap checkpoint BEFORE checking
+    # MODEL_ID env var. The proxy may route "gonzalomo-v70-photo-xl" here,
+    # and MODEL_ID will always be the base SDXL model ID.
+    swap_model = request.model
+    if swap_model and pipeline is not None:
+        ckpt_path = _resolve_checkpoint(swap_model)
+        if ckpt_path:
+            ckpt_stem = os.path.splitext(os.path.basename(ckpt_path))[0]
+            if ckpt_stem != current_model:
+                print(f"Auto-swapping to checkpoint '{ckpt_stem}' for request.model '{swap_model}'")
+                async with _generation_lock:
+                    await asyncio.to_thread(_swap_checkpoint, ckpt_path)
+
     # Prioritize environment variable (set by FlexInfer ModelDeployment) over request model
     # request.model may be an alias like "image-gen" rather than the actual HuggingFace model ID
     model_id = os.environ.get("MODEL_ID") or os.environ.get("MODEL") or request.model
     if not model_id:
         raise HTTPException(status_code=400, detail="No model specified")
-
-    # Auto-swap: if the requested model matches a known checkpoint and isn't
-    # the currently loaded model, hot-swap instead of doing a full reload.
-    if pipeline is not None and model_id != current_model:
-        ckpt_path = _resolve_checkpoint(model_id)
-        if ckpt_path:
-            ckpt_stem = os.path.splitext(os.path.basename(ckpt_path))[0]
-            if ckpt_stem != current_model:
-                print(f"Auto-swapping to checkpoint '{ckpt_stem}' for model_id '{model_id}'")
-                async with _generation_lock:
-                    await asyncio.to_thread(_swap_checkpoint, ckpt_path)
 
     # Load pipeline if needed
     pipe = load_pipeline(model_id)
