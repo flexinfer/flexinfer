@@ -149,13 +149,7 @@ func NewHealthMonitor(client bridge.Caller, logger *slog.Logger) *HealthMonitor 
 
 // Start begins the background polling goroutine at the given interval.
 func (m *HealthMonitor) Start(interval time.Duration) {
-	m.StartManual()
-	go func() {
-		if err := m.Refresh(); err != nil {
-			m.Logger.Warn("initial health refresh failed", "error", err)
-		}
-	}()
-	go m.pollLoop(interval)
+	m.StartLoop(interval, m.Refresh)
 }
 
 // Servers returns the current enriched server health entries.
@@ -399,40 +393,4 @@ func classifyHealthEntry(entry ServerHealthEntry) healthClass {
 	}
 
 	return healthClassHealthy
-}
-
-// pollLoop runs Refresh on a ticker until stopCh is closed.
-// On consecutive errors, it backs off by skipping ticker ticks.
-func (m *HealthMonitor) pollLoop(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	consecutiveErrors := 0
-	for {
-		select {
-		case <-m.StopCh():
-			m.Logger.Debug("health monitor stopped")
-			return
-		case <-ticker.C:
-			if err := m.Refresh(); err != nil {
-				consecutiveErrors++
-				if consecutiveErrors <= 3 {
-					m.Logger.Warn("health refresh error", "error", err)
-				}
-				skipTicks := min(consecutiveErrors-1, 4)
-				for range skipTicks {
-					select {
-					case <-m.StopCh():
-						return
-					case <-ticker.C:
-					}
-				}
-			} else {
-				if consecutiveErrors > 0 {
-					m.Logger.Info("health refresh recovered", "after_errors", consecutiveErrors)
-				}
-				consecutiveErrors = 0
-			}
-		}
-	}
 }

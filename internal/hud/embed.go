@@ -271,26 +271,7 @@ func (a *App) wireMonitorCallbacks() {
 		})
 	})
 	a.memoryMonitor.OnRefresh(func(stats *bridge.MemoryStatsResult) {
-		tierJSON := func(t bridge.MemoryTierStats) map[string]any {
-			return map[string]any{"items": t.Items, "tokens": t.Tokens}
-		}
-		payload := map[string]any{
-			"working_memory":    tierJSON(stats.WorkingMemory),
-			"short_term_memory": tierJSON(stats.ShortTermMemory),
-			"long_term_memory":  tierJSON(stats.LongTermMemory),
-			"total_items":       stats.TotalItems,
-			"total_tokens":      stats.TotalTokens,
-		}
-		if stats.CompressionRatio > 0 || stats.ItemsCompressedLast24h > 0 {
-			payload["compression"] = map[string]any{
-				"ratio":            stats.CompressionRatio,
-				"compressed_items": stats.ItemsCompressedLast24h,
-				"tokens_saved":     int(float64(stats.TotalTokens) * (1 - stats.CompressionRatio)),
-				"added_24h":        stats.ItemsAddedLast24h,
-				"compressed_24h":   stats.ItemsCompressedLast24h,
-			}
-		}
-		data, err := json.Marshal(payload)
+		data, err := json.Marshal(memoryStatsPayload(stats))
 		if err != nil {
 			return
 		}

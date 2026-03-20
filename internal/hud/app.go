@@ -30,14 +30,12 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	loomcache "github.com/crb2nu/loom/internal/cache"
-	"github.com/crb2nu/loom/internal/devbox/backend"
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/coordinator"
 	"github.com/crb2nu/loom/internal/hud/domain"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 	"github.com/crb2nu/loom/internal/hud/window"
 	"github.com/crb2nu/loom/internal/tui"
-	"github.com/crb2nu/loom/pkg/mcpotel"
 )
 
 //go:embed frontend/dist
@@ -169,7 +167,9 @@ const (
 )
 
 // Run creates and starts the HUD application. This is the main entry point
-// called from the CLI command.
+// called from the CLI command. It delegates to NewApp + StartMonitors for
+// construction and monitor lifecycle, then adds standalone-only concerns
+// (daemon client, event consumer, TLS, signal handling).
 func Run(cfg Config) error {
 	var logger *slog.Logger
 	if cfg.TUI {
@@ -186,327 +186,16 @@ func Run(cfg Config) error {
 	}
 	defer client.Close()
 
-	agent := bridge.NewAgentBridge(client)
-
-	cacheCfg := loomcache.LoadConfigFromEnv()
-	appCache := loomcache.New(cacheCfg, logger)
-
-	app := &App{
-		config:               cfg,
-		client:               client,
-		agent:                agent,
-		cache:                appCache,
-		cacheBackend:         cacheCfg.Backend,
-		logger:               logger,
-		nudgeQueue:           NewNudgeQueue(),
-		mobileRevocationList: NewMobileTokenRevocationList(),
-		deviceTokenStore:     NewDeviceTokenStore(),
-		mobileRateLimiter: NewMobileRateLimiter(MobileRateLimitConfig{
-			MutationPerMinute: cfg.MobileRateLimitMutation,
-			ReadPerMinute:     cfg.MobileRateLimitRead,
-		}),
-	}
-
-	defer appCache.Close()
-
-	// Initialize OTel tracer for HUD-native instrumentation.
-	tp, otelShutdown, err := mcpotel.InitTracer(context.Background(), "loom-hud", logger)
+	app, err := NewApp(cfg, client, logger)
 	if err != nil {
-		logger.Warn("otel tracer init failed, continuing without tracing", "error", err)
-	} else {
-		defer otelShutdown(context.Background())
-	}
-	app.tracer = mcpotel.Tracer(tp, "loom-hud")
-	app.metrics = NewHUDMetrics()
-
-	// Initialize and start background monitors.
-	app.fleetMonitor = monitor.NewFleetMonitor(client, agent, logger)
-	app.fleetMonitor.Start(15 * time.Second) // Slow cadence — granular agent.* SSE events carry real-time deltas.
-	defer app.fleetMonitor.Stop()
-
-	app.healthMonitor = monitor.NewHealthMonitor(client, logger)
-	app.healthMonitor.Start(5 * time.Second)
-	defer app.healthMonitor.Stop()
-
-	app.memoryMonitor = monitor.NewMemoryMonitor(agent, logger)
-	app.memoryMonitor.Start(10 * time.Second)
-	defer app.memoryMonitor.Stop()
-
-	app.workflowMonitor = monitor.NewWorkflowMonitor(agent, logger)
-	app.workflowMonitor.Start(5 * time.Second)
-	defer app.workflowMonitor.Stop()
-
-	app.streamMonitor = monitor.NewStreamMonitor(agent, logger)
-	app.streamMonitor.Start(5 * time.Second)
-	defer app.streamMonitor.Stop()
-
-	app.sandboxMonitor = monitor.NewSandboxMonitor(client, logger)
-	app.sandboxMonitor.Start(10 * time.Second)
-	defer app.sandboxMonitor.Stop()
-
-	app.costMonitor = monitor.NewCostMonitor(client, logger)
-	app.costMonitor.Start(10 * time.Second)
-	defer app.costMonitor.Stop()
-
-	// Initialize pipeline monitor when project paths are configured.
-	if cfg.PipelineProjects != "" {
-		projects := strings.Split(cfg.PipelineProjects, ",")
-		app.pipelineMonitor = monitor.NewPipelineMonitor(agent, projects, logger)
-		app.pipelineMonitor.Start(10 * time.Second)
-		defer app.pipelineMonitor.Stop()
-		logger.Info("pipeline monitor enabled", "projects", len(projects))
+		return fmt.Errorf("create app: %w", err)
 	}
 
-	logger.Info("background monitors started",
-		"fleet", "15s", "health", "5s", "memory", "10s", "workflow", "5s", "stream", "5s", "sandbox", "10s", "cost", "10s")
-
-	// Bootstrap workflow definitions from .agents/workflows/*.yaml files.
-	app.bootstrapWorkflowDefinitions()
-
-	// Initialize SSE fan-out hub for browser clients.
-	app.sseHub = NewSSEHub(logger)
-
-	// Initialize timeline event log (ring buffer for activity timeline).
-	app.eventLog = NewEventLog(1000)
-
-	// Initialize spawn orchestrator when enabled.
-	if cfg.SpawnEnabled {
-		spawnBackend, spawnErr := backend.NewK8sBackend(backend.K8sBackendConfig{
-			Kubeconfig: cfg.SpawnKubeconfig,
-			Namespace:  cfg.SpawnNamespace,
-			Registry:   cfg.SpawnRegistry,
-			SyncMode:   cfg.SpawnSyncMode,
-			GitBaseURL: cfg.SpawnGitBaseURL,
-			GitSecret:  cfg.SpawnGitSecret,
-		})
-		if spawnErr != nil {
-			logger.Error("spawn backend init failed", "error", spawnErr)
-		} else {
-			spawnCfg := DefaultSpawnConfig()
-			if cfg.SpawnProjects != "" {
-				spawnCfg.Projects = strings.Split(cfg.SpawnProjects, ",")
-			}
-			app.spawner = NewSpawnOrchestrator(
-				spawnBackend, agent, app.sseHub, app.tracer, app.metrics, logger,
-				spawnCfg,
-			)
-			app.fleetMonitor.SetSpawnLister(spawnAdapter{app.spawner})
-
-			// Inject the K8s clientset into the spawn controller so it can
-			// reconcile pod state directly, fixing the stale-after-restart bug.
-			ctrl := app.spawner.Controller()
-			ctrl.SetK8sClient(spawnBackend.Clientset(), spawnBackend.Namespace())
-
-			// Start background reconciliation loop (30s interval).
-			reconcileCtx, reconcileCancel := context.WithCancel(context.Background())
-			defer reconcileCancel()
-			ctrl.StartReconcileLoop(reconcileCtx, 30*time.Second)
-
-			logger.Info("spawn orchestrator enabled",
-				"namespace", cfg.SpawnNamespace, "registry", cfg.SpawnRegistry,
-				"sync_mode", cfg.SpawnSyncMode, "projects", len(spawnCfg.Projects))
-		}
+	ctx := context.Background()
+	if err := app.StartMonitors(ctx); err != nil {
+		return fmt.Errorf("start monitors: %w", err)
 	}
-
-	// Start session reaper — auto-ends orphaned sessions for offline agents.
-	reaperCtx, reaperCancel := context.WithCancel(context.Background())
-	defer reaperCancel()
-	go app.sessionReaper(reaperCtx)
-
-	// Start push token reaper when mobile push endpoints are enabled.
-	if cfg.MobilePushEnabled {
-		pushCleanupCtx, pushCleanupCancel := context.WithCancel(context.Background())
-		defer pushCleanupCancel()
-		go app.pushTokenReaper(pushCleanupCtx)
-	}
-
-	// Initialize APNs push bridge when push is enabled and APNs key is configured.
-	if cfg.MobilePushEnabled && cfg.APNsKeyPath != "" {
-		apnsSender := NewAPNsSender(APNsSenderConfig{
-			KeyPath: cfg.APNsKeyPath,
-			KeyID:   cfg.APNsKeyID,
-			TeamID:  cfg.APNsTeamID,
-			Topic:   cfg.APNsTopic,
-			Sandbox: cfg.APNsSandbox,
-		}, app.tracer, app.metrics, logger)
-
-		app.pushBridge = NewPushEventBridge(
-			apnsSender, app.deviceTokenStore, app.tracer, app.metrics, logger,
-		)
-		logger.Info("APNs push bridge enabled", "topic", cfg.APNsTopic, "sandbox", cfg.APNsSandbox)
-	}
-
-	// Wire monitor OnRefresh callbacks to broadcast fresh snapshots via SSE.
-	// This enables "SSE-first" data flow: stores apply data directly from
-	// these events rather than re-fetching via HTTP after receiving a signal.
-
-	// Optional webhook pusher: forward presence+session snapshots to a remote
-	// endpoint (e.g., flexdeck in the K8s cluster).
-	var fleetWebhook *FleetWebhook
-	if cfg.WebhookURL != "" {
-		fleetWebhook = NewFleetWebhook(cfg.WebhookURL, cfg.WebhookToken, cfg.WebhookResolve, logger)
-		logFields := []any{"url", cfg.WebhookURL}
-		if cfg.WebhookResolve != "" {
-			logFields = append(logFields, "resolve_override", cfg.WebhookResolve)
-		}
-		logger.Info("fleet webhook enabled", logFields...)
-	}
-
-	app.fleetMonitor.OnRefresh(func(snap monitor.FleetSnapshot) {
-		// SSE broadcast to browser clients.
-		data, err := json.Marshal(snap)
-		if err == nil {
-			app.sseHub.Broadcast(bridge.SSEEvent{
-				ID:        fmt.Sprintf("hud-fleet-%d", time.Now().UnixMilli()),
-				Type:      "hud.fleet",
-				Timestamp: time.Now(),
-				Data:      data,
-			})
-		}
-
-		// Webhook push to remote endpoint (non-blocking).
-		if fleetWebhook != nil {
-			go fleetWebhook.Push(snap)
-		}
-	})
-	app.healthMonitor.OnRefresh(func(servers []monitor.ServerHealthEntry) {
-		data, err := json.Marshal(map[string]any{"servers": servers})
-		if err != nil {
-			return
-		}
-		app.sseHub.Broadcast(bridge.SSEEvent{
-			ID:        fmt.Sprintf("hud-health-%d", time.Now().UnixMilli()),
-			Type:      "hud.health",
-			Timestamp: time.Now(),
-			Data:      data,
-		})
-	})
-	app.memoryMonitor.OnRefresh(func(stats *bridge.MemoryStatsResult) {
-		// Transform to match the HTTP endpoint shape (items/tokens, not item_count/token_count).
-		tierJSON := func(t bridge.MemoryTierStats) map[string]any {
-			return map[string]any{"items": t.Items, "tokens": t.Tokens}
-		}
-		payload := map[string]any{
-			"working_memory":    tierJSON(stats.WorkingMemory),
-			"short_term_memory": tierJSON(stats.ShortTermMemory),
-			"long_term_memory":  tierJSON(stats.LongTermMemory),
-			"total_items":       stats.TotalItems,
-			"total_tokens":      stats.TotalTokens,
-		}
-		if stats.CompressionRatio > 0 || stats.ItemsCompressedLast24h > 0 {
-			payload["compression"] = map[string]any{
-				"ratio":            stats.CompressionRatio,
-				"compressed_items": stats.ItemsCompressedLast24h,
-				"tokens_saved":     int(float64(stats.TotalTokens) * (1 - stats.CompressionRatio)),
-				"added_24h":        stats.ItemsAddedLast24h,
-				"compressed_24h":   stats.ItemsCompressedLast24h,
-			}
-		}
-		data, err := json.Marshal(payload)
-		if err != nil {
-			return
-		}
-		app.sseHub.Broadcast(bridge.SSEEvent{
-			ID:        fmt.Sprintf("hud-memory-%d", time.Now().UnixMilli()),
-			Type:      "hud.memory",
-			Timestamp: time.Now(),
-			Data:      data,
-		})
-	})
-	app.workflowMonitor.OnRefresh(func(workflows []bridge.WorkflowInfo) {
-		data, err := json.Marshal(map[string]any{"workflows": workflows})
-		if err != nil {
-			return
-		}
-		app.sseHub.Broadcast(bridge.SSEEvent{
-			ID:        fmt.Sprintf("hud-workflows-%d", time.Now().UnixMilli()),
-			Type:      "hud.workflows",
-			Timestamp: time.Now(),
-			Data:      data,
-		})
-	})
-	app.streamMonitor.OnRefresh(func(entries []monitor.StreamEntry) {
-		data, err := json.Marshal(map[string]any{"entries": entries})
-		if err != nil {
-			return
-		}
-		app.sseHub.Broadcast(bridge.SSEEvent{
-			ID:        fmt.Sprintf("hud-stream-%d", time.Now().UnixMilli()),
-			Type:      "hud.stream",
-			Timestamp: time.Now(),
-			Data:      data,
-		})
-	})
-	app.sandboxMonitor.OnRefresh(func(snap map[string]any) {
-		snap["available"] = true
-		data, err := json.Marshal(snap)
-		if err != nil {
-			return
-		}
-		app.sseHub.Broadcast(bridge.SSEEvent{
-			ID:        fmt.Sprintf("hud-sandbox-%d", time.Now().UnixMilli()),
-			Type:      "hud.sandbox",
-			Timestamp: time.Now(),
-			Data:      data,
-		})
-	})
-	app.costMonitor.OnRefresh(func(snap monitor.CostSnapshot) {
-		data, err := json.Marshal(snap)
-		if err != nil {
-			return
-		}
-		app.sseHub.Broadcast(bridge.SSEEvent{
-			ID:        fmt.Sprintf("hud-cost-%d", time.Now().UnixMilli()),
-			Type:      "hud.cost",
-			Timestamp: time.Now(),
-			Data:      data,
-		})
-	})
-	if app.pipelineMonitor != nil {
-		app.pipelineMonitor.OnRefresh(func(pipelines []bridge.PipelineInfo) {
-			data, err := json.Marshal(map[string]any{"pipelines": pipelines})
-			if err != nil {
-				return
-			}
-			app.sseHub.Broadcast(bridge.SSEEvent{
-				ID:        fmt.Sprintf("hud-pipeline-%d", time.Now().UnixMilli()),
-				Type:      "hud.pipeline",
-				Timestamp: time.Now(),
-				Data:      data,
-			})
-		})
-	}
-
-	// Initialize coordinator if FlexInfer URL is configured.
-	if cfg.FlexInferURL != "" {
-		coordCfg := coordinator.ConfigFromEnv()
-		// CLI flags override env vars.
-		coordCfg.FlexInferURL = cfg.FlexInferURL
-		if cfg.FlexInferKey != "" {
-			coordCfg.FlexInferKey = cfg.FlexInferKey
-		}
-		if cfg.CoordinatorModel != "" {
-			coordCfg.DefaultModel = cfg.CoordinatorModel
-		}
-
-		if err := coordCfg.Validate(); err != nil {
-			logger.Error("coordinator config invalid", "error", err)
-		} else {
-			c := coordinator.NewCoordinator(coordCfg, agent, app.sseHub, logger)
-			if c != nil {
-				m := coordinator.NewMetrics()
-				c.SetMetrics(m)
-				if err := c.Start(); err != nil {
-					logger.Warn("coordinator: failed to start, continuing without it", "error", err)
-				} else {
-					app.coordinator = c
-					app.coordinatorMetrics = m
-					defer c.Stop()
-					logger.Info("coordinator started", "url", cfg.FlexInferURL, "model", coordCfg.DefaultModel)
-				}
-			}
-		}
-	}
+	defer app.StopMonitors()
 
 	// Connect to daemon's SSE event stream if metrics address is configured.
 	if cfg.MetricsAddr != "" {
@@ -584,9 +273,6 @@ func Run(cfg Config) error {
 		defer ec.Stop()
 		logger.Info("event consumer started", "url", eventsURL)
 	}
-
-	// Initialize domain registry — each domain module owns its route group.
-	app.initDomainRegistry()
 
 	mux := http.NewServeMux()
 	app.registerRoutes(mux)
@@ -674,7 +360,7 @@ func Run(cfg Config) error {
 		}()
 
 		tuiErr := tuiRun(tui.Deps{
-			Agent:  agent,
+			Agent:  app.agent,
 			Fleet:  app.fleetMonitor,
 			Health: app.healthMonitor,
 			Memory: app.memoryMonitor,
@@ -1200,6 +886,33 @@ func (a *App) handleWorkflowCancel(w http.ResponseWriter, r *http.Request) {
 	a.writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
 }
 
+// memoryStatsPayload converts bridge MemoryStatsResult into the canonical JSON
+// shape served to web and mobile clients: {items, tokens} per tier (not
+// {item_count, token_count}), with a conditional compression block. This is the
+// single source of truth — SSE, REST, and mobile handlers all call this.
+func memoryStatsPayload(stats *bridge.MemoryStatsResult) map[string]any {
+	tierJSON := func(t bridge.MemoryTierStats) map[string]any {
+		return map[string]any{"items": t.Items, "tokens": t.Tokens}
+	}
+	payload := map[string]any{
+		"working_memory":    tierJSON(stats.WorkingMemory),
+		"short_term_memory": tierJSON(stats.ShortTermMemory),
+		"long_term_memory":  tierJSON(stats.LongTermMemory),
+		"total_items":       stats.TotalItems,
+		"total_tokens":      stats.TotalTokens,
+	}
+	if stats.CompressionRatio > 0 || stats.ItemsCompressedLast24h > 0 {
+		payload["compression"] = map[string]any{
+			"ratio":            stats.CompressionRatio,
+			"compressed_items": stats.ItemsCompressedLast24h,
+			"tokens_saved":     int(float64(stats.TotalTokens) * (1 - stats.CompressionRatio)),
+			"added_24h":        stats.ItemsAddedLast24h,
+			"compressed_24h":   stats.ItemsCompressedLast24h,
+		}
+	}
+	return payload
+}
+
 // handleMemoryStats returns memory hierarchy stats from the memory monitor.
 // Transforms the bridge DTO (MCP field names) into the shape the frontend expects.
 func (a *App) handleMemoryStats(w http.ResponseWriter, _ *http.Request) {
@@ -1212,29 +925,7 @@ func (a *App) handleMemoryStats(w http.ResponseWriter, _ *http.Request) {
 		}
 		stats = directStats
 	}
-
-	// Frontend expects {items, tokens} per tier, not {item_count, token_count}.
-	tierJSON := func(t bridge.MemoryTierStats) map[string]any {
-		return map[string]any{"items": t.Items, "tokens": t.Tokens}
-	}
-
-	resp := map[string]any{
-		"working_memory":    tierJSON(stats.WorkingMemory),
-		"short_term_memory": tierJSON(stats.ShortTermMemory),
-		"long_term_memory":  tierJSON(stats.LongTermMemory),
-		"total_items":       stats.TotalItems,
-		"total_tokens":      stats.TotalTokens,
-	}
-	if stats.CompressionRatio > 0 || stats.ItemsCompressedLast24h > 0 {
-		resp["compression"] = map[string]any{
-			"ratio":            stats.CompressionRatio,
-			"compressed_items": stats.ItemsCompressedLast24h,
-			"tokens_saved":     int(float64(stats.TotalTokens) * (1 - stats.CompressionRatio)),
-			"added_24h":        stats.ItemsAddedLast24h,
-			"compressed_24h":   stats.ItemsCompressedLast24h,
-		}
-	}
-	a.writeJSON(w, http.StatusOK, resp)
+	a.writeJSON(w, http.StatusOK, memoryStatsPayload(stats))
 }
 
 // handleMemoryPromote promotes a memory item via the monitor (auto-refreshes stats).
@@ -1802,80 +1493,63 @@ func (a *App) handleCacheStats(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// handleSandbox returns devbox sandbox summary by calling the devbox_summary tool.
-// The result is cached for 5s to avoid hammering the daemon on rapid refreshes.
-// Returns {"available": false} if mcp-devbox is not running.
 func (a *App) handleCost(w http.ResponseWriter, _ *http.Request) {
 	snap := a.costMonitor.Snapshot()
 	a.writeJSON(w, http.StatusOK, snap)
 }
 
-func (a *App) handleRBAC(w http.ResponseWriter, _ *http.Request) {
+// fetchRBACConfig fetches RBAC configuration from the daemon with graceful
+// degradation. Returns a zero-value result (enabled=false) on any error.
+func (a *App) fetchRBACConfig() bridge.RBACConfigResult {
 	raw, err := a.client.Call("loom/rbac-config", nil)
 	if err != nil {
 		a.logger.Debug("rbac-config call failed", "error", err)
-		a.writeJSON(w, http.StatusOK, map[string]any{
-			"enabled":       false,
-			"audit_enabled": false,
-			"denied_count":  0,
-		})
-		return
+		return bridge.RBACConfigResult{}
 	}
 	var result bridge.RBACConfigResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		a.logger.Debug("rbac-config unmarshal failed", "error", err)
-		a.writeJSON(w, http.StatusOK, map[string]any{
-			"enabled":       false,
-			"audit_enabled": false,
-			"denied_count":  0,
-		})
-		return
+		return bridge.RBACConfigResult{}
 	}
-	a.writeJSON(w, http.StatusOK, result)
+	return result
 }
 
-func (a *App) handleOTel(w http.ResponseWriter, _ *http.Request) {
+// fetchOTelStatus fetches OTel observability status from the daemon with
+// graceful degradation. Returns a zero-value result on any error.
+func (a *App) fetchOTelStatus() bridge.OTelStatusResult {
 	raw, err := a.client.Call("loom/otel-status", nil)
 	if err != nil {
 		a.logger.Debug("otel-status call failed", "error", err)
-		a.writeJSON(w, http.StatusOK, map[string]any{"otlp_configured": false})
-		return
+		return bridge.OTelStatusResult{}
 	}
 	var result bridge.OTelStatusResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		a.logger.Debug("otel-status unmarshal failed", "error", err)
-		a.writeJSON(w, http.StatusOK, map[string]any{"otlp_configured": false})
-		return
+		return bridge.OTelStatusResult{}
 	}
+	return result
+}
+
+func (a *App) handleRBAC(w http.ResponseWriter, _ *http.Request) {
+	result := a.fetchRBACConfig()
 	a.writeJSON(w, http.StatusOK, result)
 }
 
+func (a *App) handleOTel(w http.ResponseWriter, _ *http.Request) {
+	result := a.fetchOTelStatus()
+	a.writeJSON(w, http.StatusOK, result)
+}
+
+// handleSandbox returns devbox sandbox summary from the sandbox monitor.
+// Returns {"available": false} if mcp-devbox is not running.
 func (a *App) handleSandbox(w http.ResponseWriter, _ *http.Request) {
-	if cached, ok := a.cache.Get("sandbox_summary"); ok {
-		a.writeJSON(w, http.StatusOK, cached)
+	snap := a.sandboxMonitor.Snapshot()
+	if snap == nil {
+		a.writeJSON(w, http.StatusOK, map[string]any{"available": false})
 		return
 	}
-
-	result, err := a.client.CallTool("devbox_summary", nil)
-	if err != nil {
-		// Devbox not available — graceful fallback.
-		a.logger.Debug("devbox_summary call failed, returning unavailable", "error", err)
-		fallback := map[string]any{"available": false}
-		a.cache.Set("sandbox_summary", fallback, 5*time.Second)
-		a.writeJSON(w, http.StatusOK, fallback)
-		return
-	}
-
-	summary, err := bridge.ParseToolResultMap(result)
-	if err != nil {
-		a.logger.Debug("devbox_summary unmarshal failed", "error", err)
-		fallback := map[string]any{"available": false}
-		a.writeJSON(w, http.StatusOK, fallback)
-		return
-	}
-	summary["available"] = true
-	a.cache.Set("sandbox_summary", summary, 5*time.Second)
-	a.writeJSON(w, http.StatusOK, summary)
+	snap["available"] = true
+	a.writeJSON(w, http.StatusOK, snap)
 }
 
 // handleSandboxPolicy serves the sandbox policy from .sandbox-policy.json.
@@ -1915,6 +1589,36 @@ func (a *App) handleSandboxPolicy(w http.ResponseWriter, _ *http.Request) {
 	a.writeJSON(w, http.StatusOK, empty)
 }
 
+// doSandboxStart calls devbox_build through the daemon and refreshes the
+// sandbox monitor. Returns the parsed result map or an error.
+func (a *App) doSandboxStart(project, agentID string) (map[string]any, error) {
+	args := map[string]any{"project": project}
+	if agentID != "" {
+		args["agent_id"] = agentID
+	}
+	result, err := a.client.CallTool("devbox_build", args)
+	if err != nil {
+		return nil, err
+	}
+	go a.sandboxMonitor.Refresh()
+
+	parsed, err := bridge.ParseToolResultMap(result)
+	if err != nil {
+		return nil, nil // non-fatal: build succeeded but response is opaque
+	}
+	return parsed, nil
+}
+
+// doSandboxStop stops a running sandbox and refreshes the sandbox monitor.
+func (a *App) doSandboxStop(project string) error {
+	_, err := a.client.CallTool("devbox_stop", map[string]any{"project": project})
+	if err != nil {
+		return err
+	}
+	go a.sandboxMonitor.Refresh()
+	return nil
+}
+
 // handleSandboxStart triggers devbox_build for a project via the daemon.
 // POST /api/sandbox/start
 func (a *App) handleSandboxStart(w http.ResponseWriter, r *http.Request) {
@@ -1931,21 +1635,12 @@ func (a *App) handleSandboxStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	args := map[string]any{"project": body.Project}
-	if body.AgentID != "" {
-		args["agent_id"] = body.AgentID
-	}
-	result, err := a.client.CallTool("devbox_build", args)
+	parsed, err := a.doSandboxStart(body.Project, body.AgentID)
 	if err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to start sandbox", err)
 		return
 	}
-
-	// Invalidate summary cache so next poll picks up the new sandbox.
-	a.cache.Invalidate("sandbox_summary")
-
-	parsed, err := bridge.ParseToolResultMap(result)
-	if err != nil {
+	if parsed == nil {
 		a.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
@@ -1968,15 +1663,10 @@ func (a *App) handleSandboxStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := a.client.CallTool("devbox_stop", map[string]any{"project": body.Project})
-	if err != nil {
+	if err := a.doSandboxStop(body.Project); err != nil {
 		a.writeError(w, http.StatusBadGateway, "failed to stop sandbox", err)
 		return
 	}
-
-	// Invalidate summary cache.
-	a.cache.Invalidate("sandbox_summary")
-
 	a.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "project": body.Project})
 }
 

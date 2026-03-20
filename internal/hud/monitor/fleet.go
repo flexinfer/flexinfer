@@ -150,16 +150,7 @@ func (m *FleetMonitor) SetSpawnLister(sl SpawnLister) {
 
 // Start begins the background polling goroutine at the given interval.
 func (m *FleetMonitor) Start(interval time.Duration) {
-	m.StartManual()
-	// Run initial refresh asynchronously so HUD/TUI startup is non-blocking
-	// when downstream services are slow or unavailable.
-	go func() {
-		if err := m.Refresh(); err != nil {
-			m.Logger.Warn("initial fleet refresh failed", "error", err)
-		}
-	}()
-
-	go m.pollLoop(interval)
+	m.StartLoop(interval, m.Refresh)
 }
 
 // KPIs returns the current daily KPI counters.
@@ -442,41 +433,4 @@ func detectConflicts(claims []bridge.FileClaimInfo) (int, []ConflictDetail) {
 		}
 	}
 	return conflicts, details
-}
-
-// pollLoop runs Refresh on a ticker until stopCh is closed.
-// On consecutive errors, it backs off by skipping ticker ticks.
-func (m *FleetMonitor) pollLoop(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	consecutiveErrors := 0
-	for {
-		select {
-		case <-m.StopCh():
-			m.Logger.Debug("fleet monitor stopped")
-			return
-		case <-ticker.C:
-			if err := m.Refresh(); err != nil {
-				consecutiveErrors++
-				if consecutiveErrors <= 3 {
-					m.Logger.Warn("fleet refresh error", "error", err)
-				}
-				// Back off: skip next N-1 ticks (up to 4 skips = 5x interval).
-				skipTicks := min(consecutiveErrors-1, 4)
-				for range skipTicks {
-					select {
-					case <-m.StopCh():
-						return
-					case <-ticker.C:
-					}
-				}
-			} else {
-				if consecutiveErrors > 0 {
-					m.Logger.Info("fleet refresh recovered", "after_errors", consecutiveErrors)
-				}
-				consecutiveErrors = 0
-			}
-		}
-	}
 }

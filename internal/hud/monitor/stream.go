@@ -22,6 +22,23 @@ type StreamEntry struct {
 
 const maxEntries = 500
 
+// ContextEntryToStreamEntry converts a bridge ContextEntryInfo into the flat
+// StreamEntry shape used by SSE and TUI consumers. This is the single
+// canonical mapping point — callers should not duplicate the field-copy logic.
+func ContextEntryToStreamEntry(info bridge.ContextEntryInfo) StreamEntry {
+	return StreamEntry{
+		ID:        info.Entry.ID,
+		EntryType: info.Entry.EntryType,
+		AgentID:   info.Entry.AgentID,
+		Agent:     info.Entry.AgentID,
+		Namespace: info.Entry.Namespace,
+		Title:     info.Entry.Title,
+		Content:   info.Entry.Content,
+		Timestamp: info.Entry.Timestamp,
+		Score:     info.Score,
+	}
+}
+
 // StreamMonitor polls the agent context stream and maintains a cached,
 // deduplicated list of recent entries. It broadcasts only new (delta)
 // entries via the OnRefresh callback.
@@ -44,16 +61,7 @@ func NewStreamMonitor(agent *bridge.AgentBridge, logger *slog.Logger) *StreamMon
 
 // Start begins the background polling goroutine at the given interval.
 func (m *StreamMonitor) Start(interval time.Duration) {
-	// Use StartManual because StreamMonitor has custom refresh semantics
-	// (delta-based OnRefresh, watermark tracking) that do not fit the
-	// standard RefreshFunc pattern where Update replaces the snapshot.
-	m.StartManual()
-	go func() {
-		if err := m.Refresh(); err != nil {
-			m.Logger.Warn("initial stream refresh failed", "error", err)
-		}
-	}()
-	go m.pollLoop(interval)
+	m.StartLoop(interval, m.Refresh)
 }
 
 // Entries returns a thread-safe copy of the cached entries (most-recent-first).
@@ -96,17 +104,7 @@ func (m *StreamMonitor) Refresh() error {
 			continue
 		}
 
-		delta = append(delta, StreamEntry{
-			ID:        id,
-			EntryType: r.Entry.EntryType,
-			AgentID:   r.Entry.AgentID,
-			Agent:     r.Entry.AgentID,
-			Namespace: r.Entry.Namespace,
-			Title:     r.Entry.Title,
-			Content:   r.Entry.Content,
-			Timestamp: r.Entry.Timestamp,
-			Score:     r.Score,
-		})
+		delta = append(delta, ContextEntryToStreamEntry(r))
 	}
 
 	// Update watermark to now after any successful fetch, even if no entries
@@ -140,40 +138,4 @@ func (m *StreamMonitor) Refresh() error {
 
 	m.Logger.Debug("stream refresh", "new_entries", len(delta), "total", len(entries))
 	return nil
-}
-
-// pollLoop runs Refresh on a ticker until stopCh is closed.
-// On consecutive errors, it backs off by skipping ticker ticks.
-func (m *StreamMonitor) pollLoop(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	consecutiveErrors := 0
-	for {
-		select {
-		case <-m.StopCh():
-			m.Logger.Debug("stream monitor stopped")
-			return
-		case <-ticker.C:
-			if err := m.Refresh(); err != nil {
-				consecutiveErrors++
-				if consecutiveErrors <= 3 {
-					m.Logger.Warn("stream refresh error", "error", err)
-				}
-				skipTicks := min(consecutiveErrors-1, 4)
-				for range skipTicks {
-					select {
-					case <-m.StopCh():
-						return
-					case <-ticker.C:
-					}
-				}
-			} else {
-				if consecutiveErrors > 0 {
-					m.Logger.Info("stream refresh recovered", "after_errors", consecutiveErrors)
-				}
-				consecutiveErrors = 0
-			}
-		}
-	}
 }

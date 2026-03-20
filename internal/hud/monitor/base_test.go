@@ -216,3 +216,56 @@ func TestBaseMonitor_LockUnlock(t *testing.T) {
 		t.Fatalf("expected 'direct', got %q", got)
 	}
 }
+
+func TestBaseMonitor_StartLoopAndStop(t *testing.T) {
+	var b BaseMonitor[int]
+	b.InitBase(nil, nil, "test")
+
+	var calls atomic.Int32
+	refreshFn := func() error {
+		n := calls.Add(1)
+		b.Update(int(n))
+		return nil
+	}
+
+	b.StartLoop(50*time.Millisecond, refreshFn)
+
+	// Wait for initial refresh + at least one poll cycle.
+	time.Sleep(200 * time.Millisecond)
+	b.Stop()
+	time.Sleep(50 * time.Millisecond)
+
+	if c := calls.Load(); c < 2 {
+		t.Fatalf("expected at least 2 refresh calls, got %d", c)
+	}
+	if got := b.Snapshot(); got == 0 {
+		t.Fatal("expected non-zero snapshot after refresh")
+	}
+}
+
+func TestBaseMonitor_StartLoopBackoffOnErrors(t *testing.T) {
+	var b BaseMonitor[int]
+	b.InitBase(nil, nil, "test")
+
+	var calls atomic.Int32
+	refreshFn := func() error {
+		n := calls.Add(1)
+		if n <= 3 {
+			return errors.New("transient error")
+		}
+		b.Update(int(n))
+		return nil
+	}
+
+	b.StartLoop(20*time.Millisecond, refreshFn)
+
+	// With backoff, after 3 errors the monitor skips ticks. Eventually
+	// it should recover. Give it enough time.
+	time.Sleep(500 * time.Millisecond)
+	b.Stop()
+	time.Sleep(50 * time.Millisecond)
+
+	if got := b.Snapshot(); got == 0 {
+		t.Fatal("expected recovery after transient errors")
+	}
+}

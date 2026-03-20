@@ -153,6 +153,8 @@ func newTestAppWithHandlers(t *testing.T) (*App, *http.ServeMux, *appMockHandler
 
 	app.workflowMonitor = monitor.NewWorkflowMonitor(agent, nil)
 
+	app.sandboxMonitor = monitor.NewSandboxMonitor(client, nil)
+
 	// Initialize domain registry for route decomposition.
 	app.initDomainRegistry()
 
@@ -3625,5 +3627,60 @@ func TestIsMobileManagedPresence(t *testing.T) {
 				t.Fatalf("got %v want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestMemoryStatsPayload(t *testing.T) {
+	stats := &bridge.MemoryStatsResult{
+		WorkingMemory:          bridge.MemoryTierStats{Items: 10, Tokens: 500},
+		ShortTermMemory:        bridge.MemoryTierStats{Items: 20, Tokens: 1000},
+		LongTermMemory:         bridge.MemoryTierStats{Items: 5, Tokens: 200},
+		TotalItems:             35,
+		TotalTokens:            1700,
+		CompressionRatio:       0.8,
+		ItemsAddedLast24h:      3,
+		ItemsCompressedLast24h: 2,
+	}
+
+	payload := memoryStatsPayload(stats)
+
+	// Check tier shape.
+	wm, ok := payload["working_memory"].(map[string]any)
+	if !ok {
+		t.Fatal("working_memory missing or wrong type")
+	}
+	if wm["items"] != 10 || wm["tokens"] != 500 {
+		t.Fatalf("working_memory unexpected: %v", wm)
+	}
+
+	if payload["total_items"] != 35 {
+		t.Fatalf("total_items: got %v, want 35", payload["total_items"])
+	}
+
+	// Compression block should be present.
+	comp, ok := payload["compression"].(map[string]any)
+	if !ok {
+		t.Fatal("compression block missing")
+	}
+	if comp["ratio"] != 0.8 {
+		t.Fatalf("compression ratio: got %v, want 0.8", comp["ratio"])
+	}
+	// tokens_saved = int(1700 * (1 - 0.8)) — float truncation yields 339.
+	if comp["tokens_saved"] != 339 {
+		t.Fatalf("tokens_saved: got %v, want 339", comp["tokens_saved"])
+	}
+}
+
+func TestMemoryStatsPayload_NoCompression(t *testing.T) {
+	stats := &bridge.MemoryStatsResult{
+		WorkingMemory: bridge.MemoryTierStats{Items: 1, Tokens: 10},
+		TotalItems:    1,
+		TotalTokens:   10,
+	}
+
+	payload := memoryStatsPayload(stats)
+
+	if _, ok := payload["compression"]; ok {
+		t.Fatal("compression block should be absent when ratio=0 and compressed=0")
 	}
 }

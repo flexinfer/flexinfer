@@ -354,43 +354,25 @@ func (a *App) handleMobileControlPlane(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rbac := mobileControlPlaneRBAC{}
-	if rawRBAC, err := a.client.Call("loom/rbac-config", nil); err != nil {
-		a.logger.Debug("mobile control-plane: rbac-config call failed", "error", err)
-	} else {
-		var result bridge.RBACConfigResult
-		if err := json.Unmarshal(rawRBAC, &result); err != nil {
-			a.logger.Debug("mobile control-plane: unmarshal rbac-config failed", "error", err)
-		} else {
-			rbac = mobileControlPlaneRBAC{
-				Enabled:         result.Enabled,
-				DefaultPolicy:   strings.TrimSpace(result.DefaultPolicy),
-				RoleCount:       len(result.Roles),
-				BindingCount:    len(result.Bindings),
-				GlobalDenyCount: len(result.GlobalDeny),
-				RateLimitCount:  len(result.RateLimits),
-				DeniedCount:     len(result.RecentDenied),
-			}
-		}
+	rbacResult := a.fetchRBACConfig()
+	rbac := mobileControlPlaneRBAC{
+		Enabled:         rbacResult.Enabled,
+		DefaultPolicy:   strings.TrimSpace(rbacResult.DefaultPolicy),
+		RoleCount:       len(rbacResult.Roles),
+		BindingCount:    len(rbacResult.Bindings),
+		GlobalDenyCount: len(rbacResult.GlobalDeny),
+		RateLimitCount:  len(rbacResult.RateLimits),
+		DeniedCount:     len(rbacResult.RecentDenied),
 	}
 
-	otel := mobileControlPlaneOTel{}
-	if rawOTel, err := a.client.Call("loom/otel-status", nil); err != nil {
-		a.logger.Debug("mobile control-plane: otel-status call failed", "error", err)
-	} else {
-		var result bridge.OTelStatusResult
-		if err := json.Unmarshal(rawOTel, &result); err != nil {
-			a.logger.Debug("mobile control-plane: unmarshal otel-status failed", "error", err)
-		} else {
-			otel = mobileControlPlaneOTel{
-				OTLPConfigured:  result.OTLPConfigured,
-				OTLPEndpoint:    strings.TrimSpace(result.OTLPEndpoint),
-				JSONLogsEnabled: result.JSONLogsEnabled,
-				TracedServers:   result.TracedServers,
-				TotalServers:    result.TotalServers,
-				TraceCoverage:   strings.TrimSpace(result.TraceCoverage),
-			}
-		}
+	otelResult := a.fetchOTelStatus()
+	otel := mobileControlPlaneOTel{
+		OTLPConfigured:  otelResult.OTLPConfigured,
+		OTLPEndpoint:    strings.TrimSpace(otelResult.OTLPEndpoint),
+		JSONLogsEnabled: otelResult.JSONLogsEnabled,
+		TracedServers:   otelResult.TracedServers,
+		TotalServers:    otelResult.TotalServers,
+		TraceCoverage:   strings.TrimSpace(otelResult.TraceCoverage),
 	}
 
 	health := mobileControlPlaneHealth{}
@@ -1039,28 +1021,19 @@ func (a *App) handleMobileMemoryStats(w http.ResponseWriter, r *http.Request) {
 		stats = directStats
 	}
 
-	resp := map[string]any{
-		"working_memory": map[string]any{
-			"items":  stats.WorkingMemory.Items,
-			"tokens": stats.WorkingMemory.Tokens,
-		},
-		"short_term_memory": map[string]any{
-			"items":  stats.ShortTermMemory.Items,
-			"tokens": stats.ShortTermMemory.Tokens,
-		},
-		"long_term_memory": map[string]any{
-			"items":  stats.LongTermMemory.Items,
-			"tokens": stats.LongTermMemory.Tokens,
-		},
-		"total_items":  stats.TotalItems,
-		"total_tokens": stats.TotalTokens,
-		"compression": map[string]any{
+	resp := memoryStatsPayload(stats)
+	// Mobile companion (OpsModels.swift:456) expects "estimated_saved" alias
+	// inside the compression block, and always-present compression.
+	if comp, ok := resp["compression"].(map[string]any); ok {
+		comp["estimated_saved"] = comp["tokens_saved"]
+	} else {
+		resp["compression"] = map[string]any{
 			"ratio":            stats.CompressionRatio,
 			"added_24h":        stats.ItemsAddedLast24h,
 			"compressed_24h":   stats.ItemsCompressedLast24h,
 			"estimated_saved":  int(float64(stats.TotalTokens) * (1 - stats.CompressionRatio)),
 			"compressed_items": stats.ItemsCompressedLast24h,
-		},
+		}
 	}
 
 	a.writeMobileJSON(w, http.StatusOK, map[string]any{"stats": resp})
@@ -1841,29 +1814,13 @@ func (a *App) handleMobileSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if cached, ok := a.cache.Get("sandbox_summary"); ok {
-		a.writeMobileJSON(w, http.StatusOK, cached)
-		return
-	}
-
-	result, err := a.client.CallTool("devbox_summary", nil)
-	if err != nil {
-		a.logger.Debug("devbox_summary call failed, returning unavailable", "error", err)
-		fallback := map[string]any{"available": false}
-		a.cache.Set("sandbox_summary", fallback, 5*time.Second)
-		a.writeMobileJSON(w, http.StatusOK, fallback)
-		return
-	}
-
-	summary, err := bridge.ParseToolResultMap(result)
-	if err != nil {
-		a.logger.Debug("devbox_summary unmarshal failed", "error", err)
+	snap := a.sandboxMonitor.Snapshot()
+	if snap == nil {
 		a.writeMobileJSON(w, http.StatusOK, map[string]any{"available": false})
 		return
 	}
-	summary["available"] = true
-	a.cache.Set("sandbox_summary", summary, 5*time.Second)
-	a.writeMobileJSON(w, http.StatusOK, summary)
+	snap["available"] = true
+	a.writeMobileJSON(w, http.StatusOK, snap)
 }
 
 // handleMobileSandboxStart triggers devbox_build for a project.
@@ -1886,20 +1843,12 @@ func (a *App) handleMobileSandboxStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	args := map[string]any{"project": body.Project}
-	if body.AgentID != "" {
-		args["agent_id"] = body.AgentID
-	}
-	result, err := a.client.CallTool("devbox_build", args)
+	parsed, err := a.doSandboxStart(body.Project, body.AgentID)
 	if err != nil {
 		a.writeMobileError(w, http.StatusBadGateway, "devbox_build_failed", "failed to start sandbox: "+err.Error())
 		return
 	}
-
-	a.cache.Invalidate("sandbox_summary")
-
-	parsed, err := bridge.ParseToolResultMap(result)
-	if err != nil {
+	if parsed == nil {
 		a.writeMobileJSON(w, http.StatusOK, map[string]any{"started": true, "project": body.Project})
 		return
 	}
@@ -1926,13 +1875,10 @@ func (a *App) handleMobileSandboxStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := a.client.CallTool("devbox_stop", map[string]any{"project": body.Project})
-	if err != nil {
+	if err := a.doSandboxStop(body.Project); err != nil {
 		a.writeMobileError(w, http.StatusBadGateway, "devbox_stop_failed", "failed to stop sandbox: "+err.Error())
 		return
 	}
-
-	a.cache.Invalidate("sandbox_summary")
 	a.writeMobileJSON(w, http.StatusOK, map[string]any{"stopped": true, "project": body.Project})
 }
 

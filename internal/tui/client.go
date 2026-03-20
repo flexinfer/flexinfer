@@ -146,16 +146,7 @@ func (c *Client) SessionEntries(sessionID string) []monitor.StreamEntry {
 	}
 	result := make([]monitor.StreamEntry, len(entries))
 	for i, e := range entries {
-		result[i] = monitor.StreamEntry{
-			ID:        e.Entry.ID,
-			EntryType: e.Entry.EntryType,
-			AgentID:   e.Entry.AgentID,
-			Namespace: e.Entry.Namespace,
-			Title:     e.Entry.Title,
-			Content:   e.Entry.Content,
-			Timestamp: e.Entry.Timestamp,
-			Score:     e.Score,
-		}
+		result[i] = monitor.ContextEntryToStreamEntry(e)
 	}
 	return result
 }

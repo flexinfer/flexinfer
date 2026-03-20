@@ -169,6 +169,55 @@ func (b *BaseMonitor[T]) pollLoop(interval time.Duration, refreshFn RefreshFunc[
 	}
 }
 
+// StartLoop launches an async initial refresh followed by the standard poll
+// loop, but accepts a plain func() error instead of a RefreshFunc[T]. This is
+// for monitors that keep their own complex Refresh implementation (with
+// internal state, KPI tracking, etc.) and call Update themselves.
+func (b *BaseMonitor[T]) StartLoop(interval time.Duration, refreshFn func() error) {
+	go func() {
+		if err := refreshFn(); err != nil {
+			b.Logger.Warn("initial refresh failed", "error", err)
+		}
+	}()
+	go b.runLoop(interval, refreshFn)
+}
+
+// runLoop runs refreshFn on a ticker with exponential backoff.
+// On consecutive errors it skips up to 4 ticks (5x the base interval).
+func (b *BaseMonitor[T]) runLoop(interval time.Duration, refreshFn func() error) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	consecutiveErrors := 0
+	for {
+		select {
+		case <-b.stopCh:
+			b.Logger.Debug("monitor stopped")
+			return
+		case <-ticker.C:
+			if err := refreshFn(); err != nil {
+				consecutiveErrors++
+				if consecutiveErrors <= 3 {
+					b.Logger.Warn("refresh error", "error", err)
+				}
+				skipTicks := min(consecutiveErrors-1, 4)
+				for range skipTicks {
+					select {
+					case <-b.stopCh:
+						return
+					case <-ticker.C:
+					}
+				}
+			} else {
+				if consecutiveErrors > 0 {
+					b.Logger.Info("refresh recovered", "after_errors", consecutiveErrors)
+				}
+				consecutiveErrors = 0
+			}
+		}
+	}
+}
+
 // RLock acquires a read lock on the snapshot mutex. Monitors with complex
 // internal state (HealthMonitor, FleetMonitor) use this for direct access.
 func (b *BaseMonitor[T]) RLock() { b.mu.RLock() }
