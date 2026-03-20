@@ -22,7 +22,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -183,14 +182,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			})
 		}
 
-		nodeSelector := modelCache.Spec.NodeSelector
-		// Allow overriding quantize job node selection via env var
-		// (e.g. to target a node with more RAM for large models).
-		if override := os.Getenv("FLEXINFER_GPTQ_NODE_SELECTOR_OVERRIDE"); override != "" {
-			nodeSelector = map[string]string{"kubernetes.io/hostname": override}
-			log.Info("Overriding quantize job nodeSelector", "node", override)
-		}
-		gpuArch := gpu.ArchFromLabels(nodeSelector)
+		gpuArch := gpu.ArchFromLabels(modelCache.Spec.NodeSelector)
 		params := quantization.JobParams{
 			Name:         modelCache.Name,
 			Namespace:    modelCache.Namespace,
@@ -198,8 +190,8 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			ModelPath:    modelPath,
 			Spec:         modelCache.Spec.Quantization,
 			Tolerations:  tolerations,
-			NodeSelector: nodeSelector,
-			GPUVendor:    gpu.VendorFromLabels(nodeSelector),
+			NodeSelector: modelCache.Spec.NodeSelector,
+			GPUVendor:    gpu.VendorFromLabels(modelCache.Spec.NodeSelector),
 			GPUArch:      gpuArch,
 		}
 		// Look up GPUProfile for quantizer image override.

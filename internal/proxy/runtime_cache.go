@@ -115,7 +115,6 @@ func (rc *RuntimeCache) refresh(ctx context.Context) error {
 			PodIP:    pod.Status.PodIP,
 			Port:     pkgrt.RuntimeAPIPort,
 			NodeName: pod.Spec.NodeName,
-			GPUArch:  pod.Labels["flexinfer.ai/gpu-arch"],
 			Ready:    isPodReadyFromConditions(&pod),
 		}
 		endpoints = append(endpoints, ep)

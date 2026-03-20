@@ -326,14 +326,6 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "FinetuneComplete",
 			fmt.Sprintf("Finetune complete: loss=%s, samples/s=%s", ftStatus.TrainLoss, ftStatus.SamplesPerSecond))
 
-		// CRITICAL: Persist finetune status to etcd BEFORE dispatching to
-		// downstream phases. Without this, if the downstream phase's status
-		// update fails or the controller restarts, the finetune completion
-		// state is lost and finetuning re-runs from scratch.
-		if err := r.Status().Update(ctx, modelCache); err != nil {
-			return ctrl.Result{}, err
-		}
-
 		// Dispatch to quantization if spec is set.
 		if modelCache.Spec.Quantization != nil {
 			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)

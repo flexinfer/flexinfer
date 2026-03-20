@@ -7,17 +7,7 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - endpoints
-  - nodes
-  - pods
-  - secrets
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
+  - configmaps
   - persistentvolumeclaims
   - services
   verbs:
@@ -29,13 +19,26 @@ rules:
   - update
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - endpoints
+  - nodes
+  - pods
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - ai.flexinfer
   resources:
   - clusters
   - federatedmodels
+  - gpugroups
   - loraadapters
   - modelcaches
   - modelcatalogs
+  - modeldeployments
   - models
   verbs:
   - create
@@ -50,8 +53,10 @@ rules:
   resources:
   - clusters/finalizers
   - federatedmodels/finalizers
+  - gpugroups/finalizers
   - loraadapters/finalizers
   - modelcaches/finalizers
+  - modeldeployments/finalizers
   - models/finalizers
   verbs:
   - update
@@ -60,10 +65,12 @@ rules:
   resources:
   - clusters/status
   - federatedmodels/status
+  - gpugroups/status
   - gpuprofiles/status
   - loraadapters/status
   - modelcaches/status
   - modelcatalogs/status
+  - modeldeployments/status
   - models/status
   verbs:
   - get

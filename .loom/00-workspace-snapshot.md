@@ -1,45 +1,43 @@
 # Workspace Snapshot
 
-- Generated: 2026-03-05T18:43:39-05:00
+- Generated: 2026-02-20T14:30:23-05:00
 - Root: `/Users/cblevins/workspace/services/flexinfer`
 - Git toplevel: `/Users/cblevins/workspace/services/flexinfer`
-- Platform: `macOS-26.4-arm64-arm-64bit`
+- Platform: `macOS-26.3-arm64-arm-64bit`
 - Python: `3.12.11`
 
 ## Git
 ```
-## master...gitlab/fix/proxy-alias-resolution [ahead 18]
+## master...origin/master
  M .loom/00-index.md
  M .loom/00-mcp-inventory.md
  M .loom/00-workspace-snapshot.md
  M .loom/10-research.md
+ M .loom/20-product-spec.md
  M .loom/30-implementation-plan.md
+ M .loom/40-decisions.md
  M .loom/50-worklog.md
-?? .claude/.loom-skills-manifest.json
-?? .claude/commands/
-?? .claude/instructions.md
-?? .claude/rules/
-?? .claude/settings.json
-?? .claude/settings.json.tmp
-?? .kilocode/
-?? docs/roadmap-reconciliation-2026-03-05.md
+ M ROADMAP.md
+ M docs/planning/next-roadmap.md
+?? docs/roadmap-reconciliation-2026-02-19.md
+?? docs/roadmap-reconciliation-2026-02-20.md
 ```
 
 ### Remotes
 ```
 github	https://github.com/flexinfer/flexinfer.git (fetch)
 github	https://github.com/flexinfer/flexinfer.git (push)
-gitlab	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab.flexinfer.ai/services/flexinfer.git (fetch)
-gitlab	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab.flexinfer.ai/services/flexinfer.git (push)
+gitlab	https://gitlab.flexinfer.ai/services/flexinfer.git (fetch)
+gitlab	https://gitlab.flexinfer.ai/services/flexinfer.git (push)
 gitlab-vm	git@gitlab.flexinfer.ai:services/flexinfer.git (fetch)
 gitlab-vm	git@gitlab.flexinfer.ai:services/flexinfer.git (push)
-origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab.flexinfer.ai/services/flexinfer.git (fetch)
-origin	https://oauth2:glpat-vFFCVHmo_LOPh6lq1tk3p286MQp1OjEH.01.0w0ycoylq@gitlab.flexinfer.ai/services/flexinfer.git (push)
+origin	https://gitlab.flexinfer.ai/services/flexinfer.git (fetch)
+origin	https://gitlab.flexinfer.ai/services/flexinfer.git (push)
 ```
 
 ### HEAD
 ```
-a9ed3af docs: expand architecture docs with 8 Mermaid workflow diagrams
+a16b2d1 Merge branch 'codex/issue-9-prometheus-deps-batch1' into 'master'
 ```
 
 ## Top-Level Layout
@@ -52,10 +50,8 @@ a9ed3af docs: expand architecture docs with 8 Mermaid workflow diagrams
 - `.gocache/`
 - `.golangci-lint-cache/`
 - `.gotmp/`
-- `.kilocode/`
 - `.loom/`
 - `.vscode/`
-- `.vscode-mcp/`
 - `agents/`
 - `api/`
 - `assets/`
@@ -80,11 +76,21 @@ a9ed3af docs: expand architecture docs with 8 Mermaid workflow diagrams
 - `.dockerignore`
 - `.gitignore`
 - `.gitlab-ci.yml`
+- `.golangci.v2.yml`
 - `.golangci.yml`
 - `ADOPTERS.md`
 - `AGENTS.md`
 - `CODE_OF_CONDUCT.md`
 - `CONTRIBUTING.md`
+- `cover.out`
+- `coverage.out`
+- `flexinfer`
+- `flexinfer-agent`
+- `flexinfer-bench`
+- `flexinfer-flash-loader`
+- `flexinfer-manager`
+- `flexinfer-proxy`
+- `flexinfer-sched`
 - `go.mod`
 - `go.sum`
 - `GOVERNANCE.md`
@@ -95,6 +101,7 @@ a9ed3af docs: expand architecture docs with 8 Mermaid workflow diagrams
 - `renovate.json`
 - `ROADMAP.md`
 - `SECURITY.md`
+- `seed-issues`
 - `setup.sh`
 
 ## Key Files Detected
@@ -109,6 +116,7 @@ a9ed3af docs: expand architecture docs with 8 Mermaid workflow diagrams
 - `.githooks/pre-push`
 - `.gitignore`
 - `.gitlab-ci.yml`
+- `.golangci.v2.yml`
 - `.golangci.yml`
 - `.loom/00-index.md`
 - `.loom/00-mcp-inventory.md`
@@ -118,9 +126,6 @@ a9ed3af docs: expand architecture docs with 8 Mermaid workflow diagrams
 - `.loom/30-implementation-plan.md`
 - `.loom/40-decisions.md`
 - `.loom/50-worklog.md`
-- `.loom/tech-debt-inventory.json`
-- `.loom/tech-debt-plan.md`
-- `.loom/tech-debt-priority.md`
 - `.vscode/settings.json`
 - `ADOPTERS.md`
 - `AGENTS.md`
@@ -145,11 +150,6 @@ a9ed3af docs: expand architecture docs with 8 Mermaid workflow diagrams
 - `agents/agent/vram_other.go`
 - `agents/benchmarker/benchmarker.go`
 - `agents/benchmarker/benchmarker_test.go`
-- `agents/benchmarker/configmap_store.go`
-- `agents/benchmarker/postgres_store.go`
-- `agents/benchmarker/schema.sql`
-- `agents/benchmarker/store.go`
-- `agents/benchmarker/store_test.go`
 - `agents/termination/aws.go`
 - `agents/termination/azure.go`
 - `agents/termination/detector.go`
@@ -180,13 +180,8 @@ a9ed3af docs: expand architecture docs with 8 Mermaid workflow diagrams
 - `assets/header.svg`
 - `assets/icon.png`
 - `backend/comfyui.go`
-- `backend/comfyui_test.go`
 - `backend/diffusers.go`
-- `backend/diffusers_test.go`
-- `backend/gpu_compat.go`
-- `backend/gpu_compat_test.go`
 - `backend/interface.go`
-- `backend/interface_test.go`
 - `backend/llamacpp.go`
 - `backend/llamacpp_test.go`
 - `backend/mlc_llm.go`
@@ -199,24 +194,15 @@ a9ed3af docs: expand architecture docs with 8 Mermaid workflow diagrams
 - `backend/vllm_omni.go`
 - `backend/vllm_omni_test.go`
 - `backend/vllm_test.go`
-- `backend/vram_estimate.go`
-- `backend/vram_estimate_test.go`
 - `build/Dockerfile.agent`
 - `build/Dockerfile.agent.bin`
 - `build/Dockerfile.bench`
 - `build/Dockerfile.bench.bin`
 - `build/Dockerfile.comfyui-rocm`
-- `build/Dockerfile.comfyui-rocm-gfx1100`
-- `build/Dockerfile.comfyui-rocm-gfx906`
 - `build/Dockerfile.diffusers-cuda`
 - `build/Dockerfile.diffusers-rocm`
-- `build/Dockerfile.diffusers-rocm-gfx1100`
-- `build/Dockerfile.diffusers-rocm-gfx906`
 - `build/Dockerfile.flash-loader`
 - `build/Dockerfile.flash-loader.bin`
-- `build/Dockerfile.llamacpp-cuda-maxwell`
-- `build/Dockerfile.llamacpp-rocm-gfx1100`
-- `build/Dockerfile.llamacpp-rocm-gfx906`
 - `build/Dockerfile.manager`
 - `build/Dockerfile.manager.bin`
 - `build/Dockerfile.mlc-cuda`
@@ -225,31 +211,20 @@ a9ed3af docs: expand architecture docs with 8 Mermaid workflow diagrams
 - `build/Dockerfile.mlc-rocm64-build`
 - `build/Dockerfile.mlc-rocm64-full`
 - `build/Dockerfile.mlc-rocm64-gfx1100`
-- `build/Dockerfile.mlc-rocm64-gfx906`
 - `build/Dockerfile.mlc-rocm64-hipblas`
 - `build/Dockerfile.ollama-cuda-maxwell`
 - `build/Dockerfile.proxy`
 - `build/Dockerfile.proxy.bin`
 - `build/Dockerfile.quantizer-awq`
-- `build/Dockerfile.quantizer-awq-rocm`
 - `build/Dockerfile.quantizer-gguf`
 - `build/Dockerfile.quantizer-gptq`
 - `build/Dockerfile.sched`
 - `build/Dockerfile.sched.bin`
-- `build/Dockerfile.vllm-nightly-rocm-gfx1100`
 - `build/Dockerfile.vllm-omni-rocm`
-- `build/Dockerfile.vllm-omni-rocm-gfx1100`
 - `build/Dockerfile.vllm-rocm`
 - `build/Dockerfile.vllm-rocm-gfx1100`
-- `build/Dockerfile.vllm-rocm-gfx1100-fa`
-- `build/Dockerfile.vllm-rocm-gfx906`
-- `build/Dockerfile.vllm-rocm-gfx906-fa`
-- `build/README-gfx906.md`
 - `build/README-maxwell.md`
 - `build/README-rocm.md`
-- `build/patch-hipmemgetinfo.sh`
-- `build/requirements-diffusers-rocm.txt`
-- `build/vllm-omni-shims/registry.py`
 - `charts/flexinfer/Chart.yaml`
 - `charts/flexinfer/crds/ai.flexinfer_clusters.yaml`
 - `charts/flexinfer/crds/ai.flexinfer_federatedmodels.yaml`
@@ -288,10 +263,7 @@ a9ed3af docs: expand architecture docs with 8 Mermaid workflow diagrams
 - `cmd/flexinfer-agent/main_test.go`
 - `cmd/flexinfer-bench/main.go`
 - `cmd/flexinfer-bench/main_test.go`
-- `cmd/flexinfer-flash-loader/fadvise_linux.go`
-- `cmd/flexinfer-flash-loader/fadvise_other.go`
 - `cmd/flexinfer-flash-loader/main.go`
-- `cmd/flexinfer-flash-loader/main_test.go`
 - `cmd/flexinfer-global-proxy/main.go`
 - `cmd/flexinfer-global-proxy/main_test.go`
 - `cmd/flexinfer-manager/main.go`
@@ -304,6 +276,41 @@ a9ed3af docs: expand architecture docs with 8 Mermaid workflow diagrams
 - `cmd/flexinfer/commands/catalog.go`
 - `cmd/flexinfer/commands/cli_commands_test.go`
 - `cmd/flexinfer/commands/delete.go`
+- `cmd/flexinfer/commands/list.go`
+- `cmd/flexinfer/commands/list_test.go`
+- `cmd/flexinfer/commands/logs.go`
+- `cmd/flexinfer/commands/quantize.go`
+- `cmd/flexinfer/commands/root.go`
+- `cmd/flexinfer/commands/scale.go`
+- `cmd/flexinfer/commands/status.go`
+- `cmd/flexinfer/commands/status_test.go`
+- `cmd/flexinfer/main.go`
+- `config/crd/ai.flexinfer_clusters.yaml`
+- `config/crd/ai.flexinfer_federatedmodels.yaml`
+- `config/crd/ai.flexinfer_globalproxies.yaml`
+- `config/crd/ai.flexinfer_gpugroups.yaml`
+- `config/crd/ai.flexinfer_loraadapters.yaml`
+- `config/crd/ai.flexinfer_modelcaches.yaml`
+- `config/crd/ai.flexinfer_modelcatalogs.yaml`
+- `config/crd/ai.flexinfer_modeldeployments.yaml`
+- `config/crd/ai.flexinfer_models.yaml`
+- `config/rbac/role.yaml`
+- `controllers/backend_test.go`
+- `controllers/catalog_controller.go`
+- `controllers/cluster_controller.go`
+- `controllers/cluster_controller_test.go`
+- `controllers/constants.go`
+- `controllers/event_recording_test.go`
+- `controllers/federatedmodel_controller.go`
+- `controllers/federatedmodel_controller_test.go`
+- `controllers/finalizer_test.go`
+- `controllers/gpu_resource_test.go`
+- `controllers/gpugroup_controller.go`
+- `controllers/gpugroup_controller_test.go`
+- `controllers/gpugroup_integration_test.go`
+- `controllers/job_creation_test.go`
+- `controllers/lora_controller.go`
+- `controllers/model_controller.go`
 - `…`
 
 ## AGENTS.md Files

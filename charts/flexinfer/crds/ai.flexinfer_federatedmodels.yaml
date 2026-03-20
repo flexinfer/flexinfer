@@ -376,13 +376,6 @@ spec:
                         - Reconfigure
                         - Evict
                         type: string
-                      reconfigureCooldown:
-                        description: |-
-                          ReconfigureCooldown is how long after a reconfigure action before
-                          the controller considers restoring the original config.
-                          Prevents thrashing between reduced and original settings.
-                          Default: 5m.
-                        type: string
                       swapSpace:
                         anyOf:
                         - type: integer
@@ -440,11 +433,6 @@ spec:
                           Calibration configures calibration parameters for AWQ/GPTQ quantization.
                           Ignored for GGUF and EXL2 formats.
                         properties:
-                          dataset:
-                            description: |-
-                              Dataset is the HuggingFace dataset used for calibration samples.
-                              Defaults to "mit-han-lab/pile-val-backup".
-                            type: string
                           maxSamples:
                             description: |-
                               MaxSamples is the number of calibration samples to use.
@@ -477,19 +465,6 @@ spec:
                           desc_act=false gives faster inference; true gives slightly better quality.
                           Ignored for non-GPTQ formats.
                         type: boolean
-                      dynamicExclusion:
-                        description: |-
-                          DynamicExclusion controls which module patterns are excluded from
-                          quantization (kept at full precision). Defaults to "auto".
-                            - "auto": auto-detect hybrid architectures and exclude attention/expert/
-                              vision/MTP modules (matches official Qwen GPTQ-Int4 approach).
-                            - "none": quantize all modules to the target bit width (pure INT4).
-                              Produces smaller models that fit on smaller VRAM cards.
-                          Only used for GPTQ format.
-                        enum:
-                        - auto
-                        - none
-                        type: string
                       format:
                         description: Format is the target quantization format.
                         enum:
@@ -503,14 +478,6 @@ spec:
                         description: |-
                           GGUFType is the GGUF quantization level (e.g., Q4_K_M, Q5_K_M, Q8_0).
                           Only used when Format is GGUF.
-                        type: string
-                      gpuMemoryFraction:
-                        description: |-
-                          GPUMemoryFraction caps the fraction of GPU VRAM available to the
-                          quantization process (e.g. "0.80"). Defaults to "0.80".
-                          Lower values leave more headroom for GPU driver overhead (important on ROCm
-                          where HIP/GTT allocations bypass container cgroup limits).
-                          Only used for GPTQ format.
                         type: string
                       groupSize:
                         description: GroupSize is the quantization group size for

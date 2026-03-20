@@ -186,31 +186,7 @@ envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	test -s $(LOCALBIN)/setup-envtest || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 
-##@ Runtime Images (config-driven, see build/runtime.yaml)
-
-RUNTIME_PROFILES := gfx1100 gfx906 cuda-maxwell
-
-.PHONY: build-runtime-%
-build-runtime-%: ## Build runtime image for a profile (e.g. make build-runtime-gfx1100)
-	./build/build-runtime.sh $*
-
-.PHONY: push-runtime-%
-push-runtime-%: ## Build + push runtime image for a profile
-	./build/build-runtime.sh $* --push
-
-.PHONY: build-runtimes
-build-runtimes: ## Build all runtime images sequentially
-	./build/build-runtime.sh all
-
-.PHONY: push-runtimes
-push-runtimes: ## Build + push all runtime images
-	./build/build-runtime.sh all --push
-
-.PHONY: dry-run-runtime-%
-dry-run-runtime-%: ## Print docker build command for a profile without executing
-	./build/build-runtime.sh $* --dry-run
-
-##@ Legacy Backend Images
+##@ Backend Images
 
 HARBOR_REGISTRY ?= registry.harbor.lan
 MLC_ROCM64_IMAGE ?= $(HARBOR_REGISTRY)/library/mlc-llm:rocm64-src

@@ -251,28 +251,6 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 			return ready, nil
 		}
 
-		// If a ModelCache pipeline is actively processing this PVC (download, abliteration,
-		// quantization, etc.), skip cache-check jobs entirely. They would compete for the
-		// RWO PVC and waste node resources. The model stays at 0 replicas until the pipeline
-		// finishes producing the artifact.
-		if pipelineActive, mcPhase := r.isModelCachePipelineActive(ctx, pvcName, model.Namespace); pipelineActive {
-			log.FromContext(ctx).Info("ModelCache pipeline active on PVC, skipping cache check",
-				"pvc", pvcName, "modelCachePhase", mcPhase)
-			model.Status.Cache = &aiv1alpha2.CacheStatus{
-				Strategy: cacheStrategy(model),
-				PVCName:  pvcName,
-				JobPhase: "Blocked",
-				Message:  fmt.Sprintf("ModelCache pipeline active (phase: %s)", mcPhase),
-				Ready:    false,
-			}
-			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PipelineActive",
-				fmt.Sprintf("ModelCache %s is in %s phase", pvcName, mcPhase))
-			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
-				return false, err
-			}
-			return false, nil
-		}
-
 		// Default pvc:// behavior: mount the source PVC directly, but run a check job so
 		// status.cache.ready means "artifact present", not just "PVC bound".
 		jobName := model.Name + "-cache-check"
@@ -631,33 +609,6 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 		return false, err
 	}
 	return model.Status.Cache.Ready, nil
-}
-
-// isModelCachePipelineActive checks if a ModelCache with the given PVC name is actively
-// running a pipeline step (downloading, abliterating, finetuning, or quantizing).
-// When active, the Model controller should not create cache-check jobs or try to schedule
-// pods on the same node — the pipeline job already owns the GPU and PVC.
-func (r *ModelReconciler) isModelCachePipelineActive(ctx context.Context, pvcName, namespace string) (bool, string) {
-	mcList := &aiv1alpha1.ModelCacheList{}
-	if err := r.List(ctx, mcList, client.InNamespace(namespace)); err != nil {
-		return false, ""
-	}
-	for _, mc := range mcList.Items {
-		if mc.Name != pvcName {
-			continue
-		}
-		switch mc.Status.Phase {
-		case aiv1alpha1.ModelCachePhasePending,
-			aiv1alpha1.ModelCachePhaseInitializing,
-			aiv1alpha1.ModelCachePhaseProvisioning,
-			aiv1alpha1.ModelCachePhaseAbliterating,
-			aiv1alpha1.ModelCachePhaseFinetuning,
-			aiv1alpha1.ModelCachePhaseQuantizing,
-			aiv1alpha1.ModelCachePhasePublishing:
-			return true, string(mc.Status.Phase)
-		}
-	}
-	return false, ""
 }
 
 // ensureQuantization manages the quantization job lifecycle for a model.

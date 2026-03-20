@@ -289,14 +289,6 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "AbliterationComplete",
 			fmt.Sprintf("Abliteration complete: %d layers modified", ablitStatus.LayersModified))
 
-		// CRITICAL: Persist abliteration status to etcd BEFORE dispatching to
-		// downstream phases. Without this, if the downstream phase's status
-		// update fails or the controller restarts, the abliteration completion
-		// state is lost and abliteration re-runs from scratch.
-		if err := r.Status().Update(ctx, modelCache); err != nil {
-			return ctrl.Result{}, err
-		}
-
 		// Dispatch to finetune or quantization if spec is set.
 		if modelCache.Spec.Finetune != nil {
 			return r.reconcileFinetune(ctx, modelCache, pvcName, modelPath)

@@ -371,23 +371,6 @@ echo "Skip vision: ${SKIP_VISION}"
 echo "Device map: ${DEVICE_MAP}"
 echo "Start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# Short-circuit: if abliteration already completed (status file + weight files exist),
-# re-emit the metadata and exit 0. This handles the case where the Job is recreated
-# (TTL GC + controller restart) after a successful abliteration.
-ABLIT_STATUS="${MODEL_DIR}/.abliteration-status.json"
-if [ -f "${ABLIT_STATUS}" ]; then
-    ABLIT_COMPLETE=$(python3 -c "import json; d=json.load(open('${ABLIT_STATUS}')); print('yes' if d.get('status')=='complete' else 'no')" 2>/dev/null || echo "no")
-    WEIGHT_COUNT=$(find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) 2>/dev/null | wc -l | tr -d ' ')
-    if [ "${ABLIT_COMPLETE}" = "yes" ] && [ "${WEIGHT_COUNT}" -gt 0 ]; then
-        echo "Abliteration already complete (${WEIGHT_COUNT} weight files present)"
-        echo "Status: $(cat ${ABLIT_STATUS})"
-        # Re-emit termination metadata for controller capture
-        cat "${ABLIT_STATUS}" > /dev/termination-log 2>/dev/null || true
-        exit 0
-    fi
-    echo "WARNING: Status file exists but abliteration may be incomplete (status=${ABLIT_COMPLETE}, weights=${WEIGHT_COUNT})"
-fi
-
 python3 /opt/flexinfer/scripts/abliterate.py
 
 END_TS=$(date +%s)

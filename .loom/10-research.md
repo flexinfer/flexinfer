@@ -1,153 +1,88 @@
-# AWQ vLLM Context Length Optimization Research
+# Research Brief
 
-## Current State
+## Problem
 
-The `vllm-qwen-awq` deployment runs **Qwen3-14B-AWQ** on a single AMD RX 7900 XTX (24GB VRAM) with ROCm.
+We need a current, evidence-backed planning baseline for FlexInfer that is safe to use immediately in this workspace, including tool/runtime capabilities and known blockers.
 
-### Current vLLM Serve Arguments
+## Questions
 
-From [vllm-qwen-awq.yaml](file:///Users/cblevins/workspace/platform/gitops/k3s/ai/legacy/vllm/vllm-qwen-awq.yaml#L192-L209):
+- What is the current local repo state and architecture context?
+- Which MCP inventory path is actually available in this session?
+- Is `codebase_memory` indexing/search ready for planning workflows?
 
-| Parameter                  | Current Value | Notes                                      |
-| -------------------------- | ------------- | ------------------------------------------ |
-| `--max-model-len`          | 8192          | Model natively supports 32K (131K w/ YaRN) |
-| `--gpu-memory-utilization` | 0.90          | Conservative; 0.92–0.95 possible           |
-| `--max-num-seqs`           | 6             | Low concurrent request count               |
-| `--max-num-batched-tokens` | 384           | **Extremely** conservative                 |
-| `--block-size`             | 32            | Standard                                   |
-| `--swap-space`             | 8             | 8GB CPU offload space                      |
-| `--enforce-eager`          | yes           | Disables HIP graph capture                 |
-| `--enable-chunked-prefill` | yes           | Good for ITL                               |
-| `--kv-cache-dtype`         | auto          | Currently FP16; not FP8                    |
-| `--quantization`           | awq           | INT4 weights via AWQ                       |
+## Constraints
 
-### Environment Variables (Container)
+- Work with current branch state (do not discard local changes).
+- Treat unsupported/unavailable MCP resource APIs as hard constraints.
+- Separate observed facts from assumptions.
 
-- `VLLM_USE_V1=0` — V0 engine (V1 is now default in vLLM ≥0.12)
-- `VLLM_ATTENTION_BACKEND=ROCM_FLASH` — Flash Attention on ROCm
-- `VLLM_USE_TRITON_FLASH_ATTN=1` — Triton FA for RDNA3
-- `VLLM_USE_TRITON_AWQ=1` — Triton AWQ path (required for ROCm)
-- `PYTORCH_HIP_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128`
-- Resource limits: 48Gi memory, 1× AMD GPU
+## Method
 
-### Model Specification — Qwen3-14B-AWQ
+- Ran `plan-loom-core` scripts to refresh `.loom/` scaffolding and workspace snapshot.
+- Queried MCP resource discovery (`list_mcp_resources`, `list_mcp_resource_templates`).
+- Used `loom` CLI fallback for server/tool inventory and counts.
+- Ran `codebase_memory` stats/index start/poll checks for `repo_id=flexinfer`.
+- Collected architecture anchors from `AGENTS.md`.
 
-- **Native context**: 32,768 tokens
-- **Extended context**: up to 131,072 with YaRN RoPE scaling
-- **AWQ model size**: ~9.5 GB (INT4 weights)
-- **Source**: `Qwen/Qwen3-14B-AWQ` on HuggingFace
+## Findings (Facts)
 
----
+- FlexInfer architecture context remains six cooperating executables documented in `AGENTS.md`.
+- Initial snapshot in this research run showed `master` behind `origin/master`; repository has since been reconciled and `master` is aligned at `a16b2d1`.
+- MCP resource/template APIs returned empty collections, so loom-resource mode was not available through MCP resource reads.
+- CLI fallback succeeded and reported `42` running servers and `445` tools.
+- `codebase_memory` index readiness failed for this repo:
+  - baseline stats require `repo_id`,
+  - `repo_id=flexinfer` shows `0` chunks,
+  - two index attempts failed (vector schema mismatch, then invalid point-id format),
+  - subsequent stats calls returned transport closed.
 
-## Optimization Levers Identified
+## Update (2026-02-19, later in session)
 
-### 1. FP8 KV Cache (`--kv-cache-dtype fp8`)
+- After recreating `codebase_memory_v1` with vector size `1536` and rebuilding `mcp-codebase-memory`, indexing succeeded:
+  - `job_id=1869e8aca6a0ab14`
+  - `chunks_total=1877`
+  - `errors=0`
+- Semantic lookup now returns expected symbols (for example `ModelReconciler` in `controllers/model_controller.go`).
+- The remaining issue is bridge-specific: direct `functions.mcp__loom__*` calls in this chat still return `Transport closed`, while `loom tools call ...` works.
 
-**Impact: ~2× KV cache capacity → nearly double context length**
+## Assumptions
 
-- Quantizes the KV cache from FP16 to FP8 (E4M3 format), halving per-token KV memory.
-- Supported on ROCm ≥ 6.2 with vLLM ≥ 0.16.0.
-- Minimal accuracy degradation for most tasks; AMD has validated this on MI300X and consumer RDNA3.
-- Can be combined with AWQ weight quantization (they operate on different tensors).
-- **Risk**: Slight precision loss in long-range attention patterns; acceptable for chat/code tasks.
+- `repo_id=flexinfer` is the intended identifier for this workspace until explicitly changed.
+- CLI inventory (`loom servers/tools`) is trustworthy enough for planning despite MCP resource discovery gaps.
 
-### 2. Increase `--max-model-len` (8192 → 16384 or 32768)
+## Update (2026-02-20)
 
-**Impact: Directly enables longer context windows**
+- Three serverless cold-start bugs found and fixed during Qwen3-30B-A3B deployment:
+  1. Controller `desiredReplicas()` reaped Loading models when `LastActiveTime` exceeded `idleTimeout`.
+  2. Proxy `triggerScaleUp()` silently swallowed Kubernetes conflict errors, leaving `LastActiveTime` stale.
+  3. GPUGroup queue path used global timeout, ignoring per-model `ColdStartTimeoutSeconds`.
+- Performance finding: Longhorn mmap overhead for 18.7GB GGUF is 15-20 minutes. Switching to `local-path` (direct NVMe) reduces load to ~3 minutes.
+- Qwen3-30B-A3B benchmark on AMD gfx1100: 108 tok/s generation, 72.5 tok/s prompt processing, Q4_K_M quantization.
+- All fixes merged via MR !40, CI pipeline #1787 green, deployed to cluster via Flux.
 
-- Current 8K is only 25% of the model's native 32K.
-- With FP8 KV cache, 32K context should fit in 24GB with a 14B AWQ model.
-- KV cache memory for 32K context at FP8: ~2.6 GB (vs ~5.2 GB at FP16).
-- Model weights (AWQ INT4): ~9.5 GB. Activations/overhead: ~2–3 GB.
-- **Total estimated**: 9.5 + 2.6 + 3 ≈ 15.1 GB at 32K/FP8, leaving ~8.9 GB headroom on 24GB.
-- **Conservative target**: 16384 (doubles current) with room for batched sequences.
+## Recommendation
 
-### 3. Increase `--gpu-memory-utilization` (0.90 → 0.92–0.95)
-
-**Impact: 0.5–1.2 GB more KV cache space**
-
-- 0.90 × 24GB = 21.6 GB available; 0.95 × 24GB = 22.8 GB.
-- The extra 1.2GB can hold additional ~4K–8K tokens of KV cache at FP8.
-- **Risk**: Too high can cause OOM under peak load; 0.92 is safe, 0.95 is aggressive.
-
-### 4. Increase `--max-num-batched-tokens` (384 → 2048+)
-
-**Impact: Dramatically better throughput and TTFT**
-
-- 384 is far too conservative—this limits prefill to 384 tokens per scheduler iteration.
-- vLLM recommends ≥ 2048 for reasonable TTFT; 8192+ for peak throughput.
-- With chunked prefill enabled, this controls the prefill chunk size.
-- **Recommended**: 2048 (balanced ITL/TTFT) or 4096 (throughput-oriented).
-
-### 5. Enable `--enable-prefix-caching`
-
-**Impact: Reuses KV cache for repeated prefixes (system prompts, multi-turn)**
-
-- Very effective for chat workloads where system prompt is shared.
-- Combines well with chunked prefill.
-- **Risk**: Minimal; slight metadata overhead. Already proven in the vLLM optimized deployment.
-
-### 6. `--enforce-eager` Removal
-
-**Impact: Enable HIP graph capture for decode throughput**
-
-- HIP graphs (CUDA graphs on AMD) reduce CPU-GPU kernel launch overhead.
-- On ROCm/RDNA3, reports indicate this is generally stable with vLLM's PIECEWISE mode.
-- **Risk**: Some models have had correctness issues on ROCm 7.0 with graph capture. Need to test.
-- **Recommendation**: Test without `--enforce-eager` first; fall back if stability issues arise.
-
-### 7. Reduce `--max-num-seqs` or Keep at 6
-
-- With longer context, each sequence consumes more KV memory.
-- At 32K context, 6 simultaneous sequences × 32K tokens = 192K total KV tokens.
-- May need to reduce to 3–4 concurrent sequences if pushing to 32K context.
-- At 16K, 6 sequences is feasible with FP8 KV.
-
-### 8. Consider V1 Engine (`VLLM_USE_V1=1`)
-
-**Impact: Better scheduler, prefix caching on by default, improved batching**
-
-- V1 engine is the default since vLLM 0.12 and has significant perf improvements.
-- Chunked prefill is enabled by default in V1.
-- **Risk**: needs validation with AWQ + ROCm + Triton FA. Conversation `7864d209` noted V1 was being used for Qwen3, suggesting it may already work.
-
----
-
-## Memory Budget Analysis (24GB VRAM)
-
-| Component            | FP16 KV @ 8K | FP16 KV @ 16K | FP16 KV @ 32K   | FP8 KV @ 16K | FP8 KV @ 32K    |
-| -------------------- | ------------ | ------------- | --------------- | ------------ | --------------- |
-| Model weights (AWQ)  | 9.5 GB       | 9.5 GB        | 9.5 GB          | 9.5 GB       | 9.5 GB          |
-| KV cache (per seq)   | ~0.65 GB     | ~1.3 GB       | ~2.6 GB         | ~0.65 GB     | ~1.3 GB         |
-| KV cache (6 seqs)    | ~3.9 GB      | ~7.8 GB       | ~15.6 GB        | ~3.9 GB      | ~7.8 GB         |
-| Activations/overhead | ~2.5 GB      | ~2.5 GB       | ~2.5 GB         | ~2.5 GB      | ~2.5 GB         |
-| **Total**            | **~15.9 GB** | **~19.8 GB**  | **~27.6 GB** ❌ | **~15.9 GB** | **~19.8 GB** ✅ |
-
-> [!IMPORTANT]
-> With FP8 KV cache, 32K context × 6 sequences fits in ~19.8 GB (82% of 24GB). This leaves comfortable headroom at `--gpu-memory-utilization=0.90`.
-
----
-
-## Comparison with Dolphin Llama3 Deployment
-
-The [vllm-llama3-optimized.yaml](file:///Users/cblevins/workspace/platform/gitops/k3s/ai/vllm/vllm-llama3-optimized.yaml) deployment runs a non-quantized 8B model at:
-
-- `--max-model-len=16384` (2× the AWQ deployment)
-- `--gpu-memory-utilization=0.92`
-- `--max-num-seqs=48`
-- No `--enforce-eager`
-- No `--max-num-batched-tokens` limit
-- No chunked prefill
-
-This shows the 7900 XTX can handle 16K+ context comfortably.
-
----
+- Use this `.loom` pack as the planning baseline now.
+- Prioritize a short recovery task to restore `codebase_memory` indexing before relying on semantic search-driven workflows.
+- Continue using shell-native discovery as primary mechanism until index health is verified.
+- For new large GGUF models (>10GB), use `storageClass: local-path` to avoid Longhorn mmap overhead.
 
 ## Sources
 
-- Deployment manifest: `platform/gitops/k3s/ai/legacy/vllm/vllm-qwen-awq.yaml`
-- Dockerfile: `platform/gitops/Dockerfiles/Dockerfile.vllm-rocm-awq`
-- Comparison: `platform/gitops/k3s/ai/vllm/vllm-llama3-optimized.yaml`
-- vLLM FP8 KV cache docs: vllm.ai/docs
-- AMD ROCm FP8 validation: amd.com/vllm-rocm
-- Qwen3-14B-AWQ model card: huggingface.co/Qwen/Qwen3-14B-AWQ
+- [S1] `AGENTS.md:7`
+- [S2] `AGENTS.md:12`
+- [S3] `AGENTS.md:13`
+- [S4] `AGENTS.md:14`
+- [S5] `AGENTS.md:15`
+- [S6] `AGENTS.md:16`
+- [S7] `.loom/00-workspace-snapshot.md:11`
+- [S8] `.loom/00-workspace-snapshot.md:12`
+- [C1] `python /Users/cblevins/.codex/skills/plan-loom-core/scripts/workspace_snapshot.py --root .`
+- [C2] `loom servers --json | jq '.servers | length'` -> `42`
+- [C3] `loom tools list --json --limit 500 --page 1 | jq '{server,page,pageSize,totalTools,totalPages,serverCount,cachedAt}'`
+- [C4] `functions.list_mcp_resources({})` -> `resources: []`
+- [C5] `functions.list_mcp_resource_templates({})` -> `resourceTemplates: []`
+- [C6] `functions.mcp__loom__codebase_memory__codebase_index_poll({job_id:\"5380e4246b4b7cf1\"})`
+- [C7] `functions.mcp__loom__codebase_memory__codebase_index_poll({job_id:\"237b41f443376c18\"})`
+- [C8] `loom tools call codebase_memory__codebase_index_poll --args '{"job_id":"1869e8aca6a0ab14"}' --json`
+- [C9] `loom tools call codebase_memory__codebase_get_definition --args '{"repo_id":"flexinfer","symbol":"ModelReconciler","limit":5}' --json`

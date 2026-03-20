@@ -16,51 +16,51 @@
 - [x] Capture current MCP/runtime inventory with tool counts and constraints.
 - [x] Validate `codebase_memory` indexing/search readiness and document blockers.
 - [x] Produce an evidence-backed research/spec/plan set for next execution.
-- [ ] Plan next feature/improvement round based on open GitLab issues and code gaps.
 
-## Current State (2026-03-05)
+## Current State (2026-02-20)
 
-- FlexInfer at `a9ed3af` on `master`. All phases 1-5 and advanced features complete.
-- 18 commits since last loom refresh (`da62a60` -> `a9ed3af`):
-  - Architecture docs expanded with 8 Mermaid workflow diagrams (`a9ed3af`)
-  - FLUX.1 NF4 support, gc.collect OOM fix (`053a2d6`)
-  - gfx1100 perf tuning: HipBLASLt, split attention (`45d311c`)
-  - Scheduler RBAC hardening: dedicated ClusterRole (#25, `017d46f`)
-  - Configurable CRD tolerations (#24, `9334ba3`)
-  - Benchmark sidecar termination (#23, `cfafb4e`)
-  - K8s allocatable GPU detection fallback (#22, `076ba57`)
-  - gfx906 fixes and Makefile targets (`580d7d8`, `937cc70`)
-  - 3 Renovate dependency batches merged (`2dc2626`, `5732903`, `b0d74a9`)
-  - Quantization status preservation (`859d4d7`, `03f1ccf`)
-- MCP: resource API still empty; `loom tools call` CLI is reliable fallback.
-- 15 open GitLab issues (see `10-research.md` for prioritized inventory).
+- FlexInfer architecture baseline remains six cooperating executables (`agent`, `bench`, `manager`, `sched`, `global-proxy`, metrics embedded) and is documented in `AGENTS.md`.
+- Workspace is on `master` at `d01972d` after MR !40 merge (`fad43a7`). Cold-start reliability fixes and dependency batches are all on `master`.
+- MCP inventory is available through `loom` CLI fallback (`42` servers, `445` tools) because direct MCP resource listing returned empty sets.
+- `codebase_memory` indexing is operational via `loom tools call` after collection repair + binary rebuild (`total_chunks=1877`).
 
-### Cluster Model Fleet (2026-03-05)
+### Cluster Model Fleet (2026-02-20)
 
-| Model | Backend | Phase | GPU Pool | Priority | Notes |
-|-------|---------|-------|----------|----------|-------|
-| `nomic-embed-text` | ollama | Ready | — | — | Embedding model, always warm |
-| `qwen3-30b-a3b-abliterated` | llamacpp | Standby | 5930k-models | 110 | MoE 18.7GB GGUF |
-| `qwen3-14b-claude-distill` | llamacpp | Active | 5930k-models | 160 | 14B distill |
-| `sdxl-turbo-imagegen` | diffusers | Ready | 7900xtx-image | — | Image gen, ROCm |
-| `sdxl-inpainting` | diffusers | Idle | 7900xtx-image | — | Inpainting, ROCm |
-| `instruct-pix2pix` | diffusers | Idle | 7900xtx-image | — | Image editing, ROCm |
+| Model | Backend | Phase | GPU Pool | Serverless | Notes |
+|-------|---------|-------|----------|------------|-------|
+| `nomic-embed-text` | ollama | Ready | — | idle 30m | Embedding model, always warm |
+| `qwen3-30b-a3b-abliterated` | llamacpp | Idle | amd-gpu-pool | idle 30m, cold 25m | MoE 18.7GB GGUF, local-path NVMe cache, 108 tok/s gen |
+| `qwen3-8b-fast` | mlc-llm | Idle | 5930k-models | idle 5m, cold 10m | Dense 8B, NFS cache |
+| `sdxl-turbo-imagegen` | diffusers | Ready | 7900xtx-image | idle 10m | Image generation, ROCm |
+
+- Controller and proxy images deployed with cold-start fixes (Loading phase guard, conflict retry, GPUGroup per-model timeout).
+- Proxy timeouts: `queue=25m`, `coldStart=25m` (via Helm values).
 
 ## Open Questions
 
-- Next feature round selection: which of the 15 open issues to prioritize?
-- Renovate Docker major updates (ROCm 6.4 -> 7.x) require staged rollout.
-- Image-gen benchmarking is stub-only (health check, no images/sec).
+- What is the preferred fix for `codebase_memory` failures:
+  - new Qdrant collection (`CODEBASE_QDRANT_COLLECTION`) with expected vector schema, or
+  - server-side point-id generation update to UUID/numeric?
+- Should `repo_id=flexinfer` remain canonical, or should this workspace use a namespaced id (for example `services-flexinfer`) to avoid collisions?
+- Do we want a "minimum viable MCP set" for planning tasks in this repo to reduce tool selection overhead?
 
 ## Risks
 
-- MCP resource discovery still returns empty in Claude Code sessions.
-- FLUX.1 NF4 user guide missing (GitLab #36, critical).
-- vLLM gfx906 build blocked by cmake/ROCm mismatch (GitLab #31).
+- Direct MCP bridge instability may block tool calls even when daemon-side tools are healthy.
+- MCP inventory can drift; if not refreshed, plans may rely on unavailable tools.
+- Planning docs can drift quickly after merge trains unless reconciliation notes are refreshed alongside backlog updates.
 
 ## Sources
 
-- [S1] `git log --oneline -20` -> HEAD at `a9ed3af`, 18 commits since `da62a60`
-- [S2] `ListMcpResourcesTool({})` -> `No resources found` (2026-03-05)
-- [S3] Workspace snapshot regenerated 2026-03-05T18:43:39-05:00
-- [S4] GitLab issue scan: 15 open issues (2026-03-05)
+- [S1] `AGENTS.md:7`
+- [S2] `AGENTS.md:12`
+- [S3] `AGENTS.md:13`
+- [S4] `AGENTS.md:14`
+- [S5] `AGENTS.md:15`
+- [S6] `AGENTS.md:16`
+- [S7] `.loom/00-workspace-snapshot.md:11`
+- [S8] `.loom/00-workspace-snapshot.md:12`
+- [C1] `loom servers --json | jq '.servers | length'` -> `42`
+- [C2] `loom tools list --json --limit 500 --page 1 | jq '{server,page,pageSize,totalTools,totalPages,serverCount,cachedAt}'` -> `totalTools=445, totalPages=1`
+- [C3] `loom tools call codebase_memory__codebase_index_poll --args '{"job_id":"1869e8aca6a0ab14"}' --json` -> `status: done, chunks_total: 1877`
+- [C4] `loom tools call codebase_memory__codebase_stats --args '{"repo_id":"flexinfer"}' --json` -> `total_chunks: 1877`

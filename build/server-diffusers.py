@@ -1452,17 +1452,6 @@ async def generate_images(request: ImageGenerationRequest):
     except ValueError:
         width, height = 1024, 1024
 
-    # Diagnostic logging — shows whether params came from the request or defaults
-    _src_steps = "request" if request.num_inference_steps is not None else "default"
-    _src_guidance = "request" if request.guidance_scale is not None else "default"
-    _src_neg = "request" if request.negative_prompt else "default"
-    print(
-        f"[gen] model={model_id} size={width}x{height} "
-        f"steps={steps}({_src_steps}) guidance={guidance_scale}({_src_guidance}) "
-        f"neg_prompt={'set' if negative_prompt else 'none'}({_src_neg}) "
-        f"n={request.n} seed={request.seed}"
-    )
-
     def _run_inference():
         """Run blocking pipeline inference in a thread so the event loop stays responsive."""
         # FluxFillPipeline is an inpainting model — route text2image through
@@ -1630,13 +1619,9 @@ async def edit_images(
         for _ in range(n):
             with torch.inference_mode():
                 if PIPELINE_MODE == "inpainting":
-                    if mask_bytes is not None:
-                        mask_img = _decode_mask(mask_bytes, src_img.size)
-                    else:
-                        # No mask provided — default to full white mask (edit everywhere).
-                        # This matches OpenAI API behaviour where mask is optional.
-                        print("inpainting: no mask provided, using full white mask")
-                        mask_img = Image.new("L", src_img.size, 255)
+                    if mask_bytes is None:
+                        raise ValueError("Inpainting mode requires a mask image")
+                    mask_img = _decode_mask(mask_bytes, src_img.size)
                     if _pipeline_is_flux_like(pipe, model_id):
                         # FluxFillPipeline: no strength, no negative_prompt
                         result = pipe(

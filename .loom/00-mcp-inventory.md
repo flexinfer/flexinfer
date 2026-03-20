@@ -6,57 +6,36 @@ Capture current MCP/runtime capabilities and constraints for FlexInfer planning 
 
 ## Runtime Mode Detection
 
-### Session 2026-03-05 (current)
-
-- `ListMcpResourcesTool({})` returned `No resources found` — same as 2026-02-27.
-- `loom tools call` CLI remains the reliable path.
-- Result: **MCP partially degraded**. Resource API empty, CLI fallback functional.
-
-### Session 2026-02-27
-
-- `ListMcpResourcesTool({})` returned `No resources found` — loom resources not discoverable via MCP resource API.
-- `loom tools call` CLI works reliably for all servers. **474 tools** across **40+ servers**.
-- `codebase_memory` fully operational via CLI: index, search, stats all working.
-- Result: **MCP partially degraded**. Resource API empty, but CLI fallback fully functional.
-
-### Session 2026-02-26
-
-### Session 2026-02-22
-
-- `ListMcpResourcesTool({})` returned 5 loom resources: `loom://servers`, `loom://tools`, `loom://tools/index`, `loom://health`, `loom://config`.
-- Result: **loom-mode active**. Resources discoverable via MCP resource API.
-- `ReadMcpResourceTool(server="loom", uri="loom://config")` returned:
-  - Profile: `full`, servers: `43`, tools: `459`
-  - All 43 servers running (42 running + jira stopped)
-
-### Session 2026-02-19/20
-
-- `functions.list_mcp_resources({})` returned `[]` — loom resources were not discoverable.
+- `functions.list_mcp_resources({})` returned `[]`.
+- `functions.list_mcp_resource_templates({})` returned `[]`.
+- Result: loom resource-proxy mode (`loom://config`, `loom://servers`, `loom://tools/index`) was not discoverable via MCP resource APIs in this session.
 - Fallback used: `loom` CLI inventory commands.
 
-## Server Inventory (loom-mode)
+## Server Inventory (CLI fallback)
 
-- Source: `ReadMcpResourceTool(server="loom", uri="loom://servers")`
-- Total servers: **43** (42 running, 1 stopped: `jira`)
-- Total tools: **459** (across 5 pages at 100/page)
+- `loom servers --json | jq '.servers | length'` -> `42`
+- `loom servers --json | jq '[.servers[] | select(.running==false)] | length'` -> `0`
+- `loom tools list --json --limit 500 --page 1 | jq '{server,page,pageSize,totalTools,totalPages,serverCount,cachedAt}'` ->
+  - `totalTools=445`
+  - `totalPages=1`
+  - `serverCount=42`
+  - `cachedAt=2026-02-19T09:24:19.657908-05:00`
 
-### Tool Counts by Server (from loom://tools/index, 459 total)
+### Tool Counts by Server Prefix
 
-Key server groups for FlexInfer work:
+From:
 
-| Server | Category | Tools |
-|--------|----------|-------|
-| `agent_context` | memory/agents | ~78 |
-| `k8s_apps_k3s` | kubernetes/ops | 7 |
-| `gitlab` | devops/scm | 30 |
-| `flux` | gitops | 8 |
-| `helm` | k8s/deployment | 6 |
-| `prometheus` | monitoring | 7 |
-| `loki` | logging | 8 |
-| `grafana` | dashboards | 6 |
-| `codebase_memory` | code/search | 17 |
-| `devbox` | sandbox/dev | 11 |
-| `flexinfer` | ai/inference | ~15 |
+`loom tools list --json --limit 500 --page 1 | jq -r '.tools[].name' | awk -F'__' '{print $1}' | sort | uniq -c | sort -nr`
+
+Top groups:
+
+- `agent_context`: 78
+- `jobsearch`: 66
+- `gitlab`: 30
+- `codebase_memory`: 17
+- `github`: 11
+- `git`: 11
+- `devbox`: 11
 
 ## Codebase Index/Search Readiness (`codebase_memory`)
 
@@ -90,29 +69,17 @@ Key server groups for FlexInfer work:
 3. Restarted Loom daemon:
    - `loom restart`
 
-### Current Status (2026-02-27)
+### Current Status
 
-- **Full re-index completed** via `loom tools call` CLI. Indexed as 9 sharded repos:
-
-  | Repo ID | Directory | Files | Chunks |
-  |---------|-----------|-------|--------|
-  | `flexinfer-controllers` | controllers/ | 26 | 523 |
-  | `flexinfer-api` | api/ | 17 | 338 |
-  | `flexinfer-cmd` | cmd/ | 29 | 201 |
-  | `flexinfer-internal` | internal/ | 23 | 269 |
-  | `flexinfer-pkg` | pkg/ | 23 | 220 |
-  | `flexinfer-scheduler` | scheduler/ | 2 | 28 |
-  | `flexinfer-agents` | agents/ | 22 | 188 |
-  | `flexinfer-backend` | backend/ | 22 | 227 |
-  | `flexinfer-e2e` | e2e/ | 5 | 78 |
-  | **Total** | | **169** | **2,072** |
-
-- Text search verified working:
-  - `codebase_text_search(query=chooseSharedGroupLeader, repo_id=flexinfer-controllers)` -> `matched_chunks: 5`
-  - `codebase_text_search(query=ModelSpec, repo_id=flexinfer-api)` -> `matched_chunks: 29`
-- Root cause of previous 0-file indexing: `--hub-prefer` daemon flag routed calls to remote hub (no local filesystem access). Fixed by adding `local-only` category in registry.yaml.
-- Full-repo single-index (170 files from root) hangs at `files_done: 0` — workaround: shard by directory.
-- `loom tools call` is the reliable path; direct MCP bridge still returns empty resources.
+- Indexing now succeeds via CLI path:
+  - index job `1869e8aca6a0ab14` finished with `status: done`, `chunks_total: 1877`, `errors: 0`.
+- Semantic queries now return results:
+  - `codebase_stats(repo_id=flexinfer)` -> `total_chunks: 1877`
+  - `codebase_get_definition(symbol=ModelReconciler)` -> `found: true`
+  - `codebase_text_search(query=ModelReconciler)` -> `matched_chunks: 56`
+- Remaining caveat:
+  - In this chat session, direct `functions.mcp__loom__*` calls still fail with `Transport closed`.
+  - `loom tools call ...` works and is the active fallback path.
 
 ## Best Tool for Job (FlexInfer)
 
@@ -124,17 +91,27 @@ Key server groups for FlexInfer work:
 
 ## Constraints and Permissions
 
-- As of 2026-02-27, MCP resource API returns empty but `loom tools call` CLI works reliably.
-- `loom` CLI uses local socket `/Users/cblevins/.config/loom/loom.sock`.
-- `codebase_memory` requires `local-only` category to prevent hub routing (fixed in registry.yaml 2026-02-27).
-- Full-repo indexing (170+ files) has a known hang bug; use directory sharding as workaround.
-- Fallback: `rg`, `git`, direct file reads, `loom tools call ...` via shell when MCP bridge is unreliable.
+- MCP resource/template discovery is empty in-session; inventory depends on CLI fallback.
+- `loom` CLI uses local socket `/Users/cblevins/.config/loom/loom.sock` (default from CLI help).
+- Direct MCP bridge for this chat session remains unstable (`Transport closed`) despite daemon-side recovery.
 
 ## Sources
 
-- [C1] `ListMcpResourcesTool({})` -> `No resources found` (2026-02-27)
-- [C2] `loom tools list` -> 474 tools across 40+ servers (2026-02-27)
-- [C3] `codebase_memory__codebase_stats({repo_id:"flexinfer-controllers"})` -> `total_chunks: 523` (2026-02-27)
-- [C4] `codebase_memory__codebase_index_poll` -> all 9 directory indexes `status: done` (2026-02-27)
-- [C5] `codebase_memory__codebase_text_search({query:"chooseSharedGroupLeader"})` -> `matched_chunks: 5` (2026-02-27)
-- [C6-C18] Previous session sources preserved in git history
+- [C1] `functions.list_mcp_resources({})` -> `resources: []`
+- [C2] `functions.list_mcp_resource_templates({})` -> `resourceTemplates: []`
+- [C3] `loom servers --json | jq '.servers | length'` -> `42`
+- [C4] `loom servers --json | jq '[.servers[] | select(.running==false)] | length'` -> `0`
+- [C5] `loom tools list --json --limit 500 --page 1 | jq '{server,page,pageSize,totalTools,totalPages,serverCount,cachedAt}'`
+- [C6] `loom tools list --json --limit 500 --page 1 | jq -r '.tools[].name' | awk -F'__' '{print $1}' | sort | uniq -c | sort -nr`
+- [C7] `functions.mcp__loom__codebase_memory__codebase_stats({})` -> `repo_id is required`
+- [C8] `functions.mcp__loom__codebase_memory__codebase_stats({repo_id:\"flexinfer\"})` -> `total_chunks: 0`
+- [C9] `functions.mcp__loom__codebase_memory__codebase_index_poll({job_id:\"5380e4246b4b7cf1\"})` -> `vector size=1 expected=1536`
+- [C10] `functions.mcp__loom__codebase_memory__codebase_index_poll({job_id:\"237b41f443376c18\"})` -> `invalid point ID`
+- [C11] `loom tools call qdrant__qdrant_get_collection --args '{"collection":"codebase_memory_v1"}' --json` -> `vectors.size: 1` (before fix)
+- [C12] `loom tools call qdrant__qdrant_delete_collection --args '{"collection":"codebase_memory_v1"}' --json`
+- [C13] `loom tools call qdrant__qdrant_create_collection --args '{"collection":"codebase_memory_v1","vector_size":1536,"distance":"Cosine"}' --json`
+- [C14] `go build -o /Users/cblevins/workspace/services/loom-core/bin/mcp-codebase-memory /Users/cblevins/workspace/services/loom-core/cmd/mcp-codebase-memory`
+- [C15] `loom restart`
+- [C16] `loom tools call codebase_memory__codebase_index_poll --args '{"job_id":"1869e8aca6a0ab14"}' --json` -> `status: done, chunks_total: 1877`
+- [C17] `loom tools call codebase_memory__codebase_stats --args '{"repo_id":"flexinfer"}' --json` -> `total_chunks: 1877`
+- [C18] `loom tools call codebase_memory__codebase_get_definition --args '{"repo_id":"flexinfer","symbol":"ModelReconciler","limit":5}' --json` -> `found: true`

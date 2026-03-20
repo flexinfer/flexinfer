@@ -298,13 +298,6 @@ spec:
                     - Reconfigure
                     - Evict
                     type: string
-                  reconfigureCooldown:
-                    description: |-
-                      ReconfigureCooldown is how long after a reconfigure action before
-                      the controller considers restoring the original config.
-                      Prevents thrashing between reduced and original settings.
-                      Default: 5m.
-                    type: string
                   swapSpace:
                     anyOf:
                     - type: integer
@@ -724,15 +717,6 @@ spec:
                           quantization.
                         format: int64
                         type: integer
-                      progress:
-                        description: Progress is the current job progress percentage
-                          (0-100), read from structured telemetry.
-                        format: int32
-                        type: integer
-                      progressDetail:
-                        description: ProgressDetail is a human-readable description
-                          of current progress (e.g., "layer 152/336").
-                        type: string
                       quantizationTime:
                         description: QuantizationTime is the wall-clock duration of
                           the quantization job.
@@ -843,14 +827,6 @@ spec:
                 description: KVCache tracks observed KV-cache metrics and pressure
                   state.
                 properties:
-                  evicted:
-                    description: Evicted indicates the controller has scaled down
-                      replicas due to KV-cache pressure.
-                    type: boolean
-                  evictedAt:
-                    description: EvictedAt is when the eviction was triggered.
-                    format: date-time
-                    type: string
                   lastAction:
                     description: LastAction describes the most recent action taken
                       in response to pressure.
@@ -860,31 +836,10 @@ spec:
                       detected.
                     format: date-time
                     type: string
-                  originalMaxNumSeqs:
-                    description: |-
-                      OriginalMaxNumSeqs is the original maxNumSeqs value before reconfigure,
-                      used to restore the config when pressure subsides.
-                    format: int32
-                    type: integer
                   pressure:
                     description: Pressure indicates whether the model is under KV-cache
                       pressure.
                     type: boolean
-                  reconfigured:
-                    description: |-
-                      Reconfigured indicates whether the controller has applied config overrides
-                      to reduce KV-cache pressure.
-                    type: boolean
-                  reconfiguredAt:
-                    description: ReconfiguredAt is when the reconfigure action was
-                      applied.
-                    format: date-time
-                    type: string
-                  reconfiguredMaxNumSeqs:
-                    description: ReconfiguredMaxNumSeqs is the reduced maxNumSeqs
-                      value applied by reconfigure.
-                    format: int32
-                    type: integer
                   utilization:
                     description: Utilization is the current KV-cache usage ratio (0.0
                       to 1.0).

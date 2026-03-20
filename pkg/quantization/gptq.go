@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -75,12 +74,6 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	memoryGB := int32(DefaultGPUQuantizationMemoryGB)
 	if params.Spec.MaxMemoryGB != nil {
 		memoryGB = *params.Spec.MaxMemoryGB
-	}
-	// Allow env var override for memory (e.g. when redirecting to a high-RAM node).
-	if override := os.Getenv("FLEXINFER_GPTQ_MAX_MEMORY_GB"); override != "" {
-		if v, err := strconv.Atoi(override); err == nil && v > 0 {
-			memoryGB = int32(v)
-		}
 	}
 
 	bits := DefaultGPTQBits
@@ -355,15 +348,11 @@ PY
     echo "Patched quantize_gptq.py to disable GPTQ offload_to_disk for Qwen3.5 direct load"
 fi
 
-# Inject init_empty_weights + load_checkpoint_in_model into quantize_gptq.py.
-# Replaces from_config + shard loading + dispatch in a SINGLE combined replacement.
-# from_config alone allocates 54GB bf16 tensors; init_empty_weights creates on meta
-# device (0 bytes). load_checkpoint_in_model materializes weights on target devices
-# WITHOUT adding accelerate dispatch hooks (which conflict with GPTQModel's
-# shell_module_materialize). Peak RSS = CPU portion only, not the full model.
-if [ -f "${GPTQ_SCRIPT}" ] && [ "${QUANTIZE_DEVICE_MAP}" != "cpu" ]; then
-    python3 - <<'DEVICE_MAP_PY'
-import os, re, sys
+# Inject device_map dispatch into quantize_gptq.py for GPU/CPU split.
+# Older runtime images don't have this code; inject it at runtime.
+if [ -f "${GPTQ_SCRIPT}" ] && [ "${QUANTIZE_DEVICE_MAP}" != "cpu" ] && ! grep -q "QUANTIZE_DEVICE_MAP" "${GPTQ_SCRIPT}" 2>/dev/null; then
+    python3 - <<'PY'
+import os
 from pathlib import Path
 
 path = Path(os.environ.get("GPTQ_SCRIPT", "/opt/flexinfer/scripts/quantize_gptq.py"))
@@ -371,6 +360,7 @@ src = path.read_text()
 
 # Add env var read near top of script (after imports)
 if "quantize_device_map" not in src:
+    # Insert after the gpu_memory_fraction line if it exists, otherwise after imports
     marker = "gpu_memory_fraction = "
     if marker in src:
         idx = src.index(marker)
@@ -378,82 +368,38 @@ if "quantize_device_map" not in src:
         inject = 'quantize_device_map = os.environ.get("QUANTIZE_DEVICE_MAP", "cpu")\n'
         src = src[:end_line] + inject + src[end_line:]
     else:
+        # Fallback: inject near top
         src = 'import os as _os_dm\nquantize_device_map = _os_dm.environ.get("QUANTIZE_DEVICE_MAP", "cpu")\n' + src
 
-# Combined replacement: from_config through model.eval()
-# Uses regex to find from_config line robustly, then replaces everything
-# through model.eval() with init_empty_weights + load_checkpoint_and_dispatch.
-fc_pattern = re.compile(r'^([ \t]+)model = model_definition\.loader\.from_config\(config, \*\*init_kwargs\)', re.MULTILINE)
-fc_match = fc_pattern.search(src)
-eval_marker = '    model.eval()'
-eval_found = eval_marker in src
-
-if fc_match and eval_found:
-    indent = fc_match.group(1)
-    start_idx = fc_match.start()
-    end_idx = src.index(eval_marker, fc_match.end()) + len(eval_marker)
-    replacement = (
-        f'{indent}from accelerate import init_empty_weights\n'
-        f'{indent}with init_empty_weights():\n'
-        f'{indent}    model = model_definition.loader.from_config(config, **init_kwargs)\n'
-        f'{indent}print("Model skeleton created on meta device (no memory allocated)")\n'
-        f'{indent}# --- Injected by controller: load_checkpoint_in_model (no dispatch hooks) ---\n'
-        f'{indent}if quantize_device_map and quantize_device_map != "cpu":\n'
-        f'{indent}    from accelerate import infer_auto_device_map, load_checkpoint_in_model\n'
-        f'{indent}    from accelerate.utils import get_max_memory\n'
-        f'{indent}    max_mem = get_max_memory()\n'
-        f'{indent}    for dev_id in list(max_mem.keys()):\n'
-        f'{indent}        if dev_id != "cpu":\n'
-        f'{indent}            max_mem[dev_id] = int(max_mem[dev_id] * gpu_memory_fraction)\n'
-        f'{indent}    device_map = infer_auto_device_map(model, max_memory=max_mem)\n'
-        f'{indent}    gpu_layers = sum(1 for v in device_map.values() if v != "cpu")\n'
-        f'{indent}    cpu_layers = sum(1 for v in device_map.values() if v == "cpu")\n'
-        f'{indent}    print(f"Loading with device_map: gpu_layers={{gpu_layers}} cpu_layers={{cpu_layers}}")\n'
-        f'{indent}    load_checkpoint_in_model(\n'
-        f'{indent}        model, model_dir, device_map=device_map,\n'
-        f'{indent}        dtype=dtype,\n'
-        f'{indent}    )\n'
-        f'{indent}    print("Model loaded via load_checkpoint_in_model (no dispatch hooks)")\n'
-        f'{indent}else:\n'
-        f'{indent}    index_filename = resolve_checkpoint_index(model_dir)\n'
-        f'{indent}    shard_files, shard_metadata = get_checkpoint_shard_files(\n'
-        f'{indent}        model_dir, index_filename, local_files_only=True,\n'
-        f'{indent}    )\n'
-        f'{indent}    print(f"Loading {{len(shard_files)}} checkpoint shards (CPU-only)")\n'
-        f'{indent}    for idx, shard_file in enumerate(shard_files, start=1):\n'
-        f'{indent}        emit_progress("progress", phase="quantizing",\n'
-        f'{indent}            percent=min(4.5, 1.0 + (idx / max(len(shard_files), 1)) * 3.0),\n'
-        f'{indent}            detail=f"loading shard {{idx}}/{{len(shard_files)}}")\n'
-        f'{indent}        state_dict = load_state_dict(shard_file, map_location="cpu")\n'
-        f'{indent}        model.load_state_dict(state_dict, strict=False)\n'
-        f'{indent}        del state_dict\n'
-        f'{indent}        gc.collect()\n'
-        f'{indent}model.eval()'
-    )
-    src = src[:start_idx] + replacement + src[end_idx:]
-    # Remove any old post-load dispatch blocks
-    src = re.sub(
-        r'\n    # Injected by controller.*?print\(f"WARN: device_map dispatch.*?"\)\n',
-        '\n', src, flags=re.DOTALL
-    )
-    src = re.sub(
-        r'\n    # Dispatch model across devices.*?print\(f"WARN: device_map dispatch.*?"\)\n',
-        '\n', src, flags=re.DOTALL
-    )
-    print("Injected init_empty_weights + load_checkpoint_in_model (no dispatch hooks)")
+# Inject dispatch logic after model.eval() in load_model_manual_sharded_state_dict
+eval_marker = "    model.eval()\n"
+dispatch_code = '''
+    # Injected by controller: dispatch model across GPU+CPU if device_map != cpu
+    if quantize_device_map and quantize_device_map != "cpu":
+        try:
+            from accelerate import infer_auto_device_map, dispatch_model
+            from accelerate.utils import get_max_memory
+            max_mem = get_max_memory()
+            for dev_id in list(max_mem.keys()):
+                if dev_id != "cpu":
+                    max_mem[dev_id] = int(max_mem[dev_id] * gpu_memory_fraction)
+            device_map_result = infer_auto_device_map(model, max_memory=max_mem)
+            model = dispatch_model(model, device_map=device_map_result)
+            gpu_layers = sum(1 for v in device_map_result.values() if v != "cpu")
+            cpu_layers = sum(1 for v in device_map_result.values() if v == "cpu")
+            print(f"Dispatched model: device_map={quantize_device_map} gpu_layers={gpu_layers} cpu_layers={cpu_layers}")
+        except Exception as exc:
+            print(f"WARN: device_map dispatch failed, keeping all on CPU: {exc}")
+'''
+if eval_marker in src and "dispatch_model" not in src:
+    idx = src.index(eval_marker) + len(eval_marker)
+    src = src[:idx] + dispatch_code + src[idx:]
+    print("Injected device_map dispatch into quantize_gptq.py")
 else:
-    print(f"WARN: could not find markers for combined replacement", file=sys.stderr)
-    print(f"  from_config match: {fc_match is not None} (pattern: {fc_pattern.pattern})", file=sys.stderr)
-    print(f"  model.eval() found: {eval_found}", file=sys.stderr)
-    if not fc_match:
-        # Dump lines containing from_config for debugging
-        for i, line in enumerate(src.split('\n'), 1):
-            if 'from_config' in line:
-                print(f"  line {i}: {repr(line)}", file=sys.stderr)
-    sys.exit(1)
+    print("WARN: could not inject device_map dispatch (marker not found or already present)")
 
 path.write_text(src)
-DEVICE_MAP_PY
+PY
 fi
 
 # Auto-detect gfx900 (Radeon VII).
@@ -490,38 +436,7 @@ fi
 ORIGINAL_SIZE=$(du -sb "${MODEL_DIR}" | cut -f1)
 echo "Original size: ${ORIGINAL_SIZE} bytes"
 
-# Short-circuit: if quantization already completed (quantize_config.json + safetensors
-# in OUT_DIR), re-emit metadata and exit 0. Handles Job recreation after TTL GC.
-QUANT_STATUS="${MODEL_DIR}/.quantization-status.json"
-if [ -f "${OUT_DIR}/quantize_config.json" ] && ls "${OUT_DIR}"/*.safetensors &>/dev/null; then
-    COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
-    echo "Quantization already complete in ${OUT_DIR}"
-    echo "Output size: ${COMPRESSED_SIZE} bytes"
-    if [ -f "${QUANT_STATUS}" ]; then
-        cat "${QUANT_STATUS}" > /dev/termination-log 2>/dev/null || true
-    else
-        END_TS=$(date +%s)
-        DURATION_SEC=$((END_TS - START_TS))
-        cat > /dev/termination-log << TERMINATION
-{
-  "type": "${TYPE}",
-  "originalSizeBytes": ${ORIGINAL_SIZE},
-  "compressedSizeBytes": ${COMPRESSED_SIZE},
-  "quantizationTimeSeconds": ${DURATION_SEC}
-}
-TERMINATION
-    fi
-    exit 0
-fi
-
-# Only clean output dir if no valid partial output exists.
-# On retries (backoff), this preserves any checkpoint data.
-if [ -d "${OUT_DIR}" ]; then
-    if [ -f "${OUT_DIR}/quantize_config.json" ] || ls "${OUT_DIR}"/*.safetensors &>/dev/null 2>&1; then
-        echo "WARNING: Partial output exists in ${OUT_DIR} but missing quantize_config.json or safetensors — cleaning"
-    fi
-    rm -rf "${OUT_DIR}"
-fi
+rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
 mkdir -p /workspace/offload
 

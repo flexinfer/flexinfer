@@ -50,9 +50,6 @@ claude_desktop_config/
 # Build logs
 build_*.log
 
-# Generated runtime env file (build/build-runtime.sh creates and cleans up)
-build/.runtime-env
-
 # Throwaway test files
 test_*.go
 !*_test.go

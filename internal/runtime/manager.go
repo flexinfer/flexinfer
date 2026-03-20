@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/flexinfer/flexinfer/backend"
-	sharedrt "github.com/flexinfer/flexinfer/pkg/runtime"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -38,7 +37,6 @@ type LoadRequest struct {
 	Model     string                 `json:"model"`
 	ModelPath string                 `json:"modelPath,omitempty"`
 	Config    map[string]interface{} `json:"config,omitempty"`
-	Env       []sharedrt.EnvVar      `json:"env,omitempty"`
 }
 
 // LoadedModel tracks a running backend subprocess and its model.
@@ -51,19 +49,9 @@ type LoadedModel struct {
 	PID       int                `json:"pid,omitempty"`
 	LoadedAt  time.Time          `json:"loadedAt,omitempty"`
 	Error     string             `json:"error,omitempty"`
-	Launch    *LaunchPlan        `json:"launch,omitempty"`
 	HealthURL string             `json:"-"`
 	cmd       *exec.Cmd          `json:"-"`
 	cancel    context.CancelFunc `json:"-"`
-}
-
-// LaunchPlan captures the resolved subprocess configuration for a loaded model.
-type LaunchPlan struct {
-	Executable            string            `json:"executable"`
-	Args                  []string          `json:"args,omitempty"`
-	Env                   []sharedrt.EnvVar `json:"env,omitempty"`
-	ModelPath             string            `json:"modelPath,omitempty"`
-	StartupTimeoutSeconds int               `json:"startupTimeoutSeconds,omitempty"`
 }
 
 // NodeMode represents the operating mode of a GPU node.
@@ -201,18 +189,6 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		env = append(env, corev1.EnvVar{Name: "LOCAL_MODEL_PATH", Value: modelPath})
 	}
 
-	startupTimeout := b.StartupTimeout()
-	if v, ok := req.Config["startupTimeoutSeconds"]; ok {
-		switch t := v.(type) {
-		case float64:
-			startupTimeout = time.Duration(t) * time.Second
-		case string:
-			if d, err := time.ParseDuration(t); err == nil {
-				startupTimeout = d
-			}
-		}
-	}
-
 	// Determine the executable.
 	var executable string
 	var execArgs []string
@@ -234,10 +210,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	// Inherit current process env, then overlay backend-specific vars.
 	cmd.Env = os.Environ()
 	for _, e := range env {
-		cmd.Env = upsertCommandEnv(cmd.Env, e.Name, e.Value)
-	}
-	for _, e := range req.Env {
-		cmd.Env = upsertCommandEnv(cmd.Env, e.Name, e.Value)
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", e.Name, e.Value))
 	}
 
 	// Pipe stdout/stderr to structured logging.
@@ -250,15 +223,8 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		Model:   req.Model,
 		State:   ModelStateLoading,
 		Port:    b.Port(),
-		Launch: &LaunchPlan{
-			Executable:            executable,
-			Args:                  append([]string(nil), execArgs...),
-			Env:                   mergeLaunchEnv(env, req.Env),
-			ModelPath:             modelPath,
-			StartupTimeoutSeconds: int(startupTimeout.Seconds()),
-		},
-		cmd:    cmd,
-		cancel: cancel,
+		cmd:     cmd,
+		cancel:  cancel,
 	}
 
 	m.active = loaded
@@ -296,6 +262,19 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	go m.monitorProcess(subCtx, name, cmd)
 
 	// Start health checking in background.
+	// Allow the load request config to override the backend's default startup timeout
+	// so the proxy/controller can pass the model's coldStartTimeout.
+	startupTimeout := b.StartupTimeout()
+	if v, ok := req.Config["startupTimeoutSeconds"]; ok {
+		switch t := v.(type) {
+		case float64:
+			startupTimeout = time.Duration(t) * time.Second
+		case string:
+			if d, err := time.ParseDuration(t); err == nil {
+				startupTimeout = d
+			}
+		}
+	}
 	go m.healthCheckLoop(subCtx, name, b, startupTimeout)
 
 	return nil
@@ -381,7 +360,6 @@ func (m *Manager) Status() RuntimeStatus {
 			PID:      m.active.PID,
 			LoadedAt: m.active.LoadedAt,
 			Error:    m.active.Error,
-			Launch:   m.active.Launch,
 		}
 	}
 
@@ -454,15 +432,14 @@ type RuntimeStatus struct {
 
 // ModelSummary is a serializable view of a loaded model.
 type ModelSummary struct {
-	Name     string      `json:"name"`
-	Backend  string      `json:"backend"`
-	Model    string      `json:"model"`
-	State    string      `json:"state"`
-	Port     int32       `json:"port"`
-	PID      int         `json:"pid,omitempty"`
-	LoadedAt time.Time   `json:"loadedAt,omitempty"`
-	Error    string      `json:"error,omitempty"`
-	Launch   *LaunchPlan `json:"launch,omitempty"`
+	Name     string    `json:"name"`
+	Backend  string    `json:"backend"`
+	Model    string    `json:"model"`
+	State    string    `json:"state"`
+	Port     int32     `json:"port"`
+	PID      int       `json:"pid,omitempty"`
+	LoadedAt time.Time `json:"loadedAt,omitempty"`
+	Error    string    `json:"error,omitempty"`
 }
 
 // monitorProcess waits for the subprocess to exit and updates state.
@@ -623,37 +600,4 @@ func streamLogs(r io.ReadCloser, logger interface {
 			logger.Info(line, "stream", stream)
 		}
 	}
-}
-
-func upsertCommandEnv(env []string, key, value string) []string {
-	prefix := key + "="
-	entry := prefix + value
-	for i := range env {
-		if strings.HasPrefix(env[i], prefix) {
-			env[i] = entry
-			return env
-		}
-	}
-	return append(env, entry)
-}
-
-func mergeLaunchEnv(base []corev1.EnvVar, overlay []sharedrt.EnvVar) []sharedrt.EnvVar {
-	merged := make([]sharedrt.EnvVar, 0, len(base)+len(overlay))
-	for _, item := range base {
-		merged = appendOrReplaceLaunchEnv(merged, sharedrt.EnvVar{Name: item.Name, Value: item.Value})
-	}
-	for _, item := range overlay {
-		merged = appendOrReplaceLaunchEnv(merged, item)
-	}
-	return merged
-}
-
-func appendOrReplaceLaunchEnv(env []sharedrt.EnvVar, item sharedrt.EnvVar) []sharedrt.EnvVar {
-	for i := range env {
-		if env[i].Name == item.Name {
-			env[i].Value = item.Value
-			return env
-		}
-	}
-	return append(env, item)
 }
