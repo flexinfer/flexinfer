@@ -12,7 +12,8 @@
 # Disk requirements:
 #   27B BF16: ~54 GB download + ~15 GB GPTQ output → 120 GB PVC
 #
-# GPU requirements: 1x gfx1100 (24 GB VRAM) for abliteration + quantization
+# GPU requirements: 1x AMD GPU for abliteration + quantization
+# Currently targeting radeonvii (gfx906, 16 GB VRAM, 128 GB RAM) for large models
 ---
 # Qwen3.5-27B Opus-Reasoning-Distilled → Abliterate → GPTQ INT4
 # SFT from Claude 4.6 Opus reasoning, BF16 ~54 GB.
@@ -29,7 +30,7 @@ spec:
   clusterStorageClassName: nvme-1r-gpu
   secretRef: "hf-token"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-radeonvii
   download:
     maxMemoryGB: 16
     hfTransfer: false
@@ -38,7 +39,7 @@ spec:
     targetLayers: "auto"
     numSamples: 128
     useGPU: true
-    maxMemoryGB: 48
+    maxMemoryGB: 96
     timeoutSeconds: 43200
     skipVisionLayers: true
   quantization:
@@ -49,8 +50,8 @@ spec:
     descAct: false
     dynamicExclusion: "none"
     useGPU: true
-    maxMemoryGB: 48
-    timeoutSeconds: 14400
+    maxMemoryGB: 96
+    timeoutSeconds: 28800
     calibration:
       maxSeqLen: 2048
       maxSamples: 128
