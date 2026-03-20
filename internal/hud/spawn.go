@@ -3,6 +3,7 @@ package hud
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,13 @@ import (
 	"github.com/crb2nu/loom/internal/devbox/detect"
 	"github.com/crb2nu/loom/internal/devbox/dockerfile"
 	"github.com/crb2nu/loom/internal/hud/bridge"
+)
+
+// Pinned CLI versions for reproducible agent container builds.
+const (
+	claudeCodeVersion = "1.0.33"
+	codexVersion      = "0.1.2025062000"
+	geminiVersion     = "0.3.7"
 )
 
 // SpawnStatus tracks the lifecycle state of a spawned agent.
@@ -66,6 +74,7 @@ type SpawnOrchestrator struct {
 	tracer      trace.Tracer
 	metrics     *HUDMetrics
 	logger      *slog.Logger
+	store       *SpawnStore
 
 	mu     sync.RWMutex
 	spawns map[string]*SpawnState
@@ -121,13 +130,27 @@ func NewSpawnOrchestrator(
 	if wsRoot == "" {
 		wsRoot = "/workspace"
 	}
+
+	spawnLogger := logger.With("component", "spawn")
+
+	// Initialize persistent spawn store.
+	var store *SpawnStore
+	storeDir := defaultSpawnStoreDir()
+	if s, err := NewSpawnStore(storeDir); err != nil {
+		spawnLogger.Warn("failed to create spawn store, state will not be persisted",
+			"dir", storeDir, "error", err)
+	} else {
+		store = s
+	}
+
 	return &SpawnOrchestrator{
 		backend:        b,
 		agentBridge:    agentBridge,
 		sseHub:         sseHub,
 		tracer:         tracer,
 		metrics:        metrics,
-		logger:         logger.With("component", "spawn"),
+		logger:         spawnLogger,
+		store:          store,
 		spawns:         make(map[string]*SpawnState),
 		maxConcurrent:  cfg.MaxConcurrent,
 		defaultTimeout: cfg.DefaultTimeout,
@@ -135,6 +158,62 @@ func NewSpawnOrchestrator(
 		defaultCPUs:    cfg.DefaultCPUs,
 		workspaceRoot:  wsRoot,
 		projects:       cfg.Projects,
+	}
+}
+
+// RecoverSpawns loads persisted spawn state on startup, marks non-terminal
+// spawns as failed (stale after restart), and re-populates the in-memory map.
+func (o *SpawnOrchestrator) RecoverSpawns() {
+	if o.store == nil {
+		return
+	}
+	states, err := o.store.Load()
+	if err != nil {
+		o.logger.Warn("failed to load persisted spawns", "error", err)
+		return
+	}
+	if len(states) == 0 {
+		return
+	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	recovered := 0
+	failed := 0
+	for _, st := range states {
+		if isTerminal(st.Status) {
+			// Keep terminal states in memory for visibility.
+			o.spawns[st.SpawnID] = st
+			recovered++
+			continue
+		}
+		// Non-terminal spawns are stale after a HUD restart.
+		o.logger.Warn("marking stale spawn as failed",
+			"spawn_id", st.SpawnID,
+			"previous_status", st.Status,
+			"agent_id", st.AgentID,
+		)
+		st.Status = SpawnStatusFailed
+		st.Error = "stale after HUD restart"
+		now := time.Now()
+		st.EndedAt = &now
+		o.spawns[st.SpawnID] = st
+
+		// Re-persist the updated terminal state.
+		if err := o.store.Save(st); err != nil {
+			o.logger.Warn("failed to persist recovered spawn state",
+				"spawn_id", st.SpawnID, "error", err)
+		}
+		failed++
+	}
+
+	o.logger.Info("spawn recovery complete",
+		"total", len(states), "recovered", recovered, "failed_stale", failed)
+
+	// Prune old completed/failed spawns (older than 24 hours).
+	if err := o.store.PruneCompleted(24 * time.Hour); err != nil {
+		o.logger.Warn("failed to prune old spawn states", "error", err)
 	}
 }
 
@@ -195,6 +274,13 @@ func (o *SpawnOrchestrator) Spawn(ctx context.Context, req SpawnRequest) (string
 	o.spawns[spawnID] = state
 	o.mu.Unlock()
 
+	// Persist initial state.
+	if o.store != nil {
+		if err := o.store.Save(state); err != nil {
+			o.logger.Warn("failed to persist spawn state", "spawn_id", spawnID, "error", err)
+		}
+	}
+
 	if o.metrics != nil {
 		o.metrics.AgentSpawnTotal.Add(ctx, 1,
 			metric.WithAttributes(
@@ -233,6 +319,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	o.mu.Lock()
 	state.Status = SpawnStatusBuilding
 	o.mu.Unlock()
+	o.persistState(state)
 	o.broadcastSpawnEvent("agent.spawn.building", state)
 
 	_, buildSpan := o.tracer.Start(ctx, "agent.spawn.image_build")
@@ -287,6 +374,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	o.mu.Lock()
 	state.PodName = startResult.ContainerID
 	o.mu.Unlock()
+	o.persistState(state)
 
 	// Step 3: Inject pre-authed configs (with a short timeout to avoid hanging on SPDY issues).
 	_, cfgSpan := o.tracer.Start(ctx, "agent.spawn.config_inject")
@@ -315,6 +403,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	o.mu.Lock()
 	state.Status = SpawnStatusRunning
 	o.mu.Unlock()
+	o.persistState(state)
 	o.broadcastSpawnEvent("agent.spawn.running", state)
 
 	// Step 5: Start heartbeat loop for spawn visibility.
@@ -399,7 +488,8 @@ WORKDIR /workspace
 // in-cluster SPDY stdin stream hangs observed on K3s.
 func (o *SpawnOrchestrator) injectAgentConfig(ctx context.Context, containerID, agentType, project string) error {
 	writeCmd := func(dir, file, content string) error {
-		cmd := fmt.Sprintf("mkdir -p %s && cat > %s/%s << 'AGENTCFG'\n%s\nAGENTCFG", dir, dir, file, content)
+		encoded := base64.StdEncoding.EncodeToString([]byte(content))
+		cmd := fmt.Sprintf("mkdir -p %s && echo '%s' | base64 -d > %s/%s", dir, encoded, dir, file)
 		_, err := o.backend.Exec(ctx, backend.ExecOpts{
 			ContainerID: containerID,
 			Command:     cmd,
@@ -477,6 +567,9 @@ func (o *SpawnOrchestrator) StopSpawn(ctx context.Context, spawnID string) error
 	state.EndedAt = &now
 	o.mu.Unlock()
 
+	// Persist terminal state.
+	o.persistState(state)
+
 	if o.metrics != nil {
 		o.metrics.SpawnedAgentActive.Add(ctx, -1)
 	}
@@ -491,14 +584,26 @@ func (o *SpawnOrchestrator) StopSpawn(ctx context.Context, spawnID string) error
 	return nil
 }
 
-// failSpawn marks a spawn as failed and broadcasts the event.
+// failSpawn marks a spawn as failed, cleans up the K8s pod, and broadcasts the event.
 func (o *SpawnOrchestrator) failSpawn(ctx context.Context, state *SpawnState, reason string) {
 	o.mu.Lock()
 	state.Status = SpawnStatusFailed
 	state.Error = reason
 	now := time.Now()
 	state.EndedAt = &now
+	podName := state.PodName
 	o.mu.Unlock()
+
+	// Clean up K8s pod if one was created.
+	if podName != "" {
+		if err := o.backend.Stop(ctx, podName); err != nil {
+			o.logger.Warn("failed to clean up pod on spawn failure",
+				"spawn_id", state.SpawnID, "pod", podName, "error", err)
+		}
+	}
+
+	// Persist terminal state.
+	o.persistState(state)
 
 	if o.metrics != nil {
 		o.metrics.SpawnedAgentActive.Add(ctx, -1)
@@ -532,6 +637,9 @@ func (o *SpawnOrchestrator) completeSpawn(ctx context.Context, state *SpawnState
 	now := time.Now()
 	state.EndedAt = &now
 	o.mu.Unlock()
+
+	// Persist terminal state.
+	o.persistState(state)
 
 	if o.metrics != nil {
 		o.metrics.SpawnedAgentActive.Add(ctx, -1)
@@ -615,6 +723,17 @@ func (o *SpawnOrchestrator) runHeartbeatLoop(ctx context.Context, state *SpawnSt
 	}
 }
 
+// persistState saves the spawn state to disk if a store is configured.
+func (o *SpawnOrchestrator) persistState(state *SpawnState) {
+	if o.store == nil {
+		return
+	}
+	if err := o.store.Save(state); err != nil {
+		o.logger.Warn("failed to persist spawn state",
+			"spawn_id", state.SpawnID, "error", err)
+	}
+}
+
 // broadcastSpawnEvent sends a spawn lifecycle event to the SSE hub.
 func (o *SpawnOrchestrator) broadcastSpawnEvent(eventType string, state *SpawnState) {
 	data, err := json.Marshal(state)
@@ -689,15 +808,16 @@ func agentSecretMounts(agentType string) []backend.SecretMount {
 	}
 }
 
-// agentCLIInstallLines returns Dockerfile RUN lines to install the agent CLI.
+// agentCLIInstallLines returns Dockerfile RUN lines to install the agent CLI
+// with pinned versions for reproducible builds.
 func agentCLIInstallLines(agentType string) string {
 	switch agentType {
 	case "claude-code":
-		return "RUN npm install -g @anthropic-ai/claude-code@latest"
+		return fmt.Sprintf("RUN npm install -g @anthropic-ai/claude-code@%s", claudeCodeVersion)
 	case "codex":
-		return "RUN npm install -g @openai/codex@latest"
+		return fmt.Sprintf("RUN npm install -g @openai/codex@%s", codexVersion)
 	case "gemini":
-		return "RUN npm install -g @google/gemini-cli@latest"
+		return fmt.Sprintf("RUN npm install -g @google/gemini-cli@%s", geminiVersion)
 	default:
 		return ""
 	}
