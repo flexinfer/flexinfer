@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -114,49 +115,42 @@ func TestIsTransportError_UnrelatedError(t *testing.T) {
 	}
 }
 
-// --- Tests for normalizeEntityInfo ---
+// --- Tests for EntityInfo.UnmarshalJSON auto-sync ---
 
-func TestNormalizeEntityInfo_NilSafe(t *testing.T) {
-	// Should not panic on nil.
-	normalizeEntityInfo(nil)
-}
-
-func TestNormalizeEntityInfo_CopiesTypeToEntityType(t *testing.T) {
-	e := &EntityInfo{
-		ID:   "e-1",
-		Name: "TestEntity",
-		Type: "service",
+func TestEntityInfo_UnmarshalJSON_TypeSyncsToEntityType(t *testing.T) {
+	data := []byte(`{"id":"e-1","name":"TestEntity","type":"service"}`)
+	var e EntityInfo
+	if err := json.Unmarshal(data, &e); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
-	normalizeEntityInfo(e)
-
 	if e.EntityType != "service" {
 		t.Errorf("expected EntityType 'service', got %q", e.EntityType)
 	}
+	if e.Type != "service" {
+		t.Errorf("expected Type 'service', got %q", e.Type)
+	}
 }
 
-func TestNormalizeEntityInfo_CopiesEntityTypeToType(t *testing.T) {
-	e := &EntityInfo{
-		ID:         "e-1",
-		Name:       "TestEntity",
-		EntityType: "database",
+func TestEntityInfo_UnmarshalJSON_EntityTypeSyncsToType(t *testing.T) {
+	data := []byte(`{"id":"e-1","name":"TestEntity","entity_type":"database"}`)
+	var e EntityInfo
+	if err := json.Unmarshal(data, &e); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
-	normalizeEntityInfo(e)
-
 	if e.Type != "database" {
 		t.Errorf("expected Type 'database', got %q", e.Type)
 	}
+	if e.EntityType != "database" {
+		t.Errorf("expected EntityType 'database', got %q", e.EntityType)
+	}
 }
 
-func TestNormalizeEntityInfo_BothSet(t *testing.T) {
-	e := &EntityInfo{
-		ID:         "e-1",
-		Name:       "TestEntity",
-		Type:       "service",
-		EntityType: "database",
+func TestEntityInfo_UnmarshalJSON_BothSet(t *testing.T) {
+	data := []byte(`{"id":"e-1","name":"TestEntity","type":"service","entity_type":"database"}`)
+	var e EntityInfo
+	if err := json.Unmarshal(data, &e); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
-	normalizeEntityInfo(e)
-
-	// Both are already set, should remain unchanged.
 	if e.Type != "service" {
 		t.Errorf("expected Type 'service', got %q", e.Type)
 	}
@@ -165,13 +159,12 @@ func TestNormalizeEntityInfo_BothSet(t *testing.T) {
 	}
 }
 
-func TestNormalizeEntityInfo_BothEmpty(t *testing.T) {
-	e := &EntityInfo{
-		ID:   "e-1",
-		Name: "TestEntity",
+func TestEntityInfo_UnmarshalJSON_BothEmpty(t *testing.T) {
+	data := []byte(`{"id":"e-1","name":"TestEntity"}`)
+	var e EntityInfo
+	if err := json.Unmarshal(data, &e); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
-	normalizeEntityInfo(e)
-
 	if e.Type != "" {
 		t.Errorf("expected empty Type, got %q", e.Type)
 	}
@@ -180,49 +173,87 @@ func TestNormalizeEntityInfo_BothEmpty(t *testing.T) {
 	}
 }
 
-// --- Tests for normalizeRelationInfo ---
-
-func TestNormalizeRelationInfo_NilSafe(t *testing.T) {
-	normalizeRelationInfo(nil)
+func TestEntityInfo_UnmarshalJSON_InvalidJSON(t *testing.T) {
+	data := []byte(`{invalid}`)
+	var e EntityInfo
+	if err := json.Unmarshal(data, &e); err == nil {
+		t.Error("expected error for invalid JSON")
+	}
 }
 
-func TestNormalizeRelationInfo_CopiesTypeToRelationType(t *testing.T) {
-	r := &RelationInfo{
-		ID:   "r-1",
-		Type: "depends_on",
-	}
-	normalizeRelationInfo(r)
+// --- Tests for EntityDetail.UnmarshalJSON auto-sync ---
 
+func TestEntityDetail_UnmarshalJSON_TypeSyncsToEntityType(t *testing.T) {
+	data := []byte(`{"id":"e-1","name":"TestEntity","type":"service"}`)
+	var d EntityDetail
+	if err := json.Unmarshal(data, &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if d.EntityType != "service" {
+		t.Errorf("expected EntityType 'service', got %q", d.EntityType)
+	}
+}
+
+func TestEntityDetail_UnmarshalJSON_EntityTypeSyncsToType(t *testing.T) {
+	data := []byte(`{"id":"e-1","name":"TestEntity","entity_type":"database"}`)
+	var d EntityDetail
+	if err := json.Unmarshal(data, &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if d.Type != "database" {
+		t.Errorf("expected Type 'database', got %q", d.Type)
+	}
+}
+
+// --- Tests for RelationInfo.UnmarshalJSON auto-sync ---
+
+func TestRelationInfo_UnmarshalJSON_TypeSyncsToRelationType(t *testing.T) {
+	data := []byte(`{"id":"r-1","source_id":"s","target_id":"t","type":"depends_on"}`)
+	var r RelationInfo
+	if err := json.Unmarshal(data, &r); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
 	if r.RelationType != "depends_on" {
 		t.Errorf("expected RelationType 'depends_on', got %q", r.RelationType)
 	}
+	if r.Type != "depends_on" {
+		t.Errorf("expected Type 'depends_on', got %q", r.Type)
+	}
 }
 
-func TestNormalizeRelationInfo_CopiesRelationTypeToType(t *testing.T) {
-	r := &RelationInfo{
-		ID:           "r-1",
-		RelationType: "owns",
+func TestRelationInfo_UnmarshalJSON_RelationTypeSyncsToType(t *testing.T) {
+	data := []byte(`{"id":"r-1","source_id":"s","target_id":"t","relation_type":"owns"}`)
+	var r RelationInfo
+	if err := json.Unmarshal(data, &r); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
-	normalizeRelationInfo(r)
-
 	if r.Type != "owns" {
 		t.Errorf("expected Type 'owns', got %q", r.Type)
 	}
+	if r.RelationType != "owns" {
+		t.Errorf("expected RelationType 'owns', got %q", r.RelationType)
+	}
 }
 
-func TestNormalizeRelationInfo_BothSet(t *testing.T) {
-	r := &RelationInfo{
-		ID:           "r-1",
-		Type:         "uses",
-		RelationType: "depends_on",
+func TestRelationInfo_UnmarshalJSON_BothSet(t *testing.T) {
+	data := []byte(`{"id":"r-1","source_id":"s","target_id":"t","type":"uses","relation_type":"depends_on"}`)
+	var r RelationInfo
+	if err := json.Unmarshal(data, &r); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
-	normalizeRelationInfo(r)
-
 	if r.Type != "uses" {
 		t.Errorf("expected Type 'uses', got %q", r.Type)
 	}
 	if r.RelationType != "depends_on" {
 		t.Errorf("expected RelationType 'depends_on', got %q", r.RelationType)
+	}
+}
+
+func TestRelationInfo_UnmarshalJSON_InvalidJSON(t *testing.T) {
+	data := []byte(`{invalid}`)
+	var r RelationInfo
+	if err := json.Unmarshal(data, &r); err == nil {
+		t.Error("expected error for invalid JSON")
 	}
 }
 

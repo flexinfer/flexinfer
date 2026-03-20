@@ -60,30 +60,6 @@ const (
 
 // --- Internal helpers ---
 
-func normalizeEntityInfo(e *EntityInfo) {
-	if e == nil {
-		return
-	}
-	if e.EntityType == "" {
-		e.EntityType = e.Type
-	}
-	if e.Type == "" {
-		e.Type = e.EntityType
-	}
-}
-
-func normalizeRelationInfo(r *RelationInfo) {
-	if r == nil {
-		return
-	}
-	if r.RelationType == "" {
-		r.RelationType = r.Type
-	}
-	if r.Type == "" {
-		r.Type = r.RelationType
-	}
-}
-
 func isUnknownToolErr(err error, toolName string) bool {
 	if err == nil || strings.TrimSpace(toolName) == "" {
 		return false

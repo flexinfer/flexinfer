@@ -6,6 +6,8 @@
 // wire format.
 package bridge
 
+import "encoding/json"
+
 // --- Session DTOs ---
 
 // SessionInfo describes an agent session.
@@ -185,6 +187,61 @@ type RelationInfo struct {
 	TargetName   string `json:"target_name,omitempty"`
 	Type         string `json:"type,omitempty"`
 	RelationType string `json:"relation_type,omitempty"`
+}
+
+// UnmarshalJSON decodes EntityInfo from JSON, syncing the Type and EntityType
+// fields so both are populated regardless of which one the wire payload contains.
+func (e *EntityInfo) UnmarshalJSON(data []byte) error {
+	type alias EntityInfo
+	var raw alias
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*e = EntityInfo(raw)
+	if e.EntityType == "" {
+		e.EntityType = e.Type
+	}
+	if e.Type == "" {
+		e.Type = e.EntityType
+	}
+	return nil
+}
+
+// UnmarshalJSON decodes EntityDetail from JSON, syncing the Type and EntityType
+// fields so both are populated regardless of which one the wire payload contains.
+func (d *EntityDetail) UnmarshalJSON(data []byte) error {
+	type alias EntityDetail
+	var raw alias
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*d = EntityDetail(raw)
+	if d.EntityType == "" {
+		d.EntityType = d.Type
+	}
+	if d.Type == "" {
+		d.Type = d.EntityType
+	}
+	return nil
+}
+
+// UnmarshalJSON decodes RelationInfo from JSON, syncing the Type and
+// RelationType fields so both are populated regardless of which one the wire
+// payload contains.
+func (r *RelationInfo) UnmarshalJSON(data []byte) error {
+	type alias RelationInfo
+	var raw alias
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*r = RelationInfo(raw)
+	if r.RelationType == "" {
+		r.RelationType = r.Type
+	}
+	if r.Type == "" {
+		r.Type = r.RelationType
+	}
+	return nil
 }
 
 // --- Context DTOs ---
