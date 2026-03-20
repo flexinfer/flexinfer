@@ -2,14 +2,11 @@ package hud
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
-	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -20,6 +17,7 @@ import (
 	"github.com/crb2nu/loom/internal/devbox/detect"
 	"github.com/crb2nu/loom/internal/devbox/dockerfile"
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/spawn"
 )
 
 // Pinned CLI versions for reproducible agent container builds.
@@ -29,44 +27,28 @@ const (
 	geminiVersion     = "0.3.7"
 )
 
-// SpawnStatus tracks the lifecycle state of a spawned agent.
-type SpawnStatus string
+// SpawnStatus is a type alias for spawn.Status, preserving the existing HUD API.
+type SpawnStatus = spawn.Status
 
+// SpawnStatus constants — aliases to spawn package constants.
 const (
-	SpawnStatusCreating  SpawnStatus = "creating"
-	SpawnStatusBuilding  SpawnStatus = "building"
-	SpawnStatusRunning   SpawnStatus = "running"
-	SpawnStatusCompleted SpawnStatus = "completed"
-	SpawnStatusFailed    SpawnStatus = "failed"
-	SpawnStatusStopped   SpawnStatus = "stopped"
+	SpawnStatusCreating  = spawn.StatusPending
+	SpawnStatusBuilding  = spawn.StatusBuilding
+	SpawnStatusRunning   = spawn.StatusRunning
+	SpawnStatusCompleted = spawn.StatusCompleted
+	SpawnStatusFailed    = spawn.StatusFailed
+	SpawnStatusStopped   = spawn.StatusStopped
 )
 
-// SpawnRequest contains the parameters for spawning a headless agent.
-type SpawnRequest struct {
-	AgentType       string  `json:"agent_type"`       // "claude-code", "codex", "gemini"
-	Namespace       string  `json:"namespace"`        // Agent context namespace.
-	Branch          string  `json:"branch"`           // Git branch to work on.
-	BaseBranch      string  `json:"base_branch"`      // Base branch for worktree.
-	TaskDescription string  `json:"task_description"` // Task to execute.
-	Project         string  `json:"project"`          // Project/repo name.
-	MemoryMB        int     `json:"memory_mb"`        // Container memory limit.
-	CPUs            float64 `json:"cpus"`             // Container CPU limit.
-	TimeoutMinutes  int     `json:"timeout_minutes"`  // Max runtime before reap.
-}
+// SpawnRequest is a type alias for spawn.Request.
+type SpawnRequest = spawn.Request
 
-// SpawnState holds the state of a spawned agent.
-type SpawnState struct {
-	SpawnID   string       `json:"spawn_id"`
-	AgentID   string       `json:"agent_id"`
-	PodName   string       `json:"pod_name"`
-	Status    SpawnStatus  `json:"status"`
-	Request   SpawnRequest `json:"request"`
-	StartedAt time.Time    `json:"started_at"`
-	EndedAt   *time.Time   `json:"ended_at,omitempty"`
-	Error     string       `json:"error,omitempty"`
-}
+// SpawnState is a type alias for spawn.State.
+type SpawnState = spawn.State
 
 // SpawnOrchestrator manages the full lifecycle of headless agent spawns.
+// It delegates state management to a spawn.Controller, keeping the HUD layer
+// focused on orchestration concerns (build, deploy, exec, SSE, metrics).
 type SpawnOrchestrator struct {
 	backend     backend.Backend
 	agentBridge *bridge.AgentBridge
@@ -74,10 +56,7 @@ type SpawnOrchestrator struct {
 	tracer      trace.Tracer
 	metrics     *HUDMetrics
 	logger      *slog.Logger
-	store       *SpawnStore
-
-	mu     sync.RWMutex
-	spawns map[string]*SpawnState
+	ctrl        *spawn.K8sController
 
 	// Limits.
 	maxConcurrent  int
@@ -116,7 +95,9 @@ func DefaultSpawnConfig() SpawnOrchestratorConfig {
 	}
 }
 
-// NewSpawnOrchestrator creates a new spawn orchestrator.
+// NewSpawnOrchestrator creates a new spawn orchestrator. It initialises a
+// spawn.K8sController backed by a FileStore for persistence and wires it
+// into the HUD orchestration layer.
 func NewSpawnOrchestrator(
 	b backend.Backend,
 	agentBridge *bridge.AgentBridge,
@@ -133,14 +114,26 @@ func NewSpawnOrchestrator(
 
 	spawnLogger := logger.With("component", "spawn")
 
-	// Initialize persistent spawn store.
-	var store *SpawnStore
-	storeDir := defaultSpawnStoreDir()
-	if s, err := NewSpawnStore(storeDir); err != nil {
+	// Initialize persistent spawn store (FileStore for backward compat).
+	var store spawn.Store
+	storeDir := spawn.DefaultStoreDir()
+	if fs, err := spawn.NewFileStore(storeDir); err != nil {
 		spawnLogger.Warn("failed to create spawn store, state will not be persisted",
 			"dir", storeDir, "error", err)
 	} else {
-		store = s
+		store = fs
+	}
+
+	// Create a K8sController. We pass a nil kubernetes.Interface because the
+	// orchestrator uses the devbox backend (not raw K8s client) for pod
+	// management. The controller still provides state tracking, reconciliation
+	// hooks, and persistence. A future iteration can inject a real K8s client
+	// when the spawn backend exposes it.
+	ctrl := spawn.NewK8sController(nil, "", store, spawnLogger)
+
+	// Recover persisted state from the store on startup.
+	if err := ctrl.RecoverFromStore(context.Background()); err != nil {
+		spawnLogger.Warn("failed to recover spawn state from store", "error", err)
 	}
 
 	return &SpawnOrchestrator{
@@ -150,8 +143,7 @@ func NewSpawnOrchestrator(
 		tracer:         tracer,
 		metrics:        metrics,
 		logger:         spawnLogger,
-		store:          store,
-		spawns:         make(map[string]*SpawnState),
+		ctrl:           ctrl,
 		maxConcurrent:  cfg.MaxConcurrent,
 		defaultTimeout: cfg.DefaultTimeout,
 		defaultMemory:  cfg.DefaultMemory,
@@ -161,82 +153,25 @@ func NewSpawnOrchestrator(
 	}
 }
 
-// RecoverSpawns loads persisted spawn state on startup, marks non-terminal
-// spawns as failed (stale after restart), and re-populates the in-memory map.
+// Controller returns the underlying spawn.K8sController for callers that need
+// direct access (e.g., to start a reconcile loop).
+func (o *SpawnOrchestrator) Controller() *spawn.K8sController {
+	return o.ctrl
+}
+
+// RecoverSpawns delegates recovery to the spawn controller. Previously this
+// blindly marked non-terminal spawns as failed ("stale after HUD restart").
+// Now the controller recovers from the store and a subsequent Reconcile call
+// will check actual pod status — fixing the stale-after-restart bug.
 func (o *SpawnOrchestrator) RecoverSpawns() {
-	if o.store == nil {
-		return
-	}
-	states, err := o.store.Load()
-	if err != nil {
-		o.logger.Warn("failed to load persisted spawns", "error", err)
-		return
-	}
-	if len(states) == 0 {
-		return
-	}
-
-	o.mu.Lock()
-	defer o.mu.Unlock()
-
-	recovered := 0
-	failed := 0
-	for _, st := range states {
-		if isTerminal(st.Status) {
-			// Keep terminal states in memory for visibility.
-			o.spawns[st.SpawnID] = st
-			recovered++
-			continue
-		}
-		// Non-terminal spawns are stale after a HUD restart.
-		o.logger.Warn("marking stale spawn as failed",
-			"spawn_id", st.SpawnID,
-			"previous_status", st.Status,
-			"agent_id", st.AgentID,
-		)
-		st.Status = SpawnStatusFailed
-		st.Error = "stale after HUD restart"
-		now := time.Now()
-		st.EndedAt = &now
-		o.spawns[st.SpawnID] = st
-
-		// Re-persist the updated terminal state.
-		if err := o.store.Save(st); err != nil {
-			o.logger.Warn("failed to persist recovered spawn state",
-				"spawn_id", st.SpawnID, "error", err)
-		}
-		failed++
-	}
-
-	o.logger.Info("spawn recovery complete",
-		"total", len(states), "recovered", recovered, "failed_stale", failed)
-
-	// Prune old completed/failed spawns (older than 24 hours).
-	if err := o.store.PruneCompleted(24 * time.Hour); err != nil {
-		o.logger.Warn("failed to prune old spawn states", "error", err)
+	if err := o.ctrl.RecoverFromStore(context.Background()); err != nil {
+		o.logger.Warn("failed to recover spawns", "error", err)
 	}
 }
 
 // Spawn starts a new headless agent. Returns the spawn ID immediately (202).
 // The actual spawn runs asynchronously in a goroutine.
 func (o *SpawnOrchestrator) Spawn(ctx context.Context, req SpawnRequest) (string, error) {
-	// Validate request.
-	if req.AgentType == "" {
-		req.AgentType = "claude-code"
-	}
-	switch req.AgentType {
-	case "claude-code", "codex", "gemini":
-		// ok
-	default:
-		return "", fmt.Errorf("unsupported agent type: %s", req.AgentType)
-	}
-	if req.TaskDescription == "" {
-		return "", fmt.Errorf("task_description is required")
-	}
-	if req.Project == "" {
-		return "", fmt.Errorf("project is required")
-	}
-
 	// Apply defaults.
 	if req.MemoryMB <= 0 {
 		req.MemoryMB = o.defaultMemory
@@ -255,30 +190,14 @@ func (o *SpawnOrchestrator) Spawn(ctx context.Context, req SpawnRequest) (string
 	}
 
 	// Check concurrent limit.
-	if o.activeCount() >= o.maxConcurrent {
+	if o.ctrl.ActiveCount() >= o.maxConcurrent {
 		return "", fmt.Errorf("max concurrent spawns reached (%d)", o.maxConcurrent)
 	}
 
-	spawnID := newSpawnID()
-	agentID := fmt.Sprintf("spawn-%s-%s", req.AgentType, spawnID[6:])
-
-	state := &SpawnState{
-		SpawnID:   spawnID,
-		AgentID:   agentID,
-		Status:    SpawnStatusCreating,
-		Request:   req,
-		StartedAt: time.Now(),
-	}
-
-	o.mu.Lock()
-	o.spawns[spawnID] = state
-	o.mu.Unlock()
-
-	// Persist initial state.
-	if o.store != nil {
-		if err := o.store.Save(state); err != nil {
-			o.logger.Warn("failed to persist spawn state", "spawn_id", spawnID, "error", err)
-		}
+	// Delegate validation and ID generation to the controller.
+	spawnID, err := o.ctrl.Spawn(ctx, req)
+	if err != nil {
+		return "", err
 	}
 
 	if o.metrics != nil {
@@ -309,17 +228,13 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	)
 	defer span.End()
 
-	o.mu.RLock()
-	state := o.spawns[spawnID]
-	o.mu.RUnlock()
+	state, _ := o.ctrl.Get(spawnID)
 
 	projectDir := o.workspaceRoot + "/" + req.Project
 
 	// Step 1: Detect project environment and generate Dockerfile.
-	o.mu.Lock()
 	state.Status = SpawnStatusBuilding
-	o.mu.Unlock()
-	o.persistState(state)
+	o.ctrl.UpdateState(ctx, state)
 	o.broadcastSpawnEvent("agent.spawn.building", state)
 
 	_, buildSpan := o.tracer.Start(ctx, "agent.spawn.image_build")
@@ -371,10 +286,8 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 		return
 	}
 
-	o.mu.Lock()
 	state.PodName = startResult.ContainerID
-	o.mu.Unlock()
-	o.persistState(state)
+	o.ctrl.UpdateState(ctx, state)
 
 	// Step 3: Inject pre-authed configs (with a short timeout to avoid hanging on SPDY issues).
 	_, cfgSpan := o.tracer.Start(ctx, "agent.spawn.config_inject")
@@ -400,10 +313,8 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	sessSpan.End()
 
 	// Mark running and broadcast event.
-	o.mu.Lock()
 	state.Status = SpawnStatusRunning
-	o.mu.Unlock()
-	o.persistState(state)
+	o.ctrl.UpdateState(ctx, state)
 	o.broadcastSpawnEvent("agent.spawn.running", state)
 
 	// Step 5: Start heartbeat loop for spawn visibility.
@@ -536,39 +447,24 @@ func buildAgentCommand(agentType, task, agentID string) string {
 	}
 }
 
-// newSpawnID generates a unique spawn ID using crypto/rand.
-func newSpawnID() string {
-	var buf [6]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return fmt.Sprintf("spawn-%d", time.Now().UnixNano())
-	}
-	return "spawn-" + hex.EncodeToString(buf[:])
-}
-
 // StopSpawn stops a running spawned agent.
 func (o *SpawnOrchestrator) StopSpawn(ctx context.Context, spawnID string) error {
-	o.mu.Lock()
-	state, ok := o.spawns[spawnID]
+	state, ok := o.ctrl.Get(spawnID)
 	if !ok {
-		o.mu.Unlock()
 		return fmt.Errorf("spawn %s not found", spawnID)
 	}
-	o.mu.Unlock()
 
+	// Stop via devbox backend (handles pod deletion + cleanup).
 	if state.PodName != "" {
 		if err := o.backend.Stop(ctx, state.PodName); err != nil {
 			o.logger.Warn("failed to stop spawn pod", "spawn_id", spawnID, "error", err)
 		}
 	}
 
-	o.mu.Lock()
 	state.Status = SpawnStatusStopped
 	now := time.Now()
 	state.EndedAt = &now
-	o.mu.Unlock()
-
-	// Persist terminal state.
-	o.persistState(state)
+	o.ctrl.UpdateState(ctx, state)
 
 	if o.metrics != nil {
 		o.metrics.SpawnedAgentActive.Add(ctx, -1)
@@ -586,13 +482,12 @@ func (o *SpawnOrchestrator) StopSpawn(ctx context.Context, spawnID string) error
 
 // failSpawn marks a spawn as failed, cleans up the K8s pod, and broadcasts the event.
 func (o *SpawnOrchestrator) failSpawn(ctx context.Context, state *SpawnState, reason string) {
-	o.mu.Lock()
 	state.Status = SpawnStatusFailed
 	state.Error = reason
 	now := time.Now()
 	state.EndedAt = &now
 	podName := state.PodName
-	o.mu.Unlock()
+	o.ctrl.UpdateState(ctx, state)
 
 	// Clean up K8s pod if one was created.
 	if podName != "" {
@@ -601,9 +496,6 @@ func (o *SpawnOrchestrator) failSpawn(ctx context.Context, state *SpawnState, re
 				"spawn_id", state.SpawnID, "pod", podName, "error", err)
 		}
 	}
-
-	// Persist terminal state.
-	o.persistState(state)
 
 	if o.metrics != nil {
 		o.metrics.SpawnedAgentActive.Add(ctx, -1)
@@ -632,14 +524,10 @@ func (o *SpawnOrchestrator) failSpawn(ctx context.Context, state *SpawnState, re
 
 // completeSpawn marks a spawn as completed.
 func (o *SpawnOrchestrator) completeSpawn(ctx context.Context, state *SpawnState) {
-	o.mu.Lock()
 	state.Status = SpawnStatusCompleted
 	now := time.Now()
 	state.EndedAt = &now
-	o.mu.Unlock()
-
-	// Persist terminal state.
-	o.persistState(state)
+	o.ctrl.UpdateState(ctx, state)
 
 	if o.metrics != nil {
 		o.metrics.SpawnedAgentActive.Add(ctx, -1)
@@ -666,34 +554,12 @@ func (o *SpawnOrchestrator) completeSpawn(ctx context.Context, state *SpawnState
 
 // ListSpawns returns all spawn states.
 func (o *SpawnOrchestrator) ListSpawns() []*SpawnState {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	result := make([]*SpawnState, 0, len(o.spawns))
-	for _, s := range o.spawns {
-		result = append(result, s)
-	}
-	return result
+	return o.ctrl.List()
 }
 
 // GetSpawn returns a specific spawn state.
 func (o *SpawnOrchestrator) GetSpawn(spawnID string) (*SpawnState, bool) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	s, ok := o.spawns[spawnID]
-	return s, ok
-}
-
-// activeCount returns the number of spawns in creating or running state.
-func (o *SpawnOrchestrator) activeCount() int {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	count := 0
-	for _, s := range o.spawns {
-		if s.Status == SpawnStatusCreating || s.Status == SpawnStatusBuilding || s.Status == SpawnStatusRunning {
-			count++
-		}
-	}
-	return count
+	return o.ctrl.Get(spawnID)
 }
 
 // Projects returns the configured project list for spawn pickers.
@@ -708,10 +574,7 @@ func (o *SpawnOrchestrator) runHeartbeatLoop(ctx context.Context, state *SpawnSt
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			o.mu.RLock()
-			status := state.Status
-			o.mu.RUnlock()
-			if status != SpawnStatusRunning {
+			if state.Status != SpawnStatusRunning {
 				return
 			}
 			_, _ = o.agentBridge.PresenceHeartbeat(state.AgentID, bridge.PresenceHeartbeatParams{
@@ -720,17 +583,6 @@ func (o *SpawnOrchestrator) runHeartbeatLoop(ctx context.Context, state *SpawnSt
 				Branch:      state.Request.Branch,
 			})
 		}
-	}
-}
-
-// persistState saves the spawn state to disk if a store is configured.
-func (o *SpawnOrchestrator) persistState(state *SpawnState) {
-	if o.store == nil {
-		return
-	}
-	if err := o.store.Save(state); err != nil {
-		o.logger.Warn("failed to persist spawn state",
-			"spawn_id", state.SpawnID, "error", err)
 	}
 }
 

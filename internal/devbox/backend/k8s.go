@@ -120,6 +120,18 @@ func buildRestConfig(kubeconfig string) (*rest.Config, error) {
 	return clientcmd.BuildConfigFromFlags("", home+"/.kube/config")
 }
 
+// Clientset returns the underlying Kubernetes clientset. This allows callers
+// (e.g., the spawn controller) to share the same authenticated client for
+// direct pod queries without creating a separate kubeconfig connection.
+func (k *K8sBackend) Clientset() kubernetes.Interface {
+	return k.clientset
+}
+
+// Namespace returns the K8s namespace this backend targets.
+func (k *K8sBackend) Namespace() string {
+	return k.namespace
+}
+
 func (k *K8sBackend) Health(ctx context.Context) error {
 	_, err := k.clientset.CoreV1().Namespaces().Get(ctx, k.namespace, metav1.GetOptions{})
 	if err != nil {
