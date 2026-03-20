@@ -286,6 +286,17 @@ func Run(cfg Config) error {
 				spawnCfg,
 			)
 			app.fleetMonitor.SetSpawnLister(spawnAdapter{app.spawner})
+
+			// Inject the K8s clientset into the spawn controller so it can
+			// reconcile pod state directly, fixing the stale-after-restart bug.
+			ctrl := app.spawner.Controller()
+			ctrl.SetK8sClient(spawnBackend.Clientset(), spawnBackend.Namespace())
+
+			// Start background reconciliation loop (30s interval).
+			reconcileCtx, reconcileCancel := context.WithCancel(context.Background())
+			defer reconcileCancel()
+			ctrl.StartReconcileLoop(reconcileCtx, 30*time.Second)
+
 			logger.Info("spawn orchestrator enabled",
 				"namespace", cfg.SpawnNamespace, "registry", cfg.SpawnRegistry,
 				"sync_mode", cfg.SpawnSyncMode, "projects", len(spawnCfg.Projects))
