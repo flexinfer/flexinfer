@@ -1032,7 +1032,7 @@ func (m *Manager) regenerateSkills(p *Profile) error {
 		RegistryPath:  skillsRegPath,
 		Target:        p.SkillsTarget,
 		RepoRoot:      m.RepoRoot,
-		WorkspaceRoot: m.RepoRoot,
+		WorkspaceRoot: m.WorkspaceRoot,
 		OutputDir:     outputDir,
 		GeminiSkillsHome: func() string {
 			if p.SkillsTarget != "gemini" {
@@ -1084,11 +1084,22 @@ func (m *Manager) regenerateSkills(p *Profile) error {
 
 // cleanRepoSkills removes stale skill files from the repo directory when
 // skills are generated directly to home (SkillsDirectToHome).
+// Also cleans the workspace root if it differs from the repo root.
 func (m *Manager) cleanRepoSkills(p *Profile) {
-	repoPath := m.ResolveRepoPath(p)
+	m.cleanSkillsAt(m.ResolveRepoPath(p))
 
-	// Remove the skills directory (e.g. <repo>/.gemini/skills/)
-	skillsDir := filepath.Join(repoPath, "skills")
+	// Also clean workspace root if different from repo root
+	if m.WorkspaceRoot != "" && m.WorkspaceRoot != m.RepoRoot {
+		wsPath := filepath.Join(m.WorkspaceRoot, p.RepoDir)
+		if wsPath != m.ResolveHomePath(p) {
+			m.cleanSkillsAt(wsPath)
+		}
+	}
+}
+
+// cleanSkillsAt removes stale skill files from the given directory.
+func (m *Manager) cleanSkillsAt(dir string) {
+	skillsDir := filepath.Join(dir, "skills")
 	if Exists(skillsDir) {
 		if err := os.RemoveAll(skillsDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not remove stale repo skills %s: %v\n", skillsDir, err)
@@ -1097,17 +1108,15 @@ func (m *Manager) cleanRepoSkills(p *Profile) {
 		}
 	}
 
-	// Remove the manifest file
-	manifestPath := filepath.Join(repoPath, skills.ManifestFilename)
+	manifestPath := filepath.Join(dir, skills.ManifestFilename)
 	if Exists(manifestPath) {
 		if err := os.Remove(manifestPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not remove stale manifest %s: %v\n", manifestPath, err)
 		}
 	}
 
-	// Remove instructions.md/GEMINI.md if it exists (generated alongside skills)
 	for _, f := range []string{"instructions.md", "GEMINI.md"} {
-		p := filepath.Join(repoPath, f)
+		p := filepath.Join(dir, f)
 		if Exists(p) {
 			if err := os.Remove(p); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not remove stale %s %s: %v\n", f, p, err)
@@ -1118,9 +1127,21 @@ func (m *Manager) cleanRepoSkills(p *Profile) {
 
 // cleanRepoGenerated removes stale generated config files from the repo
 // directory when a profile now writes them directly to home.
+// Also cleans the workspace root if it differs from the repo root.
 func (m *Manager) cleanRepoGenerated(p *Profile) {
-	repoPath := m.ResolveRepoPath(p)
+	m.cleanGeneratedAt(m.ResolveRepoPath(p), p)
 
+	// Also clean workspace root if different from repo root
+	if m.WorkspaceRoot != "" && m.WorkspaceRoot != m.RepoRoot {
+		wsPath := filepath.Join(m.WorkspaceRoot, p.RepoDir)
+		if wsPath != m.ResolveHomePath(p) {
+			m.cleanGeneratedAt(wsPath, p)
+		}
+	}
+}
+
+// cleanGeneratedAt removes stale generated config files from the given directory.
+func (m *Manager) cleanGeneratedAt(dir string, p *Profile) {
 	files := []string{p.GeneratedFile}
 	files = append(files, p.ExtraGeneratedFiles...)
 
@@ -1128,7 +1149,7 @@ func (m *Manager) cleanRepoGenerated(p *Profile) {
 		if rel == "" {
 			continue
 		}
-		path := filepath.Join(repoPath, rel)
+		path := filepath.Join(dir, rel)
 		if !Exists(path) {
 			continue
 		}

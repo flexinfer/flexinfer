@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/crb2nu/loom/pkg/generator"
 )
 
 // Profile defines the configuration for a specific tool profile.
@@ -52,10 +54,11 @@ type Profile struct {
 
 // Manager handles synchronization operations.
 type Manager struct {
-	RepoRoot   string
-	HomeDir    string
-	Profiles   map[string]*Profile
-	SkipSkills bool // When true, skip skills generation during Regenerate
+	RepoRoot      string
+	HomeDir       string
+	WorkspaceRoot string // Inferred workspace root (may equal RepoRoot)
+	Profiles      map[string]*Profile
+	SkipSkills    bool // When true, skip skills generation during Regenerate
 }
 
 // NewManager creates a new sync manager.
@@ -66,9 +69,10 @@ func NewManager(repoRoot string) (*Manager, error) {
 	}
 
 	m := &Manager{
-		RepoRoot: repoRoot,
-		HomeDir:  home,
-		Profiles: make(map[string]*Profile),
+		RepoRoot:      repoRoot,
+		HomeDir:       home,
+		WorkspaceRoot: generator.InferWorkspaceRoot(repoRoot),
+		Profiles:      make(map[string]*Profile),
 	}
 
 	// Register default profiles

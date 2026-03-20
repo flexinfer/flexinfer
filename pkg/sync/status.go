@@ -109,6 +109,18 @@ func (m *Manager) GetSyncStatus(profileName string) (*SyncStatus, error) {
 		}
 	}
 
+	// Check for stale workspace-level configs that shadow home configs
+	if profile.GeneratedDirectToHome && m.WorkspaceRoot != "" && m.WorkspaceRoot != m.RepoRoot {
+		wsConfigPath := filepath.Join(m.WorkspaceRoot, profile.RepoDir, profile.GeneratedFile)
+		if Exists(wsConfigPath) {
+			status.DriftDetails = append(status.DriftDetails, DriftItem{
+				File:   "workspace:" + profile.GeneratedFile,
+				Status: DriftOutOfSync,
+			})
+			status.InSync = false
+		}
+	}
+
 	// Check skill files for drift via manifest
 	if profile.SkillsManifest != "" {
 		var skillDrift []DriftItem
