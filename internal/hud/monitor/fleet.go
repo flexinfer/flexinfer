@@ -5,7 +5,6 @@ package monitor
 
 import (
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
@@ -108,50 +107,38 @@ type KPICounters struct {
 // FleetMonitor aggregates data from the daemon client and agent bridge
 // into a FleetSnapshot. It runs a background goroutine that polls all
 // data sources at a configurable interval.
+//
+// FleetMonitor embeds BaseMonitor for lifecycle management (stop, pollLoop,
+// OnRefresh, Snapshot) but keeps its own complex Refresh implementation
+// with KPI tracking, conflict detection, and notification logic.
 type FleetMonitor struct {
+	BaseMonitor[FleetSnapshot]
 	client *bridge.DaemonClient
 	agent  *bridge.AgentBridge
-	spawns SpawnLister // optional — nil when spawn orchestrator not configured
-	logger *slog.Logger
+	spawns SpawnLister // optional -- nil when spawn orchestrator not configured
 
-	mu          sync.RWMutex
-	snapshot    FleetSnapshot
 	lastRefresh time.Time // debounce: skip Refresh() if <2s since last
 
 	// Handoff notification dedup: tracks handoff IDs already notified.
 	notifiedHandoffs map[string]bool
 
-	// KPI counters — daily aggregate metrics.
+	// KPI counters -- daily aggregate metrics.
 	kpis KPICounters
 
 	// Previous snapshot for diff-based notifications.
 	prevFileClaims []bridge.FileClaimInfo
 	prevApprovals  int
-
-	onRefresh func(FleetSnapshot)
-
-	stopCh   chan struct{}
-	stopOnce sync.Once
-}
-
-// OnRefresh registers a callback that fires after each successful refresh
-// with the new snapshot. Used to broadcast data via SSE.
-func (m *FleetMonitor) OnRefresh(fn func(FleetSnapshot)) {
-	m.onRefresh = fn
 }
 
 // NewFleetMonitor creates a FleetMonitor backed by the given client and agent bridge.
 func NewFleetMonitor(client *bridge.DaemonClient, agent *bridge.AgentBridge, logger *slog.Logger) *FleetMonitor {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &FleetMonitor{
+	m := &FleetMonitor{
 		client:           client,
 		agent:            agent,
-		logger:           logger.With("component", "fleet-monitor"),
 		notifiedHandoffs: make(map[string]bool),
-		stopCh:           make(chan struct{}),
 	}
+	m.InitBase(logger, nil, "fleet-monitor")
+	return m
 }
 
 // SetSpawnLister injects a spawn source for fleet aggregation.
@@ -162,40 +149,29 @@ func (m *FleetMonitor) SetSpawnLister(sl SpawnLister) {
 
 // Start begins the background polling goroutine at the given interval.
 func (m *FleetMonitor) Start(interval time.Duration) {
+	m.StartManual()
 	// Run initial refresh asynchronously so HUD/TUI startup is non-blocking
 	// when downstream services are slow or unavailable.
 	go func() {
 		if err := m.Refresh(); err != nil {
-			m.logger.Warn("initial fleet refresh failed", "error", err)
+			m.Logger.Warn("initial fleet refresh failed", "error", err)
 		}
 	}()
 
 	go m.pollLoop(interval)
 }
 
-// Stop signals the background goroutine to exit. It is safe to call multiple times.
-func (m *FleetMonitor) Stop() {
-	m.stopOnce.Do(func() { close(m.stopCh) })
-}
-
-// Snapshot returns the current aggregated fleet snapshot.
-func (m *FleetMonitor) Snapshot() FleetSnapshot {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.snapshot
-}
-
 // KPIs returns the current daily KPI counters.
 func (m *FleetMonitor) KPIs() KPICounters {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.RLock()
+	defer m.RUnlock()
 	return m.kpis
 }
 
 // IncrementKPI atomically increments a specific KPI counter.
 func (m *FleetMonitor) IncrementKPI(field string, delta int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.Lock()
+	defer m.Unlock()
 
 	// Auto-reset on day change.
 	today := time.Now().Format("2006-01-02")
@@ -214,11 +190,11 @@ func (m *FleetMonitor) IncrementKPI(field string, delta int) {
 }
 
 // OfflineAgentsWithActiveSessions returns agents that are offline but still
-// have active sessions — candidates for session reaping.
+// have active sessions -- candidates for session reaping.
 func (m *FleetMonitor) OfflineAgentsWithActiveSessions() []bridge.PresenceInfo {
-	m.mu.RLock()
-	snap := m.snapshot
-	m.mu.RUnlock()
+	m.RLock()
+	snap := m.GetSnapshot()
+	m.RUnlock()
 
 	// Build set of agents with active sessions.
 	activeSessionAgents := make(map[string]bool)
@@ -243,13 +219,13 @@ func (m *FleetMonitor) OfflineAgentsWithActiveSessions() []bridge.PresenceInfo {
 func (m *FleetMonitor) Refresh() error {
 	// Debounce: skip if less than 2s since last refresh to prevent stampede
 	// when multiple handlers fire go Refresh() concurrently.
-	m.mu.RLock()
+	m.RLock()
 	if time.Since(m.lastRefresh) < 2*time.Second {
-		m.mu.RUnlock()
-		m.logger.Debug("fleet refresh debounced")
+		m.RUnlock()
+		m.Logger.Debug("fleet refresh debounced")
 		return nil
 	}
-	m.mu.RUnlock()
+	m.RUnlock()
 
 	snap := FleetSnapshot{
 		UpdatedAt: time.Now(),
@@ -257,7 +233,7 @@ func (m *FleetMonitor) Refresh() error {
 
 	// Fetch daemon status.
 	if status, err := m.client.Status(); err != nil {
-		m.logger.Warn("fleet: failed to fetch daemon status", "error", err)
+		m.Logger.Warn("fleet: failed to fetch daemon status", "error", err)
 	} else {
 		snap.DaemonRunning = status.Running
 		snap.ServerCount = status.Servers
@@ -267,7 +243,7 @@ func (m *FleetMonitor) Refresh() error {
 
 	// Fetch agent sessions.
 	if sessions, err := m.agent.Sessions(); err != nil {
-		m.logger.Warn("fleet: failed to fetch sessions", "error", err)
+		m.Logger.Warn("fleet: failed to fetch sessions", "error", err)
 	} else {
 		snap.Sessions = sessions
 		snap.TotalSessions = len(sessions)
@@ -281,7 +257,7 @@ func (m *FleetMonitor) Refresh() error {
 
 	// Fetch all tasks.
 	if tasks, err := m.agent.AllTasks(); err != nil {
-		m.logger.Warn("fleet: failed to fetch tasks", "error", err)
+		m.Logger.Warn("fleet: failed to fetch tasks", "error", err)
 	} else {
 		snap.Tasks = tasks
 		snap.TotalTasks = len(tasks)
@@ -299,7 +275,7 @@ func (m *FleetMonitor) Refresh() error {
 
 	// Fetch memory stats.
 	if memStats, err := m.agent.MemoryStats(); err != nil {
-		m.logger.Warn("fleet: failed to fetch memory stats", "error", err)
+		m.Logger.Warn("fleet: failed to fetch memory stats", "error", err)
 	} else {
 		snap.MemoryTotalItems = memStats.TotalItems
 		snap.MemoryTotalTokens = memStats.TotalTokens
@@ -307,7 +283,7 @@ func (m *FleetMonitor) Refresh() error {
 
 	// Fetch graph stats.
 	if graphStats, err := m.agent.GraphStats(); err != nil {
-		m.logger.Warn("fleet: failed to fetch graph stats", "error", err)
+		m.Logger.Warn("fleet: failed to fetch graph stats", "error", err)
 	} else {
 		snap.EntityCount = graphStats.EntityCount
 		snap.RelationCount = graphStats.RelationCount
@@ -315,7 +291,7 @@ func (m *FleetMonitor) Refresh() error {
 
 	// Fetch workflow list.
 	if workflows, err := m.agent.WorkflowList(); err != nil {
-		m.logger.Warn("fleet: failed to fetch workflows", "error", err)
+		m.Logger.Warn("fleet: failed to fetch workflows", "error", err)
 	} else {
 		for _, w := range workflows {
 			switch w.Status {
@@ -329,7 +305,7 @@ func (m *FleetMonitor) Refresh() error {
 
 	// Fetch agent presence.
 	if agents, err := m.agent.PresenceList(true); err != nil {
-		m.logger.Warn("fleet: failed to fetch presence", "error", err)
+		m.Logger.Warn("fleet: failed to fetch presence", "error", err)
 	} else {
 		snap.Agents = agents
 		for _, a := range agents {
@@ -346,14 +322,14 @@ func (m *FleetMonitor) Refresh() error {
 
 	// Fetch file claims.
 	if claims, err := m.agent.FileClaimList(""); err != nil {
-		m.logger.Warn("fleet: failed to fetch file claims", "error", err)
+		m.Logger.Warn("fleet: failed to fetch file claims", "error", err)
 	} else {
 		snap.FileClaims = claims
 	}
 
 	// Fetch worktree assignments.
 	if worktrees, err := m.agent.WorktreeList("", "active"); err != nil {
-		m.logger.Warn("fleet: failed to fetch worktrees", "error", err)
+		m.Logger.Warn("fleet: failed to fetch worktrees", "error", err)
 	} else {
 		snap.Worktrees = worktrees
 		snap.ActiveWorktrees = len(worktrees)
@@ -373,7 +349,7 @@ func (m *FleetMonitor) Refresh() error {
 	)
 
 	// --- KPI daily counter reset ---
-	m.mu.Lock()
+	m.Lock()
 	today := time.Now().Format("2006-01-02")
 	if m.kpis.resetDate != today {
 		m.kpis = KPICounters{resetDate: today}
@@ -384,17 +360,17 @@ func (m *FleetMonitor) Refresh() error {
 	conflictCount, conflictDetails := detectConflicts(snap.FileClaims)
 	m.kpis.FileConflicts = conflictCount
 	m.kpis.ConflictDetails = conflictDetails
-	m.mu.Unlock()
+	m.Unlock()
 
 	// --- Proactive notifications: conflict detection ---
 	newConflicts := conflictCount
-	m.mu.RLock()
+	m.RLock()
 	prevConflicts, _ := detectConflicts(m.prevFileClaims)
-	m.mu.RUnlock()
+	m.RUnlock()
 	if newConflicts > prevConflicts {
 		go func() {
 			if err := notify.NotifyConflict(newConflicts); err != nil {
-				m.logger.Debug("conflict notification failed", "error", err)
+				m.Logger.Debug("conflict notification failed", "error", err)
 			}
 		}()
 	}
@@ -405,34 +381,32 @@ func (m *FleetMonitor) Refresh() error {
 
 	// Check for new handoffs and send desktop notifications.
 	if handoffs, err := m.agent.HandoffList(); err != nil {
-		m.logger.Debug("fleet: failed to fetch handoffs for notification", "error", err)
+		m.Logger.Debug("fleet: failed to fetch handoffs for notification", "error", err)
 	} else {
-		m.mu.Lock()
+		m.Lock()
 		for _, h := range handoffs {
 			if h.Status == "pending" && !m.notifiedHandoffs[h.ID] {
 				m.notifiedHandoffs[h.ID] = true
 				go func(from, to, summary string) {
 					if err := notify.NotifyHandoff(from, to, summary); err != nil {
-						m.logger.Debug("handoff notification failed", "error", err)
+						m.Logger.Debug("handoff notification failed", "error", err)
 					}
 				}(h.FromAgent, h.ToAgent, h.Summary)
 			}
 		}
-		m.mu.Unlock()
+		m.Unlock()
 	}
 
 	// Commit the snapshot atomically and save previous state for diff-based notifications.
-	m.mu.Lock()
-	m.prevFileClaims = m.snapshot.FileClaims
-	m.prevApprovals = m.snapshot.PendingApprovals
-	m.snapshot = snap
+	m.Lock()
+	m.prevFileClaims = m.GetSnapshot().FileClaims
+	m.prevApprovals = m.GetSnapshot().PendingApprovals
+	m.SetSnapshot(snap)
 	m.lastRefresh = time.Now()
-	m.mu.Unlock()
+	m.Unlock()
 
 	// Notify listeners (e.g., SSE hub) with the fresh snapshot.
-	if m.onRefresh != nil {
-		m.onRefresh(snap)
-	}
+	m.FireOnRefresh(snap)
 
 	return nil
 }
@@ -473,27 +447,27 @@ func (m *FleetMonitor) pollLoop(interval time.Duration) {
 	consecutiveErrors := 0
 	for {
 		select {
-		case <-m.stopCh:
-			m.logger.Debug("fleet monitor stopped")
+		case <-m.StopCh():
+			m.Logger.Debug("fleet monitor stopped")
 			return
 		case <-ticker.C:
 			if err := m.Refresh(); err != nil {
 				consecutiveErrors++
 				if consecutiveErrors <= 3 {
-					m.logger.Warn("fleet refresh error", "error", err)
+					m.Logger.Warn("fleet refresh error", "error", err)
 				}
 				// Back off: skip next N-1 ticks (up to 4 skips = 5x interval).
 				skipTicks := min(consecutiveErrors-1, 4)
 				for range skipTicks {
 					select {
-					case <-m.stopCh:
+					case <-m.StopCh():
 						return
 					case <-ticker.C:
 					}
 				}
 			} else {
 				if consecutiveErrors > 0 {
-					m.logger.Info("fleet refresh recovered", "after_errors", consecutiveErrors)
+					m.Logger.Info("fleet refresh recovered", "after_errors", consecutiveErrors)
 				}
 				consecutiveErrors = 0
 			}

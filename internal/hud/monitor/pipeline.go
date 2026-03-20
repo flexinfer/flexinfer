@@ -1,9 +1,9 @@
 package monitor
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
@@ -21,65 +21,48 @@ const pipelineDetailTTL = 10 * time.Second
 // PipelineMonitor tracks active GitLab CI pipelines and caches their details.
 // It polls the mcp-gitlab server at a configurable interval and lazily fetches
 // individual pipeline details on demand.
+//
+// PipelineMonitor keeps its own adaptive pollLoop (fast when active, slow when
+// idle) but delegates snapshot storage, stop lifecycle, and OnRefresh to
+// BaseMonitor.
 type PipelineMonitor struct {
+	BaseMonitor[[]bridge.PipelineInfo]
 	agent    *bridge.AgentBridge
-	logger   *slog.Logger
-	projects []string // GitLab project paths to monitor.
-
-	mu        sync.RWMutex
-	pipelines []bridge.PipelineInfo
-	details   map[int]*cachedPipelineDetail // pipeline ID -> cached detail
-
-	onRefresh func([]bridge.PipelineInfo)
-
-	stopCh   chan struct{}
-	stopOnce sync.Once
-}
-
-// OnRefresh registers a callback that fires after each successful refresh
-// with the updated pipeline list. Used to broadcast data via SSE.
-func (m *PipelineMonitor) OnRefresh(fn func([]bridge.PipelineInfo)) {
-	m.onRefresh = fn
+	projects []string                      // GitLab project paths to monitor.
+	details  map[int]*cachedPipelineDetail // pipeline ID -> cached detail
 }
 
 // NewPipelineMonitor creates a PipelineMonitor that watches the given GitLab projects.
 func NewPipelineMonitor(agent *bridge.AgentBridge, projects []string, logger *slog.Logger) *PipelineMonitor {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &PipelineMonitor{
+	m := &PipelineMonitor{
 		agent:    agent,
-		logger:   logger.With("component", "pipeline-monitor"),
 		projects: projects,
 		details:  make(map[int]*cachedPipelineDetail),
-		stopCh:   make(chan struct{}),
 	}
+	m.InitBase(logger, nil, "pipeline-monitor")
+	return m
 }
 
 // Start begins the background polling goroutine at the given interval.
 func (m *PipelineMonitor) Start(interval time.Duration) {
+	m.StartManual()
 	// Run initial refresh asynchronously so HUD startup is non-blocking.
 	go func() {
 		if err := m.Refresh(); err != nil {
-			m.logger.Warn("initial pipeline refresh failed", "error", err)
+			m.Logger.Warn("initial pipeline refresh failed", "error", err)
 		}
 	}()
-
 	go m.pollLoop(interval)
-}
-
-// Stop signals the background goroutine to exit. Safe to call multiple times.
-func (m *PipelineMonitor) Stop() {
-	m.stopOnce.Do(func() { close(m.stopCh) })
 }
 
 // Pipelines returns the current pipeline list.
 func (m *PipelineMonitor) Pipelines() []bridge.PipelineInfo {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.RLock()
+	defer m.RUnlock()
 
-	out := make([]bridge.PipelineInfo, len(m.pipelines))
-	copy(out, m.pipelines)
+	snap := m.GetSnapshot()
+	out := make([]bridge.PipelineInfo, len(snap))
+	copy(out, snap)
 	return out
 }
 
@@ -87,12 +70,12 @@ func (m *PipelineMonitor) Pipelines() []bridge.PipelineInfo {
 // available and fresh (within pipelineDetailTTL). Otherwise fetches fresh data.
 func (m *PipelineMonitor) Detail(project string, pipelineID int) (*bridge.PipelineDetail, error) {
 	// Check cache first under read lock.
-	m.mu.RLock()
+	m.RLock()
 	if cached, ok := m.details[pipelineID]; ok && time.Since(cached.fetchedAt) < pipelineDetailTTL {
-		m.mu.RUnlock()
+		m.RUnlock()
 		return cached.detail, nil
 	}
-	m.mu.RUnlock()
+	m.RUnlock()
 
 	// Fetch fresh detail (outside lock).
 	detail, err := m.agent.GetPipelineDetail(project, pipelineID)
@@ -101,43 +84,57 @@ func (m *PipelineMonitor) Detail(project string, pipelineID int) (*bridge.Pipeli
 	}
 
 	// Cache the result.
-	m.mu.Lock()
+	m.Lock()
 	m.details[pipelineID] = &cachedPipelineDetail{
 		detail:    detail,
 		fetchedAt: time.Now(),
 	}
-	m.mu.Unlock()
+	m.Unlock()
 
 	return detail, nil
 }
 
 // HasActivePipelines returns true if any pipelines are currently running.
 func (m *PipelineMonitor) HasActivePipelines() bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return len(m.pipelines) > 0
+	m.RLock()
+	defer m.RUnlock()
+	return len(m.GetSnapshot()) > 0
 }
 
 // Refresh fetches the latest pipeline list from the mcp-gitlab bridge.
 func (m *PipelineMonitor) Refresh() error {
+	pipelines, err := m.refresh(context.Background())
+	if err != nil {
+		return err
+	}
+	m.update(pipelines)
+	return nil
+}
+
+// refresh fetches the pipeline list from the bridge.
+func (m *PipelineMonitor) refresh(_ context.Context) ([]bridge.PipelineInfo, error) {
 	if len(m.projects) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	pipelines, err := m.agent.ListActivePipelines(m.projects)
 	if err != nil {
-		m.logger.Warn("pipeline: failed to fetch active pipelines", "error", err)
-		return err
+		m.Logger.Warn("pipeline: failed to fetch active pipelines", "error", err)
+		return nil, err
 	}
+	return pipelines, nil
+}
 
+// update stores the pipeline list and prunes stale detail cache entries.
+func (m *PipelineMonitor) update(pipelines []bridge.PipelineInfo) {
 	// Build a set of current pipeline IDs for cache pruning.
 	currentIDs := make(map[int]struct{}, len(pipelines))
 	for _, p := range pipelines {
 		currentIDs[p.ID] = struct{}{}
 	}
 
-	m.mu.Lock()
-	m.pipelines = pipelines
+	m.Lock()
+	m.SetSnapshot(pipelines)
 
 	// Prune cached details for pipelines no longer active.
 	for id := range m.details {
@@ -145,16 +142,12 @@ func (m *PipelineMonitor) Refresh() error {
 			delete(m.details, id)
 		}
 	}
-	m.mu.Unlock()
+	m.Unlock()
 
 	// Notify listeners (e.g., SSE hub) with the fresh pipeline list (outside lock).
-	if m.onRefresh != nil {
-		out := make([]bridge.PipelineInfo, len(pipelines))
-		copy(out, pipelines)
-		m.onRefresh(out)
-	}
-
-	return nil
+	out := make([]bridge.PipelineInfo, len(pipelines))
+	copy(out, pipelines)
+	m.FireOnRefresh(out)
 }
 
 // pollLoop runs Refresh on a ticker until stopCh is closed.
@@ -169,26 +162,26 @@ func (m *PipelineMonitor) pollLoop(interval time.Duration) {
 
 	for {
 		select {
-		case <-m.stopCh:
-			m.logger.Debug("pipeline monitor stopped")
+		case <-m.StopCh():
+			m.Logger.Debug("pipeline monitor stopped")
 			return
 		case <-ticker.C:
 			if err := m.Refresh(); err != nil {
 				consecutiveErrors++
 				if consecutiveErrors <= 3 {
-					m.logger.Warn("pipeline refresh error", "error", err)
+					m.Logger.Warn("pipeline refresh error", "error", err)
 				}
 				skipTicks := min(consecutiveErrors-1, 4)
 				for range skipTicks {
 					select {
-					case <-m.stopCh:
+					case <-m.StopCh():
 						return
 					case <-ticker.C:
 					}
 				}
 			} else {
 				if consecutiveErrors > 0 {
-					m.logger.Info("pipeline refresh recovered", "after_errors", consecutiveErrors)
+					m.Logger.Info("pipeline refresh recovered", "after_errors", consecutiveErrors)
 				}
 				consecutiveErrors = 0
 

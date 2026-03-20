@@ -1,8 +1,8 @@
 package monitor
 
 import (
+	"context"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
@@ -39,65 +39,31 @@ type CostServerSummary struct {
 
 // CostMonitor polls the daemon's cost-stats RPC and maintains a cached snapshot.
 type CostMonitor struct {
+	BaseMonitor[CostSnapshot]
 	client *bridge.DaemonClient
-	logger *slog.Logger
-
-	mu       sync.RWMutex
-	snapshot CostSnapshot
-
-	onRefresh func(CostSnapshot)
-
-	stopCh   chan struct{}
-	stopOnce sync.Once
 }
 
 // NewCostMonitor creates a CostMonitor backed by the given daemon client.
 func NewCostMonitor(client *bridge.DaemonClient, logger *slog.Logger) *CostMonitor {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &CostMonitor{
-		client: client,
-		logger: logger.With("component", "cost-monitor"),
-		stopCh: make(chan struct{}),
-	}
-}
-
-// OnRefresh registers a callback that fires after each successful refresh.
-func (m *CostMonitor) OnRefresh(fn func(CostSnapshot)) {
-	m.onRefresh = fn
+	m := &CostMonitor{client: client}
+	m.InitBase(logger, nil, "cost-monitor")
+	return m
 }
 
 // Start begins the background polling goroutine at the given interval.
 func (m *CostMonitor) Start(interval time.Duration) {
-	go func() {
-		if err := m.Refresh(); err != nil {
-			m.logger.Debug("initial cost refresh failed", "error", err)
-		}
-	}()
-	go m.pollLoop(interval)
+	m.BaseMonitor.Start(interval, m.refresh)
 }
 
-// Stop signals the background goroutine to exit.
-func (m *CostMonitor) Stop() {
-	m.stopOnce.Do(func() { close(m.stopCh) })
-}
-
-// Snapshot returns the current cached cost data.
-func (m *CostMonitor) Snapshot() CostSnapshot {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.snapshot
-}
-
-// Refresh fetches the latest cost stats from the daemon via bridge.
-func (m *CostMonitor) Refresh() error {
+// refresh fetches the latest cost stats from the daemon via bridge.
+func (m *CostMonitor) refresh(_ context.Context) (CostSnapshot, error) {
 	result, err := m.client.CostStats()
 	if err != nil {
-		return err
+		return CostSnapshot{}, err
 	}
 	if result == nil {
-		return nil
+		// Return current snapshot unchanged when the daemon has no data.
+		return m.Snapshot(), nil
 	}
 
 	snap := CostSnapshot{
@@ -127,48 +93,15 @@ func (m *CostMonitor) Refresh() error {
 		})
 	}
 
-	m.mu.Lock()
-	m.snapshot = snap
-	m.mu.Unlock()
-
-	if m.onRefresh != nil {
-		m.onRefresh(snap)
-	}
-
-	return nil
+	return snap, nil
 }
 
-// pollLoop runs Refresh on a ticker until stopCh is closed.
-func (m *CostMonitor) pollLoop(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	consecutiveErrors := 0
-	for {
-		select {
-		case <-m.stopCh:
-			m.logger.Debug("cost monitor stopped")
-			return
-		case <-ticker.C:
-			if err := m.Refresh(); err != nil {
-				consecutiveErrors++
-				if consecutiveErrors <= 3 {
-					m.logger.Debug("cost refresh error", "error", err)
-				}
-				skipTicks := min(consecutiveErrors-1, 4)
-				for range skipTicks {
-					select {
-					case <-m.stopCh:
-						return
-					case <-ticker.C:
-					}
-				}
-			} else {
-				if consecutiveErrors > 0 {
-					m.logger.Info("cost refresh recovered", "after_errors", consecutiveErrors)
-				}
-				consecutiveErrors = 0
-			}
-		}
+// Refresh forces an immediate refresh. Exposed for external callers.
+func (m *CostMonitor) Refresh() error {
+	snap, err := m.refresh(context.Background())
+	if err != nil {
+		return err
 	}
+	m.Update(snap)
+	return nil
 }

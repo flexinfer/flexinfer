@@ -1,9 +1,9 @@
 package monitor
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
@@ -12,76 +12,47 @@ import (
 // MemoryMonitor tracks memory hierarchy statistics and provides methods
 // for browsing, promoting, and demoting memory items.
 type MemoryMonitor struct {
-	agent  *bridge.AgentBridge
-	logger *slog.Logger
-
-	mu           sync.RWMutex
-	stats        *bridge.MemoryStatsResult
+	BaseMonitor[*bridge.MemoryStatsResult]
+	agent        *bridge.AgentBridge
 	tokenHistory *RingBuffer // sparkline history of TotalTokens
-
-	onRefresh func(*bridge.MemoryStatsResult)
-
-	stopCh   chan struct{}
-	stopOnce sync.Once
-}
-
-// OnRefresh registers a callback that fires after each successful refresh
-// with the new memory stats. Used to broadcast data via SSE.
-func (m *MemoryMonitor) OnRefresh(fn func(*bridge.MemoryStatsResult)) {
-	m.onRefresh = fn
 }
 
 // NewMemoryMonitor creates a MemoryMonitor backed by the given agent bridge.
 func NewMemoryMonitor(agent *bridge.AgentBridge, logger *slog.Logger) *MemoryMonitor {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &MemoryMonitor{
+	m := &MemoryMonitor{
 		agent:        agent,
-		logger:       logger.With("component", "memory-monitor"),
 		tokenHistory: NewRingBuffer(DefaultRingSize),
-		stopCh:       make(chan struct{}),
 	}
+	m.InitBase(logger, nil, "memory-monitor")
+	return m
 }
 
 // Start begins the background polling goroutine at the given interval.
 func (m *MemoryMonitor) Start(interval time.Duration) {
-	// Run initial refresh asynchronously so HUD/TUI startup is non-blocking
-	// when downstream services are slow or unavailable.
-	go func() {
-		if err := m.Refresh(); err != nil {
-			m.logger.Warn("initial memory refresh failed", "error", err)
-		}
-	}()
-
-	go m.pollLoop(interval)
-}
-
-// Stop signals the background goroutine to exit. It is safe to call multiple times.
-func (m *MemoryMonitor) Stop() {
-	m.stopOnce.Do(func() { close(m.stopCh) })
+	m.BaseMonitor.Start(interval, m.refresh)
 }
 
 // Stats returns the current memory hierarchy statistics.
 // Returns nil if stats have never been successfully fetched.
 func (m *MemoryMonitor) Stats() *bridge.MemoryStatsResult {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.RLock()
+	defer m.RUnlock()
 
-	if m.stats == nil {
+	stats := m.GetSnapshot()
+	if stats == nil {
 		return nil
 	}
 
 	// Return a copy to avoid data races.
-	cp := *m.stats
+	cp := *stats
 	return &cp
 }
 
 // TokenHistory returns the sparkline history of TotalTokens readings
 // (oldest first). Returns nil if no readings have been recorded yet.
 func (m *MemoryMonitor) TokenHistory() []float64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.RLock()
+	defer m.RUnlock()
 	return m.tokenHistory.Values()
 }
 
@@ -103,7 +74,7 @@ func (m *MemoryMonitor) Promote(id string) error {
 	}
 	// Best-effort refresh after mutation.
 	if err := m.Refresh(); err != nil {
-		m.logger.Warn("memory: stats refresh after promote failed", "error", err)
+		m.Logger.Warn("memory: stats refresh after promote failed", "error", err)
 	}
 	return nil
 }
@@ -116,65 +87,42 @@ func (m *MemoryMonitor) Demote(id string) error {
 	}
 	// Best-effort refresh after mutation.
 	if err := m.Refresh(); err != nil {
-		m.logger.Warn("memory: stats refresh after demote failed", "error", err)
+		m.Logger.Warn("memory: stats refresh after demote failed", "error", err)
 	}
 	return nil
 }
 
-// Refresh fetches the latest memory hierarchy statistics from the agent bridge.
-func (m *MemoryMonitor) Refresh() error {
+// refresh fetches the latest memory hierarchy statistics from the agent bridge.
+func (m *MemoryMonitor) refresh(_ context.Context) (*bridge.MemoryStatsResult, error) {
 	stats, err := m.agent.MemoryStats()
 	if err != nil {
-		m.logger.Warn("memory: failed to fetch memory stats", "error", err)
-		return err
+		m.Logger.Warn("memory: failed to fetch memory stats", "error", err)
+		return nil, err
 	}
-
-	m.mu.Lock()
-	m.stats = stats
-	m.tokenHistory.Push(float64(stats.TotalTokens))
-	m.mu.Unlock()
-
-	// Notify listeners (e.g., SSE hub) with the fresh stats (outside lock).
-	if m.onRefresh != nil {
-		cp := *stats
-		m.onRefresh(&cp)
-	}
-
-	return nil
+	return stats, nil
 }
 
-// pollLoop runs Refresh on a ticker until stopCh is closed.
-// On consecutive errors, it backs off by skipping ticker ticks.
-func (m *MemoryMonitor) pollLoop(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	consecutiveErrors := 0
-	for {
-		select {
-		case <-m.stopCh:
-			m.logger.Debug("memory monitor stopped")
-			return
-		case <-ticker.C:
-			if err := m.Refresh(); err != nil {
-				consecutiveErrors++
-				if consecutiveErrors <= 3 {
-					m.logger.Warn("memory refresh error", "error", err)
-				}
-				skipTicks := min(consecutiveErrors-1, 4)
-				for range skipTicks {
-					select {
-					case <-m.stopCh:
-						return
-					case <-ticker.C:
-					}
-				}
-			} else {
-				if consecutiveErrors > 0 {
-					m.logger.Info("memory refresh recovered", "after_errors", consecutiveErrors)
-				}
-				consecutiveErrors = 0
-			}
-		}
+// Update overrides BaseMonitor.Update to also record token history.
+func (m *MemoryMonitor) Update(stats *bridge.MemoryStatsResult) {
+	m.Lock()
+	m.SetSnapshot(stats)
+	if stats != nil {
+		m.tokenHistory.Push(float64(stats.TotalTokens))
 	}
+	m.Unlock()
+
+	if stats != nil {
+		cp := *stats
+		m.FireOnRefresh(&cp)
+	}
+}
+
+// Refresh forces an immediate refresh. Exposed for external callers.
+func (m *MemoryMonitor) Refresh() error {
+	stats, err := m.refresh(context.Background())
+	if err != nil {
+		return err
+	}
+	m.Update(stats)
+	return nil
 }
