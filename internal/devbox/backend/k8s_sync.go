@@ -41,7 +41,12 @@ var defaultSyncExcludes = []string{
 // MaxSyncBytes is the default maximum uncompressed tar size (200 MB).
 const MaxSyncBytes int64 = 200 * 1024 * 1024
 
-// SyncWorkspace streams local directories into a running pod via SPDY exec.
+// Deprecated: SyncWorkspace uses the legacy tar-pipe sync mode, which streams
+// local directories into a pod via SPDY exec. This mode is being replaced by
+// the sandbox.Controller unified interface with WebSocket exec support.
+// Gate behind DEVBOX_SYNC_MODE=tar-pipe to use; will be removed in a future version.
+//
+// SyncWorkspace streams local directories into a running pod via exec.
 // It creates a tar.gz archive spanning all dirs (each placed at its RemotePath)
 // and pipes it into `tar xzf - -C /` inside the pod.
 func (k *K8sBackend) SyncWorkspace(ctx context.Context, podName string, dirs []SyncDir, extraExcludes []string, maxBytes int64) error {
@@ -100,6 +105,8 @@ func (k *K8sBackend) pipeTarIntoPod(ctx context.Context, podName string, payload
 			Stderr:    true,
 		}, scheme.ParameterCodec)
 
+	// Tar-pipe sync always uses SPDY because stdin piping over WebSocket
+	// requires bidirectional stream support that differs from exec semantics.
 	executor, err := remotecommand.NewSPDYExecutor(k.restConfig, "POST", req.URL())
 	if err != nil {
 		return fmt.Errorf("create sync executor: %w", err)
