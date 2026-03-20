@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/internal/hubproto"
 )
 
 // hubKeepaliveLoop periodically probes the hub WebSocket connection to detect
@@ -33,8 +35,9 @@ func (d *Daemon) hubKeepaliveLoop() {
 }
 
 // hubKeepalivePing borrows a connection from the hub pool, sends a lightweight
-// tools/list probe, and observes the result. On failure, the connection is
-// marked unhealthy and the pool/client are cleaned up.
+// tools/list probe wrapped in a DomainControl envelope, and observes the result.
+// On failure, the connection is marked unhealthy and the pool/client are cleaned up.
+// For backward compatibility, it gracefully handles raw (non-envelope) pong responses.
 func (d *Daemon) hubKeepalivePing() {
 	if d.hubPool == nil || d.hubClient == nil {
 		return
@@ -62,11 +65,14 @@ func (d *Daemon) hubKeepalivePing() {
 		return
 	}
 
-	// Send a lightweight tools/list probe.
+	// Build the inner MCP probe request.
 	req, _ := mcp.NewRequest(1, "tools/list", json.RawMessage(`{}`))
 
+	// Wrap the probe in a DomainControl envelope with method "ping".
+	pingEnv := d.buildControlPing(req)
+
 	sendCtx, sendCancel := context.WithTimeout(ctx, 5*time.Second)
-	sendErr := conn.Transport.Send(sendCtx, req)
+	sendErr := conn.Transport.Send(sendCtx, pingEnv)
 	sendCancel()
 	if sendErr != nil {
 		d.logger.Warn("hub keepalive: send failed, clearing connection",
@@ -79,7 +85,7 @@ func (d *Daemon) hubKeepalivePing() {
 	}
 
 	recvCtx, recvCancel := context.WithTimeout(ctx, 5*time.Second)
-	_, recvErr := conn.Transport.Recv(recvCtx)
+	resp, recvErr := conn.Transport.Recv(recvCtx)
 	recvCancel()
 	if recvErr != nil {
 		d.logger.Warn("hub keepalive: recv failed, clearing connection",
@@ -91,9 +97,65 @@ func (d *Daemon) hubKeepalivePing() {
 		return
 	}
 
+	// Backward compat: accept both envelope-wrapped and raw MCP responses.
+	d.handlePongResponse(resp)
+
 	// Success: return healthy connection to pool (keeps it warm).
 	d.hubPool.Put(conn)
 	d.logger.Debug("hub keepalive: probe succeeded", "server", serverName)
+}
+
+// buildControlPing wraps an MCP probe request in a DomainControl "ping"
+// envelope and returns it as an MCP message for transport.
+func (d *Daemon) buildControlPing(inner *mcp.Message) *mcp.Message {
+	innerBytes, err := json.Marshal(inner)
+	if err != nil {
+		// Fallback: send the raw request if marshaling fails.
+		d.logger.Debug("hub keepalive: failed to marshal inner request, sending raw", "error", err)
+		return inner
+	}
+
+	env := &hubproto.Envelope{
+		Domain:    hubproto.DomainControl,
+		Method:    "ping",
+		RequestID: "keepalive",
+		Payload:   json.RawMessage(innerBytes),
+		Source:    "daemon",
+		Timestamp: time.Now().UTC(),
+	}
+
+	envBytes, err := hubproto.Encode(env)
+	if err != nil {
+		d.logger.Debug("hub keepalive: failed to encode envelope, sending raw", "error", err)
+		return inner
+	}
+
+	// Wrap the envelope JSON as the params of a synthetic MCP message so it
+	// can be sent over the existing MCP transport layer.
+	msg, _ := mcp.NewRequest(0, "hub/envelope", json.RawMessage(envBytes))
+	return msg
+}
+
+// handlePongResponse processes a keepalive response, accepting both
+// envelope-wrapped pongs and raw MCP responses for backward compatibility.
+func (d *Daemon) handlePongResponse(resp *mcp.Message) {
+	if resp == nil {
+		return
+	}
+
+	// Try to decode as an envelope response. If the hub supports envelopes,
+	// the response will be a hub/envelope method with an envelope payload.
+	if resp.Method == "hub/envelope" && resp.Result != nil {
+		env, err := hubproto.Decode(resp.Result)
+		if err == nil && env.Domain == hubproto.DomainControl {
+			d.logger.Debug("hub keepalive: received envelope pong",
+				"method", env.Method, "request_id", env.RequestID)
+			return
+		}
+	}
+
+	// Backward compat: raw MCP response (non-envelope hub).
+	d.logger.Debug("hub keepalive: received raw pong (non-envelope)")
 }
 
 // pickHubServer returns the name of a hub-capable server from the registry.

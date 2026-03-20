@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/crb2nu/loom/internal/hubproto"
 	"github.com/crb2nu/loom/internal/pool"
 	"github.com/crb2nu/loom/internal/process"
 	"github.com/crb2nu/loom/internal/router"
@@ -86,6 +87,7 @@ type Daemon struct {
 	pool                *pool.Pool
 	hubPool             *pool.Pool
 	router              *router.Router
+	hubRouter           *hubproto.Router // Domain-multiplexed envelope router for hub WebSocket
 	hubClient           *mcp.WebSocketClient
 	callLocks           gosync.Map // serverName -> *gosync.Mutex (serializes stdio request/response)
 	listener            net.Listener
@@ -430,6 +432,7 @@ func New(cfg Config) (*Daemon, error) {
 		pool:        connPool,
 		hubPool:     hubPool,
 		router:      rtr,
+		hubRouter:   hubproto.NewRouter(),
 		hubClient:   hubClient,
 		logger:      logger,
 		toolCache: &ToolCache{
