@@ -29,9 +29,6 @@ func (a *AgentBridge) EntityFind(query string, entityType string, limit int) ([]
 	if err := a.callAgentTool("agent_entity_find", args, &result); err != nil {
 		return nil, err
 	}
-	for i := range result.Entities {
-		normalizeEntityInfo(&result.Entities[i])
-	}
 	return result.Entities, nil
 }
 
@@ -75,19 +72,12 @@ func (a *AgentBridge) EntityGet(id string) (*EntityDetail, error) {
 		return nil, fmt.Errorf("entity not found: %s", id)
 	}
 	entity := result.Entities[0]
-	if entity.EntityType == "" {
-		entity.EntityType = entity.Type
-	}
-	if entity.Type == "" {
-		entity.Type = entity.EntityType
-	}
 
 	var relResult struct {
 		Relations []RelationInfo `json:"relations"`
 	}
 	if err := a.callAgentTool("agent_relation_get", map[string]any{"entity_id": id}, &relResult); err == nil {
 		for i := range relResult.Relations {
-			normalizeRelationInfo(&relResult.Relations[i])
 			if relResult.Relations[i].Source == id {
 				entity.OutboundRelations = append(entity.OutboundRelations, relResult.Relations[i])
 			}
@@ -159,9 +149,8 @@ func (a *AgentBridge) GraphFindPath(fromID, toID string, maxDepth int) ([]Entity
 	}
 
 	byID := make(map[string]EntityInfo, len(entitiesResult.Entities))
-	for i := range entitiesResult.Entities {
-		normalizeEntityInfo(&entitiesResult.Entities[i])
-		byID[entitiesResult.Entities[i].ID] = entitiesResult.Entities[i]
+	for _, e := range entitiesResult.Entities {
+		byID[e.ID] = e
 	}
 
 	path := make([]EntityInfo, 0, len(result.Path))
