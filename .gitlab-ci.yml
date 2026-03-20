@@ -855,6 +855,62 @@ publish_diffusers_rocm_gfx906:
       when: manual
     - when: never
 
+# Unified gfx906 runtime (quantizer + diffusers + abliteration)
+# Replaces quantizer:gptq-rocm-gfx906, quantizer:gptq-rocm64-gfx906, diffusers:rocm-gfx906
+# Based on mixa3607/pytorch-gfx906 (ROCm 6.3.3 + PyTorch 2.9)
+publish_unified_rocm_gfx906:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 1h
+  needs: []
+  resource_group: buildkit-rocm-images
+  retry:
+    max: 1
+    when: [runner_system_failure, stuck_or_timeout_failure]
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building Unified Runtime image for gfx906..."
+      attempts=3
+      delay=5
+      for i in $(seq 1 "${attempts}"); do
+        if buildctl --addr "${BUILDKIT_HOST}" build \
+          --frontend dockerfile.v0 \
+          --local context=. \
+          --local dockerfile=build \
+          --opt filename="Dockerfile.unified-gfx906" \
+          --opt platform=linux/amd64 \
+          --import-cache "type=registry,ref=${REGISTRY}/runtime:unified-gfx906" \
+          --export-cache "type=inline" \
+          --output "type=image,\"name=${REGISTRY}/runtime:unified-gfx906,${REGISTRY}/runtime:unified-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"; then
+          break
+        fi
+        if [ "${i}" -eq "${attempts}" ]; then
+          echo "ERROR: build failed after ${attempts} attempts"
+          exit 1
+        fi
+        echo "WARN: build failed (${i}/${attempts}); retrying..."
+        sleep "${delay}"
+        delay=$((delay * 2))
+      done
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - build/Dockerfile.unified-gfx906
+        - build/scripts/abliterate.py
+        - build/scripts/quantize_gptq.py
+        - build/server-diffusers.py
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
 # Diffusers API CUDA - Maxwell (sm_52, CUDA 11.8) image
 publish_diffusers_cuda:
   stage: publish
