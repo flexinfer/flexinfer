@@ -21,7 +21,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -78,7 +77,7 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 
 	// Wait for request to be processed with timeout
 	timeout := p.queueTimeout
-	if coldStartTimeout := p.getColdStartTimeout(ctx, modelName); coldStartTimeout > timeout {
+	if coldStartTimeout := p.activator.GetColdStartTimeout(ctx, modelName); coldStartTimeout > timeout {
 		timeout = coldStartTimeout
 	}
 
@@ -152,7 +151,7 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 
 	// Record demand before attempting activation so the controller's
 	// serverless reconcile loop does not immediately reap a direct-loaded model.
-	p.touchLastActiveTime(ctx, modelName)
+	p.activator.TouchLastActiveTime(ctx, modelName)
 
 	// Fast path: try direct runtime load (bypasses controller reconcile loop).
 	if p.directRuntimeEnabled && p.runtimeCache != nil {
@@ -165,7 +164,7 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 			slog.Info("queue processor finished (direct)", "model", modelName)
 
 			// Async: update LastActiveTime so controller backfills status.
-			go p.touchLastActiveTime(ctx, modelName)
+			go p.activator.TouchLastActiveTime(ctx, modelName)
 			return
 		}
 		slog.Debug("direct runtime load failed or unavailable, falling back to controller path", "model", modelName)
@@ -196,7 +195,7 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 
 		// Trigger scale-up using singleflight to deduplicate
 		_, err, _ := p.requestGroup.Do(modelName+"-scaleup", func() (interface{}, error) {
-			return nil, p.triggerScaleUp(ctx, modelName)
+			return nil, p.activator.TriggerScaleUp(ctx, modelName)
 		})
 
 		if err != nil {
@@ -315,7 +314,7 @@ func (p *Proxy) cleanupStaleQueues() {
 // waitForReady polls until the model is ready or timeout.
 func (p *Proxy) waitForReady(ctx context.Context, modelName string) error {
 	// Get the cold start timeout, preferring per-model configuration
-	timeout := p.getColdStartTimeout(ctx, modelName)
+	timeout := p.activator.GetColdStartTimeout(ctx, modelName)
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -352,108 +351,6 @@ func (p *Proxy) waitForReady(ctx context.Context, modelName string) error {
 			}
 		}
 	}
-}
-
-// triggerScaleUp scales the model to 1 replica.
-func (p *Proxy) triggerScaleUp(ctx context.Context, modelName string) error {
-	// Try v1alpha2 Model first: update LastActiveTime to trigger controller scale-up.
-	m, err := p.getModel(ctx, modelName)
-	if err == nil {
-		// Retry on conflict since the controller may also be updating status.
-		for i := 0; i < 3; i++ {
-			if i > 0 {
-				m, err = p.getModel(ctx, modelName)
-				if err != nil {
-					return err
-				}
-			}
-
-			now := metav1.Now()
-			m.Status.LastActiveTime = &now
-			if err := p.client.Status().Update(ctx, m); err != nil {
-				if errors.IsConflict(err) {
-					slog.Debug("conflict updating lastActiveTime, retrying", "model", modelName, "attempt", i+1)
-					continue
-				}
-				return fmt.Errorf("failed to update Model lastActiveTime: %w", err)
-			}
-			return nil
-		}
-		return fmt.Errorf("failed to update Model lastActiveTime after 3 retries (conflict)")
-	}
-	if !errors.IsNotFound(err) {
-		return err
-	}
-
-	// Fallback: v1alpha1 ModelDeployment (deprecated)
-	md, err := p.getModelDeployment(ctx, modelName)
-	if err != nil {
-		return err
-	}
-
-	// Already scaled up?
-	if md.Spec.Replicas != nil && *md.Spec.Replicas > 0 {
-		return nil
-	}
-
-	slog.Info("scaling up model", "model", modelName, "from", 0, "to", 1)
-	scaleUpsTotal.WithLabelValues(modelName).Inc()
-
-	// First, update LastAccessTime to prevent the controller from immediately
-	// scaling back down due to stale idle timeout.
-	now := metav1.Now()
-	slog.Debug("setting lastAccessTime", "model", modelName, "time", now.Time, "resourceVersion", md.ResourceVersion)
-	md.Status.LastAccessTime = &now
-	if err := p.client.Status().Update(ctx, md); err != nil {
-		slog.Warn("failed to update LastAccessTime before scale-up", "model", modelName, "error", err)
-	} else {
-		slog.Debug("updated lastAccessTime", "model", modelName)
-	}
-
-	// Re-fetch to get latest version after status update
-	md, err = p.getModelDeployment(ctx, modelName)
-	if err != nil {
-		return err
-	}
-
-	// Check again in case someone else scaled it up
-	if md.Spec.Replicas != nil && *md.Spec.Replicas > 0 {
-		return nil
-	}
-
-	one := int32(1)
-	md.Spec.Replicas = &one
-	if err := p.client.Update(ctx, md); err != nil {
-		if errors.IsConflict(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to scale up: %w", err)
-	}
-
-	return nil
-}
-
-// getColdStartTimeout returns the cold start timeout for a model.
-// Uses per-model ColdStartTimeout if specified, otherwise falls back to proxy default.
-func (p *Proxy) getColdStartTimeout(ctx context.Context, modelName string) time.Duration {
-	// Check v1alpha2 Model first
-	m, err := p.getModel(ctx, modelName)
-	if err == nil {
-		if m.Spec.Serverless != nil && m.Spec.Serverless.ColdStartTimeout != nil {
-			return m.Spec.Serverless.ColdStartTimeout.Duration
-		}
-		return p.coldStartTimeout
-	}
-	if !errors.IsNotFound(err) {
-		return p.coldStartTimeout
-	}
-
-	// Fallback: v1alpha1 ModelDeployment (deprecated)
-	md, err := p.getModelDeployment(ctx, modelName)
-	if err == nil && md.Spec.ColdStartTimeoutSeconds != nil {
-		return time.Duration(*md.Spec.ColdStartTimeoutSeconds) * time.Second
-	}
-	return p.coldStartTimeout
 }
 
 // calculateBackoff returns the wait time for a given retry attempt using exponential backoff with jitter.
@@ -628,25 +525,5 @@ func (p *Proxy) waitForRuntimeReady(ctx context.Context, ep *pkgrt.RuntimeEndpoi
 			}
 			// "Loading" — keep polling
 		}
-	}
-}
-
-// touchLastActiveTime updates the model's LastActiveTime so the controller
-// can backfill Model.Status.Phase for observability. Fire-and-forget.
-func (p *Proxy) touchLastActiveTime(ctx context.Context, modelName string) {
-	for i := 0; i < 3; i++ {
-		m, err := p.getModel(ctx, modelName)
-		if err != nil {
-			return
-		}
-		now := metav1.Now()
-		m.Status.LastActiveTime = &now
-		if err := p.client.Status().Update(ctx, m); err != nil {
-			if errors.IsConflict(err) {
-				continue
-			}
-			slog.Debug("direct load: failed to touch lastActiveTime", "model", modelName, "error", err)
-		}
-		return
 	}
 }

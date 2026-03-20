@@ -160,7 +160,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		}
 
 		// Build and create the quantization job
-		builder, builderErr := quantization.GetBuilder(modelCache.Spec.Quantization.Format)
+		builder, builderErr := quantization.GetBuilder(convertQuantizationFormatV1toV2(modelCache.Spec.Quantization.Format))
 		if builderErr != nil {
 			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizationFailed",
 				fmt.Sprintf("Unsupported quantization format: %s", builderErr))
@@ -188,7 +188,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			Namespace:    modelCache.Namespace,
 			PVCName:      pvcName,
 			ModelPath:    modelPath,
-			Spec:         modelCache.Spec.Quantization,
+			Spec:         convertQuantizationSpecV1toV2(modelCache.Spec.Quantization),
 			Tolerations:  tolerations,
 			NodeSelector: modelCache.Spec.NodeSelector,
 			GPUVendor:    gpu.VendorFromLabels(modelCache.Spec.NodeSelector),

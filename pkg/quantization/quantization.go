@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 // JobBuilder generates a Kubernetes Job for a specific quantization format.
@@ -20,10 +20,10 @@ type JobBuilder interface {
 	BuildJob(params JobParams) (*batchv1.Job, error)
 
 	// Format returns the quantization format this builder handles.
-	Format() aiv1alpha1.QuantizationFormat
+	Format() aiv1alpha2.QuantizationFormat
 
 	// Validate checks that the quantization spec is valid for this format.
-	Validate(spec *aiv1alpha1.QuantizationSpec) error
+	Validate(spec *aiv1alpha2.QuantizationSpec) error
 }
 
 // JobParams contains the inputs needed to build a quantization job.
@@ -41,7 +41,7 @@ type JobParams struct {
 	ModelPath string
 
 	// Spec is the quantization configuration from the ModelCache.
-	Spec *aiv1alpha1.QuantizationSpec
+	Spec *aiv1alpha2.QuantizationSpec
 
 	// GPUVendor selects the GPU resource name: "nvidia" (default) or "amd".
 	GPUVendor string
@@ -63,12 +63,12 @@ type JobParams struct {
 }
 
 // FormatBackendCompatibility maps quantization formats to compatible backends.
-var FormatBackendCompatibility = map[aiv1alpha1.QuantizationFormat][]string{
-	aiv1alpha1.QuantizationFormatGGUF: {"llamacpp", "ollama"},
-	aiv1alpha1.QuantizationFormatAWQ:  {"vllm"},
-	aiv1alpha1.QuantizationFormatGPTQ: {"vllm"},
-	aiv1alpha1.QuantizationFormatEXL2: {"exllamav2"},
-	aiv1alpha1.QuantizationFormatFP8:  {"vllm"},
+var FormatBackendCompatibility = map[aiv1alpha2.QuantizationFormat][]string{
+	aiv1alpha2.QuantizationFormatGGUF: {"llamacpp", "ollama"},
+	aiv1alpha2.QuantizationFormatAWQ:  {"vllm"},
+	aiv1alpha2.QuantizationFormatGPTQ: {"vllm"},
+	aiv1alpha2.QuantizationFormatEXL2: {"exllamav2"},
+	aiv1alpha2.QuantizationFormatFP8:  {"vllm"},
 }
 
 // ValidGGUFTypes lists the supported GGUF quantization levels.
@@ -90,17 +90,17 @@ func IsValidGGUFType(t string) bool {
 }
 
 // GetBuilder returns the appropriate JobBuilder for the given format.
-func GetBuilder(format aiv1alpha1.QuantizationFormat) (JobBuilder, error) {
+func GetBuilder(format aiv1alpha2.QuantizationFormat) (JobBuilder, error) {
 	switch format {
-	case aiv1alpha1.QuantizationFormatGGUF:
+	case aiv1alpha2.QuantizationFormatGGUF:
 		return &GGUFJobBuilder{}, nil
-	case aiv1alpha1.QuantizationFormatAWQ:
+	case aiv1alpha2.QuantizationFormatAWQ:
 		return &AWQJobBuilder{}, nil
-	case aiv1alpha1.QuantizationFormatGPTQ:
+	case aiv1alpha2.QuantizationFormatGPTQ:
 		return &GPTQJobBuilder{}, nil
-	case aiv1alpha1.QuantizationFormatEXL2:
+	case aiv1alpha2.QuantizationFormatEXL2:
 		return &EXL2JobBuilder{}, nil
-	case aiv1alpha1.QuantizationFormatFP8:
+	case aiv1alpha2.QuantizationFormatFP8:
 		return &FP8JobBuilder{}, nil
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedFormat, format)
@@ -156,7 +156,7 @@ func workspaceVolume(sizeLimit string) (corev1.Volume, corev1.VolumeMount) {
 }
 
 // effectiveDeadline returns the job deadline from spec override or the default.
-func effectiveDeadline(spec *aiv1alpha1.QuantizationSpec) int64 {
+func effectiveDeadline(spec *aiv1alpha2.QuantizationSpec) int64 {
 	if spec != nil && spec.TimeoutSeconds != nil && *spec.TimeoutSeconds >= 300 {
 		return *spec.TimeoutSeconds
 	}

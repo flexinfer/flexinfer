@@ -329,7 +329,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 	// Preserve existing cache sub-status (e.g. Quantization) when rebuilding.
 	// Creating a fresh struct here wiped Quantization, causing ensureQuantization
 	// to re-write status on every reconcile (infinite loop).
-	var existingQuant *aiv1alpha1.QuantizationStatus
+	var existingQuant *aiv1alpha2.QuantizationStatus
 	if model.Status.Cache != nil {
 		existingQuant = model.Status.Cache.Quantization
 	}
@@ -720,7 +720,7 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 		}
 		meta, _ := r.readQuantizationMetadataFromJob(ctx, model.Namespace, jobName)
 		if meta != nil {
-			model.Status.Cache.Quantization = &aiv1alpha1.QuantizationStatus{
+			model.Status.Cache.Quantization = &aiv1alpha2.QuantizationStatus{
 				Format:              string(spec.Format),
 				Type:                meta.Type,
 				OriginalSizeBytes:   meta.OriginalSizeBytes,
@@ -734,7 +734,7 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 				model.Status.Cache.Quantization.QuantizationTime = fmt.Sprintf("%ds", meta.QuantizationTimeSeconds)
 			}
 		} else {
-			model.Status.Cache.Quantization = &aiv1alpha1.QuantizationStatus{
+			model.Status.Cache.Quantization = &aiv1alpha2.QuantizationStatus{
 				Format: string(spec.Format),
 			}
 		}
@@ -761,7 +761,7 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 		} else {
 			model.Status.Cache.Message = "quantization job failed"
 		}
-		quantStatus := &aiv1alpha1.QuantizationStatus{
+		quantStatus := &aiv1alpha2.QuantizationStatus{
 			Format:         string(spec.Format),
 			FailureMessage: failureMsg,
 		}

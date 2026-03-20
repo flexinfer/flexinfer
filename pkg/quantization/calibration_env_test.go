@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 func TestResolveCalibration_Defaults(t *testing.T) {
@@ -30,7 +30,7 @@ func TestResolveCalibration_CustomValues(t *testing.T) {
 	dataset := "custom/dataset"
 	parallel := int32(32)
 
-	calib := &aiv1alpha1.CalibrationSpec{
+	calib := &aiv1alpha2.CalibrationSpec{
 		MaxSeqLen:             &seqLen,
 		MaxSamples:            &samples,
 		Dataset:               &dataset,
@@ -76,7 +76,7 @@ func TestBuildCalibrationEnv_Defaults(t *testing.T) {
 
 func TestBuildCalibrationEnv_WithParallel(t *testing.T) {
 	parallel := int32(16)
-	calib := &aiv1alpha1.CalibrationSpec{
+	calib := &aiv1alpha2.CalibrationSpec{
 		NParallelCalibSamples: &parallel,
 	}
 	envVars := BuildCalibrationEnv(calib)

@@ -5,7 +5,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 // CalibrationParams holds resolved calibration values with defaults applied.
@@ -19,7 +19,7 @@ type CalibrationParams struct {
 // ResolveCalibration extracts calibration parameters from the spec, applying
 // defaults for any unset fields. This eliminates repeated nil-check boilerplate
 // across AWQ, GPTQ, and future calibration-based quantization builders.
-func ResolveCalibration(calib *aiv1alpha1.CalibrationSpec) CalibrationParams {
+func ResolveCalibration(calib *aiv1alpha2.CalibrationSpec) CalibrationParams {
 	p := CalibrationParams{
 		MaxSeqLen:  int32(DefaultCalibrationMaxSeqLen),
 		MaxSamples: int32(DefaultCalibrationMaxSamples),
@@ -45,7 +45,7 @@ func ResolveCalibration(calib *aiv1alpha1.CalibrationSpec) CalibrationParams {
 
 // BuildCalibrationEnv returns the common calibration environment variables
 // (MAX_SEQ_LEN, MAX_SAMPLES, DATASET, and optionally N_PARALLEL_CALIB_SAMPLES).
-func BuildCalibrationEnv(calib *aiv1alpha1.CalibrationSpec) []corev1.EnvVar {
+func BuildCalibrationEnv(calib *aiv1alpha2.CalibrationSpec) []corev1.EnvVar {
 	p := ResolveCalibration(calib)
 	env := []corev1.EnvVar{
 		{Name: "MAX_SEQ_LEN", Value: fmt.Sprintf("%d", p.MaxSeqLen)},

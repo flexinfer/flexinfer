@@ -38,6 +38,8 @@ func setupTestProxyWithRouting(t *testing.T) *Proxy {
 		coldStartTimeout: 60 * time.Second,
 		router:           routing.NewRouter(),
 		routingEnabled:   true,
+		resolver:         NewModelResolver(k8sClient, "default"),
+		activator:        NewK8sModelActivator(k8sClient, "default", 60*time.Second),
 	}
 }
 
@@ -73,33 +75,35 @@ func TestRefreshServiceLabelCache_MultipleClaimants(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, svc1))
 	require.NoError(t, p.client.Create(ctx, svc2))
 
-	p.refreshServiceLabelCache(ctx)
+	p.resolver.refreshServiceLabelCache(ctx)
 
 	// serviceLabelCache should still have first claimant (backward compat)
-	val, ok := p.serviceLabelCache.Load("abliterated")
+	val, ok := p.resolver.serviceLabelCache.Load("abliterated")
 	require.True(t, ok)
 	assert.Contains(t, []string{"model-a", "model-b"}, val)
 
 	// labelGroupCache should have both claimants
-	groupVal, ok := p.labelGroupCache.Load("abliterated")
+	groupVal, ok := p.resolver.labelGroupCache.Load("abliterated")
 	require.True(t, ok)
 	assert.Len(t, groupVal, 2)
 	assert.Contains(t, groupVal, "model-a")
 	assert.Contains(t, groupVal, "model-b")
 
 	// Same for "uncensored"
-	groupVal2, ok := p.labelGroupCache.Load("uncensored")
+	groupVal2, ok := p.resolver.labelGroupCache.Load("uncensored")
 	require.True(t, ok)
 	assert.Len(t, groupVal2, 2)
 
 	// labelGroupModels reverse index should map each model to both
-	membersA, ok := p.labelGroupModels.Load("model-a")
+	membersAVal, ok := p.resolver.labelGroupModels.Load("model-a")
 	require.True(t, ok, "model-a should be in labelGroupModels")
+	membersA := membersAVal.([]string)
 	sort.Strings(membersA)
 	assert.Equal(t, []string{"model-a", "model-b"}, membersA)
 
-	membersB, ok := p.labelGroupModels.Load("model-b")
+	membersBVal, ok := p.resolver.labelGroupModels.Load("model-b")
 	require.True(t, ok, "model-b should be in labelGroupModels")
+	membersB := membersBVal.([]string)
 	sort.Strings(membersB)
 	assert.Equal(t, []string{"model-a", "model-b"}, membersB)
 }
@@ -123,20 +127,20 @@ func TestRefreshServiceLabelCache_SingleClaimant_NoGroup(t *testing.T) {
 	}
 	require.NoError(t, p.client.Create(ctx, svc))
 
-	p.refreshServiceLabelCache(ctx)
+	p.resolver.refreshServiceLabelCache(ctx)
 
 	// serviceLabelCache should work as before
-	val, ok := p.serviceLabelCache.Load("unique-label")
+	val, ok := p.resolver.serviceLabelCache.Load("unique-label")
 	require.True(t, ok)
 	assert.Equal(t, "model-solo", val)
 
 	// labelGroupCache should have the single claimant
-	groupVal, ok := p.labelGroupCache.Load("unique-label")
+	groupVal, ok := p.resolver.labelGroupCache.Load("unique-label")
 	require.True(t, ok)
 	assert.Len(t, groupVal, 1)
 
 	// labelGroupModels should NOT have an entry (no group with <2 members)
-	_, ok = p.labelGroupModels.Load("model-solo")
+	_, ok = p.resolver.labelGroupModels.Load("model-solo")
 	assert.False(t, ok, "single-claimant model should not be in labelGroupModels")
 }
 
@@ -144,13 +148,13 @@ func TestIsModelInLabelGroup(t *testing.T) {
 	p := setupTestProxyWithRouting(t)
 
 	// Not in any group initially
-	assert.False(t, p.isModelInLabelGroup("model-a"))
+	assert.False(t, p.resolver.IsModelInLabelGroup("model-a"))
 
 	// Manually populate
-	p.labelGroupModels.Store("model-a", []string{"model-a", "model-b"})
+	p.resolver.labelGroupModels.Store("model-a", []string{"model-a", "model-b"})
 
-	assert.True(t, p.isModelInLabelGroup("model-a"))
-	assert.False(t, p.isModelInLabelGroup("model-c"))
+	assert.True(t, p.resolver.IsModelInLabelGroup("model-a"))
+	assert.False(t, p.resolver.IsModelInLabelGroup("model-c"))
 }
 
 func TestRefreshEndpoints_LabelGroupAggregation(t *testing.T) {
@@ -246,11 +250,11 @@ func TestRefreshEndpoints_LabelGroupAggregation(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, epB))
 
 	// First refresh labels so groups are built
-	p.refreshServiceLabelCache(ctx)
+	p.resolver.refreshServiceLabelCache(ctx)
 
 	// Verify groups were built
-	assert.True(t, p.isModelInLabelGroup("model-a"))
-	assert.True(t, p.isModelInLabelGroup("model-b"))
+	assert.True(t, p.resolver.IsModelInLabelGroup("model-a"))
+	assert.True(t, p.resolver.IsModelInLabelGroup("model-b"))
 
 	// Now refresh endpoints
 	p.refreshEndpoints(ctx)
@@ -297,7 +301,7 @@ func TestGetRoutingStrategy_LabelGroup_DefaultsToLeastLoaded(t *testing.T) {
 	assert.Equal(t, routing.StrategyDefault, strategy)
 
 	// Add to label group
-	p.labelGroupModels.Store("model-no-annotation", []string{"model-no-annotation", "model-other"})
+	p.resolver.labelGroupModels.Store("model-no-annotation", []string{"model-no-annotation", "model-other"})
 
 	// Now should return least-loaded
 	strategy = p.getRoutingStrategy(ctx, "model-no-annotation")
@@ -325,7 +329,7 @@ func TestGetRoutingStrategy_ExplicitAnnotation_OverridesLabelGroup(t *testing.T)
 	require.NoError(t, p.client.Create(ctx, m))
 
 	// Also add to label group
-	p.labelGroupModels.Store("model-with-prefix", []string{"model-with-prefix", "model-other"})
+	p.resolver.labelGroupModels.Store("model-with-prefix", []string{"model-with-prefix", "model-other"})
 
 	// Explicit annotation should win over label group default
 	strategy := p.getRoutingStrategy(ctx, "model-with-prefix")
@@ -416,9 +420,9 @@ func TestRefreshEndpoints_LabelGroup_PartialEndpoints(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, epDown))
 
 	// Build label groups
-	p.refreshServiceLabelCache(ctx)
-	assert.True(t, p.isModelInLabelGroup("model-up"))
-	assert.True(t, p.isModelInLabelGroup("model-down"))
+	p.resolver.refreshServiceLabelCache(ctx)
+	assert.True(t, p.resolver.IsModelInLabelGroup("model-up"))
+	assert.True(t, p.resolver.IsModelInLabelGroup("model-down"))
 
 	// Refresh endpoints
 	p.refreshEndpoints(ctx)
@@ -467,14 +471,14 @@ func TestRefreshServiceLabelCache_ActiveAnnotationPrecedence(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, svcA))
 	require.NoError(t, p.client.Create(ctx, svcB))
 
-	p.refreshServiceLabelCache(ctx)
+	p.resolver.refreshServiceLabelCache(ctx)
 
 	// Only model-a should claim "shared-label" (model-b has empty active annotation)
-	val, ok := p.serviceLabelCache.Load("shared-label")
+	val, ok := p.resolver.serviceLabelCache.Load("shared-label")
 	require.True(t, ok)
 	assert.Equal(t, "model-a", val)
 
 	// No label group since only one claimant
-	_, ok = p.labelGroupModels.Load("model-a")
+	_, ok = p.resolver.labelGroupModels.Load("model-a")
 	assert.False(t, ok, "should not form a group when only one model has active labels")
 }

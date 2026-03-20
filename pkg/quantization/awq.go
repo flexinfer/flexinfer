@@ -7,20 +7,20 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 // AWQJobBuilder generates Kubernetes Jobs for AWQ quantization.
 type AWQJobBuilder struct{}
 
 // Format returns the AWQ quantization format.
-func (b *AWQJobBuilder) Format() aiv1alpha1.QuantizationFormat {
-	return aiv1alpha1.QuantizationFormatAWQ
+func (b *AWQJobBuilder) Format() aiv1alpha2.QuantizationFormat {
+	return aiv1alpha2.QuantizationFormatAWQ
 }
 
 // Validate checks that the quantization spec is valid for AWQ.
-func (b *AWQJobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
-	if spec.Format != aiv1alpha1.QuantizationFormatAWQ {
+func (b *AWQJobBuilder) Validate(spec *aiv1alpha2.QuantizationSpec) error {
+	if spec.Format != aiv1alpha2.QuantizationFormatAWQ {
 		return fmt.Errorf("AWQJobBuilder only handles AWQ format, got %q", spec.Format)
 	}
 	if !spec.UseGPU {
@@ -84,7 +84,7 @@ func (b *AWQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 }
 
 // buildEnv returns environment variables for the AWQ quantization script.
-func (b *AWQJobBuilder) buildEnv(modelPath string, bits, groupSize int, calib *aiv1alpha1.CalibrationSpec) []corev1.EnvVar {
+func (b *AWQJobBuilder) buildEnv(modelPath string, bits, groupSize int, calib *aiv1alpha2.CalibrationSpec) []corev1.EnvVar {
 	env := []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
 		{Name: "BITS", Value: fmt.Sprintf("%d", bits)},

@@ -7,10 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
@@ -32,13 +31,13 @@ type gptqModelPolicy struct {
 }
 
 // Format returns the GPTQ quantization format.
-func (b *GPTQJobBuilder) Format() aiv1alpha1.QuantizationFormat {
-	return aiv1alpha1.QuantizationFormatGPTQ
+func (b *GPTQJobBuilder) Format() aiv1alpha2.QuantizationFormat {
+	return aiv1alpha2.QuantizationFormatGPTQ
 }
 
 // Validate checks that the quantization spec is valid for GPTQ.
-func (b *GPTQJobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
-	if spec.Format != aiv1alpha1.QuantizationFormatGPTQ {
+func (b *GPTQJobBuilder) Validate(spec *aiv1alpha2.QuantizationSpec) error {
+	if spec.Format != aiv1alpha2.QuantizationFormatGPTQ {
 		return fmt.Errorf("GPTQJobBuilder only handles GPTQ format, got %q", spec.Format)
 	}
 	if !spec.UseGPU {
@@ -134,7 +133,7 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 }
 
 // buildEnv returns environment variables for the GPTQ quantization script.
-func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, descAct bool, memoryGB int32, gpuMemFraction, dynamicExclusion string, calib *aiv1alpha1.CalibrationSpec) []corev1.EnvVar {
+func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, descAct bool, memoryGB int32, gpuMemFraction, dynamicExclusion string, calib *aiv1alpha2.CalibrationSpec) []corev1.EnvVar {
 	symStr := "True"
 	if !sym {
 		symStr = "False"

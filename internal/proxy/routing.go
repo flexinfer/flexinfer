@@ -113,7 +113,7 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 			}
 			for _, addr := range subset.Addresses {
 				// Skip pods on nodes marked for spot termination
-				if addr.NodeName != nil && p.isNodeTerminating(ctx, *addr.NodeName) {
+				if addr.NodeName != nil && p.activator.IsNodeTerminating(ctx, *addr.NodeName) {
 					slog.Debug("skipping endpoint on terminating node", "model", modelName, "node", *addr.NodeName)
 					continue
 				}
@@ -134,7 +134,7 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 	// Aggregation pass: for models in label groups, combine endpoints from all group members.
 	// This overwrites each model's router ring with the union of all group members' endpoints,
 	// enabling cross-node load balancing for models sharing service labels.
-	p.labelGroupModels.Range(func(modelName string, groupMembers []string) bool {
+	p.resolver.RangeLabelGroupModels(func(modelName string, groupMembers []string) bool {
 		seen := make(map[string]bool)
 		var aggregated []string
 		for _, member := range groupMembers {
@@ -155,30 +155,6 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 		}
 		return true
 	})
-}
-
-// isNodeTerminating checks if a node is marked for spot instance termination.
-// Nodes are marked by the drain coordinator setting the flexinfer.ai/spot-terminating annotation.
-func (p *Proxy) isNodeTerminating(ctx context.Context, nodeName string) bool {
-	var node corev1.Node
-	if err := p.client.Get(ctx, client.ObjectKey{Name: nodeName}, &node); err != nil {
-		return false
-	}
-
-	if node.Annotations != nil {
-		if node.Annotations["flexinfer.ai/spot-terminating"] == "true" {
-			return true
-		}
-	}
-
-	// Also check for the taint
-	for _, taint := range node.Spec.Taints {
-		if taint.Key == "flexinfer.ai/spot-terminating" {
-			return true
-		}
-	}
-
-	return false
 }
 
 // trackEndpointChanges compares current endpoints with cached ones and updates metrics.
@@ -222,8 +198,7 @@ func (p *Proxy) trackEndpointChanges(modelName string, newEndpoints []string) {
 
 // isModelInLabelGroup checks if a model is part of a label group (shares service labels with other models).
 func (p *Proxy) isModelInLabelGroup(modelName string) bool {
-	_, ok := p.labelGroupModels.Load(modelName)
-	return ok
+	return p.resolver.IsModelInLabelGroup(modelName)
 }
 
 // modelHasRoutingAnnotation checks if a model has the flexinfer.ai/routing annotation set.
@@ -303,7 +278,7 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 	// but keep the adapter name in the request body for the backend.
 	resolvedModel := modelName
 	isLoRA := false
-	if parentModel, ok := p.resolveLoRAAdapter(ctx, modelName); ok {
+	if parentModel, ok := p.resolver.ResolveLoRAAdapter(ctx, modelName); ok {
 		resolvedModel = parentModel
 		isLoRA = true
 	}

@@ -179,19 +179,9 @@ type Proxy struct {
 	queues   TypedSyncMap[string, *RequestQueue]
 	queuesMu sync.Mutex
 
-	// Service label to model name cache
-	serviceLabelCache   TypedSyncMap[string, string]
-	serviceLabelCacheMu sync.Mutex
-	lastCacheRefresh    time.Time
-
-	// Label group routing: labels shared by multiple models
-	labelGroupCache  TypedSyncMap[string, []string] // label -> []modelName (all claimants)
-	labelGroupModels TypedSyncMap[string, []string] // modelName -> []relatedModelNames (reverse index)
-
-	// Model alias cache: servedModelName/aliases -> K8s resource name
-	modelAliasCache   TypedSyncMap[string, string]
-	modelAliasCacheMu sync.Mutex
-	lastAliasRefresh  time.Time
+	// Extracted subsystems
+	resolver  *ModelResolver // name resolution: service labels, aliases, LoRA
+	activator ModelActivator // K8s activation: scale-up, demand signals, cold-start
 
 	// Configuration (can be overridden by env vars)
 	maxQueueSize       int                          // Default: 100
@@ -257,6 +247,8 @@ func New(cfg Config) *Proxy {
 	p := &Proxy{
 		client:               cfg.Client,
 		namespace:            cfg.Namespace,
+		resolver:             NewModelResolver(cfg.Client, cfg.Namespace),
+		activator:            NewK8sModelActivator(cfg.Client, cfg.Namespace, cfg.ColdStartTimeout),
 		maxQueueSize:         cfg.MaxQueueSize,
 		queueTimeout:         cfg.QueueTimeout,
 		coldStartTimeout:     cfg.ColdStartTimeout,
@@ -396,7 +388,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	ctx = r.Context()
 
 	// 2. Try to resolve service labels (e.g., "textgen" -> "qwen3-8b-fast")
-	resolvedName := p.resolveServiceLabel(ctx, modelName)
+	resolvedName := p.resolver.ResolveServiceLabel(ctx, modelName)
 	if resolvedName != modelName {
 		slog.Debug("resolved service label", "label", modelName, "model", resolvedName, "request_id", requestID)
 		modelName = resolvedName
@@ -404,7 +396,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2b. Try to resolve model aliases (servedModelName / litellm aliases -> K8s name)
-	resolvedAlias := p.resolveModelAlias(ctx, modelName)
+	resolvedAlias := p.resolver.ResolveModelAlias(ctx, modelName)
 	if resolvedAlias != modelName {
 		slog.Debug("resolved model alias", "alias", modelName, "model", resolvedAlias, "request_id", requestID)
 		modelName = resolvedAlias

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -13,29 +13,29 @@ func TestAWQJobBuilder_Validate_EdgeCases(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		spec    *aiv1alpha1.QuantizationSpec
+		spec    *aiv1alpha2.QuantizationSpec
 		wantErr string
 	}{
 		{
 			name: "wrong format",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatGPTQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatGPTQ,
 				UseGPU: true,
 			},
 			wantErr: "only handles AWQ format",
 		},
 		{
 			name: "GPU not enabled",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatAWQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatAWQ,
 				UseGPU: false,
 			},
 			wantErr: "requires useGPU=true",
 		},
 		{
 			name: "invalid bits (8)",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatAWQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatAWQ,
 				UseGPU: true,
 				Bits:   int32Ptr(8),
 			},
@@ -43,8 +43,8 @@ func TestAWQJobBuilder_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "zero group size",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format:    aiv1alpha1.QuantizationFormatAWQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format:    aiv1alpha2.QuantizationFormatAWQ,
 				UseGPU:    true,
 				GroupSize: int32Ptr(0),
 			},
@@ -52,8 +52,8 @@ func TestAWQJobBuilder_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "negative group size",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format:    aiv1alpha1.QuantizationFormatAWQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format:    aiv1alpha2.QuantizationFormatAWQ,
 				UseGPU:    true,
 				GroupSize: int32Ptr(-1),
 			},
@@ -61,8 +61,8 @@ func TestAWQJobBuilder_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "valid defaults",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatAWQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatAWQ,
 				UseGPU: true,
 			},
 			wantErr: "",
@@ -121,7 +121,7 @@ func TestAWQJobBuilder_BuildEnv_Content(t *testing.T) {
 
 	t.Run("custom calibration", func(t *testing.T) {
 		customDataset := "custom/dataset"
-		env := builder.buildEnv("test-model", 4, 64, &aiv1alpha1.CalibrationSpec{
+		env := builder.buildEnv("test-model", 4, 64, &aiv1alpha2.CalibrationSpec{
 			MaxSeqLen:             int32Ptr(2048),
 			MaxSamples:            int32Ptr(64),
 			NParallelCalibSamples: int32Ptr(8),
@@ -176,8 +176,8 @@ func TestAWQJobBuilder_BuildJob_ProfileImageOverride(t *testing.T) {
 		Namespace: "default",
 		PVCName:   "test-pvc",
 		ModelPath: "test-model",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format: aiv1alpha1.QuantizationFormatAWQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format: aiv1alpha2.QuantizationFormatAWQ,
 			UseGPU: true,
 		},
 		ProfileQuantizerImage: "custom-profile/quantizer:v1",

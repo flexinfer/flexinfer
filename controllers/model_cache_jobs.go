@@ -27,7 +27,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -76,20 +75,6 @@ func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destS
 
 	destSubdir = strings.Trim(destSubdir, "/")
 	destDir := "/models/" + destSubdir
-
-	var nodeSelector map[string]string
-	if len(model.Spec.NodeSelector) > 0 {
-		nodeSelector = model.Spec.NodeSelector
-	}
-	var tolerations []corev1.Toleration
-	if model.Spec.GetGPUCount() > 0 {
-		tolerations = append(tolerations, corev1.Toleration{
-			Key:      "dedicated",
-			Operator: corev1.TolerationOpEqual,
-			Value:    "gpu",
-			Effect:   corev1.TaintEffectNoSchedule,
-		})
-	}
 
 	var image string
 	var downloadScript string
@@ -178,58 +163,49 @@ echo "Download complete."
 `, modelID, destDir)
 	}
 
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      model.Name + "-cache-prefetch",
-			Namespace: model.Namespace,
-			Labels:    r.labelsForModel(model),
-			Annotations: map[string]string{
-				"flexinfer.ai/source":     model.Spec.Source,
-				"flexinfer.ai/cache-kind": "prefetch",
-				"flexinfer.ai/cache-pvc":  pvcName,
-				"flexinfer.ai/cache-dest": destSubdir,
+	nodeSelector, tolerations := modelNodeSelectorAndTolerations(model)
+
+	job := buildCacheJob(CacheJobParams{
+		Name:      model.Name + "-cache-prefetch",
+		Namespace: model.Namespace,
+		Labels:    r.labelsForModel(model),
+		Annotations: map[string]string{
+			"flexinfer.ai/source":     model.Spec.Source,
+			"flexinfer.ai/cache-kind": "prefetch",
+			"flexinfer.ai/cache-pvc":  pvcName,
+			"flexinfer.ai/cache-dest": destSubdir,
+		},
+		NodeSelector:  nodeSelector,
+		Tolerations:   tolerations,
+		BackoffLimit:  DefaultDownloadBackoffLimit,
+		RestartPolicy: corev1.RestartPolicyOnFailure,
+		ContainerName: "downloader",
+		Image:         image,
+		Command:       []string{"/bin/sh", "-c"},
+		Args:          []string{downloadScript},
+		Env:           envVars,
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("1Gi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("8Gi"),
 			},
 		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit: ptr.To(DefaultDownloadBackoffLimit),
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy:                corev1.RestartPolicyOnFailure,
-					NodeSelector:                 nodeSelector,
-					Tolerations:                  tolerations,
-					AutomountServiceAccountToken: ptr.To(false),
-					Containers: []corev1.Container{{
-						Name:    "downloader",
-						Image:   image,
-						Command: []string{"/bin/sh", "-c"},
-						Args:    []string{downloadScript},
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "model-store",
-							MountPath: "/models",
-						}},
-						Env: envVars,
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("100m"),
-								corev1.ResourceMemory: resource.MustParse("1Gi"),
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse("8Gi"),
-							},
-						},
-					}},
-					Volumes: []corev1.Volume{{
-						Name: "model-store",
-						VolumeSource: corev1.VolumeSource{
-							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: pvcName,
-							},
-						},
-					}},
+		VolumeMounts: []corev1.VolumeMount{{
+			Name:      "model-store",
+			MountPath: "/models",
+		}},
+		Volumes: []corev1.Volume{{
+			Name: "model-store",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: pvcName,
 				},
 			},
-		},
-	}
+		}},
+	})
 
 	if err := ctrl.SetControllerReference(model, job, r.Scheme); err != nil {
 		return nil, err
@@ -242,20 +218,6 @@ func (r *ModelReconciler) jobForCacheCheck(model *aiv1alpha2.Model, pvcName, sub
 	target := "/models"
 	if subPath != "" {
 		target = "/models/" + subPath
-	}
-
-	var nodeSelector map[string]string
-	if len(model.Spec.NodeSelector) > 0 {
-		nodeSelector = model.Spec.NodeSelector
-	}
-	var tolerations []corev1.Toleration
-	if model.Spec.GetGPUCount() > 0 {
-		tolerations = append(tolerations, corev1.Toleration{
-			Key:      "dedicated",
-			Operator: corev1.TolerationOpEqual,
-			Value:    "gpu",
-			Effect:   corev1.TaintEffectNoSchedule,
-		})
 	}
 
 	script := fmt.Sprintf(`
@@ -280,57 +242,48 @@ fi
 echo "Artifact present at file $TARGET"
 `, target)
 
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      model.Name + "-cache-check",
-			Namespace: model.Namespace,
-			Labels:    r.labelsForModel(model),
-			Annotations: map[string]string{
-				"flexinfer.ai/source":     model.Spec.Source,
-				"flexinfer.ai/cache-kind": "check",
-				"flexinfer.ai/cache-pvc":  pvcName,
-				"flexinfer.ai/cache-path": subPath,
+	nodeSelector, tolerations := modelNodeSelectorAndTolerations(model)
+
+	job := buildCacheJob(CacheJobParams{
+		Name:      model.Name + "-cache-check",
+		Namespace: model.Namespace,
+		Labels:    r.labelsForModel(model),
+		Annotations: map[string]string{
+			"flexinfer.ai/source":     model.Spec.Source,
+			"flexinfer.ai/cache-kind": "check",
+			"flexinfer.ai/cache-pvc":  pvcName,
+			"flexinfer.ai/cache-path": subPath,
+		},
+		NodeSelector:  nodeSelector,
+		Tolerations:   tolerations,
+		BackoffLimit:  0,
+		RestartPolicy: corev1.RestartPolicyNever,
+		ContainerName: "checker",
+		Image:         "alpine:3.19",
+		Command:       []string{"/bin/sh", "-c"},
+		Args:          []string{script},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("10m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("128Mi"),
 			},
 		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit: ptr.To(int32(0)),
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy:                corev1.RestartPolicyNever,
-					NodeSelector:                 nodeSelector,
-					Tolerations:                  tolerations,
-					AutomountServiceAccountToken: ptr.To(false),
-					Containers: []corev1.Container{{
-						Name:    "checker",
-						Image:   "alpine:3.19",
-						Command: []string{"/bin/sh", "-c"},
-						Args:    []string{script},
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "model-store",
-							MountPath: "/models",
-						}},
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("10m"),
-								corev1.ResourceMemory: resource.MustParse("32Mi"),
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse("128Mi"),
-							},
-						},
-					}},
-					Volumes: []corev1.Volume{{
-						Name: "model-store",
-						VolumeSource: corev1.VolumeSource{
-							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: pvcName,
-							},
-						},
-					}},
+		VolumeMounts: []corev1.VolumeMount{{
+			Name:      "model-store",
+			MountPath: "/models",
+		}},
+		Volumes: []corev1.Volume{{
+			Name: "model-store",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: pvcName,
 				},
 			},
-		},
-	}
+		}},
+	})
 
 	if err := ctrl.SetControllerReference(model, job, r.Scheme); err != nil {
 		return nil, err
@@ -344,20 +297,6 @@ echo "Artifact present at file $TARGET"
 // to a new node that has not been pre-populated).
 func (r *ModelReconciler) jobForLocalCacheCheck(model *aiv1alpha2.Model) (*batchv1.Job, error) {
 	cachePath := resolveLocalCachePath(model)
-
-	var nodeSelector map[string]string
-	if len(model.Spec.NodeSelector) > 0 {
-		nodeSelector = model.Spec.NodeSelector
-	}
-	var tolerations []corev1.Toleration
-	if model.Spec.GetGPUCount() > 0 {
-		tolerations = append(tolerations, corev1.Toleration{
-			Key:      "dedicated",
-			Operator: corev1.TolerationOpEqual,
-			Value:    "gpu",
-			Effect:   corev1.TaintEffectNoSchedule,
-		})
-	}
 
 	script := fmt.Sprintf(`
 set -ex
@@ -376,58 +315,49 @@ fi
 echo "Local cache verified: $DIR ($COUNT+ model files found)"
 `, cachePath)
 
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      model.Name + "-cache-check",
-			Namespace: model.Namespace,
-			Labels:    r.labelsForModel(model),
-			Annotations: map[string]string{
-				"flexinfer.ai/source":     model.Spec.Source,
-				"flexinfer.ai/cache-kind": "local-check",
-				"flexinfer.ai/cache-path": cachePath,
+	nodeSelector, tolerations := modelNodeSelectorAndTolerations(model)
+
+	job := buildCacheJob(CacheJobParams{
+		Name:      model.Name + "-cache-check",
+		Namespace: model.Namespace,
+		Labels:    r.labelsForModel(model),
+		Annotations: map[string]string{
+			"flexinfer.ai/source":     model.Spec.Source,
+			"flexinfer.ai/cache-kind": "local-check",
+			"flexinfer.ai/cache-path": cachePath,
+		},
+		NodeSelector:            nodeSelector,
+		Tolerations:             tolerations,
+		BackoffLimit:            0,
+		RestartPolicy:           corev1.RestartPolicyNever,
+		TTLSecondsAfterFinished: ptr.To(int32(300)),
+		ContainerName:           "checker",
+		Image:                   "alpine:3.19",
+		Command:                 []string{"/bin/sh", "-c"},
+		Args:                    []string{script},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("10m"),
+				corev1.ResourceMemory: resource.MustParse("32Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("64Mi"),
 			},
 		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit:            ptr.To(int32(0)),
-			TTLSecondsAfterFinished: ptr.To(int32(300)),
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy:                corev1.RestartPolicyNever,
-					NodeSelector:                 nodeSelector,
-					Tolerations:                  tolerations,
-					AutomountServiceAccountToken: ptr.To(false),
-					Containers: []corev1.Container{{
-						Name:    "checker",
-						Image:   "alpine:3.19",
-						Command: []string{"/bin/sh", "-c"},
-						Args:    []string{script},
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "cache-dir",
-							MountPath: cachePath,
-						}},
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("10m"),
-								corev1.ResourceMemory: resource.MustParse("32Mi"),
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse("64Mi"),
-							},
-						},
-					}},
-					Volumes: []corev1.Volume{{
-						Name: "cache-dir",
-						VolumeSource: corev1.VolumeSource{
-							HostPath: &corev1.HostPathVolumeSource{
-								Path: cachePath,
-								Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
-							},
-						},
-					}},
+		VolumeMounts: []corev1.VolumeMount{{
+			Name:      "cache-dir",
+			MountPath: cachePath,
+		}},
+		Volumes: []corev1.Volume{{
+			Name: "cache-dir",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: cachePath,
+					Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
 				},
 			},
-		},
-	}
+		}},
+	})
 
 	if err := ctrl.SetControllerReference(model, job, r.Scheme); err != nil {
 		return nil, err
@@ -442,20 +372,6 @@ func (r *ModelReconciler) jobForLocalCacheStage(model *aiv1alpha2.Model, sourceP
 	if subPath != "" {
 		src = "/src/" + subPath
 		dst = "/models/" + subPath
-	}
-
-	var nodeSelector map[string]string
-	if len(model.Spec.NodeSelector) > 0 {
-		nodeSelector = model.Spec.NodeSelector
-	}
-	var tolerations []corev1.Toleration
-	if model.Spec.GetGPUCount() > 0 {
-		tolerations = append(tolerations, corev1.Toleration{
-			Key:      "dedicated",
-			Operator: corev1.TolerationOpEqual,
-			Value:    "gpu",
-			Effect:   corev1.TaintEffectNoSchedule,
-		})
 	}
 
 	sum := sha256.Sum256([]byte(model.Spec.Source))
@@ -492,75 +408,66 @@ touch "$MARKER"
 echo "Local staging complete."
 `, src, dst, marker)
 
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      model.Name + "-cache-stage",
-			Namespace: model.Namespace,
-			Labels:    r.labelsForModel(model),
-			Annotations: map[string]string{
-				"flexinfer.ai/source":        model.Spec.Source,
-				"flexinfer.ai/cache-kind":    "local-stage",
-				"flexinfer.ai/cache-src-pvc": sourcePVCName,
-				"flexinfer.ai/cache-path":    subPath,
+	nodeSelector, tolerations := modelNodeSelectorAndTolerations(model)
+
+	job := buildCacheJob(CacheJobParams{
+		Name:      model.Name + "-cache-stage",
+		Namespace: model.Namespace,
+		Labels:    r.labelsForModel(model),
+		Annotations: map[string]string{
+			"flexinfer.ai/source":        model.Spec.Source,
+			"flexinfer.ai/cache-kind":    "local-stage",
+			"flexinfer.ai/cache-src-pvc": sourcePVCName,
+			"flexinfer.ai/cache-path":    subPath,
+		},
+		NodeSelector:  nodeSelector,
+		Tolerations:   tolerations,
+		BackoffLimit:  1,
+		RestartPolicy: corev1.RestartPolicyOnFailure,
+		ContainerName: "stager",
+		Image:         "alpine:3.20",
+		Command:       []string{"/bin/sh", "-c"},
+		Args:          []string{script},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("2Gi"),
 			},
 		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit: ptr.To(int32(1)),
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy:                corev1.RestartPolicyOnFailure,
-					NodeSelector:                 nodeSelector,
-					Tolerations:                  tolerations,
-					AutomountServiceAccountToken: ptr.To(false),
-					Containers: []corev1.Container{{
-						Name:    "stager",
-						Image:   "alpine:3.20",
-						Command: []string{"/bin/sh", "-c"},
-						Args:    []string{script},
-						VolumeMounts: []corev1.VolumeMount{
-							{
-								Name:      "source",
-								MountPath: "/src",
-								ReadOnly:  true,
-							},
-							{
-								Name:      "model-store",
-								MountPath: "/models",
-							},
-						},
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("100m"),
-								corev1.ResourceMemory: resource.MustParse("256Mi"),
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse("2Gi"),
-							},
-						},
-					}},
-					Volumes: []corev1.Volume{
-						{
-							Name: "source",
-							VolumeSource: corev1.VolumeSource{
-								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-									ClaimName: sourcePVCName,
-								},
-							},
-						},
-						{
-							Name: "model-store",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: resolveLocalCachePath(model),
-									Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
-								},
-							},
-						},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "source",
+				MountPath: "/src",
+				ReadOnly:  true,
+			},
+			{
+				Name:      "model-store",
+				MountPath: "/models",
+			},
+		},
+		Volumes: []corev1.Volume{
+			{
+				Name: "source",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: sourcePVCName,
+					},
+				},
+			},
+			{
+				Name: "model-store",
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: resolveLocalCachePath(model),
+						Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
 					},
 				},
 			},
 		},
-	}
+	})
 
 	if err := ctrl.SetControllerReference(model, job, r.Scheme); err != nil {
 		return nil, err
@@ -606,20 +513,6 @@ func (r *ModelReconciler) jobForLocalHFPrefetch(model *aiv1alpha2.Model) (*batch
 			corev1.EnvVar{Name: "VAE_REPO", Value: vaeRepo},
 			corev1.EnvVar{Name: "VAE_DEST_DIR", Value: vaeDest},
 		)
-	}
-
-	var nodeSelector map[string]string
-	if len(model.Spec.NodeSelector) > 0 {
-		nodeSelector = model.Spec.NodeSelector
-	}
-	var tolerations []corev1.Toleration
-	if model.Spec.GetGPUCount() > 0 {
-		tolerations = append(tolerations, corev1.Toleration{
-			Key:      "dedicated",
-			Operator: corev1.TolerationOpEqual,
-			Value:    "gpu",
-			Effect:   corev1.TaintEffectNoSchedule,
-		})
 	}
 
 	script := fmt.Sprintf(`
@@ -682,59 +575,50 @@ touch "$MARKER"
 echo "Local HF staging complete."
 `, modelID, markerName)
 
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      model.Name + "-cache-stage",
-			Namespace: model.Namespace,
-			Labels:    r.labelsForModel(model),
-			Annotations: map[string]string{
-				"flexinfer.ai/source":     model.Spec.Source,
-				"flexinfer.ai/cache-kind": "local-prefetch",
-				"flexinfer.ai/cache-path": cachePath,
+	nodeSelector, tolerations := modelNodeSelectorAndTolerations(model)
+
+	job := buildCacheJob(CacheJobParams{
+		Name:      model.Name + "-cache-stage",
+		Namespace: model.Namespace,
+		Labels:    r.labelsForModel(model),
+		Annotations: map[string]string{
+			"flexinfer.ai/source":     model.Spec.Source,
+			"flexinfer.ai/cache-kind": "local-prefetch",
+			"flexinfer.ai/cache-path": cachePath,
+		},
+		NodeSelector:            nodeSelector,
+		Tolerations:             tolerations,
+		BackoffLimit:            DefaultDownloadBackoffLimit,
+		RestartPolicy:           corev1.RestartPolicyOnFailure,
+		TTLSecondsAfterFinished: ptr.To(int32(300)),
+		ContainerName:           "downloader",
+		Image:                   "python:3.10-slim",
+		Command:                 []string{"/bin/sh", "-c"},
+		Args:                    []string{script},
+		Env:                     envVars,
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("1Gi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("8Gi"),
 			},
 		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit:            ptr.To(DefaultDownloadBackoffLimit),
-			TTLSecondsAfterFinished: ptr.To(int32(300)),
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy:                corev1.RestartPolicyOnFailure,
-					NodeSelector:                 nodeSelector,
-					Tolerations:                  tolerations,
-					AutomountServiceAccountToken: ptr.To(false),
-					Containers: []corev1.Container{{
-						Name:    "downloader",
-						Image:   "python:3.10-slim",
-						Command: []string{"/bin/sh", "-c"},
-						Args:    []string{script},
-						Env:     envVars,
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "model-store",
-							MountPath: "/models",
-						}},
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("100m"),
-								corev1.ResourceMemory: resource.MustParse("1Gi"),
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse("8Gi"),
-							},
-						},
-					}},
-					Volumes: []corev1.Volume{{
-						Name: "model-store",
-						VolumeSource: corev1.VolumeSource{
-							HostPath: &corev1.HostPathVolumeSource{
-								Path: cachePath,
-								Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
-							},
-						},
-					}},
+		VolumeMounts: []corev1.VolumeMount{{
+			Name:      "model-store",
+			MountPath: "/models",
+		}},
+		Volumes: []corev1.Volume{{
+			Name: "model-store",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: cachePath,
+					Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
 				},
 			},
-		},
-	}
+		}},
+	})
 
 	if err := ctrl.SetControllerReference(model, job, r.Scheme); err != nil {
 		return nil, err
@@ -749,20 +633,6 @@ func (r *ModelReconciler) jobForCacheCopy(model *aiv1alpha2.Model, sourcePVCName
 	if subPath != "" {
 		src = "/src/" + subPath
 		dst = "/models/" + subPath
-	}
-
-	var nodeSelector map[string]string
-	if len(model.Spec.NodeSelector) > 0 {
-		nodeSelector = model.Spec.NodeSelector
-	}
-	var tolerations []corev1.Toleration
-	if model.Spec.GetGPUCount() > 0 {
-		tolerations = append(tolerations, corev1.Toleration{
-			Key:      "dedicated",
-			Operator: corev1.TolerationOpEqual,
-			Value:    "gpu",
-			Effect:   corev1.TaintEffectNoSchedule,
-		})
 	}
 
 	sum := sha256.Sum256([]byte(model.Spec.Source))
@@ -796,75 +666,66 @@ touch "$MARKER"
 echo "Copy complete."
 `, src, dst, marker)
 
-	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      model.Name + "-cache-copy",
-			Namespace: model.Namespace,
-			Labels:    r.labelsForModel(model),
-			Annotations: map[string]string{
-				"flexinfer.ai/source":        model.Spec.Source,
-				"flexinfer.ai/cache-kind":    "copy",
-				"flexinfer.ai/cache-src-pvc": sourcePVCName,
-				"flexinfer.ai/cache-pvc":     cachePVCName,
-				"flexinfer.ai/cache-path":    subPath,
+	nodeSelector, tolerations := modelNodeSelectorAndTolerations(model)
+
+	job := buildCacheJob(CacheJobParams{
+		Name:      model.Name + "-cache-copy",
+		Namespace: model.Namespace,
+		Labels:    r.labelsForModel(model),
+		Annotations: map[string]string{
+			"flexinfer.ai/source":        model.Spec.Source,
+			"flexinfer.ai/cache-kind":    "copy",
+			"flexinfer.ai/cache-src-pvc": sourcePVCName,
+			"flexinfer.ai/cache-pvc":     cachePVCName,
+			"flexinfer.ai/cache-path":    subPath,
+		},
+		NodeSelector:  nodeSelector,
+		Tolerations:   tolerations,
+		BackoffLimit:  1,
+		RestartPolicy: corev1.RestartPolicyOnFailure,
+		ContainerName: "copier",
+		Image:         "alpine:3.20",
+		Command:       []string{"/bin/sh", "-c"},
+		Args:          []string{script},
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("256Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("2Gi"),
 			},
 		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit: ptr.To(int32(1)),
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy:                corev1.RestartPolicyOnFailure,
-					NodeSelector:                 nodeSelector,
-					Tolerations:                  tolerations,
-					AutomountServiceAccountToken: ptr.To(false),
-					Containers: []corev1.Container{{
-						Name:    "copier",
-						Image:   "alpine:3.20",
-						Command: []string{"/bin/sh", "-c"},
-						Args:    []string{script},
-						VolumeMounts: []corev1.VolumeMount{
-							{
-								Name:      "source",
-								MountPath: "/src",
-								ReadOnly:  true,
-							},
-							{
-								Name:      "model-store",
-								MountPath: "/models",
-							},
-						},
-						Resources: corev1.ResourceRequirements{
-							Requests: corev1.ResourceList{
-								corev1.ResourceCPU:    resource.MustParse("100m"),
-								corev1.ResourceMemory: resource.MustParse("256Mi"),
-							},
-							Limits: corev1.ResourceList{
-								corev1.ResourceMemory: resource.MustParse("2Gi"),
-							},
-						},
-					}},
-					Volumes: []corev1.Volume{
-						{
-							Name: "source",
-							VolumeSource: corev1.VolumeSource{
-								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-									ClaimName: sourcePVCName,
-								},
-							},
-						},
-						{
-							Name: "model-store",
-							VolumeSource: corev1.VolumeSource{
-								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-									ClaimName: cachePVCName,
-								},
-							},
-						},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "source",
+				MountPath: "/src",
+				ReadOnly:  true,
+			},
+			{
+				Name:      "model-store",
+				MountPath: "/models",
+			},
+		},
+		Volumes: []corev1.Volume{
+			{
+				Name: "source",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: sourcePVCName,
+					},
+				},
+			},
+			{
+				Name: "model-store",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: cachePVCName,
 					},
 				},
 			},
 		},
-	}
+	})
 
 	if err := ctrl.SetControllerReference(model, job, r.Scheme); err != nil {
 		return nil, err

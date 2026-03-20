@@ -9,7 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 const (
@@ -38,13 +38,13 @@ const (
 type GGUFJobBuilder struct{}
 
 // Format returns the GGUF quantization format.
-func (b *GGUFJobBuilder) Format() aiv1alpha1.QuantizationFormat {
-	return aiv1alpha1.QuantizationFormatGGUF
+func (b *GGUFJobBuilder) Format() aiv1alpha2.QuantizationFormat {
+	return aiv1alpha2.QuantizationFormatGGUF
 }
 
 // Validate checks that the quantization spec is valid for GGUF.
-func (b *GGUFJobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
-	if spec.Format != aiv1alpha1.QuantizationFormatGGUF {
+func (b *GGUFJobBuilder) Validate(spec *aiv1alpha2.QuantizationSpec) error {
+	if spec.Format != aiv1alpha2.QuantizationFormatGGUF {
 		return fmt.Errorf("GGUFJobBuilder only handles GGUF format, got %q", spec.Format)
 	}
 	if spec.GGUFType != "" && !IsValidGGUFType(spec.GGUFType) {
