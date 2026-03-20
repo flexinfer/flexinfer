@@ -63,6 +63,9 @@ variables:
   # CI should resolve pinned module versions, not the local workspace overlays
   # used on developer machines.
   GOWORK: "off"
+  # Disable CGo globally — CI runners don't have fi-accel C headers, and all
+  # binaries are statically linked for container deployment.
+  CGO_ENABLED: "0"
   # GitLab Runner intermittently attempts to fetch `refs/pipelines/<id>`, which
   # is not reliably available on this GitLab instance. Skip the built-in
   # checkout and fetch sources explicitly inside jobs instead.
@@ -215,9 +218,6 @@ lint:
     - prepare:go-cache
   variables:
     GO_WARM_MOD_CACHE: "false"
-    # Disable CGo so packages importing fi-accel use the pure-Go fallback
-    # (the fi-accel C header is not installed on CI runners).
-    CGO_ENABLED: "0"
     KUBERNETES_CPU_REQUEST: "1"
     KUBERNETES_CPU_LIMIT: "2"
     KUBERNETES_MEMORY_REQUEST: "4Gi"
@@ -237,7 +237,6 @@ vet:
   stage: lint
   variables:
     GO_WARM_MOD_CACHE: "false"
-    CGO_ENABLED: "0"
   script:
     - go vet ./...
 
@@ -263,7 +262,6 @@ guardrails:docs-cli:
   stage: lint
   variables:
     GO_WARM_MOD_CACHE: "false"
-    CGO_ENABLED: "0"
   script:
     - |
       # The shared template may fetch sources via archive (no .git metadata).
@@ -291,7 +289,6 @@ security:gosec:
     - when: never
   variables:
     GO_WARM_MOD_CACHE: "false"
-    CGO_ENABLED: "0"
   script:
     - go install github.com/securego/gosec/v2/cmd/gosec@latest
     # Exclude rules that are false positives or intentional patterns:
@@ -322,7 +319,6 @@ security:govulncheck:
     - when: never
   variables:
     GO_WARM_MOD_CACHE: "false"
-    CGO_ENABLED: "0"
     GOMEMLIMIT: "6GiB"
   script:
     - go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -393,8 +389,8 @@ build:binaries:
       mkdir -p bin
 
       # Build main binaries
-      CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/loom ./cmd/loom
-      CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/loomd ./cmd/loomd
+      go build -ldflags="$LDFLAGS" -o bin/loom ./cmd/loom
+      go build -ldflags="$LDFLAGS" -o bin/loomd ./cmd/loomd
 
       # Build MCP servers for integration tests in parallel to reduce wall time.
       # Cap parallelism to avoid exhausting /tmp with per-process Go build caches
@@ -408,7 +404,7 @@ build:binaries:
       if ! printf '%s\n' "${MCP_PKGS[@]}" | xargs -P "${MCP_BUILD_JOBS}" -I{} bash -c '
         pkg="$1"
         echo "Building ${pkg}..."
-        CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "bin/${pkg}" "./cmd/${pkg}"
+        go build -ldflags="$LDFLAGS" -o "bin/${pkg}" "./cmd/${pkg}"
       ' _ {}; then
         echo "ERROR: one or more MCP server builds failed"
         exit 1
@@ -428,9 +424,6 @@ test:unit:
   stage: test
   variables:
     GO_WARM_MOD_CACHE: "false"
-    # Disable CGo so packages importing fi-accel use the pure-Go fallback
-    # (the fi-accel C header is not installed on CI runners).
-    CGO_ENABLED: "0"
     KUBERNETES_CPU_REQUEST: "2"
     KUBERNETES_CPU_LIMIT: "4"
     KUBERNETES_MEMORY_REQUEST: "4Gi"
@@ -522,9 +515,6 @@ test:enterprise-smoke:
   stage: test
   variables:
     GO_WARM_MOD_CACHE: "false"
-    # Disable CGo so packages importing fi-accel use the pure-Go fallback
-    # (the fi-accel C header is not installed on CI runners).
-    CGO_ENABLED: "0"
   script:
     - bash scripts/ci/enterprise_smoke_suite.sh
 
@@ -565,8 +555,6 @@ test:benchmark:
   needs:
     - build:binaries
   allow_failure: true
-  variables:
-    CGO_ENABLED: "0"
   script:
     - |
       export LOOM_REPO_ROOT="$CI_PROJECT_DIR"
