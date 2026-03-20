@@ -376,6 +376,13 @@ spec:
                         - Reconfigure
                         - Evict
                         type: string
+                      reconfigureCooldown:
+                        description: |-
+                          ReconfigureCooldown is how long after a reconfigure action before
+                          the controller considers restoring the original config.
+                          Prevents thrashing between reduced and original settings.
+                          Default: 5m.
+                        type: string
                       swapSpace:
                         anyOf:
                         - type: integer

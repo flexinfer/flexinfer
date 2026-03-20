@@ -52,6 +52,33 @@ func TestStatusEmpty(t *testing.T) {
 	assert.Nil(t, status.ActiveModel)
 }
 
+func TestStatusIncludesLaunchPlan(t *testing.T) {
+	m := NewManager(ManagerConfig{
+		GPUVendor: backend.GPUVendorAMD,
+		GPUArch:   "gfx1100",
+	})
+
+	m.active = &LoadedModel{
+		Name:    "fast-chat",
+		Backend: "vllm",
+		Model:   "Qwen/Qwen3-14B",
+		State:   ModelStateReady,
+		Port:    8000,
+		Launch: &LaunchPlan{
+			Executable:            "python",
+			Args:                  []string{"-m", "vllm.entrypoints.openai.api_server"},
+			ModelPath:             "/models/fast-chat",
+			StartupTimeoutSeconds: 120,
+		},
+	}
+
+	status := m.Status()
+	require.NotNil(t, status.ActiveModel)
+	require.NotNil(t, status.ActiveModel.Launch)
+	assert.Equal(t, "python", status.ActiveModel.Launch.Executable)
+	assert.Equal(t, 120, status.ActiveModel.Launch.StartupTimeoutSeconds)
+}
+
 func TestActiveNil(t *testing.T) {
 	m := NewManager(ManagerConfig{})
 	assert.Nil(t, m.Active())

@@ -107,11 +107,8 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--enforce-eager")
 	}
 
-	// CPU offload — move part of model weights to CPU to free VRAM for KV cache
-	// Note: not supported in vLLM V1 engine (nightly 0.14.0+), only V0 (0.7.x)
-	if cpuOffload := spec.ConfigInt("cpuOffloadGb", 0); cpuOffload > 0 {
-		args = append(args, "--cpu-offload-gb", fmt.Sprintf("%d", cpuOffload))
-	}
+	// CPU offload removed in vLLM V1 (0.17.0+). Previously --cpu-offload-gb.
+	// For weight offloading, use model-level config or OffloadConfig in future.
 
 	// Override KV cache blocks — bypasses the profiling step that measures
 	// available GPU memory. Useful when model weights consume nearly all VRAM
@@ -141,12 +138,11 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--kv-cache-dtype", kvDtype)
 	}
 
-	// Prefix caching — enabled by default in V1, allow explicit control
+	// Prefix caching is ON by default in vLLM V1 (0.17.0+).
+	// Only emit --no-prefix-caching when explicitly disabled.
 	if spec.Config != nil {
 		if _, ok := spec.Config["enablePrefixCaching"]; ok {
-			if spec.ConfigBool("enablePrefixCaching", true) {
-				args = append(args, "--enable-prefix-caching")
-			} else {
+			if !spec.ConfigBool("enablePrefixCaching", true) {
 				args = append(args, "--no-prefix-caching")
 			}
 		}
@@ -191,21 +187,12 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	if spec.GPUVendor == GPUVendorAMD {
 		env = append(env, ROCmEnvVars(spec.GPUArch)...)
 
-		// Only inject vLLM-specific env vars when explicitly configured.
-		// - Legacy 0.7.3 images: Dockerfile bakes VLLM_USE_V1=0 as safe default
-		// - 0.14.0+ images: VLLM_USE_V1 env var removed, V1 is the only engine
-		// When empty (default), don't inject — let Dockerfile ENV win.
-		engineVersion := spec.ConfigString("vllmEngineVersion", "")
+		// vLLM 0.17.0+ is V1-only. VLLM_USE_V1 env var removed.
+		// Only inject flash attention and AITER controls when explicitly configured.
 		enableFA := spec.ConfigBool("enableFlashAttention", false)
 		enableAiter := spec.ConfigBool("enableAiter", false)
 
-		// Collect vLLM env vars that are explicitly opted into
 		var vllmEnv []corev1.EnvVar
-		if engineVersion == "v1" {
-			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_V1", Value: "1"})
-		} else if engineVersion == "v0" {
-			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_V1", Value: "0"})
-		}
 		if enableFA {
 			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: "1"})
 		}
@@ -215,13 +202,6 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			strings.HasPrefix(spec.GPUArch, "gfx942")
 		if enableAiter && supportsAiter {
 			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
-		}
-
-		// Prefill-Decode split attention: uses separate Triton kernels for prefill
-		// and a custom ROCm paged-attention kernel for decode. Can improve decode
-		// throughput on RDNA3 where AITER is not available.
-		if spec.ConfigBool("enablePrefillDecodeAttention", false) {
-			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_V1_USE_PREFILL_DECODE_ATTENTION", Value: "1"})
 		}
 
 		env = append(env, vllmEnv...)
@@ -275,9 +255,9 @@ func (b *VLLMBackend) KVCacheArgs(maxBlockSize *int, swapSpaceGiB *float64) []st
 	return args
 }
 
-// SupportsSwapSpace returns true — vLLM supports CPU-offloaded KV-cache via --swap-space.
+// SupportsSwapSpace returns false — vLLM V1 (0.17.0+) removed CPU↔GPU KV cache swapping.
 func (b *VLLMBackend) SupportsSwapSpace() bool {
-	return true
+	return false
 }
 
 // SupportsLoRA returns true — vLLM supports hot-loading LoRA adapters.

@@ -96,9 +96,9 @@ func TestVLLMBackendEnv_NoInjectionWithDefaults(t *testing.T) {
 	if v, ok := envMap["TORCH_BLAS_PREFER_HIPBLASLT"]; !ok || v != "1" {
 		t.Errorf("expected TORCH_BLAS_PREFER_HIPBLASLT=1 for gfx1100, got %q (present=%v)", v, ok)
 	}
-	// VLLM_V1_USE_PREFILL_DECODE_ATTENTION should NOT be set by default
-	if _, ok := envMap["VLLM_V1_USE_PREFILL_DECODE_ATTENTION"]; ok {
-		t.Error("expected VLLM_V1_USE_PREFILL_DECODE_ATTENTION to be absent by default")
+	// VLLM_USE_V1 should never be injected (V1-only in 0.17.0+)
+	if _, ok := envMap["VLLM_USE_V1"]; ok {
+		t.Error("expected VLLM_USE_V1 to be absent (V1-only)")
 	}
 }
 
@@ -203,16 +203,16 @@ func TestVLLMBackendArgs_ToolCallingDefaultParser(t *testing.T) {
 	}
 }
 
-func TestVLLMBackendEnv_V0ExplicitOptIn(t *testing.T) {
+func TestVLLMBackendEnv_V1Only_IgnoresEngineVersion(t *testing.T) {
 	b := &VLLMBackend{}
 
-	// Explicitly setting vllmEngineVersion=v0 should inject VLLM_USE_V1=0
-	// (for legacy 0.7.3 images that need explicit control)
+	// vLLM 0.17.0+ is V1-only. vllmEngineVersion config is ignored.
+	// VLLM_USE_V1 should never be injected.
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
 		Config: map[string]interface{}{
-			"vllmEngineVersion": "v0",
+			"vllmEngineVersion": "v0", // legacy config, should be ignored
 		},
 	}
 
@@ -222,45 +222,8 @@ func TestVLLMBackendEnv_V0ExplicitOptIn(t *testing.T) {
 		envMap[e.Name] = e.Value
 	}
 
-	if v, ok := envMap["VLLM_USE_V1"]; !ok || v != "0" {
-		t.Errorf("expected VLLM_USE_V1=0 with explicit v0 opt-in, got %q (present=%v)", v, ok)
-	}
-	// FA and AITER should not be injected (not opted in)
-	if _, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; ok {
-		t.Error("expected VLLM_USE_TRITON_FLASH_ATTN to be absent without FA opt-in")
-	}
-	if _, ok := envMap["VLLM_ROCM_USE_AITER"]; ok {
-		t.Error("expected VLLM_ROCM_USE_AITER to be absent without AITER opt-in")
-	}
-}
-
-func TestVLLMBackendEnv_V1EngineOptIn(t *testing.T) {
-	b := &VLLMBackend{}
-
-	spec := &ModelSpec{
-		GPUVendor: GPUVendorAMD,
-		GPUArch:   "gfx1100",
-		Config: map[string]interface{}{
-			"vllmEngineVersion": "v1",
-		},
-	}
-
-	env := b.Env(spec)
-	envMap := make(map[string]string)
-	for _, e := range env {
-		envMap[e.Name] = e.Value
-	}
-
-	if v, ok := envMap["VLLM_USE_V1"]; !ok || v != "1" {
-		t.Errorf("expected VLLM_USE_V1=1 with v1 opt-in, got %q", v)
-	}
-	// Flash attention should not be injected (not opted in)
-	if _, ok := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; ok {
-		t.Error("expected VLLM_USE_TRITON_FLASH_ATTN to be absent without FA opt-in")
-	}
-	// AITER should not be injected (not opted in)
-	if _, ok := envMap["VLLM_ROCM_USE_AITER"]; ok {
-		t.Error("expected VLLM_ROCM_USE_AITER to be absent without AITER opt-in")
+	if _, ok := envMap["VLLM_USE_V1"]; ok {
+		t.Error("expected VLLM_USE_V1 to be absent (V1-only in 0.17.0+)")
 	}
 }
 
@@ -297,7 +260,6 @@ func TestVLLMBackendEnv_FullOptIn(t *testing.T) {
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
 		Config: map[string]interface{}{
-			"vllmEngineVersion":    "v1",
 			"enableFlashAttention": true,
 			"enableAiter":          true,
 		},
@@ -309,8 +271,9 @@ func TestVLLMBackendEnv_FullOptIn(t *testing.T) {
 		envMap[e.Name] = e.Value
 	}
 
-	if v := envMap["VLLM_USE_V1"]; v != "1" {
-		t.Errorf("expected VLLM_USE_V1=1, got %q", v)
+	// VLLM_USE_V1 should never be injected (V1-only in 0.17.0+)
+	if _, ok := envMap["VLLM_USE_V1"]; ok {
+		t.Error("expected VLLM_USE_V1 to be absent")
 	}
 	if v := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; v != "1" {
 		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=1, got %q", v)
@@ -327,7 +290,6 @@ func TestVLLMBackendEnv_GFX906IgnoresAiter(t *testing.T) {
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx906",
 		Config: map[string]interface{}{
-			"vllmEngineVersion":    "v1",
 			"enableFlashAttention": true,
 			"enableAiter":          true, // should be ignored on gfx906
 		},
@@ -339,8 +301,9 @@ func TestVLLMBackendEnv_GFX906IgnoresAiter(t *testing.T) {
 		envMap[e.Name] = e.Value
 	}
 
-	if v := envMap["VLLM_USE_V1"]; v != "1" {
-		t.Errorf("expected VLLM_USE_V1=1, got %q", v)
+	// VLLM_USE_V1 should never be injected (V1-only)
+	if _, ok := envMap["VLLM_USE_V1"]; ok {
+		t.Error("expected VLLM_USE_V1 to be absent")
 	}
 	if v := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; v != "1" {
 		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=1, got %q", v)
@@ -636,6 +599,28 @@ func TestVLLMBackendArgs_PrefixCachingExplicitDisable(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_PrefixCachingExplicitEnableIsNoop(t *testing.T) {
+	b := &VLLMBackend{}
+
+	// enablePrefixCaching=true should NOT emit --enable-prefix-caching (it's default in V1)
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]interface{}{
+			"enablePrefixCaching": true,
+		},
+	}
+
+	args := b.Args(spec)
+	for _, a := range args {
+		if a == "--enable-prefix-caching" {
+			t.Error("should not emit --enable-prefix-caching (default in V1)")
+		}
+		if a == "--no-prefix-caching" {
+			t.Error("should not emit --no-prefix-caching when enabled")
+		}
+	}
+}
+
 func TestVLLMBackendArgs_PrefixCachingNotSetByDefault(t *testing.T) {
 	b := &VLLMBackend{}
 
@@ -699,9 +684,10 @@ func TestVLLMBackendArgs_NumGpuBlocksOverride(t *testing.T) {
 	}
 }
 
-func TestVLLMBackendArgs_CPUOffloadGb(t *testing.T) {
+func TestVLLMBackendArgs_CPUOffloadGbRemoved(t *testing.T) {
 	b := &VLLMBackend{}
 
+	// cpuOffloadGb config should be ignored (removed in vLLM V1 0.17.0+)
 	spec := &ModelSpec{
 		Model: "test-model",
 		Config: map[string]interface{}{
@@ -710,15 +696,10 @@ func TestVLLMBackendArgs_CPUOffloadGb(t *testing.T) {
 	}
 
 	args := b.Args(spec)
-	argMap := make(map[string]string)
-	for i := 0; i < len(args)-1; i++ {
-		if args[i][0] == '-' {
-			argMap[args[i]] = args[i+1]
+	for _, a := range args {
+		if a == "--cpu-offload-gb" {
+			t.Error("expected --cpu-offload-gb to be absent (removed in V1)")
 		}
-	}
-
-	if v := argMap["--cpu-offload-gb"]; v != "2" {
-		t.Errorf("expected --cpu-offload-gb=2, got %q", v)
 	}
 }
 
@@ -850,9 +831,10 @@ func TestVLLMBackendEnv_PytorchCudaAllocConf_NVIDIA(t *testing.T) {
 	}
 }
 
-func TestVLLMBackendEnv_PrefillDecodeAttention(t *testing.T) {
+func TestVLLMBackendEnv_PrefillDecodeAttentionRemoved(t *testing.T) {
 	b := &VLLMBackend{}
 
+	// enablePrefillDecodeAttention config is ignored (env var was unknown to vLLM)
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
@@ -862,13 +844,10 @@ func TestVLLMBackendEnv_PrefillDecodeAttention(t *testing.T) {
 	}
 
 	env := b.Env(spec)
-	envMap := make(map[string]string)
 	for _, e := range env {
-		envMap[e.Name] = e.Value
-	}
-
-	if v, ok := envMap["VLLM_V1_USE_PREFILL_DECODE_ATTENTION"]; !ok || v != "1" {
-		t.Errorf("expected VLLM_V1_USE_PREFILL_DECODE_ATTENTION=1, got %q (present=%v)", v, ok)
+		if e.Name == "VLLM_V1_USE_PREFILL_DECODE_ATTENTION" {
+			t.Error("expected VLLM_V1_USE_PREFILL_DECODE_ATTENTION to be absent (removed)")
+		}
 	}
 }
 

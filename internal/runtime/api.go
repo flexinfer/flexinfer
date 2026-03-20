@@ -56,6 +56,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 			PID:      active.PID,
 			LoadedAt: active.LoadedAt,
 			Error:    active.Error,
+			Launch:   active.Launch,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{

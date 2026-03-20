@@ -55,14 +55,52 @@
   - New controller + proxy images deployed to k3s cluster via Flux reconciliation.
   - Model cache switched from Longhorn to `local-path` for Qwen3-30B (18.7GB GGUF mmap: ~3min vs 15-20min).
   - Proxy timeouts set to 25m globally via Helm values.
-- Model fleet verified:
-  - `qwen3-30b-a3b-abliterated`: Idle (serverless), 108 tok/s gen, 72.5 tok/s prompt on AMD gfx1100.
-  - `sdxl-turbo-imagegen`: Ready (warm), diffusers ROCm.
-  - `nomic-embed-text`: Ready (warm), ollama.
-  - `qwen3-8b-fast`: Idle (serverless), mlc-llm.
-- Remaining:
-  - E2E cold start test without manual `kubectl patch` workarounds (new images should handle it natively now).
-  - Dependency refresh batch (Issue #9) still in progress on separate branch.
+
+## Status Update (2026-02-24)
+
+- Cold-start swap optimization **Round 3** completed and deployed:
+  - **Resolution-aware warmup**: 512x512 default (was 64x64). Compiles MIOpen kernels for 64x64 latent space, improving coverage for 1024x1024 inference.
+  - **Persistent flash-tmpfs**: Shared GPU models use `/dev/shm/flexinfer/{ns}/{model}` hostPath instead of emptyDir. Flash-loader skips copy when weights persist across pod restarts.
+  - Two new tests: `TestPersistentFlashTmpfsForSharedModel`, `TestEphemeralFlashTmpfsForNonSharedModel`.
+  - All Go tests pass (`go test ./backend/... ./controllers/...`).
+  - Images built/pushed: `diffusers-api:rocm-0cbf9b7`, `flexinfer-controller:0cbf9b7` (tagged `master`).
+  - GitOps values updated, Flux HelmRelease v342 deployed.
+- Benchmark results:
+  - First cold swap: **49.11s** (was 59.95s, -18%)
+  - Second cold swap (warm tmpfs): **41.77s** (was 59.95s, -30%)
+  - Flash-loader second swap: `copied=0 skipped=21 (6621.3 MB) elapsed=17ms`
+- ~~Remaining:~~
+  - ~~Commit flexinfer source changes to master.~~ Done (15 commits since `0cbf9b7`).
+  - Inference still 14-16s on first swap; consider 1024x1024 warmup or explicit kernel pre-compilation for Round 4.
+  - ~~Automated `/dev/shm` cleanup on model deletion (deferred).~~ Done: `3f175af`.
+
+## Status Update (2026-02-26)
+
+- 15 new commits landed on `master` since last update (`0cbf9b7` -> `3f175af`):
+  - GPU sharing: per-group swap cooldown (`980a12e`), service label sync (`537b603`, `5585378`).
+  - Alias safety: litellm alias conflict detection (`6d956f6`), pre-commit uniqueness check (`96930ea`).
+  - Flash-tmpfs: automated `/dev/shm` cleanup on shared model deletion (`3f175af`).
+  - Model onboarding: qwen3-14b-claude-distill added with benchmark script (`a36e1dc`, `676483c`).
+  - Dependency refresh: helm batch (`32c4c74`), docker base images (`7a3f95a`).
+
+## Status Update (2026-02-27)
+
+- **Priority inversion fix** deployed (`da62a60`):
+  - One-line fix in `chooseSharedGroupLeader`: demand-based preemption now requires `demandedLeader.Spec.GetPriority() >= readyLeader.Spec.GetPriority()`.
+  - 4 new test cases + 2 updated assertions in `TestChooseSharedGroupLeader_DemandPriorityGate`.
+  - CI pipeline #2368 green. Controller pod restarted with new image. Verified qwen3-14b-claude-distill (priority 160) holds Active position.
+- **Round 4 warmup optimization** was already deployed (`1c83f01`):
+  - Multi-resolution warmup (512x512 + 1024x1024) eliminates 14-16s first-request penalty.
+  - First 1024x1024 request: 18.2s (was ~32s). Steady-state: ~17.6s.
+- **`codebase_memory` fully re-indexed**:
+  - Fixed `local-only` routing in registry.yaml (was being routed to remote hub).
+  - 9 directory shards indexed: 169 files, 2,072 chunks. Text search verified.
+  - Full-repo single-index has known hang bug; directory sharding is the workaround.
+- **Renovate dependency batches triggered** (3 of 5):
+  - Checked: kubernetes (k8s.io/* Go deps), all-minor-patch (buildkit v0.27.1), helm (kube-scheduler v1.35.2).
+  - Unchecked (high-risk): Docker minor (CUDA/ROCm base images), Docker major.
+  - MRs pending Renovate cron (`before 6am Monday MT`).
+- All backlog items complete. No remaining tech-debt or roadmap items identified.
 
 ## Test Plan
 

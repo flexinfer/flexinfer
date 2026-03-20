@@ -58,6 +58,18 @@ func TestListModelsEmpty(t *testing.T) {
 
 func TestStatusEndpoint(t *testing.T) {
 	srv := newTestServer()
+	srv.manager.active = &LoadedModel{
+		Name:    "fast-chat",
+		Backend: "vllm",
+		Model:   "Qwen/Qwen3-14B",
+		State:   ModelStateReady,
+		Port:    8000,
+		Launch: &LaunchPlan{
+			Executable:            "python",
+			Args:                  []string{"-m", "vllm.entrypoints.openai.api_server"},
+			StartupTimeoutSeconds: 120,
+		},
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/status", nil)
 	w := httptest.NewRecorder()
@@ -69,6 +81,11 @@ func TestStatusEndpoint(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, "amd", body["gpuVendor"])
 	assert.Equal(t, "gfx1100", body["gpuArch"])
+	activeModel, ok := body["activeModel"].(map[string]interface{})
+	require.True(t, ok)
+	launch, ok := activeModel["launch"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "python", launch["executable"])
 }
 
 func TestLoadModelMissingBackend(t *testing.T) {

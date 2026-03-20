@@ -207,8 +207,8 @@ See `docs/design/multi-cluster.md` for full design.
 
 1. **Dependency refresh and validation cadence** — process scheduled Renovate batches and validate affected build/test paths ([Issue #9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9))
 2. **Roadmap tracking maintenance** — keep issue/document state synchronized as slices close ([Issue #1](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1))
-3. **User-facing docs for FLUX NF4** — document three-layer dtype strategy, bitsandbytes version requirements, and memory analysis for gfx1100
-4. **GPU sharing operational docs** — document priority preemption semantics, demand window/swap cooldown timings, and hot-swap latency breakdown
+3. **User-facing docs for FLUX NF4** — document three-layer dtype strategy, bitsandbytes version requirements, and memory analysis for gfx1100 ([Issue #36](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/36))
+4. **GPU sharing operational docs** — document priority preemption semantics, demand window/swap cooldown timings, and hot-swap latency breakdown ([Issue #38](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/38))
 
 **What's Ready:**
 - ✅ Helm charts complete

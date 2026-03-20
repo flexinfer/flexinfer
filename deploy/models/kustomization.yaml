@@ -6,7 +6,7 @@ resources:
   - qwen35-27b-opus-distill.yaml    # vLLM, GPTQ INT4, ~15 GiB VRAM
 
   # === cblevins-5930k (24 GB gfx1100) — image generation + fast swap text ===
-  - gonzalomo-fluxpony-imagegen.yaml        # diffusers, SDXL repo, cpu offload (primary)
+  - sdxl-base-imagegen.yaml                 # diffusers, SDXL repo, cpu offload (primary)
   - qwen35-27b-opus-distill-5930k.yaml      # vLLM, GPTQ INT4, fast swap (secondary)
 
   # === cblevins-radeonvii (16 GB gfx906) — image editing / inpainting ===
