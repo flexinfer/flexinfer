@@ -74,4 +74,7 @@ RUN python3 -m pip uninstall -y numba llvmlite && \
     scipy \
     scikit-learn
 
+# FlexInfer abliteration script (referenced by controller wrapper)
+COPY build/scripts/abliterate.py /opt/flexinfer/scripts/abliterate.py
+
 ENTRYPOINT ["/bin/bash"]
