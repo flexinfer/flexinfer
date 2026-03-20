@@ -20,14 +20,12 @@ spec:
       nodeSelector:
         kubernetes.io/arch: amd64
       containers:
-        - name: loomed
+        - name: loomd
           image: registry.harbor.lan/mcp/loom-core:latest
           imagePullPolicy: IfNotPresent
           command:
             - /usr/local/bin/loomd
           args:
-            - --socket
-            - /var/run/loom/loom.sock
             - --registry
             - /etc/loom/registry.yaml
             - --warm
@@ -39,6 +37,8 @@ spec:
             - --hub-fallback=true
             - --metrics-addr
             - 127.0.0.1:9876
+            - --hud-port
+            - "3333"
           env:
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://langfuse-web.ai.svc.cluster.local:3000/api/public/otel"
@@ -56,54 +56,7 @@ spec:
               value: https://api.morphllm.com/v1
             - name: MORPH_EMBED_MODEL
               value: morph-embedding-v3
-          ports:
-            - containerPort: 9876
-              name: metrics
-          readinessProbe:
-            httpGet:
-              host: 127.0.0.1
-              path: /health
-              port: 9876
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              host: 127.0.0.1
-              path: /health
-              port: 9876
-            initialDelaySeconds: 10
-            periodSeconds: 30
-          resources:
-            requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: 500m
-              memory: 512Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
-            readOnlyRootFilesystem: false
-          volumeMounts:
-            - name: loom-socket
-              mountPath: /var/run/loom
-            - name: registry
-              mountPath: /etc/loom
-              readOnly: true
-        - name: hud
-          image: registry.harbor.lan/mcp/loom-core:latest
-          imagePullPolicy: IfNotPresent
-          command:
-            - /usr/local/bin/loom
-          args:
-            - --socket
-            - /var/run/loom/loom.sock
-            - hud
-            - --port
-            - "3333"
-          env:
+            # HUD configuration (previously in separate hud container)
             - name: HUD_BIND_ADDRESS
               value: 0.0.0.0
             - name: HUD_MOBILE_OPERATOR_TOKEN
@@ -116,8 +69,6 @@ spec:
                 secretKeyRef:
                   name: loom-secrets
                   key: HUD_MOBILE_OPERATOR_SCOPES
-            - name: LOOM_SOCKET
-              value: /var/run/loom/loom.sock
             - name: CACHE_BACKEND
               value: memory
             - name: SPAWN_ENABLED
@@ -134,8 +85,6 @@ spec:
               value: gitlab-creds
             - name: SPAWN_PROJECTS
               value: "loom-core,flexdeck,flexinfer,homelab-homepage,storyboard-generator,jobsearch-app"
-            - name: DAEMON_METRICS_ADDR
-              value: "127.0.0.1:9876"
             - name: HUD_PIPELINE_PROJECTS
               value: >-
                 labs/game,labs/git-tunes,labs/metelevator,
@@ -158,6 +107,8 @@ spec:
                 services/storyboard-generator,services/streamslate,
                 services/streamslate-site,services/substack,services/tech-radar
           ports:
+            - containerPort: 9876
+              name: metrics
             - containerPort: 3333
               name: http
           readinessProbe:
@@ -174,7 +125,7 @@ spec:
             periodSeconds: 20
           resources:
             requests:
-              cpu: 100m
+              cpu: 200m
               memory: 256Mi
             limits:
               cpu: "1"
@@ -186,15 +137,14 @@ spec:
                 - ALL
             readOnlyRootFilesystem: false
           volumeMounts:
-            - name: loom-socket
-              mountPath: /var/run/loom
+            - name: registry
+              mountPath: /etc/loom
+              readOnly: true
       securityContext:
         fsGroup: 1000
         runAsNonRoot: true
         runAsUser: 1000
       volumes:
-        - name: loom-socket
-          emptyDir: {}
         - name: registry
           configMap:
             name: mobile-hud-registry

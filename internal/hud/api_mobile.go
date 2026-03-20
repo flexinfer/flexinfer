@@ -355,31 +355,41 @@ func (a *App) handleMobileControlPlane(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rbac := mobileControlPlaneRBAC{}
-	if result, err := a.client.RBACConfig(); err != nil {
+	if rawRBAC, err := a.client.Call("loom/rbac-config", nil); err != nil {
 		a.logger.Debug("mobile control-plane: rbac-config call failed", "error", err)
-	} else if result != nil {
-		rbac = mobileControlPlaneRBAC{
-			Enabled:         result.Enabled,
-			DefaultPolicy:   strings.TrimSpace(result.DefaultPolicy),
-			RoleCount:       len(result.Roles),
-			BindingCount:    len(result.Bindings),
-			GlobalDenyCount: len(result.GlobalDeny),
-			RateLimitCount:  len(result.RateLimits),
-			DeniedCount:     len(result.RecentDenied),
+	} else {
+		var result bridge.RBACConfigResult
+		if err := json.Unmarshal(rawRBAC, &result); err != nil {
+			a.logger.Debug("mobile control-plane: unmarshal rbac-config failed", "error", err)
+		} else {
+			rbac = mobileControlPlaneRBAC{
+				Enabled:         result.Enabled,
+				DefaultPolicy:   strings.TrimSpace(result.DefaultPolicy),
+				RoleCount:       len(result.Roles),
+				BindingCount:    len(result.Bindings),
+				GlobalDenyCount: len(result.GlobalDeny),
+				RateLimitCount:  len(result.RateLimits),
+				DeniedCount:     len(result.RecentDenied),
+			}
 		}
 	}
 
 	otel := mobileControlPlaneOTel{}
-	if result, err := a.client.OTelStatus(); err != nil {
+	if rawOTel, err := a.client.Call("loom/otel-status", nil); err != nil {
 		a.logger.Debug("mobile control-plane: otel-status call failed", "error", err)
-	} else if result != nil {
-		otel = mobileControlPlaneOTel{
-			OTLPConfigured:  result.OTLPConfigured,
-			OTLPEndpoint:    strings.TrimSpace(result.OTLPEndpoint),
-			JSONLogsEnabled: result.JSONLogsEnabled,
-			TracedServers:   result.TracedServers,
-			TotalServers:    result.TotalServers,
-			TraceCoverage:   strings.TrimSpace(result.TraceCoverage),
+	} else {
+		var result bridge.OTelStatusResult
+		if err := json.Unmarshal(rawOTel, &result); err != nil {
+			a.logger.Debug("mobile control-plane: unmarshal otel-status failed", "error", err)
+		} else {
+			otel = mobileControlPlaneOTel{
+				OTLPConfigured:  result.OTLPConfigured,
+				OTLPEndpoint:    strings.TrimSpace(result.OTLPEndpoint),
+				JSONLogsEnabled: result.JSONLogsEnabled,
+				TracedServers:   result.TracedServers,
+				TotalServers:    result.TotalServers,
+				TraceCoverage:   strings.TrimSpace(result.TraceCoverage),
+			}
 		}
 	}
 

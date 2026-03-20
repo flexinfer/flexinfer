@@ -85,8 +85,30 @@ type FileConfig struct {
 	// in the delegate list, calls are routed through the hub automatically.
 	HubDelegate HubDelegateConfig `yaml:"hub_delegate,omitempty"`
 
+	// EmbeddedHUD controls the embedded HUD application within the daemon process.
+	EmbeddedHUD EmbeddedHUDConfig `yaml:"embedded_hud,omitempty"`
+
 	// Debug enables debug logging
 	Debug bool `yaml:"debug"`
+}
+
+// EmbeddedHUDConfig controls the embedded HUD application within the daemon.
+type EmbeddedHUDConfig struct {
+	Enabled              bool   `yaml:"enabled"`
+	MobileOperatorToken  string `yaml:"mobile_operator_token,omitempty"`
+	MobileOperatorScopes string `yaml:"mobile_operator_scopes,omitempty"`
+	SpawnEnabled         bool   `yaml:"spawn_enabled"`
+	SpawnNamespace       string `yaml:"spawn_namespace,omitempty"`
+	SpawnRegistry        string `yaml:"spawn_registry,omitempty"`
+	SpawnSyncMode        string `yaml:"spawn_sync_mode,omitempty"`
+	SpawnGitBaseURL      string `yaml:"spawn_git_base_url,omitempty"`
+	SpawnGitSecret       string `yaml:"spawn_git_secret,omitempty"`
+	SpawnProjects        string `yaml:"spawn_projects,omitempty"`
+	PipelineProjects     string `yaml:"pipeline_projects,omitempty"`
+	BindAddress          string `yaml:"bind_address,omitempty"`
+	FlexInferURL         string `yaml:"flexinfer_url,omitempty"`
+	FlexInferKey         string `yaml:"flexinfer_key,omitempty"`
+	CoordinatorModel     string `yaml:"coordinator_model,omitempty"`
 }
 
 // OTelConfig controls OpenTelemetry trace export.

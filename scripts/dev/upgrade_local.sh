@@ -191,37 +191,12 @@ if [[ "$DAEMON_RESTARTED" == "true" ]]; then
 fi
 
 echo "== HUD =="
+echo "HUD is now embedded in loomd (--hud-port). Daemon restart covers HUD restart."
+# Clean up legacy HUD plist if present.
 HUD_PLIST="$HOME/Library/LaunchAgents/com.loom.hud.plist"
 if [ -f "$HUD_PLIST" ]; then
   launchctl stop com.loom.hud 2>/dev/null || true
-  sleep 1
-  launchctl start com.loom.hud
-  sleep 2
-  if lsof -ti :3333 >/dev/null 2>&1; then
-    HUD_URL="$("$HUD_URL_SCRIPT" 3333)"
-    echo "HUD restarted via launchctl — $HUD_URL"
-  else
-    echo "WARNING: HUD failed to restart via launchctl. Check ~/.config/loom/logs/hud.log"
-  fi
-else
-  # Fallback: manual nohup restart if no plist installed.
-  HUD_PID=$(lsof -ti :3333 2>/dev/null | head -1 || true)
-  if [ -n "$HUD_PID" ]; then
-    kill "$HUD_PID" 2>/dev/null || true
-    sleep 1
-    if kill -0 "$HUD_PID" 2>/dev/null; then kill -9 "$HUD_PID" 2>/dev/null || true; fi
-    echo "Killed old HUD (PID $HUD_PID)"
-    nohup "$RUN_LOOM" hud --port 3333 > /tmp/loom-hud.log 2>&1 &
-    sleep 2
-    if lsof -ti :3333 >/dev/null 2>&1; then
-      HUD_URL="$("$HUD_URL_SCRIPT" 3333)"
-      echo "HUD restarted — $HUD_URL"
-    else
-      echo "WARNING: HUD failed to restart. Check /tmp/loom-hud.log"
-    fi
-  else
-    echo "No HUD process on port 3333 and no launchd plist; skipping"
-  fi
+  echo "Stopped legacy HUD launchd agent (consider removing $HUD_PLIST)"
 fi
 
 if [[ "$DAEMON_RESTARTED" == "true" ]]; then

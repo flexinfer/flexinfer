@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"time"
@@ -124,7 +125,7 @@ const (
 // (sparkline history, notification dedup).
 type HealthMonitor struct {
 	BaseMonitor[[]ServerHealthEntry]
-	client *bridge.DaemonClient
+	client bridge.Caller
 
 	history map[string]*RingBuffer // server name -> latency ring buffer
 	summary HealthSummary
@@ -134,8 +135,8 @@ type HealthMonitor struct {
 	prevDown     map[string]bool      // servers that were down on previous refresh
 }
 
-// NewHealthMonitor creates a HealthMonitor backed by the given daemon client.
-func NewHealthMonitor(client *bridge.DaemonClient, logger *slog.Logger) *HealthMonitor {
+// NewHealthMonitor creates a HealthMonitor backed by the given caller.
+func NewHealthMonitor(client bridge.Caller, logger *slog.Logger) *HealthMonitor {
 	m := &HealthMonitor{
 		client:       client,
 		history:      make(map[string]*RingBuffer),
@@ -180,27 +181,50 @@ func (m *HealthMonitor) Summary() HealthSummary {
 // history, and recomputes the summary.
 func (m *HealthMonitor) Refresh() error {
 	// Fetch health data.
-	healthResult, healthErr := m.client.Health()
+	var healthResult *bridge.HealthResult
+	rawHealth, healthErr := m.client.Call("loom/health", nil)
 	if healthErr != nil {
 		m.Logger.Warn("health: failed to fetch health", "error", healthErr)
+	} else {
+		var hr bridge.HealthResult
+		if err := json.Unmarshal(rawHealth, &hr); err != nil {
+			m.Logger.Warn("health: failed to unmarshal health", "error", err)
+			healthErr = err
+		} else {
+			healthResult = &hr
+		}
 	}
 
 	// Fetch server list.
-	serversResult, serversErr := m.client.Servers()
+	var serversResult *bridge.ServersResult
+	rawServers, serversErr := m.client.Call("loom/servers", nil)
 	if serversErr != nil {
 		m.Logger.Warn("health: failed to fetch servers", "error", serversErr)
+	} else {
+		var sr bridge.ServersResult
+		if err := json.Unmarshal(rawServers, &sr); err != nil {
+			m.Logger.Warn("health: failed to unmarshal servers", "error", err)
+			serversErr = err
+		} else {
+			serversResult = &sr
+		}
 	}
 
 	// Fetch aggregated tool list to derive per-server tool counts.
 	// Tool names are namespaced as "server__toolname".
 	toolCounts := make(map[string]int)
-	toolsResult, toolsErr := m.client.Tools()
+	rawTools, toolsErr := m.client.Call("loom/tools", nil)
 	if toolsErr != nil {
 		m.Logger.Debug("health: failed to fetch tools for counts", "error", toolsErr)
-	} else if toolsResult != nil {
-		for _, t := range toolsResult.Tools {
-			if parts := strings.SplitN(t.Name, "__", 2); len(parts) == 2 {
-				toolCounts[parts[0]]++
+	} else {
+		var toolsResult bridge.ToolsResult
+		if err := json.Unmarshal(rawTools, &toolsResult); err != nil {
+			m.Logger.Debug("health: failed to unmarshal tools", "error", err)
+		} else {
+			for _, t := range toolsResult.Tools {
+				if parts := strings.SplitN(t.Name, "__", 2); len(parts) == 2 {
+					toolCounts[parts[0]]++
+				}
 			}
 		}
 	}

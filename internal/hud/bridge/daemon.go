@@ -186,16 +186,16 @@ func (c *DaemonClient) reconnect() error {
 	return fmt.Errorf("failed to reconnect after %d attempts", maxRetries)
 }
 
-// call sends a JSON-RPC request and returns the result. It handles
+// Call sends a JSON-RPC request and returns the result. It handles
 // auto-reconnection on transport errors and circuit-breaking on downstream
 // server failures. Caller must NOT hold c.mu.
-func (c *DaemonClient) call(method string, params any) (json.RawMessage, error) {
-	return c.callOpt(method, params, 0)
+func (c *DaemonClient) Call(method string, params any) (json.RawMessage, error) {
+	return c.CallWithTimeout(method, params, 0)
 }
 
-// callOpt is like call but accepts an optional per-call timeout override.
+// CallWithTimeout is like Call but accepts an optional per-call timeout override.
 // A zero or negative timeout uses the client's default callTimeout.
-func (c *DaemonClient) callOpt(method string, params any, timeout time.Duration) (json.RawMessage, error) {
+func (c *DaemonClient) CallWithTimeout(method string, params any, timeout time.Duration) (json.RawMessage, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -482,7 +482,7 @@ type CacheStatsResult struct {
 
 // Status returns the daemon status.
 func (c *DaemonClient) Status() (*StatusResult, error) {
-	raw, err := c.call("loom/status", nil)
+	raw, err := c.Call("loom/status", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -495,7 +495,7 @@ func (c *DaemonClient) Status() (*StatusResult, error) {
 
 // Health returns the health of all servers.
 func (c *DaemonClient) Health() (*HealthResult, error) {
-	raw, err := c.call("loom/health", nil)
+	raw, err := c.Call("loom/health", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -508,7 +508,7 @@ func (c *DaemonClient) Health() (*HealthResult, error) {
 
 // Servers returns the list of registered servers.
 func (c *DaemonClient) Servers() (*ServersResult, error) {
-	raw, err := c.call("loom/servers", nil)
+	raw, err := c.Call("loom/servers", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -521,7 +521,7 @@ func (c *DaemonClient) Servers() (*ServersResult, error) {
 
 // Tools returns the aggregated tool list.
 func (c *DaemonClient) Tools() (*ToolsResult, error) {
-	raw, err := c.call("loom/tools", nil)
+	raw, err := c.Call("loom/tools", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -534,7 +534,7 @@ func (c *DaemonClient) Tools() (*ToolsResult, error) {
 
 // Tunnels returns the SSH tunnel status.
 func (c *DaemonClient) Tunnels() (*TunnelsResult, error) {
-	raw, err := c.call("loom/tunnels", nil)
+	raw, err := c.Call("loom/tunnels", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -547,7 +547,7 @@ func (c *DaemonClient) Tunnels() (*TunnelsResult, error) {
 
 // CacheStats returns response cache statistics.
 func (c *DaemonClient) CacheStats() (*CacheStatsResult, error) {
-	raw, err := c.call("loom/cache/stats", nil)
+	raw, err := c.Call("loom/cache/stats", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -597,7 +597,7 @@ type CostTotals struct {
 
 // CostStats returns cost/usage tracking statistics.
 func (c *DaemonClient) CostStats() (*CostStatsResult, error) {
-	raw, err := c.call("loom/cost-stats", nil)
+	raw, err := c.Call("loom/cost-stats", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -654,7 +654,7 @@ type RBACDeniedEntry struct {
 
 // RBACConfig returns RBAC configuration and recent denied calls.
 func (c *DaemonClient) RBACConfig() (*RBACConfigResult, error) {
-	raw, err := c.call("loom/rbac-config", nil)
+	raw, err := c.Call("loom/rbac-config", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -678,7 +678,7 @@ type OTelStatusResult struct {
 
 // OTelStatus returns observability/OTel configuration status.
 func (c *DaemonClient) OTelStatus() (*OTelStatusResult, error) {
-	raw, err := c.call("loom/otel-status", nil)
+	raw, err := c.Call("loom/otel-status", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -695,7 +695,7 @@ func (c *DaemonClient) CallTool(name string, args map[string]any) (json.RawMessa
 		"name":      name,
 		"arguments": args,
 	}
-	return c.call("tools/call", params)
+	return c.Call("tools/call", params)
 }
 
 // CallToolWithTimeout is like CallTool but uses a per-call timeout override.
@@ -704,5 +704,5 @@ func (c *DaemonClient) CallToolWithTimeout(name string, args map[string]any, tim
 		"name":      name,
 		"arguments": args,
 	}
-	return c.callOpt("tools/call", params, timeout)
+	return c.CallWithTimeout("tools/call", params, timeout)
 }

@@ -77,6 +77,12 @@ type ResourceCache struct {
 	ttl       time.Duration
 }
 
+// hudAppStopper is satisfied by *hud.App. Defined as an interface here to
+// avoid an import cycle (daemon → hud → bridge → daemon).
+type hudAppStopper interface {
+	StopMonitors()
+}
+
 // Daemon is the main Loom daemon.
 type Daemon struct {
 	cfg                 Config
@@ -143,6 +149,9 @@ type Daemon struct {
 	lockFile *os.File
 
 	tracer trace.Tracer
+
+	// hudApp is the embedded HUD application (nil when not enabled).
+	hudApp hudAppStopper
 }
 
 func (d *Daemon) callLock(serverName string) *gosync.Mutex {
@@ -768,6 +777,11 @@ func (d *Daemon) Stop() (err error) {
 		// Stop tunnel manager
 		if d.tunnelMgr != nil {
 			d.tunnelMgr.Stop()
+		}
+
+		// Stop embedded HUD monitors
+		if d.hudApp != nil {
+			d.hudApp.StopMonitors()
 		}
 
 		// Shutdown HTTP server

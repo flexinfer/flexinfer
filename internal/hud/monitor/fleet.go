@@ -4,6 +4,7 @@
 package monitor
 
 import (
+	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -113,7 +114,7 @@ type KPICounters struct {
 // with KPI tracking, conflict detection, and notification logic.
 type FleetMonitor struct {
 	BaseMonitor[FleetSnapshot]
-	client *bridge.DaemonClient
+	client bridge.Caller
 	agent  *bridge.AgentBridge
 	spawns SpawnLister // optional -- nil when spawn orchestrator not configured
 
@@ -130,8 +131,8 @@ type FleetMonitor struct {
 	prevApprovals  int
 }
 
-// NewFleetMonitor creates a FleetMonitor backed by the given client and agent bridge.
-func NewFleetMonitor(client *bridge.DaemonClient, agent *bridge.AgentBridge, logger *slog.Logger) *FleetMonitor {
+// NewFleetMonitor creates a FleetMonitor backed by the given caller and agent bridge.
+func NewFleetMonitor(client bridge.Caller, agent *bridge.AgentBridge, logger *slog.Logger) *FleetMonitor {
 	m := &FleetMonitor{
 		client:           client,
 		agent:            agent,
@@ -232,13 +233,18 @@ func (m *FleetMonitor) Refresh() error {
 	}
 
 	// Fetch daemon status.
-	if status, err := m.client.Status(); err != nil {
+	if raw, err := m.client.Call("loom/status", nil); err != nil {
 		m.Logger.Warn("fleet: failed to fetch daemon status", "error", err)
 	} else {
-		snap.DaemonRunning = status.Running
-		snap.ServerCount = status.Servers
-		snap.ActiveConns = status.ActiveConns
-		snap.Processes = status.Processes
+		var status bridge.StatusResult
+		if err := json.Unmarshal(raw, &status); err != nil {
+			m.Logger.Warn("fleet: failed to unmarshal daemon status", "error", err)
+		} else {
+			snap.DaemonRunning = status.Running
+			snap.ServerCount = status.Servers
+			snap.ActiveConns = status.ActiveConns
+			snap.Processes = status.Processes
+		}
 	}
 
 	// Fetch agent sessions.

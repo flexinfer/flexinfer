@@ -13,11 +13,11 @@ import (
 // as other simple monitors using BaseMonitor.
 type SandboxMonitor struct {
 	BaseMonitor[map[string]any]
-	client *bridge.DaemonClient
+	client bridge.Caller
 }
 
-// NewSandboxMonitor creates a SandboxMonitor backed by the given daemon client.
-func NewSandboxMonitor(client *bridge.DaemonClient, logger *slog.Logger) *SandboxMonitor {
+// NewSandboxMonitor creates a SandboxMonitor backed by the given caller.
+func NewSandboxMonitor(client bridge.Caller, logger *slog.Logger) *SandboxMonitor {
 	m := &SandboxMonitor{client: client}
 	m.InitBase(logger, nil, "sandbox-monitor")
 	return m

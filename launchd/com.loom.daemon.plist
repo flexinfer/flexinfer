@@ -10,6 +10,8 @@
         <string>/Users/cblevins/.local/bin/loomd</string>
         <string>--registry</string>
         <string>/Users/cblevins/.config/loom/registry.yaml</string>
+        <string>--hud-port</string>
+        <string>3333</string>
     </array>
 
     <key>RunAtLoad</key>
