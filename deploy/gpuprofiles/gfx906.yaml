@@ -55,4 +55,4 @@ spec:
       - gptq
       - gguf
     images:
-      gptq: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx906
+      gptq: registry.harbor.lan/flexinfer/quantizer:gptq-rocm64-gfx906
