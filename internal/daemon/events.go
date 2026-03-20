@@ -41,6 +41,10 @@ const (
 	EventToolsChanged EventType = "tools.list_changed"
 	// EventResourcesChanged is emitted when the aggregated resource list changes.
 	EventResourcesChanged EventType = "resources.list_changed"
+	// EventHubConnected is emitted when the hub WebSocket connection is established.
+	EventHubConnected EventType = "hub.connected"
+	// EventHubDisconnected is emitted when the hub WebSocket connection is lost.
+	EventHubDisconnected EventType = "hub.disconnected"
 )
 
 // Event is a daemon event that can be broadcast to subscribers.
