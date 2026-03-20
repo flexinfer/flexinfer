@@ -348,8 +348,8 @@ push-diffusers-rocm: ## Push Diffusers ROCm image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(DIFFUSERS_ROCM_IMAGE)
 
 .PHONY: build-diffusers-gfx1100
-build-diffusers-gfx1100: ## Build Diffusers ROCm image for gfx1100 (architecture-specific)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.diffusers-rocm-gfx1100 -t $(DIFFUSERS_GFX1100_IMAGE) .
+build-diffusers-gfx1100: ## Build Diffusers ROCm image for gfx1100 (uses generic Dockerfile)
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.diffusers-rocm -t $(DIFFUSERS_GFX1100_IMAGE) .
 
 .PHONY: push-diffusers-gfx1100
 push-diffusers-gfx1100: ## Push Diffusers ROCm gfx1100 image to Harbor

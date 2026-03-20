@@ -776,6 +776,7 @@ publish_diffusers_rocm:
       allow_failure: true
 
 # Diffusers API ROCm - gfx1100 (RDNA3) architecture-specific image
+# Uses the generic Dockerfile.diffusers-rocm (identical functionality, gfx1100 env vars hardcoded)
 publish_diffusers_rocm_gfx1100:
   stage: publish
   image: registry.harbor.lan/library/buildkit:v0.12.5
@@ -800,7 +801,7 @@ publish_diffusers_rocm_gfx1100:
         --frontend dockerfile.v0 \
         --local context=. \
         --local dockerfile=build \
-        --opt filename="Dockerfile.diffusers-rocm-gfx1100" \
+        --opt filename="Dockerfile.diffusers-rocm" \
         --opt platform=linux/amd64 \
         --import-cache "type=registry,ref=${REGISTRY}/diffusers:rocm-gfx1100" \
         --export-cache "type=inline" \
@@ -808,7 +809,7 @@ publish_diffusers_rocm_gfx1100:
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
       changes:
-        - build/Dockerfile.diffusers-rocm-gfx1100
+        - build/Dockerfile.diffusers-rocm
         - build/server-diffusers.py
         - build/requirements-diffusers-rocm.txt
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
