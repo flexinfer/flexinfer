@@ -337,16 +337,30 @@ func defaultAbliterationModelPoliciesJSON() string {
 func abliterationWrapperScript() string {
 	return `set -euo pipefail
 START_TS=$(date +%s)
+LOGFILE=/tmp/abliterate-output.log
 
-dump_checkpoint() {
-  local checkpoint="${MODEL_DIR}/.abliteration-checkpoint.json"
-  if [ -f "${checkpoint}" ]; then
-    echo "=== Last abliteration checkpoint ==="
-    cat "${checkpoint}" || true
+cleanup_on_failure() {
+  local rc=$?
+  if [ $rc -ne 0 ]; then
+    # Write error context to termination-log for controller capture
+    {
+      echo "exit_code=${rc}"
+      local checkpoint="${MODEL_DIR}/.abliteration-checkpoint.json"
+      if [ -f "${checkpoint}" ]; then
+        echo "---checkpoint---"
+        cat "${checkpoint}" 2>/dev/null || true
+      fi
+      echo "---output_tail---"
+      tail -80 "${LOGFILE}" 2>/dev/null || echo "(no log output captured)"
+    } > /dev/termination-log 2>/dev/null || true
   fi
+  exit $rc
 }
 
-trap 'rc=$?; if [ $rc -ne 0 ]; then dump_checkpoint; fi; exit $rc' EXIT
+trap cleanup_on_failure EXIT
+
+# Tee all output so cleanup can capture tail on failure
+exec > >(tee -a "${LOGFILE}") 2>&1
 
 echo "=== FlexInfer Abliteration ==="
 echo "Model: ${MODEL_DIR}"

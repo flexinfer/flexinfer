@@ -34,9 +34,6 @@ DEFAULT_MODEL_POLICIES = [
         "python_packages": [
             "git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea",
         ],
-        "quantize_config_overrides": {
-            "offload_to_disk": False,
-        },
         "calibration_overrides": {
             "max_samples": 16,
             "max_seq_len": 512,
@@ -51,53 +48,67 @@ DEFAULT_MODEL_POLICIES = [
 ]
 
 
-def patch_triton_autotuner_cache_compat():
-    """Backfill GPTQModel's thread-safe autotuner state on Triton 3.5 instances.
+def patch_triton_nogil_compat():
+    """Backfill GPTQModel nogil_patcher state on Triton JITFunction/Autotuner.
 
-    GPTQModel monkey-patches Triton's Autotuner class to use _cache/_cache_lock/
-    _cache_futures, but some Autotuner instances in the Qwen3.5 FLA path can still
-    reach the patched methods without those fields initialized. Patch lazily on first
-    use so quantization falls back to the intended thread-safe path instead of dying.
+    GPTQModel's nogil_patcher.py patches JITFunction.run and Autotuner.run,
+    expecting _cache_lock, _cache, and _cache_futures attributes. FLA's
+    fused_norm_gate creates Triton kernel instances at import time (before
+    nogil_patcher runs), so those instances lack these attributes.
+
+    For Autotuner: the native attribute is .cache (dict). nogil_patcher
+    expects ._cache (same dict), ._cache_lock, and ._cache_futures.
+    We add class-level defaults so any instance works with the patched run().
     """
+    patched = []
+    try:
+        from triton.runtime.jit import JITFunction
 
+        if not hasattr(JITFunction, "_cache_lock"):
+            JITFunction._cache_lock = threading.Lock()
+            patched.append("JITFunction._cache_lock")
+    except Exception:
+        pass
     try:
         from triton.runtime.autotuner import Autotuner
+
+        needs = []
+        if not hasattr(Autotuner, "_cache_lock"):
+            Autotuner._cache_lock = threading.Lock()
+            needs.append("_cache_lock")
+        if not hasattr(Autotuner, "_cache_futures"):
+            Autotuner._cache_futures = {}
+            needs.append("_cache_futures")
+        # _cache must mirror the existing .cache dict per-instance.
+        # We monkey-patch __init_subclass__ won't help — instead, wrap
+        # the Autotuner.__init__ to copy .cache → ._cache after init.
+        if not hasattr(Autotuner, "_flexinfer_init_patched"):
+            _orig_init = Autotuner.__init__
+
+            def _patched_init(self, *args, **kwargs):
+                _orig_init(self, *args, **kwargs)
+                if not hasattr(self, "_cache"):
+                    self._cache = getattr(self, "cache", {})
+                if not hasattr(self, "_cache_lock"):
+                    self._cache_lock = threading.Lock()
+                if not hasattr(self, "_cache_futures"):
+                    self._cache_futures = {}
+
+            Autotuner.__init__ = _patched_init
+            Autotuner._flexinfer_init_patched = True
+            needs.append("__init__")
+        if needs:
+            patched.append(f"Autotuner({','.join(needs)})")
     except Exception:
-        return
-
-    if getattr(Autotuner, "_flexinfer_cache_compat", False):
-        return
-
-    original_get_config_for_key = getattr(Autotuner, "_get_config_for_key", None)
-    original_run = getattr(Autotuner, "run", None)
-    if original_get_config_for_key is None or original_run is None:
-        return
-
-    def ensure_threadsafe_cache_state(instance):
-        cache_map = getattr(instance, "cache", {})
-        if not hasattr(instance, "_cache"):
-            instance._cache = dict(cache_map)
-            instance.cache = instance._cache
-        if not hasattr(instance, "_cache_lock"):
-            instance._cache_lock = threading.RLock()
-        if not hasattr(instance, "_cache_futures"):
-            instance._cache_futures = {}
-
-    def wrapped_get_config_for_key(self, *args, **kwargs):
-        ensure_threadsafe_cache_state(self)
-        return original_get_config_for_key(self, *args, **kwargs)
-
-    def wrapped_run(self, *args, **kwargs):
-        ensure_threadsafe_cache_state(self)
-        return original_run(self, *args, **kwargs)
-
-    Autotuner._get_config_for_key = wrapped_get_config_for_key
-    Autotuner.run = wrapped_run
-    Autotuner._flexinfer_cache_compat = True
-    print("Patched Triton Autotuner cache compatibility for GPTQModel", flush=True)
+        pass
+    if patched:
+        print(
+            f"Patched Triton {'; '.join(patched)} for GPTQModel/FLA compat",
+            flush=True,
+        )
 
 
-patch_triton_autotuner_cache_compat()
+patch_triton_nogil_compat()
 
 
 # ── Telemetry helper ──────────────────────────────────────────────────
@@ -183,7 +194,9 @@ def select_model_policy(model_dir, cfg, policy_state, policies):
             if model_type and model_type in candidates:
                 return policy
         for token in policy.get("match_path_substrings", []):
-            if token and any(token in candidate.lower() for candidate in path_candidates if candidate):
+            if token and any(
+                token in candidate.lower() for candidate in path_candidates if candidate
+            ):
                 return policy
     return None
 
@@ -192,9 +205,7 @@ def apply_model_policy(cfg, policy, policy_state):
     root_model_type = cfg.get("model_type", "")
     text_model_type = cfg.get("text_config", {}).get("model_type", "")
     original_model_type = (
-        policy_state.get("original_model_type")
-        or text_model_type
-        or root_model_type
+        policy_state.get("original_model_type") or text_model_type or root_model_type
     )
     active_cfg = cfg
     if policy.get("extract_text_config") and text_model_type:
@@ -226,7 +237,9 @@ def ensure_policy_python_packages(policy):
     if not packages:
         return
     if policy_python_packages_satisfied(policy, packages):
-        print(f"Policy python packages already satisfied for {policy.get('name', 'unnamed-policy')}")
+        print(
+            f"Policy python packages already satisfied for {policy.get('name', 'unnamed-policy')}"
+        )
         return
     print(f"Installing policy python packages: {packages}")
     subprocess.check_call(
@@ -295,9 +308,15 @@ def apply_runtime_overrides(policy, config=None):
             qwen35_modeling.chunk_gated_delta_rule = None
             qwen35_modeling.fused_recurrent_gated_delta_rule = None
             qwen35_modeling.is_fast_path_available = False
-            print("Disabled Qwen3.5 FLA fast path for quantization; using torch fallback")
+            print(
+                "Disabled Qwen3.5 FLA fast path for quantization; using torch fallback"
+            )
         except Exception as exc:
             print(f"WARN: failed to disable Qwen3.5 FLA fast path: {exc}")
+
+        # Re-run the full nogil compat patch (idempotent) to cover any
+        # Autotuner/JITFunction instances created during model import.
+        patch_triton_nogil_compat()
 
     return overrides
 
@@ -327,6 +346,7 @@ qcfg_damp_auto_increment_override = os.environ.get(
 ).strip()
 gptq_resume_enabled = env_bool("GPTQ_RESUME", True)
 gptq_calibration_cache_enabled = env_bool("GPTQ_CALIBRATION_CACHE", True)
+quantize_device_map = os.environ.get("QUANTIZE_DEVICE_MAP", "cpu")
 
 emit_progress(
     "start", phase="quantizing", model=model_dir, bits=bits, group_size=group_size
@@ -460,7 +480,9 @@ class QuantizationCheckpointCallback:
     def _persist(self):
         persist_quant_checkpoint(self.model_dir, self.state)
 
-    def subset_event(self, stage, layer_idx, subset_index, subset_total, module_names, processor):
+    def subset_event(
+        self, stage, layer_idx, subset_index, subset_total, module_names, processor
+    ):
         processor_name = processor
         if callable(processor_name):
             processor_name = getattr(processor_name, "__name__", str(processor_name))
@@ -480,13 +502,22 @@ class QuantizationCheckpointCallback:
             subset_fraction = 0.0
             if subset_total:
                 subset_fraction = max(subset_index - 1, 0) / max(subset_total, 1)
-            percent = min(89.0, 10.0 + ((layer_fraction + (subset_fraction / max(self.total_layers, 1))) * 80.0))
+            percent = min(
+                89.0,
+                10.0
+                + (
+                    (layer_fraction + (subset_fraction / max(self.total_layers, 1)))
+                    * 80.0
+                ),
+            )
         detail = (
             f"layer {layer_idx + 1}"
             + (f" subset {subset_index}/{subset_total}" if subset_total else "")
             + (f" via {processor_name}" if processor_name else "")
         )
-        emit_progress("progress", phase="quantizing", percent=round(percent, 1), detail=detail)
+        emit_progress(
+            "progress", phase="quantizing", percent=round(percent, 1), detail=detail
+        )
         self._persist()
 
     def layer_complete(self, layer_idx, submodule_finalized):
@@ -496,12 +527,18 @@ class QuantizationCheckpointCallback:
             completed.sort()
         self.state["stage"] = "quantizing"
         self.state["last_completed_layer"] = layer_idx
-        self.state["last_completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        self.state["last_completed_at"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+        )
         detail = f"completed layer {layer_idx + 1}"
         percent = 10.0
         if self.total_layers:
-            percent = min(89.0, 10.0 + (((layer_idx + 1) / max(self.total_layers, 1)) * 80.0))
-        emit_progress("progress", phase="quantizing", percent=round(percent, 1), detail=detail)
+            percent = min(
+                89.0, 10.0 + (((layer_idx + 1) / max(self.total_layers, 1)) * 80.0)
+            )
+        emit_progress(
+            "progress", phase="quantizing", percent=round(percent, 1), detail=detail
+        )
         self._persist()
 
 
@@ -538,8 +575,12 @@ with open(cfg_path, "w") as f:
 
 ensure_policy_python_packages(policy)
 
-effective_max_seq_len = effective_calibration_setting(policy, "max_seq_len", max_seq_len)
-effective_max_samples = effective_calibration_setting(policy, "max_samples", max_samples)
+effective_max_seq_len = effective_calibration_setting(
+    policy, "max_seq_len", max_seq_len
+)
+effective_max_samples = effective_calibration_setting(
+    policy, "max_samples", max_samples
+)
 effective_max_tokens = effective_calibration_setting(
     policy,
     "max_tokens",
@@ -655,8 +696,12 @@ def patch_gptq_hessian_inverse():
         for attempt in range(hessian_max_floor_attempts + 1):
             current_diag = torch.nan_to_num(orig_diag, nan=0.0, posinf=0.0, neginf=0.0)
             if attempt > 0:
-                floor_increment = floor_base * math.pow(hessian_floor_multiplier, attempt - 1)
-                current_diag = torch.clamp(current_diag + floor_increment, min=floor_increment)
+                floor_increment = floor_base * math.pow(
+                    hessian_floor_multiplier, attempt - 1
+                )
+                current_diag = torch.clamp(
+                    current_diag + floor_increment, min=floor_increment
+                )
                 print(
                     f"GPTQ Hessian recovery for module={getattr(self, 'name', 'unknown')}: "
                     f"diagonal floor +{floor_increment:.2e} (attempt {attempt}/{hessian_max_floor_attempts})"
@@ -760,7 +805,9 @@ def patch_defuser_transformers_prerelease_gate():
         return False
 
     defuser_impl.is_supported_transformers_version = _allow_same_base_prerelease
-    defuser_impl.warn_if_public_api_transformers_unsupported = _suppress_same_base_prerelease_warning
+    defuser_impl.warn_if_public_api_transformers_unsupported = (
+        _suppress_same_base_prerelease_warning
+    )
     print(
         "Patched Defuser public API gate to allow transformers prerelease "
         f"{transformers.__version__} for base version {current.base_version}"
@@ -771,19 +818,25 @@ def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
     import defuser
 
     trust_remote_code = resolve_trust_remote_code(model_dir, trust_remote_code=True)
-    model_definition = check_and_get_model_definition(model_dir, trust_remote_code=trust_remote_code)
+    model_definition = check_and_get_model_definition(
+        model_dir, trust_remote_code=trust_remote_code
+    )
     config = AutoConfig.from_pretrained(model_dir, trust_remote_code=trust_remote_code)
 
     patch_defuser_transformers_prerelease_gate()
     defuser.replace_fused_blocks(config.model_type)
     normalize_hf_config_compat(config, trust_remote_code=trust_remote_code)
     prepare_remote_model_init_compat(model_dir, config)
-    config = resolve_loader_config(model_definition, config, trust_remote_code=trust_remote_code)
+    config = resolve_loader_config(
+        model_definition, config, trust_remote_code=trust_remote_code
+    )
     apply_runtime_overrides(policy, config)
 
     if quantize_config.device is None:
         quantize_config.device = auto_select_device(None, None)
-    dtype = auto_dtype(config=config, device=quantize_config.device, quant_inference=False)
+    dtype = auto_dtype(
+        config=config, device=quantize_config.device, quant_inference=False
+    )
 
     def skip(*args, **kwargs):
         pass
@@ -808,7 +861,9 @@ def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
     expected_keys = set((shard_metadata or {}).get("weight_map", {}).keys())
     loaded_keys = set()
     unexpected_keys = set()
-    print(f"Loading {len(shard_files)} checkpoint shards from {os.path.basename(index_filename)}")
+    print(
+        f"Loading {len(shard_files)} checkpoint shards from {os.path.basename(index_filename)}"
+    )
     for idx, shard_file in enumerate(shard_files, start=1):
         emit_progress(
             "progress",
@@ -833,6 +888,28 @@ def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
     model._model_init_kwargs = init_kwargs.copy()
     model.eval()
 
+    # Dispatch model across devices if device_map is not cpu-only.
+    if quantize_device_map and quantize_device_map != "cpu":
+        try:
+            from accelerate import infer_auto_device_map, dispatch_model
+            from accelerate.utils import get_max_memory
+
+            max_mem = get_max_memory()
+            # Apply GPU memory fraction to limit VRAM usage.
+            for dev_id in list(max_mem.keys()):
+                if dev_id != "cpu":
+                    max_mem[dev_id] = int(max_mem[dev_id] * gpu_memory_fraction)
+            device_map = infer_auto_device_map(model, max_memory=max_mem)
+            model = dispatch_model(model, device_map=device_map)
+            gpu_layers = sum(1 for v in device_map.values() if v != "cpu")
+            cpu_layers = sum(1 for v in device_map.values() if v == "cpu")
+            print(
+                f"Dispatched model: device_map={quantize_device_map} "
+                f"gpu_layers={gpu_layers} cpu_layers={cpu_layers}"
+            )
+        except Exception as exc:
+            print(f"WARN: device_map dispatch failed, keeping all on CPU: {exc}")
+
     return model_definition(
         model,
         turtle_model=None,
@@ -842,6 +919,7 @@ def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
         trust_remote_code=trust_remote_code,
         model_local_path=model_dir,
     )
+
 
 # ── Tokenizer + model ──────────────────────────────────────────────────
 runtime_overrides = runtime_overrides_for_policy(policy)
@@ -857,8 +935,12 @@ for key, value in (policy or {}).get("quantize_config_overrides", {}).items():
 quantize_config = QuantizeConfig(**qcfg_kwargs)
 if qcfg_damp_percent_override:
     quantize_config.damp_percent = float(qcfg_damp_percent_override)
-    print(f"Applied QuantizeConfig damp_percent override: {quantize_config.damp_percent}")
-if qcfg_damp_auto_increment_override and hasattr(quantize_config, "damp_auto_increment"):
+    print(
+        f"Applied QuantizeConfig damp_percent override: {quantize_config.damp_percent}"
+    )
+if qcfg_damp_auto_increment_override and hasattr(
+    quantize_config, "damp_auto_increment"
+):
     quantize_config.damp_auto_increment = float(qcfg_damp_auto_increment_override)
     print(
         "Applied QuantizeConfig damp_auto_increment override: "
@@ -883,7 +965,10 @@ if examples is None:
     total_tokens = 0
     for sample in dataset.select(range(min(effective_max_samples, len(dataset)))):
         tok = tokenizer(
-            sample["text"], return_tensors="pt", max_length=effective_max_seq_len, truncation=True
+            sample["text"],
+            return_tensors="pt",
+            max_length=effective_max_seq_len,
+            truncation=True,
         )
         sample_tokens = int(tok.input_ids.shape[-1])
         if total_tokens >= effective_max_tokens:
@@ -910,7 +995,9 @@ if examples is None:
     checkpoint_state["calibration_max_seq_len"] = effective_max_seq_len
     checkpoint_state["calibration_max_tokens"] = effective_max_tokens
     checkpoint_state["calibration_total_tokens"] = total_tokens
-    checkpoint_state["calibration_cached_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    checkpoint_state["calibration_cached_at"] = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+    )
     persist_cached_examples(model_dir, examples, checkpoint_state)
     quant_checkpoint_state = checkpoint_state
 
@@ -920,7 +1007,9 @@ emit_progress(
 
 # ── Quantize ───────────────────────────────────────────────────────────
 total_layers = infer_total_layers(model)
-checkpoint_callback = QuantizationCheckpointCallback(model_dir, total_layers, quant_checkpoint_state)
+checkpoint_callback = QuantizationCheckpointCallback(
+    model_dir, total_layers, quant_checkpoint_state
+)
 model.layer_callback = checkpoint_callback
 model.subset_callback = checkpoint_callback
 checkpoint_callback.state["stage"] = "quantizing"
@@ -931,7 +1020,9 @@ model.quantize(examples)
 
 emit_progress("progress", phase="saving", percent=90.0, detail="saving quantized model")
 checkpoint_callback.state["stage"] = "saving"
-checkpoint_callback.state["save_started_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+checkpoint_callback.state["save_started_at"] = time.strftime(
+    "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+)
 checkpoint_callback._persist()
 
 # ── Save ───────────────────────────────────────────────────────────────
@@ -939,7 +1030,9 @@ model.save(out_dir)
 tokenizer.save_pretrained(out_dir)
 
 checkpoint_callback.state["stage"] = "complete"
-checkpoint_callback.state["completed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+checkpoint_callback.state["completed_at"] = time.strftime(
+    "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+)
 checkpoint_callback._persist()
 emit_progress("complete", phase="quantizing")
 print("Quantization complete")

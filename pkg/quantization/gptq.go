@@ -165,6 +165,7 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 	dampAutoIncrementOverride := os.Getenv("FLEXINFER_GPTQ_DAMP_AUTO_INCREMENT_OVERRIDE")
 	resumeEnabled := getenvDefault("FLEXINFER_GPTQ_RESUME", "true")
 	calibrationCacheEnabled := getenvDefault("FLEXINFER_GPTQ_CALIBRATION_CACHE", "true")
+	deviceMap := getenvDefault("FLEXINFER_GPTQ_DEVICE_MAP", "cpu")
 
 	return []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
@@ -190,6 +191,7 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 		{Name: "GPTQ_DAMP_AUTO_INCREMENT_OVERRIDE", Value: dampAutoIncrementOverride},
 		{Name: "GPTQ_RESUME", Value: resumeEnabled},
 		{Name: "GPTQ_CALIBRATION_CACHE", Value: calibrationCacheEnabled},
+		{Name: "QUANTIZE_DEVICE_MAP", Value: deviceMap},
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
 	}
 }
@@ -244,10 +246,17 @@ func (b *GPTQJobBuilder) gptqWrapperScript() string {
 	return `set -euo pipefail
 TYPE="W${BITS}_G${GROUP_SIZE}"
 START_TS=$(date +%s)
+LOGFILE=/tmp/quantize-output.log
 
 cleanup() {
     local ec=$?
     if [ $ec -ne 0 ]; then
+        # Write last 80 lines to termination-log so controller can capture the error
+        {
+            echo "exit_code=${ec}"
+            echo "---"
+            tail -80 "${LOGFILE}" 2>/dev/null || echo "(no log output captured)"
+        } > /dev/termination-log 2>/dev/null || true
         if [ ! -f "${OUT_DIR}/quantize_config.json" ] && \
            ! ls "${OUT_DIR}"/*.safetensors &>/dev/null; then
             rm -rf "${OUT_DIR}"
@@ -258,6 +267,9 @@ cleanup() {
     fi
 }
 trap cleanup EXIT
+
+# Tee all output so cleanup can capture tail on failure
+exec > >(tee -a "${LOGFILE}") 2>&1
 
 # Patch GPTQModel writer.py to guard against ZeroDivisionError.
 WRITER_PY=$(python3 -c "import gptqmodel.models.writer as w; print(w.__file__)" 2>/dev/null || true)
@@ -336,6 +348,60 @@ PY
     echo "Patched quantize_gptq.py to disable GPTQ offload_to_disk for Qwen3.5 direct load"
 fi
 
+# Inject device_map dispatch into quantize_gptq.py for GPU/CPU split.
+# Older runtime images don't have this code; inject it at runtime.
+if [ -f "${GPTQ_SCRIPT}" ] && [ "${QUANTIZE_DEVICE_MAP}" != "cpu" ] && ! grep -q "QUANTIZE_DEVICE_MAP" "${GPTQ_SCRIPT}" 2>/dev/null; then
+    python3 - <<'PY'
+import os
+from pathlib import Path
+
+path = Path(os.environ.get("GPTQ_SCRIPT", "/opt/flexinfer/scripts/quantize_gptq.py"))
+src = path.read_text()
+
+# Add env var read near top of script (after imports)
+if "quantize_device_map" not in src:
+    # Insert after the gpu_memory_fraction line if it exists, otherwise after imports
+    marker = "gpu_memory_fraction = "
+    if marker in src:
+        idx = src.index(marker)
+        end_line = src.index("\n", idx) + 1
+        inject = 'quantize_device_map = os.environ.get("QUANTIZE_DEVICE_MAP", "cpu")\n'
+        src = src[:end_line] + inject + src[end_line:]
+    else:
+        # Fallback: inject near top
+        src = 'import os as _os_dm\nquantize_device_map = _os_dm.environ.get("QUANTIZE_DEVICE_MAP", "cpu")\n' + src
+
+# Inject dispatch logic after model.eval() in load_model_manual_sharded_state_dict
+eval_marker = "    model.eval()\n"
+dispatch_code = '''
+    # Injected by controller: dispatch model across GPU+CPU if device_map != cpu
+    if quantize_device_map and quantize_device_map != "cpu":
+        try:
+            from accelerate import infer_auto_device_map, dispatch_model
+            from accelerate.utils import get_max_memory
+            max_mem = get_max_memory()
+            for dev_id in list(max_mem.keys()):
+                if dev_id != "cpu":
+                    max_mem[dev_id] = int(max_mem[dev_id] * gpu_memory_fraction)
+            device_map_result = infer_auto_device_map(model, max_memory=max_mem)
+            model = dispatch_model(model, device_map=device_map_result)
+            gpu_layers = sum(1 for v in device_map_result.values() if v != "cpu")
+            cpu_layers = sum(1 for v in device_map_result.values() if v == "cpu")
+            print(f"Dispatched model: device_map={quantize_device_map} gpu_layers={gpu_layers} cpu_layers={cpu_layers}")
+        except Exception as exc:
+            print(f"WARN: device_map dispatch failed, keeping all on CPU: {exc}")
+'''
+if eval_marker in src and "dispatch_model" not in src:
+    idx = src.index(eval_marker) + len(eval_marker)
+    src = src[:idx] + dispatch_code + src[idx:]
+    print("Injected device_map dispatch into quantize_gptq.py")
+else:
+    print("WARN: could not inject device_map dispatch (marker not found or already present)")
+
+path.write_text(src)
+PY
+fi
+
 # Auto-detect gfx900 (Radeon VII).
 if command -v rocminfo &>/dev/null; then
     GPU_GFX=$(rocminfo 2>/dev/null | grep -oP 'gfx\d+' | head -1 || true)
@@ -400,7 +466,44 @@ fi
 # causing torch.linalg.{cholesky,eigh,svd,qr} to fail. Patch to use scipy as
 # final fallback for linalg ops needed by GPTQ warmup and Hessian inverse.
 cat > /tmp/_magma_fallback.py << 'MAGMA_PATCH'
-import torch, sys, runpy
+import torch, sys, runpy, threading
+
+# GPTQModel's nogil_patcher patches JITFunction.run and Autotuner.run,
+# expecting _cache_lock, _cache, _cache_futures. FLA's fused_norm_gate
+# creates Triton kernel instances before nogil_patcher runs.
+try:
+    from triton.runtime.jit import JITFunction as _JIT
+    if not hasattr(_JIT, '_cache_lock'):
+        _JIT._cache_lock = threading.Lock()
+        print("Patched JITFunction._cache_lock")
+except Exception as _e:
+    print(f"WARN: JITFunction patch failed: {_e}")
+try:
+    from triton.runtime.autotuner import Autotuner as _AT
+    _at_patched = []
+    if not hasattr(_AT, '_cache_lock'):
+        _AT._cache_lock = threading.Lock()
+        _at_patched.append('_cache_lock')
+    if not hasattr(_AT, '_cache_futures'):
+        _AT._cache_futures = {}
+        _at_patched.append('_cache_futures')
+    if not hasattr(_AT, '_flexinfer_init_patched'):
+        _orig_at_init = _AT.__init__
+        def _patched_at_init(self, *a, **kw):
+            _orig_at_init(self, *a, **kw)
+            if not hasattr(self, '_cache'):
+                self._cache = getattr(self, 'cache', {})
+            if not hasattr(self, '_cache_lock'):
+                self._cache_lock = threading.Lock()
+            if not hasattr(self, '_cache_futures'):
+                self._cache_futures = {}
+        _AT.__init__ = _patched_at_init
+        _AT._flexinfer_init_patched = True
+        _at_patched.append('__init__')
+    if _at_patched:
+        print(f"Patched Autotuner({','.join(_at_patched)}) for GPTQModel/FLA compat")
+except Exception as _e:
+    print(f"WARN: Autotuner patch failed: {_e}")
 import numpy as np
 try:
     import scipy.linalg as _scipy_la

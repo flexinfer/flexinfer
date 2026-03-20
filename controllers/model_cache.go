@@ -752,7 +752,7 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 	}
 
 	if job.Status.Failed > 0 {
-		failureMsg := captureQuantizationFailureLogs(ctx, r.Client, model.Namespace, jobName)
+		failureMsg := captureQuantizationFailureLogs(ctx, r.Client, nil, model.Namespace, jobName)
 		model.Status.Cache.Ready = false
 		model.Status.Cache.JobName = jobName
 		model.Status.Cache.JobPhase = "Failed"

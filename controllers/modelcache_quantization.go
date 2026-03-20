@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -392,7 +393,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "quantize")
 		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "quantization_failed").Inc()
 
-		failureMsg := captureQuantizationFailureLogs(ctx, r.Client, modelCache.Namespace, quantJob.Name)
+		failureMsg := captureQuantizationFailureLogs(ctx, r.Client, r.KubeClient, modelCache.Namespace, quantJob.Name)
 		quantStatus := &aiv1alpha1.QuantizationStatus{
 			Format:         string(modelCache.Spec.Quantization.Format),
 			Type:           quantizationTypeFromSpec(modelCache.Spec.Quantization),
@@ -613,8 +614,10 @@ func quantizationTypeFromSpec(spec *aiv1alpha1.QuantizationSpec) string {
 }
 
 // captureQuantizationFailureLogs reads the termination message from the quantizer
-// container of a failed job's pods. Returns the message or empty string.
-func captureQuantizationFailureLogs(ctx context.Context, c client.Client, namespace, jobName string) string {
+// container of a failed job's pods. When kubeClient is non-nil and the
+// termination message is empty or generic ("Error"), it falls back to reading
+// the last 50 lines of pod logs so actual Python tracebacks are captured.
+func captureQuantizationFailureLogs(ctx context.Context, c client.Client, kubeClient kubernetes.Interface, namespace, jobName string) string {
 	podList := &corev1.PodList{}
 	if err := c.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
 		return ""
@@ -635,12 +638,38 @@ func captureQuantizationFailureLogs(ctx context.Context, c client.Client, namesp
 			if msg != "" {
 				return truncateString(msg, 1024)
 			}
+			// Termination message is empty — try reading pod logs as fallback.
+			if kubeClient != nil {
+				if logMsg := readPodLogTail(ctx, kubeClient, namespace, podList.Items[i].Name, "quantizer", 50); logMsg != "" {
+					return truncateString(logMsg, 1024)
+				}
+			}
 			if terminated.Reason != "" {
 				return truncateString(terminated.Reason, 256)
 			}
 		}
 	}
 	return ""
+}
+
+// readPodLogTail reads the last tailLines of a container's logs. Returns the
+// content as a string, or empty on any error.
+func readPodLogTail(ctx context.Context, kubeClient kubernetes.Interface, namespace, podName, container string, tailLines int64) string {
+	req := kubeClient.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{
+		Container: container,
+		TailLines: &tailLines,
+	})
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		return ""
+	}
+	defer stream.Close()
+	buf := make([]byte, 8192)
+	n, _ := stream.Read(buf)
+	if n == 0 {
+		return ""
+	}
+	return strings.TrimSpace(string(buf[:n]))
 }
 
 // truncateString truncates s to maxLen, appending "..." if truncated.

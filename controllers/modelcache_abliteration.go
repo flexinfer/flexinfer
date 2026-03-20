@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -368,7 +369,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "abliterate")
 		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "abliteration_failed").Inc()
 
-		failureMsg := captureAbliterationFailureLogs(ctx, r.Client, modelCache.Namespace, ablitJob.Name)
+		failureMsg := captureAbliterationFailureLogs(ctx, r.Client, r.KubeClient, modelCache.Namespace, ablitJob.Name)
 		ablitStatus := &aiv1alpha1.AbliterationStatus{
 			FailureMessage: failureMsg,
 		}
@@ -487,7 +488,8 @@ func (r *ModelCacheReconciler) readAbliterationMetadataFromPods(ctx context.Cont
 }
 
 // captureAbliterationFailureLogs reads the termination message from the abliterator container.
-func captureAbliterationFailureLogs(ctx context.Context, c client.Client, namespace, jobName string) string {
+// Falls back to reading pod logs when kubeClient is non-nil and no termination message exists.
+func captureAbliterationFailureLogs(ctx context.Context, c client.Client, kubeClient kubernetes.Interface, namespace, jobName string) string {
 	podList := &corev1.PodList{}
 	if err := c.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
 		return ""
@@ -506,6 +508,11 @@ func captureAbliterationFailureLogs(ctx context.Context, c client.Client, namesp
 			}
 			if msg := strings.TrimSpace(terminated.Message); msg != "" {
 				return truncateString(msg, 1024)
+			}
+			if kubeClient != nil {
+				if logMsg := readPodLogTail(ctx, kubeClient, namespace, pod.Name, "abliterator", 50); logMsg != "" {
+					return truncateString(logMsg, 1024)
+				}
 			}
 			if terminated.Reason != "" {
 				return truncateString(terminated.Reason, 256)
