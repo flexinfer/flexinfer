@@ -421,7 +421,7 @@ func (m *manager) syncIfNeeded(ctx context.Context, containerID, projectDir stri
 	m.logger.Info("syncing workspace", "project", filepath.Base(projectDir),
 		"dirs", len(dirs), "container", containerID)
 
-	return kb.SyncWorkspace(ctx, containerID, dirs, m.cfg.syncExcludes, m.cfg.maxSyncSize)
+	return kb.SyncWorkspace(ctx, containerID, dirs, m.cfg.syncExcludes, m.cfg.maxSyncSize) //nolint:staticcheck // intentionally deprecated, migrating to sandbox.Controller
 }
 
 // buildMounts creates the standard bind mounts for a sandbox.

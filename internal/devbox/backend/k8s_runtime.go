@@ -4,14 +4,32 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 )
+
+// execMode returns the executor transport mode from the DEVBOX_EXEC_MODE env var.
+// Default: "websocket". Set DEVBOX_EXEC_MODE=spdy to use the legacy SPDY transport.
+func execMode() string {
+	return strings.ToLower(os.Getenv("DEVBOX_EXEC_MODE"))
+}
+
+// newExecForMode creates a remotecommand.Executor using the appropriate transport.
+// Default is WebSocket; set DEVBOX_EXEC_MODE=spdy to fall back to SPDY.
+func newExecForMode(config *rest.Config, execURL *url.URL) (remotecommand.Executor, error) {
+	if execMode() == "spdy" {
+		return remotecommand.NewSPDYExecutor(config, "POST", execURL)
+	}
+	return remotecommand.NewWebSocketExecutor(config, "GET", execURL.String())
+}
 
 func (k *K8sBackend) Start(ctx context.Context, opts StartOpts) (*StartResult, error) {
 	registryTag := k.registryTag(opts.ImageTag)
@@ -92,7 +110,7 @@ func (k *K8sBackend) Exec(_ context.Context, opts ExecOpts) (*ExecResult, error)
 			Stderr:    true,
 		}, scheme.ParameterCodec)
 
-	executor, err := remotecommand.NewSPDYExecutor(k.restConfig, "POST", req.URL())
+	executor, err := newExecForMode(k.restConfig, req.URL())
 	if err != nil {
 		return nil, fmt.Errorf("create executor: %w", err)
 	}
@@ -186,7 +204,7 @@ func (k *K8sBackend) ReadFile(ctx context.Context, id, path string) ([]byte, err
 			Stderr:    true,
 		}, scheme.ParameterCodec)
 
-	executor, err := remotecommand.NewSPDYExecutor(k.restConfig, "POST", req.URL())
+	executor, err := newExecForMode(k.restConfig, req.URL())
 	if err != nil {
 		return nil, fmt.Errorf("create executor: %w", err)
 	}
@@ -219,7 +237,7 @@ func (k *K8sBackend) WriteFile(ctx context.Context, id, path string, content []b
 			Stderr:    true,
 		}, scheme.ParameterCodec)
 
-	executor, err := remotecommand.NewSPDYExecutor(k.restConfig, "POST", req.URL())
+	executor, err := newExecForMode(k.restConfig, req.URL())
 	if err != nil {
 		return fmt.Errorf("create executor: %w", err)
 	}
