@@ -153,6 +153,9 @@ func newTestAppWithHandlers(t *testing.T) (*App, *http.ServeMux, *appMockHandler
 
 	app.workflowMonitor = monitor.NewWorkflowMonitor(agent, nil)
 
+	// Initialize domain registry for route decomposition.
+	app.initDomainRegistry()
+
 	mux := http.NewServeMux()
 	app.registerRoutes(mux)
 

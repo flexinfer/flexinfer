@@ -33,6 +33,7 @@ import (
 	"github.com/crb2nu/loom/internal/devbox/backend"
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/coordinator"
+	"github.com/crb2nu/loom/internal/hud/domain"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 	"github.com/crb2nu/loom/internal/hud/window"
 	"github.com/crb2nu/loom/internal/tui"
@@ -154,6 +155,9 @@ type App struct {
 
 	// Headless agent spawn orchestrator.
 	spawner *SpawnOrchestrator
+
+	// Domain registry — self-contained feature modules that own their routes.
+	domainRegistry *domain.Registry
 }
 
 const (
@@ -580,6 +584,9 @@ func Run(cfg Config) error {
 		logger.Info("event consumer started", "url", eventsURL)
 	}
 
+	// Initialize domain registry — each domain module owns its route group.
+	app.initDomainRegistry()
+
 	mux := http.NewServeMux()
 	app.registerRoutes(mux)
 
@@ -752,6 +759,10 @@ func Run(cfg Config) error {
 }
 
 // registerRoutes sets up all HTTP routes on the given ServeMux.
+//
+// Domain-specific routes (fleet, spawn, mobile, coordinator, sandbox) are
+// registered by domain modules via the domain registry. Core/shared routes
+// (status, health, pprof, frontend, etc.) are registered directly here.
 func (a *App) registerRoutes(mux *http.ServeMux) {
 	// Debug profiling endpoint — goroutine dump, heap, etc.
 	// Registered without method prefix so they match both GET and POST,
@@ -817,10 +828,6 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/cost", a.withCORS(a.handleCost))
 	mux.HandleFunc("GET /api/rbac", a.withCORS(a.handleRBAC))
 	mux.HandleFunc("GET /api/otel", a.withCORS(a.handleOTel))
-	mux.HandleFunc("GET /api/sandbox", a.withCORS(a.handleSandbox))
-	mux.HandleFunc("GET /api/sandbox/policy", a.withCORS(a.handleSandboxPolicy))
-	mux.HandleFunc("POST /api/sandbox/start", a.withCORS(a.handleSandboxStart))
-	mux.HandleFunc("POST /api/sandbox/stop", a.withCORS(a.handleSandboxStop))
 	mux.HandleFunc("GET /api/events", a.withCORS(a.handleSSE))
 
 	// API routes — catalog (enable/disable servers).
@@ -829,91 +836,17 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/catalog/{name}/enable", a.withCORS(a.handleCatalogEnable))
 	mux.HandleFunc("POST /api/catalog/{name}/disable", a.withCORS(a.handleCatalogDisable))
 
-	// API routes — mobile companion v1.
-	mux.HandleFunc("GET /api/mobile/v1/ping", a.withCORS(a.handleMobilePing))
-	mux.HandleFunc("GET /api/mobile/v1/dashboard", a.withCORS(a.handleMobileDashboard))
-	mux.HandleFunc("GET /api/mobile/v1/control-plane", a.withCORS(a.handleMobileControlPlane))
-	mux.HandleFunc("GET /api/mobile/v1/sessions", a.withCORS(a.handleMobileSessions))
-	mux.HandleFunc("GET /api/mobile/v1/sessions/{session_id}", a.withCORS(a.handleMobileSessionDetail))
-	mux.HandleFunc("GET /api/mobile/v1/sessions/{session_id}/events", a.withCORS(a.handleMobileSessionEvents))
-	mux.HandleFunc("GET /api/mobile/v1/tasks", a.withCORS(a.handleMobileTasks))
-	mux.HandleFunc("GET /api/mobile/v1/workflows", a.withCORS(a.handleMobileWorkflows))
-	mux.HandleFunc("GET /api/mobile/v1/workflows/{workflow_id}", a.withCORS(a.handleMobileWorkflowDetail))
-	mux.HandleFunc("GET /api/mobile/v1/presence", a.withCORS(a.handleMobilePresence))
-	mux.HandleFunc("GET /api/mobile/v1/agents", a.withCORS(a.handleMobileAgents))
-	mux.HandleFunc("GET /api/mobile/v1/memory/stats", a.withCORS(a.handleMobileMemoryStats))
-	mux.HandleFunc("GET /api/mobile/v1/memory/items", a.withCORS(a.handleMobileMemoryItems))
-	mux.HandleFunc("GET /api/mobile/v1/stream", a.withCORS(a.handleMobileStream))
-	mux.HandleFunc("GET /api/mobile/v1/topology", a.withCORS(a.handleMobileTopology))
-	mux.HandleFunc("GET /api/mobile/v1/graph/stats", a.withCORS(a.handleMobileGraphStats))
-	mux.HandleFunc("GET /api/mobile/v1/graph/entities", a.withCORS(a.handleMobileGraphEntities))
-	mux.HandleFunc("GET /api/mobile/v1/graph/path", a.withCORS(a.handleMobileGraphPath))
-	mux.HandleFunc("GET /api/mobile/v1/reasoning/chains", a.withCORS(a.handleMobileReasoningChains))
-	mux.HandleFunc("GET /api/mobile/v1/reasoning/chains/{chain_id}", a.withCORS(a.handleMobileReasoningChainDetail))
-	mux.HandleFunc("GET /api/mobile/v1/events/stream", a.withCORS(a.handleMobileEventsStream))
-	mux.HandleFunc("POST /api/mobile/v1/sessions", a.withCORS(a.handleMobileSessionCreate))
-	mux.HandleFunc("POST /api/mobile/v1/sessions/{session_id}/end", a.withCORS(a.handleMobileSessionEnd))
-	mux.HandleFunc("GET /api/mobile/v1/audit", a.withCORS(a.handleMobileAudit))
-	mux.HandleFunc("GET /api/mobile/v1/alerts/policy", a.withCORS(a.handleMobileAlertsPolicy))
-	mux.HandleFunc("POST /api/mobile/v1/push/register", a.withCORS(a.handleMobilePushRegister))
-	mux.HandleFunc("POST /api/mobile/v1/push/unregister", a.withCORS(a.handleMobilePushUnregister))
-	mux.HandleFunc("POST /api/mobile/v1/admin/revoke", a.withCORS(a.handleMobileAdminRevoke))
-	mux.HandleFunc("GET /api/mobile/v1/sandbox", a.withCORS(a.handleMobileSandbox))
-	mux.HandleFunc("POST /api/mobile/v1/sandbox/start", a.withCORS(a.handleMobileSandboxStart))
-	mux.HandleFunc("POST /api/mobile/v1/sandbox/stop", a.withCORS(a.handleMobileSandboxStop))
-	mux.HandleFunc("GET /api/mobile/v1/pipelines", a.withCORS(a.handleMobilePipelines))
-	mux.HandleFunc("POST /api/mobile/v1/workflows/{workflow_id}/approve", a.withCORS(a.handleMobileWorkflowApprove))
-	mux.HandleFunc("POST /api/mobile/v1/workflows/{workflow_id}/reject", a.withCORS(a.handleMobileWorkflowReject))
-	mux.HandleFunc("GET /api/mobile/v1/handoffs", a.withCORS(a.handleMobileHandoffs))
-	mux.HandleFunc("POST /api/mobile/v1/agent/spawn", a.withCORS(a.handleMobileSpawnAgent))
-	mux.HandleFunc("GET /api/mobile/v1/agent/spawns", a.withCORS(a.handleMobileSpawnList))
-	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/config", a.withCORS(a.handleMobileSpawnConfig))
-	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/{spawn_id}", a.withCORS(a.handleMobileSpawnDetail))
-	mux.HandleFunc("POST /api/mobile/v1/agent/spawn/{spawn_id}/stop", a.withCORS(a.handleMobileSpawnStop))
-	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/{spawn_id}/stream", a.withCORS(a.handleMobileSpawnStream))
-
 	// API routes — topology graph.
 	mux.HandleFunc("GET /api/topology", a.withCORS(a.handleTopology))
 
-	// API routes — command center (KPIs, timeline, dispatch, claims).
+	// API routes — command center (KPIs, timeline).
 	mux.HandleFunc("GET /api/kpis", a.withCORS(a.handleKPIs))
 	mux.HandleFunc("GET /api/timeline", a.withCORS(a.handleTimeline))
-	mux.HandleFunc("POST /api/agent/dispatch", a.withCORS(a.handleAgentDispatch))
-	mux.HandleFunc("DELETE /api/claims/{agent_id}/{file_path...}", a.withCORS(a.handleClaimRelease))
 
-	// API routes — headless agent spawn.
-	mux.HandleFunc("POST /api/agent/spawn", a.withCORS(a.handleAgentSpawn))
-	mux.HandleFunc("GET /api/agent/spawns", a.withCORS(a.handleAgentSpawnList))
-	mux.HandleFunc("GET /api/agent/spawn/config", a.withCORS(a.handleAgentSpawnConfig))
-	mux.HandleFunc("GET /api/agent/spawn/{spawn_id}", a.withCORS(a.handleAgentSpawnDetail))
-	mux.HandleFunc("POST /api/agent/spawn/{spawn_id}/stop", a.withCORS(a.handleAgentSpawnStop))
-
-	// API routes — agent lifecycle (CLI hooks call these).
-	mux.HandleFunc("POST /api/agent/session-start", a.withCORS(a.handleAgentSessionStart))
-	mux.HandleFunc("POST /api/agent/session-end", a.withCORS(a.handleAgentSessionEnd))
-	mux.HandleFunc("POST /api/agent/heartbeat", a.withCORS(a.handleAgentHeartbeat))
-	mux.HandleFunc("POST /api/agent/task-update", a.withCORS(a.handleAgentTaskUpdate))
-	mux.HandleFunc("GET /api/agent/session", a.withCORS(a.handleAgentSession))
-	mux.HandleFunc("POST /api/agent/session-list", a.withCORS(a.handleAgentSessionList))
-	mux.HandleFunc("POST /api/agent/session-prune", a.withCORS(a.handleAgentSessionPrune))
-	mux.HandleFunc("POST /api/agent/context/add", a.withCORS(a.handleAgentContextAdd))
-	mux.HandleFunc("GET /api/agent/context-inspect", a.withCORS(a.handleAgentContextInspect))
-	mux.HandleFunc("GET /api/agent/session-detail", a.withCORS(a.handleAgentSessionDetail))
-	mux.HandleFunc("POST /api/agent/nudge", a.withCORS(a.handleAgentNudge))
-	mux.HandleFunc("GET /api/agent/nudge-queue", a.withCORS(a.handleAgentNudgeQueue))
-	mux.HandleFunc("GET /api/agent/nudge-queue-policy", a.withCORS(a.handleAgentNudgeQueuePolicy))
-	mux.HandleFunc("POST /api/agent/nudge-queue-policy", a.withCORS(a.handleAgentNudgeQueuePolicyUpdate))
-	mux.HandleFunc("GET /api/knowledge", a.withCORS(a.handleKnowledge))
-	mux.HandleFunc("POST /api/agent/workflow-define", a.withCORS(a.handleAgentWorkflowDefine))
-	mux.HandleFunc("GET /api/agent/workflow-definitions", a.withCORS(a.handleAgentWorkflowDefinitions))
-
-	// API routes — coordinator (LLM-powered agent context intelligence).
-	mux.HandleFunc("GET /api/coordinator/status", a.withCORS(a.handleCoordinatorStatus))
-	mux.HandleFunc("POST /api/coordinator/summarize/{session_id}", a.withCORS(a.handleCoordinatorSummarize))
-	mux.HandleFunc("POST /api/coordinator/compress", a.withCORS(a.handleCoordinatorCompress))
-	mux.HandleFunc("POST /api/coordinator/plan", a.withCORS(a.handleCoordinatorPlan))
-	if a.coordinatorMetrics != nil {
-		mux.Handle("GET /api/coordinator/metrics", a.coordinatorMetrics.Handler())
+	// Domain-managed routes — fleet, spawn, mobile, coordinator, sandbox.
+	// Each domain module registers its own route group via the registry.
+	if a.domainRegistry != nil {
+		a.domainRegistry.RegisterAll(mux, a.withCORS)
 	}
 
 	// Lightweight health check — no bridge calls, no CORS overhead, sub-1ms response.
