@@ -3,7 +3,6 @@ package monitor
 import (
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
@@ -119,79 +118,61 @@ const (
 // HealthMonitor tracks server health and maintains sparkline latency
 // history for each server. It merges data from the Health() and Servers()
 // bridge calls.
+//
+// HealthMonitor embeds BaseMonitor for lifecycle management (stop, pollLoop)
+// but keeps its own complex Refresh implementation with internal state
+// (sparkline history, notification dedup).
 type HealthMonitor struct {
+	BaseMonitor[[]ServerHealthEntry]
 	client *bridge.DaemonClient
-	logger *slog.Logger
 
-	mu      sync.RWMutex
-	servers []ServerHealthEntry
-	summary HealthSummary
 	history map[string]*RingBuffer // server name -> latency ring buffer
+	summary HealthSummary
 
-	// Notification debounce state (protected by mu).
+	// Notification debounce state (protected by base mu).
 	notifiedDown map[string]time.Time // server name -> last notification time
 	prevDown     map[string]bool      // servers that were down on previous refresh
-
-	onRefresh func([]ServerHealthEntry)
-
-	stopCh   chan struct{}
-	stopOnce sync.Once
-}
-
-// OnRefresh registers a callback that fires after each successful refresh
-// with the new server health entries. Used to broadcast data via SSE.
-func (m *HealthMonitor) OnRefresh(fn func([]ServerHealthEntry)) {
-	m.onRefresh = fn
 }
 
 // NewHealthMonitor creates a HealthMonitor backed by the given daemon client.
 func NewHealthMonitor(client *bridge.DaemonClient, logger *slog.Logger) *HealthMonitor {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &HealthMonitor{
+	m := &HealthMonitor{
 		client:       client,
-		logger:       logger.With("component", "health-monitor"),
 		history:      make(map[string]*RingBuffer),
 		notifiedDown: make(map[string]time.Time),
 		prevDown:     make(map[string]bool),
-		stopCh:       make(chan struct{}),
 	}
+	m.InitBase(logger, nil, "health-monitor")
+	return m
 }
 
 // Start begins the background polling goroutine at the given interval.
 func (m *HealthMonitor) Start(interval time.Duration) {
-	// Run initial refresh asynchronously so HUD/TUI startup is non-blocking
-	// when downstream services are slow or unavailable.
+	m.StartManual()
 	go func() {
 		if err := m.Refresh(); err != nil {
-			m.logger.Warn("initial health refresh failed", "error", err)
+			m.Logger.Warn("initial health refresh failed", "error", err)
 		}
 	}()
-
 	go m.pollLoop(interval)
-}
-
-// Stop signals the background goroutine to exit. It is safe to call multiple times.
-func (m *HealthMonitor) Stop() {
-	m.stopOnce.Do(func() { close(m.stopCh) })
 }
 
 // Servers returns the current enriched server health entries.
 func (m *HealthMonitor) Servers() []ServerHealthEntry {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.RLock()
+	defer m.RUnlock()
 
+	snap := m.GetSnapshot()
 	// Return a copy to avoid data races on the slice.
-	out := make([]ServerHealthEntry, len(m.servers))
-	copy(out, m.servers)
+	out := make([]ServerHealthEntry, len(snap))
+	copy(out, snap)
 	return out
 }
 
 // Summary returns the current health summary.
 func (m *HealthMonitor) Summary() HealthSummary {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.RLock()
+	defer m.RUnlock()
 	return m.summary
 }
 
@@ -201,13 +182,13 @@ func (m *HealthMonitor) Refresh() error {
 	// Fetch health data.
 	healthResult, healthErr := m.client.Health()
 	if healthErr != nil {
-		m.logger.Warn("health: failed to fetch health", "error", healthErr)
+		m.Logger.Warn("health: failed to fetch health", "error", healthErr)
 	}
 
 	// Fetch server list.
 	serversResult, serversErr := m.client.Servers()
 	if serversErr != nil {
-		m.logger.Warn("health: failed to fetch servers", "error", serversErr)
+		m.Logger.Warn("health: failed to fetch servers", "error", serversErr)
 	}
 
 	// Fetch aggregated tool list to derive per-server tool counts.
@@ -215,7 +196,7 @@ func (m *HealthMonitor) Refresh() error {
 	toolCounts := make(map[string]int)
 	toolsResult, toolsErr := m.client.Tools()
 	if toolsErr != nil {
-		m.logger.Debug("health: failed to fetch tools for counts", "error", toolsErr)
+		m.Logger.Debug("health: failed to fetch tools for counts", "error", toolsErr)
 	} else if toolsResult != nil {
 		for _, t := range toolsResult.Tools {
 			if parts := strings.SplitN(t.Name, "__", 2); len(parts) == 2 {
@@ -254,7 +235,7 @@ func (m *HealthMonitor) Refresh() error {
 		nameSet[name] = struct{}{}
 	}
 
-	m.mu.Lock()
+	m.Lock()
 
 	entries := make([]ServerHealthEntry, 0, len(nameSet))
 	summary := HealthSummary{TotalServers: len(nameSet)}
@@ -342,7 +323,7 @@ func (m *HealthMonitor) Refresh() error {
 				m.notifiedDown[e.Name] = time.Now()
 				go func(name string) {
 					if err := notify.NotifyServerDown(name); err != nil {
-						m.logger.Debug("server-down notification failed", "server", name, "error", err)
+						m.Logger.Debug("server-down notification failed", "server", name, "error", err)
 					}
 				}(e.Name)
 			}
@@ -353,23 +334,21 @@ func (m *HealthMonitor) Refresh() error {
 			delete(m.notifiedDown, e.Name)
 			go func(name string) {
 				if err := notify.NotifyServerRecovered(name); err != nil {
-					m.logger.Debug("server-recovered notification failed", "server", name, "error", err)
+					m.Logger.Debug("server-recovered notification failed", "server", name, "error", err)
 				}
 			}(e.Name)
 		}
 	}
 	m.prevDown = nowDown
 
-	m.servers = entries
+	m.SetSnapshot(entries)
 	m.summary = summary
-	m.mu.Unlock()
+	m.Unlock()
 
 	// Notify listeners (e.g., SSE hub) with the fresh entries (outside lock).
-	if m.onRefresh != nil {
-		out := make([]ServerHealthEntry, len(entries))
-		copy(out, entries)
-		m.onRefresh(out)
-	}
+	out := make([]ServerHealthEntry, len(entries))
+	copy(out, entries)
+	m.FireOnRefresh(out)
 
 	return nil
 }
@@ -407,26 +386,26 @@ func (m *HealthMonitor) pollLoop(interval time.Duration) {
 	consecutiveErrors := 0
 	for {
 		select {
-		case <-m.stopCh:
-			m.logger.Debug("health monitor stopped")
+		case <-m.StopCh():
+			m.Logger.Debug("health monitor stopped")
 			return
 		case <-ticker.C:
 			if err := m.Refresh(); err != nil {
 				consecutiveErrors++
 				if consecutiveErrors <= 3 {
-					m.logger.Warn("health refresh error", "error", err)
+					m.Logger.Warn("health refresh error", "error", err)
 				}
 				skipTicks := min(consecutiveErrors-1, 4)
 				for range skipTicks {
 					select {
-					case <-m.stopCh:
+					case <-m.StopCh():
 						return
 					case <-ticker.C:
 					}
 				}
 			} else {
 				if consecutiveErrors > 0 {
-					m.logger.Info("health refresh recovered", "after_errors", consecutiveErrors)
+					m.Logger.Info("health refresh recovered", "after_errors", consecutiveErrors)
 				}
 				consecutiveErrors = 0
 			}

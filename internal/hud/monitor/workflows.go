@@ -1,10 +1,10 @@
 package monitor
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
@@ -24,67 +24,38 @@ const detailTTL = 10 * time.Second
 // It polls the workflow list at a configurable interval and lazily
 // fetches individual workflow details on demand.
 type WorkflowMonitor struct {
-	agent  *bridge.AgentBridge
-	logger *slog.Logger
-
-	mu        sync.RWMutex
-	workflows []bridge.WorkflowInfo
-	details   map[string]*cachedDetail // workflow ID -> cached detail
+	BaseMonitor[[]bridge.WorkflowInfo]
+	agent   *bridge.AgentBridge
+	details map[string]*cachedDetail // workflow ID -> cached detail
 
 	// Notification dedup: tracks workflow+step combos already notified.
 	notifiedApprovals map[string]bool // "workflowID:stepName" -> true
-
-	onRefresh func([]bridge.WorkflowInfo)
-
-	stopCh   chan struct{}
-	stopOnce sync.Once
-}
-
-// OnRefresh registers a callback that fires after each successful refresh
-// with the new workflow list. Used to broadcast data via SSE.
-func (m *WorkflowMonitor) OnRefresh(fn func([]bridge.WorkflowInfo)) {
-	m.onRefresh = fn
 }
 
 // NewWorkflowMonitor creates a WorkflowMonitor backed by the given agent bridge.
 func NewWorkflowMonitor(agent *bridge.AgentBridge, logger *slog.Logger) *WorkflowMonitor {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &WorkflowMonitor{
+	m := &WorkflowMonitor{
 		agent:             agent,
-		logger:            logger.With("component", "workflow-monitor"),
 		details:           make(map[string]*cachedDetail),
 		notifiedApprovals: make(map[string]bool),
-		stopCh:            make(chan struct{}),
 	}
+	m.InitBase(logger, nil, "workflow-monitor")
+	return m
 }
 
 // Start begins the background polling goroutine at the given interval.
 func (m *WorkflowMonitor) Start(interval time.Duration) {
-	// Run initial refresh asynchronously so HUD/TUI startup is non-blocking
-	// when downstream services are slow or unavailable.
-	go func() {
-		if err := m.Refresh(); err != nil {
-			m.logger.Warn("initial workflow refresh failed", "error", err)
-		}
-	}()
-
-	go m.pollLoop(interval)
-}
-
-// Stop signals the background goroutine to exit. It is safe to call multiple times.
-func (m *WorkflowMonitor) Stop() {
-	m.stopOnce.Do(func() { close(m.stopCh) })
+	m.BaseMonitor.Start(interval, m.refresh)
 }
 
 // Workflows returns the current workflow list.
 func (m *WorkflowMonitor) Workflows() []bridge.WorkflowInfo {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.RLock()
+	defer m.RUnlock()
 
-	out := make([]bridge.WorkflowInfo, len(m.workflows))
-	copy(out, m.workflows)
+	snap := m.GetSnapshot()
+	out := make([]bridge.WorkflowInfo, len(snap))
+	copy(out, snap)
 	return out
 }
 
@@ -93,12 +64,12 @@ func (m *WorkflowMonitor) Workflows() []bridge.WorkflowInfo {
 // agent bridge.
 func (m *WorkflowMonitor) Detail(id string) (*bridge.WorkflowDetail, error) {
 	// Check cache first under read lock.
-	m.mu.RLock()
+	m.RLock()
 	if cached, ok := m.details[id]; ok && time.Since(cached.fetchedAt) < detailTTL {
-		m.mu.RUnlock()
+		m.RUnlock()
 		return cached.detail, nil
 	}
-	m.mu.RUnlock()
+	m.RUnlock()
 
 	// Fetch fresh detail (outside lock to avoid blocking readers).
 	detail, err := m.agent.WorkflowStatus(id)
@@ -107,18 +78,18 @@ func (m *WorkflowMonitor) Detail(id string) (*bridge.WorkflowDetail, error) {
 	}
 	events, err := m.agent.WorkflowEvents(id)
 	if err != nil {
-		m.logger.Debug("workflow: failed to fetch workflow events", "workflow_id", id, "error", err)
+		m.Logger.Debug("workflow: failed to fetch workflow events", "workflow_id", id, "error", err)
 	} else {
 		detail.Events = events
 	}
 
 	// Cache the result.
-	m.mu.Lock()
+	m.Lock()
 	m.details[id] = &cachedDetail{
 		detail:    detail,
 		fetchedAt: time.Now(),
 	}
-	m.mu.Unlock()
+	m.Unlock()
 
 	return detail, nil
 }
@@ -154,11 +125,11 @@ func (m *WorkflowMonitor) CancelWorkflow(workflowID string) error {
 
 // PendingApprovals returns the count of workflows with status "waiting_approval".
 func (m *WorkflowMonitor) PendingApprovals() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.RLock()
+	defer m.RUnlock()
 
 	count := 0
-	for _, w := range m.workflows {
+	for _, w := range m.GetSnapshot() {
 		if w.Status == "waiting_approval" {
 			count++
 		}
@@ -166,23 +137,27 @@ func (m *WorkflowMonitor) PendingApprovals() int {
 	return count
 }
 
-// Refresh fetches the latest workflow list from the agent bridge.
-// It also prunes cached details for workflows that no longer exist.
-func (m *WorkflowMonitor) Refresh() error {
+// refresh fetches the latest workflow list from the agent bridge.
+func (m *WorkflowMonitor) refresh(_ context.Context) ([]bridge.WorkflowInfo, error) {
 	workflows, err := m.agent.WorkflowList()
 	if err != nil {
-		m.logger.Warn("workflow: failed to fetch workflow list", "error", err)
-		return err
+		m.Logger.Warn("workflow: failed to fetch workflow list", "error", err)
+		return nil, err
 	}
+	return workflows, nil
+}
 
+// Update overrides BaseMonitor.Update to handle detail cache pruning
+// and notification-dedup bookkeeping.
+func (m *WorkflowMonitor) Update(workflows []bridge.WorkflowInfo) {
 	// Build a set of current workflow IDs for pruning.
 	currentIDs := make(map[string]struct{}, len(workflows))
 	for _, w := range workflows {
 		currentIDs[w.ID] = struct{}{}
 	}
 
-	m.mu.Lock()
-	m.workflows = workflows
+	m.Lock()
+	m.SetSnapshot(workflows)
 
 	// Prune cached details for workflows that are no longer in the list.
 	for id := range m.details {
@@ -214,58 +189,28 @@ func (m *WorkflowMonitor) Refresh() error {
 			delete(m.notifiedApprovals, key)
 		}
 	}
-	m.mu.Unlock()
+	m.Unlock()
 
 	// Notify listeners (e.g., SSE hub) with the fresh workflow list (outside lock).
-	if m.onRefresh != nil {
-		out := make([]bridge.WorkflowInfo, len(workflows))
-		copy(out, workflows)
-		m.onRefresh(out)
-	}
+	out := make([]bridge.WorkflowInfo, len(workflows))
+	copy(out, workflows)
+	m.FireOnRefresh(out)
+}
 
+// Refresh forces an immediate refresh. Exposed for external callers.
+func (m *WorkflowMonitor) Refresh() error {
+	workflows, err := m.refresh(context.Background())
+	if err != nil {
+		return err
+	}
+	m.Update(workflows)
 	return nil
 }
 
 // invalidateDetail removes the cached detail for the given workflow ID
 // so the next Detail() call will fetch fresh data.
 func (m *WorkflowMonitor) invalidateDetail(workflowID string) {
-	m.mu.Lock()
+	m.Lock()
 	delete(m.details, workflowID)
-	m.mu.Unlock()
-}
-
-// pollLoop runs Refresh on a ticker until stopCh is closed.
-// On consecutive errors, it backs off by skipping ticker ticks.
-func (m *WorkflowMonitor) pollLoop(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	consecutiveErrors := 0
-	for {
-		select {
-		case <-m.stopCh:
-			m.logger.Debug("workflow monitor stopped")
-			return
-		case <-ticker.C:
-			if err := m.Refresh(); err != nil {
-				consecutiveErrors++
-				if consecutiveErrors <= 3 {
-					m.logger.Warn("workflow refresh error", "error", err)
-				}
-				skipTicks := min(consecutiveErrors-1, 4)
-				for range skipTicks {
-					select {
-					case <-m.stopCh:
-						return
-					case <-ticker.C:
-					}
-				}
-			} else {
-				if consecutiveErrors > 0 {
-					m.logger.Info("workflow refresh recovered", "after_errors", consecutiveErrors)
-				}
-				consecutiveErrors = 0
-			}
-		}
-	}
+	m.Unlock()
 }
