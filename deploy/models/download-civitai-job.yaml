@@ -1,0 +1,92 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: download-civitai-checkpoints
+  namespace: flexinfer-system
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: download-civitai-checkpoints
+    spec:
+      restartPolicy: OnFailure
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-5930k
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+      securityContext:
+        runAsUser: 0
+      containers:
+        - name: download
+          image: alpine:3.19
+          env:
+            - name: CIVITAI_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: civitai-token
+                  key: CIVITAI_TOKEN
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              apk add --no-cache curl
+              CKPT_DIR="/models/.checkpoints"
+              mkdir -p "$CKPT_DIR"
+
+              download() {
+                VERSION_ID="$1"
+                FILENAME="$2"
+                DEST="$CKPT_DIR/$FILENAME"
+                if [ -f "$DEST" ]; then
+                  echo "Already exists: $DEST"
+                  ls -lh "$DEST"
+                  return 0
+                fi
+                echo "Downloading $FILENAME (version $VERSION_ID)..."
+                URL="https://civitai.com/api/download/models/${VERSION_ID}?type=Model&format=SafeTensor&token=${CIVITAI_TOKEN}"
+                curl -L --retry 3 --retry-delay 10 \
+                  --progress-bar \
+                  -o "$DEST.tmp" \
+                  "$URL"
+                # Verify the download is a real model (>100MB)
+                SIZE=$(stat -c%s "$DEST.tmp" 2>/dev/null || stat -f%z "$DEST.tmp" 2>/dev/null || echo 0)
+                if [ "$SIZE" -lt 100000000 ]; then
+                  echo "ERROR: Download too small ($SIZE bytes), likely auth failure"
+                  head -c 500 "$DEST.tmp"
+                  rm -f "$DEST.tmp"
+                  return 1
+                fi
+                mv "$DEST.tmp" "$DEST"
+                echo "Done: $DEST"
+                ls -lh "$DEST"
+              }
+
+              # GonzaLomo v7.0 Photo XL (urn:air:sdxl:checkpoint:civitai:1513492@2732845)
+              download 2732845 "gonzalomo-v70-photo-xl.safetensors"
+
+              # Reality BoundXL soulGrip v10 (urn:air:sdxl:checkpoint:civitai:1815169@2711169)
+              download 2711169 "realityboundxl-soulgrip-v10.safetensors"
+
+              echo ""
+              echo "All checkpoints downloaded:"
+              ls -lh "$CKPT_DIR"
+          volumeMounts:
+            - name: model-storage
+              mountPath: /models
+          resources:
+            requests:
+              cpu: "1"
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+      volumes:
+        - name: model-storage
+          hostPath:
+            path: /var/lib/flexinfer/models
+            type: DirectoryOrCreate

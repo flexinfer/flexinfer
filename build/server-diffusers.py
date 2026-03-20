@@ -96,6 +96,11 @@ current_model_family = None
 gpu_info = None
 warmup_complete = False
 
+# Checkpoint hot-swap state
+# Maps friendly name (stem) -> absolute path to .safetensors file
+_available_checkpoints: dict[str, str] = {}
+_checkpoint_dir: Optional[str] = None
+
 # Pipeline mode: "text2image" (default), "inpainting", or "instruct"
 PIPELINE_MODE = os.environ.get("PIPELINE_MODE", "text2image")
 
@@ -653,6 +658,175 @@ class ImageData(BaseModel):
 class ImageGenerationResponse(BaseModel):
     created: int
     data: List[ImageData]
+
+
+class CheckpointSwapRequest(BaseModel):
+    """Request body for /v1/checkpoints/swap."""
+    checkpoint: str  # filename or stem of a .safetensors file
+
+
+def _discover_checkpoints() -> dict[str, str]:
+    """Scan the checkpoint directory for available .safetensors files.
+
+    Returns a dict mapping friendly name (filename stem) to absolute path.
+    The checkpoint dir is resolved from CHECKPOINT_DIR env, or defaults to
+    /models/.checkpoints (the hostPath mount convention).
+
+    When LOCAL_MODEL_PATH points to a model subdirectory (e.g. /models/sdxl-xyz),
+    we look for .checkpoints at the parent model root level (/models/.checkpoints).
+    """
+    global _checkpoint_dir
+    ckpt_dir = os.environ.get("CHECKPOINT_DIR", "").strip()
+    if not ckpt_dir:
+        model_path = os.environ.get("LOCAL_MODEL_PATH", "/models")
+        # LOCAL_MODEL_PATH may be a model subdirectory (e.g. /models/sdxl-xyz).
+        # Check for .checkpoints at the model path level first, then parent.
+        candidates = [
+            os.path.join(model_path, ".checkpoints"),
+            os.path.join(os.path.dirname(model_path), ".checkpoints") if model_path != "/models" else None,
+            "/models/.checkpoints",  # absolute fallback
+        ]
+        ckpt_dir = next((c for c in candidates if c and os.path.isdir(c)), candidates[0])
+    _checkpoint_dir = ckpt_dir
+
+    checkpoints: dict[str, str] = {}
+    if not os.path.isdir(ckpt_dir):
+        print(f"Checkpoint dir not found: {ckpt_dir}")
+        return checkpoints
+
+    for fname in sorted(os.listdir(ckpt_dir)):
+        if fname.endswith(".safetensors") and not fname.startswith("."):
+            stem = os.path.splitext(fname)[0]
+            checkpoints[stem] = os.path.join(ckpt_dir, fname)
+            print(f"  Discovered checkpoint: {stem} -> {fname}")
+    print(f"Found {len(checkpoints)} checkpoint(s) in {ckpt_dir}")
+    sys.stdout.flush()
+    return checkpoints
+
+
+def _resolve_checkpoint(name: str) -> Optional[str]:
+    """Resolve a checkpoint name to a file path.
+
+    Accepts: exact stem, filename with extension, or case-insensitive partial match.
+    """
+    if not _available_checkpoints:
+        return None
+    # Exact stem match
+    if name in _available_checkpoints:
+        return _available_checkpoints[name]
+    # With extension
+    stem = name.removesuffix(".safetensors")
+    if stem in _available_checkpoints:
+        return _available_checkpoints[stem]
+    # Case-insensitive partial match
+    lower = name.lower()
+    for k, v in _available_checkpoints.items():
+        if lower in k.lower():
+            return v
+    return None
+
+
+def _swap_checkpoint(checkpoint_path: str) -> str:
+    """Hot-swap to a different SDXL checkpoint.
+
+    Reuses text encoders and VAE from the currently loaded pipeline,
+    only replaces the UNet weights from the new checkpoint file.
+    Returns the new model name.
+    """
+    global pipeline, current_model, warmup_complete
+    import time as _time
+
+    t0 = _time.time()
+    ckpt_name = os.path.splitext(os.path.basename(checkpoint_path))[0]
+
+    if pipeline is None:
+        raise RuntimeError("No pipeline loaded — cannot hot-swap")
+
+    # Verify it's an SDXL pipeline (hot-swap only works within same architecture)
+    pipe_class_name = type(pipeline).__name__
+    if "XL" not in pipe_class_name and "Stable" not in pipe_class_name:
+        raise RuntimeError(
+            f"Hot-swap only supports SDXL pipelines, got {pipe_class_name}"
+        )
+
+    print(f"Hot-swapping to checkpoint: {ckpt_name}")
+    print(f"  Checkpoint: {checkpoint_path}")
+    print(f"  Current model: {current_model}")
+    sys.stdout.flush()
+
+    # Extract reusable components from current pipeline
+    text_encoder = getattr(pipeline, "text_encoder", None)
+    text_encoder_2 = getattr(pipeline, "text_encoder_2", None)
+    vae = getattr(pipeline, "vae", None)
+    scheduler = pipeline.scheduler
+
+    # Determine dtype from current pipeline
+    dtype = next(pipeline.unet.parameters()).dtype if hasattr(pipeline, "unet") else torch.float16
+
+    print(f"  Reusing text_encoder: {text_encoder is not None}")
+    print(f"  Reusing text_encoder_2: {text_encoder_2 is not None}")
+    print(f"  Reusing VAE: {vae is not None}")
+    print(f"  dtype: {dtype}")
+    sys.stdout.flush()
+
+    # Free old UNet from GPU memory before loading the new one
+    if hasattr(pipeline, "unet") and pipeline.unet is not None:
+        pipeline.unet.to("cpu")
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        print(f"  GPU memory after UNet offload: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+
+    # Load new pipeline from checkpoint, reusing text_encoder(s) + VAE
+    load_kwargs = {
+        "torch_dtype": dtype,
+        "use_safetensors": True,
+    }
+    if text_encoder is not None:
+        load_kwargs["text_encoder"] = text_encoder
+    if text_encoder_2 is not None:
+        load_kwargs["text_encoder_2"] = text_encoder_2
+    if vae is not None:
+        load_kwargs["vae"] = vae
+
+    config_override = _single_file_config_override()
+    if config_override:
+        load_kwargs["config"] = config_override
+
+    print("  Loading checkpoint via from_single_file...")
+    sys.stdout.flush()
+    new_pipe = StableDiffusionXLPipeline.from_single_file(
+        checkpoint_path, **load_kwargs
+    )
+
+    # Restore the scheduler from the previous pipeline
+    new_pipe.scheduler = scheduler
+
+    # Move the new UNet to GPU
+    is_rocm = hasattr(torch.version, "hip") and torch.version.hip is not None
+    offload_env = os.environ.get("USE_CPU_OFFLOAD", "")
+    use_cpu_offload = offload_env == "1" or (offload_env != "0" and is_rocm)
+
+    if use_cpu_offload and torch.cuda.is_available():
+        print("  Enabling CPU offload for swapped pipeline...")
+        new_pipe.enable_model_cpu_offload()
+    elif torch.cuda.is_available():
+        print("  Moving swapped pipeline to GPU...")
+        new_pipe = new_pipe.to("cuda")
+        torch.cuda.synchronize()
+
+    if torch.cuda.is_available():
+        print(f"  GPU memory after swap: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+
+    # Update globals
+    pipeline = new_pipe
+    current_model = ckpt_name
+    warmup_complete = True  # Skip warmup for hot-swaps (same arch)
+
+    elapsed = _time.time() - t0
+    print(f"  Hot-swap complete in {elapsed:.1f}s: {ckpt_name}")
+    sys.stdout.flush()
+    return ckpt_name
 
 
 def _detect_model_format(model_path: str) -> tuple:
@@ -1372,8 +1546,11 @@ def warmup_inference():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _available_checkpoints
     # Startup: check GPU and preload model if specified
     check_gpu()
+    # Discover available checkpoints for hot-swap
+    _available_checkpoints = _discover_checkpoints()
     model_id = os.environ.get("MODEL_ID", os.environ.get("MODEL", ""))
     if model_id:
         load_pipeline(model_id)
@@ -1416,9 +1593,87 @@ async def list_models():
                 "object": "model",
                 "created": int(time.time()),
                 "owned_by": "diffusers",
+                "active": True,
             }
         )
+    # Include available checkpoints (not currently loaded)
+    for stem, path in _available_checkpoints.items():
+        if stem != current_model:
+            models.append(
+                {
+                    "id": stem,
+                    "object": "model",
+                    "created": int(os.path.getmtime(path)),
+                    "owned_by": "checkpoint",
+                    "active": False,
+                }
+            )
     return {"object": "list", "data": models}
+
+
+@app.get("/v1/checkpoints")
+async def list_checkpoints():
+    """List available SDXL checkpoints that can be hot-swapped."""
+    checkpoints = []
+    for stem, path in _available_checkpoints.items():
+        size_gb = os.path.getsize(path) / (1024**3)
+        checkpoints.append(
+            {
+                "name": stem,
+                "path": path,
+                "size_gb": round(size_gb, 2),
+                "active": stem == current_model,
+            }
+        )
+    return {
+        "current_model": current_model,
+        "checkpoint_dir": _checkpoint_dir,
+        "checkpoints": checkpoints,
+    }
+
+
+@app.post("/v1/checkpoints/swap")
+async def swap_checkpoint(request: CheckpointSwapRequest):
+    """Hot-swap to a different SDXL checkpoint without full reload.
+
+    Reuses text encoders and VAE from the current pipeline —
+    only the UNet weights are replaced. Takes ~13s vs ~36s cold load.
+    """
+    checkpoint_path = _resolve_checkpoint(request.checkpoint)
+    if not checkpoint_path:
+        available = list(_available_checkpoints.keys())
+        raise HTTPException(
+            status_code=404,
+            detail=f"Checkpoint '{request.checkpoint}' not found. Available: {available}",
+        )
+
+    ckpt_stem = os.path.splitext(os.path.basename(checkpoint_path))[0]
+    if ckpt_stem == current_model:
+        return {
+            "status": "already_active",
+            "model": current_model,
+            "message": f"Checkpoint '{ckpt_stem}' is already the active model.",
+        }
+
+    async with _generation_lock:
+        new_model = await asyncio.to_thread(_swap_checkpoint, checkpoint_path)
+
+    return {
+        "status": "swapped",
+        "model": new_model,
+        "message": f"Hot-swapped to '{new_model}' successfully.",
+    }
+
+
+@app.post("/v1/checkpoints/refresh")
+async def refresh_checkpoints():
+    """Re-scan the checkpoint directory for newly added models."""
+    global _available_checkpoints
+    _available_checkpoints = _discover_checkpoints()
+    return {
+        "checkpoint_dir": _checkpoint_dir,
+        "checkpoints": list(_available_checkpoints.keys()),
+    }
 
 
 @app.post("/v1/images/generations")
@@ -1430,6 +1685,17 @@ async def generate_images(request: ImageGenerationRequest):
     model_id = os.environ.get("MODEL_ID") or os.environ.get("MODEL") or request.model
     if not model_id:
         raise HTTPException(status_code=400, detail="No model specified")
+
+    # Auto-swap: if the requested model matches a known checkpoint and isn't
+    # the currently loaded model, hot-swap instead of doing a full reload.
+    if pipeline is not None and model_id != current_model:
+        ckpt_path = _resolve_checkpoint(model_id)
+        if ckpt_path:
+            ckpt_stem = os.path.splitext(os.path.basename(ckpt_path))[0]
+            if ckpt_stem != current_model:
+                print(f"Auto-swapping to checkpoint '{ckpt_stem}' for model_id '{model_id}'")
+                async with _generation_lock:
+                    await asyncio.to_thread(_swap_checkpoint, ckpt_path)
 
     # Load pipeline if needed
     pipe = load_pipeline(model_id)
@@ -1451,6 +1717,17 @@ async def generate_images(request: ImageGenerationRequest):
         width, height = map(int, request.size.split("x"))
     except ValueError:
         width, height = 1024, 1024
+
+    # Diagnostic logging — shows whether params came from the request or defaults
+    _src_steps = "request" if request.num_inference_steps is not None else "default"
+    _src_guidance = "request" if request.guidance_scale is not None else "default"
+    _src_neg = "request" if request.negative_prompt else "default"
+    print(
+        f"[gen] model={model_id} size={width}x{height} "
+        f"steps={steps}({_src_steps}) guidance={guidance_scale}({_src_guidance}) "
+        f"neg_prompt={'set' if negative_prompt else 'none'}({_src_neg}) "
+        f"n={request.n} seed={request.seed}"
+    )
 
     def _run_inference():
         """Run blocking pipeline inference in a thread so the event loop stays responsive."""
@@ -1619,9 +1896,13 @@ async def edit_images(
         for _ in range(n):
             with torch.inference_mode():
                 if PIPELINE_MODE == "inpainting":
-                    if mask_bytes is None:
-                        raise ValueError("Inpainting mode requires a mask image")
-                    mask_img = _decode_mask(mask_bytes, src_img.size)
+                    if mask_bytes is not None:
+                        mask_img = _decode_mask(mask_bytes, src_img.size)
+                    else:
+                        # No mask provided — default to full white mask (edit everywhere).
+                        # This matches OpenAI API behaviour where mask is optional.
+                        print("inpainting: no mask provided, using full white mask")
+                        mask_img = Image.new("L", src_img.size, 255)
                     if _pipeline_is_flux_like(pipe, model_id):
                         # FluxFillPipeline: no strength, no negative_prompt
                         result = pipe(
