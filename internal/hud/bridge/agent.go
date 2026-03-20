@@ -28,16 +28,16 @@ import (
 // tools/call endpoint. Each method calls the appropriate agent_context__* tool
 // and unmarshals the result into a clean Go struct.
 type AgentBridge struct {
-	client *DaemonClient
+	client Caller       // Caller interface (DaemonClient or LocalCaller)
 	cache  *Cache       // session lookup cache (internal, always in-memory)
 	tracer trace.Tracer // OTel tracer for bridge operations
 }
 
 const defaultSessionListLimit = 1000
 
-// NewAgentBridge creates an AgentBridge backed by the given DaemonClient.
+// NewAgentBridge creates an AgentBridge backed by the given Caller.
 // The tracer defaults to a no-op; use SetTracer to enable OTel instrumentation.
-func NewAgentBridge(client *DaemonClient) *AgentBridge {
+func NewAgentBridge(client Caller) *AgentBridge {
 	return &AgentBridge{
 		client: client,
 		cache:  NewCache(),

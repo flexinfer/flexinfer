@@ -25,6 +25,7 @@ const defaultMetricsAddr = "127.0.0.1:9876"
 func main() {
 	var cfg daemon.Config
 	var metricsAddr string
+	var hudPort int
 	metricsDefault := strings.TrimSpace(os.Getenv("LOOM_METRICS_ADDR"))
 	if metricsDefault == "" {
 		metricsDefault = defaultMetricsAddr
@@ -35,7 +36,7 @@ func main() {
 		Short:   "Loom daemon - unified MCP hub management",
 		Version: version,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(cfg, metricsAddr)
+			return run(cfg, metricsAddr, hudPort)
 		},
 	}
 
@@ -52,13 +53,14 @@ func main() {
 	flags.BoolVar(&cfg.Debug, "debug", false, "Enable debug logging")
 	flags.StringVar(&metricsAddr, "metrics-addr", metricsDefault, "Address for metrics/health/events endpoint (e.g., 127.0.0.1:9876; empty disables)")
 	flags.StringVar(&cfg.HTTPAddr, "http-addr", "", "Address for Streamable HTTP listener (e.g., :8088)")
+	flags.IntVar(&hudPort, "hud-port", 0, "Enable embedded HUD on this port (shortcut: sets --http-addr and embedded_hud.enabled)")
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
-func run(cfg daemon.Config, metricsAddr string) error {
+func run(cfg daemon.Config, metricsAddr string, hudPort int) error {
 	// Best-effort raise the file descriptor limit early. A low RLIMIT_NOFILE
 	// prevents loomd from spawning many MCP servers (EMFILE / "too many open files").
 	tuneNoFileLimit(slog.Default())
@@ -70,6 +72,13 @@ func run(cfg daemon.Config, metricsAddr string) error {
 	fileCfg, fcErr := daemon.LoadConfigFile()
 	if fcErr != nil {
 		slog.Warn("failed to load config file for OTel", "error", fcErr)
+	}
+
+	// --hud-port shortcut: set HTTP addr for the embedded HUD.
+	if hudPort > 0 {
+		if cfg.HTTPAddr == "" {
+			cfg.HTTPAddr = fmt.Sprintf(":%d", hudPort)
+		}
 	}
 
 	// Build OTel options from file config (env vars take precedence).
@@ -100,6 +109,12 @@ func run(cfg daemon.Config, metricsAddr string) error {
 	d, err := daemon.New(cfg)
 	if err != nil {
 		return fmt.Errorf("create daemon: %w", err)
+	}
+
+	// --hud-port shortcut: enable embedded HUD after daemon creation.
+	if hudPort > 0 {
+		d.EnableEmbeddedHUD()
+		slog.Info("embedded HUD enabled via --hud-port", "port", hudPort)
 	}
 
 	if err := d.Start(ctx); err != nil {

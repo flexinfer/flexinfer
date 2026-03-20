@@ -70,6 +70,10 @@ func newHudCmd(socketPath string) *cobra.Command {
 		Long: `Launch an interactive dashboard for managing AI coding agents,
 MCP servers, workflows, memory, and the knowledge graph.
 
+DEPRECATED: The HUD is now embedded in loomd. Use 'loomd --hud-port 3333'
+instead of running a separate 'loom hud' process. This command remains
+functional for backward compatibility but will be removed in a future release.
+
 The HUD connects to the running loom daemon and provides real-time
 monitoring and control of the entire agent ecosystem.
 
@@ -94,6 +98,7 @@ Use --install-shader to install the loom-vibrancy.glsl shader to
 
 Use --metrics-addr to connect to the daemon's SSE event stream for
 real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
+		Deprecated: "use 'loomd --hud-port 3333' instead (HUD is now embedded in the daemon)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Load optional env file (secrets for launchd, etc.).
 			homeDir, _ := os.UserHomeDir()

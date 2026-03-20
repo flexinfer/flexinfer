@@ -112,7 +112,7 @@ type Config struct {
 // to the daemon.
 type App struct {
 	config       Config
-	client       *bridge.DaemonClient
+	client       bridge.Caller
 	agent        *bridge.AgentBridge
 	cache        loomcache.Store
 	cacheBackend string // "memory" or "redis" — exposed in /api/health.
@@ -147,8 +147,9 @@ type App struct {
 	deviceTokenStore     *DeviceTokenStore // Push notification device tokens (MBL-7).
 
 	// OTel instrumentation.
-	tracer  trace.Tracer
-	metrics *HUDMetrics
+	tracer       trace.Tracer
+	metrics      *HUDMetrics
+	otelShutdown func(context.Context) error
 
 	// Push notification bridge (SSE events → APNs).
 	pushBridge *PushEventBridge
@@ -1748,10 +1749,16 @@ func (a *App) handleGraphFindPath(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleTunnels(w http.ResponseWriter, _ *http.Request) {
-	result, err := a.client.Tunnels()
+	raw, err := a.client.Call("loom/tunnels", nil)
 	if err != nil {
 		// Fallback to empty if daemon doesn't support tunnels yet.
 		a.logger.Debug("tunnels RPC failed, returning empty", "error", err)
+		a.writeJSON(w, http.StatusOK, map[string]any{"tunnels": []any{}, "count": 0})
+		return
+	}
+	var result bridge.TunnelsResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		a.logger.Debug("tunnels unmarshal failed", "error", err)
 		a.writeJSON(w, http.StatusOK, map[string]any{"tunnels": []any{}, "count": 0})
 		return
 	}
@@ -1763,10 +1770,19 @@ func (a *App) handleTunnels(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) handleCacheStats(w http.ResponseWriter, _ *http.Request) {
-	result, err := a.client.CacheStats()
+	raw, err := a.client.Call("loom/cache/stats", nil)
 	if err != nil {
 		// Fallback to local HUD cache stats if daemon doesn't support cache RPC.
 		a.logger.Debug("cache stats RPC failed, returning local cache", "error", err)
+		a.writeJSON(w, http.StatusOK, map[string]any{
+			"entries":  a.cache.Len(),
+			"hit_rate": 0.0,
+		})
+		return
+	}
+	var result bridge.CacheStatsResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		a.logger.Debug("cache stats unmarshal failed", "error", err)
 		a.writeJSON(w, http.StatusOK, map[string]any{
 			"entries":  a.cache.Len(),
 			"hit_rate": 0.0,
@@ -1795,9 +1811,19 @@ func (a *App) handleCost(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) handleRBAC(w http.ResponseWriter, _ *http.Request) {
-	result, err := a.client.RBACConfig()
+	raw, err := a.client.Call("loom/rbac-config", nil)
 	if err != nil {
 		a.logger.Debug("rbac-config call failed", "error", err)
+		a.writeJSON(w, http.StatusOK, map[string]any{
+			"enabled":       false,
+			"audit_enabled": false,
+			"denied_count":  0,
+		})
+		return
+	}
+	var result bridge.RBACConfigResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		a.logger.Debug("rbac-config unmarshal failed", "error", err)
 		a.writeJSON(w, http.StatusOK, map[string]any{
 			"enabled":       false,
 			"audit_enabled": false,
@@ -1809,9 +1835,15 @@ func (a *App) handleRBAC(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) handleOTel(w http.ResponseWriter, _ *http.Request) {
-	result, err := a.client.OTelStatus()
+	raw, err := a.client.Call("loom/otel-status", nil)
 	if err != nil {
 		a.logger.Debug("otel-status call failed", "error", err)
+		a.writeJSON(w, http.StatusOK, map[string]any{"otlp_configured": false})
+		return
+	}
+	var result bridge.OTelStatusResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		a.logger.Debug("otel-status unmarshal failed", "error", err)
 		a.writeJSON(w, http.StatusOK, map[string]any{"otlp_configured": false})
 		return
 	}

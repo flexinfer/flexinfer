@@ -2,6 +2,8 @@ package monitor
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -40,11 +42,11 @@ type CostServerSummary struct {
 // CostMonitor polls the daemon's cost-stats RPC and maintains a cached snapshot.
 type CostMonitor struct {
 	BaseMonitor[CostSnapshot]
-	client *bridge.DaemonClient
+	client bridge.Caller
 }
 
-// NewCostMonitor creates a CostMonitor backed by the given daemon client.
-func NewCostMonitor(client *bridge.DaemonClient, logger *slog.Logger) *CostMonitor {
+// NewCostMonitor creates a CostMonitor backed by the given caller.
+func NewCostMonitor(client bridge.Caller, logger *slog.Logger) *CostMonitor {
 	m := &CostMonitor{client: client}
 	m.InitBase(logger, nil, "cost-monitor")
 	return m
@@ -57,13 +59,13 @@ func (m *CostMonitor) Start(interval time.Duration) {
 
 // refresh fetches the latest cost stats from the daemon via bridge.
 func (m *CostMonitor) refresh(_ context.Context) (CostSnapshot, error) {
-	result, err := m.client.CostStats()
+	raw, err := m.client.Call("loom/cost-stats", nil)
 	if err != nil {
 		return CostSnapshot{}, err
 	}
-	if result == nil {
-		// Return current snapshot unchanged when the daemon has no data.
-		return m.Snapshot(), nil
+	var result bridge.CostStatsResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return CostSnapshot{}, fmt.Errorf("unmarshal cost-stats: %w", err)
 	}
 
 	snap := CostSnapshot{

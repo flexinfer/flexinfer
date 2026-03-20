@@ -75,6 +75,13 @@ func (d *Daemon) startHTTPListener(ctx context.Context) error {
 		mux.HandleFunc("/oauth2/revoke", d.oauth.HandleRevoke)
 	}
 
+	// Embedded HUD: mount dashboard, mobile API, and SSE routes on the same mux.
+	if d.fileCfg.EmbeddedHUD.Enabled {
+		if err := d.startEmbeddedHUD(ctx, mux); err != nil {
+			d.logger.Error("embedded HUD init failed, continuing without HUD", "error", err)
+		}
+	}
+
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           mux,

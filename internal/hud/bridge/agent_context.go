@@ -322,8 +322,12 @@ func (a *AgentBridge) estimateToolSchemaBudget() (chars int, tokens int) {
 	if a == nil || a.client == nil {
 		return 0, 0
 	}
-	toolsResult, err := a.client.Tools()
-	if err != nil || toolsResult == nil {
+	raw, err := a.client.Call("loom/tools", nil)
+	if err != nil || raw == nil {
+		return 0, 0
+	}
+	var toolsResult ToolsResult
+	if err := json.Unmarshal(raw, &toolsResult); err != nil {
 		return 0, 0
 	}
 	for _, tool := range toolsResult.Tools {
