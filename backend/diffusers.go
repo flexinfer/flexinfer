@@ -184,6 +184,17 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		})
 	}
 
+	// ControlNet support
+	if cnPath := spec.ConfigString("controlnetPath", ""); cnPath != "" {
+		env = append(env, corev1.EnvVar{Name: "CONTROLNET_PATH", Value: cnPath})
+	}
+	if cnRepo := spec.ConfigString("controlnetRepo", ""); cnRepo != "" {
+		env = append(env, corev1.EnvVar{Name: "CONTROLNET_REPO", Value: cnRepo})
+	}
+	if cnScale := spec.ConfigString("controlnetScale", ""); cnScale != "" {
+		env = append(env, corev1.EnvVar{Name: "CONTROLNET_SCALE", Value: cnScale})
+	}
+
 	// Warmup inference control: skip the startup warmup pass if requested.
 	if skip := spec.ConfigString("skipWarmup", ""); skip != "" {
 		env = append(env, corev1.EnvVar{Name: "SKIP_WARMUP", Value: skip})
