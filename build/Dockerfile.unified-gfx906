@@ -1,0 +1,133 @@
+# Dockerfile.unified-gfx906
+# Unified runtime image for AMD Radeon VII (gfx906) on FlexInfer.
+# Replaces 3 separate images:
+#   - quantizer:gptq-rocm-gfx906       (ROCm 6.2.3, PyTorch 2.3, transformers <5)
+#   - quantizer:gptq-rocm64-gfx906     (ROCm 6.4.1, PyTorch 2.6, CPU-only)
+#   - diffusers:rocm-gfx906            (ROCm 6.2.3, PyTorch 2.3, bitsandbytes)
+#
+# Base: mixa3607/pytorch-gfx906 — community-maintained PyTorch builds with
+# rebuilt rocBLAS+Tensile for gfx906 on ROCm 6.3.3. This restores GPU compute
+# that was broken in ROCm 6.4+ (torch.empty(device="cuda") failure).
+#
+# Capabilities:
+#   - GPTQ quantization via GPTQModel (GPU-accelerated, transformers >=5.0)
+#   - Abliteration (GPU-accelerated with monkey-patched hipMemGetInfo)
+#   - Diffusers inference (SDXL, FLUX) with bitsandbytes NF4
+#   - GGUF conversion via llama.cpp (CPU-only, uses 128GB system RAM)
+#
+# GPU validation required before first use:
+#   docker run --device=/dev/kfd --device=/dev/dri \
+#     -e HSA_OVERRIDE_GFX_VERSION=9.0.6 \
+#     mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3 \
+#     python3 -c "import torch; x = torch.randn(1024, device='cuda'); print('OK:', x.mean())"
+#
+# Build:
+#   docker --context 7900xtx build -f build/Dockerfile.unified-gfx906 \
+#     -t registry.harbor.lan/flexinfer/runtime:unified-gfx906 .
+
+ARG PYTORCH_GFX906_TAG=v2.9.0-rocm-6.3.3
+FROM docker.io/mixa3607/pytorch-gfx906:${PYTORCH_GFX906_TAG}
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1
+
+# ── gfx906 runtime environment ──────────────────────────────────────────────
+# Hardware reports gfx900; override to gfx906 for correct ISA dispatch.
+# HSA_USE_SVM=0 works around hipMemGetInfo crash (ROCm/ROCm#2433).
+# TORCH_BLAS_PREFER_HIPBLASLT=0 disables hipBLASLt (not available on GCN5).
+ENV PYTORCH_ROCM_ARCH=gfx906 \
+    HSA_OVERRIDE_GFX_VERSION=9.0.6 \
+    HSA_ENABLE_SDMA=0 \
+    HSA_USE_SVM=0 \
+    TORCH_BLAS_PREFER_HIPBLASLT=0 \
+    MIOPEN_FIND_MODE=2
+
+# ── System dependencies ─────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl cmake ninja-build build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --upgrade pip "setuptools>=77" wheel "packaging>=24.2"
+
+# ── Triton fix ───────────────────────────────────────────────────────────────
+# The ROCm PyTorch base image may ship a broken editable Triton install.
+# Replace with the PyPI wheel which includes full ROCm/HIP support.
+RUN python3 -m pip install --force-reinstall triton==3.2.0
+
+# ── GPTQModel (quantization) ────────────────────────────────────────────────
+# CRITICAL: --no-deps prevents gptqmodel from pulling CUDA torch>=2.8.0.
+# On ROCm, ext_modules=[] (no native extensions), pure Python quantization.
+RUN python3 -m pip install -v "gptqmodel @ git+https://github.com/ModelCloud/GPTQModel.git@main" \
+    --no-build-isolation --no-deps
+
+# ── Python dependencies (shared by quantization + diffusers + abliteration) ─
+# transformers>=5.0 enables Qwen3.5, Llama4, and all modern model architectures.
+# This is the key unlock vs the old ROCm 6.2.3 image (which was pinned to <5).
+RUN python3 -m pip install \
+    "transformers>=5.0" \
+    safetensors \
+    "accelerate>=1.0" \
+    datasets \
+    sentencepiece \
+    huggingface_hub \
+    protobuf \
+    pillow \
+    device-smi \
+    tokenicer \
+    logbar \
+    maturin \
+    pyarrow \
+    dill \
+    pypcre \
+    zstandard \
+    defuser
+
+# Diffusers stack (inference for SDXL, FLUX, etc.)
+RUN python3 -m pip install \
+    "diffusers>=0.36.0" \
+    "fastapi>=0.115" \
+    "uvicorn[standard]>=0.34" \
+    pydantic \
+    python-multipart \
+    aiofiles
+
+# ── numpy ABI fix ────────────────────────────────────────────────────────────
+# Uninstall numba (not needed, ABI-incompatible with numpy 1.26+).
+# Force numpy <2 for ROCm PyTorch compatibility.
+RUN python3 -m pip uninstall -y numba llvmlite 2>/dev/null; \
+    python3 -m pip install --force-reinstall \
+    "numpy>=1.26,<2" \
+    pandas \
+    scipy \
+    scikit-learn
+
+# ── bitsandbytes from source (NF4/INT8 for gfx906) ──────────────────────────
+# pip wheel only ships HIP kernels for gfx90a/gfx942/gfx1100.
+# Build from source with COMPUTE_BACKEND=hip for gfx906 kernel support.
+# The conda compiler_compat linker may be incompatible — rename during build.
+RUN COMPILER_COMPAT=$(find / -path "*/compiler_compat" -type d 2>/dev/null | head -1) && \
+    if [ -n "$COMPILER_COMPAT" ]; then mv "$COMPILER_COMPAT" "${COMPILER_COMPAT}.bak"; fi && \
+    git clone --depth 1 --branch 0.49.2 \
+      https://github.com/bitsandbytes-foundation/bitsandbytes.git /tmp/bnb && \
+    cd /tmp/bnb && \
+    cmake -DCOMPUTE_BACKEND=hip -S . -B build && \
+    cmake --build build -j$(nproc) && \
+    BNB_SKIP_CMAKE=1 pip install --no-cache-dir --no-deps . && \
+    if [ -n "$COMPILER_COMPAT" ] && [ -d "${COMPILER_COMPAT}.bak" ]; then \
+      mv "${COMPILER_COMPAT}.bak" "$COMPILER_COMPAT"; \
+    fi && \
+    rm -rf /tmp/bnb
+
+# ── Disable hf-xet (overwhelms constrained WANs) ────────────────────────────
+ENV HF_HUB_DISABLE_XET=1
+
+# ── FlexInfer scripts ────────────────────────────────────────────────────────
+COPY build/scripts/abliterate.py /opt/flexinfer/scripts/abliterate.py
+COPY build/scripts/quantize_gptq.py /opt/flexinfer/scripts/quantize_gptq.py
+COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py
+
+RUN mkdir -p /models
+EXPOSE 8000
+
+ENTRYPOINT ["/bin/bash"]

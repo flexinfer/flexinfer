@@ -2,11 +2,24 @@ package quantization
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
+
+// quantizationCPUCores returns the CPU core count for quantization jobs.
+// Reads FLEXINFER_GPTQ_CPU_CORES env var, falls back to DefaultGPUQuantizationCPU.
+func quantizationCPUCores() int {
+	if v := os.Getenv("FLEXINFER_GPTQ_CPU_CORES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return DefaultGPUQuantizationCPU
+}
 
 const (
 	// DefaultAWQImage is the default image used for AWQ quantization jobs.
@@ -18,9 +31,10 @@ const (
 	// DefaultGPTQROCmImage is the default image used for GPTQ quantization on ROCm (gfx1100).
 	DefaultGPTQROCmImage = "registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100"
 
-	// DefaultGPTQROCmGFX906Image is the GPTQ quantizer image for Radeon VII (gfx906).
-	// Uses ROCm 6.2.3 + PyTorch 2.3 (last version with full gfx906 kernel support).
-	DefaultGPTQROCmGFX906Image = "registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx906"
+	// DefaultGPTQROCmGFX906Image is the unified runtime image for Radeon VII (gfx906).
+	// Based on mixa3607/pytorch-gfx906 (ROCm 6.3.3 + PyTorch 2.9), which restores
+	// GPU compute broken in ROCm 6.4+. Includes GPTQModel, bitsandbytes, diffusers.
+	DefaultGPTQROCmGFX906Image = "registry.harbor.lan/flexinfer/runtime:unified-gfx906"
 
 	// DefaultGPUQuantizationMemoryGB is the default memory limit for AWQ/GPTQ jobs.
 	DefaultGPUQuantizationMemoryGB = 48
@@ -90,7 +104,7 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 				},
 				Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", DefaultGPUQuantizationCPU)),
+						corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", quantizationCPUCores())),
 						corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryRequestForLimitGB(memoryGB))),
 						gpuResource:           resource.MustParse("1"),
 					},

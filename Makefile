@@ -186,7 +186,31 @@ envtest: $(ENVTEST) ## Download envtest-setup locally if necessary.
 $(ENVTEST): $(LOCALBIN)
 	test -s $(LOCALBIN)/setup-envtest || GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 
-##@ Backend Images
+##@ Runtime Images (config-driven, see build/runtime.yaml)
+
+RUNTIME_PROFILES := gfx1100 gfx906 cuda-maxwell
+
+.PHONY: build-runtime-%
+build-runtime-%: ## Build runtime image for a profile (e.g. make build-runtime-gfx1100)
+	./build/build-runtime.sh $*
+
+.PHONY: push-runtime-%
+push-runtime-%: ## Build + push runtime image for a profile
+	./build/build-runtime.sh $* --push
+
+.PHONY: build-runtimes
+build-runtimes: ## Build all runtime images sequentially
+	./build/build-runtime.sh all
+
+.PHONY: push-runtimes
+push-runtimes: ## Build + push all runtime images
+	./build/build-runtime.sh all --push
+
+.PHONY: dry-run-runtime-%
+dry-run-runtime-%: ## Print docker build command for a profile without executing
+	./build/build-runtime.sh $* --dry-run
+
+##@ Legacy Backend Images
 
 HARBOR_REGISTRY ?= registry.harbor.lan
 MLC_ROCM64_IMAGE ?= $(HARBOR_REGISTRY)/library/mlc-llm:rocm64-src
@@ -205,6 +229,7 @@ OLLAMA_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/ollama:cuda-maxwell
 DIFFUSERS_ROCM_IMAGE ?= $(HARBOR_REGISTRY)/library/diffusers-api:rocm-$(shell git rev-parse --short HEAD)
 DIFFUSERS_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/diffusers:rocm-gfx1100
 DIFFUSERS_GFX906_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/diffusers:rocm-gfx906
+UNIFIED_GFX906_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/runtime:unified-gfx906
 DIFFUSERS_CUDA_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/diffusers:cuda-maxwell
 
 # Docker context for GPU builds (requires remote builder with GPU access)
@@ -337,6 +362,14 @@ build-diffusers-gfx906: ## Build Diffusers ROCm image for gfx906 (Radeon VII, bi
 .PHONY: push-diffusers-gfx906
 push-diffusers-gfx906: ## Push Diffusers ROCm gfx906 image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(DIFFUSERS_GFX906_IMAGE)
+
+.PHONY: build-unified-gfx906
+build-unified-gfx906: ## Build unified gfx906 image (quantizer + diffusers + abliteration, mixa3607 base)
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.unified-gfx906 -t $(UNIFIED_GFX906_IMAGE) .
+
+.PHONY: push-unified-gfx906
+push-unified-gfx906: ## Push unified gfx906 image to Harbor
+	docker --context $(DOCKER_CONTEXT_GPU) push $(UNIFIED_GFX906_IMAGE)
 
 .PHONY: build-diffusers-cuda
 build-diffusers-cuda: ## Build Diffusers CUDA image for Maxwell (sm_52, CUDA 11.8)

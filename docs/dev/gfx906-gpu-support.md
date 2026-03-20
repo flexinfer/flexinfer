@@ -122,17 +122,20 @@ FROM rocm/pytorch:rocm6.1_ubuntu22.04_py3.10_pytorch_release_2.4.1
 - **Con**: hipMemGetInfo still broken (need monkey-patch for `torch.cuda.mem_get_info`)
 - **Status**: Untested. Validate `torch.empty(device="cuda")` works before adopting.
 
-### Option B: mixa3607/ML-gfx906 Community Images
+### Option B: mixa3607/ML-gfx906 Community Images (ADOPTED)
 
 [github.com/mixa3607/ML-gfx906](https://github.com/mixa3607/ML-gfx906) — active
 community project providing Docker images with PyTorch 2.7-2.11 on ROCm 6.3-7.2,
-all built with gfx906 targets.
+all built with gfx906 targets. Rebuilds rocBLAS+Tensile from source for gfx906.
 
-- **Pro**: Latest PyTorch + ROCm, actively maintained
-- **Pro**: Includes vLLM 0.11-0.12, llama.cpp, ComfyUI images
+- **Pro**: Latest PyTorch + ROCm, actively maintained (130 stars, last commit 2026-03-15)
+- **Pro**: Includes vLLM 0.12, llama.cpp, ComfyUI images
+- **Pro**: ROCm 6.3.3 is the last ROCm with shipped Tensile libs for gfx906
+- **Pro**: GPU compute confirmed working by community
 - **Con**: Community builds, not AMD-supported
-- **Con**: May need additional testing for production use
-- **Status**: Not evaluated. Worth testing for GPU-accelerated abliteration/quantization.
+- **Status**: **Adopted** as base for unified gfx906 image. See `build/Dockerfile.unified-gfx906`.
+- **Available images**: `mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3` (recommended),
+  `mixa3607/vllm-gfx906:0.12.0-rocm-6.3.3-nlzy` (vLLM inference)
 
 ### Option C: nlzy/vllm-gfx906 (Archived)
 
@@ -165,12 +168,45 @@ For inference, gfx906 **works** with:
 The GPU is functional for inference workloads that don't require transformers>=5.0
 or `torch.cuda.mem_get_info()` during loading.
 
+## Unified Runtime Image (2026-03-20)
+
+A unified image replaces the 3 separate gfx906 images with a single image based on
+[mixa3607/ML-gfx906](https://github.com/mixa3607/ML-gfx906) community builds.
+
+**Base**: `mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3`
+- ROCm 6.3.3 is the last version with pre-compiled Tensile libraries for gfx906
+- mixa3607 rebuilds rocBLAS+Tensile from source, restoring GPU compute on ROCm 6.3+
+- PyTorch 2.9 satisfies `transformers>=5.0` (needed for Qwen3.5, Llama 4, etc.)
+- GPU compute confirmed working by community (130+ stars, last commit 2026-03-15)
+
+**Dockerfile**: `build/Dockerfile.unified-gfx906`
+**Image**: `registry.harbor.lan/flexinfer/runtime:unified-gfx906`
+**Build**: `make build-unified-gfx906`
+
+**Replaces**:
+| Old Image | Purpose | Status |
+|-----------|---------|--------|
+| `quantizer:gptq-rocm-gfx906` | GPTQ quantization (ROCm 6.2.3) | Superseded |
+| `quantizer:gptq-rocm64-gfx906` | Qwen3.5 CPU-only quantization (ROCm 6.4.1) | Superseded |
+| `diffusers:rocm-gfx906` | Diffusers inference | Superseded |
+
+**Capabilities in unified image**:
+- GPTQ quantization (GPU-accelerated, transformers >=5.0)
+- Abliteration (GPU-accelerated with monkey-patched `hipMemGetInfo`)
+- Diffusers inference (SDXL, FLUX) with bitsandbytes NF4 from source
+- Modern model support (Qwen3.5, Llama 4, all architectures requiring transformers 5.x)
+
+**GPU validation required**: The build script auto-detects whether GPU compute works
+at runtime (`torch.empty(device="cuda")` test) and falls back to CPU-only if it fails.
+
+**Key risk**: Depends on community-maintained base image. Mitigation: mixa3607 build
+scripts are public and self-contained; can be forked if maintenance stops.
+
 ## Decision Log
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
+| 2026-03-20 | Unified gfx906 image based on mixa3607 | Restores GPU compute + transformers>=5.0 in single image |
 | 2026-03-20 | CPU-only abliteration on gfx906 | GPU alloc broken on ROCm 6.4; 128GB RAM makes CPU viable |
 | 2026-03-20 | Use `gptq-rocm64-gfx906` image | Only image with transformers>=5.0 for Qwen3.5 support |
 | 2026-03-08 | Keep `gptq-rocm-gfx906` (ROCm 6.2.3) | GPU works for non-Qwen3.5 GPTQ quantization |
-| TBD | Evaluate ROCm 6.1 + PyTorch 2.4.1 | Could restore GPU for transformers>=5.0 workloads |
-| TBD | Evaluate mixa3607/ML-gfx906 images | Community builds with latest PyTorch for gfx906 |
