@@ -29,7 +29,7 @@ func init() {
 }
 
 func (b *DiffusersBackend) Name() string {
-	return "diffusers"
+	return NameDiffusers
 }
 
 func (b *DiffusersBackend) Image(gpuVendor GPUVendor, gpuArch string) string {

@@ -29,7 +29,7 @@ func init() {
 }
 
 func (b *ComfyUIBackend) Name() string {
-	return "comfyui"
+	return NameComfyUI
 }
 
 func (b *ComfyUIBackend) Aliases() []string {

@@ -35,7 +35,7 @@ func init() {
 }
 
 func (b *LlamaCppBackend) Name() string {
-	return "llamacpp"
+	return NameLlamaCpp
 }
 
 func (b *LlamaCppBackend) Aliases() []string {

@@ -30,7 +30,7 @@ func init() {
 }
 
 func (b *VLLMOmniBackend) Name() string {
-	return "vllm-omni"
+	return NameVLLMOmni
 }
 
 func (b *VLLMOmniBackend) Aliases() []string {

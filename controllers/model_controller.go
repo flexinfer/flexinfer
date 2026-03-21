@@ -20,6 +20,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -115,7 +116,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// Handle finalizer
 	if model.DeletionTimestamp.IsZero() {
-		if !containsString(model.GetFinalizers(), aiv1alpha2.ModelFinalizer) {
+		if !slices.Contains(model.GetFinalizers(), aiv1alpha2.ModelFinalizer) {
 			model.SetFinalizers(append(model.GetFinalizers(), aiv1alpha2.ModelFinalizer))
 			if err := r.Update(ctx, model); err != nil {
 				log.Error(err, "Failed to add finalizer")
@@ -125,12 +126,12 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 	} else {
 		// Object is being deleted
-		if containsString(model.GetFinalizers(), aiv1alpha2.ModelFinalizer) {
+		if slices.Contains(model.GetFinalizers(), aiv1alpha2.ModelFinalizer) {
 			if err := r.cleanupModel(ctx, model); err != nil {
 				log.Error(err, "Failed to cleanup Model resources")
 				return ctrl.Result{}, err
 			}
-			model.SetFinalizers(removeString(model.GetFinalizers(), aiv1alpha2.ModelFinalizer))
+			model.SetFinalizers(slices.DeleteFunc(model.GetFinalizers(), func(v string) bool { return v == aiv1alpha2.ModelFinalizer }))
 			if err := r.Update(ctx, model); err != nil {
 				log.Error(err, "Failed to remove finalizer")
 				return ctrl.Result{}, err
@@ -238,12 +239,12 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	// Emit informational events for experimental opt-ins (vLLM V1 engine, flash attention).
-	if b.Name() == "vllm" || b.Name() == "vllm-omni" {
+	if b.Name() == backend.NameVLLM || b.Name() == backend.NameVLLMOmni {
 		r.emitVLLMOptInEvents(model)
 	}
 
 	// Backend-specific validation: llama.cpp needs an actual GGUF file path.
-	if b.Name() == "llamacpp" {
+	if b.Name() == backend.NameLlamaCpp {
 		if strings.HasPrefix(model.Spec.Source, "ollama://") {
 			err := fmt.Errorf("llamacpp backend does not support ollama:// sources; use HF:// (with config.ggufFile), pvc://, or file:// instead")
 			log.Error(err, "Backend source validation failed")

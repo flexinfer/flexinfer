@@ -79,7 +79,7 @@ func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, confi
 	if strings.HasPrefix(source, "HF://") && strategy == "SharedPVC" && model.Status.Cache != nil && model.Status.Cache.PVCName != "" {
 		plan.ModelPath = "/models/" + model.Name
 		// diffusers expects model_index.json at mount root.
-		if backendName == "diffusers" {
+		if backendName == backend.NameDiffusers {
 			plan.ModelVolumeSubPath = model.Name
 		}
 	}
@@ -108,7 +108,7 @@ func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, confi
 	// Backends that load a single GGUF file need a concrete file path under the
 	// staged HF directory. llama.cpp always requires it; vLLM uses it when the
 	// user specifies ggufFile to select a specific variant from multi-GGUF repos.
-	if (backendName == "llamacpp" || backendName == "vllm") &&
+	if (backendName == backend.NameLlamaCpp || backendName == backend.NameVLLM) &&
 		strings.HasPrefix(source, "HF://") &&
 		strategy == "SharedPVC" &&
 		model.Status.Cache != nil &&

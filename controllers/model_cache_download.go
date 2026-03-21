@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/backend"
 )
 
 func isMlcModelSource(source string) bool {
@@ -119,7 +120,7 @@ func resolveHFDownloadOptions(model *aiv1alpha2.Model) hfDownloadOptions {
 
 	// Backends that load GGUF files: filter downloads to just the specified file
 	// to avoid downloading all quantization variants from multi-GGUF repos.
-	if backendName == "llamacpp" || backendName == "llama.cpp" || backendName == "vllm" {
+	if backendName == backend.NameLlamaCpp || backendName == "llama.cpp" || backendName == backend.NameVLLM {
 		ggufFile := configStringValue(cfg, "ggufFile", "modelFile")
 		if ggufFile != "" {
 			opts.allowPatterns = append(opts.allowPatterns, ggufFile)

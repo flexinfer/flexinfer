@@ -34,7 +34,7 @@ func init() {
 }
 
 func (b *MLCLLMBackend) Name() string {
-	return "mlc-llm"
+	return NameMLCLLM
 }
 
 func (b *MLCLLMBackend) Aliases() []string {

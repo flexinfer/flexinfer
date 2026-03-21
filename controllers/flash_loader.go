@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/envutil"
 )
 
 type flashLoaderRuntimeConfig struct {
@@ -44,9 +45,11 @@ type flashLoaderRuntimeConfig struct {
 	ExcludePatterns string
 }
 
-const (
-	defaultFlashLoaderImage       = "registry.harbor.lan/flexinfer/flash-loader:latest"
-	defaultFlashLoaderConcurrency = 4
+const defaultFlashLoaderConcurrency = 4
+
+var defaultFlashLoaderImage = envutil.StringOrDefault(
+	"FLEXINFER_FLASH_LOADER_IMAGE",
+	"registry.harbor.lan/flexinfer/flash-loader:latest",
 )
 
 // cleanupFlashTmpfs creates a short-lived Job to remove the persistent

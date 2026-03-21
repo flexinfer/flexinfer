@@ -84,9 +84,9 @@ func resolveCapabilities(model *aiv1alpha2.Model, b backend.Backend) ResolvedCap
 	}
 
 	switch model.Spec.Backend {
-	case "vllm", "ollama":
+	case backend.NameVLLM, backend.NameOllama:
 		caps.ToolCalling = true
-	case "llamacpp":
+	case backend.NameLlamaCpp:
 		caps.ToolCalling = model.Spec.ConfigBool("jinja", false)
 		caps.Vision = model.Spec.ConfigString("mmproj", "") != ""
 	}

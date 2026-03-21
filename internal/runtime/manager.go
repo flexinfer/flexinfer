@@ -131,7 +131,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		return fmt.Errorf("backend %q does not support GPU vendor %q", req.Backend, m.gpuVendor)
 	}
 
-	if b.Name() == "comfyui" {
+	if b.Name() == backend.NameComfyUI {
 		return fmt.Errorf("backend %q is not bundled in flexinfer-runtime images; use the dedicated ComfyUI image", req.Backend)
 	}
 
@@ -610,15 +610,15 @@ func (m *Manager) continuousHealthCheck(ctx context.Context, name, healthURL str
 // Dockerfile handles invocation via ENTRYPOINT/CMD.
 func inferCommand(backendName string) (string, []string) {
 	switch backendName {
-	case "vllm", "vllm-omni":
+	case backend.NameVLLM, backend.NameVLLMOmni:
 		return "python", []string{"-m", "vllm.entrypoints.openai.api_server"}
-	case "diffusers":
+	case backend.NameDiffusers:
 		return "python", []string{"/opt/flexinfer/server-diffusers.py"}
-	case "llamacpp":
+	case backend.NameLlamaCpp:
 		return "llama-server", nil
-	case "ollama":
+	case backend.NameOllama:
 		return "ollama", nil
-	case "steam":
+	case backend.NameSteam:
 		return "steam", nil
 	default:
 		return backendName, nil

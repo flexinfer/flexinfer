@@ -31,7 +31,7 @@ func init() {
 }
 
 func (b *VLLMBackend) Name() string {
-	return "vllm"
+	return NameVLLM
 }
 
 func (b *VLLMBackend) Image(gpuVendor GPUVendor, gpuArch string) string {

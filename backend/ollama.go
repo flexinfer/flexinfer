@@ -37,7 +37,7 @@ func init() {
 }
 
 func (b *OllamaBackend) Name() string {
-	return "ollama"
+	return NameOllama
 }
 
 func (b *OllamaBackend) Image(gpuVendor GPUVendor, gpuArch string) string {

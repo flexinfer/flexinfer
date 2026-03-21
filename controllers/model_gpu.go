@@ -128,7 +128,7 @@ func (r *ModelReconciler) validateMaxwellSpecifics(model *aiv1alpha2.Model, b ba
 		return fmt.Errorf("FP16 models are not supported on Maxwell GPUs (no native FP16). Use q4f32_1, q0f32, or GGUF quantized models instead")
 	}
 
-	if b.Name() == "mlc-llm" {
+	if b.Name() == backend.NameMLCLLM {
 		// MLC-LLM on Maxwell should use a pre-compiled model library and avoid JIT.
 		cfg := model.Spec.GetConfigMap()
 		if cfg != nil {

@@ -17,6 +17,7 @@ limitations under the License.
 package controllers
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,216 +25,31 @@ import (
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
 
-func TestContainsString(t *testing.T) {
-	tests := []struct {
-		name     string
-		slice    []string
-		target   string
-		expected bool
-	}{
-		{
-			name:     "empty slice",
-			slice:    []string{},
-			target:   "test",
-			expected: false,
-		},
-		{
-			name:     "single element - contains",
-			slice:    []string{"test"},
-			target:   "test",
-			expected: true,
-		},
-		{
-			name:     "single element - does not contain",
-			slice:    []string{"other"},
-			target:   "test",
-			expected: false,
-		},
-		{
-			name:     "multiple elements - contains at start",
-			slice:    []string{"test", "other", "values"},
-			target:   "test",
-			expected: true,
-		},
-		{
-			name:     "multiple elements - contains in middle",
-			slice:    []string{"first", "test", "last"},
-			target:   "test",
-			expected: true,
-		},
-		{
-			name:     "multiple elements - contains at end",
-			slice:    []string{"first", "second", "test"},
-			target:   "test",
-			expected: true,
-		},
-		{
-			name:     "multiple elements - does not contain",
-			slice:    []string{"first", "second", "third"},
-			target:   "test",
-			expected: false,
-		},
-		{
-			name:     "empty string target - contains",
-			slice:    []string{"", "test"},
-			target:   "",
-			expected: true,
-		},
-		{
-			name:     "empty string target - does not contain",
-			slice:    []string{"test", "other"},
-			target:   "",
-			expected: false,
-		},
-		{
-			name:     "case sensitive",
-			slice:    []string{"Test", "OTHER"},
-			target:   "test",
-			expected: false,
-		},
-		{
-			name:     "finalizer string",
-			slice:    []string{"kubernetes.io/pv-protection", aiv1alpha1.ModelDeploymentFinalizer, "other.finalizer/cleanup"},
-			target:   aiv1alpha1.ModelDeploymentFinalizer,
-			expected: true,
-		},
-		{
-			name:     "duplicate elements",
-			slice:    []string{"test", "test", "other"},
-			target:   "test",
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := containsString(tt.slice, tt.target)
-			assert.Equal(t, tt.expected, result, "containsString result should match expected")
-		})
-	}
-}
-
-func TestRemoveString(t *testing.T) {
-	tests := []struct {
-		name     string
-		slice    []string
-		target   string
-		expected []string
-	}{
-		{
-			name:     "empty slice",
-			slice:    []string{},
-			target:   "test",
-			expected: nil,
-		},
-		{
-			name:     "single element - remove existing",
-			slice:    []string{"test"},
-			target:   "test",
-			expected: nil,
-		},
-		{
-			name:     "single element - remove non-existing",
-			slice:    []string{"other"},
-			target:   "test",
-			expected: []string{"other"},
-		},
-		{
-			name:     "multiple elements - remove from start",
-			slice:    []string{"test", "other", "values"},
-			target:   "test",
-			expected: []string{"other", "values"},
-		},
-		{
-			name:     "multiple elements - remove from middle",
-			slice:    []string{"first", "test", "last"},
-			target:   "test",
-			expected: []string{"first", "last"},
-		},
-		{
-			name:     "multiple elements - remove from end",
-			slice:    []string{"first", "second", "test"},
-			target:   "test",
-			expected: []string{"first", "second"},
-		},
-		{
-			name:     "multiple elements - remove non-existing",
-			slice:    []string{"first", "second", "third"},
-			target:   "test",
-			expected: []string{"first", "second", "third"},
-		},
-		{
-			name:     "remove empty string",
-			slice:    []string{"", "test", "other"},
-			target:   "",
-			expected: []string{"test", "other"},
-		},
-		{
-			name:     "case sensitive - no removal",
-			slice:    []string{"Test", "OTHER"},
-			target:   "test",
-			expected: []string{"Test", "OTHER"},
-		},
-		{
-			name:     "finalizer removal",
-			slice:    []string{"kubernetes.io/pv-protection", aiv1alpha1.ModelDeploymentFinalizer, "other.finalizer/cleanup"},
-			target:   aiv1alpha1.ModelDeploymentFinalizer,
-			expected: []string{"kubernetes.io/pv-protection", "other.finalizer/cleanup"},
-		},
-		{
-			name:     "remove multiple occurrences",
-			slice:    []string{"test", "other", "test", "final"},
-			target:   "test",
-			expected: []string{"other", "final"},
-		},
-		{
-			name:     "remove all elements",
-			slice:    []string{"test", "test", "test"},
-			target:   "test",
-			expected: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := removeString(tt.slice, tt.target)
-			if tt.expected == nil {
-				assert.Nil(t, result, "removeString result should be nil when expected")
-			} else {
-				assert.Equal(t, tt.expected, result, "removeString result should match expected")
-			}
-
-			// Note: Go slices may share underlying arrays in some cases,
-			// but the removeString function creates a new slice when needed
-		})
-	}
-}
-
 func TestFinalizerIntegration(t *testing.T) {
-	// Integration test for finalizer workflow
+	// Integration test for finalizer workflow using stdlib slices
 	finalizers := []string{
 		"kubernetes.io/pv-protection",
 		"some.other/finalizer",
 	}
 
 	// Test adding finalizer
-	assert.False(t, containsString(finalizers, aiv1alpha1.ModelDeploymentFinalizer), "Finalizer should not be present initially")
+	assert.False(t, slices.Contains(finalizers, aiv1alpha1.ModelDeploymentFinalizer), "Finalizer should not be present initially")
 
 	// Add finalizer
 	finalizers = append(finalizers, aiv1alpha1.ModelDeploymentFinalizer)
-	assert.True(t, containsString(finalizers, aiv1alpha1.ModelDeploymentFinalizer), "Finalizer should be present after adding")
+	assert.True(t, slices.Contains(finalizers, aiv1alpha1.ModelDeploymentFinalizer), "Finalizer should be present after adding")
 
 	// Verify other finalizers are preserved
-	assert.True(t, containsString(finalizers, "kubernetes.io/pv-protection"), "Other finalizers should be preserved")
-	assert.True(t, containsString(finalizers, "some.other/finalizer"), "Other finalizers should be preserved")
+	assert.True(t, slices.Contains(finalizers, "kubernetes.io/pv-protection"), "Other finalizers should be preserved")
+	assert.True(t, slices.Contains(finalizers, "some.other/finalizer"), "Other finalizers should be preserved")
 
 	// Remove finalizer
-	finalizers = removeString(finalizers, aiv1alpha1.ModelDeploymentFinalizer)
-	assert.False(t, containsString(finalizers, aiv1alpha1.ModelDeploymentFinalizer), "Finalizer should be removed")
+	finalizers = slices.DeleteFunc(finalizers, func(v string) bool { return v == aiv1alpha1.ModelDeploymentFinalizer })
+	assert.False(t, slices.Contains(finalizers, aiv1alpha1.ModelDeploymentFinalizer), "Finalizer should be removed")
 
 	// Verify other finalizers are still preserved
-	assert.True(t, containsString(finalizers, "kubernetes.io/pv-protection"), "Other finalizers should still be preserved")
-	assert.True(t, containsString(finalizers, "some.other/finalizer"), "Other finalizers should still be preserved")
+	assert.True(t, slices.Contains(finalizers, "kubernetes.io/pv-protection"), "Other finalizers should still be preserved")
+	assert.True(t, slices.Contains(finalizers, "some.other/finalizer"), "Other finalizers should still be preserved")
 
 	expectedFinalizers := []string{"kubernetes.io/pv-protection", "some.other/finalizer"}
 	assert.Equal(t, expectedFinalizers, finalizers, "Final finalizer list should match expected")
@@ -242,30 +58,23 @@ func TestFinalizerIntegration(t *testing.T) {
 func TestFinalizerEdgeCases(t *testing.T) {
 	t.Run("remove from nil slice", func(t *testing.T) {
 		var nilSlice []string
-		result := removeString(nilSlice, "test")
+		result := slices.DeleteFunc(nilSlice, func(v string) bool { return v == "test" })
 		assert.Empty(t, result, "Removing from nil slice should return empty slice")
 	})
 
 	t.Run("contains in nil slice", func(t *testing.T) {
 		var nilSlice []string
-		result := containsString(nilSlice, "test")
+		result := slices.Contains(nilSlice, "test")
 		assert.False(t, result, "Contains in nil slice should return false")
-	})
-
-	t.Run("remove empty string from slice with empty strings", func(t *testing.T) {
-		slice := []string{"", "", "test", ""}
-		result := removeString(slice, "")
-		expected := []string{"test"}
-		assert.Equal(t, expected, result, "Should remove all empty strings")
 	})
 
 	t.Run("contains and remove with special characters", func(t *testing.T) {
 		specialString := "flexinfer.ai/cleanup-with-special-chars!@#$%^&*()"
 		slice := []string{"normal", specialString, "other"}
 
-		assert.True(t, containsString(slice, specialString), "Should find string with special characters")
+		assert.True(t, slices.Contains(slice, specialString), "Should find string with special characters")
 
-		result := removeString(slice, specialString)
+		result := slices.DeleteFunc(slice, func(v string) bool { return v == specialString })
 		expected := []string{"normal", "other"}
 		assert.Equal(t, expected, result, "Should remove string with special characters")
 	})
