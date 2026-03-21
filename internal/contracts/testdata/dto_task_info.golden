@@ -1,0 +1,19 @@
+{
+  "id": "task_001",
+  "session_id": "sess_abc123",
+  "agent_id": "claude-code-1",
+  "namespace": "project/feature-x",
+  "title": "Implement golden test framework",
+  "context": "Add contract tests for API response shapes",
+  "priority": "high",
+  "status": "in_progress",
+  "tags": [
+    "testing",
+    "contracts"
+  ],
+  "blocked_by": [
+    "task_000"
+  ],
+  "created_at": "2025-01-15T10:05:00Z",
+  "updated_at": "2025-01-15T10:20:00Z"
+}

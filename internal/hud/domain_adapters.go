@@ -1,340 +1,645 @@
 // domain_adapters.go provides exported method adapters so that *App satisfies
-// the domain handler interfaces (fleet.AppHandlers, spawn.AppHandlers, etc.).
-//
-// Each method is a thin forwarder to the corresponding unexported handler.
-// This enables the domain packages to call App methods without exporting the
-// original handler signatures or changing the existing code.
+// the Deps interfaces for all domain packages (fleet, spawn, coordinator,
+// sandbox, mobile, graph, workflow, memory, handoff).
 package hud
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 
+	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/domain"
 	coorddomain "github.com/crb2nu/loom/internal/hud/domain/coordinator"
 	"github.com/crb2nu/loom/internal/hud/domain/fleet"
+	"github.com/crb2nu/loom/internal/hud/domain/graph"
+	"github.com/crb2nu/loom/internal/hud/domain/handoff"
+	"github.com/crb2nu/loom/internal/hud/domain/memory"
 	"github.com/crb2nu/loom/internal/hud/domain/mobile"
 	"github.com/crb2nu/loom/internal/hud/domain/sandbox"
-	"github.com/crb2nu/loom/internal/hud/domain/spawn"
+	domainspawn "github.com/crb2nu/loom/internal/hud/domain/spawn"
+	"github.com/crb2nu/loom/internal/hud/domain/workflow"
+	"github.com/crb2nu/loom/internal/hud/monitor"
+	pkgspawn "github.com/crb2nu/loom/internal/spawn"
 )
 
 // initDomainRegistry creates and populates the domain registry. Called from
 // Run() and from test helpers.
 func (a *App) initDomainRegistry() {
 	a.domainRegistry = domain.NewRegistry()
-	a.domainRegistry.Register(fleet.New(a))
-	a.domainRegistry.Register(spawn.New(a))
+	a.domainRegistry.Register(fleet.New(&fleetDepsAdapter{app: a}))
+	a.domainRegistry.Register(domainspawn.New(&spawnDepsAdapter{app: a}))
 	a.domainRegistry.Register(mobile.New(a))
 	a.domainRegistry.Register(coorddomain.New(a))
 	a.domainRegistry.Register(sandbox.New(a))
-}
-
-// --- Fleet domain adapters ---
-
-func (a *App) HandleAgentSessionStart(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentSessionStart(w, r)
-}
-
-func (a *App) HandleAgentSessionEnd(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentSessionEnd(w, r)
-}
-
-func (a *App) HandleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentHeartbeat(w, r)
-}
-
-func (a *App) HandleAgentSession(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentSession(w, r)
-}
-
-func (a *App) HandleAgentSessionList(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentSessionList(w, r)
-}
-
-func (a *App) HandleAgentSessionPrune(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentSessionPrune(w, r)
-}
-
-func (a *App) HandleAgentSessionDetail(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentSessionDetail(w, r)
-}
-
-func (a *App) HandleAgentContextAdd(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentContextAdd(w, r)
-}
-
-func (a *App) HandleAgentContextInspect(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentContextInspect(w, r)
-}
-
-func (a *App) HandleKnowledge(w http.ResponseWriter, r *http.Request) {
-	a.handleKnowledge(w, r)
-}
-
-func (a *App) HandleAgentTaskUpdate(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentTaskUpdate(w, r)
-}
-
-func (a *App) HandleAgentWorkflowDefine(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentWorkflowDefine(w, r)
-}
-
-func (a *App) HandleAgentWorkflowDefinitions(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentWorkflowDefinitions(w, r)
-}
-
-func (a *App) HandleAgentNudge(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentNudge(w, r)
-}
-
-func (a *App) HandleAgentNudgeQueue(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentNudgeQueue(w, r)
-}
-
-func (a *App) HandleAgentNudgeQueuePolicy(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentNudgeQueuePolicy(w, r)
-}
-
-func (a *App) HandleAgentNudgeQueuePolicyUpdate(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentNudgeQueuePolicyUpdate(w, r)
-}
-
-func (a *App) HandleAgentDispatch(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentDispatch(w, r)
-}
-
-func (a *App) HandleClaimRelease(w http.ResponseWriter, r *http.Request) {
-	a.handleClaimRelease(w, r)
-}
-
-// --- Spawn domain adapters ---
-
-func (a *App) HandleAgentSpawn(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentSpawn(w, r)
-}
+	a.domainRegistry.Register(graph.New(&graphDepsAdapter{app: a}))
+	a.domainRegistry.Register(workflow.New(&workflowDepsAdapter{app: a}))
+	a.domainRegistry.Register(memory.New(&memoryDepsAdapter{app: a}))
+	a.domainRegistry.Register(handoff.New(&handoffDepsAdapter{app: a}))
+}
+
+// --- Shared Deps methods (used by multiple domains) ---
+
+func (a *App) Agent() *bridge.AgentBridge { return a.agent }
+func (a *App) Logger() *slog.Logger       { return a.logger }
+
+func (a *App) Monitors() mobile.Monitors {
+	return mobile.Monitors{
+		Fleet:    a.fleetMonitor,
+		Health:   a.healthMonitor,
+		Memory:   a.memoryMonitor,
+		Workflow: a.workflowMonitor,
+		Sandbox:  a.sandboxMonitor,
+		Cost:     a.costMonitor,
+		Pipeline: a.pipelineMonitor,
+	}
+}
+
+func (a *App) MobileConfig() mobile.MobileConfig {
+	return mobile.MobileConfig{
+		OperatorToken:  a.config.MobileOperatorToken,
+		OperatorScopes: a.config.MobileOperatorScopes,
+		PushEnabled:    a.config.MobilePushEnabled,
+	}
+}
 
-func (a *App) HandleAgentSpawnList(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentSpawnList(w, r)
-}
-
-func (a *App) HandleAgentSpawnConfig(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentSpawnConfig(w, r)
-}
-
-func (a *App) HandleAgentSpawnDetail(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentSpawnDetail(w, r)
-}
-
-func (a *App) HandleAgentSpawnStop(w http.ResponseWriter, r *http.Request) {
-	a.handleAgentSpawnStop(w, r)
-}
-
-// --- Mobile domain adapters ---
-
-func (a *App) HandleMobilePing(w http.ResponseWriter, r *http.Request) {
-	a.handleMobilePing(w, r)
-}
-
-func (a *App) HandleMobileDashboard(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileDashboard(w, r)
-}
-
-func (a *App) HandleMobileControlPlane(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileControlPlane(w, r)
-}
-
-func (a *App) HandleMobileSessions(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSessions(w, r)
-}
-
-func (a *App) HandleMobileSessionDetail(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSessionDetail(w, r)
-}
-
-func (a *App) HandleMobileSessionEvents(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSessionEvents(w, r)
-}
-
-func (a *App) HandleMobileTasks(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileTasks(w, r)
-}
+func (a *App) SSEHub() mobile.SSEHubOps { return a.sseHub }
 
-func (a *App) HandleMobileWorkflows(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileWorkflows(w, r)
+func (a *App) RateLimiter() mobile.RateLimiterOps {
+	if a.mobileRateLimiter == nil {
+		return nil
+	}
+	return a.mobileRateLimiter
 }
 
-func (a *App) HandleMobileWorkflowDetail(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileWorkflowDetail(w, r)
-}
-
-func (a *App) HandleMobilePresence(w http.ResponseWriter, r *http.Request) {
-	a.handleMobilePresence(w, r)
-}
-
-func (a *App) HandleMobileAgents(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileAgents(w, r)
-}
-
-func (a *App) HandleMobileMemoryStats(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileMemoryStats(w, r)
-}
-
-func (a *App) HandleMobileMemoryItems(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileMemoryItems(w, r)
-}
-
-func (a *App) HandleMobileStream(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileStream(w, r)
-}
+func (a *App) RevocationList() mobile.RevocationListOps {
+	if a.mobileRevocationList == nil {
+		return nil
+	}
+	return a.mobileRevocationList
+}
+
+func (a *App) DeviceTokens() mobile.DeviceTokenStoreOps {
+	if a.deviceTokenStore == nil {
+		return nil
+	}
+	return a.deviceTokenStore
+}
+
+func (a *App) EventLog() mobile.EventLogOps {
+	if a.eventLog == nil {
+		return nil
+	}
+	return &mobileEventLogAdapter{log: a.eventLog}
+}
+
+func (a *App) Spawner() mobile.SpawnerOps {
+	if a.spawner == nil {
+		return nil
+	}
+	return &mobileSpawnerAdapter{s: a.spawner}
+}
+
+func (a *App) BroadcastAgentEvent(eventType string, payload any) {
+	a.broadcastAgentEvent(eventType, payload)
+}
+
+func (a *App) MaybeAutoProvisionSandbox(namespace string) {
+	cached, ok := a.cache.Get("sandbox_policy")
+	if !ok {
+		return
+	}
+	policy, ok := cached.(map[string]any)
+	if !ok {
+		return
+	}
+	autoProvision, _ := policy["auto_provision"].(bool)
+	if !autoProvision {
+		return
+	}
+
+	project := namespace
+	if i := strings.Index(namespace, "/"); i > 0 {
+		project = namespace[:i]
+	}
+	if project == "" {
+		return
+	}
+
+	detectResult, err := a.client.CallTool("devbox_detect", map[string]any{"project": project})
+	if err != nil {
+		a.logger.Debug("sandbox auto-provision: detect failed", "project", project, "error", err)
+		return
+	}
+	detect, err := bridge.ParseToolResultMap(detectResult)
+	if err != nil {
+		return
+	}
+	if detect["fingerprint_hash"] == nil || detect["fingerprint_hash"] == "" {
+		return
+	}
 
-func (a *App) HandleMobileTopology(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileTopology(w, r)
-}
-
-func (a *App) HandleMobileGraphStats(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileGraphStats(w, r)
-}
-
-func (a *App) HandleMobileGraphEntities(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileGraphEntities(w, r)
-}
+	_, err = a.client.CallTool("devbox_build", map[string]any{"project": project})
+	if err != nil {
+		a.logger.Debug("sandbox auto-provision: build failed", "project", project, "error", err)
+		return
+	}
+	a.logger.Info("sandbox auto-provisioned", "project", project)
+}
 
-func (a *App) HandleMobileGraphPath(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileGraphPath(w, r)
+func (a *App) FetchRBACConfig() bridge.RBACConfigResult { return a.fetchRBACConfig() }
+func (a *App) FetchOTelStatus() bridge.OTelStatusResult { return a.fetchOTelStatus() }
+
+func (a *App) DoSandboxStart(project, agentID string) (map[string]any, error) {
+	return a.doSandboxStart(project, agentID)
 }
 
-func (a *App) HandleMobileReasoningChains(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileReasoningChains(w, r)
+func (a *App) DoSandboxStop(project string) error {
+	return a.doSandboxStop(project)
 }
 
-func (a *App) HandleMobileReasoningChainDetail(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileReasoningChainDetail(w, r)
+func (a *App) WriteJSON(w http.ResponseWriter, status int, v any) {
+	a.writeJSON(w, status, v)
 }
 
-func (a *App) HandleMobileEventsStream(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileEventsStream(w, r)
+func (a *App) HandleSSE(w http.ResponseWriter, r *http.Request) {
+	a.handleSSE(w, r)
 }
 
-func (a *App) HandleMobileSessionCreate(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSessionCreate(w, r)
+func (a *App) ComputeTopology(snap monitor.FleetSnapshot) mobile.TopologyGraph {
+	hudGraph := computeTopology(snap, a)
+	nodes := make([]mobile.TopologyNode, len(hudGraph.Nodes))
+	for i, n := range hudGraph.Nodes {
+		nodes[i] = mobile.TopologyNode{
+			AgentID:     n.AgentID,
+			Status:      n.Status,
+			AgentType:   n.AgentType,
+			CurrentTask: n.CurrentTask,
+			Branch:      n.Branch,
+			PRUrl:       n.PRUrl,
+			Namespace:   n.Namespace,
+		}
+	}
+	edges := make([]mobile.TopologyEdge, len(hudGraph.Edges))
+	for i, e := range hudGraph.Edges {
+		edges[i] = mobile.TopologyEdge{
+			Source:   e.Source,
+			Target:   e.Target,
+			EdgeType: e.EdgeType,
+			Weight:   e.Weight,
+			Label:    e.Label,
+			Status:   e.Status,
+		}
+	}
+	clusters := make([]mobile.TopologyCluster, len(hudGraph.Clusters))
+	for i, c := range hudGraph.Clusters {
+		clusters[i] = mobile.TopologyCluster{
+			Project:  c.Project,
+			AgentIDs: c.AgentIDs,
+		}
+	}
+	return mobile.TopologyGraph{Nodes: nodes, Edges: edges, Clusters: clusters}
 }
 
-func (a *App) HandleMobileSessionEnd(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSessionEnd(w, r)
+func (a *App) OnSessionEnd(sessionID, agentID string) {
+	if a.coordinator != nil {
+		go a.coordinator.OnSessionEnd(sessionID, agentID)
+	}
 }
 
-func (a *App) HandleMobileAudit(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileAudit(w, r)
+func (a *App) MemoryStatsPayload(stats *bridge.MemoryStatsResult) map[string]any {
+	return memory.StatsPayload(stats)
 }
 
-func (a *App) HandleMobileAlertsPolicy(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileAlertsPolicy(w, r)
+func (a *App) FleetIncrementKPI(field string, delta int) {
+	a.fleetMonitor.IncrementKPI(field, delta)
 }
 
-func (a *App) HandleMobilePushRegister(w http.ResponseWriter, r *http.Request) {
-	a.handleMobilePushRegister(w, r)
+func (a *App) FleetRefresh() {
+	a.fleetMonitor.Refresh()
 }
 
-func (a *App) HandleMobilePushUnregister(w http.ResponseWriter, r *http.Request) {
-	a.handleMobilePushUnregister(w, r)
+func (a *App) RequireAdminToken(w http.ResponseWriter, r *http.Request) bool {
+	return a.requireAdminToken(w, r)
 }
 
-func (a *App) HandleMobileAdminRevoke(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileAdminRevoke(w, r)
-}
-
-func (a *App) HandleMobileSandbox(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSandbox(w, r)
-}
+// --- Mobile adapter helpers ---
 
-func (a *App) HandleMobileSandboxStart(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSandboxStart(w, r)
+// mobileEventLogAdapter wraps *EventLog to satisfy mobile.EventLogOps,
+// converting hud.TimelineEntry to mobile.TimelineEntry.
+type mobileEventLogAdapter struct {
+	log *EventLog
 }
 
-func (a *App) HandleMobileSandboxStop(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSandboxStop(w, r)
+func (e *mobileEventLogAdapter) All(limit int) []mobile.TimelineEntry {
+	entries := e.log.All(limit)
+	result := make([]mobile.TimelineEntry, len(entries))
+	for i, entry := range entries {
+		result[i] = mobile.TimelineEntry{
+			Timestamp: entry.Timestamp,
+			EventType: entry.EventType,
+			AgentID:   entry.AgentID,
+			AgentType: entry.AgentType,
+			Data:      entry.Data,
+		}
+	}
+	return result
 }
 
-func (a *App) HandleMobilePipelines(w http.ResponseWriter, r *http.Request) {
-	a.handleMobilePipelines(w, r)
+// mobileSpawnerAdapter wraps *SpawnOrchestrator to satisfy mobile.SpawnerOps.
+type mobileSpawnerAdapter struct {
+	s *SpawnOrchestrator
 }
 
-func (a *App) HandleMobileWorkflowApprove(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileWorkflowApprove(w, r)
+func (sa *mobileSpawnerAdapter) Spawn(ctx context.Context, req pkgspawn.Request) (string, error) {
+	return sa.s.Spawn(ctx, req)
 }
 
-func (a *App) HandleMobileWorkflowReject(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileWorkflowReject(w, r)
+func (sa *mobileSpawnerAdapter) GetSpawn(spawnID string) (*pkgspawn.State, bool) {
+	return sa.s.GetSpawn(spawnID)
 }
 
-func (a *App) HandleMobileHandoffs(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileHandoffs(w, r)
+func (sa *mobileSpawnerAdapter) ListSpawns() []*pkgspawn.State {
+	return sa.s.ListSpawns()
 }
 
-func (a *App) HandleMobileSpawnAgent(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSpawnAgent(w, r)
+func (sa *mobileSpawnerAdapter) StopSpawn(ctx context.Context, spawnID string) error {
+	return sa.s.StopSpawn(ctx, spawnID)
 }
 
-func (a *App) HandleMobileSpawnList(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSpawnList(w, r)
+func (sa *mobileSpawnerAdapter) Projects() []string {
+	return sa.s.Projects()
 }
 
-func (a *App) HandleMobileSpawnConfig(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSpawnConfig(w, r)
-}
+// --- Spawn domain Deps adapter ---
 
-func (a *App) HandleMobileSpawnDetail(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSpawnDetail(w, r)
+// spawnDepsAdapter wraps *App to satisfy domainspawn.Deps. A separate adapter
+// is needed because *App.Spawner() returns mobile.SpawnerOps (for the mobile
+// domain), while spawn.Deps requires spawn.SpawnerOps. Both interfaces have
+// identical method sets but are distinct Go types.
+type spawnDepsAdapter struct {
+	app *App
 }
 
-func (a *App) HandleMobileSpawnStop(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSpawnStop(w, r)
+func (s *spawnDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	s.app.WriteJSON(w, status, v)
 }
 
-func (a *App) HandleMobileSpawnStream(w http.ResponseWriter, r *http.Request) {
-	a.handleMobileSpawnStream(w, r)
+func (s *spawnDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	s.app.WriteError(w, status, msg, err)
 }
 
-// --- Coordinator domain adapters ---
-
-func (a *App) HandleCoordinatorStatus(w http.ResponseWriter, r *http.Request) {
-	a.handleCoordinatorStatus(w, r)
+func (s *spawnDepsAdapter) RequireAdminToken(w http.ResponseWriter, r *http.Request) bool {
+	return s.app.RequireAdminToken(w, r)
 }
 
-func (a *App) HandleCoordinatorSummarize(w http.ResponseWriter, r *http.Request) {
-	a.handleCoordinatorSummarize(w, r)
+func (s *spawnDepsAdapter) Spawner() domainspawn.SpawnerOps {
+	if s.app.spawner == nil {
+		return nil
+	}
+	return s.app.spawner
 }
 
-func (a *App) HandleCoordinatorCompress(w http.ResponseWriter, r *http.Request) {
-	a.handleCoordinatorCompress(w, r)
-}
+// --- Coordinator domain Deps implementation ---
 
-func (a *App) HandleCoordinatorPlan(w http.ResponseWriter, r *http.Request) {
-	a.handleCoordinatorPlan(w, r)
+// Coordinator returns the coordinator operations, or nil if not enabled.
+func (a *App) Coordinator() coorddomain.CoordinatorOps {
+	if a.coordinator == nil {
+		return nil
+	}
+	return a.coordinator
 }
 
-// CoordinatorMetricsHandler returns the coordinator Prometheus metrics handler,
-// or nil if the coordinator is not enabled.
-func (a *App) CoordinatorMetricsHandler() http.Handler {
+// CoordinatorMetrics returns the coordinator metrics, or nil if not enabled.
+func (a *App) CoordinatorMetrics() coorddomain.MetricsOps {
 	if a.coordinatorMetrics == nil {
 		return nil
 	}
-	return a.coordinatorMetrics.Handler()
+	return a.coordinatorMetrics
 }
 
-// --- Sandbox domain adapters ---
-
-func (a *App) HandleSandbox(w http.ResponseWriter, r *http.Request) {
-	a.handleSandbox(w, r)
+// WriteError writes a JSON error response (exported for domain packages).
+func (a *App) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	a.writeError(w, status, msg, err)
 }
 
-func (a *App) HandleSandboxPolicy(w http.ResponseWriter, r *http.Request) {
-	a.handleSandboxPolicy(w, r)
+// --- Sandbox domain Deps implementation ---
+
+func (a *App) SandboxSnapshot() map[string]any {
+	return a.sandboxMonitor.Snapshot()
 }
 
-func (a *App) HandleSandboxStart(w http.ResponseWriter, r *http.Request) {
-	a.handleSandboxStart(w, r)
+func (a *App) CacheGet(key string) (any, bool) {
+	return a.cache.Get(key)
 }
 
-func (a *App) HandleSandboxStop(w http.ResponseWriter, r *http.Request) {
-	a.handleSandboxStop(w, r)
+func (a *App) CacheSet(key string, value any, ttl time.Duration) {
+	a.cache.Set(key, value, ttl)
+}
+
+// --- Fleet domain Deps adapter ---
+
+// fleetDepsAdapter wraps *App to satisfy fleet.Deps. A separate adapter is
+// needed because fleet.NudgeQueue() returns fleet.NudgeQueueOps (bridge DTOs),
+// while *App holds a *NudgeQueue with hud-local types.
+type fleetDepsAdapter struct {
+	app *App
+}
+
+func (f *fleetDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	f.app.WriteJSON(w, status, v)
+}
+
+func (f *fleetDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	f.app.WriteError(w, status, msg, err)
+}
+
+func (f *fleetDepsAdapter) RequireAdminToken(w http.ResponseWriter, r *http.Request) bool {
+	return f.app.RequireAdminToken(w, r)
+}
+
+func (f *fleetDepsAdapter) Logger() *slog.Logger { return f.app.Logger() }
+
+func (f *fleetDepsAdapter) Agent() *bridge.AgentBridge { return f.app.Agent() }
+
+func (f *fleetDepsAdapter) FleetIncrementKPI(field string, delta int) {
+	f.app.FleetIncrementKPI(field, delta)
+}
+
+func (f *fleetDepsAdapter) FleetRefresh() { f.app.FleetRefresh() }
+
+func (f *fleetDepsAdapter) BroadcastAgentEvent(eventType string, payload any) {
+	f.app.BroadcastAgentEvent(eventType, payload)
+}
+
+func (f *fleetDepsAdapter) OnSessionEnd(sessionID, agentID string) {
+	f.app.OnSessionEnd(sessionID, agentID)
+}
+
+func (f *fleetDepsAdapter) MaybeAutoProvisionSandbox(namespace string) {
+	f.app.MaybeAutoProvisionSandbox(namespace)
+}
+
+func (f *fleetDepsAdapter) NudgeQueue() fleet.NudgeQueueOps {
+	return &fleetNudgeAdapter{q: f.app.nudgeQueue}
+}
+
+func (f *fleetDepsAdapter) CacheGet(key string) (any, bool) { return f.app.CacheGet(key) }
+
+func (f *fleetDepsAdapter) CacheSet(key string, value any, ttl time.Duration) {
+	f.app.CacheSet(key, value, ttl)
+}
+
+// fleetNudgeAdapter wraps *NudgeQueue to satisfy fleet.NudgeQueueOps,
+// converting between hud-local types and bridge DTOs.
+type fleetNudgeAdapter struct {
+	q *NudgeQueue
+}
+
+func (n *fleetNudgeAdapter) QueueNudge(agentID, nudgeType, lane, content, fromAgent string) string {
+	id := NewNudgeID(agentID)
+	n.q.Add(agentID, NudgeEntry{
+		ID:        id,
+		Type:      nudgeType,
+		Lane:      lane,
+		Content:   content,
+		FromAgent: fromAgent,
+	})
+	return id
+}
+
+func (n *fleetNudgeAdapter) Count(agentID string) int {
+	return n.q.Count(agentID)
+}
+
+func (n *fleetNudgeAdapter) Drain(agentID string) []any {
+	entries := n.q.Drain(agentID)
+	if len(entries) == 0 {
+		return nil
+	}
+	result := make([]any, len(entries))
+	for i, e := range entries {
+		result[i] = e
+	}
+	return result
+}
+
+func (n *fleetNudgeAdapter) StatusView(agentID string) bridge.NudgeQueueStatus {
+	s := n.q.Status(agentID)
+	return bridge.NudgeQueueStatus{
+		Pending:      s.Pending,
+		Dropped:      s.Dropped,
+		ByLane:       s.ByLane,
+		DebounceMs:   s.DebounceMs,
+		Cap:          s.Cap,
+		DropPolicy:   string(s.DropPolicy),
+		LanePriority: s.LanePriority,
+	}
+}
+
+func (n *fleetNudgeAdapter) PolicyView() bridge.NudgeQueuePolicy {
+	cfg := n.q.Config()
+	return bridge.NudgeQueuePolicy{
+		DebounceMs:   int(cfg.Debounce / time.Millisecond),
+		Cap:          cfg.Cap,
+		DropPolicy:   string(cfg.DropPolicy),
+		LanePriority: cfg.LanePriority,
+	}
+}
+
+func (n *fleetNudgeAdapter) ApplyPolicy(mutation bridge.NudgeQueuePolicyMutation) (before, after bridge.NudgeQueuePolicy, err error) {
+	before = n.PolicyView()
+	update := NudgeQueuePolicyUpdate{
+		DebounceMs:   mutation.DebounceMs,
+		Cap:          mutation.Cap,
+		DropPolicy:   mutation.DropPolicy,
+		LanePriority: mutation.LanePriority,
+	}
+	afterCfg, err := n.q.UpdateConfig(update)
+	if err != nil {
+		return before, before, err
+	}
+	after = bridge.NudgeQueuePolicy{
+		DebounceMs:   int(afterCfg.Debounce / time.Millisecond),
+		Cap:          afterCfg.Cap,
+		DropPolicy:   string(afterCfg.DropPolicy),
+		LanePriority: afterCfg.LanePriority,
+	}
+	return before, after, nil
+}
+
+// --- Graph domain Deps adapter ---
+
+// graphDepsAdapter wraps *App to satisfy graph.Deps.
+type graphDepsAdapter struct {
+	app *App
+}
+
+func (g *graphDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	g.app.WriteJSON(w, status, v)
+}
+
+func (g *graphDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	g.app.WriteError(w, status, msg, err)
+}
+
+func (g *graphDepsAdapter) Logger() *slog.Logger { return g.app.Logger() }
+
+func (g *graphDepsAdapter) Agent() *bridge.AgentBridge { return g.app.Agent() }
+
+func (g *graphDepsAdapter) CacheGet(key string) (any, bool) { return g.app.CacheGet(key) }
+
+func (g *graphDepsAdapter) CacheSet(key string, value any, ttl time.Duration) {
+	g.app.CacheSet(key, value, ttl)
+}
+
+// --- Workflow domain Deps adapter ---
+
+type workflowDepsAdapter struct {
+	app *App
+}
+
+func (w *workflowDepsAdapter) WriteJSON(wr http.ResponseWriter, status int, v any) {
+	w.app.WriteJSON(wr, status, v)
+}
+
+func (w *workflowDepsAdapter) WriteError(wr http.ResponseWriter, status int, msg string, err error) {
+	w.app.WriteError(wr, status, msg, err)
+}
+
+func (w *workflowDepsAdapter) Logger() *slog.Logger { return w.app.Logger() }
+
+func (w *workflowDepsAdapter) BroadcastAgentEvent(eventType string, payload any) {
+	w.app.BroadcastAgentEvent(eventType, payload)
+}
+
+func (w *workflowDepsAdapter) WorkflowMonitor() workflow.WorkflowMonitorOps {
+	return &workflowMonitorAdapter{mon: w.app.workflowMonitor}
+}
+
+// workflowMonitorAdapter converts between monitor types and workflow domain types.
+type workflowMonitorAdapter struct {
+	mon *monitor.WorkflowMonitor
+}
+
+func (a *workflowMonitorAdapter) Workflows() []workflow.WorkflowSummary {
+	infos := a.mon.Workflows()
+	out := make([]workflow.WorkflowSummary, len(infos))
+	for i, wf := range infos {
+		out[i] = workflow.WorkflowSummary{
+			ID:          wf.ID,
+			Name:        wf.Name,
+			Status:      wf.Status,
+			CurrentStep: wf.CurrentStep,
+			CreatedAt:   wf.CreatedAt,
+			Progress:    wf.Progress,
+			Error:       wf.Error,
+		}
+	}
+	return out
+}
+
+func (a *workflowMonitorAdapter) Detail(id string) (*workflow.WorkflowDetail, error) {
+	detail, err := a.mon.Detail(id)
+	if err != nil {
+		return nil, err
+	}
+	steps := make([]workflow.WorkflowStep, len(detail.Steps))
+	for i, s := range detail.Steps {
+		steps[i] = workflow.WorkflowStep{
+			ID:     s.ID,
+			Name:   s.Name,
+			Status: s.Status,
+			Type:   s.Type,
+		}
+	}
+	events := make([]workflow.WorkflowEvent, len(detail.Events))
+	for i, e := range detail.Events {
+		events[i] = workflow.WorkflowEvent{
+			ID:        e.ID,
+			EventType: e.EventType,
+			Timestamp: e.Timestamp,
+			StepID:    e.StepID,
+			Details:   e.Details,
+		}
+	}
+	return &workflow.WorkflowDetail{
+		ID:          detail.ID,
+		Name:        detail.Name,
+		Status:      detail.Status,
+		CurrentStep: detail.CurrentStep,
+		Progress:    detail.Progress,
+		CreatedAt:   detail.CreatedAt,
+		StartedAt:   detail.StartedAt,
+		CompletedAt: detail.CompletedAt,
+		Error:       detail.Error,
+		Steps:       steps,
+		Events:      events,
+	}, nil
+}
+
+func (a *workflowMonitorAdapter) ApproveStep(workflowID, stepID string) error {
+	return a.mon.ApproveStep(workflowID, stepID)
+}
+
+func (a *workflowMonitorAdapter) RejectStep(workflowID, stepID string) error {
+	return a.mon.RejectStep(workflowID, stepID)
+}
+
+func (a *workflowMonitorAdapter) CancelWorkflow(id string) error {
+	return a.mon.CancelWorkflow(id)
+}
+
+func (a *workflowMonitorAdapter) Refresh() {
+	_ = a.mon.Refresh()
+}
+
+// --- Memory domain Deps adapter ---
+
+type memoryDepsAdapter struct {
+	app *App
+}
+
+func (m *memoryDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	m.app.WriteJSON(w, status, v)
+}
+
+func (m *memoryDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	m.app.WriteError(w, status, msg, err)
+}
+
+func (m *memoryDepsAdapter) Logger() *slog.Logger { return m.app.Logger() }
+
+func (m *memoryDepsAdapter) Agent() *bridge.AgentBridge { return m.app.Agent() }
+
+func (m *memoryDepsAdapter) BroadcastAgentEvent(eventType string, payload any) {
+	m.app.BroadcastAgentEvent(eventType, payload)
+}
+
+func (m *memoryDepsAdapter) MemoryMonitor() memory.MemoryMonitorOps {
+	return m.app.memoryMonitor
+}
+
+// --- Handoff domain Deps adapter ---
+
+type handoffDepsAdapter struct {
+	app *App
+}
+
+func (h *handoffDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	h.app.WriteJSON(w, status, v)
+}
+
+func (h *handoffDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	h.app.WriteError(w, status, msg, err)
+}
+
+func (h *handoffDepsAdapter) Logger() *slog.Logger { return h.app.Logger() }
+
+func (h *handoffDepsAdapter) Agent() *bridge.AgentBridge { return h.app.Agent() }
+
+func (h *handoffDepsAdapter) BroadcastAgentEvent(eventType string, payload any) {
+	h.app.BroadcastAgentEvent(eventType, payload)
 }

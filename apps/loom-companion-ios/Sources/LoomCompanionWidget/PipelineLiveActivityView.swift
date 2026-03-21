@@ -8,13 +8,19 @@ struct PipelineLiveActivityView: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: PipelineActivityAttributes.self) { context in
             lockScreenView(context: context)
-                .activityBackgroundTint(.black.opacity(0.7))
+                .activityBackgroundTint(context.state.status == "failed" ? .red.opacity(0.15) : .black.opacity(0.7))
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Image(systemName: "server.rack")
-                        .foregroundStyle(pipelineStatusColor(context.state.status))
-                        .font(.title2)
+                    if !context.attributes.agentId.isEmpty {
+                        Image(systemName: agentIcon(context.attributes.agentType))
+                            .foregroundStyle(agentColor(context.attributes.agentType))
+                            .font(.title2)
+                    } else {
+                        Image(systemName: "server.rack")
+                            .foregroundStyle(pipelineStatusColor(context.state.status))
+                            .font(.title2)
+                    }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     VStack(alignment: .trailing, spacing: 2) {
@@ -32,10 +38,17 @@ struct PipelineLiveActivityView: Widget {
                         Text(shortProject(context.attributes.project))
                             .font(.headline)
                             .lineLimit(1)
-                        Text(context.state.currentStage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        if context.state.status == "failed" && context.state.failedJobCount > 0 {
+                            Text("\(context.state.failedJobCount) jobs failed")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .lineLimit(1)
+                        } else {
+                            Text(context.state.currentStage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
@@ -58,11 +71,21 @@ struct PipelineLiveActivityView: Widget {
     @ViewBuilder
     private func lockScreenView(context: ActivityViewContext<PipelineActivityAttributes>) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Header: GitLab icon + project + ref + timer
+            // Header: agent/pipeline icon + project + ref + timer
             HStack {
-                Image(systemName: "server.rack")
-                    .foregroundStyle(pipelineStatusColor(context.state.status))
-                    .font(.title3)
+                if context.state.status == "failed" {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .font(.title3)
+                } else if !context.attributes.agentId.isEmpty {
+                    Image(systemName: agentIcon(context.attributes.agentType))
+                        .foregroundStyle(agentColor(context.attributes.agentType))
+                        .font(.title3)
+                } else {
+                    Image(systemName: "server.rack")
+                        .foregroundStyle(pipelineStatusColor(context.state.status))
+                        .font(.title3)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(shortProject(context.attributes.project))
                         .font(.headline)
@@ -97,11 +120,20 @@ struct PipelineLiveActivityView: Widget {
             HStack(spacing: 12) {
                 statusBadge(context.state.status)
                 if context.state.failedJobCount > 0 {
-                    Label("\(context.state.failedJobCount) failed", systemImage: "xmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(.red)
+                    Label(
+                        "\(context.state.failedJobCount) \(context.state.failedJobCount == 1 ? "job" : "jobs") failed",
+                        systemImage: "xmark.circle"
+                    )
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.red)
                 }
                 Spacer()
+                if !context.attributes.agentId.isEmpty {
+                    Label(context.attributes.agentId, systemImage: agentIcon(context.attributes.agentType))
+                        .font(.caption2)
+                        .foregroundStyle(agentColor(context.attributes.agentType))
+                }
             }
         }
         .padding()
@@ -181,7 +213,7 @@ struct PipelineLiveActivityView: Widget {
         }
     }
 
-    /// Extract short project name from full path (e.g., "group/project" → "project").
+    /// Extract short project name from full path (e.g., "group/project" -> "project").
     private func shortProject(_ project: String) -> String {
         if let last = project.split(separator: "/").last {
             return String(last)

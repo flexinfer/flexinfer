@@ -56,18 +56,30 @@ public final class LiveActivityManager {
     // MARK: - Stale Activity Reaping
 
     /// Reap activities that haven't been updated within their staleness window.
+    /// Checks server-provided `staleAfter` timestamp first (authoritative).
+    /// Falls back to ActivityKit staleDate heuristic when no server hint.
     /// Sessions: 5 minutes. Workflows/Pipelines: 10 minutes.
     public func reapStaleActivities() {
         let sessionStaleThreshold: TimeInterval = 300
         let otherStaleThreshold: TimeInterval = 600
+        let isoFormatter = ISO8601DateFormatter()
 
         for (id, activity) in sessionActivities {
+            // Server-authoritative: check staleAfter field first.
+            let serverStaleAfter = activity.content.state.staleAfter
+            if !serverStaleAfter.isEmpty,
+               let staleDate = isoFormatter.date(from: serverStaleAfter),
+               Date() > staleDate {
+                endSessionActivity(sessionId: id, finalStatus: "stale")
+                continue
+            }
+
+            // Fall back to ActivityKit staleDate when server hint is absent.
             if let staleDate = activity.content.staleDate, Date() > staleDate {
                 endSessionActivity(sessionId: id, finalStatus: "stale")
-            } else if activity.content.state.status == "active",
+            } else if serverStaleAfter.isEmpty,
+                      activity.content.state.status == "active",
                       activity.content.state.elapsedSeconds == 0 {
-                // Heuristic: if the state hasn't been updated and staleness date isn't set,
-                // check via the activity's content date.
                 if let date = activity.content.staleDate, Date().timeIntervalSince(date) > sessionStaleThreshold {
                     endSessionActivity(sessionId: id, finalStatus: "stale")
                 }
@@ -214,7 +226,8 @@ public final class LiveActivityManager {
         agentType: String,
         namespace: String,
         branch: String = "",
-        currentTask: String = ""
+        currentTask: String = "",
+        estimatedCost: Double = 0
     ) {
         guard sessionActivities[sessionId] == nil else { return }
         guard sessionActivities.count < maxSessionSlots else { return }
@@ -233,7 +246,8 @@ public final class LiveActivityManager {
             branch: branch,
             elapsedSeconds: 0,
             tokenCount: 0,
-            entryCount: 0
+            entryCount: 0,
+            estimatedCost: estimatedCost
         )
 
         do {
@@ -256,22 +270,33 @@ public final class LiveActivityManager {
         currentTask: String? = nil,
         branch: String? = nil,
         tokenCount: Int? = nil,
-        entryCount: Int? = nil
+        entryCount: Int? = nil,
+        estimatedCost: Double? = nil,
+        staleAfter: String? = nil
     ) {
         guard let activity = sessionActivities[sessionId] else { return }
 
         let currentState = activity.content.state
+        let resolvedStaleAfter = staleAfter ?? currentState.staleAfter
         let state = SessionActivityAttributes.ContentState(
             status: status,
             currentTask: currentTask ?? currentState.currentTask,
             branch: branch ?? currentState.branch,
             elapsedSeconds: 0, // Timer is handled by Text(startDate, style: .timer)
             tokenCount: tokenCount ?? currentState.tokenCount,
-            entryCount: entryCount ?? currentState.entryCount
+            entryCount: entryCount ?? currentState.entryCount,
+            estimatedCost: estimatedCost ?? currentState.estimatedCost,
+            staleAfter: resolvedStaleAfter
         )
 
+        // Derive ActivityKit staleDate from the server-provided timestamp.
+        var activityStaleDate: Date?
+        if !resolvedStaleAfter.isEmpty {
+            activityStaleDate = ISO8601DateFormatter().date(from: resolvedStaleAfter)
+        }
+
         Task {
-            await activity.update(.init(state: state, staleDate: nil))
+            await activity.update(.init(state: state, staleDate: activityStaleDate))
         }
     }
 
@@ -293,7 +318,9 @@ public final class LiveActivityManager {
             branch: currentState.branch,
             elapsedSeconds: 0,
             tokenCount: currentState.tokenCount,
-            entryCount: currentState.entryCount
+            entryCount: currentState.entryCount,
+            estimatedCost: currentState.estimatedCost,
+            staleAfter: ""
         )
 
         Task {
@@ -329,7 +356,9 @@ public final class LiveActivityManager {
         project: String,
         ref: String,
         currentStage: String = "Starting",
-        totalStages: Int = 1
+        totalStages: Int = 1,
+        agentId: String = "",
+        agentType: String = ""
     ) {
         guard pipelineActivities[pipelineId] == nil else { return }
         guard activeCount < maxConcurrent else { return }
@@ -338,7 +367,9 @@ public final class LiveActivityManager {
         let attributes = PipelineActivityAttributes(
             pipelineId: pipelineId,
             project: project,
-            ref: ref
+            ref: ref,
+            agentId: agentId,
+            agentType: agentType
         )
         let state = PipelineActivityAttributes.ContentState(
             status: "running",

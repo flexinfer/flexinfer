@@ -1,0 +1,32 @@
+{
+  "id": "ent_001",
+  "name": "UserService",
+  "type": "service",
+  "entity_type": "service",
+  "namespace": "project/auth",
+  "properties": {
+    "language": "go"
+  },
+  "inbound_relations": [
+    {
+      "id": "rel_001",
+      "source_id": "ent_002",
+      "source_name": "APIGateway",
+      "target_id": "ent_001",
+      "target_name": "UserService",
+      "type": "depends_on",
+      "relation_type": "depends_on"
+    }
+  ],
+  "outbound_relations": [
+    {
+      "id": "rel_002",
+      "source_id": "ent_001",
+      "source_name": "UserService",
+      "target_id": "ent_003",
+      "target_name": "PostgresDB",
+      "type": "uses",
+      "relation_type": "uses"
+    }
+  ]
+}

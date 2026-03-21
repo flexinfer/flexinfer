@@ -9,49 +9,62 @@ struct AgentRowView: View {
             StatusAccentBar(color: LoomColors.presenceStatusColor(agent.status))
 
             VStack(alignment: .leading, spacing: LoomSpacing.xxs) {
-                HStack {
-                    Image(systemName: agentTypeIcon)
-                        .font(.system(size: 14))
-                        .foregroundStyle(LoomColors.presenceStatusColor(agent.status))
+                // Line 1: status dot + agent_id + branch pill + token count
+                HStack(spacing: LoomSpacing.xs) {
+                    Circle()
+                        .fill(LoomColors.presenceStatusColor(agent.status))
+                        .frame(width: 8, height: 8)
 
                     Text(agent.agentId)
-                        .font(LoomTypography.headlineMedium)
+                        .font(LoomTypography.bodyMedium)
                         .lineLimit(1)
 
                     Spacer()
 
-                    StatusBadge(presenceStatus: agent.status)
-                }
-
-                if !agent.currentTask.isEmpty {
-                    Text(agent.currentTask)
-                        .font(LoomTypography.caption)
-                        .foregroundStyle(LoomColors.textSecondary)
-                        .lineLimit(2)
-                } else if !agent.description.isEmpty {
-                    Text(agent.description)
-                        .font(LoomTypography.caption)
-                        .foregroundStyle(LoomColors.textSecondary)
-                        .lineLimit(2)
-                }
-
-                HStack(spacing: LoomSpacing.sm) {
                     if !agent.branch.isEmpty {
-                        Label(agent.branch, systemImage: "arrow.triangle.branch")
-                            .font(LoomTypography.monoCaption)
-                            .foregroundStyle(LoomColors.textTertiary)
-                            .lineLimit(1)
+                        branchPill
                     }
 
-                    if let ns = agent.namespace, !ns.isEmpty {
-                        Label(ns, systemImage: "folder")
+                    if agent.totalTokens > 0 {
+                        Text(formatTokens(agent.totalTokens))
                             .font(LoomTypography.monoCaption)
                             .foregroundStyle(LoomColors.textTertiary)
-                            .lineLimit(1)
                     }
                 }
 
-                HStack(spacing: LoomSpacing.sm) {
+                // Line 2: namespace + current task / description
+                HStack(spacing: LoomSpacing.xs) {
+                    if let ns = agent.namespace, !ns.isEmpty {
+                        Text(ns)
+                            .font(LoomTypography.monoCaption)
+                            .foregroundStyle(LoomColors.textTertiary)
+                            .lineLimit(1)
+                    }
+
+                    if !agent.currentTask.isEmpty {
+                        Text(agent.currentTask)
+                            .font(LoomTypography.caption)
+                            .foregroundStyle(LoomColors.textSecondary)
+                            .lineLimit(1)
+                    } else if !agent.description.isEmpty {
+                        Text(agent.description)
+                            .font(LoomTypography.caption)
+                            .foregroundStyle(LoomColors.textSecondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    // Inline indicators
+                    if agent.needsAttention {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.orange)
+                    }
+                }
+
+                // Line 3: compact pill row
+                HStack(spacing: LoomSpacing.xs) {
                     if agent.hasSession {
                         sessionPill
                     }
@@ -61,9 +74,6 @@ struct AgentRowView: View {
                     if agent.taskCount > 0 {
                         taskCountPill
                     }
-                    if agent.needsAttention {
-                        attentionIndicator
-                    }
                     Spacer()
                     elapsedLabel
                 }
@@ -72,14 +82,20 @@ struct AgentRowView: View {
         .padding(.vertical, LoomSpacing.xxs)
     }
 
-    private var agentTypeIcon: String {
-        switch agent.agentType.lowercased() {
-        case "claude-code": return "brain.head.profile"
-        case "codex": return "terminal"
-        case "gemini": return "sparkles"
-        default: return "desktopcomputer"
-        }
+    // MARK: - Branch Pill
+
+    private var branchPill: some View {
+        Text(agent.branch)
+            .font(LoomTypography.monoCaption)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(LoomColors.accent.opacity(0.1))
+            .foregroundStyle(LoomColors.accent)
+            .clipShape(Capsule())
+            .lineLimit(1)
     }
+
+    // MARK: - Pills
 
     private var sessionPill: some View {
         HStack(spacing: 3) {
@@ -87,7 +103,7 @@ struct AgentRowView: View {
                 .font(.system(size: 8))
             Text("\(agent.entryCount) entries")
             if agent.totalTokens > 0 {
-                Text("·")
+                Text("\u{00B7}")
                 Text(formatTokens(agent.totalTokens))
             }
         }
@@ -134,11 +150,7 @@ struct AgentRowView: View {
         .clipShape(Capsule())
     }
 
-    private var attentionIndicator: some View {
-        Image(systemName: "exclamationmark.circle.fill")
-            .font(.system(size: 10))
-            .foregroundStyle(.orange)
-    }
+    // MARK: - Elapsed
 
     private var elapsedLabel: some View {
         Group {
@@ -160,6 +172,8 @@ struct AgentRowView: View {
             }
         }
     }
+
+    // MARK: - Helpers
 
     private func formatTokens(_ tokens: Int) -> String {
         if tokens >= 1000 {

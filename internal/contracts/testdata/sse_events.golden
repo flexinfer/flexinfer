@@ -1,0 +1,60 @@
+{
+  "fleet": {
+    "id": "evt_fleet_001",
+    "type": "hud.fleet",
+    "timestamp": "2025-01-15T10:30:00Z",
+    "data": {
+      "daemon_running": true,
+      "server_count": 12,
+      "active_sessions": 3,
+      "active_agents": 2,
+      "idle_agents": 1,
+      "offline_agents": 0
+    }
+  },
+  "health": {
+    "id": "evt_health_001",
+    "type": "hud.health",
+    "timestamp": "2025-01-15T10:30:00Z",
+    "data": {
+      "total_servers": 12,
+      "healthy_servers": 10,
+      "degraded_servers": 1,
+      "down_servers": 1,
+      "idle_servers": 0
+    }
+  },
+  "heartbeat": {
+    "id": "evt_hb_001",
+    "type": "hud.heartbeat",
+    "timestamp": "2025-01-15T10:30:00Z",
+    "data": {
+      "agent_id": "claude-code-1",
+      "status": "active",
+      "current_task": "Writing tests",
+      "branch": "feat/feature-x"
+    }
+  },
+  "session_end": {
+    "id": "evt_sess_002",
+    "type": "hud.session.end",
+    "timestamp": "2025-01-15T10:30:00Z",
+    "data": {
+      "session_id": "sess_abc123",
+      "agent_id": "claude-code-1",
+      "namespace": "project/feature-x",
+      "summary": "Completed feature X implementation"
+    }
+  },
+  "session_start": {
+    "id": "evt_sess_001",
+    "type": "hud.session.start",
+    "timestamp": "2025-01-15T10:30:00Z",
+    "data": {
+      "session_id": "sess_abc123",
+      "agent_id": "claude-code-1",
+      "namespace": "project/feature-x",
+      "description": "Working on feature X"
+    }
+  }
+}

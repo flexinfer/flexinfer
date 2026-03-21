@@ -1,0 +1,59 @@
+{
+  "coordination": {
+    "blockers": [],
+    "risky_namespaces": [],
+    "summary": {
+      "active_namespaces": 1,
+      "agents_needing_attention": 0,
+      "conflict_files": 0,
+      "cross_agent_blockers": 0,
+      "idle_claim_holders": 0,
+      "namespaces_at_risk": 0,
+      "orphan_tasks": 0,
+      "shared_branches": 0
+    }
+  },
+  "counts": {
+    "pending": 1,
+    "in_progress": 1,
+    "blocked": 0,
+    "completed": 0
+  },
+  "tasks": [
+    {
+      "id": "task_001",
+      "session_id": "sess_abc123",
+      "agent_id": "claude-code-1",
+      "namespace": "project/feature-x",
+      "title": "Implement golden test framework",
+      "context": "Add contract tests for API response shapes",
+      "priority": "high",
+      "status": "in_progress",
+      "tags": [
+        "testing",
+        "contracts"
+      ],
+      "blocked_by": [],
+      "created_at": "2025-01-15T10:05:00Z",
+      "updated_at": "2025-01-15T10:20:00Z"
+    },
+    {
+      "id": "task_002",
+      "session_id": "sess_abc123",
+      "agent_id": "claude-code-1",
+      "namespace": "project/feature-x",
+      "title": "Add SSE event golden files",
+      "context": "Capture SSE event payload shapes",
+      "priority": "medium",
+      "status": "pending",
+      "tags": [
+        "testing"
+      ],
+      "blocked_by": [
+        "task_001"
+      ],
+      "created_at": "2025-01-15T10:06:00Z",
+      "updated_at": "2025-01-15T10:06:00Z"
+    }
+  ]
+}

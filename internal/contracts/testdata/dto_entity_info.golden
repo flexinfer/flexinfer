@@ -1,0 +1,12 @@
+{
+  "id": "ent_001",
+  "name": "UserService",
+  "type": "service",
+  "entity_type": "service",
+  "description": "Handles user authentication and profile management",
+  "namespace": "project/auth",
+  "properties": {
+    "language": "go",
+    "lines": 450
+  }
+}

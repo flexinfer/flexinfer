@@ -49,16 +49,26 @@ public struct PipelineActivityAttributes: ActivityAttributes {
     public let ref: String
     public let startDate: Date
 
+    /// Agent that triggered the pipeline (may be empty).
+    public let agentId: String
+
+    /// Agent type for icon/color rendering (may be empty).
+    public let agentType: String
+
     public init(
         pipelineId: Int,
         project: String,
         ref: String,
-        startDate: Date = .now
+        startDate: Date = .now,
+        agentId: String = "",
+        agentType: String = ""
     ) {
         self.pipelineId = pipelineId
         self.project = project
         self.ref = ref
         self.startDate = startDate
+        self.agentId = agentId
+        self.agentType = agentType
     }
 }
 #endif

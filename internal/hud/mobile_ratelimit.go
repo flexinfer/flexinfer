@@ -1,8 +1,6 @@
 package hud
 
 import (
-	"net"
-	"net/http"
 	"sync"
 	"time"
 )
@@ -68,14 +66,4 @@ func (rl *MobileRateLimiter) Allow(actor string, isMutation bool) bool {
 	rl.counters[key] = counter
 
 	return counter.Count <= limit
-}
-
-// actorFromRequest extracts a rate-limit actor key from the request.
-// Uses the remote IP address (port stripped).
-func actorFromRequest(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }

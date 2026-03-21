@@ -122,6 +122,7 @@ Before merging compatibility-sensitive changes:
 ```bash
 go test ./...
 go vet ./...
+make ci-contracts    # Verify golden files match — surfaces drift for loom/loom-zed consumers
 ```
 
 For command-level sanity:
@@ -130,6 +131,8 @@ For command-level sanity:
 go run ./cmd/loom --help
 go run ./cmd/loom proxy --help
 ```
+
+See `docs/CONTRACT_TESTING.md` for the full golden-file contract workflow.
 
 ## Reporting Regressions
 

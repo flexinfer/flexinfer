@@ -1,7 +1,7 @@
 .PHONY: all build clean test install servers lint fmt vet check setup hooks git-setup dev help \
 		loom loomd \
 		install-core install-all bootstrap-local dev-sync dev-sync-repo dev-upgrade dev-reload \
-	ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-enterprise-smoke ci-test-race ci-benchmark ci-security ci-baseline \
+	ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-enterprise-smoke ci-test-race ci-benchmark ci-security ci-baseline ci-contracts \
 	codebase-bench-baseline codebase-bench-full codebase-bench-incremental codebase-bench-watch \
 		security security-gosec security-vuln \
 		changelog changelog-html changelog-json \
@@ -566,7 +566,7 @@ mod-update:
 COVERAGE_THRESHOLD ?= 28
 
 # Full CI pipeline
-ci: ci-lint ci-build ci-test ci-security
+ci: ci-lint ci-build ci-test ci-contracts ci-security
 	@echo ""
 	@echo "✓ CI pipeline passed!"
 
@@ -656,6 +656,16 @@ ci-test-integration: ci-build
 	ls -la bin/mcp-* 2>/dev/null || echo "No MCP servers found"; \
 	echo ""; \
 	go test -v -race ./internal/integration/...
+
+# Contract tests — verify golden files are up-to-date (run in CI and before releases)
+# Fails if any golden file would change, surfacing drift for sibling consumers (loom, loom-zed).
+ci-contracts:
+	@echo "Running contract tests (golden file verification)..."
+	@go test -v -count=1 -run 'Contract$$' ./internal/contracts/...
+	@echo ""
+	@echo "Golden files verified:"
+	@ls internal/contracts/testdata/*.golden | wc -l | xargs -I{} echo "  {} golden files checked"
+	@echo "✓ Contract tests passed — no drift detected"
 
 # Enterprise smoke suite (mirrors GitLab CI test:enterprise-smoke)
 ci-test-enterprise-smoke:

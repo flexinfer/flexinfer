@@ -20,6 +20,8 @@ import (
 
 	loomcache "github.com/crb2nu/loom/internal/cache"
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/hud/domain/memory"
+	"github.com/crb2nu/loom/internal/hud/domain/mobile"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 )
 
@@ -951,8 +953,8 @@ func TestHandler_AgentNudgeQueuePolicy_Get(t *testing.T) {
 	}
 
 	var result struct {
-		OK     bool                 `json:"ok"`
-		Policy nudgeQueuePolicyView `json:"policy"`
+		OK     bool                    `json:"ok"`
+		Policy bridge.NudgeQueuePolicy `json:"policy"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -994,8 +996,8 @@ func TestHandler_AgentNudgeQueuePolicy_Update(t *testing.T) {
 	}
 
 	var result struct {
-		OK     bool                 `json:"ok"`
-		Policy nudgeQueuePolicyView `json:"policy"`
+		OK     bool                    `json:"ok"`
+		Policy bridge.NudgeQueuePolicy `json:"policy"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -1293,7 +1295,7 @@ func TestHandler_MobilePing_ReturnsEnvelope(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var env mobileEnvelope
+	var env mobile.Envelope
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatalf("failed to decode envelope: %v", err)
 	}
@@ -1349,7 +1351,7 @@ func TestHandler_MobileDashboard_EnrichedWithHealthAndTimeline(t *testing.T) {
 			} `json:"coordination"`
 			RecentTimeline []json.RawMessage `json:"recent_timeline"`
 		} `json:"data"`
-		Meta mobMeta `json:"meta"`
+		Meta mobile.EnvMeta `json:"meta"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatalf("failed to decode dashboard envelope: %v", err)
@@ -1391,7 +1393,7 @@ func TestHandler_MobileSessions_ReturnsEnvelope(t *testing.T) {
 		Data struct {
 			Sessions []json.RawMessage `json:"sessions"`
 		} `json:"data"`
-		Meta mobMeta `json:"meta"`
+		Meta mobile.EnvMeta `json:"meta"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatalf("failed to decode sessions envelope: %v", err)
@@ -1448,7 +1450,7 @@ func TestHandler_MobileReadParityEndpoints_ReturnEnvelope(t *testing.T) {
 			var env struct {
 				OK   bool           `json:"ok"`
 				Data map[string]any `json:"data"`
-				Meta mobMeta        `json:"meta"`
+				Meta mobile.EnvMeta `json:"meta"`
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 				t.Fatalf("failed to decode envelope: %v", err)
@@ -1471,7 +1473,7 @@ func TestHandler_MobileReadParityEndpoints_ReturnEnvelope(t *testing.T) {
 }
 
 func TestMobileTaskDTO_ContextAlwaysPresent(t *testing.T) {
-	dto := mapMobileTask(bridge.TaskInfo{
+	dto := mobile.MapMobileTask(bridge.TaskInfo{
 		ID:       "task-1",
 		Title:    "Test task",
 		Priority: "medium",
@@ -1547,7 +1549,7 @@ func TestHandler_MobileErrorReturnsEnvelope(t *testing.T) {
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
-		Meta mobMeta `json:"meta"`
+		Meta mobile.EnvMeta `json:"meta"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatalf("failed to decode error envelope: %v", err)
@@ -1648,7 +1650,7 @@ func TestHandler_MobileAuthError_ReturnsEnvelope(t *testing.T) {
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
-		Meta mobMeta `json:"meta"`
+		Meta mobile.EnvMeta `json:"meta"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatalf("failed to decode auth error envelope: %v", err)
@@ -2121,7 +2123,7 @@ func TestHandler_MobileRateLimit_Returns429(t *testing.T) {
 		t.Fatalf("expected 429, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var env mobileEnvelope
+	var env mobile.Envelope
 	json.Unmarshal(w.Body.Bytes(), &env)
 	if env.OK {
 		t.Error("expected ok=false for rate limited response")
@@ -2148,7 +2150,7 @@ func TestMobileRevocation_RevokedTokenDenied(t *testing.T) {
 		t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var env mobileEnvelope
+	var env mobile.Envelope
 	json.Unmarshal(w.Body.Bytes(), &env)
 	errObj, _ := env.Error.(map[string]any)
 	if errObj["code"] != "token_revoked" {
@@ -2266,7 +2268,7 @@ func TestMobileRevocation_ImmediateAcrossAllEndpoints(t *testing.T) {
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("post-revoke: %s %s expected 401, got %d", ep.method, ep.path, w.Code)
 		}
-		var env mobileEnvelope
+		var env mobile.Envelope
 		json.Unmarshal(w.Body.Bytes(), &env)
 		errObj, _ := env.Error.(map[string]any)
 		if errObj["code"] != "token_revoked" {
@@ -2363,7 +2365,7 @@ func TestMobileAuth_TokenNotConfigured(t *testing.T) {
 		t.Fatalf("expected 403 when token not configured, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var env mobileEnvelope
+	var env mobile.Envelope
 	json.Unmarshal(w.Body.Bytes(), &env)
 	errObj, _ := env.Error.(map[string]any)
 	if errObj["code"] != "not_configured" {
@@ -2517,7 +2519,7 @@ func TestMobileAudit_DeviceIDExtraction(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.Header.Set("X-Device-ID", "iphone-abc123")
 
-	got := extractDeviceID(req)
+	got := mobile.ExtractDeviceID(req)
 	if got != "iphone-abc123" {
 		t.Errorf("expected 'iphone-abc123', got %q", got)
 	}
@@ -2525,14 +2527,14 @@ func TestMobileAudit_DeviceIDExtraction(t *testing.T) {
 	// Test truncation.
 	long := strings.Repeat("x", 200)
 	req.Header.Set("X-Device-ID", long)
-	got = extractDeviceID(req)
-	if len(got) != maxDeviceIDLen {
-		t.Errorf("expected truncation to %d chars, got %d", maxDeviceIDLen, len(got))
+	got = mobile.ExtractDeviceID(req)
+	if len(got) != mobile.MaxDeviceIDLen {
+		t.Errorf("expected truncation to %d chars, got %d", mobile.MaxDeviceIDLen, len(got))
 	}
 
 	// Test missing header.
 	req.Header.Del("X-Device-ID")
-	got = extractDeviceID(req)
+	got = mobile.ExtractDeviceID(req)
 	if got != "" {
 		t.Errorf("expected empty string for missing header, got %q", got)
 	}
@@ -2777,7 +2779,7 @@ func TestMobileContract_SessionCreate_ResponseShape(t *testing.T) {
 			SessionID      string `json:"session_id"`
 			AlreadyExisted bool   `json:"already_existed"`
 		} `json:"data"`
-		Meta mobMeta `json:"meta"`
+		Meta mobile.EnvMeta `json:"meta"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -2818,7 +2820,7 @@ func TestMobileContract_SessionEnd_ResponseShape(t *testing.T) {
 			Ended     bool   `json:"ended"`
 			SessionID string `json:"session_id"`
 		} `json:"data"`
-		Meta mobMeta `json:"meta"`
+		Meta mobile.EnvMeta `json:"meta"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -3059,7 +3061,7 @@ func TestMobileAlertsPolicy_ResponseShape(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var env mobileEnvelope
+	var env mobile.Envelope
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
@@ -3098,7 +3100,7 @@ func TestMobileAlertsPolicy_ResponseShape(t *testing.T) {
 }
 
 func TestMobileAlertsPolicy_MatrixCompleteness(t *testing.T) {
-	matrix := mobileAlertPolicyMatrix()
+	matrix := mobile.AlertPolicyMatrix()
 	if len(matrix) != 10 {
 		t.Errorf("expected 10 policy entries, got %d", len(matrix))
 	}
@@ -3129,7 +3131,7 @@ func TestMobileAlertsPolicy_MatrixCompleteness(t *testing.T) {
 }
 
 func TestMobileAlertsPolicy_InfoEventsArePassive(t *testing.T) {
-	for _, entry := range mobileAlertPolicyMatrix() {
+	for _, entry := range mobile.AlertPolicyMatrix() {
 		if entry.Severity == "info" && entry.InterruptionLevel != "passive" {
 			t.Errorf("info-severity event %q should be passive, got %q",
 				entry.EventType, entry.InterruptionLevel)
@@ -3139,7 +3141,7 @@ func TestMobileAlertsPolicy_InfoEventsArePassive(t *testing.T) {
 
 func TestMobileAlertsPolicy_NoMutationActions(t *testing.T) {
 	safeActions := map[string]bool{"view_session": true, "view_dashboard": true, "acknowledge": true}
-	for _, entry := range mobileAlertPolicyMatrix() {
+	for _, entry := range mobile.AlertPolicyMatrix() {
 		for _, action := range entry.AllowedActions {
 			if !safeActions[action] {
 				t.Errorf("event %q has unsafe action %q", entry.EventType, action)
@@ -3398,7 +3400,7 @@ func TestMobilePushRegister_Success(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var env mobileEnvelope
+	var env mobile.Envelope
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
@@ -3642,7 +3644,7 @@ func TestMemoryStatsPayload(t *testing.T) {
 		ItemsCompressedLast24h: 2,
 	}
 
-	payload := memoryStatsPayload(stats)
+	payload := memory.StatsPayload(stats)
 
 	// Check tier shape.
 	wm, ok := payload["working_memory"].(map[string]any)
@@ -3678,7 +3680,7 @@ func TestMemoryStatsPayload_NoCompression(t *testing.T) {
 		TotalTokens:   10,
 	}
 
-	payload := memoryStatsPayload(stats)
+	payload := memory.StatsPayload(stats)
 
 	if _, ok := payload["compression"]; ok {
 		t.Fatal("compression block should be absent when ratio=0 and compressed=0")

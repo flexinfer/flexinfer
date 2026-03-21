@@ -290,6 +290,19 @@ The `mcp-agent-context` server provides persistent memory for AI agents across s
 4. **Add tasks as you discover them**: Track TODOs/FIXMEs in the task system
 5. **End sessions with summary**: Generates compressed context for future recall
 
+## Contract Tests (Golden Files)
+
+Golden-file tests in `internal/contracts/` guard API response shapes consumed by
+sibling repos (loom VS Code extension, loom-zed). Run them with:
+
+```bash
+make ci-contracts                                    # Verify golden files match (CI mode)
+go test ./internal/contracts/... -update-golden       # Accept intentional changes
+```
+
+Any golden file diff in a MR signals a contract change — review it and notify
+sibling consumers. See `docs/CONTRACT_TESTING.md` for the full workflow.
+
 Code Style
 
 - Run `golangci-lint run` before committing

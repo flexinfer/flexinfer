@@ -13,6 +13,7 @@ import (
 	"github.com/crb2nu/loom/internal/devbox/backend"
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/coordinator"
+	"github.com/crb2nu/loom/internal/hud/domain/memory"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 	"github.com/crb2nu/loom/pkg/mcpotel"
 )
@@ -271,7 +272,7 @@ func (a *App) wireMonitorCallbacks() {
 		})
 	})
 	a.memoryMonitor.OnRefresh(func(stats *bridge.MemoryStatsResult) {
-		data, err := json.Marshal(memoryStatsPayload(stats))
+		data, err := json.Marshal(memory.StatsPayload(stats))
 		if err != nil {
 			return
 		}

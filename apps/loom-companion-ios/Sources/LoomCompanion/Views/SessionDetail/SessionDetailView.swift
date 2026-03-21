@@ -6,9 +6,15 @@ struct SessionDetailView: View {
     @State private var viewModel: SessionDetailViewModel
     @State private var showingEndConfirmation = false
     @State private var showingEndError = false
-    @State private var entriesExpanded = true
-    @State private var eventsExpanded = true
     @State private var liveActivityStarted = false
+
+    // DisclosureGroup expansion state: first two default expanded
+    @State private var entriesExpanded = true
+    @State private var tasksExpanded = true
+    @State private var decisionsExpanded = false
+    @State private var errorsExpanded = false
+    @State private var filesExpanded = false
+    @State private var eventsExpanded = false
 
     init(sessionId: String, apiClient: any LoomAPIClientProtocol) {
         self.sessionId = sessionId
@@ -26,52 +32,89 @@ struct SessionDetailView: View {
                     SessionMetadataView(session: session)
                         .cardAppear(index: 0)
 
-                    // Tasks summary
-                    if let tasks = viewModel.tasks, tasks.total > 0 {
-                        SessionTasksView(tasks: tasks)
-                            .cardAppear(index: 1)
-                    }
-
-                    // Context entry breakdown (collapsible)
+                    // Context entry breakdown (collapsible with summary)
                     if !viewModel.entryBreakdown.isEmpty {
-                        DisclosureGroup(isExpanded: $entriesExpanded) {
+                        collapsibleSection(
+                            isExpanded: $entriesExpanded,
+                            icon: "chart.bar",
+                            title: "Entry Breakdown",
+                            summary: entrySummary,
+                            index: 1
+                        ) {
                             SessionEntryBreakdownView(buckets: viewModel.entryBreakdown)
-                        } label: {
-                            Label("Entry Breakdown", systemImage: "chart.bar")
-                                .font(.headline)
                         }
-                        .animation(.spring(duration: 0.35), value: entriesExpanded)
-                        .cardAppear(index: 2)
                     }
 
-                    // Decisions
+                    // Tasks summary (collapsible with summary)
+                    if let tasks = viewModel.tasks, tasks.total > 0 {
+                        collapsibleSection(
+                            isExpanded: $tasksExpanded,
+                            icon: "checklist",
+                            title: "Tasks",
+                            summary: tasksSummary(tasks),
+                            index: 2
+                        ) {
+                            SessionTasksView(tasks: tasks)
+                        }
+                    }
+
+                    // Decisions (collapsible with summary)
                     if !viewModel.decisions.isEmpty {
-                        SessionEntriesSection(title: "Decisions", icon: "lightbulb", entries: viewModel.decisions)
-                            .cardAppear(index: 3)
+                        collapsibleSection(
+                            isExpanded: $decisionsExpanded,
+                            icon: "lightbulb",
+                            title: "Top Decisions",
+                            summary: decisionsSummary,
+                            index: 3
+                        ) {
+                            SessionEntriesSection(
+                                title: "Decisions",
+                                icon: "lightbulb",
+                                entries: viewModel.decisions
+                            )
+                        }
                     }
 
-                    // Errors
+                    // Errors (collapsible with summary)
                     if !viewModel.errors.isEmpty {
-                        SessionEntriesSection(title: "Errors", icon: "exclamationmark.triangle", entries: viewModel.errors)
-                            .cardAppear(index: 4)
+                        collapsibleSection(
+                            isExpanded: $errorsExpanded,
+                            icon: "exclamationmark.triangle",
+                            title: "Errors",
+                            summary: errorsSummary,
+                            index: 4
+                        ) {
+                            SessionEntriesSection(
+                                title: "Errors",
+                                icon: "exclamationmark.triangle",
+                                entries: viewModel.errors
+                            )
+                        }
                     }
 
-                    // Top files
+                    // Top files (collapsible with summary)
                     if !viewModel.topFiles.isEmpty {
-                        SessionTopFilesView(files: viewModel.topFiles)
-                            .cardAppear(index: 5)
+                        collapsibleSection(
+                            isExpanded: $filesExpanded,
+                            icon: "doc.text",
+                            title: "Top Files",
+                            summary: filesSummary,
+                            index: 5
+                        ) {
+                            SessionTopFilesView(files: viewModel.topFiles)
+                        }
                     }
 
-                    // Events timeline (collapsible)
-                    DisclosureGroup(isExpanded: $eventsExpanded) {
+                    // Events timeline (collapsible with summary)
+                    collapsibleSection(
+                        isExpanded: $eventsExpanded,
+                        icon: "clock.arrow.circlepath",
+                        title: "Events",
+                        summary: "\(viewModel.events.count) events",
+                        index: 6
+                    ) {
                         SessionEventsView(events: viewModel.events)
-                    } label: {
-                        Label("Events (\(viewModel.events.count))", systemImage: "clock.arrow.circlepath")
-                            .font(.headline)
-                            .contentTransition(.numericText())
                     }
-                    .animation(.spring(duration: 0.35), value: eventsExpanded)
-                    .cardAppear(index: 6)
                 } else if viewModel.isLoading {
                     ProgressView("Loading session...")
                         .padding(.top, 40)
@@ -151,6 +194,102 @@ struct SessionDetailView: View {
             await viewModel.load(sessionId: sessionId)
             updateLiveActivityState()
         }
+    }
+
+    // MARK: - Collapsible Section Builder
+
+    private func collapsibleSection<Content: View>(
+        isExpanded: Binding<Bool>,
+        icon: String,
+        title: String,
+        summary: String,
+        index: Int,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        DisclosureGroup(isExpanded: isExpanded) {
+            content()
+        } label: {
+            HStack {
+                Label(title, systemImage: icon)
+                    .font(.headline)
+                Spacer()
+                Text(summary)
+                    .font(LoomTypography.caption)
+                    .foregroundStyle(LoomColors.textSecondary)
+            }
+        }
+        .animation(.spring(duration: 0.35), value: isExpanded.wrappedValue)
+        .cardAppear(index: index)
+    }
+
+    // MARK: - Summary Strings
+
+    private var entrySummary: String {
+        let totalEntries = viewModel.entryBreakdown.reduce(0) { $0 + $1.count }
+        let totalTokens = viewModel.entryBreakdown.reduce(0) { $0 + $1.estimatedTokens }
+        return "\(totalEntries) entries \u{00B7} \(formatTokenCount(totalTokens))"
+    }
+
+    private func tasksSummary(_ tasks: SessionTaskSummary) -> String {
+        var parts: [String] = []
+        if tasks.pending > 0 { parts.append("\(tasks.pending) pending") }
+        if tasks.inProgress > 0 { parts.append("\(tasks.inProgress) in-progress") }
+        if tasks.completed > 0 { parts.append("\(tasks.completed) done") }
+        return parts.isEmpty ? "\(tasks.total) tasks" : parts.joined(separator: " \u{00B7} ")
+    }
+
+    private var decisionsSummary: String {
+        let count = viewModel.decisions.count
+        let latestAge = latestRelativeTime(viewModel.decisions)
+        if let age = latestAge {
+            return "\(count) decisions \u{00B7} latest \(age)"
+        }
+        return "\(count) decisions"
+    }
+
+    private var errorsSummary: String {
+        let count = viewModel.errors.count
+        let latestAge = latestRelativeTime(viewModel.errors)
+        if let age = latestAge {
+            return "\(count) errors \u{00B7} latest \(age)"
+        }
+        return "\(count) errors"
+    }
+
+    private var filesSummary: String {
+        "\(viewModel.topFiles.count) files touched"
+    }
+
+    // MARK: - Helpers
+
+    private func formatTokenCount(_ tokens: Int) -> String {
+        if tokens >= 1000 {
+            return String(format: "%.1fk tokens", Double(tokens) / 1000.0)
+        }
+        return "\(tokens) tokens"
+    }
+
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let isoFallback: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    private func latestRelativeTime(_ entries: [SessionTopEntry]) -> String? {
+        let dates = entries.compactMap {
+            Self.isoFormatter.date(from: $0.timestamp) ?? Self.isoFallback.date(from: $0.timestamp)
+        }
+        guard let latest = dates.max() else { return nil }
+        let diff = Int(Date().timeIntervalSince(latest))
+        if diff < 60 { return "\(diff)s ago" }
+        if diff < 3600 { return "\(diff / 60)m ago" }
+        return "\(diff / 3600)h ago"
     }
 
     private func updateLiveActivityState() {

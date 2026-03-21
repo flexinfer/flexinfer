@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "data": {
+    "pong": true
+  },
+  "meta": {
+    "request_id": "req_0000000000000000",
+    "timestamp": "2025-01-15T10:30:00Z"
+  }
+}
