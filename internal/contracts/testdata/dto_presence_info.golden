@@ -1,0 +1,15 @@
+{
+  "agent_id": "claude-code-1",
+  "session_id": "sess_abc123",
+  "status": "active",
+  "agent_type": "claude-code",
+  "description": "Working on feature X",
+  "current_task": "Writing unit tests",
+  "active_files": [
+    "internal/contracts/golden_test.go"
+  ],
+  "branch": "feat/feature-x",
+  "worktree_id": "wt_001",
+  "last_heartbeat": "2025-01-15T10:29:55Z",
+  "registered_at": "2025-01-15T10:00:00Z"
+}

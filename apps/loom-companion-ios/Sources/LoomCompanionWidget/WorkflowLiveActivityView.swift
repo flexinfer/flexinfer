@@ -8,7 +8,7 @@ struct WorkflowLiveActivityView: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: WorkflowActivityAttributes.self) { context in
             lockScreenView(context: context)
-                .activityBackgroundTint(.black.opacity(0.7))
+                .activityBackgroundTint(context.state.status == "failed" ? .red.opacity(0.15) : .black.opacity(0.7))
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
@@ -31,10 +31,17 @@ struct WorkflowLiveActivityView: Widget {
                         Text(context.attributes.workflowName)
                             .font(.headline)
                             .lineLimit(1)
-                        Text(context.state.currentStepName)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        if context.state.status == "failed" {
+                            Text(context.state.currentStepName)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .lineLimit(1)
+                        } else {
+                            Text(context.state.currentStepName)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
@@ -60,8 +67,13 @@ struct WorkflowLiveActivityView: Widget {
     private func lockScreenView(context: ActivityViewContext<WorkflowActivityAttributes>) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Image(systemName: statusIcon(context.state.status))
-                    .foregroundStyle(statusColor(context.state.status))
+                if context.state.status == "failed" {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                } else {
+                    Image(systemName: statusIcon(context.state.status))
+                        .foregroundStyle(statusColor(context.state.status))
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(context.attributes.workflowName)
                         .font(.headline)
@@ -77,9 +89,16 @@ struct WorkflowLiveActivityView: Widget {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(context.state.currentStepName)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
+                    if context.state.status == "failed" {
+                        Label(context.state.currentStepName, systemImage: "xmark.circle")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.red)
+                    } else {
+                        Text(context.state.currentStepName)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                    }
                     Spacer()
                     Text("Step \(context.state.currentStepIndex + 1) of \(context.state.totalSteps)")
                         .font(.caption2)
@@ -89,8 +108,19 @@ struct WorkflowLiveActivityView: Widget {
                     .tint(statusColor(context.state.status))
             }
 
-            if context.state.status == "waiting_approval" {
-                HStack(spacing: 12) {
+            HStack(spacing: 12) {
+                if context.state.status == "failed" {
+                    Text("Failed")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.red.opacity(0.2))
+                        .foregroundStyle(.red)
+                        .clipShape(Capsule())
+                }
+
+                if context.state.status == "waiting_approval" {
                     Link(destination: URL(string: "loom://workflow/\(context.attributes.workflowId)/approve")!) {
                         Label("Approve", systemImage: "checkmark.circle")
                             .font(.caption)

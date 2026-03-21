@@ -83,6 +83,7 @@
 		AE26BF83C8AEFE0B08F1DA96 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DF3DC44CF14DC2FB3F085E0 /* TokenStore.swift */; };
 		AFED48DE9C9328A10D542700 /* SessionTasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E77474862988D0C330061E27 /* SessionTasksView.swift */; };
 		B03747CEFD8DAB35671BF975 /* StatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B2A65F47D87C55A22DF2C6F /* StatusBadge.swift */; };
+		B160EB1AC83AB4898CFA7B0F /* LiveActivityHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30139D278B540C98AE965B6D /* LiveActivityHelpers.swift */; };
 		B636A47B4F338A2BFC9743F2 /* AgentsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8EBAD7BBD75B088B1545875 /* AgentsListView.swift */; };
 		B6F6347DAF13C5995D105AE8 /* SessionEntryBreakdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DC84E6AC9D1E37BCC3497FE /* SessionEntryBreakdownView.swift */; };
 		BA4BFDAF7460757C230C1995 /* OpsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C5E25ADF1909F821B3221D7 /* OpsView.swift */; };
@@ -178,7 +179,6 @@
 		12B1DCFD032943745B95EAED /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		13953CDE3FE9EFAF412B840C /* StatusAccentBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusAccentBar.swift; sourceTree = "<group>"; };
 		154FBD88AB4A47A607ED2A12 /* LoomSpacing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomSpacing.swift; sourceTree = "<group>"; };
-		15F8B18107C14CB1B53193DF /* LoomCompanion.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LoomCompanion.entitlements; sourceTree = "<group>"; };
 		17BE1C3F697C16FED620CF84 /* PulsingDot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulsingDot.swift; sourceTree = "<group>"; };
 		1C5E25ADF1909F821B3221D7 /* OpsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsView.swift; sourceTree = "<group>"; };
 		1CF7388A60BCC73E46496965 /* FleetSummaryCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSummaryCard.swift; sourceTree = "<group>"; };
@@ -194,6 +194,7 @@
 		29969AE5F1FA24CA231E80EA /* ActiveSessionsWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveSessionsWidget.swift; sourceTree = "<group>"; };
 		2ED40FA4A31DB113C275C811 /* LANPermissionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LANPermissionView.swift; sourceTree = "<group>"; };
 		2FD17C0F3B8954C8FA32E1D1 /* TaskStatusChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskStatusChart.swift; sourceTree = "<group>"; };
+		30139D278B540C98AE965B6D /* LiveActivityHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityHelpers.swift; sourceTree = "<group>"; };
 		30696986D90C9AC7E69B8AA2 /* ConnectionHealthMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionHealthMonitor.swift; sourceTree = "<group>"; };
 		318FE4DE0832DCDFC1FDA031 /* DashboardViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardViewModel.swift; sourceTree = "<group>"; };
 		351DF692E793E5470B23617D /* PipelineLiveActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PipelineLiveActivityView.swift; sourceTree = "<group>"; };
@@ -213,7 +214,6 @@
 		52AE107FC4C72CDDC7C2546E /* ConnectionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionViewModel.swift; sourceTree = "<group>"; };
 		531717108CA193976CD1D2E3 /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIError.swift; sourceTree = "<group>"; };
 		531CFBE30C35AB55DC6366E8 /* LoomWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomWidgetBundle.swift; sourceTree = "<group>"; };
-		5544EB0FFF37D42886F0F019 /* LoomCompanionWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LoomCompanionWidget.entitlements; sourceTree = "<group>"; };
 		58F4D60206A7290881186E35 /* SessionTopFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTopFilesView.swift; sourceTree = "<group>"; };
 		5CFF203EEBD1AF6A4A2AB4D2 /* AlertsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertsViewModel.swift; sourceTree = "<group>"; };
 		5E96EE11EC79E0AB9D4A62AF /* SessionEventsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionEventsView.swift; sourceTree = "<group>"; };
@@ -334,6 +334,7 @@
 				29969AE5F1FA24CA231E80EA /* ActiveSessionsWidget.swift */,
 				7B34ABB0F4EB13226360A9DB /* FleetHealthWidget.swift */,
 				69611C28D852731CE58ABE15 /* Info.plist */,
+				30139D278B540C98AE965B6D /* LiveActivityHelpers.swift */,
 				1FDABA6D332038DFBF9D6B31 /* LockScreenWidgets.swift */,
 				531CFBE30C35AB55DC6366E8 /* LoomWidgetBundle.swift */,
 				351DF692E793E5470B23617D /* PipelineLiveActivityView.swift */,
@@ -379,20 +380,10 @@
 		4DDCF8E9200D33074DEB19BC = {
 			isa = PBXGroup;
 			children = (
-				AAEE11110000ENTITLEMENTS00 /* Entitlements */,
 				1D9D9E79E6A89BB4FE624947 /* Sources */,
 				A01FBEBC772BA1D92BF59C6C /* Frameworks */,
 				D262802FE3DF614BBC4E2868 /* Products */,
 			);
-			sourceTree = "<group>";
-		};
-		AAEE11110000ENTITLEMENTS00 /* Entitlements */ = {
-			isa = PBXGroup;
-			children = (
-				15F8B18107C14CB1B53193DF /* LoomCompanion.entitlements */,
-				5544EB0FFF37D42886F0F019 /* LoomCompanionWidget.entitlements */,
-			);
-			path = Entitlements;
 			sourceTree = "<group>";
 		};
 		5B5C969B517E14D8E56AA2A2 /* Spawn */ = {
@@ -822,6 +813,7 @@
 			files = (
 				4230844724B8E98B13157430 /* ActiveSessionsWidget.swift in Sources */,
 				43049187DD24603E3EC0A76F /* FleetHealthWidget.swift in Sources */,
+				B160EB1AC83AB4898CFA7B0F /* LiveActivityHelpers.swift in Sources */,
 				1174B15F742624950E57EA68 /* LockScreenWidgets.swift in Sources */,
 				992D5F5727FA6B11475BBBDA /* LoomWidgetBundle.swift in Sources */,
 				D51570C66C0B485EBCF6ADB6 /* PipelineLiveActivityView.swift in Sources */,

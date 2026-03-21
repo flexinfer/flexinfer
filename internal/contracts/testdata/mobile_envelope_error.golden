@@ -1,0 +1,11 @@
+{
+  "ok": false,
+  "error": {
+    "code": "upstream_error",
+    "message": "failed to list sessions"
+  },
+  "meta": {
+    "request_id": "req_0000000000000000",
+    "timestamp": "2025-01-15T10:30:00Z"
+  }
+}

@@ -7,7 +7,7 @@ struct FleetSummaryCard: View {
 
     var body: some View {
         LoomCard {
-            VStack(alignment: .leading, spacing: LoomSpacing.cardSpacing) {
+            VStack(alignment: .leading, spacing: LoomSpacing.sm) {
                 HStack {
                     Text("Fleet Overview")
                         .font(LoomTypography.headlineMedium)
@@ -33,45 +33,38 @@ struct FleetSummaryCard: View {
                 )
                 #endif
 
-                LazyVGrid(columns: [
-                    GridItem(.flexible()),
-                    GridItem(.flexible()),
-                    GridItem(.flexible()),
-                ], spacing: LoomSpacing.cardSpacing) {
-                    SummaryTile(
+                // Compact inline metrics strip
+                HStack(spacing: 0) {
+                    compactMetric(
+                        count: dashboard.activeSessions,
                         label: "Sessions",
-                        value: dashboard.activeSessions,
-                        icon: "rectangle.stack",
-                        index: 0,
-                        trigger: tileAnimationTrigger
+                        index: 0
                     )
-                    SummaryTile(
+                    metricDivider
+                    compactMetric(
+                        count: dashboard.activeAgents,
                         label: "Active",
-                        value: dashboard.activeAgents,
-                        icon: "person.fill",
-                        index: 1,
-                        trigger: tileAnimationTrigger
+                        index: 1
                     )
-                    SummaryTile(
+                    metricDivider
+                    compactMetric(
+                        count: dashboard.idleAgents,
                         label: "Idle",
-                        value: dashboard.idleAgents,
-                        icon: "person",
-                        index: 2,
-                        trigger: tileAnimationTrigger
+                        index: 2
                     )
-                    SummaryTile(
-                        label: "Offline",
-                        value: dashboard.offlineAgents,
-                        icon: "person.slash",
-                        index: 3,
-                        trigger: tileAnimationTrigger
-                    )
-                    SummaryTile(
-                        label: "Servers",
-                        value: dashboard.serverCount,
-                        icon: "server.rack",
-                        index: 4,
-                        trigger: tileAnimationTrigger
+                    if dashboard.offlineAgents > 0 {
+                        metricDivider
+                        compactMetric(
+                            count: dashboard.offlineAgents,
+                            label: "Offline",
+                            index: 3
+                        )
+                    }
+                    metricDivider
+                    compactMetric(
+                        count: dashboard.serverCount,
+                        label: "Srv",
+                        index: 4
                     )
                 }
 
@@ -88,6 +81,27 @@ struct FleetSummaryCard: View {
         }
         .onAppear { tileAnimationTrigger.toggle() }
     }
+
+    // MARK: - Compact Metric Cell
+
+    private func compactMetric(count: Int, label: String, index: Int) -> some View {
+        VStack(spacing: LoomSpacing.xxs) {
+            AnimatedCounter(count, font: LoomTypography.counterSmall)
+            Text(label)
+                .font(LoomTypography.labelSmall)
+                .foregroundStyle(LoomColors.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, LoomSpacing.xs)
+        .cardAppear(index: index)
+    }
+
+    private var metricDivider: some View {
+        Divider()
+            .frame(height: 28)
+    }
+
+    // MARK: - Event Density
 
     private static let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -115,31 +129,5 @@ struct FleetSummaryCard: View {
             buckets[idx] += 1
         }
         return buckets
-    }
-}
-
-private struct SummaryTile: View {
-    let label: String
-    let value: Int
-    let icon: String
-    let index: Int
-    let trigger: Bool
-
-    var body: some View {
-        VStack(spacing: LoomSpacing.xs) {
-            Image(systemName: icon)
-                .font(.title3)
-                .foregroundStyle(LoomColors.textSecondary)
-                .symbolEffect(.bounce, value: trigger)
-
-            AnimatedCounter(value, font: LoomTypography.counterSmall)
-
-            Text(label)
-                .font(LoomTypography.labelSmall)
-                .foregroundStyle(LoomColors.textSecondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, LoomSpacing.sm)
-        .cardAppear(index: index)
     }
 }

@@ -1,0 +1,9 @@
+{
+  "id": "rel_001",
+  "source_id": "ent_001",
+  "source_name": "UserService",
+  "target_id": "ent_002",
+  "target_name": "PostgresDB",
+  "type": "uses",
+  "relation_type": "uses"
+}

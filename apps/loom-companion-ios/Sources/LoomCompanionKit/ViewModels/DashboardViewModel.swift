@@ -256,6 +256,8 @@ public final class DashboardViewModel {
             let status: String?
             let current_task: String?
             let branch: String?
+            let estimated_cost: Double?
+            let stale_after: String?
         }
 
         guard let payload = try? JSONDecoder().decode(HeartbeatPayload.self, from: data),
@@ -268,7 +270,9 @@ public final class DashboardViewModel {
             sessionId: sessionId,
             status: payload.status ?? "active",
             currentTask: payload.current_task,
-            branch: payload.branch
+            branch: payload.branch,
+            estimatedCost: payload.estimated_cost,
+            staleAfter: payload.stale_after
         )
     }
 
@@ -302,6 +306,8 @@ public final class DashboardViewModel {
             let agent_id: String?
             let total_tokens: Int?
             let entry_count: Int?
+            let estimated_cost: Double?
+            let stale_after: String?
         }
 
         guard let payload = try? JSONDecoder().decode(SessionStatsPayload.self, from: data) else { return }
@@ -320,7 +326,9 @@ public final class DashboardViewModel {
         lam.updateSessionActivity(
             sessionId: sid,
             tokenCount: payload.total_tokens,
-            entryCount: payload.entry_count
+            entryCount: payload.entry_count,
+            estimatedCost: payload.estimated_cost,
+            staleAfter: payload.stale_after
         )
     }
 
@@ -395,6 +403,8 @@ public final class DashboardViewModel {
             let total_stages: Int?
             let failed_job_count: Int?
             let started_at: String?
+            let agent_id: String?
+            let agent_type: String?
         }
 
         guard let payload = try? JSONDecoder().decode(PipelinePayload.self, from: data),
@@ -414,7 +424,9 @@ public final class DashboardViewModel {
                         project: pipeline.project,
                         ref: pipeline.ref,
                         currentStage: stage,
-                        totalStages: total
+                        totalStages: total,
+                        agentId: pipeline.agent_id ?? "",
+                        agentType: pipeline.agent_type ?? ""
                     )
                 } else {
                     lam.updatePipelineActivity(

@@ -361,9 +361,11 @@ build:binaries:
   stage: build
   variables:
     GO_WARM_MOD_CACHE: "false"
-    KUBERNETES_CPU_REQUEST: "2"
+    # Keep generous limits, but lower requests so bursty branch pipelines fit
+    # more cleanly on the shared runner pool during agent-heavy development.
+    KUBERNETES_CPU_REQUEST: "1500m"
     KUBERNETES_CPU_LIMIT: "4"
-    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_REQUEST: "3Gi"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
   cache:
     # Keep Go module/build caches shared per-branch, but keep compiled binaries
@@ -424,9 +426,9 @@ test:unit:
   stage: test
   variables:
     GO_WARM_MOD_CACHE: "false"
-    KUBERNETES_CPU_REQUEST: "2"
+    KUBERNETES_CPU_REQUEST: "1500m"
     KUBERNETES_CPU_LIMIT: "4"
-    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_REQUEST: "3Gi"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
   script:
     - |
@@ -487,9 +489,9 @@ test:integration:
   variables:
     GO_WARM_MOD_CACHE: "false"
     CGO_ENABLED: "1"
-    KUBERNETES_CPU_REQUEST: "2"
+    KUBERNETES_CPU_REQUEST: "1500m"
     KUBERNETES_CPU_LIMIT: "4"
-    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_REQUEST: "3Gi"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
   cache:
     - key: ${CI_COMMIT_SHA}-bin
@@ -525,9 +527,9 @@ test:race:
   variables:
     GO_WARM_MOD_CACHE: "false"
     CGO_ENABLED: "1"
-    KUBERNETES_CPU_REQUEST: "2"
+    KUBERNETES_CPU_REQUEST: "1500m"
     KUBERNETES_CPU_LIMIT: "4"
-    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_REQUEST: "3Gi"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
   script:
     - |

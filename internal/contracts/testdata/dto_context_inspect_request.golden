@@ -1,0 +1,6 @@
+{
+  "agent_id": "claude-code-1",
+  "session_id": "sess_abc123",
+  "detail": true,
+  "limit": 200
+}

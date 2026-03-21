@@ -1,0 +1,25 @@
+{
+  "sessions": [
+    {
+      "id": "sess_abc123",
+      "agent_id": "claude-code-1",
+      "namespace": "project/feature-x",
+      "started_at": "2025-01-15T10:00:00Z",
+      "status": "active",
+      "description": "Working on feature X",
+      "entry_count": 42,
+      "total_tokens": 8500
+    },
+    {
+      "id": "sess_def456",
+      "agent_id": "gemini-1",
+      "namespace": "project/review",
+      "started_at": "2025-01-15T09:00:00Z",
+      "ended_at": "2025-01-15T09:45:00Z",
+      "status": "ended",
+      "description": "Code review session",
+      "entry_count": 15,
+      "total_tokens": 3200
+    }
+  ]
+}

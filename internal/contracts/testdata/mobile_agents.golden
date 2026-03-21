@@ -1,0 +1,50 @@
+{
+  "agents": [
+    {
+      "agent_id": "claude-code-1",
+      "agent_type": "claude-code",
+      "status": "active",
+      "source": "presence",
+      "description": "Implementing feature X",
+      "current_task": "Write unit tests",
+      "branch": "feat/feature-x",
+      "last_heartbeat": "2025-01-15T10:29:55Z",
+      "session_id": "sess_abc123",
+      "namespace": "project/feature-x",
+      "session_status": "active",
+      "session_started_at": "2025-01-15T10:00:00Z",
+      "entry_count": 42,
+      "total_tokens": 8500,
+      "active_file_count": 3,
+      "needs_attention": false,
+      "task_count": 5,
+      "blocked_tasks": 1,
+      "claim_count": 2
+    },
+    {
+      "agent_id": "gemini-1",
+      "agent_type": "gemini",
+      "status": "idle",
+      "source": "presence",
+      "description": "Code review agent",
+      "current_task": "",
+      "branch": "",
+      "last_heartbeat": "2025-01-15T10:25:00Z",
+      "entry_count": 0,
+      "total_tokens": 0,
+      "active_file_count": 0,
+      "needs_attention": false,
+      "task_count": 0,
+      "blocked_tasks": 0,
+      "claim_count": 0
+    }
+  ],
+  "summary": {
+    "total_agents": 2,
+    "active_agents": 1,
+    "idle_agents": 1,
+    "offline_agents": 0,
+    "spawned_agents": 0,
+    "with_sessions": 1
+  }
+}

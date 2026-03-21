@@ -6,22 +6,14 @@ import (
 	"net/http"
 )
 
-// AppHandlers exposes the subset of *App methods that sandbox routes need.
-type AppHandlers interface {
-	HandleSandbox(w http.ResponseWriter, r *http.Request)
-	HandleSandboxPolicy(w http.ResponseWriter, r *http.Request)
-	HandleSandboxStart(w http.ResponseWriter, r *http.Request)
-	HandleSandboxStop(w http.ResponseWriter, r *http.Request)
-}
-
 // SandboxDomain registers devbox sandbox management endpoints.
 type SandboxDomain struct {
-	app AppHandlers
+	deps Deps
 }
 
-// New creates a new SandboxDomain backed by the given handler interface.
-func New(app AppHandlers) *SandboxDomain {
-	return &SandboxDomain{app: app}
+// New creates a new SandboxDomain backed by the given Deps implementation.
+func New(deps Deps) *SandboxDomain {
+	return &SandboxDomain{deps: deps}
 }
 
 // Name returns "sandbox".
@@ -29,8 +21,8 @@ func (d *SandboxDomain) Name() string { return "sandbox" }
 
 // RegisterRoutes wires the sandbox endpoints to the ServeMux.
 func (d *SandboxDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFunc) http.HandlerFunc) {
-	mux.HandleFunc("GET /api/sandbox", mw(d.app.HandleSandbox))
-	mux.HandleFunc("GET /api/sandbox/policy", mw(d.app.HandleSandboxPolicy))
-	mux.HandleFunc("POST /api/sandbox/start", mw(d.app.HandleSandboxStart))
-	mux.HandleFunc("POST /api/sandbox/stop", mw(d.app.HandleSandboxStop))
+	mux.HandleFunc("GET /api/sandbox", mw(d.handleSandbox))
+	mux.HandleFunc("GET /api/sandbox/policy", mw(d.handleSandboxPolicy))
+	mux.HandleFunc("POST /api/sandbox/start", mw(d.handleSandboxStart))
+	mux.HandleFunc("POST /api/sandbox/stop", mw(d.handleSandboxStop))
 }

@@ -10,23 +10,18 @@ struct ActiveWorkCard: View {
 
     var body: some View {
         LoomCard {
-            VStack(alignment: .leading, spacing: LoomSpacing.sm) {
-                Text("Active Work")
-                    .font(LoomTypography.headlineMedium)
-                    .foregroundStyle(LoomColors.textPrimary)
-
-                HStack(spacing: LoomSpacing.lg) {
-                    metricPill(count: counts.pending, label: "Pending", color: .orange)
-                    metricPill(count: counts.inProgress, label: "Active", color: LoomColors.statusHealthy)
-                    metricPill(count: counts.blocked, label: "Blocked", color: LoomColors.statusBlocked)
+            VStack(alignment: .leading, spacing: LoomSpacing.xs) {
+                // Single row: title + colored count badges
+                HStack(spacing: LoomSpacing.md) {
+                    Text("Active Work")
+                        .font(LoomTypography.headlineMedium)
+                        .foregroundStyle(LoomColors.textPrimary)
 
                     Spacer()
 
-                    if total > 0 {
-                        Text("\(total)")
-                            .font(LoomTypography.counterLarge)
-                            .foregroundStyle(LoomColors.textSecondary)
-                    }
+                    inlineCount(count: counts.pending, label: "pending", color: .orange)
+                    inlineCount(count: counts.inProgress, label: "active", color: LoomColors.statusHealthy)
+                    inlineCount(count: counts.blocked, label: "blocked", color: LoomColors.statusBlocked)
                 }
 
                 if total > 0 {
@@ -47,10 +42,10 @@ struct ActiveWorkCard: View {
         }
     }
 
-    private func metricPill(count: Int, label: String, color: Color) -> some View {
-        VStack(spacing: 2) {
+    private func inlineCount(count: Int, label: String, color: Color) -> some View {
+        HStack(spacing: LoomSpacing.xxs) {
             Text("\(count)")
-                .font(LoomTypography.counterMedium)
+                .font(LoomTypography.counterSmall)
                 .foregroundStyle(count > 0 ? color : LoomColors.textTertiary)
             Text(label)
                 .font(LoomTypography.monoCaption)

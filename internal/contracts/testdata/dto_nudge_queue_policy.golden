@@ -1,0 +1,11 @@
+{
+  "debounce_ms": 500,
+  "cap": 100,
+  "drop_policy": "drop_old",
+  "lane_priority": [
+    "critical",
+    "high",
+    "normal",
+    "low"
+  ]
+}
