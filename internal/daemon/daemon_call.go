@@ -28,6 +28,23 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 }
 
 func (d *Daemon) handleCallWithOptions(ctx context.Context, msg *mcp.Message, skipSemaphore bool) (*mcp.Message, error) {
+	// Reject new calls while daemon is draining.
+	if d.draining.Load() {
+		return &mcp.Message{
+			JSONRPC: mcp.JSONRPCVersion,
+			ID:      msg.ID,
+			Error: &mcp.Error{
+				Code:    mcp.InternalError,
+				Message: "daemon is draining, retry after backoff",
+				Data: &PipelineErrorData{
+					Code:      "DAEMON_DRAINING",
+					Stage:     "gate",
+					Retryable: true,
+				},
+			},
+		}, nil
+	}
+
 	d.activeRPCs.Add(1)
 	defer d.activeRPCs.Add(-1)
 

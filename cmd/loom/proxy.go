@@ -48,6 +48,19 @@ var lastHeartbeat atomic.Int64
 // heartbeatIntervalNanos is the minimum interval between heartbeats in nanoseconds.
 var heartbeatIntervalNanos int64 = int64(5 * time.Second)
 
+// sessionKeepaliveActive is the keepalive interval when the proxy is actively forwarding calls.
+var sessionKeepaliveActive = 5 * time.Second
+
+// sessionKeepaliveIdle is the keepalive interval when the proxy has been idle.
+var sessionKeepaliveIdle = 30 * time.Second
+
+// sessionIdleThreshold is how long since the last forwarded call before
+// the proxy is considered idle for heartbeat interval purposes.
+var sessionIdleThreshold = 30 * time.Second
+
+// lastProxyCallTime tracks the last time a tool call was forwarded to the daemon (unix nanos).
+var lastProxyCallTime atomic.Int64
+
 // proxyNamespace caches inferred git namespace for proxy heartbeat session bootstrap.
 var (
 	proxyNamespaceOnce sync.Once
@@ -159,6 +172,10 @@ func runProxy(socketPath string) error {
 		proxyRoutingTimeouts = fileCfg.Routing.Timeouts
 		if fileCfg.Proxy.HeartbeatIntervalMs > 0 {
 			heartbeatIntervalNanos = int64(time.Duration(fileCfg.Proxy.HeartbeatIntervalMs) * time.Millisecond)
+			sessionKeepaliveActive = time.Duration(fileCfg.Proxy.HeartbeatIntervalMs) * time.Millisecond
+		}
+		if fileCfg.Proxy.IdleHeartbeatIntervalMs > 0 {
+			sessionKeepaliveIdle = time.Duration(fileCfg.Proxy.IdleHeartbeatIntervalMs) * time.Millisecond
 		}
 	}
 
@@ -322,23 +339,27 @@ func runProxy(socketPath string) error {
 	// The session keepalive goroutine uses this to avoid concurrent daemon access.
 	var proxyMainLoopIdle atomic.Bool
 
-	// Session keepalive: periodically sends heartbeat to daemon to prevent
-	// silent session expiry during long idle periods (e.g., Codex sessions).
+	// Session keepalive: adaptive timer that fires more often during active
+	// use (sessionKeepaliveActive, default 5s) and backs off during idle
+	// periods (sessionKeepaliveIdle, default 30s).
 	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
+		timer := time.NewTimer(sessionKeepaliveActive)
+		defer timer.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-timer.C:
 				if daemon == nil || proxySessionDisabled || proxySessionID == "" {
+					timer.Reset(sessionKeepaliveIdle)
 					continue
 				}
 				if !proxyMainLoopIdle.Load() {
+					timer.Reset(sessionKeepaliveActive)
 					continue // main loop is actively processing; skip to avoid race
 				}
 				proxySessionHeartbeat(ctx, daemon)
+				timer.Reset(nextSessionKeepaliveInterval())
 			}
 		}
 	}()
@@ -554,6 +575,9 @@ func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, err.Error()), nil
 	}
+
+	// Track activity for adaptive session keepalive interval.
+	lastProxyCallTime.Store(time.Now().UnixNano())
 
 	// Proxy-level heartbeat: fire async heartbeat on each tool call for
 	// platforms with zero hook support (Kilocode, Antigravity, etc.).
@@ -1473,6 +1497,20 @@ func proxySessionHeartbeat(ctx context.Context, transport mcp.Transport) {
 		proxySessionID = ""
 		return
 	}
+}
+
+// nextSessionKeepaliveInterval returns the appropriate keepalive interval
+// based on whether the proxy has recently forwarded a tool call.
+func nextSessionKeepaliveInterval() time.Duration {
+	last := lastProxyCallTime.Load()
+	if last == 0 {
+		return sessionKeepaliveIdle
+	}
+	elapsed := time.Since(time.Unix(0, last))
+	if elapsed < sessionIdleThreshold {
+		return sessionKeepaliveActive
+	}
+	return sessionKeepaliveIdle
 }
 
 // proxyCloseSession sends a graceful session close to the daemon with a short timeout.

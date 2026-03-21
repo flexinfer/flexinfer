@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Adaptive session heartbeat** (`cmd/loom/proxy.go`): Proxy heartbeat switches between 5s (active) and 30s (idle) intervals based on recent RPC activity, configurable via `proxy.heartbeat_interval_ms` and `proxy.idle_heartbeat_interval_ms`.
+- **Daemon drain gate** (`internal/daemon`): Daemon-level drain mode rejects new `loom/call` requests with a retryable `DAEMON_DRAINING` error; `loom/status` and `loom/session/status` report actual drain state.
 - **RBAC** (`internal/daemon/rbac.go`): Role-based tool access control with glob patterns, per-agent bindings, and deny-wins evaluation.
 - **Audit Trail** (`internal/daemon/audit.go`): Append-only JSONL logging of all tool calls with agent, server, tool, duration, and status fields.
 - **Cost Tracking** (`internal/daemon/cost.go`): Usage attribution by agent/server/tool with aggregation buckets and snapshot API endpoint.

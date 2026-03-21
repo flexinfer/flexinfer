@@ -73,6 +73,75 @@ func TestHeartbeatRateLimiting_AllowsAfterInterval(t *testing.T) {
 	}
 }
 
+func TestNextSessionKeepaliveInterval_NoActivity(t *testing.T) {
+	lastProxyCallTime.Store(0)
+	savedActive := sessionKeepaliveActive
+	savedIdle := sessionKeepaliveIdle
+	savedThreshold := sessionIdleThreshold
+	defer func() {
+		sessionKeepaliveActive = savedActive
+		sessionKeepaliveIdle = savedIdle
+		sessionIdleThreshold = savedThreshold
+	}()
+
+	sessionKeepaliveActive = 5 * time.Second
+	sessionKeepaliveIdle = 30 * time.Second
+	sessionIdleThreshold = 30 * time.Second
+
+	// No activity recorded → idle interval.
+	got := nextSessionKeepaliveInterval()
+	if got != 30*time.Second {
+		t.Fatalf("expected 30s idle interval, got %v", got)
+	}
+}
+
+func TestNextSessionKeepaliveInterval_RecentActivity(t *testing.T) {
+	savedActive := sessionKeepaliveActive
+	savedIdle := sessionKeepaliveIdle
+	savedThreshold := sessionIdleThreshold
+	defer func() {
+		sessionKeepaliveActive = savedActive
+		sessionKeepaliveIdle = savedIdle
+		sessionIdleThreshold = savedThreshold
+		lastProxyCallTime.Store(0)
+	}()
+
+	sessionKeepaliveActive = 5 * time.Second
+	sessionKeepaliveIdle = 30 * time.Second
+	sessionIdleThreshold = 30 * time.Second
+
+	// Activity just now → active interval.
+	lastProxyCallTime.Store(time.Now().UnixNano())
+	got := nextSessionKeepaliveInterval()
+	if got != 5*time.Second {
+		t.Fatalf("expected 5s active interval, got %v", got)
+	}
+}
+
+func TestNextSessionKeepaliveInterval_StaleActivity(t *testing.T) {
+	savedActive := sessionKeepaliveActive
+	savedIdle := sessionKeepaliveIdle
+	savedThreshold := sessionIdleThreshold
+	defer func() {
+		sessionKeepaliveActive = savedActive
+		sessionKeepaliveIdle = savedIdle
+		sessionIdleThreshold = savedThreshold
+		lastProxyCallTime.Store(0)
+	}()
+
+	sessionKeepaliveActive = 5 * time.Second
+	sessionKeepaliveIdle = 30 * time.Second
+	sessionIdleThreshold = 1 * time.Millisecond // tiny threshold for test
+
+	// Activity in the past, beyond threshold → idle interval.
+	lastProxyCallTime.Store(time.Now().Add(-10 * time.Millisecond).UnixNano())
+	time.Sleep(2 * time.Millisecond) // ensure we're past threshold
+	got := nextSessionKeepaliveInterval()
+	if got != 30*time.Second {
+		t.Fatalf("expected 30s idle interval for stale activity, got %v", got)
+	}
+}
+
 func TestResolveProxyIdentity_UsesEnvOverride(t *testing.T) {
 	t.Setenv("LOOM_PROXY_AGENT_ID", "custom-proxy-id")
 	proxyIdentityOnce = sync.Once{}

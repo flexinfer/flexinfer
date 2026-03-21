@@ -143,6 +143,7 @@ type statusResult struct {
 	Processes           []string `json:"processes"`
 	ActiveRPCs          int64    `json:"activeRPCs"`
 	DrainReady          bool     `json:"drainReady"`
+	Draining            bool     `json:"draining"`
 	DaemonEpoch         int64    `json:"daemonEpoch"`
 	ActiveProxySessions int      `json:"activeProxySessions"`
 }
@@ -164,6 +165,7 @@ func (d *Daemon) handleStatus(ctx context.Context, msg *mcp.Message) (*mcp.Messa
 		Processes:           d.procMgr.List(),
 		ActiveRPCs:          rpcs,
 		DrainReady:          rpcs == 0,
+		Draining:            d.draining.Load(),
 		DaemonEpoch:         d.daemonEpoch,
 		ActiveProxySessions: activeSessions,
 	}

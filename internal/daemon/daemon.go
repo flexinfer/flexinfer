@@ -140,6 +140,9 @@ type Daemon struct {
 	// activeRPCs tracks in-flight RPC call count for drain-readiness checks.
 	activeRPCs atomic.Int64
 
+	// draining indicates the daemon is shutting down and should reject new calls.
+	draining atomic.Bool
+
 	// daemonEpoch is incremented on each daemon startup for deterministic restart detection.
 	daemonEpoch int64
 	// sessions manages proxy session leases.
@@ -748,6 +751,20 @@ func (d *Daemon) signalLoop(ctx context.Context) {
 	}
 }
 
+// SetDraining transitions the daemon into drain mode. New loom/call requests
+// are rejected with a retryable error and all active sessions are drained.
+func (d *Daemon) SetDraining() {
+	d.draining.Store(true)
+	if d.sessions != nil {
+		d.sessions.DrainAll()
+	}
+}
+
+// IsDraining returns true if the daemon is in drain mode.
+func (d *Daemon) IsDraining() bool {
+	return d.draining.Load()
+}
+
 // Stop stops the daemon.
 func (d *Daemon) Stop() (err error) {
 	_, span := d.daemonTracer().Start(context.Background(), "daemon.stop")
@@ -764,10 +781,8 @@ func (d *Daemon) Stop() (err error) {
 			close(d.done)
 		}
 
-		// Drain all proxy sessions
-		if d.sessions != nil {
-			d.sessions.DrainAll()
-		}
+		// Drain all proxy sessions and set daemon-level drain flag.
+		d.SetDraining()
 
 		// Stop health monitor first
 		if d.healthMonitor != nil {

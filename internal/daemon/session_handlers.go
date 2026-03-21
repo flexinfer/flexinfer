@@ -103,10 +103,15 @@ type sessionStatusResult struct {
 }
 
 func (d *Daemon) handleSessionStatus(_ context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	drainState := "none"
+	if d.draining.Load() {
+		drainState = "draining"
+	}
+
 	if d.sessions == nil {
 		return mcp.NewResponse(msg.ID, sessionStatusResult{
 			DaemonEpoch: d.daemonEpoch,
-			DrainState:  "none",
+			DrainState:  drainState,
 		})
 	}
 
@@ -114,7 +119,7 @@ func (d *Daemon) handleSessionStatus(_ context.Context, msg *mcp.Message) (*mcp.
 		DaemonEpoch:    d.daemonEpoch,
 		ActiveSessions: d.sessions.ActiveCount(),
 		TotalSessions:  d.sessions.Count(),
-		DrainState:     "none",
+		DrainState:     drainState,
 	})
 }
 
