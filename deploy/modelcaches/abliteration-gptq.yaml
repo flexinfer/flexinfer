@@ -10,7 +10,7 @@
 #   5. Quantized files stored in gptq-w4-g128/ subdirectory on PVC (Ready)
 #
 # Disk requirements:
-#   27B BF16: ~54 GB download + ~15 GB GPTQ output → 120 GB PVC
+#   27B BF16: ~54 GB download + ~15 GB GPTQ output + working headroom → 160 GB PVC
 #
 # GPU requirements: 1x AMD GPU for quantization only
 # Abliteration runs CPU-only (gfx906 GPU alloc broken on ROCm 6.4)
@@ -27,7 +27,7 @@ metadata:
 spec:
   source: "Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled"
   storageStrategy: SharedPVC
-  storageSize: "120Gi"
+  storageSize: "160Gi"
   clusterStorageClassName: nvme-1r-gpu
   secretRef: "hf-token"
   nodeSelector:
