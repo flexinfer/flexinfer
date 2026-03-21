@@ -31,3 +31,36 @@ const (
 	// ordering when multiple models share a GPU group.
 	defaultEvictionPriority = int32(50)
 )
+
+// Annotation keys used on Jobs, Deployments, Pods, and Services.
+const (
+	AnnotationSource      = "flexinfer.ai/source"
+	AnnotationCacheKind   = "flexinfer.ai/cache-kind"
+	AnnotationCachePVC    = "flexinfer.ai/cache-pvc"
+	AnnotationCacheDest   = "flexinfer.ai/cache-dest"
+	AnnotationCachePath   = "flexinfer.ai/cache-path"
+	AnnotationCacheSrcPVC = "flexinfer.ai/cache-src-pvc"
+
+	AnnotationServiceLabels = "flexinfer.ai/service-labels"
+	AnnotationVRAMEstimate  = "flexinfer.ai/gpu.vram-estimate-mb"
+	AnnotationKVCacheUsage  = "flexinfer.ai/kv-cache-usage"
+
+	// LiteLLM proxy annotations.
+	AnnotationLiteLLMServedModel  = "litellm.flexinfer.ai/served-model"
+	AnnotationLiteLLMAliases      = "litellm.flexinfer.ai/aliases"
+	AnnotationLiteLLMCopilot      = "litellm.flexinfer.ai/copilot-model"
+	AnnotationLiteLLMCapabilities = "litellm.flexinfer.ai/capabilities"
+)
+
+// Label keys used on Pods, Jobs, and Deployments.
+const (
+	LabelModel          = "flexinfer.ai/model"
+	LabelBackend        = "flexinfer.ai/backend"
+	LabelGPUGroup       = "flexinfer.ai/gpu-group"
+	LabelGPUArch        = "flexinfer.ai/gpu.arch"
+	LabelGPUArchLegacy  = "flexinfer.ai/gpu-arch"
+	LabelComponent      = "flexinfer.ai/component"
+	LabelFormat         = "flexinfer.ai/format"
+	LabelCache          = "flexinfer.ai/cache"
+	LabelFederatedModel = "flexinfer.ai/federated-model"
+)

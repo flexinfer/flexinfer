@@ -33,7 +33,7 @@ func TestJobForLocalHFPrefetch(t *testing.T) {
 	if job.Name != "gonzalomo-fluxpony-imagegen-cache-stage" {
 		t.Fatalf("job.Name = %q", job.Name)
 	}
-	if got := job.Annotations["flexinfer.ai/cache-kind"]; got != "local-prefetch" {
+	if got := job.Annotations[AnnotationCacheKind]; got != "local-prefetch" {
 		t.Fatalf("cache-kind annotation = %q", got)
 	}
 	if len(job.Spec.Template.Spec.Volumes) != 1 {

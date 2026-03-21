@@ -753,7 +753,7 @@ func TestDetectGPU(t *testing.T) {
 			}),
 			nodes: []corev1.Node{
 				readyNode("amd-node-flex", map[string]string{
-					"flexinfer.ai/gpu.arch": "gfx906",
+					LabelGPUArch: "gfx906",
 				}, corev1.ResourceList{
 					"amd.com/gpu": resource.MustParse("1"),
 				}),
@@ -867,7 +867,7 @@ func TestDetectGPU(t *testing.T) {
 			}),
 			nodes: []corev1.Node{
 				readyNode("nvidia-flex", map[string]string{
-					"flexinfer.ai/gpu.arch": "sm_89",
+					LabelGPUArch: "sm_89",
 				}, corev1.ResourceList{
 					"nvidia.com/gpu": resource.MustParse("1"),
 				}),

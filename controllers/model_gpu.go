@@ -246,7 +246,7 @@ func (r *ModelReconciler) detectGPU(ctx context.Context, model *aiv1alpha2.Model
 				}
 				// Fall back to flexinfer.ai/gpu.arch label (same as AMD detection).
 				if arch == "" && node.Labels != nil {
-					arch = node.Labels["flexinfer.ai/gpu.arch"]
+					arch = node.Labels[LabelGPUArch]
 				}
 				return nodeMatch{vendor: backend.GPUVendorNVIDIA, arch: arch}, true
 			case backend.GPUVendorAMD:
@@ -259,7 +259,7 @@ func (r *ModelReconciler) detectGPU(ctx context.Context, model *aiv1alpha2.Model
 					arch = node.Labels["gpu.amd.com/gpu-architecture"]
 					if arch == "" {
 						// FlexInfer agent sets this label via rocminfo detection.
-						arch = node.Labels["flexinfer.ai/gpu.arch"]
+						arch = node.Labels[LabelGPUArch]
 					}
 					if arch == "" {
 						// ROCm arch label isn't always present; fall back to common node-level labels.

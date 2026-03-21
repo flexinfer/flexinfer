@@ -36,7 +36,7 @@ func TestRequestsForRuntimePod_RequeuesMatchingModels(t *testing.T) {
 			Name: "cblevins-radeonvii",
 			Labels: map[string]string{
 				"kubernetes.io/hostname": "cblevins-radeonvii",
-				"flexinfer.ai/gpu-arch":  "gfx906",
+				LabelGPUArchLegacy:       "gfx906",
 			},
 		},
 	}

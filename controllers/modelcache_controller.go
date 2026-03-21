@@ -35,29 +35,12 @@ import (
 )
 
 const (
-	// annotationQuantSpecHash stores a SHA-256 hash of the QuantizationSpec.
-	// When the hash changes, the controller triggers re-quantization.
-	annotationQuantSpecHash = "flexinfer.ai/quant-spec-hash"
-
-	// annotationRequantize triggers re-quantization when set to "true".
-	// The controller clears this annotation after initiating the re-quantization.
-	annotationRequantize = "flexinfer.ai/requantize"
-
-	// annotationAblitSpecHash stores a SHA-256 hash of the AbliterationSpec.
-	// When the hash changes, the controller triggers re-abliteration.
-	annotationAblitSpecHash = "flexinfer.ai/ablit-spec-hash"
-
-	// annotationReabliterate triggers re-abliteration when set to "true".
-	// The controller clears this annotation after initiating the re-abliteration.
-	annotationReabliterate = "flexinfer.ai/reabliterate"
-
-	// annotationFinetuneSpecHash stores a SHA-256 hash of the FinetuneSpec.
-	// When the hash changes, the controller triggers re-finetuning.
+	annotationQuantSpecHash    = "flexinfer.ai/quant-spec-hash"
+	annotationRequantize       = "flexinfer.ai/requantize"
+	annotationAblitSpecHash    = "flexinfer.ai/ablit-spec-hash"
+	annotationReabliterate     = "flexinfer.ai/reabliterate"
 	annotationFinetuneSpecHash = "flexinfer.ai/finetune-spec-hash"
-
-	// annotationRefinetune triggers re-finetuning when set to "true".
-	// The controller clears this annotation after initiating the re-finetuning.
-	annotationRefinetune = "flexinfer.ai/refinetune"
+	annotationRefinetune       = "flexinfer.ai/refinetune"
 
 	// DefaultDownloadMemoryGB is the default memory limit for download jobs (in GiB).
 	DefaultDownloadMemoryGB = 16

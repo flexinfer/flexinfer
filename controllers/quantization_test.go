@@ -79,9 +79,9 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 			}, time.Minute, time.Second).Should(Equal(aiv1alpha1.ModelCachePhaseQuantizing))
 
 			By("Verifying quantization job labels")
-			Expect(quantJob.Labels).To(HaveKey("flexinfer.ai/format"))
-			Expect(quantJob.Labels["flexinfer.ai/format"]).To(Equal("GGUF"))
-			Expect(quantJob.Labels["flexinfer.ai/cache"]).To(Equal(CacheName))
+			Expect(quantJob.Labels).To(HaveKey(LabelFormat))
+			Expect(quantJob.Labels[LabelFormat]).To(Equal("GGUF"))
+			Expect(quantJob.Labels[LabelCache]).To(Equal(CacheName))
 
 			By("Simulating quantization job success")
 			start := metav1.NewTime(time.Now().Add(-2 * time.Minute))
@@ -288,8 +288,8 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 				return k8sClient.Get(ctx, quantJobKey, quantJob)
 			}, time.Minute, time.Second).Should(Succeed())
 
-			Expect(quantJob.Labels["flexinfer.ai/format"]).To(Equal("AWQ"))
-			Expect(quantJob.Labels["flexinfer.ai/cache"]).To(Equal(cacheName))
+			Expect(quantJob.Labels[LabelFormat]).To(Equal("AWQ"))
+			Expect(quantJob.Labels[LabelCache]).To(Equal(cacheName))
 
 			By("Simulating AWQ quantization job success")
 			start := metav1.NewTime(time.Now().Add(-90 * time.Second))
