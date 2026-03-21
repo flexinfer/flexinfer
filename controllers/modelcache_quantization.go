@@ -663,7 +663,7 @@ func readPodLogTail(ctx context.Context, kubeClient kubernetes.Interface, namesp
 	if err != nil {
 		return ""
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 	buf := make([]byte, 8192)
 	n, _ := stream.Read(buf)
 	if n == 0 {
