@@ -37,14 +37,10 @@ func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destS
 	modelID := extractModelFromSource(model.Spec.Source)
 	hfOpts := resolveHFDownloadOptions(model)
 
-	envVars := []corev1.EnvVar{
-		{Name: "HF_HUB_ENABLE_HF_TRANSFER", Value: "0"},
-		// Keep HuggingFace cache on the mounted volume so backends can reuse downloads.
-		{Name: "HF_HOME", Value: "/models/.cache/huggingface"},
-		{Name: "HF_HUB_CACHE", Value: "/models/.cache/huggingface/hub"},
-		{Name: "HUGGINGFACE_HUB_CACHE", Value: "/models/.cache/huggingface/hub"},
-		{Name: "TRANSFORMERS_CACHE", Value: "/models/.cache/huggingface/transformers"},
-	}
+	envVars := append(
+		[]corev1.EnvVar{{Name: "HF_HUB_ENABLE_HF_TRANSFER", Value: "0"}},
+		hfCacheEnvVars("/models/.cache/huggingface")...,
+	)
 	if len(hfOpts.allowPatterns) > 0 {
 		allowJSON, err := json.Marshal(hfOpts.allowPatterns)
 		if err != nil {
@@ -482,13 +478,10 @@ func (r *ModelReconciler) jobForLocalHFPrefetch(model *aiv1alpha2.Model) (*batch
 	markerSum := sha256.Sum256([]byte(model.Spec.Source))
 	markerName := ".flexinfer_cached_" + hex.EncodeToString(markerSum[:])
 
-	envVars := []corev1.EnvVar{
-		{Name: "HF_HUB_ENABLE_HF_TRANSFER", Value: "0"},
-		{Name: "HF_HOME", Value: "/models/.cache/huggingface"},
-		{Name: "HF_HUB_CACHE", Value: "/models/.cache/huggingface/hub"},
-		{Name: "HUGGINGFACE_HUB_CACHE", Value: "/models/.cache/huggingface/hub"},
-		{Name: "TRANSFORMERS_CACHE", Value: "/models/.cache/huggingface/transformers"},
-	}
+	envVars := append(
+		[]corev1.EnvVar{{Name: "HF_HUB_ENABLE_HF_TRANSFER", Value: "0"}},
+		hfCacheEnvVars("/models/.cache/huggingface")...,
+	)
 	if len(hfOpts.allowPatterns) > 0 {
 		allowJSON, err := json.Marshal(hfOpts.allowPatterns)
 		if err != nil {
