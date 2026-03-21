@@ -109,7 +109,7 @@ func (r *ModelCacheReconciler) daemonSetForNodeLocal(m *aiv1alpha1.ModelCache, m
 
 	if isOCISource(m.Spec.Source) {
 		// OCI registry source - use ORAS
-		image = "ghcr.io/oras-project/oras:v1.2.2"
+		image = ImageORAS
 		if img, ok := os.LookupEnv("ORAS_DOWNLOADER_IMAGE"); ok && img != "" {
 			image = img
 		}
@@ -134,7 +134,7 @@ while true; do sleep 3600; done
 `, modelPath, registryRef)
 	} else if isMlcModel(m.Spec.Source) {
 		// MLC-LLM models require git clone with LFS
-		image = "debian:bookworm-slim"
+		image = ImageDebianSlim
 		modelID := parseModelSource(m.Spec.Source)
 		downloadScript = fmt.Sprintf(`
 set -ex
@@ -158,7 +158,7 @@ while true; do sleep 3600; done
 `, modelPath, modelID, huggingFaceRepositoryBaseURL)
 	} else {
 		// Standard HuggingFace models
-		image = "python:3.10-slim"
+		image = ImagePythonSlim
 		modelID := parseModelSource(m.Spec.Source)
 		downloadScript = fmt.Sprintf(`
 set -ex

@@ -80,7 +80,7 @@ func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destS
 	var downloadScript string
 
 	if isMlcModelSource(model.Spec.Source) {
-		image = "debian:bookworm-slim"
+		image = ImageDebianSlim
 		downloadScript = fmt.Sprintf(`
 set -ex
 MODEL_ID="%s"
@@ -107,7 +107,7 @@ touch "$MARKER"
 echo "Download complete."
 `, modelID, destDir, huggingFaceRepositoryBaseURL)
 	} else {
-		image = "python:3.10-slim"
+		image = ImagePythonSlim
 		downloadScript = fmt.Sprintf(`
 set -ex
 MODEL_ID="%s"
@@ -259,7 +259,7 @@ echo "Artifact present at file $TARGET"
 		BackoffLimit:  0,
 		RestartPolicy: corev1.RestartPolicyNever,
 		ContainerName: "checker",
-		Image:         "alpine:3.19",
+		Image:         ImageAlpine,
 		Command:       []string{"/bin/sh", "-c"},
 		Args:          []string{script},
 		Resources: corev1.ResourceRequirements{
@@ -332,7 +332,7 @@ echo "Local cache verified: $DIR ($COUNT+ model files found)"
 		RestartPolicy:           corev1.RestartPolicyNever,
 		TTLSecondsAfterFinished: ptr.To(int32(300)),
 		ContainerName:           "checker",
-		Image:                   "alpine:3.19",
+		Image:                   ImageAlpine,
 		Command:                 []string{"/bin/sh", "-c"},
 		Args:                    []string{script},
 		Resources: corev1.ResourceRequirements{
@@ -425,7 +425,7 @@ echo "Local staging complete."
 		BackoffLimit:  1,
 		RestartPolicy: corev1.RestartPolicyOnFailure,
 		ContainerName: "stager",
-		Image:         "alpine:3.20",
+		Image:         ImageAlpine,
 		Command:       []string{"/bin/sh", "-c"},
 		Args:          []string{script},
 		Resources: corev1.ResourceRequirements{
@@ -592,7 +592,7 @@ echo "Local HF staging complete."
 		RestartPolicy:           corev1.RestartPolicyOnFailure,
 		TTLSecondsAfterFinished: ptr.To(int32(300)),
 		ContainerName:           "downloader",
-		Image:                   "python:3.10-slim",
+		Image:                   ImagePythonSlim,
 		Command:                 []string{"/bin/sh", "-c"},
 		Args:                    []string{script},
 		Env:                     envVars,
@@ -684,7 +684,7 @@ echo "Copy complete."
 		BackoffLimit:  1,
 		RestartPolicy: corev1.RestartPolicyOnFailure,
 		ContainerName: "copier",
-		Image:         "alpine:3.20",
+		Image:         ImageAlpine,
 		Command:       []string{"/bin/sh", "-c"},
 		Args:          []string{script},
 		Resources: corev1.ResourceRequirements{

@@ -64,3 +64,11 @@ const (
 	LabelCache          = "flexinfer.ai/cache"
 	LabelFederatedModel = "flexinfer.ai/federated-model"
 )
+
+// Container images used by cache/download jobs.
+const (
+	ImageAlpine     = "alpine:3.20"
+	ImagePythonSlim = "python:3.10-slim"
+	ImageDebianSlim = "debian:bookworm-slim"
+	ImageORAS       = "ghcr.io/oras-project/oras:v1.2.2"
+)

@@ -363,7 +363,7 @@ func (r *ModelCacheReconciler) jobForDownload(m *aiv1alpha1.ModelCache, pvcName,
 	if isLocalSource(m.Spec.Source) {
 		// local:// sources are paths that should already exist in the mounted model store.
 		// If the source is already under the destination dir, just verify it exists (avoid copying onto itself).
-		image = "alpine:3.19"
+		image = ImageAlpine
 		srcRel := parseLocalSource(m.Spec.Source)
 		downloadScript = fmt.Sprintf(`
 set -ex
@@ -406,7 +406,7 @@ ls -la "$DEST_DIR"
 	} else if isMlcModel(m.Spec.Source) {
 		// MLC-LLM models require git clone with LFS support
 		// Use debian:bookworm-slim as stable base with apt-get support
-		image = "debian:bookworm-slim"
+		image = ImageDebianSlim
 		downloadScript = fmt.Sprintf(`
 set -ex
 MODEL_ID="%s"
@@ -434,7 +434,7 @@ ls -la "$DEST_DIR"
 `, modelID, modelPath, huggingFaceRepositoryBaseURL)
 	} else {
 		// Standard HuggingFace models use huggingface_hub snapshot_download (more stable than huggingface-cli)
-		image = "python:3.10-slim"
+		image = ImagePythonSlim
 		downloadScript = fmt.Sprintf(`
 set -ex
 MODEL_ID="%s"
@@ -569,7 +569,7 @@ func (r *ModelCacheReconciler) jobForOCIDownload(m *aiv1alpha1.ModelCache, pvcNa
 	registryRef := parseOCISource(m.Spec.Source)
 
 	// Get ORAS image from environment or use default
-	orasImage := "ghcr.io/oras-project/oras:v1.2.2"
+	orasImage := ImageORAS
 	if img, ok := os.LookupEnv("ORAS_DOWNLOADER_IMAGE"); ok && img != "" {
 		orasImage = img
 	}

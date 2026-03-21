@@ -143,7 +143,7 @@ func (r *ModelCacheReconciler) daemonSetForMemory(m *aiv1alpha1.ModelCache, mode
 	if m.Spec.ExistingClaimName != nil && *m.Spec.ExistingClaimName != "" {
 		sourcePVC = *m.Spec.ExistingClaimName
 		copyFromPVC = true
-		image = "alpine:3.19"
+		image = ImageAlpine
 
 		// Determine source path within the PVC
 		// If modelPath is set, use it; otherwise use the cache name as subdirectory
@@ -215,7 +215,7 @@ done
 `, sourcePath, modelPath)
 	} else if isOCISource(m.Spec.Source) {
 		// OCI registry source - use ORAS
-		image = "ghcr.io/oras-project/oras:v1.2.2"
+		image = ImageORAS
 		if img, ok := os.LookupEnv("ORAS_DOWNLOADER_IMAGE"); ok && img != "" {
 			image = img
 		}
@@ -240,7 +240,7 @@ while true; do sleep 3600; done
 `, modelPath, registryRef)
 	} else if isMlcModel(m.Spec.Source) {
 		// MLC-LLM models require git clone with LFS
-		image = "debian:bookworm-slim"
+		image = ImageDebianSlim
 		modelID := parseModelSource(m.Spec.Source)
 		downloadScript = fmt.Sprintf(`
 set -ex
@@ -264,7 +264,7 @@ while true; do sleep 3600; done
 `, modelPath, modelID, huggingFaceRepositoryBaseURL)
 	} else {
 		// Standard HuggingFace models
-		image = "python:3.10-slim"
+		image = ImagePythonSlim
 		modelID := parseModelSource(m.Spec.Source)
 		downloadScript = fmt.Sprintf(`
 set -ex
