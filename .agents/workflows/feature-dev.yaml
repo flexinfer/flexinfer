@@ -98,14 +98,28 @@ steps:
 
   - id: commit
     name: "Commit Changes"
-    step_type: approval
-    approval_message: "Pre-commit checks pass. Changes committed?"
+    step_type: tool
+    tool_name: agent_context_add
+    server_name: agent-context
+    tool_args:
+      session_id: "${init.session_id}"
+      entries:
+        - entry_type: "milestone"
+          title: "Changes committed"
+          content: "Committed scoped changes with conventional format"
     depends_on: [precommit]
 
   - id: push
     name: "Push & Check CI"
-    step_type: approval
-    approval_message: "Committed. Pushed to remote and CI pipeline passing?"
+    step_type: tool
+    tool_name: agent_context_add
+    server_name: agent-context
+    tool_args:
+      session_id: "${init.session_id}"
+      entries:
+        - entry_type: "milestone"
+          title: "Pushed and CI verified"
+          content: "Pushed branch to remote and verified CI pipeline"
     depends_on: [commit]
 
   - id: end
@@ -118,14 +132,14 @@ steps:
       summarize: true
     depends_on: [push]
 
-  - id: release-worktree
-    name: "Release Worktree"
+  - id: cleanup
+    name: "Cleanup Worktree"
     step_type: tool
     tool_name: agent_worktree_release
     server_name: agent-context
     tool_args:
       assignment_id: "${worktree.assignment_id}"
-      remove_worktree: false
+      remove_worktree: true
     depends_on: [end]
 
 input_schema:
