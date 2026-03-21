@@ -4,8 +4,7 @@ namespace: flexinfer-system
 resources:
   # MLC compiled model references (shared NFS PVC)
   - mlc-shared-caches.yaml
-  # GPTQ quantization pipeline (Download → Quantize)
-  - gptq-quantization.yaml
+  # gptq-quantization.yaml — removed: 14B quant superseded by 27B opus distill
   # Abliteration + GPTQ pipeline (Download → Abliterate → Quantize)
   - abliteration-gptq.yaml
   # Finetune pipeline test (Download → QLoRA Finetune → Quantize)
