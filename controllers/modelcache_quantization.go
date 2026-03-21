@@ -30,7 +30,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -55,66 +54,31 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 	log := log.FromContext(ctx)
 
 	currentHash := quantSpecHash(modelCache.Spec.Quantization)
-	storedHash := ""
-	if modelCache.Annotations != nil {
-		storedHash = modelCache.Annotations[annotationQuantSpecHash]
+
+	changed, err := r.detectAndApplySpecChange(ctx, modelCache, specChangeParams{
+		CurrentHash:          currentHash,
+		HashAnnotationKey:    annotationQuantSpecHash,
+		TriggerAnnotationKey: annotationRequantize,
+		JobSuffixesToDelete:  []string{"-abliterate", "-quantize", "-downloader"},
+		EventReason:          "RequantizationTriggered",
+	})
+	if err != nil {
+		return ctrl.Result{}, err
 	}
-
-	// Detect spec change or explicit requantize request.
-	specChanged := storedHash != "" && storedHash != currentHash
-	requantize := modelCache.Annotations != nil && modelCache.Annotations[annotationRequantize] == "true"
-	needsRequant := specChanged || requantize
-
-	if needsRequant && (modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady || modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseFailed) {
-		reason := "spec change"
-		if requantize {
-			reason = "requantize annotation"
-		}
-		log.Info("Re-quantization triggered", "cache", modelCache.Name, "reason", reason,
-			"storedHash", storedHash, "currentHash", currentHash)
-
-		// Delete existing abliterate, quantize AND download jobs. Re-quantization
-		// requires fresh FP16 source weights because the previous run's FP16
-		// cleanup deletes them after save. The download job's "Complete" status
-		// is stale once we need to re-download.
-		propagation := metav1.DeletePropagationBackground
-		for _, suffix := range []string{"-abliterate", "-quantize", "-downloader"} {
-			jobName := modelCache.Name + suffix
-			existingJob := &batchv1.Job{}
-			if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: modelCache.Namespace}, existingJob); err == nil {
-				if err := r.Delete(ctx, existingJob, &client.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !errors.IsNotFound(err) {
-					return ctrl.Result{}, fmt.Errorf("deleting job %s for re-quant: %w", jobName, err)
-				}
-				log.Info("Deleted job for re-quantization", "job", jobName)
-			}
-		}
-
+	if changed {
 		// Reset quantization status and phase back to Provisioning.
-		// The download job will re-run; the improved marker validation
-		// (checks for actual weight files) ensures it re-downloads if
-		// FP16 sources were cleaned up by the previous quantization.
 		modelCache.Status.Quantization = nil
 		modelCache.Status.Abliteration = nil
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
-
-		// Update annotation: store new hash, clear requantize flag.
-		if modelCache.Annotations == nil {
-			modelCache.Annotations = make(map[string]string)
-		}
-		modelCache.Annotations[annotationQuantSpecHash] = currentHash
-		delete(modelCache.Annotations, annotationRequantize)
-		if err := r.Update(ctx, modelCache); err != nil {
-			return ctrl.Result{}, err
-		}
-
-		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "RequantizationTriggered",
-			fmt.Sprintf("Re-quantization triggered (%s), old job deleted", reason))
-
-		// Requeue to let the deleted job disappear before creating a new one.
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
+	}
+
+	storedHash := ""
+	if modelCache.Annotations != nil {
+		storedHash = modelCache.Annotations[annotationQuantSpecHash]
 	}
 
 	// If quantization completed and publishing is configured but not yet recorded,
@@ -141,7 +105,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 	quantJobName := modelCache.Name + "-quantize"
 	quantJob := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: quantJobName, Namespace: modelCache.Namespace}, quantJob)
+	err = r.Get(ctx, types.NamespacedName{Name: quantJobName, Namespace: modelCache.Namespace}, quantJob)
 	if err != nil && errors.IsNotFound(err) {
 		// If quantization already completed, the job was GC'd by TTL — don't recreate.
 		if quantizationCompleted(modelCache.Status.Quantization) {
