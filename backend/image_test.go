@@ -96,7 +96,7 @@ func TestResolveImage(t *testing.T) {
 			// Clean up any test env vars
 			for _, r := range rules {
 				if r.EnvVar != "" {
-					os.Unsetenv(r.EnvVar)
+					_ = os.Unsetenv(r.EnvVar)
 				}
 			}
 			if tt.envKey != "" {
