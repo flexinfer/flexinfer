@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -20,6 +21,22 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 		CacheName      = "test-quant-cache"
 		CacheNamespace = "default"
 	)
+
+	bindSharedPVC := func(ctx context.Context, cacheName string) {
+		By("Binding the shared PVC")
+		pvcKey := types.NamespacedName{Name: cacheName, Namespace: CacheNamespace}
+		Eventually(func() error {
+			pvc := &corev1.PersistentVolumeClaim{}
+			if err := k8sClient.Get(ctx, pvcKey, pvc); err != nil {
+				return err
+			}
+			if pvc.Status.Phase == corev1.ClaimBound {
+				return nil
+			}
+			pvc.Status.Phase = corev1.ClaimBound
+			return k8sClient.Status().Update(ctx, pvc)
+		}, time.Minute, time.Second).Should(Succeed())
+	}
 
 	Context("When a ModelCache has quantization spec", func() {
 		It("Should create a quantization job after download succeeds", func() {
@@ -43,6 +60,8 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, modelCache)).To(Succeed())
+
+			bindSharedPVC(ctx, CacheName)
 
 			By("Checking that a downloader job is created")
 			dlJobKey := types.NamespacedName{
@@ -131,6 +150,8 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, modelCache)).To(Succeed())
+
+			bindSharedPVC(ctx, cacheName)
 
 			By("Simulating download job success")
 			dlJobKey := types.NamespacedName{
@@ -266,6 +287,8 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 			}
 			Expect(k8sClient.Create(ctx, modelCache)).To(Succeed())
 
+			bindSharedPVC(ctx, cacheName)
+
 			By("Simulating download job success")
 			dlJobKey := types.NamespacedName{
 				Name:      fmt.Sprintf("%s-downloader", cacheName),
@@ -341,6 +364,8 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 			}
 			Expect(k8sClient.Create(ctx, modelCache)).To(Succeed())
 
+			bindSharedPVC(ctx, cacheName)
+
 			By("Simulating download job success")
 			dlJobKey := types.NamespacedName{
 				Name:      fmt.Sprintf("%s-downloader", cacheName),
@@ -404,6 +429,8 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, modelCache)).To(Succeed())
+
+			bindSharedPVC(ctx, cacheName)
 
 			By("Simulating download + quantization success")
 			dlJobKey := types.NamespacedName{Name: cacheName + "-downloader", Namespace: CacheNamespace}
@@ -477,6 +504,8 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, modelCache)).To(Succeed())
+
+			bindSharedPVC(ctx, cacheName)
 
 			By("Simulating download + quantization success")
 			dlJobKey := types.NamespacedName{Name: cacheName + "-downloader", Namespace: CacheNamespace}
