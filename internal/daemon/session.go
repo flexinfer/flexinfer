@@ -207,6 +207,18 @@ func (m *SessionManager) DrainAll() int {
 	return drained
 }
 
+// IsDraining returns true if any sessions are in draining state.
+func (m *SessionManager) IsDraining() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, sess := range m.sessions {
+		if sess.State == SessionDraining {
+			return true
+		}
+	}
+	return false
+}
+
 // Epoch returns the daemon epoch this manager was initialized with.
 func (m *SessionManager) Epoch() int64 {
 	return m.daemonEpoch
