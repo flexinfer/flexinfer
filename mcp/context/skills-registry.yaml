@@ -64,7 +64,7 @@
 # Sync: loom sync <profile> --regen --hub-mode --all-projects --skip-worktrees
 
 version: 1
-updated: 2026-03-19
+updated: 2026-03-21
 skills:
   - name: flux-gitops-operator
     categories: [kubernetes, gitops, operations]
@@ -4298,7 +4298,7 @@ skills:
     categories: [development, workflow]
     common:
       description: |
-        Standard feature development loop with session tracking, worktree allocation, sandbox testing, and commit/push gates. Use for any multi-file feature implementation.
+        Standard feature development loop with session tracking, worktree allocation, sandbox testing, and commit/push gates. Use for any multi-file feature implementation. Ship without asking: commit, push, create MR, and request auto-merge automatically. Only pause on failures or explicit user stop. After merge, auto-cleanup: delete remote branch, release worktree, delete local branch.
       instructions: |
         # Feature Development
 
@@ -4326,14 +4326,25 @@ skills:
         5. **Pre-commit checks** — lint, fmt, hooks
         6. **Landing Procedure**
            a. Stage only files for the active task (never `.env`, credentials, or unrelated changes)
-           b. Commit with conventional format: `feat(scope): description` + `Co-Authored-By` trailer
+           b. Commit with conventional format: `type(scope): description` + `Co-Authored-By` trailer
            c. Push branch (`-u` if first push)
-           d. Create or reuse MR/PR (check existing MRs for same source branch first)
-           e. Request auto-merge when project policy allows
+           d. Create or reuse MR/PR (check existing MRs for same source branch first; never create duplicates)
+              - GitLab: `gitlab__list_merge_requests(source_branch=..., target_branch=main)`
+              - GitHub: `gh pr list --head <branch>`
+           e. Request auto-merge
+              - GitLab: `gitlab__merge_merge_request(auto_merge=true, sha=<HEAD>)`
+              - GitHub: `gh pr merge --auto --squash`
            f. Poll pipeline to terminal state; if red → fix → re-commit → re-push → re-poll
            g. Confirm merged or document blocker
-        7. **Release worktree** — `agent_worktree_release(...)`
-        8. **End session** — `agent_session_end(summarize=true)`
+
+           Do not ask the user before committing, pushing, creating MRs, or merging.
+           Only pause on failures, blockers, or when the user explicitly requests a stop.
+
+        7. **Post-Merge Cleanup**
+           a. Delete remote branch: `git push origin --delete <branch>`
+           b. Release worktree: `agent_worktree_release(agent_id=..., worktree_id=..., remove_worktree=true)`
+           c. Delete local branch: `git branch -d <branch>`
+           d. End session: `agent_session_end(session_id=..., summarize=true)`
 
         ## Quick Start
 
@@ -4400,7 +4411,7 @@ skills:
     categories: [development, workflow]
     common:
       description: |
-        Bug fix workflow with investigation step, regression testing, worktree isolation, and session bookends. Use when fixing bugs that need root cause analysis.
+        Bug fix workflow with investigation step, regression testing, worktree isolation, and session bookends. Use when fixing bugs that need root cause analysis. Ship without asking: commit, push, create MR, and request auto-merge automatically. Only pause on failures or explicit user stop. After merge, auto-cleanup: delete remote branch, release worktree, delete local branch.
       instructions: |
         # Bug Fix
 
@@ -4431,12 +4442,23 @@ skills:
            a. Stage only files for the active fix (never `.env`, credentials, or unrelated changes)
            b. Commit with conventional format: `fix(scope): description` + `Co-Authored-By` trailer
            c. Push branch (`-u` if first push)
-           d. Create or reuse MR/PR (check existing MRs for same source branch first)
-           e. Request auto-merge when project policy allows
+           d. Create or reuse MR/PR (check existing MRs for same source branch first; never create duplicates)
+              - GitLab: `gitlab__list_merge_requests(source_branch=..., target_branch=main)`
+              - GitHub: `gh pr list --head <branch>`
+           e. Request auto-merge
+              - GitLab: `gitlab__merge_merge_request(auto_merge=true, sha=<HEAD>)`
+              - GitHub: `gh pr merge --auto --squash`
            f. Poll pipeline to terminal state; if red → fix → re-commit → re-push → re-poll
            g. Confirm merged or document blocker
-        8. **Release worktree** — `agent_worktree_release(...)`
-        9. **End session** — `agent_session_end(summarize=true)`
+
+           Do not ask the user before committing, pushing, creating MRs, or merging.
+           Only pause on failures, blockers, or when the user explicitly requests a stop.
+
+        8. **Post-Merge Cleanup**
+           a. Delete remote branch: `git push origin --delete <branch>`
+           b. Release worktree: `agent_worktree_release(agent_id=..., worktree_id=..., remove_worktree=true)`
+           c. Delete local branch: `git branch -d <branch>`
+           d. End session: `agent_session_end(session_id=..., summarize=true)`
 
         ## Quick Start
 
@@ -5147,6 +5169,11 @@ skills:
         - omit `--stage-all` if you want tracked-only staging or explicit file selection
         - pass `--no-auto-merge` when approvals or project policy require a human checkpoint
 
+        ## Auto-Ship Policy
+
+        Do not ask the user before committing, pushing, creating MRs, or merging.
+        Only pause on failures, blockers, or when the user explicitly requests a stop.
+
         ## Safety Rules
 
         - do not auto-merge infra-only changes just to clear red CI
@@ -5154,11 +5181,13 @@ skills:
         - do not open a fresh MR if the branch already has an active one
         - do not keep retrying a flaky test in the main merge gate without a quarantine plan
 
-        ## Cleanup
+        ## Post-Merge Cleanup
 
         After the MR is merged (or blocker documented):
-        - release worktree if allocated: `agent_worktree_release(...)`
-        - `agent_session_end(summarize=true)` if a session is active
+        1. Delete remote branch: `git push origin --delete <branch>`
+        2. Release worktree if allocated: `agent_worktree_release(agent_id=..., worktree_id=..., remove_worktree=true)`
+        3. Delete local branch: `git branch -d <branch>`
+        4. End session: `agent_session_end(session_id=..., summarize=true)`
 
         ## Reference
 
@@ -5209,7 +5238,7 @@ skills:
     categories: [workflow, development]
     common:
       description: |
-        Lightweight coding loop for small, well-bounded changes: clarify the request, inspect the narrow code surface, implement, verify locally, and ship without heavyweight workflow overhead.
+        Lightweight coding loop for small, well-bounded changes: clarify the request, inspect the narrow code surface, implement, verify locally, and ship without heavyweight workflow overhead. Ship without asking: commit, push, create MR, and request auto-merge automatically. Only pause on failures or explicit user stop. After merge, auto-cleanup: delete remote branch, release worktree, delete local branch.
       instructions: |
         # Small Change Loop
 
@@ -5242,13 +5271,27 @@ skills:
         4. **Verify proportionally**
            - run the smallest meaningful local checks first
            - escalate to `quality-gate-loop` if the change grows or fails unexpectedly
-        5. **Ship (Landing Procedure lite)**
-           a. Stage only files for the active task
+        5. **Ship (Landing Procedure)**
+           a. Stage only files for the active task (never `.env`, credentials, or unrelated changes)
            b. Commit with conventional format: `type(scope): description` + `Co-Authored-By` trailer
-           c. Push if the user has not opted out (`-u` if first push)
-           d. Create or reuse MR/PR when on a feature branch
-           e. Verify CI when the repo policy requires it; if red → fix → re-push
-           f. Confirm merged or document blocker
+           c. Push branch (`-u` if first push)
+           d. Create or reuse MR/PR (check existing MRs for same source branch first; never create duplicates)
+              - GitLab: `gitlab__list_merge_requests(source_branch=..., target_branch=main)`
+              - GitHub: `gh pr list --head <branch>`
+           e. Request auto-merge
+              - GitLab: `gitlab__merge_merge_request(auto_merge=true, sha=<HEAD>)`
+              - GitHub: `gh pr merge --auto --squash`
+           f. Poll pipeline to terminal state; if red → fix → re-commit → re-push → re-poll
+           g. Confirm merged or document blocker
+
+           Do not ask the user before committing, pushing, creating MRs, or merging.
+           Only pause on failures, blockers, or when the user explicitly requests a stop.
+
+        6. **Post-Merge Cleanup** (when worktree was allocated)
+           a. Delete remote branch: `git push origin --delete <branch>`
+           b. Release worktree: `agent_worktree_release(agent_id=..., worktree_id=..., remove_worktree=true)`
+           c. Delete local branch: `git branch -d <branch>`
+           d. End session: `agent_session_end(session_id=..., summarize=true)`
 
         ## Escalation
 
@@ -5337,14 +5380,22 @@ skills:
            - If green: report success
 
         7. **Create or reuse MR/PR**
-           - Check for existing MR on the same source branch before creating a new one
+           - Check for existing MR on the same source branch before creating a new one; never create duplicates
            - GitLab: `gitlab__list_merge_requests(source_branch=..., target_branch=main)`
            - GitHub: `gh pr list --head <branch>`
-           - If on a feature branch and no MR exists, ask user before creating
 
-        8. **Request auto-merge** (when user approves and project policy allows)
+        8. **Request auto-merge**
            - GitLab: `gitlab__merge_merge_request(auto_merge=true, sha=<HEAD>)`
            - GitHub: `gh pr merge --auto --squash`
+
+        9. **Post-Merge Cleanup** (when applicable)
+           - Delete remote branch: `git push origin --delete <branch>`
+           - Release worktree if allocated: `agent_worktree_release(agent_id=..., worktree_id=..., remove_worktree=true)`
+           - Delete local branch: `git branch -d <branch>`
+           - End session if active: `agent_session_end(session_id=..., summarize=true)`
+
+        Do not ask the user before committing, pushing, creating MRs, or merging.
+        Only pause on failures, blockers, or when the user explicitly requests a stop.
 
         ## Safety
 
@@ -5465,18 +5516,24 @@ skills:
         3. **Landing Procedure**
            a. Push integration branch (`-u` if first push)
            b. Create MR/PR from integration branch to main with all slice summaries in description
-           c. Request auto-merge when project policy allows
+              (check existing MRs for same source branch first; never create duplicates)
+           c. Request auto-merge
               - GitLab: `gitlab__merge_merge_request(auto_merge=true, sha=<HEAD>)`
               - GitHub: `gh pr merge --auto --squash`
            d. Poll pipeline to terminal state; if red → fix → re-push → re-poll
            e. Confirm merged or document blocker
 
-        ## Phase 4: Cleanup
+           Do not ask the user before committing, pushing, creating MRs, or merging.
+           Only pause on failures, blockers, or when the user explicitly requests a stop.
 
-        - Release all worktrees: `agent_worktree_release(...)` for each slice
-        - End sub-agent sessions
-        - Record decisions and outcomes in agent context
-        - `agent_session_end(summarize=true)`
+        ## Phase 4: Post-Merge Cleanup
+
+        1. Delete remote branches: `git push origin --delete <branch>` for integration + all slice branches
+        2. Release all worktrees: `agent_worktree_release(agent_id=..., worktree_id=..., remove_worktree=true)` for each slice
+        3. Delete local branches: `git branch -d <branch>` for all slice branches
+        4. End sub-agent sessions
+        5. Record decisions and outcomes in agent context
+        6. End session: `agent_session_end(session_id=..., summarize=true)`
       scripts: []
       references: []
       assets: []

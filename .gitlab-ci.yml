@@ -767,7 +767,7 @@ build:image:loom-core:
         PROBE_LOG="$CI_PROJECT_DIR/.probe-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
         rm -f "$PROBE_LOG"
         if command -v wget >/dev/null 2>&1; then
-          if ! wget -q --spider --no-check-certificate --timeout=5 --tries=1 "https://$REGISTRY/v2/" >"$PROBE_LOG" 2>&1; then
+          if ! wget -q --spider --no-check-certificate --timeout=15 --tries=2 "https://$REGISTRY/v2/" >"$PROBE_LOG" 2>&1; then
             if grep -Eqi "401|403|unauthorized|forbidden|certificate" "$PROBE_LOG"; then
               echo "Registry host $REGISTRY is reachable (auth challenge or self-signed cert)."
             else
@@ -920,7 +920,7 @@ build:image:custom-server:
         PROBE_LOG="$CI_PROJECT_DIR/.probe-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
         rm -f "$PROBE_LOG"
         if command -v wget >/dev/null 2>&1; then
-          if ! wget -q --spider --no-check-certificate --timeout=5 --tries=1 "https://$REGISTRY/v2/" >"$PROBE_LOG" 2>&1; then
+          if ! wget -q --spider --no-check-certificate --timeout=15 --tries=2 "https://$REGISTRY/v2/" >"$PROBE_LOG" 2>&1; then
             if grep -Eqi "401|403|unauthorized|forbidden|certificate" "$PROBE_LOG"; then
               echo "Registry host $REGISTRY is reachable (auth challenge or self-signed cert)."
             else
