@@ -9,11 +9,15 @@ struct AgentRowView: View {
             StatusAccentBar(color: LoomColors.presenceStatusColor(agent.status))
 
             VStack(alignment: .leading, spacing: LoomSpacing.xxs) {
-                // Line 1: status dot + agent_id + branch pill + token count
+                // Line 1: status dot + type icon + agent_id + branch pill + token count
                 HStack(spacing: LoomSpacing.xs) {
                     Circle()
                         .fill(LoomColors.presenceStatusColor(agent.status))
                         .frame(width: 8, height: 8)
+
+                    Image(systemName: LoomColors.agentTypeIcon(agent.agentType))
+                        .font(.system(size: 10))
+                        .foregroundStyle(LoomColors.agentTypeColor(agent.agentType))
 
                     Text(agent.agentId)
                         .font(LoomTypography.bodyMedium)
@@ -32,9 +36,14 @@ struct AgentRowView: View {
                     }
                 }
 
-                // Line 2: namespace + current task / description
+                // Line 2: project/namespace + current task / description
                 HStack(spacing: LoomSpacing.xs) {
-                    if let ns = agent.namespace, !ns.isEmpty {
+                    if let project = agent.project, !project.isEmpty {
+                        Text(project)
+                            .font(LoomTypography.monoCaption)
+                            .foregroundStyle(LoomColors.textTertiary)
+                            .lineLimit(1)
+                    } else if let ns = agent.namespace, !ns.isEmpty {
                         Text(ns)
                             .font(LoomTypography.monoCaption)
                             .foregroundStyle(LoomColors.textTertiary)
@@ -73,6 +82,9 @@ struct AgentRowView: View {
                     }
                     if agent.taskCount > 0 {
                         taskCountPill
+                    }
+                    if let status = agent.pipelineStatus, !status.isEmpty {
+                        pipelinePill(status: status)
                     }
                     Spacer()
                     elapsedLabel
@@ -148,6 +160,31 @@ struct AgentRowView: View {
         .background(Color.gray.opacity(0.1))
         .foregroundStyle(LoomColors.textSecondary)
         .clipShape(Capsule())
+    }
+
+    private func pipelinePill(status: String) -> some View {
+        let color = pipelineColor(status)
+        return HStack(spacing: 3) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 8))
+            Text("CI \(status)")
+        }
+        .font(.caption2)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(color.opacity(0.1))
+        .foregroundStyle(color)
+        .clipShape(Capsule())
+    }
+
+    private func pipelineColor(_ status: String) -> Color {
+        switch status {
+        case "running": return LoomColors.statusActive
+        case "success": return LoomColors.statusHealthy
+        case "failed": return LoomColors.statusCritical
+        case "pending": return LoomColors.statusIdle
+        default: return LoomColors.textTertiary
+        }
     }
 
     // MARK: - Elapsed

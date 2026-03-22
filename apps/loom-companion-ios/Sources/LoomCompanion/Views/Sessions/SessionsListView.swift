@@ -30,7 +30,9 @@ struct SessionsListView: View {
                 SessionFilterView(
                     statusFilter: $viewModel.statusFilter,
                     agentFilter: $viewModel.agentFilter,
-                    availableAgents: viewModel.availableAgents
+                    namespaceFilter: $viewModel.namespaceFilter,
+                    availableAgents: viewModel.availableAgents,
+                    availableNamespaces: viewModel.uniqueNamespaces
                 )
 
                 ForEach(viewModel.filteredSessions) { session in

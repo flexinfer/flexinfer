@@ -1,13 +1,16 @@
 import SwiftUI
 import LoomCompanionKit
 
-/// Detail view for an agent, showing session context breakdown, decisions, errors, and tasks.
+/// Detail view for an agent, showing session context breakdown, decisions, errors, tasks, and pipelines.
 struct AgentDetailView: View {
     let agent: UnifiedAgent
     @State private var viewModel: SessionDetailViewModel
+    @State private var pipelines: [MobilePipeline] = []
+    private let apiClient: any LoomAPIClientProtocol
 
     init(agent: UnifiedAgent, apiClient: any LoomAPIClientProtocol) {
         self.agent = agent
+        self.apiClient = apiClient
         self._viewModel = State(initialValue: SessionDetailViewModel(apiClient: apiClient))
     }
 
@@ -27,6 +30,9 @@ struct AgentDetailView: View {
                     if let tasks = viewModel.tasks, tasks.total > 0 {
                         taskSection(tasks)
                     }
+                    if !pipelines.isEmpty {
+                        pipelineSection
+                    }
                     if !viewModel.decisions.isEmpty {
                         decisionSection
                     }
@@ -37,6 +43,9 @@ struct AgentDetailView: View {
                         topFilesSection
                     }
                 } else if agent.sessionId == nil {
+                    if !pipelines.isEmpty {
+                        pipelineSection
+                    }
                     Text("No active session")
                         .foregroundStyle(LoomColors.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -47,7 +56,10 @@ struct AgentDetailView: View {
         }
         .navigationTitle(agent.agentId)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await loadSession() }
+        .task {
+            await loadSession()
+            await loadPipelines()
+        }
     }
 
     private func loadSession() async {
@@ -56,11 +68,24 @@ struct AgentDetailView: View {
         }
     }
 
+    private func loadPipelines() async {
+        guard !agent.branch.isEmpty else { return }
+        do {
+            let response: MobilePipelinesResponse = try await apiClient.request(.pipelines)
+            pipelines = response.pipelines.filter { $0.ref == agent.branch }
+        } catch {
+            // Non-critical; pipeline section just won't appear.
+        }
+    }
+
     // MARK: - Sections
 
     private var agentHeader: some View {
         VStack(alignment: .leading, spacing: LoomSpacing.xs) {
             HStack {
+                Image(systemName: LoomColors.agentTypeIcon(agent.agentType))
+                    .font(.system(size: 14))
+                    .foregroundStyle(LoomColors.agentTypeColor(agent.agentType))
                 StatusBadge(presenceStatus: agent.status)
                 Text(agent.agentType)
                     .font(LoomTypography.caption)
@@ -158,6 +183,58 @@ struct AgentDetailView: View {
                         .foregroundStyle(.orange)
                 }
             }
+        }
+    }
+
+    private var pipelineSection: some View {
+        VStack(alignment: .leading, spacing: LoomSpacing.xs) {
+            Text("Pipelines")
+                .font(LoomTypography.headlineMedium)
+            ForEach(pipelines) { pipeline in
+                HStack(spacing: LoomSpacing.sm) {
+                    StatusAccentBar(color: pipelineColor(pipeline.status))
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(pipeline.project.components(separatedBy: "/").last ?? pipeline.project)
+                                .font(LoomTypography.bodyMedium)
+                                .foregroundStyle(LoomColors.textPrimary)
+                                .lineLimit(1)
+                            StatusBadge(pipeline.status, color: pipelineColor(pipeline.status))
+                        }
+                        HStack(spacing: 4) {
+                            Text(pipeline.ref)
+                                .font(LoomTypography.monoCaption)
+                                .foregroundStyle(LoomColors.accent)
+                            if let stage = pipeline.currentStage {
+                                Text("\u{2022} \(stage)")
+                                    .font(LoomTypography.caption)
+                                    .foregroundStyle(LoomColors.textSecondary)
+                            }
+                        }
+                        if pipeline.totalStages > 0 {
+                            ProgressView(value: Double(pipeline.completedStages), total: Double(pipeline.totalStages))
+                                .tint(pipelineColor(pipeline.status))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if pipeline.failedJobCount > 0 {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(LoomColors.statusCritical)
+                            .font(.caption)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    private func pipelineColor(_ status: String) -> Color {
+        switch status {
+        case "running": return LoomColors.statusActive
+        case "success": return LoomColors.statusHealthy
+        case "failed": return LoomColors.statusCritical
+        case "pending": return LoomColors.statusIdle
+        default: return LoomColors.textTertiary
         }
     }
 

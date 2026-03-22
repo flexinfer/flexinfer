@@ -963,6 +963,8 @@ public struct MobilePipeline: Decodable, Identifiable, Sendable {
     public let completedStages: Int
     public let totalStages: Int
     public let failedJobCount: Int
+    public let agentId: String?
+    public let agentType: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -976,6 +978,8 @@ public struct MobilePipeline: Decodable, Identifiable, Sendable {
         case completedStages = "completed_stages"
         case totalStages = "total_stages"
         case failedJobCount = "failed_job_count"
+        case agentId = "agent_id"
+        case agentType = "agent_type"
     }
 }
 

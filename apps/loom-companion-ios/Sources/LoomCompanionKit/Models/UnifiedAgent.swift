@@ -25,6 +25,8 @@ public struct UnifiedAgent: Decodable, Identifiable, Sendable {
     public let taskCount: Int
     public let blockedTasks: Int
     public let claimCount: Int
+    public let pipelineCount: Int
+    public let pipelineStatus: String?
 
     public var id: String { agentId }
     public var hasSession: Bool { sessionId != nil && !(sessionId?.isEmpty ?? true) }
@@ -54,6 +56,8 @@ public struct UnifiedAgent: Decodable, Identifiable, Sendable {
         case taskCount = "task_count"
         case blockedTasks = "blocked_tasks"
         case claimCount = "claim_count"
+        case pipelineCount = "pipeline_count"
+        case pipelineStatus = "pipeline_status"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -81,6 +85,8 @@ public struct UnifiedAgent: Decodable, Identifiable, Sendable {
         self.taskCount = try container.decodeIfPresent(Int.self, forKey: .taskCount) ?? 0
         self.blockedTasks = try container.decodeIfPresent(Int.self, forKey: .blockedTasks) ?? 0
         self.claimCount = try container.decodeIfPresent(Int.self, forKey: .claimCount) ?? 0
+        self.pipelineCount = try container.decodeIfPresent(Int.self, forKey: .pipelineCount) ?? 0
+        self.pipelineStatus = try container.decodeIfPresent(String.self, forKey: .pipelineStatus)
     }
 }
 

@@ -4,6 +4,7 @@ import LoomCompanionKit
 struct AgentFilterView: View {
     @Binding var statusFilter: MobilePresenceStatus?
     var summary: UnifiedAgentsSummary?
+    var pipelineAgentCount: Int = 0
 
     var body: some View {
         VStack(spacing: LoomSpacing.sm) {
@@ -32,6 +33,9 @@ struct AgentFilterView: View {
                 summaryBadge("Offline", count: summary.offlineAgents, color: LoomColors.statusIdle)
                 if summary.spawnedAgents > 0 {
                     summaryBadge("K8s", count: summary.spawnedAgents, color: .purple)
+                }
+                if pipelineAgentCount > 0 {
+                    summaryBadge("CI", count: pipelineAgentCount, color: LoomColors.statusActive)
                 }
             }
         }

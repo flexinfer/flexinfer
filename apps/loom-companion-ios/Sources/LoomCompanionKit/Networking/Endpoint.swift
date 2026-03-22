@@ -41,6 +41,7 @@ public enum Endpoint: Sendable {
     case workflowApprove(id: String, stepId: String)
     case workflowReject(id: String, stepId: String, reason: String? = nil)
     case handoffs(limit: Int? = nil)
+    case namespaces
 
     var method: String {
         switch self {
@@ -49,7 +50,7 @@ public enum Endpoint: Sendable {
              .memoryItems, .stream, .topology, .graphStats, .graphEntities,
              .graphPath, .reasoningChains, .reasoningChainDetail,
              .eventsStream, .audit, .sandbox, .spawnList, .spawnConfig, .spawnDetail, .agents,
-             .pipelines, .handoffs:
+             .pipelines, .handoffs, .namespaces:
             return "GET"
         case .createSession, .endSession, .pushRegister, .pushUnregister,
              .sandboxStart, .sandboxStop, .spawnAgent, .spawnStop,
@@ -138,6 +139,8 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/workflows/\(id)/reject"
         case .handoffs:
             return "/api/mobile/v1/handoffs"
+        case .namespaces:
+            return "/api/mobile/v1/namespaces"
         }
     }
 

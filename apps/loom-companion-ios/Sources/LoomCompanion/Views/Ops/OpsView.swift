@@ -951,6 +951,15 @@ struct OpsView: View {
                                             .font(LoomTypography.caption)
                                             .foregroundStyle(LoomColors.textSecondary)
                                     }
+                                    if let agentId = pipeline.agentId, !agentId.isEmpty {
+                                        HStack(spacing: 2) {
+                                            Image(systemName: LoomColors.agentTypeIcon(pipeline.agentType ?? agentId))
+                                                .font(.system(size: 8))
+                                            Text(agentId)
+                                        }
+                                        .font(.caption2)
+                                        .foregroundStyle(LoomColors.agentTypeColor(pipeline.agentType ?? agentId))
+                                    }
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)

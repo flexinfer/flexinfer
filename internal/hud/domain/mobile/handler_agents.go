@@ -115,6 +115,72 @@ func (d *MobileDomain) handleMobilePresence(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+func (d *MobileDomain) handleMobileNamespaces(w http.ResponseWriter, r *http.Request) {
+	if !d.requireMobileScope(w, r, ScopeRead) {
+		return
+	}
+
+	snap := d.deps.Monitors().Fleet.Snapshot()
+
+	// Build agent status lookup from presence data.
+	agentActive := map[string]bool{}
+	for _, pa := range snap.Agents {
+		agentActive[pa.AgentID] = normalizeMobilePresenceStatus(pa.Status) == "active"
+	}
+
+	type nsData struct {
+		sessions int
+		agents   map[string]bool // agentID -> isActive
+	}
+	nsMap := map[string]*nsData{}
+
+	for _, sess := range snap.Sessions {
+		if sess.Namespace == "" {
+			continue
+		}
+		data, ok := nsMap[sess.Namespace]
+		if !ok {
+			data = &nsData{agents: map[string]bool{}}
+			nsMap[sess.Namespace] = data
+		}
+		data.sessions++
+		isActive := agentActive[sess.AgentID]
+		if prev, seen := data.agents[sess.AgentID]; !seen || (!prev && isActive) {
+			data.agents[sess.AgentID] = isActive
+		}
+	}
+
+	results := make([]namespaceSummary, 0, len(nsMap))
+	for ns, data := range nsMap {
+		active := 0
+		for _, a := range data.agents {
+			if a {
+				active++
+			}
+		}
+		results = append(results, namespaceSummary{
+			Namespace:    ns,
+			SessionCount: data.sessions,
+			AgentCount:   len(data.agents),
+			ActiveAgents: active,
+		})
+	}
+
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].ActiveAgents != results[j].ActiveAgents {
+			return results[i].ActiveAgents > results[j].ActiveAgents
+		}
+		if results[i].SessionCount != results[j].SessionCount {
+			return results[i].SessionCount > results[j].SessionCount
+		}
+		return results[i].Namespace < results[j].Namespace
+	})
+
+	d.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"namespaces": results,
+	})
+}
+
 func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request) {
 	if !d.requireMobileScope(w, r, ScopeRead) {
 		return
@@ -218,6 +284,35 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 			ua.TaskCount = ca.TaskCount
 			ua.BlockedTasks = ca.BlockedTasks
 			ua.ClaimCount = ca.ClaimCount
+		}
+	}
+
+	// Correlate pipelines by branch.
+	if mon := d.deps.Monitors(); mon.Pipeline != nil {
+		branchPipelines := map[string]struct {
+			count  int
+			status string
+		}{}
+		for _, p := range mon.Pipeline.Pipelines() {
+			if p.Ref == "" {
+				continue
+			}
+			bp := branchPipelines[p.Ref]
+			bp.count++
+			// Keep the most relevant status (running > pending > failed > success).
+			if bp.status == "" || p.Status == "running" || (bp.status != "running" && p.Status == "failed") {
+				bp.status = p.Status
+			}
+			branchPipelines[p.Ref] = bp
+		}
+		for _, ua := range agentMap {
+			if ua.Branch == "" {
+				continue
+			}
+			if bp, ok := branchPipelines[ua.Branch]; ok {
+				ua.PipelineCount = bp.count
+				ua.PipelineStatus = bp.status
+			}
 		}
 	}
 
