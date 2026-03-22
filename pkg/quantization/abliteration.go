@@ -94,14 +94,7 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 		deadline = *ablitSpec.TimeoutSeconds
 	}
 
-	image := abliterationImage(params.GPUVendor, params.GPUArch)
-	// Prefer GPUProfile-specific runtime images first so per-arch/per-node
-	// immutable digests can override the global fallback cleanly.
-	if params.ProfileQuantizerImage != "" {
-		image = params.ProfileQuantizerImage
-	} else if img := runtimeImageForQuantization(); img != "" {
-		image = img
-	}
+	image := ResolveImage(ImageFormatAbliteration, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
 	ablitEnv := abliterationEnv(params.ModelPath, ablitSpec)
 	script := abliterationWrapperScript()
 
@@ -182,22 +175,6 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 			},
 		},
 	}, nil
-}
-
-// abliterationImage returns the container image for abliteration jobs.
-// Reuses the GPTQ quantizer image since it already has transformers + torch + accelerate.
-func abliterationImage(gpuVendor, gpuArch string) string {
-	// Prefer unified runtime image when available.
-	if img := runtimeImageForQuantization(); img != "" {
-		return img
-	}
-	if img := os.Getenv("FLEXINFER_ABLITERATOR_IMAGE"); img != "" {
-		return img
-	}
-	if gpuVendor == "amd" {
-		return gptqQuantizerROCmImage(gpuArch)
-	}
-	return gptqQuantizerImage()
 }
 
 // abliterationEnv returns environment variables for the abliteration script.

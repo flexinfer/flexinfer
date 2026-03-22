@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/flexinfer/flexinfer/agents/termination"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 )
 
 // DrainCoordinator watches for spot termination signals and gracefully
@@ -76,13 +77,13 @@ func (d *DrainCoordinator) taintNode(ctx context.Context) error {
 
 	// Check if taint already exists
 	for _, t := range node.Spec.Taints {
-		if t.Key == "flexinfer.ai/spot-terminating" {
+		if t.Key == constants.TaintKeySpotTerminating {
 			return nil // Already tainted
 		}
 	}
 
 	node.Spec.Taints = append(node.Spec.Taints, corev1.Taint{
-		Key:    "flexinfer.ai/spot-terminating",
+		Key:    constants.TaintKeySpotTerminating,
 		Value:  "true",
 		Effect: corev1.TaintEffectNoSchedule,
 	})
@@ -101,8 +102,8 @@ func (d *DrainCoordinator) annotateTerminating(ctx context.Context) error {
 	if node.Annotations == nil {
 		node.Annotations = make(map[string]string)
 	}
-	node.Annotations["flexinfer.ai/spot-terminating"] = "true"
-	node.Annotations["flexinfer.ai/spot-terminating-at"] = time.Now().UTC().Format(time.RFC3339)
+	node.Annotations[constants.NodeAnnotationSpotTerminating] = "true"
+	node.Annotations[constants.NodeAnnotationSpotTerminatingAt] = time.Now().UTC().Format(time.RFC3339)
 
 	_, err = d.kubeClient.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
 	return err

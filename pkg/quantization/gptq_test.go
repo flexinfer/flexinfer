@@ -233,24 +233,24 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 	})
 }
 
-func TestGPTQQuantizerImage(t *testing.T) {
+func TestResolveImage_GPTQ(t *testing.T) {
 	t.Run("default CUDA image", func(t *testing.T) {
-		img := gptqQuantizerImage()
+		img := ResolveImage(ImageFormatGPTQ, "", "", "")
 		if img != DefaultGPTQImage {
-			t.Errorf("gptqQuantizerImage() = %q, want %q", img, DefaultGPTQImage)
+			t.Errorf("ResolveImage(GPTQ) = %q, want %q", img, DefaultGPTQImage)
 		}
 	})
 
 	t.Run("env override", func(t *testing.T) {
 		t.Setenv("FLEXINFER_QUANTIZER_GPTQ_IMAGE", "custom/gptq:v2")
-		img := gptqQuantizerImage()
+		img := ResolveImage(ImageFormatGPTQ, "", "", "")
 		if img != "custom/gptq:v2" {
-			t.Errorf("gptqQuantizerImage() = %q, want custom", img)
+			t.Errorf("ResolveImage(GPTQ) = %q, want custom", img)
 		}
 	})
 }
 
-func TestGPTQQuantizerROCmImage(t *testing.T) {
+func TestResolveImage_GPTQ_ROCm(t *testing.T) {
 	tests := []struct {
 		name    string
 		gpuArch string
@@ -312,9 +312,9 @@ func TestGPTQQuantizerROCmImage(t *testing.T) {
 			for k, v := range tt.envVars {
 				t.Setenv(k, v)
 			}
-			got := gptqQuantizerROCmImage(tt.gpuArch)
+			got := ResolveImage(ImageFormatGPTQ, "", "amd", tt.gpuArch)
 			if got != tt.wantImg {
-				t.Errorf("gptqQuantizerROCmImage(%q) = %q, want %q", tt.gpuArch, got, tt.wantImg)
+				t.Errorf("ResolveImage(GPTQ, amd, %q) = %q, want %q", tt.gpuArch, got, tt.wantImg)
 			}
 		})
 	}

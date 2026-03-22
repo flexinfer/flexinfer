@@ -460,43 +460,43 @@ func TestAbliterationMemoryBudgets(t *testing.T) {
 	}
 }
 
-func TestAbliterationImage_EnvOverride(t *testing.T) {
+func TestResolveImage_Abliteration_EnvOverride(t *testing.T) {
 	t.Setenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE", "")
 	t.Setenv("FLEXINFER_ABLITERATOR_IMAGE", "custom-registry.io/abliterator:v1")
 
-	img := abliterationImage("amd", "gfx1100")
+	img := ResolveImage(ImageFormatAbliteration, "", "amd", "gfx1100")
 	if img != "custom-registry.io/abliterator:v1" {
-		t.Errorf("abliterationImage = %q, want custom override", img)
+		t.Errorf("ResolveImage(Abliteration) = %q, want custom override", img)
 	}
 }
 
-func TestAbliterationImage_UnifiedRuntime(t *testing.T) {
+func TestResolveImage_Abliteration_UnifiedRuntime(t *testing.T) {
 	t.Setenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE", "true")
 	t.Setenv("FLEXINFER_RUNTIME_IMAGE", "registry.harbor.lan/flexinfer/runtime:rocm-gfx1100")
 	t.Setenv("FLEXINFER_ABLITERATOR_IMAGE", "should-not-use-this")
 
-	img := abliterationImage("amd", "gfx1100")
+	img := ResolveImage(ImageFormatAbliteration, "", "amd", "gfx1100")
 	if img != "registry.harbor.lan/flexinfer/runtime:rocm-gfx1100" {
-		t.Errorf("abliterationImage = %q, want unified runtime image", img)
+		t.Errorf("ResolveImage(Abliteration) = %q, want unified runtime image", img)
 	}
 }
 
-func TestAbliterationImage_DefaultAMD(t *testing.T) {
+func TestResolveImage_Abliteration_DefaultAMD(t *testing.T) {
 	t.Setenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE", "")
 	t.Setenv("FLEXINFER_ABLITERATOR_IMAGE", "")
 
-	img := abliterationImage("amd", "gfx1100")
+	img := ResolveImage(ImageFormatAbliteration, "", "amd", "gfx1100")
 	if img != DefaultGPTQROCmImage {
-		t.Errorf("abliterationImage(amd, gfx1100) = %q, want %q", img, DefaultGPTQROCmImage)
+		t.Errorf("ResolveImage(Abliteration, amd, gfx1100) = %q, want %q", img, DefaultGPTQROCmImage)
 	}
 }
 
-func TestAbliterationImage_DefaultNvidia(t *testing.T) {
+func TestResolveImage_Abliteration_DefaultNvidia(t *testing.T) {
 	t.Setenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE", "")
 	t.Setenv("FLEXINFER_ABLITERATOR_IMAGE", "")
 
-	img := abliterationImage("nvidia", "")
+	img := ResolveImage(ImageFormatAbliteration, "", "nvidia", "")
 	if img != DefaultGPTQImage {
-		t.Errorf("abliterationImage(nvidia) = %q, want %q", img, DefaultGPTQImage)
+		t.Errorf("ResolveImage(Abliteration, nvidia) = %q, want %q", img, DefaultGPTQImage)
 	}
 }

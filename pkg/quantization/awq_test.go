@@ -152,19 +152,28 @@ func TestAWQJobBuilder_BuildEnv_Content(t *testing.T) {
 	})
 }
 
-func TestAWQQuantizerImage(t *testing.T) {
+func TestResolveImage_AWQ(t *testing.T) {
 	t.Run("default image", func(t *testing.T) {
-		img := awqQuantizerImage()
+		img := ResolveImage(ImageFormatAWQ, "", "", "")
 		if img != DefaultAWQImage {
-			t.Errorf("awqQuantizerImage() = %q, want %q", img, DefaultAWQImage)
+			t.Errorf("ResolveImage(AWQ) = %q, want %q", img, DefaultAWQImage)
 		}
 	})
 
 	t.Run("env override", func(t *testing.T) {
 		t.Setenv("FLEXINFER_QUANTIZER_AWQ_IMAGE", "custom/awq:latest")
-		img := awqQuantizerImage()
+		img := ResolveImage(ImageFormatAWQ, "", "", "")
 		if img != "custom/awq:latest" {
-			t.Errorf("awqQuantizerImage() = %q, want %q", img, "custom/awq:latest")
+			t.Errorf("ResolveImage(AWQ) = %q, want %q", img, "custom/awq:latest")
+		}
+	})
+
+	t.Run("runtime override (was missing in old AWQ)", func(t *testing.T) {
+		t.Setenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE", "true")
+		t.Setenv("FLEXINFER_RUNTIME_IMAGE", "registry.harbor.lan/flexinfer/runtime:unified")
+		img := ResolveImage(ImageFormatAWQ, "", "", "")
+		if img != "registry.harbor.lan/flexinfer/runtime:unified" {
+			t.Errorf("ResolveImage(AWQ) = %q, want runtime override", img)
 		}
 	})
 }
