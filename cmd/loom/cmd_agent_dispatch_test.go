@@ -41,7 +41,7 @@ func TestLoadWorkflowFile_FeatureDevIncludesManagedWorktreeContract(t *testing.T
 			if got, _ := toolArgs["project"].(string); got == "${input.project}" {
 				sawDevboxProject = true
 			}
-		case "release-worktree":
+		case "release-worktree", "cleanup":
 			if toolName != "agent_worktree_release" {
 				t.Fatalf("release-worktree tool_name = %q, want agent_worktree_release", toolName)
 			}
