@@ -85,7 +85,8 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 	// continue into publish instead of getting stuck in Ready.
 	if quantizationCompleted(modelCache.Status.Quantization) &&
 		modelCache.Spec.Publish != nil && modelCache.Status.Publish == nil {
-		return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+		publishPath := quantizedOutputPath(modelCache.Spec.Quantization, modelPath)
+		return r.reconcilePublish(ctx, modelCache, pvcName, publishPath)
 	}
 
 	// If already Ready with quantization status and hash matches, nothing to do.
@@ -112,7 +113,8 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			log.Info("Quantization job GC'd but quantization already complete, skipping re-creation",
 				"cache", modelCache.Name)
 			if modelCache.Spec.Publish != nil {
-				return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+				publishPath := quantizedOutputPath(modelCache.Spec.Quantization, modelPath)
+				return r.reconcilePublish(ctx, modelCache, pvcName, publishPath)
 			}
 			if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 				modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
@@ -287,7 +289,8 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			r.Recorder.Event(modelCache, corev1.EventTypeNormal, "QuantizationComplete",
 				fmt.Sprintf("Model quantized (%s/%s), dispatching to publish",
 					modelCache.Spec.Quantization.Format, quantStatus.Type))
-			return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+			publishPath := quantizedOutputPath(modelCache.Spec.Quantization, modelPath)
+			return r.reconcilePublish(ctx, modelCache, pvcName, publishPath)
 		}
 
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
@@ -645,6 +648,40 @@ func truncateString(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// quantizedOutputPath derives the quantized output subdirectory from the spec,
+// matching the OUT_DIR convention used by the GPTQ/AWQ builders (e.g. gptq-w4-g128).
+func quantizedOutputPath(spec *aiv1alpha1.QuantizationSpec, basePath string) string {
+	if spec == nil {
+		return basePath
+	}
+	var subdir string
+	switch spec.Format {
+	case aiv1alpha1.QuantizationFormatGPTQ:
+		bits := int32(quantization.DefaultGPTQBits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		groupSize := int32(quantization.DefaultQuantizationGroupSize)
+		if spec.GroupSize != nil {
+			groupSize = *spec.GroupSize
+		}
+		subdir = fmt.Sprintf("gptq-w%d-g%d", bits, groupSize)
+	case aiv1alpha1.QuantizationFormatAWQ:
+		bits := int32(quantization.DefaultAWQBits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		groupSize := int32(quantization.DefaultQuantizationGroupSize)
+		if spec.GroupSize != nil {
+			groupSize = *spec.GroupSize
+		}
+		subdir = fmt.Sprintf("awq-w%d-g%d", bits, groupSize)
+	default:
+		return basePath
+	}
+	return filepath.Join(basePath, subdir)
 }
 
 // effectiveQuantizationDeadline returns the job deadline in seconds from spec or default.

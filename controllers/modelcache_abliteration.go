@@ -88,8 +88,18 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
 	}
 
-	// If already Ready with abliteration status and hash matches, dispatch to quantization.
+	// If already Ready with abliteration status and hash matches, check for pending publish
+	// before treating as no-op. Publish may still be pending even though downstream phases completed.
 	if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady && modelCache.Status.Abliteration != nil {
+		if modelCache.Spec.Publish != nil && modelCache.Status.Publish == nil {
+			if modelCache.Spec.Quantization != nil {
+				return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
+			}
+			if modelCache.Spec.Finetune != nil {
+				return r.reconcileFinetune(ctx, modelCache, pvcName, modelPath)
+			}
+			return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+		}
 		if storedHash == "" {
 			if modelCache.Annotations == nil {
 				modelCache.Annotations = make(map[string]string)
@@ -99,7 +109,6 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 				return ctrl.Result{}, err
 			}
 		}
-		// Already abliterated and ready — quantization (if any) is also done.
 		return ctrl.Result{}, nil
 	}
 

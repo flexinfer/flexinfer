@@ -85,7 +85,7 @@ func BuildPublishJob(params JobParams, spec *aiv1alpha1.PublishSpec) (*batchv1.J
 				Name:            "publisher",
 				Image:           image,
 				ImagePullPolicy: corev1.PullAlways,
-				Command:         []string{"/bin/bash", "-c"},
+				Command:         []string{"/bin/sh", "-c"},
 				Args:            []string{script},
 				Env:             env,
 				VolumeMounts:    mounts,
@@ -144,8 +144,8 @@ func publishEnv(modelPath string, spec *aiv1alpha1.PublishSpec) []corev1.EnvVar 
 
 	if spec.OCIRef != nil && *spec.OCIRef != "" {
 		env = append(env, corev1.EnvVar{Name: "OCI_REF", Value: *spec.OCIRef})
-		if shouldUsePlainHTTP(*spec.OCIRef) {
-			env = append(env, corev1.EnvVar{Name: "OCI_PLAIN_HTTP", Value: "true"})
+		if shouldUseInsecure(*spec.OCIRef) {
+			env = append(env, corev1.EnvVar{Name: "OCI_INSECURE", Value: "true"})
 		}
 	}
 	if spec.HuggingFaceRepo != nil && *spec.HuggingFaceRepo != "" {
@@ -173,7 +173,11 @@ func publishEnv(modelPath string, spec *aiv1alpha1.PublishSpec) []corev1.EnvVar 
 	return env
 }
 
-func shouldUsePlainHTTP(ociRef string) bool {
+// shouldUseInsecure returns true for private registries (e.g. .lan) that use
+// self-signed TLS certificates. This triggers --insecure (HTTPS without cert
+// verify) rather than --plain-http (HTTP), since Harbor's HTTP endpoint has
+// limited OCI distribution support (manifest PUT returns 404).
+func shouldUseInsecure(ociRef string) bool {
 	host := ociRef
 	if strings.Contains(ociRef, "://") {
 		if parsed, err := url.Parse(ociRef); err == nil && parsed.Host != "" {
@@ -186,16 +190,17 @@ func shouldUsePlainHTTP(ociRef string) bool {
 	return strings.HasSuffix(host, ".lan")
 }
 
-// publishWrapperScript returns a bash script that runs the appropriate
-// publish scripts for each target sequentially.
+// publishWrapperScript returns a shell script that runs the appropriate
+// publish logic for each target sequentially. The OCI target is inlined
+// as a POSIX sh script so any image with sh works (including alpine).
 func publishWrapperScript(spec *aiv1alpha1.PublishSpec) string {
 	var parts []string
-	parts = append(parts, "set -euo pipefail")
+	parts = append(parts, "set -eu")
 
 	for _, target := range spec.Targets {
 		switch target {
 		case aiv1alpha1.PublishTargetOCI:
-			parts = append(parts, "python3 /opt/flexinfer/scripts/publish_oci.py")
+			parts = append(parts, ociPublishScript())
 		case aiv1alpha1.PublishTargetHuggingFace:
 			parts = append(parts, "python3 /opt/flexinfer/scripts/publish_hf.py")
 		}
@@ -204,17 +209,75 @@ func publishWrapperScript(spec *aiv1alpha1.PublishSpec) string {
 	return strings.Join(parts, "\n")
 }
 
+// ociPublishScript returns an inlined POSIX sh script for OCI publish via oras.
+func ociPublishScript() string {
+	return `
+apk add --no-cache curl >/dev/null 2>&1 || true
+
+if ! command -v oras >/dev/null 2>&1; then
+  echo "oras not found, installing v1.2.0..."
+  curl -fsSL https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz | tar -xz -C /usr/local/bin oras
+  echo "oras installed successfully"
+fi
+
+if [ -z "${MODEL_DIR:-}" ] || [ -z "${OCI_REF:-}" ]; then
+  echo "ERROR: MODEL_DIR and OCI_REF are required" >&2; exit 1
+fi
+if [ ! -d "$MODEL_DIR" ]; then
+  echo "ERROR: MODEL_DIR does not exist: $MODEL_DIR" >&2; exit 1
+fi
+
+REGISTRY=$(echo "$OCI_REF" | cut -d'/' -f1)
+INSECURE_FLAG=""
+if [ "${OCI_INSECURE:-}" = "true" ] || echo "$REGISTRY" | grep -q '\.lan$'; then
+  INSECURE_FLAG="--insecure"
+fi
+
+TOTAL_BYTES=0
+FILE_COUNT=0
+for f in $(find "$MODEL_DIR" -type f); do
+  sz=$(stat -c '%s' "$f" 2>/dev/null || stat -f '%z' "$f" 2>/dev/null || echo 0)
+  TOTAL_BYTES=$((TOTAL_BYTES + sz))
+  FILE_COUNT=$((FILE_COUNT + 1))
+done
+echo "{\"event\":\"start\",\"phase\":\"publishing\",\"target\":\"oci\",\"total_bytes\":$TOTAL_BYTES,\"file_count\":$FILE_COUNT}"
+
+if [ -n "${OCI_USERNAME:-}" ] && [ -n "${OCI_PASSWORD:-}" ]; then
+  oras login $INSECURE_FLAG "$REGISTRY" -u "$OCI_USERNAME" -p "$OCI_PASSWORD"
+  echo "{\"event\":\"progress\",\"phase\":\"authenticated\",\"percent\":5}"
+fi
+
+ARTIFACTS=""
+for fpath in $(find "$MODEL_DIR" -type f); do
+  rel=$(echo "$fpath" | sed "s|^$MODEL_DIR/||")
+  ARTIFACTS="$ARTIFACTS $fpath:$rel"
+done
+
+echo "{\"event\":\"progress\",\"phase\":\"pushing\",\"percent\":10,\"detail\":\"$FILE_COUNT files\"}"
+
+START_TIME=$(date +%s)
+oras push $INSECURE_FLAG --disable-path-validation "$OCI_REF" $ARTIFACTS --artifact-type "application/vnd.flexinfer.model.v1" 2>&1 | tee /tmp/oras-output.log
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+DIGEST=$(grep 'Digest: sha256:' /tmp/oras-output.log | head -1 | sed 's/.*Digest: //' || echo "")
+
+echo "{\"event\":\"complete\",\"phase\":\"publishing\",\"target\":\"oci\",\"duration_seconds\":$DURATION,\"digest\":\"$DIGEST\"}"
+
+cat > /dev/termination-log <<TERMEOF
+{"target":"oci","ociRef":"$OCI_REF","ociDigest":"$DIGEST","durationSeconds":$DURATION,"totalBytes":$TOTAL_BYTES,"fileCount":$FILE_COUNT}
+TERMEOF
+
+echo "Published to $OCI_REF (digest: $DIGEST) in ${DURATION}s"
+`
+}
+
 // publishImage returns the image to use for publish jobs.
-// Prefers the unified runtime image when available, falls back to GPTQ image.
+// Prefers FLEXINFER_PUBLISH_IMAGE. Defaults to alpine (publish only
+// needs sh + curl for oras install, no Python/GPU required).
 func publishImage() string {
-	if os.Getenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE") == "true" {
-		if img := os.Getenv("FLEXINFER_RUNTIME_IMAGE"); img != "" {
-			return img
-		}
-	}
-	// Fallback: GPTQ image has Python + huggingface_hub.
-	if img := os.Getenv("FLEXINFER_QUANTIZER_GPTQ_IMAGE"); img != "" {
+	if img := os.Getenv("FLEXINFER_PUBLISH_IMAGE"); img != "" {
 		return img
 	}
-	return "registry.harbor.lan/flexinfer/quantizer-gptq:latest"
+	return "alpine:3.23"
 }
