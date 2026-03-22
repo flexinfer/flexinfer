@@ -6,7 +6,6 @@ package quantization
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -59,14 +58,7 @@ func BuildFinetuneJob(params JobParams, spec *aiv1alpha1.FinetuneSpec) (*batchv1
 		deadline = *spec.TimeoutSeconds
 	}
 
-	image := finetuneImage(params.GPUVendor, params.GPUArch)
-	// Prefer GPUProfile-specific runtime images first so per-arch/per-node
-	// immutable digests can override the global fallback cleanly.
-	if params.ProfileQuantizerImage != "" {
-		image = params.ProfileQuantizerImage
-	} else if img := runtimeImageForQuantization(); img != "" {
-		image = img
-	}
+	image := ResolveImage(ImageFormatFinetune, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
 	ftEnv := finetuneEnv(params.ModelPath, spec)
 	script := finetuneWrapperScript()
 
@@ -167,21 +159,6 @@ func BuildFinetuneJob(params JobParams, spec *aiv1alpha1.FinetuneSpec) (*batchv1
 			},
 		},
 	}, nil
-}
-
-// finetuneImage returns the container image for finetune jobs.
-func finetuneImage(gpuVendor, gpuArch string) string {
-	// Prefer unified runtime image when available.
-	if img := runtimeImageForQuantization(); img != "" {
-		return img
-	}
-	if img := os.Getenv("FLEXINFER_FINETUNE_IMAGE"); img != "" {
-		return img
-	}
-	if gpuVendor == "amd" {
-		return gptqQuantizerROCmImage(gpuArch)
-	}
-	return gptqQuantizerImage()
 }
 
 // finetuneEnv returns environment variables for the finetune script.

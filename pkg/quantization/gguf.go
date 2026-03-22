@@ -2,7 +2,6 @@ package quantization
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -69,7 +68,7 @@ func (b *GGUFJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		memoryGB = *params.Spec.MaxMemoryGB
 	}
 
-	image := quantizerImage()
+	image := ResolveImage(ImageFormatGGUF, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
 	deadline := effectiveDeadline(params.Spec)
 	backoffLimit := int32(2)
 
@@ -141,13 +140,4 @@ func (b *GGUFJobBuilder) buildEnv(modelPath, ggufType string) []corev1.EnvVar {
 // It delegates to the script at /opt/flexinfer/scripts/quantize_gguf.sh.
 func (b *GGUFJobBuilder) ggufWrapperScript() string {
 	return `/opt/flexinfer/scripts/quantize_gguf.sh`
-}
-
-// quantizerImage returns the container image for GGUF quantization.
-// Supports override via environment variable.
-func quantizerImage() string {
-	if img := os.Getenv("FLEXINFER_QUANTIZER_GGUF_IMAGE"); img != "" {
-		return img
-	}
-	return DefaultGGUFImage
 }

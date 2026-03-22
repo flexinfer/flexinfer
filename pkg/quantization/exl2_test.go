@@ -119,19 +119,19 @@ func TestEXL2JobBuilder_BuildScript_Content(t *testing.T) {
 	})
 }
 
-func TestEXL2QuantizerImage(t *testing.T) {
+func TestResolveImage_EXL2(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
-		img := exl2QuantizerImage()
+		img := ResolveImage(ImageFormatEXL2, "", "", "")
 		if img != DefaultEXL2Image {
-			t.Errorf("exl2QuantizerImage() = %q, want %q", img, DefaultEXL2Image)
+			t.Errorf("ResolveImage(EXL2) = %q, want %q", img, DefaultEXL2Image)
 		}
 	})
 
 	t.Run("env override", func(t *testing.T) {
 		t.Setenv("FLEXINFER_QUANTIZER_EXL2_IMAGE", "custom/exl2:v1")
-		img := exl2QuantizerImage()
+		img := ResolveImage(ImageFormatEXL2, "", "", "")
 		if img != "custom/exl2:v1" {
-			t.Errorf("exl2QuantizerImage() = %q, want custom", img)
+			t.Errorf("ResolveImage(EXL2) = %q, want custom", img)
 		}
 	})
 }

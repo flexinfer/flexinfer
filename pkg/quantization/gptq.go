@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -110,17 +109,7 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		dynamicExclusion = *params.Spec.DynamicExclusion
 	}
 
-	image := gptqQuantizerImage()
-	if params.GPUVendor == "amd" {
-		image = gptqQuantizerROCmImage(params.GPUArch)
-	}
-	// Prefer GPUProfile-specific runtime images first so per-arch/per-node
-	// immutable digests can override the global fallback cleanly.
-	if params.ProfileQuantizerImage != "" {
-		image = params.ProfileQuantizerImage
-	} else if img := runtimeImageForQuantization(); img != "" {
-		image = img
-	}
+	image := ResolveImage(ImageFormatGPTQ, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
 
 	env := b.buildEnv(params.ModelPath, bits, groupSize, sym, descAct, memoryGB, gpuMemFraction, dynamicExclusion, params.Spec.Calibration)
 
@@ -812,43 +801,4 @@ echo "=== Quantization complete ==="
 echo "Output: ${OUT_DIR}"
 echo "End: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 `
-}
-
-func gptqQuantizerImage() string {
-	if img := os.Getenv("FLEXINFER_QUANTIZER_GPTQ_IMAGE"); img != "" {
-		return img
-	}
-	return DefaultGPTQImage
-}
-
-func gptqQuantizerROCmImage(gpuArch string) string {
-	// Prefer unified runtime image when available.
-	if img := runtimeImageForQuantization(); img != "" {
-		return img
-	}
-	// Check arch-specific env var first (e.g. FLEXINFER_QUANTIZER_GPTQ_ROCM_GFX906_IMAGE).
-	if gpuArch != "" {
-		envKey := "FLEXINFER_QUANTIZER_GPTQ_ROCM_" + strings.ToUpper(gpuArch) + "_IMAGE"
-		if img := os.Getenv(envKey); img != "" {
-			return img
-		}
-	}
-	if gpuArch == "gfx906" {
-		return DefaultGPTQROCmGFX906Image
-	}
-	// Generic ROCm override.
-	if img := os.Getenv("FLEXINFER_QUANTIZER_GPTQ_ROCM_IMAGE"); img != "" {
-		return img
-	}
-	return DefaultGPTQROCmImage
-}
-
-// runtimeImageForQuantization returns the unified runtime image when
-// FLEXINFER_USE_RUNTIME_FOR_QUANTIZE is set. This eliminates the need
-// for separate 60GB+ quantizer images.
-func runtimeImageForQuantization() string {
-	if os.Getenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE") != "true" {
-		return ""
-	}
-	return os.Getenv("FLEXINFER_RUNTIME_IMAGE")
 }

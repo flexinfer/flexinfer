@@ -2,7 +2,6 @@ package quantization
 
 import (
 	"fmt"
-	"os"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -66,11 +65,7 @@ func (b *AWQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		groupSize = int(*params.Spec.GroupSize)
 	}
 
-	image := awqQuantizerImage()
-	// GPUProfile image override takes priority.
-	if params.ProfileQuantizerImage != "" {
-		image = params.ProfileQuantizerImage
-	}
+	image := ResolveImage(ImageFormatAWQ, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
 
 	env := b.buildEnv(params.ModelPath, bits, groupSize, params.Spec.Calibration)
 
@@ -190,11 +185,4 @@ echo "=== Quantization complete ==="
 echo "Output: ${OUT_DIR}"
 echo "End: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 `
-}
-
-func awqQuantizerImage() string {
-	if img := os.Getenv("FLEXINFER_QUANTIZER_AWQ_IMAGE"); img != "" {
-		return img
-	}
-	return DefaultAWQImage
 }

@@ -113,19 +113,19 @@ func TestFP8JobBuilder_BuildScript_Content(t *testing.T) {
 	})
 }
 
-func TestFP8QuantizerImage(t *testing.T) {
+func TestResolveImage_FP8(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
-		img := fp8QuantizerImage()
+		img := ResolveImage(ImageFormatFP8, "", "", "")
 		if img != DefaultFP8Image {
-			t.Errorf("fp8QuantizerImage() = %q, want %q", img, DefaultFP8Image)
+			t.Errorf("ResolveImage(FP8) = %q, want %q", img, DefaultFP8Image)
 		}
 	})
 
 	t.Run("env override", func(t *testing.T) {
 		t.Setenv("FLEXINFER_QUANTIZER_FP8_IMAGE", "custom/fp8:v1")
-		img := fp8QuantizerImage()
+		img := ResolveImage(ImageFormatFP8, "", "", "")
 		if img != "custom/fp8:v1" {
-			t.Errorf("fp8QuantizerImage() = %q, want custom", img)
+			t.Errorf("ResolveImage(FP8) = %q, want custom", img)
 		}
 	})
 }

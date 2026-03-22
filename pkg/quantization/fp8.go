@@ -2,7 +2,6 @@ package quantization
 
 import (
 	"fmt"
-	"os"
 
 	batchv1 "k8s.io/api/batch/v1"
 
@@ -65,9 +64,11 @@ func (b *FP8JobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		bits = int(*params.Spec.Bits)
 	}
 
+	image := ResolveImage(ImageFormatFP8, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
+
 	return buildGPUQuantizationJob(
 		params,
-		fp8QuantizerImage(),
+		image,
 		b.buildScript(params.ModelPath, bits),
 		memoryGB,
 		nil,
@@ -151,11 +152,4 @@ echo "=== Quantization complete ==="
 echo "Output: ${OUT_DIR}"
 echo "End: $(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)"
 `, modelPath, bits)
-}
-
-func fp8QuantizerImage() string {
-	if img := os.Getenv("FLEXINFER_QUANTIZER_FP8_IMAGE"); img != "" {
-		return img
-	}
-	return DefaultFP8Image
 }
