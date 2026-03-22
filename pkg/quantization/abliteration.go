@@ -338,10 +338,40 @@ func abliterationWrapperScript() string {
 	return `set -euo pipefail
 START_TS=$(date +%s)
 LOGFILE=/tmp/abliterate-output.log
+# Persist full log to PVC for post-mortem analysis (survives pod GC)
+PVC_LOGDIR="${MODEL_DIR}/.flexinfer-logs"
+PVC_LOGFILE="${PVC_LOGDIR}/abliterate-$(date +%Y%m%d-%H%M%S).log"
+
+# Structured JSON event emitter for Loki/OTEL queryability.
+# Events go to stdout (Promtail → Loki) and are queryable via:
+#   {namespace="flexinfer-system"} | json | event="abliteration_start"
+emit_event() {
+    local event="$1"; shift
+    local ts
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local json="{\"ts\":\"${ts}\",\"component\":\"abliterator\",\"event\":\"${event}\""
+    while [ $# -ge 2 ]; do
+        local key="$1" val="$2"; shift 2
+        case "${val}" in
+            ''|*[!0-9.]*) json="${json},\"${key}\":\"${val}\"" ;;
+            *)            json="${json},\"${key}\":${val}" ;;
+        esac
+    done
+    json="${json}}"
+    echo "${json}"
+}
 
 cleanup_on_failure() {
   local rc=$?
+  # Persist log to PVC before anything else
+  if [ -f "${LOGFILE}" ]; then
+    mkdir -p "${PVC_LOGDIR}"
+    cp "${LOGFILE}" "${PVC_LOGFILE}" 2>/dev/null || true
+    # Keep only last 3 log files to avoid PVC bloat
+    ls -t "${PVC_LOGDIR}"/abliterate-*.log 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null || true
+  fi
   if [ $rc -ne 0 ]; then
+    emit_event "abliteration_error" "exit_code" "${rc}" "model" "${MODEL_DIR}"
     # Write error context to termination-log for controller capture
     {
       echo "exit_code=${rc}"
@@ -362,6 +392,7 @@ trap cleanup_on_failure EXIT
 # Tee all output so cleanup can capture tail on failure
 exec > >(tee -a "${LOGFILE}") 2>&1
 
+emit_event "abliteration_start" "model" "${MODEL_DIR}" "samples" "${NUM_SAMPLES}" "target_layers" "${TARGET_LAYERS}" "weight_matrices" "${WEIGHT_MATRICES}" "device_map" "${DEVICE_MAP}"
 echo "=== FlexInfer Abliteration ==="
 echo "Model: ${MODEL_DIR}"
 echo "Samples: ${NUM_SAMPLES}"
@@ -379,6 +410,7 @@ if [ -f "${ABLIT_STATUS}" ]; then
     ABLIT_COMPLETE=$(python3 -c "import json; d=json.load(open('${ABLIT_STATUS}')); print('yes' if d.get('status')=='complete' else 'no')" 2>/dev/null || echo "no")
     WEIGHT_COUNT=$(find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) 2>/dev/null | wc -l | tr -d ' ')
     if [ "${ABLIT_COMPLETE}" = "yes" ] && [ "${WEIGHT_COUNT}" -gt 0 ]; then
+        emit_event "abliteration_cached" "model" "${MODEL_DIR}" "weight_files" "${WEIGHT_COUNT}"
         echo "Abliteration already complete (${WEIGHT_COUNT} weight files present)"
         echo "Status: $(cat ${ABLIT_STATUS})"
         # Re-emit termination metadata for controller capture
@@ -392,6 +424,12 @@ fi
 # on Vega20 — VMM not available). Without this, device_map=auto crashes during
 # caching_allocator_warmup in transformers 5.x. Returns hardcoded VRAM size
 # so accelerate can still distribute the model across GPU+CPU.
+# Record status file mtime before running (to detect if abliterate.py updated it)
+ABLIT_STATUS_MTIME_BEFORE=""
+if [ -f "${ABLIT_STATUS}" ]; then
+    ABLIT_STATUS_MTIME_BEFORE=$(stat -c %Y "${ABLIT_STATUS}" 2>/dev/null || stat -f %m "${ABLIT_STATUS}" 2>/dev/null || echo "")
+fi
+
 python3 -c "
 import torch.cuda, os
 _orig = torch.cuda.mem_get_info
@@ -409,6 +447,19 @@ exec(open('/opt/flexinfer/scripts/abliterate.py').read())
 
 END_TS=$(date +%s)
 DURATION=$((END_TS - START_TS))
-echo "=== Abliteration finished in ${DURATION}s ==="
+
+# Only emit abliteration_complete if actual work was done (status file updated).
+# If the Python script short-circuited via its own caching, emit abliteration_cached instead.
+ABLIT_STATUS_MTIME_AFTER=""
+if [ -f "${ABLIT_STATUS}" ]; then
+    ABLIT_STATUS_MTIME_AFTER=$(stat -c %Y "${ABLIT_STATUS}" 2>/dev/null || stat -f %m "${ABLIT_STATUS}" 2>/dev/null || echo "")
+fi
+if [ -n "${ABLIT_STATUS_MTIME_AFTER}" ] && [ "${ABLIT_STATUS_MTIME_BEFORE}" = "${ABLIT_STATUS_MTIME_AFTER}" ]; then
+    emit_event "abliteration_cached" "model" "${MODEL_DIR}" "duration_sec" "${DURATION}" "detail" "python_internal_cache"
+    echo "=== Abliteration skipped (already complete) in ${DURATION}s ==="
+else
+    emit_event "abliteration_complete" "model" "${MODEL_DIR}" "duration_sec" "${DURATION}" "samples" "${NUM_SAMPLES}"
+    echo "=== Abliteration finished in ${DURATION}s ==="
+fi
 `
 }
