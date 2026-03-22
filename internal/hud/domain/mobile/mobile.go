@@ -33,6 +33,7 @@ func (d *MobileDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFu
 	mux.HandleFunc("GET /api/mobile/v1/workflows/{workflow_id}", mw(d.handleMobileWorkflowDetail))
 	mux.HandleFunc("GET /api/mobile/v1/presence", mw(d.handleMobilePresence))
 	mux.HandleFunc("GET /api/mobile/v1/agents", mw(d.handleMobileAgents))
+	mux.HandleFunc("GET /api/mobile/v1/namespaces", mw(d.handleMobileNamespaces))
 	mux.HandleFunc("GET /api/mobile/v1/memory/stats", mw(d.handleMobileMemoryStats))
 	mux.HandleFunc("GET /api/mobile/v1/memory/items", mw(d.handleMobileMemoryItems))
 	mux.HandleFunc("GET /api/mobile/v1/stream", mw(d.handleMobileStream))

@@ -60,6 +60,28 @@ public struct SessionInfo: Decodable, Identifiable, Sendable {
     }
 }
 
+/// Summary of a namespace with session/agent counts.
+public struct NamespaceSummary: Decodable, Identifiable, Sendable {
+    public let namespace: String
+    public let sessionCount: Int
+    public let agentCount: Int
+    public let activeAgents: Int
+
+    public var id: String { namespace }
+
+    enum CodingKeys: String, CodingKey {
+        case namespace
+        case sessionCount = "session_count"
+        case agentCount = "agent_count"
+        case activeAgents = "active_agents"
+    }
+}
+
+/// Response wrapper for the namespaces endpoint.
+public struct NamespacesResponse: Decodable, Sendable {
+    public let namespaces: [NamespaceSummary]
+}
+
 /// Response wrapper for session list endpoint.
 public struct SessionsResponse: Decodable, Sendable {
     public let sessions: [SessionInfo]

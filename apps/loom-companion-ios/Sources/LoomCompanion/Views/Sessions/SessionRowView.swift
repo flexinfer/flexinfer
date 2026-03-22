@@ -11,6 +11,10 @@ struct SessionRowView: View {
 
             VStack(alignment: .leading, spacing: LoomSpacing.xs) {
                 HStack {
+                    Image(systemName: LoomColors.agentTypeIcon(session.agentId))
+                        .font(.system(size: 10))
+                        .foregroundStyle(LoomColors.agentTypeColor(session.agentId))
+
                     Text(session.agentId)
                         .font(LoomTypography.bodyMedium)
                     Spacer()

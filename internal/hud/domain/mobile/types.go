@@ -304,6 +304,15 @@ type AlertPolicyEntry struct {
 	Conditional       bool     `json:"conditional"`
 }
 
+// --- Namespace summary ---
+
+type namespaceSummary struct {
+	Namespace    string `json:"namespace"`
+	SessionCount int    `json:"session_count"`
+	AgentCount   int    `json:"agent_count"`
+	ActiveAgents int    `json:"active_agents"`
+}
+
 // --- Unified agents ---
 
 type unifiedAgent struct {
@@ -330,6 +339,8 @@ type unifiedAgent struct {
 	TaskCount        int      `json:"task_count"`
 	BlockedTasks     int      `json:"blocked_tasks"`
 	ClaimCount       int      `json:"claim_count"`
+	PipelineCount    int      `json:"pipeline_count"`
+	PipelineStatus   string   `json:"pipeline_status,omitempty"`
 }
 
 type unifiedAgentsSummary struct {

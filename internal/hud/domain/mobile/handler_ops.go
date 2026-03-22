@@ -198,6 +198,25 @@ func (d *MobileDomain) handleMobilePipelines(w http.ResponseWriter, r *http.Requ
 
 	pipelines := mon.Pipeline.Pipelines()
 
+	// Build branch-to-agent lookup for pipeline-agent correlation.
+	type agentRef struct {
+		ID   string
+		Type string
+	}
+	branchAgents := map[string]agentRef{}
+	if fleet := mon.Fleet; fleet != nil {
+		snap := fleet.Snapshot()
+		for _, pa := range snap.Agents {
+			if pa.Branch != "" {
+				agentType := pa.AgentType
+				if agentType == "" || agentType == "unknown" {
+					agentType = inferAgentType(pa.AgentID)
+				}
+				branchAgents[pa.Branch] = agentRef{ID: pa.AgentID, Type: agentType}
+			}
+		}
+	}
+
 	type pipelineResponse struct {
 		ID              int    `json:"id"`
 		Project         string `json:"project"`
@@ -210,6 +229,8 @@ func (d *MobileDomain) handleMobilePipelines(w http.ResponseWriter, r *http.Requ
 		CompletedStages int    `json:"completed_stages"`
 		TotalStages     int    `json:"total_stages"`
 		FailedJobCount  int    `json:"failed_job_count"`
+		AgentID         string `json:"agent_id,omitempty"`
+		AgentType       string `json:"agent_type,omitempty"`
 	}
 
 	results := make([]pipelineResponse, 0, len(pipelines))
@@ -228,6 +249,10 @@ func (d *MobileDomain) handleMobilePipelines(w http.ResponseWriter, r *http.Requ
 			resp.CompletedStages = detail.CompletedStages
 			resp.TotalStages = detail.TotalStages
 			resp.FailedJobCount = detail.FailedJobCount
+		}
+		if ar, ok := branchAgents[p.Ref]; ok {
+			resp.AgentID = ar.ID
+			resp.AgentType = ar.Type
 		}
 		results = append(results, resp)
 	}

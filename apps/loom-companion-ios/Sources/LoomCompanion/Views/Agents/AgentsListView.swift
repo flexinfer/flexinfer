@@ -32,7 +32,8 @@ struct AgentsListView: View {
             List {
                 AgentFilterView(
                     statusFilter: $viewModel.statusFilter,
-                    summary: viewModel.summary
+                    summary: viewModel.summary,
+                    pipelineAgentCount: viewModel.agents.filter { $0.pipelineCount > 0 }.count
                 )
 
                 ForEach(viewModel.filteredAgents) { agent in
