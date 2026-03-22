@@ -15,6 +15,7 @@ import (
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/internal/cache"
 	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	corev1 "k8s.io/api/core/v1"
@@ -244,10 +245,10 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 	// that have enough free VRAM according to the node agent.
 	var vramEstimateMB float64
 	if args.Pod.Annotations != nil {
-		if est := strings.TrimSpace(args.Pod.Annotations["flexinfer.ai/gpu.vram-estimate-mb"]); est != "" {
+		if est := strings.TrimSpace(args.Pod.Annotations[constants.AnnotationVRAMEstimateMB]); est != "" {
 			parsed, err := strconv.ParseFloat(est, 64)
 			if err != nil {
-				log.V(1).Info("invalid flexinfer.ai/gpu.vram-estimate-mb annotation (ignoring)", "value", est, "error", err)
+				log.V(1).Info("invalid "+constants.AnnotationVRAMEstimateMB+" annotation (ignoring)", "value", est, "error", err)
 			} else {
 				vramEstimateMB = parsed
 			}
@@ -258,7 +259,7 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 	// Read the backend annotation for architecture-aware filtering.
 	var podBackend string
 	if args.Pod.Annotations != nil {
-		podBackend = canonicalBackend(args.Pod.Annotations["flexinfer.ai/backend"])
+		podBackend = canonicalBackend(args.Pod.Annotations[constants.AnnotationBackend])
 	}
 
 	filteredNodes := make([]string, 0)
@@ -269,10 +270,10 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 			log.Error(err, "Failed to get node from cache", "node", nodeName)
 			continue
 		}
-		if _, ok := node.Labels["flexinfer.ai/gpu.vendor"]; ok {
+		if _, ok := node.Labels[constants.NodeLabelGPUVendor]; ok {
 			// If we have an estimate and the node agent reports free VRAM, enforce it.
 			if vramEstimateMB > 0 && gpuCount > 0 {
-				freeVRAMStr := strings.TrimSpace(node.Annotations["flexinfer.ai/gpu-free-memory"])
+				freeVRAMStr := strings.TrimSpace(node.Annotations[constants.NodeAnnotationGPUFreeMemory])
 				if freeVRAMStr != "" {
 					if freeMB, err := strconv.ParseFloat(freeVRAMStr, 64); err == nil && freeMB > 0 {
 						required := vramEstimateMB * float64(gpuCount)
@@ -287,7 +288,7 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 			// Architecture-aware filtering: reject nodes where the backend
 			// does not support the node's GPU architecture (defense-in-depth).
 			if podBackend != "" {
-				if nodeArch := strings.TrimSpace(node.Labels["flexinfer.ai/gpu.arch"]); nodeArch != "" {
+				if nodeArch := strings.TrimSpace(node.Labels[constants.NodeLabelGPUArch]); nodeArch != "" {
 					if support, found := backend.LookupGPUArchSupport(podBackend, nodeArch); found && support.Level == backend.SupportUnsupported {
 						failed[nodeName] = fmt.Sprintf("backend %s unsupported on GPU arch %s", podBackend, nodeArch)
 						continue
@@ -297,7 +298,7 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 
 			filteredNodes = append(filteredNodes, nodeName)
 		} else {
-			failed[nodeName] = "no flexinfer.ai/gpu.vendor label"
+			failed[nodeName] = "no " + constants.NodeLabelGPUVendor + " label"
 		}
 	}
 
@@ -337,8 +338,8 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 	model := ""
 	backend := ""
 	if args.Pod.Annotations != nil {
-		model = args.Pod.Annotations["flexinfer.ai/model"]
-		backend = canonicalBackend(args.Pod.Annotations["flexinfer.ai/backend"])
+		model = args.Pod.Annotations[constants.AnnotationModel]
+		backend = canonicalBackend(args.Pod.Annotations[constants.AnnotationBackend])
 	}
 
 	var globalCM *corev1.ConfigMap
@@ -387,42 +388,42 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		utilStr := node.Annotations["flexinfer.ai/gpu.util"]
+		utilStr := node.Annotations[constants.NodeAnnotationGPUUtil]
 		util := 0.0
 		if raw := strings.TrimSpace(utilStr); raw != "" {
 			parsed, err := strconv.ParseFloat(raw, 64)
 			if err != nil {
-				log.V(1).Info("invalid node annotation (using 0)", "node", nodeName, "key", "flexinfer.ai/gpu.util", "value", utilStr, "error", err)
+				log.V(1).Info("invalid node annotation (using 0)", "node", nodeName, "key", constants.NodeAnnotationGPUUtil, "value", utilStr, "error", err)
 			} else {
 				util = parsed
 			}
 		}
-		costStr := node.Annotations["flexinfer.ai/cost"]
+		costStr := node.Annotations[constants.NodeAnnotationCost]
 		cost := 0.0
 		if raw := strings.TrimSpace(costStr); raw != "" {
 			parsed, err := strconv.ParseFloat(raw, 64)
 			if err != nil {
-				log.V(1).Info("invalid node annotation (using 0)", "node", nodeName, "key", "flexinfer.ai/cost", "value", costStr, "error", err)
+				log.V(1).Info("invalid node annotation (using 0)", "node", nodeName, "key", constants.NodeAnnotationCost, "value", costStr, "error", err)
 			} else {
 				cost = parsed
 			}
 		}
-		cacheStr := node.Annotations["flexinfer.ai/kv-cache-usage"]
+		cacheStr := node.Annotations[constants.NodeAnnotationKVCacheUsage]
 		cacheUsage := 0.0
 		if raw := strings.TrimSpace(cacheStr); raw != "" {
 			parsed, err := strconv.ParseFloat(raw, 64)
 			if err != nil {
-				log.V(1).Info("invalid node annotation (using 0)", "node", nodeName, "key", "flexinfer.ai/kv-cache-usage", "value", cacheStr, "error", err)
+				log.V(1).Info("invalid node annotation (using 0)", "node", nodeName, "key", constants.NodeAnnotationKVCacheUsage, "value", cacheStr, "error", err)
 			} else {
 				cacheUsage = parsed
 			}
 		}
-		freeVRAMStr := node.Annotations["flexinfer.ai/gpu-free-memory"] // MB, sum across GPUs
+		freeVRAMStr := node.Annotations[constants.NodeAnnotationGPUFreeMemory] // MB, sum across GPUs
 		freeVRAMMB := 0.0
 		if raw := strings.TrimSpace(freeVRAMStr); raw != "" {
 			parsed, err := strconv.ParseFloat(raw, 64)
 			if err != nil {
-				log.V(1).Info("invalid node annotation (using 0)", "node", nodeName, "key", "flexinfer.ai/gpu-free-memory", "value", freeVRAMStr, "error", err)
+				log.V(1).Info("invalid node annotation (using 0)", "node", nodeName, "key", constants.NodeAnnotationGPUFreeMemory, "value", freeVRAMStr, "error", err)
 			} else {
 				freeVRAMMB = parsed
 			}
@@ -442,9 +443,9 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 		// This uses labels set by flexinfer-agent (per-GPU VRAM and GPU count) plus
 		// the free VRAM annotation (sum across GPUs).
 		freeRatio := 0.0
-		if perGi, ok := parseGiLabel(node.Labels["flexinfer.ai/gpu.vram"]); ok {
+		if perGi, ok := parseGiLabel(node.Labels[constants.NodeLabelGPUVRAM]); ok {
 			cnt := 1.0
-			if cStr := node.Labels["flexinfer.ai/gpu.count"]; cStr != "" {
+			if cStr := node.Labels[constants.NodeLabelGPUCount]; cStr != "" {
 				if c, err := strconv.ParseFloat(strings.TrimSpace(cStr), 64); err == nil && c > 0 {
 					cnt = c
 				}
@@ -495,11 +496,11 @@ func deviceClassFromNode(node *corev1.Node) string {
 	labels := node.Labels
 	return fmt.Sprintf(
 		"vendor=%s,arch=%s,vram=%s,count=%s,int4=%s",
-		labels["flexinfer.ai/gpu.vendor"],
-		labels["flexinfer.ai/gpu.arch"],
-		labels["flexinfer.ai/gpu.vram"],
-		labels["flexinfer.ai/gpu.count"],
-		labels["flexinfer.ai/gpu.int4"],
+		labels[constants.NodeLabelGPUVendor],
+		labels[constants.NodeLabelGPUArch],
+		labels[constants.NodeLabelGPUVRAM],
+		labels[constants.NodeLabelGPUCount],
+		labels[constants.NodeLabelGPUInt4],
 	)
 }
 

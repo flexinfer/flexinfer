@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
 )
 
@@ -327,7 +328,7 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 // managed but currently inactive -- do not fall back to static service-labels".
 func (r *ModelReconciler) syncActiveServiceLabels(ctx context.Context, activeModel *aiv1alpha2.Model, groupModels []*aiv1alpha2.Model) {
 	log := log.FromContext(ctx)
-	const annoKey = "ai.flexinfer/active-services"
+	annoKey := constants.ServiceAnnotationActiveLabels
 
 	for _, m := range groupModels {
 		svc := &corev1.Service{}
