@@ -33,14 +33,16 @@ func (a *AgentBridge) AllTasks() ([]TaskInfo, error) {
 
 // CreateTaskParams holds all fields for task creation.
 type CreateTaskParams struct {
-	SessionID  string
-	Title      string
-	Priority   string
-	Tags       []string
-	Context    string   // Description of what needs to be done
-	FilePath   string   // Related file
-	LineNumber int      // Related line
-	BlockedBy  []string // Task IDs this is blocked by
+	SessionID   string
+	Title       string
+	Priority    string
+	Tags        []string
+	Context     string       // Description of what needs to be done
+	FilePath    string       // Related file
+	LineNumber  int          // Related line
+	BlockedBy   []string     // Task IDs this is blocked by
+	PipelineRef *PipelineRef `json:"pipeline_ref,omitempty"` // Link to blocking CI pipeline
+	WorkflowID  string       `json:"workflow_id,omitempty"`  // Workflow instance that created this task
 }
 
 type CreateTaskResult struct {
@@ -74,6 +76,17 @@ func (a *AgentBridge) CreateTask(p CreateTaskParams) (*CreateTaskResult, error) 
 	if len(p.BlockedBy) > 0 {
 		task["blocked_by"] = p.BlockedBy
 	}
+	if p.PipelineRef != nil {
+		task["pipeline_ref"] = map[string]any{
+			"id":      p.PipelineRef.ID,
+			"project": p.PipelineRef.Project,
+			"ref":     p.PipelineRef.Ref,
+			"web_url": p.PipelineRef.WebURL,
+		}
+	}
+	if p.WorkflowID != "" {
+		task["workflow_id"] = p.WorkflowID
+	}
 	args := map[string]any{
 		"session_id": p.SessionID,
 		"tasks":      []map[string]any{task},
@@ -87,13 +100,15 @@ func (a *AgentBridge) CreateTask(p CreateTaskParams) (*CreateTaskResult, error) 
 
 // UpdateTaskParams holds all fields for task updates.
 type UpdateTaskParams struct {
-	ID         string `json:"task_id"`
-	AgentID    string `json:"agent_id,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	Status     string `json:"status"`
-	Title      string `json:"title,omitempty"`
-	Priority   string `json:"priority,omitempty"`
-	Resolution string `json:"resolution,omitempty"`
+	ID          string       `json:"task_id"`
+	AgentID     string       `json:"agent_id,omitempty"`
+	SessionID   string       `json:"session_id,omitempty"`
+	Status      string       `json:"status"`
+	Title       string       `json:"title,omitempty"`
+	Priority    string       `json:"priority,omitempty"`
+	Resolution  string       `json:"resolution,omitempty"`
+	PipelineRef *PipelineRef `json:"pipeline_ref,omitempty"`
+	WorkflowID  string       `json:"workflow_id,omitempty"`
 }
 
 // UpdateTask updates a task's status, priority, and/or resolution.
@@ -107,6 +122,17 @@ func (a *AgentBridge) UpdateTask(p UpdateTaskParams) error {
 	}
 	if p.Resolution != "" {
 		args["resolution"] = p.Resolution
+	}
+	if p.PipelineRef != nil {
+		args["pipeline_ref"] = map[string]any{
+			"id":      p.PipelineRef.ID,
+			"project": p.PipelineRef.Project,
+			"ref":     p.PipelineRef.Ref,
+			"web_url": p.PipelineRef.WebURL,
+		}
+	}
+	if p.WorkflowID != "" {
+		args["workflow_id"] = p.WorkflowID
 	}
 	return a.callAgentTool("agent_task_update", args, nil)
 }
@@ -124,6 +150,8 @@ type DispatchTaskParams struct {
 	FilePath        string
 	LineNumber      int
 	BlockedBy       []string
+	PipelineRef     *PipelineRef
+	WorkflowID      string
 }
 
 // DispatchTask creates a task and a handoff targeting a specific agent.
@@ -146,14 +174,16 @@ func (a *AgentBridge) DispatchTask(p DispatchTaskParams) (map[string]any, error)
 	// Create the task.
 	if sessionID != "" {
 		taskResult, err := a.CreateTask(CreateTaskParams{
-			SessionID:  sessionID,
-			Title:      p.Title,
-			Context:    p.Context,
-			Priority:   p.Priority,
-			Tags:       mergeDispatchTags(p.Tags),
-			FilePath:   p.FilePath,
-			LineNumber: p.LineNumber,
-			BlockedBy:  p.BlockedBy,
+			SessionID:   sessionID,
+			Title:       p.Title,
+			Context:     p.Context,
+			Priority:    p.Priority,
+			Tags:        mergeDispatchTags(p.Tags),
+			FilePath:    p.FilePath,
+			LineNumber:  p.LineNumber,
+			BlockedBy:   p.BlockedBy,
+			PipelineRef: p.PipelineRef,
+			WorkflowID:  p.WorkflowID,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create task: %w", err)

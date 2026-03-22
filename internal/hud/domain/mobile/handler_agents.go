@@ -368,3 +368,96 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 		"summary": summary,
 	})
 }
+
+// handleMobileSessionActivity returns a unified view of session tasks, pipeline, and recent context.
+func (d *MobileDomain) handleMobileSessionActivity(w http.ResponseWriter, r *http.Request) {
+	if !d.requireMobileScope(w, r, ScopeRead) {
+		return
+	}
+
+	sessionID := strings.TrimSpace(r.PathValue("session_id"))
+	if sessionID == "" {
+		d.writeMobileError(w, http.StatusBadRequest, "bad_request", "session_id is required")
+		return
+	}
+
+	agent := d.deps.Agent()
+
+	// Fetch tasks for this session.
+	tasks, err := agent.Tasks(sessionID)
+	if err != nil {
+		d.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to list session tasks")
+		return
+	}
+	if tasks == nil {
+		tasks = []bridge.TaskInfo{}
+	}
+
+	// Build task DTOs with pipeline/workflow info.
+	type activityTaskDTO struct {
+		ID         string   `json:"id"`
+		Title      string   `json:"title"`
+		Status     string   `json:"status"`
+		Priority   string   `json:"priority"`
+		Tags       []string `json:"tags,omitempty"`
+		WorkflowID string   `json:"workflow_id,omitempty"`
+		PipelineID int      `json:"pipeline_id,omitempty"`
+		CreatedAt  string   `json:"created_at"`
+		UpdatedAt  string   `json:"updated_at"`
+	}
+
+	taskDTOs := make([]activityTaskDTO, 0, len(tasks))
+	for _, t := range tasks {
+		dto := activityTaskDTO{
+			ID:        t.ID,
+			Title:     t.Title,
+			Status:    normalizeMobileTaskStatus(t.Status),
+			Priority:  normalizeMobilePriority(t.Priority),
+			Tags:      t.Tags,
+			CreatedAt: t.CreatedAt,
+			UpdatedAt: t.UpdatedAt,
+		}
+		taskDTOs = append(taskDTOs, dto)
+	}
+
+	// Check if any active pipelines match this session's agent by branch.
+	type pipelineSummaryDTO struct {
+		ID             int    `json:"id"`
+		Project        string `json:"project"`
+		Ref            string `json:"ref"`
+		Status         string `json:"status"`
+		CurrentStage   string `json:"current_stage,omitempty"`
+		FailedJobCount int    `json:"failed_job_count"`
+		WebURL         string `json:"web_url,omitempty"`
+	}
+
+	var pipelines []pipelineSummaryDTO
+	if mon := d.deps.Monitors(); mon.Pipeline != nil {
+		for _, p := range mon.Pipeline.Pipelines() {
+			detail, err := mon.Pipeline.Detail(p.Project, p.ID)
+			if err != nil {
+				continue
+			}
+			pipelines = append(pipelines, pipelineSummaryDTO{
+				ID:             p.ID,
+				Project:        p.Project,
+				Ref:            p.Ref,
+				Status:         p.Status,
+				CurrentStage:   detail.CurrentStage,
+				FailedJobCount: detail.FailedJobCount,
+				WebURL:         p.WebURL,
+			})
+		}
+	}
+	if pipelines == nil {
+		pipelines = []pipelineSummaryDTO{}
+	}
+
+	d.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"session_id":     sessionID,
+		"tasks":          taskDTOs,
+		"pipelines":      pipelines,
+		"task_count":     len(taskDTOs),
+		"pipeline_count": len(pipelines),
+	})
+}

@@ -6,6 +6,11 @@
   "ended_at": "2025-01-15T11:00:00Z",
   "status": "ended",
   "description": "Working on feature X",
+  "pipeline_ref": {
+    "id": 67890,
+    "project": "services/loom-core",
+    "ref": "feat/feature-x"
+  },
   "entry_count": 42,
   "total_tokens": 8500
 }

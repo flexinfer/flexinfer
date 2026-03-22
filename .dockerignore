@@ -32,3 +32,19 @@ internal/hud/frontend/.vite
 .cache
 .worktrees
 launchd
+
+# Local Go caches (can be hundreds of MB)
+.go
+.go-build
+.go-tmp
+.tmp
+
+# Agent/planning artifacts
+.loom
+.agents
+
+# Directories not needed in server image
+apps
+tools
+docs
+*.md

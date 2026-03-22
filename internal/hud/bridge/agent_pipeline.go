@@ -53,6 +53,26 @@ type PipelineDetail struct {
 	Duration        int             `json:"duration,omitempty"`
 }
 
+// PipelineRef is a lightweight reference for linking entities to pipelines.
+// This is a bridge-local type (distinct from the schema PipelineRef) following
+// the bridge DTO pattern.
+type PipelineRef struct {
+	ID      int    `json:"id"`
+	Project string `json:"project"`
+	Ref     string `json:"ref,omitempty"`
+	WebURL  string `json:"web_url,omitempty"`
+}
+
+// PipelineRefFromInfo creates a PipelineRef from a PipelineInfo.
+func PipelineRefFromInfo(p PipelineInfo) *PipelineRef {
+	return &PipelineRef{
+		ID:      p.ID,
+		Project: p.Project,
+		Ref:     p.Ref,
+		WebURL:  p.WebURL,
+	}
+}
+
 // --- Pipeline bridge methods ---
 
 // ListActivePipelines fetches active pipelines from the mcp-gitlab server
@@ -214,6 +234,51 @@ func (a *AgentBridge) GetPipelineDetail(project string, pipelineID int) (*Pipeli
 		CurrentStage:    currentStage,
 		FailedJobCount:  failedJobs,
 	}, nil
+}
+
+// RecordPipelineEvent creates a pipeline_event context entry in the given session.
+// This links CI pipeline lifecycle events to the agent's session context.
+func (a *AgentBridge) RecordPipelineEvent(sessionID string, ref PipelineRef, status, stage string) error {
+	title := fmt.Sprintf("Pipeline %d %s", ref.ID, status)
+	content := fmt.Sprintf("Pipeline %d (%s) on %s: status=%s", ref.ID, ref.Project, ref.Ref, status)
+	if stage != "" {
+		content += fmt.Sprintf(", stage=%s", stage)
+	}
+
+	entries := []map[string]any{{
+		"entry_type": "pipeline_event",
+		"title":      title,
+		"content":    content,
+		"metadata": map[string]any{
+			"pipeline_id":      ref.ID,
+			"pipeline_project": ref.Project,
+			"pipeline_ref":     ref.Ref,
+			"pipeline_status":  status,
+			"pipeline_stage":   stage,
+			"pipeline_web_url": ref.WebURL,
+		},
+	}}
+
+	return a.ContextAdd(sessionID, entries)
+}
+
+// FindPipelineForBranch searches active pipelines for one matching the given branch.
+// Returns nil if no matching pipeline is found. Used by WorkStart to auto-link
+// sessions/tasks to their CI pipeline.
+func (a *AgentBridge) FindPipelineForBranch(projects []string, branch string) *PipelineRef {
+	if branch == "" || len(projects) == 0 {
+		return nil
+	}
+	pipelines, err := a.ListActivePipelines(projects)
+	if err != nil || len(pipelines) == 0 {
+		return nil
+	}
+	for _, p := range pipelines {
+		if p.Ref == branch {
+			return PipelineRefFromInfo(p)
+		}
+	}
+	return nil
 }
 
 // aggregateJobStatus determines the overall status of a stage from its jobs.

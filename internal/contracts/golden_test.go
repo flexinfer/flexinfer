@@ -416,6 +416,11 @@ func TestSessionInfoContract(t *testing.T) {
 		EndedAt:     "2025-01-15T11:00:00Z",
 		Status:      "ended",
 		Description: "Working on feature X",
+		PipelineRef: &bridge.PipelineRef{
+			ID:      67890,
+			Project: "services/loom-core",
+			Ref:     "feat/feature-x",
+		},
 		EntryCount:  42,
 		TotalTokens: 8500,
 	}
@@ -434,8 +439,15 @@ func TestTaskInfoContract(t *testing.T) {
 		Status:    "in_progress",
 		Tags:      []string{"testing", "contracts"},
 		BlockedBy: []string{"task_000"},
-		CreatedAt: "2025-01-15T10:05:00Z",
-		UpdatedAt: "2025-01-15T10:20:00Z",
+		PipelineRef: &bridge.PipelineRef{
+			ID:      12345,
+			Project: "services/loom-core",
+			Ref:     "feat/golden-tests",
+			WebURL:  "https://gitlab.example.com/services/loom-core/-/pipelines/12345",
+		},
+		WorkflowID: "wf_build_and_test_001",
+		CreatedAt:  "2025-01-15T10:05:00Z",
+		UpdatedAt:  "2025-01-15T10:20:00Z",
 	}
 	assertGolden(t, "dto_task_info", marshalIndent(t, task))
 }
