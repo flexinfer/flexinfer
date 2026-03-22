@@ -207,6 +207,7 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, modelCache)).To(Succeed())
+			bindSharedPVC(ctx, cacheName)
 
 			dlJobKey := types.NamespacedName{
 				Name:      fmt.Sprintf("%s-downloader", cacheName),
