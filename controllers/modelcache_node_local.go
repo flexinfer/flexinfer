@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -67,109 +66,16 @@ func (r *ModelCacheReconciler) reconcileNodeLocal(ctx context.Context, m *aiv1al
 		return ctrl.Result{}, err
 	}
 
-	// Keep the DaemonSet spec in sync with the desired state (no kubectl patches needed).
+	// Keep the DaemonSet spec in sync with the desired state.
 	desiredDS, err := r.daemonSetForNodeLocal(m, modelPath, hostPath)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	dsNeedsUpdate := false
-
-	// Ensure controller ownership so we get DaemonSet events and can reconcile drift.
-	if !metav1.IsControlledBy(ds, m) {
-		if err := ctrl.SetControllerReference(m, ds, r.Scheme); err != nil {
-			return ctrl.Result{}, err
-		}
-		dsNeedsUpdate = true
+	_, readyNodes, totalNodes, err := r.syncDaemonSet(ctx, ds, desiredDS, m)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
-
-	// Sync labels (merge-only: keep any extra labels set by users/tools).
-	if ds.Labels == nil {
-		ds.Labels = make(map[string]string)
-	}
-	for k, v := range desiredDS.Labels {
-		if ds.Labels[k] != v {
-			ds.Labels[k] = v
-			dsNeedsUpdate = true
-		}
-	}
-	if ds.Spec.Template.Labels == nil {
-		ds.Spec.Template.Labels = make(map[string]string)
-	}
-	for k, v := range desiredDS.Spec.Template.Labels {
-		if ds.Spec.Template.Labels[k] != v {
-			ds.Spec.Template.Labels[k] = v
-			dsNeedsUpdate = true
-		}
-	}
-
-	// Sync the PodSpec fields we own.
-	if !reflect.DeepEqual(ds.Spec.Template.Spec.NodeSelector, desiredDS.Spec.Template.Spec.NodeSelector) {
-		ds.Spec.Template.Spec.NodeSelector = desiredDS.Spec.Template.Spec.NodeSelector
-		dsNeedsUpdate = true
-	}
-	if !reflect.DeepEqual(ds.Spec.Template.Spec.Tolerations, desiredDS.Spec.Template.Spec.Tolerations) {
-		ds.Spec.Template.Spec.Tolerations = desiredDS.Spec.Template.Spec.Tolerations
-		dsNeedsUpdate = true
-	}
-	if !reflect.DeepEqual(ds.Spec.Template.Spec.Volumes, desiredDS.Spec.Template.Spec.Volumes) {
-		ds.Spec.Template.Spec.Volumes = desiredDS.Spec.Template.Spec.Volumes
-		dsNeedsUpdate = true
-	}
-
-	if len(desiredDS.Spec.Template.Spec.Containers) == 0 {
-		return ctrl.Result{}, fmt.Errorf("desired DaemonSet has no containers")
-	}
-	desiredSyncer := desiredDS.Spec.Template.Spec.Containers[0]
-
-	syncerIndex := -1
-	for i := range ds.Spec.Template.Spec.Containers {
-		if ds.Spec.Template.Spec.Containers[i].Name == desiredSyncer.Name {
-			syncerIndex = i
-			break
-		}
-	}
-	if syncerIndex == -1 {
-		ds.Spec.Template.Spec.Containers = desiredDS.Spec.Template.Spec.Containers
-		dsNeedsUpdate = true
-	} else {
-		syncer := &ds.Spec.Template.Spec.Containers[syncerIndex]
-		if syncer.Image != desiredSyncer.Image {
-			syncer.Image = desiredSyncer.Image
-			dsNeedsUpdate = true
-		}
-		if !reflect.DeepEqual(syncer.Command, desiredSyncer.Command) {
-			syncer.Command = desiredSyncer.Command
-			dsNeedsUpdate = true
-		}
-		if !reflect.DeepEqual(syncer.Args, desiredSyncer.Args) {
-			syncer.Args = desiredSyncer.Args
-			dsNeedsUpdate = true
-		}
-		if !reflect.DeepEqual(syncer.Env, desiredSyncer.Env) {
-			syncer.Env = desiredSyncer.Env
-			dsNeedsUpdate = true
-		}
-		if !reflect.DeepEqual(syncer.VolumeMounts, desiredSyncer.VolumeMounts) {
-			syncer.VolumeMounts = desiredSyncer.VolumeMounts
-			dsNeedsUpdate = true
-		}
-		if !reflect.DeepEqual(syncer.Resources, desiredSyncer.Resources) {
-			syncer.Resources = desiredSyncer.Resources
-			dsNeedsUpdate = true
-		}
-	}
-
-	if dsNeedsUpdate {
-		log.Info("Updating NodeLocal DaemonSet", "DaemonSet", dsName)
-		if err := r.Update(ctx, ds); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-
-	// 3. Check DaemonSet status
-	readyNodes := ds.Status.NumberReady
-	totalNodes := ds.Status.DesiredNumberScheduled
 
 	m.Status.ReadyNodes = readyNodes
 	m.Status.TotalNodes = totalNodes
@@ -203,7 +109,7 @@ func (r *ModelCacheReconciler) daemonSetForNodeLocal(m *aiv1alpha1.ModelCache, m
 
 	if isOCISource(m.Spec.Source) {
 		// OCI registry source - use ORAS
-		image = "ghcr.io/oras-project/oras:v1.2.2"
+		image = ImageORAS
 		if img, ok := os.LookupEnv("ORAS_DOWNLOADER_IMAGE"); ok && img != "" {
 			image = img
 		}
@@ -228,7 +134,7 @@ while true; do sleep 3600; done
 `, modelPath, registryRef)
 	} else if isMlcModel(m.Spec.Source) {
 		// MLC-LLM models require git clone with LFS
-		image = "debian:bookworm-slim"
+		image = ImageDebianSlim
 		modelID := parseModelSource(m.Spec.Source)
 		downloadScript = fmt.Sprintf(`
 set -ex
@@ -252,7 +158,7 @@ while true; do sleep 3600; done
 `, modelPath, modelID, huggingFaceRepositoryBaseURL)
 	} else {
 		// Standard HuggingFace models
-		image = "python:3.10-slim"
+		image = ImagePythonSlim
 		modelID := parseModelSource(m.Spec.Source)
 		downloadScript = fmt.Sprintf(`
 set -ex

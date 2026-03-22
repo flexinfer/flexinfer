@@ -4,16 +4,16 @@ import (
 	"strings"
 	"testing"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 func TestQualityPolicyFor_AllFormats(t *testing.T) {
-	formats := []aiv1alpha1.QuantizationFormat{
-		aiv1alpha1.QuantizationFormatGGUF,
-		aiv1alpha1.QuantizationFormatAWQ,
-		aiv1alpha1.QuantizationFormatGPTQ,
-		aiv1alpha1.QuantizationFormatEXL2,
-		aiv1alpha1.QuantizationFormatFP8,
+	formats := []aiv1alpha2.QuantizationFormat{
+		aiv1alpha2.QuantizationFormatGGUF,
+		aiv1alpha2.QuantizationFormatAWQ,
+		aiv1alpha2.QuantizationFormatGPTQ,
+		aiv1alpha2.QuantizationFormatEXL2,
+		aiv1alpha2.QuantizationFormatFP8,
 	}
 	for _, format := range formats {
 		policy, err := QualityPolicyFor(format)
@@ -32,7 +32,7 @@ func TestQualityPolicyFor_AllFormats(t *testing.T) {
 func TestEvaluateQuality(t *testing.T) {
 	tests := []struct {
 		name    string
-		format  aiv1alpha1.QuantizationFormat
+		format  aiv1alpha2.QuantizationFormat
 		base    QualityMetrics
 		cand    QualityMetrics
 		pass    bool
@@ -40,28 +40,28 @@ func TestEvaluateQuality(t *testing.T) {
 	}{
 		{
 			name:   "gguf-pass",
-			format: aiv1alpha1.QuantizationFormatGGUF,
+			format: aiv1alpha2.QuantizationFormatGGUF,
 			base:   QualityMetrics{Perplexity: 9.50, AcceptanceRate: 0.94},
 			cand:   QualityMetrics{Perplexity: 10.10, AcceptanceRate: 0.92},
 			pass:   true,
 		},
 		{
 			name:   "awq-fail-perplexity",
-			format: aiv1alpha1.QuantizationFormatAWQ,
+			format: aiv1alpha2.QuantizationFormatAWQ,
 			base:   QualityMetrics{Perplexity: 8.0, AcceptanceRate: 0.93},
 			cand:   QualityMetrics{Perplexity: 9.0, AcceptanceRate: 0.92},
 			pass:   false,
 		},
 		{
 			name:   "fp8-fail-acceptance",
-			format: aiv1alpha1.QuantizationFormatFP8,
+			format: aiv1alpha2.QuantizationFormatFP8,
 			base:   QualityMetrics{Perplexity: 6.0, AcceptanceRate: 0.97},
 			cand:   QualityMetrics{Perplexity: 6.1, AcceptanceRate: 0.94},
 			pass:   false,
 		},
 		{
 			name:    "invalid-baseline",
-			format:  aiv1alpha1.QuantizationFormatGGUF,
+			format:  aiv1alpha2.QuantizationFormatGGUF,
 			base:    QualityMetrics{Perplexity: 0, AcceptanceRate: 0.9},
 			cand:    QualityMetrics{Perplexity: 1, AcceptanceRate: 0.9},
 			wantErr: "baseline perplexity",

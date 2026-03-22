@@ -313,7 +313,7 @@ func (r *FederatedModelReconciler) buildRemoteClient(ctx context.Context, cluste
 
 func desiredRemoteModel(fm *aiv1alpha2.FederatedModel) *aiv1alpha2.Model {
 	labels := map[string]string{
-		"flexinfer.ai/federated-model": fm.Name,
+		LabelFederatedModel: fm.Name,
 	}
 	for k, v := range fm.Labels {
 		if _, exists := labels[k]; !exists {

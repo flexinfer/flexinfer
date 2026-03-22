@@ -6,20 +6,20 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 // AWQJobBuilder generates Kubernetes Jobs for AWQ quantization.
 type AWQJobBuilder struct{}
 
 // Format returns the AWQ quantization format.
-func (b *AWQJobBuilder) Format() aiv1alpha1.QuantizationFormat {
-	return aiv1alpha1.QuantizationFormatAWQ
+func (b *AWQJobBuilder) Format() aiv1alpha2.QuantizationFormat {
+	return aiv1alpha2.QuantizationFormatAWQ
 }
 
 // Validate checks that the quantization spec is valid for AWQ.
-func (b *AWQJobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
-	if spec.Format != aiv1alpha1.QuantizationFormatAWQ {
+func (b *AWQJobBuilder) Validate(spec *aiv1alpha2.QuantizationSpec) error {
+	if spec.Format != aiv1alpha2.QuantizationFormatAWQ {
 		return fmt.Errorf("AWQJobBuilder only handles AWQ format, got %q", spec.Format)
 	}
 	if !spec.UseGPU {
@@ -79,45 +79,15 @@ func (b *AWQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 }
 
 // buildEnv returns environment variables for the AWQ quantization script.
-func (b *AWQJobBuilder) buildEnv(modelPath string, bits, groupSize int, calib *aiv1alpha1.CalibrationSpec) []corev1.EnvVar {
-	maxSeqLen := int32(DefaultCalibrationMaxSeqLen)
-	maxSamples := int32(DefaultCalibrationMaxSamples)
-	dataset := DefaultCalibrationDataset
-	if calib != nil {
-		if calib.MaxSeqLen != nil {
-			maxSeqLen = *calib.MaxSeqLen
-		}
-		if calib.MaxSamples != nil {
-			maxSamples = *calib.MaxSamples
-		}
-		if calib.Dataset != nil {
-			dataset = *calib.Dataset
-		}
-	}
-
+func (b *AWQJobBuilder) buildEnv(modelPath string, bits, groupSize int, calib *aiv1alpha2.CalibrationSpec) []corev1.EnvVar {
 	env := []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
 		{Name: "BITS", Value: fmt.Sprintf("%d", bits)},
 		{Name: "GROUP_SIZE", Value: fmt.Sprintf("%d", groupSize)},
-		{Name: "MAX_SEQ_LEN", Value: fmt.Sprintf("%d", maxSeqLen)},
-		{Name: "MAX_SAMPLES", Value: fmt.Sprintf("%d", maxSamples)},
-		{Name: "DATASET", Value: dataset},
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
+		{Name: "OUT_DIR", Value: fmt.Sprintf("/cache/%s/awq-w%d-g%d", modelPath, bits, groupSize)},
 	}
-
-	// OUT_DIR is derived from MODEL_DIR in the wrapper script.
-	env = append(env, corev1.EnvVar{
-		Name:  "OUT_DIR",
-		Value: fmt.Sprintf("/cache/%s/awq-w%d-g%d", modelPath, bits, groupSize),
-	})
-
-	if calib != nil && calib.NParallelCalibSamples != nil {
-		env = append(env, corev1.EnvVar{
-			Name:  "N_PARALLEL_CALIB_SAMPLES",
-			Value: fmt.Sprintf("%d", *calib.NParallelCalibSamples),
-		})
-	}
-
+	env = append(env, BuildCalibrationEnv(calib)...)
 	return env
 }
 

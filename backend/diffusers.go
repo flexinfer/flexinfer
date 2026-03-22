@@ -1,12 +1,22 @@
 package backend
 
 import (
-	"os"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
+
+// diffusersImageRules defines the image resolution precedence for Diffusers.
+var diffusersImageRules = []ImageRule{
+	// AMD arch-specific
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_DIFFUSERS_IMAGE_GFX1100", Default: "registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100"},
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_DIFFUSERS_IMAGE_GFX906", Default: "registry.harbor.lan/flexinfer/diffusers:rocm-gfx906"},
+	// AMD generic
+	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_DIFFUSERS_IMAGE_AMD", Default: "registry.harbor.lan/library/diffusers-api:rocm-latest"},
+	// Global default
+	{EnvVar: "DEFAULT_DIFFUSERS_IMAGE", Default: "registry.harbor.lan/library/diffusers-api:cuda"},
+}
 
 // DiffusersBackend implements the Backend interface for the Diffusers API server.
 // Provides OpenAI-compatible image generation endpoints.
@@ -19,36 +29,11 @@ func init() {
 }
 
 func (b *DiffusersBackend) Name() string {
-	return "diffusers"
+	return NameDiffusers
 }
 
 func (b *DiffusersBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
-	switch gpuVendor {
-	case GPUVendorAMD:
-		// Check for arch-specific overrides before built-in defaults
-		if strings.HasPrefix(gpuArch, "gfx110") {
-			if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE_GFX1100"); img != "" {
-				return img
-			}
-			return "registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100"
-		}
-		if strings.HasPrefix(gpuArch, "gfx906") {
-			if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE_GFX906"); img != "" {
-				return img
-			}
-			return "registry.harbor.lan/flexinfer/diffusers:rocm-gfx906"
-		}
-		if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE_AMD"); img != "" {
-			return img
-		}
-		// Fallback: use generic rocm-latest tag for other AMD GPUs
-		return "registry.harbor.lan/library/diffusers-api:rocm-latest"
-	default:
-		if img := os.Getenv("DEFAULT_DIFFUSERS_IMAGE"); img != "" {
-			return img
-		}
-		return "registry.harbor.lan/library/diffusers-api:cuda"
-	}
+	return ResolveImage(diffusersImageRules, gpuVendor, gpuArch)
 }
 
 func (b *DiffusersBackend) Port() int32 {
@@ -197,6 +182,17 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			Name:  "USE_ROCM_AITER_ROPE_BACKEND",
 			Value: aiterRope,
 		})
+	}
+
+	// ControlNet support
+	if cnPath := spec.ConfigString("controlnetPath", ""); cnPath != "" {
+		env = append(env, corev1.EnvVar{Name: "CONTROLNET_PATH", Value: cnPath})
+	}
+	if cnRepo := spec.ConfigString("controlnetRepo", ""); cnRepo != "" {
+		env = append(env, corev1.EnvVar{Name: "CONTROLNET_REPO", Value: cnRepo})
+	}
+	if cnScale := spec.ConfigString("controlnetScale", ""); cnScale != "" {
+		env = append(env, corev1.EnvVar{Name: "CONTROLNET_SCALE", Value: cnScale})
 	}
 
 	// Warmup inference control: skip the startup warmup pass if requested.

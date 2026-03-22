@@ -36,13 +36,16 @@ func setupTestProxy(t *testing.T) *Proxy {
 
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 
-	return &Proxy{
+	p := &Proxy{
 		client:           k8sClient,
 		namespace:        "default",
 		maxQueueSize:     100,
 		queueTimeout:     60 * time.Second,
 		coldStartTimeout: 60 * time.Second,
 	}
+	p.resolver = NewModelResolver(k8sClient, "default")
+	p.activator = NewK8sModelActivator(k8sClient, "default", 60*time.Second)
+	return p
 }
 
 func TestHandleRequest_NoModelId(t *testing.T) {
@@ -142,7 +145,7 @@ func TestTriggerScaleUp_AlreadyScaled(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, md))
 
 	// Should return immediately without error (already scaled)
-	err := p.triggerScaleUp(ctx, "ready-model")
+	err := p.activator.TriggerScaleUp(ctx, "ready-model")
 	assert.NoError(t, err)
 
 	// Verify replicas unchanged
@@ -168,7 +171,7 @@ func TestTriggerScaleUp_FromZero(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, md))
 
 	// Should scale up from 0 to 1
-	err := p.triggerScaleUp(ctx, "scaled-zero-model")
+	err := p.activator.TriggerScaleUp(ctx, "scaled-zero-model")
 	assert.NoError(t, err)
 
 	// Verify replicas changed to 1
@@ -191,7 +194,7 @@ func TestGetColdStartTimeout_Default(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, md))
 
 	// Should return proxy default (60s)
-	timeout := p.getColdStartTimeout(ctx, "timeout-model")
+	timeout := p.activator.GetColdStartTimeout(ctx, "timeout-model")
 	assert.Equal(t, 60*time.Second, timeout)
 }
 
@@ -212,7 +215,7 @@ func TestGetColdStartTimeout_Custom(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, md))
 
 	// Should return custom timeout (120s)
-	timeout := p.getColdStartTimeout(ctx, "custom-timeout-model")
+	timeout := p.activator.GetColdStartTimeout(ctx, "custom-timeout-model")
 	assert.Equal(t, 120*time.Second, timeout)
 }
 
@@ -551,7 +554,7 @@ func TestResolveServiceLabel_DirectModelName(t *testing.T) {
 	ctx := context.Background()
 
 	// No services created, should return input as-is
-	result := p.resolveServiceLabel(ctx, "direct-model-name")
+	result := p.resolver.ResolveServiceLabel(ctx, "direct-model-name")
 	assert.Equal(t, "direct-model-name", result)
 }
 
@@ -617,7 +620,7 @@ func TestConnectionTimeout_CancelledContext(t *testing.T) {
 	require.NoError(t, p.client.Create(context.Background(), md))
 
 	// triggerScaleUp should respect context cancellation
-	err := p.triggerScaleUp(ctx, "timeout-model")
+	err := p.activator.TriggerScaleUp(ctx, "timeout-model")
 	// With cancelled context, should return early
 	assert.NoError(t, err) // Already scaled, so no error
 }
@@ -640,6 +643,8 @@ func TestColdStartTimeout_Exceeded(t *testing.T) {
 		queueTimeout:     60 * time.Second,
 		coldStartTimeout: 1 * time.Millisecond, // Very short timeout for testing
 	}
+	p.resolver = NewModelResolver(k8sClient, "default")
+	p.activator = NewK8sModelActivator(k8sClient, "default", 1*time.Millisecond)
 
 	ctx := context.Background()
 
@@ -660,7 +665,7 @@ func TestColdStartTimeout_Exceeded(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, md))
 
 	// Getting cold start timeout should return the proxy default
-	timeout := p.getColdStartTimeout(ctx, "slow-model")
+	timeout := p.activator.GetColdStartTimeout(ctx, "slow-model")
 	assert.Equal(t, 1*time.Millisecond, timeout)
 }
 
@@ -675,7 +680,7 @@ func TestModelNotFoundAtStartup(t *testing.T) {
 	assert.True(t, errors.IsNotFound(err), "Expected NotFound error, got: %v", err)
 
 	// Verify that triggerScaleUp also handles missing model
-	err = p.triggerScaleUp(ctx, "missing-model")
+	err = p.activator.TriggerScaleUp(ctx, "missing-model")
 	assert.Error(t, err)
 	assert.True(t, errors.IsNotFound(err), "Expected NotFound error, got: %v", err)
 }
@@ -698,6 +703,8 @@ func TestQueueTimeout_Context(t *testing.T) {
 		queueTimeout:     10 * time.Millisecond, // Short timeout
 		coldStartTimeout: 60 * time.Second,
 	}
+	p.resolver = NewModelResolver(k8sClient, "default")
+	p.activator = NewK8sModelActivator(k8sClient, "default", 60*time.Second)
 
 	// Queue timeout should be respected in context creation
 	assert.Equal(t, 10*time.Millisecond, p.queueTimeout)
@@ -720,6 +727,8 @@ func TestHandleRequest_QueueTimeoutResponse(t *testing.T) {
 		queueTimeout:     1 * time.Millisecond,
 		coldStartTimeout: 1 * time.Millisecond,
 	}
+	p.resolver = NewModelResolver(k8sClient, "default")
+	p.activator = NewK8sModelActivator(k8sClient, "default", 1*time.Millisecond)
 
 	ctx := context.Background()
 
@@ -823,7 +832,7 @@ func TestResolveModelAlias_ServedModelName(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, m))
 
 	// Resolve by servedModelName
-	result := p.resolveModelAlias(ctx, "qwen3-30b-abliterated")
+	result := p.resolver.ResolveModelAlias(ctx, "qwen3-30b-abliterated")
 	assert.Equal(t, "qwen3-30b-a3b-abliterated", result)
 }
 
@@ -848,10 +857,10 @@ func TestResolveModelAlias_Alias(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, m))
 
 	// Resolve by alias
-	result := p.resolveModelAlias(ctx, "qwen3-30b")
+	result := p.resolver.ResolveModelAlias(ctx, "qwen3-30b")
 	assert.Equal(t, "qwen3-30b-a3b-abliterated", result)
 
-	result = p.resolveModelAlias(ctx, "qwen3-moe")
+	result = p.resolver.ResolveModelAlias(ctx, "qwen3-moe")
 	assert.Equal(t, "qwen3-30b-a3b-abliterated", result)
 }
 
@@ -875,7 +884,7 @@ func TestResolveModelAlias_DirectName(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, m))
 
 	// K8s resource name should pass through unmodified (not in alias cache)
-	result := p.resolveModelAlias(ctx, "my-model")
+	result := p.resolver.ResolveModelAlias(ctx, "my-model")
 	assert.Equal(t, "my-model", result)
 }
 
@@ -897,7 +906,7 @@ func TestResolveModelAlias_NoLiteLLMSpec(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, m))
 
 	// Should return input as-is
-	result := p.resolveModelAlias(ctx, "unknown-alias")
+	result := p.resolver.ResolveModelAlias(ctx, "unknown-alias")
 	assert.Equal(t, "unknown-alias", result)
 }
 
@@ -923,11 +932,11 @@ func TestResolveModelAlias_ServedNameSameAsResource(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, m))
 
 	// Neither servedModelName nor alias should create a mapping since they match the resource name
-	result := p.resolveModelAlias(ctx, "same-name-model")
+	result := p.resolver.ResolveModelAlias(ctx, "same-name-model")
 	assert.Equal(t, "same-name-model", result)
 
 	// Unrelated name should pass through
-	result = p.resolveModelAlias(ctx, "other-name")
+	result = p.resolver.ResolveModelAlias(ctx, "other-name")
 	assert.Equal(t, "other-name", result)
 }
 
@@ -967,10 +976,10 @@ func TestResolveModelAlias_MultipleModels(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, m1))
 	require.NoError(t, p.client.Create(ctx, m2))
 
-	assert.Equal(t, "model-alpha", p.resolveModelAlias(ctx, "alpha-served"))
-	assert.Equal(t, "model-alpha", p.resolveModelAlias(ctx, "fast-chat"))
-	assert.Equal(t, "model-beta", p.resolveModelAlias(ctx, "beta-served"))
-	assert.Equal(t, "model-beta", p.resolveModelAlias(ctx, "embeddings"))
+	assert.Equal(t, "model-alpha", p.resolver.ResolveModelAlias(ctx, "alpha-served"))
+	assert.Equal(t, "model-alpha", p.resolver.ResolveModelAlias(ctx, "fast-chat"))
+	assert.Equal(t, "model-beta", p.resolver.ResolveModelAlias(ctx, "beta-served"))
+	assert.Equal(t, "model-beta", p.resolver.ResolveModelAlias(ctx, "embeddings"))
 }
 
 // Multipart Form-Data Model Extraction Tests
@@ -1097,13 +1106,13 @@ func TestResolveModelAlias_CacheRefresh(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, m))
 
 	// First call populates cache
-	result := p.resolveModelAlias(ctx, "cached-served")
+	result := p.resolver.ResolveModelAlias(ctx, "cached-served")
 	assert.Equal(t, "cached-model", result)
 
 	// Force cache expiry
-	p.modelAliasCacheMu.Lock()
-	p.lastAliasRefresh = time.Time{}
-	p.modelAliasCacheMu.Unlock()
+	p.resolver.modelAliasCacheMu.Lock()
+	p.resolver.lastAliasRefresh = time.Time{}
+	p.resolver.modelAliasCacheMu.Unlock()
 
 	// Update model aliases
 	require.NoError(t, p.client.Get(ctx, client.ObjectKey{Name: "cached-model", Namespace: "default"}, m))
@@ -1111,6 +1120,6 @@ func TestResolveModelAlias_CacheRefresh(t *testing.T) {
 	require.NoError(t, p.client.Update(ctx, m))
 
 	// Should pick up new alias after cache refresh
-	result = p.resolveModelAlias(ctx, "new-alias")
+	result = p.resolver.ResolveModelAlias(ctx, "new-alias")
 	assert.Equal(t, "cached-model", result)
 }

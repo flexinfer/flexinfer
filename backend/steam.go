@@ -18,7 +18,7 @@ func init() {
 }
 
 func (b *SteamBackend) Name() string {
-	return "steam"
+	return NameSteam
 }
 
 func (b *SteamBackend) Aliases() []string {

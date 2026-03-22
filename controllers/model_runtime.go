@@ -120,10 +120,14 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		r.unloadFromRuntime(ctx, model, endpoint)
 		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
 			phase := aiv1alpha2.ModelPhaseIdle
+			reason := aiv1alpha2.ReasonWaitingForActivation
+			message := "Model is idle, waiting for traffic"
 			if !cacheReady {
 				phase = aiv1alpha2.ModelPhasePending
+				reason = "CacheNotReady"
+				message = "Waiting for cache to be ready"
 			}
-			if err := r.updatePhase(ctx, model, phase); err != nil {
+			if err := r.updateRuntimeStatus(ctx, model, phase, false, reason, message); err != nil {
 				log.Error(err, "Failed to update phase")
 			}
 		}
@@ -150,7 +154,7 @@ func (r *ModelReconciler) reconcileViaRuntime(
 			}
 			return ctrl.Result{RequeueAfter: requeueAfter}, nil
 		}
-		if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseLoading); err != nil {
+		if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhaseLoading, false, "RuntimeLoading", "Model is loading via runtime"); err != nil {
 			log.Error(err, "Failed to update phase after runtime load")
 		}
 		// Requeue quickly to poll for readiness.
@@ -177,11 +181,13 @@ func (r *ModelReconciler) reconcileViaRuntime(
 			return ctrl.Result{}, err
 		}
 	case "Loading":
-		if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseLoading); err != nil {
+		if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhaseLoading, false, "RuntimeLoading", "Model is loading via runtime"); err != nil {
 			log.Error(err, "Failed to update phase")
 		}
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	case "Failed":
+		r.removeRuntimeEndpoints(ctx, model)
+		model.Status.Endpoint = ""
 		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, "RuntimeFailed", status.Error)
 		r.Recorder.Event(model, corev1.EventTypeWarning, "RuntimeFailed", status.Error)
@@ -194,6 +200,22 @@ func (r *ModelReconciler) reconcileViaRuntime(
 	}
 
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
+}
+
+func (r *ModelReconciler) updateRuntimeStatus(
+	ctx context.Context,
+	model *aiv1alpha2.Model,
+	phase aiv1alpha2.ModelPhase,
+	ready bool,
+	reason, message string,
+) error {
+	oldPhase := model.Status.Phase
+	model.Status.Phase = phase
+	model.Status.Endpoint = ""
+	setModelCondition(model, aiv1alpha2.ConditionModelReady, ready, reason, message)
+	r.recordPhaseMetrics(model, oldPhase, phase)
+	r.removeRuntimeEndpoints(ctx, model)
+	return r.Status().Update(ctx, model)
 }
 
 func (r *ModelReconciler) ensureRuntimeNetworking(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend) error {

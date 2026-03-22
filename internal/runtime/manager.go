@@ -131,7 +131,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		return fmt.Errorf("backend %q does not support GPU vendor %q", req.Backend, m.gpuVendor)
 	}
 
-	if b.Name() == "comfyui" {
+	if b.Name() == backend.NameComfyUI {
 		return fmt.Errorf("backend %q is not bundled in flexinfer-runtime images; use the dedicated ComfyUI image", req.Backend)
 	}
 
@@ -213,9 +213,17 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", e.Name, e.Value))
 	}
 
-	// Pipe stdout/stderr to structured logging.
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
+	// Pipe stdout/stderr to structured logging. Errors here typically mean
+	// Start() was already called (programming error) — log and continue
+	// so the subprocess still launches, just without log streaming.
+	stdout, stdoutErr := cmd.StdoutPipe()
+	stderr, stderrErr := cmd.StderrPipe()
+	if stdoutErr != nil {
+		logger.Error(stdoutErr, "Failed to create stdout pipe, subprocess logs will be lost")
+	}
+	if stderrErr != nil {
+		logger.Error(stderrErr, "Failed to create stderr pipe, subprocess logs will be lost")
+	}
 
 	loaded := &LoadedModel{
 		Name:    name,
@@ -254,9 +262,14 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 
 	ModelLoadsTotal.WithLabelValues(req.Backend, "ok").Inc()
 
-	// Stream subprocess output to logger.
-	go streamLogs(stdout, logger, "stdout")
-	go streamLogs(stderr, logger, "stderr")
+	// Stream subprocess output to logger. Only start goroutines if pipes
+	// were created successfully — a nil reader would panic in bufio.NewScanner.
+	if stdout != nil {
+		go streamLogs(stdout, logger, "stdout")
+	}
+	if stderr != nil {
+		go streamLogs(stderr, logger, "stderr")
+	}
 
 	// Monitor subprocess exit.
 	go m.monitorProcess(subCtx, name, cmd)
@@ -306,15 +319,32 @@ func (m *Manager) unloadLocked(ctx context.Context) error {
 		logger.Info("Sending SIGTERM to backend", "pid", m.active.PID)
 		_ = m.active.cmd.Process.Signal(syscall.SIGTERM)
 
-		// Wait for graceful exit with timeout.
+		// Wait for graceful exit with timeout. The done channel signals
+		// that cmd.Wait() has returned and the process has been reaped.
+		// We must not call Kill() after Wait() returns, because the PID
+		// may have been recycled by the OS.
 		done := make(chan error, 1)
 		go func() { done <- m.active.cmd.Wait() }()
 
 		select {
 		case <-time.After(m.shutdownTimeout):
-			logger.Info("Shutdown timeout exceeded, sending SIGKILL", "pid", m.active.PID)
-			_ = m.active.cmd.Process.Kill()
-			<-done
+			// Only kill if the process has not yet exited. We use a
+			// non-blocking check on done to avoid a race with PID reuse:
+			// if Wait() already returned, the PID is reaped and could be
+			// reassigned to an unrelated process.
+			select {
+			case err := <-done:
+				// Process already exited before we could kill it.
+				if err != nil {
+					logger.Info("Backend exited during shutdown timeout", "error", err)
+				}
+			default:
+				logger.Info("Shutdown timeout exceeded, sending SIGKILL", "pid", m.active.PID)
+				if err := m.active.cmd.Process.Kill(); err != nil {
+					logger.Info("Kill returned error (process may have already exited)", "error", err)
+				}
+				<-done // Wait for the process to be reaped after kill.
+			}
 		case err := <-done:
 			if err != nil {
 				logger.Info("Backend exited", "error", err)
@@ -383,14 +413,20 @@ func (m *Manager) Mode() NodeMode {
 // SetMode switches the node between inference and gaming mode.
 // Gaming mode unloads any active model and starts the steam backend.
 // Inference mode unloads steam and leaves the node available for models.
+//
+// Lock ordering: this method does NOT hold m.mu across the Load() call.
+// Load() acquires m.mu internally. Holding it here would deadlock.
+// Instead we: (1) read/write state under the lock, (2) release,
+// (3) call Load() which takes its own lock, (4) re-acquire to
+// verify and finalize mode state.
 func (m *Manager) SetMode(ctx context.Context, target NodeMode) error {
 	logger := log.FromContext(ctx)
 
+	// Phase 1: check current mode and unload under lock.
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.mode == target {
 		logger.Info("Already in target mode", "mode", target)
+		m.mu.Unlock()
 		return nil
 	}
 
@@ -403,17 +439,19 @@ func (m *Manager) SetMode(ctx context.Context, target NodeMode) error {
 	}
 
 	m.mode = target
+	m.mu.Unlock()
 
+	// Phase 2: if gaming mode, call Load() without holding the lock.
+	// Load() acquires m.mu internally for its own state management.
 	if target == ModeGaming {
-		// Load steam backend. Release lock briefly to reuse Load()
-		// which acquires the lock itself.
-		m.mu.Unlock()
 		err := m.Load(ctx, "__gaming__", LoadRequest{
 			Backend: "steam",
 		})
-		m.mu.Lock()
 		if err != nil {
-			m.mode = ModeInference // revert on failure
+			// Phase 3: revert mode under lock on failure.
+			m.mu.Lock()
+			m.mode = ModeInference
+			m.mu.Unlock()
 			return fmt.Errorf("failed to start gaming mode: %w", err)
 		}
 	}
@@ -572,15 +610,15 @@ func (m *Manager) continuousHealthCheck(ctx context.Context, name, healthURL str
 // Dockerfile handles invocation via ENTRYPOINT/CMD.
 func inferCommand(backendName string) (string, []string) {
 	switch backendName {
-	case "vllm", "vllm-omni":
+	case backend.NameVLLM, backend.NameVLLMOmni:
 		return "python", []string{"-m", "vllm.entrypoints.openai.api_server"}
-	case "diffusers":
+	case backend.NameDiffusers:
 		return "python", []string{"/opt/flexinfer/server-diffusers.py"}
-	case "llamacpp":
+	case backend.NameLlamaCpp:
 		return "llama-server", nil
-	case "ollama":
+	case backend.NameOllama:
 		return "ollama", nil
-	case "steam":
+	case backend.NameSteam:
 		return "steam", nil
 	default:
 		return backendName, nil

@@ -64,16 +64,6 @@ func (r *GPUProfileReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err := r.Get(ctx, req.NamespacedName, &profile); err != nil {
 		if errors.IsNotFound(err) {
 			// Profile deleted — remove from cache.
-			// We don't know the arch from the key alone, so scan and remove.
-			r.profiles.Range(func(key, value interface{}) bool {
-				if spec, ok := value.(*aiv1alpha2.GPUProfileSpec); ok {
-					// Match by checking if any cached spec came from this CR name.
-					// Since architecture is unique per profile, we can check the name indirectly.
-					_ = spec
-				}
-				return true
-			})
-			// Brute-force: remove any entry whose CR name matches.
 			// The CR name is typically the architecture (e.g. "gfx1100").
 			r.profiles.Delete(req.Name)
 			log.Info("GPUProfile deleted, removed from cache", "name", req.Name)

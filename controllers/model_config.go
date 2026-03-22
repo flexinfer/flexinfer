@@ -18,9 +18,9 @@ package controllers
 
 import (
 	"os"
-	"strconv"
 	"strings"
 
+	"github.com/flexinfer/flexinfer/pkg/envutil"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
@@ -37,38 +37,19 @@ func defaultSHMSizeLimit() resource.Quantity {
 	return resource.MustParse(defaultSHMSizeLimitRaw)
 }
 
+// Thin wrappers for backward compatibility within the controllers package.
+// These delegate to the shared envutil package.
+
 func envStringOrDefault(name, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-		return v
-	}
-	return fallback
+	return envutil.StringOrDefault(name, fallback)
 }
 
 func envIntOrDefault(name string, fallback int) int {
-	v := strings.TrimSpace(os.Getenv(name))
-	if v == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return fallback
-	}
-	return n
+	return envutil.IntOrDefault(name, fallback)
 }
 
 func envBoolOrDefault(name string, fallback bool) bool {
-	v := strings.TrimSpace(os.Getenv(name))
-	if v == "" {
-		return fallback
-	}
-	switch strings.ToLower(v) {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return fallback
-	}
+	return envutil.BoolOrDefault(name, fallback)
 }
 
 func parseOptionalQuantity(raw string) (*resource.Quantity, bool) {

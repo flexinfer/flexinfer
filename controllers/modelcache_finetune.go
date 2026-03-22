@@ -29,7 +29,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -72,47 +71,26 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 	)
 
 	currentHash := finetuneSpecHash(modelCache.Spec.Finetune)
-	storedHash := ""
-	if modelCache.Annotations != nil {
-		storedHash = modelCache.Annotations[annotationFinetuneSpecHash]
+
+	// Build suffix list: finetune and quantize always, plus upstream if abliteration is configured.
+	suffixes := []string{"-finetune", "-quantize"}
+	if modelCache.Spec.Abliteration != nil {
+		suffixes = append(suffixes, "-abliterate", "-downloader")
+	} else {
+		suffixes = append(suffixes, "-downloader")
 	}
 
-	// Detect spec change or explicit re-finetune request.
-	specChanged := storedHash != "" && storedHash != currentHash
-	refinetune := modelCache.Annotations != nil && modelCache.Annotations[annotationRefinetune] == "true"
-	needsRefinetune := specChanged || refinetune
-
-	if needsRefinetune && (modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady || modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseFailed) {
-		reason := "spec change"
-		if refinetune {
-			reason = "refinetune annotation"
-		}
-		log.Info("Re-finetuning triggered", "cache", modelCache.Name, "reason", reason,
-			"storedHash", storedHash, "currentHash", currentHash)
-
-		// Re-finetuning modifies weights in-place, so we need fresh source weights.
-		// Delete finetune, quantize, and upstream jobs to re-run the pipeline.
-		propagation := metav1.DeletePropagationBackground
-		suffixes := []string{"-finetune", "-quantize"}
-		if modelCache.Spec.Abliteration != nil {
-			// If abliteration is configured, we need to re-abliterate too
-			// since finetune modifies the abliterated weights.
-			suffixes = append(suffixes, "-abliterate", "-downloader")
-		} else {
-			suffixes = append(suffixes, "-downloader")
-		}
-		for _, suffix := range suffixes {
-			jobName := modelCache.Name + suffix
-			existingJob := &batchv1.Job{}
-			if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: modelCache.Namespace}, existingJob); err == nil {
-				if err := r.Delete(ctx, existingJob, &client.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !errors.IsNotFound(err) {
-					return ctrl.Result{}, fmt.Errorf("deleting job %s for re-finetune: %w", jobName, err)
-				}
-				log.Info("Deleted job for re-finetuning", "job", jobName)
-			}
-		}
-
-		// Reset status and phase back to Provisioning.
+	changed, err := r.detectAndApplySpecChange(ctx, modelCache, specChangeParams{
+		CurrentHash:          currentHash,
+		HashAnnotationKey:    annotationFinetuneSpecHash,
+		TriggerAnnotationKey: annotationRefinetune,
+		JobSuffixesToDelete:  suffixes,
+		EventReason:          "RefinetuneTriggered",
+	})
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if changed {
 		modelCache.Status.Finetune = nil
 		modelCache.Status.Quantization = nil
 		if modelCache.Spec.Abliteration != nil {
@@ -122,21 +100,12 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
+		return ctrl.Result{RequeueAfter: requeueShort}, nil
+	}
 
-		// Update annotations.
-		if modelCache.Annotations == nil {
-			modelCache.Annotations = make(map[string]string)
-		}
-		modelCache.Annotations[annotationFinetuneSpecHash] = currentHash
-		delete(modelCache.Annotations, annotationRefinetune)
-		if err := r.Update(ctx, modelCache); err != nil {
-			return ctrl.Result{}, err
-		}
-
-		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "RefinetuneTriggered",
-			fmt.Sprintf("Re-finetuning triggered (%s), jobs deleted", reason))
-
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	storedHash := ""
+	if modelCache.Annotations != nil {
+		storedHash = modelCache.Annotations[annotationFinetuneSpecHash]
 	}
 
 	// If finetuning completed and publishing is configured but not yet recorded,
@@ -185,7 +154,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 	// Look for existing finetune job.
 	finetuneJobName := modelCache.Name + "-finetune"
 	finetuneJob := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: finetuneJobName, Namespace: modelCache.Namespace}, finetuneJob)
+	err = r.Get(ctx, types.NamespacedName{Name: finetuneJobName, Namespace: modelCache.Namespace}, finetuneJob)
 	if err != nil && errors.IsNotFound(err) {
 		// If finetune already completed, the job was GC'd by TTL — dispatch to next phase.
 		if finetuneCompleted(modelCache.Status.Finetune) {
@@ -415,29 +384,7 @@ type finetuneJobMetadata struct {
 
 // readFinetuneMetadataFromPods reads finetune metadata from pod termination logs.
 func (r *ModelCacheReconciler) readFinetuneMetadataFromPods(ctx context.Context, namespace, jobName string) *finetuneJobMetadata {
-	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
-		return nil
-	}
-	for _, pod := range podList.Items {
-		for _, cs := range pod.Status.ContainerStatuses {
-			if cs.Name != "finetuner" {
-				continue
-			}
-			terminated := cs.State.Terminated
-			if terminated == nil {
-				terminated = cs.LastTerminationState.Terminated
-			}
-			if terminated == nil || terminated.Message == "" {
-				continue
-			}
-			var meta finetuneJobMetadata
-			if err := json.Unmarshal([]byte(strings.TrimSpace(terminated.Message)), &meta); err == nil {
-				return &meta
-			}
-		}
-	}
-	return nil
+	return ReadJobMetadata[finetuneJobMetadata](ctx, r.Client, namespace, jobName, "finetuner")
 }
 
 // captureFinetuneFailureLogs reads the termination message from the finetuner container.

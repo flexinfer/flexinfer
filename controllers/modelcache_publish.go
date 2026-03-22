@@ -18,7 +18,6 @@ package controllers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -225,29 +224,7 @@ type publishJobMetadata struct {
 
 // readPublishMetadataFromPods reads publish metadata from pod termination logs.
 func (r *ModelCacheReconciler) readPublishMetadataFromPods(ctx context.Context, namespace, jobName string) *publishJobMetadata {
-	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
-		return nil
-	}
-	for _, pod := range podList.Items {
-		for _, cs := range pod.Status.ContainerStatuses {
-			if cs.Name != "publisher" {
-				continue
-			}
-			terminated := cs.State.Terminated
-			if terminated == nil {
-				terminated = cs.LastTerminationState.Terminated
-			}
-			if terminated == nil || terminated.Message == "" {
-				continue
-			}
-			var meta publishJobMetadata
-			if err := json.Unmarshal([]byte(strings.TrimSpace(terminated.Message)), &meta); err == nil {
-				return &meta
-			}
-		}
-	}
-	return nil
+	return ReadJobMetadata[publishJobMetadata](ctx, r.Client, namespace, jobName, "publisher")
 }
 
 // capturePublishFailureLogs reads the termination message from the publisher container.

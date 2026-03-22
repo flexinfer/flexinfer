@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 func TestEXL2JobBuilder_Validate_EdgeCases(t *testing.T) {
@@ -12,29 +12,29 @@ func TestEXL2JobBuilder_Validate_EdgeCases(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		spec    *aiv1alpha1.QuantizationSpec
+		spec    *aiv1alpha2.QuantizationSpec
 		wantErr string
 	}{
 		{
 			name: "wrong format",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatAWQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatAWQ,
 				UseGPU: true,
 			},
 			wantErr: "only handles EXL2 format",
 		},
 		{
 			name: "GPU not enabled",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatEXL2,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatEXL2,
 				UseGPU: false,
 			},
 			wantErr: "requires useGPU=true",
 		},
 		{
 			name: "bits below minimum (1)",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatEXL2,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatEXL2,
 				UseGPU: true,
 				Bits:   int32Ptr(1),
 			},
@@ -42,8 +42,8 @@ func TestEXL2JobBuilder_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "bits above maximum (7)",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatEXL2,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatEXL2,
 				UseGPU: true,
 				Bits:   int32Ptr(7),
 			},
@@ -51,8 +51,8 @@ func TestEXL2JobBuilder_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "valid bits at minimum (2)",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatEXL2,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatEXL2,
 				UseGPU: true,
 				Bits:   int32Ptr(2),
 			},
@@ -60,8 +60,8 @@ func TestEXL2JobBuilder_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "valid bits at maximum (6)",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatEXL2,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatEXL2,
 				UseGPU: true,
 				Bits:   int32Ptr(6),
 			},
@@ -69,8 +69,8 @@ func TestEXL2JobBuilder_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "valid with defaults",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatEXL2,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatEXL2,
 				UseGPU: true,
 			},
 			wantErr: "",
@@ -143,8 +143,8 @@ func TestEXL2JobBuilder_BuildJob_Defaults(t *testing.T) {
 		Namespace: "default",
 		PVCName:   "test-pvc",
 		ModelPath: "test-model",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format: aiv1alpha1.QuantizationFormatEXL2,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format: aiv1alpha2.QuantizationFormatEXL2,
 			UseGPU: true,
 		},
 	}

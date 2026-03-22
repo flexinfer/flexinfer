@@ -187,6 +187,7 @@ func TestWaitForReady_V1Alpha2Ready(t *testing.T) {
 		namespace:        "default",
 		coldStartTimeout: 5 * time.Second,
 	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", 5*time.Second)
 
 	err := p.waitForReady(context.Background(), "test-model")
 	assert.NoError(t, err)
@@ -226,6 +227,7 @@ func TestWaitForReady_V1Alpha2Timeout(t *testing.T) {
 		namespace:        "default",
 		coldStartTimeout: 500 * time.Millisecond,
 	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", 500*time.Millisecond)
 
 	err := p.waitForReady(context.Background(), "test-model")
 	assert.Error(t, err)
@@ -273,6 +275,7 @@ func TestWaitForReady_V1Alpha1Fallback(t *testing.T) {
 		namespace:        "default",
 		coldStartTimeout: 5 * time.Second,
 	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", 5*time.Second)
 
 	err := p.waitForReady(context.Background(), "test-model")
 	assert.NoError(t, err)
@@ -307,8 +310,9 @@ func TestTriggerScaleUp_V1Alpha2(t *testing.T) {
 		client:    k8sClient,
 		namespace: "default",
 	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", 60*time.Second)
 
-	err := p.triggerScaleUp(context.Background(), "test-model")
+	err := p.activator.TriggerScaleUp(context.Background(), "test-model")
 	require.NoError(t, err)
 
 	// Verify LastActiveTime was set
@@ -346,8 +350,9 @@ func TestTriggerScaleUp_V1Alpha1Fallback(t *testing.T) {
 		client:    k8sClient,
 		namespace: "default",
 	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", 60*time.Second)
 
-	err := p.triggerScaleUp(context.Background(), "test-model")
+	err := p.activator.TriggerScaleUp(context.Background(), "test-model")
 	require.NoError(t, err)
 
 	// Verify replicas were scaled to 1
@@ -390,8 +395,9 @@ func TestGetColdStartTimeout_V1Alpha2Custom(t *testing.T) {
 		namespace:        "default",
 		coldStartTimeout: 60 * time.Second,
 	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", 60*time.Second)
 
-	timeout := p.getColdStartTimeout(context.Background(), "test-model")
+	timeout := p.activator.GetColdStartTimeout(context.Background(), "test-model")
 	assert.Equal(t, 120*time.Second, timeout)
 }
 
@@ -424,8 +430,9 @@ func TestGetColdStartTimeout_FallbackToDefault(t *testing.T) {
 		namespace:        "default",
 		coldStartTimeout: 60 * time.Second,
 	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", 60*time.Second)
 
-	timeout := p.getColdStartTimeout(context.Background(), "test-model")
+	timeout := p.activator.GetColdStartTimeout(context.Background(), "test-model")
 	assert.Equal(t, 60*time.Second, timeout)
 }
 
@@ -458,8 +465,9 @@ func TestGetColdStartTimeout_V1Alpha1Custom(t *testing.T) {
 		namespace:        "default",
 		coldStartTimeout: 60 * time.Second,
 	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", 60*time.Second)
 
-	timeout := p.getColdStartTimeout(context.Background(), "test-model")
+	timeout := p.activator.GetColdStartTimeout(context.Background(), "test-model")
 	assert.Equal(t, 90*time.Second, timeout)
 }
 
@@ -570,8 +578,9 @@ func TestTouchLastActiveTime(t *testing.T) {
 		client:    k8sClient,
 		namespace: "default",
 	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", 60*time.Second)
 
-	p.touchLastActiveTime(context.Background(), "test-model")
+	p.activator.TouchLastActiveTime(context.Background(), "test-model")
 
 	updated := &aiv1alpha2.Model{}
 	require.NoError(t, k8sClient.Get(context.Background(), client.ObjectKeyFromObject(model), updated))
@@ -654,6 +663,8 @@ func TestProcessQueueTouchesLastActiveTimeBeforeDirectRuntimeLoad(t *testing.T) 
 		directRuntimeEnabled: true,
 		runtimeCache:         NewRuntimeCache(k8sClient, "default", time.Hour),
 	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", 25*time.Millisecond)
+	p.resolver = NewModelResolver(k8sClient, "default")
 	p.runtimeCache.endpoints = []*pkgrt.RuntimeEndpoint{{
 		PodName:  "runtime-pod",
 		PodIP:    host,

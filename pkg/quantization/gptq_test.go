@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -14,29 +14,29 @@ func TestGPTQJobBuilder_Validate_EdgeCases(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		spec    *aiv1alpha1.QuantizationSpec
+		spec    *aiv1alpha2.QuantizationSpec
 		wantErr string
 	}{
 		{
 			name: "wrong format",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatAWQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatAWQ,
 				UseGPU: true,
 			},
 			wantErr: "only handles GPTQ format",
 		},
 		{
 			name: "GPU not enabled",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatGPTQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatGPTQ,
 				UseGPU: false,
 			},
 			wantErr: "requires useGPU=true",
 		},
 		{
 			name: "invalid bits (3)",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatGPTQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatGPTQ,
 				UseGPU: true,
 				Bits:   int32Ptr(3),
 			},
@@ -44,8 +44,8 @@ func TestGPTQJobBuilder_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "valid bits 4",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatGPTQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatGPTQ,
 				UseGPU: true,
 				Bits:   int32Ptr(4),
 			},
@@ -53,8 +53,8 @@ func TestGPTQJobBuilder_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "valid bits 8",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatGPTQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatGPTQ,
 				UseGPU: true,
 				Bits:   int32Ptr(8),
 			},
@@ -62,8 +62,8 @@ func TestGPTQJobBuilder_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "zero group size",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format:    aiv1alpha1.QuantizationFormatGPTQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format:    aiv1alpha2.QuantizationFormatGPTQ,
 				UseGPU:    true,
 				GroupSize: int32Ptr(0),
 			},
@@ -327,8 +327,8 @@ func TestGPTQJobBuilder_BuildJob_AMDImage(t *testing.T) {
 		Namespace: "default",
 		PVCName:   "test-pvc",
 		ModelPath: "test-model",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format: aiv1alpha1.QuantizationFormatGPTQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format: aiv1alpha2.QuantizationFormatGPTQ,
 			UseGPU: true,
 		},
 		GPUVendor: "amd",

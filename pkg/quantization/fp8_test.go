@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 func TestFP8JobBuilder_Validate_EdgeCases(t *testing.T) {
@@ -12,29 +12,29 @@ func TestFP8JobBuilder_Validate_EdgeCases(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		spec    *aiv1alpha1.QuantizationSpec
+		spec    *aiv1alpha2.QuantizationSpec
 		wantErr string
 	}{
 		{
 			name: "wrong format",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatAWQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatAWQ,
 				UseGPU: true,
 			},
 			wantErr: "only handles FP8 format",
 		},
 		{
 			name: "GPU not enabled",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatFP8,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatFP8,
 				UseGPU: false,
 			},
 			wantErr: "requires useGPU=true",
 		},
 		{
 			name: "invalid bits (4)",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatFP8,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatFP8,
 				UseGPU: true,
 				Bits:   int32Ptr(4),
 			},
@@ -42,8 +42,8 @@ func TestFP8JobBuilder_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "groupSize not allowed",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format:    aiv1alpha1.QuantizationFormatFP8,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format:    aiv1alpha2.QuantizationFormatFP8,
 				UseGPU:    true,
 				GroupSize: int32Ptr(128),
 			},
@@ -51,16 +51,16 @@ func TestFP8JobBuilder_Validate_EdgeCases(t *testing.T) {
 		},
 		{
 			name: "valid with defaults",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatFP8,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatFP8,
 				UseGPU: true,
 			},
 			wantErr: "",
 		},
 		{
 			name: "valid with explicit bits 8",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatFP8,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatFP8,
 				UseGPU: true,
 				Bits:   int32Ptr(8),
 			},
@@ -137,8 +137,8 @@ func TestFP8JobBuilder_BuildJob_Defaults(t *testing.T) {
 		Namespace: "default",
 		PVCName:   "test-pvc",
 		ModelPath: "test-model",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format: aiv1alpha1.QuantizationFormatFP8,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format: aiv1alpha2.QuantizationFormatFP8,
 			UseGPU: true,
 		},
 	}

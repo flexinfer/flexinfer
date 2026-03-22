@@ -6,7 +6,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 func TestIsValidGGUFType(t *testing.T) {
@@ -36,52 +36,52 @@ func TestIsValidGGUFType(t *testing.T) {
 
 func TestGetBuilder(t *testing.T) {
 	// GGUF should return a builder
-	builder, err := GetBuilder(aiv1alpha1.QuantizationFormatGGUF)
+	builder, err := GetBuilder(aiv1alpha2.QuantizationFormatGGUF)
 	if err != nil {
 		t.Fatalf("GetBuilder(GGUF) returned error: %v", err)
 	}
-	if builder.Format() != aiv1alpha1.QuantizationFormatGGUF {
+	if builder.Format() != aiv1alpha2.QuantizationFormatGGUF {
 		t.Errorf("builder.Format() = %v, want GGUF", builder.Format())
 	}
 
 	// AWQ should return a builder
-	builder, err = GetBuilder(aiv1alpha1.QuantizationFormatAWQ)
+	builder, err = GetBuilder(aiv1alpha2.QuantizationFormatAWQ)
 	if err != nil {
 		t.Fatalf("GetBuilder(AWQ) returned error: %v", err)
 	}
-	if builder.Format() != aiv1alpha1.QuantizationFormatAWQ {
+	if builder.Format() != aiv1alpha2.QuantizationFormatAWQ {
 		t.Errorf("builder.Format() = %v, want AWQ", builder.Format())
 	}
 
 	// GPTQ should return a builder
-	builder, err = GetBuilder(aiv1alpha1.QuantizationFormatGPTQ)
+	builder, err = GetBuilder(aiv1alpha2.QuantizationFormatGPTQ)
 	if err != nil {
 		t.Fatalf("GetBuilder(GPTQ) returned error: %v", err)
 	}
-	if builder.Format() != aiv1alpha1.QuantizationFormatGPTQ {
+	if builder.Format() != aiv1alpha2.QuantizationFormatGPTQ {
 		t.Errorf("builder.Format() = %v, want GPTQ", builder.Format())
 	}
 
 	// EXL2 should return a builder
-	builder, err = GetBuilder(aiv1alpha1.QuantizationFormatEXL2)
+	builder, err = GetBuilder(aiv1alpha2.QuantizationFormatEXL2)
 	if err != nil {
 		t.Fatalf("GetBuilder(EXL2) returned error: %v", err)
 	}
-	if builder.Format() != aiv1alpha1.QuantizationFormatEXL2 {
+	if builder.Format() != aiv1alpha2.QuantizationFormatEXL2 {
 		t.Errorf("builder.Format() = %v, want EXL2", builder.Format())
 	}
 
 	// FP8 should return a builder
-	builder, err = GetBuilder(aiv1alpha1.QuantizationFormatFP8)
+	builder, err = GetBuilder(aiv1alpha2.QuantizationFormatFP8)
 	if err != nil {
 		t.Fatalf("GetBuilder(FP8) returned error: %v", err)
 	}
-	if builder.Format() != aiv1alpha1.QuantizationFormatFP8 {
+	if builder.Format() != aiv1alpha2.QuantizationFormatFP8 {
 		t.Errorf("builder.Format() = %v, want FP8", builder.Format())
 	}
 
 	// Unknown format should remain unsupported.
-	_, err = GetBuilder(aiv1alpha1.QuantizationFormat("INVALID"))
+	_, err = GetBuilder(aiv1alpha2.QuantizationFormat("INVALID"))
 	if err == nil {
 		t.Error("GetBuilder(INVALID) should return error for unimplemented format")
 	}
@@ -92,35 +92,35 @@ func TestGGUFJobBuilder_Validate(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		spec    *aiv1alpha1.QuantizationSpec
+		spec    *aiv1alpha2.QuantizationSpec
 		wantErr bool
 	}{
 		{
 			name: "valid GGUF with Q4_K_M",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format:   aiv1alpha1.QuantizationFormatGGUF,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format:   aiv1alpha2.QuantizationFormatGGUF,
 				GGUFType: "Q4_K_M",
 			},
 			wantErr: false,
 		},
 		{
 			name: "valid GGUF with empty type (uses default)",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatGGUF,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatGGUF,
 			},
 			wantErr: false,
 		},
 		{
 			name: "invalid format for GGUF builder",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format: aiv1alpha1.QuantizationFormatAWQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatAWQ,
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid GGUF type",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format:   aiv1alpha1.QuantizationFormatGGUF,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format:   aiv1alpha2.QuantizationFormatGGUF,
 				GGUFType: "Q99_INVALID",
 			},
 			wantErr: true,
@@ -145,8 +145,8 @@ func TestGGUFJobBuilder_BuildJob(t *testing.T) {
 		Namespace: "flexinfer-system",
 		PVCName:   "llama3-8b",
 		ModelPath: "llama3-8b",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:   aiv1alpha1.QuantizationFormatGGUF,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:   aiv1alpha2.QuantizationFormatGGUF,
 			GGUFType: "Q4_K_M",
 		},
 	}
@@ -242,8 +242,8 @@ func TestGGUFJobBuilder_BuildJob_DefaultType(t *testing.T) {
 		Namespace: "default",
 		PVCName:   "test-model",
 		ModelPath: "test-model",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format: aiv1alpha1.QuantizationFormatGGUF,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format: aiv1alpha2.QuantizationFormatGGUF,
 			// GGUFType is empty — should default to Q4_K_M
 		},
 	}
@@ -269,8 +269,8 @@ func TestGGUFJobBuilder_BuildJob_CustomMemory(t *testing.T) {
 		Namespace: "default",
 		PVCName:   "test-model",
 		ModelPath: "test-model",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:      aiv1alpha1.QuantizationFormatGGUF,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:      aiv1alpha2.QuantizationFormatGGUF,
 			GGUFType:    "Q5_K_M",
 			MaxMemoryGB: &maxMem,
 		},
@@ -293,8 +293,8 @@ func TestAWQJobBuilder_Validate(t *testing.T) {
 	bits := int32(4)
 	groupSize := int32(128)
 
-	valid := &aiv1alpha1.QuantizationSpec{
-		Format:    aiv1alpha1.QuantizationFormatAWQ,
+	valid := &aiv1alpha2.QuantizationSpec{
+		Format:    aiv1alpha2.QuantizationFormatAWQ,
 		Bits:      &bits,
 		GroupSize: &groupSize,
 		UseGPU:    true,
@@ -304,8 +304,8 @@ func TestAWQJobBuilder_Validate(t *testing.T) {
 	}
 
 	invalidBits := int32(8)
-	invalidSpec := &aiv1alpha1.QuantizationSpec{
-		Format:    aiv1alpha1.QuantizationFormatAWQ,
+	invalidSpec := &aiv1alpha2.QuantizationSpec{
+		Format:    aiv1alpha2.QuantizationFormatAWQ,
 		Bits:      &invalidBits,
 		GroupSize: &groupSize,
 		UseGPU:    true,
@@ -324,8 +324,8 @@ func TestAWQJobBuilder_BuildJob(t *testing.T) {
 		Namespace: "flexinfer-system",
 		PVCName:   "llama3-awq",
 		ModelPath: "llama3-awq",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatAWQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatAWQ,
 			Bits:      &bits,
 			GroupSize: &groupSize,
 			UseGPU:    true,
@@ -386,8 +386,8 @@ func TestAWQJobBuilder_BuildJob_AMDVendor(t *testing.T) {
 				Effect:   corev1.TaintEffectNoSchedule,
 			},
 		},
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatAWQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatAWQ,
 			Bits:      &bits,
 			GroupSize: &groupSize,
 			UseGPU:    true,
@@ -468,8 +468,8 @@ func TestGGUFJobBuilder_BuildJob_Tolerations(t *testing.T) {
 				Effect:   corev1.TaintEffectNoSchedule,
 			},
 		},
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:   aiv1alpha1.QuantizationFormatGGUF,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:   aiv1alpha2.QuantizationFormatGGUF,
 			GGUFType: "Q4_K_M",
 		},
 	}
@@ -502,8 +502,8 @@ func TestGPTQJobBuilder_BuildJob(t *testing.T) {
 		Namespace: "flexinfer-system",
 		PVCName:   "llama3-gptq",
 		ModelPath: "llama3-gptq",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatGPTQ,
 			Bits:      &bits,
 			GroupSize: &groupSize,
 			UseGPU:    true,
@@ -551,8 +551,8 @@ func TestGPTQJobBuilder_BuildJob_SymFalse(t *testing.T) {
 		Namespace: "flexinfer-system",
 		PVCName:   "qwen3-gptq",
 		ModelPath: "qwen3-gptq",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatGPTQ,
 			Bits:      &bits,
 			GroupSize: &groupSize,
 			UseGPU:    true,
@@ -596,8 +596,8 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor(t *testing.T) {
 				Effect:   corev1.TaintEffectNoSchedule,
 			},
 		},
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatGPTQ,
 			Bits:      &bits,
 			GroupSize: &groupSize,
 			UseGPU:    true,
@@ -663,8 +663,8 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX906(t *testing.T) {
 		NodeSelector: map[string]string{
 			"kubernetes.io/hostname": "cblevins-radeonvii",
 		},
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatGPTQ,
 			Bits:      &bits,
 			GroupSize: &groupSize,
 			UseGPU:    true,
@@ -699,8 +699,8 @@ func TestGPTQJobBuilder_BuildJob_VLMConfigExtraction(t *testing.T) {
 		Namespace: "flexinfer-system",
 		PVCName:   "qwen35-27b-gptq",
 		ModelPath: "qwen35-27b-gptq",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatGPTQ,
 			Bits:      &bits,
 			GroupSize: &groupSize,
 			UseGPU:    true,
@@ -746,8 +746,8 @@ func TestGPTQJobBuilder_BuildJob_DynamicExclusionNone(t *testing.T) {
 		Namespace: "flexinfer-system",
 		PVCName:   "qwen35-gptq-pure",
 		ModelPath: "qwen35-gptq-pure",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:           aiv1alpha1.QuantizationFormatGPTQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:           aiv1alpha2.QuantizationFormatGPTQ,
 			Bits:             &bits,
 			GroupSize:        &groupSize,
 			UseGPU:           true,
@@ -783,8 +783,8 @@ func TestGPTQJobBuilder_BuildJob_DynamicExclusionAuto(t *testing.T) {
 		Namespace: "flexinfer-system",
 		PVCName:   "qwen35-gptq-auto",
 		ModelPath: "qwen35-gptq-auto",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:           aiv1alpha1.QuantizationFormatGPTQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:           aiv1alpha2.QuantizationFormatGPTQ,
 			Bits:             &bits,
 			GroupSize:        &groupSize,
 			UseGPU:           true,
@@ -820,8 +820,8 @@ func TestGPTQJobBuilder_BuildJob_CustomGPUMemoryFraction(t *testing.T) {
 		Namespace: "flexinfer-system",
 		PVCName:   "test-gptq-gpufrac",
 		ModelPath: "test-gptq-gpufrac",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:            aiv1alpha1.QuantizationFormatGPTQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:            aiv1alpha2.QuantizationFormatGPTQ,
 			Bits:              &bits,
 			GroupSize:         &groupSize,
 			UseGPU:            true,
@@ -850,12 +850,12 @@ func TestGPTQJobBuilder_BuildJob_CustomCalibrationDataset(t *testing.T) {
 		Namespace: "flexinfer-system",
 		PVCName:   "test-gptq-dataset",
 		ModelPath: "test-gptq-dataset",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatGPTQ,
 			Bits:      &bits,
 			GroupSize: &groupSize,
 			UseGPU:    true,
-			Calibration: &aiv1alpha1.CalibrationSpec{
+			Calibration: &aiv1alpha2.CalibrationSpec{
 				Dataset: &dataset,
 			},
 		},
@@ -882,12 +882,12 @@ func TestAWQJobBuilder_BuildJob_CustomCalibrationDataset(t *testing.T) {
 		Namespace: "flexinfer-system",
 		PVCName:   "test-awq-dataset",
 		ModelPath: "test-awq-dataset",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatAWQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatAWQ,
 			Bits:      &bits,
 			GroupSize: &groupSize,
 			UseGPU:    true,
-			Calibration: &aiv1alpha1.CalibrationSpec{
+			Calibration: &aiv1alpha2.CalibrationSpec{
 				Dataset: &dataset,
 			},
 		},
@@ -913,8 +913,8 @@ func TestGPTQJobBuilder_BuildJob_DefaultGPUMemoryFraction(t *testing.T) {
 		Namespace: "flexinfer-system",
 		PVCName:   "test-gptq-default-frac",
 		ModelPath: "test-gptq-default-frac",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatGPTQ,
 			Bits:      &bits,
 			GroupSize: &groupSize,
 			UseGPU:    true,
@@ -937,8 +937,8 @@ func TestEXL2JobBuilder_Validate(t *testing.T) {
 	builder := &EXL2JobBuilder{}
 	bits := int32(4)
 
-	valid := &aiv1alpha1.QuantizationSpec{
-		Format: aiv1alpha1.QuantizationFormatEXL2,
+	valid := &aiv1alpha2.QuantizationSpec{
+		Format: aiv1alpha2.QuantizationFormatEXL2,
 		Bits:   &bits,
 		UseGPU: true,
 	}
@@ -947,8 +947,8 @@ func TestEXL2JobBuilder_Validate(t *testing.T) {
 	}
 
 	invalidBits := int32(7)
-	invalidSpec := &aiv1alpha1.QuantizationSpec{
-		Format: aiv1alpha1.QuantizationFormatEXL2,
+	invalidSpec := &aiv1alpha2.QuantizationSpec{
+		Format: aiv1alpha2.QuantizationFormatEXL2,
 		Bits:   &invalidBits,
 		UseGPU: true,
 	}
@@ -965,8 +965,8 @@ func TestEXL2JobBuilder_BuildJob(t *testing.T) {
 		Namespace: "flexinfer-system",
 		PVCName:   "llama3-exl2",
 		ModelPath: "llama3-exl2",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format: aiv1alpha1.QuantizationFormatEXL2,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format: aiv1alpha2.QuantizationFormatEXL2,
 			Bits:   &bits,
 			UseGPU: true,
 		},
@@ -1000,8 +1000,8 @@ func TestFP8JobBuilder_Validate(t *testing.T) {
 	builder := &FP8JobBuilder{}
 	bits := int32(8)
 
-	valid := &aiv1alpha1.QuantizationSpec{
-		Format: aiv1alpha1.QuantizationFormatFP8,
+	valid := &aiv1alpha2.QuantizationSpec{
+		Format: aiv1alpha2.QuantizationFormatFP8,
 		Bits:   &bits,
 		UseGPU: true,
 	}
@@ -1010,8 +1010,8 @@ func TestFP8JobBuilder_Validate(t *testing.T) {
 	}
 
 	invalidBits := int32(4)
-	invalidSpec := &aiv1alpha1.QuantizationSpec{
-		Format: aiv1alpha1.QuantizationFormatFP8,
+	invalidSpec := &aiv1alpha2.QuantizationSpec{
+		Format: aiv1alpha2.QuantizationFormatFP8,
 		Bits:   &invalidBits,
 		UseGPU: true,
 	}
@@ -1028,8 +1028,8 @@ func TestFP8JobBuilder_BuildJob(t *testing.T) {
 		Namespace: "flexinfer-system",
 		PVCName:   "llama3-fp8",
 		ModelPath: "llama3-fp8",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format: aiv1alpha1.QuantizationFormatFP8,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format: aiv1alpha2.QuantizationFormatFP8,
 			Bits:   &bits,
 			UseGPU: true,
 		},
@@ -1061,7 +1061,7 @@ func TestFP8JobBuilder_BuildJob(t *testing.T) {
 
 func TestFormatBackendCompatibility(t *testing.T) {
 	// GGUF should be compatible with llamacpp and ollama
-	ggufBackends := FormatBackendCompatibility[aiv1alpha1.QuantizationFormatGGUF]
+	ggufBackends := FormatBackendCompatibility[aiv1alpha2.QuantizationFormatGGUF]
 	if !containsStr(ggufBackends, "llamacpp") {
 		t.Error("GGUF should be compatible with llamacpp")
 	}
@@ -1070,7 +1070,7 @@ func TestFormatBackendCompatibility(t *testing.T) {
 	}
 
 	// AWQ should be compatible with vllm
-	awqBackends := FormatBackendCompatibility[aiv1alpha1.QuantizationFormatAWQ]
+	awqBackends := FormatBackendCompatibility[aiv1alpha2.QuantizationFormatAWQ]
 	if !containsStr(awqBackends, "vllm") {
 		t.Error("AWQ should be compatible with vllm")
 	}
@@ -1088,7 +1088,7 @@ func TestRecommendSpec(t *testing.T) {
 		if rec.Spec == nil {
 			t.Fatal("recommendation spec is nil")
 		}
-		if rec.Spec.Format != aiv1alpha1.QuantizationFormatGGUF {
+		if rec.Spec.Format != aiv1alpha2.QuantizationFormatGGUF {
 			t.Fatalf("Format = %q, want GGUF", rec.Spec.Format)
 		}
 		if rec.Spec.GGUFType != DefaultGGUFType {
@@ -1112,7 +1112,7 @@ func TestRecommendSpec(t *testing.T) {
 		if rec.Spec == nil {
 			t.Fatal("recommendation spec is nil")
 		}
-		if rec.Spec.Format != aiv1alpha1.QuantizationFormatGGUF {
+		if rec.Spec.Format != aiv1alpha2.QuantizationFormatGGUF {
 			t.Fatalf("Format = %q, want GGUF", rec.Spec.Format)
 		}
 		if rec.Spec.GGUFType != "Q3_K_M" {
@@ -1131,7 +1131,7 @@ func TestRecommendSpec(t *testing.T) {
 		if rec.Spec == nil {
 			t.Fatal("recommendation spec is nil")
 		}
-		if rec.Spec.Format != aiv1alpha1.QuantizationFormatAWQ {
+		if rec.Spec.Format != aiv1alpha2.QuantizationFormatAWQ {
 			t.Fatalf("Format = %q, want AWQ", rec.Spec.Format)
 		}
 		if rec.Spec.Bits == nil || *rec.Spec.Bits != int32(DefaultAWQBits) {
@@ -1156,7 +1156,7 @@ func TestRecommendSpec(t *testing.T) {
 		if rec.Spec == nil {
 			t.Fatal("recommendation spec is nil")
 		}
-		if rec.Spec.Format != aiv1alpha1.QuantizationFormatFP8 {
+		if rec.Spec.Format != aiv1alpha2.QuantizationFormatFP8 {
 			t.Fatalf("Format = %q, want FP8", rec.Spec.Format)
 		}
 		if rec.Spec.Bits == nil || *rec.Spec.Bits != int32(DefaultFP8Bits) {
@@ -1177,7 +1177,7 @@ func TestRecommendSpec(t *testing.T) {
 		if rec.Spec == nil {
 			t.Fatal("recommendation spec is nil")
 		}
-		if rec.Spec.Format != aiv1alpha1.QuantizationFormatGGUF {
+		if rec.Spec.Format != aiv1alpha2.QuantizationFormatGGUF {
 			t.Fatalf("Format = %q, want GGUF", rec.Spec.Format)
 		}
 		if rec.Spec.GGUFType != "Q3_K_M" {
@@ -1195,8 +1195,8 @@ func TestGGUFJobBuilder_BuildJob_CustomTimeout(t *testing.T) {
 		Namespace: "default",
 		PVCName:   "test-model",
 		ModelPath: "test-model",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:         aiv1alpha1.QuantizationFormatGGUF,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:         aiv1alpha2.QuantizationFormatGGUF,
 			GGUFType:       "Q4_K_M",
 			TimeoutSeconds: &timeout,
 		},
@@ -1225,12 +1225,12 @@ func TestAWQJobBuilder_BuildJob_Calibration(t *testing.T) {
 		Namespace: "default",
 		PVCName:   "test-awq-calib",
 		ModelPath: "test-awq-calib",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatAWQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatAWQ,
 			Bits:      &bits,
 			GroupSize: &groupSize,
 			UseGPU:    true,
-			Calibration: &aiv1alpha1.CalibrationSpec{
+			Calibration: &aiv1alpha2.CalibrationSpec{
 				MaxSeqLen:             &maxSeqLen,
 				MaxSamples:            &maxSamples,
 				NParallelCalibSamples: &nParallel,
@@ -1265,8 +1265,8 @@ func TestAWQJobBuilder_BuildJob_DefaultCalibration(t *testing.T) {
 		Namespace: "default",
 		PVCName:   "test-awq-default",
 		ModelPath: "test-awq-default",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatAWQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatAWQ,
 			Bits:      &bits,
 			GroupSize: &groupSize,
 			UseGPU:    true,
@@ -1304,12 +1304,12 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 		Namespace: "default",
 		PVCName:   "test-gptq-calib",
 		ModelPath: "test-gptq-calib",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatGPTQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatGPTQ,
 			Bits:      &bits,
 			GroupSize: &groupSize,
 			UseGPU:    true,
-			Calibration: &aiv1alpha1.CalibrationSpec{
+			Calibration: &aiv1alpha2.CalibrationSpec{
 				MaxSeqLen:  &maxSeqLen,
 				MaxSamples: &maxSamples,
 			},
@@ -1398,8 +1398,8 @@ func TestGPUQuantizationJob_CustomTimeout(t *testing.T) {
 		Namespace: "default",
 		PVCName:   "test-timeout",
 		ModelPath: "test-timeout",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format:         aiv1alpha1.QuantizationFormatAWQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:         aiv1alpha2.QuantizationFormatAWQ,
 			Bits:           &bits,
 			GroupSize:      &groupSize,
 			UseGPU:         true,
@@ -1428,8 +1428,8 @@ func TestCleanupTrapInScripts(t *testing.T) {
 			builder: &AWQJobBuilder{},
 			params: JobParams{
 				Name: "test", Namespace: "default", PVCName: "test", ModelPath: "test",
-				Spec: &aiv1alpha1.QuantizationSpec{
-					Format: aiv1alpha1.QuantizationFormatAWQ, Bits: int32Ptr(4), GroupSize: int32Ptr(128), UseGPU: true,
+				Spec: &aiv1alpha2.QuantizationSpec{
+					Format: aiv1alpha2.QuantizationFormatAWQ, Bits: int32Ptr(4), GroupSize: int32Ptr(128), UseGPU: true,
 				},
 			},
 		},
@@ -1438,8 +1438,8 @@ func TestCleanupTrapInScripts(t *testing.T) {
 			builder: &GPTQJobBuilder{},
 			params: JobParams{
 				Name: "test", Namespace: "default", PVCName: "test", ModelPath: "test",
-				Spec: &aiv1alpha1.QuantizationSpec{
-					Format: aiv1alpha1.QuantizationFormatGPTQ, Bits: int32Ptr(4), GroupSize: int32Ptr(128), UseGPU: true,
+				Spec: &aiv1alpha2.QuantizationSpec{
+					Format: aiv1alpha2.QuantizationFormatGPTQ, Bits: int32Ptr(4), GroupSize: int32Ptr(128), UseGPU: true,
 				},
 			},
 		},
@@ -1448,8 +1448,8 @@ func TestCleanupTrapInScripts(t *testing.T) {
 			builder: &EXL2JobBuilder{},
 			params: JobParams{
 				Name: "test", Namespace: "default", PVCName: "test", ModelPath: "test",
-				Spec: &aiv1alpha1.QuantizationSpec{
-					Format: aiv1alpha1.QuantizationFormatEXL2, Bits: int32Ptr(4), UseGPU: true,
+				Spec: &aiv1alpha2.QuantizationSpec{
+					Format: aiv1alpha2.QuantizationFormatEXL2, Bits: int32Ptr(4), UseGPU: true,
 				},
 			},
 		},
@@ -1458,8 +1458,8 @@ func TestCleanupTrapInScripts(t *testing.T) {
 			builder: &FP8JobBuilder{},
 			params: JobParams{
 				Name: "test", Namespace: "default", PVCName: "test", ModelPath: "test",
-				Spec: &aiv1alpha1.QuantizationSpec{
-					Format: aiv1alpha1.QuantizationFormatFP8, Bits: int32Ptr(8), UseGPU: true,
+				Spec: &aiv1alpha2.QuantizationSpec{
+					Format: aiv1alpha2.QuantizationFormatFP8, Bits: int32Ptr(8), UseGPU: true,
 				},
 			},
 		},

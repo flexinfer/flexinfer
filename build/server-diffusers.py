@@ -70,14 +70,20 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from diffusers import (
+    ControlNetModel,
     DiffusionPipeline,
     AutoencoderKL,
     StableDiffusionXLPipeline,
+    StableDiffusionXLImg2ImgPipeline,
+    StableDiffusionXLControlNetPipeline,
     StableDiffusionPipeline,
     StableDiffusionInstructPix2PixPipeline,
     StableDiffusionXLInpaintPipeline,
     FluxPipeline,
     FluxFillPipeline,
+    FluxImg2ImgPipeline,
+    FluxControlNetPipeline,
+    FluxControlNetModel,
 )
 
 
@@ -95,6 +101,7 @@ current_model = None
 current_model_family = None
 gpu_info = None
 warmup_complete = False
+controlnet_model = None
 
 # Checkpoint hot-swap state
 # Maps friendly name (stem) -> absolute path to .safetensors file
@@ -167,6 +174,9 @@ class ImageGenerationRequest(BaseModel):
     guidance_scale: Optional[float] = Field(default=None, ge=0.0, le=20.0)
     # Optional seed for reproducible generation. If None, uses random seed.
     seed: Optional[int] = None
+    # ControlNet: base64-encoded control image (e.g. canny edges, depth map)
+    control_image: Optional[str] = None
+    controlnet_conditioning_scale: Optional[float] = Field(default=None, ge=0.0, le=2.0)
 
 
 def _env_int(name: str) -> Optional[int]:
@@ -227,7 +237,12 @@ def _class_name_model_family(class_name: Optional[str]) -> Optional[str]:
     class_name = (class_name or "").strip()
     if not class_name:
         return None
-    if class_name in ("FluxPipeline", "FluxFillPipeline"):
+    if class_name in (
+        "FluxPipeline",
+        "FluxFillPipeline",
+        "FluxImg2ImgPipeline",
+        "FluxControlNetPipeline",
+    ):
         return "flux"
     if "StableDiffusion3" in class_name:
         return "sd3"
@@ -311,7 +326,15 @@ def _single_file_strict() -> bool:
 
 def _pipeline_is_flux_like(pipe=None, model_id: Optional[str] = None) -> bool:
     if pipe is not None:
-        return isinstance(pipe, (FluxPipeline, FluxFillPipeline))
+        return isinstance(
+            pipe,
+            (
+                FluxPipeline,
+                FluxFillPipeline,
+                FluxImg2ImgPipeline,
+                FluxControlNetPipeline,
+            ),
+        )
     override = _single_file_pipeline_override()
     if override in ("flux", "flux-fill"):
         return True
@@ -487,10 +510,8 @@ def _apply_startup_lora(pipe, family: Optional[str]) -> None:
     if not lora_path and not lora_repo:
         return
 
-    if family not in {"sdxl", "sd3", "sd15"}:
-        print(
-            f"Skipping startup LoRA for unsupported family: {family or 'unknown'}"
-        )
+    if family not in {"sdxl", "sd3", "sd15", "flux"}:
+        print(f"Skipping startup LoRA for unsupported family: {family or 'unknown'}")
         return
 
     if not hasattr(pipe, "load_lora_weights"):
@@ -521,7 +542,9 @@ def _apply_startup_lora(pipe, family: Optional[str]) -> None:
                 if hasattr(pipe, "set_adapters"):
                     try:
                         pipe.set_adapters(adapter_name, lora_scale)
-                        print(f"Applied startup LoRA scale via set_adapters: {lora_scale}")
+                        print(
+                            f"Applied startup LoRA scale via set_adapters: {lora_scale}"
+                        )
                         scale_applied = True
                     except Exception as exc:
                         print(f"WARNING: set_adapters failed for LoRA scale: {exc}")
@@ -535,10 +558,14 @@ def _apply_startup_lora(pipe, family: Optional[str]) -> None:
                 if not scale_applied and hasattr(pipe, "fuse_lora"):
                     try:
                         pipe.fuse_lora(lora_scale=lora_scale)
-                        print(f"Applied startup LoRA scale via fuse_lora fallback: {lora_scale}")
+                        print(
+                            f"Applied startup LoRA scale via fuse_lora fallback: {lora_scale}"
+                        )
                         scale_applied = True
                     except Exception as exc:
-                        print(f"WARNING: fuse_lora fallback failed for LoRA scale: {exc}")
+                        print(
+                            f"WARNING: fuse_lora fallback failed for LoRA scale: {exc}"
+                        )
                 if not scale_applied:
                     print(
                         "WARNING: LoRA scale requested but pipeline exposes no scaling hook"
@@ -572,7 +599,7 @@ def _apply_compile_controls(pipe, family: Optional[str], cpu_offload: bool) -> N
         print("Skipping torch.compile because CPU offload is enabled")
         return
 
-    if family not in {"sdxl", "sd3", "sd15"}:
+    if family not in {"sdxl", "sd3", "sd15", "flux"}:
         print(f"Skipping torch.compile for unsupported family: {family or 'unknown'}")
         return
 
@@ -649,6 +676,27 @@ def _apply_compile_controls(pipe, family: Optional[str], cpu_offload: bool) -> N
             pass
 
 
+def _load_controlnet(family: Optional[str], dtype):
+    """Load a ControlNet model from env config. Returns the loaded model or None."""
+    cn_path = os.environ.get("CONTROLNET_PATH", "").strip()
+    cn_repo = os.environ.get("CONTROLNET_REPO", "").strip()
+    source = cn_path or cn_repo
+    if not source:
+        return None
+    try:
+        if family == "flux":
+            print(f"Loading FluxControlNetModel from {source}...")
+            sys.stdout.flush()
+            return FluxControlNetModel.from_pretrained(source, torch_dtype=dtype)
+        else:
+            print(f"Loading ControlNetModel from {source}...")
+            sys.stdout.flush()
+            return ControlNetModel.from_pretrained(source, torch_dtype=dtype)
+    except Exception as exc:
+        print(f"WARNING: failed to load ControlNet from {source}: {exc}")
+        return None
+
+
 class ImageData(BaseModel):
     b64_json: Optional[str] = None
     url: Optional[str] = None
@@ -662,6 +710,7 @@ class ImageGenerationResponse(BaseModel):
 
 class CheckpointSwapRequest(BaseModel):
     """Request body for /v1/checkpoints/swap."""
+
     checkpoint: str  # filename or stem of a .safetensors file
 
 
@@ -683,10 +732,16 @@ def _discover_checkpoints() -> dict[str, str]:
         # Check for .checkpoints at the model path level first, then parent.
         candidates = [
             os.path.join(model_path, ".checkpoints"),
-            os.path.join(os.path.dirname(model_path), ".checkpoints") if model_path != "/models" else None,
+            (
+                os.path.join(os.path.dirname(model_path), ".checkpoints")
+                if model_path != "/models"
+                else None
+            ),
             "/models/.checkpoints",  # absolute fallback
         ]
-        ckpt_dir = next((c for c in candidates if c and os.path.isdir(c)), candidates[0])
+        ckpt_dir = next(
+            (c for c in candidates if c and os.path.isdir(c)), candidates[0]
+        )
     _checkpoint_dir = ckpt_dir
 
     checkpoints: dict[str, str] = {}
@@ -761,7 +816,11 @@ def _swap_checkpoint(checkpoint_path: str) -> str:
     scheduler = pipeline.scheduler
 
     # Determine dtype from current pipeline
-    dtype = next(pipeline.unet.parameters()).dtype if hasattr(pipeline, "unet") else torch.float16
+    dtype = (
+        next(pipeline.unet.parameters()).dtype
+        if hasattr(pipeline, "unet")
+        else torch.float16
+    )
 
     print(f"  Reusing text_encoder: {text_encoder is not None}")
     print(f"  Reusing text_encoder_2: {text_encoder_2 is not None}")
@@ -775,7 +834,9 @@ def _swap_checkpoint(checkpoint_path: str) -> str:
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        print(f"  GPU memory after UNet offload: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+        print(
+            f"  GPU memory after UNet offload: {torch.cuda.memory_allocated() / 1024**3:.2f} GB"
+        )
 
     # Load new pipeline from checkpoint, reusing text_encoder(s) + VAE
     load_kwargs = {
@@ -816,7 +877,9 @@ def _swap_checkpoint(checkpoint_path: str) -> str:
         torch.cuda.synchronize()
 
     if torch.cuda.is_available():
-        print(f"  GPU memory after swap: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+        print(
+            f"  GPU memory after swap: {torch.cuda.memory_allocated() / 1024**3:.2f} GB"
+        )
 
     # Update globals
     pipeline = new_pipe
@@ -1042,7 +1105,9 @@ def load_pipeline(model_id: str):
         if os.path.isabs(trimmed):
             candidates.append(trimmed)
             if model_root:
-                candidates.append(os.path.join(model_root, ".vae", os.path.basename(trimmed)))
+                candidates.append(
+                    os.path.join(model_root, ".vae", os.path.basename(trimmed))
+                )
         else:
             if model_root:
                 candidates.append(os.path.join(model_root, trimmed))
@@ -1206,6 +1271,30 @@ def load_pipeline(model_id: str):
                     resolved_path,
                     **flux_kwargs,
                 )
+            elif PIPELINE_MODE == "img2img":
+                print(
+                    "Loading FluxImg2ImgPipeline (loading to CPU, local files only)..."
+                )
+                sys.stdout.flush()
+                pipeline = FluxImg2ImgPipeline.from_pretrained(
+                    resolved_path,
+                    **flux_kwargs,
+                )
+            elif PIPELINE_MODE == "controlnet":
+                cn = _load_controlnet(
+                    "flux", flux_kwargs.get("torch_dtype", torch.bfloat16)
+                )
+                if cn is not None:
+                    controlnet_model = cn
+                    flux_kwargs["controlnet"] = cn
+                print(
+                    "Loading FluxControlNetPipeline (loading to CPU, local files only)..."
+                )
+                sys.stdout.flush()
+                pipeline = FluxControlNetPipeline.from_pretrained(
+                    resolved_path,
+                    **flux_kwargs,
+                )
             else:
                 print("Loading FluxPipeline (loading to CPU, local files only)...")
                 sys.stdout.flush()
@@ -1267,6 +1356,30 @@ def load_pipeline(model_id: str):
             pipeline = StableDiffusionInstructPix2PixPipeline.from_pretrained(
                 resolved_path,
                 **instruct_kwargs,
+            )
+        elif PIPELINE_MODE == "img2img":
+            print(
+                "Loading StableDiffusionXLImg2ImgPipeline (loading to CPU, local files only)..."
+            )
+            sys.stdout.flush()
+            pipeline = StableDiffusionXLImg2ImgPipeline.from_pretrained(
+                resolved_path,
+                **pipeline_kwargs,
+            )
+        elif PIPELINE_MODE == "controlnet":
+            cn = _load_controlnet(
+                "sdxl", pipeline_kwargs.get("torch_dtype", torch.float16)
+            )
+            if cn is not None:
+                controlnet_model = cn
+                pipeline_kwargs["controlnet"] = cn
+            print(
+                "Loading StableDiffusionXLControlNetPipeline (loading to CPU, local files only)..."
+            )
+            sys.stdout.flush()
+            pipeline = StableDiffusionXLControlNetPipeline.from_pretrained(
+                resolved_path,
+                **pipeline_kwargs,
             )
         else:
             try:
@@ -1523,6 +1636,13 @@ def warmup_inference():
                     kw["strength"] = 0.5
             elif PIPELINE_MODE == "instruct":
                 kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
+            elif PIPELINE_MODE == "img2img":
+                kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
+                kw["strength"] = 0.5
+            elif PIPELINE_MODE == "controlnet":
+                kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
+                kw["control_image"] = Image.new("RGB", (w, h), (128, 128, 128))
+                kw["controlnet_conditioning_scale"] = 0.5
             with torch.inference_mode():
                 pipeline(**kw)
             if torch.cuda.is_available():
@@ -1689,7 +1809,9 @@ async def generate_images(request: ImageGenerationRequest):
         if ckpt_path:
             ckpt_stem = os.path.splitext(os.path.basename(ckpt_path))[0]
             if ckpt_stem != current_model:
-                print(f"Auto-swapping to checkpoint '{ckpt_stem}' for request.model '{swap_model}'")
+                print(
+                    f"Auto-swapping to checkpoint '{ckpt_stem}' for request.model '{swap_model}'"
+                )
                 async with _generation_lock:
                     await asyncio.to_thread(_swap_checkpoint, ckpt_path)
 
@@ -1770,6 +1892,16 @@ async def generate_images(request: ImageGenerationRequest):
                     # FLUX doesn't support negative_prompt
                     if not _pipeline_is_flux_like(pipe, model_id) and negative_prompt:
                         gen_kwargs["negative_prompt"] = negative_prompt
+                    # ControlNet: decode base64 control image and pass conditioning scale
+                    if PIPELINE_MODE == "controlnet" and request.control_image:
+                        ctrl_bytes = base64.b64decode(request.control_image)
+                        gen_kwargs["control_image"] = _decode_image(ctrl_bytes)
+                        cn_scale = (
+                            request.controlnet_conditioning_scale
+                            if request.controlnet_conditioning_scale is not None
+                            else float(os.environ.get("CONTROLNET_SCALE", "1.0"))
+                        )
+                        gen_kwargs["controlnet_conditioning_scale"] = cn_scale
                 if gen is not None:
                     gen_kwargs["generator"] = gen
                 result = pipe(**gen_kwargs)
@@ -1799,6 +1931,7 @@ async def edit_images(
     prompt: str = Form(...),
     image: Optional[UploadFile] = File(None),
     mask: Optional[UploadFile] = File(None),
+    control_image: Optional[UploadFile] = File(None),
     model: Optional[str] = Form(None),
     n: int = Form(1),
     size: Optional[str] = Form(None),
@@ -1808,12 +1941,13 @@ async def edit_images(
     strength: Optional[float] = Form(None),
     image_guidance_scale: Optional[float] = Form(None),
     negative_prompt: Optional[str] = Form(None),
+    controlnet_conditioning_scale: Optional[float] = Form(None),
 ):
     """OpenAI-compatible image editing endpoint.
 
-    Supports inpainting (mask-based) and instruction-based editing
-    depending on PIPELINE_MODE. When no image is provided, falls back
-    to text-to-image generation (blank canvas + full mask).
+    Supports inpainting (mask-based), instruction-based editing, img2img,
+    and controlnet modes depending on PIPELINE_MODE. When no image is
+    provided, falls back to text-to-image generation (blank canvas + full mask).
     """
     global pipeline
 
@@ -1823,16 +1957,17 @@ async def edit_images(
 
     pipe = load_pipeline(model_id)
 
-    if PIPELINE_MODE not in ("inpainting", "instruct"):
+    if PIPELINE_MODE not in ("inpainting", "instruct", "img2img", "controlnet"):
         raise HTTPException(
             status_code=400,
             detail=f"PIPELINE_MODE '{PIPELINE_MODE}' does not support /v1/images/edits. "
-            f"Use 'inpainting' or 'instruct'.",
+            f"Use 'inpainting', 'instruct', 'img2img', or 'controlnet'.",
         )
 
     # Read uploaded files before entering the thread
     image_bytes = await image.read() if image else None
     mask_bytes = await mask.read() if mask else None
+    control_image_bytes = await control_image.read() if control_image else None
 
     steps = (
         num_inference_steps
@@ -1847,6 +1982,12 @@ async def edit_images(
     neg = negative_prompt or _default_negative_prompt()
 
     def _run_edit():
+        # img2img and controlnet require an input image
+        if image_bytes is None and PIPELINE_MODE == "img2img":
+            raise ValueError("img2img mode requires an input image")
+        if image_bytes is None and PIPELINE_MODE == "controlnet":
+            raise ValueError("controlnet mode requires an input image")
+
         # No image provided: fall back to text-to-image generation
         # using blank canvas + full mask (same as /v1/images/generations)
         if image_bytes is None:
@@ -1940,6 +2081,36 @@ async def edit_images(
                         image_guidance_scale=img_scale,
                         num_inference_steps=steps,
                     )
+                elif PIPELINE_MODE == "img2img":
+                    s = strength if strength is not None else _default_strength()
+                    gen_kwargs = {
+                        "prompt": prompt,
+                        "image": src_img,
+                        "strength": s,
+                        "num_inference_steps": steps,
+                        "guidance_scale": cfg_scale,
+                    }
+                    if not _pipeline_is_flux_like(pipe, model_id) and neg:
+                        gen_kwargs["negative_prompt"] = neg
+                    result = pipe(**gen_kwargs)
+                elif PIPELINE_MODE == "controlnet":
+                    cn_scale = (
+                        controlnet_conditioning_scale
+                        if controlnet_conditioning_scale is not None
+                        else float(os.environ.get("CONTROLNET_SCALE", "1.0"))
+                    )
+                    gen_kwargs = {
+                        "prompt": prompt,
+                        "image": src_img,
+                        "controlnet_conditioning_scale": cn_scale,
+                        "num_inference_steps": steps,
+                        "guidance_scale": cfg_scale,
+                    }
+                    if control_image_bytes is not None:
+                        gen_kwargs["control_image"] = _decode_image(control_image_bytes)
+                    if not _pipeline_is_flux_like(pipe, model_id) and neg:
+                        gen_kwargs["negative_prompt"] = neg
+                    result = pipe(**gen_kwargs)
 
             img = result.images[0]
             buffer = io.BytesIO()
@@ -1956,6 +2127,92 @@ async def edit_images(
     async with _generation_lock:
         try:
             images = await asyncio.to_thread(_run_edit)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    return ImageGenerationResponse(created=int(time.time()), data=images)
+
+
+@app.post("/v1/images/variations")
+async def image_variations(
+    image: UploadFile = File(...),
+    model: Optional[str] = Form(None),
+    n: int = Form(1),
+    size: Optional[str] = Form(None),
+    response_format: str = Form("b64_json"),
+    strength: Optional[float] = Form(None),
+):
+    """OpenAI-compatible image variations endpoint.
+
+    Produces N variations of the input image. Uses img2img with an empty
+    prompt and moderate strength, or FluxFillPipeline with a full mask.
+    """
+    global pipeline
+
+    model_id = os.environ.get("MODEL_ID") or os.environ.get("MODEL") or model
+    if not model_id:
+        raise HTTPException(status_code=400, detail="No model specified")
+
+    pipe = load_pipeline(model_id)
+
+    image_bytes = await image.read()
+    s = strength if strength is not None else 0.6
+
+    def _run_variations():
+        src_img = _decode_image(image_bytes)
+        src_img = _resize_for_pipeline(src_img, size)
+        w, h = src_img.size
+
+        results = []
+        for _ in range(n):
+            with torch.inference_mode():
+                if isinstance(pipe, FluxFillPipeline):
+                    # Full mask = regenerate everything conditioned on the image structure
+                    full_mask = Image.new("L", (w, h), 255)
+                    result = pipe(
+                        prompt="",
+                        image=src_img,
+                        mask_image=full_mask,
+                        num_inference_steps=_default_steps(model_id),
+                        guidance_scale=_default_guidance_scale(model_id),
+                        height=h,
+                        width=w,
+                    )
+                elif isinstance(
+                    pipe, (FluxImg2ImgPipeline, StableDiffusionXLImg2ImgPipeline)
+                ):
+                    gen_kwargs = {
+                        "prompt": "",
+                        "image": src_img,
+                        "strength": s,
+                        "num_inference_steps": _default_steps(model_id),
+                        "guidance_scale": _default_guidance_scale(model_id),
+                    }
+                    result = pipe(**gen_kwargs)
+                else:
+                    # Fallback: text2image at the same size (degraded but functional)
+                    gen_kwargs = {
+                        "prompt": "",
+                        "num_inference_steps": _default_steps(model_id),
+                        "guidance_scale": _default_guidance_scale(model_id),
+                        "height": h,
+                        "width": w,
+                    }
+                    result = pipe(**gen_kwargs)
+            img = result.images[0]
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+            results.append(ImageData(b64_json=b64_data))
+            del result, img, buffer
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return results
+
+    async with _generation_lock:
+        try:
+            images = await asyncio.to_thread(_run_variations)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 

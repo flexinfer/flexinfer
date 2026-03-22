@@ -89,10 +89,14 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: modelCache.Namespace}, job)
 	if err != nil && errors.IsNotFound(err) {
 		// If download already completed, the job was GC'd by TTL — continue to next phase.
+		// Include Failed phase when pipeline progress exists (abliteration/finetune/quantization
+		// completed but a later phase failed). Without this, a Failed quantization after
+		// successful abliteration + download GC would re-download and re-abliterate from scratch.
 		if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady ||
 			modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseQuantizing ||
 			modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseFinetuning ||
 			modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseAbliterating ||
+			(modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseFailed && modelCache.Status.Path != "") ||
 			(modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseProvisioning && modelCache.Status.Path != "") {
 			log.Info("Download job GC'd but download already complete, skipping re-creation",
 				"cache", modelCache.Name, "phase", modelCache.Status.Phase)
@@ -359,7 +363,7 @@ func (r *ModelCacheReconciler) jobForDownload(m *aiv1alpha1.ModelCache, pvcName,
 	if isLocalSource(m.Spec.Source) {
 		// local:// sources are paths that should already exist in the mounted model store.
 		// If the source is already under the destination dir, just verify it exists (avoid copying onto itself).
-		image = "alpine:3.19"
+		image = ImageAlpine
 		srcRel := parseLocalSource(m.Spec.Source)
 		downloadScript = fmt.Sprintf(`
 set -ex
@@ -402,7 +406,7 @@ ls -la "$DEST_DIR"
 	} else if isMlcModel(m.Spec.Source) {
 		// MLC-LLM models require git clone with LFS support
 		// Use debian:bookworm-slim as stable base with apt-get support
-		image = "debian:bookworm-slim"
+		image = ImageDebianSlim
 		downloadScript = fmt.Sprintf(`
 set -ex
 MODEL_ID="%s"
@@ -430,7 +434,7 @@ ls -la "$DEST_DIR"
 `, modelID, modelPath, huggingFaceRepositoryBaseURL)
 	} else {
 		// Standard HuggingFace models use huggingface_hub snapshot_download (more stable than huggingface-cli)
-		image = "python:3.10-slim"
+		image = ImagePythonSlim
 		downloadScript = fmt.Sprintf(`
 set -ex
 MODEL_ID="%s"
@@ -565,7 +569,7 @@ func (r *ModelCacheReconciler) jobForOCIDownload(m *aiv1alpha1.ModelCache, pvcNa
 	registryRef := parseOCISource(m.Spec.Source)
 
 	// Get ORAS image from environment or use default
-	orasImage := "ghcr.io/oras-project/oras:v1.2.2"
+	orasImage := ImageORAS
 	if img, ok := os.LookupEnv("ORAS_DOWNLOADER_IMAGE"); ok && img != "" {
 		orasImage = img
 	}

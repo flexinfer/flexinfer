@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -74,7 +75,7 @@ func (r *LoRAAdapterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Handle finalizer for cleanup
 	if adapter.DeletionTimestamp.IsZero() {
-		if !containsString(adapter.GetFinalizers(), aiv1alpha2.LoRAAdapterFinalizer) {
+		if !slices.Contains(adapter.GetFinalizers(), aiv1alpha2.LoRAAdapterFinalizer) {
 			adapter.SetFinalizers(append(adapter.GetFinalizers(), aiv1alpha2.LoRAAdapterFinalizer))
 			if err := r.Update(ctx, adapter); err != nil {
 				return ctrl.Result{}, err
@@ -83,9 +84,9 @@ func (r *LoRAAdapterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 	} else {
 		// Object is being deleted — unload from all replicas
-		if containsString(adapter.GetFinalizers(), aiv1alpha2.LoRAAdapterFinalizer) {
+		if slices.Contains(adapter.GetFinalizers(), aiv1alpha2.LoRAAdapterFinalizer) {
 			r.unloadFromAllReplicas(ctx, adapter)
-			adapter.SetFinalizers(removeString(adapter.GetFinalizers(), aiv1alpha2.LoRAAdapterFinalizer))
+			adapter.SetFinalizers(slices.DeleteFunc(adapter.GetFinalizers(), func(v string) bool { return v == aiv1alpha2.LoRAAdapterFinalizer }))
 			if err := r.Update(ctx, adapter); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -100,7 +101,9 @@ func (r *LoRAAdapterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			adapter.Status.Phase = aiv1alpha2.LoRAAdapterPhaseFailed
 			adapter.Status.Message = fmt.Sprintf("parent model %q not found", adapter.Spec.ModelRef)
 			r.Recorder.Event(adapter, corev1.EventTypeWarning, "ModelNotFound", adapter.Status.Message)
-			_ = r.Status().Update(ctx, adapter)
+			if err := r.Status().Update(ctx, adapter); err != nil {
+				log.Error(err, "failed to update LoRAAdapter status")
+			}
 			return ctrl.Result{RequeueAfter: requeueLong}, nil
 		}
 		return ctrl.Result{}, err
@@ -111,7 +114,9 @@ func (r *LoRAAdapterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if !ok {
 		adapter.Status.Phase = aiv1alpha2.LoRAAdapterPhaseFailed
 		adapter.Status.Message = fmt.Sprintf("%v: %s (on parent model)", backend.ErrUnknownBackend, model.Spec.Backend)
-		_ = r.Status().Update(ctx, adapter)
+		if err := r.Status().Update(ctx, adapter); err != nil {
+			log.Error(err, "failed to update LoRAAdapter status")
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -120,7 +125,9 @@ func (r *LoRAAdapterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		adapter.Status.Phase = aiv1alpha2.LoRAAdapterPhaseFailed
 		adapter.Status.Message = fmt.Sprintf("backend %q does not support LoRA", model.Spec.Backend)
 		r.Recorder.Event(adapter, corev1.EventTypeWarning, "BackendUnsupported", adapter.Status.Message)
-		_ = r.Status().Update(ctx, adapter)
+		if err := r.Status().Update(ctx, adapter); err != nil {
+			log.Error(err, "failed to update LoRAAdapter status")
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -128,7 +135,9 @@ func (r *LoRAAdapterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if model.Status.Phase != aiv1alpha2.ModelPhaseReady {
 		adapter.Status.Phase = aiv1alpha2.LoRAAdapterPhasePending
 		adapter.Status.Message = "waiting for parent model to be ready"
-		_ = r.Status().Update(ctx, adapter)
+		if err := r.Status().Update(ctx, adapter); err != nil {
+			log.Error(err, "failed to update LoRAAdapter status")
+		}
 		return ctrl.Result{RequeueAfter: requeueMedium}, nil
 	}
 
@@ -139,7 +148,9 @@ func (r *LoRAAdapterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if len(podAddresses) == 0 {
 		adapter.Status.Phase = aiv1alpha2.LoRAAdapterPhasePending
 		adapter.Status.Message = "no ready pods for parent model"
-		_ = r.Status().Update(ctx, adapter)
+		if err := r.Status().Update(ctx, adapter); err != nil {
+			log.Error(err, "failed to update LoRAAdapter status")
+		}
 		return ctrl.Result{RequeueAfter: requeueMedium}, nil
 	}
 

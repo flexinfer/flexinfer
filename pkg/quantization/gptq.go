@@ -6,10 +6,9 @@ import (
 	"os"
 	"strconv"
 
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
@@ -31,13 +30,13 @@ type gptqModelPolicy struct {
 }
 
 // Format returns the GPTQ quantization format.
-func (b *GPTQJobBuilder) Format() aiv1alpha1.QuantizationFormat {
-	return aiv1alpha1.QuantizationFormatGPTQ
+func (b *GPTQJobBuilder) Format() aiv1alpha2.QuantizationFormat {
+	return aiv1alpha2.QuantizationFormatGPTQ
 }
 
 // Validate checks that the quantization spec is valid for GPTQ.
-func (b *GPTQJobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
-	if spec.Format != aiv1alpha1.QuantizationFormatGPTQ {
+func (b *GPTQJobBuilder) Validate(spec *aiv1alpha2.QuantizationSpec) error {
+	if spec.Format != aiv1alpha2.QuantizationFormatGPTQ {
 		return fmt.Errorf("GPTQJobBuilder only handles GPTQ format, got %q", spec.Format)
 	}
 	if !spec.UseGPU {
@@ -123,22 +122,7 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 }
 
 // buildEnv returns environment variables for the GPTQ quantization script.
-func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, descAct bool, memoryGB int32, gpuMemFraction, dynamicExclusion string, calib *aiv1alpha1.CalibrationSpec) []corev1.EnvVar {
-	maxSeqLen := int32(DefaultCalibrationMaxSeqLen)
-	maxSamples := int32(DefaultCalibrationMaxSamples)
-	dataset := DefaultCalibrationDataset
-	if calib != nil {
-		if calib.MaxSeqLen != nil {
-			maxSeqLen = *calib.MaxSeqLen
-		}
-		if calib.MaxSamples != nil {
-			maxSamples = *calib.MaxSamples
-		}
-		if calib.Dataset != nil {
-			dataset = *calib.Dataset
-		}
-	}
-
+func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, descAct bool, memoryGB int32, gpuMemFraction, dynamicExclusion string, calib *aiv1alpha2.CalibrationSpec) []corev1.EnvVar {
 	symStr := "True"
 	if !sym {
 		symStr = "False"
@@ -163,19 +147,16 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 	calibrationCacheEnabled := getenvDefault("FLEXINFER_GPTQ_CALIBRATION_CACHE", "true")
 	deviceMap := getenvDefault("FLEXINFER_GPTQ_DEVICE_MAP", "cpu")
 
-	return []corev1.EnvVar{
+	env := []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
 		{Name: "OUT_DIR", Value: fmt.Sprintf("/cache/%s/gptq-w%d-g%d", modelPath, bits, groupSize)},
 		{Name: "BITS", Value: fmt.Sprintf("%d", bits)},
 		{Name: "GROUP_SIZE", Value: fmt.Sprintf("%d", groupSize)},
 		{Name: "MAX_MEMORY_GB", Value: fmt.Sprintf("%d", memoryGB)},
-		{Name: "MAX_SEQ_LEN", Value: fmt.Sprintf("%d", maxSeqLen)},
-		{Name: "MAX_SAMPLES", Value: fmt.Sprintf("%d", maxSamples)},
 		{Name: "SYM", Value: symStr},
 		{Name: "DESC_ACT", Value: descActStr},
 		{Name: "GPU_MEMORY_FRACTION", Value: gpuMemFraction},
 		{Name: "DYNAMIC_EXCLUSION", Value: dynamicExclusion},
-		{Name: "DATASET", Value: dataset},
 		{Name: "QUANTIZE_MODEL_POLICIES", Value: modelPolicies},
 		{Name: "GPTQ_HESSIAN_REPAIR", Value: hessianRepair},
 		{Name: "GPTQ_HESSIAN_SANITIZE_NONFINITE", Value: hessianSanitizeNonfinite},
@@ -190,6 +171,8 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 		{Name: "QUANTIZE_DEVICE_MAP", Value: deviceMap},
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
 	}
+	env = append(env, BuildCalibrationEnv(calib)...)
+	return env
 }
 
 func getenvDefault(name, fallback string) string {

@@ -25,8 +25,6 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
 
 // ModelFinalizer is the finalizer used for Model cleanup
@@ -284,9 +282,9 @@ type ModelSpec struct {
 
 	// Quantize configures post-download quantization of model weights.
 	// When set, the controller downloads the source model, quantizes it,
-	// and serves the quantized output. Reuses v1alpha1 QuantizationSpec.
+	// and serves the quantized output.
 	// +optional
-	Quantize *aiv1alpha1.QuantizationSpec `json:"quantize,omitempty"`
+	Quantize *QuantizationSpec `json:"quantize,omitempty"`
 }
 
 // GPUVendor selects which vendor GPU resource to request.
@@ -610,7 +608,7 @@ type CacheStatus struct {
 	SizeBytes int64 `json:"sizeBytes,omitempty"`
 	// Quantization records the result of weight quantization.
 	// +optional
-	Quantization *aiv1alpha1.QuantizationStatus `json:"quantization,omitempty"`
+	Quantization *QuantizationStatus `json:"quantization,omitempty"`
 }
 
 //+kubebuilder:object:root=true
