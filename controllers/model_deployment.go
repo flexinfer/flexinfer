@@ -38,6 +38,7 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 )
 
 // ensureService creates or updates the Service for the model.
@@ -56,18 +57,18 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 	annotations := make(map[string]string)
 	if litellmEnabled(model) {
 		servedModel := litellmServedModel(model)
-		annotations["litellm.flexinfer.ai/served-model"] = servedModel
+		annotations[constants.LiteLLMAnnotationServedModel] = servedModel
 		if aliases := litellmAliases(model, servedModel); len(aliases) > 0 {
-			annotations["litellm.flexinfer.ai/aliases"] = strings.Join(aliases, ",")
+			annotations[constants.LiteLLMAnnotationAliases] = strings.Join(aliases, ",")
 		}
 		if model.Spec.LiteLLM != nil && model.Spec.LiteLLM.CopilotAlias != "" {
-			annotations["litellm.flexinfer.ai/copilot-model"] = model.Spec.LiteLLM.CopilotAlias
+			annotations[constants.LiteLLMAnnotationCopilotModel] = model.Spec.LiteLLM.CopilotAlias
 		}
 	}
 
 	// Add service labels for routing
 	if len(model.Spec.ServiceLabels) > 0 {
-		annotations["flexinfer.ai/service-labels"] = strings.Join(model.Spec.ServiceLabels, ",")
+		annotations[constants.ServiceAnnotationServiceLabels] = strings.Join(model.Spec.ServiceLabels, ",")
 	}
 
 	desiredService := &corev1.Service{
@@ -413,18 +414,18 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 				annotations := make(map[string]string)
 				if litellmEnabled(model) {
 					servedModel := litellmServedModel(model)
-					annotations["litellm.flexinfer.ai/served-model"] = servedModel
+					annotations[constants.LiteLLMAnnotationServedModel] = servedModel
 					if aliases := litellmAliases(model, servedModel); len(aliases) > 0 {
-						annotations["litellm.flexinfer.ai/aliases"] = strings.Join(aliases, ",")
+						annotations[constants.LiteLLMAnnotationAliases] = strings.Join(aliases, ",")
 					}
 					if model.Spec.LiteLLM != nil && model.Spec.LiteLLM.CopilotAlias != "" {
-						annotations["litellm.flexinfer.ai/copilot-model"] = model.Spec.LiteLLM.CopilotAlias
+						annotations[constants.LiteLLMAnnotationCopilotModel] = model.Spec.LiteLLM.CopilotAlias
 					}
 					capsJSON, _ := json.Marshal(resolveCapabilities(model, b))
-					annotations["litellm.flexinfer.ai/capabilities"] = string(capsJSON)
+					annotations[constants.LiteLLMAnnotationCapabilities] = string(capsJSON)
 				}
 				if len(model.Spec.ServiceLabels) > 0 {
-					annotations["flexinfer.ai/service-labels"] = strings.Join(model.Spec.ServiceLabels, ",")
+					annotations[constants.ServiceAnnotationServiceLabels] = strings.Join(model.Spec.ServiceLabels, ",")
 				}
 				if len(annotations) == 0 {
 					return nil

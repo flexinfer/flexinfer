@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 	"github.com/flexinfer/flexinfer/pkg/observability"
 )
 
@@ -313,7 +314,7 @@ func (r *FederatedModelReconciler) buildRemoteClient(ctx context.Context, cluste
 
 func desiredRemoteModel(fm *aiv1alpha2.FederatedModel) *aiv1alpha2.Model {
 	labels := map[string]string{
-		"flexinfer.ai/federated-model": fm.Name,
+		constants.LabelFederatedModel: fm.Name,
 	}
 	for k, v := range fm.Labels {
 		if _, exists := labels[k]; !exists {

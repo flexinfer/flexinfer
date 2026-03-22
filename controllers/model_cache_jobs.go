@@ -32,6 +32,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 )
 
 func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destSubdir string) (*batchv1.Job, error) {
@@ -184,10 +185,10 @@ echo "Download complete."
 			Namespace: model.Namespace,
 			Labels:    r.labelsForModel(model),
 			Annotations: map[string]string{
-				"flexinfer.ai/source":     model.Spec.Source,
-				"flexinfer.ai/cache-kind": "prefetch",
-				"flexinfer.ai/cache-pvc":  pvcName,
-				"flexinfer.ai/cache-dest": destSubdir,
+				constants.JobAnnotationSource:    model.Spec.Source,
+				constants.JobAnnotationCacheKind: "prefetch",
+				constants.JobAnnotationCachePVC:  pvcName,
+				constants.JobAnnotationCacheDest: destSubdir,
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -286,10 +287,10 @@ echo "Artifact present at file $TARGET"
 			Namespace: model.Namespace,
 			Labels:    r.labelsForModel(model),
 			Annotations: map[string]string{
-				"flexinfer.ai/source":     model.Spec.Source,
-				"flexinfer.ai/cache-kind": "check",
-				"flexinfer.ai/cache-pvc":  pvcName,
-				"flexinfer.ai/cache-path": subPath,
+				constants.JobAnnotationSource:    model.Spec.Source,
+				constants.JobAnnotationCacheKind: "check",
+				constants.JobAnnotationCachePVC:  pvcName,
+				constants.JobAnnotationCachePath: subPath,
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -382,9 +383,9 @@ echo "Local cache verified: $DIR ($COUNT+ model files found)"
 			Namespace: model.Namespace,
 			Labels:    r.labelsForModel(model),
 			Annotations: map[string]string{
-				"flexinfer.ai/source":     model.Spec.Source,
-				"flexinfer.ai/cache-kind": "local-check",
-				"flexinfer.ai/cache-path": cachePath,
+				constants.JobAnnotationSource:    model.Spec.Source,
+				constants.JobAnnotationCacheKind: "local-check",
+				constants.JobAnnotationCachePath: cachePath,
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -498,10 +499,10 @@ echo "Local staging complete."
 			Namespace: model.Namespace,
 			Labels:    r.labelsForModel(model),
 			Annotations: map[string]string{
-				"flexinfer.ai/source":        model.Spec.Source,
-				"flexinfer.ai/cache-kind":    "local-stage",
-				"flexinfer.ai/cache-src-pvc": sourcePVCName,
-				"flexinfer.ai/cache-path":    subPath,
+				constants.JobAnnotationSource:      model.Spec.Source,
+				constants.JobAnnotationCacheKind:   "local-stage",
+				constants.JobAnnotationCacheSrcPVC: sourcePVCName,
+				constants.JobAnnotationCachePath:   subPath,
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -688,9 +689,9 @@ echo "Local HF staging complete."
 			Namespace: model.Namespace,
 			Labels:    r.labelsForModel(model),
 			Annotations: map[string]string{
-				"flexinfer.ai/source":     model.Spec.Source,
-				"flexinfer.ai/cache-kind": "local-prefetch",
-				"flexinfer.ai/cache-path": cachePath,
+				constants.JobAnnotationSource:    model.Spec.Source,
+				constants.JobAnnotationCacheKind: "local-prefetch",
+				constants.JobAnnotationCachePath: cachePath,
 			},
 		},
 		Spec: batchv1.JobSpec{
@@ -802,11 +803,11 @@ echo "Copy complete."
 			Namespace: model.Namespace,
 			Labels:    r.labelsForModel(model),
 			Annotations: map[string]string{
-				"flexinfer.ai/source":        model.Spec.Source,
-				"flexinfer.ai/cache-kind":    "copy",
-				"flexinfer.ai/cache-src-pvc": sourcePVCName,
-				"flexinfer.ai/cache-pvc":     cachePVCName,
-				"flexinfer.ai/cache-path":    subPath,
+				constants.JobAnnotationSource:      model.Spec.Source,
+				constants.JobAnnotationCacheKind:   "copy",
+				constants.JobAnnotationCacheSrcPVC: sourcePVCName,
+				constants.JobAnnotationCachePVC:    cachePVCName,
+				constants.JobAnnotationCachePath:   subPath,
 			},
 		},
 		Spec: batchv1.JobSpec{

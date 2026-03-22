@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 )
 
 // reconcileKVCachePressure checks KV-cache utilization from agent annotations
@@ -53,7 +54,7 @@ func (r *ModelReconciler) reconcileKVCachePressure(ctx context.Context, model *a
 
 	utilStr := ""
 	if node.Annotations != nil {
-		utilStr = node.Annotations["flexinfer.ai/kv-cache-usage"]
+		utilStr = node.Annotations[constants.NodeAnnotationKVCacheUsage]
 	}
 	if utilStr == "" {
 		return

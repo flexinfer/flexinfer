@@ -37,6 +37,7 @@ import (
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
 )
 
@@ -113,7 +114,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 				if err != nil && !errors.IsNotFound(err) {
 					return false, err
 				}
-				if err == nil && job.Annotations != nil && job.Annotations["flexinfer.ai/source"] != model.Spec.Source {
+				if err == nil && job.Annotations != nil && job.Annotations[constants.JobAnnotationSource] != model.Spec.Source {
 					if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
 						return false, delErr
 					}
@@ -195,7 +196,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 				if err != nil && !errors.IsNotFound(err) {
 					return false, err
 				}
-				if err == nil && job.Annotations != nil && job.Annotations["flexinfer.ai/source"] != model.Spec.Source {
+				if err == nil && job.Annotations != nil && job.Annotations[constants.JobAnnotationSource] != model.Spec.Source {
 					if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
 						return false, delErr
 					}
@@ -263,7 +264,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 		if err != nil && !errors.IsNotFound(err) {
 			return false, err
 		}
-		if err == nil && job.Annotations != nil && job.Annotations["flexinfer.ai/source"] != model.Spec.Source {
+		if err == nil && job.Annotations != nil && job.Annotations[constants.JobAnnotationSource] != model.Spec.Source {
 			if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
 				return false, delErr
 			}
@@ -529,7 +530,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 		if err != nil && !errors.IsNotFound(err) {
 			return false, err
 		}
-		if err == nil && job.Annotations != nil && job.Annotations["flexinfer.ai/source"] != model.Spec.Source {
+		if err == nil && job.Annotations != nil && job.Annotations[constants.JobAnnotationSource] != model.Spec.Source {
 			if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
 				return false, delErr
 			}

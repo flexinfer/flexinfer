@@ -15,16 +15,17 @@ import (
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Service label annotation constants for model routing.
-const (
-	// AnnotationActiveServiceLabels contains comma-separated service labels for an active model.
-	AnnotationActiveServiceLabels = "ai.flexinfer/active-services"
-	// AnnotationServiceLabels contains comma-separated service labels (static claim).
-	AnnotationServiceLabels = "flexinfer.ai/service-labels"
+// These are aliases for the canonical values in pkg/constants, kept for
+// backward compatibility within the proxy package and its tests.
+var (
+	AnnotationActiveServiceLabels = constants.ServiceAnnotationActiveLabels
+	AnnotationServiceLabels       = constants.ServiceAnnotationServiceLabels
 )
 
 // getModelDeployment fetches the ModelDeployment resource.

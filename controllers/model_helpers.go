@@ -32,6 +32,7 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 	"github.com/flexinfer/flexinfer/pkg/k8surl"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
 )
@@ -160,7 +161,7 @@ func isActivePipelinePod(pod *corev1.Pod) bool {
 	if pod == nil {
 		return false
 	}
-	switch pod.Labels["flexinfer.ai/component"] {
+	switch pod.Labels[constants.LabelComponent] {
 	case "abliterator", "quantizer", "finetuner", "publisher":
 		return true
 	}
@@ -220,7 +221,7 @@ func (r *ModelReconciler) labelsForModel(model *aiv1alpha2.Model) map[string]str
 		gpuGroup = model.Status.SharedGroup.GroupName
 	}
 	if gpuGroup != "" {
-		labels["flexinfer.ai/gpu-group"] = gpuGroup
+		labels[constants.LabelGPUGroup] = gpuGroup
 	}
 
 	return labels
@@ -231,8 +232,8 @@ func (r *ModelReconciler) selectorLabelsForModel(model *aiv1alpha2.Model) map[st
 		"app.kubernetes.io/name":       "model",
 		"app.kubernetes.io/instance":   model.Name,
 		"app.kubernetes.io/managed-by": "flexinfer",
-		"flexinfer.ai/model":           model.Name,
-		"flexinfer.ai/backend":         model.Spec.Backend,
+		constants.LabelModel:           model.Name,
+		constants.LabelBackend:         model.Spec.Backend,
 	}
 }
 
