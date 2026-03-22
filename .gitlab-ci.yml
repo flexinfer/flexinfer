@@ -702,6 +702,7 @@ ios:archive-export:
 build:image:loom-core:
   stage: deploy
   interruptible: true
+  timeout: 90 minutes
   # Image jobs do not use language caches; skip restore/upload overhead.
   cache: []
   # Keep serialization within a ref, but don't let feature/MR pipelines block main.
@@ -857,6 +858,7 @@ build:image:loom-core:
 build:image:custom-server:
   stage: deploy
   interruptible: true
+  timeout: 90 minutes
   # Image jobs do not use language caches; skip restore/upload overhead.
   cache: []
   # Keep serialization within a ref, but don't let feature/MR pipelines block main.
