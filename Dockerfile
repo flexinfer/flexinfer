@@ -30,17 +30,16 @@ RUN --mount=type=secret,id=ci_job_token,required=false \
 # Copy source
 COPY . .
 
-# Build all binaries
+# Build all binaries in a single layer to share build cache and parallelise MCP servers
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loomd ./cmd/loomd
-RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loom ./cmd/loom
-
-# Build all MCP servers
 RUN mkdir -p /bin && \
-    for d in cmd/mcp-*; do \
-      name="$(basename "$d")"; \
-      CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w" -o "/bin/$name" "./$d"; \
-    done
+    CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -trimpath \
+      -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loomd ./cmd/loomd && \
+    CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -trimpath \
+      -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loom ./cmd/loom && \
+    find cmd -mindepth 1 -maxdepth 1 -type d -name 'mcp-*' | xargs -n1 basename | \
+      xargs -P4 -I{} sh -c \
+        'CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -trimpath -ldflags="-s -w" -o "/bin/$1" "./cmd/$1"' _ {}
 
 # Runtime stage - minimal image
 FROM ${RUNTIME_REGISTRY}/dockerhub-cache/library/alpine:3.21
