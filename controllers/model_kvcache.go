@@ -53,7 +53,7 @@ func (r *ModelReconciler) reconcileKVCachePressure(ctx context.Context, model *a
 
 	utilStr := ""
 	if node.Annotations != nil {
-		utilStr = node.Annotations["flexinfer.ai/kv-cache-usage"]
+		utilStr = node.Annotations[AnnotationKVCacheUsage]
 	}
 	if utilStr == "" {
 		return

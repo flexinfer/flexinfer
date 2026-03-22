@@ -30,7 +30,6 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -55,61 +54,30 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 	log := log.FromContext(ctx)
 
 	currentHash := ablitSpecHash(modelCache.Spec.Abliteration)
-	storedHash := ""
-	if modelCache.Annotations != nil {
-		storedHash = modelCache.Annotations[annotationAblitSpecHash]
+
+	changed, err := r.detectAndApplySpecChange(ctx, modelCache, specChangeParams{
+		CurrentHash:          currentHash,
+		HashAnnotationKey:    annotationAblitSpecHash,
+		TriggerAnnotationKey: annotationReabliterate,
+		JobSuffixesToDelete:  []string{"-abliterate", "-quantize", "-downloader"},
+		EventReason:          "ReabliterationTriggered",
+	})
+	if err != nil {
+		return ctrl.Result{}, err
 	}
-
-	// Detect spec change or explicit re-abliteration request.
-	specChanged := storedHash != "" && storedHash != currentHash
-	reabliterate := modelCache.Annotations != nil && modelCache.Annotations[annotationReabliterate] == "true"
-	needsReablit := specChanged || reabliterate
-
-	if needsReablit && (modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady || modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseFailed) {
-		reason := "spec change"
-		if reabliterate {
-			reason = "reabliterate annotation"
-		}
-		log.Info("Re-abliteration triggered", "cache", modelCache.Name, "reason", reason,
-			"storedHash", storedHash, "currentHash", currentHash)
-
-		// Delete abliterate, quantize, and download jobs.
-		// Re-abliteration requires fresh FP16 weights because abliteration
-		// modifies them in-place (original weights are gone).
-		propagation := metav1.DeletePropagationBackground
-		for _, suffix := range []string{"-abliterate", "-quantize", "-downloader"} {
-			jobName := modelCache.Name + suffix
-			existingJob := &batchv1.Job{}
-			if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: modelCache.Namespace}, existingJob); err == nil {
-				if err := r.Delete(ctx, existingJob, &client.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !errors.IsNotFound(err) {
-					return ctrl.Result{}, fmt.Errorf("deleting job %s for re-abliteration: %w", jobName, err)
-				}
-				log.Info("Deleted job for re-abliteration", "job", jobName)
-			}
-		}
-
-		// Reset status and phase back to Provisioning.
+	if changed {
 		modelCache.Status.Abliteration = nil
 		modelCache.Status.Quantization = nil
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
-
-		// Update annotations.
-		if modelCache.Annotations == nil {
-			modelCache.Annotations = make(map[string]string)
-		}
-		modelCache.Annotations[annotationAblitSpecHash] = currentHash
-		delete(modelCache.Annotations, annotationReabliterate)
-		if err := r.Update(ctx, modelCache); err != nil {
-			return ctrl.Result{}, err
-		}
-
-		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "ReabliterationTriggered",
-			fmt.Sprintf("Re-abliteration triggered (%s), all jobs deleted", reason))
-
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
+	}
+
+	storedHash := ""
+	if modelCache.Annotations != nil {
+		storedHash = modelCache.Annotations[annotationAblitSpecHash]
 	}
 
 	// If abliteration completed and publishing is configured but not yet recorded,
@@ -161,7 +129,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 	// Look for existing abliteration job.
 	ablitJobName := modelCache.Name + "-abliterate"
 	ablitJob := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: ablitJobName, Namespace: modelCache.Namespace}, ablitJob)
+	err = r.Get(ctx, types.NamespacedName{Name: ablitJobName, Namespace: modelCache.Namespace}, ablitJob)
 	if err != nil && errors.IsNotFound(err) {
 		// If abliteration already completed, the job was GC'd by TTL — dispatch to next phase.
 		if abliterationCompleted(modelCache.Status.Abliteration) {
@@ -462,29 +430,7 @@ type abliterationJobMetadata struct {
 
 // readAbliterationMetadataFromPods reads abliteration metadata from pod termination logs.
 func (r *ModelCacheReconciler) readAbliterationMetadataFromPods(ctx context.Context, namespace, jobName string) *abliterationJobMetadata {
-	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
-		return nil
-	}
-	for _, pod := range podList.Items {
-		for _, cs := range pod.Status.ContainerStatuses {
-			if cs.Name != "abliterator" {
-				continue
-			}
-			terminated := cs.State.Terminated
-			if terminated == nil {
-				terminated = cs.LastTerminationState.Terminated
-			}
-			if terminated == nil || terminated.Message == "" {
-				continue
-			}
-			var meta abliterationJobMetadata
-			if err := json.Unmarshal([]byte(terminated.Message), &meta); err == nil {
-				return &meta
-			}
-		}
-	}
-	return nil
+	return ReadJobMetadata[abliterationJobMetadata](ctx, r.Client, namespace, jobName, "abliterator")
 }
 
 // captureAbliterationFailureLogs reads the termination message from the abliterator container.

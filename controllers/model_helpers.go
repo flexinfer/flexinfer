@@ -160,7 +160,7 @@ func isActivePipelinePod(pod *corev1.Pod) bool {
 	if pod == nil {
 		return false
 	}
-	switch pod.Labels["flexinfer.ai/component"] {
+	switch pod.Labels[LabelComponent] {
 	case "abliterator", "quantizer", "finetuner", "publisher":
 		return true
 	}
@@ -220,7 +220,7 @@ func (r *ModelReconciler) labelsForModel(model *aiv1alpha2.Model) map[string]str
 		gpuGroup = model.Status.SharedGroup.GroupName
 	}
 	if gpuGroup != "" {
-		labels["flexinfer.ai/gpu-group"] = gpuGroup
+		labels[LabelGPUGroup] = gpuGroup
 	}
 
 	return labels
@@ -231,8 +231,8 @@ func (r *ModelReconciler) selectorLabelsForModel(model *aiv1alpha2.Model) map[st
 		"app.kubernetes.io/name":       "model",
 		"app.kubernetes.io/instance":   model.Name,
 		"app.kubernetes.io/managed-by": "flexinfer",
-		"flexinfer.ai/model":           model.Name,
-		"flexinfer.ai/backend":         model.Spec.Backend,
+		LabelModel:                     model.Name,
+		LabelBackend:                   model.Spec.Backend,
 	}
 }
 

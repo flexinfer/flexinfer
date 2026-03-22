@@ -698,8 +698,8 @@ func TestPruneFailedModelPods_DeletesOnlyOldFailedPods(t *testing.T) {
 		"app.kubernetes.io/name":       "model",
 		"app.kubernetes.io/instance":   "test-model",
 		"app.kubernetes.io/managed-by": "flexinfer",
-		"flexinfer.ai/model":           "test-model",
-		"flexinfer.ai/backend":         "mlc-llm",
+		LabelModel:                     "test-model",
+		LabelBackend:                   "mlc-llm",
 	}
 
 	oldFailed := &corev1.Pod{
@@ -826,15 +826,15 @@ func TestLabelsForModel(t *testing.T) {
 
 	labels := r.labelsForModel(model)
 
-	if labels["flexinfer.ai/model"] != "qwen3-8b" {
-		t.Errorf("Expected model label 'qwen3-8b', got %q", labels["flexinfer.ai/model"])
+	if labels[LabelModel] != "qwen3-8b" {
+		t.Errorf("Expected model label 'qwen3-8b', got %q", labels[LabelModel])
 	}
 
-	if labels["flexinfer.ai/backend"] != "mlc-llm" {
-		t.Errorf("Expected backend label 'mlc-llm', got %q", labels["flexinfer.ai/backend"])
+	if labels[LabelBackend] != "mlc-llm" {
+		t.Errorf("Expected backend label 'mlc-llm', got %q", labels[LabelBackend])
 	}
 
-	if _, ok := labels["flexinfer.ai/gpu-group"]; ok {
+	if _, ok := labels[LabelGPUGroup]; ok {
 		t.Error("Should not have gpu-group label when not shared")
 	}
 
@@ -844,8 +844,8 @@ func TestLabelsForModel(t *testing.T) {
 	}
 
 	labels = r.labelsForModel(model)
-	if labels["flexinfer.ai/gpu-group"] != "homelab-gpu" {
-		t.Errorf("Expected gpu-group label 'homelab-gpu', got %q", labels["flexinfer.ai/gpu-group"])
+	if labels[LabelGPUGroup] != "homelab-gpu" {
+		t.Errorf("Expected gpu-group label 'homelab-gpu', got %q", labels[LabelGPUGroup])
 	}
 }
 
@@ -1443,8 +1443,8 @@ func TestEnsureServicePreservesClusterIP(t *testing.T) {
 	if updated.Spec.Selector == nil {
 		t.Fatal("expected selector to be set")
 	}
-	if updated.Spec.Selector["flexinfer.ai/model"] != model.Name {
-		t.Fatalf("expected selector flexinfer.ai/model=%s, got %v", model.Name, updated.Spec.Selector)
+	if updated.Spec.Selector[LabelModel] != model.Name {
+		t.Fatalf("expected selector %s=%s, got %v", LabelModel, model.Name, updated.Spec.Selector)
 	}
 }
 
@@ -1469,7 +1469,7 @@ func TestRemoveRuntimeServiceSelector(t *testing.T) {
 			Namespace: model.Namespace,
 		},
 		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{"flexinfer.ai/model": model.Name},
+			Selector: map[string]string{LabelModel: model.Name},
 		},
 	}
 
@@ -1567,9 +1567,9 @@ func TestEnsureDeploymentPreservesSelectorAndMatchesTemplate(t *testing.T) {
 		"app.kubernetes.io/name":       "model",
 		"app.kubernetes.io/instance":   model.Name,
 		"app.kubernetes.io/managed-by": "flexinfer",
-		"flexinfer.ai/model":           model.Name,
-		"flexinfer.ai/backend":         model.Spec.Backend,
-		"flexinfer.ai/gpu-group":       "homelab-7900xtx",
+		LabelModel:                     model.Name,
+		LabelBackend:                   model.Spec.Backend,
+		LabelGPUGroup:                  "homelab-7900xtx",
 	}
 
 	existing := &appsv1.Deployment{
@@ -1619,7 +1619,7 @@ func TestEnsureDeploymentPreservesSelectorAndMatchesTemplate(t *testing.T) {
 	if updated.Spec.Selector == nil || updated.Spec.Selector.MatchLabels == nil {
 		t.Fatal("expected deployment selector to be set")
 	}
-	if updated.Spec.Selector.MatchLabels["flexinfer.ai/gpu-group"] != "homelab-7900xtx" {
+	if updated.Spec.Selector.MatchLabels[LabelGPUGroup] != "homelab-7900xtx" {
 		t.Fatalf("expected selector to preserve gpu-group, got %#v", updated.Spec.Selector.MatchLabels)
 	}
 	for k, v := range updated.Spec.Selector.MatchLabels {
@@ -2241,7 +2241,7 @@ func TestDeploymentChangedFields(t *testing.T) {
 						},
 					},
 					NodeSelector: map[string]string{
-						"flexinfer.ai/gpu.arch": "gfx1100",
+						LabelGPUArch: "gfx1100",
 					},
 				},
 			},
@@ -2291,7 +2291,7 @@ func TestDeploymentChangedFields(t *testing.T) {
 		{
 			name: "nodeSelector change",
 			modify: func(s *appsv1.DeploymentSpec) {
-				s.Template.Spec.NodeSelector["flexinfer.ai/gpu.arch"] = "gfx906"
+				s.Template.Spec.NodeSelector[LabelGPUArch] = "gfx906"
 			},
 			wantFields: []string{"nodeSelector"},
 		},

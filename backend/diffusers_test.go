@@ -127,6 +127,19 @@ func TestDiffusersBackendEnv(t *testing.T) {
 				"USE_FP16": "1",
 			},
 		},
+		{
+			name: "controlnet settings map to env",
+			config: map[string]interface{}{
+				"controlnetPath":  "/models/controlnet",
+				"controlnetRepo":  "diffusers/controlnet-canny-sdxl-1.0",
+				"controlnetScale": "0.5",
+			},
+			wantEnv: map[string]string{
+				"CONTROLNET_PATH":  "/models/controlnet",
+				"CONTROLNET_REPO":  "diffusers/controlnet-canny-sdxl-1.0",
+				"CONTROLNET_SCALE": "0.5",
+			},
+		},
 	}
 
 	for _, tt := range tests {

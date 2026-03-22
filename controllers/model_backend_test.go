@@ -25,7 +25,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 )
@@ -229,14 +228,14 @@ func TestResolveBackendStoragePlan(t *testing.T) {
 				Spec: aiv1alpha2.ModelSpec{
 					Source: "HF://org/model",
 					Cache:  &aiv1alpha2.CacheSpec{Strategy: "SharedPVC"},
-					Quantize: &aiv1alpha1.QuantizationSpec{
-						Format: aiv1alpha1.QuantizationFormatGPTQ,
+					Quantize: &aiv1alpha2.QuantizationSpec{
+						Format: aiv1alpha2.QuantizationFormatGPTQ,
 					},
 				},
 				Status: aiv1alpha2.ModelStatus{
 					Cache: &aiv1alpha2.CacheStatus{
 						PVCName: "quant-model-cache",
-						Quantization: &aiv1alpha1.QuantizationStatus{
+						Quantization: &aiv1alpha2.QuantizationStatus{
 							CompletedAt: timeNow(),
 						},
 					},
@@ -298,18 +297,18 @@ func TestResolveBackendStoragePlan(t *testing.T) {
 func TestQuantizedOutputDir(t *testing.T) {
 	tests := []struct {
 		name string
-		spec *aiv1alpha1.QuantizationSpec
+		spec *aiv1alpha2.QuantizationSpec
 		want string
 	}{
 		{
 			name: "AWQ defaults (bits=nil, groupSize=nil)",
-			spec: &aiv1alpha1.QuantizationSpec{Format: aiv1alpha1.QuantizationFormatAWQ},
+			spec: &aiv1alpha2.QuantizationSpec{Format: aiv1alpha2.QuantizationFormatAWQ},
 			want: "awq-w4-g128",
 		},
 		{
 			name: "AWQ custom bits and group size",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format:    aiv1alpha1.QuantizationFormatAWQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format:    aiv1alpha2.QuantizationFormatAWQ,
 				Bits:      int32Ptr(8),
 				GroupSize: int32Ptr(64),
 			},
@@ -317,13 +316,13 @@ func TestQuantizedOutputDir(t *testing.T) {
 		},
 		{
 			name: "GPTQ defaults",
-			spec: &aiv1alpha1.QuantizationSpec{Format: aiv1alpha1.QuantizationFormatGPTQ},
+			spec: &aiv1alpha2.QuantizationSpec{Format: aiv1alpha2.QuantizationFormatGPTQ},
 			want: "gptq-w4-g128",
 		},
 		{
 			name: "GPTQ custom bits and group size",
-			spec: &aiv1alpha1.QuantizationSpec{
-				Format:    aiv1alpha1.QuantizationFormatGPTQ,
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format:    aiv1alpha2.QuantizationFormatGPTQ,
 				Bits:      int32Ptr(3),
 				GroupSize: int32Ptr(256),
 			},
@@ -336,7 +335,7 @@ func TestQuantizedOutputDir(t *testing.T) {
 		},
 		{
 			name: "unknown format returns empty",
-			spec: &aiv1alpha1.QuantizationSpec{Format: aiv1alpha1.QuantizationFormatGGUF},
+			spec: &aiv1alpha2.QuantizationSpec{Format: aiv1alpha2.QuantizationFormatGGUF},
 			want: "",
 		},
 	}

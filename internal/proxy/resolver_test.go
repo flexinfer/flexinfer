@@ -73,7 +73,7 @@ func TestResolveLoRAAdapter_Found(t *testing.T) {
 	}
 	require.NoError(t, p.client.Create(ctx, adapter))
 
-	parentModel, isLoRA := p.resolveLoRAAdapter(ctx, "lora-finetune")
+	parentModel, isLoRA := p.resolver.ResolveLoRAAdapter(ctx, "lora-finetune")
 	assert.True(t, isLoRA)
 	assert.Equal(t, "parent-model", parentModel)
 }
@@ -82,7 +82,7 @@ func TestResolveLoRAAdapter_NotFound(t *testing.T) {
 	p := setupTestProxy(t)
 	ctx := context.Background()
 
-	parentModel, isLoRA := p.resolveLoRAAdapter(ctx, "no-such-adapter")
+	parentModel, isLoRA := p.resolver.ResolveLoRAAdapter(ctx, "no-such-adapter")
 	assert.False(t, isLoRA)
 	assert.Equal(t, "no-such-adapter", parentModel)
 }
@@ -125,17 +125,17 @@ func TestResolveLoRAAdapter_MultipleAdapters(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, adapter2))
 
 	// Resolve the shared name -- first match should win.
-	parentModel, isLoRA := p.resolveLoRAAdapter(ctx, "shared-name")
+	parentModel, isLoRA := p.resolver.ResolveLoRAAdapter(ctx, "shared-name")
 	assert.True(t, isLoRA)
 	assert.Equal(t, "model-alpha", parentModel)
 
 	// Resolve the unique name for the second adapter.
-	parentModel, isLoRA = p.resolveLoRAAdapter(ctx, "unique-name")
+	parentModel, isLoRA = p.resolver.ResolveLoRAAdapter(ctx, "unique-name")
 	assert.True(t, isLoRA)
 	assert.Equal(t, "model-beta", parentModel)
 
 	// Unmatched name returns original.
-	parentModel, isLoRA = p.resolveLoRAAdapter(ctx, "nonexistent")
+	parentModel, isLoRA = p.resolver.ResolveLoRAAdapter(ctx, "nonexistent")
 	assert.False(t, isLoRA)
 	assert.Equal(t, "nonexistent", parentModel)
 }

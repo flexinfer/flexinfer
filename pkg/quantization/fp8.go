@@ -6,7 +6,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 const (
@@ -21,13 +21,13 @@ const (
 type FP8JobBuilder struct{}
 
 // Format returns the FP8 quantization format.
-func (b *FP8JobBuilder) Format() aiv1alpha1.QuantizationFormat {
-	return aiv1alpha1.QuantizationFormatFP8
+func (b *FP8JobBuilder) Format() aiv1alpha2.QuantizationFormat {
+	return aiv1alpha2.QuantizationFormatFP8
 }
 
 // Validate checks that the quantization spec is valid for FP8.
-func (b *FP8JobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
-	if spec.Format != aiv1alpha1.QuantizationFormatFP8 {
+func (b *FP8JobBuilder) Validate(spec *aiv1alpha2.QuantizationSpec) error {
+	if spec.Format != aiv1alpha2.QuantizationFormatFP8 {
 		return fmt.Errorf("FP8JobBuilder only handles FP8 format, got %q", spec.Format)
 	}
 	if !spec.UseGPU {

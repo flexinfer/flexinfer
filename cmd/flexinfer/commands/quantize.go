@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
 )
 
@@ -121,19 +122,19 @@ func runQuantizeFormats(cmd *cobra.Command, _ []string) error {
 		bits  string
 		notes string
 	}
-	info := map[aiv1alpha1.QuantizationFormat]formatInfo{
-		aiv1alpha1.QuantizationFormatGGUF: {bits: "2-8", notes: "Best for consumer GPUs"},
-		aiv1alpha1.QuantizationFormatAWQ:  {bits: "4", notes: "NVIDIA-focused throughput"},
-		aiv1alpha1.QuantizationFormatGPTQ: {bits: "4-8", notes: "Wide NVIDIA compatibility"},
-		aiv1alpha1.QuantizationFormatEXL2: {bits: "2-6", notes: "ExLlamaV2 optimized"},
-		aiv1alpha1.QuantizationFormatFP8:  {bits: "8", notes: "Datacenter GPU optimization"},
+	info := map[aiv1alpha2.QuantizationFormat]formatInfo{
+		aiv1alpha2.QuantizationFormatGGUF: {bits: "2-8", notes: "Best for consumer GPUs"},
+		aiv1alpha2.QuantizationFormatAWQ:  {bits: "4", notes: "NVIDIA-focused throughput"},
+		aiv1alpha2.QuantizationFormatGPTQ: {bits: "4-8", notes: "Wide NVIDIA compatibility"},
+		aiv1alpha2.QuantizationFormatEXL2: {bits: "2-6", notes: "ExLlamaV2 optimized"},
+		aiv1alpha2.QuantizationFormatFP8:  {bits: "8", notes: "Datacenter GPU optimization"},
 	}
-	order := []aiv1alpha1.QuantizationFormat{
-		aiv1alpha1.QuantizationFormatGGUF,
-		aiv1alpha1.QuantizationFormatAWQ,
-		aiv1alpha1.QuantizationFormatGPTQ,
-		aiv1alpha1.QuantizationFormatEXL2,
-		aiv1alpha1.QuantizationFormatFP8,
+	order := []aiv1alpha2.QuantizationFormat{
+		aiv1alpha2.QuantizationFormatGGUF,
+		aiv1alpha2.QuantizationFormatAWQ,
+		aiv1alpha2.QuantizationFormatGPTQ,
+		aiv1alpha2.QuantizationFormatEXL2,
+		aiv1alpha2.QuantizationFormatFP8,
 	}
 
 	_, _ = fmt.Fprintf(out, "%-8s %-6s %-24s %-11s %s\n", "FORMAT", "BITS", "BACKENDS", "STATUS", "NOTES")
@@ -165,7 +166,7 @@ func runQuantizeFormats(cmd *cobra.Command, _ []string) error {
 func runQuantize(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	cacheName := args[0]
-	format := aiv1alpha1.QuantizationFormat(strings.ToUpper(strings.TrimSpace(quantFormat)))
+	format := aiv1alpha2.QuantizationFormat(strings.ToUpper(strings.TrimSpace(quantFormat)))
 	if format == "" {
 		return fmt.Errorf("quantization format is required")
 	}
@@ -175,7 +176,7 @@ func runQuantize(cmd *cobra.Command, args []string) error {
 	}
 
 	qType := strings.TrimSpace(quantType)
-	if format == aiv1alpha1.QuantizationFormatGGUF {
+	if format == aiv1alpha2.QuantizationFormatGGUF {
 		if qType == "" {
 			qType = quantization.DefaultGGUFType
 		} else {
@@ -199,27 +200,27 @@ func runQuantize(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build the quantization spec patch
-	quantSpec := &aiv1alpha1.QuantizationSpec{
+	quantSpec := &aiv1alpha2.QuantizationSpec{
 		Format: format,
 	}
 	effectiveBits := quantBits
-	if (format == aiv1alpha1.QuantizationFormatFP8) && !cmd.Flags().Changed("bits") {
+	if (format == aiv1alpha2.QuantizationFormatFP8) && !cmd.Flags().Changed("bits") {
 		effectiveBits = int32(quantization.DefaultFP8Bits)
 	}
 
-	if format == aiv1alpha1.QuantizationFormatGGUF {
+	if format == aiv1alpha2.QuantizationFormatGGUF {
 		quantSpec.GGUFType = qType
 	}
-	if format == aiv1alpha1.QuantizationFormatAWQ || format == aiv1alpha1.QuantizationFormatGPTQ {
+	if format == aiv1alpha2.QuantizationFormatAWQ || format == aiv1alpha2.QuantizationFormatGPTQ {
 		quantSpec.Bits = &effectiveBits
 		quantSpec.GroupSize = &quantGroupSize
 		quantSpec.UseGPU = quantUseGPU
 	}
-	if format == aiv1alpha1.QuantizationFormatEXL2 {
+	if format == aiv1alpha2.QuantizationFormatEXL2 {
 		quantSpec.Bits = &effectiveBits
 		quantSpec.UseGPU = quantUseGPU
 	}
-	if format == aiv1alpha1.QuantizationFormatFP8 {
+	if format == aiv1alpha2.QuantizationFormatFP8 {
 		quantSpec.Bits = &effectiveBits
 		quantSpec.UseGPU = quantUseGPU
 	}
@@ -232,19 +233,19 @@ func runQuantize(cmd *cobra.Command, args []string) error {
 
 	// Apply patch
 	original := cache.DeepCopy()
-	cache.Spec.Quantization = quantSpec
+	cache.Spec.Quantization = convertQuantizationSpecV2toV1(quantSpec)
 	if err := k8sClient.Patch(ctx(), cache, client.MergeFrom(original)); err != nil {
 		return fmt.Errorf("failed to patch ModelCache: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(out, "Quantization requested for ModelCache %q\n", cacheName)
 	_, _ = fmt.Fprintf(out, "  Format: %s\n", format)
-	if format == aiv1alpha1.QuantizationFormatGGUF {
+	if format == aiv1alpha2.QuantizationFormatGGUF {
 		_, _ = fmt.Fprintf(out, "  Type:   %s\n", qType)
-	} else if format == aiv1alpha1.QuantizationFormatEXL2 {
+	} else if format == aiv1alpha2.QuantizationFormatEXL2 {
 		_, _ = fmt.Fprintf(out, "  Type:   EXL2_B%d\n", effectiveBits)
 		_, _ = fmt.Fprintf(out, "  GPU:    %t\n", quantUseGPU)
-	} else if format == aiv1alpha1.QuantizationFormatFP8 {
+	} else if format == aiv1alpha2.QuantizationFormatFP8 {
 		_, _ = fmt.Fprintf(out, "  Type:   FP8_B%d\n", effectiveBits)
 		_, _ = fmt.Fprintf(out, "  GPU:    %t\n", quantUseGPU)
 	} else {
@@ -286,9 +287,9 @@ func runQuantizeStatus(cmd *cobra.Command, args []string) error {
 		requested = string(cache.Spec.Quantization.Format)
 		if cache.Spec.Quantization.GGUFType != "" {
 			requested = fmt.Sprintf("%s/%s", requested, cache.Spec.Quantization.GGUFType)
-		} else if cache.Spec.Quantization.Format == aiv1alpha1.QuantizationFormatEXL2 && cache.Spec.Quantization.Bits != nil {
+		} else if aiv1alpha2.QuantizationFormat(cache.Spec.Quantization.Format) == aiv1alpha2.QuantizationFormatEXL2 && cache.Spec.Quantization.Bits != nil {
 			requested = fmt.Sprintf("%s/EXL2_B%d", requested, *cache.Spec.Quantization.Bits)
-		} else if cache.Spec.Quantization.Format == aiv1alpha1.QuantizationFormatFP8 && cache.Spec.Quantization.Bits != nil {
+		} else if aiv1alpha2.QuantizationFormat(cache.Spec.Quantization.Format) == aiv1alpha2.QuantizationFormatFP8 && cache.Spec.Quantization.Bits != nil {
 			requested = fmt.Sprintf("%s/FP8_B%d", requested, *cache.Spec.Quantization.Bits)
 		} else if cache.Spec.Quantization.Bits != nil && cache.Spec.Quantization.GroupSize != nil {
 			requested = fmt.Sprintf("%s/W%d_G%d", requested, *cache.Spec.Quantization.Bits, *cache.Spec.Quantization.GroupSize)
@@ -396,7 +397,7 @@ func runQuantizeRecommend(cmd *cobra.Command, args []string) error {
 	}
 
 	original := cache.DeepCopy()
-	cache.Spec.Quantization = rec.Spec
+	cache.Spec.Quantization = convertQuantizationSpecV2toV1(rec.Spec)
 	if err := k8sClient.Patch(ctx(), cache, client.MergeFrom(original)); err != nil {
 		return fmt.Errorf("failed to patch ModelCache with recommendation: %w", err)
 	}
@@ -408,7 +409,7 @@ func runQuantizeRecommend(cmd *cobra.Command, args []string) error {
 
 func runQuantizeValidate(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
-	format := aiv1alpha1.QuantizationFormat(strings.ToUpper(strings.TrimSpace(quantValFormat)))
+	format := aiv1alpha2.QuantizationFormat(strings.ToUpper(strings.TrimSpace(quantValFormat)))
 	if format == "" {
 		return fmt.Errorf("quantization format is required")
 	}
@@ -459,20 +460,20 @@ func runQuantizeValidate(cmd *cobra.Command, _ []string) error {
 	return fmt.Errorf("quantization quality gate failed")
 }
 
-func quantizationSpecSummary(spec *aiv1alpha1.QuantizationSpec) string {
+func quantizationSpecSummary(spec *aiv1alpha2.QuantizationSpec) string {
 	if spec == nil {
 		return "-"
 	}
 	switch spec.Format {
-	case aiv1alpha1.QuantizationFormatGGUF:
+	case aiv1alpha2.QuantizationFormatGGUF:
 		ggufType := strings.TrimSpace(spec.GGUFType)
 		if ggufType == "" {
 			ggufType = quantization.DefaultGGUFType
 		}
 		return fmt.Sprintf("GGUF/%s", ggufType)
-	case aiv1alpha1.QuantizationFormatAWQ, aiv1alpha1.QuantizationFormatGPTQ:
+	case aiv1alpha2.QuantizationFormatAWQ, aiv1alpha2.QuantizationFormatGPTQ:
 		bits := int32(quantization.DefaultAWQBits)
-		if spec.Format == aiv1alpha1.QuantizationFormatGPTQ {
+		if spec.Format == aiv1alpha2.QuantizationFormatGPTQ {
 			bits = int32(quantization.DefaultGPTQBits)
 		}
 		if spec.Bits != nil {
@@ -483,13 +484,13 @@ func quantizationSpecSummary(spec *aiv1alpha1.QuantizationSpec) string {
 			group = *spec.GroupSize
 		}
 		return fmt.Sprintf("%s/W%d_G%d", spec.Format, bits, group)
-	case aiv1alpha1.QuantizationFormatEXL2:
+	case aiv1alpha2.QuantizationFormatEXL2:
 		bits := int32(quantization.DefaultEXL2Bits)
 		if spec.Bits != nil {
 			bits = *spec.Bits
 		}
 		return fmt.Sprintf("EXL2/EXL2_B%d", bits)
-	case aiv1alpha1.QuantizationFormatFP8:
+	case aiv1alpha2.QuantizationFormatFP8:
 		bits := int32(quantization.DefaultFP8Bits)
 		if spec.Bits != nil {
 			bits = *spec.Bits

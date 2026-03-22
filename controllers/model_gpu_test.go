@@ -333,18 +333,18 @@ func TestValidateBackendGPUCompatibility(t *testing.T) {
 		},
 		{
 			name:        "experimental with generic image emits warning",
-			backendName: "diffusers",
-			image:       "registry.example.com/diffusers:generic",
+			backendName: "comfyui",
+			image:       "registry.example.com/comfyui:generic",
 			gpuVendor:   backend.GPUVendorAMD,
 			gpuArch:     "gfx906",
 			wantErr:     false,
 			wantWarning: true,
-			desc:        "diffusers on gfx906 is experimental; generic image triggers warning",
+			desc:        "comfyui on gfx906 is experimental; generic image triggers warning",
 		},
 		{
 			name:        "experimental with arch-specific gfx906 image suppresses warning",
-			backendName: "diffusers",
-			image:       "registry.example.com/diffusers:rocm-gfx906",
+			backendName: "comfyui",
+			image:       "registry.example.com/comfyui:rocm-gfx906",
 			gpuVendor:   backend.GPUVendorAMD,
 			gpuArch:     "gfx906",
 			wantErr:     false,
@@ -753,7 +753,7 @@ func TestDetectGPU(t *testing.T) {
 			}),
 			nodes: []corev1.Node{
 				readyNode("amd-node-flex", map[string]string{
-					"flexinfer.ai/gpu.arch": "gfx906",
+					LabelGPUArch: "gfx906",
 				}, corev1.ResourceList{
 					"amd.com/gpu": resource.MustParse("1"),
 				}),
@@ -867,7 +867,7 @@ func TestDetectGPU(t *testing.T) {
 			}),
 			nodes: []corev1.Node{
 				readyNode("nvidia-flex", map[string]string{
-					"flexinfer.ai/gpu.arch": "sm_89",
+					LabelGPUArch: "sm_89",
 				}, corev1.ResourceList{
 					"nvidia.com/gpu": resource.MustParse("1"),
 				}),

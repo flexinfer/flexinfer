@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 func TestAbliterationJobPrefersProfileImageOverGlobalRuntime(t *testing.T) {
@@ -63,8 +64,8 @@ func TestGPTQJobPrefersProfileImageOverGlobalRuntime(t *testing.T) {
 		GPUVendor:             "amd",
 		GPUArch:               "gfx1100",
 		ProfileQuantizerImage: "registry.harbor.lan/flexinfer/runtime@sha256:profile",
-		Spec: &aiv1alpha1.QuantizationSpec{
-			Format: aiv1alpha1.QuantizationFormatGPTQ,
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format: aiv1alpha2.QuantizationFormatGPTQ,
 			UseGPU: true,
 		},
 	})

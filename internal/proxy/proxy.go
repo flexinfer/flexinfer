@@ -7,15 +7,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httputil"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/internal/routing"
+	"github.com/flexinfer/flexinfer/pkg/envutil"
 	"github.com/flexinfer/flexinfer/pkg/validation"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
@@ -51,6 +51,10 @@ const (
 
 	// readyPollInterval is the polling interval when waiting for a model to become ready.
 	readyPollInterval = 1 * time.Second
+
+	// proxyTTL is how long a cached httputil.ReverseProxy is valid before eviction.
+	// After this duration, the proxy is recreated to pick up backend pod IP changes.
+	proxyTTL = 5 * time.Minute
 )
 
 // Scheme is the runtime scheme used by the proxy for K8s API types.
@@ -131,73 +135,70 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 	cfg := Config{
 		Namespace:                        namespace,
 		Client:                           k8sClient,
-		MaxQueueSize:                     getEnvInt("PROXY_MAX_QUEUE_SIZE", 100),
-		QueueTimeout:                     getEnvDuration("PROXY_QUEUE_TIMEOUT", 60*time.Second),
-		ColdStartTimeout:                 getEnvDuration("PROXY_COLD_START_TIMEOUT", 60*time.Second),
-		RoutingEnabled:                   getEnvBool("PROXY_ROUTING_ENABLED", true),
-		RoutingExplicitCacheKeyMaxLength: getEnvInt("PROXY_ROUTING_EXPLICIT_KEY_MAX_LENGTH", defaultRoutingConfig.ExplicitCacheKeyMaxLength),
-		RoutingSystemSegmentMaxLength:    getEnvInt("PROXY_ROUTING_SYSTEM_SEGMENT_MAX_LENGTH", defaultRoutingConfig.SystemSegmentMaxLength),
-		RoutingDocSegmentMaxLength:       getEnvInt("PROXY_ROUTING_DOCUMENT_SEGMENT_MAX_LENGTH", defaultRoutingConfig.DocSegmentMaxLength),
-		ValidateRequests:                 getEnvBool("PROXY_VALIDATE_REQUESTS", false),
-		BackoffEnabled:                   getEnvBool("PROXY_BACKOFF_ENABLED", false),
-		BackoffMaxRetries:                getEnvInt("PROXY_BACKOFF_MAX_RETRIES", 3),
-		BackoffInitialWait:               getEnvDuration("PROXY_BACKOFF_INITIAL_WAIT", 5*time.Second),
-		BackoffMaxWait:                   getEnvDuration("PROXY_BACKOFF_MAX_WAIT", 30*time.Second),
-		RateLimitEnabled:                 getEnvBool("PROXY_RATE_LIMIT_ENABLED", false),
-		RateLimitPerModel:                getEnvFloat("PROXY_RATE_LIMIT_PER_MODEL", 100.0),
-		RateLimitBurst:                   getEnvInt("PROXY_RATE_LIMIT_BURST", 50),
-		RateLimitGlobal:                  getEnvFloat("PROXY_RATE_LIMIT_GLOBAL", 1000.0),
-		RateLimitGlobalBurst:             getEnvInt("PROXY_RATE_LIMIT_GLOBAL_BURST", 200),
-		AuthEnabled:                      getEnvBool("PROXY_AUTH_ENABLED", false),
+		MaxQueueSize:                     envutil.IntOrDefault("PROXY_MAX_QUEUE_SIZE", 100),
+		QueueTimeout:                     envutil.DurationOrDefault("PROXY_QUEUE_TIMEOUT", 60*time.Second),
+		ColdStartTimeout:                 envutil.DurationOrDefault("PROXY_COLD_START_TIMEOUT", 60*time.Second),
+		RoutingEnabled:                   envutil.BoolOrDefault("PROXY_ROUTING_ENABLED", true),
+		RoutingExplicitCacheKeyMaxLength: envutil.IntOrDefault("PROXY_ROUTING_EXPLICIT_KEY_MAX_LENGTH", defaultRoutingConfig.ExplicitCacheKeyMaxLength),
+		RoutingSystemSegmentMaxLength:    envutil.IntOrDefault("PROXY_ROUTING_SYSTEM_SEGMENT_MAX_LENGTH", defaultRoutingConfig.SystemSegmentMaxLength),
+		RoutingDocSegmentMaxLength:       envutil.IntOrDefault("PROXY_ROUTING_DOCUMENT_SEGMENT_MAX_LENGTH", defaultRoutingConfig.DocSegmentMaxLength),
+		ValidateRequests:                 envutil.BoolOrDefault("PROXY_VALIDATE_REQUESTS", false),
+		BackoffEnabled:                   envutil.BoolOrDefault("PROXY_BACKOFF_ENABLED", false),
+		BackoffMaxRetries:                envutil.IntOrDefault("PROXY_BACKOFF_MAX_RETRIES", 3),
+		BackoffInitialWait:               envutil.DurationOrDefault("PROXY_BACKOFF_INITIAL_WAIT", 5*time.Second),
+		BackoffMaxWait:                   envutil.DurationOrDefault("PROXY_BACKOFF_MAX_WAIT", 30*time.Second),
+		RateLimitEnabled:                 envutil.BoolOrDefault("PROXY_RATE_LIMIT_ENABLED", false),
+		RateLimitPerModel:                envutil.Float64OrDefault("PROXY_RATE_LIMIT_PER_MODEL", 100.0),
+		RateLimitBurst:                   envutil.IntOrDefault("PROXY_RATE_LIMIT_BURST", 50),
+		RateLimitGlobal:                  envutil.Float64OrDefault("PROXY_RATE_LIMIT_GLOBAL", 1000.0),
+		RateLimitGlobalBurst:             envutil.IntOrDefault("PROXY_RATE_LIMIT_GLOBAL_BURST", 200),
+		AuthEnabled:                      envutil.BoolOrDefault("PROXY_AUTH_ENABLED", false),
 		AuthToken:                        os.Getenv("PROXY_AUTH_TOKEN"),
-		DirectRuntimeEnabled:             getEnvBool("PROXY_DIRECT_RUNTIME_ENABLED", true),
+		DirectRuntimeEnabled:             envutil.BoolOrDefault("PROXY_DIRECT_RUNTIME_ENABLED", true),
 	}
 
 	return cfg
+}
+
+// proxyEntry holds a cached httputil.ReverseProxy with its creation timestamp
+// so stale entries can be evicted after proxyTTL.
+type proxyEntry struct {
+	proxy   *httputil.ReverseProxy
+	created time.Time
 }
 
 // Proxy is the flexinfer reverse proxy that routes requests to model backends.
 type Proxy struct {
 	client       client.Client
 	namespace    string
-	proxyMap     sync.Map           // cache of httputil.ReverseProxy by model name
-	requestGroup singleflight.Group // coalescing activation requests
+	proxyMap     TypedSyncMap[string, proxyEntry] // cache of ReverseProxy by target URL, with TTL
+	requestGroup singleflight.Group               // coalescing activation requests
 
 	// Request queues per model during cold start
-	queues   sync.Map // map[string]*RequestQueue
+	queues   TypedSyncMap[string, *RequestQueue]
 	queuesMu sync.Mutex
 
-	// Service label to model name cache
-	serviceLabelCache   sync.Map // map[string]string: service label -> model name
-	serviceLabelCacheMu sync.Mutex
-	lastCacheRefresh    time.Time
-
-	// Label group routing: labels shared by multiple models
-	labelGroupCache  sync.Map // map[string][]string: label -> []modelName (all claimants)
-	labelGroupModels sync.Map // map[string][]string: modelName -> []relatedModelNames (reverse index)
-
-	// Model alias cache: servedModelName/aliases -> K8s resource name
-	modelAliasCache   sync.Map // map[string]string: alias -> K8s model name
-	modelAliasCacheMu sync.Mutex
-	lastAliasRefresh  time.Time
+	// Extracted subsystems
+	resolver  *ModelResolver // name resolution: service labels, aliases, LoRA
+	activator ModelActivator // K8s activation: scale-up, demand signals, cold-start
 
 	// Configuration (can be overridden by env vars)
-	maxQueueSize       int           // Default: 100
-	queueTimeout       time.Duration // Default: 60s (how long request can wait in queue)
-	coldStartTimeout   time.Duration // Default: 60s (how long to wait for model to become ready)
-	connectionTracking sync.Map      // map[string]*int64 for tracking active connections per model
+	maxQueueSize       int                          // Default: 100
+	queueTimeout       time.Duration                // Default: 60s (how long request can wait in queue)
+	coldStartTimeout   time.Duration                // Default: 60s (how long to wait for model to become ready)
+	connectionTracking TypedSyncMap[string, *int64] // tracking active connections per model
 
 	// Routing for multi-replica models
 	router             *routing.Router
-	routingEnabled     bool     // Enable advanced routing (session affinity, prefix-based)
-	podConnectionCount sync.Map // map[string]*int64 for tracking connections per pod address
+	routingEnabled     bool                         // Enable advanced routing (session affinity, prefix-based)
+	podConnectionCount TypedSyncMap[string, *int64] // tracking connections per pod address
 
 	// Request validation
 	validateRequests bool // Enable OpenAI request schema validation
 
 	// Endpoint tracking for metrics
-	endpointCache sync.Map // map[string][]string - model name -> list of endpoint addresses
-	routingKeySet sync.Map // map[string]*routingKeyTracker keyed by model|strategy|key_source
+	endpointCache TypedSyncMap[string, []string]           // model name -> list of endpoint addresses
+	routingKeySet TypedSyncMap[string, *routingKeyTracker] // model|strategy|key_source -> tracker
 
 	// Backoff configuration for failed activations
 	backoffEnabled     bool          // Enable exponential backoff for failed activations
@@ -206,22 +207,26 @@ type Proxy struct {
 	backoffMaxWait     time.Duration // Maximum wait time (default: 30s)
 
 	// Rate limiting
-	rateLimitEnabled     bool          // Enable per-model rate limiting
-	rateLimitPerModel    float64       // Requests per second per model (0 = unlimited)
-	rateLimitBurst       int           // Max burst size per model
-	rateLimitGlobal      float64       // Global requests per second (0 = unlimited)
-	rateLimitGlobalBurst int           // Global burst size
-	modelLimiters        sync.Map      // map[string]*rate.Limiter per-model rate limiters
-	globalLimiter        *rate.Limiter // global rate limiter (nil if disabled)
+	rateLimitEnabled     bool                                // Enable per-model rate limiting
+	rateLimitPerModel    float64                             // Requests per second per model (0 = unlimited)
+	rateLimitBurst       int                                 // Max burst size per model
+	rateLimitGlobal      float64                             // Global requests per second (0 = unlimited)
+	rateLimitGlobalBurst int                                 // Global burst size
+	modelLimiters        TypedSyncMap[string, *rate.Limiter] // per-model rate limiters
+	globalLimiter        *rate.Limiter                       // global rate limiter (nil if disabled)
 
 	// Authentication
 	authEnabled bool   // Enable bearer token authentication
 	authToken   string // Expected bearer token (from Secret)
 
 	// Direct runtime communication (fast path)
-	runtimeCache         *RuntimeCache // cached runtime pod endpoints
-	directRuntimeEnabled bool          // enable direct proxy-to-runtime loading
-	directLoadTargets    sync.Map      // map[string]string: modelName -> "http://podIP:backendPort"
+	runtimeCache         *RuntimeCache                // cached runtime pod endpoints
+	directRuntimeEnabled bool                         // enable direct proxy-to-runtime loading
+	directLoadTargets    TypedSyncMap[string, string] // modelName -> "http://podIP:backendPort"
+
+	// Lifecycle context for background goroutines
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	// Stored config for debug endpoint (secrets redacted)
 	debugConfig debugConfigView
@@ -236,9 +241,13 @@ func New(cfg Config) *Proxy {
 		DocSegmentMaxLength:       cfg.RoutingDocSegmentMaxLength,
 	})
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	p := &Proxy{
 		client:               cfg.Client,
 		namespace:            cfg.Namespace,
+		resolver:             NewModelResolver(cfg.Client, cfg.Namespace),
+		activator:            NewK8sModelActivator(cfg.Client, cfg.Namespace, cfg.ColdStartTimeout),
 		maxQueueSize:         cfg.MaxQueueSize,
 		queueTimeout:         cfg.QueueTimeout,
 		coldStartTimeout:     cfg.ColdStartTimeout,
@@ -257,6 +266,8 @@ func New(cfg Config) *Proxy {
 		authEnabled:          cfg.AuthEnabled,
 		authToken:            cfg.AuthToken,
 		directRuntimeEnabled: cfg.DirectRuntimeEnabled,
+		ctx:                  ctx,
+		cancel:               cancel,
 		debugConfig:          newDebugConfigView(cfg),
 	}
 
@@ -272,6 +283,13 @@ func New(cfg Config) *Proxy {
 	return p
 }
 
+// Shutdown cancels all background goroutines started by Run.
+func (p *Proxy) Shutdown() {
+	if p.cancel != nil {
+		p.cancel()
+	}
+}
+
 // Run starts the proxy HTTP server and background goroutines.
 func (p *Proxy) Run(port int) error {
 	// Start queue cleanup goroutine
@@ -279,15 +297,15 @@ func (p *Proxy) Run(port int) error {
 
 	// Start endpoint watcher for routing
 	if p.routingEnabled {
-		go p.watchEndpoints(context.Background())
+		go p.watchEndpoints(p.ctx)
 	}
 
 	// Start runtime cache for direct fast path
 	if p.runtimeCache != nil {
-		p.runtimeCache.StartRefreshLoop(context.Background())
+		p.runtimeCache.StartRefreshLoop(p.ctx)
 
 		// Recover direct load targets from running runtime pods.
-		recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		recoveryCtx, recoveryCancel := context.WithTimeout(p.ctx, 10*time.Second)
 		p.recoverDirectLoadTargets(recoveryCtx)
 		recoveryCancel()
 	}
@@ -369,7 +387,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	ctx = r.Context()
 
 	// 2. Try to resolve service labels (e.g., "textgen" -> "qwen3-8b-fast")
-	resolvedName := p.resolveServiceLabel(ctx, modelName)
+	resolvedName := p.resolver.ResolveServiceLabel(ctx, modelName)
 	if resolvedName != modelName {
 		slog.Debug("resolved service label", "label", modelName, "model", resolvedName, "request_id", requestID)
 		modelName = resolvedName
@@ -377,7 +395,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2b. Try to resolve model aliases (servedModelName / litellm aliases -> K8s name)
-	resolvedAlias := p.resolveModelAlias(ctx, modelName)
+	resolvedAlias := p.resolver.ResolveModelAlias(ctx, modelName)
 	if resolvedAlias != modelName {
 		slog.Debug("resolved model alias", "alias", modelName, "model", resolvedAlias, "request_id", requestID)
 		modelName = resolvedAlias
@@ -510,47 +528,4 @@ func (p *Proxy) handleDebugConfig(w http.ResponseWriter, _ *http.Request) {
 	if err := json.NewEncoder(w).Encode(p.debugConfig); err != nil {
 		slog.Warn("debug config write failed", "error", err)
 	}
-}
-
-// getEnvInt returns an integer from environment variable or default.
-func getEnvInt(key string, defaultVal int) int {
-	if val := os.Getenv(key); val != "" {
-		if i, err := strconv.Atoi(val); err == nil {
-			return i
-		}
-	}
-	return defaultVal
-}
-
-// getEnvDuration returns a duration from environment variable or default.
-func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
-	if val := os.Getenv(key); val != "" {
-		if d, err := time.ParseDuration(val); err == nil {
-			return d
-		}
-	}
-	return defaultVal
-}
-
-// getEnvBool returns a boolean from environment variable or default.
-func getEnvBool(key string, defaultVal bool) bool {
-	if val := os.Getenv(key); val != "" {
-		switch strings.ToLower(val) {
-		case "true", "1", "yes", "on":
-			return true
-		case "false", "0", "no", "off":
-			return false
-		}
-	}
-	return defaultVal
-}
-
-// getEnvFloat returns a float64 from environment variable or default.
-func getEnvFloat(key string, defaultVal float64) float64 {
-	if val := os.Getenv(key); val != "" {
-		if f, err := strconv.ParseFloat(val, 64); err == nil {
-			return f
-		}
-	}
-	return defaultVal
 }

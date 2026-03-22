@@ -5,7 +5,7 @@ import (
 	"math"
 	"strings"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 // QualityPolicy defines allowed quality deltas for a quantization format.
@@ -22,7 +22,7 @@ type QualityMetrics struct {
 
 // QualityEvaluation captures deterministic quality gate results.
 type QualityEvaluation struct {
-	Format             aiv1alpha1.QuantizationFormat
+	Format             aiv1alpha2.QuantizationFormat
 	Policy             QualityPolicy
 	PerplexityDeltaPct float64
 	AcceptanceDropPct  float64
@@ -32,16 +32,16 @@ type QualityEvaluation struct {
 	Candidate          QualityMetrics
 }
 
-var qualityPolicies = map[aiv1alpha1.QuantizationFormat]QualityPolicy{
-	aiv1alpha1.QuantizationFormatGGUF: {MaxPerplexityRegressionPct: 10.0, MaxAcceptanceDropPct: 3.0},
-	aiv1alpha1.QuantizationFormatAWQ:  {MaxPerplexityRegressionPct: 7.0, MaxAcceptanceDropPct: 2.0},
-	aiv1alpha1.QuantizationFormatGPTQ: {MaxPerplexityRegressionPct: 8.0, MaxAcceptanceDropPct: 2.5},
-	aiv1alpha1.QuantizationFormatEXL2: {MaxPerplexityRegressionPct: 6.0, MaxAcceptanceDropPct: 2.0},
-	aiv1alpha1.QuantizationFormatFP8:  {MaxPerplexityRegressionPct: 5.0, MaxAcceptanceDropPct: 1.5},
+var qualityPolicies = map[aiv1alpha2.QuantizationFormat]QualityPolicy{
+	aiv1alpha2.QuantizationFormatGGUF: {MaxPerplexityRegressionPct: 10.0, MaxAcceptanceDropPct: 3.0},
+	aiv1alpha2.QuantizationFormatAWQ:  {MaxPerplexityRegressionPct: 7.0, MaxAcceptanceDropPct: 2.0},
+	aiv1alpha2.QuantizationFormatGPTQ: {MaxPerplexityRegressionPct: 8.0, MaxAcceptanceDropPct: 2.5},
+	aiv1alpha2.QuantizationFormatEXL2: {MaxPerplexityRegressionPct: 6.0, MaxAcceptanceDropPct: 2.0},
+	aiv1alpha2.QuantizationFormatFP8:  {MaxPerplexityRegressionPct: 5.0, MaxAcceptanceDropPct: 1.5},
 }
 
 // QualityPolicyFor returns deterministic quality thresholds for a format.
-func QualityPolicyFor(format aiv1alpha1.QuantizationFormat) (QualityPolicy, error) {
+func QualityPolicyFor(format aiv1alpha2.QuantizationFormat) (QualityPolicy, error) {
 	policy, ok := qualityPolicies[normalizeFormat(format)]
 	if !ok {
 		return QualityPolicy{}, fmt.Errorf("quality policy is not defined for format %q", format)
@@ -62,7 +62,7 @@ func NormalizeAcceptanceRate(v float64) (float64, bool, error) {
 }
 
 // EvaluateQuality evaluates candidate metrics against the policy for a format.
-func EvaluateQuality(format aiv1alpha1.QuantizationFormat, baseline, candidate QualityMetrics) (QualityEvaluation, error) {
+func EvaluateQuality(format aiv1alpha2.QuantizationFormat, baseline, candidate QualityMetrics) (QualityEvaluation, error) {
 	policy, err := QualityPolicyFor(format)
 	if err != nil {
 		return QualityEvaluation{}, err
@@ -105,8 +105,8 @@ func EvaluateQuality(format aiv1alpha1.QuantizationFormat, baseline, candidate Q
 	}, nil
 }
 
-func normalizeFormat(format aiv1alpha1.QuantizationFormat) aiv1alpha1.QuantizationFormat {
-	return aiv1alpha1.QuantizationFormat(strings.ToUpper(strings.TrimSpace(string(format))))
+func normalizeFormat(format aiv1alpha2.QuantizationFormat) aiv1alpha2.QuantizationFormat {
+	return aiv1alpha2.QuantizationFormat(strings.ToUpper(strings.TrimSpace(string(format))))
 }
 
 func round2(v float64) float64 {

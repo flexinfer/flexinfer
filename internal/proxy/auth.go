@@ -39,12 +39,12 @@ func (p *Proxy) checkRateLimit(modelName string) bool {
 
 // getModelLimiter returns a per-model rate limiter, creating one if needed.
 func (p *Proxy) getModelLimiter(modelName string) *rate.Limiter {
-	if val, ok := p.modelLimiters.Load(modelName); ok {
-		return val.(*rate.Limiter)
+	if limiter, ok := p.modelLimiters.Load(modelName); ok {
+		return limiter
 	}
 	limiter := rate.NewLimiter(rate.Limit(p.rateLimitPerModel), p.rateLimitBurst)
 	actual, _ := p.modelLimiters.LoadOrStore(modelName, limiter)
-	return actual.(*rate.Limiter)
+	return actual
 }
 
 // checkAuth validates the bearer token. Returns true if authenticated or auth is disabled.

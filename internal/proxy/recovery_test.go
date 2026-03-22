@@ -122,9 +122,8 @@ func TestRecoverDirectLoadTargets_ReadyModel(t *testing.T) {
 	val, ok := p.directLoadTargets.Load("test-model")
 	assert.True(t, ok, "test-model should be in directLoadTargets")
 	if ok {
-		target := val.(string)
 		// Target should point to the pod IP with the backend port (vllm=8000).
-		assert.Contains(t, target, srvIP)
+		assert.Contains(t, val, srvIP)
 	}
 }
 

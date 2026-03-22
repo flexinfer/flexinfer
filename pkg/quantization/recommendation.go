@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/pkg/gpu"
 )
 
@@ -20,7 +20,7 @@ type RecommendationInput struct {
 
 // Recommendation is a deterministic recommendation for quantization format.
 type Recommendation struct {
-	Spec                 *aiv1alpha1.QuantizationSpec
+	Spec                 *aiv1alpha2.QuantizationSpec
 	Reason               string
 	GPUVendor            string
 	GPUArchitecture      string
@@ -48,15 +48,15 @@ func RecommendSpec(in RecommendationInput) Recommendation {
 
 	switch {
 	case gpu.IsMaxwellArch(arch):
-		rec.Spec = &aiv1alpha1.QuantizationSpec{
-			Format:   aiv1alpha1.QuantizationFormatGGUF,
+		rec.Spec = &aiv1alpha2.QuantizationSpec{
+			Format:   aiv1alpha2.QuantizationFormatGGUF,
 			GGUFType: "Q3_K_M",
 		}
 		rec.Reason = "Maxwell/sm_5x GPUs are constrained and AWQ/GPTQ/FP8 pipelines are NVIDIA-newer-arch focused; GGUF is the safest option."
 	case strings.EqualFold(vendor, "AMD"):
 		ggufType := recommendGGUFType(modelSizeB, hasModelSize)
-		rec.Spec = &aiv1alpha1.QuantizationSpec{
-			Format:   aiv1alpha1.QuantizationFormatGGUF,
+		rec.Spec = &aiv1alpha2.QuantizationSpec{
+			Format:   aiv1alpha2.QuantizationFormatGGUF,
 			GGUFType: ggufType,
 		}
 		if strings.EqualFold(arch, "gfx1100") {
@@ -68,8 +68,8 @@ func RecommendSpec(in RecommendationInput) Recommendation {
 		}
 	case strings.EqualFold(vendor, "NVIDIA") && isNvidiaDatacenterArch(arch):
 		bits := int32(DefaultFP8Bits)
-		rec.Spec = &aiv1alpha1.QuantizationSpec{
-			Format: aiv1alpha1.QuantizationFormatFP8,
+		rec.Spec = &aiv1alpha2.QuantizationSpec{
+			Format: aiv1alpha2.QuantizationFormatFP8,
 			Bits:   &bits,
 			UseGPU: true,
 		}
@@ -77,16 +77,16 @@ func RecommendSpec(in RecommendationInput) Recommendation {
 	case strings.EqualFold(vendor, "NVIDIA"):
 		bits := int32(DefaultAWQBits)
 		group := int32(DefaultQuantizationGroupSize)
-		rec.Spec = &aiv1alpha1.QuantizationSpec{
-			Format:    aiv1alpha1.QuantizationFormatAWQ,
+		rec.Spec = &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatAWQ,
 			Bits:      &bits,
 			GroupSize: &group,
 			UseGPU:    true,
 		}
 		rec.Reason = "AWQ (4-bit, group size 128) is the default high-throughput recommendation for NVIDIA GPUs."
 	default:
-		rec.Spec = &aiv1alpha1.QuantizationSpec{
-			Format:   aiv1alpha1.QuantizationFormatGGUF,
+		rec.Spec = &aiv1alpha2.QuantizationSpec{
+			Format:   aiv1alpha2.QuantizationFormatGGUF,
 			GGUFType: DefaultGGUFType,
 		}
 		rec.Reason = "No explicit GPU vendor constraints detected; GGUF default is the most portable recommendation."

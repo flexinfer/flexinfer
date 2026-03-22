@@ -2,12 +2,27 @@ package backend
 
 import (
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
+
+// llamaCppImageRules defines the image resolution precedence for llama.cpp.
+// Note: gfx110 has env-only override (no built-in default), falling through
+// to the generic AMD image when unset.
+var llamaCppImageRules = []ImageRule{
+	// AMD arch-specific
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_GFX1100"},
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_GFX906", Default: "registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3"},
+	// AMD generic
+	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_AMD", Default: "ghcr.io/ggerganov/llama.cpp:server-rocm"},
+	// CPU-only
+	{Vendor: GPUVendorCPU, EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_CPU", Default: "ghcr.io/ggerganov/llama.cpp:server"},
+	// NVIDIA Maxwell sub-arch
+	{Vendor: GPUVendorNVIDIA, ArchPrefix: "sm_5", EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_MAXWELL", Default: "registry.harbor.lan/flexinfer/llamacpp:cuda-maxwell"},
+	// NVIDIA/global default
+	{EnvVar: "DEFAULT_LLAMA_CPP_IMAGE", Default: "ghcr.io/ggerganov/llama.cpp:server-cuda"},
+}
 
 // LlamaCppBackend implements the Backend interface for llama.cpp.
 // llama.cpp provides efficient LLM inference for GGUF models.
@@ -20,7 +35,7 @@ func init() {
 }
 
 func (b *LlamaCppBackend) Name() string {
-	return "llamacpp"
+	return NameLlamaCpp
 }
 
 func (b *LlamaCppBackend) Aliases() []string {
@@ -28,46 +43,7 @@ func (b *LlamaCppBackend) Aliases() []string {
 }
 
 func (b *LlamaCppBackend) Image(gpuVendor GPUVendor, gpuArch string) string {
-	switch gpuVendor {
-	case GPUVendorAMD:
-		// Architecture-specific overrides via env var.
-		if strings.HasPrefix(gpuArch, "gfx110") {
-			if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_GFX1100"); img != "" {
-				return img
-			}
-			// Fall through to generic AMD image.
-		}
-		// gfx906 (Radeon VII, Vega20) needs a patched build for hipMemGetInfo.
-		if strings.HasPrefix(gpuArch, "gfx906") {
-			if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_GFX906"); img != "" {
-				return img
-			}
-			return "registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3"
-		}
-		if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_AMD"); img != "" {
-			return img
-		}
-		return "ghcr.io/ggerganov/llama.cpp:server-rocm"
-	case GPUVendorCPU:
-		// CPU-only image without GPU dependencies
-		if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_CPU"); img != "" {
-			return img
-		}
-		return "ghcr.io/ggerganov/llama.cpp:server"
-	default:
-		// Check for Maxwell architecture (sm_52) — CUDA 12.x does not include sm_52.
-		// Requires a build with CUDA 11.8 and CUDA_ARCHITECTURES="50;52".
-		if strings.HasPrefix(gpuArch, "sm_5") {
-			if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE_MAXWELL"); img != "" {
-				return img
-			}
-			return "registry.harbor.lan/flexinfer/llamacpp:cuda-maxwell"
-		}
-		if img := os.Getenv("DEFAULT_LLAMA_CPP_IMAGE"); img != "" {
-			return img
-		}
-		return "ghcr.io/ggerganov/llama.cpp:server-cuda"
-	}
+	return ResolveImage(llamaCppImageRules, gpuVendor, gpuArch)
 }
 
 func (b *LlamaCppBackend) Port() int32 {

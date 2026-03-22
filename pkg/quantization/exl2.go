@@ -6,7 +6,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 const (
@@ -27,13 +27,13 @@ const (
 type EXL2JobBuilder struct{}
 
 // Format returns the EXL2 quantization format.
-func (b *EXL2JobBuilder) Format() aiv1alpha1.QuantizationFormat {
-	return aiv1alpha1.QuantizationFormatEXL2
+func (b *EXL2JobBuilder) Format() aiv1alpha2.QuantizationFormat {
+	return aiv1alpha2.QuantizationFormatEXL2
 }
 
 // Validate checks that the quantization spec is valid for EXL2.
-func (b *EXL2JobBuilder) Validate(spec *aiv1alpha1.QuantizationSpec) error {
-	if spec.Format != aiv1alpha1.QuantizationFormatEXL2 {
+func (b *EXL2JobBuilder) Validate(spec *aiv1alpha2.QuantizationSpec) error {
+	if spec.Format != aiv1alpha2.QuantizationFormatEXL2 {
 		return fmt.Errorf("EXL2JobBuilder only handles EXL2 format, got %q", spec.Format)
 	}
 	if !spec.UseGPU {

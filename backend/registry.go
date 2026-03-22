@@ -7,6 +7,19 @@ import (
 	"sync"
 )
 
+// Backend name constants. Use these instead of raw string literals
+// so typos become compile errors.
+const (
+	NameVLLM      = "vllm"
+	NameVLLMOmni  = "vllm-omni"
+	NameOllama    = "ollama"
+	NameLlamaCpp  = "llamacpp"
+	NameDiffusers = "diffusers"
+	NameComfyUI   = "comfyui"
+	NameMLCLLM    = "mlc-llm"
+	NameSteam     = "steam"
+)
+
 var (
 	// registry holds all registered backends
 	registry = make(map[string]Backend)

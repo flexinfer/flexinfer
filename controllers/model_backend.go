@@ -23,7 +23,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
@@ -80,7 +79,7 @@ func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, confi
 	if strings.HasPrefix(source, "HF://") && strategy == "SharedPVC" && model.Status.Cache != nil && model.Status.Cache.PVCName != "" {
 		plan.ModelPath = "/models/" + model.Name
 		// diffusers expects model_index.json at mount root.
-		if backendName == "diffusers" {
+		if backendName == backend.NameDiffusers {
 			plan.ModelVolumeSubPath = model.Name
 		}
 	}
@@ -109,7 +108,7 @@ func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, confi
 	// Backends that load a single GGUF file need a concrete file path under the
 	// staged HF directory. llama.cpp always requires it; vLLM uses it when the
 	// user specifies ggufFile to select a specific variant from multi-GGUF repos.
-	if (backendName == "llamacpp" || backendName == "vllm") &&
+	if (backendName == backend.NameLlamaCpp || backendName == backend.NameVLLM) &&
 		strings.HasPrefix(source, "HF://") &&
 		strategy == "SharedPVC" &&
 		model.Status.Cache != nil &&
@@ -137,12 +136,12 @@ func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, confi
 }
 
 // quantizedOutputDir returns the output subdirectory name for a given quantization spec.
-func quantizedOutputDir(spec *aiv1alpha1.QuantizationSpec) string {
+func quantizedOutputDir(spec *aiv1alpha2.QuantizationSpec) string {
 	if spec == nil {
 		return ""
 	}
 	switch spec.Format {
-	case aiv1alpha1.QuantizationFormatAWQ:
+	case aiv1alpha2.QuantizationFormatAWQ:
 		bits := int32(quantization.DefaultAWQBits)
 		if spec.Bits != nil {
 			bits = *spec.Bits
@@ -152,7 +151,7 @@ func quantizedOutputDir(spec *aiv1alpha1.QuantizationSpec) string {
 			groupSize = *spec.GroupSize
 		}
 		return fmt.Sprintf("awq-w%d-g%d", bits, groupSize)
-	case aiv1alpha1.QuantizationFormatGPTQ:
+	case aiv1alpha2.QuantizationFormatGPTQ:
 		bits := int32(quantization.DefaultGPTQBits)
 		if spec.Bits != nil {
 			bits = *spec.Bits

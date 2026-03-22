@@ -23,17 +23,17 @@ import (
 )
 
 var managedModelAnnotations = []string{
-	"litellm.flexinfer.ai/served-model",
-	"litellm.flexinfer.ai/aliases",
-	"litellm.flexinfer.ai/copilot-model",
-	"litellm.flexinfer.ai/capabilities",
-	"flexinfer.ai/service-labels",
+	AnnotationLiteLLMServedModel,
+	AnnotationLiteLLMAliases,
+	AnnotationLiteLLMCopilot,
+	AnnotationLiteLLMCapabilities,
+	AnnotationServiceLabels,
 }
 
 var managedModelPodAnnotations = []string{
-	"flexinfer.ai/model",
-	"flexinfer.ai/backend",
-	"flexinfer.ai/gpu.vram-estimate-mb",
+	LabelModel,
+	LabelBackend,
+	AnnotationVRAMEstimate,
 }
 
 func applyManagedAnnotations(existing map[string]string, desired map[string]string, managedKeys []string) map[string]string {
@@ -72,11 +72,11 @@ func mergeStringMap(existing map[string]string, additional map[string]string) ma
 
 func (r *ModelReconciler) podAnnotationsForModel(model *aiv1alpha2.Model) map[string]string {
 	ann := map[string]string{
-		"flexinfer.ai/model":   model.Name,
-		"flexinfer.ai/backend": model.Spec.Backend,
+		LabelModel:   model.Name,
+		LabelBackend: model.Spec.Backend,
 	}
 	if model.Spec.GPU != nil && model.Spec.GPU.VRAMEstimateMB != nil && *model.Spec.GPU.VRAMEstimateMB > 0 {
-		ann["flexinfer.ai/gpu.vram-estimate-mb"] = fmt.Sprintf("%d", *model.Spec.GPU.VRAMEstimateMB)
+		ann[AnnotationVRAMEstimate] = fmt.Sprintf("%d", *model.Spec.GPU.VRAMEstimateMB)
 	}
 	return ann
 }
