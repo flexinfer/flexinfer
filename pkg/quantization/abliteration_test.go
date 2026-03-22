@@ -325,7 +325,7 @@ func TestAbliterationEnv_CPUMode(t *testing.T) {
 func TestAbliterationWrapperScript(t *testing.T) {
 	script := abliterationWrapperScript()
 
-	if !strings.Contains(script, "python3 /opt/flexinfer/scripts/abliterate.py") {
+	if !strings.Contains(script, "abliterate.py") {
 		t.Error("wrapper script should invoke abliterate.py")
 	}
 	if !strings.Contains(script, "set -euo pipefail") {

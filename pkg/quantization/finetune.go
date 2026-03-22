@@ -286,7 +286,54 @@ func finetuneEnv(modelPath string, spec *aiv1alpha1.FinetuneSpec) []corev1.EnvVa
 func finetuneWrapperScript() string {
 	return `set -euo pipefail
 START_TS=$(date +%s)
+LOGFILE=/tmp/finetune-output.log
+# Persist full log to PVC for post-mortem analysis (survives pod GC)
+PVC_LOGDIR="${MODEL_DIR}/.flexinfer-logs"
+PVC_LOGFILE="${PVC_LOGDIR}/finetune-$(date +%Y%m%d-%H%M%S).log"
 
+# Structured JSON event emitter for Loki/OTEL queryability.
+# Events go to stdout (Promtail → Loki) and are queryable via:
+#   {namespace="flexinfer-system"} | json | event="finetune_start"
+emit_event() {
+    local event="$1"; shift
+    local ts
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local json="{\"ts\":\"${ts}\",\"component\":\"finetuner\",\"event\":\"${event}\""
+    while [ $# -ge 2 ]; do
+        local key="$1" val="$2"; shift 2
+        case "${val}" in
+            ''|*[!0-9.]*) json="${json},\"${key}\":\"${val}\"" ;;
+            *)            json="${json},\"${key}\":${val}" ;;
+        esac
+    done
+    json="${json}}"
+    echo "${json}"
+}
+
+cleanup() {
+    local ec=$?
+    # Persist log to PVC before anything else
+    if [ -f "${LOGFILE}" ]; then
+        mkdir -p "${PVC_LOGDIR}"
+        cp "${LOGFILE}" "${PVC_LOGFILE}" 2>/dev/null || true
+        # Keep only last 3 log files to avoid PVC bloat
+        ls -t "${PVC_LOGDIR}"/finetune-*.log 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null || true
+    fi
+    if [ $ec -ne 0 ]; then
+        emit_event "finetune_error" "exit_code" "${ec}" "model" "${MODEL_DIR}" "mode" "${MODE}"
+        {
+            echo "exit_code=${ec}"
+            echo "---"
+            tail -80 "${LOGFILE}" 2>/dev/null || echo "(no log output captured)"
+        } > /dev/termination-log 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
+# Tee all output so cleanup can capture tail on failure
+exec > >(tee -a "${LOGFILE}") 2>&1
+
+emit_event "finetune_start" "model" "${MODEL_DIR}" "mode" "${MODE}" "epochs" "${EPOCHS}" "batch_size" "${BATCH_SIZE}" "lr" "${LEARNING_RATE}" "lora_rank" "${LORA_RANK}"
 echo "=== FlexInfer Finetune ==="
 echo "Model: ${MODEL_DIR}"
 echo "Mode: ${MODE}"
@@ -347,6 +394,7 @@ ${PYTHON_BIN} /opt/flexinfer/scripts/finetune.py
 
 END_TS=$(date +%s)
 DURATION=$((END_TS - START_TS))
+emit_event "finetune_complete" "model" "${MODEL_DIR}" "mode" "${MODE}" "duration_sec" "${DURATION}"
 echo "=== Finetune finished in ${DURATION}s ==="
 `
 }

@@ -30,6 +30,7 @@ FROM docker.io/mixa3607/pytorch-gfx906:${PYTORCH_GFX906_TAG}
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
     PYTHONUNBUFFERED=1
 
 # ── gfx906 runtime environment ──────────────────────────────────────────────
@@ -48,7 +49,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl cmake ninja-build build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --upgrade pip "setuptools>=77" wheel "packaging>=24.2"
+# mixa3607 base installs pip/setuptools/wheel via Debian (no RECORD files).
+# --ignore-installed skips the uninstall step that fails on these packages.
+RUN python3 -m pip install --ignore-installed "setuptools>=77" wheel "packaging>=24.2"
 
 # ── Triton fix ───────────────────────────────────────────────────────────────
 # The ROCm PyTorch base image may ship a broken editable Triton install.

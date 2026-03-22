@@ -254,10 +254,41 @@ func (b *GPTQJobBuilder) gptqWrapperScript() string {
 TYPE="W${BITS}_G${GROUP_SIZE}"
 START_TS=$(date +%s)
 LOGFILE=/tmp/quantize-output.log
+# Persist full log to PVC for post-mortem analysis (survives pod GC)
+PVC_LOGDIR="${MODEL_DIR}/.flexinfer-gptq-cache"
+PVC_LOGFILE="${PVC_LOGDIR}/quantize-$(date +%Y%m%d-%H%M%S).log"
+
+# Structured JSON event emitter for Loki/OTEL queryability.
+# Events go to stdout (Promtail → Loki) and are queryable via:
+#   {namespace="flexinfer-system"} | json | event="quantization_start"
+emit_event() {
+    local event="$1"; shift
+    local ts
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local json="{\"ts\":\"${ts}\",\"component\":\"gptq-quantizer\",\"event\":\"${event}\""
+    while [ $# -ge 2 ]; do
+        local key="$1" val="$2"; shift 2
+        # Quote numeric values without quotes, strings with quotes
+        case "${val}" in
+            ''|*[!0-9.]*) json="${json},\"${key}\":\"${val}\"" ;;
+            *)            json="${json},\"${key}\":${val}" ;;
+        esac
+    done
+    json="${json}}"
+    echo "${json}"
+}
 
 cleanup() {
     local ec=$?
+    # Persist log to PVC before anything else
+    if [ -f "${LOGFILE}" ]; then
+        mkdir -p "${PVC_LOGDIR}"
+        cp "${LOGFILE}" "${PVC_LOGFILE}" 2>/dev/null || true
+        # Keep only last 3 log files to avoid PVC bloat
+        ls -t "${PVC_LOGDIR}"/quantize-*.log 2>/dev/null | tail -n +4 | xargs rm -f 2>/dev/null || true
+    fi
     if [ $ec -ne 0 ]; then
+        emit_event "quantization_error" "exit_code" "${ec}" "model" "${MODEL_DIR}" "type" "${TYPE}"
         # Write last 80 lines to termination-log so controller can capture the error
         {
             echo "exit_code=${ec}"
@@ -476,6 +507,7 @@ if command -v rocminfo &>/dev/null; then
     fi
 fi
 
+emit_event "quantization_start" "model" "${MODEL_DIR}" "type" "${TYPE}" "bits" "${BITS}" "group_size" "${GROUP_SIZE}" "memory_gb" "${MAX_MEMORY_GB}"
 echo "=== GPTQ Quantization (GPTQModel) ==="
 echo "Model: ${MODEL_DIR}"
 echo "Type: ${TYPE}"
@@ -501,17 +533,24 @@ echo "Original size: ${ORIGINAL_SIZE} bytes"
 
 # Short-circuit: if quantization already completed (quantize_config.json + safetensors
 # in OUT_DIR), re-emit metadata and exit 0. Handles Job recreation after TTL GC.
+# Validates that the shard index file exists (written last by save_quantized) and that
+# the compressed size is at least 10% of the original — prevents false positives from
+# partial saves that wrote config + 1 shard before dying.
 QUANT_STATUS="${MODEL_DIR}/.quantization-status.json"
 if [ -f "${OUT_DIR}/quantize_config.json" ] && ls "${OUT_DIR}"/*.safetensors &>/dev/null; then
     COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
-    echo "Quantization already complete in ${OUT_DIR}"
-    echo "Output size: ${COMPRESSED_SIZE} bytes"
-    if [ -f "${QUANT_STATUS}" ]; then
-        cat "${QUANT_STATUS}" > /dev/termination-log 2>/dev/null || true
-    else
-        END_TS=$(date +%s)
-        DURATION_SEC=$((END_TS - START_TS))
-        cat > /dev/termination-log << TERMINATION
+    SHARD_INDEX="${OUT_DIR}/model.safetensors.index.json"
+    MIN_SIZE=$((ORIGINAL_SIZE / 10))
+    if [ -f "${SHARD_INDEX}" ] && [ "${COMPRESSED_SIZE}" -gt "${MIN_SIZE}" ]; then
+        emit_event "quantization_cached" "model" "${MODEL_DIR}" "type" "${TYPE}" "original_bytes" "${ORIGINAL_SIZE}" "compressed_bytes" "${COMPRESSED_SIZE}"
+        echo "Quantization already complete in ${OUT_DIR}"
+        echo "Output size: ${COMPRESSED_SIZE} bytes (original: ${ORIGINAL_SIZE})"
+        if [ -f "${QUANT_STATUS}" ]; then
+            cat "${QUANT_STATUS}" > /dev/termination-log 2>/dev/null || true
+        else
+            END_TS=$(date +%s)
+            DURATION_SEC=$((END_TS - START_TS))
+            cat > /dev/termination-log << TERMINATION
 {
   "type": "${TYPE}",
   "originalSizeBytes": ${ORIGINAL_SIZE},
@@ -519,8 +558,23 @@ if [ -f "${OUT_DIR}/quantize_config.json" ] && ls "${OUT_DIR}"/*.safetensors &>/
   "quantizationTimeSeconds": ${DURATION_SEC}
 }
 TERMINATION
+        fi
+        exit 0
+    else
+        emit_event "quantization_partial_detected" "model" "${MODEL_DIR}" "type" "${TYPE}" "compressed_bytes" "${COMPRESSED_SIZE}" "min_expected" "${MIN_SIZE}" "has_index" "$([ -f \"${SHARD_INDEX}\" ] && echo yes || echo no)"
+        echo "WARNING: Output dir has quantize_config.json but save appears incomplete"
+        echo "  shard_index_exists=$([ -f \"${SHARD_INDEX}\" ] && echo yes || echo no)"
+        echo "  compressed_size=${COMPRESSED_SIZE} min_expected=${MIN_SIZE}"
+        echo "Cleaning partial output and re-running quantization"
+        rm -rf "${OUT_DIR}"
     fi
-    exit 0
+fi
+
+# Clean stale temp save dir from previous interrupted saves
+if [ -d "${OUT_DIR}.saving" ]; then
+    emit_event "quantization_cleanup" "detail" "removing stale save temp dir" "path" "${OUT_DIR}.saving"
+    echo "Cleaning stale save temp dir: ${OUT_DIR}.saving"
+    rm -rf "${OUT_DIR}.saving"
 fi
 
 # Only clean output dir if no valid partial output exists.
@@ -749,6 +803,11 @@ cat > /dev/termination-log << TERMINATION
 }
 TERMINATION
 
+RATIO="0"
+if [ "${ORIGINAL_SIZE}" -gt 0 ]; then
+    RATIO=$(python3 -c "print(f'{${ORIGINAL_SIZE}/${COMPRESSED_SIZE}:.2f}')" 2>/dev/null || echo "0")
+fi
+emit_event "quantization_complete" "model" "${MODEL_DIR}" "type" "${TYPE}" "original_bytes" "${ORIGINAL_SIZE}" "compressed_bytes" "${COMPRESSED_SIZE}" "duration_sec" "${DURATION_SEC}" "compression_ratio" "${RATIO}"
 echo "=== Quantization complete ==="
 echo "Output: ${OUT_DIR}"
 echo "End: $(date -u +%Y-%m-%dT%H:%M:%SZ)"

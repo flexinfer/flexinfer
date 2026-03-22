@@ -11,6 +11,7 @@ import gc
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -1025,9 +1026,61 @@ checkpoint_callback.state["save_started_at"] = time.strftime(
 )
 checkpoint_callback._persist()
 
-# ── Save ───────────────────────────────────────────────────────────────
-model.save(out_dir)
-tokenizer.save_pretrained(out_dir)
+# ── Save (atomic: write to temp dir, then rename) ─────────────────────
+save_tmp = out_dir + ".saving"
+if os.path.exists(save_tmp):
+    shutil.rmtree(save_tmp)
+os.makedirs(save_tmp, exist_ok=True)
+
+
+def save_with_progress(model, tokenizer, save_dir):
+    """Save model + tokenizer with per-shard progress events."""
+    done = threading.Event()
+
+    def monitor():
+        while not done.is_set():
+            try:
+                shard_count = len(
+                    [f for f in os.listdir(save_dir) if f.endswith(".safetensors")]
+                )
+            except OSError:
+                shard_count = 0
+            if shard_count > 0:
+                emit_progress(
+                    "progress",
+                    phase="saving",
+                    percent=min(96.0, 91.0 + shard_count * 0.7),
+                    detail=f"saved {shard_count} shards",
+                )
+            done.wait(timeout=30)
+
+    t = threading.Thread(target=monitor, daemon=True)
+    t.start()
+    try:
+        model.save(save_dir)
+        tokenizer.save_pretrained(save_dir)
+    finally:
+        done.set()
+        t.join(timeout=5)
+
+
+emit_progress("progress", phase="saving", percent=90.5, detail="saving model shards")
+save_with_progress(model, tokenizer, save_tmp)
+
+# Validate before promoting
+shard_files = [f for f in os.listdir(save_tmp) if f.endswith(".safetensors")]
+has_config = os.path.exists(os.path.join(save_tmp, "quantize_config.json"))
+if not shard_files or not has_config:
+    raise RuntimeError(
+        f"Save validation failed: shards={len(shard_files)} config={has_config}"
+    )
+
+emit_progress(
+    "progress", phase="saving", percent=97.0, detail="promoting output directory"
+)
+if os.path.exists(out_dir):
+    shutil.rmtree(out_dir)
+os.rename(save_tmp, out_dir)
 
 checkpoint_callback.state["stage"] = "complete"
 checkpoint_callback.state["completed_at"] = time.strftime(
