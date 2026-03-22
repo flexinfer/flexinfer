@@ -58,24 +58,23 @@ func TestShouldUseInsecure(t *testing.T) {
 }
 
 func TestPublishImage(t *testing.T) {
-	// Clean env for test isolation
 	origVal, origSet := os.LookupEnv("FLEXINFER_PUBLISH_IMAGE")
 	defer func() {
 		if origSet {
-			os.Setenv("FLEXINFER_PUBLISH_IMAGE", origVal)
+			_ = os.Setenv("FLEXINFER_PUBLISH_IMAGE", origVal)
 		} else {
-			os.Unsetenv("FLEXINFER_PUBLISH_IMAGE")
+			_ = os.Unsetenv("FLEXINFER_PUBLISH_IMAGE")
 		}
 	}()
 
 	t.Run("default returns alpine:3.23", func(t *testing.T) {
-		os.Unsetenv("FLEXINFER_PUBLISH_IMAGE")
+		_ = os.Unsetenv("FLEXINFER_PUBLISH_IMAGE")
 		got := publishImage()
 		assert.Equal(t, "alpine:3.23", got)
 	})
 
 	t.Run("env override takes precedence", func(t *testing.T) {
-		os.Setenv("FLEXINFER_PUBLISH_IMAGE", "custom-publisher:v2")
+		_ = os.Setenv("FLEXINFER_PUBLISH_IMAGE", "custom-publisher:v2")
 		got := publishImage()
 		assert.Equal(t, "custom-publisher:v2", got)
 	})
