@@ -152,10 +152,8 @@ func newGenerateConfigsCmd() *cobra.Command {
 				targets = []string{"all"}
 			}
 
-			if loomMode && loomBinary == "" {
-				if exe, err := os.Executable(); err == nil && exe != "" {
-					loomBinary = exe
-				}
+			if loomMode {
+				loomBinary = resolveStableLoomBinary(loomBinary)
 			}
 
 			fmt.Printf("Generating configs in %s...\n", outputDir)
@@ -348,11 +346,7 @@ func newSyncCmd() *cobra.Command {
 				}
 				loomModeExplicit := cmd.Flags().Changed("loom-mode")
 				// Auto-detect loom binary for profiles that default to loom mode
-				if loomBinary == "" {
-					if exe, err := os.Executable(); err == nil && exe != "" {
-						loomBinary = exe
-					}
-				}
+				loomBinary = resolveStableLoomBinary(loomBinary)
 				if err := mgr.SyncAll(true, regen, repoOnly, hubMode, hubURL, loomMode, loomBinary, rs, loomModeExplicit); err != nil {
 					return err
 				}
@@ -367,10 +361,8 @@ func newSyncCmd() *cobra.Command {
 					}
 				}
 
-				if loomMode && loomBinary == "" {
-					if exe, err := os.Executable(); err == nil && exe != "" {
-						loomBinary = exe
-					}
+				if loomMode {
+					loomBinary = resolveStableLoomBinary(loomBinary)
 				}
 
 				if err := mgr.SyncToHome(profile, true, regen, repoOnly, hubMode, hubURL, loomMode, loomBinary, resolveSecrets); err != nil {

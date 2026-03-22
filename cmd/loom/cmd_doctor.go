@@ -87,9 +87,7 @@ func runDoctor(fix, outputJSON, checkSchemas bool) error {
 	// Check loom binary reachability.
 	loomPath, _ := exec.LookPath("loom")
 	if loomPath == "" {
-		if exe, err := os.Executable(); err == nil {
-			loomPath = exe
-		}
+		loomPath = resolveStableLoomBinary("")
 	}
 
 	if outputJSON {
@@ -323,10 +321,7 @@ func fixStale(report *generator.DoctorReport, workspaceRoot string) error {
 		return fmt.Errorf("init sync manager: %w", err)
 	}
 
-	var loomBinary string
-	if exe, err := os.Executable(); err == nil {
-		loomBinary = exe
-	}
+	loomBinary := resolveStableLoomBinary("")
 
 	for _, platform := range stale {
 		p := mgr.Get(platform)
