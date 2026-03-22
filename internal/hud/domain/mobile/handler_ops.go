@@ -231,6 +231,7 @@ func (d *MobileDomain) handleMobilePipelines(w http.ResponseWriter, r *http.Requ
 		FailedJobCount  int    `json:"failed_job_count"`
 		AgentID         string `json:"agent_id,omitempty"`
 		AgentType       string `json:"agent_type,omitempty"`
+		Correlation     string `json:"correlation,omitempty"`
 	}
 
 	results := make([]pipelineResponse, 0, len(pipelines))
@@ -253,6 +254,7 @@ func (d *MobileDomain) handleMobilePipelines(w http.ResponseWriter, r *http.Requ
 		if ar, ok := branchAgents[p.Ref]; ok {
 			resp.AgentID = ar.ID
 			resp.AgentType = ar.Type
+			resp.Correlation = "branch_match"
 		}
 		results = append(results, resp)
 	}

@@ -26,14 +26,20 @@ type WorkStartParams struct {
 
 	HeartbeatStatus string
 	HeartbeatFiles  []string
+
+	// Pipeline linking (auto-detected if PipelineProjects provided)
+	PipelineProjects []string     // GitLab projects to search for matching pipeline
+	PipelineRef      *PipelineRef // Explicit pipeline ref (overrides auto-detection)
+	WorkflowID       string       // Workflow instance ID for task-workflow tracing
 }
 
 type WorkStartResult struct {
-	SessionID    string `json:"session_id"`
-	AssignmentID string `json:"assignment_id"`
-	WorktreePath string `json:"worktree_path"`
-	Branch       string `json:"branch"`
-	TaskID       string `json:"task_id"`
+	SessionID    string       `json:"session_id"`
+	AssignmentID string       `json:"assignment_id"`
+	WorktreePath string       `json:"worktree_path"`
+	Branch       string       `json:"branch"`
+	TaskID       string       `json:"task_id"`
+	PipelineRef  *PipelineRef `json:"pipeline_ref,omitempty"`
 }
 
 // WorkStart enforces a single fail-fast lifecycle entrypoint:
@@ -82,15 +88,27 @@ func (a *AgentBridge) WorkStart(p WorkStartParams) (*WorkStartResult, error) {
 		return nil, fmt.Errorf("work-start step=worktree-allocate session_id=%s: empty assignment_id", sessionID)
 	}
 
+	// Auto-detect pipeline for the branch if not explicitly provided.
+	pipelineRef := p.PipelineRef
+	if pipelineRef == nil && len(p.PipelineProjects) > 0 {
+		branch := strings.TrimSpace(worktree.Branch)
+		if branch == "" {
+			branch = strings.TrimSpace(p.WorktreeBranch)
+		}
+		pipelineRef = a.FindPipelineForBranch(p.PipelineProjects, branch)
+	}
+
 	taskResult, err := a.CreateTask(CreateTaskParams{
-		SessionID:  sessionID,
-		Title:      taskTitle,
-		Context:    strings.TrimSpace(p.TaskContext),
-		Priority:   strings.TrimSpace(p.TaskPriority),
-		Tags:       p.TaskTags,
-		FilePath:   strings.TrimSpace(p.TaskFilePath),
-		LineNumber: p.TaskLineNumber,
-		BlockedBy:  p.TaskBlockedBy,
+		SessionID:   sessionID,
+		Title:       taskTitle,
+		Context:     strings.TrimSpace(p.TaskContext),
+		Priority:    strings.TrimSpace(p.TaskPriority),
+		Tags:        p.TaskTags,
+		FilePath:    strings.TrimSpace(p.TaskFilePath),
+		LineNumber:  p.TaskLineNumber,
+		BlockedBy:   p.TaskBlockedBy,
+		PipelineRef: pipelineRef,
+		WorkflowID:  strings.TrimSpace(p.WorkflowID),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("work-start step=task-add session_id=%s assignment_id=%s: %w", sessionID, worktree.AssignmentID, err)
@@ -108,13 +126,24 @@ func (a *AgentBridge) WorkStart(p WorkStartParams) (*WorkStartResult, error) {
 	if status == "" {
 		status = "active"
 	}
-	if _, err := a.PresenceHeartbeat(agentID, PresenceHeartbeatParams{
+	heartbeatParams := PresenceHeartbeatParams{
 		Status:      status,
 		ActiveFiles: p.HeartbeatFiles,
 		CurrentTask: taskTitle,
 		Branch:      strings.TrimSpace(worktree.Branch),
-	}); err != nil {
+	}
+	if pipelineRef != nil {
+		heartbeatParams.PipelineStatus = "linked"
+	}
+	if _, err := a.PresenceHeartbeat(agentID, heartbeatParams); err != nil {
 		return nil, fmt.Errorf("work-start step=heartbeat session_id=%s assignment_id=%s task_id=%s: %w", sessionID, worktree.AssignmentID, taskID, err)
+	}
+
+	// Record pipeline context entry if a pipeline was linked.
+	if pipelineRef != nil {
+		go func() {
+			_ = a.RecordPipelineEvent(sessionID, *pipelineRef, "linked", "")
+		}()
 	}
 
 	return &WorkStartResult{
@@ -123,6 +152,7 @@ func (a *AgentBridge) WorkStart(p WorkStartParams) (*WorkStartResult, error) {
 		WorktreePath: strings.TrimSpace(worktree.WorktreePath),
 		Branch:       strings.TrimSpace(worktree.Branch),
 		TaskID:       taskID,
+		PipelineRef:  pipelineRef,
 	}, nil
 }
 

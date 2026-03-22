@@ -12,33 +12,36 @@ import "encoding/json"
 
 // SessionInfo describes an agent session.
 type SessionInfo struct {
-	ID          string `json:"id"`
-	AgentID     string `json:"agent_id"`
-	Namespace   string `json:"namespace"`
-	StartedAt   string `json:"started_at"`
-	EndedAt     string `json:"ended_at,omitempty"`
-	Status      string `json:"status"`
-	Description string `json:"description"`
-	EntryCount  int    `json:"entry_count"`
-	TotalTokens int    `json:"total_tokens"`
+	ID          string       `json:"id"`
+	AgentID     string       `json:"agent_id"`
+	Namespace   string       `json:"namespace"`
+	StartedAt   string       `json:"started_at"`
+	EndedAt     string       `json:"ended_at,omitempty"`
+	Status      string       `json:"status"`
+	Description string       `json:"description"`
+	PipelineRef *PipelineRef `json:"pipeline_ref,omitempty"`
+	EntryCount  int          `json:"entry_count"`
+	TotalTokens int          `json:"total_tokens"`
 }
 
 // --- Task DTOs ---
 
 // TaskInfo describes an agent task.
 type TaskInfo struct {
-	ID        string   `json:"id"`
-	SessionID string   `json:"session_id"`
-	AgentID   string   `json:"agent_id"`
-	Namespace string   `json:"namespace"`
-	Title     string   `json:"title"`
-	Context   string   `json:"context,omitempty"`
-	Priority  string   `json:"priority"`
-	Status    string   `json:"status"`
-	Tags      []string `json:"tags,omitempty"`
-	BlockedBy []string `json:"blocked_by,omitempty"`
-	CreatedAt string   `json:"created_at"`
-	UpdatedAt string   `json:"updated_at"`
+	ID          string       `json:"id"`
+	SessionID   string       `json:"session_id"`
+	AgentID     string       `json:"agent_id"`
+	Namespace   string       `json:"namespace"`
+	Title       string       `json:"title"`
+	Context     string       `json:"context,omitempty"`
+	Priority    string       `json:"priority"`
+	Status      string       `json:"status"`
+	Tags        []string     `json:"tags,omitempty"`
+	BlockedBy   []string     `json:"blocked_by,omitempty"`
+	PipelineRef *PipelineRef `json:"pipeline_ref,omitempty"`
+	WorkflowID  string       `json:"workflow_id,omitempty"`
+	CreatedAt   string       `json:"created_at"`
+	UpdatedAt   string       `json:"updated_at"`
 }
 
 // --- Workflow DTOs ---

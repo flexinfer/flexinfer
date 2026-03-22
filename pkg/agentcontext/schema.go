@@ -15,17 +15,18 @@ const SchemaVersion = "v1"
 type EntryType string
 
 const (
-	EntryTypeFileRead    EntryType = "file_read"
-	EntryTypeDecision    EntryType = "decision"
-	EntryTypeFinding     EntryType = "finding"
-	EntryTypeQuestion    EntryType = "question"
-	EntryTypeSummary     EntryType = "summary"
-	EntryTypeCodeContext EntryType = "code_context"
-	EntryTypeNote        EntryType = "note"
-	EntryTypeError       EntryType = "error"
-	EntryTypeTask        EntryType = "task"
-	EntryTypeHandoff     EntryType = "handoff"
-	EntryTypeAnnotation  EntryType = "annotation"
+	EntryTypeFileRead      EntryType = "file_read"
+	EntryTypeDecision      EntryType = "decision"
+	EntryTypeFinding       EntryType = "finding"
+	EntryTypeQuestion      EntryType = "question"
+	EntryTypeSummary       EntryType = "summary"
+	EntryTypeCodeContext   EntryType = "code_context"
+	EntryTypeNote          EntryType = "note"
+	EntryTypeError         EntryType = "error"
+	EntryTypeTask          EntryType = "task"
+	EntryTypeHandoff       EntryType = "handoff"
+	EntryTypeAnnotation    EntryType = "annotation"
+	EntryTypePipelineEvent EntryType = "pipeline_event"
 )
 
 // TaskStatus defines the status of a task
@@ -176,6 +177,9 @@ type Session struct {
 	Description string `json:"description,omitempty"`
 	WorkingDir  string `json:"working_dir,omitempty"`
 
+	// Pipeline linking
+	PipelineRef *PipelineRef `json:"pipeline_ref,omitempty"`
+
 	// Statistics
 	EntryCount  int `json:"entry_count"`
 	TotalTokens int `json:"total_tokens"`
@@ -310,6 +314,10 @@ type Task struct {
 	BlockedBy []string `json:"blocked_by,omitempty"`
 	ParentID  string   `json:"parent_id,omitempty"`
 
+	// Pipeline and workflow linking
+	PipelineRef *PipelineRef `json:"pipeline_ref,omitempty"`
+	WorkflowID  string       `json:"workflow_id,omitempty"`
+
 	// Timestamps
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
@@ -400,6 +408,14 @@ const (
 // RecallScope restricts which backends are queried during unified recall.
 // An empty slice queries all backends.
 type RecallScope []RecallSource
+
+// PipelineRef links an entity to a specific CI pipeline.
+type PipelineRef struct {
+	ID      int    `json:"id"`
+	Project string `json:"project"`
+	Ref     string `json:"ref,omitempty"`
+	WebURL  string `json:"web_url,omitempty"`
+}
 
 // EnhancedRecallOptions extends RecallOptions with new capabilities
 type EnhancedRecallOptions struct {

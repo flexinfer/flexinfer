@@ -19,6 +19,10 @@ type SessionStartParams struct {
 	AutoRecallStrategy    string `json:"auto_recall_strategy,omitempty"`
 	AutoRecallQuery       string `json:"auto_recall_query,omitempty"`
 	AutoRecallTokenBudget int    `json:"auto_recall_token_budget,omitempty"`
+
+	// Pipeline linking (optional, set when session is tied to a CI pipeline)
+	PipelineProject string `json:"pipeline_project,omitempty"`
+	PipelineID      int    `json:"pipeline_id,omitempty"`
 }
 
 // SessionStartResult holds the result of starting a session.
@@ -260,10 +264,11 @@ func (a *AgentBridge) EndSession(p SessionEndParams) (bool, error) {
 
 // PresenceHeartbeat updates the heartbeat timestamp for an agent.
 type PresenceHeartbeatParams struct {
-	Status      string
-	ActiveFiles []string
-	CurrentTask string
-	Branch      string
+	Status         string
+	ActiveFiles    []string
+	CurrentTask    string
+	Branch         string
+	PipelineStatus string `json:"pipeline_status,omitempty"` // Current pipeline status (running/success/failed)
 }
 
 func (a *AgentBridge) PresenceHeartbeat(agentID string, p PresenceHeartbeatParams) (*PresenceHeartbeatResult, error) {
@@ -281,6 +286,9 @@ func (a *AgentBridge) PresenceHeartbeat(agentID string, p PresenceHeartbeatParam
 	}
 	if p.Branch != "" {
 		args["branch"] = p.Branch
+	}
+	if p.PipelineStatus != "" {
+		args["pipeline_status"] = p.PipelineStatus
 	}
 
 	var result PresenceHeartbeatResult
