@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Pipeline-aware agent lifecycle** (`internal/hud/bridge`): Explicit `PipelineRef` foreign keys on Session and Task, replacing branch-name heuristics; `WorkflowID` on Task for workflow-step tracing; `pipeline_event` context entries; auto-detection in WorkStart.
+- **Mobile session activity endpoint** (`internal/hud/domain/mobile`): `GET /api/sessions/{id}/activity` returns unified tasks + pipelines with correlation type.
+
+### Changed
+- **CI pipeline parallelism** (`.gitlab-ci.yml`): `build:binaries`, `test:unit`, `test:race`, and `test:enterprise-smoke` now use `needs: [prepare:go-cache]` to fan out in parallel after prepare instead of waiting for full stage gates (~3-8 min saved).
+- **MCP build parallelism** (`.gitlab-ci.yml`): `MCP_BUILD_JOBS` default increased from 2 to 4 to match CPU limit.
+- **Dockerfile optimization** (`Dockerfile`): Combined 3 binary build `RUN` layers into 1 with parallel MCP server builds (`xargs -P4`) and `-trimpath`.
+- **BuildKit DRY** (`scripts/ci/buildkit-build.sh`): Extracted duplicated registry-failover logic from 2 image jobs into shared helper.
+- **Docker build context** (`.dockerignore`): Excluded `.go*`, `.tmp`, `.loom`, `.agents`, `apps/`, `tools/`, `docs/`, `*.md` to reduce transfer size.
 - **Adaptive session heartbeat** (`cmd/loom/proxy.go`): Proxy heartbeat switches between 5s (active) and 30s (idle) intervals based on recent RPC activity, configurable via `proxy.heartbeat_interval_ms` and `proxy.idle_heartbeat_interval_ms`.
 - **Daemon drain gate** (`internal/daemon`): Daemon-level drain mode rejects new `loom/call` requests with a retryable `DAEMON_DRAINING` error; `loom/status` and `loom/session/status` report actual drain state.
 - **RBAC** (`internal/daemon/rbac.go`): Role-based tool access control with glob patterns, per-agent bindings, and deny-wins evaluation.
