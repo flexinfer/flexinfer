@@ -125,6 +125,30 @@ def emit_progress(event_type, **kwargs):
     print(json.dumps(msg), flush=True)
 
 
+def _memory_stats():
+    """Return a compact GPU + RSS memory string for per-layer/shard logging."""
+    parts = []
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            alloc_mb = torch.cuda.memory_allocated() / 1048576
+            reserved_mb = torch.cuda.memory_reserved() / 1048576
+            parts.append(f"gpu_alloc={alloc_mb:.0f}MB gpu_reserved={reserved_mb:.0f}MB")
+    except Exception:
+        pass
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    rss_kb = int(line.split()[1])
+                    parts.append(f"rss={rss_kb // 1024}MB")
+                    break
+    except Exception:
+        pass
+    return " ".join(parts)
+
+
 def load_model_policies():
     raw = os.environ.get("QUANTIZE_MODEL_POLICIES", "").strip()
     if not raw:
@@ -537,6 +561,10 @@ class QuantizationCheckpointCallback:
             percent = min(
                 89.0, 10.0 + (((layer_idx + 1) / max(self.total_layers, 1)) * 80.0)
             )
+        # Log GPU + system memory stats per layer for debugging OOM/fragmentation.
+        mem_detail = _memory_stats()
+        if mem_detail:
+            detail = f"{detail} | {mem_detail}"
         emit_progress(
             "progress", phase="quantizing", percent=round(percent, 1), detail=detail
         )
@@ -1046,11 +1074,15 @@ def save_with_progress(model, tokenizer, save_dir):
             except OSError:
                 shard_count = 0
             if shard_count > 0:
+                detail = f"saved {shard_count} shards"
+                mem = _memory_stats()
+                if mem:
+                    detail = f"{detail} | {mem}"
                 emit_progress(
                     "progress",
                     phase="saving",
                     percent=min(96.0, 91.0 + shard_count * 0.7),
-                    detail=f"saved {shard_count} shards",
+                    detail=detail,
                 )
             done.wait(timeout=30)
 

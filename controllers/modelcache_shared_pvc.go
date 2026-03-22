@@ -89,15 +89,7 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: modelCache.Namespace}, job)
 	if err != nil && errors.IsNotFound(err) {
 		// If download already completed, the job was GC'd by TTL — continue to next phase.
-		// Include Failed phase when pipeline progress exists (abliteration/finetune/quantization
-		// completed but a later phase failed). Without this, a Failed quantization after
-		// successful abliteration + download GC would re-download and re-abliterate from scratch.
-		if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady ||
-			modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseQuantizing ||
-			modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseFinetuning ||
-			modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseAbliterating ||
-			(modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseFailed && modelCache.Status.Path != "") ||
-			(modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseProvisioning && modelCache.Status.Path != "") {
+		if downloadGCdShouldProceed(&modelCache.Status) {
 			log.Info("Download job GC'd but download already complete, skipping re-creation",
 				"cache", modelCache.Name, "phase", modelCache.Status.Phase)
 			modelCache.Status.Path = fmt.Sprintf("%s:%s", pvcName, modelPath)
@@ -300,6 +292,16 @@ func parseOCISource(source string) string {
 	source = strings.TrimPrefix(source, "oci://")
 	source = strings.TrimPrefix(source, "oras://")
 	return source
+}
+
+// downloadGCdShouldProceed returns true when a GC'd download job can be safely
+// skipped (i.e. download already completed). Status.Path is the definitive signal
+// that download completed in a prior reconcile cycle. Phase alone is unreliable
+// during controller rollouts — the old pod may advance the phase before the new
+// pod starts, creating a race where the download job is GC'd but no downstream
+// evidence (Path) was recorded.
+func downloadGCdShouldProceed(status *aiv1alpha1.ModelCacheStatus) bool {
+	return status.Path != ""
 }
 
 func (r *ModelCacheReconciler) jobForDownload(m *aiv1alpha1.ModelCache, pvcName, modelPath string) (*batchv1.Job, error) {
