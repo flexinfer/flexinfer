@@ -16,14 +16,15 @@ import (
 
 // asyncExec represents a running or completed async exec.
 type asyncExec struct {
-	ID        string              `json:"id"`
-	Project   string              `json:"project"`
-	Command   string              `json:"command"`
-	Status    string              `json:"status"` // "running", "completed", "failed"
-	Result    *backend.ExecResult `json:"result,omitempty"`
-	Error     string              `json:"error,omitempty"`
-	StartedAt time.Time           `json:"started_at"`
-	cancel    context.CancelFunc
+	ID          string              `json:"id"`
+	Project     string              `json:"project"`
+	Command     string              `json:"command"`
+	Status      string              `json:"status"` // "running", "completed", "failed"
+	Result      *backend.ExecResult `json:"result,omitempty"`
+	Error       string              `json:"error,omitempty"`
+	StartedAt   time.Time           `json:"started_at"`
+	CompletedAt *time.Time          `json:"completed_at,omitempty"`
+	cancel      context.CancelFunc
 }
 
 // asyncRegistry tracks in-flight and recently completed async execs.
@@ -56,7 +57,15 @@ func (r *asyncRegistry) cleanup(maxAge time.Duration) {
 	defer r.mu.Unlock()
 	cutoff := time.Now().Add(-maxAge)
 	for id, e := range r.execs {
-		if e.Status != "running" && e.StartedAt.Before(cutoff) {
+		if e.Status == "running" {
+			continue
+		}
+
+		completedAt := e.StartedAt
+		if e.CompletedAt != nil {
+			completedAt = *e.CompletedAt
+		}
+		if completedAt.Before(cutoff) {
 			delete(r.execs, id)
 		}
 	}
@@ -147,6 +156,8 @@ func (m *manager) handleExecAsync(ctx context.Context, args map[string]any) (*mc
 
 		m.asyncExecs.mu.Lock()
 		defer m.asyncExecs.mu.Unlock()
+		completedAt := time.Now()
+		ae.CompletedAt = &completedAt
 		if err != nil {
 			ae.Status = "failed"
 			ae.Error = err.Error()
@@ -183,6 +194,9 @@ func (m *manager) handleExecPoll(_ context.Context, args map[string]any) (*mcp.C
 		"command":    ae.Command,
 		"started_at": ae.StartedAt.Format(time.RFC3339),
 		"elapsed_ms": time.Since(ae.StartedAt).Milliseconds(),
+	}
+	if ae.CompletedAt != nil {
+		result["completed_at"] = ae.CompletedAt.Format(time.RFC3339)
 	}
 
 	if ae.Result != nil {
