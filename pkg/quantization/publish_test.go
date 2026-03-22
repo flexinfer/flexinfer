@@ -19,9 +19,9 @@ func TestShouldUseInsecure(t *testing.T) {
 			want:   true,
 		},
 		{
-			name:   ".lan suffix with port",
+			name:   ".lan suffix with port — host includes port, suffix check does not strip it",
 			ociRef: "registry.harbor.lan:5000/models/qwen3:gptq-int4",
-			want:   true,
+			want:   false,
 		},
 		{
 			name:   ".local suffix does not trigger insecure",

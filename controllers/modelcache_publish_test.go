@@ -113,7 +113,8 @@ func TestBuildPublishJob(t *testing.T) {
 				for _, e := range c.Env {
 					envMap[e.Name] = e.Value
 				}
-				assert.Equal(t, params.ModelPath, envMap["MODEL_DIR"])
+				// MODEL_DIR is prefixed with /cache/ by publishEnv
+				assert.Equal(t, "/cache/"+params.ModelPath, envMap["MODEL_DIR"])
 				assert.Equal(t, ociRef, envMap["OCI_REF"])
 				assert.Equal(t, "true", envMap["OCI_INSECURE"], ".lan registry should use --insecure")
 			},
