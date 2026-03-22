@@ -4,7 +4,10 @@ ARG RUNTIME_REGISTRY=registry.harbor.lan
 FROM golang:1.25.8-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
-ENV GOWORK=off
+ENV GOWORK=off \
+    GOPRIVATE=gitlab.flexinfer.ai/* \
+    GONOSUMDB=gitlab.flexinfer.ai/* \
+    GONOPROXY=gitlab.flexinfer.ai/*
 
 WORKDIR /src
 
@@ -12,6 +15,8 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=secret,id=ci_job_token,required=false \
     --mount=type=secret,id=gitlab_token,required=false \
+    --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
     set -eu; \
     token=""; \
     token_user=""; \
@@ -32,13 +37,16 @@ COPY . .
 
 # Build all binaries in a single layer to share build cache and parallelise MCP servers
 ARG VERSION=dev
-RUN mkdir -p /bin && \
+ARG MCP_BUILD_JOBS=4
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    mkdir -p /bin && \
     CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -trimpath \
       -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loomd ./cmd/loomd && \
     CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -trimpath \
       -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loom ./cmd/loom && \
     find cmd -mindepth 1 -maxdepth 1 -type d -name 'mcp-*' | xargs -n1 basename | \
-      xargs -P4 -I{} sh -c \
+      xargs -P"${MCP_BUILD_JOBS}" -I{} sh -c \
         'CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -trimpath -ldflags="-s -w" -o "/bin/$1" "./cmd/$1"' _ {}
 
 # Runtime stage - minimal image
