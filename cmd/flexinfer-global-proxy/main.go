@@ -18,6 +18,7 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/internal/globalrouting"
+	"github.com/flexinfer/flexinfer/pkg/config"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	corev1 "k8s.io/api/core/v1"
@@ -119,20 +120,16 @@ func main() {
 	flag.IntVar(&port, "port", 8090, "Port to listen on")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	flag.StringVar(&strategyFlag, "strategy", "round-robin", "Routing strategy (round-robin, failover, latency, weighted)")
-	flag.StringVar(&clustersFlag, "clusters", os.Getenv("GLOBAL_PROXY_CLUSTERS"), "Cluster endpoints in the form name=url,name=url")
-	flag.StringVar(&failoverFlag, "failover-order", os.Getenv("GLOBAL_PROXY_FAILOVER_ORDER"), "Failover priority list (comma-separated cluster names)")
-	flag.StringVar(&weightsFlag, "weights", os.Getenv("GLOBAL_PROXY_WEIGHTS"), "Optional cluster weights in the form name=weight,name=weight")
+	flag.StringVar(&clustersFlag, "clusters", config.GetEnv("GLOBAL_PROXY_CLUSTERS", ""), "Cluster endpoints in the form name=url,name=url")
+	flag.StringVar(&failoverFlag, "failover-order", config.GetEnv("GLOBAL_PROXY_FAILOVER_ORDER", ""), "Failover priority list (comma-separated cluster names)")
+	flag.StringVar(&weightsFlag, "weights", config.GetEnv("GLOBAL_PROXY_WEIGHTS", ""), "Optional cluster weights in the form name=weight,name=weight")
 	flag.StringVar(&probePath, "probe-path", "/healthz", "Health probe path on downstream cluster proxies")
 	flag.DurationVar(&probeTimeout, "probe-timeout", 2*time.Second, "HTTP timeout per downstream probe")
 	flag.DurationVar(&probeEvery, "probe-interval", 15*time.Second, "Probe interval for downstream latency/health checks")
-	flag.StringVar(&globalProxyName, "globalproxy-name", os.Getenv("GLOBAL_PROXY_NAME"), "Optional GlobalProxy resource name for dynamic config sync")
-	flag.StringVar(&globalProxyNamespace, "globalproxy-namespace", os.Getenv("POD_NAMESPACE"), "Namespace containing GlobalProxy resource (default: POD_NAMESPACE or default)")
+	flag.StringVar(&globalProxyName, "globalproxy-name", config.GetEnv("GLOBAL_PROXY_NAME", ""), "Optional GlobalProxy resource name for dynamic config sync")
+	flag.StringVar(&globalProxyNamespace, "globalproxy-namespace", config.GetEnv("POD_NAMESPACE", "default"), "Namespace containing GlobalProxy resource (default: POD_NAMESPACE or default)")
 	flag.DurationVar(&globalProxySyncInterval, "globalproxy-sync-interval", 15*time.Second, "Polling interval for GlobalProxy config sync")
 	flag.Parse()
-
-	if strings.TrimSpace(globalProxyNamespace) == "" {
-		globalProxyNamespace = "default"
-	}
 
 	logger := buildLogger(logLevel)
 	slog.SetDefault(logger)

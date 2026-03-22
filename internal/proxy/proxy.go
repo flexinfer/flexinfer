@@ -8,14 +8,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/internal/routing"
+	"github.com/flexinfer/flexinfer/pkg/config"
 	"github.com/flexinfer/flexinfer/pkg/validation"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
@@ -131,26 +130,26 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 	cfg := Config{
 		Namespace:                        namespace,
 		Client:                           k8sClient,
-		MaxQueueSize:                     getEnvInt("PROXY_MAX_QUEUE_SIZE", 100),
-		QueueTimeout:                     getEnvDuration("PROXY_QUEUE_TIMEOUT", 60*time.Second),
-		ColdStartTimeout:                 getEnvDuration("PROXY_COLD_START_TIMEOUT", 60*time.Second),
-		RoutingEnabled:                   getEnvBool("PROXY_ROUTING_ENABLED", true),
-		RoutingExplicitCacheKeyMaxLength: getEnvInt("PROXY_ROUTING_EXPLICIT_KEY_MAX_LENGTH", defaultRoutingConfig.ExplicitCacheKeyMaxLength),
-		RoutingSystemSegmentMaxLength:    getEnvInt("PROXY_ROUTING_SYSTEM_SEGMENT_MAX_LENGTH", defaultRoutingConfig.SystemSegmentMaxLength),
-		RoutingDocSegmentMaxLength:       getEnvInt("PROXY_ROUTING_DOCUMENT_SEGMENT_MAX_LENGTH", defaultRoutingConfig.DocSegmentMaxLength),
-		ValidateRequests:                 getEnvBool("PROXY_VALIDATE_REQUESTS", false),
-		BackoffEnabled:                   getEnvBool("PROXY_BACKOFF_ENABLED", false),
-		BackoffMaxRetries:                getEnvInt("PROXY_BACKOFF_MAX_RETRIES", 3),
-		BackoffInitialWait:               getEnvDuration("PROXY_BACKOFF_INITIAL_WAIT", 5*time.Second),
-		BackoffMaxWait:                   getEnvDuration("PROXY_BACKOFF_MAX_WAIT", 30*time.Second),
-		RateLimitEnabled:                 getEnvBool("PROXY_RATE_LIMIT_ENABLED", false),
-		RateLimitPerModel:                getEnvFloat("PROXY_RATE_LIMIT_PER_MODEL", 100.0),
-		RateLimitBurst:                   getEnvInt("PROXY_RATE_LIMIT_BURST", 50),
-		RateLimitGlobal:                  getEnvFloat("PROXY_RATE_LIMIT_GLOBAL", 1000.0),
-		RateLimitGlobalBurst:             getEnvInt("PROXY_RATE_LIMIT_GLOBAL_BURST", 200),
-		AuthEnabled:                      getEnvBool("PROXY_AUTH_ENABLED", false),
+		MaxQueueSize:                     config.GetEnvInt("PROXY_MAX_QUEUE_SIZE", 100),
+		QueueTimeout:                     config.GetEnvDuration("PROXY_QUEUE_TIMEOUT", 60*time.Second),
+		ColdStartTimeout:                 config.GetEnvDuration("PROXY_COLD_START_TIMEOUT", 60*time.Second),
+		RoutingEnabled:                   config.GetEnvBool("PROXY_ROUTING_ENABLED", true),
+		RoutingExplicitCacheKeyMaxLength: config.GetEnvInt("PROXY_ROUTING_EXPLICIT_KEY_MAX_LENGTH", defaultRoutingConfig.ExplicitCacheKeyMaxLength),
+		RoutingSystemSegmentMaxLength:    config.GetEnvInt("PROXY_ROUTING_SYSTEM_SEGMENT_MAX_LENGTH", defaultRoutingConfig.SystemSegmentMaxLength),
+		RoutingDocSegmentMaxLength:       config.GetEnvInt("PROXY_ROUTING_DOCUMENT_SEGMENT_MAX_LENGTH", defaultRoutingConfig.DocSegmentMaxLength),
+		ValidateRequests:                 config.GetEnvBool("PROXY_VALIDATE_REQUESTS", false),
+		BackoffEnabled:                   config.GetEnvBool("PROXY_BACKOFF_ENABLED", false),
+		BackoffMaxRetries:                config.GetEnvInt("PROXY_BACKOFF_MAX_RETRIES", 3),
+		BackoffInitialWait:               config.GetEnvDuration("PROXY_BACKOFF_INITIAL_WAIT", 5*time.Second),
+		BackoffMaxWait:                   config.GetEnvDuration("PROXY_BACKOFF_MAX_WAIT", 30*time.Second),
+		RateLimitEnabled:                 config.GetEnvBool("PROXY_RATE_LIMIT_ENABLED", false),
+		RateLimitPerModel:                config.GetEnvFloat64("PROXY_RATE_LIMIT_PER_MODEL", 100.0),
+		RateLimitBurst:                   config.GetEnvInt("PROXY_RATE_LIMIT_BURST", 50),
+		RateLimitGlobal:                  config.GetEnvFloat64("PROXY_RATE_LIMIT_GLOBAL", 1000.0),
+		RateLimitGlobalBurst:             config.GetEnvInt("PROXY_RATE_LIMIT_GLOBAL_BURST", 200),
+		AuthEnabled:                      config.GetEnvBool("PROXY_AUTH_ENABLED", false),
 		AuthToken:                        os.Getenv("PROXY_AUTH_TOKEN"),
-		DirectRuntimeEnabled:             getEnvBool("PROXY_DIRECT_RUNTIME_ENABLED", true),
+		DirectRuntimeEnabled:             config.GetEnvBool("PROXY_DIRECT_RUNTIME_ENABLED", true),
 	}
 
 	return cfg
@@ -510,47 +509,4 @@ func (p *Proxy) handleDebugConfig(w http.ResponseWriter, _ *http.Request) {
 	if err := json.NewEncoder(w).Encode(p.debugConfig); err != nil {
 		slog.Warn("debug config write failed", "error", err)
 	}
-}
-
-// getEnvInt returns an integer from environment variable or default.
-func getEnvInt(key string, defaultVal int) int {
-	if val := os.Getenv(key); val != "" {
-		if i, err := strconv.Atoi(val); err == nil {
-			return i
-		}
-	}
-	return defaultVal
-}
-
-// getEnvDuration returns a duration from environment variable or default.
-func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
-	if val := os.Getenv(key); val != "" {
-		if d, err := time.ParseDuration(val); err == nil {
-			return d
-		}
-	}
-	return defaultVal
-}
-
-// getEnvBool returns a boolean from environment variable or default.
-func getEnvBool(key string, defaultVal bool) bool {
-	if val := os.Getenv(key); val != "" {
-		switch strings.ToLower(val) {
-		case "true", "1", "yes", "on":
-			return true
-		case "false", "0", "no", "off":
-			return false
-		}
-	}
-	return defaultVal
-}
-
-// getEnvFloat returns a float64 from environment variable or default.
-func getEnvFloat(key string, defaultVal float64) float64 {
-	if val := os.Getenv(key); val != "" {
-		if f, err := strconv.ParseFloat(val, 64); err == nil {
-			return f
-		}
-	}
-	return defaultVal
 }

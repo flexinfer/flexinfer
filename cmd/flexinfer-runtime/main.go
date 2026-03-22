@@ -29,6 +29,7 @@ import (
 	"github.com/flexinfer/flexinfer/backend"
 	_ "github.com/flexinfer/flexinfer/backend" // register all backends
 	"github.com/flexinfer/flexinfer/internal/runtime"
+	"github.com/flexinfer/flexinfer/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
@@ -44,8 +45,8 @@ func main() {
 	)
 
 	flag.StringVar(&listenAddr, "listen", ":8080", "Address for the runtime API server.")
-	flag.StringVar(&gpuVendor, "gpu-vendor", os.Getenv("GPU_VENDOR"), "GPU vendor: amd, nvidia, cpu.")
-	flag.StringVar(&gpuArch, "gpu-arch", os.Getenv("GPU_ARCH"), "GPU architecture: gfx1100, gfx906, sm_52, etc.")
+	flag.StringVar(&gpuVendor, "gpu-vendor", config.GetEnv("GPU_VENDOR", "cpu"), "GPU vendor: amd, nvidia, cpu.")
+	flag.StringVar(&gpuArch, "gpu-arch", config.GetEnv("GPU_ARCH", ""), "GPU architecture: gfx1100, gfx906, sm_52, etc.")
 	flag.StringVar(&modelBasePath, "model-base-path", "/models", "Root path where models are mounted.")
 	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", 30*time.Second, "Time to wait for subprocess graceful exit.")
 	flag.DurationVar(&healthInterval, "health-interval", 5*time.Second, "Health check polling interval.")
@@ -63,16 +64,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if gpuVendor == "" {
-		logger.Info("No GPU vendor specified, defaulting to 'cpu'")
-		gpuVendor = "cpu"
-	}
-
 	// Register Prometheus metrics for the runtime.
 	runtime.RegisterMetrics()
 
 	// Set runtime info gauge.
-	nodeName := os.Getenv("NODE_NAME")
+	nodeName := config.GetEnv("NODE_NAME", "")
 	if nodeName == "" {
 		nodeName, _ = os.Hostname()
 	}
