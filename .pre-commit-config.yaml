@@ -38,7 +38,7 @@ repos:
 
       - id: go-imports
         name: goimports
-        entry: bash -c 'if [ "$#" -eq 0 ]; then exit 0; fi; ~/go/bin/goimports -local github.com/crb2nu/loom -w "$@"' --
+        entry: bash scripts/dev/goimports-hook.sh
         language: system
         types: [go]
 
