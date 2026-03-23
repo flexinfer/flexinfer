@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -76,21 +75,9 @@ func TestAudit_WritesJSONL(t *testing.T) {
 		a.Log(e)
 	}
 
-	// Read back and verify
-	f, err := os.Open(logPath)
+	decoded, err := a.ReadEntries(AuditReadOptions{})
 	if err != nil {
-		t.Fatalf("open log: %v", err)
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	var decoded []AuditEntry
-	for scanner.Scan() {
-		var entry AuditEntry
-		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-			t.Fatalf("unmarshal line: %v", err)
-		}
-		decoded = append(decoded, entry)
+		t.Fatalf("read entries: %v", err)
 	}
 
 	if len(decoded) != 3 {
@@ -150,20 +137,12 @@ func TestAudit_AppendBehavior(t *testing.T) {
 	a2.Log(AuditEntry{AgentID: "second", Server: "s", Tool: "t", Status: "success"})
 	a2.Close()
 
-	// Verify both entries present
-	f, err := os.Open(logPath)
+	entries, err := ReadAuditEntries(logPath, AuditReadOptions{})
 	if err != nil {
-		t.Fatalf("open log: %v", err)
+		t.Fatalf("read entries: %v", err)
 	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	var lines int
-	for scanner.Scan() {
-		lines++
-	}
-	if lines != 2 {
-		t.Errorf("expected 2 lines (append), got %d", lines)
+	if len(entries) != 2 {
+		t.Errorf("expected 2 entries (append), got %d", len(entries))
 	}
 }
 
@@ -260,29 +239,70 @@ func TestAudit_ConcurrentWrites(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Read back and count lines.
-	f, err := os.Open(logPath)
+	entries, err := a.ReadEntries(AuditReadOptions{})
 	if err != nil {
-		t.Fatalf("open log: %v", err)
+		t.Fatalf("read entries: %v", err)
 	}
-	defer f.Close()
+	if len(entries) != totalEntries {
+		t.Errorf("expected %d entries, got %d", totalEntries, len(entries))
+	}
+}
 
-	scanner := bufio.NewScanner(f)
-	var lineCount int
-	for scanner.Scan() {
-		lineCount++
-		// Verify each line is valid JSON.
-		var entry map[string]any
-		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-			t.Errorf("line %d is not valid JSON: %v", lineCount, err)
-		}
+func TestAudit_SummaryUsesStatusAndAgentFields(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "audit-summary.jsonl")
+
+	a, err := NewAuditLogger(AuditConfig{Enabled: true, LogPath: logPath}, slog.Default())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scanner error: %v", err)
+	defer a.Close()
+
+	now := time.Date(2026, 3, 18, 10, 0, 0, 0, time.UTC)
+	a.Log(AuditEntry{
+		Timestamp:  now,
+		AgentID:    "codex",
+		AgentType:  "worker",
+		Server:     "git",
+		Tool:       "status",
+		DurationMs: 12,
+		Status:     "success",
+	})
+	a.Log(AuditEntry{
+		Timestamp: now.Add(time.Second),
+		AgentID:   "codex",
+		Server:    "gitlab",
+		Tool:      "push",
+		Status:    "error",
+		Error:     "denied",
+	})
+	a.Log(AuditEntry{
+		Timestamp: now.Add(2 * time.Second),
+		AgentID:   "claude",
+		Server:    "github",
+		Tool:      "list_prs",
+		Status:    "success",
+	})
+
+	summary, err := a.Summary(AuditReadOptions{Limit: 2})
+	if err != nil {
+		t.Fatalf("summary: %v", err)
 	}
 
-	if lineCount != totalEntries {
-		t.Errorf("expected %d lines, got %d", totalEntries, lineCount)
+	if summary.TotalEvents != 2 {
+		t.Fatalf("summary total_events = %d, want 2", summary.TotalEvents)
+	}
+	if summary.ByEventType["success"] != 1 || summary.ByEventType["error"] != 1 {
+		t.Fatalf("unexpected by_event_type: %+v", summary.ByEventType)
+	}
+	if summary.ByActorID["codex"] != 1 || summary.ByActorID["claude"] != 1 {
+		t.Fatalf("unexpected by_actor_id: %+v", summary.ByActorID)
+	}
+	if summary.OldestTimestamp == nil || *summary.OldestTimestamp != now.Add(time.Second).Format(time.RFC3339Nano) {
+		t.Fatalf("unexpected oldest timestamp: %+v", summary.OldestTimestamp)
+	}
+	if summary.NewestTimestamp == nil || *summary.NewestTimestamp != now.Add(2*time.Second).Format(time.RFC3339Nano) {
+		t.Fatalf("unexpected newest timestamp: %+v", summary.NewestTimestamp)
 	}
 }
 

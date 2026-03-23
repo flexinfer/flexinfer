@@ -11,9 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 	"gopkg.in/yaml.v3"
+
+	"github.com/crb2nu/loom/pkg/strutil"
 )
 
 const (
@@ -543,7 +544,7 @@ func truncateBulkText(text string) string {
 }
 
 func parseEmbeddedStructuredText(text string) (any, bool) {
-	raw, err := fiaccel.ExtractEmbeddedJSON([]byte(text))
+	raw, err := strutil.ExtractEmbeddedJSON([]byte(text))
 	if err != nil {
 		return nil, false
 	}

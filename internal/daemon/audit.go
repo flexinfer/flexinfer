@@ -51,6 +51,7 @@ type AuditLogger struct {
 	file   *os.File
 	enc    *json.Encoder
 	logger *slog.Logger
+	path   string
 }
 
 // NewAuditLogger creates an audit logger. Returns nil if auditing is disabled.
@@ -83,6 +84,7 @@ func NewAuditLogger(cfg AuditConfig, logger *slog.Logger) (*AuditLogger, error) 
 		file:   f,
 		enc:    json.NewEncoder(f),
 		logger: logger,
+		path:   logPath,
 	}, nil
 }
 
