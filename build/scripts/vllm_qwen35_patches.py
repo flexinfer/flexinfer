@@ -1218,3 +1218,260 @@ with open(runner_path, "w") as f:
     f.write(runner_content)
 
 print("15. PATCHED: Hidden states tracing diagnostics added")
+
+# ==============================================================================
+# 16. FIX: Replace broken QuantLinear in_proj_ba with nn.Linear
+#
+# ROOT CAUSE: GPTQModel 5.8.0 does not quantize in_proj_ba layers (shape
+# [96, 5120]) in Qwen3.5's hybrid architecture. The checkpoint stores them as
+# full-precision .weight tensors. But vLLM's GPTQ loader converts ALL linear
+# layers to QuantLinear, so in_proj_ba gets random/zero-initialized qweight/
+# scales/qzeros. This corrupts g (decay) and beta (update gate) for all 48
+# linear attention layers, producing garbage inference.
+#
+# Fix: Patch load_weights() to detect layers in the checkpoint that have
+# .weight but no .qweight, and load them as regular parameters instead of
+# trying to use the quantized weight_loader path.
+# ==============================================================================
+print("\n16. Fixing unquantized in_proj_ba layers (GPTQ mixed-quant fix)...")
+
+q35_path = f"{BASE}/model_executor/models/qwen3_5.py"
+with open(q35_path) as f:
+    q35_content = f.read()
+
+# We need to patch load_weights() to handle mixed quantized/unquantized checkpoints.
+# The approach: after the standard load_weights() processes all weights, we do a
+# post-load fixup that:
+# 1. Scans the safetensors index for layers with .weight but no .qweight
+# 2. For each such layer, if the model has a QuantLinear, replaces it with nn.Linear
+# 3. Loads the full-precision weight from the safetensors file
+
+# Find the load_weights method and add a post-load fixup call
+old_load_weights_end = """        loader = AutoWeightsLoader(
+            self,
+            skip_prefixes=(["lm_head."]
+                           if self.config.tie_word_embeddings else None),
+        )
+        loader.load_model_weights(weights, prefix=prefix)"""
+
+new_load_weights_end = """        loader = AutoWeightsLoader(
+            self,
+            skip_prefixes=(["lm_head."]
+                           if self.config.tie_word_embeddings else None),
+        )
+        loader.load_model_weights(weights, prefix=prefix)
+
+        # ── POST-LOAD FIXUP: Replace broken QuantLinear for unquantized layers ──
+        # GPTQModel may skip quantizing small layers (e.g. in_proj_ba [96, 5120]).
+        # These are stored as .weight in the checkpoint but vLLM wraps them as
+        # QuantLinear with random qweight. Detect and fix.
+        import json as _fix_json
+        import os as _fix_os
+        try:
+            _model_dir = self.config._name_or_path
+            _index_path = _fix_os.path.join(_model_dir, "model.safetensors.index.json")
+            if _fix_os.path.exists(_index_path):
+                with open(_index_path) as _f:
+                    _idx = _fix_json.load(_f)
+                _wmap = _idx.get("weight_map", {})
+
+                # Find layers with .weight but no .qweight
+                _has_weight = set()
+                _has_qweight = set()
+                for _k in _wmap:
+                    if _k.endswith(".weight"):
+                        _has_weight.add(_k.rsplit(".weight", 1)[0])
+                    elif _k.endswith(".qweight"):
+                        _has_qweight.add(_k.rsplit(".qweight", 1)[0])
+
+                _unquantized = _has_weight - _has_qweight
+                if _unquantized:
+                    import safetensors.torch as _st
+                    import torch.nn as _nn
+                    _fixed = 0
+                    _loaded_shards = {}  # cache shard loads
+
+                    for _layer_prefix in sorted(_unquantized):
+                        # Strip "model." prefix to match named_modules output
+                        _mod_name = _layer_prefix
+                        if _mod_name.startswith("model."):
+                            _mod_name = _mod_name[len("model."):]
+
+                        # Find the module in the model
+                        try:
+                            _mod = self.model.get_submodule(_mod_name)
+                        except (AttributeError, ValueError):
+                            continue
+
+                        # Check if it's a quantized linear (has qweight attribute)
+                        if not hasattr(_mod, "qweight"):
+                            continue
+
+                        # Load the full-precision weight
+                        _weight_key = f"{_layer_prefix}.weight"
+                        _shard_file = _wmap.get(_weight_key)
+                        if not _shard_file:
+                            continue
+
+                        _shard_path = _fix_os.path.join(_model_dir, _shard_file)
+                        if _shard_path not in _loaded_shards:
+                            _loaded_shards[_shard_path] = _st.load_file(
+                                _shard_path, device="cpu"
+                            )
+                        _weight = _loaded_shards[_shard_path].get(_weight_key)
+                        if _weight is None:
+                            continue
+
+                        # Check for bias
+                        _bias_key = f"{_layer_prefix}.bias"
+                        _bias = None
+                        if _bias_key in _wmap:
+                            _b_shard = _wmap[_bias_key]
+                            _b_path = _fix_os.path.join(_model_dir, _b_shard)
+                            if _b_path not in _loaded_shards:
+                                _loaded_shards[_b_path] = _st.load_file(
+                                    _b_path, device="cpu"
+                                )
+                            _bias = _loaded_shards[_b_path].get(_bias_key)
+
+                        # Create replacement nn.Linear
+                        _out_f, _in_f = _weight.shape
+                        _new_linear = _nn.Linear(
+                            _in_f, _out_f, bias=(_bias is not None)
+                        )
+                        _dev = next(_mod.parameters()).device
+                        _dtype = next(_mod.parameters()).dtype
+                        _new_linear.weight.data = _weight.to(
+                            device=_dev, dtype=_dtype
+                        )
+                        if _bias is not None:
+                            _new_linear.bias.data = _bias.to(
+                                device=_dev, dtype=_dtype
+                            )
+
+                        # Replace in parent module
+                        _parts = _mod_name.rsplit(".", 1)
+                        if len(_parts) == 2:
+                            _parent = self.model.get_submodule(_parts[0])
+                            setattr(_parent, _parts[1], _new_linear)
+                        else:
+                            setattr(self.model, _mod_name, _new_linear)
+
+                        _fixed += 1
+                        print(
+                            f"  16. Fixed {_layer_prefix}: QuantLinear -> "
+                            f"nn.Linear({_in_f}, {_out_f}) on {_dev}",
+                            flush=True,
+                        )
+
+                    # Free cached shards
+                    del _loaded_shards
+
+                    if _fixed > 0:
+                        print(
+                            f"  16. FIXED {_fixed} unquantized layers "
+                            f"(replaced QuantLinear with nn.Linear)",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            "  16. No unquantized QuantLinear layers found",
+                            flush=True,
+                        )
+                else:
+                    print("  16. All layers properly quantized", flush=True)
+            else:
+                print(
+                    f"  16. SKIP: No safetensors index at {_index_path}",
+                    flush=True,
+                )
+        except Exception as _fix_e:
+            import traceback as _fix_tb
+            print(f"  16. ERROR in post-load fixup: {_fix_e}", flush=True)
+            _fix_tb.print_exc()"""
+
+if old_load_weights_end in q35_content:
+    q35_content = q35_content.replace(old_load_weights_end, new_load_weights_end, 1)
+    with open(q35_path, "w") as f:
+        f.write(q35_content)
+    print("16. PATCHED: load_weights() post-fixup for unquantized in_proj_ba layers")
+else:
+    print("16. WARNING: Could not find load_weights AutoWeightsLoader pattern")
+    print("    Trying alternative approach: patch weight_loader directly...")
+
+    # Alternative: check if the pattern is slightly different
+    # Try to find any AutoWeightsLoader usage
+    import re as _re16
+
+    _match = _re16.search(
+        r"(loader\s*=\s*AutoWeightsLoader\([^)]+\)\s*\n\s*loader\.load_model_weights\([^)]+\))",
+        q35_content,
+    )
+    if _match:
+        _old = _match.group(0)
+        # Build the replacement using the exact matched text
+        _new = (
+            _old
+            + """
+
+        # ── POST-LOAD FIXUP: Replace broken QuantLinear for unquantized layers ──
+        import json as _fix_json
+        import os as _fix_os
+        try:
+            _model_dir = self.config._name_or_path
+            _index_path = _fix_os.path.join(_model_dir, "model.safetensors.index.json")
+            if _fix_os.path.exists(_index_path):
+                with open(_index_path) as _f:
+                    _idx = _fix_json.load(_f)
+                _wmap = _idx.get("weight_map", {})
+                _has_weight = {k.rsplit(".weight", 1)[0] for k in _wmap if k.endswith(".weight")}
+                _has_qweight = {k.rsplit(".qweight", 1)[0] for k in _wmap if k.endswith(".qweight")}
+                _unquantized = _has_weight - _has_qweight
+                if _unquantized:
+                    import safetensors.torch as _st
+                    import torch.nn as _nn
+                    _fixed = 0
+                    _loaded_shards = {}
+                    for _lp in sorted(_unquantized):
+                        _mn = _lp[len("model."):] if _lp.startswith("model.") else _lp
+                        try:
+                            _mod = self.model.get_submodule(_mn)
+                        except (AttributeError, ValueError):
+                            continue
+                        if not hasattr(_mod, "qweight"):
+                            continue
+                        _wk = f"{_lp}.weight"
+                        _sf = _wmap.get(_wk)
+                        if not _sf:
+                            continue
+                        _sp = _fix_os.path.join(_model_dir, _sf)
+                        if _sp not in _loaded_shards:
+                            _loaded_shards[_sp] = _st.load_file(_sp, device="cpu")
+                        _w = _loaded_shards[_sp].get(_wk)
+                        if _w is None:
+                            continue
+                        _of, _if = _w.shape
+                        _nl = _nn.Linear(_if, _of, bias=False)
+                        _dev = next(_mod.parameters()).device
+                        _dt = next(_mod.parameters()).dtype
+                        _nl.weight.data = _w.to(device=_dev, dtype=_dt)
+                        _parts = _mn.rsplit(".", 1)
+                        if len(_parts) == 2:
+                            _parent = self.model.get_submodule(_parts[0])
+                            setattr(_parent, _parts[1], _nl)
+                        else:
+                            setattr(self.model, _mn, _nl)
+                        _fixed += 1
+                        print(f"  16. Fixed {_lp}: QuantLinear -> nn.Linear({_if}, {_of}) on {_dev}", flush=True)
+                    del _loaded_shards
+                    print(f"  16. FIXED {_fixed} unquantized layers" if _fixed else "  16. No fixable layers", flush=True)
+        except Exception as _fix_e:
+            print(f"  16. ERROR: {_fix_e}", flush=True)"""
+        )
+        q35_content = q35_content.replace(_old, _new, 1)
+        with open(q35_path, "w") as f:
+            f.write(q35_content)
+        print("16. PATCHED (alt): load_weights() post-fixup via regex match")
+    else:
+        print("16. FAILED: Could not find any AutoWeightsLoader pattern in qwen3_5.py")
+        print("    Manual intervention required")
