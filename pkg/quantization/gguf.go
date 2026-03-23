@@ -26,8 +26,9 @@ const (
 	DefaultGGUFCPU = 8
 
 	// DefaultActiveDeadlineSeconds is the max runtime for quantization jobs.
-	// GPTQ 27B + NFS save can take 2.5h+; we set a 4-hour deadline.
-	DefaultActiveDeadlineSeconds int64 = 14400
+	// GPTQ 27B + NFS save measured at 4.5h (74 min quant + 55 min save + margin).
+	// Set to 6 hours to accommodate large models.
+	DefaultActiveDeadlineSeconds int64 = 21600
 )
 
 // GGUFJobBuilder generates Kubernetes Jobs for GGUF quantization.
