@@ -19,6 +19,8 @@ include:
     ref: main
     file:
       - /k3s/ci/caches/gitlab-ci-cache.yml
+  - project: "services/tech-radar"
+    file: "/ci/radar.yml"
 
 # This GitLab instance intermittently creates detached MR pipelines with
 # refs/merge-requests/*/head that fail immediately with no jobs. Run the
@@ -54,13 +56,16 @@ variables:
   GOPRIVATE: "gitlab.flexinfer.ai/*"
   # Athens is the preferred in-cluster proxy; fall back to public proxy then direct
   # to reduce transient infra outages breaking CI.
-  GOPROXY: "http://athens.ci.svc.cluster.local:3000|https://proxy.golang.org|direct"
+  GOPROXY: "https://proxy.golang.org|direct"
   # Work around occasional runner fetch failures for ephemeral pipeline refs by
   # disabling shallow clones (fetch full history).
   GIT_DEPTH: "0"
   # CI should resolve pinned module versions, not the local workspace overlays
   # used on developer machines.
   GOWORK: "off"
+  # Disable CGo globally — CI runners don't have fi-accel C headers, and all
+  # binaries are statically linked for container deployment.
+  CGO_ENABLED: "0"
   # GitLab Runner intermittently attempts to fetch `refs/pipelines/<id>`, which
   # is not reliably available on this GitLab instance. Skip the built-in
   # checkout and fetch sources explicitly inside jobs instead.
@@ -213,9 +218,6 @@ lint:
     - prepare:go-cache
   variables:
     GO_WARM_MOD_CACHE: "false"
-    # Disable CGo so packages importing fi-accel use the pure-Go fallback
-    # (the fi-accel C header is not installed on CI runners).
-    CGO_ENABLED: "0"
     KUBERNETES_CPU_REQUEST: "1"
     KUBERNETES_CPU_LIMIT: "2"
     KUBERNETES_MEMORY_REQUEST: "4Gi"
@@ -227,7 +229,7 @@ lint:
         ls -la "$(go env GOPATH)/bin" || true
         exit 1
       fi
-    - $(go env GOPATH)/bin/golangci-lint run --timeout 20m ${GO_APP_PKGS}
+    - $(go env GOPATH)/bin/golangci-lint run --timeout 30m ${GO_APP_PKGS}
   allow_failure: true
 
 vet:
@@ -235,7 +237,6 @@ vet:
   stage: lint
   variables:
     GO_WARM_MOD_CACHE: "false"
-    CGO_ENABLED: "0"
   script:
     - go vet ./...
 
@@ -261,7 +262,6 @@ guardrails:docs-cli:
   stage: lint
   variables:
     GO_WARM_MOD_CACHE: "false"
-    CGO_ENABLED: "0"
   script:
     - |
       # The shared template may fetch sources via archive (no .git metadata).
@@ -289,7 +289,6 @@ security:gosec:
     - when: never
   variables:
     GO_WARM_MOD_CACHE: "false"
-    CGO_ENABLED: "0"
   script:
     - go install github.com/securego/gosec/v2/cmd/gosec@latest
     # Exclude rules that are false positives or intentional patterns:
@@ -320,7 +319,6 @@ security:govulncheck:
     - when: never
   variables:
     GO_WARM_MOD_CACHE: "false"
-    CGO_ENABLED: "0"
     GOMEMLIMIT: "6GiB"
   script:
     - go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -361,11 +359,16 @@ lint:mcp-godot:
 build:binaries:
   <<: *go-template
   stage: build
+  needs:
+    - job: prepare:go-cache
+      artifacts: false
   variables:
     GO_WARM_MOD_CACHE: "false"
-    KUBERNETES_CPU_REQUEST: "2"
+    # Keep generous limits, but lower requests so bursty branch pipelines fit
+    # more cleanly on the shared runner pool during agent-heavy development.
+    KUBERNETES_CPU_REQUEST: "1500m"
     KUBERNETES_CPU_LIMIT: "4"
-    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_REQUEST: "3Gi"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
   cache:
     # Keep Go module/build caches shared per-branch, but keep compiled binaries
@@ -391,22 +394,22 @@ build:binaries:
       mkdir -p bin
 
       # Build main binaries
-      CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/loom ./cmd/loom
-      CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o bin/loomd ./cmd/loomd
+      go build -ldflags="$LDFLAGS" -o bin/loom ./cmd/loom
+      go build -ldflags="$LDFLAGS" -o bin/loomd ./cmd/loomd
 
       # Build MCP servers for integration tests in parallel to reduce wall time.
       # Cap parallelism to avoid exhausting /tmp with per-process Go build caches
       # when building 60+ servers. Also redirect GOTMPDIR to the workspace volume
       # which has more space than the runner's tmpfs.
       mapfile -t MCP_PKGS < <(find cmd -mindepth 1 -maxdepth 1 -type d -name 'mcp-*' | xargs -n1 basename | sort)
-      MCP_BUILD_JOBS="${MCP_BUILD_JOBS:-2}"
+      MCP_BUILD_JOBS="${MCP_BUILD_JOBS:-4}"
       export GOTMPDIR="${CI_PROJECT_DIR:-.}/.go-tmp"
       mkdir -p "$GOTMPDIR"
       echo "Building ${#MCP_PKGS[@]} MCP servers with ${MCP_BUILD_JOBS} parallel jobs..."
       if ! printf '%s\n' "${MCP_PKGS[@]}" | xargs -P "${MCP_BUILD_JOBS}" -I{} bash -c '
         pkg="$1"
         echo "Building ${pkg}..."
-        CGO_ENABLED=0 go build -ldflags="$LDFLAGS" -o "bin/${pkg}" "./cmd/${pkg}"
+        go build -ldflags="$LDFLAGS" -o "bin/${pkg}" "./cmd/${pkg}"
       ' _ {}; then
         echo "ERROR: one or more MCP server builds failed"
         exit 1
@@ -424,11 +427,14 @@ build:binaries:
 test:unit:
   <<: *go-template
   stage: test
+  needs:
+    - job: prepare:go-cache
+      artifacts: false
   variables:
     GO_WARM_MOD_CACHE: "false"
-    KUBERNETES_CPU_REQUEST: "2"
+    KUBERNETES_CPU_REQUEST: "1500m"
     KUBERNETES_CPU_LIMIT: "4"
-    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_REQUEST: "3Gi"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
   script:
     - |
@@ -488,9 +494,10 @@ test:integration:
     - build:binaries
   variables:
     GO_WARM_MOD_CACHE: "false"
-    KUBERNETES_CPU_REQUEST: "2"
+    CGO_ENABLED: "1"
+    KUBERNETES_CPU_REQUEST: "1500m"
     KUBERNETES_CPU_LIMIT: "4"
-    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_REQUEST: "3Gi"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
   cache:
     - key: ${CI_COMMIT_SHA}-bin
@@ -515,17 +522,26 @@ test:integration:
 test:enterprise-smoke:
   <<: *go-template
   stage: test
+  needs:
+    - job: prepare:go-cache
+      artifacts: false
+  variables:
+    GO_WARM_MOD_CACHE: "false"
   script:
     - bash scripts/ci/enterprise_smoke_suite.sh
 
 test:race:
   <<: *go-template
   stage: test
+  needs:
+    - job: prepare:go-cache
+      artifacts: false
   variables:
     GO_WARM_MOD_CACHE: "false"
-    KUBERNETES_CPU_REQUEST: "2"
+    CGO_ENABLED: "1"
+    KUBERNETES_CPU_REQUEST: "1500m"
     KUBERNETES_CPU_LIMIT: "4"
-    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_REQUEST: "3Gi"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
   script:
     - |
@@ -534,10 +550,13 @@ test:race:
       # agentcontext-linked packages require fi-accel FFI. On runners where
       # the native fi-accel library is unavailable, skip those packages so
       # the rest of the race suite can still run.
+      # Packages that transitively depend on fi-accel via agentcontext bridge:
+      #   cmd/loom, cmd/loomd, cmd/mcp-agent-context, pkg/...
+      #   internal/daemon, internal/hud/*, internal/tui
       if [ ! -f "${CI_PROJECT_DIR}/../../libs/fi-accel/go/lib/linux_amd64/libfi_accel_ffi.so" ] && \
          [ ! -f "${CI_PROJECT_DIR}/../../libs/fi-accel/go/lib/linux_amd64/libfi_accel_ffi.a" ]; then
         echo "fi-accel FFI library not found; excluding agentcontext-linked packages from race tests."
-        mapfile -t PKGS < <(printf '%s\n' "${PKGS[@]}" | grep -Ev '^github.com/crb2nu/loom/(pkg|cmd/mcp-agent-context)')
+        mapfile -t PKGS < <(printf '%s\n' "${PKGS[@]}" | grep -Ev '^github.com/crb2nu/loom/(pkg|cmd/(loom$|loomd$|mcp-agent-context)|internal/(daemon|hud|tui|contracts))')
       fi
 
       go test -race -short "${PKGS[@]}"
@@ -552,8 +571,6 @@ test:benchmark:
   needs:
     - build:binaries
   allow_failure: true
-  variables:
-    CGO_ENABLED: "0"
   script:
     - |
       export LOOM_REPO_ROOT="$CI_PROJECT_DIR"
@@ -697,6 +714,7 @@ ios:archive-export:
 build:image:loom-core:
   stage: deploy
   interruptible: true
+  timeout: 90 minutes
   # Image jobs do not use language caches; skip restore/upload overhead.
   cache: []
   # Keep serialization within a ref, but don't let feature/MR pipelines block main.
@@ -709,152 +727,35 @@ build:image:loom-core:
   image:
     name: $BUILDKIT_CLI_IMAGE
     entrypoint: [""]
-  # This repo sets GIT_STRATEGY=none globally; image jobs need a checked-out
-  # working tree, and the GitLab archive API has been returning 404.
+  # GIT_STRATEGY overrides the global "none" because image jobs need a working tree.
+  # DOCKER_HOST="" prevents the runner from waiting for a DinD daemon.
   variables:
     GIT_STRATEGY: fetch
-    # Remote BuildKit does not need local DinD.
     DOCKER_HOST: ""
   script:
-    - |
-      set -eu
-
-      pick_buildkit_host() {
-        CANDIDATES="${BUILDKIT_HOST:-}"
-        if [ -n "${BUILDKIT_FALLBACK_HOSTS:-}" ]; then
-          CANDIDATES="$CANDIDATES $(echo "$BUILDKIT_FALLBACK_HOSTS" | tr ',' ' ')"
-        fi
-
-        if [ -z "$CANDIDATES" ]; then
-          echo "No BuildKit endpoint configured."
-          return 1
-        fi
-
-        SEEN=""
-        for HOST in $CANDIDATES; do
-          [ -z "$HOST" ] && continue
-          case " $SEEN " in
-            *" $HOST "*) continue ;;
-          esac
-          SEEN="$SEEN $HOST"
-
-          echo "Checking BuildKit endpoint: $HOST"
-          if buildctl --addr "$HOST" debug info >/dev/null 2>&1; then
-            BUILDKIT_HOST="$HOST"
-            export BUILDKIT_HOST
-            echo "Using BuildKit endpoint: $BUILDKIT_HOST"
-            buildctl --addr "$BUILDKIT_HOST" debug info
-            return 0
-          fi
-        done
-
-        echo "No healthy BuildKit endpoint found."
-        return 1
-      }
-
-      pick_buildkit_host
-
-      REGISTRY_CANDIDATES="${IMAGE_REGISTRIES:-${IMAGE_REGISTRY}}"
-      SUCCESS=0
-      LAST_RC=1
-
-      for REGISTRY in $REGISTRY_CANDIDATES; do
-        PROBE_LOG="$CI_PROJECT_DIR/.probe-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
-        rm -f "$PROBE_LOG"
-        if command -v wget >/dev/null 2>&1; then
-          if ! wget -q --spider --timeout=5 --tries=1 "https://$REGISTRY/v2/" >"$PROBE_LOG" 2>&1; then
-            if grep -Eqi "401|403|unauthorized|forbidden" "$PROBE_LOG"; then
-              echo "Registry host $REGISTRY is reachable (auth challenge)."
-            else
-              echo "Registry host $REGISTRY is unreachable; skipping."
-              cat "$PROBE_LOG"
-              rm -f "$PROBE_LOG"
-              continue
-            fi
-          fi
-        fi
-        rm -f "$PROBE_LOG"
-
-        IMAGE="$REGISTRY/mcp/loom-core"
-        CACHE_REF="$REGISTRY/library/build-cache/loom-core"
-        IMAGE_NAMES="$IMAGE:$CI_COMMIT_SHORT_SHA"
-        if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-          IMAGE_NAMES="$IMAGE_NAMES,$IMAGE:latest"
-        fi
-        if [ -n "${CI_COMMIT_TAG:-}" ]; then
-          IMAGE_NAMES="$IMAGE_NAMES,$IMAGE:$CI_COMMIT_TAG"
-        fi
-
-        echo "Attempting build/push via registry host: $REGISTRY"
-        echo "Building with image names: $IMAGE_NAMES"
-        LOG_FILE="$CI_PROJECT_DIR/.buildctl-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
-        rm -f "$LOG_FILE"
-        if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 build \
-          --frontend dockerfile.v0 \
-          --local context="$CI_PROJECT_DIR" \
-          --local dockerfile="$CI_PROJECT_DIR" \
-          --secret id=ci_job_token,env=CI_JOB_TOKEN \
-          --opt filename=Dockerfile \
-          --opt "build-arg:RUNTIME_REGISTRY=$REGISTRY" \
-          --opt "build-arg:VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
-          --import-cache "type=registry,ref=${CACHE_REF}" \
-          --export-cache "type=registry,ref=${CACHE_REF},mode=min,image-manifest=true" \
-          --output "type=image,\"name=${IMAGE_NAMES}\",push=true" >"$LOG_FILE" 2>&1; then
-          cat "$LOG_FILE"
-          rm -f "$LOG_FILE"
-          SUCCESS=1
-          break
-        else
-          LAST_RC=$?
-        fi
-        cat "$LOG_FILE"
-        if grep -Eqi "error writing manifest blob|/manifests/buildcache|buildcache" "$LOG_FILE"; then
-          echo "Registry cache export failed; retrying without cache flags."
-          rm -f "$LOG_FILE"
-          LOG_FILE="$CI_PROJECT_DIR/.buildctl-nocache-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
-          if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 build \
-            --frontend dockerfile.v0 \
-            --local context="$CI_PROJECT_DIR" \
-            --local dockerfile="$CI_PROJECT_DIR" \
-            --secret id=ci_job_token,env=CI_JOB_TOKEN \
-            --opt filename=Dockerfile \
-            --opt "build-arg:RUNTIME_REGISTRY=$REGISTRY" \
-            --opt "build-arg:VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
-            --output "type=image,\"name=${IMAGE_NAMES}\",push=true" >"$LOG_FILE" 2>&1; then
-            cat "$LOG_FILE"
-            rm -f "$LOG_FILE"
-            SUCCESS=1
-            break
-          else
-            LAST_RC=$?
-          fi
-          cat "$LOG_FILE"
-        fi
-
-        if grep -Eqi "x509|certificate|tls handshake timeout|unknown authority|connection refused|i/o timeout|no route to host|context deadline exceeded|temporary failure in name resolution|unauthorized|denied|failed to list workers|transport: error while dialing|dial tcp|unexpected EOF|connection reset by peer" "$LOG_FILE"; then
-          echo "Registry host $REGISTRY failed; trying next configured host."
-          rm -f "$LOG_FILE"
-          continue
-        fi
-
-        rm -f "$LOG_FILE"
-        exit "$LAST_RC"
-      done
-
-      if [ "$SUCCESS" -ne 1 ]; then
-        echo "All registry hosts failed: $REGISTRY_CANDIDATES"
-        exit "$LAST_RC"
-      fi
+    - chmod +x scripts/ci/buildkit-build.sh
+    - scripts/ci/buildkit-build.sh mcp/loom-core Dockerfile loom-core
   rules:
-    - if: '$CI_COMMIT_BRANCH'
     - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH'
+      changes:
+        - .gitlab-ci.yml
+        - .dockerignore
+        - Dockerfile
+        - scripts/ci/buildkit-build.sh
+        - go.mod
+        - go.sum
+        - cmd/**/*
+        - internal/**/*
+        - pkg/**/*
+    - when: never
 
 build:image:custom-server:
   stage: deploy
   interruptible: true
-  # Image jobs do not use language caches; skip restore/upload overhead.
+  timeout: 90 minutes
   cache: []
-  # Keep serialization within a ref, but don't let feature/MR pipelines block main.
   resource_group: "buildkit-images-custom-server-${CI_COMMIT_REF_SLUG}"
   retry:
     max: 1
@@ -866,136 +767,25 @@ build:image:custom-server:
     entrypoint: [""]
   variables:
     GIT_STRATEGY: fetch
-    # Remote BuildKit does not need local DinD.
     DOCKER_HOST: ""
   script:
-    - |
-      set -eu
-
-      pick_buildkit_host() {
-        CANDIDATES="${BUILDKIT_HOST:-}"
-        if [ -n "${BUILDKIT_FALLBACK_HOSTS:-}" ]; then
-          CANDIDATES="$CANDIDATES $(echo "$BUILDKIT_FALLBACK_HOSTS" | tr ',' ' ')"
-        fi
-
-        if [ -z "$CANDIDATES" ]; then
-          echo "No BuildKit endpoint configured."
-          return 1
-        fi
-
-        SEEN=""
-        for HOST in $CANDIDATES; do
-          [ -z "$HOST" ] && continue
-          case " $SEEN " in
-            *" $HOST "*) continue ;;
-          esac
-          SEEN="$SEEN $HOST"
-
-          echo "Checking BuildKit endpoint: $HOST"
-          if buildctl --addr "$HOST" debug info >/dev/null 2>&1; then
-            BUILDKIT_HOST="$HOST"
-            export BUILDKIT_HOST
-            echo "Using BuildKit endpoint: $BUILDKIT_HOST"
-            buildctl --addr "$BUILDKIT_HOST" debug info
-            return 0
-          fi
-        done
-
-        echo "No healthy BuildKit endpoint found."
-        return 1
-      }
-
-      pick_buildkit_host
-
-      REGISTRY_CANDIDATES="${IMAGE_REGISTRIES:-${IMAGE_REGISTRY}}"
-      SUCCESS=0
-      LAST_RC=1
-
-      for REGISTRY in $REGISTRY_CANDIDATES; do
-        PROBE_LOG="$CI_PROJECT_DIR/.probe-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
-        rm -f "$PROBE_LOG"
-        if command -v wget >/dev/null 2>&1; then
-          if ! wget -q --spider --timeout=5 --tries=1 "https://$REGISTRY/v2/" >"$PROBE_LOG" 2>&1; then
-            if grep -Eqi "401|403|unauthorized|forbidden" "$PROBE_LOG"; then
-              echo "Registry host $REGISTRY is reachable (auth challenge)."
-            else
-              echo "Registry host $REGISTRY is unreachable; skipping."
-              cat "$PROBE_LOG"
-              rm -f "$PROBE_LOG"
-              continue
-            fi
-          fi
-        fi
-        rm -f "$PROBE_LOG"
-
-        IMAGE="$REGISTRY/$CUSTOM_SERVER_IMAGE_REPO"
-        CACHE_REF="$REGISTRY/library/build-cache/custom-server"
-        IMAGE_NAMES="$IMAGE:$CI_COMMIT_SHORT_SHA"
-        if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-          IMAGE_NAMES="$IMAGE_NAMES,$IMAGE:latest"
-        fi
-        if [ -n "${CI_COMMIT_TAG:-}" ]; then
-          IMAGE_NAMES="$IMAGE_NAMES,$IMAGE:$CI_COMMIT_TAG"
-        fi
-
-        echo "Attempting build/push via registry host: $REGISTRY"
-        echo "Building with image names: $IMAGE_NAMES"
-        LOG_FILE="$CI_PROJECT_DIR/.buildctl-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
-        rm -f "$LOG_FILE"
-        if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 build \
-          --frontend dockerfile.v0 \
-          --local context="$CI_PROJECT_DIR" \
-          --local dockerfile="$CI_PROJECT_DIR" \
-          --secret id=ci_job_token,env=CI_JOB_TOKEN \
-          --opt filename=Dockerfile.custom-server \
-          --opt "build-arg:RUNTIME_REGISTRY=$REGISTRY" \
-          --import-cache "type=registry,ref=${CACHE_REF}" \
-          --export-cache "type=registry,ref=${CACHE_REF},mode=min,image-manifest=true" \
-          --output "type=image,\"name=${IMAGE_NAMES}\",push=true" >"$LOG_FILE" 2>&1; then
-          cat "$LOG_FILE"
-          rm -f "$LOG_FILE"
-          SUCCESS=1
-          break
-        else
-          LAST_RC=$?
-        fi
-        cat "$LOG_FILE"
-        if grep -Eqi "error writing manifest blob|/manifests/buildcache|buildcache" "$LOG_FILE"; then
-          echo "Registry cache export failed; retrying without cache flags."
-          rm -f "$LOG_FILE"
-          LOG_FILE="$CI_PROJECT_DIR/.buildctl-nocache-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
-          if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 build \
-            --frontend dockerfile.v0 \
-            --local context="$CI_PROJECT_DIR" \
-            --local dockerfile="$CI_PROJECT_DIR" \
-            --secret id=ci_job_token,env=CI_JOB_TOKEN \
-            --opt filename=Dockerfile.custom-server \
-            --opt "build-arg:RUNTIME_REGISTRY=$REGISTRY" \
-            --output "type=image,\"name=${IMAGE_NAMES}\",push=true" >"$LOG_FILE" 2>&1; then
-            cat "$LOG_FILE"
-            rm -f "$LOG_FILE"
-            SUCCESS=1
-            break
-          else
-            LAST_RC=$?
-          fi
-          cat "$LOG_FILE"
-        fi
-
-        if grep -Eqi "x509|certificate|tls handshake timeout|unknown authority|connection refused|i/o timeout|no route to host|context deadline exceeded|temporary failure in name resolution|unauthorized|denied|failed to list workers|transport: error while dialing|dial tcp|unexpected EOF|connection reset by peer" "$LOG_FILE"; then
-          echo "Registry host $REGISTRY failed; trying next configured host."
-          rm -f "$LOG_FILE"
-          continue
-        fi
-
-        rm -f "$LOG_FILE"
-        exit "$LAST_RC"
-      done
-
-      if [ "$SUCCESS" -ne 1 ]; then
-        echo "All registry hosts failed: $REGISTRY_CANDIDATES"
-        exit "$LAST_RC"
-      fi
+    - chmod +x scripts/ci/buildkit-build.sh
+    - scripts/ci/buildkit-build.sh "$CUSTOM_SERVER_IMAGE_REPO" Dockerfile.custom-server custom-server
   rules:
-    - if: '$CI_COMMIT_BRANCH'
     - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH'
+      changes:
+        - .gitlab-ci.yml
+        - .dockerignore
+        - Dockerfile.custom-server
+        - scripts/ci/buildkit-build.sh
+        - go.mod
+        - go.sum
+        - cmd/**/*
+        - internal/**/*
+        - pkg/**/*
+    - when: never
+
+radar-scan:
+  extends: .radar-scan
