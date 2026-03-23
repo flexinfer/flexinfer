@@ -15,11 +15,11 @@ import (
 
 // OpenAIModel represents a model in OpenAI API format.
 type OpenAIModel struct {
-	ID       string                 `json:"id"`
-	Object   string                 `json:"object"`
-	Created  int64                  `json:"created"`
-	OwnedBy  string                 `json:"owned_by"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	ID       string         `json:"id"`
+	Object   string         `json:"object"`
+	Created  int64          `json:"created"`
+	OwnedBy  string         `json:"owned_by"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // OpenAIModelsResponse is the response format for /v1/models.
@@ -87,7 +87,7 @@ func (p *Proxy) modelDeploymentToOpenAI(md *aiv1alpha1.ModelDeployment) OpenAIMo
 	}
 
 	// Build metadata
-	metadata := map[string]interface{}{
+	metadata := map[string]any{
 		"backend":    md.Spec.Backend,
 		"ready":      ready,
 		"scaled":     replicas > 0,
@@ -133,7 +133,7 @@ func (p *Proxy) modelToOpenAI(m *aiv1alpha2.Model) OpenAIModel {
 	ready := m.Status.Phase == aiv1alpha2.ModelPhaseReady
 
 	// Build metadata
-	metadata := map[string]interface{}{
+	metadata := map[string]any{
 		"backend": m.Spec.Backend,
 		"source":  m.Spec.Source,
 		"ready":   ready,

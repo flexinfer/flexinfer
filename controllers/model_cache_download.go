@@ -33,7 +33,7 @@ type hfDownloadOptions struct {
 	revision       string
 }
 
-func configStringValue(cfg map[string]interface{}, keys ...string) string {
+func configStringValue(cfg map[string]any, keys ...string) string {
 	for _, key := range keys {
 		raw, ok := cfg[key]
 		if !ok {
@@ -49,7 +49,7 @@ func configStringValue(cfg map[string]interface{}, keys ...string) string {
 	return ""
 }
 
-func configStringListValue(cfg map[string]interface{}, key string) []string {
+func configStringListValue(cfg map[string]any, key string) []string {
 	raw, ok := cfg[key]
 	if !ok || raw == nil {
 		return nil
@@ -76,7 +76,7 @@ func configStringListValue(cfg map[string]interface{}, key string) []string {
 		for _, item := range v {
 			appendItem(item)
 		}
-	case []interface{}:
+	case []any:
 		for _, item := range v {
 			if s, ok := item.(string); ok {
 				appendItem(s)

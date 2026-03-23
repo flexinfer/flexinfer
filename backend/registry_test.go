@@ -212,7 +212,7 @@ func TestBackendGPUSupport(t *testing.T) {
 
 func TestModelSpecConfigHelpers(t *testing.T) {
 	spec := &ModelSpec{
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"mode":            "server",
 			"maxNumSequence":  4,
 			"trustRemoteCode": true,
@@ -247,36 +247,36 @@ func TestModelSpecConfigHelpers(t *testing.T) {
 func TestConfigBool_StringValues(t *testing.T) {
 	tests := []struct {
 		name       string
-		config     map[string]interface{}
+		config     map[string]any
 		key        string
 		defaultVal bool
 		want       bool
 	}{
 		// Native bool values (existing behavior)
-		{"native true", map[string]interface{}{"k": true}, "k", false, true},
-		{"native false", map[string]interface{}{"k": false}, "k", true, false},
+		{"native true", map[string]any{"k": true}, "k", false, true},
+		{"native false", map[string]any{"k": false}, "k", true, false},
 
 		// String values from CRD config (the bug fix)
-		{"string true", map[string]interface{}{"k": "true"}, "k", false, true},
-		{"string false", map[string]interface{}{"k": "false"}, "k", true, false},
-		{"string True", map[string]interface{}{"k": "True"}, "k", false, true},
-		{"string FALSE", map[string]interface{}{"k": "FALSE"}, "k", true, false},
-		{"string 1", map[string]interface{}{"k": "1"}, "k", false, true},
-		{"string 0", map[string]interface{}{"k": "0"}, "k", true, false},
+		{"string true", map[string]any{"k": "true"}, "k", false, true},
+		{"string false", map[string]any{"k": "false"}, "k", true, false},
+		{"string True", map[string]any{"k": "True"}, "k", false, true},
+		{"string FALSE", map[string]any{"k": "FALSE"}, "k", true, false},
+		{"string 1", map[string]any{"k": "1"}, "k", false, true},
+		{"string 0", map[string]any{"k": "0"}, "k", true, false},
 
 		// Missing key returns default
-		{"missing key default false", map[string]interface{}{}, "k", false, false},
-		{"missing key default true", map[string]interface{}{}, "k", true, true},
+		{"missing key default false", map[string]any{}, "k", false, false},
+		{"missing key default true", map[string]any{}, "k", true, true},
 
 		// Nil config returns default
 		{"nil config", nil, "k", true, true},
 
 		// Invalid string returns default
-		{"invalid string", map[string]interface{}{"k": "notabool"}, "k", false, false},
-		{"empty string", map[string]interface{}{"k": ""}, "k", true, true},
+		{"invalid string", map[string]any{"k": "notabool"}, "k", false, false},
+		{"empty string", map[string]any{"k": ""}, "k", true, true},
 
 		// Non-bool non-string type returns default
-		{"int value", map[string]interface{}{"k": 42}, "k", false, false},
+		{"int value", map[string]any{"k": 42}, "k", false, false},
 	}
 
 	for _, tt := range tests {
@@ -293,32 +293,32 @@ func TestConfigBool_StringValues(t *testing.T) {
 func TestDeviceIsolationEnvVars(t *testing.T) {
 	tests := []struct {
 		name   string
-		config map[string]interface{}
+		config map[string]any
 		expect map[string]string // expected env var name -> value
 	}{
 		{
 			"no config",
-			map[string]interface{}{},
+			map[string]any{},
 			map[string]string{},
 		},
 		{
 			"hipVisibleDevices mirrors to ROCR",
-			map[string]interface{}{"hipVisibleDevices": "1"},
+			map[string]any{"hipVisibleDevices": "1"},
 			map[string]string{"HIP_VISIBLE_DEVICES": "1", "ROCR_VISIBLE_DEVICES": "1"},
 		},
 		{
 			"rocrVisibleDevices mirrors to HIP",
-			map[string]interface{}{"rocrVisibleDevices": "1"},
+			map[string]any{"rocrVisibleDevices": "1"},
 			map[string]string{"HIP_VISIBLE_DEVICES": "1", "ROCR_VISIBLE_DEVICES": "1"},
 		},
 		{
 			"both set independently",
-			map[string]interface{}{"hipVisibleDevices": "0", "rocrVisibleDevices": "1"},
+			map[string]any{"hipVisibleDevices": "0", "rocrVisibleDevices": "1"},
 			map[string]string{"HIP_VISIBLE_DEVICES": "0", "ROCR_VISIBLE_DEVICES": "1"},
 		},
 		{
 			"gpuDeviceOrdinal mirrors to HIP and ROCR",
-			map[string]interface{}{"gpuDeviceOrdinal": "1"},
+			map[string]any{"gpuDeviceOrdinal": "1"},
 			map[string]string{"GPU_DEVICE_ORDINAL": "1", "HIP_VISIBLE_DEVICES": "1", "ROCR_VISIBLE_DEVICES": "1"},
 		},
 	}

@@ -53,11 +53,11 @@ func (f *FakeEventRecorder) Event(object runtime.Object, eventtype, reason, mess
 	})
 }
 
-func (f *FakeEventRecorder) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+func (f *FakeEventRecorder) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...any) {
 	f.Event(object, eventtype, reason, fmt.Sprintf(messageFmt, args...))
 }
 
-func (f *FakeEventRecorder) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
+func (f *FakeEventRecorder) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...any) {
 	// For simplicity, ignore annotations in tests
 	f.Eventf(object, eventtype, reason, messageFmt, args...)
 }

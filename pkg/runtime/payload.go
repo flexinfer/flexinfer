@@ -18,17 +18,17 @@ import (
 // LoadPayload is the JSON body sent to POST /api/v1/models/{name}/load.
 // This matches the runtime.LoadRequest struct accepted by the runtime API.
 type LoadPayload struct {
-	Backend   string                 `json:"backend"`
-	Model     string                 `json:"model"`
-	ModelPath string                 `json:"modelPath,omitempty"`
-	Config    map[string]interface{} `json:"config,omitempty"`
-	Env       []EnvVar               `json:"env,omitempty"`
+	Backend   string         `json:"backend"`
+	Model     string         `json:"model"`
+	ModelPath string         `json:"modelPath,omitempty"`
+	Config    map[string]any `json:"config,omitempty"`
+	Env       []EnvVar       `json:"env,omitempty"`
 }
 
 // BuildLoadPayload constructs a serialized LoadPayload from model metadata.
 // Both the proxy and controller use this to build identical load requests.
 // The modelBasePath is the runtime's model mount root (e.g. "/models").
-func BuildLoadPayload(backendName, source, modelBasePath string, config map[string]interface{}) ([]byte, error) {
+func BuildLoadPayload(backendName, source, modelBasePath string, config map[string]any) ([]byte, error) {
 	model := ExtractModelFromSource(source)
 	payload := LoadPayload{
 		Backend: backendName,
@@ -173,7 +173,7 @@ func runtimeArtifactRoot(modelPath string) string {
 	return modelPath
 }
 
-func normalizeRuntimeConfigPaths(config map[string]interface{}, modelPath, modelBasePath string) map[string]interface{} {
+func normalizeRuntimeConfigPaths(config map[string]any, modelPath, modelBasePath string) map[string]any {
 	if len(config) == 0 {
 		return config
 	}
@@ -229,23 +229,23 @@ func marshalLoadPayload(payload LoadPayload) ([]byte, error) {
 	return data, nil
 }
 
-func cloneConfig(in map[string]interface{}) map[string]interface{} {
+func cloneConfig(in map[string]any) map[string]any {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[string]interface{}, len(in))
+	out := make(map[string]any, len(in))
 	for k, v := range in {
 		out[k] = v
 	}
 	return out
 }
 
-func applyColdStartTimeout(config map[string]interface{}, model *aiv1alpha2.Model) map[string]interface{} {
+func applyColdStartTimeout(config map[string]any, model *aiv1alpha2.Model) map[string]any {
 	if model == nil || model.Spec.Serverless == nil || model.Spec.Serverless.ColdStartTimeout == nil {
 		return config
 	}
 	if config == nil {
-		config = make(map[string]interface{}, 1)
+		config = make(map[string]any, 1)
 	}
 	if _, exists := config["startupTimeoutSeconds"]; !exists {
 		config["startupTimeoutSeconds"] = model.Spec.Serverless.ColdStartTimeout.Duration.Seconds()
@@ -253,12 +253,12 @@ func applyColdStartTimeout(config map[string]interface{}, model *aiv1alpha2.Mode
 	return config
 }
 
-func applyGPUProfileDeviceDefaults(config map[string]interface{}, vendor backend.GPUVendor, profile *aiv1alpha2.GPUProfileSpec) map[string]interface{} {
+func applyGPUProfileDeviceDefaults(config map[string]any, vendor backend.GPUVendor, profile *aiv1alpha2.GPUProfileSpec) map[string]any {
 	if profile == nil || len(profile.UsableDeviceIndices) == 0 {
 		return config
 	}
 	if config == nil {
-		config = make(map[string]interface{}, 3)
+		config = make(map[string]any, 3)
 	}
 	joined := strings.Join(profile.UsableDeviceIndices, ",")
 	first := profile.UsableDeviceIndices[0]
@@ -278,7 +278,7 @@ func applyGPUProfileDeviceDefaults(config map[string]interface{}, vendor backend
 	return config
 }
 
-func applyGPUProfileRuntimeEnv(env []EnvVar, config map[string]interface{}, vendor backend.GPUVendor, profile *aiv1alpha2.GPUProfileSpec) []EnvVar {
+func applyGPUProfileRuntimeEnv(env []EnvVar, config map[string]any, vendor backend.GPUVendor, profile *aiv1alpha2.GPUProfileSpec) []EnvVar {
 	if profile == nil || len(profile.UsableDeviceIndices) == 0 {
 		return env
 	}
@@ -312,7 +312,7 @@ func appendOrReplaceEnv(env []EnvVar, item EnvVar) []EnvVar {
 	return append(env, item)
 }
 
-func configString(config map[string]interface{}, key string) string {
+func configString(config map[string]any, key string) string {
 	if len(config) == 0 {
 		return ""
 	}

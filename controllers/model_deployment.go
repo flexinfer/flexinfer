@@ -138,7 +138,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	// Apply KV-cache reconfigure overrides (reduced maxNumSeqs) if active.
 	if model.Status.KVCache != nil && model.Status.KVCache.Reconfigured && model.Status.KVCache.ReconfiguredMaxNumSeqs != nil {
 		if spec.Config == nil {
-			spec.Config = map[string]interface{}{}
+			spec.Config = map[string]any{}
 		}
 		spec.Config["maxNumSeqs"] = float64(*model.Status.KVCache.ReconfiguredMaxNumSeqs)
 	}

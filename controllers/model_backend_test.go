@@ -79,7 +79,7 @@ func TestResolveBackendStoragePlan(t *testing.T) {
 		name     string
 		model    *aiv1alpha2.Model
 		backend  backend.Backend
-		config   map[string]interface{}
+		config   map[string]any
 		wantPlan backendStoragePlan
 	}{
 		{
@@ -196,7 +196,7 @@ func TestResolveBackendStoragePlan(t *testing.T) {
 				},
 			},
 			backend: &fakeBackend{name: "llamacpp", needsVolume: true},
-			config:  map[string]interface{}{"ggufFile": "llama-2-7b.Q4_K_M.gguf"},
+			config:  map[string]any{"ggufFile": "llama-2-7b.Q4_K_M.gguf"},
 			wantPlan: backendStoragePlan{
 				ModelPath:       "/models/llama-gguf/llama-2-7b.Q4_K_M.gguf",
 				HFCacheBasePath: "/models/.cache/huggingface",
@@ -215,7 +215,7 @@ func TestResolveBackendStoragePlan(t *testing.T) {
 				},
 			},
 			backend: &fakeBackend{name: "vllm", needsVolume: true},
-			config:  map[string]interface{}{"ggufFile": "model.Q5_K_M.gguf"},
+			config:  map[string]any{"ggufFile": "model.Q5_K_M.gguf"},
 			wantPlan: backendStoragePlan{
 				ModelPath:       "/models/vllm-gguf/model.Q5_K_M.gguf",
 				HFCacheBasePath: "/models/.cache/huggingface",
@@ -355,27 +355,27 @@ func TestQuantizedOutputDir(t *testing.T) {
 func TestResolveGGUFFile_Comprehensive(t *testing.T) {
 	tests := []struct {
 		name   string
-		config map[string]interface{}
+		config map[string]any
 		want   string
 	}{
 		{
 			name:   "ggufFile key present",
-			config: map[string]interface{}{"ggufFile": "model-q4.gguf"},
+			config: map[string]any{"ggufFile": "model-q4.gguf"},
 			want:   "model-q4.gguf",
 		},
 		{
 			name:   "modelFile fallback",
-			config: map[string]interface{}{"modelFile": "model-q5.gguf"},
+			config: map[string]any{"modelFile": "model-q5.gguf"},
 			want:   "model-q5.gguf",
 		},
 		{
 			name:   "both present, ggufFile wins",
-			config: map[string]interface{}{"ggufFile": "primary.gguf", "modelFile": "secondary.gguf"},
+			config: map[string]any{"ggufFile": "primary.gguf", "modelFile": "secondary.gguf"},
 			want:   "primary.gguf",
 		},
 		{
 			name:   "whitespace-only value returns empty",
-			config: map[string]interface{}{"ggufFile": "   "},
+			config: map[string]any{"ggufFile": "   "},
 			want:   "",
 		},
 		{
@@ -385,12 +385,12 @@ func TestResolveGGUFFile_Comprehensive(t *testing.T) {
 		},
 		{
 			name:   "path traversal attempt returns empty",
-			config: map[string]interface{}{"ggufFile": "../etc/passwd"},
+			config: map[string]any{"ggufFile": "../etc/passwd"},
 			want:   "",
 		},
 		{
 			name:   "leading slash is stripped",
-			config: map[string]interface{}{"ggufFile": "/model.gguf"},
+			config: map[string]any{"ggufFile": "/model.gguf"},
 			want:   "model.gguf",
 		},
 	}

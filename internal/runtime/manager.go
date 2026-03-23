@@ -33,10 +33,10 @@ const (
 
 // LoadRequest describes a model to load into the runtime.
 type LoadRequest struct {
-	Backend   string                 `json:"backend"`
-	Model     string                 `json:"model"`
-	ModelPath string                 `json:"modelPath,omitempty"`
-	Config    map[string]interface{} `json:"config,omitempty"`
+	Backend   string         `json:"backend"`
+	Model     string         `json:"model"`
+	ModelPath string         `json:"modelPath,omitempty"`
+	Config    map[string]any `json:"config,omitempty"`
 }
 
 // LoadedModel tracks a running backend subprocess and its model.
@@ -627,7 +627,7 @@ func inferCommand(backendName string) (string, []string) {
 
 // streamLogs reads from r line-by-line and logs each line.
 func streamLogs(r io.ReadCloser, logger interface {
-	Info(msg string, keysAndValues ...interface{})
+	Info(msg string, keysAndValues ...any)
 }, stream string) {
 	scanner := bufio.NewScanner(r)
 	// Allow up to 1MB lines (some backends produce verbose JSON output).

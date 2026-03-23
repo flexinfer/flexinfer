@@ -407,13 +407,13 @@ func TestExtractMemoryValue(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		gpu      map[string]interface{}
+		gpu      map[string]any
 		keys     []string
 		expected uint64
 	}{
 		{
 			name: "exact match",
-			gpu: map[string]interface{}{
+			gpu: map[string]any{
 				"GPU Memory Free (MB)": "24550",
 			},
 			keys:     []string{"GPU Memory Free (MB)"},
@@ -421,7 +421,7 @@ func TestExtractMemoryValue(t *testing.T) {
 		},
 		{
 			name: "case insensitive",
-			gpu: map[string]interface{}{
+			gpu: map[string]any{
 				"gpu memory free (mb)": "24550",
 			},
 			keys:     []string{"GPU Memory Free (MB)"},
@@ -429,7 +429,7 @@ func TestExtractMemoryValue(t *testing.T) {
 		},
 		{
 			name: "fallback key",
-			gpu: map[string]interface{}{
+			gpu: map[string]any{
 				"vram_free": "25742540800",
 			},
 			keys:     []string{"GPU Memory Free (MB)", "vram_free"},
@@ -437,7 +437,7 @@ func TestExtractMemoryValue(t *testing.T) {
 		},
 		{
 			name:     "no match",
-			gpu:      map[string]interface{}{},
+			gpu:      map[string]any{},
 			keys:     []string{"vram_free"},
 			expected: 0,
 		},

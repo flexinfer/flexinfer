@@ -248,7 +248,7 @@ func (a *Autotuner) Run(ctx context.Context) error {
 }
 
 // Rollback applies the baseline config. Used by the CLI signal handler for clean exit.
-func (a *Autotuner) Rollback(ctx context.Context, config map[string]interface{}) error {
+func (a *Autotuner) Rollback(ctx context.Context, config map[string]any) error {
 	return a.applyConfig(ctx, config)
 }
 
@@ -261,15 +261,15 @@ func (a *Autotuner) getModel(ctx context.Context) (*aiv1alpha2.Model, error) {
 	return model, nil
 }
 
-func extractConfig(model *aiv1alpha2.Model) map[string]interface{} {
+func extractConfig(model *aiv1alpha2.Model) map[string]any {
 	cfg := model.Spec.GetConfigMap()
 	if cfg == nil {
-		return make(map[string]interface{})
+		return make(map[string]any)
 	}
 	return cfg
 }
 
-func (a *Autotuner) applyConfig(ctx context.Context, cfg map[string]interface{}) error {
+func (a *Autotuner) applyConfig(ctx context.Context, cfg map[string]any) error {
 	model, err := a.getModel(ctx)
 	if err != nil {
 		return fmt.Errorf("get model for patch: %w", err)
@@ -328,7 +328,7 @@ func (a *Autotuner) waitForReady(ctx context.Context) error {
 	}
 }
 
-func (a *Autotuner) validateCandidate(cfg map[string]interface{}) (rejected bool, reason string) {
+func (a *Autotuner) validateCandidate(cfg map[string]any) (rejected bool, reason string) {
 	if v, ok := cfg["gpuMemoryUtilization"]; ok {
 		var val float64
 		switch tv := v.(type) {
@@ -347,7 +347,7 @@ func (a *Autotuner) validateCandidate(cfg map[string]interface{}) (rejected bool
 	return false, ""
 }
 
-func configDeltaString(base, candidate map[string]interface{}) string {
+func configDeltaString(base, candidate map[string]any) string {
 	var parts []string
 	for k, v := range candidate {
 		if base[k] != v {
@@ -360,7 +360,7 @@ func configDeltaString(base, candidate map[string]interface{}) string {
 	return strings.Join(parts, ",")
 }
 
-func formatConfigDelta(cfg map[string]interface{}) string {
+func formatConfigDelta(cfg map[string]any) string {
 	var parts []string
 	for k, v := range cfg {
 		parts = append(parts, fmt.Sprintf("%s=%v", k, v))

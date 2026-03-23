@@ -27,7 +27,7 @@ func testScheme() *runtime.Scheme {
 	return s
 }
 
-func makeModel(name, ns, backend string, cfg map[string]interface{}) *aiv1alpha2.Model {
+func makeModel(name, ns, backend string, cfg map[string]any) *aiv1alpha2.Model {
 	model := &aiv1alpha2.Model{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: aiv1alpha2.ModelSpec{
@@ -92,7 +92,7 @@ func TestAutotuner_Run_RejectsSharedGPU(t *testing.T) {
 func TestAutotuner_Run_CoordinateDescent(t *testing.T) {
 	t.Parallel()
 
-	initialCfg := map[string]interface{}{"maxNumSeqs": float64(8)}
+	initialCfg := map[string]any{"maxNumSeqs": float64(8)}
 	model := makeModel("test-model", "test-ns", "vllm", initialCfg)
 	deploy := makeDeployment("test-model", "test-ns", 1)
 
@@ -129,7 +129,7 @@ func TestAutotuner_Run_CoordinateDescent(t *testing.T) {
 	// Use a minimal search space for fast tests.
 	space := SearchSpace{
 		Parameters: []Parameter{
-			{Name: "maxNumSeqs", Values: []interface{}{float64(1), float64(2), float64(4)}},
+			{Name: "maxNumSeqs", Values: []any{float64(1), float64(2), float64(4)}},
 		},
 	}
 
@@ -165,13 +165,13 @@ func TestAutotuner_ValidateCandidate_RejectsHighGPUMem(t *testing.T) {
 
 	tuner := &Autotuner{}
 
-	rejected, reason := tuner.validateCandidate(map[string]interface{}{
+	rejected, reason := tuner.validateCandidate(map[string]any{
 		"gpuMemoryUtilization": "0.99",
 	})
 	assert.True(t, rejected)
 	assert.Contains(t, reason, "safety cap")
 
-	rejected, _ = tuner.validateCandidate(map[string]interface{}{
+	rejected, _ = tuner.validateCandidate(map[string]any{
 		"gpuMemoryUtilization": "0.95",
 	})
 	assert.False(t, rejected)
@@ -181,7 +181,7 @@ func TestAutotuner_ValidateCandidate_AcceptsNormalConfig(t *testing.T) {
 	t.Parallel()
 
 	tuner := &Autotuner{}
-	rejected, _ := tuner.validateCandidate(map[string]interface{}{
+	rejected, _ := tuner.validateCandidate(map[string]any{
 		"maxNumSeqs": float64(16),
 	})
 	assert.False(t, rejected)
@@ -190,8 +190,8 @@ func TestAutotuner_ValidateCandidate_AcceptsNormalConfig(t *testing.T) {
 func TestConfigDeltaString(t *testing.T) {
 	t.Parallel()
 
-	base := map[string]interface{}{"a": 1, "b": "x"}
-	candidate := map[string]interface{}{"a": 2, "b": "x"}
+	base := map[string]any{"a": 1, "b": "x"}
+	candidate := map[string]any{"a": 2, "b": "x"}
 
 	delta := configDeltaString(base, candidate)
 	assert.Equal(t, "a=2", delta)
@@ -200,7 +200,7 @@ func TestConfigDeltaString(t *testing.T) {
 func TestConfigDeltaString_NoChange(t *testing.T) {
 	t.Parallel()
 
-	cfg := map[string]interface{}{"a": 1}
+	cfg := map[string]any{"a": 1}
 	delta := configDeltaString(cfg, cfg)
 	assert.Equal(t, "(no change)", delta)
 }

@@ -15,7 +15,7 @@ type ChatCompletionRequest struct {
 	TopP             *float64       `json:"top_p,omitempty"`
 	N                *int           `json:"n,omitempty"`
 	Stream           *bool          `json:"stream,omitempty"`
-	Stop             interface{}    `json:"stop,omitempty"` // string or []string
+	Stop             any            `json:"stop,omitempty"` // string or []string
 	MaxTokens        *int           `json:"max_tokens,omitempty"`
 	PresencePenalty  *float64       `json:"presence_penalty,omitempty"`
 	FrequencyPenalty *float64       `json:"frequency_penalty,omitempty"`
@@ -37,7 +37,7 @@ type ChatMessage struct {
 // CompletionRequest represents the OpenAI completion request schema.
 type CompletionRequest struct {
 	Model            string         `json:"model"`
-	Prompt           interface{}    `json:"prompt"` // string or []string or []int or [][]int
+	Prompt           any            `json:"prompt"` // string or []string or []int or [][]int
 	Suffix           string         `json:"suffix,omitempty"`
 	MaxTokens        *int           `json:"max_tokens,omitempty"`
 	Temperature      *float64       `json:"temperature,omitempty"`
@@ -46,7 +46,7 @@ type CompletionRequest struct {
 	Stream           *bool          `json:"stream,omitempty"`
 	Logprobs         *int           `json:"logprobs,omitempty"`
 	Echo             *bool          `json:"echo,omitempty"`
-	Stop             interface{}    `json:"stop,omitempty"` // string or []string
+	Stop             any            `json:"stop,omitempty"` // string or []string
 	PresencePenalty  *float64       `json:"presence_penalty,omitempty"`
 	FrequencyPenalty *float64       `json:"frequency_penalty,omitempty"`
 	BestOf           *int           `json:"best_of,omitempty"`
@@ -56,11 +56,11 @@ type CompletionRequest struct {
 
 // EmbeddingRequest represents the OpenAI embedding request schema.
 type EmbeddingRequest struct {
-	Model          string      `json:"model"`
-	Input          interface{} `json:"input"` // string or []string or []int or [][]int
-	EncodingFormat string      `json:"encoding_format,omitempty"`
-	Dimensions     *int        `json:"dimensions,omitempty"`
-	User           string      `json:"user,omitempty"`
+	Model          string `json:"model"`
+	Input          any    `json:"input"` // string or []string or []int or [][]int
+	EncodingFormat string `json:"encoding_format,omitempty"`
+	Dimensions     *int   `json:"dimensions,omitempty"`
+	User           string `json:"user,omitempty"`
 }
 
 // ValidationResult contains the result of request validation.

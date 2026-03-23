@@ -432,7 +432,7 @@ func (p *Proxy) rewriteModelInBody(body []byte, backendModelName string) []byte 
 	}
 
 	// Slow path: full JSON parse
-	var data map[string]interface{}
+	var data map[string]any
 	if err := json.Unmarshal(body, &data); err != nil {
 		return body
 	}

@@ -499,7 +499,7 @@ func (b *Benchmarker) generateOnceVLLM(ctx context.Context, model, prompt string
 		}
 	}
 
-	reqBody, err := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]any{
 		"model":      model,
 		"prompt":     prompt,
 		"max_tokens": maxTokens,
@@ -545,7 +545,7 @@ func (b *Benchmarker) generateOnceVLLMServerTiming(ctx context.Context, model, p
 		return 0, 0, false, err
 	}
 
-	reqBody, err := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]any{
 		"model":      model,
 		"prompt":     prompt,
 		"max_tokens": maxTokens,
@@ -692,12 +692,12 @@ func sumPromMetric(metrics, name string) (float64, bool) {
 }
 
 func (b *Benchmarker) generateOnceVLLMStream(ctx context.Context, model, prompt string, maxTokens int) (streamSample, bool, error) {
-	reqBody, err := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]any{
 		"model":      model,
 		"prompt":     prompt,
 		"max_tokens": maxTokens,
 		"stream":     true,
-		"stream_options": map[string]interface{}{
+		"stream_options": map[string]any{
 			"include_usage": true,
 		},
 	})
@@ -816,7 +816,7 @@ func (b *Benchmarker) generateOnceOllama(ctx context.Context, model, prompt stri
 		}
 	}
 
-	reqBody, err := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]any{
 		"model":  model,
 		"prompt": prompt,
 		"stream": false,
@@ -860,7 +860,7 @@ func (b *Benchmarker) generateOnceOllama(ctx context.Context, model, prompt stri
 }
 
 func (b *Benchmarker) generateOnceOllamaStream(ctx context.Context, model, prompt string) (streamSample, bool, error) {
-	reqBody, err := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]any{
 		"model":  model,
 		"prompt": prompt,
 		"stream": true,
@@ -947,11 +947,11 @@ func (b *Benchmarker) generateOnceComfyUI(ctx context.Context, model string) (to
 	start := b.now()
 
 	// Minimal ComfyUI workflow: empty latent → KSampler → VAE decode
-	workflow := map[string]interface{}{
-		"prompt": map[string]interface{}{
-			"1": map[string]interface{}{
+	workflow := map[string]any{
+		"prompt": map[string]any{
+			"1": map[string]any{
 				"class_type": "EmptyLatentImage",
-				"inputs":     map[string]interface{}{"width": 512, "height": 512, "batch_size": 1},
+				"inputs":     map[string]any{"width": 512, "height": 512, "batch_size": 1},
 			},
 		},
 	}
@@ -993,7 +993,7 @@ func (b *Benchmarker) generateOnceComfyUI(ctx context.Context, model string) (to
 func (b *Benchmarker) generateOnceDiffusers(ctx context.Context, model string) (tokens int, duration time.Duration, usedBackendTiming bool, err error) {
 	start := b.now()
 
-	reqBody, err := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]any{
 		"model":           model,
 		"prompt":          "A solid blue square",
 		"n":               1,
@@ -1038,7 +1038,7 @@ func (b *Benchmarker) generateOnceTEI(ctx context.Context, prompt string) (token
 	start := b.now()
 
 	// TEI uses POST /embed for embeddings
-	reqBody, err := json.Marshal(map[string]interface{}{
+	reqBody, err := json.Marshal(map[string]any{
 		"inputs": prompt,
 	})
 	if err != nil {

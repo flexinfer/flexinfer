@@ -121,7 +121,7 @@ func (r *OllamaRegistry) Resolve(ctx context.Context, ref string) (*ModelMetadat
 	}
 
 	var result struct {
-		ModelInfo map[string]interface{} `json:"model_info"`
+		ModelInfo map[string]any `json:"model_info"`
 		Details   struct {
 			Format string `json:"format"`
 		} `json:"details"`

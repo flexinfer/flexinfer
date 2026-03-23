@@ -272,7 +272,7 @@ func ExtractSessionKey(req *http.Request, body []byte) (string, KeySource) {
 		return "", KeySourceNone
 	}
 
-	var data map[string]interface{}
+	var data map[string]any
 	if err := json.Unmarshal(body, &data); err != nil {
 		return "", KeySourceNone
 	}
@@ -284,7 +284,7 @@ func ExtractSessionKey(req *http.Request, body []byte) (string, KeySource) {
 
 	// For chat completions, hash the messages to create implicit session ID
 	// This provides affinity for requests with the same conversation history
-	if messages, ok := data["messages"].([]interface{}); ok && len(messages) > 0 {
+	if messages, ok := data["messages"].([]any); ok && len(messages) > 0 {
 		// Hash first few messages (conversation context)
 		// Limit to avoid hashing huge histories
 		maxMessages := 5
@@ -294,7 +294,7 @@ func ExtractSessionKey(req *http.Request, body []byte) (string, KeySource) {
 
 		h := sha256.New()
 		for i := 0; i < maxMessages; i++ {
-			if msg, ok := messages[i].(map[string]interface{}); ok {
+			if msg, ok := messages[i].(map[string]any); ok {
 				if content, ok := msg["content"].(string); ok {
 					h.Write([]byte(content))
 				}
@@ -339,7 +339,7 @@ func extractPrefixKey(req *http.Request, body []byte, routedModel string) (strin
 		return "", KeySourceNone
 	}
 
-	var data map[string]interface{}
+	var data map[string]any
 	if err := json.Unmarshal(body, &data); err != nil {
 		return "", KeySourceNone
 	}
@@ -373,7 +373,7 @@ func normalizeExplicitCacheKey(in string) (string, bool) {
 	return trimmed, true
 }
 
-func extractExplicitBodyKey(data map[string]interface{}) (string, bool) {
+func extractExplicitBodyKey(data map[string]any) (string, bool) {
 	for _, field := range []string{"cache_key", "cacheKey"} {
 		if raw, ok := data[field].(string); ok {
 			if normalized, valid := normalizeExplicitCacheKey(raw); valid {
@@ -384,7 +384,7 @@ func extractExplicitBodyKey(data map[string]interface{}) (string, bool) {
 	return "", false
 }
 
-func extractCanonicalPrefixMaterial(data map[string]interface{}, routedModel string) string {
+func extractCanonicalPrefixMaterial(data map[string]any, routedModel string) string {
 	model := extractCanonicalModel(routedModel, data)
 	system := extractSystemContext(data)
 	document := extractDocumentContext(data)
@@ -406,7 +406,7 @@ func extractCanonicalPrefixMaterial(data map[string]interface{}, routedModel str
 	return strings.Join(segments, "|")
 }
 
-func extractCanonicalModel(routedModel string, data map[string]interface{}) string {
+func extractCanonicalModel(routedModel string, data map[string]any) string {
 	if model := normalizeText(routedModel, defaultModelSegmentMaxLength); model != "" {
 		return model
 	}
@@ -416,16 +416,16 @@ func extractCanonicalModel(routedModel string, data map[string]interface{}) stri
 	return ""
 }
 
-func extractSystemContext(data map[string]interface{}) string {
+func extractSystemContext(data map[string]any) string {
 	cfg := CurrentPrefixKeyConfig()
-	messages, ok := data["messages"].([]interface{})
+	messages, ok := data["messages"].([]any)
 	if !ok || len(messages) == 0 {
 		return ""
 	}
 
 	parts := make([]string, 0, 3)
 	for _, rawMsg := range messages {
-		msg, ok := rawMsg.(map[string]interface{})
+		msg, ok := rawMsg.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -449,7 +449,7 @@ func extractSystemContext(data map[string]interface{}) string {
 	return strings.Join(parts, " ")
 }
 
-func extractDocumentContext(data map[string]interface{}) string {
+func extractDocumentContext(data map[string]any) string {
 	cfg := CurrentPrefixKeyConfig()
 	for _, key := range []string{"document_context", "documentContext", "context"} {
 		if normalized := normalizeText(extractTextPayload(data[key]), cfg.DocSegmentMaxLength); normalized != "" {
@@ -457,11 +457,11 @@ func extractDocumentContext(data map[string]interface{}) string {
 		}
 	}
 
-	if docs, ok := data["documents"].([]interface{}); ok && len(docs) > 0 {
+	if docs, ok := data["documents"].([]any); ok && len(docs) > 0 {
 		if normalized := normalizeText(extractTextPayload(docs[0]), cfg.DocSegmentMaxLength); normalized != "" {
 			return normalized
 		}
-		if first, ok := docs[0].(map[string]interface{}); ok {
+		if first, ok := docs[0].(map[string]any); ok {
 			for _, key := range []string{"content", "text", "value"} {
 				if normalized := normalizeText(extractTextPayload(first[key]), cfg.DocSegmentMaxLength); normalized != "" {
 					return normalized
@@ -473,11 +473,11 @@ func extractDocumentContext(data map[string]interface{}) string {
 	return ""
 }
 
-func extractTextPayload(raw interface{}) string {
+func extractTextPayload(raw any) string {
 	switch v := raw.(type) {
 	case string:
 		return v
-	case []interface{}:
+	case []any:
 		parts := make([]string, 0, len(v))
 		for _, item := range v {
 			if text := strings.TrimSpace(extractTextPayload(item)); text != "" {
@@ -485,7 +485,7 @@ func extractTextPayload(raw interface{}) string {
 			}
 		}
 		return strings.Join(parts, " ")
-	case map[string]interface{}:
+	case map[string]any:
 		for _, key := range []string{"text", "content", "value"} {
 			if text := strings.TrimSpace(extractTextPayload(v[key])); text != "" {
 				return text

@@ -428,7 +428,7 @@ func filterAMDDiscreteTotals(totals []uint64) (cutoff uint64, maxDiscrete uint64
 // parseRocm parses output from rocm-smi and rocminfo to fill GPU labels.
 // Supports multiple ROCm versions (5.x, 6.0-6.3, 6.4+).
 func (a *Agent) parseRocm(smiOut, infoOut string, labels map[string]string) {
-	var data map[string]map[string]interface{}
+	var data map[string]map[string]any
 	if err := json.Unmarshal([]byte(smiOut), &data); err != nil {
 		return
 	}
@@ -606,7 +606,7 @@ func (a *Agent) parseNvidiaFreeMemory(out string) uint64 {
 // - ROCm 6.0-6.3: {"card0": {"VRAM Total Free Memory (B)": "12345"}}
 // - ROCm 6.4+: {"card0": {"GPU Memory Free (MB)": "12345"}}
 func (a *Agent) parseRocmFreeMemory(out string) uint64 {
-	var data map[string]map[string]interface{}
+	var data map[string]map[string]any
 	if err := json.Unmarshal([]byte(out), &data); err != nil {
 		return 0
 	}
@@ -675,7 +675,7 @@ func (a *Agent) parseRocmFreeMemory(out string) uint64 {
 
 // extractMemoryValue extracts a memory value from GPU data, trying multiple key names.
 // Handles both bytes and MB values automatically.
-func (a *Agent) extractMemoryValue(gpu map[string]interface{}, keys []string) uint64 {
+func (a *Agent) extractMemoryValue(gpu map[string]any, keys []string) uint64 {
 	for _, key := range keys {
 		// Try exact match first
 		if val, ok := gpu[key]; ok {
@@ -923,9 +923,9 @@ func (a *Agent) detectAMDMetrics(ctx context.Context) []GPUMetrics {
 		log.V(1).Info("rocm-smi utilization failed (best-effort)", "error", err)
 	}
 
-	var tempData map[string]map[string]interface{}
-	var memData map[string]map[string]interface{}
-	var utilData map[string]map[string]interface{}
+	var tempData map[string]map[string]any
+	var memData map[string]map[string]any
+	var utilData map[string]map[string]any
 
 	if err := json.Unmarshal(tempOut, &tempData); err != nil {
 		log.V(1).Info("failed to parse rocm-smi temperature JSON, falling back to sysfs", "error", err)
@@ -1112,7 +1112,7 @@ func (a *Agent) detectAMDMetricsSysfs() []GPUMetrics {
 }
 
 // extractTempValue extracts temperature from rocm-smi JSON data.
-func (a *Agent) extractTempValue(gpu map[string]interface{}) float64 {
+func (a *Agent) extractTempValue(gpu map[string]any) float64 {
 	// Try various key names for different ROCm versions
 	keys := []string{
 		"Temperature (Sensor edge) (C)",
@@ -1142,7 +1142,7 @@ func (a *Agent) extractTempValue(gpu map[string]interface{}) float64 {
 }
 
 // extractUtilValue extracts GPU utilization from rocm-smi JSON data.
-func (a *Agent) extractUtilValue(gpu map[string]interface{}) float64 {
+func (a *Agent) extractUtilValue(gpu map[string]any) float64 {
 	keys := []string{
 		"GPU use (%)",
 		"gpu use (%)",

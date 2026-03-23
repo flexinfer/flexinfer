@@ -975,13 +975,13 @@ func TestResolveBackendStoragePlan_PVCAndFileSources(t *testing.T) {
 }
 
 func TestResolveGGUFFile(t *testing.T) {
-	if got := resolveGGUFFile(map[string]interface{}{"ggufFile": "models/tinyllama.gguf"}); got != "models/tinyllama.gguf" {
+	if got := resolveGGUFFile(map[string]any{"ggufFile": "models/tinyllama.gguf"}); got != "models/tinyllama.gguf" {
 		t.Fatalf("resolveGGUFFile(ggufFile) = %q", got)
 	}
-	if got := resolveGGUFFile(map[string]interface{}{"modelFile": "legacy/tinyllama.gguf"}); got != "legacy/tinyllama.gguf" {
+	if got := resolveGGUFFile(map[string]any{"modelFile": "legacy/tinyllama.gguf"}); got != "legacy/tinyllama.gguf" {
 		t.Fatalf("resolveGGUFFile(modelFile) = %q", got)
 	}
-	if got := resolveGGUFFile(map[string]interface{}{"ggufFile": "../escape.gguf"}); got != "" {
+	if got := resolveGGUFFile(map[string]any{"ggufFile": "../escape.gguf"}); got != "" {
 		t.Fatalf("resolveGGUFFile traversal = %q, want empty", got)
 	}
 }
@@ -1153,7 +1153,7 @@ func TestValidateBackendGPUCompatibility_Maxwell(t *testing.T) {
 	}
 
 	// Explicit modelLibPath should pass.
-	cfg := map[string]interface{}{
+	cfg := map[string]any{
 		"modelLibPath": "/models/qwen3-0.6b/maxwell-lib.so",
 	}
 	raw, err := json.Marshal(cfg)

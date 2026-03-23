@@ -67,8 +67,8 @@ func main() {
 
 // runProbeAndMetrics runs hardware detection and emits Prometheus metrics.
 func runProbeAndMetrics(ctx context.Context, nodeAgent *agent.Agent, setupLog interface {
-	Info(msg string, keysAndValues ...interface{})
-	Error(err error, msg string, keysAndValues ...interface{})
+	Info(msg string, keysAndValues ...any)
+	Error(err error, msg string, keysAndValues ...any)
 }) {
 	// Run node labeling
 	if err := nodeAgent.ProbeAndLabel(ctx); err != nil {

@@ -7,7 +7,7 @@ func TestVLLMOmniBackendEnv_DeviceIsolation(t *testing.T) {
 
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"hipVisibleDevices":  "1",
 			"rocrVisibleDevices": "2",
 			"gpuDeviceOrdinal":   "2",
@@ -61,7 +61,7 @@ func TestVLLMOmniBackendArgs_MemoryTuning(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"numGpuBlocksOverride": 20,
 		},
 	}
@@ -90,7 +90,7 @@ func TestVLLMOmniBackendArgs_Tokenizer(t *testing.T) {
 
 	spec := &ModelSpec{
 		ModelPath: "/models/model.gguf",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"tokenizer": "org/base-model",
 		},
 	}
@@ -113,7 +113,7 @@ func TestVLLMOmniBackendArgs_PrefixCachingDefaultV1(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enablePrefixCaching": true,
 		},
 	}
@@ -134,7 +134,7 @@ func TestVLLMOmniBackendArgs_PrefixCachingDisable(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enablePrefixCaching": false,
 		},
 	}
@@ -159,7 +159,7 @@ func TestVLLMOmniBackendArgs_ToolCalling(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enableToolCalling": true,
 			"toolCallParser":    "mistral",
 		},
@@ -192,7 +192,7 @@ func TestVLLMOmniBackendArgs_ReasoningParser(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"reasoningParser": "deepseek_r1",
 		},
 	}
@@ -216,7 +216,7 @@ func TestVLLMOmniBackendEnv_FAAndAiter(t *testing.T) {
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enableFlashAttention": true,
 			"enableAiter":          true,
 		},
@@ -246,7 +246,7 @@ func TestVLLMOmniBackendEnv_DisabledKernels(t *testing.T) {
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"disabledKernels": "ExllamaLinearKernel",
 		},
 	}
@@ -268,7 +268,7 @@ func TestVLLMOmniBackendEnv_PytorchCudaAllocConf(t *testing.T) {
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"pytorchCudaAllocConf": "expandable_segments:True",
 		},
 	}
@@ -310,7 +310,7 @@ func TestVLLMOmniBackendEnv_HIPVisibleDevices_MirrorsROCR(t *testing.T) {
 
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"hipVisibleDevices": "1",
 		},
 	}
