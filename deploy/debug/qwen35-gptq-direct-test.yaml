@@ -1,0 +1,295 @@
+# Direct GPTQ model inference test — bypasses vLLM to validate quantized weights.
+#
+# Tests the GPTQ-quantized Qwen3.5-27B model using transformers + GPTQModel
+# directly. If the model produces correct output here, the bug is in vLLM's
+# GDN (Gated Delta Net) implementation. If garbage here too, weights are bad.
+#
+# Usage:
+#   kubectl apply -f deploy/debug/qwen35-gptq-direct-test.yaml
+#   kubectl logs -f job/qwen35-gptq-direct-test -n flexinfer-system
+#   kubectl delete -f deploy/debug/qwen35-gptq-direct-test.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qwen35-gptq-direct-test
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+data:
+  test.py: |
+    #!/usr/bin/env python3
+    """Direct GPTQ model test — patches gptqmodel warmup on disk before imports.
+
+    Tests the GPTQ-quantized Qwen3.5-27B model using transformers directly
+    (no vLLM). If the model produces correct output here, the bug is in vLLM's
+    GDN implementation. If garbage here too, GPTQ weights are bad.
+    """
+    import sys, os, time, json, traceback, subprocess
+
+    print("=" * 70)
+    print("GPTQ Direct Inference Test")
+    print("=" * 70)
+    sys.stdout.flush()
+
+    # ── Step 0: Install missing deps ────────────────────────────────────
+    print("\n[0/7] Installing dependencies...")
+    sys.stdout.flush()
+    for dep in ["logbar", "tokenicer", "device_smi", "threadpoolctl", "defuser", "optimum"]:
+        try:
+            __import__(dep.replace("-", "_"))
+        except ImportError:
+            print(f"  Installing {dep}...")
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", dep, "--quiet"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    sys.stdout.flush()
+
+    # ── Step 1: Patch gptqmodel warmup BEFORE import ────────────────────
+    print("\n[1/7] Patching gptqmodel linalg_warmup...")
+    sys.stdout.flush()
+    import importlib.util
+    try:
+        spec = importlib.util.find_spec("gptqmodel")
+        gptq_base = spec.submodule_search_locations[0] if spec and spec.submodule_search_locations else None
+    except Exception:
+        gptq_base = None
+
+    if gptq_base is None:
+        print("  Installing gptqmodel...")
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "gptqmodel", "--no-build-isolation", "--quiet"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        spec = importlib.util.find_spec("gptqmodel")
+        gptq_base = spec.submodule_search_locations[0]
+
+    warmup_path = os.path.join(gptq_base, "utils", "linalg_warmup.py")
+    if os.path.exists(warmup_path):
+        noop = '"""Linalg warmup — no-op for ROCm (no MAGMA)."""\n'
+        noop += 'def linalg_warmup(*a, **kw): pass\n'
+        noop += 'def start_linalg_warmup(*a, **kw): pass\n'
+        noop += 'def run_torch_linalg_warmup(*a, **kw): pass\n'
+        noop += 'class LinalgWarmup:\n'
+        noop += '    def __init__(self, *a, **kw): pass\n'
+        noop += '    def start(self, *a, **kw): pass\n'
+        noop += '    def stop(self, *a, **kw): pass\n'
+        noop += '    def join(self, *a, **kw): pass\n'
+        with open(warmup_path, "w") as f:
+            f.write(noop)
+        print(f"  Patched: {warmup_path}")
+    sys.stdout.flush()
+
+    # ── Step 2: Remap model_type ────────────────────────────────────────
+    MODEL_DIR = "/models/qwen35-27b-opus-distill"
+    WORK_DIR = "/tmp/model-remapped"
+    print(f"\n[2/7] Remapping model_type: qwen3_5_text -> qwen3_next")
+    sys.stdout.flush()
+
+    if not os.path.isdir(MODEL_DIR):
+        print(f"  ERROR: Model dir not found: {MODEL_DIR}")
+        if os.path.isdir("/models"):
+            print(f"  /models contents: {os.listdir('/models')}")
+        sys.exit(1)
+
+    os.makedirs(WORK_DIR, exist_ok=True)
+    for f in os.listdir(MODEL_DIR):
+        dst = os.path.join(WORK_DIR, f)
+        if os.path.lexists(dst):
+            os.remove(dst)
+        os.symlink(os.path.join(MODEL_DIR, f), dst)
+
+    config_path = os.path.join(WORK_DIR, "config.json")
+    if os.path.lexists(config_path):
+        os.remove(config_path)
+    with open(os.path.join(MODEL_DIR, "config.json")) as f:
+        config = json.load(f)
+    orig_type = config.get("model_type", "unknown")
+    if orig_type == "qwen3_5_text":
+        config["model_type"] = "qwen3_next"
+        print(f"  Remapped: {orig_type} -> qwen3_next")
+    else:
+        print(f"  model_type already: {orig_type}")
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+
+    qc = config.get("quantization_config", {})
+    print(f"  Quant: bits={qc.get('bits')} group_size={qc.get('group_size')} sym={qc.get('sym')} method={qc.get('quant_method')}")
+    sys.stdout.flush()
+
+    # ── Step 3: Check GPU ───────────────────────────────────────────────
+    print(f"\n[3/7] Checking GPU")
+    sys.stdout.flush()
+    import torch
+    print(f"  PyTorch {torch.__version__}, CUDA={torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            p = torch.cuda.get_device_properties(i)
+            free, total = torch.cuda.mem_get_info(i)
+            print(f"  GPU {i}: {p.name} ({free/1024**3:.1f}/{total/1024**3:.1f} GiB free)")
+    else:
+        print("  ERROR: No GPU!"); sys.exit(1)
+    sys.stdout.flush()
+
+    # ── Step 4: Import libraries ────────────────────────────────────────
+    print(f"\n[4/7] Importing libraries")
+    sys.stdout.flush()
+    t0 = time.time()
+    import transformers
+    print(f"  transformers: {transformers.__version__}")
+    try:
+        import gptqmodel
+        print(f"  gptqmodel: {gptqmodel.__version__}")
+    except Exception as e:
+        print(f"  gptqmodel: {e} (using transformers built-in GPTQ)")
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    print(f"  Import: {time.time()-t0:.1f}s")
+    sys.stdout.flush()
+
+    # ── Step 5: Load model ──────────────────────────────────────────────
+    print(f"\n[5/7] Loading model")
+    sys.stdout.flush()
+    t0 = time.time()
+    tokenizer = AutoTokenizer.from_pretrained(WORK_DIR, trust_remote_code=True)
+    print(f"  Tokenizer: vocab={tokenizer.vocab_size} ({time.time()-t0:.1f}s)")
+    sys.stdout.flush()
+
+    t1 = time.time()
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            WORK_DIR, device_map="auto", torch_dtype=torch.float16, trust_remote_code=True)
+        print(f"  Model: {model.__class__.__name__} ({time.time()-t1:.1f}s)")
+    except Exception as e:
+        print(f"  ERROR: {e}"); traceback.print_exc(); sys.exit(1)
+
+    for i in range(torch.cuda.device_count()):
+        a = torch.cuda.memory_allocated(i)/1024**3
+        r = torch.cuda.memory_reserved(i)/1024**3
+        print(f"  GPU {i}: {a:.2f} GiB alloc, {r:.2f} GiB reserved")
+    sys.stdout.flush()
+
+    # ── Step 6: Generate responses ──────────────────────────────────────
+    print(f"\n[6/7] Inference tests")
+    sys.stdout.flush()
+    prompts = [
+        "What is 2+2? Reply with just the number.",
+        "The capital of France is",
+        "Explain quantum computing in one sentence.",
+    ]
+    for idx, prompt in enumerate(prompts):
+        print(f"\n--- Test {idx+1}: {prompt[:60]} ---")
+        messages = [{"role": "user", "content": prompt}]
+        try:
+            text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        except Exception:
+            text = prompt
+        inputs = tokenizer(text, return_tensors="pt").to(model.device)
+        input_len = inputs["input_ids"].shape[1]
+        t0 = time.time()
+        with torch.no_grad():
+            outputs = model.generate(**inputs, max_new_tokens=64, do_sample=False)
+        gen_time = time.time() - t0
+        new_tokens = outputs.shape[1] - input_len
+        response = tokenizer.decode(outputs[0][input_len:], skip_special_tokens=True)
+        print(f"  {new_tokens} tokens in {gen_time:.2f}s ({new_tokens/gen_time:.1f} tok/s)")
+        print(f"  Response: {response[:500]}")
+        sys.stdout.flush()
+
+    # ── Step 7: Logit analysis ──────────────────────────────────────────
+    print(f"\n[7/7] Logit analysis")
+    sys.stdout.flush()
+    messages = [{"role": "user", "content": prompts[0]}]
+    try:
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    except Exception:
+        text = prompts[0]
+    inputs = tokenizer(text, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        out = model(**inputs)
+        logits = out.logits[0, -1, :]
+        nan_ct = torch.isnan(logits).sum().item()
+        inf_ct = torch.isinf(logits).sum().item()
+        print(f"  NaN={nan_ct} Inf={inf_ct}")
+        top10_v, top10_i = torch.topk(logits, k=10)
+        print(f"  Top-10 logits:")
+        for i in range(10):
+            tid = top10_i[i].item()
+            tok = tokenizer.decode([tid])
+            print(f"    #{i+1}: id={tid} '{tok}' logit={top10_v[i].item():.4f}")
+        top_tok = tokenizer.decode([top10_i[0].item()])
+        if "4" in top_tok:
+            print(f"\n  PASS: Top token contains '4'")
+        else:
+            print(f"\n  FAIL: Top token is '{top_tok}' (expected '4')")
+        lf = logits.float()
+        probs = torch.softmax(lf, dim=0)
+        entropy = -torch.sum(probs * torch.log(probs + 1e-10)).item()
+        max_ent = torch.log(torch.tensor(float(logits.shape[0]))).item()
+        print(f"  Entropy: {entropy:.4f} (ratio={entropy/max_ent:.4f})")
+        print(f"  Logits: mean={lf.mean().item():.4f} std={lf.std().item():.4f}")
+
+    print(f"\n{'='*70}\nTest complete.\n{'='*70}")
+    sys.stdout.flush()
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen35-gptq-direct-test
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-7900xtx
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: test
+          image: registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-nightly-v2
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              echo "Starting GPTQ direct inference test..."
+              python3 /scripts/test.py 2>&1
+          resources:
+            requests:
+              memory: "48Gi"
+              amd.com/gpu: "1"
+            limits:
+              memory: "56Gi"
+              amd.com/gpu: "1"
+          env:
+            - name: HF_HUB_OFFLINE
+              value: "1"
+            - name: TRANSFORMERS_OFFLINE
+              value: "1"
+            - name: HSA_OVERRIDE_GFX_VERSION
+              value: "11.0.0"
+            - name: PYTORCH_HIP_ALLOC_CONF
+              value: "expandable_segments:True"
+          volumeMounts:
+            - name: models
+              mountPath: /models/qwen35-27b-opus-distill
+              subPath: qwen35-27b-opus-distill-gptq/gptq-w4-g128
+              readOnly: true
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: qwen35-27b-opus-distill-gptq
+        - name: scripts
+          configMap:
+            name: qwen35-gptq-direct-test

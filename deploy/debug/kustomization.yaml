@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Debug manifests for Qwen3.5-27B GPTQ inference debugging.
+# These are NOT auto-applied by the main kustomization.
+# Apply manually: kubectl apply -k deploy/debug/
+resources:
+  - qwen35-gptq-direct-test.yaml
