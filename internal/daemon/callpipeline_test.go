@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -151,23 +150,9 @@ func enableAuditAndCostForTest(t *testing.T, d *Daemon) string {
 func readAuditEntries(t *testing.T, path string) []AuditEntry {
 	t.Helper()
 
-	f, err := os.Open(path)
+	entries, err := ReadAuditEntries(path, AuditReadOptions{})
 	if err != nil {
-		t.Fatalf("open audit log: %v", err)
-	}
-	defer f.Close()
-
-	var entries []AuditEntry
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		var entry AuditEntry
-		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-			t.Fatalf("decode audit entry: %v", err)
-		}
-		entries = append(entries, entry)
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan audit log: %v", err)
+		t.Fatalf("read audit log: %v", err)
 	}
 	return entries
 }

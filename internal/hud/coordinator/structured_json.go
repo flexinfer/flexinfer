@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel"
+	"github.com/crb2nu/loom/pkg/strutil"
 )
 
 func decodeStructuredJSON[T any](raw string, dst *T) error {
-	if err := fiaccel.DecodeEmbeddedJSON([]byte(raw), dst); err == nil {
+	if err := strutil.DecodeEmbeddedJSON([]byte(raw), dst); err == nil {
 		return nil
 	}
 

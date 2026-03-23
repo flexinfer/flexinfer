@@ -13,8 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel"
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/strutil"
 )
 
 // Config holds configuration for the daemon loopback client.
@@ -215,7 +216,7 @@ func parseToolResult(raw json.RawMessage) (map[string]any, error) {
 }
 
 func parseEmbeddedJSONText(text string) (any, bool) {
-	raw, err := fiaccel.ExtractEmbeddedJSON([]byte(text))
+	raw, err := strutil.ExtractEmbeddedJSON([]byte(text))
 	if err != nil {
 		return nil, false
 	}
