@@ -58,7 +58,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 			Error:    active.Error,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	writeJSON(w, http.StatusOK, map[string]any{
 		"models": models,
 	})
 }
@@ -135,7 +135,7 @@ func (s *Server) handleModelHealth(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusServiceUnavailable
 	}
 
-	writeJSON(w, status, map[string]interface{}{
+	writeJSON(w, status, map[string]any{
 		"name":  active.Name,
 		"state": string(active.State),
 		"error": active.Error,
@@ -147,7 +147,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	status := s.manager.Status()
 
 	gpuInfo := QueryGPU(status.GPUVendor, status.GPUArch)
-	resp := map[string]interface{}{
+	resp := map[string]any{
 		"gpuVendor": status.GPUVendor,
 		"gpuArch":   status.GPUArch,
 		"gpu":       gpuInfo,
@@ -174,7 +174,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
-func writeJSON(w http.ResponseWriter, code int, v interface{}) {
+func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)

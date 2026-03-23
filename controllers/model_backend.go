@@ -56,7 +56,7 @@ type backendStoragePlan struct {
 
 // resolveBackendStoragePlan centralizes cache/storage path decisions so backend
 // and source quirks are handled in one place.
-func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, config map[string]interface{}) backendStoragePlan {
+func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, config map[string]any) backendStoragePlan {
 	plan := backendStoragePlan{}
 	source := model.Spec.Source
 	modelValue := extractModelFromSource(source)
@@ -166,7 +166,7 @@ func quantizedOutputDir(spec *aiv1alpha2.QuantizationSpec) string {
 	}
 }
 
-func resolveGGUFFile(config map[string]interface{}) string {
+func resolveGGUFFile(config map[string]any) string {
 	if config == nil {
 		return ""
 	}

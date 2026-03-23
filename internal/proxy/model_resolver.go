@@ -249,7 +249,7 @@ func (r *ModelResolver) IsModelInLabelGroup(modelName string) bool {
 
 // RangeLabelGroupModels iterates over all label group model entries.
 func (r *ModelResolver) RangeLabelGroupModels(f func(modelName string, groupMembers []string) bool) {
-	r.labelGroupModels.Range(func(key, value interface{}) bool {
+	r.labelGroupModels.Range(func(key, value any) bool {
 		return f(key.(string), value.([]string))
 	})
 }

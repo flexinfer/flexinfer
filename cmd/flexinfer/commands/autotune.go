@@ -116,7 +116,7 @@ func runAutotune(cmd *cobra.Command, args []string) error {
 	// Capture baseline config for signal-handler rollback.
 	baselineConfig := model.Spec.GetConfigMap()
 	if baselineConfig == nil {
-		baselineConfig = make(map[string]interface{})
+		baselineConfig = make(map[string]any)
 	}
 
 	// Set up signal handler for clean rollback on interrupt.

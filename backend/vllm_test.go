@@ -107,7 +107,7 @@ func TestVLLMBackendArgs_TuningKnobs(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"dtype":                "half",
 			"maxModelLen":          4096,
 			"gpuMemoryUtilization": "0.92",
@@ -150,7 +150,7 @@ func TestVLLMBackendArgs_ToolCalling(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enableToolCalling": true,
 			"toolCallParser":    "mistral",
 		},
@@ -185,7 +185,7 @@ func TestVLLMBackendArgs_ToolCallingDefaultParser(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enableToolCalling": true,
 		},
 	}
@@ -211,7 +211,7 @@ func TestVLLMBackendEnv_V1Only_IgnoresEngineVersion(t *testing.T) {
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"vllmEngineVersion": "v0", // legacy config, should be ignored
 		},
 	}
@@ -233,7 +233,7 @@ func TestVLLMBackendEnv_FlashAttentionOptIn(t *testing.T) {
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enableFlashAttention": true,
 		},
 	}
@@ -259,7 +259,7 @@ func TestVLLMBackendEnv_FullOptIn(t *testing.T) {
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enableFlashAttention": true,
 			"enableAiter":          true,
 		},
@@ -289,7 +289,7 @@ func TestVLLMBackendEnv_GFX906IgnoresAiter(t *testing.T) {
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx906",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enableFlashAttention": true,
 			"enableAiter":          true, // should be ignored on gfx906
 		},
@@ -387,7 +387,7 @@ func TestVLLMBackendEnv_GFX942AiterOptIn(t *testing.T) {
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx942",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enableAiter": true,
 		},
 	}
@@ -410,7 +410,7 @@ func TestVLLMBackendEnv_GFX90aIgnoresAiter(t *testing.T) {
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx90a",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enableAiter": true, // should be ignored on gfx90a
 		},
 	}
@@ -432,7 +432,7 @@ func TestVLLMBackendEnv_HIPVisibleDevices_MirrorsROCR(t *testing.T) {
 
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"hipVisibleDevices": "1",
 		},
 	}
@@ -457,7 +457,7 @@ func TestVLLMBackendEnv_ROCRVisibleDevices_MirrorsHIP(t *testing.T) {
 
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"rocrVisibleDevices": "2",
 		},
 	}
@@ -481,7 +481,7 @@ func TestVLLMBackendEnv_DeviceIsolationOverrides(t *testing.T) {
 
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"hipVisibleDevices":  "1",
 			"rocrVisibleDevices": "2",
 			"gpuDeviceOrdinal":   "2",
@@ -510,7 +510,7 @@ func TestVLLMBackendArgs_Quantization(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"quantization": "awq",
 		},
 	}
@@ -533,7 +533,7 @@ func TestVLLMBackendArgs_ServedModelName(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "org/long-model-name",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"servedModelName": "my-model",
 		},
 	}
@@ -556,7 +556,7 @@ func TestVLLMBackendArgs_KVCacheDtype(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"kvCacheDtype": "fp8_e5m2",
 		},
 	}
@@ -579,7 +579,7 @@ func TestVLLMBackendArgs_PrefixCachingExplicitDisable(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enablePrefixCaching": false,
 		},
 	}
@@ -605,7 +605,7 @@ func TestVLLMBackendArgs_PrefixCachingExplicitEnableIsNoop(t *testing.T) {
 	// enablePrefixCaching=true should NOT emit --enable-prefix-caching (it's default in V1)
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enablePrefixCaching": true,
 		},
 	}
@@ -627,7 +627,7 @@ func TestVLLMBackendArgs_PrefixCachingNotSetByDefault(t *testing.T) {
 	// No enablePrefixCaching key in config — should not emit either flag
 	spec := &ModelSpec{
 		Model:  "test-model",
-		Config: map[string]interface{}{},
+		Config: map[string]any{},
 	}
 
 	args := b.Args(spec)
@@ -643,7 +643,7 @@ func TestVLLMBackendArgs_ReasoningParser(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "deepseek-r1",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"reasoningParser": "deepseek_r1",
 		},
 	}
@@ -666,7 +666,7 @@ func TestVLLMBackendArgs_NumGpuBlocksOverride(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"numGpuBlocksOverride": 10,
 		},
 	}
@@ -690,7 +690,7 @@ func TestVLLMBackendArgs_CPUOffloadGbRemoved(t *testing.T) {
 	// cpuOffloadGb config should be ignored (removed in vLLM V1 0.17.0+)
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"cpuOffloadGb": 2,
 		},
 	}
@@ -708,7 +708,7 @@ func TestVLLMBackendArgs_Tokenizer(t *testing.T) {
 
 	spec := &ModelSpec{
 		ModelPath: "/models/my-model/model-Q4_K_M.gguf",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"quantization": "gguf",
 			"tokenizer":    "Qwen/Qwen3.5-35B-A3B",
 		},
@@ -739,7 +739,7 @@ func TestVLLMBackendEnv_DisabledKernels(t *testing.T) {
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"disabledKernels": "ExllamaLinearKernel",
 		},
 	}
@@ -777,7 +777,7 @@ func TestVLLMBackendEnv_PytorchCudaAllocConf(t *testing.T) {
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"pytorchCudaAllocConf": "expandable_segments:True",
 		},
 	}
@@ -815,7 +815,7 @@ func TestVLLMBackendEnv_PytorchCudaAllocConf_NVIDIA(t *testing.T) {
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorNVIDIA,
 		GPUArch:   "sm_89",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"pytorchCudaAllocConf": "expandable_segments:True,max_split_size_mb:128",
 		},
 	}
@@ -838,7 +838,7 @@ func TestVLLMBackendEnv_PrefillDecodeAttentionRemoved(t *testing.T) {
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"enablePrefillDecodeAttention": true,
 		},
 	}
@@ -856,13 +856,13 @@ func TestVLLMBackendArgs_SpeculativeConfig(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		config    map[string]interface{}
+		config    map[string]any
 		wantFlag  bool
 		wantValue string
 	}{
 		{
 			name: "ngram speculation",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"speculativeConfig": `{"method": "ngram", "num_speculative_tokens": 3}`,
 			},
 			wantFlag:  true,
@@ -870,7 +870,7 @@ func TestVLLMBackendArgs_SpeculativeConfig(t *testing.T) {
 		},
 		{
 			name: "draft model speculation",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"speculativeConfig": `{"model": "Qwen/Qwen3-0.6B", "num_speculative_tokens": 5, "method": "draft_model"}`,
 			},
 			wantFlag:  true,
@@ -878,7 +878,7 @@ func TestVLLMBackendArgs_SpeculativeConfig(t *testing.T) {
 		},
 		{
 			name: "mtp speculation",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"speculativeConfig": `{"method": "mtp", "num_speculative_tokens": 1}`,
 			},
 			wantFlag:  true,
@@ -886,12 +886,12 @@ func TestVLLMBackendArgs_SpeculativeConfig(t *testing.T) {
 		},
 		{
 			name:     "not set by default",
-			config:   map[string]interface{}{},
+			config:   map[string]any{},
 			wantFlag: false,
 		},
 		{
 			name: "empty string ignored",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"speculativeConfig": "",
 			},
 			wantFlag: false,
@@ -933,7 +933,7 @@ func TestVLLMBackendArgs_DisableLogStats(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "test-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"disableLogStats": true,
 		},
 	}

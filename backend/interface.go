@@ -53,7 +53,7 @@ type ModelSpec struct {
 	ModelPath string
 
 	// Config contains backend-specific configuration as key-value pairs
-	Config map[string]interface{}
+	Config map[string]any
 
 	// GPUVendor indicates which GPU vendor is being used
 	GPUVendor GPUVendor
@@ -99,7 +99,7 @@ func (s *ModelSpec) ConfigInt(key string, defaultVal int) int {
 // ConfigBool returns a bool config value with a default.
 // Handles both native bool values and string representations
 // ("true", "false", "1", "0") since CRD config values arrive as
-// JSON strings after json.Unmarshal into map[string]interface{}.
+// JSON strings after json.Unmarshal into map[string]any.
 func (s *ModelSpec) ConfigBool(key string, defaultVal bool) bool {
 	if s.Config == nil {
 		return defaultVal

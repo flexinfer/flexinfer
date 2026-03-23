@@ -194,7 +194,7 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 		}
 
 		// Trigger scale-up using singleflight to deduplicate
-		_, err, _ := p.requestGroup.Do(modelName+"-scaleup", func() (interface{}, error) {
+		_, err, _ := p.requestGroup.Do(modelName+"-scaleup", func() (any, error) {
 			return nil, p.activator.TriggerScaleUp(ctx, modelName)
 		})
 

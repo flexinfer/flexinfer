@@ -714,11 +714,11 @@ func (s *ModelSpec) IsServerless() bool {
 
 // GetConfigMap parses the JSON config into a map.
 // Returns nil if config is not set.
-func (s *ModelSpec) GetConfigMap() map[string]interface{} {
+func (s *ModelSpec) GetConfigMap() map[string]any {
 	if s.Config == nil || s.Config.Raw == nil {
 		return nil
 	}
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(s.Config.Raw, &result); err != nil {
 		return nil
 	}

@@ -94,7 +94,7 @@ func TestExperimentLogger_SaveToConfigMap(t *testing.T) {
 		Improvement:   9.29,
 		TotalSteps:    5,
 		AcceptedSteps: 2,
-		BestConfig:    map[string]interface{}{"maxNumSeqs": float64(16)},
+		BestConfig:    map[string]any{"maxNumSeqs": float64(16)},
 	}
 
 	err := logger.Save(context.Background(), summary)

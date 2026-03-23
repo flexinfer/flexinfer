@@ -79,7 +79,7 @@ func gpuInt64Ptr(v int64) *int64 { return &v }
 func gpuInt32Ptr(v int32) *int32 { return &v }
 
 // mustJSONConfig marshals a map into an apiextensionsv1.JSON pointer.
-func mustJSONConfig(m map[string]interface{}) *apiextensionsv1.JSON {
+func mustJSONConfig(m map[string]any) *apiextensionsv1.JSON {
 	raw, _ := json.Marshal(m)
 	return &apiextensionsv1.JSON{Raw: raw}
 }
@@ -460,7 +460,7 @@ func TestValidateMaxwellSpecifics(t *testing.T) {
 		gpuVendor   backend.GPUVendor
 		gpuArch     string
 		source      string
-		config      map[string]interface{}
+		config      map[string]any
 		wantErr     bool
 		errContains string
 	}{
@@ -504,7 +504,7 @@ func TestValidateMaxwellSpecifics(t *testing.T) {
 			gpuVendor:   backend.GPUVendorNVIDIA,
 			gpuArch:     "sm_52",
 			source:      "HF://org/model",
-			config:      map[string]interface{}{"modelLibPath": "/libs/model.so"},
+			config:      map[string]any{"modelLibPath": "/libs/model.so"},
 			wantErr:     false,
 		},
 		{
@@ -513,7 +513,7 @@ func TestValidateMaxwellSpecifics(t *testing.T) {
 			gpuVendor:   backend.GPUVendorNVIDIA,
 			gpuArch:     "sm_52",
 			source:      "HF://org/model",
-			config:      map[string]interface{}{},
+			config:      map[string]any{},
 			wantErr:     true,
 			errContains: "mlc-llm on Maxwell GPUs requires config.modelLibPath",
 		},
@@ -568,22 +568,22 @@ func TestValidateMaxwellSpecifics(t *testing.T) {
 func TestEmitVLLMOptInEvents(t *testing.T) {
 	tests := []struct {
 		name        string
-		config      map[string]interface{}
+		config      map[string]any
 		wantReasons []string
 	}{
 		{
 			name:        "v1 engine opt-in emits event",
-			config:      map[string]interface{}{"vllmEngineVersion": "v1"},
+			config:      map[string]any{"vllmEngineVersion": "v1"},
 			wantReasons: []string{"V1EngineOptIn"},
 		},
 		{
 			name:        "flash attention true (bool) emits event",
-			config:      map[string]interface{}{"enableFlashAttention": true},
+			config:      map[string]any{"enableFlashAttention": true},
 			wantReasons: []string{"FlashAttentionOptIn"},
 		},
 		{
 			name:        "flash attention true (string) emits event",
-			config:      map[string]interface{}{"enableFlashAttention": "true"},
+			config:      map[string]any{"enableFlashAttention": "true"},
 			wantReasons: []string{"FlashAttentionOptIn"},
 		},
 		{
@@ -593,27 +593,27 @@ func TestEmitVLLMOptInEvents(t *testing.T) {
 		},
 		{
 			name:        "no matching keys emits no events",
-			config:      map[string]interface{}{"maxModelLen": 4096, "gpuMemoryUtilization": 0.95},
+			config:      map[string]any{"maxModelLen": 4096, "gpuMemoryUtilization": 0.95},
 			wantReasons: nil,
 		},
 		{
 			name:        "both v1 engine and flash attention emit two events",
-			config:      map[string]interface{}{"vllmEngineVersion": "v1", "enableFlashAttention": true},
+			config:      map[string]any{"vllmEngineVersion": "v1", "enableFlashAttention": true},
 			wantReasons: []string{"V1EngineOptIn", "FlashAttentionOptIn"},
 		},
 		{
 			name:        "flash attention false (bool) emits no event",
-			config:      map[string]interface{}{"enableFlashAttention": false},
+			config:      map[string]any{"enableFlashAttention": false},
 			wantReasons: nil,
 		},
 		{
 			name:        "flash attention 1 (string) emits event",
-			config:      map[string]interface{}{"enableFlashAttention": "1"},
+			config:      map[string]any{"enableFlashAttention": "1"},
 			wantReasons: []string{"FlashAttentionOptIn"},
 		},
 		{
 			name:        "vllm engine version v2 does not emit event",
-			config:      map[string]interface{}{"vllmEngineVersion": "v2"},
+			config:      map[string]any{"vllmEngineVersion": "v2"},
 			wantReasons: nil,
 		},
 	}

@@ -10,7 +10,7 @@ func TestMLCLLMBackendArgs_ModeServerMapsToServe(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "my-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"mode": "server",
 		},
 	}
@@ -39,7 +39,7 @@ func TestMLCLLMBackendArgs_UsesMaxTotalSeqLengthOverrideKey(t *testing.T) {
 
 	spec := &ModelSpec{
 		Model: "my-model",
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"maxNumSequence":    2,
 			"maxTotalSeqLength": 32768,
 		},

@@ -528,7 +528,7 @@ func TestHandleModels_WithServiceLabels(t *testing.T) {
 	m := response.Data[0]
 	assert.Equal(t, "model-with-labels", m.ID)
 
-	serviceLabels, ok := m.Metadata["service_labels"].([]interface{})
+	serviceLabels, ok := m.Metadata["service_labels"].([]any)
 	require.True(t, ok, "service_labels should be a list")
 	assert.Len(t, serviceLabels, 2)
 	assert.Contains(t, serviceLabels, "textgen")

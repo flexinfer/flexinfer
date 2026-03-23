@@ -571,7 +571,7 @@ func TestLoRAReconcile_PartialLoad(t *testing.T) {
 func TestLoadAdapterOnPod_WithMaxRank(t *testing.T) {
 	s := newLoRATestScheme(t)
 
-	var receivedPayload map[string]interface{}
+	var receivedPayload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &receivedPayload)

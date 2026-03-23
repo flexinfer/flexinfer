@@ -75,7 +75,7 @@ func TestSpliceModelField(t *testing.T) {
 			}
 
 			// Verify result is valid JSON with correct model
-			var parsed map[string]interface{}
+			var parsed map[string]any
 			if err := json.Unmarshal(result, &parsed); err != nil {
 				t.Fatalf("result is not valid JSON: %v\nresult: %q", err, string(result))
 			}
@@ -96,7 +96,7 @@ func TestRewriteModelInBody(t *testing.T) {
 	body := []byte(`{"model":"user-alias","messages":[{"role":"user","content":"hello"}],"stream":true}`)
 	result := p.rewriteModelInBody(body, "Qwen/Qwen2.5-7B-Instruct")
 
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if err := json.Unmarshal(result, &parsed); err != nil {
 		t.Fatalf("result not valid JSON: %v", err)
 	}
@@ -125,7 +125,7 @@ func BenchmarkRewriteModelInBody_FullParse(b *testing.B) {
 	body := []byte(`{"model":"my-model","messages":[{"role":"user","content":"hello world"}],"temperature":0.7,"stream":true}`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		var data map[string]interface{}
+		var data map[string]any
 		if err := json.Unmarshal(body, &data); err != nil {
 			b.Fatal(err)
 		}

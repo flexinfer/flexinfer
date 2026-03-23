@@ -15,18 +15,18 @@ import (
 type GPTQJobBuilder struct{}
 
 type gptqModelPolicy struct {
-	Name                   string                 `json:"name"`
-	MatchModelTypes        []string               `json:"match_model_types,omitempty"`
-	MatchPathSubstrings    []string               `json:"match_path_substrings,omitempty"`
-	ExtractTextConfig      bool                   `json:"extract_text_config,omitempty"`
-	CopyRootKeys           []string               `json:"copy_root_keys,omitempty"`
-	RemapModelType         string                 `json:"remap_model_type,omitempty"`
-	Architectures          []string               `json:"architectures,omitempty"`
-	Loader                 string                 `json:"loader,omitempty"`
-	PythonPackages         []string               `json:"python_packages,omitempty"`
-	QuantizeConfigOverride map[string]interface{} `json:"quantize_config_overrides,omitempty"`
-	CalibrationOverrides   map[string]int         `json:"calibration_overrides,omitempty"`
-	RuntimeOverrides       map[string]interface{} `json:"runtime_overrides,omitempty"`
+	Name                   string         `json:"name"`
+	MatchModelTypes        []string       `json:"match_model_types,omitempty"`
+	MatchPathSubstrings    []string       `json:"match_path_substrings,omitempty"`
+	ExtractTextConfig      bool           `json:"extract_text_config,omitempty"`
+	CopyRootKeys           []string       `json:"copy_root_keys,omitempty"`
+	RemapModelType         string         `json:"remap_model_type,omitempty"`
+	Architectures          []string       `json:"architectures,omitempty"`
+	Loader                 string         `json:"loader,omitempty"`
+	PythonPackages         []string       `json:"python_packages,omitempty"`
+	QuantizeConfigOverride map[string]any `json:"quantize_config_overrides,omitempty"`
+	CalibrationOverrides   map[string]int `json:"calibration_overrides,omitempty"`
+	RuntimeOverrides       map[string]any `json:"runtime_overrides,omitempty"`
 }
 
 // Format returns the GPTQ quantization format.
@@ -196,7 +196,7 @@ func defaultGPTQModelPoliciesJSON() string {
 			PythonPackages: []string{
 				"git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea",
 			},
-			QuantizeConfigOverride: map[string]interface{}{
+			QuantizeConfigOverride: map[string]any{
 				"offload_to_disk": false,
 			},
 			CalibrationOverrides: map[string]int{
@@ -204,7 +204,7 @@ func defaultGPTQModelPoliciesJSON() string {
 				"max_seq_len": 512,
 				"max_tokens":  8192,
 			},
-			RuntimeOverrides: map[string]interface{}{
+			RuntimeOverrides: map[string]any{
 				"attn_implementation": "eager",
 				"disable_qwen35_fla":  true,
 				"fix_mistral_regex":   true,

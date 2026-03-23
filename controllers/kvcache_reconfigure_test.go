@@ -54,7 +54,7 @@ func kvCacheTestSetup(t *testing.T, utilization string, objects ...runtime.Objec
 		},
 	}
 
-	configJSON, _ := json.Marshal(map[string]interface{}{
+	configJSON, _ := json.Marshal(map[string]any{
 		"maxNumSeqs": 8,
 	})
 
@@ -235,7 +235,7 @@ func TestKVCacheReconfigure_MinimumOneSequence(t *testing.T) {
 	r, model := kvCacheTestSetup(t, "0.95")
 
 	// Set maxNumSeqs=1 — reducing by 50% should clamp to 1
-	configJSON, _ := json.Marshal(map[string]interface{}{
+	configJSON, _ := json.Marshal(map[string]any{
 		"maxNumSeqs": 1,
 	})
 	model.Spec.Config = &apiextensionsv1.JSON{Raw: configJSON}

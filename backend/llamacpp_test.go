@@ -10,7 +10,7 @@ func TestLlamaCppBackendArgs_ReasoningAndDevicePassThrough(t *testing.T) {
 	spec := &ModelSpec{
 		ModelPath: "/models/test/model.gguf",
 		GPUVendor: GPUVendorAMD,
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"gpuDeviceOrdinal": "0",
 			"reasoningFormat":  "none",
 			"reasoningBudget":  float64(0),
@@ -36,7 +36,7 @@ func TestLlamaCppBackendArgs_DeviceTakesPrecedenceOverOrdinal(t *testing.T) {
 	spec := &ModelSpec{
 		ModelPath: "/models/test/model.gguf",
 		GPUVendor: GPUVendorAMD,
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"device":           "2",
 			"gpuDeviceOrdinal": "0",
 		},
@@ -53,7 +53,7 @@ func TestLlamaCppBackendEnv_AMDDevicePinningFromOrdinal(t *testing.T) {
 	b := &LlamaCppBackend{}
 	spec := &ModelSpec{
 		GPUVendor: GPUVendorAMD,
-		Config: map[string]interface{}{
+		Config: map[string]any{
 			"gpuDeviceOrdinal": "1",
 		},
 	}
@@ -81,7 +81,7 @@ func TestLlamaCppBackendArgs_JinjaFlag(t *testing.T) {
 	t.Run("enabled", func(t *testing.T) {
 		spec := &ModelSpec{
 			ModelPath: "/models/test/model.gguf",
-			Config: map[string]interface{}{
+			Config: map[string]any{
 				"jinja": true,
 			},
 		}
@@ -95,7 +95,7 @@ func TestLlamaCppBackendArgs_JinjaFlag(t *testing.T) {
 	t.Run("disabled", func(t *testing.T) {
 		spec := &ModelSpec{
 			ModelPath: "/models/test/model.gguf",
-			Config:    map[string]interface{}{},
+			Config:    map[string]any{},
 		}
 		args := b.Args(spec)
 		joined := strings.Join(args, " ")
@@ -111,7 +111,7 @@ func TestLlamaCppBackendArgs_EmbeddingFlag(t *testing.T) {
 	t.Run("enabled", func(t *testing.T) {
 		spec := &ModelSpec{
 			ModelPath: "/models/bge/model.gguf",
-			Config: map[string]interface{}{
+			Config: map[string]any{
 				"embedding": true,
 			},
 		}
@@ -125,7 +125,7 @@ func TestLlamaCppBackendArgs_EmbeddingFlag(t *testing.T) {
 	t.Run("not set by default", func(t *testing.T) {
 		spec := &ModelSpec{
 			ModelPath: "/models/test/model.gguf",
-			Config:    map[string]interface{}{},
+			Config:    map[string]any{},
 		}
 		args := b.Args(spec)
 		joined := strings.Join(args, " ")

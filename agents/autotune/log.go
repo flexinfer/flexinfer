@@ -37,15 +37,15 @@ type ExperimentEntry struct {
 
 // ExperimentSummary captures the final outcome of an autotune run.
 type ExperimentSummary struct {
-	ModelName     string                 `json:"modelName"`
-	StartTime     time.Time              `json:"startTime"`
-	EndTime       time.Time              `json:"endTime"`
-	BaselineTPS   float64                `json:"baselineTps"`
-	BestTPS       float64                `json:"bestTps"`
-	Improvement   float64                `json:"improvementPct"`
-	TotalSteps    int                    `json:"totalSteps"`
-	AcceptedSteps int                    `json:"acceptedSteps"`
-	BestConfig    map[string]interface{} `json:"bestConfig"`
+	ModelName     string         `json:"modelName"`
+	StartTime     time.Time      `json:"startTime"`
+	EndTime       time.Time      `json:"endTime"`
+	BaselineTPS   float64        `json:"baselineTps"`
+	BestTPS       float64        `json:"bestTps"`
+	Improvement   float64        `json:"improvementPct"`
+	TotalSteps    int            `json:"totalSteps"`
+	AcceptedSteps int            `json:"acceptedSteps"`
+	BestConfig    map[string]any `json:"bestConfig"`
 }
 
 // ExperimentLogger records experiment entries and persists them to a ConfigMap.

@@ -33,37 +33,37 @@ import (
 func TestConfigStringValue(t *testing.T) {
 	tests := []struct {
 		name string
-		cfg  map[string]interface{}
+		cfg  map[string]any
 		keys []string
 		want string
 	}{
 		{
 			name: "single key found",
-			cfg:  map[string]interface{}{"foo": "bar"},
+			cfg:  map[string]any{"foo": "bar"},
 			keys: []string{"foo"},
 			want: "bar",
 		},
 		{
 			name: "multi-key fallback: first missing, second found",
-			cfg:  map[string]interface{}{"second": "value"},
+			cfg:  map[string]any{"second": "value"},
 			keys: []string{"first", "second"},
 			want: "value",
 		},
 		{
 			name: "all keys missing",
-			cfg:  map[string]interface{}{"other": "val"},
+			cfg:  map[string]any{"other": "val"},
 			keys: []string{"missing1", "missing2"},
 			want: "",
 		},
 		{
 			name: "key exists but empty string",
-			cfg:  map[string]interface{}{"empty": ""},
+			cfg:  map[string]any{"empty": ""},
 			keys: []string{"empty"},
 			want: "",
 		},
 		{
 			name: "key exists but whitespace-only",
-			cfg:  map[string]interface{}{"ws": "   "},
+			cfg:  map[string]any{"ws": "   "},
 			keys: []string{"ws"},
 			want: "",
 		},
@@ -75,13 +75,13 @@ func TestConfigStringValue(t *testing.T) {
 		},
 		{
 			name: "key exists with non-string value",
-			cfg:  map[string]interface{}{"num": 42},
+			cfg:  map[string]any{"num": 42},
 			keys: []string{"num"},
 			want: "",
 		},
 		{
 			name: "first key whitespace, second key valid",
-			cfg:  map[string]interface{}{"a": "  ", "b": "good"},
+			cfg:  map[string]any{"a": "  ", "b": "good"},
 			keys: []string{"a", "b"},
 			want: "good",
 		},
@@ -104,61 +104,61 @@ func TestConfigStringValue(t *testing.T) {
 func TestConfigStringListValue(t *testing.T) {
 	tests := []struct {
 		name string
-		cfg  map[string]interface{}
+		cfg  map[string]any
 		key  string
 		want []string
 	}{
 		{
 			name: "comma-separated string",
-			cfg:  map[string]interface{}{"k": "a,b,c"},
+			cfg:  map[string]any{"k": "a,b,c"},
 			key:  "k",
 			want: []string{"a", "b", "c"},
 		},
 		{
 			name: "single string without comma",
-			cfg:  map[string]interface{}{"k": "abc"},
+			cfg:  map[string]any{"k": "abc"},
 			key:  "k",
 			want: []string{"abc"},
 		},
 		{
 			name: "[]string slice",
-			cfg:  map[string]interface{}{"k": []string{"x", "y"}},
+			cfg:  map[string]any{"k": []string{"x", "y"}},
 			key:  "k",
 			want: []string{"x", "y"},
 		},
 		{
-			name: "[]interface{} slice with strings",
-			cfg:  map[string]interface{}{"k": []interface{}{"m", "n"}},
+			name: "[]any slice with strings",
+			cfg:  map[string]any{"k": []any{"m", "n"}},
 			key:  "k",
 			want: []string{"m", "n"},
 		},
 		{
 			name: "key missing",
-			cfg:  map[string]interface{}{"other": "val"},
+			cfg:  map[string]any{"other": "val"},
 			key:  "k",
 			want: nil,
 		},
 		{
 			name: "key is nil value",
-			cfg:  map[string]interface{}{"k": nil},
+			cfg:  map[string]any{"k": nil},
 			key:  "k",
 			want: nil,
 		},
 		{
 			name: "trims whitespace from items",
-			cfg:  map[string]interface{}{"k": " a , b "},
+			cfg:  map[string]any{"k": " a , b "},
 			key:  "k",
 			want: []string{"a", "b"},
 		},
 		{
 			name: "empty string value yields empty list",
-			cfg:  map[string]interface{}{"k": ""},
+			cfg:  map[string]any{"k": ""},
 			key:  "k",
 			want: []string{},
 		},
 		{
 			name: "whitespace-only items filtered",
-			cfg:  map[string]interface{}{"k": " , , "},
+			cfg:  map[string]any{"k": " , , "},
 			key:  "k",
 			want: []string{},
 		},
@@ -259,7 +259,7 @@ func TestSanitizeHFPatterns(t *testing.T) {
 
 // makeModelWithConfig creates a v1alpha2.Model with the given backend, source,
 // and config key/value pairs serialized as JSON.
-func makeModelWithConfig(backend, source string, configKV map[string]interface{}) *aiv1alpha2.Model {
+func makeModelWithConfig(backend, source string, configKV map[string]any) *aiv1alpha2.Model {
 	m := &aiv1alpha2.Model{
 		Spec: aiv1alpha2.ModelSpec{
 			Backend: backend,
@@ -275,7 +275,7 @@ func makeModelWithConfig(backend, source string, configKV map[string]interface{}
 
 func TestResolveHFDownloadOptions(t *testing.T) {
 	t.Run("llamacpp with ggufFile", func(t *testing.T) {
-		model := makeModelWithConfig("llamacpp", "HF://org/model", map[string]interface{}{
+		model := makeModelWithConfig("llamacpp", "HF://org/model", map[string]any{
 			"ggufFile": "model-q4.gguf",
 		})
 		opts := resolveHFDownloadOptions(model)
@@ -285,7 +285,7 @@ func TestResolveHFDownloadOptions(t *testing.T) {
 	})
 
 	t.Run("vllm with ggufFile and mmproj", func(t *testing.T) {
-		model := makeModelWithConfig("vllm", "HF://org/model", map[string]interface{}{
+		model := makeModelWithConfig("vllm", "HF://org/model", map[string]any{
 			"ggufFile": "model.gguf",
 			"mmproj":   "mmproj-model.gguf",
 		})
@@ -299,7 +299,7 @@ func TestResolveHFDownloadOptions(t *testing.T) {
 	})
 
 	t.Run("non-GGUF backend without ggufFile", func(t *testing.T) {
-		model := makeModelWithConfig("vllm", "HF://org/model", map[string]interface{}{
+		model := makeModelWithConfig("vllm", "HF://org/model", map[string]any{
 			"maxModelLen": 4096,
 		})
 		opts := resolveHFDownloadOptions(model)
@@ -309,7 +309,7 @@ func TestResolveHFDownloadOptions(t *testing.T) {
 	})
 
 	t.Run("hfRevision populated", func(t *testing.T) {
-		model := makeModelWithConfig("vllm", "HF://org/model", map[string]interface{}{
+		model := makeModelWithConfig("vllm", "HF://org/model", map[string]any{
 			"hfRevision": "main",
 		})
 		opts := resolveHFDownloadOptions(model)
@@ -319,7 +319,7 @@ func TestResolveHFDownloadOptions(t *testing.T) {
 	})
 
 	t.Run("hfAllowPatterns and hfIgnorePatterns", func(t *testing.T) {
-		model := makeModelWithConfig("vllm", "HF://org/model", map[string]interface{}{
+		model := makeModelWithConfig("vllm", "HF://org/model", map[string]any{
 			"hfAllowPatterns":  "*.safetensors,config.json",
 			"hfIgnorePatterns": "*.bin",
 		})
@@ -347,7 +347,7 @@ func TestResolveHFDownloadOptions(t *testing.T) {
 	})
 
 	t.Run("mmproj with leading slash is excluded", func(t *testing.T) {
-		model := makeModelWithConfig("llamacpp", "HF://org/model", map[string]interface{}{
+		model := makeModelWithConfig("llamacpp", "HF://org/model", map[string]any{
 			"ggufFile": "model.gguf",
 			"mmproj":   "/absolute/path",
 		})
@@ -362,7 +362,7 @@ func TestResolveHFDownloadOptions(t *testing.T) {
 	})
 
 	t.Run("patterns are sanitized", func(t *testing.T) {
-		model := makeModelWithConfig("llamacpp", "HF://org/model", map[string]interface{}{
+		model := makeModelWithConfig("llamacpp", "HF://org/model", map[string]any{
 			"ggufFile":        " model.gguf ",
 			"hfAllowPatterns": "../traversal,/leading-slash",
 		})

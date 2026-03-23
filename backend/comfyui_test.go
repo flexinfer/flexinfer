@@ -22,7 +22,7 @@ func TestComfyUIBackendEnv_GFX906MemoryTuning(t *testing.T) {
 		Model:     "test-model",
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx906",
-		Config:    map[string]interface{}{},
+		Config:    map[string]any{},
 	}
 	envs := b.Env(spec)
 
@@ -43,7 +43,7 @@ func TestComfyUIBackendEnv_GFX906MemoryTuning(t *testing.T) {
 		Model:     "test-model",
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
-		Config:    map[string]interface{}{},
+		Config:    map[string]any{},
 	}
 	envs1100 := b.Env(spec1100)
 	if _, ok := findEnv(envs1100, "ENABLE_ATTENTION_SLICING"); ok {

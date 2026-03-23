@@ -45,12 +45,12 @@ func TestListModelsEmpty(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var body map[string]interface{}
+	var body map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	models, ok := body["models"]
 	// models should be null or empty array when nothing loaded.
 	if ok && models != nil {
-		arr, ok := models.([]interface{})
+		arr, ok := models.([]any)
 		assert.True(t, ok)
 		assert.Empty(t, arr)
 	}
@@ -65,7 +65,7 @@ func TestStatusEndpoint(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var body map[string]interface{}
+	var body map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, "amd", body["gpuVendor"])
 	assert.Equal(t, "gfx1100", body["gpuArch"])

@@ -329,23 +329,23 @@ func TestCollectGPUInventory_UsesInitContainerMaxForScheduledPods(t *testing.T) 
 func TestBuildClusterModelStatusSorted(t *testing.T) {
 	items := []unstructured.Unstructured{
 		{
-			Object: map[string]interface{}{
-				"metadata": map[string]interface{}{
+			Object: map[string]any{
+				"metadata": map[string]any{
 					"name":      "zeta",
 					"namespace": "ns-b",
 				},
-				"status": map[string]interface{}{
+				"status": map[string]any{
 					"phase": "Ready",
 				},
 			},
 		},
 		{
-			Object: map[string]interface{}{
-				"metadata": map[string]interface{}{
+			Object: map[string]any{
+				"metadata": map[string]any{
 					"name":      "alpha",
 					"namespace": "ns-a",
 				},
-				"status": map[string]interface{}{
+				"status": map[string]any{
 					"phase": "Pending",
 				},
 			},
@@ -372,23 +372,23 @@ func TestRemoteModelWatchSnapshotAndEvents(t *testing.T) {
 
 	initial := []unstructured.Unstructured{
 		{
-			Object: map[string]interface{}{
-				"metadata": map[string]interface{}{
+			Object: map[string]any{
+				"metadata": map[string]any{
 					"name":      "zeta",
 					"namespace": "ns-b",
 				},
-				"status": map[string]interface{}{
+				"status": map[string]any{
 					"phase": "Pending",
 				},
 			},
 		},
 		{
-			Object: map[string]interface{}{
-				"metadata": map[string]interface{}{
+			Object: map[string]any{
+				"metadata": map[string]any{
 					"name":      "alpha",
 					"namespace": "ns-a",
 				},
-				"status": map[string]interface{}{
+				"status": map[string]any{
 					"phase": "Loading",
 				},
 			},
@@ -408,20 +408,20 @@ func TestRemoteModelWatchSnapshotAndEvents(t *testing.T) {
 	}
 
 	modified := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"metadata": map[string]interface{}{
+		Object: map[string]any{
+			"metadata": map[string]any{
 				"name":      "alpha",
 				"namespace": "ns-a",
 			},
-			"status": map[string]interface{}{
+			"status": map[string]any{
 				"phase": "Ready",
 			},
 		},
 	}
 	w.applyWatchEvent(watch.Event{Type: watch.Modified, Object: modified})
 	deleted := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"metadata": map[string]interface{}{
+		Object: map[string]any{
+			"metadata": map[string]any{
 				"name":      "zeta",
 				"namespace": "ns-b",
 			},

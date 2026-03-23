@@ -3,7 +3,7 @@ package autotune
 // SearchStrategy generates candidate configurations to evaluate.
 type SearchStrategy interface {
 	// Next returns the next candidate config to try, or nil when the search is exhausted.
-	Next(current map[string]interface{}, history []ExperimentEntry) *map[string]interface{}
+	Next(current map[string]any, history []ExperimentEntry) *map[string]any
 }
 
 // CoordinateDescent iterates through each parameter in turn, trying all values
@@ -20,7 +20,7 @@ func NewCoordinateDescent(space SearchSpace) *CoordinateDescent {
 }
 
 // Next returns the next candidate configuration, or nil when exhausted.
-func (cd *CoordinateDescent) Next(current map[string]interface{}, _ []ExperimentEntry) *map[string]interface{} {
+func (cd *CoordinateDescent) Next(current map[string]any, _ []ExperimentEntry) *map[string]any {
 	for cd.paramIdx < len(cd.Space.Parameters) {
 		param := cd.Space.Parameters[cd.paramIdx]
 
@@ -62,15 +62,15 @@ func (cd *CoordinateDescent) Progress() (step, total int) {
 	return step, total
 }
 
-func copyConfig(cfg map[string]interface{}) map[string]interface{} {
-	out := make(map[string]interface{}, len(cfg))
+func copyConfig(cfg map[string]any) map[string]any {
+	out := make(map[string]any, len(cfg))
 	for k, v := range cfg {
 		out[k] = v
 	}
 	return out
 }
 
-func configsEqual(a, b map[string]interface{}) bool {
+func configsEqual(a, b map[string]any) bool {
 	if len(a) != len(b) {
 		return false
 	}

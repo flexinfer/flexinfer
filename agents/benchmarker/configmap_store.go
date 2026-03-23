@@ -82,7 +82,7 @@ func (c *ConfigMapStore) upsertGlobalResult(ctx context.Context, r BenchmarkReco
 	key := benchmarkKey(r.Backend, r.ModelName, deviceClass)
 	metaKey := "meta_" + key
 
-	meta := map[string]interface{}{
+	meta := map[string]any{
 		"backend":          r.Backend,
 		"model":            r.ModelName,
 		"deviceClass":      deviceClass,

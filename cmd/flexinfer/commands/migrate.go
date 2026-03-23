@@ -340,7 +340,7 @@ func BuildServerlessSpec(md *aiv1alpha1.ModelDeployment) *aiv1alpha2.ServerlessS
 
 // BuildConfigMap converts backend-specific specs to a generic config map.
 // Exported for testing.
-func BuildConfigMap(md *aiv1alpha1.ModelDeployment) map[string]interface{} {
+func BuildConfigMap(md *aiv1alpha1.ModelDeployment) map[string]any {
 	switch {
 	case md.Spec.VLLM != nil:
 		return vllmSpecToConfig(md.Spec.VLLM)
@@ -357,8 +357,8 @@ func BuildConfigMap(md *aiv1alpha1.ModelDeployment) map[string]interface{} {
 	}
 }
 
-func vllmSpecToConfig(v *aiv1alpha1.VLLMSpec) map[string]interface{} {
-	cfg := map[string]interface{}{}
+func vllmSpecToConfig(v *aiv1alpha1.VLLMSpec) map[string]any {
+	cfg := map[string]any{}
 	if v.TensorParallelSize != nil {
 		cfg["tensorParallelSize"] = *v.TensorParallelSize
 	}
@@ -417,7 +417,7 @@ func vllmSpecToConfig(v *aiv1alpha1.VLLMSpec) map[string]interface{} {
 		cfg["blockSize"] = *v.BlockSize
 	}
 	if v.RopeScaling != nil {
-		rs := map[string]interface{}{}
+		rs := map[string]any{}
 		if v.RopeScaling.Type != "" {
 			rs["type"] = v.RopeScaling.Type
 		}
@@ -432,8 +432,8 @@ func vllmSpecToConfig(v *aiv1alpha1.VLLMSpec) map[string]interface{} {
 	return cfg
 }
 
-func llamaCppSpecToConfig(l *aiv1alpha1.LlamaCppSpec) map[string]interface{} {
-	cfg := map[string]interface{}{}
+func llamaCppSpecToConfig(l *aiv1alpha1.LlamaCppSpec) map[string]any {
+	cfg := map[string]any{}
 	if l.ContextSize != nil {
 		cfg["contextSize"] = *l.ContextSize
 	}
@@ -464,8 +464,8 @@ func llamaCppSpecToConfig(l *aiv1alpha1.LlamaCppSpec) map[string]interface{} {
 	return cfg
 }
 
-func mlcllmSpecToConfig(m *aiv1alpha1.MLCLLMSpec) map[string]interface{} {
-	cfg := map[string]interface{}{}
+func mlcllmSpecToConfig(m *aiv1alpha1.MLCLLMSpec) map[string]any {
+	cfg := map[string]any{}
 	if m.Mode != "" {
 		cfg["mode"] = m.Mode
 	}
@@ -479,7 +479,7 @@ func mlcllmSpecToConfig(m *aiv1alpha1.MLCLLMSpec) map[string]interface{} {
 		cfg["jitPolicy"] = m.JITPolicy
 	}
 	if m.Overrides != nil {
-		overrides := map[string]interface{}{}
+		overrides := map[string]any{}
 		if m.Overrides.PrefillChunkSize != nil {
 			overrides["prefillChunkSize"] = *m.Overrides.PrefillChunkSize
 		}
@@ -503,7 +503,7 @@ func mlcllmSpecToConfig(m *aiv1alpha1.MLCLLMSpec) map[string]interface{} {
 		}
 	}
 	if m.CompileOptions != nil {
-		co := map[string]interface{}{}
+		co := map[string]any{}
 		if m.CompileOptions.UseCutlass != nil {
 			co["useCutlass"] = *m.CompileOptions.UseCutlass
 		}
@@ -526,8 +526,8 @@ func mlcllmSpecToConfig(m *aiv1alpha1.MLCLLMSpec) map[string]interface{} {
 	return cfg
 }
 
-func comfyUISpecToConfig(c *aiv1alpha1.ComfyUISpec) map[string]interface{} {
-	cfg := map[string]interface{}{}
+func comfyUISpecToConfig(c *aiv1alpha1.ComfyUISpec) map[string]any {
+	cfg := map[string]any{}
 	if c.WorkflowsPath != "" {
 		cfg["workflowsPath"] = c.WorkflowsPath
 	}
@@ -552,8 +552,8 @@ func comfyUISpecToConfig(c *aiv1alpha1.ComfyUISpec) map[string]interface{} {
 	return cfg
 }
 
-func vllmOmniSpecToConfig(v *aiv1alpha1.VLLMOmniSpec) map[string]interface{} {
-	cfg := map[string]interface{}{}
+func vllmOmniSpecToConfig(v *aiv1alpha1.VLLMOmniSpec) map[string]any {
+	cfg := map[string]any{}
 	if v.DiffusionModel != "" {
 		cfg["diffusionModel"] = v.DiffusionModel
 	}

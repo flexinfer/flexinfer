@@ -8,7 +8,7 @@ type SearchSpace struct {
 // Parameter represents a single tunable parameter with an ordered list of values to try.
 type Parameter struct {
 	Name   string
-	Values []interface{}
+	Values []any
 }
 
 // DefaultVLLMSearchSpace returns the default search space for vLLM on RDNA3 (gfx1100).
@@ -18,27 +18,27 @@ func DefaultVLLMSearchSpace() SearchSpace {
 		Parameters: []Parameter{
 			{
 				Name:   "maxNumSeqs",
-				Values: []interface{}{float64(1), float64(2), float64(4), float64(8), float64(16), float64(32)},
+				Values: []any{float64(1), float64(2), float64(4), float64(8), float64(16), float64(32)},
 			},
 			{
 				Name:   "gpuMemoryUtilization",
-				Values: []interface{}{"0.80", "0.85", "0.90", "0.95"},
+				Values: []any{"0.80", "0.85", "0.90", "0.95"},
 			},
 			{
 				Name:   "maxModelLen",
-				Values: []interface{}{float64(2048), float64(4096), float64(8192), float64(16384)},
+				Values: []any{float64(2048), float64(4096), float64(8192), float64(16384)},
 			},
 			{
 				Name:   "enforceEager",
-				Values: []interface{}{true, false},
+				Values: []any{true, false},
 			},
 			{
 				Name:   "enablePrefixCaching",
-				Values: []interface{}{true, false},
+				Values: []any{true, false},
 			},
 			{
 				Name:   "maxNumBatchedTokens",
-				Values: []interface{}{float64(512), float64(1024), float64(2048), float64(4096)},
+				Values: []any{float64(512), float64(1024), float64(2048), float64(4096)},
 			},
 		},
 	}

@@ -215,7 +215,7 @@ func (r *LoRAAdapterReconciler) getModelPodAddresses(ctx context.Context, model 
 
 // loadAdapterOnPod sends a POST to the vLLM LoRA load endpoint on a specific pod.
 func (r *LoRAAdapterReconciler) loadAdapterOnPod(ctx context.Context, podAddr string, adapter *aiv1alpha2.LoRAAdapter, ls backend.LoRASupporter) error {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"lora_name": adapter.Spec.AdapterName,
 		"lora_path": adapter.Spec.Source.URI,
 	}
@@ -279,7 +279,7 @@ func (r *LoRAAdapterReconciler) unloadFromAllReplicas(ctx context.Context, adapt
 
 // unloadAdapterFromPod sends a POST to the vLLM LoRA unload endpoint.
 func (r *LoRAAdapterReconciler) unloadAdapterFromPod(ctx context.Context, podAddr string, adapter *aiv1alpha2.LoRAAdapter, ls backend.LoRASupporter) error {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"lora_name": adapter.Spec.AdapterName,
 	}
 

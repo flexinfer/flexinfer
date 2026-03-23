@@ -21,13 +21,13 @@ func TestDiffusersBackendEnv(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		config    map[string]interface{}
+		config    map[string]any
 		wantEnv   map[string]string // env vars that must be present with exact values
 		absentEnv []string          // env vars that must NOT be present
 	}{
 		{
 			name: "inpainting mode sets PIPELINE_MODE and DEFAULT_STRENGTH",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"pipelineMode": "inpainting",
 				"strength":     "0.75",
 			},
@@ -39,7 +39,7 @@ func TestDiffusersBackendEnv(t *testing.T) {
 		},
 		{
 			name: "instruct mode sets PIPELINE_MODE and DEFAULT_IMAGE_GUIDANCE_SCALE",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"pipelineMode":       "instruct",
 				"imageGuidanceScale": "1.5",
 			},
@@ -51,7 +51,7 @@ func TestDiffusersBackendEnv(t *testing.T) {
 		},
 		{
 			name:   "no pipelineMode omits all three env vars",
-			config: map[string]interface{}{},
+			config: map[string]any{},
 			absentEnv: []string{
 				"PIPELINE_MODE",
 				"DEFAULT_STRENGTH",
@@ -60,7 +60,7 @@ func TestDiffusersBackendEnv(t *testing.T) {
 		},
 		{
 			name: "single-file overrides map to env",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"singleFileConfig":   "stablediffusionapi/example",
 				"singleFilePipeline": "sdxl",
 				"singleFileStrict":   "true",
@@ -73,7 +73,7 @@ func TestDiffusersBackendEnv(t *testing.T) {
 		},
 		{
 			name: "model family override maps to env",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"modelFamily": "sdxl",
 			},
 			wantEnv: map[string]string{
@@ -82,7 +82,7 @@ func TestDiffusersBackendEnv(t *testing.T) {
 		},
 		{
 			name: "compile controls and startup LoRA map to env",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"compileMode":           "reduce-overhead",
 				"compileFullgraph":      "true",
 				"compileDynamic":        "false",
@@ -107,7 +107,7 @@ func TestDiffusersBackendEnv(t *testing.T) {
 		},
 		{
 			name: "rocm aiter rope override maps to env",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"useRocmAiterRopeBackend": "0",
 			},
 			wantEnv: map[string]string{
@@ -116,7 +116,7 @@ func TestDiffusersBackendEnv(t *testing.T) {
 		},
 		{
 			name: "vae settings map to env",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"vaeRepo": "madebyollin/sdxl-vae-fp16-fix",
 				"vaePath": ".vae/sdxl-vae-fp16-fix",
 				"useFp16": "1",
@@ -129,7 +129,7 @@ func TestDiffusersBackendEnv(t *testing.T) {
 		},
 		{
 			name: "controlnet settings map to env",
-			config: map[string]interface{}{
+			config: map[string]any{
 				"controlnetPath":  "/models/controlnet",
 				"controlnetRepo":  "diffusers/controlnet-canny-sdxl-1.0",
 				"controlnetScale": "0.5",
@@ -216,7 +216,7 @@ func TestDiffusersSkipWarmupEnv(t *testing.T) {
 	}
 
 	// With skipWarmup set
-	spec := &ModelSpec{Model: "test", Config: map[string]interface{}{"skipWarmup": "1"}}
+	spec := &ModelSpec{Model: "test", Config: map[string]any{"skipWarmup": "1"}}
 	envs := b.Env(spec)
 	if v, ok := findEnv(envs, "SKIP_WARMUP"); !ok {
 		t.Error("expected SKIP_WARMUP env var when skipWarmup config is set")
@@ -225,7 +225,7 @@ func TestDiffusersSkipWarmupEnv(t *testing.T) {
 	}
 
 	// Without skipWarmup
-	spec2 := &ModelSpec{Model: "test", Config: map[string]interface{}{}}
+	spec2 := &ModelSpec{Model: "test", Config: map[string]any{}}
 	envs2 := b.Env(spec2)
 	if _, ok := findEnv(envs2, "SKIP_WARMUP"); ok {
 		t.Error("expected SKIP_WARMUP to be absent when skipWarmup is not configured")
@@ -256,7 +256,7 @@ func TestDiffusersBackendEnv_GFX906MemoryTuning(t *testing.T) {
 		Model:     "test-model",
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx906",
-		Config:    map[string]interface{}{},
+		Config:    map[string]any{},
 	}
 	envs := b.Env(spec)
 
@@ -279,7 +279,7 @@ func TestDiffusersBackendEnv_GFX906MemoryTuning(t *testing.T) {
 		Model:     "test-model",
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
-		Config:    map[string]interface{}{},
+		Config:    map[string]any{},
 	}
 	envs1100 := b.Env(spec1100)
 	if _, ok := findEnv(envs1100, "ENABLE_ATTENTION_SLICING"); ok {
@@ -330,7 +330,7 @@ func TestDiffusersBackendEnv_MiopenFindModeOverride(t *testing.T) {
 		Model:     "test-model",
 		GPUVendor: GPUVendorAMD,
 		GPUArch:   "gfx1100",
-		Config:    map[string]interface{}{"miopenFindMode": "1"},
+		Config:    map[string]any{"miopenFindMode": "1"},
 	}
 	envs := b.Env(spec)
 
@@ -355,7 +355,7 @@ func TestDiffusersWarmupResolutionsEnv(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		config    map[string]interface{}
+		config    map[string]any
 		gpuVendor GPUVendor
 		gpuArch   string
 		wantEnv   map[string]string
@@ -363,7 +363,7 @@ func TestDiffusersWarmupResolutionsEnv(t *testing.T) {
 	}{
 		{
 			name:   "explicit warmupResolutions emits WARMUP_RESOLUTIONS",
-			config: map[string]interface{}{"warmupResolutions": "512x512,1024x1024"},
+			config: map[string]any{"warmupResolutions": "512x512,1024x1024"},
 			wantEnv: map[string]string{
 				"WARMUP_RESOLUTIONS": "512x512,1024x1024",
 			},
@@ -371,7 +371,7 @@ func TestDiffusersWarmupResolutionsEnv(t *testing.T) {
 		},
 		{
 			name:   "legacy warmupWidth/warmupHeight still works",
-			config: map[string]interface{}{"warmupWidth": "768", "warmupHeight": "768"},
+			config: map[string]any{"warmupWidth": "768", "warmupHeight": "768"},
 			wantEnv: map[string]string{
 				"WARMUP_WIDTH":  "768",
 				"WARMUP_HEIGHT": "768",
@@ -380,7 +380,7 @@ func TestDiffusersWarmupResolutionsEnv(t *testing.T) {
 		},
 		{
 			name:      "gfx1100 auto-default includes 1024x1024",
-			config:    map[string]interface{}{},
+			config:    map[string]any{},
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx1100",
 			wantEnv: map[string]string{
@@ -390,7 +390,7 @@ func TestDiffusersWarmupResolutionsEnv(t *testing.T) {
 		},
 		{
 			name:      "gfx906 auto-default omits 1024x1024",
-			config:    map[string]interface{}{},
+			config:    map[string]any{},
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx906",
 			wantEnv: map[string]string{
@@ -400,14 +400,14 @@ func TestDiffusersWarmupResolutionsEnv(t *testing.T) {
 		},
 		{
 			name:      "NVIDIA gets no auto-default warmup resolutions",
-			config:    map[string]interface{}{},
+			config:    map[string]any{},
 			gpuVendor: GPUVendorNVIDIA,
 			gpuArch:   "sm_89",
 			absentEnv: []string{"WARMUP_RESOLUTIONS", "WARMUP_WIDTH", "WARMUP_HEIGHT"},
 		},
 		{
 			name:      "warmupResolutions takes precedence over warmupWidth",
-			config:    map[string]interface{}{"warmupResolutions": "768x768", "warmupWidth": "512"},
+			config:    map[string]any{"warmupResolutions": "768x768", "warmupWidth": "512"},
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx1100",
 			wantEnv: map[string]string{
@@ -457,7 +457,7 @@ func TestDiffusersBackendEnv_ComputeDtype(t *testing.T) {
 	}
 
 	// With computeDtype set
-	spec := &ModelSpec{Model: "test", Config: map[string]interface{}{"computeDtype": "bfloat16"}}
+	spec := &ModelSpec{Model: "test", Config: map[string]any{"computeDtype": "bfloat16"}}
 	envs := b.Env(spec)
 	if v, ok := findEnv(envs, "BNB_COMPUTE_DTYPE"); !ok {
 		t.Error("expected BNB_COMPUTE_DTYPE when computeDtype config is set")
@@ -466,7 +466,7 @@ func TestDiffusersBackendEnv_ComputeDtype(t *testing.T) {
 	}
 
 	// Without computeDtype
-	spec2 := &ModelSpec{Model: "test", Config: map[string]interface{}{}}
+	spec2 := &ModelSpec{Model: "test", Config: map[string]any{}}
 	envs2 := b.Env(spec2)
 	if _, ok := findEnv(envs2, "BNB_COMPUTE_DTYPE"); ok {
 		t.Error("expected BNB_COMPUTE_DTYPE to be absent when computeDtype is not configured")
