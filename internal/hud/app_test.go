@@ -20,6 +20,7 @@ import (
 
 	loomcache "github.com/crb2nu/loom/internal/cache"
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/hud/coordinator"
 	"github.com/crb2nu/loom/internal/hud/domain/memory"
 	"github.com/crb2nu/loom/internal/hud/domain/mobile"
 	"github.com/crb2nu/loom/internal/hud/monitor"
@@ -33,6 +34,17 @@ func newTestApp(t *testing.T) (*App, *http.ServeMux) {
 
 	app, mux, _ := newTestAppWithHandlers(t)
 	return app, mux
+}
+
+func newPassiveCoordinatorForTest() *coordinator.Coordinator {
+	cfg := coordinator.DefaultConfig()
+	cfg.FlexInferURL = "http://127.0.0.1:1"
+	cfg.EnableSummarizer = false
+	cfg.EnableCompressor = false
+	cfg.EnableTriager = false
+	cfg.EnableExtractor = false
+	cfg.EnablePlanner = false
+	return coordinator.NewCoordinator(cfg, nil, nil, slog.Default())
 }
 
 func newTestAppWithHandlers(t *testing.T) (*App, *http.ServeMux, *appMockHandlers) {
@@ -73,6 +85,18 @@ func newTestAppWithHandlers(t *testing.T) (*App, *http.ServeMux, *appMockHandler
 				{Name: "time", Running: true, Categories: []string{"utility"}},
 				{Name: "memory", Running: false},
 			},
+		}, nil
+	})
+
+	handlers.handle("loom/tools", func(_ json.RawMessage) (any, error) {
+		return &bridge.ToolsResult{
+			Tools: []bridge.ToolInfo{
+				{
+					Name:        "agent_context__agent_recall",
+					Description: "Recall relevant context for an agent session",
+				},
+			},
+			ServerCount: 1,
 		}, nil
 	})
 
@@ -132,14 +156,16 @@ func newTestAppWithHandlers(t *testing.T) (*App, *http.ServeMux, *appMockHandler
 	agent := bridge.NewAgentBridge(client)
 
 	app := &App{
-		config:     Config{Dev: true},
-		client:     client,
-		agent:      agent,
-		cache:      loomcache.NewMemoryStore(),
-		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		sseHub:     NewSSEHub(nil),
-		eventLog:   NewEventLog(1000),
-		nudgeQueue: NewNudgeQueue(),
+		config:              Config{Dev: true},
+		client:              client,
+		agent:               agent,
+		cache:               loomcache.NewMemoryStore(),
+		logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+		sseHub:              NewSSEHub(nil),
+		eventLog:            NewEventLog(1000),
+		nudgeQueue:          NewNudgeQueue(),
+		agentContextMetrics: NewAgentContextMetrics(),
+		agentContextLatest:  NewAgentContextLatestStore(),
 	}
 
 	// Create monitors pointing at the mock daemon. Don't start polling —
@@ -1225,7 +1251,6 @@ func TestHandler_AgentHeartbeat_RegistersBarePresenceWithoutEnsureSession(t *tes
 
 	var heartbeatCalls int
 	var presenceRegisterCalls int
-
 	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
 		var req struct {
 			Name string `json:"name"`
@@ -1265,6 +1290,60 @@ func TestHandler_AgentHeartbeat_RegistersBarePresenceWithoutEnsureSession(t *tes
 	}
 }
 
+func TestHandler_AgentSessionStart_AutoRecallReturnsStartupBriefing(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[]}"}]}`), nil
+		case "agent_context__agent_session_start":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"session_id\":\"sess-briefing\"}"}]}`), nil
+		case "agent_context__agent_recall":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"ok\":true,\"entries\":[{\"id\":\"e1\",\"agent_id\":\"codex-gpt5\",\"entry_type\":\"decision\",\"title\":\"Keep startup briefings bounded\",\"content\":\"Return compressed recall instead of a full dump.\",\"namespace\":\"loom-core/main\",\"token_count\":40}],\"count\":1,\"total_tokens\":40,\"token_budget\":1500}"}]}`), nil
+		default:
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+	})
+
+	req := httptest.NewRequest("POST", "/api/agent/session-start", strings.NewReader(`{"agent_id":"codex-gpt5","agent_type":"codex","namespace":"loom-core/main","auto_recall":true,"auto_recall_strategy":"fast"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var payload struct {
+		SessionID              string `json:"session_id"`
+		StartupBriefing        string `json:"startup_briefing"`
+		RecalledContext        string `json:"recalled_context"`
+		StartupBriefingEntries int    `json:"startup_briefing_entries"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload.SessionID != "sess-briefing" {
+		t.Fatalf("expected session_id=sess-briefing, got %q", payload.SessionID)
+	}
+	if payload.StartupBriefing == "" {
+		t.Fatalf("expected startup_briefing to be populated")
+	}
+	if payload.RecalledContext != payload.StartupBriefing {
+		t.Fatalf("expected recalled_context alias, got %q vs %q", payload.RecalledContext, payload.StartupBriefing)
+	}
+	if payload.StartupBriefingEntries != 1 {
+		t.Fatalf("expected startup_briefing_entries=1, got %d", payload.StartupBriefingEntries)
+	}
+}
 func TestHandler_MobileSessionEnd_PathRoute(t *testing.T) {
 	app, mux := newTestApp(t)
 	app.config.MobileOperatorToken = "mobile-secret"
@@ -2737,6 +2816,115 @@ func TestMobileContract_SessionEnd_ExplicitFalseDisablesSummarize(t *testing.T) 
 	}
 	if got, ok := summarizeValue.(bool); !ok || got {
 		t.Fatalf("expected summarize=false, got %#v", summarizeValue)
+	}
+}
+
+func TestPlanSessionEndSummary_PrefersCoordinatorWhenSummarizeEnabled(t *testing.T) {
+	params := bridge.SessionEndParams{SessionID: "sess-1"}
+
+	planned, coordinatorOwnsSummary := planSessionEndSummary(params, true)
+	if !coordinatorOwnsSummary {
+		t.Fatal("expected coordinator to own summarization when enabled")
+	}
+	if planned.Summarize == nil || *planned.Summarize {
+		t.Fatalf("expected planned summarize=false, got %#v", planned.Summarize)
+	}
+	if planned.SummaryAsync {
+		t.Fatal("expected summary_async to be disabled when coordinator owns summary")
+	}
+}
+
+func TestPlanSessionEndSummary_PreservesExplicitFalse(t *testing.T) {
+	summarize := false
+	params := bridge.SessionEndParams{SessionID: "sess-1", Summarize: &summarize, SummaryAsync: true}
+
+	planned, coordinatorOwnsSummary := planSessionEndSummary(params, true)
+	if coordinatorOwnsSummary {
+		t.Fatal("expected coordinator to stay out when summarize=false")
+	}
+	if planned.Summarize == nil || *planned.Summarize {
+		t.Fatalf("expected summarize=false to remain false, got %#v", planned.Summarize)
+	}
+	if !planned.SummaryAsync {
+		t.Fatal("expected summary_async setting to be preserved when coordinator is not used")
+	}
+}
+
+func TestHandler_AgentSessionEnd_WithCoordinatorDisablesAgentSummary(t *testing.T) {
+	app, mux, handlers := newTestAppWithHandlers(t)
+	app.coordinator = newPassiveCoordinatorForTest()
+
+	var sawSessionEnd bool
+	var summarizeValue any
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		if req.Name == "agent_context__agent_session_end" {
+			sawSessionEnd = true
+			summarizeValue = req.Arguments["summarize"]
+		}
+		return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+	})
+
+	req := httptest.NewRequest("POST", "/api/agent/session-end", strings.NewReader(`{"session_id":"sess-1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !sawSessionEnd {
+		t.Fatal("expected agent_session_end tool call")
+	}
+	if got, ok := summarizeValue.(bool); !ok || got {
+		t.Fatalf("expected summarize=false when coordinator owns summary, got %#v", summarizeValue)
+	}
+}
+
+func TestMobileContract_SessionEnd_WithCoordinatorDisablesAgentSummary(t *testing.T) {
+	app, mux, handlers := newTestAppWithHandlers(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:session:end"
+	app.coordinator = newPassiveCoordinatorForTest()
+
+	var sawSessionEnd bool
+	var summarizeValue any
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		if req.Name == "agent_context__agent_session_end" {
+			sawSessionEnd = true
+			summarizeValue = req.Arguments["summarize"]
+		}
+		return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+	})
+
+	req := httptest.NewRequest("POST", "/api/mobile/v1/sessions/sess-1/end", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !sawSessionEnd {
+		t.Fatal("expected agent_session_end tool call")
+	}
+	if got, ok := summarizeValue.(bool); !ok || got {
+		t.Fatalf("expected summarize=false when coordinator owns summary, got %#v", summarizeValue)
 	}
 }
 

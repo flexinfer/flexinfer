@@ -431,6 +431,7 @@ test:unit:
     - job: prepare:go-cache
       artifacts: false
   variables:
+    CGO_ENABLED: "0"
     GO_WARM_MOD_CACHE: "false"
     KUBERNETES_CPU_REQUEST: "1500m"
     KUBERNETES_CPU_LIMIT: "4"

@@ -62,6 +62,7 @@ func (d *FleetDomain) handleAgentContextAdd(w http.ResponseWriter, r *http.Reque
 		"session_id":    body.SessionID,
 		"entries_added": len(body.Entries),
 	})
+	d.deps.MaybeSampleContextTelemetry("", body.SessionID, "", "context_add")
 
 	d.deps.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

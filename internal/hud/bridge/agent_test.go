@@ -1081,6 +1081,9 @@ func TestBuildSessionStartRecallArgs_DefaultsBalanced(t *testing.T) {
 	if got, _ := args["token_budget"].(int); got != 4000 {
 		t.Fatalf("expected token_budget 4000, got %v", args["token_budget"])
 	}
+	if got, _ := args["scope"].(string); got != "all" {
+		t.Fatalf("expected scope all, got %q", got)
+	}
 	if got, _ := args["include_tasks"].(bool); !got {
 		t.Fatalf("expected include_tasks=true, got %v", args["include_tasks"])
 	}
@@ -1092,6 +1095,9 @@ func TestBuildSessionStartRecallArgs_DefaultsBalanced(t *testing.T) {
 	}
 	if got, _ := args["recency_weight"].(float64); got != 0.20 {
 		t.Fatalf("expected recency_weight=0.20, got %v", args["recency_weight"])
+	}
+	if got, ok := args["memory_tiers"].([]string); !ok || len(got) != 3 || got[0] != "working" || got[1] != "short_term" || got[2] != "long_term" {
+		t.Fatalf("expected balanced memory_tiers [working short_term long_term], got %#v", args["memory_tiers"])
 	}
 }
 
@@ -1110,11 +1116,17 @@ func TestBuildSessionStartRecallArgs_FastProfileAndOverrides(t *testing.T) {
 	if got, _ := args["token_budget"].(int); got != 256 {
 		t.Fatalf("expected clamped token_budget 256, got %v", args["token_budget"])
 	}
+	if got, _ := args["scope"].(string); got != "all" {
+		t.Fatalf("expected scope all, got %q", got)
+	}
 	if got, _ := args["include_tasks"].(bool); got {
 		t.Fatalf("expected include_tasks=false for fast profile, got %v", args["include_tasks"])
 	}
 	if got, _ := args["recency_weight"].(float64); got != 0.45 {
 		t.Fatalf("expected recency_weight=0.45 for fast profile, got %v", args["recency_weight"])
+	}
+	if got, ok := args["memory_tiers"].([]string); !ok || len(got) != 2 || got[0] != "working" || got[1] != "short_term" {
+		t.Fatalf("expected fast memory_tiers [working short_term], got %#v", args["memory_tiers"])
 	}
 }
 
@@ -1161,7 +1173,7 @@ func TestAgentBridge_StartSession_AutoRecallUsesStrategyArgs(t *testing.T) {
 			return map[string]any{
 				"isError": false,
 				"content": []map[string]any{
-					{"type": "text", "text": `{"ok":true}`},
+					{"type": "text", "text": `{"ok":true,"entries":[{"id":"e1","agent_id":"codex-gpt5","entry_type":"decision","title":"Adopt queue throttling","content":"Heartbeat bursts were spamming downstream consumers and needed debounce.","namespace":"loom-core/main","token_count":55}],"count":1,"total_tokens":55,"token_budget":1800}`},
 				},
 			}, nil
 		default:
@@ -1192,6 +1204,15 @@ func TestAgentBridge_StartSession_AutoRecallUsesStrategyArgs(t *testing.T) {
 	if result == nil || result.SessionID != "sess-123" {
 		t.Fatalf("unexpected session result: %+v", result)
 	}
+	if result.StartupBriefing == "" {
+		t.Fatalf("expected startup briefing to be populated")
+	}
+	if result.RecalledContext != result.StartupBriefing {
+		t.Fatalf("expected recalled_context compatibility alias, got %q vs %q", result.RecalledContext, result.StartupBriefing)
+	}
+	if result.StartupBriefingEntries != 1 {
+		t.Fatalf("expected startup_briefing_entries=1, got %d", result.StartupBriefingEntries)
+	}
 
 	select {
 	case recallArgs := <-recallArgsCh:
@@ -1207,11 +1228,112 @@ func TestAgentBridge_StartSession_AutoRecallUsesStrategyArgs(t *testing.T) {
 		if got, _ := recallArgs["token_budget"].(float64); int(got) != 1800 {
 			t.Fatalf("expected recall token_budget 1800, got %v", recallArgs["token_budget"])
 		}
+		if got, _ := recallArgs["scope"].(string); got != "all" {
+			t.Fatalf("expected recall scope all, got %q", got)
+		}
 		if got, _ := recallArgs["include_tasks"].(bool); got {
 			t.Fatalf("expected include_tasks=false for fast strategy, got %v", recallArgs["include_tasks"])
 		}
+		memoryTiers, ok := recallArgs["memory_tiers"].([]any)
+		if !ok || len(memoryTiers) != 2 || memoryTiers[0] != "working" || memoryTiers[1] != "short_term" {
+			t.Fatalf("expected recall memory_tiers [working short_term], got %#v", recallArgs["memory_tiers"])
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for recall call")
+	}
+}
+
+func TestAgentBridge_StartSession_ExistingSessionCanStillReturnBriefing(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+	recallCalls := 0
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"sessions":[{"id":"sess-existing","agent_id":"codex-gpt5","namespace":"loom-core/main","status":"active"}]}`},
+				},
+			}, nil
+		case "agent_context__agent_recall":
+			recallCalls++
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"ok":true,"entries":[{"id":"e1","agent_id":"codex-gpt5","entry_type":"finding","title":"Context telemetry shipped","content":"HUD now exposes prompt pressure metrics and timeline samples.","namespace":"loom-core/main","token_count":42}],"count":1,"total_tokens":42,"token_budget":1500}`},
+				},
+			}, nil
+		default:
+			t.Fatalf("unexpected tool name: %s", req.Name)
+			return nil, nil
+		}
+	})
+
+	client := NewDaemonClient(sockPath, nil)
+	if err := client.Connect(); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer client.Close()
+
+	bridge := NewAgentBridge(client)
+	result, err := bridge.StartSession(SessionStartParams{
+		Namespace:          "loom-core/main",
+		AgentID:            "codex-gpt5",
+		AgentType:          "codex",
+		AutoRecall:         true,
+		AutoRecallStrategy: "fast",
+	})
+	if err != nil {
+		t.Fatalf("start session failed: %v", err)
+	}
+	if !result.AlreadyExisted {
+		t.Fatalf("expected already_existed=true")
+	}
+	if result.StartupBriefing == "" {
+		t.Fatalf("expected startup briefing for existing session")
+	}
+	if recallCalls != 1 {
+		t.Fatalf("recallCalls = %d, want 1", recallCalls)
+	}
+}
+
+func TestFormatSessionStartBriefing_TruncatesAndSummarizes(t *testing.T) {
+	briefing := formatSessionStartBriefing(&KnowledgeResult{
+		Entries: []KnowledgeEntry{
+			{
+				EntryType: "decision",
+				Title:     "Use bounded startup recall",
+				Content:   "We want startup recall to return a concise, structured briefing instead of a huge raw dump that bloats prompt context immediately.",
+				Namespace: "loom-core/main",
+			},
+			{
+				EntryType: "task",
+				Content:   "Add alerting thresholds once telemetry is stable in production.",
+			},
+		},
+		TotalTokens: 200,
+	}, autoRecallProfile{BriefingItems: 2, BriefingChars: 280})
+
+	if !strings.Contains(briefing, "Recalled 2 entries") {
+		t.Fatalf("unexpected briefing header: %q", briefing)
+	}
+	if !strings.Contains(briefing, "decision: Use bounded startup recall") {
+		t.Fatalf("expected decision summary in briefing: %q", briefing)
+	}
+	if !strings.Contains(briefing, "task:") {
+		t.Fatalf("expected task summary in briefing: %q", briefing)
+	}
+	if len([]rune(briefing)) > 280 {
+		t.Fatalf("expected briefing to respect char limit, got %d chars", len([]rune(briefing)))
 	}
 }
 

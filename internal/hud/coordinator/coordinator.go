@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -239,16 +240,13 @@ func (c *Coordinator) OnSessionEnd(sessionID, agentID string) {
 			"session_id": sessionID,
 		})
 
-		result, err := c.summarizer.SummarizeSession(ctx, sessionID)
+		result, err := c.summarizeSessionWithTelemetry(ctx, sessionID, agentID)
 		if err != nil {
 			c.logger.Warn("summarize session failed", "session_id", sessionID, "error", err)
 			return
 		}
 
-		c.broadcastEvent("coordinator.summarize.complete", map[string]any{
-			"session_id":      sessionID,
-			"summary_preview": truncate(result.Summary, 200),
-		})
+		c.broadcastEvent("coordinator.summarize.complete", summaryEventPayload(result))
 	}()
 }
 
@@ -269,7 +267,7 @@ func (c *Coordinator) SummarizeSession(ctx context.Context, sessionID string) (*
 		return nil, ErrUnavailable
 	}
 	defer c.releaseSem()
-	return c.summarizer.SummarizeSession(ctx, sessionID)
+	return c.summarizeSessionWithTelemetry(ctx, sessionID, "")
 }
 
 // RunCompression performs on-demand memory compression (for API calls).
@@ -472,12 +470,9 @@ func (c *Coordinator) poll() bool {
 			c.recordSubsystem("compressor", err)
 			if err != nil {
 				c.logger.Warn("compaction cycle error", "error", err)
-			} else if result != nil && result.CompressedCount > 0 {
-				c.broadcastEvent("coordinator.compress.complete", map[string]any{
-					"tier":             result.Tier,
-					"compressed_count": result.CompressedCount,
-					"tokens_saved":     result.TokensSaved,
-				})
+			} else if hasCompactionWork(result) {
+				c.recordCompactionMetrics(result)
+				c.broadcastEvent("coordinator.compress.complete", compactionEventPayload(result))
 			}
 		}
 	}
@@ -510,6 +505,12 @@ func (c *Coordinator) recordHealthMetrics(healthy bool) {
 func (c *Coordinator) recordPollMetrics(start time.Time) {
 	if c.metrics != nil {
 		c.metrics.RecordPollCycle(time.Since(start))
+	}
+}
+
+func (c *Coordinator) recordCompactionMetrics(result *CompactionResult) {
+	if c.metrics != nil {
+		c.metrics.RecordCompactionResult(result)
 	}
 }
 
@@ -558,6 +559,106 @@ func (c *Coordinator) broadcastEvent(eventType string, payload any) {
 		Timestamp: time.Now(),
 		Data:      data,
 	})
+}
+
+func (c *Coordinator) summarizeSessionWithTelemetry(ctx context.Context, sessionID, agentID string) (*SessionSummaryResult, error) {
+	if c == nil || c.summarizer == nil {
+		return nil, fmt.Errorf("summarizer is disabled")
+	}
+
+	resolvedAgentID := strings.TrimSpace(agentID)
+	if resolvedAgentID == "" {
+		resolvedAgentID = c.resolveSessionAgentID(sessionID)
+	}
+	before := c.inspectSessionPrompt(resolvedAgentID, sessionID)
+
+	result, err := c.summarizer.SummarizeSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	enrichSummaryPromptDelta(result, resolvedAgentID, before, c.inspectSessionPrompt(resolvedAgentID, sessionID))
+	return result, nil
+}
+
+func (c *Coordinator) resolveSessionAgentID(sessionID string) string {
+	if c == nil || c.agent == nil || strings.TrimSpace(sessionID) == "" {
+		return ""
+	}
+	sessions, err := c.agent.Sessions()
+	if err != nil {
+		return ""
+	}
+	for _, session := range sessions {
+		if session.ID == sessionID {
+			return strings.TrimSpace(session.AgentID)
+		}
+	}
+	return ""
+}
+
+func (c *Coordinator) inspectSessionPrompt(agentID, sessionID string) *bridge.ContextInspectResult {
+	if c == nil || c.agent == nil || strings.TrimSpace(agentID) == "" || strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	inspect, err := c.agent.ContextInspect(agentID, sessionID, false, 200)
+	if err != nil {
+		return nil
+	}
+	return inspect
+}
+
+func enrichSummaryPromptDelta(result *SessionSummaryResult, agentID string, before, after *bridge.ContextInspectResult) {
+	if result == nil {
+		return
+	}
+	result.AgentID = strings.TrimSpace(agentID)
+	if before != nil {
+		result.PromptTokensBefore = before.EstimatedTokens
+	}
+	if after != nil {
+		result.PromptTokensAfter = after.EstimatedTokens
+	}
+	if result.PromptTokensBefore > 0 && result.PromptTokensAfter > 0 {
+		result.PromptTokensDelta = result.PromptTokensBefore - result.PromptTokensAfter
+	}
+}
+
+func summaryEventPayload(result *SessionSummaryResult) map[string]any {
+	if result == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"session_id":           result.SessionID,
+		"agent_id":             result.AgentID,
+		"summary_preview":      truncate(result.Summary, 200),
+		"prompt_tokens_before": result.PromptTokensBefore,
+		"prompt_tokens_after":  result.PromptTokensAfter,
+		"prompt_tokens_delta":  result.PromptTokensDelta,
+	}
+}
+
+func hasCompactionWork(result *CompactionResult) bool {
+	return result != nil && (result.CompressedCount > 0 || result.MergedCount > 0)
+}
+
+func compactionEventPayload(result *CompactionResult) map[string]any {
+	if result == nil {
+		return map[string]any{}
+	}
+	return map[string]any{
+		"tier":                      result.Tier,
+		"trigger":                   result.Trigger,
+		"compressed_count":          result.CompressedCount,
+		"merged_count":              result.MergedCount,
+		"tokens_saved":              result.TokensSaved,
+		"pressure_session_id":       result.PressureSessionID,
+		"pressure_agent_id":         result.PressureAgentID,
+		"pressure_namespace":        result.PressureNamespace,
+		"prompt_tokens_before":      result.PromptTokensBefore,
+		"prompt_tokens_after":       result.PromptTokensAfter,
+		"prompt_tokens_delta":       result.PromptTokensDelta,
+		"pressure_estimated_tokens": result.PressureEstimatedTokens,
+	}
 }
 
 // acquireSem tries to acquire the LLM semaphore without blocking.

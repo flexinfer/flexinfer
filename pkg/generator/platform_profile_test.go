@@ -50,6 +50,15 @@ func TestGetPlatformProfile_Claude(t *testing.T) {
 	if !p.Capabilities.Permissions {
 		t.Error("capabilities.permissions = false, want true")
 	}
+	if p.LoomProxy.AgentHint != "claude-code" {
+		t.Errorf("loom_proxy.agent_hint = %q, want claude-code", p.LoomProxy.AgentHint)
+	}
+	if p.LoomProxy.ToolProfile != "llm-core" {
+		t.Errorf("loom_proxy.tool_profile = %q, want llm-core", p.LoomProxy.ToolProfile)
+	}
+	if p.LoomProxy.MaxTools != 140 {
+		t.Errorf("loom_proxy.max_tools = %d, want 140", p.LoomProxy.MaxTools)
+	}
 }
 
 func TestGetPlatformProfile_Codex(t *testing.T) {
@@ -68,6 +77,15 @@ func TestGetPlatformProfile_Codex(t *testing.T) {
 	}
 	if !p.Features.RequiresPreamble {
 		t.Error("features.requires_preamble = false, want true")
+	}
+	if p.LoomProxy.AgentHint != "codex" {
+		t.Errorf("loom_proxy.agent_hint = %q, want codex", p.LoomProxy.AgentHint)
+	}
+	if p.LoomProxy.ToolProfile != "llm-core" {
+		t.Errorf("loom_proxy.tool_profile = %q, want llm-core", p.LoomProxy.ToolProfile)
+	}
+	if p.LoomProxy.MaxTools != 140 {
+		t.Errorf("loom_proxy.max_tools = %d, want 140", p.LoomProxy.MaxTools)
 	}
 }
 

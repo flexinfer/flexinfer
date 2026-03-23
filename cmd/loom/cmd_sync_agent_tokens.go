@@ -1,8 +1,8 @@
 // cmd_sync_agent_tokens.go implements `loom sync agent-tokens` for managing
-// agent OAuth token synchronization to K8s secrets via SOPS-encrypted GitOps.
+// file-backed agent auth synchronization to K8s secrets via SOPS-encrypted GitOps.
 //
 // Subcommands:
-//   - loom sync agent-tokens run [--apply]   — Sync tokens now
+//   - loom sync agent-tokens run [--apply]   — Sync file-backed tokens now
 //   - loom sync agent-tokens status          — Show token freshness
 //   - loom sync agent-tokens install         — Install launchd periodic sync
 //   - loom sync agent-tokens uninstall       — Remove launchd periodic sync
@@ -57,8 +57,8 @@ func resolveAgentTokenSyncConfig() agentTokenSyncConfig {
 func newSyncAgentTokensCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agent-tokens",
-		Short: "Manage agent OAuth token sync to K8s secrets",
-		Long: `Sync local agent OAuth tokens (Codex, Gemini) to SOPS-encrypted
+		Short: "Manage file-backed agent token sync to K8s secrets",
+		Long: `Sync local agent auth files (Codex, Gemini) to SOPS-encrypted
 K8s secrets in the GitOps repo, with optional launchd scheduling.
 
 The sync reads tokens from:
@@ -68,6 +68,9 @@ The sync reads tokens from:
 
 And updates the SOPS-encrypted secret at:
   <gitops>/k3s/devbox/agent-auth-tokens.yaml
+
+Claude is intentionally excluded from this sync path. Cluster Claude agents use
+ANTHROPIC_API_KEY from the agent-api-keys secret rather than ~/.claude/auth.json.
 
 Set LOOM_GITOPS_REPO to override the gitops repo path.
 Set LOOM_TOKEN_SYNC_INTERVAL to override the sync interval (seconds, default 21600 = 6h).`,
@@ -87,7 +90,7 @@ func newAgentTokenSyncRunCmd() *cobra.Command {
 	var apply bool
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Sync agent tokens now",
+		Short: "Sync file-backed agent tokens now",
 		Long:  "Read local auth files, update SOPS secret, optionally commit+push+reconcile.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAgentTokenSync(apply)
@@ -173,6 +176,7 @@ func agentTokenSyncStatus() error {
 		age := time.Since(info.ModTime())
 		fmt.Printf("  ✓ %s: %dB, %s old\n", t.label, info.Size(), formatDuration(age))
 	}
+	fmt.Println("  Claude: managed separately via agent-api-keys (ANTHROPIC_API_KEY), not this file sync")
 
 	// SOPS secret freshness.
 	secretPath := filepath.Join(cfg.GitopsRepo, "k3s", "devbox", "agent-auth-tokens.yaml")

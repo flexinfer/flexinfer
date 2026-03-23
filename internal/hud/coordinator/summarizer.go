@@ -19,6 +19,11 @@ type SessionSummaryResult struct {
 	FilesTouched []string `json:"files_touched"`
 	Unresolved   []string `json:"unresolved"`
 	Tags         []string `json:"tags"`
+	AgentID      string   `json:"agent_id,omitempty"`
+
+	PromptTokensBefore int `json:"prompt_tokens_before,omitempty"`
+	PromptTokensAfter  int `json:"prompt_tokens_after,omitempty"`
+	PromptTokensDelta  int `json:"prompt_tokens_delta,omitempty"`
 }
 
 // Summarizer handles LLM-powered session summarization.

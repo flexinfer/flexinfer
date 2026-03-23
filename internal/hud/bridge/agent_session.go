@@ -27,9 +27,11 @@ type SessionStartParams struct {
 
 // SessionStartResult holds the result of starting a session.
 type SessionStartResult struct {
-	SessionID       string `json:"session_id"`
-	RecalledContext string `json:"recalled_context,omitempty"`
-	AlreadyExisted  bool   `json:"already_existed"`
+	SessionID              string `json:"session_id"`
+	RecalledContext        string `json:"recalled_context,omitempty"`
+	StartupBriefing        string `json:"startup_briefing,omitempty"`
+	StartupBriefingEntries int    `json:"startup_briefing_entries,omitempty"`
+	AlreadyExisted         bool   `json:"already_existed"`
 }
 
 const sessionStartActiveLookupTimeout = 1500 * time.Millisecond
@@ -46,6 +48,10 @@ type autoRecallProfile struct {
 	TokenBudget   int
 	IncludeTasks  bool
 	RecencyWeight float64
+	Timeout       time.Duration
+	BriefingItems int
+	BriefingChars int
+	MemoryTiers   []string
 }
 
 var autoRecallProfiles = map[string]autoRecallProfile{
@@ -53,16 +59,28 @@ var autoRecallProfiles = map[string]autoRecallProfile{
 		TokenBudget:   1500,
 		IncludeTasks:  false,
 		RecencyWeight: 0.45,
+		Timeout:       900 * time.Millisecond,
+		BriefingItems: 3,
+		BriefingChars: 420,
+		MemoryTiers:   []string{"working", "short_term"},
 	},
 	autoRecallStrategyBalanced: {
 		TokenBudget:   4000,
 		IncludeTasks:  true,
 		RecencyWeight: 0.20,
+		Timeout:       1500 * time.Millisecond,
+		BriefingItems: 4,
+		BriefingChars: 640,
+		MemoryTiers:   []string{"working", "short_term", "long_term"},
 	},
 	autoRecallStrategyDeep: {
 		TokenBudget:   8000,
 		IncludeTasks:  true,
 		RecencyWeight: 0.10,
+		Timeout:       2500 * time.Millisecond,
+		BriefingItems: 6,
+		BriefingChars: 960,
+		MemoryTiers:   []string{"working", "short_term", "long_term"},
 	},
 }
 
@@ -114,11 +132,13 @@ func buildSessionStartRecallArgs(p SessionStartParams) map[string]any {
 
 	args := map[string]any{
 		"query":             query,
+		"scope":             "all",
 		"token_budget":      tokenBudget,
 		"include_decisions": true,
 		"include_summaries": true,
 		"include_tasks":     profile.IncludeTasks,
 		"recency_weight":    profile.RecencyWeight,
+		"memory_tiers":      profile.MemoryTiers,
 	}
 	if id := strings.TrimSpace(p.AgentID); id != "" {
 		args["agent_id"] = id
@@ -128,6 +148,10 @@ func buildSessionStartRecallArgs(p SessionStartParams) map[string]any {
 	}
 
 	return args
+}
+
+func sessionStartRecallProfile(p SessionStartParams) autoRecallProfile {
+	return autoRecallProfiles[normalizeAutoRecallStrategy(p.AutoRecallStrategy)]
 }
 
 // StartSession creates a session, registers presence, and optionally recalls context.
@@ -153,10 +177,12 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 			}
 			go func() { _ = a.callAgentTool("agent_presence_register", presenceArgs, nil) }()
 
-			return &SessionStartResult{
+			result := &SessionStartResult{
 				SessionID:      existing.ID,
 				AlreadyExisted: true,
-			}, nil
+			}
+			a.attachSessionStartBriefing(result, p)
+			return result, nil
 		}
 	}
 
@@ -196,13 +222,102 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 	}
 	go func() { _ = a.callAgentTool("agent_presence_register", presenceArgs, nil) }()
 
-	// Fire-and-forget: recall context (best-effort, not returned to caller).
-	if p.AutoRecall {
-		recallArgs := buildSessionStartRecallArgs(p)
-		go func() { _ = a.callAgentTool("agent_recall", recallArgs, nil) }()
-	}
+	a.attachSessionStartBriefing(result, p)
 
 	return result, nil
+}
+
+func (a *AgentBridge) attachSessionStartBriefing(result *SessionStartResult, p SessionStartParams) {
+	if a == nil || result == nil || !p.AutoRecall {
+		return
+	}
+	briefing, entryCount, err := a.buildSessionStartBriefing(p)
+	if err != nil || strings.TrimSpace(briefing) == "" {
+		return
+	}
+	result.StartupBriefing = briefing
+	result.RecalledContext = briefing
+	result.StartupBriefingEntries = entryCount
+}
+
+func (a *AgentBridge) buildSessionStartBriefing(p SessionStartParams) (string, int, error) {
+	recallArgs := buildSessionStartRecallArgs(p)
+	profile := sessionStartRecallProfile(p)
+
+	var recall KnowledgeResult
+	if err := a.callAgentToolTimeout("agent_recall", recallArgs, &recall, profile.Timeout); err != nil {
+		return "", 0, err
+	}
+
+	briefing := formatSessionStartBriefing(&recall, profile)
+	return briefing, len(recall.Entries), nil
+}
+
+func formatSessionStartBriefing(result *KnowledgeResult, profile autoRecallProfile) string {
+	if result == nil || len(result.Entries) == 0 {
+		return ""
+	}
+
+	lines := []string{
+		fmt.Sprintf("Recalled %d entries (%d tokens).", len(result.Entries), result.TotalTokens),
+	}
+	limit := profile.BriefingItems
+	if limit <= 0 || limit > len(result.Entries) {
+		limit = len(result.Entries)
+	}
+	for _, entry := range result.Entries[:limit] {
+		line := summarizeRecallEntry(entry)
+		if line != "" {
+			lines = append(lines, "- "+line)
+		}
+	}
+	if omitted := len(result.Entries) - limit; omitted > 0 {
+		lines = append(lines, fmt.Sprintf("- +%d more recalled entries", omitted))
+	}
+
+	return truncateSessionBriefing(strings.Join(lines, "\n"), profile.BriefingChars)
+}
+
+func summarizeRecallEntry(entry KnowledgeEntry) string {
+	parts := []string{}
+	if kind := strings.TrimSpace(entry.EntryType); kind != "" {
+		parts = append(parts, kind+":")
+	}
+	title := compactRecallText(entry.Title)
+	content := compactRecallText(entry.Content)
+	switch {
+	case title != "" && content != "" && !strings.EqualFold(title, content):
+		parts = append(parts, title+" - "+truncateSessionBriefing(content, 140))
+	case title != "":
+		parts = append(parts, title)
+	case content != "":
+		parts = append(parts, truncateSessionBriefing(content, 180))
+	}
+	if entry.Namespace != "" {
+		parts = append(parts, "("+entry.Namespace+")")
+	}
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func compactRecallText(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func truncateSessionBriefing(text string, limit int) string {
+	if limit <= 0 {
+		return strings.TrimSpace(text)
+	}
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-3]) + "..."
 }
 
 // SessionEndParams holds parameters for ending an agent session.

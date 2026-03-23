@@ -69,10 +69,11 @@ func (cs *ContextSvc) Add(ctx context.Context, args map[string]any) (*mcp.CallTo
 	}
 
 	type parsedEntry struct {
-		raw        map[string]any
-		durability Durability
-		title      string
-		content    string
+		raw            map[string]any
+		durability     Durability
+		title          string
+		content        string
+		mirrorToMemory bool
 	}
 	var parsed []parsedEntry
 
@@ -86,11 +87,18 @@ func (cs *ContextSvc) Add(ctx context.Context, args map[string]any) (*mcp.CallTo
 		if title == "" || content == "" {
 			continue
 		}
-		dur := Durability(toString(m["durability"]))
+		durabilityRaw := strings.TrimSpace(toString(m["durability"]))
+		dur := Durability(durabilityRaw)
 		if dur == "" {
 			dur = DurabilitySession
 		}
-		parsed = append(parsed, parsedEntry{raw: m, durability: dur, title: title, content: content})
+		parsed = append(parsed, parsedEntry{
+			raw:            m,
+			durability:     dur,
+			title:          title,
+			content:        content,
+			mirrorToMemory: durabilityRaw == "" && shouldAutoMirrorToMemory(EntryType(strings.TrimSpace(toString(m["entry_type"])))),
+		})
 	}
 
 	if len(parsed) == 0 {
@@ -124,14 +132,16 @@ func (cs *ContextSvc) Add(ctx context.Context, args map[string]any) (*mcp.CallTo
 	}
 
 	for _, p := range parsed {
-		if p.durability != DurabilityPersistent {
+		if p.durability != DurabilityPersistent && !p.mirrorToMemory {
 			continue
 		}
 		id, err := cs.routeToMemory(ctx, session, p.raw, p.title, p.content)
 		if err != nil {
 			return mcp.ErrorResult(fmt.Errorf("memory store: %w", err)), nil
 		}
-		allIDs = append(allIDs, id)
+		if !p.mirrorToMemory {
+			allIDs = append(allIDs, id)
+		}
 		routedCounts["memory"]++
 	}
 
@@ -152,7 +162,7 @@ func (cs *ContextSvc) Add(ctx context.Context, args map[string]any) (*mcp.CallTo
 		totalTokens += EstimateTokens(p.title + " " + p.content)
 	}
 	if cs.addSessionEntryStats != nil {
-		cs.addSessionEntryStats(session, len(allIDs), totalTokens)
+		cs.addSessionEntryStats(session, len(parsed), totalTokens)
 	}
 	if cs.persistSession != nil {
 		if err := cs.persistSession(ctx, session); err != nil {
@@ -166,10 +176,19 @@ func (cs *ContextSvc) Add(ctx context.Context, args map[string]any) (*mcp.CallTo
 
 	return mcp.JSONResult(map[string]any{
 		"ok":        true,
-		"count":     len(allIDs),
+		"count":     len(parsed),
 		"entry_ids": allIDs,
 		"routed":    routedCounts,
 	})
+}
+
+func shouldAutoMirrorToMemory(entryType EntryType) bool {
+	switch entryType {
+	case EntryTypeDecision, EntryTypeFinding, EntryTypeQuestion, EntryTypeSummary, EntryTypeError, EntryTypeHandoff:
+		return true
+	default:
+		return false
+	}
 }
 
 func (cs *ContextSvc) buildContextEntry(session *Session, m map[string]any, title, content string) ContextEntry {
@@ -264,7 +283,7 @@ func (cs *ContextSvc) routeToMemory(ctx context.Context, session *Session, m map
 	}
 
 	item := &MemoryItem{
-		Tier:       MemoryTierLongTerm,
+		Tier:       MemoryTierShortTerm,
 		Importance: ImportanceLevelMedium,
 		Title:      title,
 		Content:    content,
@@ -283,8 +302,8 @@ func (cs *ContextSvc) routeToMemory(ctx context.Context, session *Session, m map
 		return "", err
 	}
 
-	cs.metrics.LongTermMemoryItems.Add(1)
-	cs.metrics.LongTermMemoryTokens.Add(int64(item.OriginalTokens))
+	cs.metrics.ShortTermMemoryItems.Add(1)
+	cs.metrics.ShortTermMemoryTokens.Add(int64(item.OriginalTokens))
 
 	return item.ID, nil
 }

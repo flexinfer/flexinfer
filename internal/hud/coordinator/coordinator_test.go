@@ -362,10 +362,123 @@ func TestDefaultConfig_SafetyCaps(t *testing.T) {
 	if cfg.MaxCompressItems != 3 {
 		t.Errorf("expected MaxCompressItems=3, got %d", cfg.MaxCompressItems)
 	}
+	if cfg.CompactionPromptTokenThreshold != 12000 {
+		t.Errorf("expected CompactionPromptTokenThreshold=12000, got %d", cfg.CompactionPromptTokenThreshold)
+	}
+	if cfg.CompactionInspectSessions != 3 {
+		t.Errorf("expected CompactionInspectSessions=3, got %d", cfg.CompactionInspectSessions)
+	}
 	if cfg.CircuitBreakerThreshold != 3 {
 		t.Errorf("expected CircuitBreakerThreshold=3, got %d", cfg.CircuitBreakerThreshold)
 	}
 	if cfg.SubsystemTimeout != 15*time.Second {
 		t.Errorf("expected SubsystemTimeout=15s, got %s", cfg.SubsystemTimeout)
+	}
+}
+
+func TestHasCompactionWork_AllowsMergeOnlyResults(t *testing.T) {
+	t.Parallel()
+
+	if hasCompactionWork(nil) {
+		t.Fatal("expected nil result to report no work")
+	}
+	if hasCompactionWork(&CompactionResult{}) {
+		t.Fatal("expected empty result to report no work")
+	}
+	if !hasCompactionWork(&CompactionResult{MergedCount: 1}) {
+		t.Fatal("expected merge-only result to report work")
+	}
+	if !hasCompactionWork(&CompactionResult{CompressedCount: 1}) {
+		t.Fatal("expected compressed result to report work")
+	}
+}
+
+func TestCompactionEventPayload_IncludesPromptPressureFields(t *testing.T) {
+	t.Parallel()
+
+	payload := compactionEventPayload(&CompactionResult{
+		Tier:                    "working",
+		Trigger:                 "prompt_pressure",
+		CompressedCount:         1,
+		MergedCount:             2,
+		TokensSaved:             3000,
+		PressureSessionID:       "sess-1",
+		PressureAgentID:         "codex",
+		PressureNamespace:       "loom-core/context-telemetry",
+		PromptTokensBefore:      15000,
+		PromptTokensAfter:       11800,
+		PromptTokensDelta:       3200,
+		PressureEstimatedTokens: 15000,
+	})
+
+	if got := payload["merged_count"]; got != 2 {
+		t.Fatalf("expected merged_count=2, got %#v", got)
+	}
+	if got := payload["prompt_tokens_before"]; got != 15000 {
+		t.Fatalf("expected prompt_tokens_before=15000, got %#v", got)
+	}
+	if got := payload["prompt_tokens_after"]; got != 11800 {
+		t.Fatalf("expected prompt_tokens_after=11800, got %#v", got)
+	}
+	if got := payload["prompt_tokens_delta"]; got != 3200 {
+		t.Fatalf("expected prompt_tokens_delta=3200, got %#v", got)
+	}
+	if got := payload["pressure_session_id"]; got != "sess-1" {
+		t.Fatalf("expected pressure_session_id=sess-1, got %#v", got)
+	}
+}
+
+func TestEnrichSummaryPromptDelta(t *testing.T) {
+	t.Parallel()
+
+	result := &SessionSummaryResult{SessionID: "sess-1", Summary: "done"}
+	before := &bridge.ContextInspectResult{EstimatedTokens: 9600}
+	after := &bridge.ContextInspectResult{EstimatedTokens: 10100}
+
+	enrichSummaryPromptDelta(result, "codex", before, after)
+
+	if result.AgentID != "codex" {
+		t.Fatalf("AgentID = %q, want codex", result.AgentID)
+	}
+	if result.PromptTokensBefore != 9600 {
+		t.Fatalf("PromptTokensBefore = %d, want 9600", result.PromptTokensBefore)
+	}
+	if result.PromptTokensAfter != 10100 {
+		t.Fatalf("PromptTokensAfter = %d, want 10100", result.PromptTokensAfter)
+	}
+	if result.PromptTokensDelta != -500 {
+		t.Fatalf("PromptTokensDelta = %d, want -500", result.PromptTokensDelta)
+	}
+}
+
+func TestSummaryEventPayload_IncludesPromptTelemetry(t *testing.T) {
+	t.Parallel()
+
+	payload := summaryEventPayload(&SessionSummaryResult{
+		SessionID:          "sess-1",
+		AgentID:            "claude-code",
+		Summary:            "Wrapped up session summary ownership cleanup.",
+		PromptTokensBefore: 9600,
+		PromptTokensAfter:  10100,
+		PromptTokensDelta:  -500,
+	})
+
+	if got := payload["session_id"]; got != "sess-1" {
+		t.Fatalf("session_id = %#v, want sess-1", got)
+	}
+	if got := payload["agent_id"]; got != "claude-code" {
+		t.Fatalf("agent_id = %#v, want claude-code", got)
+	}
+	if got := payload["prompt_tokens_before"]; got != 9600 {
+		t.Fatalf("prompt_tokens_before = %#v, want 9600", got)
+	}
+	if got := payload["prompt_tokens_after"]; got != 10100 {
+		t.Fatalf("prompt_tokens_after = %#v, want 10100", got)
+	}
+	if got := payload["prompt_tokens_delta"]; got != -500 {
+		t.Fatalf("prompt_tokens_delta = %#v, want -500", got)
+	}
+	if got, _ := payload["summary_preview"].(string); got == "" {
+		t.Fatal("expected non-empty summary_preview")
 	}
 }

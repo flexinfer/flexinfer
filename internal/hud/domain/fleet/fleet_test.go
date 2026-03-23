@@ -25,9 +25,13 @@ func (m *mockDeps) FleetRefresh()                                               
 func (m *mockDeps) BroadcastAgentEvent(_ string, _ any)                           {}
 func (m *mockDeps) OnSessionEnd(_, _ string)                                      {}
 func (m *mockDeps) MaybeAutoProvisionSandbox(_ string)                            {}
+func (m *mockDeps) MaybeSampleContextTelemetry(_, _, _, _ string)                 {}
 func (m *mockDeps) NudgeQueue() NudgeQueueOps                                     { return &mockNudgeQueue{} }
 func (m *mockDeps) CacheGet(_ string) (any, bool)                                 { return nil, false }
 func (m *mockDeps) CacheSet(_ string, _ any, _ time.Duration)                     {}
+func (m *mockDeps) PlanSessionEndSummary(params bridge.SessionEndParams) (bridge.SessionEndParams, bool) {
+	return params, false
+}
 
 type mockNudgeQueue struct{}
 

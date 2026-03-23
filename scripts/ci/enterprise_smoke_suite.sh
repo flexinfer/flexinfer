@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 export GOCACHE="${GOCACHE:-/tmp/loom-core-gocache}"
 export GOMODCACHE="${GOMODCACHE:-/tmp/loom-core-gomodcache}"
+export CGO_ENABLED="${CGO_ENABLED:-0}"
 mkdir -p "$GOCACHE" "$GOMODCACHE"
 
 echo "==> Enterprise smoke: gateway auth + RBAC/audit"

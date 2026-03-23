@@ -20,6 +20,10 @@ platforms:
       heartbeat_event: "PostToolUse"
       heartbeat_matcher: "Bash|Task"
       extras: ["preToolUse_guardrails", "postToolUse_formatters"]
+    loom_proxy:
+      agent_hint: "claude-code"
+      tool_profile: "llm-core"
+      max_tools: 140
     capabilities:
       mcp_servers: true
       permissions: true
@@ -92,6 +96,10 @@ platforms:
       enabled: true
       file: "config.toml"
       events: ["notify"]
+    loom_proxy:
+      agent_hint: "codex"
+      tool_profile: "llm-core"
+      max_tools: 140
     capabilities:
       mcp_servers: true
       permissions: true

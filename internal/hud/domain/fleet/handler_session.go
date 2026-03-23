@@ -41,6 +41,7 @@ func (d *FleetDomain) handleAgentSessionStart(w http.ResponseWriter, r *http.Req
 		go d.deps.FleetRefresh()
 		go d.deps.MaybeAutoProvisionSandbox(body.Namespace)
 	}
+	d.deps.MaybeSampleContextTelemetry(body.AgentID, result.SessionID, body.AgentType, "session_start")
 
 	d.deps.WriteJSON(w, http.StatusOK, result)
 }
@@ -57,6 +58,7 @@ func (d *FleetDomain) handleAgentSessionEnd(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	body, _ = d.deps.PlanSessionEndSummary(body)
 	ended, err := d.deps.Agent().EndSession(body)
 	if err != nil {
 		d.deps.WriteError(w, http.StatusBadGateway, "failed to end session", err)
@@ -222,6 +224,7 @@ func (d *FleetDomain) handleAgentHeartbeat(w http.ResponseWriter, r *http.Reques
 	if nudges := d.deps.NudgeQueue().Drain(body.AgentID); len(nudges) > 0 {
 		resp["nudges"] = nudges
 	}
+	d.deps.MaybeSampleContextTelemetry(body.AgentID, body.SessionID, body.AgentType, "heartbeat")
 
 	d.deps.WriteJSON(w, http.StatusOK, resp)
 }

@@ -59,6 +59,7 @@ make build
 - Health check: `curl http://localhost:9876/health`
 - Launch HUD: `./bin/loom hud --port 3333`
 - HUD launchd lifecycle (macOS): `./bin/loom hud install`, `./bin/loom hud status`
+- Agent token launchd sync (Codex/Gemini): `./bin/loom sync agent-tokens install`, `./bin/loom sync agent-tokens status`
 
 ## Notable Capabilities
 

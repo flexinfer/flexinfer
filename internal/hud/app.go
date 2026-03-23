@@ -130,8 +130,10 @@ type App struct {
 	sseHub *SSEHub
 
 	// Coordinator — optional LLM-powered agent context intelligence.
-	coordinator        *coordinator.Coordinator
-	coordinatorMetrics *coordinator.Metrics
+	coordinator         *coordinator.Coordinator
+	coordinatorMetrics  *coordinator.Metrics
+	agentContextMetrics *AgentContextMetrics
+	agentContextLatest  *AgentContextLatestStore
 
 	// Timeline event log — ring buffer for unified activity timeline.
 	eventLog *EventLog
@@ -508,6 +510,10 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	if a.domainRegistry != nil {
 		a.domainRegistry.RegisterAll(mux, a.withCORS)
 	}
+
+	// Agent context telemetry (branch addition — lives in hud package, not domain).
+	mux.HandleFunc("GET /api/agent/context-telemetry", a.withCORS(a.handleAgentContextTelemetry))
+	mux.HandleFunc("GET /api/agent/metrics", a.withCORS(a.handleAgentMetrics))
 
 	// Lightweight health check — no bridge calls, no CORS overhead, sub-1ms response.
 	mux.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) {
