@@ -96,6 +96,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		if modelCache.Spec.Abliteration != nil {
 			modelCache.Status.Abliteration = nil
 		}
+		modelCache.Status.Path = ""
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err

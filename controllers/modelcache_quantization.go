@@ -67,8 +67,10 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 	}
 	if changed {
 		// Reset quantization status and phase back to Provisioning.
+		// Clear Path so the download guard re-runs the download job.
 		modelCache.Status.Quantization = nil
 		modelCache.Status.Abliteration = nil
+		modelCache.Status.Path = ""
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
