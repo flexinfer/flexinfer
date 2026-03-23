@@ -1,0 +1,421 @@
+package controllers
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+)
+
+func TestEffectiveQuantizationDeadline(t *testing.T) {
+	tests := []struct {
+		name string
+		spec *aiv1alpha1.QuantizationSpec
+		want int64
+	}{
+		{
+			name: "nil spec uses default",
+			spec: nil,
+			want: 21600,
+		},
+		{
+			name: "timeout below minimum uses default",
+			spec: &aiv1alpha1.QuantizationSpec{
+				Format:         aiv1alpha1.QuantizationFormatGPTQ,
+				TimeoutSeconds: int64Ptr(120),
+			},
+			want: 21600,
+		},
+		{
+			name: "valid timeout overrides default",
+			spec: &aiv1alpha1.QuantizationSpec{
+				Format:         aiv1alpha1.QuantizationFormatGPTQ,
+				TimeoutSeconds: int64Ptr(1800),
+			},
+			want: 1800,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, effectiveQuantizationDeadline(tt.spec))
+		})
+	}
+}
+
+func TestReadQuantizationMetadataFromPodsSelectsLatestValidMetadata(t *testing.T) {
+	older := metav1.NewTime(time.Unix(1_700_000_000, 0))
+	newer := metav1.NewTime(time.Unix(1_700_000_600, 0))
+
+	cache := newQuantizationCache("metadata-cache")
+	r, _ := newQuantizationTestReconciler(t, nil,
+		cache,
+		quantizationPodWithFinishedAt(
+			"quant-job-old",
+			"quant-job",
+			"default",
+			older,
+			`{"type":"W4_G128","originalSizeBytes":12000,"compressedSizeBytes":4000}`,
+		),
+		quantizationPodWithFinishedAt(
+			"quant-job-invalid",
+			"quant-job",
+			"default",
+			newer,
+			`not-json`,
+		),
+		quantizationPodWithFinishedAt(
+			"quant-job-new",
+			"quant-job",
+			"default",
+			newer,
+			`{"type":"W8_G128","originalSizeBytes":24000,"compressedSizeBytes":8000,"quantizationTimeSeconds":123}`,
+		),
+	)
+
+	meta, err := r.readQuantizationMetadataFromPods(context.Background(), "default", "quant-job")
+	require.NoError(t, err)
+	require.NotNil(t, meta)
+	assert.Equal(t, "W8_G128", meta.Type)
+	assert.EqualValues(t, 24000, meta.OriginalSizeBytes)
+	assert.EqualValues(t, 8000, meta.CompressedSizeBytes)
+	assert.EqualValues(t, 123, meta.QuantizationTimeSeconds)
+}
+
+func TestReadPodLogTailReturnsTrimmedLogOutput(t *testing.T) {
+	kubeClient := newLogClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/namespaces/default/pods/quant-job-pod/log" {
+			http.NotFound(w, r)
+			return
+		}
+		assert.Equal(t, "quantizer", r.URL.Query().Get("container"))
+		fmt.Fprintln(w, "traceback line 1")
+		fmt.Fprintln(w, "traceback line 2")
+	})
+
+	got := readPodLogTail(context.Background(), kubeClient, "default", "quant-job-pod", "quantizer", 50)
+	assert.Equal(t, "traceback line 1\ntraceback line 2", got)
+}
+
+func TestReconcileQuantizationCreatesJobAndSeedsHash(t *testing.T) {
+	cache := newQuantizationCache("quant-create")
+	r, cl := newQuantizationTestReconciler(t, nil, cache)
+
+	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, requeueLong, result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseQuantizing, updated.Status.Phase)
+	require.NotNil(t, updated.Annotations)
+	assert.Equal(t, quantSpecHash(updated.Spec.Quantization), updated.Annotations[annotationQuantSpecHash])
+
+	job := &batchv1.Job{}
+	err = cl.Get(context.Background(), client.ObjectKey{Name: "quant-create-quantize", Namespace: "default"}, job)
+	require.NoError(t, err)
+	require.NotEmpty(t, job.Spec.Template.Spec.Tolerations)
+	assert.Equal(t, "dedicated", job.Spec.Template.Spec.Tolerations[0].Key)
+}
+
+func TestReconcileQuantizationUnsupportedFormatMarksFailed(t *testing.T) {
+	cache := newQuantizationCache("quant-invalid")
+	cache.Spec.Quantization.Format = aiv1alpha1.QuantizationFormat("INVALID")
+	r, cl := newQuantizationTestReconciler(t, nil, cache)
+
+	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseFailed, updated.Status.Phase)
+}
+
+func TestReconcileQuantizationActiveJobUpdatesProgress(t *testing.T) {
+	started := metav1.NewTime(time.Now().Add(-10 * time.Minute))
+
+	cache := newQuantizationCache("quant-active")
+	cache.Spec.Quantization.TimeoutSeconds = int64Ptr(1800)
+	r, cl := newQuantizationTestReconciler(t, nil,
+		cache,
+		&batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "quant-active-quantize",
+				Namespace: "default",
+			},
+			Status: batchv1.JobStatus{
+				Active:    1,
+				StartTime: &started,
+			},
+		},
+	)
+
+	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, requeueLong, result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseQuantizing, updated.Status.Phase)
+	require.NotNil(t, updated.Status.Quantization)
+	require.NotNil(t, updated.Status.Quantization.Progress)
+	assert.Greater(t, *updated.Status.Quantization.Progress, int32(0))
+	assert.LessOrEqual(t, *updated.Status.Quantization.Progress, int32(99))
+	assert.Contains(t, updated.Status.Quantization.ProgressDetail, "elapsed")
+	require.NotNil(t, updated.Status.Quantization.StartedAt)
+	assert.Equal(t, started.Unix(), updated.Status.Quantization.StartedAt.Unix())
+	assert.Empty(t, updated.Status.Quantization.FailureMessage)
+}
+
+func TestReconcileQuantizationSucceededMarksReadyAndCapturesMetadata(t *testing.T) {
+	started := metav1.NewTime(time.Unix(1_700_000_000, 0))
+	completed := metav1.NewTime(time.Unix(1_700_000_300, 0))
+
+	cache := newQuantizationCache("quant-success")
+	cache.Status.Path = "/models/base"
+	r, cl := newQuantizationTestReconciler(t, nil,
+		cache,
+		&batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "quant-success-quantize",
+				Namespace: "default",
+			},
+			Status: batchv1.JobStatus{
+				Succeeded:      1,
+				StartTime:      &started,
+				CompletionTime: &completed,
+			},
+		},
+		quantizationPodWithFinishedAt(
+			"quant-success-pod",
+			"quant-success-quantize",
+			"default",
+			completed,
+			`{"type":"W4_G128","originalSizeBytes":15000,"compressedSizeBytes":4000,"quantizationTimeSeconds":300,"outputDir":"gptq-w4-g128"}`,
+		),
+	)
+
+	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseReady, updated.Status.Phase)
+	assert.EqualValues(t, 4000, updated.Status.CacheSizeBytes)
+	assert.Equal(t, "/models/base/gptq-w4-g128", updated.Status.Path)
+
+	require.NotNil(t, updated.Status.Quantization)
+	assert.Equal(t, "GPTQ", updated.Status.Quantization.Format)
+	assert.Equal(t, "W4_G128", updated.Status.Quantization.Type)
+	assert.EqualValues(t, 15000, updated.Status.Quantization.OriginalSizeBytes)
+	assert.EqualValues(t, 4000, updated.Status.Quantization.CompressedSizeBytes)
+	assert.Equal(t, "3.75", updated.Status.Quantization.CompressionRatio)
+	assert.Equal(t, "5m0s", updated.Status.Quantization.QuantizationTime)
+	require.NotNil(t, updated.Status.Quantization.StartedAt)
+	require.NotNil(t, updated.Status.Quantization.CompletedAt)
+	assert.True(t, updated.Status.Quantization.StartedAt.Equal(&started))
+	assert.True(t, updated.Status.Quantization.CompletedAt.Equal(&completed))
+}
+
+func TestReconcileQuantizationFailedCapturesFailureMessage(t *testing.T) {
+	started := metav1.NewTime(time.Unix(1_700_000_000, 0))
+
+	cache := newQuantizationCache("quant-failed")
+	r, cl := newQuantizationTestReconciler(t, nil,
+		cache,
+		&batchv1.Job{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "quant-failed-quantize",
+				Namespace: "default",
+			},
+			Status: batchv1.JobStatus{
+				Failed:    1,
+				StartTime: &started,
+			},
+		},
+		quantizationPodWithFinishedAt(
+			"quant-failed-pod",
+			"quant-failed-quantize",
+			"default",
+			started,
+			"python traceback: boom",
+		),
+	)
+
+	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseFailed, updated.Status.Phase)
+	require.NotNil(t, updated.Status.Quantization)
+	assert.Equal(t, "W4_G128", updated.Status.Quantization.Type)
+	assert.Equal(t, "python traceback: boom", updated.Status.Quantization.FailureMessage)
+	require.NotNil(t, updated.Status.Quantization.StartedAt)
+	assert.True(t, updated.Status.Quantization.StartedAt.Equal(&started))
+}
+
+func TestReconcileQuantizationSpecChangeResetsStateAndDeletesJobs(t *testing.T) {
+	cache := newQuantizationCache("quant-reset")
+	cache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+	cache.Status.Path = "/models/base/gptq-w4-g128"
+	cache.Status.Quantization = &aiv1alpha1.QuantizationStatus{Type: "W4_G128"}
+	cache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{RefusalDirNorm: "1.0"}
+	cache.Annotations = map[string]string{
+		annotationQuantSpecHash: "stale-hash",
+	}
+
+	r, cl := newQuantizationTestReconciler(t, nil,
+		cache,
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "quant-reset-quantize", Namespace: "default"}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "quant-reset-abliterate", Namespace: "default"}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "quant-reset-downloader", Namespace: "default"}},
+	)
+
+	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, requeueShort, result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseProvisioning, updated.Status.Phase)
+	assert.Empty(t, updated.Status.Path)
+	assert.Nil(t, updated.Status.Quantization)
+	assert.Nil(t, updated.Status.Abliteration)
+	require.NotNil(t, updated.Annotations)
+	assert.Equal(t, quantSpecHash(updated.Spec.Quantization), updated.Annotations[annotationQuantSpecHash])
+
+	for _, jobName := range []string{
+		"quant-reset-quantize",
+		"quant-reset-abliterate",
+		"quant-reset-downloader",
+	} {
+		job := &batchv1.Job{}
+		err := cl.Get(context.Background(), client.ObjectKey{Name: jobName, Namespace: "default"}, job)
+		assert.Error(t, err, "expected %s to be deleted", jobName)
+	}
+}
+
+func newQuantizationTestReconciler(t *testing.T, kubeClient kubernetes.Interface, objs ...client.Object) (*ModelCacheReconciler, client.Client) {
+	t.Helper()
+
+	s := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme,
+		batchv1.AddToScheme,
+		aiv1alpha1.AddToScheme,
+	} {
+		require.NoError(t, add(s))
+	}
+
+	builder := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&aiv1alpha1.ModelCache{})
+	if len(objs) > 0 {
+		builder = builder.WithObjects(objs...)
+	}
+
+	cl := builder.Build()
+	return &ModelCacheReconciler{
+		Client:     cl,
+		Scheme:     s,
+		Recorder:   record.NewFakeRecorder(20),
+		KubeClient: kubeClient,
+	}, cl
+}
+
+func newQuantizationCache(name string) *aiv1alpha1.ModelCache {
+	return &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:          "HF://org/model",
+			StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.vendor": "AMD",
+				"flexinfer.ai/gpu.arch":   "gfx1100",
+			},
+			Quantization: &aiv1alpha1.QuantizationSpec{
+				Format:    aiv1alpha1.QuantizationFormatGPTQ,
+				Bits:      int32Ptr(4),
+				GroupSize: int32Ptr(128),
+				UseGPU:    true,
+			},
+		},
+		Status: aiv1alpha1.ModelCacheStatus{
+			Phase: aiv1alpha1.ModelCachePhaseProvisioning,
+			Path:  "/models/base",
+		},
+	}
+}
+
+func quantizationPodWithFinishedAt(name, jobName, namespace string, finished metav1.Time, message string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				"job-name": jobName,
+			},
+		},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name: "quantizer",
+					State: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{
+							Message:    message,
+							FinishedAt: finished,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func getModelCacheFromClient(t *testing.T, cl client.Client, namespace, name string) *aiv1alpha1.ModelCache {
+	t.Helper()
+
+	cache := &aiv1alpha1.ModelCache{}
+	require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Name: name, Namespace: namespace}, cache))
+	return cache
+}
+
+func newLogClient(t *testing.T, handler http.HandlerFunc) kubernetes.Interface {
+	t.Helper()
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	cfg := &rest.Config{
+		Host: server.URL,
+		ContentConfig: rest.ContentConfig{
+			GroupVersion:         &schema.GroupVersion{Version: "v1"},
+			NegotiatedSerializer: clientgoscheme.Codecs.WithoutConversion(),
+		},
+	}
+
+	clientset, err := kubernetes.NewForConfig(cfg)
+	require.NoError(t, err)
+	return clientset
+}
