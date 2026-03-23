@@ -2,7 +2,12 @@ package agentcontext
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/crb2nu/loom/pkg/codebase/embed"
+	"github.com/crb2nu/loom/pkg/httpclient"
 )
 
 func TestDurabilityConstants(t *testing.T) {
@@ -64,9 +69,12 @@ func TestRouteToMemory_CreatesItem(t *testing.T) {
 		t.Fatalf("Recall: %v", err)
 	}
 	if len(result.Items) == 0 {
-		t.Fatal("expected item in long-term tier")
+		t.Fatal("expected item in memory hierarchy")
 	}
 	item := result.Items[0]
+	if item.Tier != MemoryTierShortTerm {
+		t.Fatalf("Tier = %q, want short_term", item.Tier)
+	}
 	if item.Title != "My Decision" {
 		t.Errorf("Title = %q, want 'My Decision'", item.Title)
 	}
@@ -75,6 +83,12 @@ func TestRouteToMemory_CreatesItem(t *testing.T) {
 	}
 	if item.Namespace != "test/ns" {
 		t.Errorf("Namespace = %q, want 'test/ns'", item.Namespace)
+	}
+	if got := cs.metrics.ShortTermMemoryItems.Load(); got != 1 {
+		t.Errorf("ShortTermMemoryItems = %d, want 1", got)
+	}
+	if got := cs.metrics.LongTermMemoryItems.Load(); got != 0 {
+		t.Errorf("LongTermMemoryItems = %d, want 0", got)
 	}
 }
 
@@ -195,5 +209,147 @@ func TestBuildContextEntry_Fields(t *testing.T) {
 	}
 	if entry.Metadata["k"] != "v" {
 		t.Errorf("Metadata[k] = %v, want v", entry.Metadata["k"])
+	}
+}
+
+func TestShouldAutoMirrorToMemory(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		entryType EntryType
+		want      bool
+	}{
+		{EntryTypeDecision, true},
+		{EntryTypeFinding, true},
+		{EntryTypeQuestion, true},
+		{EntryTypeSummary, true},
+		{EntryTypeError, true},
+		{EntryTypeHandoff, true},
+		{EntryTypeFileRead, false},
+		{EntryTypeCodeContext, false},
+		{EntryTypeNote, false},
+		{EntryTypeAnnotation, false},
+		{"", false},
+	}
+
+	for _, tc := range tests {
+		if got := shouldAutoMirrorToMemory(tc.entryType); got != tc.want {
+			t.Errorf("shouldAutoMirrorToMemory(%q) = %v, want %v", tc.entryType, got, tc.want)
+		}
+	}
+}
+
+func TestAdd_AutoMirrorsHighValueEntriesToMemory(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	var collectionCreates int
+	var upserts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/collections/context":
+			http.NotFound(w, r)
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/context":
+			collectionCreates++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok","result":true}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/context/points":
+			upserts++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok","result":{"status":"acknowledged"}}`))
+		default:
+			t.Fatalf("unexpected qdrant request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cfg := Config{
+		QdrantURL:         server.URL,
+		QdrantDistance:    "Cosine",
+		ContextCollection: "context",
+		EmbedAPIKey:       "test-key",
+	}
+	vectorSize := 0
+	session := &Session{ID: "sess-1", AgentID: "agent-1", Namespace: "test/ns"}
+	mh := NewMemoryHierarchy()
+	sessionEntryCount := 0
+	sessionTokenCount := 0
+	cs := &ContextSvc{
+		qdrant:                   NewQdrantRegistry(httpclient.NewDefault(), cfg),
+		embed:                    embed.NewDummyEmbedder(3),
+		vectorSize:               &vectorSize,
+		cfg:                      cfg,
+		metrics:                  NewMetrics(),
+		persistedMemoryHierarchy: mh.SetPersistence(nil),
+		getSession: func(context.Context, string) (*Session, error) {
+			return session, nil
+		},
+		addSessionEntryStats: func(_ *Session, entries int, tokens int) {
+			sessionEntryCount += entries
+			sessionTokenCount += tokens
+		},
+	}
+
+	result, err := cs.Add(context.Background(), map[string]any{
+		"session_id": session.ID,
+		"entries": []any{
+			map[string]any{
+				"entry_type": "decision",
+				"title":      "Keep startup recall compact",
+				"content":    "Mirror high-value context into memory without dropping the session entry.",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if result == nil || len(result.Content) == 0 {
+		t.Fatal("expected tool result content")
+	}
+
+	payload := decodeToolPayload(t, result.Content[0].Text)
+	if got := payload["count"]; got != float64(1) {
+		t.Fatalf("count = %v, want 1", got)
+	}
+	entryIDs, ok := payload["entry_ids"].([]any)
+	if !ok || len(entryIDs) != 1 {
+		t.Fatalf("entry_ids = %#v, want one primary context entry ID", payload["entry_ids"])
+	}
+	routed, ok := payload["routed"].(map[string]any)
+	if !ok {
+		t.Fatalf("routed = %#v, want map", payload["routed"])
+	}
+	if got := routed["context"]; got != float64(1) {
+		t.Fatalf("routed.context = %v, want 1", got)
+	}
+	if got := routed["memory"]; got != float64(1) {
+		t.Fatalf("routed.memory = %v, want 1", got)
+	}
+	if collectionCreates != 1 {
+		t.Fatalf("collectionCreates = %d, want 1", collectionCreates)
+	}
+	if upserts != 1 {
+		t.Fatalf("upserts = %d, want 1", upserts)
+	}
+	if sessionEntryCount != 1 {
+		t.Fatalf("sessionEntryCount = %d, want 1", sessionEntryCount)
+	}
+	if sessionTokenCount <= 0 {
+		t.Fatalf("sessionTokenCount = %d, want positive", sessionTokenCount)
+	}
+
+	memoryResult, err := mh.Recall(MemoryRecallRequest{
+		Query:       "startup recall compact",
+		Namespace:   session.Namespace,
+		TokenBudget: 4000,
+		Limit:       10,
+	})
+	if err != nil {
+		t.Fatalf("Recall: %v", err)
+	}
+	if len(memoryResult.Items) != 1 {
+		t.Fatalf("expected 1 mirrored memory item, got %d", len(memoryResult.Items))
+	}
+	if memoryResult.Items[0].Title != "Keep startup recall compact" {
+		t.Fatalf("memory title = %q, want %q", memoryResult.Items[0].Title, "Keep startup recall compact")
 	}
 }

@@ -81,6 +81,9 @@ func (m *mockDeps) FleetRefresh()                 {}
 func (m *mockDeps) RequireAdminToken(http.ResponseWriter, *http.Request) bool {
 	return true
 }
+func (m *mockDeps) PlanSessionEndSummary(params bridge.SessionEndParams) (bridge.SessionEndParams, bool) {
+	return params, false
+}
 
 func newTestMockDeps() *mockDeps {
 	return &mockDeps{

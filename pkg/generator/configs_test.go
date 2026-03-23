@@ -1303,6 +1303,40 @@ func TestBuildTargetMap_LoomModeAntigravityAddsToolFilterArgs(t *testing.T) {
 	}
 }
 
+func TestBuildTargetMap_LoomModeLLMClientsAddToolFilterArgs(t *testing.T) {
+	reg := &registry.Registry{}
+
+	for _, targetName := range []string{"claude", "codex"} {
+		t.Run(targetName, func(t *testing.T) {
+			profile, _ := GetPlatformProfile(targetName)
+			targets, err := buildTargetMap(reg, targetName, profile, false, "", true, "", "", "", false)
+			if err != nil {
+				t.Fatalf("buildTargetMap(%s): %v", targetName, err)
+			}
+
+			spec := targets["loom"]
+			if spec == nil {
+				t.Fatalf("expected loom target spec in loom-mode for %s", targetName)
+			}
+
+			gotArgs := make([]string, 0, len(spec.Args))
+			for _, a := range spec.Args {
+				gotArgs = append(gotArgs, fmt.Sprintf("%v", a))
+			}
+
+			want := []string{
+				"proxy",
+				"--agent-hint", profile.LoomProxy.AgentHint,
+				"--tool-profile", "llm-core",
+				"--max-tools", "140",
+			}
+			if strings.Join(gotArgs, " ") != strings.Join(want, " ") {
+				t.Fatalf("loom-mode %s args = %v, want %v", targetName, gotArgs, want)
+			}
+		})
+	}
+}
+
 func TestBuildTargetMap_LoomModeUsesExplicitBinaryAcrossPlatforms(t *testing.T) {
 	reg := &registry.Registry{}
 	loomBinary := "/opt/loom/bin/loom"

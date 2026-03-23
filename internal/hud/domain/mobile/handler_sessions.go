@@ -272,6 +272,7 @@ func (d *MobileDomain) handleMobileSessionEnd(w http.ResponseWriter, r *http.Req
 		SessionID: sessionID,
 		Summarize: body.Summarize,
 	}
+	endParams, _ = d.deps.PlanSessionEndSummary(endParams)
 	ended, err := d.deps.Agent().EndSession(endParams)
 	if err != nil {
 		d.writeMobileError(w, http.StatusBadGateway, "upstream_error", "failed to end session")

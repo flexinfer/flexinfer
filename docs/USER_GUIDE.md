@@ -94,6 +94,22 @@ Antigravity sync includes a generated `settings.json` hooks stub alongside `mcp.
 
 `./bin/loom install` now installs both daemon and HUD launchd plists when available.
 
+### Agent token sync (macOS)
+
+```bash
+./bin/loom sync agent-tokens install
+./bin/loom sync agent-tokens status
+./bin/loom sync agent-tokens run --apply
+```
+
+This installs the `com.loom.agent-token-sync` launchd job, which delegates to the GitOps-side
+`bin/sync-agent-tokens` helper and refreshes `k3s/devbox/agent-auth-tokens.yaml` from the local
+Codex and Gemini auth files on your Mac.
+
+Claude is intentionally not part of this file sync. Cluster Claude agents use
+`ANTHROPIC_API_KEY` from `k3s/devbox/agent-api-keys.yaml`, and HUD/devbox worker launches consume
+that key-based path directly instead of a `~/.claude/auth.json` blob.
+
 ### Health and logs
 
 ```bash
@@ -187,6 +203,17 @@ For hook-only clients that do not emit explicit session-start events (for exampl
 loom agent heartbeat --agent-id codex --status active --ensure-session --agent-type codex --quiet
 ```
 
+When `loom agent session-start` runs with `--auto-recall`, the JSON response now includes a bounded `startup_briefing` field (and `recalled_context` as a compatibility alias) so hooks and wrappers can inject compressed recall instead of a full raw context dump.
+Startup recall now queries `scope=all` by default and includes memory tiers automatically: `working` + `short_term` for the `fast` strategy, and `working` + `short_term` + `long_term` for `balanced` and `deep`.
+
+When callers use `agent_context_add` without an explicit `durability`, high-value entry types such as `decision`, `finding`, `question`, `summary`, `error`, and `handoff` are now mirrored into persistent memory while still remaining available as normal session context entries.
+Persistent context writes now land in the `short_term` memory tier first instead of skipping straight to `long_term`, which makes default recall more useful and gives later promotion/compaction policies something to work with.
+When the HUD coordinator is enabled, HUD and mobile session-end flows now treat the coordinator as the canonical summary owner: they disable `agent_session_end` summarization for that request and let the coordinator produce the post-session summary asynchronously.
+Coordinator-driven compaction now also inspects a small set of active sessions for high prompt estimates and can start memory compaction earlier when live context pressure is rising, instead of waiting only for tier token totals to grow large.
+Coordinator summary completion events now include before/after prompt estimates for the summarized session as well, which makes it easier to distinguish “summary stored successfully” from “summary materially changed live prompt pressure.”
+Compaction completion events now include before/after prompt estimates for the session that triggered pressure-aware compaction, so dashboards and alerts can distinguish “compaction ran” from “compaction actually reduced pressure.” Merge-only compaction runs now emit the same completion event, which keeps telemetry accurate when summaries are consolidated without needing per-item recompression.
+Coordinator Prometheus metrics now expose compaction effectiveness too: `loom_coordinator_compaction_outcomes_total{trigger,effect}` tracks `reduced`, `flat_or_increased`, and `unmeasured` outcomes, while `loom_coordinator_compaction_prompt_delta_tokens{trigger}` records positive prompt-token reductions for alerting and dashboards.
+
 Optional environment overrides:
 
 - `LOOM_HUD_PORT`: HUD API port
@@ -197,6 +224,16 @@ Context budget inspection:
 ```bash
 loom agent context-inspect --agent-id codex --detail --limit 200
 ```
+
+HUD agent context telemetry:
+
+- Scrape Prometheus-formatted samples from `GET /api/agent/metrics`.
+- Query the latest in-memory snapshots from `GET /api/agent/context-telemetry`.
+- Current gauges include prompt estimate, context-entry tokens, tool-schema tokens, file-injection tokens, system-prompt tokens, response-budget tokens, entry count, and total memory tokens.
+- Samples are labeled by low-cardinality dimensions: `agent_type`, `session_status`, and `reason`.
+- Sampling currently happens on `session_start`, `context_add`, and `heartbeat`; heartbeat samples are throttled to avoid noisy series.
+- Each successful sample also emits an `agent.context.telemetry` event into the HUD timeline stream for per-agent debugging.
+- Generated Claude Code and Codex loom-proxy configs now default to the reduced `llm-core` tool profile with `--max-tools 140`; operators can still opt back into the full surface by overriding `--tool-profile` or `--max-tools`.
 
 Hook reliability diagnostics:
 

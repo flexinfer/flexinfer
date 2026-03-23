@@ -63,6 +63,76 @@ func TestFilterProxyTools_AntigravityCoreDefaults(t *testing.T) {
 	}
 }
 
+func TestFilterProxyTools_LLMCoreDefaults(t *testing.T) {
+	tools := make([]mcp.Tool, 0, 220)
+	for i := 0; i < 190; i++ {
+		tools = append(tools, mcp.Tool{Name: fmt.Sprintf("misc__tool_%03d", i)})
+	}
+
+	tools = append(tools,
+		mcp.Tool{Name: "git__git_status"},
+		mcp.Tool{Name: "git__git_diff"},
+		mcp.Tool{Name: "gitlab__pipeline_summary"},
+		mcp.Tool{Name: "codebase_memory__codebase_search"},
+		mcp.Tool{Name: "quality__quality_check"},
+		mcp.Tool{Name: "agent_context__agent_session_start"},
+		mcp.Tool{Name: "agent_context__agent_recall"},
+		mcp.Tool{Name: "agent_context__agent_context_add"},
+		mcp.Tool{Name: "agent_context__agent_task_add"},
+		mcp.Tool{Name: "agent_context__agent_session_end"},
+		mcp.Tool{Name: "context7__resolve-library-id"},
+		mcp.Tool{Name: "context7__get-library-docs"},
+		mcp.Tool{Name: "tavily__search"},
+		mcp.Tool{Name: "k8s_apps_k3s__k8s_getPods"},
+		mcp.Tool{Name: "prometheus__query"},
+		mcp.Tool{Name: "loki__loki_query"},
+	)
+
+	filtered := filterProxyTools(tools, "codex", "", 0)
+	if len(filtered) != proxyToolLimitLLM {
+		t.Fatalf("filtered tools = %d, want %d", len(filtered), proxyToolLimitLLM)
+	}
+
+	got := make(map[string]struct{}, len(filtered))
+	for _, tool := range filtered {
+		got[tool.Name] = struct{}{}
+	}
+	for _, want := range []string{
+		"git__git_status",
+		"git__git_diff",
+		"gitlab__pipeline_summary",
+		"codebase_memory__codebase_search",
+		"quality__quality_check",
+		"agent_context__agent_session_start",
+		"agent_context__agent_recall",
+		"agent_context__agent_context_add",
+		"agent_context__agent_task_add",
+		"agent_context__agent_session_end",
+		"context7__resolve-library-id",
+		"context7__get-library-docs",
+		"tavily__search",
+		"k8s_apps_k3s__k8s_getPods",
+		"prometheus__query",
+		"loki__loki_query",
+	} {
+		if _, ok := got[want]; !ok {
+			t.Fatalf("expected llm core tool %q in filtered set", want)
+		}
+	}
+}
+
+func TestResolveProxyToolFilter_InferLLMCoreFromAgentHint(t *testing.T) {
+	for _, agentHint := range []string{"codex", "claude", "claude-code"} {
+		profile, limit := resolveProxyToolFilter(agentHint, "", 0)
+		if profile != proxyToolProfileLLMCore {
+			t.Fatalf("agentHint %q resolved profile = %q, want %q", agentHint, profile, proxyToolProfileLLMCore)
+		}
+		if limit != proxyToolLimitLLM {
+			t.Fatalf("agentHint %q resolved limit = %d, want %d", agentHint, limit, proxyToolLimitLLM)
+		}
+	}
+}
+
 func TestFilterProxyTools_MaxToolsOnly(t *testing.T) {
 	tools := []mcp.Tool{
 		{Name: "git__git_status"},

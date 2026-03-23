@@ -88,7 +88,7 @@ type Durability string
 const (
 	// DurabilitySession stores to context backend (default, session-scoped).
 	DurabilitySession Durability = "session"
-	// DurabilityPersistent promotes to memory hierarchy (long-term tier).
+	// DurabilityPersistent promotes to memory hierarchy (short-term tier by default).
 	DurabilityPersistent Durability = "persistent"
 	// DurabilityGraph creates an entity in the knowledge graph.
 	DurabilityGraph Durability = "graph"

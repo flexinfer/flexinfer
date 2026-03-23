@@ -19,6 +19,8 @@ type Metrics struct {
 	ConsecutiveFailures prometheus.Gauge
 	SummarizedSessions  prometheus.Gauge
 	FallbackSummaries   prometheus.Counter
+	CompactionOutcome   *prometheus.CounterVec
+	CompactionDelta     *prometheus.HistogramVec
 
 	registry *prometheus.Registry
 }
@@ -114,6 +116,27 @@ func NewMetrics() *Metrics {
 		},
 	)
 
+	m.CompactionOutcome = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "loom",
+			Subsystem: "coordinator",
+			Name:      "compaction_outcomes_total",
+			Help:      "Compaction completions by trigger and prompt-pressure effectiveness",
+		},
+		[]string{"trigger", "effect"},
+	)
+
+	m.CompactionDelta = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "loom",
+			Subsystem: "coordinator",
+			Name:      "compaction_prompt_delta_tokens",
+			Help:      "Positive prompt-token reductions observed after compaction",
+			Buckets:   []float64{0, 128, 256, 512, 1024, 2048, 4096, 8192, 16384},
+		},
+		[]string{"trigger"},
+	)
+
 	m.registry.MustRegister(
 		m.SubsystemRuns,
 		m.LLMCallDuration,
@@ -124,6 +147,8 @@ func NewMetrics() *Metrics {
 		m.ConsecutiveFailures,
 		m.SummarizedSessions,
 		m.FallbackSummaries,
+		m.CompactionOutcome,
+		m.CompactionDelta,
 	)
 
 	return m
@@ -153,6 +178,30 @@ func (m *Metrics) RecordLLMCall(subsystem string, duration time.Duration) {
 // RecordPollCycle records the total duration of a poll cycle.
 func (m *Metrics) RecordPollCycle(duration time.Duration) {
 	m.PollDuration.Observe(duration.Seconds())
+}
+
+// RecordCompactionResult records prompt-pressure effectiveness for a compaction run.
+func (m *Metrics) RecordCompactionResult(result *CompactionResult) {
+	if result == nil {
+		return
+	}
+	trigger := result.Trigger
+	if trigger == "" {
+		trigger = "unknown"
+	}
+
+	effect := "unmeasured"
+	measured := result.PromptTokensBefore > 0 && (result.PromptTokensAfter > 0 || result.PromptTokensDelta != 0)
+	if measured {
+		if result.PromptTokensDelta > 0 {
+			effect = "reduced"
+			m.CompactionDelta.WithLabelValues(trigger).Observe(float64(result.PromptTokensDelta))
+		} else {
+			effect = "flat_or_increased"
+		}
+	}
+
+	m.CompactionOutcome.WithLabelValues(trigger, effect).Inc()
 }
 
 // UpdateHealth updates the healthy gauge and consecutive failure count.

@@ -40,6 +40,7 @@ type Deps interface {
 	FleetIncrementKPI(field string, delta int)
 	FleetRefresh()
 	RequireAdminToken(w http.ResponseWriter, r *http.Request) bool
+	PlanSessionEndSummary(params bridge.SessionEndParams) (bridge.SessionEndParams, bool)
 }
 
 // Monitors groups the background polling monitors.

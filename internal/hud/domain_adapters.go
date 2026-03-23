@@ -203,10 +203,33 @@ func (a *App) ComputeTopology(snap monitor.FleetSnapshot) mobile.TopologyGraph {
 	return mobile.TopologyGraph{Nodes: nodes, Edges: edges, Clusters: clusters}
 }
 
+func (a *App) PlanSessionEndSummary(params bridge.SessionEndParams) (bridge.SessionEndParams, bool) {
+	return planSessionEndSummary(params, a.coordinator != nil)
+}
+
 func (a *App) OnSessionEnd(sessionID, agentID string) {
 	if a.coordinator != nil {
 		go a.coordinator.OnSessionEnd(sessionID, agentID)
 	}
+}
+
+// planSessionEndSummary decides whether the coordinator should own
+// summarization (instead of the agent-context MCP server) for a session-end
+// call. When the coordinator is enabled and the caller has not explicitly
+// disabled summarization, it returns modified params with summarize=false
+// (so agent-context skips its own summary) and coordinatorOwnsSummary=true
+// so the caller can delegate summarization to the coordinator.
+func planSessionEndSummary(params bridge.SessionEndParams, coordinatorEnabled bool) (bridge.SessionEndParams, bool) {
+	shouldSummarize := params.Summarize == nil || *params.Summarize
+	if !coordinatorEnabled || !shouldSummarize {
+		return params, false
+	}
+
+	planned := params
+	summarize := false
+	planned.Summarize = &summarize
+	planned.SummaryAsync = false
+	return planned, true
 }
 
 func (a *App) MemoryStatsPayload(stats *bridge.MemoryStatsResult) map[string]any {
@@ -382,8 +405,16 @@ func (f *fleetDepsAdapter) MaybeAutoProvisionSandbox(namespace string) {
 	f.app.MaybeAutoProvisionSandbox(namespace)
 }
 
+func (f *fleetDepsAdapter) MaybeSampleContextTelemetry(agentID, sessionID, agentType, reason string) {
+	f.app.maybeSampleAgentContextTelemetry(agentID, sessionID, agentType, reason)
+}
+
 func (f *fleetDepsAdapter) NudgeQueue() fleet.NudgeQueueOps {
 	return &fleetNudgeAdapter{q: f.app.nudgeQueue}
+}
+
+func (f *fleetDepsAdapter) PlanSessionEndSummary(params bridge.SessionEndParams) (bridge.SessionEndParams, bool) {
+	return planSessionEndSummary(params, f.app.coordinator != nil)
 }
 
 func (f *fleetDepsAdapter) CacheGet(key string) (any, bool) { return f.app.CacheGet(key) }

@@ -8,7 +8,9 @@ import (
 
 const (
 	proxyToolProfileAntigravityCore = "antigravity-core"
+	proxyToolProfileLLMCore         = "llm-core"
 	proxyToolLimitAntigravity       = 100
+	proxyToolLimitLLM               = 140
 )
 
 // filterProxyTools applies per-client tool shaping at the proxy boundary.
@@ -20,8 +22,9 @@ func filterProxyTools(tools []mcp.Tool, agentHint, profile string, maxTools int)
 	}
 
 	resolvedProfile, resolvedLimit := resolveProxyToolFilter(agentHint, profile, maxTools)
-	if resolvedProfile == proxyToolProfileAntigravityCore {
-		return selectAntigravityCoreTools(tools, resolvedLimit)
+	switch resolvedProfile {
+	case proxyToolProfileAntigravityCore, proxyToolProfileLLMCore:
+		return selectCoreDeveloperTools(tools, resolvedLimit)
 	}
 
 	if resolvedLimit > 0 && len(tools) > resolvedLimit {
@@ -32,18 +35,28 @@ func filterProxyTools(tools []mcp.Tool, agentHint, profile string, maxTools int)
 
 func resolveProxyToolFilter(agentHint, profile string, maxTools int) (string, int) {
 	resolvedProfile := strings.ToLower(strings.TrimSpace(profile))
-	if resolvedProfile == "" && strings.EqualFold(strings.TrimSpace(agentHint), "antigravity") {
-		resolvedProfile = proxyToolProfileAntigravityCore
+	if resolvedProfile == "" {
+		switch normalized := strings.ToLower(strings.TrimSpace(agentHint)); normalized {
+		case "antigravity":
+			resolvedProfile = proxyToolProfileAntigravityCore
+		case "codex", "claude", "claude-code":
+			resolvedProfile = proxyToolProfileLLMCore
+		}
 	}
-	if resolvedProfile == proxyToolProfileAntigravityCore && maxTools <= 0 {
-		maxTools = proxyToolLimitAntigravity
+	if maxTools <= 0 {
+		switch resolvedProfile {
+		case proxyToolProfileAntigravityCore:
+			maxTools = proxyToolLimitAntigravity
+		case proxyToolProfileLLMCore:
+			maxTools = proxyToolLimitLLM
+		}
 	}
 	return resolvedProfile, maxTools
 }
 
-func selectAntigravityCoreTools(tools []mcp.Tool, limit int) []mcp.Tool {
+func selectCoreDeveloperTools(tools []mcp.Tool, limit int) []mcp.Tool {
 	if limit <= 0 {
-		limit = proxyToolLimitAntigravity
+		limit = proxyToolLimitLLM
 	}
 
 	selected := make([]mcp.Tool, 0, min(limit, len(tools)))

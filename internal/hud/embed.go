@@ -58,6 +58,8 @@ func NewApp(cfg Config, caller bridge.Caller, logger *slog.Logger) (*App, error)
 	}
 	app.tracer = mcpotel.Tracer(tp, "loom-hud")
 	app.metrics = NewHUDMetrics()
+	app.agentContextMetrics = NewAgentContextMetrics()
+	app.agentContextLatest = NewAgentContextLatestStore()
 
 	return app, nil
 }

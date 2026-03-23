@@ -20,9 +20,11 @@ type Deps interface {
 	BroadcastAgentEvent(eventType string, payload any)
 	OnSessionEnd(sessionID, agentID string)
 	MaybeAutoProvisionSandbox(namespace string)
+	MaybeSampleContextTelemetry(agentID, sessionID, agentType, reason string)
 	NudgeQueue() NudgeQueueOps
 	CacheGet(key string) (any, bool)
 	CacheSet(key string, value any, ttl time.Duration)
+	PlanSessionEndSummary(params bridge.SessionEndParams) (bridge.SessionEndParams, bool)
 }
 
 // NudgeQueueOps abstracts the nudge queue, returning bridge DTOs to avoid

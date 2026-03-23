@@ -43,8 +43,10 @@ type Config struct {
 	ExtractorBatchSize  int     // Entries per extraction batch.
 
 	// Per-cycle safety caps — limit work per poll to avoid storming the backend.
-	MaxSweepSessions int // Max sessions to summarize per poll cycle.
-	MaxCompressItems int // Max items to compress per poll cycle.
+	MaxSweepSessions               int // Max sessions to summarize per poll cycle.
+	MaxCompressItems               int // Max items to compress per poll cycle.
+	CompactionPromptTokenThreshold int // Run compaction early when an active session exceeds this prompt estimate.
+	CompactionInspectSessions      int // Max active sessions to inspect for prompt pressure per cycle.
 
 	// Circuit breaker.
 	CircuitBreakerThreshold int           // Consecutive failures to open.
@@ -77,8 +79,10 @@ func DefaultConfig() Config {
 		TriagerBatchSize:    10,
 		ExtractorBatchSize:  5,
 
-		MaxSweepSessions: 2,
-		MaxCompressItems: 3,
+		MaxSweepSessions:               2,
+		MaxCompressItems:               3,
+		CompactionPromptTokenThreshold: 12000,
+		CompactionInspectSessions:      3,
 
 		CircuitBreakerThreshold: 3,
 		CircuitBreakerReset:     30 * time.Second,
@@ -170,6 +174,12 @@ func (c Config) Validate() error {
 	}
 	if c.MaxCompressItems < 1 {
 		errs = append(errs, "MaxCompressItems must be >= 1")
+	}
+	if c.CompactionPromptTokenThreshold < 1 {
+		errs = append(errs, "CompactionPromptTokenThreshold must be >= 1")
+	}
+	if c.CompactionInspectSessions < 1 {
+		errs = append(errs, "CompactionInspectSessions must be >= 1")
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("coordinator config: %s", strings.Join(errs, "; "))

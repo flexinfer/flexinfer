@@ -103,6 +103,9 @@ func TestBuildSessionStartRecallArgs(t *testing.T) {
 	if args["token_budget"] != 5000 {
 		t.Errorf("token_budget = %v, want 5000", args["token_budget"])
 	}
+	if args["scope"] != "all" {
+		t.Errorf("scope = %v, want all", args["scope"])
+	}
 	if args["agent_id"] != "test-agent" {
 		t.Errorf("agent_id = %v, want 'test-agent'", args["agent_id"])
 	}
@@ -112,6 +115,9 @@ func TestBuildSessionStartRecallArgs(t *testing.T) {
 	// fast strategy: include_tasks should be false
 	if args["include_tasks"] != false {
 		t.Errorf("include_tasks = %v, want false", args["include_tasks"])
+	}
+	if got, ok := args["memory_tiers"].([]string); !ok || len(got) != 2 || got[0] != "working" || got[1] != "short_term" {
+		t.Errorf("memory_tiers = %#v, want [working short_term]", args["memory_tiers"])
 	}
 }
 
