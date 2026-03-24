@@ -145,14 +145,7 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 	dampAutoIncrementOverride := os.Getenv("FLEXINFER_GPTQ_DAMP_AUTO_INCREMENT_OVERRIDE")
 	resumeEnabled := getenvDefault("FLEXINFER_GPTQ_RESUME", "true")
 	calibrationCacheEnabled := getenvDefault("FLEXINFER_GPTQ_CALIBRATION_CACHE", "true")
-	deviceMap := getenvDefault("FLEXINFER_GPTQ_DEVICE_MAP", "cpu")
-	// gfx906 (Radeon VII) GPU is broken on ROCm 6.4 — force CPU-only loading.
-	// With 128GB RAM on radeonvii, the 27B BF16 model (~54GB) fits in CPU memory
-	// without the init_empty_weights meta tensor hack (which crashes GPTQModel's
-	// shell_module_materialize).
-	if gpuArch == "gfx906" && deviceMap == "auto" {
-		deviceMap = "cpu"
-	}
+	deviceMap := getenvDefault("FLEXINFER_GPTQ_DEVICE_MAP", "auto")
 
 	env := []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
