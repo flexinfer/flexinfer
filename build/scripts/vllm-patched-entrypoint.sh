@@ -43,5 +43,37 @@ if [ -n "$MODEL_PATH" ] && [ -f "${MODEL_PATH}/tokenizer_config.json" ]; then
     fi
 fi
 
+# Strip M-RoPE config from Qwen3.5 text-only models.
+# The VLM parent model's config.json contains mrope_section/mrope_interleaved
+# which triggers vLLM's M-RoPE path ("M-RoPE support is not implemented").
+# Text-only inference uses standard RoPE; these fields must be removed.
+if [ -n "$MODEL_PATH" ] && [ -f "${MODEL_PATH}/config.json" ]; then
+    if grep -q '"mrope_section"' "${MODEL_PATH}/config.json"; then
+        echo "[entrypoint] Stripping M-RoPE config from config.json (text-only model)"
+        python3 -c "
+import json
+p = '${MODEL_PATH}/config.json'
+with open(p) as f:
+    c = json.load(f)
+changed = False
+if 'rope_parameters' in c:
+    for k in ['mrope_section', 'mrope_interleaved']:
+        if k in c['rope_parameters']:
+            del c['rope_parameters'][k]
+            changed = True
+for k in ['mrope_section', 'mrope_interleaved']:
+    if k in c:
+        del c[k]
+        changed = True
+if changed:
+    with open(p, 'w') as f:
+        json.dump(c, f, indent=2, ensure_ascii=False)
+    print('[entrypoint] M-RoPE fields removed')
+else:
+    print('[entrypoint] No M-RoPE fields found')
+" || echo "[entrypoint] WARNING: M-RoPE cleanup failed"
+    fi
+fi
+
 # Launch vllm
 exec vllm serve "$@"
