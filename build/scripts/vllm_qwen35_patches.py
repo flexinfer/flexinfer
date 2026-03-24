@@ -108,18 +108,12 @@ with open(qwen35_path) as f:
 
 changes = []
 
-# 3a. Fix packed_modules_mapping for pre-fused weights
-if '["in_proj_qkv", "in_proj_z"]' in content:
-    content = content.replace('["in_proj_qkv", "in_proj_z"]', '["in_proj_qkvz"]')
-    content = content.replace('["in_proj_b", "in_proj_a"]', '["in_proj_ba"]')
-    changes.append("packed_modules_mapping")
-
-# 3b. Remove GDN entries from stacked_params_mapping
-# Match with flexible whitespace
-pattern_stacked = r'\s*\("in_proj_qkvz",\s*"in_proj_qkv",\s*\(0,\s*1,\s*2\)\),\s*\("in_proj_qkvz",\s*"in_proj_z",\s*3\),\s*\("in_proj_ba",\s*"in_proj_b",\s*0\),\s*\("in_proj_ba",\s*"in_proj_a",\s*1\),\s*\n'
-if re.search(pattern_stacked, content):
-    content = re.sub(pattern_stacked, "\n", content)
-    changes.append("stacked_params_mapping")
+# 3a. Keep original packed_modules_mapping — GPTQ checkpoint has UNFUSED
+# projections (in_proj_qkv, in_proj_z, in_proj_a, in_proj_b) that vLLM's
+# weight loader must reassemble into the fused in_proj_qkvz / in_proj_ba.
+# The original mapping {"in_proj_qkvz": ["in_proj_qkv", "in_proj_z"], ...}
+# is correct and must NOT be changed to identity.
+changes.append("packed_modules_mapping (kept original unfused mapping)")
 
 # 3c. Add IsHybrid to Qwen3_5ForCausalLMBase inheritance
 # Check if IsHybrid is already in the class definition
@@ -206,6 +200,7 @@ else:
     print("  mamba state methods already in Qwen3_5ForCausalLMBase")
 
 # 3e. Fix MergedColumnParallelLinear output_sizes for pre-fused weights
+# Pre-fused checkpoint has single tensors, not multiple shards.
 old_qkvz_proj = "output_sizes=[key_dim, key_dim, value_dim, value_dim],"
 new_qkvz_proj = "output_sizes=[key_dim + key_dim + value_dim + value_dim],"
 if old_qkvz_proj in content:
@@ -247,11 +242,15 @@ if (
 else:
     print("5. FAILED: mamba state methods missing from Qwen3_5ForCausalLMBase!")
 
-# Check packed_modules
-if '["in_proj_qkvz"]' in verify and '["in_proj_ba"]' in verify:
-    print("6. VERIFIED: packed_modules_mapping is identity")
+# Check packed_modules — should have UNFUSED entries for GPTQ checkpoint
+if '["in_proj_qkv", "in_proj_z"]' in verify and '["in_proj_b", "in_proj_a"]' in verify:
+    print("6. VERIFIED: packed_modules_mapping has unfused entries (correct for GPTQ)")
+elif '["in_proj_qkvz"]' in verify and '["in_proj_ba"]' in verify:
+    print(
+        "6. WARNING: packed_modules_mapping has identity entries (WRONG for unfused GPTQ checkpoint!)"
+    )
 else:
-    print("6. WARNING: packed_modules_mapping may not be correct")
+    print("6. WARNING: packed_modules_mapping state unknown")
 
 # Check FLA op.py
 with open(op_path) as f:
@@ -569,19 +568,17 @@ def naive_fused_recurrent_gated_delta_rule(
     return output, final_state
 '''
 
-# Write the naive implementation file (kept as fallback reference, but NOT used)
+# Write the naive implementation file (ACTIVE — used instead of Triton)
 with open(naive_impl_path, "w") as f:
     f.write(naive_impl_code)
-print(f"9a. Wrote naive FLA implementations to {naive_impl_path} (REFERENCE ONLY)")
+print(f"9a. Wrote naive FLA implementations to {naive_impl_path} (ACTIVE)")
 
-# DISABLED: Use original FLA Triton kernels instead of naive implementations.
-# Triton 3.4.0 (installed by Section 0) makes FLA chunk_gated_delta_rule work on ROCm.
-# Section 0b (fp32 wrapping for exp/log) ensures Triton math ops work on AMD.
-print(
-    "9b. SKIPPED: Keeping original FLA Triton kernel imports (Triton 3.4.0 compatible)"
-)
+# ENABLED: Use naive PyTorch FLA kernels instead of Triton.
+# The Triton chunk_gated_delta_rule kernel produces near-zero output on ROCm gfx1100
+# despite healthy inputs (Q/K/V/g/beta all have reasonable values).
+# Using naive PyTorch implementation to diagnose whether the issue is Triton-specific.
+print("9b. ENABLING naive PyTorch FLA kernels (replacing Triton)")
 
-# UNDO any previous naive import patches — restore original FLA imports
 with open(qwen3_next_path) as f:
     qn_content = f.read()
 
@@ -599,24 +596,24 @@ orig_recurrent_import = """from vllm.model_executor.layers.fla.ops import (
     fused_recurrent_gated_delta_rule,
 )"""
 
-restored = False
-if naive_chunk_import in qn_content:
-    qn_content = qn_content.replace(naive_chunk_import, orig_chunk_import)
-    restored = True
-if naive_recurrent_import in qn_content:
-    qn_content = qn_content.replace(naive_recurrent_import, orig_recurrent_import)
-    restored = True
+switched = False
+if orig_chunk_import in qn_content:
+    qn_content = qn_content.replace(orig_chunk_import, naive_chunk_import)
+    switched = True
+if orig_recurrent_import in qn_content:
+    qn_content = qn_content.replace(orig_recurrent_import, naive_recurrent_import)
+    switched = True
 
-if restored:
+if switched:
     with open(qwen3_next_path, "w") as f:
         f.write(qn_content)
-    print("9c. RESTORED: qwen3_next.py imports reverted to original FLA Triton kernels")
-elif orig_chunk_import in qn_content:
-    print("9c. qwen3_next.py already using original FLA Triton imports")
+    print("9c. SWITCHED: qwen3_next.py imports changed to naive PyTorch FLA")
+elif naive_chunk_import in qn_content:
+    print("9c. qwen3_next.py already using naive FLA imports")
 else:
     print("9c. WARNING: Could not find expected import patterns in qwen3_next.py")
 
-print("9. DONE: Using original FLA Triton kernels (NOT naive replacements)")
+print("9. DONE: Using naive PyTorch FLA kernels (NOT Triton)")
 
 # ============================================================================
 # 10. Force RMSNormGated to use forward_native (FILE PATCH on layernorm.py)
@@ -1247,19 +1244,26 @@ with open(q35_path) as f:
 # 3. Loads the full-precision weight from the safetensors file
 
 # Find the load_weights method and add a post-load fixup call
+# The actual pattern in the vLLM image's qwen3_5.py (Qwen3_5ForCausalLMBase):
+#   loader = AutoWeightsLoader(self, skip_prefixes=["mtp."])
+#   return loader.load_weights(weights)
+# NOTE: Qwen3_5ForConditionalGeneration has a different load_weights with mapper=...
+# We patch the text-only base class version.
 old_load_weights_end = """        loader = AutoWeightsLoader(
             self,
-            skip_prefixes=(["lm_head."]
-                           if self.config.tie_word_embeddings else None),
+            skip_prefixes=["mtp."],
         )
-        loader.load_model_weights(weights, prefix=prefix)"""
+        return loader.load_weights(weights)
+
+
+class Qwen3_5ForCausalLM(Qwen3_5ForCausalLMBase):
+    pass"""
 
 new_load_weights_end = """        loader = AutoWeightsLoader(
             self,
-            skip_prefixes=(["lm_head."]
-                           if self.config.tie_word_embeddings else None),
+            skip_prefixes=["mtp."],
         )
-        loader.load_model_weights(weights, prefix=prefix)
+        _loaded = loader.load_weights(weights)
 
         # ── POST-LOAD FIXUP: Replace broken QuantLinear for unquantized layers ──
         # GPTQModel may skip quantizing small layers (e.g. in_proj_ba [96, 5120]).
@@ -1268,8 +1272,22 @@ new_load_weights_end = """        loader = AutoWeightsLoader(
         import json as _fix_json
         import os as _fix_os
         try:
-            _model_dir = self.config._name_or_path
-            _index_path = _fix_os.path.join(_model_dir, "model.safetensors.index.json")
+            # Find model directory — try _name_or_path, then common paths
+            _model_dir = None
+            for _cand in [
+                getattr(self.config, "_name_or_path", ""),
+                "/models/qwen35-27b-opus-distill",
+            ]:
+                if _cand and _fix_os.path.exists(_fix_os.path.join(_cand, "model.safetensors.index.json")):
+                    _model_dir = _cand
+                    break
+            if not _model_dir and _fix_os.path.isdir("/models"):
+                for _d in _fix_os.listdir("/models"):
+                    _p = _fix_os.path.join("/models", _d)
+                    if _fix_os.path.exists(_fix_os.path.join(_p, "model.safetensors.index.json")):
+                        _model_dir = _p
+                        break
+            _index_path = _fix_os.path.join(_model_dir, "model.safetensors.index.json") if _model_dir else ""
             if _fix_os.path.exists(_index_path):
                 with open(_index_path) as _f:
                     _idx = _fix_json.load(_f)
@@ -1388,7 +1406,13 @@ new_load_weights_end = """        loader = AutoWeightsLoader(
         except Exception as _fix_e:
             import traceback as _fix_tb
             print(f"  16. ERROR in post-load fixup: {_fix_e}", flush=True)
-            _fix_tb.print_exc()"""
+            _fix_tb.print_exc()
+
+        return _loaded
+
+
+class Qwen3_5ForCausalLM(Qwen3_5ForCausalLMBase):
+    pass"""
 
 if old_load_weights_end in q35_content:
     q35_content = q35_content.replace(old_load_weights_end, new_load_weights_end, 1)
@@ -1404,7 +1428,7 @@ else:
     import re as _re16
 
     _match = _re16.search(
-        r"(loader\s*=\s*AutoWeightsLoader\([^)]+\)\s*\n\s*loader\.load_model_weights\([^)]+\))",
+        r"(loader\s*=\s*AutoWeightsLoader\([^)]+\)\s*\n\s*return\s+loader\.load_weights\([^)]+\))",
         q35_content,
     )
     if _match:
@@ -1418,8 +1442,22 @@ else:
         import json as _fix_json
         import os as _fix_os
         try:
-            _model_dir = self.config._name_or_path
-            _index_path = _fix_os.path.join(_model_dir, "model.safetensors.index.json")
+            # Find model directory — try _name_or_path, then common paths
+            _model_dir = None
+            for _cand in [
+                getattr(self.config, "_name_or_path", ""),
+                "/models/qwen35-27b-opus-distill",
+            ]:
+                if _cand and _fix_os.path.exists(_fix_os.path.join(_cand, "model.safetensors.index.json")):
+                    _model_dir = _cand
+                    break
+            if not _model_dir and _fix_os.path.isdir("/models"):
+                for _d in _fix_os.listdir("/models"):
+                    _p = _fix_os.path.join("/models", _d)
+                    if _fix_os.path.exists(_fix_os.path.join(_p, "model.safetensors.index.json")):
+                        _model_dir = _p
+                        break
+            _index_path = _fix_os.path.join(_model_dir, "model.safetensors.index.json") if _model_dir else ""
             if _fix_os.path.exists(_index_path):
                 with open(_index_path) as _f:
                     _idx = _fix_json.load(_f)
