@@ -82,6 +82,14 @@
       return;
     }
 
+    // Cmd/Ctrl + F → focus search
+    if ((e.metaKey || e.ctrlKey) && e.key === 'f' && !e.altKey) {
+      if (focusPrimaryPanelSearch()) {
+        e.preventDefault();
+        return;
+      }
+    }
+
     if (!isInput && !e.metaKey && !e.ctrlKey && !e.altKey) {
       // ` or o → Overview
       if (e.key === '`' || e.key === 'o') {
