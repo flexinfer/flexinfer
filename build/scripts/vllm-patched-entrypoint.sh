@@ -14,9 +14,9 @@ for arg in "$@"; do
     fi
 done
 
-# Fallback: scan /models for config.json
+# Fallback: scan /models for config.json (up to 2 levels deep)
 if [ -z "$MODEL_PATH" ] || [ ! -f "${MODEL_PATH}/config.json" ]; then
-    for d in /models /models/*/; do
+    for d in /models /models/*/ /models/*/*/; do
         if [ -f "${d}/config.json" ]; then
             MODEL_PATH="${d}"
             break
@@ -30,6 +30,16 @@ if [ -n "$MODEL_PATH" ] && [ -f "${MODEL_PATH}/config.json" ]; then
     if [[ "$model_type" == *"qwen3_5"* ]]; then
         echo "[entrypoint] Qwen3.5 model detected at ${MODEL_PATH}, applying vLLM patches..."
         python3 /opt/patches/patch.py || echo "[entrypoint] WARNING: patches failed, continuing anyway"
+    fi
+fi
+
+# Fix transformers 5.x TokenizersBackend incompatibility.
+# Models quantized with transformers>=5 save tokenizer_class=TokenizersBackend,
+# which doesn't exist in transformers<5 (used by this vLLM build).
+if [ -n "$MODEL_PATH" ] && [ -f "${MODEL_PATH}/tokenizer_config.json" ]; then
+    if grep -q '"TokenizersBackend"' "${MODEL_PATH}/tokenizer_config.json"; then
+        echo "[entrypoint] Fixing TokenizersBackend → PreTrainedTokenizerFast in tokenizer_config.json"
+        sed -i 's/"TokenizersBackend"/"PreTrainedTokenizerFast"/g' "${MODEL_PATH}/tokenizer_config.json"
     fi
 fi
 
