@@ -38,7 +38,6 @@ spec:
     toolCallParser: hermes
     maxNumBatchedTokens: 2048
     disableLogStats: false
-    cpuOffloadGb: "6"
     warmPolicy: primary
     hipVisibleDevices: "0"
   nodeSelector:
