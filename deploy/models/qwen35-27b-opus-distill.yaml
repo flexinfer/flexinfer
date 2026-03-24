@@ -2,7 +2,7 @@
 #
 # Model: Qwen3.5-27B, GPTQ INT4 (self-quantized pipeline, clean weights).
 # Source: OCI artifact in Harbor (pushed from radeonvii quantization pipeline).
-# Image: Patched vLLM with Qwen3.5 support (FLA kernels, qwen3_5_text registration).
+# Image: vllm:rocm-gfx1100-qwen35-patched (runtime FLA + qwen3_5_text patches).
 # Weights: ~16.6 GiB GPTQ INT4 (5 shards + metadata).
 #
 # maxModelLen=4096 to minimize KV cache budget.
@@ -15,7 +15,6 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched
   source: pvc://qwen35-27b-opus-distill-oci/qwen35-27b-opus-distill
   gpu:
     vendor: amd
