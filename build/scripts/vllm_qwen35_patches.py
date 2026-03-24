@@ -115,6 +115,15 @@ changes = []
 # is correct and must NOT be changed to identity.
 changes.append("packed_modules_mapping (kept original unfused mapping)")
 
+# 3b. Remove GDN stacked_params_mapping entries — GPTQ quantized weights
+# can't be sub-split across shards. The packed_modules_mapping already handles
+# the 2-partition mapping (in_proj_qkv→0, in_proj_z→1). The stacked entries
+# try to split in_proj_qkv into (0,1,2) sub-shards which fails for GPTQ.
+pattern_stacked = r'\s*\("in_proj_qkvz",\s*"in_proj_qkv",\s*\(0,\s*1,\s*2\)\),\s*\("in_proj_qkvz",\s*"in_proj_z",\s*3\),\s*\("in_proj_ba",\s*"in_proj_b",\s*0\),\s*\("in_proj_ba",\s*"in_proj_a",\s*1\),\s*\n'
+if re.search(pattern_stacked, content):
+    content = re.sub(pattern_stacked, "\n", content)
+    changes.append("stacked_params_mapping (removed GDN sub-shard entries)")
+
 # 3c. Add IsHybrid to Qwen3_5ForCausalLMBase inheritance
 # Check if IsHybrid is already in the class definition
 class_match = re.search(r"class Qwen3_5ForCausalLMBase\(([^)]+)\)", content, re.DOTALL)
