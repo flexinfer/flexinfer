@@ -11,10 +11,12 @@ import (
 
 	loomcache "github.com/crb2nu/loom/internal/cache"
 	"github.com/crb2nu/loom/internal/devbox/backend"
+	"github.com/crb2nu/loom/internal/hud/alerting"
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/coordinator"
 	"github.com/crb2nu/loom/internal/hud/domain/memory"
 	"github.com/crb2nu/loom/internal/hud/monitor"
+	"github.com/crb2nu/loom/internal/hud/orchestration"
 	"github.com/crb2nu/loom/pkg/mcpotel"
 )
 
@@ -98,6 +100,18 @@ func (a *App) StartMonitors(ctx context.Context) error {
 		a.pipelineMonitor = monitor.NewPipelineMonitor(a.agent, projects, a.cache, a.logger)
 	}
 
+	a.contextHealthMonitor = monitor.NewContextHealthMonitor(a.agent, nil, a.logger)
+
+	a.codebaseMonitor = monitor.NewCodebaseMonitor(a.agent, a.logger)
+
+	// Orchestration engine + monitor.
+	a.orchEngine = orchestration.NewEngine(a.logger)
+	a.orchMonitor = orchestration.NewOrchestrationMonitor(a.orchEngine, a.agent, a.logger)
+
+	// Alert engine + auto-fix.
+	alertDispatcher := alerting.NewDispatcher(a.sseHub, nil, nil, nil, a.logger)
+	a.alertEngine = alerting.NewAlertEngine(alertDispatcher, a.logger)
+
 	// Spawn orchestrator.
 	if a.config.SpawnEnabled {
 		if err := a.initSpawnOrchestrator(ctx); err != nil {
@@ -133,10 +147,21 @@ func (a *App) StartMonitors(ctx context.Context) error {
 	if a.pipelineMonitor != nil {
 		a.pipelineMonitor.Start(10 * time.Second)
 	}
+	a.contextHealthMonitor.Start(5 * time.Second)
+	a.codebaseMonitor.Start(30 * time.Second)
+	a.orchMonitor.Start(3 * time.Second)
+
+	// Wire pipeline monitor → alert engine callback.
+	if a.pipelineMonitor != nil && a.alertEngine != nil {
+		a.pipelineMonitor.OnRefresh(func(pipelines []bridge.PipelineInfo) {
+			a.alertEngine.Evaluate(pipelines)
+		})
+	}
 
 	a.logger.Info("background monitors started",
 		"fleet", "15s", "health", "5s", "memory", "10s",
-		"workflow", "5s", "stream", "5s", "sandbox", "10s", "cost", "10s")
+		"workflow", "5s", "stream", "5s", "sandbox", "10s", "cost", "10s",
+		"context-health", "5s", "codebase", "30s", "orchestration", "3s")
 
 	// Coordinator.
 	if a.config.FlexInferURL != "" {
@@ -209,6 +234,21 @@ func (a *App) RefreshMonitors() {
 		} else if cached, ok := a.loadCachedPipelineSnapshot(); ok {
 			a.logger.Info("embedded refresh: restored cached pipeline snapshot")
 			a.pipelineMonitor.Update(cached)
+		}
+	}
+	if a.contextHealthMonitor != nil {
+		if err := a.contextHealthMonitor.Refresh(); err != nil {
+			a.logger.Warn("embedded refresh: context-health refresh failed", "error", err)
+		}
+	}
+	if a.codebaseMonitor != nil {
+		if err := a.codebaseMonitor.Refresh(); err != nil {
+			a.logger.Warn("embedded refresh: codebase refresh failed", "error", err)
+		}
+	}
+	if a.orchMonitor != nil {
+		if err := a.orchMonitor.Refresh(); err != nil {
+			a.logger.Warn("embedded refresh: orchestration refresh failed", "error", err)
 		}
 	}
 }
@@ -319,6 +359,15 @@ func (a *App) StopMonitors() {
 	}
 	if a.pipelineMonitor != nil {
 		a.pipelineMonitor.Stop()
+	}
+	if a.contextHealthMonitor != nil {
+		a.contextHealthMonitor.Stop()
+	}
+	if a.codebaseMonitor != nil {
+		a.codebaseMonitor.Stop()
+	}
+	if a.orchMonitor != nil {
+		a.orchMonitor.Stop()
 	}
 	if a.coordinator != nil {
 		a.coordinator.Stop()
@@ -495,6 +544,48 @@ func (a *App) wireMonitorCallbacks() {
 			a.sseHub.Broadcast(bridge.SSEEvent{
 				ID:        fmt.Sprintf("hud-pipeline-%d", time.Now().UnixMilli()),
 				Type:      "hud.pipeline",
+				Timestamp: time.Now(),
+				Data:      data,
+			})
+		})
+	}
+	if a.contextHealthMonitor != nil {
+		a.contextHealthMonitor.OnRefresh(func(snap monitor.ContextHealthSnapshot) {
+			data, err := json.Marshal(snap)
+			if err != nil {
+				return
+			}
+			a.sseHub.Broadcast(bridge.SSEEvent{
+				ID:        fmt.Sprintf("hud-context-health-%d", time.Now().UnixMilli()),
+				Type:      "hud.context_health",
+				Timestamp: time.Now(),
+				Data:      data,
+			})
+		})
+	}
+	if a.codebaseMonitor != nil {
+		a.codebaseMonitor.OnRefresh(func(snap monitor.CodebaseSnapshot) {
+			data, err := json.Marshal(snap)
+			if err != nil {
+				return
+			}
+			a.sseHub.Broadcast(bridge.SSEEvent{
+				ID:        fmt.Sprintf("hud-codebase-%d", time.Now().UnixMilli()),
+				Type:      "hud.codebase",
+				Timestamp: time.Now(),
+				Data:      data,
+			})
+		})
+	}
+	if a.orchMonitor != nil {
+		a.orchMonitor.OnRefresh(func(snap orchestration.OrchestrationSnapshot) {
+			data, err := json.Marshal(snap)
+			if err != nil {
+				return
+			}
+			a.sseHub.Broadcast(bridge.SSEEvent{
+				ID:        fmt.Sprintf("hud-orchestration-%d", time.Now().UnixMilli()),
+				Type:      "hud.orchestration",
 				Timestamp: time.Now(),
 				Data:      data,
 			})

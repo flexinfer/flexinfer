@@ -30,10 +30,13 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	loomcache "github.com/crb2nu/loom/internal/cache"
+	"github.com/crb2nu/loom/internal/hud/alerting"
+	"github.com/crb2nu/loom/internal/hud/autofix"
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/coordinator"
 	"github.com/crb2nu/loom/internal/hud/domain"
 	"github.com/crb2nu/loom/internal/hud/monitor"
+	"github.com/crb2nu/loom/internal/hud/orchestration"
 	"github.com/crb2nu/loom/internal/hud/window"
 	"github.com/crb2nu/loom/internal/tui"
 )
@@ -117,14 +120,24 @@ type App struct {
 	logger       *slog.Logger
 
 	// Background monitors — poll the bridge and maintain cached snapshots.
-	fleetMonitor    *monitor.FleetMonitor
-	healthMonitor   *monitor.HealthMonitor
-	memoryMonitor   *monitor.MemoryMonitor
-	workflowMonitor *monitor.WorkflowMonitor
-	streamMonitor   *monitor.StreamMonitor
-	sandboxMonitor  *monitor.SandboxMonitor
-	costMonitor     *monitor.CostMonitor
-	pipelineMonitor *monitor.PipelineMonitor
+	fleetMonitor         *monitor.FleetMonitor
+	healthMonitor        *monitor.HealthMonitor
+	memoryMonitor        *monitor.MemoryMonitor
+	workflowMonitor      *monitor.WorkflowMonitor
+	streamMonitor        *monitor.StreamMonitor
+	sandboxMonitor       *monitor.SandboxMonitor
+	costMonitor          *monitor.CostMonitor
+	pipelineMonitor      *monitor.PipelineMonitor
+	contextHealthMonitor *monitor.ContextHealthMonitor
+	codebaseMonitor      *monitor.CodebaseMonitor
+	orchMonitor          *orchestration.OrchestrationMonitor
+
+	// Orchestration engine — auto-dispatch, load balancing, conflict prevention.
+	orchEngine *orchestration.Engine
+
+	// Alert engine — pipeline failure alerting and notification dispatch.
+	alertEngine   *alerting.AlertEngine
+	autofixEngine *autofix.AutoFixEngine
 
 	// SSE streaming — daemon events → browser clients.
 	sseHub *SSEHub
