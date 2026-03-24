@@ -47,6 +47,42 @@ struct DashboardDataTests {
         #expect(timeline[1].eventType == "agent.heartbeat")
     }
 
+    @Test("Decodes heartbeat summary")
+    func decodesHeartbeatSummary() throws {
+        let json = """
+        {
+          "ok": true,
+          "data": {
+            "daemon_running": true,
+            "server_count": 5,
+            "active_sessions": 2,
+            "active_agents": 3,
+            "idle_agents": 1,
+            "offline_agents": 0,
+            "updated_at": "2026-02-23T12:00:00Z",
+            "health": {
+              "total_servers": 5,
+              "healthy_servers": 4,
+              "degraded_servers": 1,
+              "down_servers": 0,
+              "idle_servers": 0
+            },
+            "recent_timeline": [],
+            "last_heartbeat": {
+              "agent_id": "claude-code",
+              "timestamp": "2026-02-23T11:59:30Z",
+              "count_1h": 12
+            }
+          }
+        }
+        """
+
+        let envelope = try JSONDecoder().decode(APIEnvelope<DashboardData>.self, from: Data(json.utf8))
+        let heartbeat = try #require(envelope.data?.lastHeartbeat)
+        #expect(heartbeat.agentId == "claude-code")
+        #expect(heartbeat.count1h == 12)
+    }
+
     @Test("Health status healthy when no degraded or down")
     func healthStatusHealthy() {
         let health = HealthSummary(

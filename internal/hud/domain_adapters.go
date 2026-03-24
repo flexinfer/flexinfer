@@ -248,6 +248,21 @@ func (e *mobileEventLogAdapter) All(limit int) []mobile.TimelineEntry {
 	return result
 }
 
+func (e *mobileEventLogAdapter) AllExcluding(limit int, excludeTypes ...string) []mobile.TimelineEntry {
+	entries := e.log.AllExcluding(limit, excludeTypes...)
+	result := make([]mobile.TimelineEntry, len(entries))
+	for i, entry := range entries {
+		result[i] = mobile.TimelineEntry{
+			Timestamp: entry.Timestamp,
+			EventType: entry.EventType,
+			AgentID:   entry.AgentID,
+			AgentType: entry.AgentType,
+			Data:      entry.Data,
+		}
+	}
+	return result
+}
+
 // mobileSpawnerAdapter wraps *SpawnOrchestrator to satisfy mobile.SpawnerOps.
 type mobileSpawnerAdapter struct {
 	s *SpawnOrchestrator

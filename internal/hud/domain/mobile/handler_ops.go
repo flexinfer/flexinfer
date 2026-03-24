@@ -2,10 +2,10 @@ package mobile
 
 import (
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 )
@@ -321,35 +321,17 @@ func (d *MobileDomain) handleMobilePipelines(w http.ResponseWriter, r *http.Requ
 	mon := d.deps.Monitors()
 	if mon.Pipeline == nil {
 		d.writeMobileJSON(w, http.StatusOK, map[string]any{
-			"pipelines": []any{},
+			"pipelines":        []any{},
+			"recent_pipelines": []any{},
+			"summary": map[string]any{
+				"running":       0,
+				"passed":        0,
+				"failed":        0,
+				"pending":       0,
+				"last_activity": "",
+			},
 			"available": false,
 		})
-		return
-	}
-
-	pipelines := mon.Pipeline.Pipelines()
-	var pipelineErr error
-	includeDetail := true
-	if len(pipelines) == 0 {
-		if mon.Pipeline.Ready() {
-			if err := mon.Pipeline.Refresh(); err == nil {
-				pipelines = mon.Pipeline.Pipelines()
-			} else {
-				pipelineErr = err
-			}
-		}
-		if len(pipelines) == 0 {
-			if projects := mon.Pipeline.Projects(); len(projects) > 0 {
-				if direct, err := d.deps.Agent().ListActivePipelines(projects); err == nil {
-					pipelines = direct
-				} else if pipelineErr == nil {
-					pipelineErr = err
-				}
-			}
-		}
-	}
-	if len(pipelines) == 0 && pipelineErr != nil {
-		d.writeMobileError(w, http.StatusBadGateway, "upstream_unavailable", "failed to load pipelines")
 		return
 	}
 
@@ -367,91 +349,192 @@ func (d *MobileDomain) handleMobilePipelines(w http.ResponseWriter, r *http.Requ
 			}
 		}
 	}
-	if len(pipelines) == 0 {
-		if recent, err := d.deps.Agent().ListRecentPipelines(mon.Pipeline.Projects(), 10); err == nil {
-			pipelines = selectMobileRelevantRecentPipelines(recent, branchAgents, 5)
-			if len(pipelines) > 0 {
-				includeDetail = false
-			}
+
+	active := mon.Pipeline.Pipelines()
+	recent := mon.Pipeline.RecentPipelines()
+	var pipelineErr error
+
+	if len(active) == 0 && mon.Pipeline.Ready() {
+		if err := mon.Pipeline.Refresh(); err == nil {
+			active = mon.Pipeline.Pipelines()
+		} else {
+			pipelineErr = err
+		}
+	}
+
+	if len(recent) == 0 && mon.Pipeline.Ready() {
+		if err := mon.Pipeline.RefreshRecent(); err == nil {
+			recent = mon.Pipeline.RecentPipelines()
 		} else if pipelineErr == nil {
 			pipelineErr = err
 		}
 	}
-	if len(pipelines) == 0 && pipelineErr != nil {
+
+	if len(recent) == 0 && len(mon.Pipeline.Projects()) > 0 {
+		if direct, err := d.deps.Agent().ListRecentPipelines(mon.Pipeline.Projects(), 10); err == nil {
+			recent = direct
+		} else if pipelineErr == nil {
+			pipelineErr = err
+		}
+	}
+
+	if len(active) == 0 && len(recent) > 0 {
+		active = filterActivePipelineInfos(recent)
+	}
+
+	if len(active) == 0 && len(recent) == 0 && pipelineErr != nil {
 		d.writeMobileError(w, http.StatusBadGateway, "upstream_unavailable", "failed to load pipelines")
 		return
 	}
-	var detailFn func(project string, pipelineID int) (*bridge.PipelineDetail, error)
-	if includeDetail {
-		detailFn = mon.Pipeline.Detail
+
+	if len(active) == 0 && len(recent) > 0 {
+		active = filterActivePipelineInfos(recent)
 	}
-	results := buildMobilePipelineResponses(pipelines, branchAgents, detailFn)
+	if len(recent) > 0 && len(active) == 0 {
+		active = filterActivePipelineInfos(recent)
+	}
+
+	activeResults := buildMobilePipelineResponses(active, branchAgents, mon.Pipeline.Detail)
+	recentResults := buildMobilePipelineResponses(limitMobilePipelineInfos(recent, 10), branchAgents, nil)
+
+	summary := summarizePipelineInfos(active, recent)
 
 	d.writeMobileJSON(w, http.StatusOK, map[string]any{
-		"pipelines": results,
-		"available": true,
+		"pipelines":        activeResults,
+		"recent_pipelines": recentResults,
+		"summary":          summary,
+		"available":        true,
 	})
 }
 
-func selectMobileRelevantRecentPipelines(pipelines []bridge.PipelineInfo, branchAgents map[string]mobilePipelineAgentRef, limit int) []bridge.PipelineInfo {
-	if limit <= 0 {
-		limit = 5
-	}
-
-	preferred := make([]bridge.PipelineInfo, 0, len(pipelines))
-	fallback := make([]bridge.PipelineInfo, 0, len(pipelines))
+func filterActivePipelineInfos(pipelines []bridge.PipelineInfo) []bridge.PipelineInfo {
+	filtered := make([]bridge.PipelineInfo, 0, len(pipelines))
 	for _, pipeline := range pipelines {
-		ref := strings.TrimSpace(pipeline.Ref)
-		if ref == "" {
-			fallback = append(fallback, pipeline)
-			continue
+		if isActivePipelineStatus(pipeline.Status) {
+			filtered = append(filtered, pipeline)
 		}
-		if _, ok := branchAgents[ref]; ok || isAgentLikePipelineRef(ref) {
-			preferred = append(preferred, pipeline)
-			continue
-		}
-		fallback = append(fallback, pipeline)
 	}
-	slices.SortStableFunc(preferred, func(a, b bridge.PipelineInfo) int {
-		return mobilePipelinePreferenceRank(strings.TrimSpace(b.Ref), branchAgents) -
-			mobilePipelinePreferenceRank(strings.TrimSpace(a.Ref), branchAgents)
-	})
-
-	selected := preferred
-	if len(selected) == 0 {
-		selected = fallback
-	}
-	if len(selected) > limit {
-		selected = selected[:limit]
-	}
-	return selected
+	return filtered
 }
 
-func mobilePipelinePreferenceRank(ref string, branchAgents map[string]mobilePipelineAgentRef) int {
-	if _, ok := branchAgents[ref]; ok {
-		return 3
+func limitMobilePipelineInfos(pipelines []bridge.PipelineInfo, limit int) []bridge.PipelineInfo {
+	if limit <= 0 || len(pipelines) <= limit {
+		out := make([]bridge.PipelineInfo, len(pipelines))
+		copy(out, pipelines)
+		return out
 	}
-	if isPlatformPipelineRef(ref) {
-		return 2
-	}
-	if ref == "main" {
-		return 1
-	}
-	return 0
+	out := make([]bridge.PipelineInfo, limit)
+	copy(out, pipelines[:limit])
+	return out
 }
 
-func isAgentLikePipelineRef(ref string) bool {
-	if ref == "main" {
+func isActivePipelineStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running", "pending":
 		return true
+	default:
+		return false
 	}
-	return isPlatformPipelineRef(ref)
 }
 
-func isPlatformPipelineRef(ref string) bool {
-	for _, prefix := range []string{"codex/", "claude/", "gemini/", "kilocode/", "antigravity/"} {
-		if strings.HasPrefix(ref, prefix) {
-			return true
+type mobilePipelineSummaryDTO struct {
+	Running      int    `json:"running"`
+	Passed       int    `json:"passed"`
+	Failed       int    `json:"failed"`
+	Pending      int    `json:"pending"`
+	LastActivity string `json:"last_activity,omitempty"`
+}
+
+func summarizePipelineInfos(active, recent []bridge.PipelineInfo) mobilePipelineSummaryDTO {
+	seen := map[int]struct{}{}
+	combined := make([]bridge.PipelineInfo, 0, len(active)+len(recent))
+	for _, pipeline := range active {
+		if _, ok := seen[pipeline.ID]; ok {
+			continue
+		}
+		seen[pipeline.ID] = struct{}{}
+		combined = append(combined, pipeline)
+	}
+	for _, pipeline := range recent {
+		if _, ok := seen[pipeline.ID]; ok {
+			continue
+		}
+		seen[pipeline.ID] = struct{}{}
+		combined = append(combined, pipeline)
+	}
+
+	summary := mobilePipelineSummaryDTO{}
+	var newest time.Time
+	for _, pipeline := range combined {
+		switch normalizeMobilePipelineStatus(pipeline.Status) {
+		case "running":
+			summary.Running++
+		case "success":
+			summary.Passed++
+		case "pending":
+			summary.Pending++
+		default:
+			summary.Failed++
+		}
+		if ts := parseMobilePipelineTime(pipeline.CreatedAt); ts.After(newest) {
+			newest = ts
+		}
+		if ts := parseMobilePipelineTime(pipeline.UpdatedAt); ts.After(newest) {
+			newest = ts
 		}
 	}
-	return false
+	if !newest.IsZero() {
+		summary.LastActivity = relativeMobilePipelineTime(newest)
+	}
+	return summary
+}
+
+func normalizeMobilePipelineStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running":
+		return "running"
+	case "success", "passed":
+		return "success"
+	case "pending", "created", "scheduled", "manual":
+		return "pending"
+	case "failed", "canceled", "cancelled", "skipped":
+		return "failed"
+	default:
+		return "failed"
+	}
+}
+
+func parseMobilePipelineTime(raw string) time.Time {
+	if raw == "" {
+		return time.Time{}
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return ts
+	}
+	if ts, err := time.Parse(time.RFC3339, raw); err == nil {
+		return ts
+	}
+	return time.Time{}
+}
+
+func relativeMobilePipelineTime(ts time.Time) string {
+	if ts.IsZero() {
+		return ""
+	}
+	diff := time.Since(ts)
+	if diff < 0 {
+		diff = 0
+	}
+	switch {
+	case diff < 5*time.Second:
+		return "just now"
+	case diff < time.Minute:
+		return strconv.Itoa(int(diff.Seconds())) + "s ago"
+	case diff < time.Hour:
+		return strconv.Itoa(int(diff.Minutes())) + "m ago"
+	case diff < 24*time.Hour:
+		return strconv.Itoa(int(diff.Hours())) + "h ago"
+	default:
+		return strconv.Itoa(int(diff.Hours()/24)) + "d ago"
+	}
 }

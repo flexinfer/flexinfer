@@ -93,7 +93,7 @@ func (a *App) StartMonitors(ctx context.Context) error {
 
 	if a.config.PipelineProjects != "" {
 		projects := strings.Split(a.config.PipelineProjects, ",")
-		a.pipelineMonitor = monitor.NewPipelineMonitor(a.agent, projects, a.logger)
+		a.pipelineMonitor = monitor.NewPipelineMonitor(a.agent, projects, a.cache, a.logger)
 	}
 
 	// Spawn orchestrator.

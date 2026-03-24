@@ -184,7 +184,7 @@ func TestHandleMobilePipelines_ColdStartRefreshesAndReturnsDetail(t *testing.T) 
 	deps.agent = bridge.NewAgentBridge(&pipelineOpsCaller{t: t})
 	deps.monitors = Monitors{
 		Fleet:    &monitor.FleetMonitor{},
-		Pipeline: monitor.NewPipelineMonitor(deps.agent, []string{"services/loom-core"}, slog.New(slog.NewTextHandler(io.Discard, nil))),
+		Pipeline: monitor.NewPipelineMonitor(deps.agent, []string{"services/loom-core"}, nil, slog.New(slog.NewTextHandler(io.Discard, nil))),
 	}
 	d := New(deps)
 
@@ -217,6 +217,20 @@ func TestHandleMobilePipelines_ColdStartRefreshesAndReturnsDetail(t *testing.T) 
 	if len(pipelines) != 1 {
 		t.Fatalf("expected one pipeline, got %#v", pipelines)
 	}
+	recent, ok := data["recent_pipelines"].([]any)
+	if !ok {
+		t.Fatalf("expected recent_pipelines array, got %T", data["recent_pipelines"])
+	}
+	if len(recent) == 0 {
+		t.Fatal("expected cached recent pipelines to be returned")
+	}
+	summary, ok := data["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary object, got %T", data["summary"])
+	}
+	if summary["running"] == nil || summary["last_activity"] == nil {
+		t.Fatalf("expected summary counts, got %#v", summary)
+	}
 	pipeline, ok := pipelines[0].(map[string]any)
 	if !ok {
 		t.Fatalf("expected pipeline object, got %T", pipelines[0])
@@ -238,7 +252,7 @@ func TestHandleMobilePipelines_FallsBackToRecentRelevantPipelinesWhenNoActiveOne
 	deps.agent = bridge.NewAgentBridge(&recentOnlyPipelineOpsCaller{})
 	deps.monitors = Monitors{
 		Fleet:    &monitor.FleetMonitor{},
-		Pipeline: monitor.NewPipelineMonitor(deps.agent, []string{"services/loom-core"}, slog.New(slog.NewTextHandler(io.Discard, nil))),
+		Pipeline: monitor.NewPipelineMonitor(deps.agent, []string{"services/loom-core"}, nil, slog.New(slog.NewTextHandler(io.Discard, nil))),
 	}
 	d := New(deps)
 
@@ -265,15 +279,22 @@ func TestHandleMobilePipelines_FallsBackToRecentRelevantPipelinesWhenNoActiveOne
 	if !ok {
 		t.Fatalf("expected pipelines array, got %T", data["pipelines"])
 	}
-	if len(pipelines) == 0 {
+	if len(pipelines) != 0 {
+		t.Fatalf("expected no active pipelines, got %#v", pipelines)
+	}
+	recent, ok := data["recent_pipelines"].([]any)
+	if !ok {
+		t.Fatalf("expected recent_pipelines array, got %T", data["recent_pipelines"])
+	}
+	if len(recent) == 0 {
 		t.Fatal("expected recent pipeline fallback to return results")
 	}
-	first, ok := pipelines[0].(map[string]any)
+	first, ok := recent[0].(map[string]any)
 	if !ok {
-		t.Fatalf("expected pipeline object, got %T", pipelines[0])
+		t.Fatalf("expected pipeline object, got %T", recent[0])
 	}
-	if first["ref"] != "codex/mobile-parity" {
-		t.Fatalf("expected codex pipeline to outrank renovate fallback, got %#v", first["ref"])
+	if first["ref"] != "renovate/minor" {
+		t.Fatalf("expected newest recent pipeline first, got %#v", first["ref"])
 	}
 }
 
@@ -282,7 +303,7 @@ func TestHandleMobilePipelines_ReturnsUpstreamErrorWhenNoPipelineDataIsAvailable
 	deps.agent = bridge.NewAgentBridge(&failingPipelineOpsCaller{})
 	deps.monitors = Monitors{
 		Fleet:    &monitor.FleetMonitor{},
-		Pipeline: monitor.NewPipelineMonitor(deps.agent, []string{"services/loom-core"}, slog.New(slog.NewTextHandler(io.Discard, nil))),
+		Pipeline: monitor.NewPipelineMonitor(deps.agent, []string{"services/loom-core"}, nil, slog.New(slog.NewTextHandler(io.Discard, nil))),
 	}
 	d := New(deps)
 
