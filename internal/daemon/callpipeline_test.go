@@ -4039,3 +4039,247 @@ func TestResolveToolCallTimeout_WhitespaceOnly(t *testing.T) {
 		t.Fatalf("expected default timeout for whitespace _timeout, got %v", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// DEBT-016: Gate-stage error envelope consistency (draining + concurrency)
+// ---------------------------------------------------------------------------
+
+func TestHandleCall_DrainingReturnsPipelineErrorData(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.draining.Store(true)
+
+	msg := &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "drain-test",
+		Method:  "loom/call",
+		Params:  json.RawMessage(`{"server":"s","tool":"t"}`),
+	}
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Error == nil {
+		t.Fatal("expected error response when draining")
+	}
+	if resp.Error.Code != mcp.InternalError {
+		t.Errorf("Code = %d, want %d", resp.Error.Code, mcp.InternalError)
+	}
+
+	ped, ok := resp.Error.Data.(*PipelineErrorData)
+	if !ok {
+		t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+	}
+	if ped.Code != "DAEMON_DRAINING" {
+		t.Errorf("Code = %q, want DAEMON_DRAINING", ped.Code)
+	}
+	if ped.Stage != "gate" {
+		t.Errorf("Stage = %q, want gate", ped.Stage)
+	}
+	if !ped.Retryable {
+		t.Error("expected Retryable=true for draining")
+	}
+}
+
+func TestHandleCall_ConcurrencyLimitReturnsPipelineErrorData(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.callSem = make(chan struct{}, 1)
+	d.callSem <- struct{}{} // Fill the semaphore.
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	msg := &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "sem-test",
+		Method:  "loom/call",
+		Params:  json.RawMessage(`{"server":"s","tool":"t"}`),
+	}
+
+	resp, err := d.handleCall(ctx, msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Error == nil {
+		t.Fatal("expected error response when concurrency limit reached")
+	}
+
+	ped, ok := resp.Error.Data.(*PipelineErrorData)
+	if !ok {
+		t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+	}
+	if ped.Code != "CONCURRENCY_LIMIT" {
+		t.Errorf("Code = %q, want CONCURRENCY_LIMIT", ped.Code)
+	}
+	if ped.Stage != "gate" {
+		t.Errorf("Stage = %q, want gate", ped.Stage)
+	}
+	if !ped.Retryable {
+		t.Error("expected Retryable=true for concurrency limit")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DEBT-016: Policy denial short-circuits route and execute
+// ---------------------------------------------------------------------------
+
+func TestHandleCall_PolicyDenialShortCircuitsRouteAndExecute(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	auditPath := enableAuditAndCostForTest(t, d)
+
+	d.policy = NewGatewayPolicyEnforcer(GatewayPolicyConfig{
+		Enabled: true,
+		Request: []GatewayRequestPolicyRule{
+			{
+				ID:                 "deny-delete",
+				Server:             "github",
+				Tool:               "delete_*",
+				ForbiddenArguments: []string{"force"},
+				ReasonCode:         "FORBIDDEN_ARG",
+			},
+		},
+	}, d.logger)
+
+	// Set up a pool that would fail loudly if route/execute ran.
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			t.Fatal("pool dial should not be called after policy denial")
+			return nil, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	msg := newCallMessage(t, map[string]any{
+		"server":    "github",
+		"tool":      "delete_repo",
+		"arguments": json.RawMessage(`{"force":true}`),
+		"agent_id":  "policy-sc-agent",
+	})
+
+	resp, err := d.handleCall(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Error == nil {
+		t.Fatal("expected policy denial")
+	}
+
+	ped, ok := resp.Error.Data.(*PipelineErrorData)
+	if !ok {
+		t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+	}
+	if ped.Code != "POLICY_DENIED" {
+		t.Errorf("Code = %q, want POLICY_DENIED", ped.Code)
+	}
+	if ped.Stage != stagePolicy {
+		t.Errorf("Stage = %q, want %q", ped.Stage, stagePolicy)
+	}
+
+	// Only 1 audit entry from policy stage.
+	entries := readAuditEntries(t, auditPath)
+	if len(entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(entries))
+	}
+	if entries[0].PipelineStage != stagePolicy {
+		t.Errorf("audit pipeline_stage = %q, want %q", entries[0].PipelineStage, stagePolicy)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DEBT-016: All error paths produce PipelineErrorData with required fields
+// ---------------------------------------------------------------------------
+
+func TestErrorEnvelope_AllPathsProducePipelineErrorData(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+
+	p := newCallPipeline(d, context.Background(), &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      "envelope-test",
+	})
+	p.serverName = "test-server"
+	p.toolName = "test-tool"
+	p.stage = stageExecute
+	p.auditStart = time.Now()
+
+	cases := []struct {
+		name string
+		resp *mcp.Message
+	}{
+		{"invalidParams", p.invalidParamsError("bad input")},
+		{"internalError", p.internalError(errors.New("something broke"))},
+		{"internalErrorWithAudit", p.internalErrorWithAudit("local", "transport died")},
+		{"rbacDenied", p.rbacDeniedError(AccessDecision{
+			Allowed:    false,
+			Reason:     "not authorized",
+			ReasonCode: "no_rule",
+			AgentID:    "agent-x",
+			Role:       "viewer",
+			Server:     "test-server",
+			Tool:       "test-tool",
+		})},
+		{"policyDenied", p.policyDeniedError(GatewayPolicyDecision{
+			Action:     "deny",
+			Reason:     "forbidden",
+			ReasonCode: "BLOCKED",
+			RuleID:     "rule-1",
+			Stage:      "request",
+		})},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.resp.Error == nil {
+				t.Fatal("expected Error in response")
+			}
+			if tc.resp.JSONRPC != mcp.JSONRPCVersion {
+				t.Errorf("JSONRPC = %q, want %q", tc.resp.JSONRPC, mcp.JSONRPCVersion)
+			}
+			if tc.resp.ID != "envelope-test" {
+				t.Errorf("ID = %v, want envelope-test", tc.resp.ID)
+			}
+
+			ped, ok := tc.resp.Error.Data.(*PipelineErrorData)
+			if !ok {
+				t.Fatalf("Data type = %T, want *PipelineErrorData", tc.resp.Error.Data)
+			}
+			if ped.Code == "" {
+				t.Error("PipelineErrorData.Code is empty")
+			}
+			if ped.Stage == "" {
+				t.Error("PipelineErrorData.Stage is empty")
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DEBT-016: newPipelineError constructor produces correct fields
+// ---------------------------------------------------------------------------
+
+func TestNewPipelineError(t *testing.T) {
+	ped := newPipelineError("TIMEOUT", "my-server", "my-tool", stageExecute, true)
+	if ped.Code != "TIMEOUT" {
+		t.Errorf("Code = %q, want TIMEOUT", ped.Code)
+	}
+	if ped.Server != "my-server" {
+		t.Errorf("Server = %q, want my-server", ped.Server)
+	}
+	if ped.Tool != "my-tool" {
+		t.Errorf("Tool = %q, want my-tool", ped.Tool)
+	}
+	if ped.Stage != stageExecute {
+		t.Errorf("Stage = %q, want %q", ped.Stage, stageExecute)
+	}
+	if !ped.Retryable {
+		t.Error("expected Retryable=true")
+	}
+	if ped.RetryAfter != "" {
+		t.Errorf("RetryAfter = %q, want empty", ped.RetryAfter)
+	}
+	if ped.Details != nil {
+		t.Errorf("Details = %v, want nil", ped.Details)
+	}
+}

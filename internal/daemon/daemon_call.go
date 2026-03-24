@@ -36,11 +36,7 @@ func (d *Daemon) handleCallWithOptions(ctx context.Context, msg *mcp.Message, sk
 			Error: &mcp.Error{
 				Code:    mcp.InternalError,
 				Message: "daemon is draining, retry after backoff",
-				Data: &PipelineErrorData{
-					Code:      "DAEMON_DRAINING",
-					Stage:     "gate",
-					Retryable: true,
-				},
+				Data:    newPipelineError("DAEMON_DRAINING", "", "", "gate", true),
 			},
 		}, nil
 	}
@@ -54,7 +50,15 @@ func (d *Daemon) handleCallWithOptions(ctx context.Context, msg *mcp.Message, sk
 		case d.callSem <- struct{}{}:
 			defer func() { <-d.callSem }()
 		case <-ctx.Done():
-			return mcp.NewErrorResponse(msg.ID, mcp.InternalError, "call concurrency limit reached"), nil
+			return &mcp.Message{
+				JSONRPC: mcp.JSONRPCVersion,
+				ID:      msg.ID,
+				Error: &mcp.Error{
+					Code:    mcp.InternalError,
+					Message: "call concurrency limit reached",
+					Data:    newPipelineError("CONCURRENCY_LIMIT", "", "", "gate", true),
+				},
+			}, nil
 		}
 	}
 

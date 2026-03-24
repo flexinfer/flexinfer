@@ -18,6 +18,19 @@ type PipelineErrorData struct {
 	Details    any    `json:"details,omitempty"`     // stage-specific data
 }
 
+// newPipelineError constructs a PipelineErrorData with consistent field
+// population. All call pipeline error paths should use this helper (or its
+// wrappers) so that new fields are added in one place.
+func newPipelineError(code, server, tool, stage string, retryable bool) *PipelineErrorData {
+	return &PipelineErrorData{
+		Code:      code,
+		Server:    server,
+		Tool:      tool,
+		Stage:     stage,
+		Retryable: retryable,
+	}
+}
+
 // classifyInternalError returns a pipeline error code based on the error and
 // current pipeline stage.
 func classifyInternalError(err error, stage string) (code string, retryable bool) {
