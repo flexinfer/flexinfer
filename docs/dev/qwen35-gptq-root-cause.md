@@ -1,113 +1,163 @@
 # Qwen3.5-27B GPTQ Garbage Inference — Root Cause Analysis
 
-**Date:** 2026-03-23
-**Status:** Root cause identified, fix pending
+**Date:** 2026-03-24 (updated)
+**Status:** Root cause confirmed — abliteration corrupted the FP16 source model
 
 ## Summary
 
-The GPTQ-quantized Qwen3.5-27B model produces garbage inference output via vLLM on
-AMD gfx1100. Root cause: **`in_proj_ba` layers were not quantized by GPTQModel but
-vLLM's GPTQ loader converts ALL linear layers to QuantLinear**, causing 48 of 64
-layers to operate on random/zero-initialized weights.
+The GPTQ-quantized Qwen3.5-27B model produces garbage inference output on AMD
+gfx1100. **Root cause: abliteration (refusal direction removal) catastrophically
+corrupted the FP16 model weights.** The refusal direction norm of 152.96, applied
+to all 64 layers (including 48 GDN linear attention layers), destroyed the model's
+ability to generate coherent text. GPTQ quantization faithfully preserved the
+already-corrupted weights.
+
+## Investigation Timeline
+
+### Phase 1: vLLM GDN debugging (2026-03-22 – 2026-03-23)
+
+Initial investigation focused on vLLM's Qwen3.5 GDN implementation:
+- Confirmed `in_proj_ba` not quantized by GPTQModel (96×5120 below threshold)
+- Added Patch 16 to `vllm_qwen35_patches.py`: post-load fixup replaces broken
+  `QuantLinear` with `nn.Linear` for unquantized layers
+- Confirmed weight loading correct: contiguous b/a split matches Qwen3.5 layout
+- Confirmed FLA inputs (Q/K/V, gating) have reasonable magnitudes
+- FLA output rapidly decays to near-zero: layer 0 std=0.08, layer 1 std=0.0004
+
+### Phase 2: Bypass vLLM — direct GPTQModel test (2026-03-24)
+
+Deployed `qwen35-gptq-transformers-test.yaml` using the GPTQ quantizer image
+(transformers 5.3.0 + GPTQModel) to test the GPTQ checkpoint without vLLM:
+
+```
+Image: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100
+Kernel: TritonV2QuantLinear
+Model: /models/qwen35-27b-opus-distill-gptq/gptq-w4-g128
+```
+
+**Result: GARBAGE.** All three test prompts produced multilingual noise:
+```
+Response: corrections珠宝首饰 quil珠宝首饰 remarks perpendicular珠宝首饰...
+Top logit for "2+2": "corrections" (not "4")
+```
+
+**Conclusion: The GPTQ weights are bad. Problem is NOT in vLLM.**
+
+### Phase 3: FP16 abliterated source test (2026-03-24)
+
+Deployed `qwen35-fp16-sanity-test.yaml` to test the pre-quantization FP16 model
+(50 safetensors shards, ~54GB BF16) with CPU offload:
+
+```
+Model: /models/qwen35-27b-opus-distill-gptq (parent dir = abliterated FP16)
+Device map: 20 GPU layers + 44 CPU layers
+```
+
+**Result: GARBAGE.** The FP16 model produces identical corruption:
+```
+Response: 錠 USERS institutooge сухо陪护 Plymouth prevalence...
+Top logit for "2+2": "錠" (logit=10.875)
+Entropy ratio: 0.7930 (near uniform = random)
+```
+
+**Conclusion: Abliteration corrupted the FP16 model BEFORE quantization.**
+
+## Root Cause: Aggressive Abliteration
+
+### Abliteration parameters
+
+```json
+{
+  "layersModified": 64,
+  "refusalDirNorm": "152.955399",
+  "maxNormLayer": 63,
+  "numSamples": 128,
+  "status": "complete",
+  "ts": "2026-03-20T16:42:00Z"
+}
+```
+
+### Why abliteration failed on Qwen3.5
+
+1. **All 64 layers modified**: Abliteration applied orthogonal projection to
+   `o_proj`, `out_proj`, and `down_proj` in ALL layers, including 48 GDN linear
+   attention layers with unique properties (non-square weight matrices, decay/gate
+   mechanics)
+
+2. **High refusal direction norm (152.96)**: For comparison, 7B models typically
+   show norms of 20-50. The 27B model's 5120-dim hidden size contributes, but
+   152.96 suggests the computed refusal direction captured significant model
+   capability rather than just refusal behavior
+
+3. **GDN layers are fragile**: The GatedDeltaNet recurrence (S = exp(g)·S + β·Δv⊗k)
+   is sensitive to `out_proj` modifications. Unlike standard attention where the
+   output projection simply remaps attention output, in GDN the output interacts
+   with the residual stream which feeds into subsequent GDN decay/gate computations
+
+4. **Only 128 calibration samples**: Insufficient to separate refusal-specific
+   directions from capability-relevant directions in a 27B parameter model
 
 ## Architecture Background
 
 Qwen3.5-27B uses a hybrid GatedDeltaNet architecture:
 - **48 linear_attention layers** (GDN with conv1d + FLA)
 - **16 full_attention layers** (standard multi-head attention)
+- `decoder_sparse_step: 4` — every 4th layer is full attention
 
-Each linear attention layer has an `in_proj_ba` projection (`[96, 5120]`) that
-projects input hidden states into the `a` and `b` components used by
-`fused_gdn_gating` to compute the decay rate `g` and update gate `beta`.
+Weight matrix shapes (non-square):
+- `o_proj`: [5120, 6144] (output projection for full attention)
+- `out_proj`: [5120, 6144] (output projection for GDN)
+- `down_proj`: [5120, 17408] (MLP down projection)
 
-## Root Cause
+## Previous Findings (Still Valid)
 
-### 1. GPTQModel skips `in_proj_ba` during quantization
+### in_proj_ba not quantized by GPTQModel
 
-GPTQModel 5.8.0 did not quantize the `in_proj_ba` layers. The checkpoint contains:
+GPTQModel 5.8.0 does not quantize `in_proj_ba` layers ([96, 5120]) — too few
+output features. vLLM Patch 16 in `vllm_qwen35_patches.py` handles this by
+replacing broken `QuantLinear` with `nn.Linear` post-load. This is correct
+behavior and NOT the cause of garbage inference.
 
-```
-model.layers.{0..62}.linear_attn.in_proj_ba.weight  → full-precision BF16
-model.layers.{0..62}.linear_attn.in_proj_ba.qweight  → MISSING
-model.layers.{0..62}.linear_attn.in_proj_ba.scales   → MISSING
-```
+### vLLM version severely outdated
 
-This is likely because the layer shape `[96, 5120]` has only 96 output features,
-which may fall below GPTQModel's minimum quantization threshold.
+vLLM commit `e3eb146f7` (2026-02-28, pre-v0.17.0) is missing all Qwen3.5
+fixes. Key missing PRs:
+- #37448: Fix AttributeError in GDN layers with quantized models
+- #36599: Triton autotuner warmup for GDN layers
+- #36720: ROCm worker startup OOM fix
 
-### 2. vLLM's GPTQ loader replaces ALL linear layers with QuantLinear
+Minimum recommended version: **v0.18.0** (2026-03-20).
 
-vLLM does not check whether individual layers have quantized weights in the
-checkpoint. It converts every linear layer to a quantized kernel (ExllamaV2 or
-TritonV2QuantLinear). When `in_proj_ba` loads, the full-precision `.weight` tensor
-is treated as unexpected and discarded; the expected `qweight/scales/qzeros` tensors
-are missing and randomly initialized.
+## Fix Plan
 
-### 3. Cascading corruption
+### Immediate: Re-download + GPTQ quantize (skip abliteration)
 
-With random `in_proj_ba` weights:
-- `a` and `b` projections produce random values
-- `fused_gdn_gating(A_log, a, b, dt_bias)` computes random `g` (decay) and `beta`
-- FLA operates on corrupted Q/K/V/g/beta → garbage attention output
-- All 48 linear attention layers are affected → model output is pure noise
+1. Delete the corrupted FP16 model from GPTQ PVC
+2. Re-download the original `qwen35-27b-opus-distill` model (pre-abliteration)
+3. GPTQ quantize directly (INT4, group_size=128, sym=true)
+4. Test via GPTQModel direct inference first
+5. If good, deploy via vLLM with existing patches
 
-## Evidence
+### Alternative: Use official Qwen/Qwen3.5-27B-GPTQ-Int4
 
-### Diagnostic data from vLLM (before root cause found)
+Pre-quantized by Qwen team, no abliteration. Quick path to verify the full
+GPTQ→vLLM pipeline works on gfx1100.
 
-```
-Layer 0 FLA output: std=0.080     (some signal, first layer)
-Layer 1 FLA output: std=0.000375  (near-zero, corruption accumulates)
-Layer 2 FLA output: std=0.000252  (further decay)
-```
+### Long-term: Fix abliteration for GDN architectures
 
-- Both naive PyTorch and Triton FLA implementations produce identical garbage
-- Hidden states flow correctly through the pipeline (no framework-level corruption)
-- The corruption originates from the FLA INPUTS, not the FLA kernel itself
-
-### Debug job confirmation
-
-The debug job (`deploy/debug/qwen35-gptq-direct-test.yaml`) confirmed:
-
-```
-in_proj_ba full-precision (.weight): 48 tensors
-in_proj_ba quantized (qweight/etc): 0 tensors
-CONFIRMED: in_proj_ba was NOT quantized by GPTQModel
-```
-
-## Fix Options
-
-### Option A: Patch vLLM's GPTQ weight loader (preferred)
-
-Add a check in vLLM's `GptqWeightsLoader` to detect layers that have `.weight` in
-the checkpoint but no `.qweight`. Keep these as regular `nn.Linear` instead of
-converting to `QuantLinear`.
-
-**Files:** `vllm/model_executor/layers/quantization/gptq.py`
-
-This fix handles mixed quantized/unquantized checkpoints generically and would
-benefit any model where some layers are too small to quantize.
-
-### Option B: Re-quantize with explicit target modules
-
-Re-run GPTQModel quantization with `in_proj_ba` explicitly listed in
-`modules_to_not_convert` (or ensure it IS quantized by lowering the threshold).
-
-**Trade-off:** Re-quantization takes ~2 hours on gfx1100 and requires the full
-FP16 model (~54 GB). Option A is faster and more general.
-
-### Option C: Runtime patch in vllm_qwen35_patches.py
-
-Add a section to the existing startup patch that detects unquantized `in_proj_ba`
-layers post-load and replaces the broken `QuantLinear` with `nn.Linear` loaded from
-the checkpoint's full-precision weights.
-
-**Trade-off:** Fragile, model-specific. Option A is better long-term.
+- Skip GDN linear_attention layers (only abliterate full_attention layers)
+- Increase calibration samples (128 → 512+)
+- Add a refusal direction norm sanity check (reject if > 100)
+- Validate model perplexity post-abliteration before proceeding to quantization
 
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `build/scripts/vllm_qwen35_patches.py` | Runtime patches for Qwen3.5 on vLLM |
-| `deploy/debug/qwen35-gptq-direct-test.yaml` | Debug job (ConfigMap + Job) |
+| `deploy/debug/qwen35-gptq-direct-test.yaml` | GPTQ weight validation job |
+| `deploy/debug/qwen35-gptq-transformers-test.yaml` | Direct GPTQModel inference test |
+| `deploy/debug/qwen35-fp16-sanity-test.yaml` | FP16 abliterated model sanity test |
 | `deploy/debug/kustomization.yaml` | Kustomize entry for debug manifests |
+| `controllers/modelcache_abliteration.go` | Abliteration reconciler |
+| `pkg/quantization/abliteration.go` | Abliteration job builder |

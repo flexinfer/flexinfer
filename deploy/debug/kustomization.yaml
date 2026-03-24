@@ -6,3 +6,5 @@ kind: Kustomization
 # Apply manually: kubectl apply -k deploy/debug/
 resources:
   - qwen35-gptq-direct-test.yaml
+  - qwen35-gptq-transformers-test.yaml
+  - qwen35-fp16-sanity-test.yaml

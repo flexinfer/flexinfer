@@ -1,0 +1,299 @@
+# FP16 abliterated model sanity check.
+#
+# Tests the pre-quantization FP16 model to determine if the corruption
+# originates from abliteration (bad source) or GPTQ quantization (bad quant).
+# Uses CPU offload since 54GB FP16 won't fit in 24GB VRAM.
+#
+# Prerequisites:
+#   - vLLM scaled to 0 replicas (GPU must be free)
+#
+# Usage:
+#   kubectl apply -f deploy/debug/qwen35-fp16-sanity-test.yaml
+#   kubectl logs -f job/qwen35-fp16-sanity-test -n flexinfer-system
+#   kubectl delete -f deploy/debug/qwen35-fp16-sanity-test.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qwen35-fp16-sanity-test
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+data:
+  test.py: |
+    #!/usr/bin/env python3
+    """FP16 abliterated model sanity check.
+
+    Tests the pre-quantization FP16 Qwen3.5-27B model using CPU offload.
+    This tells us if abliteration corrupted the model weights.
+    """
+    import sys
+    import os
+    import time
+    import json
+    import traceback
+
+    print("=" * 70)
+    print("FP16 Abliterated Model Sanity Check")
+    print("=" * 70)
+    sys.stdout.flush()
+
+    # The FP16 model is in the parent directory of gptq-w4-g128
+    MODEL_DIR = None
+    for candidate in [
+        "/models/qwen35-27b-opus-distill-gptq",  # FP16 abliterated source
+    ]:
+        if os.path.isdir(candidate) and os.path.exists(os.path.join(candidate, "config.json")):
+            MODEL_DIR = candidate
+            break
+
+    if MODEL_DIR is None:
+        print("ERROR: FP16 model not found")
+        if os.path.isdir("/models"):
+            for root, dirs, files in os.walk("/models"):
+                if "config.json" in files:
+                    print(f"  Found config.json at: {root}")
+                if root.count(os.sep) > 3:
+                    break
+        sys.exit(1)
+
+    print(f"\n[1/5] Model: {MODEL_DIR}")
+    files = sorted(os.listdir(MODEL_DIR))
+    safetensor_files = [f for f in files if f.endswith('.safetensors')]
+    print(f"  Files: {len(files)} total, {len(safetensor_files)} safetensors")
+
+    with open(os.path.join(MODEL_DIR, "config.json")) as f:
+        config = json.load(f)
+    print(f"  model_type: {config.get('model_type')}")
+    print(f"  hidden_size: {config.get('hidden_size')}")
+    print(f"  num_hidden_layers: {config.get('num_hidden_layers')}")
+    qc = config.get("quantization_config")
+    if qc:
+        print(f"  WARNING: config.json has quantization_config — this may be the GPTQ config, not FP16")
+        print(f"    quant_method={qc.get('quant_method')}")
+    sys.stdout.flush()
+
+    # Check abliteration status
+    abl_status = os.path.join(MODEL_DIR, ".abliteration-status.json")
+    if os.path.exists(abl_status):
+        with open(abl_status) as f:
+            status = json.load(f)
+        print(f"\n  Abliteration status: {json.dumps(status, indent=2)[:500]}")
+    else:
+        print(f"\n  No .abliteration-status.json found")
+    sys.stdout.flush()
+
+    # ── Step 2: GPU environment ────────────────────────────────────────
+    print(f"\n[2/5] GPU environment")
+    sys.stdout.flush()
+    import torch
+
+    print(f"  PyTorch: {torch.__version__}")
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            props = torch.cuda.get_device_properties(i)
+            free, total = torch.cuda.mem_get_info(i)
+            print(f"  GPU {i}: {props.name} — {free/1024**3:.1f}/{total/1024**3:.1f} GiB")
+    sys.stdout.flush()
+
+    # ── Step 3: Load model with CPU offload ────────────────────────────
+    print(f"\n[3/5] Loading FP16 model (device_map=auto, CPU offload)...")
+    print(f"  This will be SLOW (~10-20 min) due to CPU offload")
+    sys.stdout.flush()
+
+    import transformers
+    from transformers import AutoTokenizer, AutoModelForCausalLM
+
+    print(f"  transformers: {transformers.__version__}")
+
+    # Create a temp dir without quantization_config for FP16 loading
+    WORK_DIR = "/tmp/model-fp16"
+    os.makedirs(WORK_DIR, exist_ok=True)
+    for f in files:
+        src = os.path.join(MODEL_DIR, f)
+        dst = os.path.join(WORK_DIR, f)
+        if os.path.lexists(dst):
+            os.remove(dst)
+        os.symlink(src, dst)
+
+    # Replace config without quantization_config
+    dst_config = os.path.join(WORK_DIR, "config.json")
+    if os.path.lexists(dst_config):
+        os.remove(dst_config)
+    fp16_config = dict(config)
+    fp16_config.pop("quantization_config", None)
+    with open(dst_config, "w") as f:
+        json.dump(fp16_config, f, indent=2)
+    print(f"  Removed quantization_config from config for FP16 loading")
+    sys.stdout.flush()
+
+    t0 = time.time()
+    tokenizer = AutoTokenizer.from_pretrained(WORK_DIR, trust_remote_code=True)
+    print(f"  Tokenizer loaded ({time.time()-t0:.1f}s)")
+    sys.stdout.flush()
+
+    t1 = time.time()
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            WORK_DIR,
+            device_map="auto",
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+            low_cpu_mem_usage=True,
+        )
+        print(f"  Model loaded ({time.time()-t1:.1f}s)")
+        print(f"  Class: {model.__class__.__name__}")
+
+        # Show device map summary
+        dm = getattr(model, 'hf_device_map', {})
+        gpu_layers = sum(1 for v in dm.values() if 'cuda' in str(v))
+        cpu_layers = sum(1 for v in dm.values() if v == 'cpu')
+        disk_layers = sum(1 for v in dm.values() if v == 'disk')
+        print(f"  Device map: {gpu_layers} GPU, {cpu_layers} CPU, {disk_layers} disk")
+    except Exception as e:
+        print(f"  ERROR loading: {e}")
+        traceback.print_exc()
+        sys.exit(1)
+
+    if torch.cuda.is_available():
+        alloc = torch.cuda.memory_allocated(0) / 1024**3
+        print(f"  GPU 0: {alloc:.2f} GiB allocated")
+    sys.stdout.flush()
+
+    # ── Step 4: Quick inference test ───────────────────────────────────
+    print(f"\n[4/5] Running inference (will be slow with CPU offload)")
+    sys.stdout.flush()
+
+    prompt = "What is 2+2? Reply with just the number."
+    messages = [{"role": "user", "content": prompt}]
+    try:
+        text = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True)
+    except Exception:
+        text = prompt
+
+    inputs = tokenizer(text, return_tensors="pt").to(model.device)
+    input_len = inputs["input_ids"].shape[1]
+    print(f"  Input tokens: {input_len}")
+    sys.stdout.flush()
+
+    t0 = time.time()
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=32,
+            do_sample=False,
+        )
+    gen_time = time.time() - t0
+    new_tokens = outputs.shape[1] - input_len
+    response = tokenizer.decode(outputs[0][input_len:], skip_special_tokens=True)
+    print(f"  {new_tokens} tokens in {gen_time:.2f}s")
+    print(f"  Response: {response[:300]}")
+
+    if "4" in response[:10]:
+        print(f"\n  PASS: FP16 model produces correct output — abliteration OK")
+        print(f"  CONCLUSION: GPTQ quantization corrupted the weights")
+    else:
+        unique_chars = len(set(response[:100]))
+        if unique_chars < 10 or any(x in response for x in ["珠宝", "corrections", "sessionId"]):
+            print(f"\n  FAIL: FP16 model also produces garbage — abliteration corrupted the model")
+        else:
+            print(f"\n  UNCLEAR: Response doesn't contain '4' but may not be garbage")
+            print(f"  Manual review needed")
+    sys.stdout.flush()
+
+    # ── Step 5: Logit check ────────────────────────────────────────────
+    print(f"\n[5/5] Logit analysis")
+    sys.stdout.flush()
+
+    with torch.no_grad():
+        out = model(**inputs)
+        logits = out.logits[0, -1, :].float()
+
+        top5_vals, top5_ids = torch.topk(logits, k=5)
+        print(f"  Top-5 logits for '2+2':")
+        for i in range(5):
+            tid = top5_ids[i].item()
+            tstr = tokenizer.decode([tid])
+            print(f"    #{i+1}: id={tid} '{tstr}' logit={top5_vals[i].item():.4f}")
+
+        entropy = -torch.sum(torch.softmax(logits, dim=0) * torch.log_softmax(logits, dim=0)).item()
+        max_entropy = torch.log(torch.tensor(float(logits.shape[0]))).item()
+        print(f"  Entropy ratio: {entropy/max_entropy:.4f}")
+
+    print(f"\n{'='*70}")
+    print("FP16 sanity check complete.")
+    print(f"{'='*70}")
+    sys.stdout.flush()
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen35-fp16-sanity-test
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-7900xtx
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: test
+          image: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-c"]
+          workingDir: /tmp
+          args:
+            - |
+              set -euo pipefail
+              echo "=== FP16 Sanity Test ==="
+              free -h | head -3
+              python3 /scripts/test.py 2>&1
+          resources:
+            requests:
+              cpu: "4"
+              memory: "48Gi"
+              amd.com/gpu: "1"
+            limits:
+              cpu: "8"
+              memory: "56Gi"
+              amd.com/gpu: "1"
+          env:
+            - name: HF_HUB_OFFLINE
+              value: "1"
+            - name: TRANSFORMERS_OFFLINE
+              value: "1"
+            - name: HF_HUB_DISABLE_XET
+              value: "1"
+            - name: PYTORCH_HIP_ALLOC_CONF
+              value: "expandable_segments:True"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: qwen35-27b-opus-distill-gptq
+        - name: scripts
+          configMap:
+            name: qwen35-fp16-sanity-test
+        - name: tmp
+          emptyDir:
+            sizeLimit: "20Gi"
