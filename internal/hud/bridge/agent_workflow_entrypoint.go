@@ -58,12 +58,32 @@ func (a *AgentBridge) WorkStart(p WorkStartParams) (*WorkStartResult, error) {
 		return nil, fmt.Errorf("worktree_branch is required")
 	}
 
+	// Resolve the pipeline link as early as possible so the session, task, and
+	// later context entries all point at the same pipeline identity.
+	pipelineRef := p.PipelineRef
+	if pipelineRef == nil && len(p.PipelineProjects) > 0 {
+		pipelineRef = a.FindPipelineForBranch(p.PipelineProjects, branchName)
+	}
+
 	startResult, err := a.StartSession(SessionStartParams{
 		Namespace:   strings.TrimSpace(p.Namespace),
+		Project:     ProjectFromNamespace(strings.TrimSpace(p.Namespace)),
 		AgentID:     agentID,
 		AgentType:   strings.TrimSpace(p.AgentType),
 		Description: strings.TrimSpace(p.Description),
 		AutoRecall:  false,
+		PipelineProject: func() string {
+			if pipelineRef != nil {
+				return strings.TrimSpace(pipelineRef.Project)
+			}
+			return ""
+		}(),
+		PipelineID: func() int {
+			if pipelineRef != nil {
+				return pipelineRef.ID
+			}
+			return 0
+		}(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("work-start step=session-start: %w", err)
@@ -88,8 +108,8 @@ func (a *AgentBridge) WorkStart(p WorkStartParams) (*WorkStartResult, error) {
 		return nil, fmt.Errorf("work-start step=worktree-allocate session_id=%s: empty assignment_id", sessionID)
 	}
 
-	// Auto-detect pipeline for the branch if not explicitly provided.
-	pipelineRef := p.PipelineRef
+	// Retry pipeline discovery after worktree allocation in case branch naming
+	// was rewritten by the worktree allocator.
 	if pipelineRef == nil && len(p.PipelineProjects) > 0 {
 		branch := strings.TrimSpace(worktree.Branch)
 		if branch == "" {

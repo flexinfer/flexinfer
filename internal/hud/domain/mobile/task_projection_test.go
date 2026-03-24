@@ -223,6 +223,9 @@ func TestHandleMobileTasksProjectsCurrentTaskAndPreservesExplicitMetadata(t *tes
 	if explicit["workflow_id"] != "wf-1" {
 		t.Fatalf("expected workflow_id to be preserved, got %v", explicit["workflow_id"])
 	}
+	if explicit["project"] != "services/loom-core" {
+		t.Fatalf("expected project services/loom-core, got %v", explicit["project"])
+	}
 	if got, ok := explicit["pipeline_ref"].(map[string]any); !ok || got["id"] != float64(101) {
 		t.Fatalf("expected pipeline_ref to be preserved, got %#v", explicit["pipeline_ref"])
 	}
@@ -239,6 +242,9 @@ func TestHandleMobileTasksProjectsCurrentTaskAndPreservesExplicitMetadata(t *tes
 	}
 	if projected["session_id"] != "sess-2" {
 		t.Fatalf("expected projected session_id=sess-2, got %v", projected["session_id"])
+	}
+	if projected["project"] != "ns-2" {
+		t.Fatalf("expected projected project ns-2, got %v", projected["project"])
 	}
 
 	counts, ok := data["counts"].(map[string]any)
@@ -323,6 +329,12 @@ func TestHandleMobileAgentsUsesNormalizedTaskFeed(t *testing.T) {
 	}
 	if got := byID["agent-2"]["blocked_tasks"]; got != float64(1) {
 		t.Fatalf("expected agent-2 blocked_tasks=1, got %v", got)
+	}
+	if got := byID["agent-1"]["project"]; got != "ns-1" {
+		t.Fatalf("expected agent-1 project=ns-1, got %v", got)
+	}
+	if got := byID["agent-2"]["project"]; got != "ns-2" {
+		t.Fatalf("expected agent-2 project=ns-2, got %v", got)
 	}
 	if _, ok := byID["agent-3"]; !ok {
 		t.Fatal("expected offline agent to remain in response")

@@ -13,6 +13,7 @@ func TestAgentBridge_WorkStart_Success(t *testing.T) {
 	var taskAddSeen bool
 	var taskUpdateSeen bool
 	var heartbeatSeen bool
+	var sessionStartSeen bool
 
 	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
 		var req struct {
@@ -30,6 +31,16 @@ func TestAgentBridge_WorkStart_Success(t *testing.T) {
 				"content": []map[string]any{{"type": "text", "text": `{"sessions":[]}`}},
 			}, nil
 		case "agent_context__agent_session_start":
+			sessionStartSeen = true
+			if got, _ := req.Arguments["project"].(string); got != "services/loom-core" {
+				t.Fatalf("expected session project services/loom-core, got %q", got)
+			}
+			if got, _ := req.Arguments["pipeline_project"].(string); got != "services/loom-core" {
+				t.Fatalf("expected session pipeline_project services/loom-core, got %q", got)
+			}
+			if got, _ := req.Arguments["pipeline_id"].(float64); int(got) != 101 {
+				t.Fatalf("expected session pipeline_id 101, got %#v", req.Arguments["pipeline_id"])
+			}
 			return map[string]any{
 				"isError": false,
 				"content": []map[string]any{{"type": "text", "text": `{"session_id":"sess-1"}`}},
@@ -44,6 +55,20 @@ func TestAgentBridge_WorkStart_Success(t *testing.T) {
 			}, nil
 		case "agent_context__agent_task_add":
 			taskAddSeen = true
+			tasks, ok := req.Arguments["tasks"].([]any)
+			if !ok || len(tasks) != 1 {
+				t.Fatalf("expected one task payload, got %#v", req.Arguments["tasks"])
+			}
+			task, ok := tasks[0].(map[string]any)
+			if !ok {
+				t.Fatalf("expected task object, got %#v", tasks[0])
+			}
+			if got, _ := task["workflow_id"].(string); got != "wf-77" {
+				t.Fatalf("expected task workflow_id wf-77, got %q", got)
+			}
+			if ref, ok := task["pipeline_ref"].(map[string]any); !ok || int(ref["id"].(float64)) != 101 {
+				t.Fatalf("expected task pipeline_ref id 101, got %#v", task["pipeline_ref"])
+			}
 			return map[string]any{
 				"isError": false,
 				"content": []map[string]any{{"type": "text", "text": `{"task_ids":["task-1"]}`}},
@@ -85,6 +110,8 @@ func TestAgentBridge_WorkStart_Success(t *testing.T) {
 		TaskTitle:       "Implement consistency hardening",
 		TaskPriority:    "high",
 		HeartbeatFiles:  []string{"internal/hud/bridge/agent.go"},
+		PipelineRef:     &PipelineRef{ID: 101, Project: "services/loom-core", Ref: "main"},
+		WorkflowID:      "wf-77",
 	})
 	if err != nil {
 		t.Fatalf("work-start failed: %v", err)
@@ -92,8 +119,8 @@ func TestAgentBridge_WorkStart_Success(t *testing.T) {
 	if result == nil || result.SessionID != "sess-1" || result.AssignmentID != "wt-1" || result.TaskID != "task-1" {
 		t.Fatalf("unexpected work-start result: %#v", result)
 	}
-	if !worktreeSeen || !taskAddSeen || !taskUpdateSeen || !heartbeatSeen {
-		t.Fatalf("expected all workflow steps to execute (worktree=%v task_add=%v task_update=%v heartbeat=%v)", worktreeSeen, taskAddSeen, taskUpdateSeen, heartbeatSeen)
+	if !sessionStartSeen || !worktreeSeen || !taskAddSeen || !taskUpdateSeen || !heartbeatSeen {
+		t.Fatalf("expected all workflow steps to execute (session_start=%v worktree=%v task_add=%v task_update=%v heartbeat=%v)", sessionStartSeen, worktreeSeen, taskAddSeen, taskUpdateSeen, heartbeatSeen)
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
@@ -23,6 +22,7 @@ import (
 	"github.com/crb2nu/loom/internal/hud/domain/workflow"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 	pkgspawn "github.com/crb2nu/loom/internal/spawn"
+	"github.com/crb2nu/loom/pkg/projectmeta"
 )
 
 // initDomainRegistry creates and populates the domain registry. Called from
@@ -120,10 +120,7 @@ func (a *App) MaybeAutoProvisionSandbox(namespace string) {
 		return
 	}
 
-	project := namespace
-	if i := strings.Index(namespace, "/"); i > 0 {
-		project = namespace[:i]
-	}
+	project := projectmeta.FromNamespace(namespace)
 	if project == "" {
 		return
 	}

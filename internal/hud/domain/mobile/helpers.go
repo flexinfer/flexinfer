@@ -141,6 +141,7 @@ func MapMobileTask(task bridge.TaskInfo) taskDTO {
 		SessionID:      task.SessionID,
 		AgentID:        task.AgentID,
 		Namespace:      task.Namespace,
+		Project:        bridge.CanonicalProject(task.Project, task.Namespace, task.PipelineRef),
 		Title:          task.Title,
 		Context:        task.Context,
 		Priority:       normalizeMobilePriority(task.Priority),

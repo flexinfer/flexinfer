@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/crb2nu/loom/pkg/projectmeta"
 )
 
 // --- Session lifecycle DTOs ---
@@ -12,6 +14,7 @@ import (
 // SessionStartParams holds parameters for starting an agent session.
 type SessionStartParams struct {
 	Namespace             string `json:"namespace"`
+	Project               string `json:"project,omitempty"`
 	AgentID               string `json:"agent_id"`
 	AgentType             string `json:"agent_type"`
 	Description           string `json:"description"`
@@ -191,8 +194,21 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 		"namespace":   p.Namespace,
 		"description": p.Description,
 	}
+	project := projectmeta.Canonical(p.Project, p.Namespace)
+	if strings.TrimSpace(p.PipelineProject) != "" {
+		project = projectmeta.Canonical(p.PipelineProject, p.Namespace)
+	}
+	if project != "" {
+		args["project"] = project
+	}
 	if p.AgentID != "" {
 		args["agent_id"] = p.AgentID
+	}
+	if p.PipelineProject != "" {
+		args["pipeline_project"] = p.PipelineProject
+	}
+	if p.PipelineID > 0 {
+		args["pipeline_id"] = p.PipelineID
 	}
 	var sessionResult struct {
 		SessionID string `json:"session_id"`

@@ -467,6 +467,16 @@ func TestAgentBridge_CreateTask_UsesTasksArrayShape(t *testing.T) {
 		if got, _ := task["title"].(string); got != "Fix HUD sync" {
 			t.Fatalf("expected title, got %q", got)
 		}
+		if got, _ := task["project"].(string); got != "services/loom-core" {
+			t.Fatalf("expected project services/loom-core, got %q", got)
+		}
+		pipelineRef, ok := task["pipeline_ref"].(map[string]any)
+		if !ok || int(pipelineRef["id"].(float64)) != 42 {
+			t.Fatalf("expected pipeline_ref id 42, got %#v", task["pipeline_ref"])
+		}
+		if got, _ := task["workflow_id"].(string); got != "wf-77" {
+			t.Fatalf("expected workflow_id wf-77, got %q", got)
+		}
 		return map[string]any{
 			"isError": false,
 			"content": []map[string]any{
@@ -486,7 +496,14 @@ func TestAgentBridge_CreateTask_UsesTasksArrayShape(t *testing.T) {
 		SessionID: "sess-1",
 		Title:     "Fix HUD sync",
 		Priority:  "high",
+		Project:   "services/loom-core",
 		Context:   "update task payload shape",
+		PipelineRef: &PipelineRef{
+			ID:      42,
+			Project: "services/loom-core",
+			Ref:     "main",
+		},
+		WorkflowID: "wf-77",
 	})
 	if err != nil {
 		t.Fatalf("create task failed: %v", err)
@@ -1264,6 +1281,13 @@ func TestAgentBridge_StartSession_ExistingSessionCanStillReturnBriefing(t *testi
 					{"type": "text", "text": `{"sessions":[{"id":"sess-existing","agent_id":"codex-gpt5","namespace":"loom-core/main","status":"active"}]}`},
 				},
 			}, nil
+		case "agent_context__agent_presence_register":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"ok":true}`},
+				},
+			}, nil
 		case "agent_context__agent_recall":
 			recallCalls++
 			return map[string]any{
@@ -1372,6 +1396,15 @@ func TestAgentBridge_StartSession_IdempotentForSameNamespace(t *testing.T) {
 			}, nil
 		case "agent_context__agent_session_start":
 			sessionStartCalls++
+			if got, _ := req.Arguments["project"].(string); got != "services/loom-core" {
+				t.Fatalf("expected project services/loom-core, got %q", got)
+			}
+			if got, _ := req.Arguments["pipeline_project"].(string); got != "services/loom-core" {
+				t.Fatalf("expected pipeline_project services/loom-core, got %q", got)
+			}
+			if got, _ := req.Arguments["pipeline_id"].(float64); int(got) != 4242 {
+				t.Fatalf("expected pipeline_id 4242, got %#v", req.Arguments["pipeline_id"])
+			}
 			return map[string]any{
 				"isError": false,
 				"content": []map[string]any{
@@ -1471,9 +1504,12 @@ func TestAgentBridge_StartSession_NewNamespaceStartsNewSession(t *testing.T) {
 
 	bridge := NewAgentBridge(client)
 	result, err := bridge.StartSession(SessionStartParams{
-		Namespace: "loom-core/new",
-		AgentID:   "codex-gpt5",
-		AgentType: "codex",
+		Namespace:       "loom-core/new",
+		Project:         "services/loom-core",
+		AgentID:         "codex-gpt5",
+		AgentType:       "codex",
+		PipelineProject: "services/loom-core",
+		PipelineID:      4242,
 	})
 	if err != nil {
 		t.Fatalf("start session failed: %v", err)

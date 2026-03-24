@@ -89,6 +89,7 @@ func (ts *TaskSvc) Add(ctx context.Context, args map[string]any) (*mcp.CallToolR
 			SessionID:  sessionID,
 			AgentID:    session.AgentID,
 			Namespace:  session.Namespace,
+			Project:    session.Project,
 			Title:      title,
 			Context:    toString(m["context"]),
 			Priority:   priority,
@@ -101,6 +102,9 @@ func (ts *TaskSvc) Add(ctx context.Context, args map[string]any) (*mcp.CallToolR
 			UpdatedAt:  now,
 			TokenCount: EstimateTokens(title + " " + toString(m["context"])),
 		}
+		task.PipelineRef = pipelineRefFromValue(m["pipeline_ref"])
+		task.WorkflowID = toString(m["workflow_id"])
+		task.Project = canonicalProject(toString(m["project"]), task.Namespace, task.PipelineRef)
 
 		tasks = append(tasks, task)
 		embedTexts = append(embedTexts, task.Title+" "+task.Context)
@@ -169,6 +173,9 @@ func (ts *TaskSvc) Update(ctx context.Context, args map[string]any) (*mcp.CallTo
 	taskID := v.Required("task_id")
 	statusStr := v.String("status", "")
 	resolution := v.String("resolution", "")
+	project := v.String("project", "")
+	pipelineRef := pipelineRefFromValue(args["pipeline_ref"])
+	workflowID := v.String("workflow_id", "")
 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
@@ -193,6 +200,13 @@ func (ts *TaskSvc) Update(ctx context.Context, args map[string]any) (*mcp.CallTo
 	if resolution != "" {
 		task.Resolution = resolution
 	}
+	if pipelineRef != nil {
+		task.PipelineRef = pipelineRef
+	}
+	if workflowID != "" {
+		task.WorkflowID = workflowID
+	}
+	task.Project = canonicalProject(project, task.Namespace, task.PipelineRef)
 	task.UpdatedAt = time.Now()
 
 	if status == TaskStatusCompleted {
@@ -399,11 +413,12 @@ func (ts *TaskSvc) StopReconciler() {
 // --- Payload converters ---
 
 func taskToPayload(t Task) map[string]any {
-	return map[string]any{
+	payload := map[string]any{
 		"id":          t.ID,
 		"session_id":  t.SessionID,
 		"agent_id":    t.AgentID,
 		"namespace":   t.Namespace,
+		"project":     canonicalProject(t.Project, t.Namespace, t.PipelineRef),
 		"title":       t.Title,
 		"context":     t.Context,
 		"priority":    string(t.Priority),
@@ -419,6 +434,16 @@ func taskToPayload(t Task) map[string]any {
 		"updated_at":  t.UpdatedAt.Format(time.RFC3339Nano),
 		"token_count": t.TokenCount,
 	}
+	if t.PipelineRef != nil {
+		payload["pipeline_ref"] = pipelineRefToPayload(t.PipelineRef)
+	}
+	if t.WorkflowID != "" {
+		payload["workflow_id"] = t.WorkflowID
+	}
+	if t.CompletedAt != nil {
+		payload["completed_at"] = t.CompletedAt.Format(time.RFC3339Nano)
+	}
+	return payload
 }
 
 func payloadToTask(payload map[string]any) (*Task, error) {
@@ -427,23 +452,27 @@ func payloadToTask(payload map[string]any) (*Task, error) {
 	}
 
 	task := &Task{
-		ID:         toString(payload["id"]),
-		SessionID:  toString(payload["session_id"]),
-		AgentID:    toString(payload["agent_id"]),
-		Namespace:  toString(payload["namespace"]),
-		Title:      toString(payload["title"]),
-		Context:    toString(payload["context"]),
-		Priority:   TaskPriority(toString(payload["priority"])),
-		Status:     TaskStatus(toString(payload["status"])),
-		Resolution: toString(payload["resolution"]),
-		FilePath:   toString(payload["file_path"]),
-		LineNumber: toInt(payload["line_number"]),
-		Symbol:     toString(payload["symbol"]),
-		Tags:       toStringSlice(payload["tags"]),
-		BlockedBy:  toStringSlice(payload["blocked_by"]),
-		ParentID:   toString(payload["parent_id"]),
-		TokenCount: toInt(payload["token_count"]),
+		ID:          toString(payload["id"]),
+		SessionID:   toString(payload["session_id"]),
+		AgentID:     toString(payload["agent_id"]),
+		Namespace:   toString(payload["namespace"]),
+		Project:     toString(payload["project"]),
+		Title:       toString(payload["title"]),
+		Context:     toString(payload["context"]),
+		Priority:    TaskPriority(toString(payload["priority"])),
+		Status:      TaskStatus(toString(payload["status"])),
+		Resolution:  toString(payload["resolution"]),
+		FilePath:    toString(payload["file_path"]),
+		LineNumber:  toInt(payload["line_number"]),
+		Symbol:      toString(payload["symbol"]),
+		Tags:        toStringSlice(payload["tags"]),
+		BlockedBy:   toStringSlice(payload["blocked_by"]),
+		ParentID:    toString(payload["parent_id"]),
+		PipelineRef: pipelineRefFromValue(payload["pipeline_ref"]),
+		WorkflowID:  toString(payload["workflow_id"]),
+		TokenCount:  toInt(payload["token_count"]),
 	}
+	task.Project = canonicalProject(task.Project, task.Namespace, task.PipelineRef)
 
 	if ts := toString(payload["created_at"]); ts != "" {
 		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {

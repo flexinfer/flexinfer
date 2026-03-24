@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/monitor"
+	"github.com/crb2nu/loom/pkg/projectmeta"
 )
 
 // TopologyNode represents an agent in the topology graph.
@@ -201,18 +202,10 @@ func computeTopology(snap monitor.FleetSnapshot, a *App) TopologyGraph {
 
 // extractProjectFromNS extracts the project name from a namespace string.
 func extractProjectFromNS(ns string) string {
-	if ns == "" {
-		return "(ungrouped)"
+	if project := projectmeta.FromNamespace(ns); project != "" {
+		return project
 	}
-	for i, c := range ns {
-		if c == '/' {
-			if i > 0 {
-				return ns[:i]
-			}
-			return "(ungrouped)"
-		}
-	}
-	return ns
+	return "(ungrouped)"
 }
 
 // appendUnique appends s to the slice only if not already present.

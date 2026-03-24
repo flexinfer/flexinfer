@@ -164,11 +164,13 @@ func TestSessionToPayload(t *testing.T) {
 		ID:            "session-123",
 		AgentID:       "agent-456",
 		Namespace:     "test",
+		Project:       "services/loom-core",
 		StartedAt:     now,
 		EndedAt:       &endedAt,
 		Status:        "active",
 		Description:   "Test session",
 		WorkingDir:    "/tmp/test",
+		PipelineRef:   &PipelineRef{ID: 42, Project: "services/loom-core", Ref: "main", WebURL: "https://example.invalid/pipelines/42"},
 		EntryCount:    10,
 		TotalTokens:   500,
 		LastSummaryAt: &lastSummary,
@@ -185,8 +187,14 @@ func TestSessionToPayload(t *testing.T) {
 	if payload["status"] != session.Status {
 		t.Errorf("payload status = %v, want %v", payload["status"], session.Status)
 	}
+	if payload["project"] != session.Project {
+		t.Errorf("payload project = %v, want %v", payload["project"], session.Project)
+	}
 	if payload["entry_count"] != session.EntryCount {
 		t.Errorf("payload entry_count = %v, want %v", payload["entry_count"], session.EntryCount)
+	}
+	if payload["pipeline_ref"] == nil {
+		t.Error("payload pipeline_ref should not be nil")
 	}
 	if payload["ended_at"] == nil {
 		t.Error("payload ended_at should not be nil")
@@ -202,11 +210,13 @@ func TestPayloadToSession(t *testing.T) {
 		"id":           "session-123",
 		"agent_id":     "agent-456",
 		"namespace":    "test",
+		"project":      "services/loom-core",
 		"started_at":   now.Format(time.RFC3339Nano),
 		"ended_at":     now.Add(time.Hour).Format(time.RFC3339Nano),
 		"status":       "active",
 		"description":  "Test session",
 		"working_dir":  "/tmp/test",
+		"pipeline_ref": map[string]any{"id": float64(42), "project": "services/loom-core", "ref": "main", "web_url": "https://example.invalid/pipelines/42"},
 		"entry_count":  float64(10),
 		"total_tokens": float64(500),
 	}
@@ -225,8 +235,14 @@ func TestPayloadToSession(t *testing.T) {
 	if session.Status != "active" {
 		t.Errorf("session Status = %v, want active", session.Status)
 	}
+	if session.Project != "services/loom-core" {
+		t.Errorf("session Project = %v, want services/loom-core", session.Project)
+	}
 	if session.EntryCount != 10 {
 		t.Errorf("session EntryCount = %v, want 10", session.EntryCount)
+	}
+	if session.PipelineRef == nil || session.PipelineRef.ID != 42 {
+		t.Errorf("session PipelineRef = %#v, want pipeline 42", session.PipelineRef)
 	}
 	if session.EndedAt == nil {
 		t.Error("session EndedAt should not be nil")

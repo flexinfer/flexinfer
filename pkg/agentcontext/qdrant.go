@@ -646,12 +646,16 @@ func SessionToPayload(s Session) map[string]any {
 		"id":           s.ID,
 		"agent_id":     s.AgentID,
 		"namespace":    s.Namespace,
+		"project":      canonicalProject(s.Project, s.Namespace, s.PipelineRef),
 		"started_at":   s.StartedAt.Format(time.RFC3339Nano),
 		"status":       s.Status,
 		"description":  s.Description,
 		"working_dir":  s.WorkingDir,
 		"entry_count":  s.EntryCount,
 		"total_tokens": s.TotalTokens,
+	}
+	if s.PipelineRef != nil {
+		payload["pipeline_ref"] = pipelineRefToPayload(s.PipelineRef)
 	}
 	if s.EndedAt != nil {
 		payload["ended_at"] = s.EndedAt.Format(time.RFC3339Nano)
@@ -671,12 +675,15 @@ func PayloadToSession(payload map[string]any) (*Session, error) {
 		ID:          toString(payload["id"]),
 		AgentID:     toString(payload["agent_id"]),
 		Namespace:   toString(payload["namespace"]),
+		Project:     toString(payload["project"]),
 		Status:      toString(payload["status"]),
 		Description: toString(payload["description"]),
 		WorkingDir:  toString(payload["working_dir"]),
 		EntryCount:  toInt(payload["entry_count"]),
 		TotalTokens: toInt(payload["total_tokens"]),
+		PipelineRef: pipelineRefFromValue(payload["pipeline_ref"]),
 	}
+	session.Project = canonicalProject(session.Project, session.Namespace, session.PipelineRef)
 
 	if ts := toString(payload["started_at"]); ts != "" {
 		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
