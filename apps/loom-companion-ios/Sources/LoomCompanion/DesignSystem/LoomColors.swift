@@ -80,11 +80,12 @@ enum LoomColors {
 
     static func agentTypeColor(_ type: String) -> Color {
         switch type.lowercased() {
-        case "claude-code", "claude": return Color(red: 0.85, green: 0.55, blue: 0.25) // warm amber
-        case "gemini": return Color(red: 0.3, green: 0.65, blue: 0.95)                 // sky blue
-        case "codex": return Color(red: 0.4, green: 0.8, blue: 0.4)                    // soft green
-        case "kilocode": return Color(red: 0.7, green: 0.4, blue: 0.9)                 // purple
-        case "antigravity": return Color(red: 0.95, green: 0.4, blue: 0.4)             // coral
+        case "claude-code", "claude": return Color(red: 0.91, green: 0.36, blue: 0.45) // #E95D74
+        case "gemini": return Color(red: 0.00, green: 0.53, blue: 0.60)                // #018799
+        case "codex": return Color(red: 0.13, green: 0.70, blue: 0.33)                 // #22B255
+        case "copilot": return Color(red: 0.91, green: 0.70, blue: 0.07)               // #E7B312
+        case "kilocode": return Color(red: 0.70, green: 0.40, blue: 0.90)              // purple
+        case "antigravity": return Color(red: 0.95, green: 0.40, blue: 0.40)           // coral
         default: return statusInfo
         }
     }

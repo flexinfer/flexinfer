@@ -70,7 +70,12 @@
         enterkeyhint="search"
         data-panel-search="primary"
       />
-      {#if showShortcutHint}
+      {#if search}
+        <button class="filter-bar-clear-search" onclick={() => { if (onSearch) onSearch(''); }} aria-label="Clear search" title="Clear search">
+          &times;
+        </button>
+      {/if}
+      {#if showShortcutHint && !search}
         <kbd class="filter-bar-shortcut">{shortcutKey}</kbd>
       {/if}
     </div>
@@ -174,6 +179,29 @@
     padding: 3px 5px;
     background: color-mix(in srgb, var(--bg-secondary) 85%, transparent);
     pointer-events: none;
+  }
+
+  .filter-bar-clear-search {
+    position: absolute;
+    right: var(--space-2);
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--fg-muted);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .filter-bar-clear-search:hover {
+    color: var(--fg-primary);
+    background: var(--bg-tertiary);
   }
 
   .filter-bar-select {

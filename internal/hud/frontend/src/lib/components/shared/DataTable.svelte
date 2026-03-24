@@ -286,6 +286,10 @@
     vertical-align: middle;
   }
 
+  .data-table tbody tr:nth-child(even) td {
+    background: rgba(0, 46, 52, 0.2); /* very subtle var(--bg-tertiary) mix */
+  }
+
   .data-table.stable-layout thead th,
   .data-table.stable-layout tbody td {
     min-width: 0;
