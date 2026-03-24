@@ -14,6 +14,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   source: "oci://registry.harbor.lan/flexinfer/qwen35-27b-opus-distill:gptq-w4-g128"
+  modelPath: "qwen35-27b-opus-distill"
   storageStrategy: SharedPVC
   storageSize: "25Gi"
   clusterStorageClassName: nvme-1r-gpu
