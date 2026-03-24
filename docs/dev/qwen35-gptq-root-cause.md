@@ -132,11 +132,33 @@ Minimum recommended version: **v0.18.0** (2026-03-20).
 
 ### Immediate: Re-download + GPTQ quantize (skip abliteration)
 
-1. Delete the corrupted FP16 model from GPTQ PVC
-2. Re-download the original `qwen35-27b-opus-distill` model (pre-abliteration)
-3. GPTQ quantize directly (INT4, group_size=128, sym=true)
+Tracking issue: [#51](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/51)
+
+1. ~~Delete the corrupted FP16 model from GPTQ PVC~~ **Done** (2026-03-24)
+2. ~~Re-download the original `qwen35-27b-opus-distill` model (pre-abliteration)~~ **Done** (2026-03-24, 9m49s)
+3. GPTQ quantize directly (INT4, group_size=128, sym=true) — **in progress**
 4. Test via GPTQModel direct inference first
 5. If good, deploy via vLLM with existing patches
+
+#### Quantization meta tensor crash (2026-03-24)
+
+After re-download, GPTQ quantization failed 3/3 attempts on radeonvii (gfx906) with:
+
+```
+NotImplementedError: Cannot copy out of meta tensor; no data!
+  at gptqmodel/models/base.py:1532 in shell_module_materialize
+```
+
+**Root cause**: The controller injects `init_empty_weights()` + `load_checkpoint_in_model()`
+to reduce peak RSS during model loading. This creates meta tensors (0 bytes) which
+GPTQModel's `shell_module_materialize` cannot `.to(device)`.
+
+The injection was needed on 7900xtx (62GB RAM) but radeonvii has 128GB — the 54GB model
+fits in CPU memory without the meta device hack.
+
+**Fix**: `pkg/quantization/gptq.go` — force `QUANTIZE_DEVICE_MAP=cpu` when `gpuArch == gfx906`.
+This skips the meta tensor injection. GPTQModel loads the model normally on CPU and still
+uses the GPU for actual GPTQ matrix operations via its internal layer-by-layer mechanism.
 
 ### Alternative: Use official Qwen/Qwen3.5-27B-GPTQ-Int4
 
@@ -144,6 +166,8 @@ Pre-quantized by Qwen team, no abliteration. Quick path to verify the full
 GPTQ→vLLM pipeline works on gfx1100.
 
 ### Long-term: Fix abliteration for GDN architectures
+
+Tracking issue: [#52](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/52)
 
 - Skip GDN linear_attention layers (only abliterate full_attention layers)
 - Increase calibration samples (128 → 512+)
@@ -159,5 +183,7 @@ GPTQ→vLLM pipeline works on gfx1100.
 | `deploy/debug/qwen35-gptq-transformers-test.yaml` | Direct GPTQModel inference test |
 | `deploy/debug/qwen35-fp16-sanity-test.yaml` | FP16 abliterated model sanity test |
 | `deploy/debug/kustomization.yaml` | Kustomize entry for debug manifests |
+| `deploy/modelcaches/abliteration-gptq.yaml` | ModelCache manifest (abliteration removed) |
 | `controllers/modelcache_abliteration.go` | Abliteration reconciler |
 | `pkg/quantization/abliteration.go` | Abliteration job builder |
+| `pkg/quantization/gptq.go` | GPTQ job builder (gfx906 device_map fix) |
