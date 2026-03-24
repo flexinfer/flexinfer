@@ -141,12 +141,54 @@ func TestInitTracerWithOptions_SampleRate(t *testing.T) {
 	assert.NoError(t, shutdown(context.Background()))
 }
 
-func TestInitTracerWithOptions_GRPCProtocolError(t *testing.T) {
+func TestInitTracerWithOptions_GRPCProtocol(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
 
-	_, shutdown, err := InitTracerWithOptions(context.Background(), "test", slog.Default(), Options{
+	tp, shutdown, err := InitTracerWithOptions(context.Background(), "test", slog.Default(), Options{
 		Protocol: "grpc",
 	})
-	assert.Error(t, err, "gRPC should return error without dependency")
+	if err != nil {
+		require.NotNil(t, tp)
+		assert.NoError(t, shutdown(context.Background()))
+		return
+	}
+	_, isSDK := tp.(*sdktrace.TracerProvider)
+	assert.True(t, isSDK, "expected SDK provider with gRPC protocol")
+	assert.NoError(t, shutdown(context.Background()))
+}
+
+func TestInitTracerWithOptions_GRPCWithFileEndpoint(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+
+	tp, shutdown, err := InitTracerWithOptions(context.Background(), "test", slog.Default(), Options{
+		Protocol: "grpc",
+		Endpoint: "localhost:4317",
+	})
+	if err != nil {
+		require.NotNil(t, tp)
+		assert.NoError(t, shutdown(context.Background()))
+		return
+	}
+	_, isSDK := tp.(*sdktrace.TracerProvider)
+	assert.True(t, isSDK, "expected SDK provider with gRPC file config endpoint")
+	assert.NoError(t, shutdown(context.Background()))
+}
+
+func TestInitTracerWithOptions_GRPCWithHeaders(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "")
+
+	tp, shutdown, err := InitTracerWithOptions(context.Background(), "test", slog.Default(), Options{
+		Protocol: "grpc",
+		Endpoint: "localhost:4317",
+		Headers:  map[string]string{"Authorization": "Bearer test-token"},
+	})
+	if err != nil {
+		require.NotNil(t, tp)
+		assert.NoError(t, shutdown(context.Background()))
+		return
+	}
+	_, isSDK := tp.(*sdktrace.TracerProvider)
+	assert.True(t, isSDK, "expected SDK provider with gRPC headers")
 	assert.NoError(t, shutdown(context.Background()))
 }

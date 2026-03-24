@@ -18,6 +18,7 @@ import (
 	"os"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -148,16 +149,15 @@ func newExporter(ctx context.Context, protocol string, opts Options) (sdktrace.S
 
 // newGRPCExporter creates a gRPC-based OTLP span exporter.
 func newGRPCExporter(ctx context.Context, opts Options) (sdktrace.SpanExporter, error) {
-	// Use the protocol-agnostic otlptrace client interface for gRPC.
-	// The gRPC exporter reads OTEL_EXPORTER_OTLP_ENDPOINT env automatically.
-	// We use the generic otlptrace.New with a custom client to avoid
-	// importing the full gRPC stack when not needed. For now, fall back
-	// to HTTP exporter with a gRPC-style endpoint hint.
-	//
-	// Full gRPC support can be added later when otlptracegrpc is included.
-	_ = ctx
-	_ = opts
-	return nil, fmt.Errorf("gRPC protocol requires otlptracegrpc dependency; use protocol=http or add the dependency")
+	grpcOpts := []otlptracegrpc.Option{}
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" && opts.Endpoint != "" {
+		grpcOpts = append(grpcOpts, otlptracegrpc.WithEndpoint(opts.Endpoint))
+		grpcOpts = append(grpcOpts, otlptracegrpc.WithInsecure())
+	}
+	if os.Getenv("OTEL_EXPORTER_OTLP_HEADERS") == "" && len(opts.Headers) > 0 {
+		grpcOpts = append(grpcOpts, otlptracegrpc.WithHeaders(opts.Headers))
+	}
+	return otlptracegrpc.New(ctx, grpcOpts...)
 }
 
 // Tracer returns a named tracer from the given provider.
