@@ -115,16 +115,22 @@ changes = []
 # is correct and must NOT be changed to identity.
 changes.append("packed_modules_mapping (kept original unfused mapping)")
 
-# 3b. Remove ONLY the in_proj_qkvz stacked_params_mapping entries — GPTQ
-# quantized weights can't be sub-split across shards. The stacked entries try
-# to split in_proj_qkv into (0,1,2) sub-shards which fails for GPTQ.
-# KEEP the in_proj_ba entries — those map FP16 (non-quantized) in_proj_b/a
-# weights which use simple integer shard IDs and load correctly.
-pattern_qkvz_stacked = r'\s*\("in_proj_qkvz",\s*"in_proj_qkv",\s*\(0,\s*1,\s*2\)\),\s*\n\s*\("in_proj_qkvz",\s*"in_proj_z",\s*3\),'
+# 3b. Replace in_proj_qkvz stacked_params tuple shard IDs with simple integers.
+# Original: ("in_proj_qkvz", "in_proj_qkv", (0, 1, 2)) tries to sub-split the
+# GPTQ quantized tensor into 3 parts — impossible for packed qweight/qzeros/scales.
+# Fix: use integer shard IDs (0, 1) to concatenate whole tensors instead.
+pattern_qkvz_stacked = (
+    r'\("in_proj_qkvz",\s*"in_proj_qkv",\s*\(0,\s*1,\s*2\)\),'
+    r"\s*\n\s*"
+    r'\("in_proj_qkvz",\s*"in_proj_z",\s*3\),'
+)
+replacement_qkvz = (
+    '("in_proj_qkvz", "in_proj_qkv", 0),\n            ("in_proj_qkvz", "in_proj_z", 1),'
+)
 if re.search(pattern_qkvz_stacked, content):
-    content = re.sub(pattern_qkvz_stacked, "", content)
+    content = re.sub(pattern_qkvz_stacked, replacement_qkvz, content)
     changes.append(
-        "stacked_params_mapping (removed in_proj_qkvz entries, kept in_proj_ba)"
+        "stacked_params_mapping (in_proj_qkvz: tuple→int shard IDs for GPTQ)"
     )
 
 # 3c. Add IsHybrid to Qwen3_5ForCausalLMBase inheritance
@@ -264,26 +270,21 @@ elif '["in_proj_qkvz"]' in verify and '["in_proj_ba"]' in verify:
 else:
     print("6. WARNING: packed_modules_mapping state unknown")
 
-# Check stacked_params — in_proj_ba entries must be PRESENT, in_proj_qkvz must be REMOVED
-has_ba_stacked = (
-    '"in_proj_ba", "in_proj_b", 0' in verify
-    or "('in_proj_ba', 'in_proj_b', 0)" in verify
-)
-has_qkvz_stacked = (
-    '"in_proj_qkvz", "in_proj_qkv", (0, 1, 2)' in verify
-    or "('in_proj_qkvz', 'in_proj_qkv', (0, 1, 2))" in verify
-)
-if has_ba_stacked and not has_qkvz_stacked:
-    print(
-        "6b. VERIFIED: stacked_params has in_proj_ba (FP16), removed in_proj_qkvz (GPTQ)"
-    )
-elif has_ba_stacked and has_qkvz_stacked:
-    print(
-        "6b. WARNING: stacked_params still has in_proj_qkvz entries (will break GPTQ!)"
-    )
-elif not has_ba_stacked and not has_qkvz_stacked:
+# Check stacked_params — all entries must use integer shard IDs, no tuple (0,1,2)
+has_ba_stacked = '"in_proj_ba", "in_proj_b", 0' in verify
+has_qkvz_int = '"in_proj_qkvz", "in_proj_qkv", 0' in verify
+has_qkvz_tuple = "(0, 1, 2)" in verify and "in_proj_qkvz" in verify
+if has_ba_stacked and has_qkvz_int and not has_qkvz_tuple:
+    print("6b. VERIFIED: stacked_params all integer shard IDs (GPTQ-compatible)")
+elif has_qkvz_tuple:
+    print("6b. WARNING: stacked_params still has tuple shard IDs (will break GPTQ!)")
+elif not has_ba_stacked:
     print(
         "6b. WARNING: stacked_params missing in_proj_ba entries (in_proj_a/b won't load!)"
+    )
+elif not has_qkvz_int:
+    print(
+        "6b. WARNING: stacked_params missing in_proj_qkvz entries (qkv/z won't load!)"
     )
 else:
     print("6b. WARNING: stacked_params state unexpected")
@@ -1127,7 +1128,16 @@ print("\n14. Cleaning up M-RoPE config (not needed for text-only)...")
 
 import json
 
-config_path = "/models/qwen35-27b-opus-distill/config.json"
+# Dynamically find config.json under /models
+import glob as _glob
+
+config_path = None
+for _cand in _glob.glob("/models/**/config.json", recursive=True):
+    config_path = _cand
+    break
+if not config_path:
+    raise FileNotFoundError("No config.json found under /models/")
+print(f"    config_path: {config_path}")
 with open(config_path) as f:
     config = json.load(f)
 
@@ -1312,7 +1322,6 @@ new_load_weights_end = """        loader = AutoWeightsLoader(
             _model_dir = None
             for _cand in [
                 getattr(self.config, "_name_or_path", ""),
-                "/models/qwen35-27b-opus-distill",
             ]:
                 if _cand and _fix_os.path.exists(_fix_os.path.join(_cand, "model.safetensors.index.json")):
                     _model_dir = _cand
@@ -1482,7 +1491,6 @@ else:
             _model_dir = None
             for _cand in [
                 getattr(self.config, "_name_or_path", ""),
-                "/models/qwen35-27b-opus-distill",
             ]:
                 if _cand and _fix_os.path.exists(_fix_os.path.join(_cand, "model.safetensors.index.json")):
                     _model_dir = _cand
