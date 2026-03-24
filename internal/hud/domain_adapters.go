@@ -12,6 +12,9 @@ import (
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/coordination"
 	"github.com/crb2nu/loom/internal/hud/domain"
+	domainalerting "github.com/crb2nu/loom/internal/hud/domain/alerting"
+	"github.com/crb2nu/loom/internal/hud/domain/codebase"
+	domainctx "github.com/crb2nu/loom/internal/hud/domain/context"
 	coorddomain "github.com/crb2nu/loom/internal/hud/domain/coordinator"
 	"github.com/crb2nu/loom/internal/hud/domain/fleet"
 	"github.com/crb2nu/loom/internal/hud/domain/graph"
@@ -19,10 +22,12 @@ import (
 	"github.com/crb2nu/loom/internal/hud/domain/memory"
 	domainmerge "github.com/crb2nu/loom/internal/hud/domain/merge"
 	"github.com/crb2nu/loom/internal/hud/domain/mobile"
+	domainorch "github.com/crb2nu/loom/internal/hud/domain/orchestration"
 	"github.com/crb2nu/loom/internal/hud/domain/sandbox"
 	domainspawn "github.com/crb2nu/loom/internal/hud/domain/spawn"
 	"github.com/crb2nu/loom/internal/hud/domain/workflow"
 	"github.com/crb2nu/loom/internal/hud/monitor"
+	"github.com/crb2nu/loom/internal/hud/orchestration"
 	pkgspawn "github.com/crb2nu/loom/internal/spawn"
 	"github.com/crb2nu/loom/pkg/projectmeta"
 )
@@ -41,6 +46,10 @@ func (a *App) initDomainRegistry() {
 	a.domainRegistry.Register(memory.New(&memoryDepsAdapter{app: a}))
 	a.domainRegistry.Register(handoff.New(&handoffDepsAdapter{app: a}))
 	a.domainRegistry.Register(domainmerge.New(&mergeDepsAdapter{app: a}))
+	a.domainRegistry.Register(domainorch.New(&orchDepsAdapter{app: a}))
+	a.domainRegistry.Register(domainctx.New(&ctxDepsAdapter{app: a}))
+	a.domainRegistry.Register(codebase.New(&codebaseDepsAdapter{app: a}))
+	a.domainRegistry.Register(domainalerting.New(&alertingDepsAdapter{app: a}))
 }
 
 // --- Shared Deps methods (used by multiple domains) ---
@@ -708,4 +717,109 @@ func (m *mergeDepsAdapter) Logger() *slog.Logger { return m.app.Logger() }
 
 func (m *mergeDepsAdapter) CoordinationSnapshot() coordination.Snapshot {
 	return m.app.fleetMonitor.Snapshot().Coordination
+}
+
+// --- Orchestration domain Deps adapter ---
+
+type orchDepsAdapter struct {
+	app *App
+}
+
+func (o *orchDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	o.app.WriteJSON(w, status, v)
+}
+
+func (o *orchDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	o.app.WriteError(w, status, msg, err)
+}
+
+func (o *orchDepsAdapter) Logger() *slog.Logger { return o.app.Logger() }
+
+func (o *orchDepsAdapter) OrchestrationEngine() *orchestration.Engine {
+	return o.app.orchEngine
+}
+
+func (o *orchDepsAdapter) OrchestrationMonitor() *orchestration.OrchestrationMonitor {
+	return o.app.orchMonitor
+}
+
+func (o *orchDepsAdapter) OrchestrationBridge() orchestration.Bridge {
+	return o.app.agent
+}
+
+// --- Context health domain Deps adapter ---
+
+type ctxDepsAdapter struct {
+	app *App
+}
+
+func (c *ctxDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	c.app.WriteJSON(w, status, v)
+}
+
+func (c *ctxDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	c.app.WriteError(w, status, msg, err)
+}
+
+func (c *ctxDepsAdapter) Logger() *slog.Logger { return c.app.Logger() }
+
+func (c *ctxDepsAdapter) ContextHealthMonitor() domainctx.ContextHealthMonitorOps {
+	if c.app.contextHealthMonitor == nil {
+		return nil
+	}
+	return c.app.contextHealthMonitor
+}
+
+// --- Codebase domain Deps adapter ---
+
+type codebaseDepsAdapter struct {
+	app *App
+}
+
+func (cb *codebaseDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	cb.app.WriteJSON(w, status, v)
+}
+
+func (cb *codebaseDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	cb.app.WriteError(w, status, msg, err)
+}
+
+func (cb *codebaseDepsAdapter) Logger() *slog.Logger { return cb.app.Logger() }
+
+func (cb *codebaseDepsAdapter) Agent() *bridge.AgentBridge { return cb.app.Agent() }
+
+func (cb *codebaseDepsAdapter) CodebaseMonitor() *monitor.CodebaseMonitor {
+	return cb.app.codebaseMonitor
+}
+
+// --- Alerting domain Deps adapter ---
+
+type alertingDepsAdapter struct {
+	app *App
+}
+
+func (al *alertingDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	al.app.WriteJSON(w, status, v)
+}
+
+func (al *alertingDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	al.app.WriteError(w, status, msg, err)
+}
+
+func (al *alertingDepsAdapter) RequireAdminToken(w http.ResponseWriter, r *http.Request) bool {
+	return al.app.RequireAdminToken(w, r)
+}
+
+func (al *alertingDepsAdapter) AlertEngine() domainalerting.AlertEngineOps {
+	if al.app.alertEngine == nil {
+		return nil
+	}
+	return al.app.alertEngine
+}
+
+func (al *alertingDepsAdapter) AutoFixEngine() domainalerting.AutoFixEngineOps {
+	if al.app.autofixEngine == nil {
+		return nil
+	}
+	return al.app.autofixEngine
 }
