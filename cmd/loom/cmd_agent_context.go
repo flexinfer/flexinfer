@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -115,10 +114,7 @@ func newAgentContextInspectCmd() *cobra.Command {
 		Long: `Return a context budget breakdown for an agent session, including
 entry-type aggregates and optional top-entry detail.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if strings.TrimSpace(agentID) == "" && strings.TrimSpace(sessionID) == "" {
-				return fmt.Errorf("agent-id or session-id is required")
-			}
-
+			// Validate via shared contract (Normalize + Validate inside Path()).
 			port := resolvePort(cmd)
 			result, err := contextInspectWithFallback(cmd, port, agentID, sessionID, detail, limit)
 			if err != nil {
