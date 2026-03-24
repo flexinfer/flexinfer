@@ -570,23 +570,43 @@ mkdir -p /workspace/offload
 # GPTQModel runtime dependencies are baked into the unified runtime image for
 # quantizer-enabled profiles. Keep this fast-fail guard so older images still
 # self-heal, but do not pay the install penalty when the image is already baked.
-if ! python3 -c "import tokenicer, pcre, kernels, torchao" >/dev/null 2>&1; then
+GPTQ_PY_IMPORTS="import tokenicer, pcre, kernels"
+GPTQ_PIP_ARGS=(
+    "tokenicer>=0.0.10"
+    "pypcre>=0.2.13"
+    "kernels>=0.12.2"
+    "accelerate>=1.13.0"
+    "hf_transfer>=0.1.9"
+    "numpy>=1.26,<2"
+    "pillow>=11.3.0"
+    "protobuf>=7.34.0"
+)
+# torchao wheels currently SIGILL on older Broadwell-class x86 hosts used with
+# gfx906/gfx900 quantization. GPTQModel still works there without torchao, so
+# keep it on newer arches only.
+if [ "${PYTORCH_ROCM_ARCH:-}" != "gfx906" ] && [ "${GPU_GFX:-}" != "gfx900" ] && [ "${GPU_GFX:-}" != "gfx906" ]; then
+    GPTQ_PY_IMPORTS="${GPTQ_PY_IMPORTS}, torchao"
+    GPTQ_PIP_ARGS+=("torchao>=0.16.0")
+else
+    echo "Skipping torchao on gfx906/gfx900; wheel triggers SIGILL on older x86 hosts"
+    # pypcre wheels SIGILL on Broadwell-era hosts. GPTQModel only needs a
+    # pcre module; a stdlib re shim is sufficient for its import path here.
+    python3 -m pip uninstall -y pypcre >/dev/null 2>&1 || true
+    cat > /tmp/pcre.py <<'PY'
+from re import *
+PY
+    export PYTHONPATH="/tmp${PYTHONPATH:+:${PYTHONPATH}}"
+    GPTQ_PY_IMPORTS="import tokenicer; from gptqmodel import GPTQModel, QuantizeConfig"
+fi
+if ! python3 -c "${GPTQ_PY_IMPORTS}" >/dev/null 2>&1; then
     if [ -f /etc/flexinfer/quantizer-deps-baked ]; then
         echo "ERROR: GPTQModel runtime deps are expected in the image but imports are missing"
-        python3 -c "import tokenicer, pcre, kernels, torchao"
+        python3 -c "${GPTQ_PY_IMPORTS}"
         exit 1
     fi
     echo "Installing missing GPTQModel runtime dependencies..."
-    python3 -m pip install --no-cache-dir --quiet \
-        "tokenicer>=0.0.10" \
-        "pypcre>=0.2.13" \
-        "kernels>=0.12.2" \
-        "torchao>=0.16.0" \
-        "accelerate>=1.13.0" \
-        "numpy>=1.26,<2" \
-        "pillow>=11.3.0" \
-        "protobuf>=7.34.0" >/dev/null
-    python3 -c "import tokenicer, pcre, kernels, torchao" >/dev/null
+    python3 -m pip install --no-cache-dir --quiet "${GPTQ_PIP_ARGS[@]}" >/dev/null
+    python3 -c "${GPTQ_PY_IMPORTS}" >/dev/null
 fi
 
 # MAGMA fallback: vllm-dev base images lack MAGMA (GPU) and LAPACK (CPU),
