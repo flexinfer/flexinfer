@@ -165,6 +165,7 @@ type taskDTO struct {
 	SessionID      string              `json:"session_id"`
 	AgentID        string              `json:"agent_id"`
 	Namespace      string              `json:"namespace"`
+	Project        string              `json:"project,omitempty"`
 	Title          string              `json:"title"`
 	Context        string              `json:"context"`
 	Priority       string              `json:"priority"`

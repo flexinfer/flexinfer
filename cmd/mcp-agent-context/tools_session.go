@@ -25,6 +25,10 @@ func registerSessionTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 					"type":        "string",
 					"description": "Optional project/task namespace for grouping sessions.",
 				},
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Optional canonical project identifier for orchestration correlation. Defaults from namespace or pipeline project.",
+				},
 				"description": map[string]any{
 					"type":        "string",
 					"description": "Optional session description.",
@@ -36,6 +40,24 @@ func registerSessionTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 				"resume_session_id": map[string]any{
 					"type":        "string",
 					"description": "Resume an existing session instead of creating a new one.",
+				},
+				"pipeline_project": map[string]any{
+					"type":        "string",
+					"description": "Optional GitLab project path linked to the session's CI pipeline.",
+				},
+				"pipeline_id": map[string]any{
+					"type":        "integer",
+					"description": "Optional GitLab pipeline ID linked to the session.",
+				},
+				"pipeline_ref": map[string]any{
+					"type":        "object",
+					"description": "Optional explicit CI pipeline reference for session orchestration linking.",
+					"properties": map[string]any{
+						"id":      map[string]any{"type": "integer"},
+						"project": map[string]any{"type": "string"},
+						"ref":     map[string]any{"type": "string"},
+						"web_url": map[string]any{"type": "string"},
+					},
 				},
 			},
 		},

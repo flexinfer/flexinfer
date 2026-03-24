@@ -30,14 +30,22 @@ func TestPriorityRank(t *testing.T) {
 func TestTaskToPayload(t *testing.T) {
 	now := time.Now()
 	task := Task{
-		ID:         "task-123",
-		SessionID:  "session-456",
-		AgentID:    "agent-789",
-		Namespace:  "test",
-		Title:      "Test Task",
-		Context:    "Some context",
-		Priority:   TaskPriorityHigh,
-		Status:     TaskStatusPending,
+		ID:        "task-123",
+		SessionID: "session-456",
+		AgentID:   "agent-789",
+		Namespace: "test",
+		Project:   "services/loom-core",
+		Title:     "Test Task",
+		Context:   "Some context",
+		Priority:  TaskPriorityHigh,
+		Status:    TaskStatusPending,
+		PipelineRef: &PipelineRef{
+			ID:      101,
+			Project: "services/loom-core",
+			Ref:     "main",
+			WebURL:  "https://example.invalid/pipelines/101",
+		},
+		WorkflowID: "wf-9",
 		Tags:       []string{"tag1", "tag2"},
 		CreatedAt:  now,
 		UpdatedAt:  now,
@@ -55,21 +63,34 @@ func TestTaskToPayload(t *testing.T) {
 	if payload["priority"] != string(task.Priority) {
 		t.Errorf("payload priority = %v, want %v", payload["priority"], task.Priority)
 	}
+	if payload["project"] != task.Project {
+		t.Errorf("payload project = %v, want %v", payload["project"], task.Project)
+	}
+	if payload["pipeline_ref"] == nil {
+		t.Error("payload pipeline_ref should not be nil")
+	}
+	if payload["workflow_id"] != task.WorkflowID {
+		t.Errorf("payload workflow_id = %v, want %v", payload["workflow_id"], task.WorkflowID)
+	}
 }
 
 func TestPayloadToTask(t *testing.T) {
 	now := time.Now()
 	payload := map[string]any{
-		"id":          "task-123",
-		"session_id":  "session-456",
-		"agent_id":    "agent-789",
-		"title":       "Test Task",
-		"priority":    "high",
-		"status":      "pending",
-		"tags":        []any{"tag1", "tag2"},
-		"created_at":  now.Format(time.RFC3339Nano),
-		"updated_at":  now.Format(time.RFC3339Nano),
-		"token_count": float64(100),
+		"id":           "task-123",
+		"session_id":   "session-456",
+		"agent_id":     "agent-789",
+		"namespace":    "loom-core/feat/orchestration",
+		"project":      "services/loom-core",
+		"title":        "Test Task",
+		"priority":     "high",
+		"status":       "pending",
+		"pipeline_ref": map[string]any{"id": float64(101), "project": "services/loom-core", "ref": "main"},
+		"workflow_id":  "wf-9",
+		"tags":         []any{"tag1", "tag2"},
+		"created_at":   now.Format(time.RFC3339Nano),
+		"updated_at":   now.Format(time.RFC3339Nano),
+		"token_count":  float64(100),
 	}
 
 	task, err := payloadToTask(payload)
@@ -85,6 +106,15 @@ func TestPayloadToTask(t *testing.T) {
 	}
 	if task.Priority != TaskPriorityHigh {
 		t.Errorf("task Priority = %v, want high", task.Priority)
+	}
+	if task.Project != "services/loom-core" {
+		t.Errorf("task Project = %v, want services/loom-core", task.Project)
+	}
+	if task.PipelineRef == nil || task.PipelineRef.ID != 101 {
+		t.Errorf("task PipelineRef = %#v, want pipeline 101", task.PipelineRef)
+	}
+	if task.WorkflowID != "wf-9" {
+		t.Errorf("task WorkflowID = %v, want wf-9", task.WorkflowID)
 	}
 }
 

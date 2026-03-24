@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/crb2nu/loom/pkg/projectmeta"
 )
 
 const (
@@ -37,6 +39,7 @@ type CreateTaskParams struct {
 	Title       string
 	Priority    string
 	Tags        []string
+	Project     string
 	Context     string       // Description of what needs to be done
 	FilePath    string       // Related file
 	LineNumber  int          // Related line
@@ -66,6 +69,13 @@ func (a *AgentBridge) CreateTask(p CreateTaskParams) (*CreateTaskResult, error) 
 	}
 	if p.Context != "" {
 		task["context"] = p.Context
+	}
+	project := projectmeta.Canonical(p.Project, "")
+	if project == "" && p.PipelineRef != nil {
+		project = projectmeta.Canonical(p.PipelineRef.Project, "")
+	}
+	if project != "" {
+		task["project"] = project
 	}
 	if p.FilePath != "" {
 		task["file_path"] = p.FilePath
@@ -107,6 +117,7 @@ type UpdateTaskParams struct {
 	Title       string       `json:"title,omitempty"`
 	Priority    string       `json:"priority,omitempty"`
 	Resolution  string       `json:"resolution,omitempty"`
+	Project     string       `json:"project,omitempty"`
 	PipelineRef *PipelineRef `json:"pipeline_ref,omitempty"`
 	WorkflowID  string       `json:"workflow_id,omitempty"`
 }
@@ -122,6 +133,13 @@ func (a *AgentBridge) UpdateTask(p UpdateTaskParams) error {
 	}
 	if p.Resolution != "" {
 		args["resolution"] = p.Resolution
+	}
+	project := projectmeta.Canonical(p.Project, "")
+	if project == "" && p.PipelineRef != nil {
+		project = projectmeta.Canonical(p.PipelineRef.Project, "")
+	}
+	if project != "" {
+		args["project"] = project
 	}
 	if p.PipelineRef != nil {
 		args["pipeline_ref"] = map[string]any{

@@ -168,6 +168,7 @@ type Session struct {
 	ID        string `json:"id"`
 	AgentID   string `json:"agent_id"`
 	Namespace string `json:"namespace,omitempty"`
+	Project   string `json:"project,omitempty"`
 
 	StartedAt time.Time  `json:"started_at"`
 	EndedAt   *time.Time `json:"ended_at,omitempty"`
@@ -296,6 +297,7 @@ type Task struct {
 	SessionID string `json:"session_id"`
 	AgentID   string `json:"agent_id"`
 	Namespace string `json:"namespace,omitempty"`
+	Project   string `json:"project,omitempty"`
 
 	// Task details
 	Title      string       `json:"title"`

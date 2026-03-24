@@ -15,6 +15,7 @@ type SessionInfo struct {
 	ID          string       `json:"id"`
 	AgentID     string       `json:"agent_id"`
 	Namespace   string       `json:"namespace"`
+	Project     string       `json:"project,omitempty"`
 	StartedAt   string       `json:"started_at"`
 	EndedAt     string       `json:"ended_at,omitempty"`
 	Status      string       `json:"status"`
@@ -32,6 +33,7 @@ type TaskInfo struct {
 	SessionID   string       `json:"session_id"`
 	AgentID     string       `json:"agent_id"`
 	Namespace   string       `json:"namespace"`
+	Project     string       `json:"project,omitempty"`
 	Title       string       `json:"title"`
 	Context     string       `json:"context,omitempty"`
 	Priority    string       `json:"priority"`
@@ -42,6 +44,32 @@ type TaskInfo struct {
 	WorkflowID  string       `json:"workflow_id,omitempty"`
 	CreatedAt   string       `json:"created_at"`
 	UpdatedAt   string       `json:"updated_at"`
+}
+
+// UnmarshalJSON backfills Project for older payloads that only carry namespace
+// and/or pipeline_ref.
+func (s *SessionInfo) UnmarshalJSON(data []byte) error {
+	type alias SessionInfo
+	var raw alias
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*s = SessionInfo(raw)
+	s.Project = CanonicalProject(s.Project, s.Namespace, s.PipelineRef)
+	return nil
+}
+
+// UnmarshalJSON backfills Project for older payloads that only carry namespace
+// and/or pipeline_ref.
+func (t *TaskInfo) UnmarshalJSON(data []byte) error {
+	type alias TaskInfo
+	var raw alias
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*t = TaskInfo(raw)
+	t.Project = CanonicalProject(t.Project, t.Namespace, t.PipelineRef)
+	return nil
 }
 
 // --- Workflow DTOs ---

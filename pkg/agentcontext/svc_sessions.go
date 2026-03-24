@@ -117,9 +117,12 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 	v := validate.NewArgs(args)
 	agentID := v.String("agent_id", ss.cfg.DefaultAgentID)
 	namespace := v.String("namespace", ss.cfg.DefaultNamespace)
+	project := v.String("project", "")
 	description := v.String("description", "")
 	workingDir := v.String("working_dir", "")
 	resumeID := v.String("resume_session_id", "")
+	pipelineRef := pipelineRefFromLegacyArgs(args)
+	project = canonicalProject(project, namespace, pipelineRef)
 
 	if agentID == "" {
 		return mcp.ErrorResult(fmt.Errorf("agent_id is required")), nil
@@ -138,11 +141,16 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 				return mcp.ErrorResult(fmt.Errorf("persist resumed session: %w", err)), nil
 			}
 		}
+		project := canonicalProject(existing.Project, existing.Namespace, existing.PipelineRef)
 		result := map[string]any{
 			"ok":         true,
 			"session_id": resumeID,
 			"resumed":    true,
 			"agent_id":   existing.AgentID,
+			"project":    project,
+		}
+		if existing.PipelineRef != nil {
+			result["pipeline_ref"] = pipelineRefToPayload(existing.PipelineRef)
 		}
 		if ss.enrichResult != nil {
 			ss.enrichResult(ctx, result, existing.AgentID, existing.Namespace)
@@ -153,13 +161,18 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 	// Idempotent start: if an active session already exists for this agent in the
 	// same namespace, return it instead of rolling sessions.
 	if existing := ss.activeSessionForAgentNamespace(agentID, namespace); existing != nil {
+		project := canonicalProject(existing.Project, existing.Namespace, existing.PipelineRef)
 		result := map[string]any{
 			"ok":              true,
 			"session_id":      existing.ID,
 			"agent_id":        existing.AgentID,
 			"namespace":       existing.Namespace,
+			"project":         project,
 			"started_at":      existing.StartedAt.Format(time.RFC3339),
 			"already_existed": true,
+		}
+		if existing.PipelineRef != nil {
+			result["pipeline_ref"] = pipelineRefToPayload(existing.PipelineRef)
 		}
 		if ss.enrichResult != nil {
 			ss.enrichResult(ctx, result, existing.AgentID, existing.Namespace)
@@ -176,10 +189,12 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 		ID:          sessionID,
 		AgentID:     agentID,
 		Namespace:   namespace,
+		Project:     project,
 		StartedAt:   time.Now(),
 		Status:      string(SessionStatusActive),
 		Description: description,
 		WorkingDir:  workingDir,
+		PipelineRef: pipelineRef,
 	}
 
 	ss.mu.Lock()
@@ -191,7 +206,11 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 		"session_id": sessionID,
 		"agent_id":   agentID,
 		"namespace":  namespace,
+		"project":    project,
 		"started_at": session.StartedAt.Format(time.RFC3339),
+	}
+	if pipelineRef != nil {
+		result["pipeline_ref"] = pipelineRefToPayload(pipelineRef)
 	}
 
 	if err := ss.Persist(ctx, session); err != nil {

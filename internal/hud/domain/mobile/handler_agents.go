@@ -7,6 +7,7 @@ import (
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/monitor"
+	"github.com/crb2nu/loom/pkg/projectmeta"
 )
 
 func (d *MobileDomain) handleMobilePresence(w http.ResponseWriter, r *http.Request) {
@@ -231,6 +232,7 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 			}
 			ua.SessionID = sess.ID
 			ua.Namespace = sess.Namespace
+			ua.Project = projectmeta.Canonical(sess.Project, sess.Namespace)
 			ua.SessionStatus = sess.Status
 			ua.SessionStarted = sess.StartedAt
 			ua.EntryCount = sess.EntryCount
@@ -251,6 +253,7 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 				Description:    sess.Description,
 				SessionID:      sess.ID,
 				Namespace:      sess.Namespace,
+				Project:        projectmeta.Canonical(sess.Project, sess.Namespace),
 				SessionStatus:  sess.Status,
 				SessionStarted: sess.StartedAt,
 				EntryCount:     sess.EntryCount,
@@ -334,6 +337,9 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 
 	agents := make([]unifiedAgent, 0, len(agentMap))
 	for _, ua := range agentMap {
+		if ua.Project == "" {
+			ua.Project = projectmeta.Canonical(ua.Project, ua.Namespace)
+		}
 		if statusFilter != "" && ua.Status != statusFilter {
 			continue
 		}
