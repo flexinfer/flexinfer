@@ -1281,6 +1281,13 @@ func TestAgentBridge_StartSession_ExistingSessionCanStillReturnBriefing(t *testi
 					{"type": "text", "text": `{"sessions":[{"id":"sess-existing","agent_id":"codex-gpt5","namespace":"loom-core/main","status":"active"}]}`},
 				},
 			}, nil
+		case "agent_context__agent_presence_register":
+			return map[string]any{
+				"isError": false,
+				"content": []map[string]any{
+					{"type": "text", "text": `{"ok":true}`},
+				},
+			}, nil
 		case "agent_context__agent_recall":
 			recallCalls++
 			return map[string]any{

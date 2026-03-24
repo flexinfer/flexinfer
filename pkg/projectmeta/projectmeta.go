@@ -2,6 +2,13 @@ package projectmeta
 
 import "strings"
 
+var workspaceNamespaceRoots = map[string]struct{}{
+	"apps":     {},
+	"libs":     {},
+	"platform": {},
+	"services": {},
+}
+
 // Normalize trims an explicit project identifier.
 func Normalize(project string) string {
 	return strings.TrimSpace(project)
@@ -15,8 +22,14 @@ func FromNamespace(namespace string) string {
 	if ns == "" {
 		return ""
 	}
-	if i := strings.IndexRune(ns, '/'); i > 0 {
-		return ns[:i]
+	parts := strings.Split(ns, "/")
+	if len(parts) >= 2 {
+		if _, ok := workspaceNamespaceRoots[parts[0]]; ok && strings.TrimSpace(parts[1]) != "" {
+			return parts[0] + "/" + parts[1]
+		}
+		if strings.TrimSpace(parts[0]) != "" {
+			return parts[0]
+		}
 	}
 	if strings.HasPrefix(ns, "/") {
 		return ""
