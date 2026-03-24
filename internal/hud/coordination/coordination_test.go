@@ -67,3 +67,118 @@ func TestBuildSummarizesCrossAgentCoordination(t *testing.T) {
 		t.Fatal("expected first agent to need attention")
 	}
 }
+
+func TestBuildMergeReadiness(t *testing.T) {
+	sessions := []bridge.SessionInfo{
+		{ID: "sess-a", AgentID: "ready-agent", Namespace: "proj/x", Status: "active"},
+		{ID: "sess-b", AgentID: "blocked-agent", Namespace: "proj/y", Status: "active"},
+		{ID: "sess-c", AgentID: "main-agent", Namespace: "proj/z", Status: "active"},
+		{ID: "sess-d", AgentID: "offline-agent", Namespace: "proj/w", Status: "active"},
+	}
+	tasks := []bridge.TaskInfo{
+		{ID: "task-1", SessionID: "sess-b", AgentID: "blocked-agent", Title: "Stuck", Status: "blocked", BlockedBy: []string{"task-ext"}},
+	}
+	agents := []bridge.PresenceInfo{
+		{AgentID: "ready-agent", SessionID: "sess-a", Status: "active", Branch: "feat/ready"},
+		{AgentID: "blocked-agent", SessionID: "sess-b", Status: "active", Branch: "feat/blocked"},
+		{AgentID: "main-agent", SessionID: "sess-c", Status: "active", Branch: "main"},
+		{AgentID: "offline-agent", SessionID: "sess-d", Status: "offline", Branch: "feat/offline"},
+	}
+
+	snapshot := Build(sessions, tasks, agents, nil, nil)
+
+	agentByID := map[string]AgentSummary{}
+	for _, a := range snapshot.Agents {
+		agentByID[a.AgentID] = a
+	}
+
+	// ready-agent: active, on feature branch, no blockers => merge ready
+	if !agentByID["ready-agent"].MergeReady {
+		t.Fatal("ready-agent should be merge-ready")
+	}
+	if len(agentByID["ready-agent"].MergeBlockers) != 0 {
+		t.Fatalf("ready-agent should have no merge blockers, got %v", agentByID["ready-agent"].MergeBlockers)
+	}
+
+	// blocked-agent: has blocked tasks => not merge ready
+	if agentByID["blocked-agent"].MergeReady {
+		t.Fatal("blocked-agent should NOT be merge-ready")
+	}
+	if len(agentByID["blocked-agent"].MergeBlockers) == 0 {
+		t.Fatal("blocked-agent should have merge blockers")
+	}
+
+	// main-agent: on main branch => not a merge candidate at all
+	if agentByID["main-agent"].MergeReady {
+		t.Fatal("main-agent should NOT be merge-ready (on main)")
+	}
+
+	// offline-agent: offline => not merge ready
+	if agentByID["offline-agent"].MergeReady {
+		t.Fatal("offline-agent should NOT be merge-ready")
+	}
+
+	// Summary should count 1 merge-ready branch
+	if snapshot.Summary.MergeReadyBranches != 1 {
+		t.Fatalf("expected 1 merge-ready branch, got %d", snapshot.Summary.MergeReadyBranches)
+	}
+}
+
+func TestBuildMergeReadiness_FileConflictsBlock(t *testing.T) {
+	sessions := []bridge.SessionInfo{
+		{ID: "sess-a", AgentID: "agent-x", Namespace: "proj/x", Status: "active"},
+		{ID: "sess-b", AgentID: "agent-y", Namespace: "proj/x", Status: "active"},
+	}
+	agents := []bridge.PresenceInfo{
+		{AgentID: "agent-x", SessionID: "sess-a", Status: "active", Branch: "feat/x"},
+		{AgentID: "agent-y", SessionID: "sess-b", Status: "active", Branch: "feat/y"},
+	}
+	claims := []bridge.FileClaimInfo{
+		{ID: "c1", AgentID: "agent-x", SessionID: "sess-a", FilePath: "shared.go"},
+		{ID: "c2", AgentID: "agent-y", SessionID: "sess-b", FilePath: "shared.go"},
+	}
+
+	snapshot := Build(sessions, nil, agents, claims, nil)
+
+	agentByID := map[string]AgentSummary{}
+	for _, a := range snapshot.Agents {
+		agentByID[a.AgentID] = a
+	}
+
+	// Both agents have file conflicts => neither merge-ready
+	if agentByID["agent-x"].MergeReady {
+		t.Fatal("agent-x should NOT be merge-ready (file conflict)")
+	}
+	if agentByID["agent-y"].MergeReady {
+		t.Fatal("agent-y should NOT be merge-ready (file conflict)")
+	}
+	if snapshot.Summary.MergeReadyBranches != 0 {
+		t.Fatalf("expected 0 merge-ready branches, got %d", snapshot.Summary.MergeReadyBranches)
+	}
+}
+
+func TestBuildMergeReadiness_SharedBranchBlocks(t *testing.T) {
+	sessions := []bridge.SessionInfo{
+		{ID: "sess-a", AgentID: "agent-a", Namespace: "proj/x", Status: "active"},
+		{ID: "sess-b", AgentID: "agent-b", Namespace: "proj/x", Status: "active"},
+	}
+	agents := []bridge.PresenceInfo{
+		{AgentID: "agent-a", SessionID: "sess-a", Status: "active", Branch: "feat/shared-work"},
+		{AgentID: "agent-b", SessionID: "sess-b", Status: "active", Branch: "feat/shared-work"},
+	}
+
+	snapshot := Build(sessions, nil, agents, nil, nil)
+
+	agentByID := map[string]AgentSummary{}
+	for _, a := range snapshot.Agents {
+		agentByID[a.AgentID] = a
+	}
+
+	// Both on same branch => neither merge-ready
+	if agentByID["agent-a"].MergeReady {
+		t.Fatal("agent-a should NOT be merge-ready (shared branch)")
+	}
+	if agentByID["agent-b"].MergeReady {
+		t.Fatal("agent-b should NOT be merge-ready (shared branch)")
+	}
+}

@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/hud/coordination"
 	"github.com/crb2nu/loom/internal/hud/domain"
 	coorddomain "github.com/crb2nu/loom/internal/hud/domain/coordinator"
 	"github.com/crb2nu/loom/internal/hud/domain/fleet"
 	"github.com/crb2nu/loom/internal/hud/domain/graph"
 	"github.com/crb2nu/loom/internal/hud/domain/handoff"
 	"github.com/crb2nu/loom/internal/hud/domain/memory"
+	domainmerge "github.com/crb2nu/loom/internal/hud/domain/merge"
 	"github.com/crb2nu/loom/internal/hud/domain/mobile"
 	"github.com/crb2nu/loom/internal/hud/domain/sandbox"
 	domainspawn "github.com/crb2nu/loom/internal/hud/domain/spawn"
@@ -38,6 +40,7 @@ func (a *App) initDomainRegistry() {
 	a.domainRegistry.Register(workflow.New(&workflowDepsAdapter{app: a}))
 	a.domainRegistry.Register(memory.New(&memoryDepsAdapter{app: a}))
 	a.domainRegistry.Register(handoff.New(&handoffDepsAdapter{app: a}))
+	a.domainRegistry.Register(domainmerge.New(&mergeDepsAdapter{app: a}))
 }
 
 // --- Shared Deps methods (used by multiple domains) ---
@@ -685,4 +688,24 @@ func (h *handoffDepsAdapter) Agent() *bridge.AgentBridge { return h.app.Agent() 
 
 func (h *handoffDepsAdapter) BroadcastAgentEvent(eventType string, payload any) {
 	h.app.BroadcastAgentEvent(eventType, payload)
+}
+
+// --- Merge domain Deps adapter ---
+
+type mergeDepsAdapter struct {
+	app *App
+}
+
+func (m *mergeDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	m.app.WriteJSON(w, status, v)
+}
+
+func (m *mergeDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	m.app.WriteError(w, status, msg, err)
+}
+
+func (m *mergeDepsAdapter) Logger() *slog.Logger { return m.app.Logger() }
+
+func (m *mergeDepsAdapter) CoordinationSnapshot() coordination.Snapshot {
+	return m.app.fleetMonitor.Snapshot().Coordination
 }

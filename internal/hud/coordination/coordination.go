@@ -27,6 +27,7 @@ type Summary struct {
 	CrossAgentBlockers     int `json:"cross_agent_blockers"`
 	OrphanTasks            int `json:"orphan_tasks"`
 	IdleClaimHolders       int `json:"idle_claim_holders"`
+	MergeReadyBranches     int `json:"merge_ready_branches"`
 }
 
 // NamespaceSummary tracks coordination state for a single namespace.
@@ -62,6 +63,8 @@ type AgentSummary struct {
 	BlockingOthers    int      `json:"blocking_others"`
 	BlockedByOthers   int      `json:"blocked_by_others"`
 	IdleHoldingClaims bool     `json:"idle_holding_claims"`
+	MergeReady        bool     `json:"merge_ready"`
+	MergeBlockers     []string `json:"merge_blockers,omitempty"`
 	NeedsAttention    bool     `json:"needs_attention"`
 	AttentionReasons  []string `json:"attention_reasons,omitempty"`
 }
@@ -123,6 +126,7 @@ type agentState struct {
 	BlockingOthers   int
 	BlockedByOthers  int
 	AttentionReasons map[string]struct{}
+	MergeBlockers    []string
 }
 
 // Build derives shared coordination state from sessions, tasks, presence, claims, and worktrees.
@@ -447,6 +451,10 @@ func Build(
 	}
 
 	for _, state := range agentStates {
+		state.MergeBlockers = computeMergeBlockers(state, branchAgents)
+	}
+
+	for _, state := range agentStates {
 		summary := AgentSummary{
 			AgentID:           state.AgentID,
 			SessionID:         state.SessionID,
@@ -461,11 +469,16 @@ func Build(
 			BlockingOthers:    state.BlockingOthers,
 			BlockedByOthers:   state.BlockedByOthers,
 			IdleHoldingClaims: normalizeStatus(state.Status, "offline") == "idle" && state.ClaimCount > 0,
+			MergeReady:        len(state.MergeBlockers) == 0 && isMergeBranch(state.Branch),
+			MergeBlockers:     state.MergeBlockers,
 			AttentionReasons:  sortedReasonKeys(state.AttentionReasons),
 		}
 		summary.NeedsAttention = len(summary.AttentionReasons) > 0
 		if summary.NeedsAttention {
 			result.Summary.AgentsNeedingAttention++
+		}
+		if summary.MergeReady {
+			result.Summary.MergeReadyBranches++
 		}
 		result.Agents = append(result.Agents, summary)
 	}
@@ -656,6 +669,42 @@ func sortedKeys(values map[string]struct{}) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// computeMergeBlockers returns the list of reasons an agent's branch is not
+// ready to merge. An empty list means the branch is merge-ready.
+func computeMergeBlockers(state *agentState, branchAgents map[string]map[string]struct{}) []string {
+	if !isMergeBranch(state.Branch) {
+		return nil
+	}
+	var blockers []string
+	status := normalizeStatus(state.Status, "offline")
+	if status == "offline" {
+		blockers = append(blockers, "agent_offline")
+	}
+	if state.BlockedTasks > 0 {
+		blockers = append(blockers, "blocked_tasks")
+	}
+	if len(state.ConflictFiles) > 0 {
+		blockers = append(blockers, "file_conflicts")
+	}
+	if owners := branchAgents[state.Branch]; len(owners) > 1 {
+		blockers = append(blockers, "shared_branch")
+	}
+	if state.BlockedByOthers > 0 {
+		blockers = append(blockers, "blocked_by_others")
+	}
+	return blockers
+}
+
+// isMergeBranch returns true if the branch name indicates a feature branch
+// (not main/master) that would eventually be merged.
+func isMergeBranch(branch string) bool {
+	branch = strings.TrimSpace(branch)
+	if branch == "" || branch == "main" || branch == "master" {
+		return false
+	}
+	return true
 }
 
 func severityRank(severity string) int {
