@@ -84,6 +84,108 @@ reap_proxy_processes() {
   kill -9 "${remaining[@]}" 2>/dev/null || true
 }
 
+get_mobile_operator_token() {
+  if [[ -n "${HUD_MOBILE_OPERATOR_TOKEN:-}" ]]; then
+    printf '%s\n' "$HUD_MOBILE_OPERATOR_TOKEN"
+    return 0
+  fi
+
+  local hud_env="$HOME/.config/loom/hud.env"
+  if [[ -f "$hud_env" ]]; then
+    awk -F= '/^HUD_MOBILE_OPERATOR_TOKEN=/{print substr($0, index($0, "=") + 1); exit}' "$hud_env"
+  fi
+}
+
+probe_mobile_tasks() {
+  local token="$1"
+  [[ -z "$token" ]] && return 1
+
+  python3 - "$token" <<'PY'
+import json
+import sys
+import urllib.error
+import urllib.request
+
+req = urllib.request.Request(
+    "http://127.0.0.1:3333/api/mobile/v1/tasks",
+    headers={"Authorization": f"Bearer {sys.argv[1]}"},
+)
+try:
+    with urllib.request.urlopen(req, timeout=3) as resp:
+        payload = json.load(resp)
+except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+raise SystemExit(0 if payload.get("ok") is True else 1)
+PY
+}
+
+wait_for_mobile_tasks() {
+  local token="$1"
+  local attempts="${2:-8}"
+  local delay="${3:-2}"
+  local i
+
+  for ((i = 1; i <= attempts; i++)); do
+    if probe_mobile_tasks "$token"; then
+      return 0
+    fi
+    sleep "$delay"
+  done
+  return 1
+}
+
+start_direct_daemon_fallback() {
+  local registry_path="$1"
+  local plist_path="$HOME/Library/LaunchAgents/com.loom.daemon.plist"
+  local log_dir="$HOME/.config/loom/logs"
+  local daemon_log="$log_dir/daemon.log"
+  local daemon_err="$log_dir/daemon.err"
+  local hud_env="$HOME/.config/loom/hud.env"
+
+  echo "Launchd daemon restart came back unhealthy; switching to direct daemon fallback"
+
+  if [[ -f "$plist_path" ]]; then
+    launchctl unload "$plist_path" 2>/dev/null || true
+  fi
+
+  "$RUN_LOOM" stop >/dev/null 2>&1 || true
+  sleep 1
+
+  if [[ -f "$hud_env" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$hud_env"
+    set +a
+  fi
+
+  export CACHE_BACKEND="${CACHE_BACKEND:-redis}"
+  export REDIS_URL="${REDIS_URL:-redis://localhost:6379}"
+  export HUD_BIND_ADDRESS="${HUD_BIND_ADDRESS:-0.0.0.0}"
+  export HUD_PIPELINE_PROJECTS="${HUD_PIPELINE_PROJECTS:-services/loom-core}"
+
+  mkdir -p "$log_dir"
+  python3 - "$RUN_LOOMD" "$registry_path" "$daemon_log" "$daemon_err" <<'PY'
+import os
+import subprocess
+import sys
+
+daemon, registry, stdout_path, stderr_path = sys.argv[1:5]
+with open(stdout_path, "ab", buffering=0) as stdout, open(stderr_path, "ab", buffering=0) as stderr:
+    proc = subprocess.Popen(
+        [daemon, "--registry", registry, "--hud-port", "3333"],
+        stdin=subprocess.DEVNULL,
+        stdout=stdout,
+        stderr=stderr,
+        start_new_session=True,
+        close_fds=True,
+        env=os.environ.copy(),
+    )
+print(proc.pid)
+PY
+  sleep 2
+}
+
 echo "== Build =="
 make loom loomd mcp-hub-wrapper >/dev/null
 
@@ -218,5 +320,25 @@ resp = json.loads(out.splitlines()[0])
 assert resp.get("result", {}).get("serverInfo", {}).get("name") == "loom", resp
 print("OK:", resp["result"]["serverInfo"]["name"], "v"+resp["result"]["serverInfo"]["version"])
 PY
+
+if [[ "$DAEMON_RESTARTED" == "true" ]]; then
+  echo "== Mobile Smoke =="
+  REGISTRY_PATH="$HOME/.config/loom/registry.yaml"
+  MOBILE_OPERATOR_TOKEN="$(get_mobile_operator_token || true)"
+  if [[ -n "${MOBILE_OPERATOR_TOKEN:-}" ]]; then
+    if wait_for_mobile_tasks "$MOBILE_OPERATOR_TOKEN" 6 2; then
+      echo "Mobile task endpoint OK"
+    else
+      start_direct_daemon_fallback "$REGISTRY_PATH"
+      if wait_for_mobile_tasks "$MOBILE_OPERATOR_TOKEN" 16 2; then
+        echo "Mobile task endpoint recovered via direct daemon fallback"
+      else
+        echo "WARNING: mobile task endpoint still unhealthy after direct daemon fallback"
+      fi
+    fi
+  else
+    echo "Skipped mobile smoke (no operator token found)"
+  fi
+fi
 
 echo "OK"

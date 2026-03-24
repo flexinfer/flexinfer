@@ -28,6 +28,7 @@ struct OpsView: View {
     @State private var streamDisplayLimit = 8
     @State private var chainDisplayLimit = 8
     @State private var pipelineDisplayLimit = 8
+    @State private var showLegacyWorkflows = false
 
     enum OpsSegment: String, CaseIterable, Identifiable {
         case work = "Work"
@@ -243,9 +244,30 @@ struct OpsView: View {
                                                 color: taskStatusColor(task.status)
                                             )
                                         }
-                                        Text("\(task.agentId) \u{2022} \(task.priority)")
-                                            .font(LoomTypography.caption)
-                                            .foregroundStyle(LoomColors.textSecondary)
+                                        HStack(spacing: 6) {
+                                            Text(task.agentId.isEmpty ? "Unknown agent" : task.agentId)
+                                                .font(LoomTypography.caption)
+                                                .foregroundStyle(LoomColors.textSecondary)
+                                            Text("\u{2022}")
+                                                .font(LoomTypography.caption)
+                                                .foregroundStyle(LoomColors.textTertiary)
+                                            Text(task.priority)
+                                                .font(LoomTypography.caption)
+                                                .foregroundStyle(LoomColors.textSecondary)
+                                            if let sourceLabel = task.sourceLabel {
+                                                StatusBadge(
+                                                    sourceLabel,
+                                                    color: LoomColors.statusInfo
+                                                )
+                                            }
+                                        }
+                                        .lineLimit(1)
+                                        if let linkage = task.linkageSummary {
+                                            Text(linkage)
+                                                .font(LoomTypography.caption)
+                                                .foregroundStyle(LoomColors.textTertiary)
+                                                .lineLimit(1)
+                                        }
                                     }
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 }
@@ -279,77 +301,115 @@ struct OpsView: View {
             }
             .cardAppear(index: 0)
 
-            LoomCard {
-                VStack(alignment: .leading, spacing: LoomSpacing.sm) {
-                    Text("Workflows")
-                        .font(LoomTypography.headlineMedium)
-                        .foregroundStyle(LoomColors.textPrimary)
+            if viewModel.pipelinesAvailable {
+                pipelinesCard
+                    .cardAppear(index: 1)
+            }
 
-                    HStack {
-                        Text("Pending approvals:")
-                            .font(LoomTypography.bodyRegular)
-                            .foregroundStyle(LoomColors.textSecondary)
-                        AnimatedCounter(viewModel.pendingApprovals)
-                            .font(LoomTypography.counterMedium)
-                            .foregroundStyle(viewModel.pendingApprovals > 0 ? LoomColors.statusDegraded : LoomColors.textPrimary)
-                    }
-
-                    if viewModel.workflows.isEmpty {
-                        Text("No workflows")
-                            .font(LoomTypography.bodyRegular)
-                            .foregroundStyle(LoomColors.textTertiary)
-                    } else {
-                        ForEach(Array(viewModel.workflows.prefix(workflowDisplayLimit))) { workflow in
-                            NavigationLink {
-                                OpsWorkflowDetailView(
-                                    workflow: workflow,
-                                    loadDetail: viewModel.loadWorkflowDetail(id:)
-                                )
-                            } label: {
-                                HStack(spacing: LoomSpacing.sm) {
-                                    StatusAccentBar(color: workflowStatusColor(workflow.status))
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        HStack(spacing: 6) {
-                                            Text(workflow.name ?? workflow.id)
-                                                .font(LoomTypography.bodyMedium)
-                                                .foregroundStyle(LoomColors.textPrimary)
-                                                .lineLimit(1)
-                                            StatusBadge(
-                                                workflow.status.rawValue,
-                                                color: workflowStatusColor(workflow.status)
-                                            )
-                                        }
-                                        Text(workflow.currentStep ?? "No current step")
-                                            .font(LoomTypography.caption)
-                                            .foregroundStyle(LoomColors.textSecondary)
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .padding(.vertical, 2)
+            if viewModel.workflowsDeprecated || viewModel.pendingApprovals > 0 || !viewModel.workflows.isEmpty {
+                LoomCard {
+                    VStack(alignment: .leading, spacing: LoomSpacing.sm) {
+                        HStack(spacing: LoomSpacing.xs) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(LoomColors.statusDegraded)
+                            Text("Legacy workflows")
+                                .font(LoomTypography.headlineMedium)
+                                .foregroundStyle(LoomColors.textSecondary)
+                            Spacer()
+                            if viewModel.pendingApprovals > 0 {
+                                AnimatedCounter(viewModel.pendingApprovals)
+                                    .font(LoomTypography.counterMedium)
+                                    .foregroundStyle(LoomColors.statusDegraded)
                             }
                         }
-                        if viewModel.workflows.count > workflowDisplayLimit {
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.25)) {
-                                    workflowDisplayLimit += 8
-                                }
-                                HapticManager.light()
-                            } label: {
-                                Text("Show \(min(8, viewModel.workflows.count - workflowDisplayLimit)) More")
+
+                        Text(viewModel.workflowsDeprecationMessage ?? "Deprecated approvals only. Use tasks and pipelines for active work.")
+                            .font(LoomTypography.caption)
+                            .foregroundStyle(LoomColors.textTertiary)
+
+                        HStack {
+                            Text("Approvals in queue")
+                                .font(LoomTypography.bodyRegular)
+                                .foregroundStyle(LoomColors.textTertiary)
+                            Spacer()
+                            AnimatedCounter(viewModel.pendingApprovals)
+                                .font(LoomTypography.counterMedium)
+                                .foregroundStyle(viewModel.pendingApprovals > 0 ? LoomColors.statusDegraded : LoomColors.textTertiary)
+                        }
+
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showLegacyWorkflows.toggle()
+                            }
+                            HapticManager.light()
+                        } label: {
+                            HStack {
+                                Text(showLegacyWorkflows ? "Hide legacy workflows" : "Show legacy workflows")
                                     .font(LoomTypography.caption)
                                     .foregroundStyle(LoomColors.accent)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 6)
+                                Spacer()
+                                Image(systemName: showLegacyWorkflows ? "chevron.up" : "chevron.down")
+                                    .font(.caption2)
+                                    .foregroundStyle(LoomColors.accent)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        if showLegacyWorkflows {
+                            if viewModel.workflows.isEmpty {
+                                Text("No legacy workflows")
+                                    .font(LoomTypography.bodyRegular)
+                                    .foregroundStyle(LoomColors.textTertiary)
+                            } else {
+                                ForEach(Array(viewModel.workflows.prefix(workflowDisplayLimit))) { workflow in
+                                    NavigationLink {
+                                        OpsWorkflowDetailView(
+                                            workflow: workflow,
+                                            loadDetail: viewModel.loadWorkflowDetail(id:)
+                                        )
+                                    } label: {
+                                        HStack(spacing: LoomSpacing.sm) {
+                                            StatusAccentBar(color: workflowStatusColor(workflow.status))
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                HStack(spacing: 6) {
+                                                    Text(workflow.name ?? workflow.id)
+                                                        .font(LoomTypography.bodyMedium)
+                                                        .foregroundStyle(LoomColors.textSecondary)
+                                                        .lineLimit(1)
+                                                    StatusBadge(
+                                                        workflow.status.rawValue,
+                                                        color: workflowStatusColor(workflow.status)
+                                                    )
+                                                }
+                                                Text(workflow.currentStep ?? "No current step")
+                                                    .font(LoomTypography.caption)
+                                                    .foregroundStyle(LoomColors.textTertiary)
+                                            }
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                        .padding(.vertical, 2)
+                                    }
+                                }
+                                if viewModel.workflows.count > workflowDisplayLimit {
+                                    Button {
+                                        withAnimation(.easeInOut(duration: 0.25)) {
+                                            workflowDisplayLimit += 8
+                                        }
+                                        HapticManager.light()
+                                    } label: {
+                                        Text("Show \(min(8, viewModel.workflows.count - workflowDisplayLimit)) More")
+                                            .font(LoomTypography.caption)
+                                            .foregroundStyle(LoomColors.accent)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 6)
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            }
-            .cardAppear(index: 1)
-
-            if viewModel.pipelinesAvailable {
-                pipelinesCard
-                    .cardAppear(index: 2)
+                .cardAppear(index: 2)
             }
 
             LoomCard {
@@ -959,6 +1019,23 @@ struct OpsView: View {
                                         }
                                         .font(.caption2)
                                         .foregroundStyle(LoomColors.agentTypeColor(pipeline.agentType ?? agentId))
+                                    }
+                                }
+                                if let stages = pipeline.stages, !stages.isEmpty {
+                                    HStack(spacing: 4) {
+                                        ForEach(Array(stages.prefix(3))) { stage in
+                                            Text(stage.name)
+                                                .font(LoomTypography.labelSmall)
+                                                .foregroundStyle(pipelineStatusColor(stage.status))
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(pipelineStatusColor(stage.status).opacity(0.12), in: Capsule())
+                                        }
+                                        if stages.count > 3 {
+                                            Text("+\(stages.count - 3)")
+                                                .font(LoomTypography.labelSmall)
+                                                .foregroundStyle(LoomColors.textTertiary)
+                                        }
                                     }
                                 }
                             }

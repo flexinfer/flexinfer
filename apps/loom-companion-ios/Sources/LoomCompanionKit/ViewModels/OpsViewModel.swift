@@ -15,6 +15,8 @@ public final class OpsViewModel {
 
     public var workflows: [MobileWorkflow] = []
     public var pendingApprovals = 0
+    public var workflowsDeprecated = false
+    public var workflowsDeprecationMessage: String?
 
     public var presenceAgents: [MobilePresenceAgent] = []
     public var presenceClaims: [MobileFileClaim] = []
@@ -61,7 +63,6 @@ public final class OpsViewModel {
         "agent.spawn.completed",
         "agent.spawn.failed",
         "agent.spawn.stopped",
-        "hud.workflows",
         "hud.pipeline",
     ]
 
@@ -144,8 +145,9 @@ public final class OpsViewModel {
             tasks = response.tasks
             taskCounts = response.counts
         } catch {
-            tasks = []
-            taskCounts = MobileTaskCounts(pending: 0, inProgress: 0, blocked: 0, completed: 0)
+            if tasks.isEmpty {
+                taskCounts = MobileTaskCounts(pending: 0, inProgress: 0, blocked: 0, completed: 0)
+            }
             markFailure("tasks", error)
         }
 
@@ -154,9 +156,13 @@ public final class OpsViewModel {
             let response: MobileWorkflowsResponse = try await apiClient.request(.workflows(limit: 50))
             workflows = response.workflows
             pendingApprovals = response.pendingApprovals
+            workflowsDeprecated = response.deprecated
+            workflowsDeprecationMessage = response.deprecationMessage
         } catch {
             workflows = []
             pendingApprovals = 0
+            workflowsDeprecated = false
+            workflowsDeprecationMessage = nil
             markFailure("workflows", error)
         }
 
@@ -277,8 +283,9 @@ public final class OpsViewModel {
             pipelines = response.pipelines
             pipelinesAvailable = response.available
         } catch {
-            pipelines = []
-            pipelinesAvailable = false
+            if pipelines.isEmpty {
+                pipelinesAvailable = false
+            }
             markFailure("pipelines", error)
         }
 
@@ -290,7 +297,7 @@ public final class OpsViewModel {
         // Only surface warnings for core section failures; optional/advanced
         // sections (reasoning, graph, control plane, sandbox, topology) failing
         // is expected when the server doesn't expose those endpoints yet.
-        let coreSections: Set<String> = ["tasks", "workflows", "presence", "stream"]
+        let coreSections: Set<String> = ["tasks", "presence", "stream", "pipelines"]
         let coreFailures = failedSections.filter { coreSections.contains($0) }
         if !coreFailures.isEmpty {
             warningMessage = "Some sections are unavailable: \(coreFailures.joined(separator: ", "))"

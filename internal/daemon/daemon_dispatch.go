@@ -710,6 +710,9 @@ func (d *Daemon) Reload(ctx context.Context) error {
 			"servers": len(d.registry.Servers),
 		})
 	}
+	if d.hudApp != nil {
+		d.hudApp.RefreshMonitors()
+	}
 
 	return nil
 }

@@ -18,6 +18,12 @@ import (
 	"github.com/crb2nu/loom/pkg/mcpotel"
 )
 
+const (
+	embeddedFleetSnapshotCacheKey    = "hud:embedded:fleet_snapshot"
+	embeddedPipelineSnapshotCacheKey = "hud:embedded:pipeline_snapshot"
+	embeddedSnapshotCacheTTL         = 10 * time.Minute
+)
+
 // NewApp creates a HUD App with the given caller and configuration.
 // The caller can be a bridge.DaemonClient (standalone mode) or
 // bridge.LocalCaller (embedded in daemon). Call StartMonitors to begin
@@ -65,46 +71,30 @@ func NewApp(cfg Config, caller bridge.Caller, logger *slog.Logger) (*App, error)
 // StartMonitors initializes and starts all background monitors and optional
 // components (coordinator, spawn orchestrator, SSE hub, etc.).
 func (a *App) StartMonitors(ctx context.Context) error {
+	// Shared runtime wiring must exist before the first monitor refresh so the
+	// embedded HUD can broadcast the initial snapshots instead of missing them.
+	a.sseHub = NewSSEHub(a.logger)
+	a.eventLog = NewEventLog(1000)
+
 	// Background monitors.
 	a.fleetMonitor = monitor.NewFleetMonitor(a.client, a.agent, a.logger)
-	a.fleetMonitor.Start(15 * time.Second)
 
 	a.healthMonitor = monitor.NewHealthMonitor(a.client, a.logger)
-	a.healthMonitor.Start(5 * time.Second)
 
 	a.memoryMonitor = monitor.NewMemoryMonitor(a.agent, a.logger)
-	a.memoryMonitor.Start(10 * time.Second)
 
 	a.workflowMonitor = monitor.NewWorkflowMonitor(a.agent, a.logger)
-	a.workflowMonitor.Start(5 * time.Second)
 
 	a.streamMonitor = monitor.NewStreamMonitor(a.agent, a.logger)
-	a.streamMonitor.Start(5 * time.Second)
 
 	a.sandboxMonitor = monitor.NewSandboxMonitor(a.client, a.logger)
-	a.sandboxMonitor.Start(10 * time.Second)
 
 	a.costMonitor = monitor.NewCostMonitor(a.client, a.logger)
-	a.costMonitor.Start(10 * time.Second)
 
 	if a.config.PipelineProjects != "" {
 		projects := strings.Split(a.config.PipelineProjects, ",")
 		a.pipelineMonitor = monitor.NewPipelineMonitor(a.agent, projects, a.logger)
-		a.pipelineMonitor.Start(10 * time.Second)
 	}
-
-	a.logger.Info("background monitors started",
-		"fleet", "15s", "health", "5s", "memory", "10s",
-		"workflow", "5s", "stream", "5s", "sandbox", "10s", "cost", "10s")
-
-	// Bootstrap workflow definitions.
-	a.bootstrapWorkflowDefinitions()
-
-	// SSE hub.
-	a.sseHub = NewSSEHub(a.logger)
-
-	// Timeline event log.
-	a.eventLog = NewEventLog(1000)
 
 	// Spawn orchestrator.
 	if a.config.SpawnEnabled {
@@ -129,6 +119,23 @@ func (a *App) StartMonitors(ctx context.Context) error {
 	// Wire monitor → SSE broadcast callbacks.
 	a.wireMonitorCallbacks()
 
+	// Start the polling loops only after callbacks are wired so the initial
+	// refreshes are immediately visible to embedded/mobile clients.
+	a.fleetMonitor.Start(15 * time.Second)
+	a.healthMonitor.Start(5 * time.Second)
+	a.memoryMonitor.Start(10 * time.Second)
+	a.workflowMonitor.Start(5 * time.Second)
+	a.streamMonitor.Start(5 * time.Second)
+	a.sandboxMonitor.Start(10 * time.Second)
+	a.costMonitor.Start(10 * time.Second)
+	if a.pipelineMonitor != nil {
+		a.pipelineMonitor.Start(10 * time.Second)
+	}
+
+	a.logger.Info("background monitors started",
+		"fleet", "15s", "health", "5s", "memory", "10s",
+		"workflow", "5s", "stream", "5s", "sandbox", "10s", "cost", "10s")
+
 	// Coordinator.
 	if a.config.FlexInferURL != "" {
 		a.initCoordinator()
@@ -138,6 +145,151 @@ func (a *App) StartMonitors(ctx context.Context) error {
 	a.initDomainRegistry()
 
 	return nil
+}
+
+// RefreshMonitors forces a best-effort refresh of the embedded HUD snapshots.
+// Embedded daemon mode does not have the standalone HUD's SSE event consumer,
+// so explicit refreshes are needed after startup and daemon reloads to avoid
+// serving stale or empty cached state until the next polling tick.
+func (a *App) RefreshMonitors() {
+	if a.fleetMonitor != nil && a.fleetMonitor.Ready() {
+		if err := a.fleetMonitor.RefreshForce(); err != nil {
+			a.logger.Warn("embedded refresh: fleet refresh failed", "error", err)
+		} else if fleetSnapshotLooksEmpty(a.fleetMonitor.Snapshot()) {
+			// If the first refresh raced startup/reload, give the daemon a brief
+			// moment to settle and try once more before we fall back to polling.
+			time.Sleep(500 * time.Millisecond)
+			if err := a.fleetMonitor.RefreshForce(); err != nil {
+				a.logger.Warn("embedded refresh retry: fleet refresh failed", "error", err)
+			}
+		}
+		if snap := a.fleetMonitor.Snapshot(); !fleetSnapshotLooksEmpty(snap) {
+			a.storeCachedSnapshot(embeddedFleetSnapshotCacheKey, snap, embeddedSnapshotCacheTTL)
+		} else if cached, ok := a.loadCachedSnapshot(embeddedFleetSnapshotCacheKey); ok {
+			a.logger.Info("embedded refresh: restored cached fleet snapshot")
+			a.fleetMonitor.Update(cached)
+		}
+	}
+	if a.healthMonitor != nil {
+		if err := a.healthMonitor.Refresh(); err != nil {
+			a.logger.Warn("embedded refresh: health refresh failed", "error", err)
+		}
+	}
+	if a.memoryMonitor != nil {
+		if err := a.memoryMonitor.Refresh(); err != nil {
+			a.logger.Warn("embedded refresh: memory refresh failed", "error", err)
+		}
+	}
+	if a.workflowMonitor != nil {
+		if err := a.workflowMonitor.Refresh(); err != nil {
+			a.logger.Warn("embedded refresh: workflow refresh failed", "error", err)
+		}
+	}
+	if a.streamMonitor != nil {
+		if err := a.streamMonitor.Refresh(); err != nil {
+			a.logger.Warn("embedded refresh: stream refresh failed", "error", err)
+		}
+	}
+	if a.sandboxMonitor != nil {
+		if err := a.sandboxMonitor.Refresh(); err != nil {
+			a.logger.Warn("embedded refresh: sandbox refresh failed", "error", err)
+		}
+	}
+	if a.costMonitor != nil {
+		if err := a.costMonitor.Refresh(); err != nil {
+			a.logger.Warn("embedded refresh: cost refresh failed", "error", err)
+		}
+	}
+	if a.pipelineMonitor != nil && a.pipelineMonitor.Ready() {
+		if refreshPipelineMonitor(a.pipelineMonitor, a.logger) {
+			pipelines := a.pipelineMonitor.Pipelines()
+			a.storeCachedSnapshot(embeddedPipelineSnapshotCacheKey, pipelines, embeddedSnapshotCacheTTL)
+		} else if cached, ok := a.loadCachedPipelineSnapshot(); ok {
+			a.logger.Info("embedded refresh: restored cached pipeline snapshot")
+			a.pipelineMonitor.Update(cached)
+		}
+	}
+}
+
+func fleetSnapshotLooksEmpty(s monitor.FleetSnapshot) bool {
+	return len(s.Agents) == 0 &&
+		len(s.Tasks) == 0 &&
+		len(s.Sessions) == 0 &&
+		len(s.FileClaims) == 0 &&
+		len(s.Worktrees) == 0 &&
+		len(s.Spawns) == 0 &&
+		s.ActiveSessions == 0 &&
+		s.TotalSessions == 0 &&
+		s.TotalTasks == 0
+}
+
+type pipelineMonitorRefresher interface {
+	Ready() bool
+	Refresh() error
+	Pipelines() []bridge.PipelineInfo
+	Projects() []string
+}
+
+func refreshPipelineMonitor(mon pipelineMonitorRefresher, logger *slog.Logger) bool {
+	if mon == nil || !mon.Ready() {
+		return false
+	}
+	if err := mon.Refresh(); err != nil {
+		logger.Warn("embedded refresh: pipeline refresh failed", "error", err)
+		return false
+	}
+	if len(mon.Pipelines()) == 0 && len(mon.Projects()) > 0 {
+		time.Sleep(500 * time.Millisecond)
+		if err := mon.Refresh(); err != nil {
+			logger.Warn("embedded refresh retry: pipeline refresh failed", "error", err)
+		}
+	}
+	return len(mon.Pipelines()) > 0
+}
+
+func (a *App) loadCachedSnapshot(key string) (monitor.FleetSnapshot, bool) {
+	var snap monitor.FleetSnapshot
+	if a.cache == nil {
+		return snap, false
+	}
+	cached, ok := a.cache.Get(key)
+	if !ok || cached == nil {
+		return snap, false
+	}
+	raw, err := json.Marshal(cached)
+	if err != nil {
+		return snap, false
+	}
+	if err := json.Unmarshal(raw, &snap); err != nil {
+		return snap, false
+	}
+	return snap, true
+}
+
+func (a *App) loadCachedPipelineSnapshot() ([]bridge.PipelineInfo, bool) {
+	if a.cache == nil {
+		return nil, false
+	}
+	cached, ok := a.cache.Get(embeddedPipelineSnapshotCacheKey)
+	if !ok || cached == nil {
+		return nil, false
+	}
+	raw, err := json.Marshal(cached)
+	if err != nil {
+		return nil, false
+	}
+	var pipelines []bridge.PipelineInfo
+	if err := json.Unmarshal(raw, &pipelines); err != nil {
+		return nil, false
+	}
+	return pipelines, true
+}
+
+func (a *App) storeCachedSnapshot(key string, value any, ttl time.Duration) {
+	if a.cache == nil {
+		return
+	}
+	a.cache.Set(key, value, ttl)
 }
 
 // StopMonitors stops all background monitors and releases resources.

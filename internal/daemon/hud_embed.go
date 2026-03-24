@@ -53,6 +53,7 @@ func (d *Daemon) startEmbeddedHUD(ctx context.Context, mux *http.ServeMux) error
 	if err := app.StartMonitors(ctx); err != nil {
 		return err
 	}
+	app.RefreshMonitors()
 
 	app.RegisterRoutes(mux)
 	d.hudApp = app

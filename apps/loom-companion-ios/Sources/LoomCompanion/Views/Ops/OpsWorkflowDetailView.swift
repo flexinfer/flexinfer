@@ -12,6 +12,12 @@ struct OpsWorkflowDetailView: View {
 
     var body: some View {
         List {
+            Section {
+                Label("Legacy workflow approvals are deprecated.", systemImage: "exclamationmark.triangle.fill")
+                    .font(LoomTypography.caption)
+                    .foregroundStyle(LoomColors.statusDegraded)
+            }
+
             Section("Overview") {
                 LabeledContent("Name", value: workflow.name ?? workflow.id)
                 LabeledContent("Status") {

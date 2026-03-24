@@ -95,6 +95,14 @@ public struct MobileTask: Decodable, Identifiable, Sendable {
     public let status: MobileTaskStatus
     public let tags: [String]
     public let blockedBy: [String]
+    public let taskKind: String?
+    public let sourcePlatform: String?
+    public let sourceKind: String?
+    public let sourceId: String?
+    public let nativeKey: String?
+    public let workflowId: String?
+    public let pipelineRef: MobilePipelineRef?
+    public let isProjected: Bool
     public let createdAt: String
     public let updatedAt: String
 
@@ -109,6 +117,14 @@ public struct MobileTask: Decodable, Identifiable, Sendable {
         case status
         case tags
         case blockedBy = "blocked_by"
+        case taskKind = "task_kind"
+        case sourcePlatform = "source_platform"
+        case sourceKind = "source_kind"
+        case sourceId = "source_id"
+        case nativeKey = "native_key"
+        case workflowId = "workflow_id"
+        case pipelineRef = "pipeline_ref"
+        case isProjected = "is_projected"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
@@ -124,6 +140,14 @@ public struct MobileTask: Decodable, Identifiable, Sendable {
         status: MobileTaskStatus,
         tags: [String],
         blockedBy: [String],
+        taskKind: String? = nil,
+        sourcePlatform: String? = nil,
+        sourceKind: String? = nil,
+        sourceId: String? = nil,
+        nativeKey: String? = nil,
+        workflowId: String? = nil,
+        pipelineRef: MobilePipelineRef? = nil,
+        isProjected: Bool = false,
         createdAt: String,
         updatedAt: String
     ) {
@@ -137,6 +161,14 @@ public struct MobileTask: Decodable, Identifiable, Sendable {
         self.status = status
         self.tags = tags
         self.blockedBy = blockedBy
+        self.taskKind = taskKind
+        self.sourcePlatform = sourcePlatform
+        self.sourceKind = sourceKind
+        self.sourceId = sourceId
+        self.nativeKey = nativeKey
+        self.workflowId = workflowId
+        self.pipelineRef = pipelineRef
+        self.isProjected = isProjected
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -153,8 +185,51 @@ public struct MobileTask: Decodable, Identifiable, Sendable {
         self.status = try container.decodeIfPresent(MobileTaskStatus.self, forKey: .status) ?? .unknown
         self.tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         self.blockedBy = try container.decodeIfPresent([String].self, forKey: .blockedBy) ?? []
+        self.taskKind = try container.decodeIfPresent(String.self, forKey: .taskKind)
+        self.sourcePlatform = try container.decodeIfPresent(String.self, forKey: .sourcePlatform)
+        let decodedSourceKind = try container.decodeIfPresent(String.self, forKey: .sourceKind)
+        self.sourceKind = decodedSourceKind ?? self.taskKind
+        self.sourceId = try container.decodeIfPresent(String.self, forKey: .sourceId)
+        let decodedNativeKey = try container.decodeIfPresent(String.self, forKey: .nativeKey)
+        self.nativeKey = decodedNativeKey ?? self.sourceId
+        self.workflowId = try container.decodeIfPresent(String.self, forKey: .workflowId)
+        self.pipelineRef = try container.decodeIfPresent(MobilePipelineRef.self, forKey: .pipelineRef)
+        let explicitProjection = try container.decodeIfPresent(Bool.self, forKey: .isProjected)
+        let inferredProjection = (self.taskKind ?? self.sourceKind)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() == "projected"
+        self.isProjected = explicitProjection ?? inferredProjection
         self.createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
         self.updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
+    }
+
+    public var sourceLabel: String? {
+        if isProjected {
+            return "Projected"
+        }
+        if let sourceKind, !sourceKind.isEmpty {
+            return sourceKind
+                .replacingOccurrences(of: "_", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .capitalized
+        }
+        if let sourcePlatform, !sourcePlatform.isEmpty {
+            return sourcePlatform.capitalized
+        }
+        return nil
+    }
+
+    public var linkageSummary: String? {
+        var parts: [String] = []
+        if let workflowId, !workflowId.isEmpty {
+            parts.append("Workflow \(workflowId)")
+        }
+        if let pipelineRef {
+            let trimmedRef = pipelineRef.ref?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let pipelineLabel = (trimmedRef?.isEmpty == false ? trimmedRef : nil) ?? pipelineRef.project
+            parts.append("Pipeline \(pipelineRef.id) • \(pipelineLabel)")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
     }
 }
 
@@ -238,10 +313,41 @@ public struct MobileWorkflowDetail: Decodable, Sendable {
 public struct MobileWorkflowsResponse: Decodable, Sendable {
     public let workflows: [MobileWorkflow]
     public let pendingApprovals: Int
+    public let deprecatedPendingApprovals: Int
+    public let deprecated: Bool
+    public let deprecationMessage: String?
 
     enum CodingKeys: String, CodingKey {
         case workflows
         case pendingApprovals = "pending_approvals"
+        case deprecatedPendingApprovals = "deprecated_pending_approvals"
+        case deprecated
+        case deprecationMessage = "deprecation_message"
+    }
+
+    public init(
+        workflows: [MobileWorkflow],
+        pendingApprovals: Int,
+        deprecatedPendingApprovals: Int? = nil,
+        deprecated: Bool = false,
+        deprecationMessage: String? = nil
+    ) {
+        self.workflows = workflows
+        self.pendingApprovals = deprecatedPendingApprovals ?? pendingApprovals
+        self.deprecatedPendingApprovals = deprecatedPendingApprovals ?? pendingApprovals
+        self.deprecated = deprecated
+        self.deprecationMessage = deprecationMessage
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.workflows = try container.decodeIfPresent([MobileWorkflow].self, forKey: .workflows) ?? []
+        let decodedDeprecatedApprovals = try container.decodeIfPresent(Int.self, forKey: .deprecatedPendingApprovals)
+        let decodedPendingApprovals = try container.decodeIfPresent(Int.self, forKey: .pendingApprovals)
+        self.pendingApprovals = decodedDeprecatedApprovals ?? decodedPendingApprovals ?? 0
+        self.deprecatedPendingApprovals = decodedDeprecatedApprovals ?? decodedPendingApprovals ?? 0
+        self.deprecated = try container.decodeIfPresent(Bool.self, forKey: .deprecated) ?? false
+        self.deprecationMessage = try container.decodeIfPresent(String.self, forKey: .deprecationMessage)
     }
 }
 
@@ -951,6 +1057,92 @@ public struct MobileHandoffsResponse: Decodable, Sendable {
 
 // MARK: - Pipeline Models
 
+public struct MobilePipelineRef: Decodable, Sendable {
+    public let id: Int
+    public let project: String
+    public let ref: String?
+    public let webURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case project
+        case ref
+        case webURL = "web_url"
+    }
+
+    public init(id: Int, project: String, ref: String? = nil, webURL: String? = nil) {
+        self.id = id
+        self.project = project
+        self.ref = ref
+        self.webURL = webURL
+    }
+}
+
+public struct MobilePipelineStage: Decodable, Identifiable, Sendable {
+    public let name: String
+    public let status: String
+    public let jobs: [MobilePipelineJob]
+
+    public var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case status
+        case jobs
+    }
+
+    public init(name: String, status: String, jobs: [MobilePipelineJob] = []) {
+        self.name = name
+        self.status = status
+        self.jobs = jobs
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        self.status = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
+        self.jobs = try container.decodeIfPresent([MobilePipelineJob].self, forKey: .jobs) ?? []
+    }
+}
+
+public struct MobilePipelineJob: Decodable, Identifiable, Sendable {
+    public let id: Int
+    public let name: String
+    public let status: String
+    public let stage: String
+    public let duration: Int?
+    public let startedAt: String?
+    public let webURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case status
+        case stage
+        case duration
+        case startedAt = "started_at"
+        case webURL = "web_url"
+    }
+
+    public init(
+        id: Int,
+        name: String,
+        status: String,
+        stage: String,
+        duration: Int? = nil,
+        startedAt: String? = nil,
+        webURL: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.status = status
+        self.stage = stage
+        self.duration = duration
+        self.startedAt = startedAt
+        self.webURL = webURL
+    }
+}
+
 public struct MobilePipeline: Decodable, Identifiable, Sendable {
     public var id: Int
     public let project: String
@@ -960,6 +1152,7 @@ public struct MobilePipeline: Decodable, Identifiable, Sendable {
     public let createdAt: String
     public let webURL: String?
     public let currentStage: String?
+    public let stages: [MobilePipelineStage]?
     public let completedStages: Int
     public let totalStages: Int
     public let failedJobCount: Int
@@ -975,11 +1168,62 @@ public struct MobilePipeline: Decodable, Identifiable, Sendable {
         case createdAt = "created_at"
         case webURL = "web_url"
         case currentStage = "current_stage"
+        case stages
         case completedStages = "completed_stages"
         case totalStages = "total_stages"
         case failedJobCount = "failed_job_count"
         case agentId = "agent_id"
         case agentType = "agent_type"
+    }
+
+    public init(
+        id: Int,
+        project: String,
+        ref: String,
+        status: String,
+        source: String? = nil,
+        createdAt: String,
+        webURL: String? = nil,
+        currentStage: String? = nil,
+        stages: [MobilePipelineStage]? = nil,
+        completedStages: Int = 0,
+        totalStages: Int = 0,
+        failedJobCount: Int = 0,
+        agentId: String? = nil,
+        agentType: String? = nil
+    ) {
+        self.id = id
+        self.project = project
+        self.ref = ref
+        self.status = status
+        self.source = source
+        self.createdAt = createdAt
+        self.webURL = webURL
+        self.currentStage = currentStage
+        self.stages = stages
+        self.completedStages = completedStages
+        self.totalStages = totalStages
+        self.failedJobCount = failedJobCount
+        self.agentId = agentId
+        self.agentType = agentType
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(Int.self, forKey: .id)
+        self.project = try container.decodeIfPresent(String.self, forKey: .project) ?? ""
+        self.ref = try container.decodeIfPresent(String.self, forKey: .ref) ?? ""
+        self.status = try container.decodeIfPresent(String.self, forKey: .status) ?? ""
+        self.source = try container.decodeIfPresent(String.self, forKey: .source)
+        self.createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
+        self.webURL = try container.decodeIfPresent(String.self, forKey: .webURL)
+        self.currentStage = try container.decodeIfPresent(String.self, forKey: .currentStage)
+        self.stages = try container.decodeIfPresent([MobilePipelineStage].self, forKey: .stages)
+        self.completedStages = try container.decodeIfPresent(Int.self, forKey: .completedStages) ?? 0
+        self.totalStages = try container.decodeIfPresent(Int.self, forKey: .totalStages) ?? 0
+        self.failedJobCount = try container.decodeIfPresent(Int.self, forKey: .failedJobCount) ?? 0
+        self.agentId = try container.decodeIfPresent(String.self, forKey: .agentId)
+        self.agentType = try container.decodeIfPresent(String.self, forKey: .agentType)
     }
 }
 
