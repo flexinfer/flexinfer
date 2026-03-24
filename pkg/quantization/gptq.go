@@ -146,6 +146,13 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 	resumeEnabled := getenvDefault("FLEXINFER_GPTQ_RESUME", "true")
 	calibrationCacheEnabled := getenvDefault("FLEXINFER_GPTQ_CALIBRATION_CACHE", "true")
 	deviceMap := getenvDefault("FLEXINFER_GPTQ_DEVICE_MAP", "auto")
+	// gfx906 (Radeon VII) has 128GB system RAM — use direct CPU loading to avoid
+	// GPTQModel's shell_module_materialize meta tensor crash (init_empty_weights
+	// creates meta tensors that .to(device) can't handle). GPU compute is still
+	// used for actual per-layer quantization; this only affects model loading.
+	if gpuArch == "gfx906" && deviceMap == "auto" {
+		deviceMap = "cpu"
+	}
 
 	env := []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
