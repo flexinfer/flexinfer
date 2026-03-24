@@ -257,6 +257,10 @@ runtime:
       memoryRequest: "4Gi"
       nodeSelector:
         kubernetes.io/hostname: cblevins-radeonvii
+        # Pause runtime during quantization — radeonvii has 1 GPU,
+        # runtime DaemonSet + quantize job can't coexist.
+        # Remove this label to re-enable after quantization completes.
+        flexinfer.ai/pause: "true"
 
 grafanaDashboard:
   enabled: true
