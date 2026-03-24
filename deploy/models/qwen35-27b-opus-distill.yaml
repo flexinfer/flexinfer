@@ -1,7 +1,7 @@
 # Qwen3.5-27B via vLLM on AMD gfx1100
 #
 # Model: Qwen3.5-27B, GPTQ INT4 (self-quantized pipeline, clean weights).
-# Source: OCI artifact in Harbor (pushed from radeonvii quantization pipeline).
+# Source: Longhorn PVC with clean (non-abliterated) GPTQ INT4 weights from gfx906 pipeline.
 # Image: vllm:rocm-gfx1100-qwen35-patched (runtime FLA + qwen3_5_text patches).
 # Weights: ~16.6 GiB GPTQ INT4 (5 shards + metadata).
 #
@@ -15,7 +15,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  source: pvc://qwen35-27b-opus-distill-oci/qwen35-27b-opus-distill
+  source: pvc://qwen35-27b-opus-distill-gptq/qwen35-27b-opus-distill-gptq/gptq-w4-g128
   gpu:
     vendor: amd
     count: 2
