@@ -217,20 +217,18 @@ if needs_mamba_methods:
 else:
     print("  mamba state methods already in Qwen3_5ForCausalLMBase")
 
-# 3e. Fix MergedColumnParallelLinear output_sizes for pre-fused weights
-# Pre-fused checkpoint has single tensors, not multiple shards.
+# 3e. Fix MergedColumnParallelLinear output_sizes to match 2-shard GPTQ layout.
+# Original: [key_dim, key_dim, value_dim, value_dim] = [Q, K, V, Z] for 4 sub-shards.
+# GPTQ layout: 2 tensors — in_proj_qkv (Q+K+V fused) and in_proj_z (Z separate).
+# So output_sizes needs exactly 2 entries: [QKV_combined, Z].
 old_qkvz_proj = "output_sizes=[key_dim, key_dim, value_dim, value_dim],"
-new_qkvz_proj = "output_sizes=[key_dim + key_dim + value_dim + value_dim],"
+new_qkvz_proj = "output_sizes=[key_dim + key_dim + value_dim, value_dim],"
 if old_qkvz_proj in content:
     content = content.replace(old_qkvz_proj, new_qkvz_proj)
     changes.append("qkvz_proj output_sizes")
 
-# Also fix in_proj_ba: output_sizes=[self.num_v_heads] * 2 → [self.num_v_heads * 2]
-old_ba = "output_sizes=[self.num_v_heads] * 2,"
-new_ba = "output_sizes=[self.num_v_heads * 2],"
-if old_ba in content:
-    content = content.replace(old_ba, new_ba)
-    changes.append("in_proj_ba output_sizes")
+# in_proj_ba: output_sizes=[self.num_v_heads] * 2 is already correct for 2 shards
+# (in_proj_b = shard 0, in_proj_a = shard 1). Do NOT collapse to single entry.
 
 with open(qwen35_path, "w") as f:
     f.write(content)
