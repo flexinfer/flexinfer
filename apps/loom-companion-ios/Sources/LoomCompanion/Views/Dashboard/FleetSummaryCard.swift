@@ -25,6 +25,23 @@ struct FleetSummaryCard: View {
                     }
                 }
 
+                if let heartbeat = dashboard.lastHeartbeat {
+                    HStack(spacing: LoomSpacing.xxs) {
+                        PulsingDot(color: LoomColors.statusHealthy, isPulsing: true)
+                        Text("Last heartbeat \(relativeHeartbeatTime(heartbeat.timestamp))")
+                            .font(LoomTypography.caption)
+                            .foregroundStyle(LoomColors.textSecondary)
+                        if !heartbeat.agentId.isEmpty {
+                            Text("\u{2022} \(heartbeat.agentId)")
+                                .font(LoomTypography.caption)
+                                .foregroundStyle(LoomColors.textTertiary)
+                        }
+                        Text("\u{2022} \(heartbeat.count1h)/h")
+                            .font(LoomTypography.caption)
+                            .foregroundStyle(LoomColors.textTertiary)
+                    }
+                }
+
                 #if canImport(Charts)
                 FleetCompositionChart(
                     active: dashboard.activeAgents,
@@ -114,6 +131,23 @@ struct FleetSummaryCard: View {
         f.formatOptions = [.withInternetDateTime]
         return f
     }()
+
+    private func relativeHeartbeatTime(_ iso: String) -> String {
+        guard let date = Self.isoFormatter.date(from: iso) ?? Self.isoFallback.date(from: iso) else {
+            return "just now"
+        }
+        let diff = Int(Date().timeIntervalSince(date))
+        if diff < 5 {
+            return "just now"
+        }
+        if diff < 60 {
+            return "\(diff)s ago"
+        }
+        if diff < 3600 {
+            return "\(diff / 60)m ago"
+        }
+        return "\(diff / 3600)h ago"
+    }
 
     private var eventDensity: [Double] {
         let dates = dashboard.recentTimeline.compactMap {

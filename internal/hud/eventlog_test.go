@@ -116,6 +116,22 @@ func TestEventLog_AllEmpty(t *testing.T) {
 	}
 }
 
+func TestEventLog_AllExcludingSkipsTypes(t *testing.T) {
+	el := NewEventLog(10)
+
+	el.Append(TimelineEntry{EventType: "agent.heartbeat", Timestamp: time.Now()})
+	el.Append(TimelineEntry{EventType: "session.start", Timestamp: time.Now()})
+	el.Append(TimelineEntry{EventType: "hud.health", Timestamp: time.Now()})
+
+	filtered := el.AllExcluding(10, "agent.heartbeat", "hud.health")
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 filtered entry, got %d", len(filtered))
+	}
+	if filtered[0].EventType != "session.start" {
+		t.Fatalf("expected session.start to remain, got %q", filtered[0].EventType)
+	}
+}
+
 func TestEventLog_WrapAround(t *testing.T) {
 	el := NewEventLog(3)
 

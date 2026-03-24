@@ -11,7 +11,7 @@ struct TimelineListView: View {
                     .font(LoomTypography.headlineMedium)
 
                 if entries.isEmpty {
-                    Text("No recent events")
+                    Text("No recent activity")
                         .font(LoomTypography.bodyRegular)
                         .foregroundStyle(LoomColors.textSecondary)
                         .padding(.vertical, LoomSpacing.sm)

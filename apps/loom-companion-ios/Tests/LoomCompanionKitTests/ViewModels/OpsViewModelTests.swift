@@ -66,6 +66,23 @@ struct OpsViewModelTests {
                     agentType: "codex"
                 )
             ],
+            recentPipelines: [
+                MobilePipeline(
+                    id: 76,
+                    project: "services/loom-core",
+                    ref: "feature/recent",
+                    status: "success",
+                    createdAt: "2026-02-25T09:50:00Z",
+                    webURL: "https://gitlab.flexinfer.ai/services/loom-core/-/pipelines/76"
+                )
+            ],
+            summary: MobilePipelineSummary(
+                running: 1,
+                passed: 1,
+                failed: 0,
+                pending: 0,
+                lastActivity: "2m ago"
+            ),
             available: true
         )
         client.presenceResponse = MobilePresenceResponse(
@@ -167,6 +184,8 @@ struct OpsViewModelTests {
         #expect(vm.workflowsDeprecated == true)
         #expect(vm.workflowsDeprecationMessage?.contains("deprecated") == true)
         #expect(vm.pipelines.count == 1)
+        #expect(vm.recentPipelines.count == 1)
+        #expect(vm.pipelineSummary?.running == 1)
         #expect(vm.pipelinesAvailable == true)
         #expect(vm.memoryStats?.totalItems == 60)
         #expect(vm.graphStats?.totalEntities == 12)

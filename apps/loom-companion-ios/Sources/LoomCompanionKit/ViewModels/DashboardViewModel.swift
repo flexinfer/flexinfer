@@ -10,12 +10,16 @@ public final class DashboardViewModel {
     public var isLoading = false
     public var error: LoomAPIError?
     public var taskCounts: MobileTaskCounts?
+    public var lastHeartbeat: LastHeartbeat? { dashboard?.lastHeartbeat }
 
     @ObservationIgnored
     private let apiClient: any LoomAPIClientProtocol
 
     @ObservationIgnored
     private var sseRegistrationId: UUID?
+
+    @ObservationIgnored
+    private var ownedBroadcaster: SSEEventBroadcaster?
 
     @ObservationIgnored
     public var alertsViewModel: AlertsViewModel?
@@ -59,6 +63,15 @@ public final class DashboardViewModel {
         }
     }
 
+    /// Convenience overload used by tests and legacy call sites that still own an SSE client directly.
+    @MainActor
+    public func startListening(sseClient: SSEClient) {
+        let broadcaster = SSEEventBroadcaster()
+        startListening(broadcaster: broadcaster)
+        broadcaster.start(sseClient: sseClient)
+        ownedBroadcaster = broadcaster
+    }
+
     /// Stop listening to SSE events.
     @MainActor
     public func stopListening(broadcaster: SSEEventBroadcaster) {
@@ -66,6 +79,15 @@ public final class DashboardViewModel {
             broadcaster.unregister(id)
             sseRegistrationId = nil
         }
+    }
+
+    /// Stops a broadcaster previously created by `startListening(sseClient:)`.
+    @MainActor
+    public func stopListening() {
+        guard let ownedBroadcaster else { return }
+        stopListening(broadcaster: ownedBroadcaster)
+        ownedBroadcaster.stop()
+        self.ownedBroadcaster = nil
     }
 
     /// SSE event types that trigger a dashboard data refresh.
@@ -144,6 +166,7 @@ public final class DashboardViewModel {
 
     @MainActor
     private func syncWidgets() {
+        #if os(iOS)
         guard let dashboard else { return }
 
         let counts = taskCounts ?? MobileTaskCounts(
@@ -181,6 +204,7 @@ public final class DashboardViewModel {
         )
 
         WidgetCenter.shared.reloadAllTimelines()
+        #endif
     }
 
     private func recentTaskTitles(from timeline: [TimelineEntry]) -> [String] {
@@ -197,7 +221,7 @@ public final class DashboardViewModel {
     }
 
     private func recentSessions(from timeline: [TimelineEntry]) -> [SessionWidgetEntry] {
-        timeline.compactMap { entry in
+        timeline.compactMap { entry -> SessionWidgetEntry? in
             guard entry.eventType.contains("session") else { return nil }
 
             let agentId = entry.agentId ?? entry.data?["agent_id"]?.stringValue ?? "unknown"
@@ -330,17 +354,6 @@ public final class DashboardViewModel {
             estimatedCost: payload.estimated_cost,
             staleAfter: payload.stale_after
         )
-    }
-
-    /// Infer agent type from agent ID string.
-    private static func inferAgentType(from agentId: String) -> String {
-        let id = agentId.lowercased()
-        if id.contains("claude") { return "claude-code" }
-        if id.contains("gemini") { return "gemini" }
-        if id.contains("codex") { return "codex" }
-        if id.contains("kilo") { return "kilocode" }
-        if id.contains("antigravity") { return "antigravity" }
-        return "unknown"
     }
 
     // MARK: - Completed Session Persistence
@@ -518,4 +531,15 @@ public final class DashboardViewModel {
         }
     }
     #endif
+
+    /// Infer agent type from agent ID string.
+    private static func inferAgentType(from agentId: String) -> String {
+        let id = agentId.lowercased()
+        if id.contains("claude") { return "claude-code" }
+        if id.contains("gemini") { return "gemini" }
+        if id.contains("codex") { return "codex" }
+        if id.contains("kilo") { return "kilocode" }
+        if id.contains("antigravity") { return "antigravity" }
+        return "unknown"
+    }
 }

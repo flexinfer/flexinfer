@@ -135,7 +135,7 @@ public struct MobileTask: Decodable, Identifiable, Sendable {
         agentId: String,
         namespace: String,
         title: String,
-        context: String,
+        context: String?,
         priority: String,
         status: MobileTaskStatus,
         tags: [String],
@@ -156,7 +156,7 @@ public struct MobileTask: Decodable, Identifiable, Sendable {
         self.agentId = agentId
         self.namespace = namespace
         self.title = title
-        self.context = context
+        self.context = context ?? ""
         self.priority = priority
         self.status = status
         self.tags = tags
@@ -495,6 +495,20 @@ public struct MobilePresenceResponse: Decodable, Sendable {
     public let worktrees: [MobileWorktree]
     public let spawns: [MobilePresenceSpawn]
     public let summary: MobilePresenceSummary
+
+    public init(
+        agents: [MobilePresenceAgent],
+        claims: [MobileFileClaim],
+        worktrees: [MobileWorktree],
+        spawns: [MobilePresenceSpawn] = [],
+        summary: MobilePresenceSummary
+    ) {
+        self.agents = agents
+        self.claims = claims
+        self.worktrees = worktrees
+        self.spawns = spawns
+        self.summary = summary
+    }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -1227,7 +1241,69 @@ public struct MobilePipeline: Decodable, Identifiable, Sendable {
     }
 }
 
+public struct MobilePipelineSummary: Decodable, Sendable {
+    public let running: Int
+    public let passed: Int
+    public let failed: Int
+    public let pending: Int
+    public let lastActivity: String?
+
+    enum CodingKeys: String, CodingKey {
+        case running
+        case passed
+        case failed
+        case pending
+        case lastActivity = "last_activity"
+    }
+
+    public init(running: Int, passed: Int, failed: Int, pending: Int, lastActivity: String? = nil) {
+        self.running = running
+        self.passed = passed
+        self.failed = failed
+        self.pending = pending
+        self.lastActivity = lastActivity
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.running = try container.decodeIfPresent(Int.self, forKey: .running) ?? 0
+        self.passed = try container.decodeIfPresent(Int.self, forKey: .passed) ?? 0
+        self.failed = try container.decodeIfPresent(Int.self, forKey: .failed) ?? 0
+        self.pending = try container.decodeIfPresent(Int.self, forKey: .pending) ?? 0
+        self.lastActivity = try container.decodeIfPresent(String.self, forKey: .lastActivity)
+    }
+}
+
 public struct MobilePipelinesResponse: Decodable, Sendable {
     public let pipelines: [MobilePipeline]
+    public let recentPipelines: [MobilePipeline]
+    public let summary: MobilePipelineSummary?
     public let available: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case pipelines
+        case recentPipelines = "recent_pipelines"
+        case summary
+        case available
+    }
+
+    public init(
+        pipelines: [MobilePipeline],
+        recentPipelines: [MobilePipeline] = [],
+        summary: MobilePipelineSummary? = nil,
+        available: Bool = false
+    ) {
+        self.pipelines = pipelines
+        self.recentPipelines = recentPipelines
+        self.summary = summary
+        self.available = available
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.pipelines = try container.decodeIfPresent([MobilePipeline].self, forKey: .pipelines) ?? []
+        self.recentPipelines = try container.decodeIfPresent([MobilePipeline].self, forKey: .recentPipelines) ?? []
+        self.summary = try container.decodeIfPresent(MobilePipelineSummary.self, forKey: .summary)
+        self.available = try container.decodeIfPresent(Bool.self, forKey: .available) ?? false
+    }
 }

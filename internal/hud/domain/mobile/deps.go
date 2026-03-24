@@ -70,6 +70,7 @@ type SSEHubOps interface {
 // EventLogOps is the interface for reading timeline events.
 type EventLogOps interface {
 	All(limit int) []TimelineEntry
+	AllExcluding(limit int, excludeTypes ...string) []TimelineEntry
 }
 
 // SpawnerOps is the interface for the headless agent spawn orchestrator.

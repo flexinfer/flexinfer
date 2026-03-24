@@ -3,6 +3,7 @@ package mobile
 import (
 	"net/http"
 	"strings"
+	"time"
 )
 
 func (d *MobileDomain) handleMobilePing(w http.ResponseWriter, r *http.Request) {
@@ -23,10 +24,22 @@ func (d *MobileDomain) handleMobileDashboard(w http.ResponseWriter, r *http.Requ
 
 	var recentTimeline []TimelineEntry
 	if el := d.deps.EventLog(); el != nil {
-		recentTimeline = el.All(10)
+		recentTimeline = el.AllExcluding(10, "agent.heartbeat", "hud.fleet", "hud.health")
 	}
 	if recentTimeline == nil {
 		recentTimeline = []TimelineEntry{}
+	}
+
+	var lastHeartbeat map[string]any
+	if el := d.deps.EventLog(); el != nil {
+		lastHeartbeat = buildHeartbeatSummary(el.All(1000))
+	}
+	if lastHeartbeat == nil {
+		lastHeartbeat = map[string]any{
+			"agent_id":  "",
+			"timestamp": "",
+			"count_1h":  0,
+		}
 	}
 
 	d.writeMobileJSON(w, http.StatusOK, map[string]any{
@@ -53,6 +66,7 @@ func (d *MobileDomain) handleMobileDashboard(w http.ResponseWriter, r *http.Requ
 			"attention_lanes":  buildMobileAttentionLanes(fleetSnap.Coordination),
 		},
 		"recent_timeline": recentTimeline,
+		"last_heartbeat":  lastHeartbeat,
 	})
 }
 
@@ -146,4 +160,51 @@ func (d *MobileDomain) handleMobileControlPlane(w http.ResponseWriter, r *http.R
 		"otel":   otel,
 		"health": health,
 	})
+}
+
+func buildHeartbeatSummary(entries []TimelineEntry) map[string]any {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	cutoff := time.Now().Add(-1 * time.Hour)
+	var latest TimelineEntry
+	var found bool
+	count := 0
+
+	for _, entry := range entries {
+		if entry.EventType != "agent.heartbeat" {
+			continue
+		}
+		if !found || entry.Timestamp.After(latest.Timestamp) {
+			latest = entry
+			found = true
+		}
+		if entry.Timestamp.Before(cutoff) {
+			continue
+		}
+		count++
+	}
+	if !found {
+		return map[string]any{
+			"agent_id":  "",
+			"timestamp": "",
+			"count_1h":  0,
+		}
+	}
+	if latest.Timestamp.IsZero() {
+		return map[string]any{
+			"agent_id":  "",
+			"timestamp": "",
+			"count_1h":  0,
+		}
+	}
+
+	agentID := latest.AgentID
+
+	return map[string]any{
+		"agent_id":  agentID,
+		"timestamp": latest.Timestamp.Format(time.RFC3339),
+		"count_1h":  count,
+	}
 }

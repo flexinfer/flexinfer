@@ -138,11 +138,11 @@ struct OpsModelsTests {
         let json = """
         {
           "ok": true,
-          "data": {
-            "pipelines": [
-              {
-                "id": 101,
-                "project": "services/loom-core",
+            "data": {
+              "pipelines": [
+                {
+                  "id": 101,
+                  "project": "services/loom-core",
                 "ref": "main",
                 "status": "running",
                 "source": "push",
@@ -173,13 +173,30 @@ struct OpsModelsTests {
                 "failed_job_count": 0,
                 "agent_id": "codex-1",
                 "agent_type": "codex"
-              }
-            ],
-            "available": true
-          },
-          "meta": {
-            "request_id": "req_ops_3",
-            "timestamp": "2026-02-25T10:05:00Z"
+                }
+              ],
+              "recent_pipelines": [
+                {
+                  "id": 99,
+                  "project": "services/loom-core",
+                  "ref": "feature/test",
+                  "status": "failed",
+                  "created_at": "2026-02-25T09:55:00Z",
+                  "web_url": "https://gitlab.example.com/services/loom-core/-/pipelines/99"
+                }
+              ],
+              "summary": {
+                "running": 1,
+                "passed": 2,
+                "failed": 1,
+                "pending": 0,
+                "last_activity": "2m ago"
+              },
+              "available": true
+            },
+            "meta": {
+              "request_id": "req_ops_3",
+              "timestamp": "2026-02-25T10:05:00Z"
           }
         }
         """
@@ -196,5 +213,8 @@ struct OpsModelsTests {
         #expect(pipeline.stages?.count == 2)
         #expect(pipeline.stages?.first?.jobs.count == 1)
         #expect(pipeline.agentId == "codex-1")
+        #expect(envelope.data?.recentPipelines.count == 1)
+        #expect(envelope.data?.summary?.running == 1)
+        #expect(envelope.data?.summary?.lastActivity == "2m ago")
     }
 }

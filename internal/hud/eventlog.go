@@ -102,6 +102,46 @@ func (l *EventLog) All(limit int) []TimelineEntry {
 	return all
 }
 
+// AllExcluding returns the most recent entries up to limit, skipping excluded event types.
+func (l *EventLog) AllExcluding(limit int, excludeTypes ...string) []TimelineEntry {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = l.count()
+	}
+	if limit <= 0 {
+		return nil
+	}
+
+	all := l.snapshot()
+	if len(all) == 0 {
+		return nil
+	}
+
+	excludes := make(map[string]struct{}, len(excludeTypes))
+	for _, eventType := range excludeTypes {
+		if trimmed := eventType; trimmed != "" {
+			excludes[trimmed] = struct{}{}
+		}
+	}
+
+	filtered := make([]TimelineEntry, 0, limit)
+	for _, entry := range all {
+		if _, skip := excludes[entry.EventType]; skip {
+			continue
+		}
+		filtered = append(filtered, entry)
+		if len(filtered) >= limit {
+			break
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
+}
+
 // Len returns the number of stored entries.
 func (l *EventLog) Len() int {
 	l.mu.RLock()

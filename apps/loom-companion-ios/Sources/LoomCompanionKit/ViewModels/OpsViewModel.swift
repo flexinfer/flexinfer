@@ -38,6 +38,8 @@ public final class OpsViewModel {
     public var controlPlane: MobileControlPlaneResponse?
 
     public var pipelines: [MobilePipeline] = []
+    public var recentPipelines: [MobilePipeline] = []
+    public var pipelineSummary: MobilePipelineSummary?
     public var pipelinesAvailable = false
 
     public var sandboxSummary: MobileSandboxSummary?
@@ -102,7 +104,9 @@ public final class OpsViewModel {
         do {
             let response: MobilePipelinesResponse = try await apiClient.request(.pipelines)
             pipelines = response.pipelines
-            pipelinesAvailable = response.available
+            recentPipelines = response.recentPipelines
+            pipelineSummary = response.summary
+            pipelinesAvailable = response.available || !response.pipelines.isEmpty || !response.recentPipelines.isEmpty
         } catch {
             // Non-critical — keep existing data on transient failures.
         }
@@ -281,7 +285,9 @@ public final class OpsViewModel {
         do {
             let response: MobilePipelinesResponse = try await apiClient.request(.pipelines)
             pipelines = response.pipelines
-            pipelinesAvailable = response.available
+            recentPipelines = response.recentPipelines
+            pipelineSummary = response.summary
+            pipelinesAvailable = response.available || !response.pipelines.isEmpty || !response.recentPipelines.isEmpty
         } catch {
             if pipelines.isEmpty {
                 pipelinesAvailable = false
