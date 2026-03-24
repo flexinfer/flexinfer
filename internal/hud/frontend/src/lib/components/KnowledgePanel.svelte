@@ -115,13 +115,6 @@
     }
   }
 
-  function clearFilters() {
-    searchInput = '';
-    knowledgeStore.filterCategory = 'all';
-    knowledgeStore.filterAgent = 'all';
-    knowledgeStore.search('');
-  }
-
   function handleSort(key, dir) {
     sortKey = key;
     sortDir = dir;
@@ -194,7 +187,6 @@
     resultCount={entries.length}
     onSearch={handleSearch}
     onFilter={handleFilter}
-    onClear={clearFilters}
   >
     {#snippet actions()}
       <button class="btn btn-accent" onclick={() => handleSearch(searchInput)} disabled={knowledgeStore.loading}>
