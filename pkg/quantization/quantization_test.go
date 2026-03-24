@@ -682,11 +682,29 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX906(t *testing.T) {
 	if container.Image != DefaultGPTQROCmGFX906Image {
 		t.Fatalf("container.Image = %q, want %q", container.Image, DefaultGPTQROCmGFX906Image)
 	}
+	env := containerEnvMap(container.Env)
+	if env["QUANTIZE_DEVICE_MAP"] != "cpu" {
+		t.Fatalf("QUANTIZE_DEVICE_MAP = %q, want cpu", env["QUANTIZE_DEVICE_MAP"])
+	}
 
 	// amd.com/gpu should be set
 	amdGPU := corev1.ResourceName("amd.com/gpu")
 	if _, ok := container.Resources.Limits[amdGPU]; !ok {
 		t.Fatal("expected amd.com/gpu limit to be set")
+	}
+
+	script := container.Args[0]
+	if !contains(script, "Skipping torchao on gfx906/gfx900; wheel triggers SIGILL on older x86 hosts") {
+		t.Fatal("expected gfx906 wrapper script to skip torchao imports on Broadwell-class hosts")
+	}
+	if !contains(script, "python3 -m pip uninstall -y pypcre") {
+		t.Fatal("expected gfx906 wrapper script to remove the crashing pypcre wheel")
+	}
+	if !contains(script, "cat > /tmp/pcre.py") {
+		t.Fatal("expected gfx906 wrapper script to inject a stdlib-backed pcre shim")
+	}
+	if !contains(script, "GPTQ_PY_IMPORTS=\"import tokenicer; from gptqmodel import GPTQModel, QuantizeConfig\"") {
+		t.Fatal("expected gfx906 wrapper script to verify the GPTQModel API import path")
 	}
 }
 
@@ -1373,8 +1391,23 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "import tokenicer") {
 		t.Error("expected GPTQ wrapper script to bootstrap tokenicer when missing")
 	}
-	if !contains(script, "import tokenicer, pcre, kernels, torchao") {
-		t.Error("expected GPTQ wrapper script to verify GPTQModel runtime dependencies")
+	if !contains(script, "GPTQ_PY_IMPORTS=\"import tokenicer, pcre, kernels\"") {
+		t.Error("expected GPTQ wrapper script to define the base GPTQModel runtime dependency imports")
+	}
+	if !contains(script, "GPTQ_PIP_ARGS+=(") || !contains(script, "\"torchao>=0.16.0\"") {
+		t.Error("expected GPTQ wrapper script to add torchao only on compatible arches")
+	}
+	if !contains(script, "Skipping torchao on gfx906/gfx900; wheel triggers SIGILL on older x86 hosts") {
+		t.Error("expected GPTQ wrapper script to explain why torchao is skipped on gfx906/gfx900")
+	}
+	if !contains(script, "python3 -m pip uninstall -y pypcre") {
+		t.Error("expected GPTQ wrapper script to remove pypcre on gfx906/gfx900 hosts")
+	}
+	if !contains(script, "cat > /tmp/pcre.py") {
+		t.Error("expected GPTQ wrapper script to create a stdlib-backed pcre shim")
+	}
+	if !contains(script, "\"hf_transfer>=0.1.9\"") {
+		t.Error("expected GPTQ wrapper script self-heal path to install hf_transfer")
 	}
 	if !contains(script, "direct_init_kwargs.pop(\"device_map\", None)") {
 		t.Error("expected GPTQ wrapper script to patch GPTQModel direct CPU loader to drop device_map")

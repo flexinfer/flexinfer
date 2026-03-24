@@ -1,8 +1,8 @@
-# Direct GPTQ model inference test — bypasses vLLM to validate quantized weights.
+# GPTQ weight validation — reads safetensors directly (no full model load).
 #
-# Tests the GPTQ-quantized Qwen3.5-27B model using transformers + GPTQModel
-# directly. If the model produces correct output here, the bug is in vLLM's
-# GDN (Gated Delta Net) implementation. If garbage here too, weights are bad.
+# Validates GPTQ-quantized Qwen3.5-27B weights by scanning the checkpoint,
+# manually dequantizing key layers, and simulating GDN gating to check if
+# the extreme decay values observed in vLLM are inherent to the weights.
 #
 # Usage:
 #   kubectl apply -f deploy/debug/qwen35-gptq-direct-test.yaml
@@ -20,215 +20,307 @@ metadata:
 data:
   test.py: |
     #!/usr/bin/env python3
-    """Direct GPTQ model test — patches gptqmodel warmup on disk before imports.
+    """GPTQ weight validation — reads safetensors directly, no full model load.
 
-    Tests the GPTQ-quantized Qwen3.5-27B model using transformers directly
-    (no vLLM). If the model produces correct output here, the bug is in vLLM's
-    GDN implementation. If garbage here too, GPTQ weights are bad.
+    Validates GPTQ-quantized Qwen3.5-27B weights by:
+    1. Scanning checkpoint for quantized vs unquantized layers
+    2. Manual GPTQ dequantization of key layers on GPU
+    3. Computing gating values (in_proj_ba -> a,b -> g, beta) to check
+       if the extreme decay observed in vLLM is inherent to the weights
     """
-    import sys, os, time, json, traceback, subprocess
+    import sys, os, time, json, glob
 
     print("=" * 70)
-    print("GPTQ Direct Inference Test")
+    print("GPTQ Weight Validation (Lightweight)")
     print("=" * 70)
     sys.stdout.flush()
 
-    # ── Step 0: Install missing deps ────────────────────────────────────
-    print("\n[0/7] Installing dependencies...")
-    sys.stdout.flush()
-    for dep in ["logbar", "tokenicer", "device_smi", "threadpoolctl", "defuser", "optimum"]:
-        try:
-            __import__(dep.replace("-", "_"))
-        except ImportError:
-            print(f"  Installing {dep}...")
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", dep, "--quiet"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    sys.stdout.flush()
-
-    # ── Step 1: Patch gptqmodel warmup BEFORE import ────────────────────
-    print("\n[1/7] Patching gptqmodel linalg_warmup...")
-    sys.stdout.flush()
-    import importlib.util
-    try:
-        spec = importlib.util.find_spec("gptqmodel")
-        gptq_base = spec.submodule_search_locations[0] if spec and spec.submodule_search_locations else None
-    except Exception:
-        gptq_base = None
-
-    if gptq_base is None:
-        print("  Installing gptqmodel...")
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "gptqmodel", "--no-build-isolation", "--quiet"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        spec = importlib.util.find_spec("gptqmodel")
-        gptq_base = spec.submodule_search_locations[0]
-
-    warmup_path = os.path.join(gptq_base, "utils", "linalg_warmup.py")
-    if os.path.exists(warmup_path):
-        noop = '"""Linalg warmup — no-op for ROCm (no MAGMA)."""\n'
-        noop += 'def linalg_warmup(*a, **kw): pass\n'
-        noop += 'def start_linalg_warmup(*a, **kw): pass\n'
-        noop += 'def run_torch_linalg_warmup(*a, **kw): pass\n'
-        noop += 'class LinalgWarmup:\n'
-        noop += '    def __init__(self, *a, **kw): pass\n'
-        noop += '    def start(self, *a, **kw): pass\n'
-        noop += '    def stop(self, *a, **kw): pass\n'
-        noop += '    def join(self, *a, **kw): pass\n'
-        with open(warmup_path, "w") as f:
-            f.write(noop)
-        print(f"  Patched: {warmup_path}")
-    sys.stdout.flush()
-
-    # ── Step 2: Remap model_type ────────────────────────────────────────
     MODEL_DIR = "/models/qwen35-27b-opus-distill"
-    WORK_DIR = "/tmp/model-remapped"
-    print(f"\n[2/7] Remapping model_type: qwen3_5_text -> qwen3_next")
+
+    # ── Step 1: Scan checkpoint ────────────────────────────────────────
+    print("\n[1/5] Scanning checkpoint")
     sys.stdout.flush()
 
     if not os.path.isdir(MODEL_DIR):
-        print(f"  ERROR: Model dir not found: {MODEL_DIR}")
-        if os.path.isdir("/models"):
-            print(f"  /models contents: {os.listdir('/models')}")
+        print(f"  ERROR: {MODEL_DIR} not found")
         sys.exit(1)
 
-    os.makedirs(WORK_DIR, exist_ok=True)
-    for f in os.listdir(MODEL_DIR):
-        dst = os.path.join(WORK_DIR, f)
-        if os.path.lexists(dst):
-            os.remove(dst)
-        os.symlink(os.path.join(MODEL_DIR, f), dst)
-
-    config_path = os.path.join(WORK_DIR, "config.json")
-    if os.path.lexists(config_path):
-        os.remove(config_path)
     with open(os.path.join(MODEL_DIR, "config.json")) as f:
         config = json.load(f)
-    orig_type = config.get("model_type", "unknown")
-    if orig_type == "qwen3_5_text":
-        config["model_type"] = "qwen3_next"
-        print(f"  Remapped: {orig_type} -> qwen3_next")
-    else:
-        print(f"  model_type already: {orig_type}")
-    with open(config_path, "w") as f:
-        json.dump(config, f, indent=2)
-
     qc = config.get("quantization_config", {})
-    print(f"  Quant: bits={qc.get('bits')} group_size={qc.get('group_size')} sym={qc.get('sym')} method={qc.get('quant_method')}")
-    sys.stdout.flush()
+    print(f"  model_type: {config.get('model_type')}")
+    print(f"  bits={qc.get('bits')} group_size={qc.get('group_size')} sym={qc.get('sym')}")
+    print(f"  num_hidden_layers: {config.get('num_hidden_layers')}")
+    print(f"  hidden_size: {config.get('hidden_size')}")
 
-    # ── Step 3: Check GPU ───────────────────────────────────────────────
-    print(f"\n[3/7] Checking GPU")
-    sys.stdout.flush()
     import torch
-    print(f"  PyTorch {torch.__version__}, CUDA={torch.cuda.is_available()}")
-    if torch.cuda.is_available():
-        for i in range(torch.cuda.device_count()):
-            p = torch.cuda.get_device_properties(i)
-            free, total = torch.cuda.mem_get_info(i)
-            print(f"  GPU {i}: {p.name} ({free/1024**3:.1f}/{total/1024**3:.1f} GiB free)")
-    else:
-        print("  ERROR: No GPU!"); sys.exit(1)
+    from safetensors import safe_open
+
+    shard_files = sorted(glob.glob(os.path.join(MODEL_DIR, "*.safetensors")))
+    print(f"  Shards: {len(shard_files)}")
+
+    quant_layers = set()
+    unquant_layers = set()
+    all_keys = {}
+
+    for sf in shard_files:
+        with safe_open(sf, framework="pt", device="cpu") as f:
+            for key in f.keys():
+                all_keys[key] = sf
+                layer_name = key.rsplit(".", 1)[0]
+                if key.endswith(".qweight"):
+                    quant_layers.add(layer_name)
+                elif key.endswith(".weight") and layer_name not in quant_layers:
+                    unquant_layers.add(layer_name)
+
+    # Remove layers that have qweight (they appear in both sets)
+    unquant_layers -= quant_layers
+
+    print(f"  Quantized layers: {len(quant_layers)}")
+    print(f"  Unquantized layers: {len(unquant_layers)}")
+
+    # Check in_proj_ba specifically
+    ba_quant = [l for l in quant_layers if "in_proj_ba" in l]
+    ba_unquant = [l for l in unquant_layers if "in_proj_ba" in l]
+    print(f"\n  in_proj_ba quantized: {len(ba_quant)}")
+    print(f"  in_proj_ba unquantized: {len(ba_unquant)}")
+
+    conv_quant = [l for l in quant_layers if "conv1d" in l]
+    conv_unquant = [l for l in unquant_layers if "conv1d" in l]
+    print(f"  conv1d quantized: {len(conv_quant)}")
+    print(f"  conv1d unquantized: {len(conv_unquant)}")
+
+    gate_quant = [l for l in quant_layers if "shared_expert_gate" in l]
+    gate_unquant = [l for l in unquant_layers if "shared_expert_gate" in l]
+    print(f"  shared_expert_gate quantized: {len(gate_quant)}")
+    print(f"  shared_expert_gate unquantized: {len(gate_unquant)}")
     sys.stdout.flush()
 
-    # ── Step 4: Import libraries ────────────────────────────────────────
-    print(f"\n[4/7] Importing libraries")
-    sys.stdout.flush()
-    t0 = time.time()
-    import transformers
-    print(f"  transformers: {transformers.__version__}")
-    try:
-        import gptqmodel
-        print(f"  gptqmodel: {gptqmodel.__version__}")
-    except Exception as e:
-        print(f"  gptqmodel: {e} (using transformers built-in GPTQ)")
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    print(f"  Import: {time.time()-t0:.1f}s")
+    # ── Step 2: Validate in_proj_ba weights ─────────────────────────────
+    print("\n[2/5] Validating in_proj_ba weights (layer 0-3)")
     sys.stdout.flush()
 
-    # ── Step 5: Load model ──────────────────────────────────────────────
-    print(f"\n[5/7] Loading model")
-    sys.stdout.flush()
-    t0 = time.time()
-    tokenizer = AutoTokenizer.from_pretrained(WORK_DIR, trust_remote_code=True)
-    print(f"  Tokenizer: vocab={tokenizer.vocab_size} ({time.time()-t0:.1f}s)")
-    sys.stdout.flush()
-
-    t1 = time.time()
-    try:
-        model = AutoModelForCausalLM.from_pretrained(
-            WORK_DIR, device_map="auto", torch_dtype=torch.float16, trust_remote_code=True)
-        print(f"  Model: {model.__class__.__name__} ({time.time()-t1:.1f}s)")
-    except Exception as e:
-        print(f"  ERROR: {e}"); traceback.print_exc(); sys.exit(1)
-
-    for i in range(torch.cuda.device_count()):
-        a = torch.cuda.memory_allocated(i)/1024**3
-        r = torch.cuda.memory_reserved(i)/1024**3
-        print(f"  GPU {i}: {a:.2f} GiB alloc, {r:.2f} GiB reserved")
+    for layer_idx in range(4):
+        prefix = f"model.layers.{layer_idx}.linear_attn.in_proj_ba"
+        wkey = f"{prefix}.weight"
+        if wkey in all_keys:
+            with safe_open(all_keys[wkey], framework="pt", device="cpu") as f:
+                w = f.get_tensor(wkey)
+            print(f"  Layer {layer_idx} in_proj_ba: shape={list(w.shape)} dtype={w.dtype}")
+            wf = w.float()
+            print(f"    mean={wf.mean():.6f} std={wf.std():.6f} "
+                  f"min={wf.min():.6f} max={wf.max():.6f}")
+            print(f"    nonzero={(w != 0).sum().item()}/{w.numel()} "
+                  f"nan={torch.isnan(w).sum().item()} inf={torch.isinf(w).sum().item()}")
+            del w, wf
+        else:
+            print(f"  Layer {layer_idx} in_proj_ba: NOT FOUND")
     sys.stdout.flush()
 
-    # ── Step 6: Generate responses ──────────────────────────────────────
-    print(f"\n[6/7] Inference tests")
+    # ── Step 3: Manual GPTQ dequantization of in_proj_qkvz ─────────────
+    print("\n[3/5] Manual GPTQ dequant of in_proj_qkvz (layer 0-2)")
     sys.stdout.flush()
-    prompts = [
-        "What is 2+2? Reply with just the number.",
-        "The capital of France is",
-        "Explain quantum computing in one sentence.",
-    ]
-    for idx, prompt in enumerate(prompts):
-        print(f"\n--- Test {idx+1}: {prompt[:60]} ---")
-        messages = [{"role": "user", "content": prompt}]
-        try:
-            text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        except Exception:
-            text = prompt
-        inputs = tokenizer(text, return_tensors="pt").to(model.device)
-        input_len = inputs["input_ids"].shape[1]
-        t0 = time.time()
-        with torch.no_grad():
-            outputs = model.generate(**inputs, max_new_tokens=64, do_sample=False)
-        gen_time = time.time() - t0
-        new_tokens = outputs.shape[1] - input_len
-        response = tokenizer.decode(outputs[0][input_len:], skip_special_tokens=True)
-        print(f"  {new_tokens} tokens in {gen_time:.2f}s ({new_tokens/gen_time:.1f} tok/s)")
-        print(f"  Response: {response[:500]}")
+
+    bits = qc.get("bits", 4)
+    group_size = qc.get("group_size", 128)
+    sym = qc.get("sym", True)
+
+    def dequant_gptq(qweight, scales, qzeros, g_idx, bits=4, sym=True):
+        """Manual GPTQ dequantization (4-bit symmetric)."""
+        # qweight: [in_features // pack_factor, out_features], int32
+        # scales: [n_groups, out_features], float16
+        # qzeros: [n_groups, out_features // pack_factor], int32
+        pack_factor = 32 // bits
+        in_features = qweight.shape[0] * pack_factor
+        out_features = qweight.shape[1]
+
+        # Unpack qweight
+        weight = torch.zeros(in_features, out_features, dtype=torch.float32)
+        for j in range(pack_factor):
+            shift = bits * j
+            mask = (1 << bits) - 1
+            vals = ((qweight >> shift) & mask).to(torch.float32)
+            weight[j::pack_factor] = vals
+
+        # Unpack qzeros
+        n_groups = scales.shape[0]
+        zeros = torch.zeros(n_groups, out_features, dtype=torch.float32)
+        for j in range(pack_factor):
+            shift = bits * j
+            mask = (1 << bits) - 1
+            if qzeros.shape[1] > 0:
+                vals = ((qzeros >> shift) & mask).to(torch.float32)
+                zeros[:, j * (out_features // pack_factor):
+                       (j + 1) * (out_features // pack_factor)] = vals
+
+        # Actually, zeros columns match out_features
+        zeros2 = torch.zeros(n_groups, out_features, dtype=torch.float32)
+        for j in range(pack_factor):
+            shift = bits * j
+            mask = (1 << bits) - 1
+            col_start = qzeros.shape[1] * j // 1  # each int32 packs pack_factor zeros
+            # Simpler: zeros for symmetric is just 2^(bits-1) = 8
+            pass
+
+        if sym:
+            zero_point = 2 ** (bits - 1)  # 8 for 4-bit
+        else:
+            zero_point = zeros  # Not needed for sym
+
+        # Apply dequant per group
+        scales_f = scales.float()
+        for g in range(n_groups):
+            row_start = g * group_size
+            row_end = min(row_start + group_size, in_features)
+            if g_idx is not None:
+                # Use g_idx mapping
+                rows = (g_idx[row_start:row_end] == g)
+            weight[row_start:row_end] = (
+                weight[row_start:row_end] - zero_point
+            ) * scales_f[g:g+1]
+
+        return weight
+
+    for layer_idx in range(3):
+        prefix = f"model.layers.{layer_idx}.linear_attn.in_proj_qkvz"
+        keys_needed = [f"{prefix}.qweight", f"{prefix}.scales",
+                       f"{prefix}.qzeros", f"{prefix}.g_idx"]
+        missing = [k for k in keys_needed if k not in all_keys]
+        if missing:
+            print(f"  Layer {layer_idx} in_proj_qkvz: missing {missing}")
+            continue
+
+        with safe_open(all_keys[f"{prefix}.qweight"], framework="pt", device="cpu") as f:
+            qw = f.get_tensor(f"{prefix}.qweight")
+        with safe_open(all_keys[f"{prefix}.scales"], framework="pt", device="cpu") as f:
+            sc = f.get_tensor(f"{prefix}.scales")
+        with safe_open(all_keys[f"{prefix}.qzeros"], framework="pt", device="cpu") as f:
+            qz = f.get_tensor(f"{prefix}.qzeros")
+        g_idx_key = f"{prefix}.g_idx"
+        with safe_open(all_keys[g_idx_key], framework="pt", device="cpu") as f:
+            gi = f.get_tensor(g_idx_key)
+
+        print(f"  Layer {layer_idx} in_proj_qkvz:")
+        print(f"    qweight: {list(qw.shape)} dtype={qw.dtype}")
+        print(f"    scales:  {list(sc.shape)} dtype={sc.dtype}")
+        print(f"    qzeros:  {list(qz.shape)} dtype={qz.dtype}")
+        print(f"    g_idx:   {list(gi.shape)} unique_groups={gi.unique().shape[0]}")
+
+        # Quick dequant check
+        w = dequant_gptq(qw, sc, qz, gi, bits=bits, sym=sym)
+        print(f"    Dequant: shape={list(w.shape)} "
+              f"mean={w.mean():.6f} std={w.std():.6f}")
+        print(f"    nan={torch.isnan(w).sum().item()} "
+              f"inf={torch.isinf(w).sum().item()} "
+              f"zero_rows={(w.abs().sum(1) == 0).sum().item()}")
+        del qw, sc, qz, gi, w
         sys.stdout.flush()
 
-    # ── Step 7: Logit analysis ──────────────────────────────────────────
-    print(f"\n[7/7] Logit analysis")
+    # ── Step 4: Simulate gating computation ─────────────────────────────
+    print("\n[4/5] Simulating GDN gating (layer 0)")
     sys.stdout.flush()
-    messages = [{"role": "user", "content": prompts[0]}]
-    try:
-        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    except Exception:
-        text = prompts[0]
-    inputs = tokenizer(text, return_tensors="pt").to(model.device)
-    with torch.no_grad():
-        out = model(**inputs)
-        logits = out.logits[0, -1, :]
-        nan_ct = torch.isnan(logits).sum().item()
-        inf_ct = torch.isinf(logits).sum().item()
-        print(f"  NaN={nan_ct} Inf={inf_ct}")
-        top10_v, top10_i = torch.topk(logits, k=10)
-        print(f"  Top-10 logits:")
-        for i in range(10):
-            tid = top10_i[i].item()
-            tok = tokenizer.decode([tid])
-            print(f"    #{i+1}: id={tid} '{tok}' logit={top10_v[i].item():.4f}")
-        top_tok = tokenizer.decode([top10_i[0].item()])
-        if "4" in top_tok:
-            print(f"\n  PASS: Top token contains '4'")
-        else:
-            print(f"\n  FAIL: Top token is '{top_tok}' (expected '4')")
-        lf = logits.float()
-        probs = torch.softmax(lf, dim=0)
-        entropy = -torch.sum(probs * torch.log(probs + 1e-10)).item()
-        max_ent = torch.log(torch.tensor(float(logits.shape[0]))).item()
-        print(f"  Entropy: {entropy:.4f} (ratio={entropy/max_ent:.4f})")
-        print(f"  Logits: mean={lf.mean().item():.4f} std={lf.std().item():.4f}")
 
-    print(f"\n{'='*70}\nTest complete.\n{'='*70}")
+    # Load A_log, dt_bias, in_proj_ba.weight for layer 0
+    prefix = "model.layers.0.linear_attn"
+    needed = {
+        "A_log": f"{prefix}.A_log",
+        "dt_bias": f"{prefix}.dt_bias",
+        "ba_weight": f"{prefix}.in_proj_ba.weight",
+    }
+    tensors = {}
+    for name, key in needed.items():
+        if key in all_keys:
+            with safe_open(all_keys[key], framework="pt", device="cpu") as f:
+                tensors[name] = f.get_tensor(key)
+            print(f"  {name}: shape={list(tensors[name].shape)} dtype={tensors[name].dtype}")
+        else:
+            print(f"  {name}: NOT FOUND ({key})")
+
+    if all(k in tensors for k in needed):
+        A_log = tensors["A_log"].float()
+        dt_bias = tensors["dt_bias"].float()
+        ba_w = tensors["ba_weight"].float()
+
+        print(f"\n  A_log stats: mean={A_log.mean():.4f} std={A_log.std():.4f} "
+              f"min={A_log.min():.4f} max={A_log.max():.4f}")
+        print(f"  dt_bias stats: mean={dt_bias.mean():.4f} std={dt_bias.std():.4f}")
+        print(f"  ba_weight: shape={list(ba_w.shape)}")
+
+        # Simulate: random input hidden state to see gating range
+        hidden_size = config.get("hidden_size", 5120)
+        torch.manual_seed(42)
+        x = torch.randn(1, 1, hidden_size)  # [B, T, D]
+        x = x * 0.5  # typical hidden state magnitude
+
+        # in_proj_ba: [96, 5120] -> projects to [B, T, 96]
+        ba_out = torch.matmul(x, ba_w.t())  # [1, 1, 96]
+        n_heads = ba_out.shape[-1] // 2  # 48 heads, split a and b
+        a = ba_out[..., :n_heads]  # [1, 1, 48]
+        b = ba_out[..., n_heads:]
+
+        print(f"\n  Simulated projection (random input, std=0.5):")
+        print(f"    a (raw): mean={a.mean():.4f} std={a.std():.4f} "
+              f"min={a.min():.4f} max={a.max():.4f}")
+        print(f"    b (raw): mean={b.mean():.4f} std={b.std():.4f}")
+
+        # g = -exp(A_log) * softplus(a + dt_bias[:n_heads])
+        # A_log shape might be [n_heads] or [n_heads, head_dim]
+        A = torch.exp(A_log)
+        if A.dim() == 1:
+            dt = dt_bias[:n_heads] if dt_bias.shape[0] >= n_heads else dt_bias
+            g = -A * torch.nn.functional.softplus(a.squeeze() + dt)
+        else:
+            # Assume [n_heads, head_dim], take mean across head_dim
+            dt = dt_bias[:n_heads] if dt_bias.shape[0] >= n_heads else dt_bias
+            A_mean = A.mean(-1) if A.dim() > 1 else A
+            g = -A_mean[:n_heads] * torch.nn.functional.softplus(a.squeeze() + dt)
+
+        exp_g = torch.exp(g)
+        print(f"\n  Gating (g = -exp(A_log) * softplus(a + dt_bias)):")
+        print(f"    g: mean={g.mean():.4f} std={g.std():.4f} "
+              f"min={g.min():.4f} max={g.max():.4f}")
+        print(f"    exp(g): mean={exp_g.mean():.4f} std={exp_g.std():.4f} "
+              f"min={exp_g.min():.6f} max={exp_g.max():.4f}")
+
+        # Key diagnostic: if exp(g) is very close to 0, the recurrent
+        # state is completely forgotten each step -> zero output
+        near_zero = (exp_g < 0.01).sum().item()
+        print(f"    exp(g) < 0.01: {near_zero}/{exp_g.numel()} heads")
+        near_one = (exp_g > 0.99).sum().item()
+        print(f"    exp(g) > 0.99: {near_one}/{exp_g.numel()} heads")
+
+        # Also test with typical hidden state magnitude from vLLM diagnostics
+        # Layer 0 had Q std ~0.246
+        x2 = torch.randn(1, 1, hidden_size) * 0.25
+        ba_out2 = torch.matmul(x2, ba_w.t())
+        a2 = ba_out2[..., :n_heads]
+        if A.dim() == 1:
+            g2 = -A * torch.nn.functional.softplus(a2.squeeze() + dt)
+        else:
+            g2 = -A_mean[:n_heads] * torch.nn.functional.softplus(a2.squeeze() + dt)
+        exp_g2 = torch.exp(g2)
+        print(f"\n  With std=0.25 input (matching vLLM observed):")
+        print(f"    g: mean={g2.mean():.4f} min={g2.min():.4f} max={g2.max():.4f}")
+        print(f"    exp(g): mean={exp_g2.mean():.4f} min={exp_g2.min():.6f}")
+        print(f"    exp(g) < 0.01: {(exp_g2 < 0.01).sum().item()}/{exp_g2.numel()}")
+
+    sys.stdout.flush()
+
+    # ── Step 5: Compare with FP16 source if available ──────────────────
+    print("\n[5/5] Summary")
+    sys.stdout.flush()
+
+    print(f"\n  Checkpoint: {MODEL_DIR}")
+    print(f"  Total safetensors keys: {len(all_keys)}")
+    print(f"  Quantized layers: {len(quant_layers)}")
+    print(f"  Unquantized layers: {len(unquant_layers)}")
+    print(f"\n  Key unquantized layers:")
+    for l in sorted(unquant_layers):
+        if any(x in l for x in ["in_proj_ba", "conv1d", "shared_expert_gate",
+                                  "A_log", "dt_bias", "embed", "norm", "lm_head"]):
+            print(f"    {l}")
+
+    print(f"\n{'='*70}\nValidation complete.\n{'='*70}")
     sys.stdout.flush()
 ---
 apiVersion: batch/v1
@@ -257,27 +349,25 @@ spec:
           image: registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-nightly-v2
           imagePullPolicy: IfNotPresent
           command: ["/bin/bash", "-c"]
+          workingDir: /tmp
           args:
             - |
               set -euo pipefail
               echo "Starting GPTQ direct inference test..."
+              echo "Working dir: $(pwd)"
+              echo "System memory:"
+              free -h
               python3 /scripts/test.py 2>&1
           resources:
             requests:
-              memory: "48Gi"
-              amd.com/gpu: "1"
+              memory: "4Gi"
             limits:
-              memory: "56Gi"
-              amd.com/gpu: "1"
+              memory: "8Gi"
           env:
             - name: HF_HUB_OFFLINE
               value: "1"
             - name: TRANSFORMERS_OFFLINE
               value: "1"
-            - name: HSA_OVERRIDE_GFX_VERSION
-              value: "11.0.0"
-            - name: PYTORCH_HIP_ALLOC_CONF
-              value: "expandable_segments:True"
           volumeMounts:
             - name: models
               mountPath: /models/qwen35-27b-opus-distill
@@ -286,6 +376,8 @@ spec:
             - name: scripts
               mountPath: /scripts
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: models
           persistentVolumeClaim:
@@ -293,3 +385,6 @@ spec:
         - name: scripts
           configMap:
             name: qwen35-gptq-direct-test
+        - name: tmp
+          emptyDir:
+            sizeLimit: "10Gi"

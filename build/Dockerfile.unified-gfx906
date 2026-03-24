@@ -67,6 +67,9 @@ RUN python3 -m pip install -v "gptqmodel @ git+https://github.com/ModelCloud/GPT
 # ── Python dependencies (shared by quantization + diffusers + abliteration) ─
 # transformers>=5.0 enables Qwen3.5, Llama4, and all modern model architectures.
 # This is the key unlock vs the old ROCm 6.2.3 image (which was pinned to <5).
+# torchao is intentionally excluded here: current wheels can SIGILL on the
+# Broadwell-class x86 hosts that back the gfx906 nodes, and GPTQModel still
+# quantizes correctly there without it.
 RUN python3 -m pip install \
     "transformers>=5.0" \
     safetensors \
@@ -74,9 +77,11 @@ RUN python3 -m pip install \
     datasets \
     sentencepiece \
     huggingface_hub \
+    hf_transfer \
     protobuf \
     pillow \
     device-smi \
+    kernels \
     tokenicer \
     logbar \
     maturin \
@@ -104,6 +109,8 @@ RUN python3 -m pip uninstall -y numba llvmlite 2>/dev/null; \
     pandas \
     scipy \
     scikit-learn
+
+RUN mkdir -p /etc/flexinfer && touch /etc/flexinfer/quantizer-deps-baked
 
 # ── bitsandbytes from source (NF4/INT8 for gfx906) ──────────────────────────
 # pip wheel only ships HIP kernels for gfx90a/gfx942/gfx1100.
