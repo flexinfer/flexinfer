@@ -1,0 +1,26 @@
+# OCI Pull Cache for Qwen3.5-27B GPTQ INT4
+# Pulls quantized model from Harbor OCI registry into shared PVC.
+# Both 7900xtx and 5930k Model CRs source from this PVC.
+#
+# Pipeline: ModelCache(quantize) → Publish → Harbor OCI → ModelCache(oci) → Model CRs
+#
+# This cache depends on the publish step completing first.
+# The OCI artifact is published by the qwen35-27b-opus-distill-gptq ModelCache.
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen35-27b-opus-distill-oci
+  namespace: flexinfer-system
+spec:
+  source: "oci://registry.harbor.lan/flexinfer/qwen35-27b-opus-distill:gptq-w4-g128"
+  storageStrategy: SharedPVC
+  storageSize: "25Gi"
+  clusterStorageClassName: nvme-1r-gpu
+  secretRef: "harbor-oci-creds"
+  download:
+    maxMemoryGB: 4
+    backoffLimit: 3
+  retentionPriority: 50
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85

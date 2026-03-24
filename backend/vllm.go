@@ -90,8 +90,14 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--enforce-eager")
 	}
 
-	// CPU offload removed in vLLM V1 (0.17.0+). Previously --cpu-offload-gb.
-	// For weight offloading, use model-level config or OffloadConfig in future.
+	// CPU weight offload — moves part of model weights to CPU-pinned memory.
+	// Required when model weights exceed single-GPU VRAM (e.g. 27B GPTQ on 24 GB).
+	if offloadGB := spec.ConfigString("cpuOffloadGb", ""); offloadGB != "" {
+		args = append(args, "--cpu-offload-gb", offloadGB)
+	}
+	if offloadBackend := spec.ConfigString("offloadBackend", ""); offloadBackend != "" {
+		args = append(args, "--offload-backend", offloadBackend)
+	}
 
 	// Override KV cache blocks — bypasses the profiling step that measures
 	// available GPU memory. Useful when model weights consume nearly all VRAM

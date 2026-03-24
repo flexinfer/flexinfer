@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -579,6 +580,12 @@ func (r *ModelCacheReconciler) jobForOCIDownload(m *aiv1alpha1.ModelCache, pvcNa
 	// Extract registry host for health check
 	registryHost := extractOCIRegistry(m.Spec.Source)
 
+	// Use --insecure for .lan registries (self-signed TLS)
+	insecureFlag := ""
+	if strings.HasSuffix(registryHost, ".lan") {
+		insecureFlag = "--insecure"
+	}
+
 	downloadScript := fmt.Sprintf(`
 set -e
 MODEL_REF="%s"
@@ -593,10 +600,16 @@ if [ -d "$DEST_DIR" ] && [ "$(ls -A $DEST_DIR 2>/dev/null)" ]; then
     exit 0
 fi
 
+# Login to OCI registry if credentials are provided
+if [ -n "${OCI_USERNAME:-}" ] && [ -n "${OCI_PASSWORD:-}" ]; then
+    echo "Logging into OCI registry $REGISTRY_HOST..."
+    oras login %s "$REGISTRY_HOST" -u "$OCI_USERNAME" -p "$OCI_PASSWORD"
+fi
+
 # Registry health check with retry
 echo "Checking registry connectivity to $REGISTRY_HOST..."
 for i in $(seq 1 $MAX_RETRIES); do
-    if oras repo tags "$MODEL_REF" --last 1 >/dev/null 2>&1; then
+    if oras repo tags "$MODEL_REF" --last 1 %s >/dev/null 2>&1; then
         echo "Registry is reachable"
         break
     fi
@@ -615,7 +628,7 @@ mkdir -p "$DEST_DIR"
 RETRY_DELAY=10
 for i in $(seq 1 $MAX_RETRIES); do
     echo "Pulling OCI artifact $MODEL_REF to $DEST_DIR (attempt $i/$MAX_RETRIES)..."
-    if oras pull "$MODEL_REF" -o "$DEST_DIR"; then
+    if oras pull "$MODEL_REF" -o "$DEST_DIR" %s; then
         echo "Download complete."
         break
     fi
@@ -631,7 +644,7 @@ done
 # Show downloaded contents
 ls -la "$DEST_DIR"
 echo "Successfully cached model from $MODEL_REF"
-`, registryRef, modelPath, registryHost)
+`, registryRef, modelPath, registryHost, insecureFlag, insecureFlag, insecureFlag)
 
 	volumes := []corev1.Volume{{
 		Name: "model-store",
@@ -668,6 +681,34 @@ echo "Successfully cached model from $MODEL_REF"
 		})
 	}
 
+	// Support OCI auth via Opaque secret (OCI_USERNAME/OCI_PASSWORD keys)
+	var envVars []corev1.EnvVar
+	if m.Spec.SecretRef != nil && *m.Spec.SecretRef != "" &&
+		(m.Spec.OCIRegistrySecretRef == nil || *m.Spec.OCIRegistrySecretRef == "") {
+		envVars = append(envVars,
+			corev1.EnvVar{
+				Name: "OCI_USERNAME",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: *m.Spec.SecretRef},
+						Key:                  "OCI_USERNAME",
+						Optional:             ptr.To(true),
+					},
+				},
+			},
+			corev1.EnvVar{
+				Name: "OCI_PASSWORD",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: *m.Spec.SecretRef},
+						Key:                  "OCI_PASSWORD",
+						Optional:             ptr.To(true),
+					},
+				},
+			},
+		)
+	}
+
 	// BackoffLimit controls Kubernetes-level job retries (in addition to in-script retries)
 	backoffLimit := DefaultDownloadBackoffLimit
 
@@ -691,6 +732,7 @@ echo "Successfully cached model from $MODEL_REF"
 						Image:        orasImage,
 						Command:      []string{"/bin/sh", "-c"},
 						Args:         []string{downloadScript},
+						Env:          envVars,
 						VolumeMounts: volumeMounts,
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{

@@ -4,7 +4,7 @@
 # Scales up on demand when text requests arrive, preempts imagegen.
 # Scales back to 0 when idle, allowing imagegen to reclaim GPU.
 #
-# Same GPTQ INT4 weights as the 7900xtx variant.
+# Same GPTQ INT4 weights as the 7900xtx variant (OCI from Harbor).
 # gpu.count=1 (5930k has 1 discrete 7900 XTX, no iGPU).
 #
 apiVersion: ai.flexinfer/v1alpha2
@@ -14,7 +14,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  source: pvc://qwen35-27b-opus-distill-gptq/qwen35-27b-opus-distill-gptq/gptq-w4-g128
+  source: pvc://qwen35-27b-opus-distill-oci/qwen35-27b-opus-distill
   gpu:
     vendor: amd
     count: 1

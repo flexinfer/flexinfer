@@ -7,5 +7,7 @@ resources:
   # gptq-quantization.yaml — removed: 14B quant superseded by 27B opus distill
   # Abliteration + GPTQ pipeline (Download → Abliterate → Quantize)
   - abliteration-gptq.yaml
+  # OCI pull cache for GPTQ quantized model (Harbor → shared PVC → Model CRs)
+  - qwen35-27b-opus-distill-oci.yaml
   # Finetune pipeline test (Download → QLoRA Finetune → Quantize)
   - finetune-test.yaml

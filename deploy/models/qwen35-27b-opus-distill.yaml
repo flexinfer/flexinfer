@@ -1,13 +1,8 @@
 # Qwen3.5-27B via vLLM on AMD gfx1100
 #
-# Model: Qwen/Qwen3.5-27B-GPTQ-Int4 (official GPTQ, not abliterated)
-# Temporary: using official GPTQ while self-quantization pipeline is fixed.
-# TODO: switch back to abliterated source once quantization OOM is resolved.
-#
-# Dynamic quantization: attn layers FP16, MoE experts INT4.
-# Total model weights: ~29 GiB on disk.
-# moe_wna16 not supported on ROCm — using gptq (ExllamaV2 HIP kernels).
-# May OOM on 24GB gfx1100 — monitor VRAM usage.
+# Model: Abliterated Qwen3.5-27B, GPTQ INT4 (self-quantized pipeline).
+# Source: OCI artifact in Harbor (pushed from radeonvii quantization pipeline).
+# Weights: ~16.6 GiB GPTQ INT4 (5 shards + metadata).
 #
 # maxModelLen=4096 to minimize KV cache budget.
 # maxNumSeqs=2 to reduce concurrent memory pressure.
@@ -19,7 +14,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  source: pvc://qwen35-27b-opus-distill-gptq/qwen35-27b-gptq-int4
+  source: pvc://qwen35-27b-opus-distill-oci/qwen35-27b-opus-distill
   gpu:
     vendor: amd
     count: 2
@@ -42,6 +37,7 @@ spec:
     toolCallParser: hermes
     maxNumBatchedTokens: 2048
     disableLogStats: false
+    cpuOffloadGb: "6"
     warmPolicy: primary
     hipVisibleDevices: "0"
   nodeSelector:
