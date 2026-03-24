@@ -115,14 +115,17 @@ changes = []
 # is correct and must NOT be changed to identity.
 changes.append("packed_modules_mapping (kept original unfused mapping)")
 
-# 3b. Remove GDN stacked_params_mapping entries — GPTQ quantized weights
-# can't be sub-split across shards. The packed_modules_mapping already handles
-# the 2-partition mapping (in_proj_qkv→0, in_proj_z→1). The stacked entries
-# try to split in_proj_qkv into (0,1,2) sub-shards which fails for GPTQ.
-pattern_stacked = r'\s*\("in_proj_qkvz",\s*"in_proj_qkv",\s*\(0,\s*1,\s*2\)\),\s*\("in_proj_qkvz",\s*"in_proj_z",\s*3\),\s*\("in_proj_ba",\s*"in_proj_b",\s*0\),\s*\("in_proj_ba",\s*"in_proj_a",\s*1\),\s*\n'
-if re.search(pattern_stacked, content):
-    content = re.sub(pattern_stacked, "\n", content)
-    changes.append("stacked_params_mapping (removed GDN sub-shard entries)")
+# 3b. Remove ONLY the in_proj_qkvz stacked_params_mapping entries — GPTQ
+# quantized weights can't be sub-split across shards. The stacked entries try
+# to split in_proj_qkv into (0,1,2) sub-shards which fails for GPTQ.
+# KEEP the in_proj_ba entries — those map FP16 (non-quantized) in_proj_b/a
+# weights which use simple integer shard IDs and load correctly.
+pattern_qkvz_stacked = r'\s*\("in_proj_qkvz",\s*"in_proj_qkv",\s*\(0,\s*1,\s*2\)\),\s*\n\s*\("in_proj_qkvz",\s*"in_proj_z",\s*3\),'
+if re.search(pattern_qkvz_stacked, content):
+    content = re.sub(pattern_qkvz_stacked, "", content)
+    changes.append(
+        "stacked_params_mapping (removed in_proj_qkvz entries, kept in_proj_ba)"
+    )
 
 # 3c. Add IsHybrid to Qwen3_5ForCausalLMBase inheritance
 # Check if IsHybrid is already in the class definition
@@ -260,6 +263,30 @@ elif '["in_proj_qkvz"]' in verify and '["in_proj_ba"]' in verify:
     )
 else:
     print("6. WARNING: packed_modules_mapping state unknown")
+
+# Check stacked_params — in_proj_ba entries must be PRESENT, in_proj_qkvz must be REMOVED
+has_ba_stacked = (
+    '"in_proj_ba", "in_proj_b", 0' in verify
+    or "('in_proj_ba', 'in_proj_b', 0)" in verify
+)
+has_qkvz_stacked = (
+    '"in_proj_qkvz", "in_proj_qkv", (0, 1, 2)' in verify
+    or "('in_proj_qkvz', 'in_proj_qkv', (0, 1, 2))" in verify
+)
+if has_ba_stacked and not has_qkvz_stacked:
+    print(
+        "6b. VERIFIED: stacked_params has in_proj_ba (FP16), removed in_proj_qkvz (GPTQ)"
+    )
+elif has_ba_stacked and has_qkvz_stacked:
+    print(
+        "6b. WARNING: stacked_params still has in_proj_qkvz entries (will break GPTQ!)"
+    )
+elif not has_ba_stacked and not has_qkvz_stacked:
+    print(
+        "6b. WARNING: stacked_params missing in_proj_ba entries (in_proj_a/b won't load!)"
+    )
+else:
+    print("6b. WARNING: stacked_params state unexpected")
 
 # Check FLA op.py
 with open(op_path) as f:
