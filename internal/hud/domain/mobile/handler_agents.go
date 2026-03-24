@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/hud/monitor"
 )
 
 func (d *MobileDomain) handleMobilePresence(w http.ResponseWriter, r *http.Request) {
@@ -13,7 +14,10 @@ func (d *MobileDomain) handleMobilePresence(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	snap := d.deps.Monitors().Fleet.Snapshot()
+	snap := monitor.FleetSnapshot{}
+	if fleet := d.deps.Monitors().Fleet; fleet != nil {
+		snap = fleet.Snapshot()
+	}
 	limit := parseMobileLimit(r, DefaultLimit, MaxLimit)
 	statusFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
 	agentFilter := strings.TrimSpace(r.URL.Query().Get("agent_id"))
@@ -120,7 +124,10 @@ func (d *MobileDomain) handleMobileNamespaces(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	snap := d.deps.Monitors().Fleet.Snapshot()
+	snap := monitor.FleetSnapshot{}
+	if fleet := d.deps.Monitors().Fleet; fleet != nil {
+		snap = fleet.Snapshot()
+	}
 
 	// Build agent status lookup from presence data.
 	agentActive := map[string]bool{}
@@ -186,7 +193,10 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	snap := d.deps.Monitors().Fleet.Snapshot()
+	snap := monitor.FleetSnapshot{}
+	if fleet := d.deps.Monitors().Fleet; fleet != nil {
+		snap = fleet.Snapshot()
+	}
 	limit := parseMobileLimit(r, DefaultLimit, MaxLimit)
 	statusFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
 	typeFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
@@ -281,9 +291,15 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 		if ua, ok := agentMap[ca.AgentID]; ok {
 			ua.NeedsAttention = ca.NeedsAttention
 			ua.AttentionReasons = ca.AttentionReasons
-			ua.TaskCount = ca.TaskCount
-			ua.BlockedTasks = ca.BlockedTasks
 			ua.ClaimCount = ca.ClaimCount
+		}
+	}
+
+	taskCountsByAgent := summarizeMobileTaskCountsByAgent(buildMobileTaskFeed(snap.Tasks, snap))
+	for _, ua := range agentMap {
+		if counts, ok := taskCountsByAgent[ua.AgentID]; ok {
+			ua.TaskCount = counts.Pending + counts.InProgress + counts.Blocked + counts.Completed
+			ua.BlockedTasks = counts.Blocked
 		}
 	}
 

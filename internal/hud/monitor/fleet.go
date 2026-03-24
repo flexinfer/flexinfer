@@ -142,6 +142,11 @@ func NewFleetMonitor(client bridge.Caller, agent *bridge.AgentBridge, logger *sl
 	return m
 }
 
+// Ready reports whether the monitor has been fully initialized.
+func (m *FleetMonitor) Ready() bool {
+	return m != nil && m.stopCh != nil && m.Logger != nil
+}
+
 // SetSpawnLister injects a spawn source for fleet aggregation.
 // Call after both FleetMonitor and SpawnOrchestrator are initialized.
 func (m *FleetMonitor) SetSpawnLister(sl SpawnLister) {
@@ -209,15 +214,30 @@ func (m *FleetMonitor) OfflineAgentsWithActiveSessions() []bridge.PresenceInfo {
 // the snapshot. Each sub-fetch is independent; errors are logged but
 // do not prevent other fetches from completing.
 func (m *FleetMonitor) Refresh() error {
+	return m.refresh(false)
+}
+
+// RefreshForce refreshes immediately, bypassing the short debounce window.
+// This is used by embedded HUD startup/reload hooks so a transient empty
+// snapshot does not linger until the next polling tick.
+func (m *FleetMonitor) RefreshForce() error {
+	return m.refresh(true)
+}
+
+func (m *FleetMonitor) refresh(force bool) error {
+	prev := m.Snapshot()
+
 	// Debounce: skip if less than 2s since last refresh to prevent stampede
 	// when multiple handlers fire go Refresh() concurrently.
-	m.RLock()
-	if time.Since(m.lastRefresh) < 2*time.Second {
+	if !force {
+		m.RLock()
+		if time.Since(m.lastRefresh) < 2*time.Second {
+			m.RUnlock()
+			m.Logger.Debug("fleet refresh debounced")
+			return nil
+		}
 		m.RUnlock()
-		m.Logger.Debug("fleet refresh debounced")
-		return nil
 	}
-	m.RUnlock()
 
 	snap := FleetSnapshot{
 		UpdatedAt: time.Now(),
@@ -398,6 +418,10 @@ func (m *FleetMonitor) Refresh() error {
 	m.Lock()
 	m.prevFileClaims = m.GetSnapshot().FileClaims
 	m.prevApprovals = m.GetSnapshot().PendingApprovals
+	if fleetSnapshotLooksEmpty(snap) && !fleetSnapshotLooksEmpty(prev) {
+		m.Logger.Info("fleet refresh returned empty; preserving previous snapshot")
+		snap = prev
+	}
 	m.SetSnapshot(snap)
 	m.lastRefresh = time.Now()
 	m.Unlock()
@@ -433,4 +457,16 @@ func detectConflicts(claims []bridge.FileClaimInfo) (int, []ConflictDetail) {
 		}
 	}
 	return conflicts, details
+}
+
+func fleetSnapshotLooksEmpty(s FleetSnapshot) bool {
+	return len(s.Agents) == 0 &&
+		len(s.Tasks) == 0 &&
+		len(s.Sessions) == 0 &&
+		len(s.FileClaims) == 0 &&
+		len(s.Worktrees) == 0 &&
+		len(s.Spawns) == 0 &&
+		s.ActiveSessions == 0 &&
+		s.TotalSessions == 0 &&
+		s.TotalTasks == 0
 }

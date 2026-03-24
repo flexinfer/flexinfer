@@ -405,6 +405,19 @@ func TestHandler_Servers(t *testing.T) {
 	}
 }
 
+func TestRefreshPipelineMonitor_RetriesBlankSnapshot(t *testing.T) {
+	mon := &retryingPipelineMonitor{}
+	if got := refreshPipelineMonitor(mon, slog.New(slog.NewTextHandler(io.Discard, nil))); !got {
+		t.Fatal("expected refresh helper to report a populated snapshot after retry")
+	}
+	if mon.refreshCalls != 2 {
+		t.Fatalf("expected 2 refreshes, got %d", mon.refreshCalls)
+	}
+	if got := mon.Pipelines(); len(got) != 1 {
+		t.Fatalf("expected one pipeline after retry, got %#v", got)
+	}
+}
+
 func TestFilterTimelineEntries(t *testing.T) {
 	entries := []TimelineEntry{
 		{EventType: "agent.heartbeat", AgentID: "codex"},
@@ -419,6 +432,40 @@ func TestFilterTimelineEntries(t *testing.T) {
 	if filtered[0].AgentID != "codex" || filtered[0].EventType != "agent.heartbeat" {
 		t.Fatalf("unexpected filtered entry: %+v", filtered[0])
 	}
+}
+
+type retryingPipelineMonitor struct {
+	refreshCalls int
+	snapshot     []bridge.PipelineInfo
+}
+
+func (m *retryingPipelineMonitor) Ready() bool { return true }
+
+func (m *retryingPipelineMonitor) Refresh() error {
+	m.refreshCalls++
+	if m.refreshCalls == 1 {
+		m.snapshot = nil
+		return nil
+	}
+	m.snapshot = []bridge.PipelineInfo{{
+		ID:        101,
+		Project:   "services/loom-core",
+		Ref:       "main",
+		Status:    "running",
+		CreatedAt: "2026-03-23T12:00:00Z",
+		WebURL:    "https://gitlab.example/pipelines/101",
+	}}
+	return nil
+}
+
+func (m *retryingPipelineMonitor) Pipelines() []bridge.PipelineInfo {
+	out := make([]bridge.PipelineInfo, len(m.snapshot))
+	copy(out, m.snapshot)
+	return out
+}
+
+func (m *retryingPipelineMonitor) Projects() []string {
+	return []string{"services/loom-core"}
 }
 
 func TestHandler_TimelineFilters(t *testing.T) {

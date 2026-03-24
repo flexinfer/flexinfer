@@ -21,6 +21,47 @@ struct OpsTaskDetailView: View {
                 }
             }
 
+            if task.isProjected || task.sourcePlatform != nil || task.sourceKind != nil || task.nativeKey != nil {
+                Section("Source") {
+                    LabeledContent("Type", value: task.isProjected ? "Projected" : "Explicit")
+                    if let sourceLabel = task.sourceLabel {
+                        LabeledContent("Origin", value: sourceLabel)
+                    }
+                    if let sourcePlatform = task.sourcePlatform, !sourcePlatform.isEmpty {
+                        LabeledContent("Platform", value: sourcePlatform)
+                    }
+                    if let sourceKind = task.sourceKind, !sourceKind.isEmpty {
+                        LabeledContent("Kind", value: sourceKind)
+                    }
+                    if let nativeKey = task.nativeKey, !nativeKey.isEmpty {
+                        LabeledContent("Native Key", value: nativeKey)
+                    }
+                }
+            }
+
+            if task.workflowId != nil || task.pipelineRef != nil {
+                Section("Links") {
+                    if let workflowId = task.workflowId, !workflowId.isEmpty {
+                        LabeledContent("Workflow", value: workflowId)
+                    }
+                    if let pipelineRef = task.pipelineRef {
+                        LabeledContent("Pipeline") {
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text("ID \(pipelineRef.id)")
+                                Text(pipelineRef.project)
+                                    .font(LoomTypography.caption)
+                                    .foregroundStyle(LoomColors.textSecondary)
+                                if let ref = pipelineRef.ref, !ref.isEmpty {
+                                    Text(ref)
+                                        .font(LoomTypography.caption)
+                                        .foregroundStyle(LoomColors.textSecondary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if !task.context.isEmpty {
                 Section("Context") {
                     Text(task.context)

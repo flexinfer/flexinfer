@@ -3,6 +3,8 @@ package mobile
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/crb2nu/loom/internal/hud/bridge"
 )
 
 // --- Constants ---
@@ -159,32 +161,29 @@ type taskCounts struct {
 }
 
 type taskDTO struct {
-	ID        string   `json:"id"`
-	SessionID string   `json:"session_id"`
-	AgentID   string   `json:"agent_id"`
-	Namespace string   `json:"namespace"`
-	Title     string   `json:"title"`
-	Context   string   `json:"context"`
-	Priority  string   `json:"priority"`
-	Status    string   `json:"status"`
-	Tags      []string `json:"tags"`
-	BlockedBy []string `json:"blocked_by"`
-	CreatedAt string   `json:"created_at"`
-	UpdatedAt string   `json:"updated_at"`
+	ID             string              `json:"id"`
+	SessionID      string              `json:"session_id"`
+	AgentID        string              `json:"agent_id"`
+	Namespace      string              `json:"namespace"`
+	Title          string              `json:"title"`
+	Context        string              `json:"context"`
+	Priority       string              `json:"priority"`
+	Status         string              `json:"status"`
+	TaskKind       string              `json:"task_kind"`
+	SourcePlatform string              `json:"source_platform,omitempty"`
+	SourceKind     string              `json:"source_kind,omitempty"`
+	SourceID       string              `json:"source_id,omitempty"`
+	NativeKey      string              `json:"native_key,omitempty"`
+	PipelineRef    *bridge.PipelineRef `json:"pipeline_ref,omitempty"`
+	WorkflowID     string              `json:"workflow_id,omitempty"`
+	IsProjected    bool                `json:"is_projected,omitempty"`
+	Tags           []string            `json:"tags"`
+	BlockedBy      []string            `json:"blocked_by"`
+	CreatedAt      string              `json:"created_at"`
+	UpdatedAt      string              `json:"updated_at"`
 }
 
 // --- Workflow DTOs ---
-
-type workflowDTO struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name,omitempty"`
-	Status      string  `json:"status"`
-	CurrentStep string  `json:"current_step,omitempty"`
-	Progress    float64 `json:"progress"`
-	StartedAt   string  `json:"started_at"`
-	CompletedAt string  `json:"completed_at,omitempty"`
-	Error       string  `json:"error,omitempty"`
-}
 
 type workflowEventDTO struct {
 	ID        string `json:"id"`

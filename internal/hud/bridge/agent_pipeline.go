@@ -4,9 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/errgroup"
+)
+
+const (
+	pipelineListToolTimeout   = 5 * time.Second
+	pipelineDetailToolTimeout = 20 * time.Second
 )
 
 // --- Pipeline DTOs ---
@@ -33,13 +40,13 @@ type PipelineStage struct {
 
 // PipelineJob describes a single CI job.
 type PipelineJob struct {
-	ID        int    `json:"id"`
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	Stage     string `json:"stage"`
-	Duration  int    `json:"duration,omitempty"`
-	StartedAt string `json:"started_at,omitempty"`
-	WebURL    string `json:"web_url,omitempty"`
+	ID        int     `json:"id"`
+	Name      string  `json:"name"`
+	Status    string  `json:"status"`
+	Stage     string  `json:"stage"`
+	Duration  float64 `json:"duration,omitempty"`
+	StartedAt string  `json:"started_at,omitempty"`
+	WebURL    string  `json:"web_url,omitempty"`
 }
 
 // PipelineDetail is the full pipeline status with stage breakdown.
@@ -83,14 +90,16 @@ func (a *AgentBridge) ListActivePipelines(projects []string) ([]PipelineInfo, er
 	g.SetLimit(4) // cap concurrency to avoid overwhelming GitLab
 	var mu sync.Mutex
 	var allPipelines []PipelineInfo
+	var firstErr error
 
 	for _, project := range projects {
+		project := project
 		g.Go(func() error {
 			// Fetch running pipelines.
-			raw, err := a.client.CallTool("gitlab__list_pipelines", map[string]any{
+			raw, err := a.client.CallToolWithTimeout("gitlab__list_pipelines", map[string]any{
 				"project": project,
 				"status":  "running",
-			})
+			}, pipelineListToolTimeout)
 			if err == nil {
 				var listResult struct {
 					Pipelines []PipelineInfo `json:"pipelines"`
@@ -103,14 +112,26 @@ func (a *AgentBridge) ListActivePipelines(projects []string) ([]PipelineInfo, er
 					mu.Lock()
 					allPipelines = append(allPipelines, pipelines...)
 					mu.Unlock()
+				} else {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = fmt.Errorf("list running pipelines for %s: %w", project, err)
+					}
+					mu.Unlock()
 				}
+			} else {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("list running pipelines for %s: %w", project, err)
+				}
+				mu.Unlock()
 			}
 
 			// Fetch pending pipelines.
-			raw, err = a.client.CallTool("gitlab__list_pipelines", map[string]any{
+			raw, err = a.client.CallToolWithTimeout("gitlab__list_pipelines", map[string]any{
 				"project": project,
 				"status":  "pending",
-			})
+			}, pipelineListToolTimeout)
 			if err == nil {
 				var pendingResult struct {
 					Pipelines []PipelineInfo `json:"pipelines"`
@@ -123,23 +144,112 @@ func (a *AgentBridge) ListActivePipelines(projects []string) ([]PipelineInfo, er
 					mu.Lock()
 					allPipelines = append(allPipelines, pending...)
 					mu.Unlock()
+				} else {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = fmt.Errorf("list pending pipelines for %s: %w", project, err)
+					}
+					mu.Unlock()
 				}
+			} else {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("list pending pipelines for %s: %w", project, err)
+				}
+				mu.Unlock()
 			}
 			return nil
 		})
 	}
 
 	g.Wait()
+	if len(allPipelines) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return allPipelines, nil
+}
+
+// ListRecentPipelines fetches the newest pipelines for the given projects,
+// regardless of status. This is used as a mobile/UI fallback when there are no
+// currently active pipelines but recent CI context is still useful.
+func (a *AgentBridge) ListRecentPipelines(projects []string, perProject int) ([]PipelineInfo, error) {
+	if perProject <= 0 {
+		perProject = 10
+	}
+
+	g, _ := errgroup.WithContext(context.Background())
+	g.SetLimit(4)
+	var mu sync.Mutex
+	var allPipelines []PipelineInfo
+	var firstErr error
+
+	for _, project := range projects {
+		project := project
+		g.Go(func() error {
+			raw, err := a.client.CallToolWithTimeout("gitlab__list_pipelines", map[string]any{
+				"project":  project,
+				"per_page": perProject,
+			}, pipelineListToolTimeout)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("list recent pipelines for %s: %w", project, err)
+				}
+				mu.Unlock()
+				return nil
+			}
+
+			var listResult struct {
+				Pipelines []PipelineInfo `json:"pipelines"`
+			}
+			if err := unmarshalGitLabResult(raw, &listResult); err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("decode recent pipelines for %s: %w", project, err)
+				}
+				mu.Unlock()
+				return nil
+			}
+
+			pipelines := listResult.Pipelines
+			for i := range pipelines {
+				pipelines[i].Project = project
+			}
+			mu.Lock()
+			allPipelines = append(allPipelines, pipelines...)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	g.Wait()
+	if len(allPipelines) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+
+	slices.SortStableFunc(allPipelines, func(a, b PipelineInfo) int {
+		ta := parsePipelineTime(a.CreatedAt)
+		tb := parsePipelineTime(b.CreatedAt)
+		switch {
+		case ta.After(tb):
+			return -1
+		case ta.Before(tb):
+			return 1
+		default:
+			return 0
+		}
+	})
+
 	return allPipelines, nil
 }
 
 // GetPipelineDetail fetches detailed pipeline info including stages and jobs.
 func (a *AgentBridge) GetPipelineDetail(project string, pipelineID int) (*PipelineDetail, error) {
 	// Get pipeline info.
-	raw, err := a.client.CallTool("gitlab__get_pipeline", map[string]any{
+	raw, err := a.client.CallToolWithTimeout("gitlab__get_pipeline", map[string]any{
 		"project":     project,
 		"pipeline_id": pipelineID,
-	})
+	}, pipelineDetailToolTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("get pipeline %d: %w", pipelineID, err)
 	}
@@ -151,10 +261,10 @@ func (a *AgentBridge) GetPipelineDetail(project string, pipelineID int) (*Pipeli
 	info.Project = project
 
 	// Get pipeline jobs to build stage breakdown.
-	raw, err = a.client.CallTool("gitlab__list_pipeline_jobs", map[string]any{
+	raw, err = a.client.CallToolWithTimeout("gitlab__list_pipeline_jobs", map[string]any{
 		"project":     project,
 		"pipeline_id": pipelineID,
-	})
+	}, pipelineDetailToolTimeout)
 	if err != nil {
 		// Return basic info without stage breakdown.
 		return &PipelineDetail{PipelineInfo: info}, nil
@@ -312,6 +422,16 @@ func aggregateJobStatus(jobs []PipelineJob) string {
 		return "success"
 	}
 	return "pending"
+}
+
+func parsePipelineTime(raw string) time.Time {
+	if raw == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t
+	}
+	return time.Time{}
 }
 
 // unmarshalGitLabResult extracts the content from an MCP tool result for GitLab tools.

@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Pipeline-aware agent lifecycle** (`internal/hud/bridge`): Explicit `PipelineRef` foreign keys on Session and Task, replacing branch-name heuristics; `WorkflowID` on Task for workflow-step tracing; `pipeline_event` context entries; auto-detection in WorkStart.
 - **Mobile session activity endpoint** (`internal/hud/domain/mobile`): `GET /api/sessions/{id}/activity` returns unified tasks + pipelines with correlation type.
+- **Mobile pipelines endpoint** (`internal/hud/domain/mobile`): `GET /api/mobile/v1/pipelines` with cold-start refresh, fallback to recent pipelines, and agent-branch correlation.
+- **Pipeline monitor** (`internal/hud/monitor`): `PipelineMonitor` with adaptive 10s/60s polling intervals and 10s detail cache TTL.
+- **Task projection** (`internal/hud/domain/mobile`): Synthesize tasks from agent presence `current_task` field into the unified task feed with deterministic SHA1-based IDs.
+- **Workflow deprecation** (`internal/hud/domain/mobile`): Migration flags on approval surface to prepare transition away from workflow endpoints.
 
 ### Changed
 - **CI pipeline parallelism** (`.gitlab-ci.yml`): `build:binaries`, `test:unit`, `test:race`, and `test:enterprise-smoke` now use `needs: [prepare:go-cache]` to fan out in parallel after prepare instead of waiting for full stage gates (~3-8 min saved).

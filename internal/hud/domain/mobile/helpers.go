@@ -137,18 +137,26 @@ func MapMobileTask(task bridge.TaskInfo) taskDTO {
 		blockedBy = []string{}
 	}
 	return taskDTO{
-		ID:        task.ID,
-		SessionID: task.SessionID,
-		AgentID:   task.AgentID,
-		Namespace: task.Namespace,
-		Title:     task.Title,
-		Context:   task.Context,
-		Priority:  normalizeMobilePriority(task.Priority),
-		Status:    normalizeMobileTaskStatus(task.Status),
-		Tags:      tags,
-		BlockedBy: blockedBy,
-		CreatedAt: task.CreatedAt,
-		UpdatedAt: task.UpdatedAt,
+		ID:             task.ID,
+		SessionID:      task.SessionID,
+		AgentID:        task.AgentID,
+		Namespace:      task.Namespace,
+		Title:          task.Title,
+		Context:        task.Context,
+		Priority:       normalizeMobilePriority(task.Priority),
+		Status:         normalizeMobileTaskStatus(task.Status),
+		TaskKind:       "explicit",
+		SourcePlatform: "agent_context",
+		SourceKind:     "explicit",
+		SourceID:       task.ID,
+		NativeKey:      task.ID,
+		PipelineRef:    task.PipelineRef,
+		WorkflowID:     task.WorkflowID,
+		IsProjected:    false,
+		Tags:           tags,
+		BlockedBy:      blockedBy,
+		CreatedAt:      task.CreatedAt,
+		UpdatedAt:      task.UpdatedAt,
 	}
 }
 
@@ -166,18 +174,6 @@ func normalizeMobileWorkflowStatus(status string) string {
 		return "cancelled"
 	default:
 		return "unknown"
-	}
-}
-
-func mapMobileWorkflow(workflow bridge.WorkflowInfo) workflowDTO {
-	return workflowDTO{
-		ID:          workflow.ID,
-		Name:        workflow.Name,
-		Status:      normalizeMobileWorkflowStatus(workflow.Status),
-		CurrentStep: workflow.CurrentStep,
-		Progress:    workflow.Progress,
-		StartedAt:   workflow.CreatedAt,
-		Error:       workflow.Error,
 	}
 }
 

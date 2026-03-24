@@ -40,7 +40,33 @@ struct OpsViewModelTests {
                     error: nil
                 ),
             ],
-            pendingApprovals: 1
+            pendingApprovals: 1,
+            deprecated: true,
+            deprecationMessage: "Workflow approvals are deprecated in the mobile surface; use Loom tasks and pipelines instead."
+        )
+        client.pipelinesResponse = MobilePipelinesResponse(
+            pipelines: [
+                MobilePipeline(
+                    id: 77,
+                    project: "services/loom-core",
+                    ref: "main",
+                    status: "running",
+                    source: "push",
+                    createdAt: "2026-02-25T10:00:00Z",
+                    webURL: "https://gitlab.flexinfer.ai/services/loom-core/-/pipelines/77",
+                    currentStage: "test",
+                    stages: [
+                        MobilePipelineStage(name: "build", status: "success", jobs: []),
+                        MobilePipelineStage(name: "test", status: "running", jobs: []),
+                    ],
+                    completedStages: 1,
+                    totalStages: 2,
+                    failedJobCount: 0,
+                    agentId: "codex",
+                    agentType: "codex"
+                )
+            ],
+            available: true
         )
         client.presenceResponse = MobilePresenceResponse(
             agents: [],
@@ -138,6 +164,10 @@ struct OpsViewModelTests {
         #expect(vm.tasks.count == 1)
         #expect(vm.workflows.count == 1)
         #expect(vm.pendingApprovals == 1)
+        #expect(vm.workflowsDeprecated == true)
+        #expect(vm.workflowsDeprecationMessage?.contains("deprecated") == true)
+        #expect(vm.pipelines.count == 1)
+        #expect(vm.pipelinesAvailable == true)
         #expect(vm.memoryStats?.totalItems == 60)
         #expect(vm.graphStats?.totalEntities == 12)
         #expect(vm.topology != nil)
@@ -165,6 +195,7 @@ struct OpsViewModelTests {
         let client = MockAPIClient()
         client.tasksResponse = MobileTasksResponse(tasks: [], counts: MobileTaskCounts(pending: 0, inProgress: 0, blocked: 0, completed: 0))
         client.workflowsResponse = MobileWorkflowsResponse(workflows: [], pendingApprovals: 0)
+        client.pipelinesResponse = MobilePipelinesResponse(pipelines: [], available: true)
         client.presenceResponse = MobilePresenceResponse(
             agents: [],
             claims: [],
@@ -178,6 +209,7 @@ struct OpsViewModelTests {
                 worktreeCount: 0
             )
         )
+        client.streamResponse = MobileStreamResponse(entries: [])
         client.memoryStatsResponse = MobileMemoryStatsResponse(
             stats: MobileMemoryStats(
                 workingMemory: MobileMemoryTierStats(items: 0, tokens: 0),
@@ -252,6 +284,229 @@ struct OpsViewModelTests {
         #expect(vm.graphPath == nil)
         #expect(vm.graphEntities.count == 2)
         #expect(vm.sandboxSummary?.available == false)
+    }
+
+    @Test("Workflow failures no longer count as core warnings")
+    func workflowFailureDoesNotWarn() async {
+        let client = MockAPIClient()
+        client.tasksResponse = MobileTasksResponse(tasks: [], counts: MobileTaskCounts(pending: 0, inProgress: 0, blocked: 0, completed: 0))
+        client.pipelinesResponse = MobilePipelinesResponse(pipelines: [], available: true)
+        client.presenceResponse = MobilePresenceResponse(
+            agents: [],
+            claims: [],
+            worktrees: [],
+            summary: MobilePresenceSummary(
+                activeAgents: 0,
+                idleAgents: 0,
+                offlineAgents: 0,
+                totalAgents: 0,
+                claimCount: 0,
+                worktreeCount: 0
+            )
+        )
+        client.memoryStatsResponse = MobileMemoryStatsResponse(
+            stats: MobileMemoryStats(
+                workingMemory: MobileMemoryTierStats(items: 0, tokens: 0),
+                shortTermMemory: MobileMemoryTierStats(items: 0, tokens: 0),
+                longTermMemory: MobileMemoryTierStats(items: 0, tokens: 0),
+                totalItems: 0,
+                totalTokens: 0,
+                compression: MobileMemoryCompression(ratio: 0, added24h: 0, compressed24h: 0, estimatedSaved: 0, compressedItems: 0)
+            )
+        )
+        client.memoryItemsResponse = MobileMemoryItemsResponse(items: [], tier: .working)
+        client.streamResponse = MobileStreamResponse(entries: [])
+        client.topologyResponse = MobileTopologyResponse(nodes: [], edges: [], clusters: [], updatedAt: "2026-02-25T10:00:00Z")
+        client.graphStatsResponse = MobileGraphStatsResponse(
+            stats: MobileGraphStats(totalEntities: 0, totalRelations: 0, entityTypes: [:], relationTypes: [:])
+        )
+        client.graphEntitiesResponse = MobileGraphEntitiesResponse(entities: [])
+        client.reasoningChainsResponse = MobileReasoningChainsResponse(chains: [])
+        client.controlPlaneResponse = MobileControlPlaneResponse(
+            cost: MobileControlPlaneCost(
+                enabled: false,
+                timestamp: nil,
+                totalCalls: 0,
+                totalErrors: 0,
+                totalDenied: 0,
+                totalCached: 0,
+                totalDurationMs: 0,
+                topAgent: nil,
+                topServer: nil
+            ),
+            rbac: MobileControlPlaneRBAC(
+                enabled: false,
+                defaultPolicy: nil,
+                roleCount: 0,
+                bindingCount: 0,
+                globalDenyCount: 0,
+                rateLimitCount: 0,
+                deniedCount: 0
+            ),
+            otel: MobileControlPlaneOTel(
+                otlpConfigured: false,
+                otlpEndpoint: nil,
+                jsonLogsEnabled: false,
+                tracedServers: 0,
+                totalServers: 0,
+                traceCoverage: nil
+            ),
+            health: MobileControlPlaneHealth(
+                totalServers: 0,
+                healthyServers: 0,
+                degradedServers: 0,
+                downServers: 0,
+                idleServers: 0,
+                hubTargets: 0,
+                localTargets: 0,
+                unavailableTargets: 0
+            )
+        )
+        client.sandboxResponse = MobileSandboxSummary(available: false, projects: [], totalRunning: 0, backend: "unknown")
+        client.endpointFailures["/api/mobile/v1/workflows"] = .apiError(code: .upstreamError, message: "workflow service unavailable", requestId: "req-workflows-1")
+
+        let vm = OpsViewModel(apiClient: client)
+        await vm.load()
+
+        #expect(vm.error == nil)
+        #expect(vm.warningMessage == nil)
+        #expect(vm.workflows.isEmpty)
+        #expect(vm.pipelinesAvailable == true)
+    }
+
+    @Test("Task and pipeline failures preserve last successful data")
+    func taskAndPipelineFailuresPreserveLastKnownData() async {
+        let client = MockAPIClient()
+        client.tasksResponse = MobileTasksResponse(
+            tasks: [
+                MobileTask(
+                    id: "task-1",
+                    sessionId: "sess-1",
+                    agentId: "codex",
+                    namespace: "loom-core/main",
+                    title: "Preserve me",
+                    context: nil,
+                    priority: "high",
+                    status: .inProgress,
+                    tags: [],
+                    blockedBy: [],
+                    createdAt: "2026-02-25T10:00:00Z",
+                    updatedAt: "2026-02-25T10:10:00Z"
+                ),
+            ],
+            counts: MobileTaskCounts(pending: 0, inProgress: 1, blocked: 0, completed: 0)
+        )
+        client.workflowsResponse = MobileWorkflowsResponse(workflows: [], pendingApprovals: 0)
+        client.pipelinesResponse = MobilePipelinesResponse(
+            pipelines: [
+                MobilePipeline(
+                    id: 77,
+                    project: "services/loom-core",
+                    ref: "main",
+                    status: "running",
+                    source: "push",
+                    createdAt: "2026-02-25T10:00:00Z",
+                    webURL: nil,
+                    currentStage: "test",
+                    stages: [],
+                    completedStages: 1,
+                    totalStages: 2,
+                    failedJobCount: 0,
+                    agentId: "codex",
+                    agentType: "codex"
+                )
+            ],
+            available: true
+        )
+        client.presenceResponse = MobilePresenceResponse(
+            agents: [],
+            claims: [],
+            worktrees: [],
+            summary: MobilePresenceSummary(
+                activeAgents: 0,
+                idleAgents: 0,
+                offlineAgents: 0,
+                totalAgents: 0,
+                claimCount: 0,
+                worktreeCount: 0
+            )
+        )
+        client.memoryStatsResponse = MobileMemoryStatsResponse(
+            stats: MobileMemoryStats(
+                workingMemory: MobileMemoryTierStats(items: 0, tokens: 0),
+                shortTermMemory: MobileMemoryTierStats(items: 0, tokens: 0),
+                longTermMemory: MobileMemoryTierStats(items: 0, tokens: 0),
+                totalItems: 0,
+                totalTokens: 0,
+                compression: MobileMemoryCompression(ratio: 0, added24h: 0, compressed24h: 0, estimatedSaved: 0, compressedItems: 0)
+            )
+        )
+        client.memoryItemsResponse = MobileMemoryItemsResponse(items: [], tier: .working)
+        client.streamResponse = MobileStreamResponse(entries: [])
+        client.topologyResponse = MobileTopologyResponse(nodes: [], edges: [], clusters: [], updatedAt: "2026-02-25T10:00:00Z")
+        client.graphStatsResponse = MobileGraphStatsResponse(
+            stats: MobileGraphStats(totalEntities: 0, totalRelations: 0, entityTypes: [:], relationTypes: [:])
+        )
+        client.graphEntitiesResponse = MobileGraphEntitiesResponse(entities: [])
+        client.reasoningChainsResponse = MobileReasoningChainsResponse(chains: [])
+        client.controlPlaneResponse = MobileControlPlaneResponse(
+            cost: MobileControlPlaneCost(
+                enabled: false,
+                timestamp: nil,
+                totalCalls: 0,
+                totalErrors: 0,
+                totalDenied: 0,
+                totalCached: 0,
+                totalDurationMs: 0,
+                topAgent: nil,
+                topServer: nil
+            ),
+            rbac: MobileControlPlaneRBAC(
+                enabled: false,
+                defaultPolicy: nil,
+                roleCount: 0,
+                bindingCount: 0,
+                globalDenyCount: 0,
+                rateLimitCount: 0,
+                deniedCount: 0
+            ),
+            otel: MobileControlPlaneOTel(
+                otlpConfigured: false,
+                otlpEndpoint: nil,
+                jsonLogsEnabled: false,
+                tracedServers: 0,
+                totalServers: 0,
+                traceCoverage: nil
+            ),
+            health: MobileControlPlaneHealth(
+                totalServers: 0,
+                healthyServers: 0,
+                degradedServers: 0,
+                downServers: 0,
+                idleServers: 0,
+                hubTargets: 0,
+                localTargets: 0,
+                unavailableTargets: 0
+            )
+        )
+        client.sandboxResponse = MobileSandboxSummary(available: false, projects: [], totalRunning: 0, backend: "unknown")
+
+        let vm = OpsViewModel(apiClient: client)
+        await vm.load()
+
+        client.endpointFailures["/api/mobile/v1/tasks"] = .apiError(code: .upstreamError, message: "tasks unavailable", requestId: "req-tasks-1")
+        client.endpointFailures["/api/mobile/v1/pipelines"] = .apiError(code: .upstreamError, message: "pipelines unavailable", requestId: "req-pipes-1")
+
+        await vm.load()
+
+        #expect(vm.tasks.count == 1)
+        #expect(vm.tasks.first?.title == "Preserve me")
+        #expect(vm.taskCounts.inProgress == 1)
+        #expect(vm.pipelines.count == 1)
+        #expect(vm.pipelines.first?.currentStage == "test")
+        #expect(vm.pipelinesAvailable == true)
+        #expect(vm.warningMessage?.contains("tasks") == true)
+        #expect(vm.warningMessage?.contains("pipelines") == true)
     }
 
     @Test("Create session mutation success returns status message")

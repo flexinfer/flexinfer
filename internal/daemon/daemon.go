@@ -81,6 +81,7 @@ type ResourceCache struct {
 // avoid an import cycle (daemon → hud → bridge → daemon).
 type hudAppStopper interface {
 	StopMonitors()
+	RefreshMonitors()
 }
 
 // Daemon is the main Loom daemon.

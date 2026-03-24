@@ -1,6 +1,8 @@
 package monitor
 
 import (
+	"encoding/json"
+	"fmt"
 	"sort"
 	"testing"
 
@@ -158,5 +160,73 @@ func TestFleetSnapshot_DefaultValues(t *testing.T) {
 	}
 	if snap.ActiveSessions != 0 {
 		t.Errorf("expected 0 active sessions, got %d", snap.ActiveSessions)
+	}
+}
+
+func TestFleetMonitor_RefreshForceBypassesDebounce(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+	client, agent := newBridges(t, sockPath)
+
+	var statusCalls int
+	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
+		statusCalls++
+		return bridge.StatusResult{
+			Running:     true,
+			Servers:     1,
+			ActiveConns: 1,
+			Processes:   []string{"git"},
+		}, nil
+	})
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, err
+		}
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return toolEnvelope(map[string]any{"sessions": []map[string]any{}}), nil
+		case "agent_context__agent_task_list":
+			return toolEnvelope(map[string]any{"tasks": []map[string]any{}}), nil
+		case "agent_context__agent_memory_stats":
+			return toolEnvelope(map[string]any{"total_items": 0, "total_tokens": 0}), nil
+		case "agent_context__agent_graph_stats":
+			return toolEnvelope(map[string]any{"entity_count": 0, "relation_count": 0}), nil
+		case "agent_context__agent_workflow_list":
+			return toolEnvelope(map[string]any{"workflows": []map[string]any{}}), nil
+		case "agent_context__agent_presence_list":
+			return toolEnvelope(map[string]any{"agents": []map[string]any{}}), nil
+		case "agent_context__agent_file_claim_list":
+			return toolEnvelope(map[string]any{"claims": []map[string]any{}}), nil
+		case "agent_context__agent_worktree_list":
+			return toolEnvelope(map[string]any{"worktrees": []map[string]any{}}), nil
+		case "agent_context__agent_handoff_list":
+			return toolEnvelope(map[string]any{"handoffs": []map[string]any{}}), nil
+		default:
+			return nil, fmt.Errorf("unexpected tool: %s", req.Name)
+		}
+	})
+
+	monitor := NewFleetMonitor(client, agent, nil)
+	if err := monitor.Refresh(); err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	if statusCalls != 1 {
+		t.Fatalf("expected 1 status call after first refresh, got %d", statusCalls)
+	}
+
+	if err := monitor.Refresh(); err != nil {
+		t.Fatalf("debounced refresh: %v", err)
+	}
+	if statusCalls != 1 {
+		t.Fatalf("expected debounce to skip second refresh, got %d status calls", statusCalls)
+	}
+
+	if err := monitor.RefreshForce(); err != nil {
+		t.Fatalf("forced refresh: %v", err)
+	}
+	if statusCalls != 2 {
+		t.Fatalf("expected forced refresh to bypass debounce, got %d status calls", statusCalls)
 	}
 }

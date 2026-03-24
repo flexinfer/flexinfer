@@ -43,6 +43,11 @@ func NewPipelineMonitor(agent *bridge.AgentBridge, projects []string, logger *sl
 	return m
 }
 
+// Ready reports whether the monitor has been fully initialized.
+func (m *PipelineMonitor) Ready() bool {
+	return m != nil && m.stopCh != nil && m.Logger != nil
+}
+
 // Start begins the background polling goroutine at the given interval.
 func (m *PipelineMonitor) Start(interval time.Duration) {
 	m.StartManual()
@@ -63,6 +68,16 @@ func (m *PipelineMonitor) Pipelines() []bridge.PipelineInfo {
 	snap := m.GetSnapshot()
 	out := make([]bridge.PipelineInfo, len(snap))
 	copy(out, snap)
+	return out
+}
+
+// Projects returns the configured GitLab projects watched by this monitor.
+func (m *PipelineMonitor) Projects() []string {
+	m.RLock()
+	defer m.RUnlock()
+
+	out := make([]string, len(m.projects))
+	copy(out, m.projects)
 	return out
 }
 
@@ -103,9 +118,23 @@ func (m *PipelineMonitor) HasActivePipelines() bool {
 
 // Refresh fetches the latest pipeline list from the mcp-gitlab bridge.
 func (m *PipelineMonitor) Refresh() error {
+	prev := m.Pipelines()
+
 	pipelines, err := m.refresh(context.Background())
 	if err != nil {
 		return err
+	}
+	if len(pipelines) == 0 && len(m.projects) > 0 {
+		time.Sleep(500 * time.Millisecond)
+		if retry, retryErr := m.refresh(context.Background()); retryErr != nil {
+			m.Logger.Warn("embedded pipeline refresh retry failed", "error", retryErr)
+		} else if len(retry) > 0 {
+			pipelines = retry
+		}
+	}
+	if len(pipelines) == 0 && len(prev) > 0 {
+		m.Logger.Info("pipeline refresh returned empty; preserving previous snapshot", "pipelines", len(prev))
+		pipelines = prev
 	}
 	m.update(pipelines)
 	return nil

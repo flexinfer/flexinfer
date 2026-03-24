@@ -78,22 +78,8 @@ struct DashboardView: View {
                             .cardAppear(index: 2)
                     }
 
-                    #if canImport(Charts)
-                    if !dashboard.recentTimeline.isEmpty {
-                        LoomCard {
-                            VStack(alignment: .leading, spacing: LoomSpacing.sm) {
-                                Text("Event Activity")
-                                    .font(LoomTypography.headlineMedium)
-                                    .foregroundStyle(LoomColors.textPrimary)
-                                SessionTimelineChart(entries: dashboard.recentTimeline)
-                            }
-                        }
-                        .cardAppear(index: 3)
-                    }
-                    #endif
-
                     TimelineListView(entries: dashboard.recentTimeline)
-                        .cardAppear(index: 4)
+                        .cardAppear(index: 3)
 
                     if let agoText = updatedAgo {
                         HStack {

@@ -17,6 +17,7 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
     var workflowsResponse: MobileWorkflowsResponse?
     var workflowDetailResponse: MobileWorkflowDetailResponse?
     var presenceResponse: MobilePresenceResponse?
+    var pipelinesResponse: MobilePipelinesResponse?
     var memoryStatsResponse: MobileMemoryStatsResponse?
     var memoryItemsResponse: MobileMemoryItemsResponse?
     var streamResponse: MobileStreamResponse?
@@ -63,6 +64,8 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
             if let r = workflowDetailResponse as? T { return r }
         case .presence:
             if let r = presenceResponse as? T { return r }
+        case .pipelines:
+            if let r = pipelinesResponse as? T { return r }
         case .memoryStats:
             if let r = memoryStatsResponse as? T { return r }
         case .memoryItems:
