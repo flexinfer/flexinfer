@@ -89,29 +89,31 @@
     "id": "DEBT-107",
     "component": "controllers/model_cache.go",
     "title": "model_cache.go at 904 LOC is the largest untested controller file",
-    "statement": "model_cache.go (904 LOC) is the single largest file in the controllers package without any test coverage. It handles model artifact lifecycle: download jobs, cache readiness, PVC management, and status transitions. It's the 4th most-changed file in the repo.",
-    "evidence": "wc -l controllers/model_cache.go = 904. No model_cache_test.go exists. git hotspot: controllers/model_cache.go not in top 30 changes directly but modelcache_controller.go (25 changes) delegates to it. Contains 6 exported functions that orchestrate complex K8s job creation and status management.",
+    "statement": "model_cache.go (904 LOC) now has comprehensive test coverage via model_cache_test.go (1341 LOC, 30 tests).",
+    "evidence": "controllers/model_cache_test.go: 30 tests covering download job creation, cache readiness, status transitions, ensureCache edge cases, ensureQuantization, and matchingModelCache.",
     "impact": 4,
     "risk_reduction": 5,
     "drag_reduction": 3,
     "effort": 3,
-    "status": "open",
+    "status": "resolved",
+    "resolved_date": "2026-03-24",
     "dependencies": [],
-    "notes": "This file orchestrates the entire model caching pipeline. Bugs here have caused: local-path PVC disappearing, download marker races, hf_transfer OOMs, Longhorn RWX stale mounts. Test strategy: mock K8s client + table-driven tests for each reconciliation path."
+    "notes": "Resolved. 30 unit tests covering all exported functions and critical edge cases."
   },
   {
     "id": "DEBT-108",
-    "component": "*.go (8 remaining occurrences)",
-    "title": "interface{} → any modernization (nearly complete)",
-    "statement": "Down from 116 to 8 occurrences of interface{} across Go source files. Remaining instances need cleanup.",
-    "evidence": "grep -c 'interface{}' across all Go source files = 8 (down from 116). Previous tech debt cycles eliminated most occurrences.",
+    "component": "*.go",
+    "title": "interface{} → any modernization",
+    "statement": "All interface{} occurrences replaced with any across Go source files.",
+    "evidence": "grep -c 'interface{}' across all Go source files = 0. Completed in commit 931d8f8 (codex/debt-wave1-tests-any-20260323 branch).",
     "impact": 1,
     "risk_reduction": 1,
     "drag_reduction": 2,
     "effort": 1,
-    "status": "in-progress",
+    "status": "resolved",
+    "resolved_date": "2026-03-23",
     "dependencies": [],
-    "notes": "8 remaining occurrences. Mechanical cleanup, will be finished in current session."
+    "notes": "Resolved by prior agent session. Zero interface{} remaining in source."
   },
   {
     "id": "DEBT-109",
@@ -131,14 +133,15 @@
     "id": "DEBT-110",
     "component": "pkg/metrics/exporter.go",
     "title": "Metrics exporter at 522 LOC has no test coverage",
-    "statement": "exporter.go (522 LOC) defines all Prometheus metric collectors, descriptors, and collection logic for the controller and proxy. Zero test coverage means metric regressions (wrong labels, cardinality explosions, missing metrics) are only caught in production.",
-    "evidence": "No exporter_test.go exists. 522 LOC handles metric registration, collection callbacks, and label construction. Prometheus ServiceMonitor is deployed in production. Metric name or label changes break Grafana dashboards silently.",
+    "statement": "exporter.go (522 LOC) now has comprehensive test coverage via exporter_test.go (839 LOC, 22 tests).",
+    "evidence": "pkg/metrics/exporter_test.go: 22 tests covering descriptor contracts (names, help, labels, types), collection callbacks, histogram buckets, cardinality guards, and collector interface compliance.",
     "impact": 3,
     "risk_reduction": 3,
     "drag_reduction": 2,
     "effort": 2,
-    "status": "open",
+    "status": "resolved",
+    "resolved_date": "2026-03-24",
     "dependencies": [],
-    "notes": "Test strategy: verify metric descriptor names/labels match expected values, test collection callbacks with mock data, check for cardinality bounds. prometheus/client_golang provides test helpers."
+    "notes": "Resolved. 22 test functions covering all 43 metric descriptors, cardinality bounds, and collection behavior."
   }
 ]
