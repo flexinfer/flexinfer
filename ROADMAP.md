@@ -142,6 +142,7 @@ Derived from commit-window review (`2026-02-15` to `2026-02-17`) to reduce regre
 
 - [ ] **Finish agent contract convergence across HUD/CLI/bridge** (in progress via `8c2c50d`) ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/21))
   - ✅ Stage 1 complete: shared contracts for context-inspect + nudge policy in `internal/hud/bridge/agent_contracts.go`.
+  - ✅ 2026-03-24: agent-context sessions/tasks now carry explicit `project`, `pipeline_ref`, and `workflow_id` links through MCP tools, HUD bridge, and mobile task projections; workspace-style namespaces such as `services/loom-core/...` now preserve full repo identity during orchestration grouping.
   - Next: split and dedupe command/bridge surfaces (`cmd/loom/cmd_agent.go`, `internal/hud/bridge/agent.go`, `internal/hud/api_agent.go`) and align error envelopes.
   - Target outcome: single contract model for context-inspect, nudge queue, and policy mutation surfaces.
 
