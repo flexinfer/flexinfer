@@ -223,6 +223,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"gpu max memory", "ABLITERATION_GPU_MAX_MEMORY_GB", "20"},
 		{"offload dir", "ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload"},
 		{"skip caching allocator warmup", "ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP", "false"},
+		{"safe sharded load", "ABLITERATION_SAFE_SHARDED_LOAD", "false"},
 		{"telemetry", "FLEXINFER_TELEMETRY", "true"},
 	}
 
@@ -254,6 +255,7 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	t.Setenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB", "18")
 	t.Setenv("FLEXINFER_ABLITERATION_OFFLOAD_DIR", "/tmp/ablit-offload")
 	t.Setenv("FLEXINFER_ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP", "true")
+	t.Setenv("FLEXINFER_ABLITERATION_SAFE_SHARDED_LOAD", "true")
 	t.Setenv("FLEXINFER_ABLITERATION_MODEL_POLICIES", `[{"name":"custom"}]`)
 
 	env := abliterationEnv("my-model", "gfx1100", &aiv1alpha1.AbliterationSpec{})
@@ -304,6 +306,9 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	if got := envMap["ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP"]; got != "true" {
 		t.Errorf("ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP = %q, want true", got)
 	}
+	if got := envMap["ABLITERATION_SAFE_SHARDED_LOAD"]; got != "true" {
+		t.Errorf("ABLITERATION_SAFE_SHARDED_LOAD = %q, want true", got)
+	}
 	if got := envMap["ABLITERATION_MODEL_POLICIES"]; got != `[{"name":"custom"}]` {
 		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want custom JSON", got)
 	}
@@ -344,6 +349,9 @@ func TestAbliterationEnv_GFX906DisablesCachingAllocatorWarmup(t *testing.T) {
 	if got := envMap["ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP"]; got != "true" {
 		t.Fatalf("ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP = %q, want true", got)
 	}
+	if got := envMap["ABLITERATION_SAFE_SHARDED_LOAD"]; got != "true" {
+		t.Fatalf("ABLITERATION_SAFE_SHARDED_LOAD = %q, want true", got)
+	}
 }
 
 func TestAbliterationWrapperScript(t *testing.T) {
@@ -363,6 +371,12 @@ func TestAbliterationWrapperScript(t *testing.T) {
 	}
 	if !strings.Contains(script, "caching_allocator_warmup") {
 		t.Error("wrapper script should patch transformers caching allocator warmup")
+	}
+	if !strings.Contains(script, "ABLITERATION_SAFE_SHARDED_LOAD") {
+		t.Error("wrapper script should support gfx906 safe sharded load")
+	}
+	if !strings.Contains(script, "AutoModelForCausalLM.from_pretrained = _safe_sharded_from_pretrained") {
+		t.Error("wrapper script should patch AutoModelForCausalLM.from_pretrained for gfx906")
 	}
 }
 

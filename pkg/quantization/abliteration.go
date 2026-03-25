@@ -272,6 +272,14 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 			skipCachingAllocatorWarmup = "false"
 		}
 	}
+	safeShardedLoad := os.Getenv("FLEXINFER_ABLITERATION_SAFE_SHARDED_LOAD")
+	if safeShardedLoad == "" {
+		if spec.UseGPU && gpuArch == "gfx906" {
+			safeShardedLoad = "true"
+		} else {
+			safeShardedLoad = "false"
+		}
+	}
 	modelPolicies := os.Getenv("FLEXINFER_ABLITERATION_MODEL_POLICIES")
 	if modelPolicies == "" {
 		modelPolicies = defaultAbliterationModelPoliciesJSON()
@@ -298,6 +306,7 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		{Name: "ABLITERATION_GPU_MAX_MEMORY_GB", Value: gpuMaxMemoryGB},
 		{Name: "ABLITERATION_OFFLOAD_DIR", Value: offloadDir},
 		{Name: "ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP", Value: skipCachingAllocatorWarmup},
+		{Name: "ABLITERATION_SAFE_SHARDED_LOAD", Value: safeShardedLoad},
 		{Name: "ABLITERATION_MODEL_POLICIES", Value: modelPolicies},
 		{Name: "SAFETENSORS_FAST_GPU", Value: "0"},
 		{Name: "HF_SAFETENSORS_MMAP", Value: "0"},
@@ -441,6 +450,51 @@ if os.environ.get('ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP', 'false').lower()
         return None
     modeling_utils.caching_allocator_warmup = _skip_caching_allocator_warmup
     print('Patched transformers.caching_allocator_warmup to no-op')
+if os.environ.get('ABLITERATION_SAFE_SHARDED_LOAD', 'false').lower() == 'true':
+    import gc
+    from transformers import AutoConfig, AutoModelForCausalLM
+    from transformers.modeling_utils import get_checkpoint_shard_files, load_state_dict
+    _orig_from_pretrained = AutoModelForCausalLM.from_pretrained
+    def _safe_sharded_from_pretrained(model_path, *args, **kwargs):
+        device_map = kwargs.get('device_map')
+        if not device_map or device_map == 'cpu':
+            return _orig_from_pretrained(model_path, *args, **kwargs)
+        trust_remote_code = kwargs.get('trust_remote_code', True)
+        dtype = kwargs.get('torch_dtype')
+        config = AutoConfig.from_pretrained(model_path, trust_remote_code=trust_remote_code)
+        model = AutoModelForCausalLM.from_config(config, trust_remote_code=trust_remote_code, torch_dtype=dtype)
+        if hasattr(model, 'tie_weights'):
+            model.tie_weights()
+        index_filename = ''
+        for candidate in ('model.safetensors.index.json', 'pytorch_model.bin.index.json'):
+            candidate_path = os.path.join(model_path, candidate)
+            if os.path.exists(candidate_path):
+                index_filename = candidate_path
+                break
+        if not index_filename:
+            print('Safe sharded load patch: no shard index found, falling back to transformers from_pretrained')
+            return _orig_from_pretrained(model_path, *args, **kwargs)
+        shard_files, _ = get_checkpoint_shard_files(model_path, index_filename, local_files_only=True)
+        print(f'Safe sharded load patch: loading {len(shard_files)} checkpoint shards on CPU before dispatch')
+        for shard_file in shard_files:
+            state_dict = load_state_dict(shard_file, map_location='cpu')
+            model.load_state_dict(state_dict, strict=False)
+            del state_dict
+            gc.collect()
+        from accelerate import dispatch_model, infer_auto_device_map
+        inferred_map = infer_auto_device_map(model, max_memory=kwargs.get('max_memory'))
+        gpu_layers = sum(1 for value in inferred_map.values() if value != 'cpu')
+        cpu_layers = sum(1 for value in inferred_map.values() if value == 'cpu')
+        print(f'Safe sharded load patch: dispatching model gpu_layers={gpu_layers} cpu_layers={cpu_layers}')
+        model = dispatch_model(
+            model,
+            device_map=inferred_map,
+            offload_dir=kwargs.get('offload_folder'),
+            offload_buffers=kwargs.get('offload_buffers', False),
+        )
+        return model
+    AutoModelForCausalLM.from_pretrained = _safe_sharded_from_pretrained
+    print('Patched AutoModelForCausalLM.from_pretrained for gfx906 safe sharded load')
 exec(open('/opt/flexinfer/scripts/abliterate.py').read())
 "
 
