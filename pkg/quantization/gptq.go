@@ -378,10 +378,10 @@ fi
 # device (0 bytes). load_checkpoint_in_model materializes weights on target devices
 # WITHOUT adding accelerate dispatch hooks (which conflict with GPTQModel's
 # shell_module_materialize). Peak RSS = CPU portion only, not the full model.
-# NOTE: Only enabled for non-CPU device maps. For CPU-only loading, the loader.py
-# patch (low_cpu_mem_usage=True) handles incremental shard loading instead, avoiding
-# the meta tensor issue where shell_module_materialize crashes on .to(device).
-if [ -f "${GPTQ_SCRIPT}" ] && [ "${QUANTIZE_DEVICE_MAP}" != "cpu" ]; then
+# Apply this rewrite for both GPU and CPU device maps. The injected CPU branch
+# already streams checkpoint shards, but without the init_empty_weights wrapper
+# we still pay the full from_config allocation cost up front.
+if [ -f "${GPTQ_SCRIPT}" ]; then
     python3 - <<'DEVICE_MAP_PY'
 import os, re, sys
 from pathlib import Path
