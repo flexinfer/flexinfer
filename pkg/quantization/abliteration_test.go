@@ -194,7 +194,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		SkipVisionLayers: ablitBoolPtr(true),
 	}
 
-	env := abliterationEnv("my-model", spec)
+	env := abliterationEnv("my-model", "gfx1100", spec)
 
 	envMap := make(map[string]string)
 	for _, e := range env {
@@ -222,6 +222,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"cpu max memory", "ABLITERATION_CPU_MAX_MEMORY_GB", "20"},
 		{"gpu max memory", "ABLITERATION_GPU_MAX_MEMORY_GB", "20"},
 		{"offload dir", "ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload"},
+		{"skip caching allocator warmup", "ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP", "false"},
 		{"telemetry", "FLEXINFER_TELEMETRY", "true"},
 	}
 
@@ -252,9 +253,10 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	t.Setenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB", "28")
 	t.Setenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB", "18")
 	t.Setenv("FLEXINFER_ABLITERATION_OFFLOAD_DIR", "/tmp/ablit-offload")
+	t.Setenv("FLEXINFER_ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP", "true")
 	t.Setenv("FLEXINFER_ABLITERATION_MODEL_POLICIES", `[{"name":"custom"}]`)
 
-	env := abliterationEnv("my-model", &aiv1alpha1.AbliterationSpec{})
+	env := abliterationEnv("my-model", "gfx1100", &aiv1alpha1.AbliterationSpec{})
 	envMap := make(map[string]string)
 	for _, e := range env {
 		envMap[e.Name] = e.Value
@@ -299,6 +301,9 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	if got := envMap["ABLITERATION_OFFLOAD_DIR"]; got != "/tmp/ablit-offload" {
 		t.Errorf("ABLITERATION_OFFLOAD_DIR = %q, want /tmp/ablit-offload", got)
 	}
+	if got := envMap["ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP"]; got != "true" {
+		t.Errorf("ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP = %q, want true", got)
+	}
 	if got := envMap["ABLITERATION_MODEL_POLICIES"]; got != `[{"name":"custom"}]` {
 		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want custom JSON", got)
 	}
@@ -309,7 +314,7 @@ func TestAbliterationEnv_CPUMode(t *testing.T) {
 		UseGPU: false,
 	}
 
-	env := abliterationEnv("test-model", spec)
+	env := abliterationEnv("test-model", "gfx906", spec)
 
 	for _, e := range env {
 		if e.Name == "DEVICE_MAP" {
@@ -320,6 +325,25 @@ func TestAbliterationEnv_CPUMode(t *testing.T) {
 		}
 	}
 	t.Error("DEVICE_MAP env var not found")
+}
+
+func TestAbliterationEnv_GFX906DisablesCachingAllocatorWarmup(t *testing.T) {
+	spec := &aiv1alpha1.AbliterationSpec{
+		UseGPU: true,
+	}
+
+	env := abliterationEnv("test-model", "gfx906", spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if got := envMap["DEVICE_MAP"]; got != "auto" {
+		t.Fatalf("DEVICE_MAP = %q, want auto", got)
+	}
+	if got := envMap["ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP"]; got != "true" {
+		t.Fatalf("ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP = %q, want true", got)
+	}
 }
 
 func TestAbliterationWrapperScript(t *testing.T) {
@@ -333,6 +357,12 @@ func TestAbliterationWrapperScript(t *testing.T) {
 	}
 	if !strings.Contains(script, ".abliteration-checkpoint.json") {
 		t.Error("wrapper script should dump the last checkpoint on failure")
+	}
+	if !strings.Contains(script, "ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP") {
+		t.Error("wrapper script should support disabling transformers caching allocator warmup")
+	}
+	if !strings.Contains(script, "caching_allocator_warmup") {
+		t.Error("wrapper script should patch transformers caching allocator warmup")
 	}
 }
 
