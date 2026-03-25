@@ -80,12 +80,22 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 		}
 
 		// Build and create the publish job.
+		// Publish targets GPU nodes (for PVC affinity) — tolerate dedicated=gpu taint.
+		tolerations := []corev1.Toleration{
+			{
+				Key:      "dedicated",
+				Operator: corev1.TolerationOpEqual,
+				Value:    "gpu",
+				Effect:   corev1.TaintEffectNoSchedule,
+			},
+		}
 		params := quantization.JobParams{
 			Name:         modelCache.Name,
 			Namespace:    modelCache.Namespace,
 			PVCName:      pvcName,
 			ModelPath:    modelPath,
 			NodeSelector: modelCache.Spec.NodeSelector,
+			Tolerations:  tolerations,
 		}
 
 		newJob, buildErr := quantization.BuildPublishJob(params, modelCache.Spec.Publish)
