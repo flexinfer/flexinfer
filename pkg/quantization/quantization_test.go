@@ -708,6 +708,39 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX906(t *testing.T) {
 	}
 }
 
+func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX1100_CPUDeviceMap(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	bits := int32(4)
+	groupSize := int32(128)
+	params := JobParams{
+		Name:      "qwen35-27b-gptq-gfx1100",
+		Namespace: "flexinfer-system",
+		PVCName:   "qwen35-27b-gptq-gfx1100",
+		ModelPath: "qwen35-27b-gptq-gfx1100",
+		GPUVendor: "amd",
+		GPUArch:   "gfx1100",
+		NodeSelector: map[string]string{
+			"kubernetes.io/hostname": "cblevins-7900xtx",
+		},
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:    aiv1alpha2.QuantizationFormatGPTQ,
+			Bits:      &bits,
+			GroupSize: &groupSize,
+			UseGPU:    true,
+		},
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob() returned error: %v", err)
+	}
+
+	env := containerEnvMap(job.Spec.Template.Spec.Containers[0].Env)
+	if env["QUANTIZE_DEVICE_MAP"] != "cpu" {
+		t.Fatalf("QUANTIZE_DEVICE_MAP = %q, want cpu for gfx1100", env["QUANTIZE_DEVICE_MAP"])
+	}
+}
+
 func TestGPTQJobBuilder_BuildJob_VLMConfigExtraction(t *testing.T) {
 	builder := &GPTQJobBuilder{}
 	bits := int32(4)
