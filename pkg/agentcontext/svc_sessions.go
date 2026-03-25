@@ -121,6 +121,7 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 	description := v.String("description", "")
 	workingDir := v.String("working_dir", "")
 	resumeID := v.String("resume_session_id", "")
+	parentSessionID := v.String("parent_session_id", "")
 	pipelineRef := pipelineRefFromLegacyArgs(args)
 	project = canonicalProject(project, namespace, pipelineRef)
 
@@ -195,6 +196,20 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 		Description: description,
 		WorkingDir:  workingDir,
 		PipelineRef: pipelineRef,
+	}
+
+	// Link to parent session hierarchy (subagent grouping).
+	if parentSessionID != "" {
+		session.ParentSessionID = parentSessionID
+		if parent, err := ss.Get(ctx, parentSessionID); err == nil && parent != nil {
+			if parent.RootSessionID != "" {
+				session.RootSessionID = parent.RootSessionID
+			} else {
+				session.RootSessionID = parent.ID
+			}
+		} else {
+			session.RootSessionID = parentSessionID
+		}
 	}
 
 	ss.mu.Lock()
