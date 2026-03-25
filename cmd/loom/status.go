@@ -5,17 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 )
 
 // platformStatus aggregates daemon, agent, and HUD status into one struct.
 type platformStatus struct {
-	Daemon   daemonStatus `json:"daemon"`
-	Agents   agentStatus  `json:"agents"`
-	Sessions sessionCount `json:"sessions"`
-	HUD      hudStatus    `json:"hud"`
-	Healthy  bool         `json:"healthy"`
+	Daemon    daemonStatus   `json:"daemon"`
+	Agents    agentStatus    `json:"agents"`
+	Sessions  sessionCount   `json:"sessions"`
+	Pipelines pipelineStatus `json:"pipelines"`
+	HUD       hudStatus      `json:"hud"`
+	Healthy   bool           `json:"healthy"`
 }
 
 type daemonStatus struct {
@@ -39,6 +41,15 @@ type agentStatus struct {
 type sessionCount struct {
 	Active int `json:"active"`
 	Total  int `json:"total"`
+}
+
+type pipelineStatus struct {
+	Available    bool   `json:"available"`
+	Running      int    `json:"running"`
+	Passed       int    `json:"passed"`
+	Failed       int    `json:"failed"`
+	Pending      int    `json:"pending"`
+	LastActivity string `json:"last_activity,omitempty"`
 }
 
 type hudStatus struct {
@@ -99,6 +110,8 @@ func collectPlatformStatus(socketPath, hudPort string) platformStatus {
 	ps.Healthy = true
 
 	// 2. Agent presence from HUD (best-effort).
+	needDaemonAgents := false
+	needDaemonSessions := false
 	presenceData, err := hudGetFast(hudPort, "/api/presence", 2*defaultHUDTimeout/5)
 	if err == nil {
 		ps.HUD.Reachable = true
@@ -115,7 +128,11 @@ func collectPlatformStatus(socketPath, hudPort string) platformStatus {
 				Offline: presence.OfflineAgents,
 				Total:   presence.Total,
 			}
+		} else {
+			needDaemonAgents = true
 		}
+	} else {
+		needDaemonAgents = true
 	}
 
 	// 3. Session counts from HUD (best-effort).
@@ -123,26 +140,40 @@ func collectPlatformStatus(socketPath, hudPort string) platformStatus {
 		sessData, err := hudGetFast(hudPort, "/api/sessions", 2*defaultHUDTimeout/5)
 		if err == nil {
 			var sessResp struct {
-				Sessions []struct {
-					EndedAt string `json:"ended_at"`
-				} `json:"sessions"`
+				Sessions []bridge.SessionInfo `json:"sessions"`
 			}
 			if json.Unmarshal(sessData, &sessResp) == nil {
-				active := 0
-				for _, s := range sessResp.Sessions {
-					if s.EndedAt == "" {
-						active++
-					}
-				}
-				ps.Sessions = sessionCount{Active: active, Total: len(sessResp.Sessions)}
+				ps.Sessions = countSessionStatuses(sessResp.Sessions)
+			} else {
+				needDaemonSessions = true
+			}
+		} else {
+			needDaemonSessions = true
+		}
+
+		pipeData, err := hudGetFast(hudPort, "/api/mobile/v1/pipelines", 2*defaultHUDTimeout/5)
+		if err == nil {
+			var pipeResp struct {
+				Available bool           `json:"available"`
+				Summary   pipelineStatus `json:"summary"`
+			}
+			if json.Unmarshal(pipeData, &pipeResp) == nil && pipeResp.Available {
+				pipeResp.Summary.Available = true
+				ps.Pipelines = pipeResp.Summary
 			}
 		}
+	} else {
+		needDaemonSessions = true
 	}
 
-	if !ps.HUD.Reachable {
+	if needDaemonAgents || needDaemonSessions {
 		if agents, sessions, err := collectPlatformStatusFromDaemon(socketPath); err == nil {
-			ps.Agents = agents
-			ps.Sessions = sessions
+			if needDaemonAgents {
+				ps.Agents = agents
+			}
+			if needDaemonSessions {
+				ps.Sessions = sessions
+			}
 		}
 	}
 
@@ -195,12 +226,35 @@ func countPresenceStatuses(agents []bridge.PresenceInfo) agentStatus {
 
 func countSessionStatuses(sessions []bridge.SessionInfo) sessionCount {
 	counts := sessionCount{Total: len(sessions)}
+	seen := make(map[string]struct{})
 	for _, session := range sessions {
-		if session.Status == "active" || session.EndedAt == "" {
-			counts.Active++
+		if !isActiveSession(session) {
+			continue
 		}
+		if !hasSessionIdentity(session) {
+			counts.Active++
+			continue
+		}
+		key := sessionIdentityKey(session.AgentID, session.Namespace)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		counts.Active++
 	}
 	return counts
+}
+
+func isActiveSession(session bridge.SessionInfo) bool {
+	return strings.TrimSpace(session.Status) == "active" || strings.TrimSpace(session.EndedAt) == ""
+}
+
+func hasSessionIdentity(session bridge.SessionInfo) bool {
+	return strings.TrimSpace(session.AgentID) != "" || strings.TrimSpace(session.Namespace) != ""
+}
+
+func sessionIdentityKey(agentID, namespace string) string {
+	return strings.TrimSpace(agentID) + "\x00" + strings.TrimSpace(namespace)
 }
 
 func printPlatformStatus(ps platformStatus, socketPath string) {
@@ -216,6 +270,15 @@ func printPlatformStatus(ps platformStatus, socketPath string) {
 		ps.Agents.Active, ps.Agents.Idle, ps.Agents.Offline)
 	fmt.Printf("Sessions: %d active, %d total\n",
 		ps.Sessions.Active, ps.Sessions.Total)
+	if ps.Pipelines.Available {
+		fmt.Printf("Pipelines: %d running, %d pending, %d passed, %d failed\n",
+			ps.Pipelines.Running, ps.Pipelines.Pending, ps.Pipelines.Passed, ps.Pipelines.Failed)
+		if ps.Pipelines.LastActivity != "" {
+			fmt.Printf("Pipelines: last activity %s\n", ps.Pipelines.LastActivity)
+		}
+	} else {
+		fmt.Println("Pipelines: unavailable")
+	}
 
 	hudLabel := "unavailable"
 	if ps.HUD.Reachable {

@@ -607,6 +607,54 @@ func TestSessionStartEndsPriorActiveSessions(t *testing.T) {
 	}
 }
 
+func TestLoadFromQdrant_DedupesActiveSessionsByIdentity(t *testing.T) {
+	now := time.Now()
+	svc, _ := newSessionServiceWithQdrant(t,
+		Session{
+			ID:        "old",
+			AgentID:   "agent-1",
+			Namespace: "loom-core/main",
+			Status:    string(SessionStatusActive),
+			StartedAt: now.Add(-2 * time.Hour),
+		},
+		Session{
+			ID:        "new",
+			AgentID:   "agent-1",
+			Namespace: "loom-core/main",
+			Status:    string(SessionStatusActive),
+			StartedAt: now.Add(-time.Hour),
+		},
+		Session{
+			ID:        "other",
+			AgentID:   "agent-1",
+			Namespace: "loom-core/other",
+			Status:    string(SessionStatusActive),
+			StartedAt: now.Add(-90 * time.Minute),
+		},
+	)
+
+	if err := svc.sess.LoadFromQdrant(context.Background()); err != nil {
+		t.Fatalf("LoadFromQdrant() error = %v", err)
+	}
+
+	svc.sess.mu.RLock()
+	defer svc.sess.mu.RUnlock()
+	if len(svc.sess.sessions) != 2 {
+		t.Fatalf("loaded session count = %d, want 2", len(svc.sess.sessions))
+	}
+	if _, ok := svc.sess.sessions["old"]; ok {
+		t.Fatal("stale duplicate active session should not be loaded")
+	}
+	if got := svc.sess.sessions["new"]; got == nil {
+		t.Fatal("newest active session for identity missing")
+	} else if got.Namespace != "loom-core/main" {
+		t.Fatalf("loaded namespace = %q, want loom-core/main", got.Namespace)
+	}
+	if got := svc.sess.sessions["other"]; got == nil {
+		t.Fatal("distinct namespace session missing")
+	}
+}
+
 func TestSessionReaperActiveMaxAgeConfig(t *testing.T) {
 	svc := newTestService()
 	svc.cfg.SessionReaperActiveMaxAge = 48

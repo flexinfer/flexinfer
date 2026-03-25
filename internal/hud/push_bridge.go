@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -253,14 +254,39 @@ func classifyPipelineEvent(event bridge.SSEEvent) PushClassification {
 		return PushClassification{Worthy: false}
 	}
 
-	var failedProjects, successProjects []string
+	var (
+		failedProjects  []string
+		successProjects []string
+		runningCount    int
+		pendingCount    int
+		manualCount     int
+		firstRunning    string
+		firstPending    string
+		firstManual     string
+	)
 
 	for _, p := range payload.Pipelines {
-		switch p.Status {
+		label := pipelineDisplayLabel(p.Project, p.Ref)
+		switch normalizePipelinePushStatus(p.Status) {
 		case "failed":
-			failedProjects = append(failedProjects, p.Project)
+			failedProjects = append(failedProjects, label)
+		case "running":
+			runningCount++
+			if firstRunning == "" {
+				firstRunning = label
+			}
+		case "pending":
+			pendingCount++
+			if firstPending == "" {
+				firstPending = label
+			}
+		case "manual":
+			manualCount++
+			if firstManual == "" {
+				firstManual = label
+			}
 		case "success":
-			successProjects = append(successProjects, p.Project)
+			successProjects = append(successProjects, label)
 		}
 	}
 
@@ -270,7 +296,7 @@ func classifyPipelineEvent(event bridge.SSEEvent) PushClassification {
 		if len(failedProjects) == 1 {
 			// Find the matching pipeline for ref info.
 			for _, p := range payload.Pipelines {
-				if p.Status == "failed" {
+				if normalizePipelinePushStatus(p.Status) == "failed" {
 					body = fmt.Sprintf("%s (%s) failed", p.Project, p.Ref)
 					deepLink = fmt.Sprintf("loom://pipeline/%d", p.ID)
 					break
@@ -291,11 +317,29 @@ func classifyPipelineEvent(event bridge.SSEEvent) PushClassification {
 		}
 	}
 
+	activeCount := runningCount + pendingCount + manualCount
+	if activeCount > 0 {
+		body := buildPipelineActiveBody(runningCount, pendingCount, manualCount, len(successProjects), firstRunning, firstPending, firstManual)
+		title := "Pipeline Still Running"
+		if runningCount == 0 {
+			title = "Pipeline Waiting"
+		}
+		return PushClassification{
+			Worthy:    true,
+			EventType: "hud.pipeline.active",
+			Level:     PushLevelActive,
+			Title:     title,
+			Body:      body,
+			Category:  "pipeline",
+			DeepLink:  "loom://dashboard",
+		}
+	}
+
 	if len(successProjects) > 0 {
 		var body, deepLink string
 		if len(successProjects) == 1 {
 			for _, p := range payload.Pipelines {
-				if p.Status == "success" {
+				if normalizePipelinePushStatus(p.Status) == "success" {
 					body = fmt.Sprintf("%s (%s) passed", p.Project, p.Ref)
 					deepLink = fmt.Sprintf("loom://pipeline/%d", p.ID)
 					break
@@ -317,6 +361,72 @@ func classifyPipelineEvent(event bridge.SSEEvent) PushClassification {
 	}
 
 	return PushClassification{Worthy: false}
+}
+
+func normalizePipelinePushStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "running":
+		return "running"
+	case "pending", "created", "scheduled":
+		return "pending"
+	case "manual":
+		return "manual"
+	case "success", "passed":
+		return "success"
+	case "failed", "canceled", "cancelled", "skipped":
+		return "failed"
+	default:
+		return ""
+	}
+}
+
+func pipelineDisplayLabel(project, ref string) string {
+	project = strings.TrimSpace(project)
+	ref = strings.TrimSpace(ref)
+	if project == "" {
+		project = "pipeline"
+	}
+	if ref == "" {
+		return project
+	}
+	return fmt.Sprintf("%s (%s)", project, ref)
+}
+
+func buildPipelineActiveBody(runningCount, pendingCount, manualCount, successCount int, firstRunning, firstPending, firstManual string) string {
+	if runningCount == 1 && pendingCount == 0 && manualCount == 0 && successCount == 0 && firstRunning != "" {
+		return fmt.Sprintf("%s is still running", firstRunning)
+	}
+	if runningCount == 0 && manualCount == 1 && pendingCount == 0 && successCount == 0 && firstManual != "" {
+		return fmt.Sprintf("%s is waiting on manual jobs", firstManual)
+	}
+	if runningCount == 0 && manualCount == 0 && pendingCount == 1 && successCount == 0 && firstPending != "" {
+		return fmt.Sprintf("%s is pending", firstPending)
+	}
+
+	parts := make([]string, 0, 4)
+	if runningCount > 0 {
+		parts = append(parts, countPhrase(runningCount, "running pipeline", "running pipelines"))
+	}
+	if manualCount > 0 {
+		parts = append(parts, countPhrase(manualCount, "pipeline waiting on manual jobs", "pipelines waiting on manual jobs"))
+	}
+	if pendingCount > 0 {
+		parts = append(parts, countPhrase(pendingCount, "pending pipeline", "pending pipelines"))
+	}
+	if successCount > 0 {
+		parts = append(parts, countPhrase(successCount, "passed pipeline", "passed pipelines"))
+	}
+	if len(parts) == 0 {
+		return "Pipelines are still in progress."
+	}
+	return joinStrings(parts, ", ")
+}
+
+func countPhrase(count int, singular, plural string) string {
+	if count == 1 {
+		return fmt.Sprintf("1 %s", singular)
+	}
+	return fmt.Sprintf("%d %s", count, plural)
 }
 
 // classifyHealthEvent checks if a health event contains down servers.

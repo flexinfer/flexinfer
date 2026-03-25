@@ -18,6 +18,9 @@ import (
 type SessionSvc struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
+	// Per-agent start locks keep concurrent starts from creating duplicate
+	// active sessions for the same agent/namespace scope.
+	startLocks sync.Map
 
 	qdrant  *QdrantClient // CollSessions
 	cfg     Config
@@ -115,19 +118,22 @@ func (ss *SessionSvc) Persist(ctx context.Context, session *Session) error {
 // Start creates a new session or resumes an existing one.
 func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
-	agentID := v.String("agent_id", ss.cfg.DefaultAgentID)
-	namespace := v.String("namespace", ss.cfg.DefaultNamespace)
-	project := v.String("project", "")
-	description := v.String("description", "")
-	workingDir := v.String("working_dir", "")
-	resumeID := v.String("resume_session_id", "")
-	parentSessionID := v.String("parent_session_id", "")
+	agentID := strings.TrimSpace(v.String("agent_id", ss.cfg.DefaultAgentID))
+	namespace := strings.TrimSpace(v.String("namespace", ss.cfg.DefaultNamespace))
+	project := strings.TrimSpace(v.String("project", ""))
+	description := strings.TrimSpace(v.String("description", ""))
+	workingDir := strings.TrimSpace(v.String("working_dir", ""))
+	resumeID := strings.TrimSpace(v.String("resume_session_id", ""))
+	parentSessionID := strings.TrimSpace(v.String("parent_session_id", ""))
 	pipelineRef := pipelineRefFromLegacyArgs(args)
 	project = canonicalProject(project, namespace, pipelineRef)
 
 	if agentID == "" {
 		return mcp.ErrorResult(fmt.Errorf("agent_id is required")), nil
 	}
+
+	startUnlock := ss.lockAgentStart(agentID)
+	defer startUnlock()
 
 	// Check for resume
 	if resumeID != "" {
@@ -161,7 +167,7 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 
 	// Idempotent start: if an active session already exists for this agent in the
 	// same namespace, return it instead of rolling sessions.
-	if existing := ss.activeSessionForAgentNamespace(agentID, namespace); existing != nil {
+	if existing := ss.activeSessionForAgentNamespace(ctx, agentID, namespace); existing != nil {
 		project := canonicalProject(existing.Project, existing.Namespace, existing.PipelineRef)
 		result := map[string]any{
 			"ok":              true,
@@ -241,15 +247,65 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 	return mcp.JSONResult(result)
 }
 
-func (ss *SessionSvc) activeSessionForAgentNamespace(agentID, namespace string) *Session {
+func (ss *SessionSvc) activeSessionForAgentNamespace(ctx context.Context, agentID, namespace string) *Session {
+	agentID, namespace = normalizeSessionScope(agentID, namespace)
+	if agentID == "" {
+		return nil
+	}
+
 	ss.mu.RLock()
-	defer ss.mu.RUnlock()
 	for _, sess := range ss.sessions {
-		if sess.AgentID == agentID && sess.Namespace == namespace && sess.Status == string(SessionStatusActive) {
+		if sessionMatchesIdentity(sess, agentID, namespace) && sess.Status == string(SessionStatusActive) {
+			ss.mu.RUnlock()
 			return sess
 		}
 	}
-	return nil
+	ss.mu.RUnlock()
+
+	if ss.qdrant == nil {
+		return nil
+	}
+
+	conds := []any{
+		Match("agent_id", agentID),
+		Match("status", string(SessionStatusActive)),
+	}
+	if namespace != "" {
+		conds = append(conds, Match("namespace", namespace))
+	}
+
+	points, err := ss.qdrant.ScrollPoints(ctx, FilterMust(conds...), 100, false)
+	if err != nil {
+		return nil
+	}
+
+	var newest *Session
+	for _, p := range points {
+		sess, err := PayloadToSession(p.Payload)
+		if err != nil || sess == nil {
+			continue
+		}
+		if !sessionMatchesIdentity(sess, agentID, namespace) || sess.Status != string(SessionStatusActive) {
+			continue
+		}
+		if newest == nil || sess.StartedAt.After(newest.StartedAt) {
+			newest = sess
+		}
+	}
+	if newest == nil {
+		return nil
+	}
+
+	ss.mu.Lock()
+	if existing, ok := ss.sessions[newest.ID]; ok && existing.Status == string(SessionStatusActive) &&
+		sessionMatchesIdentity(existing, agentID, namespace) {
+		ss.mu.Unlock()
+		return existing
+	}
+	ss.sessions[newest.ID] = newest
+	ss.mu.Unlock()
+
+	return newest
 }
 
 // End marks a session as ended and optionally generates a summary.
@@ -347,9 +403,9 @@ func (ss *SessionSvc) End(ctx context.Context, args map[string]any) (*mcp.CallTo
 // List returns sessions matching optional filters.
 func (ss *SessionSvc) List(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
-	agentID := v.String("agent_id", "")
-	namespace := v.String("namespace", "")
-	status := v.String("status", "")
+	agentID := strings.TrimSpace(v.String("agent_id", ""))
+	namespace := strings.TrimSpace(v.String("namespace", ""))
+	status := strings.TrimSpace(v.String("status", ""))
 	limit := v.Int("limit", 20)
 
 	if err := v.Validate(); err != nil {
@@ -533,12 +589,13 @@ func (ss *SessionSvc) PruneSessions(ctx context.Context, maxAgeHours int, status
 
 // EndActiveForAgent ends all active sessions belonging to the given agent.
 func (ss *SessionSvc) EndActiveForAgent(ctx context.Context, agentID string) {
+	agentID = strings.TrimSpace(agentID)
 	now := time.Now()
 
 	// End in-memory sessions.
 	ss.mu.Lock()
 	for _, sess := range ss.sessions {
-		if sess.AgentID == agentID && sess.Status == string(SessionStatusActive) {
+		if strings.TrimSpace(sess.AgentID) == agentID && sess.Status == string(SessionStatusActive) {
 			sess.Status = string(SessionStatusEnded)
 			sess.EndedAt = &now
 		}
@@ -685,12 +742,21 @@ func (ss *SessionSvc) LoadFromQdrant(ctx context.Context) error {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 
+	ss.sessions = make(map[string]*Session, len(points))
 	loaded := 0
+	latestByIdentity := make(map[string]*Session)
 	for _, p := range points {
 		sess, err := PayloadToSession(p.Payload)
 		if err != nil || sess == nil {
 			continue
 		}
+		key := sessionIdentityKey(sess.AgentID, sess.Namespace)
+		if current, ok := latestByIdentity[key]; ok && !sess.StartedAt.After(current.StartedAt) {
+			continue
+		}
+		latestByIdentity[key] = sess
+	}
+	for _, sess := range latestByIdentity {
 		ss.sessions[sess.ID] = sess
 		loaded++
 	}
@@ -699,4 +765,32 @@ func (ss *SessionSvc) LoadFromQdrant(ctx context.Context) error {
 		ss.logger.Info("restored active sessions", "count", loaded)
 	}
 	return nil
+}
+
+func (ss *SessionSvc) lockAgentStart(agentID string) func() {
+	key := strings.TrimSpace(agentID)
+	if key == "" {
+		return func() {}
+	}
+
+	muAny, _ := ss.startLocks.LoadOrStore(key, &sync.Mutex{})
+	mu := muAny.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+func normalizeSessionScope(agentID, namespace string) (string, string) {
+	return strings.TrimSpace(agentID), strings.TrimSpace(namespace)
+}
+
+func sessionIdentityKey(agentID, namespace string) string {
+	agentID, namespace = normalizeSessionScope(agentID, namespace)
+	return agentID + "\x00" + namespace
+}
+
+func sessionMatchesIdentity(sess *Session, agentID, namespace string) bool {
+	if sess == nil {
+		return false
+	}
+	return strings.TrimSpace(sess.AgentID) == agentID && strings.TrimSpace(sess.Namespace) == namespace
 }

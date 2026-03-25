@@ -807,7 +807,7 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 		{
 			"type": "command",
 			"command": fmt.Sprintf(
-				`%s; %s; PARENT_FLAG=""; [ -n "${LOOM_PARENT_SESSION_ID:-}" ] && PARENT_FLAG="--parent-session-id $LOOM_PARENT_SESSION_ID"; %s agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "$AGENT_ID" --agent-type %s --description %q --auto-recall --auto-recall-strategy fast $PARENT_FLAG --quiet %s || true`,
+				`INPUT=$(cat); %s; %s; PARENT_FLAG=""; [ -n "${LOOM_PARENT_SESSION_ID:-}" ] && PARENT_FLAG="--parent-session-id $LOOM_PARENT_SESSION_ID"; %s agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "$AGENT_ID" --agent-type %s --description %q --auto-recall --auto-recall-strategy fast $PARENT_FLAG --quiet %s || true`,
 				bootstrap, staleCleanup, loomCmd, hp.AgentType, hp.Description, log),
 		},
 		{
@@ -815,7 +815,7 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 			"command": fmt.Sprintf(
 				// Let keepalive own its PID file lifecycle so repeated SessionStart hooks
 				// (for example after compact/relaunch) do not race old/new helpers.
-				`%s; %s agent keepalive --agent-id "$AGENT_ID" --agent-type %s --quiet </dev/null >/dev/null %s &`,
+				`INPUT=$(cat); %s; %s agent keepalive --agent-id "$AGENT_ID" --agent-type %s --quiet </dev/null >/dev/null %s &`,
 				bootstrap, loomCmd, hp.AgentType, log),
 		},
 	}
@@ -843,7 +843,7 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 					{
 						"type": "command",
 						"command": fmt.Sprintf(
-							`%s; PID_FILE="${TMPDIR:-/tmp}/loom-keepalive-${AGENT_ID}.pid"; [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; rm -f "$PID_FILE"; rm -f "$AGENT_ID_FILE"; %s agent session-end --agent-id "$AGENT_ID" --summarize --summary-async --quiet %s || true`,
+							`INPUT=$(cat); %s; PID_FILE="${TMPDIR:-/tmp}/loom-keepalive-${AGENT_ID}.pid"; [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; rm -f "$PID_FILE"; rm -f "$AGENT_ID_FILE"; %s agent session-end --agent-id "$AGENT_ID" --summarize --summary-async --quiet %s || true`,
 							bootstrap, loomCmd, log),
 					},
 				},
@@ -856,7 +856,7 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 					{
 						"type": "command",
 						"command": fmt.Sprintf(
-							`%s; %s agent heartbeat --agent-id "$AGENT_ID" --status active --ensure-session --infer-namespace --agent-type %s --description %q --quiet %s || true`,
+							`INPUT=$(cat); %s; %s agent heartbeat --agent-id "$AGENT_ID" --status active --ensure-session --infer-namespace --agent-type %s --description %q --quiet %s || true`,
 							bootstrap, loomCmd, hp.AgentType, hp.Description, log),
 					},
 				},
@@ -869,7 +869,7 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 					{
 						"type": "command",
 						"command": fmt.Sprintf(
-							`%s; PARENT_SID=$(%s agent session --agent-id "$AGENT_ID" --quiet 2>/dev/null | jq -r '.session.id // empty' 2>/dev/null || true); [ -n "$PARENT_SID" ] && export LOOM_PARENT_SESSION_ID="$PARENT_SID"; exit 0`,
+							`INPUT=$(cat); %s; PARENT_SID=$(%s agent session --agent-id "$AGENT_ID" --quiet 2>/dev/null | jq -r '.session.id // empty' 2>/dev/null || true); [ -n "$PARENT_SID" ] && export LOOM_PARENT_SESSION_ID="$PARENT_SID"; exit 0`,
 							bootstrap, loomCmd),
 					},
 				},
@@ -1386,17 +1386,32 @@ func hooksConfigFromProfile(reg *registry.Registry, profile *PlatformProfile, lo
 	return map[string]any{"hooks": hooks}
 }
 
+// hookAgentIDBootstrap returns shell that derives a stable AGENT_ID for the
+// current Claude/Gemini hook input.
+//
+// When hook JSON includes a session_id, the identity is scoped to that Claude
+// session so subprocesses from the same CLI instance stay grouped together.
+// If hook input is unavailable, we fall back to a workspace-scoped key.
 func hookAgentIDBootstrap(agentID string) string {
 	return fmt.Sprintf(
-		`WS_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || printf '%%s' "$PWD")"; `+
+		`HOOK_INPUT="${INPUT:-}"; `+
+			`HOOK_SESSION_ID=""; `+
+			`if [ -n "$HOOK_INPUT" ]; then `+
+			`HOOK_SESSION_ID="$(printf '%%s' "$HOOK_INPUT" | jq -r '.session_id // empty' 2>/dev/null || true)"; `+
+			`fi; `+
+			`SESSION_SCOPE=""; `+
+			`if [ -n "$HOOK_SESSION_ID" ]; then `+
+			`SESSION_SCOPE="$(printf '%%s' "$HOOK_SESSION_ID" | cksum | cut -d' ' -f1)"; `+
+			`fi; `+
+			`WS_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || printf '%%s' "$PWD")"; `+
 			`WS_HASH="$(printf '%%s' "$WS_ROOT" | cksum | cut -d' ' -f1)"; `+
 			`AGENT_CACHE_DIR="${HOME:-${TMPDIR:-/tmp}}/.cache/loom"; `+
 			`mkdir -p "$AGENT_CACHE_DIR"; `+
-			`AGENT_ID_FILE="${AGENT_CACHE_DIR}/agent-id-%s-${WS_HASH}"; `+
+			`AGENT_ID_FILE="${AGENT_CACHE_DIR}/agent-id-%s-${WS_HASH}${SESSION_SCOPE:+-${SESSION_SCOPE}}"; `+
 			`if [ -s "$AGENT_ID_FILE" ]; then `+
 			`AGENT_ID="$(cat "$AGENT_ID_FILE")"; `+
 			`else `+
-			`AGENT_ID="%s-${WS_HASH}"; `+
+			`AGENT_ID="%s-${WS_HASH}${SESSION_SCOPE:+-${SESSION_SCOPE}}"; `+
 			`printf '%%s' "$AGENT_ID" > "$AGENT_ID_FILE"; `+
 			`fi`,
 		agentID, agentID,

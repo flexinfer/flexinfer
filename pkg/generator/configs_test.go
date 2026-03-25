@@ -715,7 +715,13 @@ func TestClaudeHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
 			t.Fatalf("found hardcoded ppid in claude session-start hook: %s", cmd)
 		}
 		if strings.Contains(cmd, `--agent-id "$AGENT_ID"`) && strings.Contains(cmd, "agent-id-claude-code") {
-			// Verify workspace hash is part of the bootstrap.
+			if !strings.Contains(cmd, "INPUT=$(cat)") {
+				t.Fatalf("expected hook input capture in claude bootstrap, got: %s", cmd)
+			}
+			if !strings.Contains(cmd, "session_id") {
+				t.Fatalf("expected session_id-derived bootstrap in claude hook, got: %s", cmd)
+			}
+			// Verify workspace hash remains part of the bootstrap fallback.
 			if !strings.Contains(cmd, "WS_HASH") {
 				t.Fatalf("expected WS_HASH in agent ID bootstrap, got: %s", cmd)
 			}
@@ -757,7 +763,13 @@ func TestGeminiHooksConfig_UsesPersistentAgentIdBootstrap(t *testing.T) {
 			t.Fatalf("found hardcoded ppid in gemini session-start hook: %s", cmd)
 		}
 		if strings.Contains(cmd, `--agent-id "$AGENT_ID"`) && strings.Contains(cmd, "agent-id-gemini-cli") {
-			// Verify workspace hash is part of the bootstrap.
+			if !strings.Contains(cmd, "INPUT=$(cat)") {
+				t.Fatalf("expected hook input capture in gemini bootstrap, got: %s", cmd)
+			}
+			if !strings.Contains(cmd, "session_id") {
+				t.Fatalf("expected session_id-derived bootstrap in gemini hook, got: %s", cmd)
+			}
+			// Verify workspace hash remains part of the bootstrap fallback.
 			if !strings.Contains(cmd, "WS_HASH") {
 				t.Fatalf("expected WS_HASH in agent ID bootstrap, got: %s", cmd)
 			}
@@ -914,20 +926,23 @@ func TestEmitCodexPreamble_WebSearchDisabled(t *testing.T) {
 	}
 }
 
-// --- Workspace-scoped agent ID tests ---
+// --- Hook-scoped agent ID tests ---
 
 func TestHookAgentIDBootstrap_ContainsWorkspaceHash(t *testing.T) {
 	output := hookAgentIDBootstrap("claude-code")
 
 	for _, want := range []string{
+		"HOOK_INPUT=",
+		"HOOK_SESSION_ID=",
+		"SESSION_SCOPE=",
 		"WS_ROOT=",
 		"WS_HASH=",
 		"cksum",
 		"git rev-parse --show-toplevel",
 		"AGENT_CACHE_DIR=",
 		"${HOME:-${TMPDIR:-/tmp}}/.cache/loom",
-		"agent-id-claude-code-${WS_HASH}",
-		`AGENT_ID="claude-code-${WS_HASH}"`,
+		"agent-id-claude-code-${WS_HASH}${SESSION_SCOPE:+-${SESSION_SCOPE}}",
+		`AGENT_ID="claude-code-${WS_HASH}${SESSION_SCOPE:+-${SESSION_SCOPE}}"`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("hookAgentIDBootstrap output missing %q\ngot: %s", want, output)

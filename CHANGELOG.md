@@ -86,6 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Daemon retries local tool calls once after a transport-closed send failure before returning an error.
 
 ### Fixed
+- Session lifecycle and status reporting now reuse persisted active sessions, dedupe duplicate active identities without undercounting anonymous legacy sessions, surface HUD pipeline summaries in `loom status`, and keep Claude hook subprocesses grouped under the same CLI session identity.
 - Loom Companion iOS widgets and Live Activities now share App Group data correctly, persist dashboard snapshots before timeline reloads, and register the workflow Live Activity view from the widget extension target.
 - `mcp-alertmanager` now detects HTML error responses and returns a clear error message instead of an unmarshal panic.
 - TasksPanel row shifting caused by `display: flex` on `<td>` elements in the blocked-by column.

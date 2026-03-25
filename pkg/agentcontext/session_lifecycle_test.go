@@ -3,6 +3,7 @@ package agentcontext
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"testing"
 	"time"
 )
@@ -14,6 +15,24 @@ func decodeToolPayload(t *testing.T, resultText string) map[string]any {
 		t.Fatalf("unmarshal tool payload: %v", err)
 	}
 	return payload
+}
+
+func newSessionServiceWithQdrant(t *testing.T, seeded ...Session) (*Service, *sessionsQdrantStub) {
+	t.Helper()
+
+	qdrant, stub := newSessionsQdrantStub(t, seeded...)
+	logger := slog.Default()
+	metrics := GetMetrics()
+	cfg := Config{}
+
+	svc := &Service{
+		cfg:     cfg,
+		logger:  logger,
+		metrics: metrics,
+	}
+	svc.sess = NewSessionSvc(qdrant, cfg, logger, metrics)
+
+	return svc, stub
 }
 
 func TestEnrichSessionStartResult_ActiveAgents(t *testing.T) {
@@ -510,5 +529,46 @@ func TestSessionStart_NewNamespaceEndsPriorActiveSession(t *testing.T) {
 	}
 	if newSess.Status != string(SessionStatusActive) {
 		t.Fatalf("new session status = %q, want active", newSess.Status)
+	}
+}
+
+func TestSessionStart_UsesPersistedActiveSession(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	started := time.Now().Add(-time.Hour).Truncate(time.Second)
+	svc, stub := newSessionServiceWithQdrant(t, Session{
+		ID:        "persisted",
+		AgentID:   "agent-1",
+		Namespace: "loom-core/main",
+		Status:    string(SessionStatusActive),
+		StartedAt: started,
+	})
+
+	result, err := svc.sess.Start(context.Background(), map[string]any{
+		"agent_id":  "agent-1",
+		"namespace": "loom-core/main",
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected tool error result: %+v", result)
+	}
+
+	payload := decodeToolPayload(t, result.Content[0].Text)
+	if payload["session_id"] != "persisted" {
+		t.Fatalf("session_id = %v, want persisted", payload["session_id"])
+	}
+	if payload["already_existed"] != true {
+		t.Fatalf("already_existed = %v, want true", payload["already_existed"])
+	}
+	if payload["started_at"] != started.Format(time.RFC3339) {
+		t.Fatalf("started_at = %v, want %s", payload["started_at"], started.Format(time.RFC3339))
+	}
+
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	if len(stub.sessions) != 1 {
+		t.Fatalf("persisted session count = %d, want 1", len(stub.sessions))
 	}
 }
