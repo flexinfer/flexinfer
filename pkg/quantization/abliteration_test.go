@@ -378,6 +378,15 @@ func TestAbliterationWrapperScript(t *testing.T) {
 	if !strings.Contains(script, "AutoModelForCausalLM.from_pretrained = _safe_sharded_from_pretrained") {
 		t.Error("wrapper script should patch AutoModelForCausalLM.from_pretrained for gfx906")
 	}
+	if !strings.Contains(script, "Safe sharded load patch: constructing model from config") {
+		t.Error("wrapper script should log model construction timing for safe sharded load")
+	}
+	if !strings.Contains(script, "Safe sharded load patch: sample gpu targets:") {
+		t.Error("wrapper script should log sample GPU dispatch targets")
+	}
+	if !strings.Contains(script, "Safe sharded load patch: dispatch failed after") {
+		t.Error("wrapper script should log dispatch failures with elapsed time")
+	}
 }
 
 func TestBuildAbliterationJob_Tolerations(t *testing.T) {

@@ -432,6 +432,7 @@ if [ -f "${ABLIT_STATUS}" ]; then
 fi
 
 python3 -c "
+import json
 import os
 import torch.cuda
 _orig = torch.cuda.mem_get_info
@@ -462,8 +463,30 @@ if os.environ.get('ABLITERATION_SAFE_SHARDED_LOAD', 'false').lower() == 'true':
         trust_remote_code = kwargs.get('trust_remote_code', True)
         dtype = kwargs.get('torch_dtype')
         config = AutoConfig.from_pretrained(model_path, trust_remote_code=trust_remote_code)
+        if getattr(config, 'text_config', None) is not None and not hasattr(config, 'vocab_size'):
+            cfg_path = os.path.join(model_path, 'config.json')
+            try:
+                with open(cfg_path, 'r', encoding='utf-8') as handle:
+                    raw_cfg = json.load(handle)
+                text_cfg = dict(raw_cfg.get('text_config') or {})
+                if text_cfg:
+                    for key in ('bos_token_id', 'eos_token_id', 'pad_token_id'):
+                        if key in raw_cfg and key not in text_cfg:
+                            text_cfg[key] = raw_cfg[key]
+                    model_type = text_cfg.get('model_type') or raw_cfg.get('model_type', '')
+                    if model_type == 'qwen3_5':
+                        model_type = 'qwen3_5_text'
+                        text_cfg['architectures'] = ['Qwen3_5ForCausalLM']
+                    config = AutoConfig.for_model(model_type, **{key: value for key, value in text_cfg.items() if key != 'model_type'})
+                    print(f'Safe sharded load patch: extracted text config model_type={model_type}', flush=True)
+            except Exception as exc:
+                print(f'WARN: safe sharded load patch could not extract text config: {exc}', flush=True)
+        build_start = __import__('time').time()
+        print(f'Safe sharded load patch: constructing model from config dtype={dtype}', flush=True)
         model = AutoModelForCausalLM.from_config(config, trust_remote_code=trust_remote_code, torch_dtype=dtype)
+        print(f'Safe sharded load patch: model constructed in {__import__("time").time() - build_start:.1f}s', flush=True)
         if hasattr(model, 'tie_weights'):
+            print('Safe sharded load patch: tying weights', flush=True)
             model.tie_weights()
         index_filename = ''
         for candidate in ('model.safetensors.index.json', 'pytorch_model.bin.index.json'):
@@ -472,26 +495,45 @@ if os.environ.get('ABLITERATION_SAFE_SHARDED_LOAD', 'false').lower() == 'true':
                 index_filename = candidate_path
                 break
         if not index_filename:
-            print('Safe sharded load patch: no shard index found, falling back to transformers from_pretrained')
+            print('Safe sharded load patch: no shard index found, falling back to transformers from_pretrained', flush=True)
             return _orig_from_pretrained(model_path, *args, **kwargs)
         shard_files, _ = get_checkpoint_shard_files(model_path, index_filename, local_files_only=True)
-        print(f'Safe sharded load patch: loading {len(shard_files)} checkpoint shards on CPU before dispatch')
-        for shard_file in shard_files:
+        print(f'Safe sharded load patch: loading {len(shard_files)} checkpoint shards on CPU before dispatch', flush=True)
+        load_start = __import__('time').time()
+        for index, shard_file in enumerate(shard_files, start=1):
+            if index == 1 or index % 25 == 0 or index == len(shard_files):
+                print(f'Safe sharded load patch: loading shard {index}/{len(shard_files)}', flush=True)
             state_dict = load_state_dict(shard_file, map_location='cpu')
             model.load_state_dict(state_dict, strict=False)
             del state_dict
             gc.collect()
+        print(f'Safe sharded load patch: loaded all shards in {__import__("time").time() - load_start:.1f}s', flush=True)
         from accelerate import dispatch_model, infer_auto_device_map
         inferred_map = infer_auto_device_map(model, max_memory=kwargs.get('max_memory'))
         gpu_layers = sum(1 for value in inferred_map.values() if value != 'cpu')
         cpu_layers = sum(1 for value in inferred_map.values() if value == 'cpu')
-        print(f'Safe sharded load patch: dispatching model gpu_layers={gpu_layers} cpu_layers={cpu_layers}')
-        model = dispatch_model(
-            model,
-            device_map=inferred_map,
-            offload_dir=kwargs.get('offload_folder'),
-            offload_buffers=kwargs.get('offload_buffers', False),
-        )
+        gpu_targets = [f'{key}->{value}' for key, value in inferred_map.items() if value != 'cpu']
+        cpu_targets = [f'{key}->{value}' for key, value in inferred_map.items() if value == 'cpu']
+        print(f'Safe sharded load patch: dispatching model gpu_layers={gpu_layers} cpu_layers={cpu_layers}', flush=True)
+        if gpu_targets:
+            print(f'Safe sharded load patch: sample gpu targets: {gpu_targets[:8]}', flush=True)
+        if cpu_targets:
+            print(f'Safe sharded load patch: sample cpu targets: {cpu_targets[:8]}', flush=True)
+        dispatch_start = __import__('time').time()
+        try:
+            model = dispatch_model(
+                model,
+                device_map=inferred_map,
+                offload_dir=kwargs.get('offload_folder'),
+                offload_buffers=kwargs.get('offload_buffers', False),
+            )
+        except Exception as exc:
+            print(
+                f'Safe sharded load patch: dispatch failed after {__import__("time").time() - dispatch_start:.1f}s: {type(exc).__name__}: {exc}',
+                flush=True,
+            )
+            raise
+        print('Safe sharded load patch: dispatch complete', flush=True)
         return model
     AutoModelForCausalLM.from_pretrained = _safe_sharded_from_pretrained
     print('Patched AutoModelForCausalLM.from_pretrained for gfx906 safe sharded load')
