@@ -95,7 +95,7 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 	}
 
 	image := ResolveImage(ImageFormatAbliteration, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
-	ablitEnv := abliterationEnv(params.ModelPath, ablitSpec)
+	ablitEnv := abliterationEnv(params.ModelPath, params.GPUArch, ablitSpec)
 	script := abliterationWrapperScript()
 
 	backoffLimit := int32(2)
@@ -178,7 +178,7 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 }
 
 // abliterationEnv returns environment variables for the abliteration script.
-func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []corev1.EnvVar {
+func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpec) []corev1.EnvVar {
 	numSamples := int32(DefaultAbliterationNumSamples)
 	maxMemoryGB := int32(DefaultAbliterationMemoryGB)
 	if spec.NumSamples != nil && *spec.NumSamples > 0 {
@@ -264,6 +264,14 @@ func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []core
 	if offloadDir == "" {
 		offloadDir = "/workspace/abliteration-offload"
 	}
+	skipCachingAllocatorWarmup := os.Getenv("FLEXINFER_ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP")
+	if skipCachingAllocatorWarmup == "" {
+		if spec.UseGPU && gpuArch == "gfx906" {
+			skipCachingAllocatorWarmup = "true"
+		} else {
+			skipCachingAllocatorWarmup = "false"
+		}
+	}
 	modelPolicies := os.Getenv("FLEXINFER_ABLITERATION_MODEL_POLICIES")
 	if modelPolicies == "" {
 		modelPolicies = defaultAbliterationModelPoliciesJSON()
@@ -289,6 +297,7 @@ func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []core
 		{Name: "ABLITERATION_CPU_MAX_MEMORY_GB", Value: cpuMaxMemoryGB},
 		{Name: "ABLITERATION_GPU_MAX_MEMORY_GB", Value: gpuMaxMemoryGB},
 		{Name: "ABLITERATION_OFFLOAD_DIR", Value: offloadDir},
+		{Name: "ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP", Value: skipCachingAllocatorWarmup},
 		{Name: "ABLITERATION_MODEL_POLICIES", Value: modelPolicies},
 		{Name: "SAFETENSORS_FAST_GPU", Value: "0"},
 		{Name: "HF_SAFETENSORS_MMAP", Value: "0"},
@@ -414,7 +423,8 @@ if [ -f "${ABLIT_STATUS}" ]; then
 fi
 
 python3 -c "
-import torch.cuda, os
+import os
+import torch.cuda
 _orig = torch.cuda.mem_get_info
 def _patched(device=None):
     try:
@@ -425,6 +435,12 @@ def _patched(device=None):
         used = int(torch.cuda.memory_allocated(device) if torch.cuda.is_available() else 0)
         return (max(total - used, 0), total)
 torch.cuda.mem_get_info = _patched
+if os.environ.get('ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP', 'false').lower() == 'true':
+    import transformers.modeling_utils as modeling_utils
+    def _skip_caching_allocator_warmup(*args, **kwargs):
+        return None
+    modeling_utils.caching_allocator_warmup = _skip_caching_allocator_warmup
+    print('Patched transformers.caching_allocator_warmup to no-op')
 exec(open('/opt/flexinfer/scripts/abliterate.py').read())
 "
 
