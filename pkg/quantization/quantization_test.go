@@ -708,7 +708,7 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX906(t *testing.T) {
 	}
 }
 
-func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX1100_AutoDeviceMap(t *testing.T) {
+func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX1100_CPUDeviceMap(t *testing.T) {
 	builder := &GPTQJobBuilder{}
 	bits := int32(4)
 	groupSize := int32(128)
@@ -736,8 +736,8 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX1100_AutoDeviceMap(t *testing.T) {
 	}
 
 	env := containerEnvMap(job.Spec.Template.Spec.Containers[0].Env)
-	if env["QUANTIZE_DEVICE_MAP"] != "auto" {
-		t.Fatalf("QUANTIZE_DEVICE_MAP = %q, want auto for gfx1100", env["QUANTIZE_DEVICE_MAP"])
+	if env["QUANTIZE_DEVICE_MAP"] != "cpu" {
+		t.Fatalf("QUANTIZE_DEVICE_MAP = %q, want cpu for gfx1100", env["QUANTIZE_DEVICE_MAP"])
 	}
 }
 

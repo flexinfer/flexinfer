@@ -51,7 +51,7 @@ spec:
     descAct: false
     dynamicExclusion: "none"
     useGPU: true
-    maxMemoryGB: 56
+    maxMemoryGB: 60       # 54GB model in RAM + ~4-6GB GPTQ overhead (CPU device_map)
     timeoutSeconds: 28800
     calibration:
       maxSeqLen: 2048

@@ -87,6 +87,16 @@ spec:
                     maximum: 512
                     minimum: 16
                     type: integer
+                  skipGDNLayers:
+                    default: true
+                    description: |-
+                      SkipGDNLayers excludes GDN (Gated Delta Network) linear attention layers from
+                      abliteration. Qwen3.5 uses a hybrid architecture where 48 of 64 layers are GDN
+                      (linear attention) and 16 are standard self-attention. Abliterating GDN layers
+                      destroys the recurrence mechanics (out_proj feedback into decay/gate computation).
+                      When true (default), the script auto-detects GDN layers via decoder_sparse_step
+                      from config.json and abliterates only the full-attention layers.
+                    type: boolean
                   skipVisionLayers:
                     default: true
                     description: SkipVisionLayers excludes vision encoder layers from
