@@ -37,7 +37,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
-	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
 )
@@ -185,14 +184,9 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			GPUVendor:    gpuVendorFromNodeSelector(modelCache.Spec.NodeSelector),
 			GPUArch:      ablGPUArch,
 		}
-		// Look up GPUProfile for quantizer image override (abliteration uses GPTQ image).
-		if r.GPUProfiles != nil && ablGPUArch != "" {
-			if profile, ok := r.GPUProfiles.Lookup(ablGPUArch); ok {
-				if img, ok := backend.QuantizerImageFromProfile(profile, "gptq"); ok {
-					params.ProfileQuantizerImage = img
-				}
-			}
-		}
+		// NOTE: Abliteration does NOT use GPUProfile quantizer image override.
+		// The abliteration script lives in the runtime image (or FLEXINFER_ABLITERATOR_IMAGE),
+		// not the GPTQ quantizer image. The GPTQ quantizer image may not have abliterate.py.
 
 		newJob, buildErr := quantization.BuildAbliterationJob(params, modelCache.Spec.Abliteration)
 		if buildErr != nil {

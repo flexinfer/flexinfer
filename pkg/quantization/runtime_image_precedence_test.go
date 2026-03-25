@@ -7,25 +7,26 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
-func TestAbliterationJobPrefersProfileImageOverGlobalRuntime(t *testing.T) {
+func TestAbliterationJobUsesRuntimeImageNotProfile(t *testing.T) {
 	t.Setenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE", "true")
-	t.Setenv("FLEXINFER_RUNTIME_IMAGE", "registry.harbor.lan/flexinfer/runtime:global-tag")
+	t.Setenv("FLEXINFER_RUNTIME_IMAGE", "registry.harbor.lan/flexinfer/runtime:ablitfix")
 
+	// Controller no longer passes ProfileQuantizerImage for abliteration jobs.
+	// The abliteration script lives in the runtime image, not the GPTQ quantizer.
 	job, err := BuildAbliterationJob(JobParams{
-		Name:                  "cache",
-		Namespace:             "default",
-		PVCName:               "cache-pvc",
-		ModelPath:             "cache",
-		GPUVendor:             "amd",
-		GPUArch:               "gfx1100",
-		ProfileQuantizerImage: "registry.harbor.lan/flexinfer/runtime@sha256:profile",
+		Name:      "cache",
+		Namespace: "default",
+		PVCName:   "cache-pvc",
+		ModelPath: "cache",
+		GPUVendor: "amd",
+		GPUArch:   "gfx1100",
 	}, &aiv1alpha1.AbliterationSpec{})
 	if err != nil {
 		t.Fatalf("BuildAbliterationJob error: %v", err)
 	}
 
-	if got := job.Spec.Template.Spec.Containers[0].Image; got != "registry.harbor.lan/flexinfer/runtime@sha256:profile" {
-		t.Fatalf("image = %q, want profile digest override", got)
+	if got := job.Spec.Template.Spec.Containers[0].Image; got != "registry.harbor.lan/flexinfer/runtime:ablitfix" {
+		t.Fatalf("image = %q, want runtime image (not GPTQ profile)", got)
 	}
 }
 
