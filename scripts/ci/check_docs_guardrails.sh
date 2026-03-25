@@ -22,6 +22,8 @@ if [[ -z "$base_ref" ]]; then
     base_ref="${remote}/${GITHUB_BASE_REF}"
   elif [[ -n "${CI_DEFAULT_BRANCH:-}" ]]; then
     base_ref="${remote}/${CI_DEFAULT_BRANCH}"
+  elif git rev-parse --verify "${remote}/main" >/dev/null 2>&1; then
+    base_ref="${remote}/main"
   elif git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
     base_ref="HEAD~1"
   fi
