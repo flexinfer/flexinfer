@@ -128,7 +128,9 @@ def select_model_policy(model_dir, cfg, policies):
             if model_type and model_type in candidates:
                 return policy
         for token in policy.get("match_path_substrings", []):
-            if token and any(token in candidate.lower() for candidate in path_candidates if candidate):
+            if token and any(
+                token in candidate.lower() for candidate in path_candidates if candidate
+            ):
                 return policy
     return None
 
@@ -215,7 +217,10 @@ def emit_runtime_capabilities():
     }
     print(
         "Runtime capabilities: "
-        + ", ".join(f"{name}={'yes' if enabled else 'no'}" for name, enabled in capabilities.items())
+        + ", ".join(
+            f"{name}={'yes' if enabled else 'no'}"
+            for name, enabled in capabilities.items()
+        )
     )
     emit_progress("runtime_capabilities", phase="starting", **capabilities)
 
@@ -265,10 +270,14 @@ def materialize_state_dict_for_save(model):
     materialized = {}
     meta_keys = []
     for key, value in state_dict.items():
-        if getattr(value, "device", None) == meta_device or getattr(value, "is_meta", False):
+        if getattr(value, "device", None) == meta_device or getattr(
+            value, "is_meta", False
+        ):
             meta_keys.append(key)
             continue
-        materialized[key] = value.detach().to("cpu") if hasattr(value, "detach") else value
+        materialized[key] = (
+            value.detach().to("cpu") if hasattr(value, "detach") else value
+        )
 
     if meta_keys:
         preview = ", ".join(meta_keys[:8])
@@ -306,7 +315,9 @@ def iter_module_state_tensors(model, discard_keys=None):
     try:
         from accelerate.utils.modeling import align_module_device
     except Exception as exc:
-        raise RuntimeError(f"accelerate align_module_device unavailable: {exc}") from exc
+        raise RuntimeError(
+            f"accelerate align_module_device unavailable: {exc}"
+        ) from exc
 
     def _full_key(prefix, name):
         return f"{prefix}.{name}" if prefix else name
@@ -318,7 +329,9 @@ def iter_module_state_tensors(model, discard_keys=None):
                     key = _full_key(module_name, name)
                     if key in discard or key in seen:
                         continue
-                    if getattr(param, "device", None) == meta_device or getattr(param, "is_meta", False):
+                    if getattr(param, "device", None) == meta_device or getattr(
+                        param, "is_meta", False
+                    ):
                         meta_keys.append(key)
                         continue
                     seen.add(key)
@@ -327,7 +340,9 @@ def iter_module_state_tensors(model, discard_keys=None):
                     key = _full_key(module_name, name)
                     if key in discard or key in seen:
                         continue
-                    if getattr(buf, "device", None) == meta_device or getattr(buf, "is_meta", False):
+                    if getattr(buf, "device", None) == meta_device or getattr(
+                        buf, "is_meta", False
+                    ):
                         meta_keys.append(key)
                         continue
                     seen.add(key)
@@ -374,7 +389,9 @@ def build_streaming_shard_plan(model, max_shard_size, discard_keys=None):
 def save_streaming_safetensors(model, save_dir, max_shard_size, discard_keys=None):
     from safetensors.torch import save_file
 
-    shard_plan, total_bytes = build_streaming_shard_plan(model, max_shard_size, discard_keys)
+    shard_plan, total_bytes = build_streaming_shard_plan(
+        model, max_shard_size, discard_keys
+    )
     shard_count = len(shard_plan)
     tensor_to_filename = {}
     shard_key_maps = []
@@ -400,7 +417,11 @@ def save_streaming_safetensors(model, save_dir, max_shard_size, discard_keys=Non
         nonlocal current_tensors, current_filename
         if not current_tensors:
             return
-        save_file(current_tensors, os.path.join(save_dir, current_filename), metadata={"format": "pt"})
+        save_file(
+            current_tensors,
+            os.path.join(save_dir, current_filename),
+            metadata={"format": "pt"},
+        )
         current_tensors.clear()
         gc.collect()
         emit_snapshot("saving_stream_shard_written", filename=current_filename)
@@ -558,9 +579,14 @@ def cutover_workspace_staging(src_dir, staged_dir):
 
 
 def resolve_save_target():
-    policy = os.environ.get("ABLITERATION_SAVE_POLICY", "auto").strip().lower() or "auto"
+    policy = (
+        os.environ.get("ABLITERATION_SAVE_POLICY", "auto").strip().lower() or "auto"
+    )
     buffer_gb = int(os.environ.get("ABLITERATION_SAVE_BUFFER_GB", "8"))
-    workspace_root = os.environ.get("ABLITERATION_STAGING_ROOT", "/workspace").strip() or "/workspace"
+    workspace_root = (
+        os.environ.get("ABLITERATION_STAGING_ROOT", "/workspace").strip()
+        or "/workspace"
+    )
 
     weight_bytes = artifact_size_bytes(weight_artifact_paths(model_dir))
     model_bytes = tree_bytes(model_dir)
@@ -568,7 +594,9 @@ def resolve_save_target():
     workspace_free = free_bytes(workspace_root) if os.path.exists(workspace_root) else 0
     buffer_bytes = buffer_gb * 1024 * 1024 * 1024
     required_bytes = max(weight_bytes, model_bytes) + buffer_bytes
-    workspace_staging_dir = os.path.join(workspace_root, f"{Path(model_dir).name}.ablit-staging")
+    workspace_staging_dir = os.path.join(
+        workspace_root, f"{Path(model_dir).name}.ablit-staging"
+    )
 
     selected = policy
     if policy == "auto":
@@ -582,7 +610,9 @@ def resolve_save_target():
         raise RuntimeError(f"unknown ABLITERATION_SAVE_POLICY={policy}")
 
     if selected == "workspace" and workspace_free <= 0:
-        raise RuntimeError("workspace staging requested but /workspace has no free space")
+        raise RuntimeError(
+            "workspace staging requested but /workspace has no free space"
+        )
 
     target_dir = {
         "staged": pvc_staging_dir,
@@ -628,14 +658,19 @@ num_samples = int(os.environ["NUM_SAMPLES"])
 target_layers = os.environ["TARGET_LAYERS"]
 weight_matrices = os.environ["WEIGHT_MATRICES"].split(",")
 skip_vision = os.environ["SKIP_VISION"] == "true"
+skip_gdn = os.environ.get("SKIP_GDN_LAYERS", "true") == "true"
 device_map = os.environ["DEVICE_MAP"]
 progress_interval = max(1, env_int("ABLITERATION_PROGRESS_INTERVAL", 10))
 prompt_max_length = max(32, env_int("ABLITERATION_PROMPT_MAX_LENGTH", 256))
 configured_save_format = env_str("ABLITERATION_SAVE_FORMAT", "auto").lower()
 configured_save_max_shard_size = env_str("ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB")
 configured_save_impl = env_str("ABLITERATION_SAVE_IMPL", "streaming").lower()
-activation_capture_mode = env_str("ABLITERATION_ACTIVATION_CAPTURE_MODE", "hooks").lower()
-configured_offload_dir = env_str("ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload")
+activation_capture_mode = env_str(
+    "ABLITERATION_ACTIVATION_CAPTURE_MODE", "hooks"
+).lower()
+configured_offload_dir = env_str(
+    "ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload"
+)
 memory_trim_interval = max(0, env_int("ABLITERATION_MEMORY_TRIM_INTERVAL", 1))
 forward_use_cache = env_bool("ABLITERATION_FORWARD_USE_CACHE", False)
 resume_enabled = env_bool("ABLITERATION_RESUME", True)
@@ -698,13 +733,20 @@ print(f"Model loaded in {time.time() - load_start:.1f}s")
 
 tokenizer_kwargs = {"trust_remote_code": True}
 if active_policy and active_policy.get("tokenizer_fix_mistral_regex") is not None:
-    tokenizer_kwargs["fix_mistral_regex"] = bool(active_policy["tokenizer_fix_mistral_regex"])
+    tokenizer_kwargs["fix_mistral_regex"] = bool(
+        active_policy["tokenizer_fix_mistral_regex"]
+    )
 try:
     tokenizer = AutoTokenizer.from_pretrained(model_dir, **tokenizer_kwargs)
 except TypeError as exc:
-    if "fix_mistral_regex" not in str(exc) or "fix_mistral_regex" not in tokenizer_kwargs:
+    if (
+        "fix_mistral_regex" not in str(exc)
+        or "fix_mistral_regex" not in tokenizer_kwargs
+    ):
         raise
-    print("Tokenizer backend already manages fix_mistral_regex; retrying without explicit kwarg")
+    print(
+        "Tokenizer backend already manages fix_mistral_regex; retrying without explicit kwarg"
+    )
     tokenizer_kwargs.pop("fix_mistral_regex", None)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, **tokenizer_kwargs)
 if tokenizer.pad_token is None:
@@ -1004,6 +1046,45 @@ elif "-" in target_layers and "," not in target_layers:
     layer_indices = list(range(lo, min(hi + 1, total_layers)))
 else:
     layer_indices = [int(x) for x in target_layers.split(",") if int(x) < total_layers]
+# ── Filter GDN (linear attention) layers if skip_gdn is enabled ───────
+# Qwen3.5 uses a hybrid architecture: most layers are GDN (linear attention)
+# with full self-attention layers at regular intervals (decoder_sparse_step).
+# Abliterating GDN layers destroys the recurrence mechanics because out_proj
+# participates in residual stream feedback into decay/gate computations.
+if skip_gdn:
+    config_path = os.path.join(model_dir, "config.json")
+    gdn_filtered = False
+    if os.path.isfile(config_path):
+        import json as _json
+
+        with open(config_path) as _cf:
+            _cfg = _json.load(_cf)
+        # Check text_config (VLM wrapper) then top-level
+        _text_cfg = _cfg.get("text_config", _cfg)
+        sparse_step = _text_cfg.get("decoder_sparse_step", 0)
+        if sparse_step > 0:
+            # Full-attention layers are at indices where (index+1) % sparse_step == 0
+            full_attn_indices = set(
+                i for i in range(total_layers) if (i + 1) % sparse_step == 0
+            )
+            before_count = len(layer_indices)
+            layer_indices = [i for i in layer_indices if i in full_attn_indices]
+            gdn_count = before_count - len(layer_indices)
+            print(
+                f"GDN layer skip: decoder_sparse_step={sparse_step}, "
+                f"skipped {gdn_count} GDN layers, "
+                f"keeping {len(layer_indices)} full-attention layers: {layer_indices}"
+            )
+            gdn_filtered = True
+    if not gdn_filtered:
+        print(
+            "GDN layer skip: no decoder_sparse_step found, abliterating all target layers"
+        )
+
+# ── Refusal direction norm guard ──────────────────────────────────────
+# Will be checked after refusal direction computation (see below).
+REFUSAL_NORM_THRESHOLD = float(os.environ.get("ABLITERATION_NORM_THRESHOLD", "100"))
+
 print(
     f"Will abliterate {len(layer_indices)} layers: {layer_indices[:5]}...{layer_indices[-5:] if len(layer_indices) > 10 else ''}"
 )
@@ -1042,7 +1123,9 @@ def collect_activation_means_from_hidden_states(prompts, stage, base_percent):
                 promptCount=len(prompts),
                 percent=round(pct, 1),
             )
-            emit_snapshot(f"{stage}_activations", prompt_index=i, prompt_count=len(prompts))
+            emit_snapshot(
+                f"{stage}_activations", prompt_index=i, prompt_count=len(prompts)
+            )
         inputs = tokenizer(
             prompt,
             return_tensors="pt",
@@ -1058,8 +1141,10 @@ def collect_activation_means_from_hidden_states(prompts, stage, base_percent):
                 use_cache=forward_use_cache,
             )
         for layer_idx in range(total_layers):
-            h = out.hidden_states[layer_idx + 1][0, -1, :].detach().to(
-                device="cpu", dtype=torch.float32
+            h = (
+                out.hidden_states[layer_idx + 1][0, -1, :]
+                .detach()
+                .to(device="cpu", dtype=torch.float32)
             )
             if per_layer_sum[layer_idx] is None:
                 per_layer_sum[layer_idx] = h.clone()
@@ -1078,11 +1163,16 @@ def collect_activation_means_with_hooks(prompts, stage, base_percent):
     def make_hook(layer_idx):
         def hook(_module, _inputs, output):
             hidden = output_tensor(output)
-            captured[layer_idx] = hidden[0, -1, :].detach().to(device="cpu", dtype=torch.float32)
+            captured[layer_idx] = (
+                hidden[0, -1, :].detach().to(device="cpu", dtype=torch.float32)
+            )
 
         return hook
 
-    handles = [layer.register_forward_hook(make_hook(idx)) for idx, layer in enumerate(decoder_layers)]
+    handles = [
+        layer.register_forward_hook(make_hook(idx))
+        for idx, layer in enumerate(decoder_layers)
+    ]
     try:
         for i, prompt in enumerate(prompts):
             if i % progress_interval == 0:
@@ -1100,7 +1190,9 @@ def collect_activation_means_with_hooks(prompts, stage, base_percent):
                     promptCount=len(prompts),
                     percent=round(pct, 1),
                 )
-                emit_snapshot(f"{stage}_activations", prompt_index=i, prompt_count=len(prompts))
+                emit_snapshot(
+                    f"{stage}_activations", prompt_index=i, prompt_count=len(prompts)
+                )
             inputs = tokenizer(
                 prompt,
                 return_tensors="pt",
@@ -1118,7 +1210,9 @@ def collect_activation_means_with_hooks(prompts, stage, base_percent):
                 )
             if len(captured) != total_layers:
                 missing = sorted(set(range(total_layers)) - set(captured))
-                raise RuntimeError(f"missing activation captures for layers: {missing[:8]}")
+                raise RuntimeError(
+                    f"missing activation captures for layers: {missing[:8]}"
+                )
             for layer_idx in range(total_layers):
                 h = captured[layer_idx]
                 if per_layer_sum[layer_idx] is None:
@@ -1212,7 +1306,9 @@ else:
         norm = diff.norm().item()
         norms.append(norm)
         refusal_dirs.append(diff / diff.norm())
-    save_tensor_payload("refusal_dirs.pt", {"refusal_dirs": refusal_dirs, "norms": norms})
+    save_tensor_payload(
+        "refusal_dirs.pt", {"refusal_dirs": refusal_dirs, "norms": norms}
+    )
 
 del harmful_means, harmless_means
 release_memory("refusal_directions_ready")
@@ -1222,6 +1318,20 @@ emit_snapshot("refusal_directions_computed", max_norm_layer=max_norm_layer)
 print(
     f"Max refusal direction norm: {norms[max_norm_layer]:.4f} at layer {max_norm_layer}"
 )
+
+# Refusal direction norm guard: abort if the max norm exceeds the threshold.
+# A very high norm (>100) typically means the computed direction captures model
+# capability rather than just refusal behavior — applying it would destroy coherence.
+if norms[max_norm_layer] > REFUSAL_NORM_THRESHOLD:
+    msg = (
+        f"ABORTING: Max refusal direction norm {norms[max_norm_layer]:.2f} at layer "
+        f"{max_norm_layer} exceeds threshold {REFUSAL_NORM_THRESHOLD}. "
+        f"This indicates the refusal direction captures capability, not just refusal. "
+        f"Consider increasing NUM_SAMPLES or adjusting TARGET_LAYERS."
+    )
+    print(msg)
+    emit_progress("error", phase="abliterating", detail=msg)
+    raise RuntimeError(msg)
 
 # ── Orthogonalize weight matrices ─────────────────────────────────────
 emit_progress(
@@ -1273,9 +1383,7 @@ del refusal_dirs, mean_refusal, decoder_layers
 release_memory("saving_prerelease")
 
 # ── Save ──────────────────────────────────────────────────────────────
-emit_progress(
-    "progress", phase="saving", percent=88.0, detail="preparing save"
-)
+emit_progress("progress", phase="saving", percent=88.0, detail="preparing save")
 save_start = time.time()
 save_policy, save_dir, save_details = resolve_save_target()
 print(f"Saving abliterated model with policy={save_policy} via {save_dir}...")
@@ -1321,9 +1429,7 @@ if save_format not in {"bin", "safetensors"}:
 if configured_save_impl not in {"streaming", "materialized"}:
     raise RuntimeError(f"unknown ABLITERATION_SAVE_IMPL={configured_save_impl}")
 if save_format == "safetensors":
-    print(
-        f"Using {save_format} save path for model_type={model_type or 'unknown'}"
-    )
+    print(f"Using {save_format} save path for model_type={model_type or 'unknown'}")
 
     emit_progress(
         "progress",
@@ -1418,7 +1524,9 @@ with open("/dev/termination-log", "w") as f:
     f.write(meta_json)
 with open(os.path.join(model_dir, ".abliteration-status.json"), "w") as f:
     f.write(meta_json)
-write_checkpoint("complete", status="complete", layersModified=layers_modified, metadata=meta)
+write_checkpoint(
+    "complete", status="complete", layersModified=layers_modified, metadata=meta
+)
 emit_snapshot("complete", layers_modified=layers_modified)
 
 emit_progress("complete", phase="abliterating", layers_modified=layers_modified)

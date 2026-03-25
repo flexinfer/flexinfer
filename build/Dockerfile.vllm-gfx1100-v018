@@ -1,0 +1,28 @@
+# vLLM v0.18.0 for AMD gfx1100 (RDNA3)
+#
+# Upgrades from the navi-optimized base (v0.14.0rc0) to v0.18.0 which has
+# native Qwen3.5 GDN support.  This eliminates the 16-section runtime patch
+# file (vllm_qwen35_patches.py) that was needed on the v0.1.dev build.
+#
+# Base: ROCm 7.2, PyTorch 2.9, Python 3.12, Ubuntu 24.04
+# Added: vLLM 0.18.0+rocm700 wheel (built for ROCm 7.0, compatible with 7.2)
+#
+FROM rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0
+
+# Remove the base image's editable vLLM install and its source tree.
+# pip --force-reinstall does NOT override editable installs reliably.
+RUN pip uninstall -y vllm \
+    && rm -rf /var/lib/jenkins/vllm /workspace/vllm \
+    && pip install --no-cache-dir \
+    "vllm==0.18.0+rocm700" \
+    --extra-index-url https://wheels.vllm.ai/rocm/0.18.0/rocm700 \
+    && python3 -c "import vllm; assert '0.18' in vllm.__version__, f'Expected 0.18, got {vllm.__version__}'"
+
+# Ensure no stale patch files from layer cache.
+# vLLM v0.18.0 handles Qwen3.5 natively — old patches corrupt the model handler.
+RUN rm -rf /opt/patches
+COPY build/scripts/vllm-patched-entrypoint.sh /opt/patches/entrypoint.sh
+RUN chmod +x /opt/patches/entrypoint.sh
+
+ENTRYPOINT ["/opt/patches/entrypoint.sh"]
+CMD ["--host", "0.0.0.0", "--port", "8000"]

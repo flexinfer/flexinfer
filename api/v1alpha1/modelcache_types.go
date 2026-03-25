@@ -280,6 +280,16 @@ type AbliterationSpec struct {
 	// +kubebuilder:default=true
 	// +optional
 	SkipVisionLayers *bool `json:"skipVisionLayers,omitempty"`
+
+	// SkipGDNLayers excludes GDN (Gated Delta Network) linear attention layers from
+	// abliteration. Qwen3.5 uses a hybrid architecture where 48 of 64 layers are GDN
+	// (linear attention) and 16 are standard self-attention. Abliterating GDN layers
+	// destroys the recurrence mechanics (out_proj feedback into decay/gate computation).
+	// When true (default), the script auto-detects GDN layers via decoder_sparse_step
+	// from config.json and abliterates only the full-attention layers.
+	// +kubebuilder:default=true
+	// +optional
+	SkipGDNLayers *bool `json:"skipGDNLayers,omitempty"`
 }
 
 // AbliterationStatus records the result of abliteration.

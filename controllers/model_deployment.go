@@ -542,6 +542,25 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		return r.Create(ctx, desiredDeployment)
 	}
 
+	// Detect selector drift: if the existing deployment's immutable selector differs
+	// from the desired selector (e.g., "app.kubernetes.io/name" changed from model
+	// name to "model"), the service endpoint will never match the pods.  Delete and
+	// recreate the deployment to pick up the corrected selector.
+	desiredSelector := r.selectorLabelsForModel(model)
+	if deployment.Spec.Selector != nil {
+		for k, want := range desiredSelector {
+			if got, ok := deployment.Spec.Selector.MatchLabels[k]; ok && got != want {
+				log.Info("Selector drift detected — deleting deployment for recreation",
+					"name", model.Name, "key", k, "existing", got, "desired", want)
+				if delErr := r.Delete(ctx, deployment); delErr != nil {
+					return fmt.Errorf("delete deployment for selector recreation: %w", delErr)
+				}
+				log.Info("Creating Deployment (selector corrected)", "name", model.Name, "replicas", desiredReplicas)
+				return r.Create(ctx, desiredDeployment)
+			}
+		}
+	}
+
 	// Build the desired deployment state and compare only controller-managed fields.
 	// Using a targeted comparison (rather than DeepEqual on the entire spec) avoids
 	// infinite update loops caused by K8s-defaulted fields that the controller doesn't

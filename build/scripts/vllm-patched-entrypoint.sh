@@ -24,12 +24,18 @@ if [ -z "$MODEL_PATH" ] || [ ! -f "${MODEL_PATH}/config.json" ]; then
     done
 fi
 
-# Apply Qwen3.5 patches if model config contains qwen3_5
-if [ -n "$MODEL_PATH" ] && [ -f "${MODEL_PATH}/config.json" ]; then
+# Apply Qwen3.5 patches if model config contains qwen3_5 AND patch file exists.
+# vLLM v0.18.0+ has native Qwen3.5 GDN support — patch.py is not needed.
+if [ -f "/opt/patches/patch.py" ] && [ -n "$MODEL_PATH" ] && [ -f "${MODEL_PATH}/config.json" ]; then
     model_type=$(python3 -c "import json; print(json.load(open('${MODEL_PATH}/config.json')).get('model_type',''))" 2>/dev/null || echo "")
     if [[ "$model_type" == *"qwen3_5"* ]]; then
         echo "[entrypoint] Qwen3.5 model detected at ${MODEL_PATH}, applying vLLM patches..."
         python3 /opt/patches/patch.py || echo "[entrypoint] WARNING: patches failed, continuing anyway"
+    fi
+elif [ -n "$MODEL_PATH" ] && [ -f "${MODEL_PATH}/config.json" ]; then
+    model_type=$(python3 -c "import json; print(json.load(open('${MODEL_PATH}/config.json')).get('model_type',''))" 2>/dev/null || echo "")
+    if [[ "$model_type" == *"qwen3_5"* ]]; then
+        echo "[entrypoint] Qwen3.5 model detected — vLLM has native support, no patches needed"
     fi
 fi
 

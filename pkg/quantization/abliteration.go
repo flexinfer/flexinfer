@@ -203,6 +203,11 @@ func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []core
 		skipVision = "false"
 	}
 
+	skipGDN := "true"
+	if spec.SkipGDNLayers != nil && !*spec.SkipGDNLayers {
+		skipGDN = "false"
+	}
+
 	deviceMap := os.Getenv("FLEXINFER_ABLITERATION_DEVICE_MAP")
 	if deviceMap == "" {
 		deviceMap = "cpu"
@@ -270,6 +275,7 @@ func abliterationEnv(modelPath string, spec *aiv1alpha1.AbliterationSpec) []core
 		{Name: "TARGET_LAYERS", Value: targetLayers},
 		{Name: "WEIGHT_MATRICES", Value: weightMatrices},
 		{Name: "SKIP_VISION", Value: skipVision},
+		{Name: "SKIP_GDN_LAYERS", Value: skipGDN},
 		{Name: "DEVICE_MAP", Value: deviceMap},
 		{Name: "ABLITERATION_PROGRESS_INTERVAL", Value: progressInterval},
 		{Name: "ABLITERATION_PROMPT_MAX_LENGTH", Value: promptMaxLength},
