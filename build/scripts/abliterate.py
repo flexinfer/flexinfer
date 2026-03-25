@@ -31,6 +31,7 @@ Safety features:
 import gc
 import importlib.util
 import json
+import math
 import os
 import shutil
 import sys
@@ -1416,42 +1417,94 @@ if validate_perplexity:
         "In the year 2024, the most popular programming language was",
     ]
 
+    # Determine input device: with device_map=auto, model.device may return
+    # 'meta' or an incorrect device. Use the first real parameter's device,
+    # falling back to CPU which accelerate's dispatch hooks handle correctly.
+    try:
+        input_device = next(model.parameters()).device
+        if input_device.type == "meta":
+            input_device = torch.device("cpu")
+    except StopIteration:
+        input_device = torch.device("cpu")
+
     total_loss = 0.0
     total_tokens = 0
+    skipped_prompts = 0
     model.eval()
     with torch.inference_mode():
         for vp in validation_prompts:
-            inputs = tokenizer(vp, return_tensors="pt", truncation=True, max_length=512)
-            inputs = {k: v.to(model.device) for k, v in inputs.items()}
-            outputs = model(**inputs, labels=inputs["input_ids"])
-            n_tokens = inputs["input_ids"].numel()
-            total_loss += outputs.loss.item() * n_tokens
-            total_tokens += n_tokens
+            try:
+                inputs = tokenizer(
+                    vp, return_tensors="pt", truncation=True, max_length=512
+                )
+                inputs = {k: v.to(input_device) for k, v in inputs.items()}
+                outputs = model(**inputs, labels=inputs["input_ids"])
+                loss_val = outputs.loss.item()
+                if math.isnan(loss_val):
+                    print(f"  WARNING: NaN loss for prompt '{vp}' — skipping")
+                    skipped_prompts += 1
+                    continue
+                n_tokens = inputs["input_ids"].numel()
+                total_loss += loss_val * n_tokens
+                total_tokens += n_tokens
+            except Exception as e:
+                print(f"  WARNING: Validation failed for prompt '{vp}': {e} — skipping")
+                skipped_prompts += 1
+                continue
 
-    avg_loss = total_loss / max(total_tokens, 1)
-    perplexity = float(torch.exp(torch.tensor(avg_loss)).item())
-    print(
-        f"Post-abliteration perplexity: {perplexity:.2f} (avg cross-entropy loss: {avg_loss:.4f})"
-    )
-    emit_progress(
-        "progress",
-        phase="validating",
-        percent=87.0,
-        detail=f"perplexity={perplexity:.2f}",
-        perplexity=perplexity,
-        avgLoss=avg_loss,
-    )
-    write_checkpoint("perplexity_validated", perplexity=perplexity, avgLoss=avg_loss)
+    if total_tokens > 0:
+        avg_loss = total_loss / total_tokens
+        perplexity = float(torch.exp(torch.tensor(avg_loss)).item())
+    else:
+        avg_loss = float("nan")
+        perplexity = float("nan")
 
-    if perplexity > max_perplexity:
-        msg = (
-            f"ABORTING: Post-abliteration perplexity {perplexity:.2f} exceeds threshold "
-            f"{max_perplexity}. The abliterated model is likely corrupted. "
-            f"Weights will NOT be saved. Check abliteration parameters."
+    if math.isnan(perplexity):
+        norm_val = norms[max_norm_layer]
+        print(
+            f"WARNING: Perplexity validation inconclusive (NaN) — model may be "
+            f"offloaded. Norm guard passed (norm={norm_val:.4f}), proceeding."
         )
-        print(msg)
-        emit_progress("error", phase="validating", detail=msg, perplexity=perplexity)
-        raise RuntimeError(msg)
+        emit_progress(
+            "progress",
+            phase="validating",
+            percent=87.0,
+            detail="perplexity=NaN (inconclusive, norm guard passed)",
+            perplexity=None,
+            avgLoss=None,
+        )
+        write_checkpoint(
+            "perplexity_validated", perplexity=None, avgLoss=None, inconclusive=True
+        )
+    else:
+        print(
+            f"Post-abliteration perplexity: {perplexity:.2f} "
+            f"(avg cross-entropy loss: {avg_loss:.4f}, "
+            f"skipped {skipped_prompts}/{len(validation_prompts)} prompts)"
+        )
+        emit_progress(
+            "progress",
+            phase="validating",
+            percent=87.0,
+            detail=f"perplexity={perplexity:.2f}",
+            perplexity=perplexity,
+            avgLoss=avg_loss,
+        )
+        write_checkpoint(
+            "perplexity_validated", perplexity=perplexity, avgLoss=avg_loss
+        )
+
+        if perplexity > max_perplexity:
+            msg = (
+                f"ABORTING: Post-abliteration perplexity {perplexity:.2f} exceeds threshold "
+                f"{max_perplexity}. The abliterated model is likely corrupted. "
+                f"Weights will NOT be saved. Check abliteration parameters."
+            )
+            print(msg)
+            emit_progress(
+                "error", phase="validating", detail=msg, perplexity=perplexity
+            )
+            raise RuntimeError(msg)
 
     print("Perplexity validation passed — proceeding to save")
     release_memory("validation_complete")

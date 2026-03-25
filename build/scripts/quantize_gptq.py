@@ -677,14 +677,17 @@ from transformers import AutoConfig
 from transformers import AutoTokenizer
 from transformers.modeling_utils import get_checkpoint_shard_files, load_state_dict
 
-total_vram = torch.cuda.get_device_properties(0).total_memory
 try:
+    total_vram = torch.cuda.get_device_properties(0).total_memory
     torch.cuda.set_per_process_memory_fraction(gpu_memory_fraction)
-except RuntimeError:
-    pass
-print(
-    f"Memory: GPU fraction={gpu_memory_fraction} ({int(total_vram * gpu_memory_fraction / (1024**3))}GiB of {total_vram // (1024**3)}GiB), container={max_memory_gb}Gi"
-)
+    print(
+        f"Memory: GPU fraction={gpu_memory_fraction} ({int(total_vram * gpu_memory_fraction / (1024**3))}GiB of {total_vram // (1024**3)}GiB), container={max_memory_gb}Gi"
+    )
+except (RuntimeError, AssertionError):
+    total_vram = 0
+    print(
+        f"Memory: GPU not available (device_map={quantize_device_map}), container={max_memory_gb}Gi"
+    )
 
 
 def patch_gptq_hessian_inverse():

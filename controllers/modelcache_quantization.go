@@ -150,7 +150,13 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			})
 		}
 
-		gpuArch := gpu.ArchFromLabels(modelCache.Spec.NodeSelector)
+		// Use per-phase nodeSelector if set, otherwise fall back to top-level.
+		effectiveNodeSelector := modelCache.Spec.NodeSelector
+		if modelCache.Spec.Quantization.NodeSelector != nil {
+			effectiveNodeSelector = modelCache.Spec.Quantization.NodeSelector
+		}
+
+		gpuArch := gpu.ArchFromLabels(effectiveNodeSelector)
 		params := quantization.JobParams{
 			Name:         modelCache.Name,
 			Namespace:    modelCache.Namespace,
@@ -158,8 +164,8 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			ModelPath:    modelPath,
 			Spec:         convertQuantizationSpecV1toV2(modelCache.Spec.Quantization),
 			Tolerations:  tolerations,
-			NodeSelector: modelCache.Spec.NodeSelector,
-			GPUVendor:    gpu.VendorFromLabels(modelCache.Spec.NodeSelector),
+			NodeSelector: effectiveNodeSelector,
+			GPUVendor:    gpu.VendorFromLabels(effectiveNodeSelector),
 			GPUArch:      gpuArch,
 		}
 		// Look up GPUProfile for quantizer image override.

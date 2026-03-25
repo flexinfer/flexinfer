@@ -16,7 +16,9 @@
 # Disk requirements:
 #   27B BF16: ~54 GB download + ~15 GB GPTQ output + working headroom → 160 GB PVC
 #
-# GPU requirements: 1x AMD GPU for quantization
+# GPU requirements: 1x AMD GPU for abliteration + quantization
+# Node: cblevins-radeonvii (gfx906, 128GB RAM) — uses community PyTorch build
+#   (mixa3607/pytorch-gfx906) with transformers>=5 for Qwen3.5 support.
 ---
 # Qwen3.5-27B Opus-Reasoning-Distilled → GPTQ INT4
 # SFT from Claude 4.6 Opus reasoning, BF16 ~54 GB.
@@ -32,7 +34,7 @@ spec:
   clusterStorageClassName: nvme-1r-gpu
   secretRef: "hf-token"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-radeonvii
   download:
     maxMemoryGB: 16
     hfTransfer: false
@@ -41,7 +43,7 @@ spec:
     skipGDNLayers: true        # Only abliterate 16 full-attention layers (skip 48 GDN)
     numSamples: 128
     useGPU: true
-    maxMemoryGB: 56
+    maxMemoryGB: 96            # 128GB node, 54GB model + GPU offload headroom
     timeoutSeconds: 14400
   quantization:
     format: GPTQ
@@ -51,7 +53,7 @@ spec:
     descAct: false
     dynamicExclusion: "none"
     useGPU: true
-    maxMemoryGB: 60       # 54GB model in RAM + ~4-6GB GPTQ overhead (CPU device_map)
+    maxMemoryGB: 96            # 128GB node, 54GB model + GPTQ overhead
     timeoutSeconds: 28800
     calibration:
       maxSeqLen: 2048

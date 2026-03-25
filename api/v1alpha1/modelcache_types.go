@@ -190,6 +190,11 @@ type QuantizationSpec struct {
 	// +kubebuilder:validation:Enum=auto;none
 	// +optional
 	DynamicExclusion *string `json:"dynamicExclusion,omitempty"`
+
+	// NodeSelector overrides spec.nodeSelector for quantization jobs.
+	// Useful when quantization needs a different node (e.g., more RAM).
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
 // QuantizationStatus records the result of quantization.
@@ -290,6 +295,10 @@ type AbliterationSpec struct {
 	// +kubebuilder:default=true
 	// +optional
 	SkipGDNLayers *bool `json:"skipGDNLayers,omitempty"`
+
+	// NodeSelector overrides spec.nodeSelector for abliteration jobs.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
 // AbliterationStatus records the result of abliteration.

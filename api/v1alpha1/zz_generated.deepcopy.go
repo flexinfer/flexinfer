@@ -6,7 +6,7 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -42,6 +42,18 @@ func (in *AbliterationSpec) DeepCopyInto(out *AbliterationSpec) {
 		in, out := &in.SkipVisionLayers, &out.SkipVisionLayers
 		*out = new(bool)
 		**out = **in
+	}
+	if in.SkipGDNLayers != nil {
+		in, out := &in.SkipGDNLayers, &out.SkipGDNLayers
+		*out = new(bool)
+		**out = **in
+	}
+	if in.NodeSelector != nil {
+		in, out := &in.NodeSelector, &out.NodeSelector
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
 	}
 }
 
@@ -1435,6 +1447,13 @@ func (in *QuantizationSpec) DeepCopyInto(out *QuantizationSpec) {
 		in, out := &in.DynamicExclusion, &out.DynamicExclusion
 		*out = new(string)
 		**out = **in
+	}
+	if in.NodeSelector != nil {
+		in, out := &in.NodeSelector, &out.NodeSelector
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
 	}
 }
 

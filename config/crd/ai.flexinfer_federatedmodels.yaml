@@ -523,6 +523,13 @@ spec:
                           Defaults to 32GB for GGUF, 48GB for AWQ/GPTQ.
                         format: int32
                         type: integer
+                      nodeSelector:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          NodeSelector overrides spec.nodeSelector for quantization jobs.
+                          Useful when quantization needs a different node (e.g., more RAM).
+                        type: object
                       sym:
                         description: |-
                           Sym enables symmetric quantization for GPTQ (default true).

@@ -42,6 +42,7 @@ func convertQuantizationSpecV1toV2(in *aiv1alpha1.QuantizationSpec) *aiv1alpha2.
 		DescAct:           in.DescAct,
 		GPUMemoryFraction: in.GPUMemoryFraction,
 		DynamicExclusion:  in.DynamicExclusion,
+		NodeSelector:      in.NodeSelector,
 	}
 	if in.Calibration != nil {
 		out.Calibration = &aiv1alpha2.CalibrationSpec{

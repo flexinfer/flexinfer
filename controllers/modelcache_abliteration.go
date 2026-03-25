@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
 )
@@ -173,20 +174,33 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			})
 		}
 
-		ablGPUArch := gpuArchFromNodeSelector(modelCache.Spec.NodeSelector)
+		// Use per-phase nodeSelector if set, otherwise fall back to top-level.
+		effectiveNodeSelector := modelCache.Spec.NodeSelector
+		if modelCache.Spec.Abliteration != nil && modelCache.Spec.Abliteration.NodeSelector != nil {
+			effectiveNodeSelector = modelCache.Spec.Abliteration.NodeSelector
+		}
+
+		ablGPUArch := gpuArchFromNodeSelector(effectiveNodeSelector)
 		params := quantization.JobParams{
 			Name:         modelCache.Name,
 			Namespace:    modelCache.Namespace,
 			PVCName:      pvcName,
 			ModelPath:    modelPath,
 			Tolerations:  tolerations,
-			NodeSelector: modelCache.Spec.NodeSelector,
-			GPUVendor:    gpuVendorFromNodeSelector(modelCache.Spec.NodeSelector),
+			NodeSelector: effectiveNodeSelector,
+			GPUVendor:    gpuVendorFromNodeSelector(effectiveNodeSelector),
 			GPUArch:      ablGPUArch,
 		}
-		// NOTE: Abliteration does NOT use GPUProfile quantizer image override.
-		// The abliteration script lives in the runtime image (or FLEXINFER_ABLITERATOR_IMAGE),
-		// not the GPTQ quantizer image. The GPTQ quantizer image may not have abliterate.py.
+		// Look up GPUProfile for abliteration-specific image override.
+		// Uses key "abliteration" (NOT "gptq") since the abliteration script
+		// lives in a different image than the GPTQ quantizer.
+		if r.GPUProfiles != nil && ablGPUArch != "" {
+			if profile, ok := r.GPUProfiles.Lookup(ablGPUArch); ok {
+				if img, ok := backend.QuantizerImageFromProfile(profile, "abliteration"); ok {
+					params.ProfileQuantizerImage = img
+				}
+			}
+		}
 
 		newJob, buildErr := quantization.BuildAbliterationJob(params, modelCache.Spec.Abliteration)
 		if buildErr != nil {
