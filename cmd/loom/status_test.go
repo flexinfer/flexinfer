@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -97,10 +100,11 @@ func TestCollectPlatformStatus_HUDPresenceAndSessions(t *testing.T) {
 func TestPlatformStatus_JSONOutput(t *testing.T) {
 	t.Parallel()
 	ps := platformStatus{
-		Daemon:  daemonStatus{Running: true, Servers: 5},
-		Agents:  agentStatus{Active: 2, Idle: 1, Total: 3},
-		HUD:     hudStatus{Reachable: true},
-		Healthy: true,
+		Daemon:    daemonStatus{Running: true, Servers: 5},
+		Agents:    agentStatus{Active: 2, Idle: 1, Total: 3},
+		Pipelines: pipelineStatus{Available: true, Running: 1, Pending: 2, Passed: 3, Failed: 4, LastActivity: "5m ago"},
+		HUD:       hudStatus{Reachable: true},
+		Healthy:   true,
 	}
 
 	data, err := json.Marshal(ps)
@@ -125,14 +129,51 @@ func TestPlatformStatus_JSONOutput(t *testing.T) {
 	if agents["active"].(float64) != 2 {
 		t.Errorf("agents.active = %v, want 2", agents["active"])
 	}
+	pipelines := parsed["pipelines"].(map[string]any)
+	if pipelines["available"] != true {
+		t.Error("expected pipelines.available = true")
+	}
+	if pipelines["running"].(float64) != 1 {
+		t.Errorf("pipelines.running = %v, want 1", pipelines["running"])
+	}
+	if pipelines["pending"].(float64) != 2 {
+		t.Errorf("pipelines.pending = %v, want 2", pipelines["pending"])
+	}
+	if pipelines["passed"].(float64) != 3 {
+		t.Errorf("pipelines.passed = %v, want 3", pipelines["passed"])
+	}
+	if pipelines["failed"].(float64) != 4 {
+		t.Errorf("pipelines.failed = %v, want 4", pipelines["failed"])
+	}
 
 	if parsed["healthy"] != true {
 		t.Error("expected healthy = true")
 	}
 }
 
+func TestPrintPlatformStatus_IncludesPipelineSummary(t *testing.T) {
+	ps := platformStatus{
+		Daemon:    daemonStatus{Running: true, Servers: 5},
+		Agents:    agentStatus{Active: 2, Idle: 1, Offline: 0, Total: 3},
+		Sessions:  sessionCount{Active: 1, Total: 4},
+		Pipelines: pipelineStatus{Available: true, Running: 1, Pending: 2, Passed: 3, Failed: 4, LastActivity: "5m ago"},
+		HUD:       hudStatus{Reachable: true},
+		Healthy:   true,
+	}
+
+	got := captureStdout(t, func() {
+		printPlatformStatus(ps, "/tmp/loom.sock")
+	})
+
+	if !strings.Contains(got, "Pipelines: 1 running, 2 pending, 3 passed, 4 failed") {
+		t.Fatalf("expected pipeline summary in output, got: %s", got)
+	}
+	if !strings.Contains(got, "Pipelines: last activity 5m ago") {
+		t.Fatalf("expected last-activity line in output, got: %s", got)
+	}
+}
+
 func TestShowStatus_DaemonDown_ReturnsError(t *testing.T) {
-	t.Parallel()
 	err := showStatus("/nonexistent.sock", "0", false)
 	if err == nil {
 		t.Error("expected error for daemon not running")
@@ -161,12 +202,67 @@ func TestCountSessionStatuses(t *testing.T) {
 	t.Parallel()
 
 	got := countSessionStatuses([]bridge.SessionInfo{
-		{Status: "active", EndedAt: ""},
+		{Status: "active", EndedAt: "", AgentID: "claude-1", Namespace: "repo/a"},
 		{Status: "summarized", EndedAt: "2026-03-06T00:00:00Z"},
+		{Status: "", EndedAt: "", AgentID: "claude-1", Namespace: "repo/a"},
+	})
+
+	if got.Active != 1 || got.Total != 3 {
+		t.Fatalf("countSessionStatuses() = %+v", got)
+	}
+}
+
+func TestCountSessionStatuses_GroupsDuplicateActiveIdentities(t *testing.T) {
+	t.Parallel()
+
+	got := countSessionStatuses([]bridge.SessionInfo{
+		{AgentID: "agent-1", Namespace: "loom-core/main", Status: "active", EndedAt: ""},
+		{AgentID: "agent-1", Namespace: "loom-core/main", Status: "active", EndedAt: ""},
+		{AgentID: "agent-1", Namespace: "loom-core/other", Status: "active", EndedAt: ""},
+		{AgentID: "agent-1", Namespace: "loom-core/main", Status: "ended", EndedAt: "2026-03-06T00:00:00Z"},
+	})
+
+	if got.Active != 2 || got.Total != 4 {
+		t.Fatalf("countSessionStatuses() = %+v, want 2 active across 4 total", got)
+	}
+}
+
+func TestCountSessionStatuses_KeepsAnonymousActiveSessionsDistinct(t *testing.T) {
+	t.Parallel()
+
+	got := countSessionStatuses([]bridge.SessionInfo{
+		{Status: "active", EndedAt: ""},
 		{Status: "", EndedAt: ""},
+		{Status: "ended", EndedAt: "2026-03-06T00:00:00Z"},
 	})
 
 	if got.Active != 2 || got.Total != 3 {
-		t.Fatalf("countSessionStatuses() = %+v", got)
+		t.Fatalf("countSessionStatuses() = %+v, want 2 active across 3 total", got)
 	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	orig := os.Stdout
+	defer func() { os.Stdout = orig }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	fn()
+
+	_ = w.Close()
+
+	return <-done
 }
