@@ -31,7 +31,7 @@ spec:
     maxModelLen: 4096
     gpuMemoryUtilization: "0.95"
     maxNumSeqs: 2
-    enforceEager: true
+    enforceEager: false
     trustRemoteCode: true
     servedModelName: qwen35-27b-opus-distill
     enableToolCalling: true
