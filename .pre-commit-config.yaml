@@ -83,6 +83,14 @@ repos:
         pass_filenames: false
         stages: [pre-push]
 
+      # Docs guardrail: catch missing doc updates before CI
+      - id: docs-guardrail
+        name: docs guardrail
+        entry: bash scripts/ci/check_docs_guardrails.sh
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
       # Memory safety: detect time.After in loops (causes timer leaks)
       - id: check-time-after-loop
         name: Detect time.After in loops
