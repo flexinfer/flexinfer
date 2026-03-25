@@ -145,15 +145,14 @@ func Build(
 	}
 
 	sessionByID := make(map[string]bridge.SessionInfo, len(sessions))
-	sessionByAgent := make(map[string]bridge.SessionInfo, len(sessions))
 	namespaceStates := map[string]*namespaceState{}
 	agentStates := map[string]*agentState{}
 	taskByID := make(map[string]bridge.TaskInfo, len(tasks))
 
 	for _, session := range sessions {
 		sessionByID[session.ID] = session
-		if session.AgentID != "" {
-			sessionByAgent[session.AgentID] = session
+		if !sessionIsLive(session.Status) {
+			continue
 		}
 		ns := ensureNamespace(namespaceStates, session.Namespace)
 		ns.SessionCount++
@@ -171,7 +170,7 @@ func Build(
 			state.SessionID = agent.SessionID
 		}
 		if state.Namespace == "" {
-			if session, ok := sessionByID[agent.SessionID]; ok {
+			if session, ok := sessionByID[agent.SessionID]; ok && sessionIsLive(session.Status) {
 				state.Namespace = session.Namespace
 			}
 		}
@@ -196,7 +195,7 @@ func Build(
 			state.SessionID = worktree.SessionID
 		}
 		if state.Namespace == "" {
-			if session, ok := sessionByID[worktree.SessionID]; ok {
+			if session, ok := sessionByID[worktree.SessionID]; ok && sessionIsLive(session.Status) {
 				state.Namespace = session.Namespace
 			}
 		}
@@ -419,7 +418,7 @@ func Build(
 		if state.BlockedByOthers > 0 {
 			state.AttentionReasons["waiting on other agents"] = struct{}{}
 		}
-		if strings.EqualFold(state.Status, "offline") && state.SessionID != "" {
+		if strings.EqualFold(state.Status, "offline") && sessionIsLive(sessionByID[state.SessionID].Status) {
 			state.AttentionReasons["offline with active session"] = struct{}{}
 		}
 	}
@@ -636,6 +635,10 @@ func normalizeStatus(value, fallback string) string {
 		return fallback
 	}
 	return normalized
+}
+
+func sessionIsLive(status string) bool {
+	return normalizeStatus(status, "") == "active"
 }
 
 func preferValue(values ...string) string {

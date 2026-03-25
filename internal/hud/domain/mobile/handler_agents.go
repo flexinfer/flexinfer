@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/monitor"
@@ -203,6 +204,18 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 	typeFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
 
 	agentMap := make(map[string]*unifiedAgent)
+	liveSessionsByID := make(map[string]bridge.SessionInfo)
+	liveSessionsByAgent := make(map[string]bridge.SessionInfo)
+
+	for _, sess := range snap.Sessions {
+		if !mobileSessionIsLive(sess.Status) {
+			continue
+		}
+		liveSessionsByID[sess.ID] = sess
+		if current, ok := liveSessionsByAgent[sess.AgentID]; !ok || mobileSessionStartedAt(sess.StartedAt).After(mobileSessionStartedAt(current.StartedAt)) {
+			liveSessionsByAgent[sess.AgentID] = sess
+		}
+	}
 
 	for _, pa := range snap.Agents {
 		status := normalizeMobilePresenceStatus(pa.Status)
@@ -219,13 +232,35 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 			CurrentTask:     pa.CurrentTask,
 			Branch:          pa.Branch,
 			LastHeartbeat:   pa.LastHeartbeat,
-			SessionID:       pa.SessionID,
 			ActiveFileCount: len(pa.ActiveFiles),
+		}
+		if sess, ok := liveSessionsByID[pa.SessionID]; ok {
+			ua.SessionID = sess.ID
+			ua.Namespace = sess.Namespace
+			ua.Project = projectmeta.Canonical(sess.Project, sess.Namespace)
+			ua.SessionStatus = sess.Status
+			ua.SessionStarted = sess.StartedAt
+			ua.EntryCount = sess.EntryCount
+			ua.TotalTokens = sess.TotalTokens
+			if ua.Description == "" {
+				ua.Description = sess.Description
+			}
+		} else if sess, ok := liveSessionsByAgent[pa.AgentID]; ok {
+			ua.SessionID = sess.ID
+			ua.Namespace = sess.Namespace
+			ua.Project = projectmeta.Canonical(sess.Project, sess.Namespace)
+			ua.SessionStatus = sess.Status
+			ua.SessionStarted = sess.StartedAt
+			ua.EntryCount = sess.EntryCount
+			ua.TotalTokens = sess.TotalTokens
+			if ua.Description == "" {
+				ua.Description = sess.Description
+			}
 		}
 		agentMap[pa.AgentID] = ua
 	}
 
-	for _, sess := range snap.Sessions {
+	for _, sess := range liveSessionsByAgent {
 		if ua, ok := agentMap[sess.AgentID]; ok {
 			if ua.SessionID != "" && ua.SessionStatus == "active" && sess.Status != "active" {
 				continue
@@ -389,6 +424,14 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 		"agents":  agents,
 		"summary": summary,
 	})
+}
+
+func mobileSessionIsLive(status string) bool {
+	return strings.EqualFold(strings.TrimSpace(status), "active")
+}
+
+func mobileSessionStartedAt(raw string) time.Time {
+	return parseMobileTime(raw)
 }
 
 // handleMobileSessionActivity returns a unified view of session tasks, pipeline, and recent context.

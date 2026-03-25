@@ -341,6 +341,109 @@ func TestHandleMobileAgentsUsesNormalizedTaskFeed(t *testing.T) {
 	}
 }
 
+func TestHandleMobileAgents_IgnoresHistoricalSessionOnlyEntries(t *testing.T) {
+	snap := monitor.FleetSnapshot{
+		Sessions: []bridge.SessionInfo{
+			{
+				ID:          "sess-ended",
+				AgentID:     "agent-1",
+				Namespace:   "legacy/ns",
+				StartedAt:   "2026-03-20T19:00:00Z",
+				Status:      "ended",
+				Description: "old session",
+			},
+			{
+				ID:          "sess-live",
+				AgentID:     "agent-2",
+				Namespace:   "live/ns",
+				StartedAt:   "2026-03-25T19:00:00Z",
+				Status:      "active",
+				Description: "live session",
+			},
+			{
+				ID:          "sess-summarized",
+				AgentID:     "agent-3",
+				Namespace:   "summary/ns",
+				StartedAt:   "2026-03-25T18:00:00Z",
+				Status:      "summarized",
+				Description: "summary session",
+			},
+		},
+		Agents: []bridge.PresenceInfo{
+			{
+				AgentID:       "agent-1",
+				SessionID:     "sess-ended",
+				Status:        "active",
+				AgentType:     "claude-code",
+				Description:   "live presence",
+				LastHeartbeat: "2026-03-25T19:30:00Z",
+			},
+		},
+	}
+
+	deps := newTestMockDeps()
+	deps.monitors = Monitors{Fleet: &monitor.FleetMonitor{}}
+	deps.monitors.Fleet.Update(snap)
+	d := New(deps)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/mobile/v1/agents", d.handleMobileAgents)
+
+	req := newAuthRequest("GET", "/api/mobile/v1/agents")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var env Envelope
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+
+	data, ok := env.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected data map, got %T", env.Data)
+	}
+
+	agents, ok := data["agents"].([]any)
+	if !ok {
+		t.Fatalf("expected agents array, got %T", data["agents"])
+	}
+	if len(agents) != 2 {
+		t.Fatalf("expected one live presence agent and one live session agent, got %#v", agents)
+	}
+
+	byID := map[string]map[string]any{}
+	for _, raw := range agents {
+		agent, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("expected agent object, got %T", raw)
+		}
+		id, _ := agent["agent_id"].(string)
+		byID[id] = agent
+	}
+
+	if _, ok := byID["agent-3"]; ok {
+		t.Fatal("did not expect summarized session-only agent in response")
+	}
+	if got := byID["agent-1"]["session_status"]; got != nil {
+		t.Fatalf("expected stale ended session metadata to be omitted for active presence, got %v", got)
+	}
+	if got := byID["agent-2"]["source"]; got != "session_only" {
+		t.Fatalf("expected active session-only agent to remain visible, got %v", got)
+	}
+
+	summary, ok := data["summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected summary map, got %T", data["summary"])
+	}
+	if got := summary["offline_agents"]; got != float64(0) {
+		t.Fatalf("expected no offline historical agents in summary, got %v", got)
+	}
+}
+
 func TestHandleMobileTasks_ReturnsUpstreamErrorWhenNoTaskDataIsAvailable(t *testing.T) {
 	deps := newTestMockDeps()
 	deps.agent = bridge.NewAgentBridge(&failingTaskFeedCaller{})

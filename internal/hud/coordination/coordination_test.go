@@ -182,3 +182,35 @@ func TestBuildMergeReadiness_SharedBranchBlocks(t *testing.T) {
 		t.Fatal("agent-b should NOT be merge-ready (shared branch)")
 	}
 }
+
+func TestBuildIgnoresHistoricalSessionsForNamespaceCounts(t *testing.T) {
+	sessions := []bridge.SessionInfo{
+		{ID: "sess-live", AgentID: "agent-live", Namespace: "proj/live", Status: "active"},
+		{ID: "sess-ended", AgentID: "agent-ended", Namespace: "proj/legacy", Status: "ended"},
+	}
+	agents := []bridge.PresenceInfo{
+		{AgentID: "agent-live", SessionID: "sess-live", Status: "active"},
+		{AgentID: "agent-ended", SessionID: "sess-ended", Status: "offline"},
+	}
+
+	snapshot := Build(sessions, nil, agents, nil, nil)
+
+	if snapshot.Summary.ActiveNamespaces != 1 {
+		t.Fatalf("expected only live namespaces to count as active, got %d", snapshot.Summary.ActiveNamespaces)
+	}
+
+	agentByID := map[string]AgentSummary{}
+	for _, a := range snapshot.Agents {
+		agentByID[a.AgentID] = a
+	}
+
+	legacy, ok := agentByID["agent-ended"]
+	if !ok {
+		t.Fatal("expected offline presence agent to remain in coordination snapshot")
+	}
+	for _, reason := range legacy.AttentionReasons {
+		if reason == "offline with active session" {
+			t.Fatalf("did not expect ended sessions to trigger live-session offline attention: %#v", legacy.AttentionReasons)
+		}
+	}
+}

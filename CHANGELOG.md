@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Task projection** (`internal/hud/domain/mobile`): Synthesize tasks from agent presence `current_task` field into the unified task feed with deterministic SHA1-based IDs.
 - **Workflow deprecation** (`internal/hud/domain/mobile`): Migration flags on approval surface to prepare transition away from workflow endpoints.
 
+### Fixed
+- **Mobile HUD live-state filtering** (`internal/hud/domain/mobile`, `internal/hud/coordination`): Agent and coordination surfaces now ignore ended and summarized sessions when building live mobile snapshots, preventing ghost offline agents, stale session metadata on active agents, and inflated namespace counts after daemon/HUD refresh races.
+
 ### Changed
 - **CI pipeline parallelism** (`.gitlab-ci.yml`): `build:binaries`, `test:unit`, `test:race`, and `test:enterprise-smoke` now use `needs: [prepare:go-cache]` to fan out in parallel after prepare instead of waiting for full stage gates (~3-8 min saved).
 - **MCP build parallelism** (`.gitlab-ci.yml`): `MCP_BUILD_JOBS` default increased from 2 to 4 to match CPU limit.
