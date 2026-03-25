@@ -1396,7 +1396,7 @@ func hookAgentIDBootstrap(agentID string) string {
 			`if [ -s "$AGENT_ID_FILE" ]; then `+
 			`AGENT_ID="$(cat "$AGENT_ID_FILE")"; `+
 			`else `+
-			`AGENT_ID="%s-${WS_HASH}-$PPID"; `+
+			`AGENT_ID="%s-${WS_HASH}"; `+
 			`printf '%%s' "$AGENT_ID" > "$AGENT_ID_FILE"; `+
 			`fi`,
 		agentID, agentID,

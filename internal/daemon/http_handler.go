@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/crb2nu/loom/internal/hud"
+
 	mcp "gitlab.flexinfer.ai/libs/mcp-go"
 )
 
@@ -116,17 +118,34 @@ func (d *Daemon) startHTTPListener(ctx context.Context) error {
 	// Start session reaper
 	go d.httpSessionReaperLoop()
 
+	listener, err := new(net.ListenConfig).Listen(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+
+	if d.fileCfg.EmbeddedHUD.Enabled {
+		writeEmbeddedHUDPortFile(d.logger, listener.Addr())
+	}
+
 	// Start listener
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
+		defer listener.Close()
+		defer func() {
+			if d.fileCfg.EmbeddedHUD.Enabled {
+				if err := hud.RemovePortFile(); err != nil {
+					d.logger.Warn("failed to remove embedded HUD port file", "error", err)
+				}
+			}
+		}()
 		var err error
 		if server.TLSConfig != nil {
-			d.logger.Info("HTTP+TLS listener started", "addr", addr)
-			err = server.ListenAndServeTLS("", "")
+			d.logger.Info("HTTP+TLS listener started", "addr", listener.Addr().String())
+			err = server.Serve(tls.NewListener(listener, server.TLSConfig))
 		} else {
-			d.logger.Info("HTTP listener started", "addr", addr)
-			err = server.ListenAndServe()
+			d.logger.Info("HTTP listener started", "addr", listener.Addr().String())
+			err = server.Serve(listener)
 		}
 		if err != nil && err != http.ErrServerClosed {
 			d.logger.Error("HTTP listener error", "error", err)
@@ -145,6 +164,19 @@ func (d *Daemon) startHTTPListener(ctx context.Context) error {
 	}()
 
 	return nil
+}
+
+func writeEmbeddedHUDPortFile(logger *slog.Logger, addr net.Addr) {
+	tcpAddr, ok := addr.(*net.TCPAddr)
+	if !ok {
+		return
+	}
+	portFile, err := hud.WritePortFile(tcpAddr.Port)
+	if err != nil {
+		logger.Warn("failed to write embedded HUD port file", "path", portFile, "error", err)
+		return
+	}
+	logger.Info("embedded HUD port file written", "path", portFile, "port", tcpAddr.Port)
 }
 
 // httpSessionReaperLoop periodically cleans up expired HTTP sessions.
