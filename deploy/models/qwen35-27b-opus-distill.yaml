@@ -38,7 +38,9 @@ spec:
     toolCallParser: hermes
     maxNumBatchedTokens: 2048
     disableLogStats: false
-    warmPolicy: primary
+    # Keep this ondemand so the runtime does not reclaim the GPTQ PVC while
+    # abliteration/quantization jobs are using it. Wake it explicitly via the CR.
+    warmPolicy: ondemand
     hipVisibleDevices: "0"
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
