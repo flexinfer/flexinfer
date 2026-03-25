@@ -175,7 +175,7 @@ diffusers:
 
 quantization:
   useRuntimeForQuantize: true
-  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:1c50638ffb316a1acf4fb8327b577a391ffe71e44a123e41406801065a3e7172"
+  runtimeImage: "registry.harbor.lan/flexinfer/runtime:ablitfix"
   gptqDeviceMap: "auto"
   gptqModelPolicies:
     - name: qwen3.5-text
