@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/crb2nu/loom/internal/hud/monitor"
 )
 
 func (d *MobileDomain) handleMobilePing(w http.ResponseWriter, r *http.Request) {
@@ -21,6 +23,7 @@ func (d *MobileDomain) handleMobileDashboard(w http.ResponseWriter, r *http.Requ
 	mon := d.deps.Monitors()
 	fleetSnap := mon.Fleet.Snapshot()
 	healthSum := mon.Health.Summary()
+	activeAgents, idleAgents, offlineAgents := mobileDashboardAgentCounts(fleetSnap)
 
 	var recentTimeline []TimelineEntry
 	if el := d.deps.EventLog(); el != nil {
@@ -46,9 +49,9 @@ func (d *MobileDomain) handleMobileDashboard(w http.ResponseWriter, r *http.Requ
 		"daemon_running":  fleetSnap.DaemonRunning,
 		"server_count":    fleetSnap.ServerCount,
 		"active_sessions": fleetSnap.ActiveSessions,
-		"active_agents":   fleetSnap.ActiveAgents,
-		"idle_agents":     fleetSnap.IdleAgents,
-		"offline_agents":  fleetSnap.OfflineAgents,
+		"active_agents":   activeAgents,
+		"idle_agents":     idleAgents,
+		"offline_agents":  offlineAgents,
 		"updated_at":      fleetSnap.UpdatedAt,
 		"health": map[string]any{
 			"total_servers":    healthSum.TotalServers,
@@ -68,6 +71,37 @@ func (d *MobileDomain) handleMobileDashboard(w http.ResponseWriter, r *http.Requ
 		"recent_timeline": recentTimeline,
 		"last_heartbeat":  lastHeartbeat,
 	})
+}
+
+func mobileDashboardAgentCounts(snap monitor.FleetSnapshot) (active, idle, offline int) {
+	seen := make(map[string]struct{}, len(snap.Agents))
+	for _, agent := range snap.Agents {
+		if strings.TrimSpace(agent.AgentID) == "" {
+			continue
+		}
+		seen[agent.AgentID] = struct{}{}
+		switch normalizeMobilePresenceStatus(agent.Status) {
+		case "active":
+			active++
+		case "idle":
+			idle++
+		case "offline":
+			offline++
+		}
+	}
+
+	for _, sess := range snap.Sessions {
+		if !mobileSessionIsLive(sess.Status) || strings.TrimSpace(sess.AgentID) == "" {
+			continue
+		}
+		if _, ok := seen[sess.AgentID]; ok {
+			continue
+		}
+		seen[sess.AgentID] = struct{}{}
+		active++
+	}
+
+	return active, idle, offline
 }
 
 func (d *MobileDomain) handleMobileControlPlane(w http.ResponseWriter, r *http.Request) {
