@@ -11,7 +11,8 @@
 	browserkit-check browserkit-setup \
 	hud hud-dev hud-build hud-install hud-install-service hud-reload hud-frontend hud-dist-check hud-clean \
 		mobile-iphone-preflight mobile-gateway-sync-token mobile-gateway-preflight mobile-ios-project-sync mobile-hud mobile-app-open mobile-app-run-sim mobile-app-run-device mobile-dev mobile-gateway-dev \
-		mobile-signing-check mobile-signing-prepare mobile-signing-cleanup mobile-app-archive-export
+		mobile-signing-check mobile-signing-prepare mobile-signing-cleanup mobile-app-archive-export \
+	accel accel-build accel-verify
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
@@ -153,6 +154,11 @@ help:
 	@echo "  make schemas-list    - List vendored upstream platform schemas"
 	@echo "  make schemas-check   - Check for upstream schema drift"
 	@echo "  make schemas-update  - Fetch and update vendored schemas from upstream"
+	@echo ""
+	@echo "Acceleration (fi-accel native library):"
+	@echo "  make accel         - Rebuild fi-accel native lib + verify CGO link"
+	@echo "  make accel-build   - Rebuild fi-accel-ffi from Rust source"
+	@echo "  make accel-verify  - Verify CGO_ENABLED=1 build succeeds"
 	@echo ""
 	@echo "Other:"
 	@echo "  make install    - Install binaries to ~/.local/bin"
@@ -334,6 +340,25 @@ mcp-hub-wrapper:
 clean: hud-clean
 	rm -rf bin/
 	rm -f coverage.out coverage.html
+
+## Acceleration / fi-accel native library ————————————————————————————
+FIACCEL_DIR ?= $(WORKSPACE_ROOT)/libs/fi-accel
+
+accel: accel-build accel-verify ## Rebuild fi-accel native lib + verify CGO build
+
+accel-build:
+	@echo "Building fi-accel-ffi (release) ..."
+	cd $(FIACCEL_DIR) && cargo build --release -p fi-accel-ffi
+	yes | cp $(FIACCEL_DIR)/target/release/libfi_accel_ffi.a $(FIACCEL_DIR)/go/lib/darwin_arm64/libfi_accel_ffi.a
+	@echo "Verifying eventlog symbols ..."
+	@nm $(FIACCEL_DIR)/go/lib/darwin_arm64/libfi_accel_ffi.a 2>/dev/null | grep -q '_fi_project_eventlog' \
+		|| { echo "ERROR: _fi_project_eventlog not found in rebuilt library"; exit 1; }
+	@echo "fi-accel-ffi rebuilt successfully."
+
+accel-verify:
+	@echo "Verifying CGO build ..."
+	CGO_ENABLED=1 go build ./cmd/loom ./cmd/loomd ./cmd/mcp-agent-context
+	@echo "CGO build verified."
 
 # Testing targets
 test:

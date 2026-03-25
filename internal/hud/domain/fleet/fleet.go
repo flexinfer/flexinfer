@@ -36,6 +36,7 @@ func (d *FleetDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFun
 	mux.HandleFunc("GET /api/knowledge", mw(d.handleKnowledge))
 
 	// Task and workflow.
+	mux.HandleFunc("POST /api/agent/task-sync", mw(d.handleAgentTaskSync))
 	mux.HandleFunc("POST /api/agent/task-update", mw(d.handleAgentTaskUpdate))
 	mux.HandleFunc("POST /api/agent/workflow-define", mw(d.handleAgentWorkflowDefine))
 	mux.HandleFunc("GET /api/agent/workflow-definitions", mw(d.handleAgentWorkflowDefinitions))

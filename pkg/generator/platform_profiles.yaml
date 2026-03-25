@@ -19,7 +19,7 @@ platforms:
       session_end_event: "Stop"
       heartbeat_event: "PostToolUse"
       heartbeat_matcher: "Bash|Task"
-      extras: ["preToolUse_guardrails", "postToolUse_formatters"]
+      extras: ["preToolUse_guardrails", "postToolUse_formatters", "postToolUse_taskSync"]
     loom_proxy:
       agent_hint: "claude-code"
       tool_profile: "llm-core"

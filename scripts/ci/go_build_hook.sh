@@ -95,5 +95,10 @@ if [[ "$is_pre_push" == "true" ]]; then
 fi
 
 cleanup_go_caches_if_low_space
-echo "go-build: running go build ./..."
+
+# Respect caller's CGO_ENABLED; default to Makefile convention (0) for speed.
+# When CGO_ENABLED=1 is desired (e.g., fi-accel acceleration), set it
+# explicitly: CGO_ENABLED=1 git commit ...
+export CGO_ENABLED="${CGO_ENABLED:-0}"
+echo "go-build: running go build ./... (CGO_ENABLED=${CGO_ENABLED})"
 "${WITH_CLEAN_GIT_ENV}" go build ./...

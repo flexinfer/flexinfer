@@ -122,13 +122,18 @@ func buildMobileWorkflowsResponse(workflows []bridge.WorkflowInfo, limit int, st
 		activeWorkflows = 0
 	}
 
+	deprecated := pendingApprovals > 0 || len(result) > 0
+	msg := ""
+	if deprecated {
+		msg = mobileWorkflowDeprecationMessage
+	}
 	return mobileWorkflowsResponseDTO{
 		Workflows:                  result,
 		PendingApprovals:           0,
 		DeprecatedPendingApprovals: pendingApprovals,
 		ActiveWorkflows:            activeWorkflows,
-		Deprecated:                 true,
-		DeprecationMessage:         mobileWorkflowDeprecationMessage,
+		Deprecated:                 deprecated,
+		DeprecationMessage:         msg,
 	}
 }
 

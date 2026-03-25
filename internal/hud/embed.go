@@ -17,6 +17,7 @@ import (
 	"github.com/crb2nu/loom/internal/hud/domain/memory"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 	"github.com/crb2nu/loom/internal/hud/orchestration"
+	"github.com/crb2nu/loom/pkg/codebase"
 	"github.com/crb2nu/loom/pkg/mcpotel"
 )
 
@@ -95,8 +96,15 @@ func (a *App) StartMonitors(ctx context.Context) error {
 
 	a.costMonitor = monitor.NewCostMonitor(a.client, a.logger)
 
-	if a.config.PipelineProjects != "" {
-		projects := strings.Split(a.config.PipelineProjects, ",")
+	pipelineProjects := a.config.PipelineProjects
+	if pipelineProjects == "" {
+		if detected := codebase.DetectPipelineProject(ctx, "."); detected != "" {
+			pipelineProjects = detected
+			a.logger.Info("auto-detected pipeline project", "project", detected)
+		}
+	}
+	if pipelineProjects != "" {
+		projects := strings.Split(pipelineProjects, ",")
 		a.pipelineMonitor = monitor.NewPipelineMonitor(a.agent, projects, a.cache, a.logger)
 	}
 
