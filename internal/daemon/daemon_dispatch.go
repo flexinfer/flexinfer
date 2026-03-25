@@ -658,6 +658,10 @@ func (d *Daemon) Reload(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("load registry: %w", err)
 		}
+		newReg, err = runtimeRegistryForTarget(newReg, d.cfg.Target)
+		if err != nil {
+			return fmt.Errorf("normalize runtime registry: %w", err)
+		}
 
 		// Find servers that were removed
 		oldServers := make(map[string]bool)

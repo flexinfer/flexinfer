@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PORT="${1:-3333}"
+PORT_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/loom/hud.port"
+PORT="${1:-}"
+
+if [[ -z "$PORT" && -f "$PORT_FILE" ]]; then
+  PORT="$(tr -d '[:space:]' < "$PORT_FILE")"
+fi
+if [[ -z "$PORT" || ! "$PORT" =~ ^[0-9]+$ ]]; then
+  PORT=3333
+fi
 
 probe() {
   local url="$1"
@@ -12,4 +20,4 @@ probe() {
   return 1
 }
 
-probe "https://127.0.0.1:${PORT}" || probe "http://127.0.0.1:${PORT}" || echo "https://127.0.0.1:${PORT}"
+probe "https://127.0.0.1:${PORT}" || probe "http://127.0.0.1:${PORT}" || echo "http://127.0.0.1:${PORT}"

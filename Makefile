@@ -67,8 +67,8 @@ help:
 	@echo "  make dev        - Build and run daemon in debug mode"
 	@echo "  make dev-sync   - Regen configs and sync all profiles + skills using the repo-built loom"
 	@echo "  make dev-sync-repo - Regen configs + skills in-repo only (skip home sync/install)"
-	@echo "  make dev-upgrade - Build, install, sync configs+skills, restart daemon (safe when idle)"
-	@echo "  make dev-reload  - Build, install, sync configs+skills, force-restart daemon"
+	@echo "  make dev-upgrade - Build, install, sync configs+skills, restart daemon (safe when idle; direct embedded-HUD fallback when launchd is not active)"
+	@echo "  make dev-reload  - Build, install, sync configs+skills, force-restart daemon (embedded HUD included)"
 	@echo "  make bootstrap-local - Build + install core binaries + sync configs+skills + check setup"
 	@echo "  make check      - Run all checks (fmt, vet, lint, test)"
 	@echo ""
@@ -428,6 +428,7 @@ dev-sync-repo: loom
 # - atomic install to ~/.local/bin
 # - regen+sync configs + skills in loom mode
 # - restart daemon only when idle
+# - use a direct embedded-HUD restart path when launchd is installed but not active
 # - reap stale loom proxy clients when a restart happens
 dev-upgrade:
 	@chmod +x scripts/dev/upgrade_local.sh
@@ -436,6 +437,8 @@ dev-upgrade:
 # Force rebuild + restart: always restarts daemon regardless of active connections.
 # Reaps existing loom proxy clients so stale app-held proxies do not outlive the reload.
 # Proxy connections (Claude, Codex, Zed, etc.) auto-reconnect on the next tool call.
+# If launchd is not actively managing the daemon, restart directly with --hud-port so
+# the embedded HUD/mobile API comes back in the same process.
 dev-reload:
 	@chmod +x scripts/dev/upgrade_local.sh
 	@RESTART_DAEMON=always scripts/dev/upgrade_local.sh
