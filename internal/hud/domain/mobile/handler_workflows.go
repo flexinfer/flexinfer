@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 )
@@ -99,6 +100,18 @@ func buildMobileWorkflowsResponse(workflows []bridge.WorkflowInfo, limit int, st
 		}
 		filtered = append(filtered, wf)
 	}
+
+	// Filter out stale workflows: only keep recent or still-active ones.
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	active := filtered[:0]
+	for _, wf := range filtered {
+		status := normalizeMobileWorkflowStatus(wf.Status)
+		t := parseMobileTime(wf.CreatedAt)
+		if t.After(cutoff) || status == "running" || status == "waiting_approval" {
+			active = append(active, wf)
+		}
+	}
+	filtered = active
 
 	sortSliceStable(filtered, func(i, j int) bool {
 		ti := parseMobileTime(filtered[i].CreatedAt)
