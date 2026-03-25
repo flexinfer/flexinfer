@@ -1445,11 +1445,18 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "direct_init_kwargs.pop(\"device_map\", None)") {
 		t.Error("expected GPTQ wrapper script to patch GPTQModel direct CPU loader to drop device_map")
 	}
-	if !contains(script, "direct_init_kwargs[\"low_cpu_mem_usage\"] = False") {
-		t.Error("expected GPTQ wrapper script to force low_cpu_mem_usage=false on patched direct CPU loader")
+	if !contains(script, "direct_init_kwargs[\"low_cpu_mem_usage\"] = True") {
+		t.Error("expected GPTQ wrapper script to enable low_cpu_mem_usage=true for incremental shard loading")
 	}
 	if !contains(script, "Patched quantize_gptq.py to disable GPTQ offload_to_disk for Qwen3.5 direct load") {
 		t.Error("expected GPTQ wrapper script to retain bundled-script fallback patch for stale runtime images")
+	}
+	// init_empty_weights injection should always run (no device_map guard)
+	if !contains(script, "from accelerate import init_empty_weights") {
+		t.Error("expected GPTQ wrapper script to inject init_empty_weights for memory-efficient loading")
+	}
+	if !contains(script, "load_checkpoint_in_model") {
+		t.Error("expected GPTQ wrapper script to use load_checkpoint_in_model for shard-by-shard loading")
 	}
 }
 

@@ -44,7 +44,7 @@ spec:
     descAct: false
     dynamicExclusion: "none"
     useGPU: true
-    maxMemoryGB: 48
+    maxMemoryGB: 56
     timeoutSeconds: 28800
     calibration:
       maxSeqLen: 2048

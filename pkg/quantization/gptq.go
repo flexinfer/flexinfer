@@ -301,8 +301,9 @@ fi
 
 # GPTQModel's direct CPU path still injects device_map=cpu_device_map. In
 # transformers, any device_map enables meta-device loading/dispatch, which is
-# exactly the path failing for Qwen3.5 here. Strip device_map and force
-# low_cpu_mem_usage=False on the direct path.
+# exactly the path failing for Qwen3.5 here. Strip device_map and enable
+# low_cpu_mem_usage=True so transformers loads shards incrementally (peak RSS
+# ~ model_size + one shard) instead of loading full state_dict at once (~2x).
 LOADER_PY=$(python3 -c "import importlib.util,os; s=importlib.util.find_spec('gptqmodel'); print(os.path.join(os.path.dirname(s.origin),'models','loader.py'))" 2>/dev/null || true)
 if [ -n "${LOADER_PY}" ] && ! grep -q 'direct_init_kwargs.pop("device_map", None)' "${LOADER_PY}" 2>/dev/null; then
     python3 - "${LOADER_PY}" <<'PY'
@@ -325,7 +326,7 @@ new = '''        else:
             print("loading model directly to CPU (not using meta device or turtle_model)-----------")
             direct_init_kwargs = model_init_kwargs.copy()
             direct_init_kwargs.pop("device_map", None)
-            direct_init_kwargs["low_cpu_mem_usage"] = False
+            direct_init_kwargs["low_cpu_mem_usage"] = True
             model = cls.loader.from_pretrained(model_local_path, config=config, **direct_init_kwargs)
             if getattr(model, "config", None) is config:
                 model.config = copy.deepcopy(config)
@@ -375,8 +376,9 @@ fi
 # from_config alone allocates 54GB bf16 tensors; init_empty_weights creates on meta
 # device (0 bytes). load_checkpoint_in_model materializes weights on target devices
 # WITHOUT adding accelerate dispatch hooks (which conflict with GPTQModel's
-# shell_module_materialize). Peak RSS = CPU portion only, not the full model.
-if [ -f "${GPTQ_SCRIPT}" ] && [ "${QUANTIZE_DEVICE_MAP}" != "cpu" ]; then
+# shell_module_materialize). Peak RSS = one shard during loading (~8GB), then
+# model_size after all shards loaded. This is critical for 27B models on 62GiB nodes.
+if [ -f "${GPTQ_SCRIPT}" ]; then
     python3 - <<'DEVICE_MAP_PY'
 import os, re, sys
 from pathlib import Path
@@ -430,19 +432,15 @@ if fc_match and eval_found:
         f'{indent}    )\n'
         f'{indent}    print("Model loaded via load_checkpoint_in_model (no dispatch hooks)")\n'
         f'{indent}else:\n'
-        f'{indent}    index_filename = resolve_checkpoint_index(model_dir)\n'
-        f'{indent}    shard_files, shard_metadata = get_checkpoint_shard_files(\n'
-        f'{indent}        model_dir, index_filename, local_files_only=True,\n'
+        f'{indent}    from accelerate import load_checkpoint_in_model\n'
+        f'{indent}    cpu_device_map = {{name: "cpu" for name, _ in model.named_parameters()}}\n'
+        f'{indent}    cpu_device_map.update({{name: "cpu" for name, _ in model.named_buffers()}})\n'
+        f'{indent}    print(f"Loading model shards to CPU via load_checkpoint_in_model ({{len(cpu_device_map)}} params+buffers)")\n'
+        f'{indent}    load_checkpoint_in_model(\n'
+        f'{indent}        model, model_dir, device_map=cpu_device_map,\n'
+        f'{indent}        dtype=dtype,\n'
         f'{indent}    )\n'
-        f'{indent}    print(f"Loading {{len(shard_files)}} checkpoint shards (CPU-only)")\n'
-        f'{indent}    for idx, shard_file in enumerate(shard_files, start=1):\n'
-        f'{indent}        emit_progress("progress", phase="quantizing",\n'
-        f'{indent}            percent=min(4.5, 1.0 + (idx / max(len(shard_files), 1)) * 3.0),\n'
-        f'{indent}            detail=f"loading shard {{idx}}/{{len(shard_files)}}")\n'
-        f'{indent}        state_dict = load_state_dict(shard_file, map_location="cpu")\n'
-        f'{indent}        model.load_state_dict(state_dict, strict=False)\n'
-        f'{indent}        del state_dict\n'
-        f'{indent}        gc.collect()\n'
+        f'{indent}    print("Model loaded to CPU via load_checkpoint_in_model (no dispatch hooks)")\n'
         f'{indent}model.eval()'
     )
     src = src[:start_idx] + replacement + src[end_idx:]
