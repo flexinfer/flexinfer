@@ -94,6 +94,7 @@ func newAgentSessionStartCmd() *cobra.Command {
 		autoRecallStrategy    string
 		autoRecallQuery       string
 		autoRecallTokenBudget int
+		parentSessionID       string
 		quiet                 bool
 	)
 
@@ -118,6 +119,7 @@ Designed for use in Claude Code SessionStart hooks.`,
 				AutoRecallStrategy:    autoRecallStrategy,
 				AutoRecallQuery:       autoRecallQuery,
 				AutoRecallTokenBudget: autoRecallTokenBudget,
+				ParentSessionID:       parentSessionID,
 			})
 			if err != nil {
 				if quiet {
@@ -141,6 +143,7 @@ Designed for use in Claude Code SessionStart hooks.`,
 	cmd.Flags().StringVar(&autoRecallStrategy, "auto-recall-strategy", "balanced", "Auto-recall depth profile: fast, balanced, deep")
 	cmd.Flags().StringVar(&autoRecallQuery, "auto-recall-query", "", "Override auto-recall query (defaults to description, then namespace)")
 	cmd.Flags().IntVar(&autoRecallTokenBudget, "auto-recall-token-budget", 0, "Override auto-recall token budget (256-32000)")
+	cmd.Flags().StringVar(&parentSessionID, "parent-session-id", "", "Parent session ID (for subagent session grouping)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output (for hooks)")
 
 	return cmd

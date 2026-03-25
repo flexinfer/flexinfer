@@ -807,7 +807,7 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 		{
 			"type": "command",
 			"command": fmt.Sprintf(
-				`%s; %s; %s agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "$AGENT_ID" --agent-type %s --description %q --auto-recall --auto-recall-strategy fast --quiet %s || true`,
+				`%s; %s; PARENT_FLAG=""; [ -n "${LOOM_PARENT_SESSION_ID:-}" ] && PARENT_FLAG="--parent-session-id $LOOM_PARENT_SESSION_ID"; %s agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "$AGENT_ID" --agent-type %s --description %q --auto-recall --auto-recall-strategy fast $PARENT_FLAG --quiet %s || true`,
 				bootstrap, staleCleanup, loomCmd, hp.AgentType, hp.Description, log),
 		},
 		{
@@ -862,6 +862,19 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 				},
 			},
 		},
+		// Capture parent session ID for subagent session grouping.
+		"SubagentStart": []map[string]any{
+			{
+				"hooks": []map[string]any{
+					{
+						"type": "command",
+						"command": fmt.Sprintf(
+							`%s; PARENT_SID=$(%s agent session --agent-id "$AGENT_ID" --quiet 2>/dev/null | jq -r '.session.id // empty' 2>/dev/null || true); [ -n "$PARENT_SID" ] && export LOOM_PARENT_SESSION_ID="$PARENT_SID"; exit 0`,
+							bootstrap, loomCmd),
+					},
+				},
+			},
+		},
 	}
 
 	return hooks
@@ -910,14 +923,17 @@ func claudePostToolUseExtras() []map[string]any {
 // claudePostToolUseTaskSyncHook returns the PostToolUse hook that syncs native
 // Claude Code task tools (TaskCreate, TaskUpdate, TodoWrite) to the loom
 // agent-context task system via `loom agent task-sync`.
-func claudePostToolUseTaskSyncHook() []map[string]any {
+func claudePostToolUseTaskSyncHook(loomBinary string) []map[string]any {
+	loomCmd := shellQuote(normalizeLoomBinary(loomBinary))
 	return []map[string]any{
 		{
 			"matcher": "TaskCreate|TaskUpdate|TodoWrite",
 			"hooks": []map[string]any{
 				{
-					"type":    "command",
-					"command": `INPUT=$(cat); ` + hookAgentIDBootstrap("claude-code") + `; echo "$INPUT" | loom agent task-sync --agent-id "$AGENT_ID" --quiet 2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log" || true`,
+					"type": "command",
+					"command": fmt.Sprintf(
+						`INPUT=$(cat); %s; echo "$INPUT" | %s agent task-sync --agent-id "$AGENT_ID" --quiet 2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log" || true`,
+						hookAgentIDBootstrap("claude-code"), loomCmd),
 				},
 			},
 		},
@@ -929,13 +945,13 @@ func claudeHooks(reg *registry.Registry, profile *PlatformProfile, loomBinary st
 	hooks := buildPlatformHooks(reg, profile.Hooks, loomBinary)
 
 	// Append extras defined in the profile (e.g. preToolUse_guardrails, postToolUse_formatters).
-	appendHookExtras(hooks, profile.Hooks.Extras)
+	appendHookExtras(hooks, profile.Hooks.Extras, loomBinary)
 
 	return hooks
 }
 
 // appendHookExtras dispatches profile-defined extras to their hook implementations.
-func appendHookExtras(hooks map[string]any, extras []string) {
+func appendHookExtras(hooks map[string]any, extras []string, loomBinary string) {
 	for _, extra := range extras {
 		switch extra {
 		case "preToolUse_guardrails":
@@ -948,7 +964,7 @@ func appendHookExtras(hooks map[string]any, extras []string) {
 		case "postToolUse_taskSync":
 			event := "PostToolUse"
 			if existing, ok := hooks[event].([]map[string]any); ok {
-				hooks[event] = append(existing, claudePostToolUseTaskSyncHook()...)
+				hooks[event] = append(existing, claudePostToolUseTaskSyncHook(loomBinary)...)
 			}
 		}
 	}
@@ -1358,7 +1374,7 @@ func geminiHooksConfigFromRegistry(reg *registry.Registry, profile *PlatformProf
 // geminiHooks returns the hooks block for Gemini CLI settings.json.
 func geminiHooks(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
 	hooks := buildPlatformHooks(reg, profile.Hooks, loomBinary)
-	appendHookExtras(hooks, profile.Hooks.Extras)
+	appendHookExtras(hooks, profile.Hooks.Extras, loomBinary)
 	return hooks
 }
 
@@ -1366,7 +1382,7 @@ func geminiHooks(reg *registry.Registry, profile *PlatformProfile, loomBinary st
 // Used for platforms that have hooks.enabled but no platform-specific wrapper.
 func hooksConfigFromProfile(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
 	hooks := buildPlatformHooks(reg, profile.Hooks, loomBinary)
-	appendHookExtras(hooks, profile.Hooks.Extras)
+	appendHookExtras(hooks, profile.Hooks.Extras, loomBinary)
 	return map[string]any{"hooks": hooks}
 }
 

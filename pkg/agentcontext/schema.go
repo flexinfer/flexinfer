@@ -178,6 +178,10 @@ type Session struct {
 	Description string `json:"description,omitempty"`
 	WorkingDir  string `json:"working_dir,omitempty"`
 
+	// Session hierarchy (subagent grouping)
+	ParentSessionID string `json:"parent_session_id,omitempty"`
+	RootSessionID   string `json:"root_session_id,omitempty"`
+
 	// Pipeline linking
 	PipelineRef *PipelineRef `json:"pipeline_ref,omitempty"`
 

@@ -26,6 +26,9 @@ type SessionStartParams struct {
 	// Pipeline linking (optional, set when session is tied to a CI pipeline)
 	PipelineProject string `json:"pipeline_project,omitempty"`
 	PipelineID      int    `json:"pipeline_id,omitempty"`
+
+	// Session hierarchy (optional, set when a subagent session is linked to a parent)
+	ParentSessionID string `json:"parent_session_id,omitempty"`
 }
 
 // SessionStartResult holds the result of starting a session.
@@ -209,6 +212,9 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 	}
 	if p.PipelineID > 0 {
 		args["pipeline_id"] = p.PipelineID
+	}
+	if p.ParentSessionID != "" {
+		args["parent_session_id"] = p.ParentSessionID
 	}
 	var sessionResult struct {
 		SessionID string `json:"session_id"`

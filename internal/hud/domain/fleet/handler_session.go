@@ -38,9 +38,11 @@ func (d *FleetDomain) handleAgentSessionStart(w http.ResponseWriter, r *http.Req
 			"namespace":  body.Namespace,
 		})
 		d.deps.FleetIncrementKPI("sessions", 1)
-		go d.deps.FleetRefresh()
 		go d.deps.MaybeAutoProvisionSandbox(body.Namespace)
 	}
+	// Always refresh fleet snapshot so ActiveSessions gauge stays current,
+	// even for idempotent session starts that return an existing session.
+	go d.deps.FleetRefresh()
 	d.deps.MaybeSampleContextTelemetry(body.AgentID, result.SessionID, body.AgentType, "session_start")
 
 	d.deps.WriteJSON(w, http.StatusOK, result)
