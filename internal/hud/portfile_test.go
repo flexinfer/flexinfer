@@ -51,3 +51,28 @@ func TestPortFilePath_IsAbsolute(t *testing.T) {
 		t.Fatalf("expected absolute path, got %q", path)
 	}
 }
+
+func TestWriteAndRemovePortFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	portFile, err := WritePortFile(4312)
+	if err != nil {
+		t.Fatalf("WritePortFile() error = %v", err)
+	}
+
+	data, err := os.ReadFile(portFile)
+	if err != nil {
+		t.Fatalf("read port file: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "4312" {
+		t.Fatalf("port file contents = %q, want %q", got, "4312")
+	}
+
+	if err := RemovePortFile(); err != nil {
+		t.Fatalf("RemovePortFile() error = %v", err)
+	}
+	if _, err := os.Stat(portFile); !os.IsNotExist(err) {
+		t.Fatalf("expected port file to be removed, stat err = %v", err)
+	}
+}

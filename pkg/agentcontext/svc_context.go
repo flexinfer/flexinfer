@@ -688,6 +688,11 @@ func (cs *ContextSvc) GenerateSummary(ctx context.Context, session *Session) err
 		return err
 	}
 
+	// Update session entry stats for the summary entry.
+	if cs.addSessionEntryStats != nil {
+		cs.addSessionEntryStats(session, 1, summaryEntry.TokenCount)
+	}
+
 	// Update session timestamp via callback
 	if cs.markSessionSummarized != nil {
 		cs.markSessionSummarized(session, time.Now())

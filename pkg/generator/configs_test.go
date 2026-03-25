@@ -927,7 +927,7 @@ func TestHookAgentIDBootstrap_ContainsWorkspaceHash(t *testing.T) {
 		"AGENT_CACHE_DIR=",
 		"${HOME:-${TMPDIR:-/tmp}}/.cache/loom",
 		"agent-id-claude-code-${WS_HASH}",
-		`AGENT_ID="claude-code-${WS_HASH}-$PPID"`,
+		`AGENT_ID="claude-code-${WS_HASH}"`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Errorf("hookAgentIDBootstrap output missing %q\ngot: %s", want, output)

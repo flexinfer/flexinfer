@@ -1,6 +1,7 @@
 package hud
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -17,4 +18,25 @@ func PortFilePath() string {
 		configDir = filepath.Join(home, ".config")
 	}
 	return filepath.Join(configDir, "loom", "hud.port")
+}
+
+// WritePortFile persists the active HUD port for CLI discovery.
+func WritePortFile(port int) (string, error) {
+	portFile := PortFilePath()
+	if err := os.MkdirAll(filepath.Dir(portFile), 0o755); err != nil {
+		return portFile, fmt.Errorf("create port file dir: %w", err)
+	}
+	if err := os.WriteFile(portFile, []byte(fmt.Sprintf("%d", port)), 0o644); err != nil {
+		return portFile, fmt.Errorf("write port file: %w", err)
+	}
+	return portFile, nil
+}
+
+// RemovePortFile deletes the HUD port file if it exists.
+func RemovePortFile() error {
+	portFile := PortFilePath()
+	if err := os.Remove(portFile); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }

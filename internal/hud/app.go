@@ -325,15 +325,18 @@ func Run(cfg Config) error {
 	actualAddr := ln.Addr().String()
 	url := browserURL(scheme, bindAddr, ln.Addr())
 
-	// Write the bound port to a file so CLI commands can discover it.
-	portFile := PortFilePath()
 	actualPort := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-	if err := os.WriteFile(portFile, []byte(actualPort), 0644); err != nil {
+	portFile, err := WritePortFile(ln.Addr().(*net.TCPAddr).Port)
+	if err != nil {
 		logger.Warn("failed to write port file", "path", portFile, "error", err)
 	} else {
 		logger.Info("port file written", "path", portFile, "port", actualPort)
 	}
-	defer os.Remove(portFile)
+	defer func() {
+		if err := RemovePortFile(); err != nil {
+			logger.Warn("failed to remove port file", "path", portFile, "error", err)
+		}
+	}()
 
 	logger.Info("HUD server started", "url", url, "listen_addr", actualAddr, "dev", cfg.Dev)
 	fmt.Printf("Agent HUD running at %s\n", url)
