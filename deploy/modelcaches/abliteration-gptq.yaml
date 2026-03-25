@@ -30,7 +30,7 @@ spec:
   clusterStorageClassName: nvme-1r-gpu
   secretRef: "hf-token"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-radeonvii
+    kubernetes.io/hostname: cblevins-7900xtx
   download:
     maxMemoryGB: 16
     hfTransfer: false
