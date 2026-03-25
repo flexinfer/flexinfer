@@ -42,7 +42,11 @@ spec:
   abliteration:
     skipGDNLayers: true        # Only abliterate 16 full-attention layers (skip 48 GDN)
     numSamples: 128
-    useGPU: true
+    # gfx906 repeatedly fails during accelerate.dispatch_model() when the
+    # abliterator tries to shard the BF16 model onto the GPU. Keep the job on
+    # the radeonvii node, but run the abliteration step on CPU to get a stable
+    # custom source model; quantization still uses the GPU below.
+    useGPU: false
     maxMemoryGB: 96            # 128GB node, 54GB model + GPU offload headroom
     timeoutSeconds: 14400
   quantization:
