@@ -1451,9 +1451,9 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "Patched quantize_gptq.py to disable GPTQ offload_to_disk for Qwen3.5 direct load") {
 		t.Error("expected GPTQ wrapper script to retain bundled-script fallback patch for stale runtime images")
 	}
-	// init_empty_weights injection should always run (no device_map guard)
+	// init_empty_weights injection for non-CPU device maps (GPU path)
 	if !contains(script, "from accelerate import init_empty_weights") {
-		t.Error("expected GPTQ wrapper script to inject init_empty_weights for memory-efficient loading")
+		t.Error("expected GPTQ wrapper script to inject init_empty_weights for GPU device map loading")
 	}
 	if !contains(script, "load_checkpoint_in_model") {
 		t.Error("expected GPTQ wrapper script to use load_checkpoint_in_model for shard-by-shard loading")
