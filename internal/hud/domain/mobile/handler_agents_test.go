@@ -260,3 +260,52 @@ func TestHandleMobilePipelines_NoPipelineMonitor(t *testing.T) {
 		t.Error("expected available=false when pipeline monitor is nil")
 	}
 }
+
+func TestHandleMobileDashboard_UsesUnifiedLiveAgentCounts(t *testing.T) {
+	deps := newTestMockDeps()
+	deps.monitors = Monitors{
+		Fleet:  &monitor.FleetMonitor{},
+		Health: &monitor.HealthMonitor{},
+	}
+	deps.monitors.Fleet.Update(monitor.FleetSnapshot{
+		DaemonRunning:  true,
+		ServerCount:    46,
+		ActiveSessions: 2,
+		Sessions: []bridge.SessionInfo{
+			{ID: "sess-1", AgentID: "codex-main", Namespace: "proj/a", Status: "active"},
+			{ID: "sess-2", AgentID: "codex-feature-dev", Namespace: "proj/b", Status: "active"},
+			{ID: "sess-old", AgentID: "old-agent", Namespace: "proj/old", Status: "ended"},
+		},
+		Agents: []bridge.PresenceInfo{
+			{AgentID: "offline-proxy", Status: "offline"},
+		},
+	})
+	d := New(deps)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/mobile/v1/dashboard", d.handleMobileDashboard)
+
+	req := newAuthRequest("GET", "/api/mobile/v1/dashboard")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var env Envelope
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+
+	data, ok := env.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected data map, got %T", env.Data)
+	}
+	if got := data["active_agents"]; got != float64(2) {
+		t.Fatalf("expected dashboard active_agents=2 from active session-only agents, got %v", got)
+	}
+	if got := data["offline_agents"]; got != float64(1) {
+		t.Fatalf("expected dashboard offline_agents=1 from presence snapshot, got %v", got)
+	}
+}
