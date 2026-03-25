@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Mobile HUD live-state filtering** (`internal/hud/domain/mobile`, `internal/hud/coordination`): Agent and coordination surfaces now ignore ended and summarized sessions when building live mobile snapshots, preventing ghost offline agents, stale session metadata on active agents, and inflated namespace counts after daemon/HUD refresh races.
 - **Mobile dashboard agent totals** (`internal/hud/domain/mobile`): Dashboard headline counts now use the same unified live-agent view as the Agents tab, so active session-only agents are reflected consistently after daemon reloads.
+- **Local dev reload smoke** (`scripts/dev`): `make dev-upgrade` and `make dev-reload` now wait on the embedded HUD/mobile API readiness path instead of treating the heavier mobile task feed as the reload health gate, reducing false unhealthy warnings after daemon fallback restarts.
 
 ### Changed
 - **CI pipeline parallelism** (`.gitlab-ci.yml`): `build:binaries`, `test:unit`, `test:race`, and `test:enterprise-smoke` now use `needs: [prepare:go-cache]` to fan out in parallel after prepare instead of waiting for full stage gates (~3-8 min saved).
