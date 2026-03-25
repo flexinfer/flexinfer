@@ -349,7 +349,7 @@ spec:
                 description: |-
                   Quantize configures post-download quantization of model weights.
                   When set, the controller downloads the source model, quantizes it,
-                  and serves the quantized output. Reuses v1alpha1 QuantizationSpec.
+                  and serves the quantized output.
                 properties:
                   bits:
                     description: Bits is the quantization bit width for AWQ/GPTQ formats.
@@ -618,9 +618,10 @@ spec:
             - source
             type: object
             x-kubernetes-validations:
-            - message: spec.cache.strategy must be SharedPVC or None when spec.source
-                is pvc://... (SharedPVC copies to a cache PVC; Local stages onto
-                node-local storage for unified runtimes; None mounts the source directly)
+            - message: spec.cache.strategy must be SharedPVC, Local, or None when
+                spec.source is pvc://... (SharedPVC copies to a cache PVC; Local stages
+                onto node-local storage for unified runtimes; None mounts the source
+                directly)
               rule: '!self.source.startsWith(''pvc://'') || !has(self.cache) || !has(self.cache.strategy)
                 || size(self.cache.strategy) == 0 || self.cache.strategy == ''SharedPVC''
                 || self.cache.strategy == ''Local'' || self.cache.strategy == ''None'''
