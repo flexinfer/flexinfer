@@ -109,8 +109,10 @@ func TestReadPodLogTailReturnsTrimmedLogOutput(t *testing.T) {
 			return
 		}
 		assert.Equal(t, "quantizer", r.URL.Query().Get("container"))
-		fmt.Fprintln(w, "traceback line 1")
-		fmt.Fprintln(w, "traceback line 2")
+		_, err := fmt.Fprintln(w, "traceback line 1")
+		require.NoError(t, err)
+		_, err = fmt.Fprintln(w, "traceback line 2")
+		require.NoError(t, err)
 	})
 
 	got := readPodLogTail(context.Background(), kubeClient, "default", "quant-job-pod", "quantizer", 50)
