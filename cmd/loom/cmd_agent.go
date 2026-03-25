@@ -64,6 +64,7 @@ If HUD is not reachable, commands fall back to daemon socket tool calls.`,
 		newAgentQualityGateCmd(),
 		newAgentWorkStartCmd(),
 		newAgentWorkHandoffCmd(),
+		newAgentTaskSyncCmd(),
 	)
 
 	return agentCmd

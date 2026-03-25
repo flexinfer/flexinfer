@@ -295,7 +295,7 @@ struct OpsView: View {
             pipelinesCard
                 .cardAppear(index: 1)
 
-            if viewModel.workflowsDeprecated || viewModel.pendingApprovals > 0 || !viewModel.workflows.isEmpty {
+            if viewModel.pendingApprovals > 0 || !viewModel.workflows.isEmpty {
                 LoomCard {
                     VStack(alignment: .leading, spacing: LoomSpacing.sm) {
                         HStack(spacing: LoomSpacing.xs) {

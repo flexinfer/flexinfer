@@ -160,8 +160,14 @@ public final class OpsViewModel {
             let response: MobileWorkflowsResponse = try await apiClient.request(.workflows(limit: 50))
             workflows = response.workflows
             pendingApprovals = response.pendingApprovals
-            workflowsDeprecated = response.deprecated
-            workflowsDeprecationMessage = response.deprecationMessage
+            // Defensive normalization: suppress deprecated flag when nothing to show
+            if response.deprecated && response.workflows.isEmpty && response.pendingApprovals == 0 {
+                workflowsDeprecated = false
+                workflowsDeprecationMessage = nil
+            } else {
+                workflowsDeprecated = response.deprecated
+                workflowsDeprecationMessage = response.deprecationMessage
+            }
         } catch {
             workflows = []
             pendingApprovals = 0

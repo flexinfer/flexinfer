@@ -64,6 +64,34 @@ func TestBuildMobileWorkflowsResponse_DeprecatesApprovalSurface(t *testing.T) {
 	}
 }
 
+func TestBuildMobileWorkflowsResponse_EmptyNotDeprecated(t *testing.T) {
+	resp := buildMobileWorkflowsResponse(nil, 50, "", "", nil)
+	if resp.Deprecated {
+		t.Fatal("expected empty workflows response to not be deprecated")
+	}
+	if resp.DeprecationMessage != "" {
+		t.Fatalf("expected empty deprecation message for empty response, got %q", resp.DeprecationMessage)
+	}
+	if resp.PendingApprovals != 0 {
+		t.Fatalf("expected zero pending approvals, got %d", resp.PendingApprovals)
+	}
+	if resp.DeprecatedPendingApprovals != 0 {
+		t.Fatalf("expected zero deprecated pending approvals, got %d", resp.DeprecatedPendingApprovals)
+	}
+	if len(resp.Workflows) != 0 {
+		t.Fatalf("expected zero workflows, got %d", len(resp.Workflows))
+	}
+
+	// Also verify empty slice (not nil) produces the same result.
+	resp2 := buildMobileWorkflowsResponse([]bridge.WorkflowInfo{}, 50, "", "", nil)
+	if resp2.Deprecated {
+		t.Fatal("expected empty slice workflows response to not be deprecated")
+	}
+	if resp2.DeprecationMessage != "" {
+		t.Fatalf("expected empty deprecation message for empty slice, got %q", resp2.DeprecationMessage)
+	}
+}
+
 func TestBuildMobileWorkflowDetailResponse_DeprecatesResponse(t *testing.T) {
 	detail := &bridge.WorkflowDetail{
 		ID:          "wf-approval",

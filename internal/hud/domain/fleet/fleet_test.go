@@ -81,6 +81,7 @@ func TestFleetDomainRouteRegistration(t *testing.T) {
 		{"POST", "/api/agent/context/add"},
 		{"GET", "/api/agent/context-inspect"},
 		{"GET", "/api/knowledge"},
+		{"POST", "/api/agent/task-sync"},
 		{"POST", "/api/agent/task-update"},
 		{"POST", "/api/agent/workflow-define"},
 		{"GET", "/api/agent/workflow-definitions"},

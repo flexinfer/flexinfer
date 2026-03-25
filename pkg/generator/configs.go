@@ -907,6 +907,23 @@ func claudePostToolUseExtras() []map[string]any {
 	}
 }
 
+// claudePostToolUseTaskSyncHook returns the PostToolUse hook that syncs native
+// Claude Code task tools (TaskCreate, TaskUpdate, TodoWrite) to the loom
+// agent-context task system via `loom agent task-sync`.
+func claudePostToolUseTaskSyncHook() []map[string]any {
+	return []map[string]any{
+		{
+			"matcher": "TaskCreate|TaskUpdate|TodoWrite",
+			"hooks": []map[string]any{
+				{
+					"type":    "command",
+					"command": `INPUT=$(cat); ` + hookAgentIDBootstrap("claude-code") + `; echo "$INPUT" | loom agent task-sync --agent-id "$AGENT_ID" --quiet 2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log" || true`,
+				},
+			},
+		},
+	}
+}
+
 // claudeHooks returns the hooks block for Claude Code settings.json.
 func claudeHooks(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
 	hooks := buildPlatformHooks(reg, profile.Hooks, loomBinary)
@@ -927,6 +944,11 @@ func appendHookExtras(hooks map[string]any, extras []string) {
 			event := "PostToolUse"
 			if existing, ok := hooks[event].([]map[string]any); ok {
 				hooks[event] = append(existing, claudePostToolUseExtras()...)
+			}
+		case "postToolUse_taskSync":
+			event := "PostToolUse"
+			if existing, ok := hooks[event].([]map[string]any); ok {
+				hooks[event] = append(existing, claudePostToolUseTaskSyncHook()...)
 			}
 		}
 	}
