@@ -42,6 +42,10 @@ spec:
   abliteration:
     skipGDNLayers: true        # Only abliterate 16 full-attention layers (skip 48 GDN)
     numSamples: 128
+    # Force the known full-attention layers explicitly until the runtime-side
+    # GDN skip logic also falls back to the top-level decoder_sparse_step field
+    # in Qwen3.5 VLM configs.
+    targetLayers: "3,7,11,15,19,23,27,31,35,39,43,47,51,55,59,63"
     # gfx906 repeatedly fails during accelerate.dispatch_model() when the
     # abliterator tries to shard the BF16 model onto the GPU. Keep the job on
     # the radeonvii node, but run the abliteration step on CPU to get a stable
