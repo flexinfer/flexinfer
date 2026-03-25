@@ -146,15 +146,17 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 	resumeEnabled := getenvDefault("FLEXINFER_GPTQ_RESUME", "true")
 	calibrationCacheEnabled := getenvDefault("FLEXINFER_GPTQ_CALIBRATION_CACHE", "true")
 	deviceMap := getenvDefault("FLEXINFER_GPTQ_DEVICE_MAP", "auto")
-	// Force CPU model loading on AMD GPUs to avoid GPTQModel's
-	// shell_module_materialize meta tensor crash. When device_map=auto, the
-	// init_empty_weights() injection creates meta tensors; if the container
-	// memory limit is smaller than the model, infer_auto_device_map needs
-	// disk offload, leaving layers on meta device. shell_module_materialize
-	// then crashes on .to(device). device_map=cpu skips init_empty_weights
-	// entirely, using GPTQModel's direct from_pretrained path. GPU compute
-	// is still used for per-layer quantization; this only affects loading.
-	if (gpuArch == "gfx906" || gpuArch == "gfx1100") && deviceMap == "auto" {
+	// Force CPU model loading on gfx906 to avoid GPTQModel's
+	// shell_module_materialize meta tensor crash. On gfx906 the container
+	// memory limit is often smaller than the model, so infer_auto_device_map
+	// triggers disk offload leaving layers on meta device, and
+	// shell_module_materialize crashes on .to(device). device_map=cpu skips
+	// init_empty_weights entirely. GPU compute is still used for per-layer
+	// quantization; this only affects loading.
+	// NOTE: gfx1100 uses device_map=auto (the default). With 56Gi limit and
+	// init_empty_weights injection, the model fits without meta-device offload.
+	// Forcing cpu on gfx1100 caused OOM — 54GB model + GPTQ overhead > 56Gi.
+	if gpuArch == "gfx906" && deviceMap == "auto" {
 		deviceMap = "cpu"
 	}
 

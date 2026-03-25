@@ -6,10 +6,12 @@
 #   2. After download, controller creates GPTQ quantization job (Quantizing)
 #   3. Quantized files stored in gptq-w4-g128/ subdirectory on PVC (Ready)
 #
-# NOTE: Abliteration REMOVED (2026-03-24). Refusal direction removal with
-# norm=152.96 applied to all 64 layers (including 48 GDN layers) catastrophically
-# corrupted the Qwen3.5 hybrid GatedDeltaNet model. See docs/dev/qwen35-gptq-root-cause.md.
-# Abliteration needs architecture-aware layer targeting before re-enabling on GDN models.
+# Abliteration RE-ENABLED (2026-03-25) with three safeguards:
+#   1. GDN layer skip (skipGDNLayers: true) — only abliterates 16 full-attention layers,
+#      skips 48 GDN linear attention layers whose out_proj participates in recurrence
+#   2. Norm guard — aborts if refusal direction norm > 100 (original run was 152.96)
+#   3. Perplexity validation — aborts before save if model perplexity > 50
+# See docs/dev/qwen35-gptq-root-cause.md for full root cause analysis.
 #
 # Disk requirements:
 #   27B BF16: ~54 GB download + ~15 GB GPTQ output + working headroom → 160 GB PVC
@@ -35,7 +37,12 @@ spec:
     maxMemoryGB: 16
     hfTransfer: false
     backoffLimit: 3
-  # abliteration: DISABLED — corrupts Qwen3.5 GDN layers (see docs/dev/qwen35-gptq-root-cause.md)
+  abliteration:
+    skipGDNLayers: true        # Only abliterate 16 full-attention layers (skip 48 GDN)
+    numSamples: 128
+    useGPU: true
+    maxMemoryGB: 56
+    timeoutSeconds: 14400
   quantization:
     format: GPTQ
     bits: 4

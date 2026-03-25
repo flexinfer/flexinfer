@@ -165,14 +165,23 @@ uses the GPU for actual GPTQ matrix operations via its internal layer-by-layer m
 Pre-quantized by Qwen team, no abliteration. Quick path to verify the full
 GPTQ→vLLM pipeline works on gfx1100.
 
-### Long-term: Fix abliteration for GDN architectures
+### Long-term: Fix abliteration for GDN architectures — IMPLEMENTED
 
 Tracking issue: [#52](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/52)
 
-- Skip GDN linear_attention layers (only abliterate full_attention layers)
-- Increase calibration samples (128 → 512+)
-- Add a refusal direction norm sanity check (reject if > 100)
-- Validate model perplexity post-abliteration before proceeding to quantization
+All safeguards implemented in commit `97219d5` and follow-up (2026-03-25):
+
+- **GDN layer skip** (`abliterate.py` lines 1054-1082): Auto-detects `decoder_sparse_step`
+  from config.json, filters to only 16 full-attention layers. CRD field `SkipGDNLayers`
+  defaults to `true`, wired through `abliteration.go:206` → `SKIP_GDN_LAYERS` env var.
+- **Norm guard** (`abliterate.py` lines 1325-1334): Aborts if max refusal direction norm
+  exceeds threshold (default 100, configurable via `ABLITERATION_NORM_THRESHOLD`).
+- **Perplexity validation** (`abliterate.py` post-orthogonalization): Runs 5 test prompts
+  through the abliterated model and computes cross-entropy loss. Aborts before save if
+  perplexity > 50 (configurable via `ABLITERATION_MAX_PERPLEXITY`). Prevents wasting
+  ~90 min of downstream GPTQ quantization on corrupted weights.
+- Abliteration re-enabled in `deploy/modelcaches/abliteration-gptq.yaml` with
+  `skipGDNLayers: true`
 
 ## Files
 

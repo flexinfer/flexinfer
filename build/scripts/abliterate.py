@@ -15,6 +15,18 @@ Environment variables:
   ABLITERATION_GPU_MAX_MEMORY_GB, ABLITERATION_OFFLOAD_DIR,
   ABLITERATION_MEMORY_TRIM_INTERVAL, ABLITERATION_FORWARD_USE_CACHE,
   ABLITERATION_SAVE_IMPL, ABLITERATION_RESUME, ABLITERATION_MODEL_POLICIES (optional)
+
+Safety features:
+  - GDN layer skip (SKIP_GDN_LAYERS): Auto-detects decoder_sparse_step from config.json
+    and filters to only full-attention layers. Prevents corruption of GatedDeltaNet
+    recurrence mechanics (out_proj participates in residual stream feedback).
+  - Norm guard (ABLITERATION_NORM_THRESHOLD): Aborts if max refusal direction norm
+    exceeds threshold (default 100). High norms indicate the direction captures model
+    capability rather than just refusal behavior.
+  - Perplexity validation (ABLITERATION_VALIDATE_PERPLEXITY): After orthogonalization,
+    runs a quick inference + loss check on calibration prompts. Aborts before save if
+    perplexity exceeds ABLITERATION_MAX_PERPLEXITY (default 50). Prevents wasting
+    ~90 min of downstream GPTQ quantization on corrupted weights.
 """
 import gc
 import importlib.util
@@ -1381,6 +1393,70 @@ if hasattr(model, "lm_head"):
 
 del refusal_dirs, mean_refusal, decoder_layers
 release_memory("saving_prerelease")
+
+# ── Post-abliteration perplexity validation ──────────────────────────
+validate_perplexity = os.environ.get(
+    "ABLITERATION_VALIDATE_PERPLEXITY", "true"
+).lower() in ("true", "1", "yes")
+max_perplexity = float(os.environ.get("ABLITERATION_MAX_PERPLEXITY", "50"))
+
+if validate_perplexity:
+    emit_progress(
+        "progress", phase="validating", percent=85.0, detail="perplexity check"
+    )
+    print(
+        f"Running post-abliteration perplexity validation (threshold={max_perplexity})..."
+    )
+
+    validation_prompts = [
+        "2+2=",
+        "The capital of France is",
+        "Hello, my name is",
+        "The quick brown fox jumps over the",
+        "In the year 2024, the most popular programming language was",
+    ]
+
+    total_loss = 0.0
+    total_tokens = 0
+    model.eval()
+    with torch.inference_mode():
+        for vp in validation_prompts:
+            inputs = tokenizer(vp, return_tensors="pt", truncation=True, max_length=512)
+            inputs = {k: v.to(model.device) for k, v in inputs.items()}
+            outputs = model(**inputs, labels=inputs["input_ids"])
+            n_tokens = inputs["input_ids"].numel()
+            total_loss += outputs.loss.item() * n_tokens
+            total_tokens += n_tokens
+
+    avg_loss = total_loss / max(total_tokens, 1)
+    perplexity = float(torch.exp(torch.tensor(avg_loss)).item())
+    print(
+        f"Post-abliteration perplexity: {perplexity:.2f} (avg cross-entropy loss: {avg_loss:.4f})"
+    )
+    emit_progress(
+        "progress",
+        phase="validating",
+        percent=87.0,
+        detail=f"perplexity={perplexity:.2f}",
+        perplexity=perplexity,
+        avgLoss=avg_loss,
+    )
+    write_checkpoint("perplexity_validated", perplexity=perplexity, avgLoss=avg_loss)
+
+    if perplexity > max_perplexity:
+        msg = (
+            f"ABORTING: Post-abliteration perplexity {perplexity:.2f} exceeds threshold "
+            f"{max_perplexity}. The abliterated model is likely corrupted. "
+            f"Weights will NOT be saved. Check abliteration parameters."
+        )
+        print(msg)
+        emit_progress("error", phase="validating", detail=msg, perplexity=perplexity)
+        raise RuntimeError(msg)
+
+    print("Perplexity validation passed — proceeding to save")
+    release_memory("validation_complete")
+else:
+    print("Perplexity validation disabled (ABLITERATION_VALIDATE_PERPLEXITY=false)")
 
 # ── Save ──────────────────────────────────────────────────────────────
 emit_progress("progress", phase="saving", percent=88.0, detail="preparing save")
