@@ -444,6 +444,37 @@ MODEL_ID="%s"
 DEST_DIR="/models/%s"
 MARKER="$DEST_DIR/.download_complete"
 
+# Reset stale derived artifacts from a previous ablit/quant run before we
+# decide whether the source model can be reused. Rebuilds must start from
+# clean source weights, but we keep Hugging Face's .cache/ metadata so
+# snapshot_download can still resume efficiently.
+if [ -d "$DEST_DIR" ]; then
+    DERIVED_ARTIFACTS=0
+    for path in \
+        "$DEST_DIR/.abliteration-cache" \
+        "$DEST_DIR/.abliteration-checkpoint.json" \
+        "$DEST_DIR/.abliteration-status.json" \
+        "$DEST_DIR/.flexinfer-gptq-cache" \
+        "$DEST_DIR/.flexinfer-gptq-policy.json" \
+        "$DEST_DIR/.flexinfer-logs" \
+        "$DEST_DIR/.quantization-status.json"
+    do
+        if [ -e "$path" ]; then
+            DERIVED_ARTIFACTS=1
+            break
+        fi
+    done
+
+    if find "$DEST_DIR" -maxdepth 1 -type d -name 'gptq-*' | grep -q .; then
+        DERIVED_ARTIFACTS=1
+    fi
+
+    if [ "$DERIVED_ARTIFACTS" -eq 1 ]; then
+        echo "Detected stale abliteration/quantization artifacts in $DEST_DIR — resetting for clean rebuild"
+        find "$DEST_DIR" -mindepth 1 -maxdepth 1 ! -name '.cache' -exec rm -rf {} +
+    fi
+fi
+
 # Skip if marker exists AND weight files are present.
 # A previous quantization retry may have cleaned up source weights,
 # leaving the marker but no actual model files.
