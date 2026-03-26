@@ -158,7 +158,7 @@ func findRepoRBACPolicyPath() (string, error) {
 		}
 		dir = parent
 	}
-	return "", errors.New("repo RBAC policy not found (.loom/rbac-policy.yaml)")
+	return "", fmt.Errorf("repo RBAC policy not found (.loom/rbac-policy.yaml): %w", os.ErrNotExist)
 }
 
 func parseRBACConfigFile(path string) (daemon.RBACConfig, error) {

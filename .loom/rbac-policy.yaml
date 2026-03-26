@@ -1,0 +1,24 @@
+enabled: true
+default_policy: deny
+global_deny:
+  - "ops__delete_*"
+roles:
+  readonly:
+    allow:
+      - "*__get_*"
+      - "*__list_*"
+      - "*__search*"
+      - "*__query*"
+  operator:
+    allow:
+      - "*"
+    deny:
+      - "k8s_*__k8s_apply"
+bindings:
+  - agent_type: codex
+    role: readonly
+  - agent_id: "ops-bot"
+    role: operator
+rate_limits:
+  - agent_type: codex
+    requests_per_minute: 120

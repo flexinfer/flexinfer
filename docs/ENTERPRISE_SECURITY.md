@@ -61,6 +61,18 @@ Bindings resolve in priority order:
 2. `agent_type` match
 3. Wildcard `agent_id: "*"`
 
+### Policy Lint
+
+Run RBAC lint locally before deployment or CI policy checks:
+
+```bash
+loom validate rbac --source repo
+loom validate rbac --config ~/.config/loom/config.yaml
+```
+
+The linter fails on invalid `default_policy`, undefined roles in bindings,
+duplicate precedence traps, and overlapping allow/deny patterns.
+
 ### Access Decision
 
 Tools are qualified as `server__tool` (e.g., `git__git_status`). The enforcer evaluates:

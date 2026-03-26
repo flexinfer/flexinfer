@@ -257,6 +257,14 @@ fmt:
         exit 1
       fi
 
+lint:rbac-policy:
+  <<: *go-template
+  stage: lint
+  variables:
+    GO_WARM_MOD_CACHE: "false"
+  script:
+    - go run ./cmd/loom validate rbac --source repo
+
 guardrails:docs-cli:
   <<: *go-template
   stage: lint
