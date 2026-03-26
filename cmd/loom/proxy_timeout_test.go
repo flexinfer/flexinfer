@@ -204,31 +204,65 @@ func TestProxyDaemonRoundTripSendFailureReturnsTransportError(t *testing.T) {
 }
 
 func TestProxyDaemonRoundTrip_RetryableDaemonTransportFailureBecomesTransportError(t *testing.T) {
-	req, _ := mcp.NewRequest(1, "tools/call", map[string]any{"name": "noop"})
-	_, err := proxyDaemonRoundTrip(context.Background(), &stubTransport{
-		recvMsg: &mcp.Message{
-			JSONRPC: mcp.JSONRPCVersion,
-			ID:      json.RawMessage(`1`),
-			Error: &mcp.Error{
-				Code:    mcp.InternalError,
-				Message: "transport closed",
-				Data: map[string]any{
-					"code":      "TRANSPORT_FAILURE",
-					"stage":     "execute",
-					"retryable": true,
-				},
-			},
+	cases := []struct {
+		name      string
+		code      string
+		stage     string
+		message   string
+		wantLabel string
+	}{
+		{
+			name:      "transport failure",
+			code:      "TRANSPORT_FAILURE",
+			stage:     "execute",
+			message:   "transport closed",
+			wantLabel: "daemon reported retryable transport failure during execute",
 		},
-	}, req, "tools/call")
-	if err == nil {
-		t.Fatal("expected retryable daemon transport failure to surface as error")
+		{
+			name:      "lock timeout",
+			code:      "LOCK_TIMEOUT",
+			stage:     "route",
+			message:   "acquire call lock timed out",
+			wantLabel: "daemon reported retryable lock timeout during route",
+		},
+		{
+			name:      "connection error",
+			code:      "CONNECTION_ERROR",
+			stage:     "route",
+			message:   "max connections reached for gitlab",
+			wantLabel: "daemon reported retryable connection error during route",
+		},
 	}
-	var transportErr *proxyTransportError
-	if !errors.As(err, &transportErr) {
-		t.Fatalf("expected proxyTransportError, got %T: %v", err, err)
-	}
-	if !strings.Contains(err.Error(), "daemon reported retryable transport failure") {
-		t.Fatalf("unexpected error message: %q", err.Error())
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := mcp.NewRequest(1, "tools/call", map[string]any{"name": "noop"})
+			_, err := proxyDaemonRoundTrip(context.Background(), &stubTransport{
+				recvMsg: &mcp.Message{
+					JSONRPC: mcp.JSONRPCVersion,
+					ID:      json.RawMessage(`1`),
+					Error: &mcp.Error{
+						Code:    mcp.InternalError,
+						Message: tc.message,
+						Data: map[string]any{
+							"code":      tc.code,
+							"stage":     tc.stage,
+							"retryable": true,
+						},
+					},
+				},
+			}, req, "tools/call")
+			if err == nil {
+				t.Fatalf("expected retryable daemon %s to surface as error", tc.code)
+			}
+			var transportErr *proxyTransportError
+			if !errors.As(err, &transportErr) {
+				t.Fatalf("expected proxyTransportError, got %T: %v", err, err)
+			}
+			if !strings.Contains(err.Error(), tc.wantLabel) {
+				t.Fatalf("unexpected error message: %q", err.Error())
+			}
+		})
 	}
 }
 

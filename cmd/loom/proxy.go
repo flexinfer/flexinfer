@@ -1338,13 +1338,22 @@ func proxyRetryableDaemonResponse(resp *mcp.Message) error {
 	}
 
 	switch meta.Code {
-	case "TRANSPORT_FAILURE", "TRANSPORT_CORRUPTION":
+	case "TRANSPORT_FAILURE", "TRANSPORT_CORRUPTION", "LOCK_TIMEOUT", "CONNECTION_ERROR":
 		return &proxyTransportError{err: fmt.Errorf("daemon reported retryable %s: %s",
-			strings.ToLower(strings.ReplaceAll(meta.Code, "_", " ")),
+			proxyDaemonRetryableErrorLabel(meta),
 			resp.Error.Message)}
 	default:
 		return nil
 	}
+}
+
+func proxyDaemonRetryableErrorLabel(meta proxyDaemonErrorData) string {
+	code := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(meta.Code), "_", " "))
+	stage := strings.TrimSpace(meta.Stage)
+	if stage == "" {
+		return code
+	}
+	return fmt.Sprintf("%s during %s", code, stage)
 }
 
 func proxyParseDaemonErrorData(data any) (proxyDaemonErrorData, bool) {

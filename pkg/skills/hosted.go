@@ -2,6 +2,7 @@ package skills
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -295,7 +296,12 @@ func sanitizeHostedRelativePath(rel string) (string, error) {
 }
 
 func fetchURL(client *http.Client, target *url.URL) ([]byte, error) {
-	resp, err := client.Get(target.String())
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
