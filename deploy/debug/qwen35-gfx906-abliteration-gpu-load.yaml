@@ -1,8 +1,8 @@
 # Qwen3.5-27B gfx906 GPU load/dispatch debug job.
 #
 # Exercises the same safe sharded load path used by abliteration on gfx906,
-# but stops after model dispatch so we can isolate load/dispatch failures
-# without mutating the source weights on the PVC.
+# then runs a single hook-based forward pass so we can validate the real
+# activation-capture path without mutating the source weights on the PVC.
 #
 # Usage:
 #   kubectl apply -f deploy/debug/qwen35-gfx906-abliteration-gpu-load.yaml
@@ -28,7 +28,7 @@ data:
     import torch
     import transformers.modeling_utils as modeling_utils
     from accelerate import dispatch_model, infer_auto_device_map
-    from transformers import AutoConfig, AutoModelForCausalLM
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
     from transformers.modeling_utils import get_checkpoint_shard_files, load_state_dict
 
     MODEL_DIR = os.environ.get("MODEL_DIR", "/cache/qwen35-27b-opus-distill-gptq")
@@ -65,6 +65,13 @@ data:
         return None
     modeling_utils.caching_allocator_warmup = _skip_caching_allocator_warmup
     print("Patched torch.cuda.mem_get_info and transformers.caching_allocator_warmup", flush=True)
+
+    def model_input_device(model):
+        for param in model.parameters():
+            device = getattr(param, "device", None)
+            if device is not None and getattr(device, "type", None) != "meta":
+                return device
+        return torch.device("cpu")
 
     cfg_start = time.time()
     config = AutoConfig.from_pretrained(MODEL_DIR, trust_remote_code=True)
@@ -151,7 +158,55 @@ data:
     )
     print(f"Dispatch complete in {time.time() - dispatch_start:.1f}s", flush=True)
     print(f"hf_device_map={getattr(model, 'hf_device_map', {})}", flush=True)
-    print("SUCCESS: gfx906 GPU load path completed", flush=True)
+
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    decoder_layers = getattr(getattr(model, "model", model), "layers", None)
+    if decoder_layers is None:
+        raise RuntimeError("could not locate decoder layers for hook smoke test")
+
+    target_layers = [27, 31, 35]
+    captured = {}
+
+    def output_tensor(output):
+        if isinstance(output, (tuple, list)):
+            return output[0]
+        return output
+
+    def make_hook(layer_idx):
+        def hook(_module, _inputs, output):
+            hidden = output_tensor(output)
+            captured[layer_idx] = tuple(hidden.shape)
+        return hook
+
+    handles = [
+        decoder_layers[layer_idx].register_forward_hook(make_hook(layer_idx))
+        for layer_idx in target_layers
+    ]
+    try:
+        input_device = model_input_device(model)
+        print(f"input_device={input_device}", flush=True)
+        inputs = tokenizer(
+            "Reply with the single word READY.",
+            return_tensors="pt",
+            truncation=True,
+            max_length=128,
+        )
+        inputs = {key: value.to(input_device) for key, value in inputs.items()}
+        with torch.inference_mode():
+            outputs = model(**inputs, use_cache=False, return_dict=False)
+        print(f"forward_output_type={type(outputs).__name__}", flush=True)
+        print(f"captured_layers={sorted(captured.keys())}", flush=True)
+        if sorted(captured.keys()) != target_layers:
+            raise RuntimeError(f"missing activation captures: {sorted(set(target_layers) - set(captured))}")
+        print(f"captured_shapes={captured}", flush=True)
+    finally:
+        for handle in handles:
+            handle.remove()
+
+    print("SUCCESS: gfx906 GPU load + activation hook path completed", flush=True)
 ---
 apiVersion: batch/v1
 kind: Job
