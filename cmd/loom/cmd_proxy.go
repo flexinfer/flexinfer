@@ -10,7 +10,9 @@ func newProxyCmd(socketPath string) *cobra.Command {
 
 This allows Claude Code, Codex, Gemini CLI, etc. to use loom as their
 single MCP server entry point. Tools from all servers are aggregated
-and presented with namespaced names (server__toolname).
+and presented with namespaced names (server__toolname). Proxy-level
+policy enforcement also blocks imperative kubectl edit/set env flows in
+favor of Flux-first GitOps updates.
 
 Example config.toml:
   [mcp_servers.loom]
