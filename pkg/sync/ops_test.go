@@ -2093,7 +2093,7 @@ func TestSkillsDirectToHome_AllProfiles_HaveHomePath(t *testing.T) {
 	}
 }
 
-func TestCompareHomeGeneratedFiles_OptionalExtras(t *testing.T) {
+func TestCompareHomeGeneratedFiles_ReportsMissingExtras(t *testing.T) {
 	homeDir := t.TempDir()
 
 	// Create profile with primary and extra generated files.
@@ -2111,15 +2111,25 @@ func TestCompareHomeGeneratedFiles_OptionalExtras(t *testing.T) {
 
 	items := compareHomeGeneratedFiles(homeProfile, profile)
 
-	// Should have exactly 1 item (the primary), and it should be in-sync.
-	if len(items) != 1 {
-		t.Fatalf("expected 1 drift item, got %d: %+v", len(items), items)
+	// Should report the primary as in-sync and the missing extra as drift.
+	if len(items) != 2 {
+		t.Fatalf("expected 2 drift items, got %d: %+v", len(items), items)
 	}
-	if items[0].Status != DriftInSync {
-		t.Errorf("primary file status = %v, want DriftInSync", items[0].Status)
+	foundPrimary := false
+	foundMissingExtra := false
+	for _, item := range items {
+		switch item.File {
+		case "config.toml":
+			foundPrimary = item.Status == DriftInSync
+		case "settings.json":
+			foundMissingExtra = item.Status == DriftMissing
+		}
 	}
-	if items[0].File != "config.toml" {
-		t.Errorf("primary file = %q, want %q", items[0].File, "config.toml")
+	if !foundPrimary {
+		t.Fatal("expected primary config.toml to be in sync")
+	}
+	if !foundMissingExtra {
+		t.Fatal("expected missing settings.json extra artifact to be reported")
 	}
 
 	// Now also create the extra file — should report 2 in-sync items.

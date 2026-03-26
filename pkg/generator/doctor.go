@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/pelletier/go-toml/v2"
+
 	"github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/validator"
 )
@@ -275,8 +277,7 @@ func checkCodexHealth(health *PlatformHealth, configDir string) {
 	}
 
 	content := string(data)
-	// Codex hooks are a single "notify" line containing loom agent heartbeat.
-	if strings.Contains(content, "notify") && strings.Contains(content, "loom") && strings.Contains(content, "heartbeat") {
+	if codexNotifyHookHealthy(data) {
 		health.Hooks = "ok"
 	} else if strings.Contains(content, "[mcp_servers") {
 		health.Hooks = "missing"
@@ -298,6 +299,46 @@ func checkCodexHealth(health *PlatformHealth, configDir string) {
 	} else {
 		health.Schema = "ok"
 	}
+}
+
+func codexNotifyHookHealthy(data []byte) bool {
+	var config map[string]any
+	if err := toml.Unmarshal(data, &config); err != nil {
+		return false
+	}
+
+	notify, ok := config["notify"]
+	if !ok {
+		return false
+	}
+
+	return containsCodexNotifyCommand(notify)
+}
+
+func containsCodexNotifyCommand(value any) bool {
+	switch v := value.(type) {
+	case []any:
+		var parts []string
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) > 0 {
+			return codexNotifyCommandLooksHealthy(strings.Join(parts, " "))
+		}
+	case []string:
+		if len(v) > 0 {
+			return codexNotifyCommandLooksHealthy(strings.Join(v, " "))
+		}
+	case string:
+		return codexNotifyCommandLooksHealthy(v)
+	}
+	return false
+}
+
+func codexNotifyCommandLooksHealthy(command string) bool {
+	return strings.Contains(command, "loom") && strings.Contains(command, "agent")
 }
 
 // checkOpenCodeHealth checks OpenCode config and hooks plugin.

@@ -234,6 +234,32 @@ args = ["proxy"]
 	}
 }
 
+func TestDoctorCheckCodexHealthyWithoutHeartbeatString(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Use a non-heartbeat notify command to ensure the doctor checks the
+	// notify hook structure rather than a single hard-coded subcommand name.
+	content := `approval_policy = "never"
+sandbox_mode = "workspace-write"
+notify = ["sh", "-c", "exec loom agent keepalive --agent-id codex --quiet"]
+
+[mcp_servers.loom]
+command = "loom"
+args = ["proxy"]
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	health := DoctorCheck(nil, "codex", tmpDir)
+	if health.Hooks != "ok" {
+		t.Errorf("hooks = %s, want ok; details: %v", health.Hooks, health.Details)
+	}
+	if health.Status != "healthy" {
+		t.Errorf("status = %s, want healthy", health.Status)
+	}
+}
+
 func TestDoctorCheckCodexMissingNotify(t *testing.T) {
 	tmpDir := t.TempDir()
 
