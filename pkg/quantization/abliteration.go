@@ -197,6 +197,13 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 	if len(spec.WeightMatrices) > 0 {
 		weightMatrices = strings.Join(spec.WeightMatrices, ",")
 	}
+	ablateLMHead := "false"
+	for _, matrix := range spec.WeightMatrices {
+		if strings.EqualFold(strings.TrimSpace(matrix), "lm_head") {
+			ablateLMHead = "true"
+			break
+		}
+	}
 
 	skipVision := "true"
 	if spec.SkipVisionLayers != nil && !*spec.SkipVisionLayers {
@@ -290,6 +297,7 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		{Name: "NUM_SAMPLES", Value: fmt.Sprintf("%d", numSamples)},
 		{Name: "TARGET_LAYERS", Value: targetLayers},
 		{Name: "WEIGHT_MATRICES", Value: weightMatrices},
+		{Name: "ABLITERATION_ABLITERATE_LM_HEAD", Value: ablateLMHead},
 		{Name: "SKIP_VISION", Value: skipVision},
 		{Name: "SKIP_GDN_LAYERS", Value: skipGDN},
 		{Name: "DEVICE_MAP", Value: deviceMap},
