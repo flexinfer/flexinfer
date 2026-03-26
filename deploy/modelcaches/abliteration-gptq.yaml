@@ -6,9 +6,11 @@
 #   2. After download, controller creates GPTQ quantization job (Quantizing)
 #   3. Quantized files stored in gptq-w4-g128/ subdirectory on PVC (Ready)
 #
-# Abliteration RE-ENABLED (2026-03-25) with three safeguards:
-#   1. GDN layer skip (skipGDNLayers: true) — only abliterates 16 full-attention layers,
-#      skips 48 GDN linear attention layers whose out_proj participates in recurrence
+# Abliteration RE-ENABLED (2026-03-25) with layered safeguards:
+#   1. GDN layer skip (skipGDNLayers: true) — never touch the 48 GDN linear-attention
+#      layers whose out_proj participates in recurrence
+#   2. Core-layer targeting — only edit the middle full-attention layers where refusal
+#      steering is strongest; leave early/late full-attention blocks untouched
 #   2. Norm guard — aborts if refusal direction norm > 100 (original run was 152.96)
 #   3. Perplexity validation — aborts before save if model perplexity > 50
 # See docs/dev/qwen35-gptq-root-cause.md for full root cause analysis.
@@ -40,12 +42,13 @@ spec:
     hfTransfer: false
     backoffLimit: 3
   abliteration:
-    skipGDNLayers: true        # Only abliterate 16 full-attention layers (skip 48 GDN)
+    skipGDNLayers: true        # Skip all 48 GDN layers
     numSamples: 128
-    # Force the known full-attention layers explicitly until the runtime-side
-    # GDN skip logic also falls back to the top-level decoder_sparse_step field
-    # in Qwen3.5 VLM configs.
-    targetLayers: "3,7,11,15,19,23,27,31,35,39,43,47,51,55,59,63"
+    # Qwen3.5 full-attention blocks are every 4th layer. Keep the intervention in
+    # the middle of the network where refusal steering tends to be strongest, and
+    # avoid the early/late full-attention blocks that previously produced extreme
+    # refusal norms and coherence collapse.
+    targetLayers: "27,31,35"
     # gfx906 repeatedly fails during accelerate.dispatch_model() when the
     # abliterator tries to shard the BF16 model onto the GPU. Keep the job on
     # the radeonvii node, but run the abliteration step on CPU to get a stable
