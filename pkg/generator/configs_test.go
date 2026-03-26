@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pelletier/go-toml/v2"
+
 	"github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/validator"
 )
@@ -257,6 +259,7 @@ func TestEmitCodexPreamble(t *testing.T) {
 		`web_search = "live"`,
 		`Git safety policy: treat pre-existing dirty worktrees as baseline context.`,
 		"notify =",
+		`"--"]`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("expected Codex preamble to contain %q", want)
@@ -264,8 +267,12 @@ func TestEmitCodexPreamble(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		`.cache/loom/agent-id-codex-${WS_HASH}`,
+		`CACHE_DIR=\"${HOME}/.cache/loom\"`,
+		`${CACHE_DIR}/agent-id-codex-${WS_HASH}`,
+		`${CACHE_DIR}/notify-heartbeat-codex-${WS_HASH}.stamp`,
 		`codex-${WS_HASH}`,
+		`date +%s`,
+		` -lt 15 `,
 		`--agent-id \"`,
 		`--description \"Codex notify session\"`,
 	} {
@@ -296,6 +303,24 @@ func TestEmitCodexPreamble_UsesExplicitLoomBinary(t *testing.T) {
 
 	if !strings.Contains(content, `exec '/opt/loom/bin/loom' agent heartbeat`) {
 		t.Fatalf("expected explicit loom binary in codex notify hook, got: %s", content)
+	}
+}
+
+func TestEmitCodexPreamble_NotifyRemainsTopLevel(t *testing.T) {
+	var sb strings.Builder
+	emitCodexPreamble(&sb, testRegistry(), "/tmp/workspace", "")
+
+	var parsed map[string]any
+	if err := toml.Unmarshal([]byte(sb.String()), &parsed); err != nil {
+		t.Fatalf("expected generated preamble to be valid TOML: %v", err)
+	}
+
+	notify, ok := parsed["notify"]
+	if !ok {
+		t.Fatalf("expected top-level notify key, got: %#v", parsed)
+	}
+	if !containsCodexNotifyCommand(notify) {
+		t.Fatalf("expected top-level notify key to contain loom hook, got: %#v", notify)
 	}
 }
 
@@ -1191,8 +1216,10 @@ func TestCodexPreamble_ContainsWorkspaceHash(t *testing.T) {
 	for _, want := range []string{
 		"WS_HASH=",
 		"cksum",
+		`CACHE_DIR=\"${HOME}/.cache/loom\"`,
 		"AGENT_ID_FILE",
-		"${HOME}/.cache/loom/agent-id-codex-${WS_HASH}",
+		"${CACHE_DIR}/agent-id-codex-${WS_HASH}",
+		"${CACHE_DIR}/notify-heartbeat-codex-${WS_HASH}.stamp",
 		"codex-${WS_HASH}",
 	} {
 		if !strings.Contains(content, want) {
