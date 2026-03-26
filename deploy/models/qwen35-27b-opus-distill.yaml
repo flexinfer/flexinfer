@@ -14,7 +14,7 @@ metadata:
   name: qwen35-27b-opus-distill
   namespace: flexinfer-system
   annotations:
-    flexinfer.ai/reconcile-token: "qwen35-gfx1100-patched-nodiag-textcfg-eager"
+    flexinfer.ai/reconcile-token: "qwen35-gfx1100-patched-nodiag-textcfg-noneager"
 spec:
   backend: vllm
   source: pvc://qwen35-27b-opus-distill-gptq/qwen35-27b-opus-distill-gptq/gptq-w4-g128
@@ -33,7 +33,7 @@ spec:
     maxModelLen: 4096
     gpuMemoryUtilization: "0.95"
     maxNumSeqs: 2
-    enforceEager: true
+    enforceEager: false
     trustRemoteCode: true
     servedModelName: qwen35-27b-opus-distill
     enableToolCalling: true
