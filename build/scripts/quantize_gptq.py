@@ -1147,6 +1147,18 @@ def save_with_progress(model, tokenizer, save_dir):
     try:
         model.save(save_dir)
         tokenizer.save_pretrained(save_dir)
+        # GPTQModel/transformers can drop chat metadata such as chat_template
+        # during save_pretrained(). Preserve the source tokenizer metadata so
+        # the exported artifact behaves like the parent model at serve time.
+        for meta_name in (
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "chat_template.jinja",
+        ):
+            src = os.path.join(model_dir, meta_name)
+            dst = os.path.join(save_dir, meta_name)
+            if os.path.exists(src):
+                shutil.copy2(src, dst)
     finally:
         done.set()
         t.join(timeout=5)

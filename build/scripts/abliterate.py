@@ -670,6 +670,9 @@ checkpoint_dir = os.path.join(model_dir, ".abliteration-cache")
 num_samples = int(os.environ["NUM_SAMPLES"])
 target_layers = os.environ["TARGET_LAYERS"]
 weight_matrices = os.environ["WEIGHT_MATRICES"].split(",")
+ablate_lm_head = os.environ.get(
+    "ABLITERATION_ABLITERATE_LM_HEAD", "false"
+).lower() in ("true", "1", "yes")
 skip_vision = os.environ["SKIP_VISION"] == "true"
 skip_gdn = os.environ.get("SKIP_GDN_LAYERS", "true") == "true"
 device_map = os.environ["DEVICE_MAP"]
@@ -1380,17 +1383,19 @@ print(f"Abliterated {layers_modified} layers")
 write_checkpoint("layers_abliterated", layersModified=layers_modified)
 emit_snapshot("layers_abliterated", layers_modified=layers_modified)
 
-# ── Abliterate lm_head ───────────────────────────────────────────────
+# ── Optional lm_head abliteration ────────────────────────────────────
 mean_refusal = torch.stack(refusal_dirs).mean(0)
 mean_refusal = mean_refusal / mean_refusal.norm()
 
-if hasattr(model, "lm_head"):
+if ablate_lm_head and hasattr(model, "lm_head"):
     lm = model.lm_head
     dev = lm.weight.device
     d = mean_refusal.to(dev)
     proj = lm.weight.data.float() @ d
     lm.weight.data -= torch.outer(proj, d).to(lm.weight.dtype)
     print("Abliterated lm_head")
+else:
+    print("Skipped lm_head abliteration")
 
 del refusal_dirs, mean_refusal, decoder_layers
 release_memory("saving_prerelease")
