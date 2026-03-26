@@ -726,6 +726,7 @@ from gptqmodel.utils.hf import (
 from gptqmodel.utils.importer import auto_select_device
 from gptqmodel.utils.model import auto_dtype
 from transformers import AutoConfig
+from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 from transformers.modeling_utils import get_checkpoint_shard_files, load_state_dict
 
@@ -944,8 +945,24 @@ def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
             # Older GPTQModel builds exposed a shorter hook signature.
             before_model_load(model_definition, load_quantized_model=False)
 
-    print(f"Instantiating HF model from config for GPTQ with dtype={dtype}")
-    model = model_definition.loader.from_config(config, **init_kwargs)
+    loader_cls = model_definition.loader
+    if (
+        getattr(config, "model_type", "") == "qwen3_5_text"
+        and getattr(loader_cls, "__name__", "") == "AutoModelForImageTextToText"
+    ):
+        # GPTQModel currently maps qwen3_5_text to the multimodal loader even
+        # after we extract text_config. Force the text-only CausalLM path.
+        print(
+            "Overriding GPTQ loader for qwen3_5_text: "
+            "AutoModelForImageTextToText -> AutoModelForCausalLM"
+        )
+        loader_cls = AutoModelForCausalLM
+
+    print(
+        f"Instantiating HF model from config for GPTQ with dtype={dtype} "
+        f"using loader={getattr(loader_cls, '__name__', loader_cls)}"
+    )
+    model = loader_cls.from_config(config, **init_kwargs)
     index_filename = resolve_checkpoint_index(model_dir)
     shard_files, shard_metadata = get_checkpoint_shard_files(
         model_dir,
