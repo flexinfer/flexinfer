@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: flexinfer-system
+resources:
+  # Benchmark results ConfigMaps for ModelDeployments
+  # These are required to break the benchmark deadlock in the controller
+  # The controller waits for benchmark results before creating Deployments
+  - sdxl-turbo-fast.yaml
+  - qwen3-14b-quality.yaml
+  - qwen3-14b-abliterated.yaml
+  - qwen3-14b-mlc-debug.yaml
+  - qwen3-8b-fast.yaml
+  - bge-large-embeddings.yaml

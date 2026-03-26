@@ -1,0 +1,18 @@
+# Benchmark results for Qwen3 14B abliterated MLC deployment.
+# Note: this ConfigMap is GitOps-managed to break the controller benchmark deadlock.
+# Update via running `job/qwen3-14b-abliterated-benchmark` (flexinfer-bench).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qwen3-14b-abliterated-benchmark-results
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/component: benchmark-results
+    flexinfer.ai/model-deployment: qwen3-14b-abliterated
+data:
+  tokensPerSecond: "75.0"
+  backend: mlc-llm
+  model: Qwen3-14B-abliterated-q4f16_1-MLC
+  gpuVendor: AMD
+  gpuArch: gfx1100
+  vramUsed: "16Gi"

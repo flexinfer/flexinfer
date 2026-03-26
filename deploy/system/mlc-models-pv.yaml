@@ -1,0 +1,43 @@
+# NFS storage for MLC-LLM compiled models (FlexInfer namespace copy).
+# The primary PV/PVC lives in namespace `ai`; this provides an identical RWX mount
+# in `flexinfer-system` for FlexInfer Models/ModelCaches.
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mlc-models-nfs-flexinfer-system
+  labels:
+    type: nfs-cache
+    cache: mlc-models
+spec:
+  capacity:
+    storage: 200Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    server: 192.168.50.211
+    path: /srv/nas/pilot3/nas-media-bulk/mlc-models
+  mountOptions:
+    - nfsvers=4.1
+    - hard
+    - intr
+    - rsize=1048576
+    - wsize=1048576
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlc-models-nfs
+  namespace: flexinfer-system
+  labels:
+    type: nfs-cache
+    cache: mlc-models
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 200Gi
+  volumeName: mlc-models-nfs-flexinfer-system
+  storageClassName: ""

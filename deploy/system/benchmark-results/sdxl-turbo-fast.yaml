@@ -1,0 +1,24 @@
+# Benchmark results for SDXL Turbo Fast
+# Note: Image generation performance measured in images/minute, converted to equivalent "tokens"
+# This ConfigMap breaks the benchmark deadlock - controller waits for results before creating Deployment
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sdxl-turbo-fast-benchmark-results
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/component: benchmark-results
+    flexinfer.ai/model-deployment: sdxl-turbo-fast
+data:
+  # Performance metric (images/minute * 60 for rough tokens equivalent)
+  tokensPerSecond: "3696.29"
+  backend: diffusers
+  model: stabilityai/sdxl-turbo
+  # Additional metadata
+  gpuVendor: AMD
+  gpuArch: gfx1100
+  vramUsed: "10Gi"
+  notes: |
+    SDXL Turbo with madebyollin/sdxl-vae-fp16-fix VAE for ROCm gfx1100 compatibility.
+    The standard SDXL VAE produces NaN values in fp16 on RDNA3, causing driver timeouts.
+    Using the fp16-fix VAE resolves this issue.

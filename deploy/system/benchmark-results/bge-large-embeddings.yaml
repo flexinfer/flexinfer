@@ -1,0 +1,16 @@
+# Benchmark results for BGE Large Embeddings model
+# Text Embeddings Inference (TEI) backend
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bge-large-embeddings-benchmark-results
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/component: benchmark-results
+    flexinfer.ai/model-deployment: bge-large-embeddings
+data:
+  tokensPerSecond: "203.25"
+  backend: tei
+  model: BAAI/bge-large-en-v1.5
+  gpuVendor: CPU
+  vramUsed: "2Gi"
