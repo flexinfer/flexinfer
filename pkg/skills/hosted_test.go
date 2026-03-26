@@ -119,3 +119,18 @@ func TestImportHostedSkills_WritesBundleToHome(t *testing.T) {
 		t.Fatalf("expected scripts/run.sh to be executable, mode=%v", info.Mode())
 	}
 }
+
+func TestImportHostedSkills_RejectsPathTraversal(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc(hostedAgentSkillsIndexPath, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"skills":[{"name":"deploy","description":"Deploy things","files":["../escape"]}]}`))
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	_, err := ImportHostedSkills(srv.URL, t.TempDir(), nil)
+	if err == nil || !strings.Contains(err.Error(), "path traversal") {
+		t.Fatalf("expected path traversal error, got %v", err)
+	}
+}

@@ -97,6 +97,9 @@ func ImportHostedSkills(source, destRoot string, selected []string) ([]HostedImp
 		if installName == "" {
 			continue
 		}
+		if err := validateHostedInstallName(installName); err != nil {
+			return nil, fmt.Errorf("invalid hosted skill name %q: %w", installName, err)
+		}
 		if len(selectedSet) > 0 {
 			if _, ok := selectedSet[installName]; !ok {
 				continue
@@ -113,10 +116,11 @@ func ImportHostedSkills(source, destRoot string, selected []string) ([]HostedImp
 		written := make([]string, 0, len(files))
 
 		for _, rel := range files {
-			rel = strings.TrimSpace(rel)
-			if rel == "" {
-				continue
+			rel, err = sanitizeHostedRelativePath(rel)
+			if err != nil {
+				return nil, fmt.Errorf("sanitize %s/%s: %w", installName, rel, err)
 			}
+
 			body, err := fetchHostedFile(client, rootURL, rel)
 			if err != nil {
 				return nil, fmt.Errorf("fetch %s/%s: %w", installName, rel, err)
@@ -222,6 +226,20 @@ func hostedSkillInstallName(skill HostedSkill) string {
 	return ""
 }
 
+func validateHostedInstallName(name string) error {
+	name = strings.TrimSpace(name)
+	switch {
+	case name == "":
+		return fmt.Errorf("name is required")
+	case strings.Contains(name, "/"), strings.Contains(name, `\`):
+		return fmt.Errorf("path separators are not allowed")
+	case name == ".", name == "..":
+		return fmt.Errorf("relative directory names are not allowed")
+	default:
+		return nil
+	}
+}
+
 func hostedSkillRootURL(indexURL *url.URL) *url.URL {
 	root := cloneURL(indexURL)
 	root.Path = strings.TrimSuffix(root.Path, "index.json")
@@ -252,6 +270,28 @@ func fetchHostedFile(client *http.Client, root *url.URL, rel string) ([]byte, er
 	fileURL := cloneURL(root)
 	fileURL.Path = joinURLPath(root.Path, filepath.ToSlash(rel))
 	return fetchURL(client, fileURL)
+}
+
+func sanitizeHostedRelativePath(rel string) (string, error) {
+	rel = strings.TrimSpace(rel)
+	if rel == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if strings.Contains(rel, `\`) {
+		return "", fmt.Errorf("backslashes are not allowed")
+	}
+
+	clean := path.Clean(rel)
+	switch {
+	case clean == ".", clean == "":
+		return "", fmt.Errorf("path is required")
+	case strings.HasPrefix(clean, "/"):
+		return "", fmt.Errorf("absolute paths are not allowed")
+	case clean == "..", strings.HasPrefix(clean, "../"), strings.Contains(clean, "/../"):
+		return "", fmt.Errorf("path traversal is not allowed")
+	default:
+		return clean, nil
+	}
 }
 
 func fetchURL(client *http.Client, target *url.URL) ([]byte, error) {

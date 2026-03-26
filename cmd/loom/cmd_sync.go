@@ -524,28 +524,31 @@ Example:
 				return err
 			}
 
-			p, err := mgr.GetProfile(profile)
-			if err != nil {
-				return err
-			}
-			if p.SkillsHomePath == "" {
-				return fmt.Errorf("profile %s does not define a skills home path", profile)
-			}
-
-			destRoot := resolveSkillsHomePath(p.SkillsHomePath, mgr.HomeDir)
-			results, err := skills.ImportHostedSkills(source, destRoot, selectedSkills)
+			destinations, err := resolveHostedImportDestinations(mgr, profile)
 			if err != nil {
 				return err
 			}
 
-			if len(results) == 0 {
+			totalImported := 0
+			for _, dest := range destinations {
+				results, err := skills.ImportHostedSkills(source, dest.Root, selectedSkills)
+				if err != nil {
+					return fmt.Errorf("import hosted skills for %s: %w", dest.Profile, err)
+				}
+
+				if len(results) == 0 {
+					fmt.Printf("No hosted skills imported for %s from %s\n", dest.Profile, source)
+					continue
+				}
+
+				totalImported += len(results)
+				fmt.Printf("Imported %d skill bundle(s) into %s for %s\n", len(results), dest.Root, dest.Profile)
+				for _, result := range results {
+					fmt.Printf("  - %s (%d file(s))\n", result.Name, len(result.Files))
+				}
+			}
+			if totalImported == 0 {
 				fmt.Printf("No hosted skills imported from %s\n", source)
-				return nil
-			}
-
-			fmt.Printf("Imported %d skill bundle(s) into %s\n", len(results), destRoot)
-			for _, result := range results {
-				fmt.Printf("  - %s (%d file(s))\n", result.Name, len(result.Files))
 			}
 			return nil
 		},
@@ -617,4 +620,67 @@ func resolveSkillsHomePath(raw, homeDir string) string {
 		return filepath.Clean(raw)
 	}
 	return filepath.Join(homeDir, raw)
+}
+
+type hostedImportDestination struct {
+	Profile string
+	Root    string
+}
+
+func resolveHostedImportDestinations(mgr *sync.Manager, profile string) ([]hostedImportDestination, error) {
+	if profile == "all" {
+		names := mgr.List()
+		sort.Strings(names)
+
+		var destinations []hostedImportDestination
+		for _, name := range names {
+			p := mgr.Get(name)
+			if p == nil {
+				continue
+			}
+			root := resolveHostedImportRoot(p, mgr.HomeDir)
+			if root == "" {
+				continue
+			}
+			destinations = append(destinations, hostedImportDestination{
+				Profile: name,
+				Root:    root,
+			})
+		}
+		if len(destinations) == 0 {
+			return nil, fmt.Errorf("no profiles support hosted skill imports")
+		}
+		return destinations, nil
+	}
+
+	p, err := mgr.GetProfile(profile)
+	if err != nil {
+		return nil, err
+	}
+
+	root := resolveHostedImportRoot(p, mgr.HomeDir)
+	if root == "" {
+		return nil, fmt.Errorf("profile %s does not define a hosted skills home path", profile)
+	}
+
+	return []hostedImportDestination{{
+		Profile: profile,
+		Root:    root,
+	}}, nil
+}
+
+func resolveHostedImportRoot(p *sync.Profile, homeDir string) string {
+	if p == nil {
+		return ""
+	}
+
+	switch p.Name {
+	case "claude":
+		return filepath.Join(homeDir, ".claude", "skills")
+	}
+
+	if p.SkillsHomePath == "" {
+		return ""
+	}
+	return resolveSkillsHomePath(p.SkillsHomePath, homeDir)
 }
