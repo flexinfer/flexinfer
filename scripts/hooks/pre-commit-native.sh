@@ -32,6 +32,12 @@ if [[ -z "${STAGED_GO_FILES}" ]]; then
   exit 0
 fi
 
+mapfile -t STAGED_GO_PACKAGES < <(
+  printf '%s\n' "${STAGED_GO_FILES}" \
+    | xargs -n1 dirname \
+    | awk '!seen[$0]++ { print ($0 == "." ? "./" : "./" $0) }'
+)
+
 check_tool() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo -e "${YELLOW}Warning: $1 not found, skipping $2${NC}"
@@ -71,7 +77,7 @@ if check_tool goimports "import ordering"; then
 fi
 
 echo -n "Running go vet... "
-if ! "${WITH_CLEAN_GIT_ENV}" go vet ./... 2>&1; then
+if ! "${WITH_CLEAN_GIT_ENV}" go vet "${STAGED_GO_PACKAGES[@]}" 2>&1; then
   echo -e "${RED}FAILED${NC}"
   FAILED=1
 else
@@ -79,7 +85,7 @@ else
 fi
 
 echo -n "Checking build... "
-if ! "${WITH_CLEAN_GIT_ENV}" go build ./... 2>&1; then
+if ! "${WITH_CLEAN_GIT_ENV}" go build "${STAGED_GO_PACKAGES[@]}" 2>&1; then
   echo -e "${RED}FAILED${NC}"
   FAILED=1
 else
@@ -88,7 +94,7 @@ fi
 
 if check_tool golangci-lint "linting"; then
   echo -n "Running golangci-lint... "
-  if ! "${WITH_CLEAN_GIT_ENV}" golangci-lint run --timeout 1m ./... 2>&1; then
+  if ! "${WITH_CLEAN_GIT_ENV}" golangci-lint run --timeout 1m "${STAGED_GO_PACKAGES[@]}" 2>&1; then
     echo -e "${RED}FAILED${NC}"
     FAILED=1
   else

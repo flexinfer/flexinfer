@@ -22,9 +22,41 @@ resolve_hook_dir() {
   printf '%s\n' "${hook_dir}"
 }
 
+has_pre_commit_config() {
+  [[ -f "${REPO_ROOT}/.pre-commit-config.yaml" ]]
+}
+
+should_prefer_native_hook() {
+  local pre_commit_cache="${PRE_COMMIT_HOME:-${XDG_CACHE_HOME:-${HOME}/.cache}/pre-commit}"
+  local go_build_cache="${GOCACHE:-${HOME}/Library/Caches/go-build}"
+  local go_mod_cache_parent="${GOMODCACHE:-${HOME}/go/pkg/mod/cache}"
+
+  if [[ "${LOOM_HOOK_FORCE_NATIVE:-}" == "1" ]]; then
+    return 0
+  fi
+
+  if { [[ -d "${pre_commit_cache}" ]] && [[ ! -w "${pre_commit_cache}" ]]; } || { [[ ! -d "${pre_commit_cache}" ]] && [[ ! -w "$(dirname "${pre_commit_cache}")" ]]; }; then
+    return 0
+  fi
+  if { [[ -d "${go_build_cache}" ]] && [[ ! -w "${go_build_cache}" ]]; } || { [[ ! -d "${go_build_cache}" ]] && [[ ! -w "$(dirname "${go_build_cache}")" ]]; }; then
+    return 0
+  fi
+  if { [[ -d "${go_mod_cache_parent}" ]] && [[ ! -w "${go_mod_cache_parent}" ]]; } || { [[ ! -d "${go_mod_cache_parent}" ]] && [[ ! -w "$(dirname "${go_mod_cache_parent}")" ]]; }; then
+    return 0
+  fi
+
+  return 1
+}
 run_pre_commit() {
   local hook_dir runner=()
   hook_dir="$(resolve_hook_dir)"
+
+  if ! has_pre_commit_config; then
+    return 127
+  fi
+  if should_prefer_native_hook; then
+    return 127
+  fi
 
   if command -v pre-commit >/dev/null 2>&1; then
     runner=(pre-commit)

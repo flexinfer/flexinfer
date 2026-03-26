@@ -38,6 +38,29 @@ cleanup_go_caches_if_low_space() {
   fi
 }
 
+staged_go_packages() {
+  local files
+  files="$("${WITH_CLEAN_GIT_ENV}" git diff --cached --name-only --diff-filter=ACM -- '*.go' || true)"
+  if [[ -z "$files" ]]; then
+    return 0
+  fi
+
+  printf '%s\n' "$files" \
+    | xargs -n1 dirname \
+    | awk '!seen[$0]++ { print ($0 == "." ? "./" : "./" $0) }'
+}
+
+range_go_packages() {
+  local range="${1:-}"
+  if [[ -z "$range" ]]; then
+    return 0
+  fi
+
+  "${WITH_CLEAN_GIT_ENV}" git diff --name-only "$range" -- '*.go' \
+    | xargs -n1 dirname 2>/dev/null \
+    | awk '!seen[$0]++ { print ($0 == "." ? "./" : "./" $0) }'
+}
+
 has_go_changes_in_range() {
   local range="${1:-}"
   if [[ -z "$range" ]]; then
@@ -96,9 +119,27 @@ fi
 
 cleanup_go_caches_if_low_space
 
+packages=()
+if [[ "$is_pre_push" == "true" ]]; then
+  if [[ -n "${range:-}" ]]; then
+    while IFS= read -r pkg; do
+      [[ -n "$pkg" ]] && packages+=("$pkg")
+    done < <(range_go_packages "$range")
+  fi
+else
+  while IFS= read -r pkg; do
+    [[ -n "$pkg" ]] && packages+=("$pkg")
+  done < <(staged_go_packages)
+fi
+
+if [[ ${#packages[@]} -eq 0 ]]; then
+  echo "go-build: no changed Go packages detected; skipping."
+  exit 0
+fi
+
 # Respect caller's CGO_ENABLED; default to Makefile convention (0) for speed.
 # When CGO_ENABLED=1 is desired (e.g., fi-accel acceleration), set it
 # explicitly: CGO_ENABLED=1 git commit ...
 export CGO_ENABLED="${CGO_ENABLED:-0}"
-echo "go-build: running go build ./... (CGO_ENABLED=${CGO_ENABLED})"
-"${WITH_CLEAN_GIT_ENV}" go build ./...
+echo "go-build: running go build ${packages[*]} (CGO_ENABLED=${CGO_ENABLED})"
+"${WITH_CLEAN_GIT_ENV}" go build "${packages[@]}"

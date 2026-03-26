@@ -9,6 +9,22 @@ unset GIT_COMMON_DIR
 unset GIT_IMPLICIT_WORK_TREE
 unset GIT_PREFIX
 
+# Some sandboxed or restricted environments can read the repo but cannot write
+# the default macOS Go build cache under ~/Library/Caches/go-build. When callers
+# have not pinned their own cache locations, redirect Go scratch space into a
+# writable temp root so hooks and local CI helpers can run normally.
+tmp_root="${TMPDIR:-/tmp}"
+if [[ -z "${GOCACHE:-}" ]]; then
+  export GOCACHE="${tmp_root%/}/loom-gocache"
+fi
+if [[ -z "${GOTMPDIR:-}" ]]; then
+  export GOTMPDIR="${tmp_root%/}/loom-gotmp"
+fi
+if [[ -z "${PRE_COMMIT_HOME:-}" ]]; then
+  export PRE_COMMIT_HOME="${tmp_root%/}/loom-pre-commit"
+fi
+mkdir -p "${GOCACHE}" "${GOTMPDIR}" "${PRE_COMMIT_HOME}"
+
 # In git worktrees the go.work file references sibling libs via relative paths
 # (../../libs/*) that don't resolve from the worktree location. Disable the
 # workspace overlay so go commands use go.mod alone. Also disable CGo since
