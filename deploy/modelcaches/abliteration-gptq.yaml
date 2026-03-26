@@ -43,7 +43,10 @@ spec:
     backoffLimit: 3
   abliteration:
     skipGDNLayers: true        # Skip all 48 GDN layers
-    numSamples: 128
+    # 27B Qwen3.5 produced an extreme refusal norm at 128 samples. Bump the
+    # contrastive set so the retry recomputes fresh activations/checkpoints and
+    # better separates refusal behavior from general capability.
+    numSamples: 256
     # Qwen3.5 full-attention blocks are every 4th layer. Keep the intervention in
     # the middle of the network where refusal steering tends to be strongest, and
     # avoid the early/late full-attention blocks that previously produced extreme
