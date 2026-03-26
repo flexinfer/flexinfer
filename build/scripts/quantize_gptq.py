@@ -932,7 +932,17 @@ def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
     init_kwargs = {"torch_dtype": dtype}
     before_model_load = getattr(model_definition, "before_model_load", None)
     if callable(before_model_load):
-        before_model_load(model_definition, load_quantized_model=False)
+        try:
+            before_model_load(
+                model_definition,
+                model_local_path=model_dir,
+                load_quantized_model=False,
+            )
+        except TypeError as exc:
+            if "model_local_path" not in str(exc):
+                raise
+            # Older GPTQModel builds exposed a shorter hook signature.
+            before_model_load(model_definition, load_quantized_model=False)
 
     print(f"Instantiating HF model from config for GPTQ with dtype={dtype}")
     model = model_definition.loader.from_config(config, **init_kwargs)
