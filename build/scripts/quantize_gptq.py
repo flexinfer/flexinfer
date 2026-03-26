@@ -717,7 +717,6 @@ import torch
 from datasets import load_dataset
 from gptqmodel import GPTQModel, QuantizeConfig
 from gptqmodel.models.auto import check_and_get_model_definition
-from gptqmodel.models.loader import resolve_loader_config
 from gptqmodel.quantization.gptq import GPTQ
 from gptqmodel.utils.hf import (
     normalize_hf_config_compat,
@@ -912,9 +911,9 @@ def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
     defuser.replace_fused_blocks(config.model_type)
     normalize_hf_config_compat(config, trust_remote_code=trust_remote_code)
     prepare_remote_model_init_compat(model_dir, config)
-    config = resolve_loader_config(
-        model_definition, config, trust_remote_code=trust_remote_code
-    )
+    # GPTQModel removed resolve_loader_config() from loader.py; the supported
+    # load path now relies on AutoConfig plus the existing HF compatibility
+    # hooks above before materializing the model from config.
     apply_runtime_overrides(policy, config)
 
     if quantize_config.device is None:

@@ -27,7 +27,7 @@ RUN python3 -m pip install --force-reinstall triton==3.2.0
 # CRITICAL: Use --no-deps to prevent gptqmodel from pulling CUDA torch>=2.8.0
 # from PyPI, which would overwrite the ROCm PyTorch 2.6.0 from the base image.
 # On ROCm, ext_modules=[] (no native extensions), so the build is pure Python.
-RUN python3 -m pip install -v "gptqmodel @ git+https://github.com/ModelCloud/GPTQModel.git@main" \
+RUN python3 -m pip install -v "gptqmodel @ git+https://github.com/ModelCloud/GPTQModel.git@205ca72d2567789a337c1de4fa3f69da249d93c0" \
     --no-build-isolation --no-deps
 
 # Install gptqmodel's runtime dependencies separately, keeping ROCm torch intact.
