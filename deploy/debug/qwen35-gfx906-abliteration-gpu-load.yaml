@@ -1,0 +1,217 @@
+# Qwen3.5-27B gfx906 GPU load/dispatch debug job.
+#
+# Exercises the same safe sharded load path used by abliteration on gfx906,
+# but stops after model dispatch so we can isolate load/dispatch failures
+# without mutating the source weights on the PVC.
+#
+# Usage:
+#   kubectl apply -f deploy/debug/qwen35-gfx906-abliteration-gpu-load.yaml
+#   kubectl logs -f job/qwen35-gfx906-abliteration-gpu-load -n flexinfer-system
+#   kubectl delete -f deploy/debug/qwen35-gfx906-abliteration-gpu-load.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qwen35-gfx906-abliteration-gpu-load
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+data:
+  debug.py: |
+    #!/usr/bin/env python3
+    import gc
+    import json
+    import os
+    import time
+
+    import torch
+    import transformers.modeling_utils as modeling_utils
+    from accelerate import dispatch_model, infer_auto_device_map
+    from transformers import AutoConfig, AutoModelForCausalLM
+    from transformers.modeling_utils import get_checkpoint_shard_files, load_state_dict
+
+    MODEL_DIR = os.environ.get("MODEL_DIR", "/cache/qwen35-27b-opus-distill-gptq")
+    GPU_MAX_MEMORY_GB = int(os.environ.get("ABLITERATION_GPU_MAX_MEMORY_GB", "14"))
+    CPU_MAX_MEMORY_GB = int(os.environ.get("ABLITERATION_CPU_MAX_MEMORY_GB", "96"))
+    OFFLOAD_DIR = os.environ.get("ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload")
+
+    print("=" * 72)
+    print("Qwen3.5 gfx906 Abliteration GPU Load Debug")
+    print("=" * 72, flush=True)
+    print(f"MODEL_DIR={MODEL_DIR}", flush=True)
+    print(f"GPU_MAX_MEMORY_GB={GPU_MAX_MEMORY_GB}", flush=True)
+    print(f"CPU_MAX_MEMORY_GB={CPU_MAX_MEMORY_GB}", flush=True)
+    print(f"torch={torch.__version__}", flush=True)
+    print(f"cuda_available={torch.cuda.is_available()}", flush=True)
+    if torch.cuda.is_available():
+        props = torch.cuda.get_device_properties(0)
+        print(f"gpu_name={props.name}", flush=True)
+        print(f"gpu_total_vram_gib={props.total_memory / 1024**3:.1f}", flush=True)
+
+    os.makedirs(OFFLOAD_DIR, exist_ok=True)
+
+    _orig_mem_get_info = torch.cuda.mem_get_info
+    def _patched_mem_get_info(device=None):
+        try:
+            return _orig_mem_get_info(device)
+        except RuntimeError:
+            total = GPU_MAX_MEMORY_GB * 1024**3
+            used = int(torch.cuda.memory_allocated(device) if torch.cuda.is_available() else 0)
+            return (max(total - used, 0), total)
+    torch.cuda.mem_get_info = _patched_mem_get_info
+
+    def _skip_caching_allocator_warmup(*args, **kwargs):
+        return None
+    modeling_utils.caching_allocator_warmup = _skip_caching_allocator_warmup
+    print("Patched torch.cuda.mem_get_info and transformers.caching_allocator_warmup", flush=True)
+
+    cfg_start = time.time()
+    config = AutoConfig.from_pretrained(MODEL_DIR, trust_remote_code=True)
+    print(f"Loaded config in {time.time() - cfg_start:.1f}s", flush=True)
+    print(f"raw model_type={getattr(config, 'model_type', '')}", flush=True)
+
+    if getattr(config, "text_config", None) is not None and not hasattr(config, "vocab_size"):
+        cfg_path = os.path.join(MODEL_DIR, "config.json")
+        with open(cfg_path, "r", encoding="utf-8") as handle:
+            raw_cfg = json.load(handle)
+        text_cfg = dict(raw_cfg.get("text_config") or {})
+        if text_cfg:
+            for key in ("bos_token_id", "eos_token_id", "pad_token_id"):
+                if key in raw_cfg and key not in text_cfg:
+                    text_cfg[key] = raw_cfg[key]
+            model_type = text_cfg.get("model_type") or raw_cfg.get("model_type", "")
+            if model_type == "qwen3_5":
+                model_type = "qwen3_5_text"
+                text_cfg["architectures"] = ["Qwen3_5ForCausalLM"]
+            config = AutoConfig.for_model(
+                model_type,
+                **{key: value for key, value in text_cfg.items() if key != "model_type"},
+            )
+            print(f"Extracted text config model_type={model_type}", flush=True)
+            print(f"text full_attention_interval={text_cfg.get('full_attention_interval')}", flush=True)
+            layer_types = text_cfg.get("layer_types") or []
+            if layer_types:
+                print(f"text layer_types sample={layer_types[:8]}", flush=True)
+
+    build_start = time.time()
+    model = AutoModelForCausalLM.from_config(
+        config,
+        trust_remote_code=True,
+        torch_dtype=torch.bfloat16,
+    )
+    print(f"Constructed model in {time.time() - build_start:.1f}s", flush=True)
+    if hasattr(model, "tie_weights"):
+        model.tie_weights()
+        print("Tied weights", flush=True)
+
+    index_filename = ""
+    for candidate in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
+        candidate_path = os.path.join(MODEL_DIR, candidate)
+        if os.path.exists(candidate_path):
+            index_filename = candidate_path
+            break
+    if not index_filename:
+        raise RuntimeError("No shard index found in model directory")
+
+    shard_files, _ = get_checkpoint_shard_files(MODEL_DIR, index_filename, local_files_only=True)
+    print(f"Loading {len(shard_files)} checkpoint shards on CPU", flush=True)
+    load_start = time.time()
+    for index, shard_file in enumerate(shard_files, start=1):
+        if index == 1 or index % 25 == 0 or index == len(shard_files):
+            print(f"Loading shard {index}/{len(shard_files)}", flush=True)
+        state_dict = load_state_dict(shard_file, map_location="cpu")
+        model.load_state_dict(state_dict, strict=False)
+        del state_dict
+        gc.collect()
+    print(f"Loaded all shards in {time.time() - load_start:.1f}s", flush=True)
+
+    max_memory = {
+        "cpu": f"{CPU_MAX_MEMORY_GB}GiB",
+        0: f"{GPU_MAX_MEMORY_GB}GiB",
+    }
+    print(f"Using max_memory={max_memory}", flush=True)
+    infer_start = time.time()
+    inferred_map = infer_auto_device_map(model, max_memory=max_memory)
+    print(f"Inferred device map in {time.time() - infer_start:.1f}s", flush=True)
+    gpu_targets = [f"{key}->{value}" for key, value in inferred_map.items() if value != "cpu"]
+    cpu_targets = [f"{key}->{value}" for key, value in inferred_map.items() if value == "cpu"]
+    print(f"gpu_targets={len(gpu_targets)} cpu_targets={len(cpu_targets)}", flush=True)
+    if gpu_targets:
+        print(f"gpu_targets_sample={gpu_targets[:12]}", flush=True)
+    if cpu_targets:
+        print(f"cpu_targets_sample={cpu_targets[:12]}", flush=True)
+
+    dispatch_start = time.time()
+    model = dispatch_model(
+        model,
+        device_map=inferred_map,
+        offload_dir=OFFLOAD_DIR,
+        offload_buffers=True,
+    )
+    print(f"Dispatch complete in {time.time() - dispatch_start:.1f}s", flush=True)
+    print(f"hf_device_map={getattr(model, 'hf_device_map', {})}", flush=True)
+    print("SUCCESS: gfx906 GPU load path completed", flush=True)
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen35-gfx906-abliteration-gpu-load
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: flexinfer
+        flexinfer.ai/purpose: debug
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-radeonvii
+      containers:
+        - name: gpu-load-debug
+          image: registry.harbor.lan/flexinfer/runtime:unified-gfx906-v3
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/scripts/debug.py"]
+          env:
+            - name: MODEL_DIR
+              value: /cache/qwen35-27b-opus-distill-gptq
+            - name: ABLITERATION_GPU_MAX_MEMORY_GB
+              value: "14"
+            - name: ABLITERATION_CPU_MAX_MEMORY_GB
+              value: "96"
+            - name: ABLITERATION_OFFLOAD_DIR
+              value: /workspace/abliteration-offload
+          resources:
+            requests:
+              cpu: "8"
+              memory: 64Gi
+              amd.com/gpu: "1"
+            limits:
+              cpu: "16"
+              memory: 96Gi
+              amd.com/gpu: "1"
+          volumeMounts:
+            - name: cache
+              mountPath: /cache
+              readOnly: true
+            - name: workspace
+              mountPath: /workspace
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: qwen35-27b-opus-distill-gptq
+        - name: workspace
+          emptyDir: {}
+        - name: script
+          configMap:
+            name: qwen35-gfx906-abliteration-gpu-load
+            defaultMode: 0755

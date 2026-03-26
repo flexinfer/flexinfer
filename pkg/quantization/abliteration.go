@@ -70,9 +70,15 @@ func abliterationCPUMaxMemoryGB(limitGB int32) int32 {
 	return cpuGB
 }
 
-func abliterationGPUMaxMemoryGB(useGPU bool) int32 {
+func abliterationGPUMaxMemoryGB(useGPU bool, gpuArch string) int32 {
 	if !useGPU {
 		return 0
+	}
+	if gpuArch == "gfx906" {
+		// Radeon VII only has 16 GiB HBM2. Keep headroom so the gfx906
+		// mem_get_info shim does not over-advertise VRAM to accelerate and
+		// over-place layers onto the GPU during dispatch.
+		return 14
 	}
 	return 20
 }
@@ -265,7 +271,7 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 	}
 	gpuMaxMemoryGB := os.Getenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB")
 	if gpuMaxMemoryGB == "" {
-		gpuMaxMemoryGB = fmt.Sprintf("%d", abliterationGPUMaxMemoryGB(spec.UseGPU))
+		gpuMaxMemoryGB = fmt.Sprintf("%d", abliterationGPUMaxMemoryGB(spec.UseGPU, gpuArch))
 	}
 	offloadDir := os.Getenv("FLEXINFER_ABLITERATION_OFFLOAD_DIR")
 	if offloadDir == "" {

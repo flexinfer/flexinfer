@@ -17,7 +17,8 @@ Environment variables:
   ABLITERATION_SAVE_IMPL, ABLITERATION_RESUME, ABLITERATION_MODEL_POLICIES (optional)
 
 Safety features:
-  - GDN layer skip (SKIP_GDN_LAYERS): Auto-detects decoder_sparse_step from config.json
+  - GDN layer skip (SKIP_GDN_LAYERS): Auto-detects full-attention layers from
+    config.json (`layer_types`, `full_attention_interval`, or `decoder_sparse_step`)
     and filters to only full-attention layers. Prevents corruption of GatedDeltaNet
     recurrence mechanics (out_proj participates in residual stream feedback).
   - Norm guard (ABLITERATION_NORM_THRESHOLD): Aborts if max refusal direction norm
@@ -213,6 +214,28 @@ def emit_snapshot(stage, **kwargs):
     }
     payload.update(kwargs)
     emit_progress("snapshot", **payload)
+
+
+def apply_mistral_regex_patch(tokenizer, model_dir):
+    patcher = getattr(tokenizer.__class__, "_patch_mistral_regex", None)
+    if patcher is None:
+        print("WARN: tokenizer backend has no _patch_mistral_regex helper", flush=True)
+        return tokenizer
+    init_kwargs = dict(getattr(tokenizer, "init_kwargs", {}) or {})
+    try:
+        patched = patcher(
+            tokenizer,
+            model_dir,
+            local_files_only=True,
+            is_local=True,
+            init_kwargs=init_kwargs,
+            fix_mistral_regex=True,
+        )
+    except Exception as exc:
+        print(f"WARN: failed to apply mistral regex patch manually: {exc}", flush=True)
+        return tokenizer
+    print("Applied Mistral regex patch via tokenizer backend helper", flush=True)
+    return patched
 
 
 def has_module(module_name):
@@ -760,11 +783,11 @@ except TypeError as exc:
         or "fix_mistral_regex" not in tokenizer_kwargs
     ):
         raise
-    print(
-        "Tokenizer backend already manages fix_mistral_regex; retrying without explicit kwarg"
-    )
+    print(f"Tokenizer fix_mistral_regex load path failed: {exc}", flush=True)
+    print("Retrying without explicit kwarg and applying patch manually", flush=True)
     tokenizer_kwargs.pop("fix_mistral_regex", None)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, **tokenizer_kwargs)
+    tokenizer = apply_mistral_regex_patch(tokenizer, model_dir)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
@@ -1064,7 +1087,8 @@ else:
     layer_indices = [int(x) for x in target_layers.split(",") if int(x) < total_layers]
 # ── Filter GDN (linear attention) layers if skip_gdn is enabled ───────
 # Qwen3.5 uses a hybrid architecture: most layers are GDN (linear attention)
-# with full self-attention layers at regular intervals (decoder_sparse_step).
+# with full self-attention layers described by `layer_types`,
+# `full_attention_interval`, or legacy `decoder_sparse_step`.
 # Abliterating GDN layers destroys the recurrence mechanics because out_proj
 # participates in residual stream feedback into decay/gate computations.
 if skip_gdn:
@@ -1075,26 +1099,46 @@ if skip_gdn:
 
         with open(config_path) as _cf:
             _cfg = _json.load(_cf)
-        # Check text_config (VLM wrapper) then top-level
-        _text_cfg = _cfg.get("text_config", _cfg)
-        sparse_step = _text_cfg.get("decoder_sparse_step", 0)
-        if sparse_step > 0:
-            # Full-attention layers are at indices where (index+1) % sparse_step == 0
-            full_attn_indices = set(
-                i for i in range(total_layers) if (i + 1) % sparse_step == 0
+        _text_cfg = _cfg.get("text_config") or {}
+        layer_types = _text_cfg.get("layer_types") or _cfg.get("layer_types") or []
+        full_attn_indices = set()
+        source_detail = ""
+        if isinstance(layer_types, list) and layer_types:
+            full_attn_indices = {
+                i
+                for i, layer_type in enumerate(layer_types[:total_layers])
+                if layer_type == "full_attention"
+            }
+            if full_attn_indices:
+                source_detail = "layer_types"
+        if not full_attn_indices:
+            full_attention_interval = (
+                _text_cfg.get("full_attention_interval")
+                or _cfg.get("full_attention_interval")
+                or _text_cfg.get("decoder_sparse_step")
+                or _cfg.get("decoder_sparse_step")
+                or 0
             )
+            if full_attention_interval > 0:
+                full_attn_indices = set(
+                    i
+                    for i in range(total_layers)
+                    if (i + 1) % int(full_attention_interval) == 0
+                )
+                source_detail = f"full_attention_interval={full_attention_interval}"
+        if full_attn_indices:
             before_count = len(layer_indices)
             layer_indices = [i for i in layer_indices if i in full_attn_indices]
             gdn_count = before_count - len(layer_indices)
             print(
-                f"GDN layer skip: decoder_sparse_step={sparse_step}, "
+                f"GDN layer skip: source={source_detail}, "
                 f"skipped {gdn_count} GDN layers, "
                 f"keeping {len(layer_indices)} full-attention layers: {layer_indices}"
             )
             gdn_filtered = True
     if not gdn_filtered:
         print(
-            "GDN layer skip: no decoder_sparse_step found, abliterating all target layers"
+            "GDN layer skip: no layer_types/full_attention_interval/decoder_sparse_step found, abliterating all target layers"
         )
 
 # ── Refusal direction norm guard ──────────────────────────────────────
