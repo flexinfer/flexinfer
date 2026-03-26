@@ -20,6 +20,16 @@ Build a companion iOS/iPadOS app for loom-core operators to monitor agent fleets
 - Editing registry/platform config from mobile.
 - Replacing desktop HUD for deep diagnostics or graph-heavy analysis.
 
+## Scope Guardrails (v1)
+
+- Any request that expands beyond monitoring + session lifecycle (`start/end`) is out-of-scope for v1.
+- Out-of-scope asks must be routed to post-v1 backlog issues before implementation starts.
+- Out-of-scope backlog entries should include:
+  - requested capability,
+  - operator impact,
+  - target milestone (`v1.1+` or explicit roadmap phase),
+  - link back to Mobile Companion scope discipline issue `#37`.
+
 ## Users
 
 - Primary: operator/lead developer supervising multiple coding agents.

@@ -53,6 +53,7 @@ These are active priorities and should be treated as implementation gaps until c
 6. HUD cost dashboard integration ([Issue #52](https://gitlab.flexinfer.ai/services/loom-core/-/issues/52)): expose `loom/cost-stats` via HUD bridge, CostMonitor (10s poll), SSE `hud.cost` event, and OverviewPanel KPI tile.
 7. RBAC/audit visibility in HUD ([Issue #53](https://gitlab.flexinfer.ai/services/loom-core/-/issues/53)): `loom/rbac-config` RPC, denied-calls ring buffer, ServersPanel RBAC sub-tab, OverviewPanel badge.
 8. OTel settings visibility in HUD ([Issue #54](https://gitlab.flexinfer.ai/services/loom-core/-/issues/54)): `loom/otel-status` RPC, ServersPanel observability section, OverviewPanel badge.
+9. Mobile v1 scope discipline enforcement ([Issue #37](https://gitlab.flexinfer.ai/services/loom-core/-/issues/37)): enforce milestone exit scope gates and route desktop-parity asks to post-v1 backlog.
 
 ## Next After Current Focus
 

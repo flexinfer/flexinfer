@@ -24,6 +24,26 @@ Backend-hardening-first, then app MVP, then controlled mutation rollout.
 | M4 | Notifications + operational polish | Complete |
 | M5 | Beta rollout + telemetry tuning | Not started |
 
+## Scope Discipline Gate (Issue #37)
+
+### Milestone Exit Rule
+
+Before closing any mobile milestone (M0-M5), complete a scope gate check:
+
+- Confirm deliverables stay inside v1 scope: monitoring + session lifecycle controls.
+- For any desktop-parity or advanced-control request discovered during the milestone, open/attach a post-v1 backlog issue and link it in milestone notes.
+- Mark gate status in milestone closeout notes as `Pass` or `Pass with routed deferments`.
+
+### Deliverable Boundary Audit (M1-M5)
+
+| Milestone | Boundary check | Result |
+|---|---|---|
+| M1 | Mobile auth/API hardening only; no desktop feature parity expansion | Pass |
+| M2 | Monitoring surfaces only (dashboard/sessions/detail/diagnostics) | Pass |
+| M3 | Session create/end only; no arbitrary tool execution | Pass |
+| M4 | Notification + operational polish only; no config editing or broad control plane writes | Pass |
+| M5 | Reliability/telemetry tuning only; deferred feature expansion routed to backlog | Pending |
+
 ## M0: Contract and Threat Model
 
 ### Tasks
