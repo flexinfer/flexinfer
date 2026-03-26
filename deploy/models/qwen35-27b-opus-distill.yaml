@@ -25,7 +25,7 @@ spec:
   serverless:
     enabled: true
     minReplicas: 0
-    idleTimeout: 60m
+    idleTimeout: 1m
     coldStartTimeout: 15m
   config:
     quantization: gptq

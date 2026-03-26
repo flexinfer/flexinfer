@@ -230,13 +230,6 @@ runtime:
           value: "0"
         - name: ROCR_VISIBLE_DEVICES
           value: "0"
-      extraVolumeMounts:
-        - name: qwen35-gptq
-          mountPath: /models/qwen35-27b-opus-distill-gptq
-      extraVolumes:
-        - name: qwen35-gptq
-          persistentVolumeClaim:
-            claimName: qwen35-27b-opus-distill-gptq
     - name: gfx1100-5930k
       image: "registry.harbor.lan/flexinfer/runtime@sha256:1c50638ffb316a1acf4fb8327b577a391ffe71e44a123e41406801065a3e7172"
       gpuVendor: amd
