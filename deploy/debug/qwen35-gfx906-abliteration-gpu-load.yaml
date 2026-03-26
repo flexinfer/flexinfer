@@ -175,7 +175,7 @@ spec:
         kubernetes.io/hostname: cblevins-radeonvii
       containers:
         - name: gpu-load-debug
-          image: registry.harbor.lan/flexinfer/runtime:unified-gfx906-v3
+          image: registry.harbor.lan/flexinfer/runtime:unified-gfx906-v4
           imagePullPolicy: IfNotPresent
           command: ["python3", "/scripts/debug.py"]
           env:
