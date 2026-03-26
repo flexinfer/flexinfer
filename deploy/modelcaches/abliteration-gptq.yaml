@@ -53,6 +53,8 @@ spec:
     useGPU: false
     maxMemoryGB: 96            # 128GB node, 54GB model + GPU offload headroom
     timeoutSeconds: 14400
+    nodeSelector:
+      kubernetes.io/hostname: cblevins-radeonvii
   quantization:
     format: GPTQ
     bits: 4
@@ -63,6 +65,8 @@ spec:
     useGPU: true
     maxMemoryGB: 96            # 128GB node, 54GB model + GPTQ overhead
     timeoutSeconds: 28800
+    nodeSelector:
+      kubernetes.io/hostname: cblevins-radeonvii
     calibration:
       maxSeqLen: 2048
       maxSamples: 128
