@@ -24,12 +24,78 @@ if [ -z "$MODEL_PATH" ] || [ ! -f "${MODEL_PATH}/config.json" ]; then
     done
 fi
 
+# Normalize Qwen3.5 text-only checkpoints that were exported without nested
+# text_config. vLLM's Qwen3_5Config defaults text_config to a 4096-wide model
+# when the field is missing, which mismatches 27B GPTQ checkpoints (5120-wide).
+if [ -n "$MODEL_PATH" ] && [ -f "${MODEL_PATH}/config.json" ]; then
+    model_type=$(python3 -c "import json; print(json.load(open('${MODEL_PATH}/config.json')).get('model_type',''))" 2>/dev/null || echo "")
+    if [[ "$model_type" == "qwen3_5" ]]; then
+        python3 - <<PY || echo "[entrypoint] WARNING: Qwen3.5 text_config normalization failed"
+import json
+import os
+import shutil
+import time
+
+path = "${MODEL_PATH}/config.json"
+with open(path) as f:
+    cfg = json.load(f)
+
+if "text_config" not in cfg:
+    keys = [
+        "vocab_size",
+        "hidden_size",
+        "intermediate_size",
+        "num_hidden_layers",
+        "num_attention_heads",
+        "num_key_value_heads",
+        "hidden_act",
+        "max_position_embeddings",
+        "initializer_range",
+        "rms_norm_eps",
+        "use_cache",
+        "tie_word_embeddings",
+        "rope_parameters",
+        "attention_bias",
+        "attention_dropout",
+        "head_dim",
+        "linear_conv_kernel_dim",
+        "linear_key_head_dim",
+        "linear_value_head_dim",
+        "linear_num_key_heads",
+        "linear_num_value_heads",
+        "layer_types",
+        "pad_token_id",
+        "bos_token_id",
+        "eos_token_id",
+        "full_attention_interval",
+        "partial_rotary_factor",
+        "attn_output_gate",
+        "mlp_only_layers",
+        "mamba_ssm_dtype",
+        "dtype",
+        "mtp_num_hidden_layers",
+        "mtp_use_dedicated_embeddings",
+    ]
+    text_cfg = {k: cfg[k] for k in keys if k in cfg}
+    text_cfg["model_type"] = "qwen3_5_text"
+    backup = f"{path}.bak-textcfg-{time.strftime('%Y%m%d%H%M%S')}"
+    shutil.copy2(path, backup)
+    cfg["text_config"] = text_cfg
+    with open(path, "w") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    print(f"[entrypoint] Added missing text_config to {path}")
+    print(f"[entrypoint] Backup written to {backup}")
+PY
+    fi
+fi
+
 # Apply Qwen3.5 patches if model config contains qwen3_5 AND patch file exists.
 # vLLM v0.18.0+ has native Qwen3.5 GDN support — patch.py is not needed.
 if [ -f "/opt/patches/patch.py" ] && [ -n "$MODEL_PATH" ] && [ -f "${MODEL_PATH}/config.json" ]; then
     model_type=$(python3 -c "import json; print(json.load(open('${MODEL_PATH}/config.json')).get('model_type',''))" 2>/dev/null || echo "")
     if [[ "$model_type" == *"qwen3_5"* ]]; then
         echo "[entrypoint] Qwen3.5 model detected at ${MODEL_PATH}, applying vLLM patches..."
+        export FLEXINFER_MODEL_PATH="${MODEL_PATH}"
         python3 /opt/patches/patch.py || echo "[entrypoint] WARNING: patches failed, continuing anyway"
     fi
 elif [ -n "$MODEL_PATH" ] && [ -f "${MODEL_PATH}/config.json" ]; then
