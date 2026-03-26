@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flexinfer-system
+  labels:
+    app.kubernetes.io/name: flexinfer
+    app.kubernetes.io/part-of: ai-platform

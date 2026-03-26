@@ -1,0 +1,17 @@
+# Benchmark results for Qwen3 8B Fast model
+# MLC-LLM compiled model for AMD ROCm
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qwen3-8b-fast-benchmark-results
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/component: benchmark-results
+    flexinfer.ai/model-deployment: qwen3-8b-fast
+data:
+  tokensPerSecond: "106.01"
+  backend: mlc-llm
+  model: Qwen3-8B-abliterated-q4f32_1-MLC
+  gpuVendor: AMD
+  gpuArch: gfx1100
+  vramUsed: "8Gi"

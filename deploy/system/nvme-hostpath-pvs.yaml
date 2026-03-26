@@ -1,0 +1,190 @@
+# HostPath-backed PVs/PVCs for local NVMe model storage
+# These bypass NFS and use local storage on GPU nodes
+---
+# MLC models on cblevins-7900xtx NVMe
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mlc-models-nvme-7900xtx
+  labels:
+    type: nvme-hostpath
+    node: cblevins-7900xtx
+spec:
+  capacity:
+    storage: 100Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /var/lib/flexinfer/qwen3-14b-mlc-nvme
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - cblevins-7900xtx
+  claimRef:
+    namespace: flexinfer-system
+    name: mlc-models-nvme-7900xtx
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlc-models-nvme-7900xtx
+  namespace: flexinfer-system
+  labels:
+    type: nvme-hostpath
+    node: cblevins-7900xtx
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  volumeName: mlc-models-nvme-7900xtx
+  storageClassName: ""
+---
+# Qwen3-8B abliterated MLC on cblevins-7900xtx NVMe
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mlc-8b-abliterated-nvme-7900xtx
+  labels:
+    type: nvme-hostpath
+    node: cblevins-7900xtx
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /var/lib/flexinfer/qwen3-8b-abliterated-mlc-nvme
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - cblevins-7900xtx
+  claimRef:
+    namespace: flexinfer-system
+    name: mlc-8b-abliterated-nvme-7900xtx
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlc-8b-abliterated-nvme-7900xtx
+  namespace: flexinfer-system
+  labels:
+    type: nvme-hostpath
+    node: cblevins-7900xtx
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  volumeName: mlc-8b-abliterated-nvme-7900xtx
+  storageClassName: ""
+---
+# Vision models on cblevins-5930k NVMe
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: vision-models-nvme-5930k
+  labels:
+    type: nvme-hostpath
+    node: cblevins-5930k
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /var/lib/flexinfer/qwen3-vl-vision
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - cblevins-5930k
+  claimRef:
+    namespace: flexinfer-system
+    name: vision-models-nvme-5930k
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vision-models-nvme-5930k
+  namespace: flexinfer-system
+  labels:
+    type: nvme-hostpath
+    node: cblevins-5930k
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  volumeName: vision-models-nvme-5930k
+  storageClassName: ""
+---
+# Qwen3-8B abliterated MLC on cblevins-5930k NVMe
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mlc-8b-abliterated-nvme-5930k
+  labels:
+    type: nvme-hostpath
+    node: cblevins-5930k
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /var/lib/flexinfer/qwen3-8b-abliterated-mlc-nvme
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - cblevins-5930k
+  claimRef:
+    namespace: flexinfer-system
+    name: mlc-8b-abliterated-nvme-5930k
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlc-8b-abliterated-nvme-5930k
+  namespace: flexinfer-system
+  labels:
+    type: nvme-hostpath
+    node: cblevins-5930k
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  volumeName: mlc-8b-abliterated-nvme-5930k
+  storageClassName: ""

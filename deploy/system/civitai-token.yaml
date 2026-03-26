@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: civitai-token
+    namespace: flexinfer-system
+    labels:
+        app.kubernetes.io/name: civitai-token
+stringData:
+    CIVITAI_TOKEN: ENC[AES256_GCM,data:BnfudeH+VIKjhZDrYLsJYFKvu9X6/ZuUjI+jSFb0SFk=,iv:DKPR7SIvj+9QS5NWu70wlGzfVpa5Lf+i9At4WM4M2nI=,tag:lgP7yVtyI3muxjXmEmnFsA==,type:str]
+sops:
+    age:
+        - recipient: age1d8mxyz340rdexgn068097s0le3tmf3898xd5a4qpqng4zdtg8sgswnx9r9
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB3b0tiQk51NEJ2RlpLWUdt
+            Qm9NTS9jUnNidzJ4N2NrTFducEMzbEhIWERJCmJTdm10TE02a0QrcFlOVi9teU5y
+            eDNDa3FFN3ljQXcwS2pmVG55aUxOK1kKLS0tIHU4YTgrSGpOTzFjSVlDQ1ZFR3dn
+            TzIwSDdZR3RJMGttQTZUczY3ekVXMGsKv/YxXN/k5Fh4tdctK+jUKawVW0TZPuTP
+            P1328WpU5SwcAQP1xfUXC0/+KVzFh8yCy8007M8reqcen1c79hC4kg==
+            -----END AGE ENCRYPTED FILE-----
+    lastmodified: "2026-03-12T23:22:45Z"
+    mac: ENC[AES256_GCM,data:WRzI4fiQ7ltAvWyPXpJ4PYer8VoCd6JmC3/ZWe9XHmr6XnXrzCRFlnzvXcHxpAt0l1dyI4fZcHH+ISLYzrWyZRjmH1j1Vfw+xsHBkyK8N1vGMqaUobp4h7r4jbkAsvstgzga5Mw/OPHcp1wVX1+M4oH0U5y7NCtsSd1yVfa7i6c=,iv:u7Q8JzLflwRuk8WBBXlOK6DRSDpp+n5OErpVyrC8KG0=,tag:SrUI9a2IC0Sdb4YYlkCAZg==,type:str]
+    encrypted_regex: ^(data|stringData|token|.*_TOKEN|.*_PASSWORD|.*_KEY)$
+    version: 3.12.1

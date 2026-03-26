@@ -1,0 +1,17 @@
+# Benchmark results for Qwen3 14B Quality model
+# MLC-LLM compiled model for AMD ROCm
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qwen3-14b-quality-benchmark-results
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/component: benchmark-results
+    flexinfer.ai/model-deployment: qwen3-14b-quality
+data:
+  tokensPerSecond: "82.39"
+  backend: mlc-llm
+  model: Qwen3-14B-q4f16_1-MLC
+  gpuVendor: AMD
+  gpuArch: gfx1100
+  vramUsed: "16Gi"

@@ -1,0 +1,32 @@
+# LLM models NFS share for flexinfer-system namespace
+# Same NFS share as ai/llm-models-nfs but separate PV/PVC for namespace isolation
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: llm-models-nfs-flexinfer-system
+spec:
+  capacity:
+    storage: 500Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    server: 192.168.50.211
+    path: /srv/nas/pilot3/nas-media-bulk/llm
+  claimRef:
+    namespace: flexinfer-system
+    name: llm-models-nfs
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: llm-models-nfs
+  namespace: flexinfer-system
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 500Gi
+  volumeName: llm-models-nfs-flexinfer-system
+  storageClassName: ""

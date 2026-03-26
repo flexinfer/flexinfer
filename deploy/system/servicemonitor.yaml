@@ -1,0 +1,107 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: flexinfer-controller
+  namespace: flexinfer-system
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: controller
+      app.kubernetes.io/name: flexinfer
+  namespaceSelector:
+    matchNames:
+      - flexinfer-system
+  endpoints:
+  - port: metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: flexinfer-proxy
+  namespace: flexinfer-system
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: flexinfer-proxy
+  namespaceSelector:
+    matchNames:
+      - flexinfer-system
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+# PodMonitor for flexinfer-agent daemonset (no service, scrapes pods directly)
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: flexinfer-agent
+  namespace: flexinfer-system
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: agent
+      app.kubernetes.io/name: flexinfer
+  namespaceSelector:
+    matchNames:
+      - flexinfer-system
+  podMetricsEndpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+# PodMonitor for vLLM model backend pods (scrapes vLLM's built-in /metrics)
+# Captures: num_requests_running, num_requests_waiting, gpu_cache_usage_perc,
+# avg_generation_throughput_toks_per_s, time_to_first_token_seconds, etc.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: flexinfer-vllm-backends
+  namespace: flexinfer-system
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      flexinfer.ai/backend: vllm
+  namespaceSelector:
+    matchNames:
+      - flexinfer-system
+  podMetricsEndpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+# PodMonitor for flexinfer-runtime DaemonSet pods (persistent GPU node containers)
+# Captures: flexinfer_runtime_model_loads_total, flexinfer_runtime_model_state,
+# flexinfer_runtime_gpu_vram_*, flexinfer_runtime_backend_crashes_total, etc.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: flexinfer-runtime
+  namespace: flexinfer-system
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: flexinfer-runtime
+  namespaceSelector:
+    matchNames:
+      - flexinfer-system
+  podMetricsEndpoints:
+  - port: api
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
