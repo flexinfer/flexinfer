@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/crb2nu/loom/internal/daemon"
 	loomcontext "github.com/crb2nu/loom/pkg/context"
 	"github.com/crb2nu/loom/pkg/generator"
 	"github.com/crb2nu/loom/pkg/profiles"
@@ -184,7 +186,52 @@ Example:
 	}
 	validateSchemasCmd.Flags().String("dir", "", "Directory to scan (default: ./generated/mcp)")
 
-	validateCmd.AddCommand(validateProfileCmd, validateConfigsCmd, validateSchemasCmd)
+	validateRBACCmd := &cobra.Command{
+		Use:   "rbac",
+		Short: "Lint RBAC policy configuration",
+		Long: `Lint RBAC policy configuration and fail on conflicts or invalid rules.
+
+By default this reads user config (~/.config/loom/config.yaml). To lint a repo-local
+policy, use --source repo, or pass an explicit file via --config.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			source, _ := cmd.Flags().GetString("source")
+			configPath, _ := cmd.Flags().GetString("config")
+
+			cfg, resolvedPath, err := loadRBACConfigForValidation(source, configPath)
+			if err != nil {
+				return err
+			}
+
+			issues := daemon.LintRBACConfig(cfg)
+			if len(issues) == 0 {
+				fmt.Printf("RBAC policy lint passed (%s)\n", resolvedPath)
+				return nil
+			}
+
+			errorCount := 0
+			warningCount := 0
+			for _, issue := range issues {
+				level := "WARN"
+				if issue.Severity == daemon.RBACLintError {
+					level = "ERR "
+					errorCount++
+				} else {
+					warningCount++
+				}
+				fmt.Printf("[%s] %s: %s\n", level, issue.Path, issue.Message)
+			}
+
+			fmt.Printf("\nRBAC lint summary (%s): %d errors, %d warnings\n", resolvedPath, errorCount, warningCount)
+			if daemon.HasRBACLintErrors(issues) {
+				return fmt.Errorf("rbac lint failed with %d error(s)", errorCount)
+			}
+			return nil
+		},
+	}
+	validateRBACCmd.Flags().String("source", "user", "RBAC source: user or repo")
+	validateRBACCmd.Flags().String("config", "", "Explicit config file path (RBAC-only YAML or full config with rbac:)")
+
+	validateCmd.AddCommand(validateProfileCmd, validateConfigsCmd, validateSchemasCmd, validateRBACCmd)
 	return validateCmd
 }
 
@@ -559,4 +606,43 @@ func findSchemasDir(startDir string) string {
 		}
 	}
 	return ""
+}
+
+func loadRBACConfigForValidation(source, configPath string) (daemon.RBACConfig, string, error) {
+	if strings.TrimSpace(configPath) != "" {
+		cfg, err := parseRBACConfigFile(configPath)
+		if err != nil {
+			return daemon.RBACConfig{}, "", err
+		}
+		return cfg, configPath, nil
+	}
+
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "", "user":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return daemon.RBACConfig{}, "", fmt.Errorf("resolve home directory: %w", err)
+		}
+		path := filepath.Join(home, ".config", "loom", "config.yaml")
+		cfg, err := parseRBACConfigFile(path)
+		if err != nil {
+			return daemon.RBACConfig{}, "", err
+		}
+		return cfg, path, nil
+	case "repo":
+		path, err := findRepoRBACPolicyPath()
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return daemon.RBACConfig{}, "", errors.New("repo RBAC policy not found (.loom/rbac-policy.yaml)")
+			}
+			return daemon.RBACConfig{}, "", err
+		}
+		cfg, err := parseRBACConfigFile(path)
+		if err != nil {
+			return daemon.RBACConfig{}, "", err
+		}
+		return cfg, path, nil
+	default:
+		return daemon.RBACConfig{}, "", fmt.Errorf("invalid source %q (expected user or repo)", source)
+	}
 }
