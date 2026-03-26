@@ -75,6 +75,7 @@
   let sortKey = $state('name');
   let sortDir = $state('asc');
   let selectedServer = $state(null);
+  let rbacView = $state('policy');
 
   let categoryOptions = $derived.by(() => {
     const cats = new Set();
@@ -216,6 +217,16 @@
     if (state === 'connected') return 'success';
     if (state === 'connecting' || state === 'reconnecting') return 'warning';
     return 'error';
+  }
+
+  function formatRelativeTime(isoTs) {
+    const ts = Date.parse(isoTs ?? '');
+    if (!Number.isFinite(ts)) return '';
+    const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (diffSec < 60) return `${diffSec}s ago`;
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+    return `${Math.floor(diffSec / 86400)}d ago`;
   }
 </script>
 
@@ -405,45 +416,65 @@
       </div>
       <div class="infra-card-body">
         {#if rbacStore.enabled}
-          {#if rbacStore.roles.length > 0}
-            <div class="rbac-section">
-              <span class="text-xs uppercase text-muted">Roles</span>
-              <div class="rbac-list">
-                {#each rbacStore.roles as role}
-                  <div class="rbac-row">
-                    <span class="text-mono rbac-name">{role.name}</span>
-                    <span class="text-muted text-xs">{role.allow?.length ?? 0} allow, {role.deny?.length ?? 0} deny</span>
-                  </div>
-                {/each}
+          <div class="rbac-tabs">
+            <button class="rbac-tab-btn" class:active={rbacView === 'policy'} onclick={() => { rbacView = 'policy'; }}>Policy</button>
+            <button class="rbac-tab-btn" class:active={rbacView === 'denied'} onclick={() => { rbacView = 'denied'; }}>Denied ({rbacStore.deniedCount})</button>
+          </div>
+          {#if rbacView === 'policy'}
+            {#if rbacStore.roles.length > 0}
+              <div class="rbac-section">
+                <span class="text-xs uppercase text-muted">Roles</span>
+                <div class="rbac-list">
+                  {#each rbacStore.roles as role}
+                    <div class="rbac-row">
+                      <span class="text-mono rbac-name">{role.name}</span>
+                      <span class="text-muted text-xs">{role.allow?.length ?? 0} allow, {role.deny?.length ?? 0} deny</span>
+                    </div>
+                  {/each}
+                </div>
               </div>
-            </div>
-          {/if}
-          {#if rbacStore.bindings.length > 0}
-            <div class="rbac-section">
-              <span class="text-xs uppercase text-muted">Bindings</span>
-              <div class="rbac-list">
-                {#each rbacStore.bindings as binding}
-                  <div class="rbac-row">
-                    <span class="text-mono rbac-name">{binding.agent_id || binding.agent_type || '*'}</span>
-                    <span class="text-muted text-xs">{'\u2192'} {binding.role}</span>
-                  </div>
-                {/each}
+            {/if}
+            {#if rbacStore.bindings.length > 0}
+              <div class="rbac-section">
+                <span class="text-xs uppercase text-muted">Bindings</span>
+                <div class="rbac-list">
+                  {#each rbacStore.bindings as binding}
+                    <div class="rbac-row">
+                      <span class="text-mono rbac-name">{binding.agent_id || binding.agent_type || '*'}</span>
+                      <span class="text-muted text-xs">{'\u2192'} {binding.role}</span>
+                    </div>
+                  {/each}
+                </div>
               </div>
-            </div>
-          {/if}
-          {#if rbacStore.recentDenied.length > 0}
-            <div class="rbac-section">
-              <span class="text-xs uppercase text-muted">Recent Denied ({rbacStore.deniedCount})</span>
-              <div class="rbac-list">
-                {#each rbacStore.recentDenied.slice(0, 5) as denied}
-                  <div class="rbac-row rbac-denied">
-                    <span class="text-mono rbac-name">{denied.agent_id}</span>
-                    <span class="text-muted text-xs">{denied.tool}</span>
-                    <span class="text-xs denied-reason">{denied.reason}</span>
-                  </div>
-                {/each}
+            {/if}
+            {#if rbacStore.roles.length === 0 && rbacStore.bindings.length === 0}
+              <span class="text-muted text-xs">No roles or bindings configured</span>
+            {/if}
+          {:else}
+            {#if rbacStore.recentDenied.length > 0}
+              <div class="rbac-section">
+                <span class="text-xs uppercase text-muted">Recent Denied Calls</span>
+                <div class="rbac-list">
+                  {#each rbacStore.recentDenied.slice(0, 8) as denied}
+                    <div class="rbac-row rbac-denied">
+                      <div class="rbac-main">
+                        <span class="text-mono rbac-name">{denied.agent_id}</span>
+                        <span class="text-muted text-xs">{denied.server}/{denied.tool}</span>
+                      </div>
+                      <div class="rbac-meta text-muted text-xs">
+                        <span>{formatRelativeTime(denied.timestamp)}</span>
+                        {#if denied.role}
+                          <span class="text-mono">role:{denied.role}</span>
+                        {/if}
+                      </div>
+                      <span class="text-xs denied-reason">{denied.reason}</span>
+                    </div>
+                  {/each}
+                </div>
               </div>
-            </div>
+            {:else}
+              <span class="text-muted text-xs">No denied calls captured</span>
+            {/if}
           {/if}
           <div class="rbac-section">
             <span class="text-xs uppercase text-muted">Audit</span>
@@ -870,6 +901,28 @@
   }
 
   /* RBAC section styles */
+  .rbac-tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .rbac-tab-btn {
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    color: var(--fg-secondary);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .rbac-tab-btn.active {
+    border-color: var(--accent);
+    color: var(--fg-primary);
+    box-shadow: 0 0 8px var(--glow-accent);
+  }
+
   .rbac-section {
     display: flex;
     flex-direction: column;
@@ -899,8 +952,24 @@
     min-width: 80px;
   }
 
+  .rbac-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .rbac-meta {
+    display: flex;
+    gap: 8px;
+  }
+
   .rbac-denied {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
     color: var(--warning);
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   }
 
   .denied-reason {
@@ -908,7 +977,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 200px;
+    max-width: 320px;
   }
 
   /* OTel section styles */

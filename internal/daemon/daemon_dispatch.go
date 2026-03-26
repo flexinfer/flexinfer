@@ -502,7 +502,8 @@ func (d *Daemon) handleCostStats(ctx context.Context, msg *mcp.Message) (*mcp.Me
 func (d *Daemon) handleRBACConfig(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	if d.rbac == nil {
 		return mcp.NewResponse(msg.ID, map[string]any{
-			"enabled": false,
+			"enabled":       false,
+			"audit_enabled": d.audit != nil,
 		})
 	}
 
