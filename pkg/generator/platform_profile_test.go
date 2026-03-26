@@ -47,6 +47,9 @@ func TestGetPlatformProfile_Claude(t *testing.T) {
 	if p.Hooks.File != "settings.json" {
 		t.Errorf("hooks.file = %q, want settings.json", p.Hooks.File)
 	}
+	if len(p.Hooks.PolicyRefs) != 1 || p.Hooks.PolicyRefs[0] != "gitops_flux" {
+		t.Fatalf("hooks.policy_refs = %#v, want [gitops_flux]", p.Hooks.PolicyRefs)
+	}
 	if !p.Capabilities.Permissions {
 		t.Error("capabilities.permissions = false, want true")
 	}

@@ -21,6 +21,12 @@ func testRegistry() *registry.Registry {
 					"dirty_worktree_mode":                   "continue_scoped_commits",
 					"dirty_worktree_nudge_on_session_start": true,
 					"dirty_worktree_nudge_message":          "Dirty worktree detected. Continue on current branch with scoped commits.",
+					"guardrails": map[string]any{
+						"gitops_flux": map[string]any{
+							"blocked_commands": []any{"kubectl edit", "kubectl set env"},
+							"message":          "GitOps policy: kubectl edit/set env bypasses git history. Edit manifests and use flux reconcile.",
+						},
+					},
 				},
 			},
 			"claude": {
@@ -32,10 +38,7 @@ func testRegistry() *registry.Registry {
 					"Bash(make *)", "Bash(kubectl *)", "Bash(loom *)",
 					"WebFetch", "WebSearch",
 				},
-				Deny: []string{
-					"Bash(kubectl edit *)",
-					"Bash(kubectl set env *)",
-				},
+				Deny: []string{},
 			},
 			"codex": {
 				Settings: map[string]any{
@@ -144,6 +147,46 @@ func TestClaudePermissionsFromRegistry(t *testing.T) {
 	}
 	if len(deny) != 2 {
 		t.Errorf("expected 2 deny entries, got %d", len(deny))
+	}
+}
+
+func TestClaudeHooksConfig_UsesSharedGitOpsPolicy(t *testing.T) {
+	claudeProfile, _ := GetPlatformProfile("claude")
+	config := claudeHooksConfig(testRegistry(), claudeProfile, "")
+
+	hooks, ok := config["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("expected hooks map in claude config")
+	}
+
+	preToolUse, ok := hooks["PreToolUse"].([]map[string]any)
+	if !ok || len(preToolUse) == 0 {
+		t.Fatal("expected PreToolUse hooks from shared policy")
+	}
+
+	foundPolicyMessage := false
+	foundGitCommitReminder := false
+	for _, block := range preToolUse {
+		entries, _ := block["hooks"].([]map[string]any)
+		for _, entry := range entries {
+			cmd, _ := entry["command"].(string)
+			if strings.Contains(cmd, "kubectl edit") &&
+				strings.Contains(cmd, "flux reconcile") &&
+				strings.Contains(cmd, "GitOps policy:") {
+				foundPolicyMessage = true
+			}
+			if strings.Contains(cmd, "Pre-commit quality reminder") &&
+				strings.Contains(cmd, "quality_check") {
+				foundGitCommitReminder = true
+			}
+		}
+	}
+
+	if !foundPolicyMessage {
+		t.Fatalf("expected shared GitOps policy hook to mention kubectl edit/set env and flux reconcile: %#v", preToolUse)
+	}
+	if !foundGitCommitReminder {
+		t.Fatalf("expected pre-tool-use quality reminder hook to remain present: %#v", preToolUse)
 	}
 }
 

@@ -13,13 +13,14 @@ platforms:
       enabled: true
       file: "settings.json"
       events: ["sessionStart", "sessionEnd", "preToolUse", "postToolUse"]
+      policy_refs: ["gitops_flux"]
       agent_id: "claude-code"
       agent_type: "claude-code"
       description: "Claude Code session"
       session_end_event: "Stop"
       heartbeat_event: "PostToolUse"
       heartbeat_matcher: "Bash|Task"
-      extras: ["preToolUse_guardrails", "postToolUse_formatters", "postToolUse_taskSync"]
+      extras: ["postToolUse_formatters", "postToolUse_taskSync"]
     loom_proxy:
       agent_hint: "claude-code"
       tool_profile: "llm-core"
