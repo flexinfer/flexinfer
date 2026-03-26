@@ -233,13 +233,14 @@ func (d *FleetDomain) handleAgentHeartbeat(w http.ResponseWriter, r *http.Reques
 
 // handleAgentSession returns the active session for an agent.
 func (d *FleetDomain) handleAgentSession(w http.ResponseWriter, r *http.Request) {
-	agentID := r.URL.Query().Get("agent_id")
-	if agentID == "" {
-		d.deps.WriteError(w, http.StatusBadRequest, "agent_id query param is required", nil)
+	req := bridge.SessionRequest{AgentID: r.URL.Query().Get("agent_id")}
+	req = req.Normalize()
+	if err := req.Validate(); err != nil {
+		d.deps.WriteError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
-	session, err := d.deps.Agent().GetActiveSession(agentID)
+	session, err := d.deps.Agent().GetActiveSession(req.AgentID)
 	if err != nil {
 		d.deps.WriteError(w, http.StatusBadGateway, "failed to get session", err)
 		return
@@ -254,9 +255,14 @@ func (d *FleetDomain) handleAgentSession(w http.ResponseWriter, r *http.Request)
 
 // handleAgentSessionList lists sessions with optional filters.
 func (d *FleetDomain) handleAgentSessionList(w http.ResponseWriter, r *http.Request) {
-	var params map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+	var req bridge.SessionListRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		d.deps.WriteError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	params, err := req.Params()
+	if err != nil {
+		d.deps.WriteError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
@@ -273,9 +279,14 @@ func (d *FleetDomain) handleAgentSessionList(w http.ResponseWriter, r *http.Requ
 
 // handleAgentSessionPrune prunes stale sessions.
 func (d *FleetDomain) handleAgentSessionPrune(w http.ResponseWriter, r *http.Request) {
-	var params map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+	var req bridge.SessionPruneRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		d.deps.WriteError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	params, err := req.Params()
+	if err != nil {
+		d.deps.WriteError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 

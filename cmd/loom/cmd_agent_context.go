@@ -38,14 +38,23 @@ func contextInspectWithFallback(cmd *cobra.Command, port, agentID, sessionID str
 	)
 }
 
-func updateTaskWithFallback(cmd *cobra.Command, port string, p bridge.UpdateTaskParams) (json.RawMessage, error) {
+func updateTaskWithFallback(cmd *cobra.Command, port string, req bridge.TaskUpdateRequest) (json.RawMessage, error) {
+	req = req.Normalize()
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+
 	return withAgentFallback(
 		"agent task-update",
 		func() (json.RawMessage, error) {
-			return hudPost(port, "/api/agent/task-update", p)
+			return hudPost(port, bridge.AgentTaskUpdateEndpoint, req)
 		},
 		func() (json.RawMessage, error) {
 			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
+				p, err := req.ToParams()
+				if err != nil {
+					return nil, err
+				}
 				if err := agentBridge.UpdateTask(p); err != nil {
 					return nil, err
 				}
@@ -71,11 +80,13 @@ func newAgentTaskUpdateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port := resolvePort(cmd)
 
-			result, err := updateTaskWithFallback(cmd, port, bridge.UpdateTaskParams{
-				ID:         taskID,
+			req := bridge.TaskUpdateRequest{
+				TaskID:     taskID,
 				Status:     status,
 				Resolution: resolution,
-			})
+			}
+
+			result, err := updateTaskWithFallback(cmd, port, req)
 			if err != nil {
 				if quiet {
 					return nil

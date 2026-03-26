@@ -4,6 +4,8 @@ package fleet
 
 import (
 	"net/http"
+
+	"github.com/crb2nu/loom/internal/hud/bridge"
 )
 
 // FleetDomain registers agent lifecycle, context, nudge, and task routes.
@@ -22,17 +24,17 @@ func (d *FleetDomain) Name() string { return "fleet" }
 // RegisterRoutes wires the agent lifecycle endpoints to the ServeMux.
 func (d *FleetDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFunc) http.HandlerFunc) {
 	// Session lifecycle (CLI hooks call these).
-	mux.HandleFunc("POST /api/agent/session-start", mw(d.handleAgentSessionStart))
-	mux.HandleFunc("POST /api/agent/session-end", mw(d.handleAgentSessionEnd))
+	mux.HandleFunc("POST "+bridge.AgentSessionStartEndpoint, mw(d.handleAgentSessionStart))
+	mux.HandleFunc("POST "+bridge.AgentSessionEndEndpoint, mw(d.handleAgentSessionEnd))
 	mux.HandleFunc("POST /api/agent/heartbeat", mw(d.handleAgentHeartbeat))
-	mux.HandleFunc("GET /api/agent/session", mw(d.handleAgentSession))
-	mux.HandleFunc("POST /api/agent/session-list", mw(d.handleAgentSessionList))
-	mux.HandleFunc("POST /api/agent/session-prune", mw(d.handleAgentSessionPrune))
+	mux.HandleFunc("GET "+bridge.AgentSessionEndpoint, mw(d.handleAgentSession))
+	mux.HandleFunc("POST "+bridge.AgentSessionListEndpoint, mw(d.handleAgentSessionList))
+	mux.HandleFunc("POST "+bridge.AgentSessionPruneEndpoint, mw(d.handleAgentSessionPrune))
 	mux.HandleFunc("GET /api/agent/session-detail", mw(d.handleAgentSessionDetail))
 
 	// Context and knowledge.
 	mux.HandleFunc("POST /api/agent/context/add", mw(d.handleAgentContextAdd))
-	mux.HandleFunc("GET /api/agent/context-inspect", mw(d.handleAgentContextInspect))
+	mux.HandleFunc("GET "+bridge.AgentContextInspectEndpoint, mw(d.handleAgentContextInspect))
 	mux.HandleFunc("GET /api/knowledge", mw(d.handleKnowledge))
 
 	// Task and workflow.
@@ -44,10 +46,10 @@ func (d *FleetDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFun
 	// Nudge queue.
 	mux.HandleFunc("POST /api/agent/nudge", mw(d.handleAgentNudge))
 	mux.HandleFunc("GET /api/agent/nudge-queue", mw(d.handleAgentNudgeQueue))
-	mux.HandleFunc("GET /api/agent/nudge-queue-policy", mw(d.handleAgentNudgeQueuePolicy))
-	mux.HandleFunc("POST /api/agent/nudge-queue-policy", mw(d.handleAgentNudgeQueuePolicyUpdate))
+	mux.HandleFunc("GET "+bridge.AgentNudgeQueuePolicyPath, mw(d.handleAgentNudgeQueuePolicy))
+	mux.HandleFunc("POST "+bridge.AgentNudgeQueuePolicyPath, mw(d.handleAgentNudgeQueuePolicyUpdate))
 
 	// Dispatch and claims.
-	mux.HandleFunc("POST /api/agent/dispatch", mw(d.handleAgentDispatch))
+	mux.HandleFunc("POST "+bridge.AgentDispatchEndpoint, mw(d.handleAgentDispatch))
 	mux.HandleFunc("DELETE /api/claims/{agent_id}/{file_path...}", mw(d.handleClaimRelease))
 }

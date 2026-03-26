@@ -197,6 +197,9 @@ Validate local setup:
 
 `loom agent ...` commands prefer HUD API calls (default port `3333`) and fall back to daemon socket tool calls when HUD is unavailable.
 
+Session lookup/list/prune, task-update, dispatch, context-inspect, and nudge-queue policy flows now share canonical request contracts from `internal/hud/bridge/agent_contracts.go`.
+That shared layer keeps CLI defaults, normalization, endpoint paths, and fallback payload shapes aligned between direct HUD HTTP calls and daemon bridge execution, which reduces transport-specific drift in hooks and wrapper scripts.
+
 For hook-only clients that do not emit explicit session-start events (for example Codex `notify`), use heartbeat bootstrap mode:
 
 ```bash

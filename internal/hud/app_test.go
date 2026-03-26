@@ -775,6 +775,146 @@ func TestHandler_AgentDispatch_RejectsBlankTitle(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
+	if !strings.Contains(w.Body.String(), "title is required") {
+		t.Fatalf("expected title validation error, got %s", w.Body.String())
+	}
+}
+
+func TestHandler_AgentSession_UsesSharedRequestContract(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+
+	var sessionListSeen bool
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		if req.Name != "agent_context__agent_session_list" {
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+		sessionListSeen = true
+		if got, _ := req.Arguments["agent_id"].(string); got != "codex-1" {
+			t.Fatalf("expected trimmed agent_id, got %q", got)
+		}
+		if got, _ := req.Arguments["status"].(string); got != "active" {
+			t.Fatalf("expected active status filter, got %q", got)
+		}
+		if got, _ := req.Arguments["limit"].(float64); int(got) != 1 {
+			t.Fatalf("expected limit=1, got %#v", req.Arguments["limit"])
+		}
+		return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[{\"id\":\"sess-1\",\"agent_id\":\"codex-1\",\"status\":\"active\"}]}"}]}`), nil
+	})
+
+	req := httptest.NewRequest("GET", bridge.AgentSessionEndpoint+"?agent_id=%20codex-1%20", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !sessionListSeen {
+		t.Fatalf("expected active session lookup to hit agent_session_list")
+	}
+
+	var result struct {
+		Session *bridge.SessionInfo `json:"session"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if result.Session == nil || result.Session.ID != "sess-1" {
+		t.Fatalf("unexpected session payload: %+v", result.Session)
+	}
+}
+
+func TestHandler_AgentSessionList_UsesSharedRequestContract(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+
+	var sessionListSeen bool
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		if req.Name != "agent_context__agent_session_list" {
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+		sessionListSeen = true
+		if got, _ := req.Arguments["agent_id"].(string); got != "codex-1" {
+			t.Fatalf("expected trimmed agent_id, got %q", got)
+		}
+		if got, _ := req.Arguments["namespace"].(string); got != "loom-core/main" {
+			t.Fatalf("expected trimmed namespace, got %q", got)
+		}
+		if got, _ := req.Arguments["status"].(string); got != "active" {
+			t.Fatalf("expected trimmed status, got %q", got)
+		}
+		if got, _ := req.Arguments["limit"].(float64); int(got) != bridge.DefaultSessionListLimit {
+			t.Fatalf("expected default limit=%d, got %#v", bridge.DefaultSessionListLimit, req.Arguments["limit"])
+		}
+		return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[]}"}]}`), nil
+	})
+
+	body := `{"agent_id":" codex-1 ","namespace":" loom-core/main ","status":" active "}`
+	req := httptest.NewRequest("POST", bridge.AgentSessionListEndpoint, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !sessionListSeen {
+		t.Fatalf("expected session list request to hit agent_session_list")
+	}
+}
+
+func TestHandler_AgentSessionPrune_UsesSharedRequestContract(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+
+	var sessionPruneSeen bool
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		if req.Name != "agent_context__agent_session_prune" {
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+		sessionPruneSeen = true
+		if got, _ := req.Arguments["max_age_hours"].(float64); int(got) != 72 {
+			t.Fatalf("expected default max_age_hours=72, got %#v", req.Arguments["max_age_hours"])
+		}
+		if got, _ := req.Arguments["status"].(string); got != "summarized" {
+			t.Fatalf("expected trimmed default status, got %q", got)
+		}
+		if got, _ := req.Arguments["dry_run"].(bool); !got {
+			t.Fatalf("expected dry_run=true, got %#v", req.Arguments["dry_run"])
+		}
+		return json.RawMessage(`{"content":[{"type":"text","text":"{\"pruned\":0}"}]}`), nil
+	})
+
+	body := `{"dry_run":true,"status":" summarized "}`
+	req := httptest.NewRequest("POST", bridge.AgentSessionPruneEndpoint, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !sessionPruneSeen {
+		t.Fatalf("expected session prune request to hit agent_session_prune")
+	}
 }
 
 func TestHandler_HandoffCreate_RequiresCurrentContractFields(t *testing.T) {

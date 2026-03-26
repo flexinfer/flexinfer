@@ -22,7 +22,7 @@ func startSessionWithFallback(cmd *cobra.Command, port string, p bridge.SessionS
 			if _, err := hudGetFast(port, "/api/ping", sessionStartHUDPingTimeout); err != nil {
 				return nil, err
 			}
-			return hudPostFast(port, "/api/agent/session-start", p, sessionStartHUDPostTimeout)
+			return hudPostFast(port, bridge.AgentSessionStartEndpoint, p, sessionStartHUDPostTimeout)
 		},
 		func() (json.RawMessage, error) {
 			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
@@ -40,7 +40,7 @@ func endSessionWithFallback(cmd *cobra.Command, port string, p bridge.SessionEnd
 	return withAgentFallback(
 		"agent session-end",
 		func() (json.RawMessage, error) {
-			return hudPost(port, "/api/agent/session-end", p)
+			return hudPost(port, bridge.AgentSessionEndEndpoint, p)
 		},
 		func() (json.RawMessage, error) {
 			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
@@ -66,10 +66,14 @@ func ensureDaemonSession(cmd *cobra.Command, p bridge.SessionStartParams) error 
 }
 
 func activeSessionWithFallback(cmd *cobra.Command, port, agentID string) (json.RawMessage, error) {
+	path, err := (bridge.SessionRequest{AgentID: agentID}).Path()
+	if err != nil {
+		return nil, err
+	}
 	return withAgentFallback(
 		"agent session",
 		func() (json.RawMessage, error) {
-			return hudGet(port, "/api/agent/session?agent_id="+agentID)
+			return hudGet(port, path)
 		},
 		func() (json.RawMessage, error) {
 			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
@@ -254,23 +258,20 @@ Example:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port := resolvePort(cmd)
 
-			params := map[string]any{
-				"limit": limit,
-			}
-			if agentID != "" {
-				params["agent_id"] = agentID
-			}
-			if namespace != "" {
-				params["namespace"] = namespace
-			}
-			if status != "" {
-				params["status"] = status
+			params, err := bridge.SessionListRequest{
+				AgentID:   agentID,
+				Namespace: namespace,
+				Status:    status,
+				Limit:     limit,
+			}.Params()
+			if err != nil {
+				return err
 			}
 
 			result, err := withAgentFallback(
 				"agent session-list",
 				func() (json.RawMessage, error) {
-					return hudPost(port, "/api/agent/session-list", params)
+					return hudPost(port, bridge.AgentSessionListEndpoint, params)
 				},
 				func() (json.RawMessage, error) {
 					return withAgentBridge(cmd, func(b *bridge.AgentBridge) (json.RawMessage, error) {
@@ -323,16 +324,19 @@ Example:
 				maxAgeHours = 1
 			}
 
-			params := map[string]any{
-				"max_age_hours": maxAgeHours,
-				"status":        status,
-				"dry_run":       dryRun,
+			params, err := bridge.SessionPruneRequest{
+				MaxAgeHours: maxAgeHours,
+				Status:      status,
+				DryRun:      dryRun,
+			}.Params()
+			if err != nil {
+				return err
 			}
 
 			result, err := withAgentFallback(
 				"agent session-prune",
 				func() (json.RawMessage, error) {
-					return hudPost(port, "/api/agent/session-prune", params)
+					return hudPost(port, bridge.AgentSessionPruneEndpoint, params)
 				},
 				func() (json.RawMessage, error) {
 					return withAgentBridge(cmd, func(b *bridge.AgentBridge) (json.RawMessage, error) {

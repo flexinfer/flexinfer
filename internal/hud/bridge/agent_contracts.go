@@ -8,11 +8,20 @@ import (
 )
 
 const (
+	AgentSessionStartEndpoint   = "/api/agent/session-start"
+	AgentSessionEndEndpoint     = "/api/agent/session-end"
+	AgentSessionEndpoint        = "/api/agent/session"
+	AgentSessionListEndpoint    = "/api/agent/session-list"
+	AgentSessionPruneEndpoint   = "/api/agent/session-prune"
 	AgentContextInspectEndpoint = "/api/agent/context-inspect"
+	AgentTaskUpdateEndpoint     = "/api/agent/task-update"
 	AgentNudgeQueueEndpoint     = "/api/agent/nudge-queue"
 	AgentNudgeQueuePolicyPath   = "/api/agent/nudge-queue-policy"
+	AgentDispatchEndpoint       = "/api/agent/dispatch"
 
 	DefaultContextInspectLimit = 200
+	DefaultSessionListLimit    = 20
+	DefaultSessionPruneStatus  = "ended,summarized"
 )
 
 // ContextInspectRequest defines the shared request contract for context-inspect
@@ -92,6 +101,261 @@ func ParseContextInspectRequest(query url.Values) (ContextInspectRequest, error)
 		return ContextInspectRequest{}, err
 	}
 	return req, nil
+}
+
+// SessionRequest defines the shared query contract for GET /api/agent/session.
+type SessionRequest struct {
+	AgentID string `json:"agent_id,omitempty"`
+}
+
+// Normalize trims identifiers.
+func (r SessionRequest) Normalize() SessionRequest {
+	r.AgentID = strings.TrimSpace(r.AgentID)
+	return r
+}
+
+// Validate ensures the request is semantically valid.
+func (r SessionRequest) Validate() error {
+	if strings.TrimSpace(r.AgentID) == "" {
+		return fmt.Errorf("agent_id query parameter is required")
+	}
+	return nil
+}
+
+// Path builds the HUD path for this request.
+func (r SessionRequest) Path() (string, error) {
+	req := r.Normalize()
+	if err := req.Validate(); err != nil {
+		return "", err
+	}
+
+	params := url.Values{}
+	params.Set("agent_id", req.AgentID)
+	return AgentSessionEndpoint + "?" + params.Encode(), nil
+}
+
+// SessionListRequest defines the shared request contract for POST /api/agent/session-list.
+type SessionListRequest struct {
+	AgentID   string `json:"agent_id,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+}
+
+// Normalize trims identifiers and applies the default limit.
+func (r SessionListRequest) Normalize() SessionListRequest {
+	r.AgentID = strings.TrimSpace(r.AgentID)
+	r.Namespace = strings.TrimSpace(r.Namespace)
+	r.Status = strings.TrimSpace(r.Status)
+	if r.Limit <= 0 {
+		r.Limit = DefaultSessionListLimit
+	}
+	return r
+}
+
+// Validate ensures the request is semantically valid.
+func (r SessionListRequest) Validate() error {
+	if r.Limit <= 0 {
+		return fmt.Errorf("limit must be a positive integer")
+	}
+	return nil
+}
+
+// Params builds the canonical bridge/HUD parameter map for this request.
+func (r SessionListRequest) Params() (map[string]any, error) {
+	req := r.Normalize()
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+
+	params := map[string]any{
+		"limit": req.Limit,
+	}
+	if req.AgentID != "" {
+		params["agent_id"] = req.AgentID
+	}
+	if req.Namespace != "" {
+		params["namespace"] = req.Namespace
+	}
+	if req.Status != "" {
+		params["status"] = req.Status
+	}
+	return params, nil
+}
+
+// SessionPruneRequest defines the shared request contract for POST /api/agent/session-prune.
+type SessionPruneRequest struct {
+	MaxAgeHours int    `json:"max_age_hours,omitempty"`
+	Status      string `json:"status,omitempty"`
+	DryRun      bool   `json:"dry_run,omitempty"`
+}
+
+// Normalize applies defaults and trims string fields.
+func (r SessionPruneRequest) Normalize() SessionPruneRequest {
+	if r.MaxAgeHours <= 0 {
+		r.MaxAgeHours = 72
+	}
+	r.Status = strings.TrimSpace(r.Status)
+	if r.Status == "" {
+		r.Status = DefaultSessionPruneStatus
+	}
+	return r
+}
+
+// Validate ensures the request is semantically valid.
+func (r SessionPruneRequest) Validate() error {
+	if r.MaxAgeHours <= 0 {
+		return fmt.Errorf("max_age_hours must be a positive integer")
+	}
+	return nil
+}
+
+// Params builds the canonical bridge/HUD parameter map for this request.
+func (r SessionPruneRequest) Params() (map[string]any, error) {
+	req := r.Normalize()
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"max_age_hours": req.MaxAgeHours,
+		"status":        req.Status,
+		"dry_run":       req.DryRun,
+	}, nil
+}
+
+// TaskUpdateRequest defines the shared mutation payload for POST /api/agent/task-update.
+type TaskUpdateRequest struct {
+	TaskID      string       `json:"task_id"`
+	AgentID     string       `json:"agent_id,omitempty"`
+	SessionID   string       `json:"session_id,omitempty"`
+	Status      string       `json:"status,omitempty"`
+	Title       string       `json:"title,omitempty"`
+	Priority    string       `json:"priority,omitempty"`
+	Resolution  string       `json:"resolution,omitempty"`
+	Project     string       `json:"project,omitempty"`
+	PipelineRef *PipelineRef `json:"pipeline_ref,omitempty"`
+	WorkflowID  string       `json:"workflow_id,omitempty"`
+}
+
+// Normalize trims string fields.
+func (r TaskUpdateRequest) Normalize() TaskUpdateRequest {
+	r.TaskID = strings.TrimSpace(r.TaskID)
+	r.AgentID = strings.TrimSpace(r.AgentID)
+	r.SessionID = strings.TrimSpace(r.SessionID)
+	r.Status = strings.TrimSpace(r.Status)
+	r.Title = strings.TrimSpace(r.Title)
+	r.Priority = strings.TrimSpace(r.Priority)
+	r.Resolution = strings.TrimSpace(r.Resolution)
+	r.Project = strings.TrimSpace(r.Project)
+	r.WorkflowID = strings.TrimSpace(r.WorkflowID)
+	return r
+}
+
+// Validate ensures the request is semantically valid.
+func (r TaskUpdateRequest) Validate() error {
+	if strings.TrimSpace(r.TaskID) == "" {
+		return fmt.Errorf("task_id is required")
+	}
+	return nil
+}
+
+// ToParams converts the contract payload into bridge params.
+func (r TaskUpdateRequest) ToParams() (UpdateTaskParams, error) {
+	req := r.Normalize()
+	if err := req.Validate(); err != nil {
+		return UpdateTaskParams{}, err
+	}
+	return UpdateTaskParams{
+		ID:          req.TaskID,
+		AgentID:     req.AgentID,
+		SessionID:   req.SessionID,
+		Status:      req.Status,
+		Title:       req.Title,
+		Priority:    req.Priority,
+		Resolution:  req.Resolution,
+		Project:     req.Project,
+		PipelineRef: req.PipelineRef,
+		WorkflowID:  req.WorkflowID,
+	}, nil
+}
+
+// DispatchTaskRequest defines the shared mutation payload for POST /api/agent/dispatch.
+type DispatchTaskRequest struct {
+	TargetAgentID   string       `json:"target_agent_id"`
+	SourceSessionID string       `json:"source_session_id,omitempty"`
+	Title           string       `json:"title"`
+	Context         string       `json:"context,omitempty"`
+	Priority        string       `json:"priority,omitempty"`
+	Tags            []string     `json:"tags,omitempty"`
+	FilePath        string       `json:"file_path,omitempty"`
+	LineNumber      int          `json:"line_number,omitempty"`
+	BlockedBy       []string     `json:"blocked_by,omitempty"`
+	PipelineRef     *PipelineRef `json:"pipeline_ref,omitempty"`
+	WorkflowID      string       `json:"workflow_id,omitempty"`
+}
+
+// Normalize trims strings, normalizes list fields, and applies default priority.
+func (r DispatchTaskRequest) Normalize() DispatchTaskRequest {
+	r.TargetAgentID = strings.TrimSpace(r.TargetAgentID)
+	r.SourceSessionID = strings.TrimSpace(r.SourceSessionID)
+	r.Title = strings.TrimSpace(r.Title)
+	r.Context = strings.TrimSpace(r.Context)
+	r.Priority = normalizeTaskPriority(strings.TrimSpace(r.Priority))
+	r.Tags = NormalizeStringList(r.Tags)
+	r.FilePath = strings.TrimSpace(r.FilePath)
+	if r.LineNumber < 0 {
+		r.LineNumber = 0
+	}
+	r.BlockedBy = NormalizeStringList(r.BlockedBy)
+	r.WorkflowID = strings.TrimSpace(r.WorkflowID)
+	return r
+}
+
+// Validate ensures the request is semantically valid.
+func (r DispatchTaskRequest) Validate() error {
+	if strings.TrimSpace(r.TargetAgentID) == "" {
+		return fmt.Errorf("target_agent_id is required")
+	}
+	if strings.TrimSpace(r.Title) == "" {
+		return fmt.Errorf("title is required")
+	}
+	return nil
+}
+
+// ToParams converts the contract payload into bridge params.
+func (r DispatchTaskRequest) ToParams() (DispatchTaskParams, error) {
+	req := r.Normalize()
+	if err := req.Validate(); err != nil {
+		return DispatchTaskParams{}, err
+	}
+	return DispatchTaskParams(req), nil
+}
+
+// NormalizeStringList trims, drops empty values, and de-duplicates while preserving order.
+func NormalizeStringList(values []string) []string {
+	seen := map[string]struct{}{}
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		v := strings.TrimSpace(value)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		normalized = append(normalized, v)
+	}
+	return normalized
+}
+
+func normalizeTaskPriority(priority string) string {
+	switch strings.ToLower(strings.TrimSpace(priority)) {
+	case "low", "medium", "high", "critical":
+		return strings.ToLower(strings.TrimSpace(priority))
+	default:
+		return "medium"
+	}
 }
 
 // NudgeQueuePolicyMutation defines the shared mutation payload contract for

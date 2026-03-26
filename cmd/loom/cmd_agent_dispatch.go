@@ -163,26 +163,25 @@ This enables the HUD or CLI to push work to active agents.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port := resolvePort(cmd)
 
-			body := map[string]any{
-				"target_agent_id": targetAgent,
-				"title":           title,
-				"context":         ctx,
-				"priority":        priority,
-			}
-			if len(tags) > 0 {
-				body["tags"] = tags
-			}
-			if filePath != "" {
-				body["file_path"] = filePath
-			}
-			if lineNumber > 0 {
-				body["line_number"] = lineNumber
-			}
-			if len(blockedBy) > 0 {
-				body["blocked_by"] = blockedBy
+			req := bridge.DispatchTaskRequest{
+				TargetAgentID: targetAgent,
+				Title:         title,
+				Context:       ctx,
+				Priority:      priority,
+				Tags:          tags,
+				FilePath:      filePath,
+				LineNumber:    lineNumber,
+				BlockedBy:     blockedBy,
+			}.Normalize()
+			if err := req.Validate(); err != nil {
+				if quiet {
+					fmt.Fprintf(os.Stderr, "loom: dispatch: %v\n", err)
+					return nil
+				}
+				return err
 			}
 
-			result, err := hudPost(port, "/api/agent/dispatch", body)
+			result, err := hudPost(port, bridge.AgentDispatchEndpoint, req)
 			if err != nil {
 				if quiet {
 					fmt.Fprintf(os.Stderr, "loom: dispatch: %v\n", err)
