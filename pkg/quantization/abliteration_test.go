@@ -372,6 +372,9 @@ func TestAbliterationEnv_GFX906DisablesCachingAllocatorWarmup(t *testing.T) {
 	if got := envMap["ABLITERATION_SAFE_SHARDED_LOAD"]; got != "true" {
 		t.Fatalf("ABLITERATION_SAFE_SHARDED_LOAD = %q, want true", got)
 	}
+	if got := envMap["ABLITERATION_GPU_MAX_MEMORY_GB"]; got != "14" {
+		t.Fatalf("ABLITERATION_GPU_MAX_MEMORY_GB = %q, want 14", got)
+	}
 }
 
 func TestAbliterationWrapperScript(t *testing.T) {
@@ -525,11 +528,14 @@ func TestAbliterationMemoryBudgets(t *testing.T) {
 	if got := abliterationCPUMaxMemoryGB(60); got != 24 {
 		t.Errorf("abliterationCPUMaxMemoryGB(60) = %d, want 24", got)
 	}
-	if got := abliterationGPUMaxMemoryGB(true); got != 20 {
-		t.Errorf("abliterationGPUMaxMemoryGB(true) = %d, want 20", got)
+	if got := abliterationGPUMaxMemoryGB(true, "gfx1100"); got != 20 {
+		t.Errorf("abliterationGPUMaxMemoryGB(true, gfx1100) = %d, want 20", got)
 	}
-	if got := abliterationGPUMaxMemoryGB(false); got != 0 {
-		t.Errorf("abliterationGPUMaxMemoryGB(false) = %d, want 0", got)
+	if got := abliterationGPUMaxMemoryGB(true, "gfx906"); got != 14 {
+		t.Errorf("abliterationGPUMaxMemoryGB(true, gfx906) = %d, want 14", got)
+	}
+	if got := abliterationGPUMaxMemoryGB(false, "gfx906"); got != 0 {
+		t.Errorf("abliterationGPUMaxMemoryGB(false, gfx906) = %d, want 0", got)
 	}
 }
 

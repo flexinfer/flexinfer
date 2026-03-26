@@ -8,3 +8,4 @@ resources:
   - qwen35-gptq-direct-test.yaml
   - qwen35-gptq-transformers-test.yaml
   - qwen35-fp16-sanity-test.yaml
+  - qwen35-gfx906-abliteration-gpu-load.yaml
