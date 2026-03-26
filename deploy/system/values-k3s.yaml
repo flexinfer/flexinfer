@@ -248,7 +248,7 @@ runtime:
       nodeSelector:
         kubernetes.io/hostname: cblevins-5930k
     - name: gfx906
-      image: "registry.harbor.lan/flexinfer/runtime:unified-gfx906"
+      image: "registry.harbor.lan/flexinfer/runtime:unified-gfx906-v3"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1
