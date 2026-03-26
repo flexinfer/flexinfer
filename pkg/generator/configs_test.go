@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pelletier/go-toml/v2"
+
 	"github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/validator"
 )
@@ -21,6 +23,12 @@ func testRegistry() *registry.Registry {
 					"dirty_worktree_mode":                   "continue_scoped_commits",
 					"dirty_worktree_nudge_on_session_start": true,
 					"dirty_worktree_nudge_message":          "Dirty worktree detected. Continue on current branch with scoped commits.",
+					"guardrails": map[string]any{
+						"gitops_flux": map[string]any{
+							"blocked_commands": []any{"kubectl edit", "kubectl set env"},
+							"message":          "GitOps policy: kubectl edit/set env bypasses git history. Edit manifests and use flux reconcile.",
+						},
+					},
 				},
 			},
 			"claude": {
@@ -32,10 +40,7 @@ func testRegistry() *registry.Registry {
 					"Bash(make *)", "Bash(kubectl *)", "Bash(loom *)",
 					"WebFetch", "WebSearch",
 				},
-				Deny: []string{
-					"Bash(kubectl edit *)",
-					"Bash(kubectl set env *)",
-				},
+				Deny: []string{},
 			},
 			"codex": {
 				Settings: map[string]any{
@@ -147,6 +152,46 @@ func TestClaudePermissionsFromRegistry(t *testing.T) {
 	}
 }
 
+func TestClaudeHooksConfig_UsesSharedGitOpsPolicy(t *testing.T) {
+	claudeProfile, _ := GetPlatformProfile("claude")
+	config := claudeHooksConfig(testRegistry(), claudeProfile, "")
+
+	hooks, ok := config["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("expected hooks map in claude config")
+	}
+
+	preToolUse, ok := hooks["PreToolUse"].([]map[string]any)
+	if !ok || len(preToolUse) == 0 {
+		t.Fatal("expected PreToolUse hooks from shared policy")
+	}
+
+	foundPolicyMessage := false
+	foundGitCommitReminder := false
+	for _, block := range preToolUse {
+		entries, _ := block["hooks"].([]map[string]any)
+		for _, entry := range entries {
+			cmd, _ := entry["command"].(string)
+			if strings.Contains(cmd, "kubectl edit") &&
+				strings.Contains(cmd, "flux reconcile") &&
+				strings.Contains(cmd, "GitOps policy:") {
+				foundPolicyMessage = true
+			}
+			if strings.Contains(cmd, "Pre-commit quality reminder") &&
+				strings.Contains(cmd, "quality_check") {
+				foundGitCommitReminder = true
+			}
+		}
+	}
+
+	if !foundPolicyMessage {
+		t.Fatalf("expected shared GitOps policy hook to mention kubectl edit/set env and flux reconcile: %#v", preToolUse)
+	}
+	if !foundGitCommitReminder {
+		t.Fatalf("expected pre-tool-use quality reminder hook to remain present: %#v", preToolUse)
+	}
+}
+
 func TestGeneratedGeminiSettingsValid(t *testing.T) {
 	config := geminiHooksConfig()
 
@@ -214,6 +259,7 @@ func TestEmitCodexPreamble(t *testing.T) {
 		`web_search = "live"`,
 		`Git safety policy: treat pre-existing dirty worktrees as baseline context.`,
 		"notify =",
+		`"--"]`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("expected Codex preamble to contain %q", want)
@@ -221,8 +267,12 @@ func TestEmitCodexPreamble(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		`.cache/loom/agent-id-codex-${WS_HASH}`,
+		`CACHE_DIR=\"${HOME}/.cache/loom\"`,
+		`${CACHE_DIR}/agent-id-codex-${WS_HASH}`,
+		`${CACHE_DIR}/notify-heartbeat-codex-${WS_HASH}.stamp`,
 		`codex-${WS_HASH}`,
+		`date +%s`,
+		` -lt 15 `,
 		`--agent-id \"`,
 		`--description \"Codex notify session\"`,
 	} {
@@ -253,6 +303,24 @@ func TestEmitCodexPreamble_UsesExplicitLoomBinary(t *testing.T) {
 
 	if !strings.Contains(content, `exec '/opt/loom/bin/loom' agent heartbeat`) {
 		t.Fatalf("expected explicit loom binary in codex notify hook, got: %s", content)
+	}
+}
+
+func TestEmitCodexPreamble_NotifyRemainsTopLevel(t *testing.T) {
+	var sb strings.Builder
+	emitCodexPreamble(&sb, testRegistry(), "/tmp/workspace", "")
+
+	var parsed map[string]any
+	if err := toml.Unmarshal([]byte(sb.String()), &parsed); err != nil {
+		t.Fatalf("expected generated preamble to be valid TOML: %v", err)
+	}
+
+	notify, ok := parsed["notify"]
+	if !ok {
+		t.Fatalf("expected top-level notify key, got: %#v", parsed)
+	}
+	if !containsCodexNotifyCommand(notify) {
+		t.Fatalf("expected top-level notify key to contain loom hook, got: %#v", notify)
 	}
 }
 
@@ -1148,8 +1216,10 @@ func TestCodexPreamble_ContainsWorkspaceHash(t *testing.T) {
 	for _, want := range []string{
 		"WS_HASH=",
 		"cksum",
+		`CACHE_DIR=\"${HOME}/.cache/loom\"`,
 		"AGENT_ID_FILE",
-		"${HOME}/.cache/loom/agent-id-codex-${WS_HASH}",
+		"${CACHE_DIR}/agent-id-codex-${WS_HASH}",
+		"${CACHE_DIR}/notify-heartbeat-codex-${WS_HASH}.stamp",
 		"codex-${WS_HASH}",
 	} {
 		if !strings.Contains(content, want) {

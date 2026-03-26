@@ -44,7 +44,7 @@ repos:
 
       - id: go-vet
         name: go vet
-        entry: bash scripts/dev/with-clean-git-env.sh go vet ./...
+        entry: bash scripts/ci/go_changed_packages_hook.sh vet
         language: system
         types: [go]
         pass_filenames: false
@@ -60,7 +60,7 @@ repos:
 
       - id: golangci-lint
         name: golangci-lint
-        entry: bash scripts/dev/with-clean-git-env.sh bash -c '$HOME/go/bin/golangci-lint run'
+        entry: bash scripts/ci/go_changed_packages_hook.sh lint
         language: system
         types: [go]
         pass_filenames: false

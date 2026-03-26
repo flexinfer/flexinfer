@@ -165,7 +165,14 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 	fmt.Printf("Syncing %s -> %s\n", repoPath, homePath)
 
 	if backup && Exists(homePath) {
-		if !p.SyncGeneratedOnly || (p.GeneratedFile != "" && Exists(filepath.Join(homePath, primaryHomeGeneratedFile(p)))) {
+		hasHomeGenerated := false
+		for _, rel := range homeGeneratedFiles(p) {
+			if Exists(filepath.Join(homePath, rel)) {
+				hasHomeGenerated = true
+				break
+			}
+		}
+		if !p.SyncGeneratedOnly || hasHomeGenerated {
 			if err := m.Backup(profileName, "home"); err != nil {
 				return fmt.Errorf("backup failed: %w", err)
 			}

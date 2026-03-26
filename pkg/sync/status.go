@@ -111,13 +111,15 @@ func (m *Manager) GetSyncStatus(profileName string) (*SyncStatus, error) {
 
 	// Check for stale workspace-level configs that shadow home configs
 	if profile.GeneratedDirectToHome && m.WorkspaceRoot != "" && m.WorkspaceRoot != m.RepoRoot {
-		wsConfigPath := filepath.Join(m.WorkspaceRoot, profile.RepoDir, profile.GeneratedFile)
-		if Exists(wsConfigPath) {
-			status.DriftDetails = append(status.DriftDetails, DriftItem{
-				File:   "workspace:" + profile.GeneratedFile,
-				Status: DriftOutOfSync,
-			})
-			status.InSync = false
+		for _, relPath := range homeGeneratedFiles(profile) {
+			wsConfigPath := filepath.Join(m.WorkspaceRoot, profile.RepoDir, relPath)
+			if Exists(wsConfigPath) {
+				status.DriftDetails = append(status.DriftDetails, DriftItem{
+					File:   "workspace:" + relPath,
+					Status: DriftOutOfSync,
+				})
+				status.InSync = false
+			}
 		}
 	}
 
@@ -363,13 +365,37 @@ func compareHomeSkillFiles(homePath string) []DriftItem {
 	return items
 }
 
-func compareHomeGeneratedFiles(homePath string, profile *Profile) []DriftItem {
-	if profile.GeneratedFile == "" {
-		return []DriftItem{{File: "", Status: DriftOutOfSync}}
+// homeGeneratedFiles returns the generated files that should exist in home for
+// a direct-to-home profile. The primary generated file is always required, and
+// extra generated files are treated as required home artifacts as well.
+func homeGeneratedFiles(profile *Profile) []string {
+	if profile == nil || profile.GeneratedFile == "" {
+		return nil
 	}
 
-	files := []string{primaryHomeGeneratedFile(profile)}
-	files = append(files, profile.ExtraGeneratedFiles...)
+	primary := primaryHomeGeneratedFile(profile)
+	files := []string{primary}
+	seen := map[string]struct{}{
+		primary: {},
+	}
+	for _, rel := range profile.ExtraGeneratedFiles {
+		if rel == "" {
+			continue
+		}
+		if _, ok := seen[rel]; ok {
+			continue
+		}
+		seen[rel] = struct{}{}
+		files = append(files, rel)
+	}
+	return files
+}
+
+func compareHomeGeneratedFiles(homePath string, profile *Profile) []DriftItem {
+	files := homeGeneratedFiles(profile)
+	if len(files) == 0 {
+		return []DriftItem{{File: "", Status: DriftOutOfSync}}
+	}
 
 	var items []DriftItem
 	for _, rel := range files {
@@ -377,13 +403,9 @@ func compareHomeGeneratedFiles(homePath string, profile *Profile) []DriftItem {
 		if Exists(path) {
 			homeHash, _ := hashFile(path)
 			items = append(items, DriftItem{File: rel, HomeHash: homeHash, Status: DriftInSync})
-		} else if rel == primaryHomeGeneratedFile(profile) {
+		} else {
 			items = append(items, DriftItem{File: rel, Status: DriftMissing})
 		}
-	}
-
-	if len(items) == 0 {
-		return []DriftItem{{File: primaryHomeGeneratedFile(profile), Status: DriftMissing}}
 	}
 	return items
 }

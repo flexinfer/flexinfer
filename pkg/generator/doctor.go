@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/pelletier/go-toml/v2"
+
 	"github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/validator"
 )
@@ -275,12 +277,20 @@ func checkCodexHealth(health *PlatformHealth, configDir string) {
 	}
 
 	content := string(data)
-	// Codex hooks are a single "notify" line containing loom agent heartbeat.
-	if strings.Contains(content, "notify") && strings.Contains(content, "loom") && strings.Contains(content, "heartbeat") {
+	hasNotify, notifyHealthy, notifyRateLimited := codexNotifyHookState(data)
+	if notifyHealthy && notifyRateLimited {
 		health.Hooks = "ok"
+	} else if notifyHealthy {
+		health.Hooks = "stale"
+		health.Details = append(health.Details, "config.toml uses unthrottled loom notify hook (regenerate with: loom sync codex --regen)")
 	} else if strings.Contains(content, "[mcp_servers") {
-		health.Hooks = "missing"
-		health.Details = append(health.Details, "config.toml exists but has no loom notify hook")
+		if hasNotify {
+			health.Hooks = "stale"
+			health.Details = append(health.Details, "config.toml has notify configured but is not using the Loom-managed hook")
+		} else {
+			health.Hooks = "missing"
+			health.Details = append(health.Details, "config.toml exists but has no loom notify hook")
+		}
 	} else {
 		health.Hooks = "missing"
 		health.Details = append(health.Details, "config.toml exists but appears incomplete")
@@ -298,6 +308,74 @@ func checkCodexHealth(health *PlatformHealth, configDir string) {
 	} else {
 		health.Schema = "ok"
 	}
+}
+
+func codexNotifyHookState(data []byte) (hasNotify bool, healthy bool, rateLimited bool) {
+	var config map[string]any
+	if err := toml.Unmarshal(data, &config); err != nil {
+		return false, false, false
+	}
+
+	notify, ok := config["notify"]
+	if !ok {
+		return false, false, false
+	}
+
+	return true, containsCodexNotifyCommand(notify), containsCodexNotifyThrottle(notify)
+}
+
+func containsCodexNotifyCommand(value any) bool {
+	switch v := value.(type) {
+	case []any:
+		var parts []string
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) > 0 {
+			return codexNotifyCommandLooksHealthy(strings.Join(parts, " "))
+		}
+	case []string:
+		if len(v) > 0 {
+			return codexNotifyCommandLooksHealthy(strings.Join(v, " "))
+		}
+	case string:
+		return codexNotifyCommandLooksHealthy(v)
+	}
+	return false
+}
+
+func codexNotifyCommandLooksHealthy(command string) bool {
+	return strings.Contains(command, "loom") && strings.Contains(command, "agent")
+}
+
+func containsCodexNotifyThrottle(value any) bool {
+	switch v := value.(type) {
+	case []any:
+		var parts []string
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) > 0 {
+			return codexNotifyCommandRateLimited(strings.Join(parts, " "))
+		}
+	case []string:
+		if len(v) > 0 {
+			return codexNotifyCommandRateLimited(strings.Join(v, " "))
+		}
+	case string:
+		return codexNotifyCommandRateLimited(v)
+	}
+	return false
+}
+
+func codexNotifyCommandRateLimited(command string) bool {
+	return strings.Contains(command, "notify-heartbeat-codex-") &&
+		strings.Contains(command, "date +%s") &&
+		strings.Contains(command, " -lt 15 ")
 }
 
 // checkOpenCodeHealth checks OpenCode config and hooks plugin.
@@ -360,7 +438,7 @@ func resolveConfigDir(platform, workspaceRoot, homeDir string) string {
 	// Check workspace-local first.
 	if workspaceRoot != "" {
 		candidate := filepath.Join(workspaceRoot, dirName)
-		if dirExists(candidate) {
+		if platformConfigPresent(platform, candidate) {
 			return candidate
 		}
 	}
@@ -368,7 +446,7 @@ func resolveConfigDir(platform, workspaceRoot, homeDir string) string {
 	// Fall back to home directory.
 	if homeDir != "" {
 		candidate := filepath.Join(homeDir, homeDirName)
-		if dirExists(candidate) {
+		if platformConfigPresent(platform, candidate) {
 			return candidate
 		}
 	}
@@ -378,6 +456,38 @@ func resolveConfigDir(platform, workspaceRoot, homeDir string) string {
 		return filepath.Join(workspaceRoot, dirName)
 	}
 	return filepath.Join(homeDir, homeDirName)
+}
+
+func platformConfigPresent(platform, dir string) bool {
+	if !dirExists(dir) {
+		return false
+	}
+	for _, rel := range platformExpectedFiles(platform) {
+		if rel == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func platformExpectedFiles(platform string) []string {
+	switch platform {
+	case "claude":
+		return []string{"settings.json", "mcp.json"}
+	case "gemini":
+		return []string{"config.toml", "settings.json"}
+	case "codex", "kilocode":
+		return []string{"config.toml"}
+	case "opencode":
+		return []string{"opencode.json", filepath.Join("plugins", "loom-hooks.ts")}
+	case "vscode", "antigravity", "zed":
+		return []string{"mcp.json"}
+	default:
+		return nil
+	}
 }
 
 // platformDirNames returns the workspace-relative and home-relative directory names.

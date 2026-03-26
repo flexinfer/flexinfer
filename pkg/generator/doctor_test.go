@@ -214,8 +214,8 @@ func TestDoctorCheckGeminiPolicyDrift(t *testing.T) {
 func TestDoctorCheckCodexHealthy(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Write config.toml with a notify hook.
-	content := `notify = ["loom", "agent", "heartbeat", "--agent-id", "codex"]
+	// Write config.toml with the current throttled Loom notify hook.
+	content := `notify = ["sh", "-c", "HEARTBEAT_STAMP_FILE=\"${HOME}/.cache/loom/notify-heartbeat-codex-${WS_HASH}.stamp\"; NOW=\"$(date +%s)\"; LAST=\"$(cat \"$HEARTBEAT_STAMP_FILE\" 2>/dev/null || true)\"; case \"$LAST\" in ''|*[!0-9]*) ;; *) if [ $((NOW - LAST)) -lt 15 ]; then exit 0; fi ;; esac; exec loom agent heartbeat --agent-id codex --quiet", "--"]
 
 [mcp_servers.loom]
 command = "loom"
@@ -231,6 +231,30 @@ args = ["proxy"]
 	}
 	if health.Status != "healthy" {
 		t.Errorf("status = %s, want healthy", health.Status)
+	}
+}
+
+func TestDoctorCheckCodexStaleUnthrottledNotify(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	content := `approval_policy = "never"
+sandbox_mode = "workspace-write"
+notify = ["sh", "-c", "exec loom agent heartbeat --agent-id codex --quiet"]
+
+[mcp_servers.loom]
+command = "loom"
+args = ["proxy"]
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "config.toml"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	health := DoctorCheck(nil, "codex", tmpDir)
+	if health.Hooks != "stale" {
+		t.Errorf("hooks = %s, want stale; details: %v", health.Hooks, health.Details)
+	}
+	if health.Status != "stale" {
+		t.Errorf("status = %s, want stale", health.Status)
 	}
 }
 
@@ -338,9 +362,12 @@ func TestDeriveStatus(t *testing.T) {
 func TestResolveConfigDir(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Create workspace .claude dir.
+	// Create workspace .claude dir with an actual config file.
 	claudeDir := filepath.Join(tmpDir, ".claude")
 	os.MkdirAll(claudeDir, 0755)
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(`{"hooks":{}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Should prefer workspace-local.
 	got := resolveConfigDir("claude", tmpDir, "/nonexistent")
@@ -352,9 +379,34 @@ func TestResolveConfigDir(t *testing.T) {
 	homeDir := t.TempDir()
 	homeClaudeDir := filepath.Join(homeDir, ".claude")
 	os.MkdirAll(homeClaudeDir, 0755)
+	if err := os.WriteFile(filepath.Join(homeClaudeDir, "settings.json"), []byte(`{"hooks":{}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	got = resolveConfigDir("claude", filepath.Join(tmpDir, "nonexistent_workspace"), homeDir)
 	if got != homeClaudeDir {
 		t.Errorf("resolveConfigDir = %s, want %s", got, homeClaudeDir)
+	}
+}
+
+func TestResolveConfigDir_IgnoresEmptyWorkspaceDir(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	workspaceCodexDir := filepath.Join(workspaceRoot, ".codex")
+	if err := os.MkdirAll(workspaceCodexDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	homeDir := t.TempDir()
+	homeCodexDir := filepath.Join(homeDir, ".codex")
+	if err := os.MkdirAll(homeCodexDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(homeCodexDir, "config.toml"), []byte(`notify = ["loom"]`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := resolveConfigDir("codex", workspaceRoot, homeDir)
+	if got != homeCodexDir {
+		t.Errorf("resolveConfigDir = %s, want %s", got, homeCodexDir)
 	}
 }

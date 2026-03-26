@@ -511,6 +511,113 @@ func TestGetSyncStatus_HomeOnlyGeneratedProfile(t *testing.T) {
 	}
 }
 
+func TestGetSyncStatus_HomeOnlyGeneratedProfile_ExtraArtifactMissing(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	homeProfileDir := filepath.Join(homeDir, ".claude")
+	if err := os.MkdirAll(homeProfileDir, 0o755); err != nil {
+		t.Fatalf("mkdir home profile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeProfileDir, "mcp.json"), []byte("content"), 0o644); err != nil {
+		t.Fatalf("write home mcp.json: %v", err)
+	}
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+	m.Profiles["test"] = &Profile{
+		Name:                  "test",
+		RepoDir:               "unused-repo-dir",
+		HomeDir:               ".claude",
+		GeneratedFile:         "mcp.json",
+		ExtraGeneratedFiles:   []string{"settings.json"},
+		GeneratedDirectToHome: true,
+		SyncGeneratedOnly:     true,
+	}
+
+	status, err := m.GetSyncStatus("test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.InSync {
+		t.Fatalf("expected InSync = false when extra artifact is missing, got true (drift=%v)", status.DriftDetails)
+	}
+	if len(status.DriftDetails) != 2 {
+		t.Fatalf("expected 2 drift items, got %d: %v", len(status.DriftDetails), status.DriftDetails)
+	}
+	foundPrimary := false
+	foundMissingExtra := false
+	for _, item := range status.DriftDetails {
+		switch item.File {
+		case "mcp.json":
+			foundPrimary = item.Status == DriftInSync
+		case "settings.json":
+			foundMissingExtra = item.Status == DriftMissing
+		}
+	}
+	if !foundPrimary {
+		t.Fatal("expected primary mcp.json to remain in sync")
+	}
+	if !foundMissingExtra {
+		t.Fatal("expected missing settings.json extra artifact to be reported")
+	}
+}
+
+func TestGetSyncStatus_HomeOnlyGeneratedProfile_ExtraArtifactShadowedInWorkspace(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+	workspaceDir := t.TempDir()
+
+	homeProfileDir := filepath.Join(homeDir, ".claude")
+	workspaceProfileDir := filepath.Join(workspaceDir, ".claude")
+	if err := os.MkdirAll(homeProfileDir, 0o755); err != nil {
+		t.Fatalf("mkdir home profile: %v", err)
+	}
+	if err := os.MkdirAll(workspaceProfileDir, 0o755); err != nil {
+		t.Fatalf("mkdir workspace profile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeProfileDir, "mcp.json"), []byte("content"), 0o644); err != nil {
+		t.Fatalf("write home mcp.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(homeProfileDir, "settings.json"), []byte(`{"hooks":{}}`), 0o644); err != nil {
+		t.Fatalf("write home settings.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspaceProfileDir, "settings.json"), []byte(`{"hooks":{"stale":true}}`), 0o644); err != nil {
+		t.Fatalf("write workspace settings.json: %v", err)
+	}
+
+	m, _ := NewManager(repoDir)
+	m.HomeDir = homeDir
+	m.WorkspaceRoot = workspaceDir
+	m.Profiles["test"] = &Profile{
+		Name:                  "test",
+		RepoDir:               ".claude",
+		HomeDir:               ".claude",
+		GeneratedFile:         "mcp.json",
+		ExtraGeneratedFiles:   []string{"settings.json"},
+		GeneratedDirectToHome: true,
+		SyncGeneratedOnly:     true,
+	}
+
+	status, err := m.GetSyncStatus("test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.InSync {
+		t.Fatalf("expected InSync = false when workspace copy shadows home extra, got true (drift=%v)", status.DriftDetails)
+	}
+
+	foundWorkspaceShadow := false
+	for _, item := range status.DriftDetails {
+		if item.File == "workspace:settings.json" && item.Status == DriftOutOfSync {
+			foundWorkspaceShadow = true
+		}
+	}
+	if !foundWorkspaceShadow {
+		t.Fatalf("expected workspace:settings.json drift item, got %v", status.DriftDetails)
+	}
+}
+
 func TestGetSyncStatus_OutOfSync(t *testing.T) {
 	repoDir := t.TempDir()
 	homeDir := t.TempDir()

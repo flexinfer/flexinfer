@@ -1758,6 +1758,13 @@ platform_permissions:
       dirty_worktree_nudge_on_session_start: true
       # Canonical guidance text propagated to AGENTS.md + SessionStart hooks.
       dirty_worktree_nudge_message: "Dirty worktree detected. Treat pre-existing changes as baseline context, continue work, and stage/commit only files for the active task. Escalate only if new unexpected changes appear in files you are editing."
+      # Shared guardrails consumed by generator hooks now and proxy enforcement later.
+      guardrails:
+        gitops_flux:
+          blocked_commands:
+            - "kubectl edit"
+            - "kubectl set env"
+          message: "GitOps policy: kubectl edit/set env bypasses git history. Edit manifests and use flux reconcile."
 
   claude:
     additional_directories:
@@ -1785,9 +1792,6 @@ platform_permissions:
       - "WebSearch"
       - "Skill"
       - "ToolSearch"
-    deny:
-      - "Bash(kubectl edit *)"
-      - "Bash(kubectl set env *)"
 
   codex:
     settings:

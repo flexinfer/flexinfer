@@ -406,28 +406,52 @@ func runProxy(socketPath string) error {
 			}
 
 		default:
-			if err := ensureDaemon(); err != nil {
-				stdio.Send(ctx, mcp.NewErrorResponse(msg.ID, mcp.InternalError, "connect to daemon failed: "+err.Error()))
-				continue
-			}
-
 			switch msg.Method {
 			case "tools/list":
+				if err := ensureDaemon(); err != nil {
+					stdio.Send(ctx, mcp.NewErrorResponse(msg.ID, mcp.InternalError, "connect to daemon failed: "+err.Error()))
+					continue
+				}
 				resp, err = handleProxyToolsList(ctx, daemon, msg)
 
 			case "tools/call":
+				lastProxyCallTime.Store(time.Now().UnixNano())
+				if policyResp, blocked := proxyFluxPolicyResponse(msg); blocked {
+					resp = policyResp
+					break
+				}
+				if err := ensureDaemon(); err != nil {
+					stdio.Send(ctx, mcp.NewErrorResponse(msg.ID, mcp.InternalError, "connect to daemon failed: "+err.Error()))
+					continue
+				}
 				resp, err = handleProxyToolsCall(ctx, daemon, msg)
 
 			case "resources/read":
+				if err := ensureDaemon(); err != nil {
+					stdio.Send(ctx, mcp.NewErrorResponse(msg.ID, mcp.InternalError, "connect to daemon failed: "+err.Error()))
+					continue
+				}
 				resp, err = handleProxyResourcesRead(ctx, daemon, msg)
 
 			case "prompts/list":
+				if err := ensureDaemon(); err != nil {
+					stdio.Send(ctx, mcp.NewErrorResponse(msg.ID, mcp.InternalError, "connect to daemon failed: "+err.Error()))
+					continue
+				}
 				resp, err = handleProxyPromptsList(ctx, daemon, msg)
 
 			case "prompts/get":
+				if err := ensureDaemon(); err != nil {
+					stdio.Send(ctx, mcp.NewErrorResponse(msg.ID, mcp.InternalError, "connect to daemon failed: "+err.Error()))
+					continue
+				}
 				resp, err = handleProxyPromptsGet(ctx, daemon, msg)
 
 			default:
+				if err := ensureDaemon(); err != nil {
+					stdio.Send(ctx, mcp.NewErrorResponse(msg.ID, mcp.InternalError, "connect to daemon failed: "+err.Error()))
+					continue
+				}
 				// Forward unknown methods to daemon
 				resp, err = forwardToDaemon(ctx, daemon, msg)
 			}
@@ -568,6 +592,10 @@ func handleProxyToolsList(ctx context.Context, daemon mcp.Transport, msg *mcp.Me
 }
 
 func handleProxyToolsCall(ctx context.Context, daemon mcp.Transport, msg *mcp.Message) (*mcp.Message, error) {
+	if policyResp, blocked := proxyFluxPolicyResponse(msg); blocked {
+		return policyResp, nil
+	}
+
 	var params struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments,omitempty"`

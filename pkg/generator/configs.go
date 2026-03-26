@@ -781,9 +781,9 @@ func validateSettingsAgainstUpstream(target, filePath string, content []byte) {
 }
 
 // claudeHooksConfig returns a Claude Code settings.json with lifecycle hooks,
-// guardrail hooks, and default-allow permissions. Permissions are read from the
-// registry's platform_permissions.claude section; hooks remain in Go because
-// they are structural (event names, matcher groups) rather than data.
+// policy-driven guardrails, and default-allow permissions. Permissions are read
+// from the registry's platform_permissions.claude section; hook shape remains in
+// Go while the guarded command data comes from shared registry policy.
 func claudeHooksConfig(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
 	return map[string]any{
 		"$schema":     "https://json.schemastore.org/claude-code-settings.json",
@@ -794,7 +794,7 @@ func claudeHooksConfig(reg *registry.Registry, profile *PlatformProfile, loomBin
 
 // buildPlatformHooks generates the shared SessionStart / session-end / heartbeat
 // hooks for any platform that supports lifecycle hooks. Platform-specific extras
-// (e.g. Claude's PreToolUse guardrails) are appended by the caller.
+// (e.g. policy-driven PreToolUse guardrails) are appended by the caller.
 // Hook parameters are read from the platform profile's HookProfile.
 func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary string) map[string]any {
 	log := `2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log"`
@@ -880,22 +880,6 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 	return hooks
 }
 
-// claudePreToolUseHooks returns the PreToolUse guardrail hooks specific to
-// Claude Code (kubectl edit/set env policy enforcement).
-func claudePreToolUseHooks() []map[string]any {
-	return []map[string]any{
-		{
-			"matcher": "Bash",
-			"hooks": []map[string]any{
-				{
-					"type":    "command",
-					"command": `INPUT=$(cat); CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""'); if echo "$CMD" | grep -qE 'kubectl\s+(edit|set\s+env)'; then echo "GitOps policy: kubectl edit/set env bypasses git history. Edit manifests and use flux reconcile." >&2; exit 2; fi; if echo "$CMD" | grep -qE '^\s*git\s+commit'; then echo '{"systemMessage":"Pre-commit quality reminder: consider running quality_check (or quality_lint / quality_test) before committing to catch issues early."}'; fi; exit 0`,
-				},
-			},
-		},
-	}
-}
-
 // claudePostToolUseExtras returns the Write/Edit formatter hooks specific to
 // Claude Code, appended to the shared heartbeat PostToolUse hooks.
 func claudePostToolUseExtras() []map[string]any {
@@ -944,18 +928,31 @@ func claudePostToolUseTaskSyncHook(loomBinary string) []map[string]any {
 func claudeHooks(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
 	hooks := buildPlatformHooks(reg, profile.Hooks, loomBinary)
 
-	// Append extras defined in the profile (e.g. preToolUse_guardrails, postToolUse_formatters).
+	// Append shared policy hooks before the remaining profile-specific extras.
+	appendHookPolicies(hooks, reg, profile.Hooks.PolicyRefs)
+
+	// Append extras defined in the profile (e.g. postToolUse_formatters, postToolUse_taskSync).
 	appendHookExtras(hooks, profile.Hooks.Extras, loomBinary)
 
 	return hooks
+}
+
+// appendHookPolicies dispatches shared policy refs to their hook implementations.
+func appendHookPolicies(hooks map[string]any, reg *registry.Registry, policyRefs []string) {
+	for _, ref := range policyRefs {
+		switch ref {
+		case "gitops_flux":
+			if policyHooks := claudeGitopsFluxGuardrailHooks(reg); len(policyHooks) > 0 {
+				hooks["PreToolUse"] = appendHookBlocks(hooks["PreToolUse"], policyHooks...)
+			}
+		}
+	}
 }
 
 // appendHookExtras dispatches profile-defined extras to their hook implementations.
 func appendHookExtras(hooks map[string]any, extras []string, loomBinary string) {
 	for _, extra := range extras {
 		switch extra {
-		case "preToolUse_guardrails":
-			hooks["PreToolUse"] = claudePreToolUseHooks()
 		case "postToolUse_formatters":
 			event := "PostToolUse"
 			if existing, ok := hooks[event].([]map[string]any); ok {
@@ -970,6 +967,124 @@ func appendHookExtras(hooks map[string]any, extras []string, loomBinary string) 
 	}
 }
 
+func appendHookBlocks(existing any, hooks ...map[string]any) []map[string]any {
+	current, ok := existing.([]map[string]any)
+	if !ok {
+		current = []map[string]any{}
+	}
+	return append(current, hooks...)
+}
+
+type gitopsFluxGuardrailPolicy struct {
+	BlockedCommands []string
+	Message         string
+}
+
+func gitopsFluxGuardrailPolicyFromRegistry(reg *registry.Registry) *gitopsFluxGuardrailPolicy {
+	pp := registryPlatformPerms(reg, "agents")
+	if pp == nil || pp.Settings == nil {
+		return nil
+	}
+
+	guardrails, ok := pp.Settings["guardrails"].(map[string]any)
+	if !ok || len(guardrails) == 0 {
+		return nil
+	}
+	raw, ok := guardrails["gitops_flux"].(map[string]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+
+	policy := &gitopsFluxGuardrailPolicy{}
+	if cmds := coerceStringSlice(raw["blocked_commands"]); len(cmds) > 0 {
+		policy.BlockedCommands = cmds
+	} else if cmds := coerceStringSlice(raw["deny"]); len(cmds) > 0 {
+		policy.BlockedCommands = cmds
+	}
+	if msg, ok := raw["message"].(string); ok && strings.TrimSpace(msg) != "" {
+		policy.Message = strings.TrimSpace(msg)
+	}
+	return policy
+}
+
+func gitopsFluxGuardrailDenyRules(policy *gitopsFluxGuardrailPolicy) []string {
+	if policy == nil {
+		return nil
+	}
+	rules := make([]string, 0, len(policy.BlockedCommands))
+	for _, cmd := range policy.BlockedCommands {
+		cmd = strings.TrimSpace(cmd)
+		if cmd == "" {
+			continue
+		}
+		rules = append(rules, fmt.Sprintf("Bash(%s *)", cmd))
+	}
+	return rules
+}
+
+func gitopsFluxGuardrailRegex(policy *gitopsFluxGuardrailPolicy) string {
+	if policy == nil || len(policy.BlockedCommands) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(policy.BlockedCommands))
+	for _, cmd := range policy.BlockedCommands {
+		cmd = strings.TrimSpace(cmd)
+		if cmd == "" {
+			continue
+		}
+		quoted := regexp.QuoteMeta(cmd)
+		quoted = strings.ReplaceAll(quoted, `\ `, " ")
+		parts = append(parts, quoted)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return `^[[:space:]]*(` + strings.Join(parts, "|") + `)([[:space:]]|$)`
+}
+
+// claudeGitopsFluxGuardrailHooks returns the PreToolUse hooks backed by shared
+// GitOps/Flux policy data from platform_permissions.agents.
+func claudeGitopsFluxGuardrailHooks(reg *registry.Registry) []map[string]any {
+	policy := gitopsFluxGuardrailPolicyFromRegistry(reg)
+	if policy == nil {
+		return nil
+	}
+
+	message := policy.Message
+	if message == "" {
+		message = "GitOps policy: kubectl edit/set env bypasses git history. Edit manifests and use flux reconcile."
+	}
+	pattern := gitopsFluxGuardrailRegex(policy)
+	if pattern == "" {
+		return nil
+	}
+
+	return []map[string]any{
+		{
+			"matcher": "Bash",
+			"hooks": []map[string]any{
+				{
+					"type": "command",
+					"command": fmt.Sprintf(
+						`INPUT=$(cat); CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""'); if echo "$CMD" | grep -qE %q; then printf '%%s\n' %q >&2; exit 2; fi; exit 0`,
+						pattern, message,
+					),
+				},
+			},
+		},
+		{
+			"matcher": "Bash",
+			"hooks": []map[string]any{
+				{
+					"type":    "command",
+					"command": `INPUT=$(cat); CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""'); if echo "$CMD" | grep -qE '^[[:space:]]*git[[:space:]]+commit([[:space:]]|$)'; then echo '{"systemMessage":"Pre-commit quality reminder: consider running quality_check (or quality_lint / quality_test) before committing to catch issues early."}'; fi; exit 0`,
+				},
+			},
+		},
+	}
+}
+
 // claudePermissions builds the permissions block for Claude Code settings.json.
 // It reads from the registry's platform_permissions.claude section so the allow/deny
 // lists are maintained in YAML rather than Go code. Falls back to a minimal default
@@ -978,11 +1093,16 @@ func claudePermissions(reg *registry.Registry) map[string]any {
 	perms := map[string]any{}
 
 	pp := registryPlatformPerms(reg, "claude")
+	sharedPolicy := gitopsFluxGuardrailPolicyFromRegistry(reg)
 	if pp == nil {
 		// Minimal fallback: allow loom proxy tools only.
-		return map[string]any{
+		fallback := map[string]any{
 			"allow": []string{"mcp__loom"},
 		}
+		if deny := gitopsFluxGuardrailDenyRules(sharedPolicy); len(deny) > 0 {
+			fallback["deny"] = deny
+		}
+		return fallback
 	}
 
 	if len(pp.AdditionalDirectories) > 0 {
@@ -1020,6 +1140,13 @@ func claudePermissions(reg *registry.Registry) map[string]any {
 			fmt.Fprintf(os.Stderr, "WARN  [claude] dropping %d invalid permissions.deny entries: %s\n", len(dropped), strings.Join(dropped, ", "))
 		}
 		if len(deny) > 0 {
+			perms["deny"] = deny
+		}
+	}
+	if deny := gitopsFluxGuardrailDenyRules(sharedPolicy); len(deny) > 0 {
+		if existing, ok := perms["deny"].([]string); ok {
+			perms["deny"] = append(existing, deny...)
+		} else {
 			perms["deny"] = deny
 		}
 	}
@@ -1186,12 +1313,17 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 	// AGENT_ID_FILE to avoid per-hook process-ID churn that fragments identity.
 	// The workspace hash from cksum matches the scheme used by hookAgentIDBootstrap
 	// for Claude/Gemini, avoiding cross-workspace agent ID collisions.
+	// Emit notify before any [agents.*] tables so TOML keeps it at top level.
+	sb.WriteString("# Agent lifecycle: heartbeat on turn completion (rate-limited to avoid notify storms)\n")
+	fmt.Fprintf(sb, `notify = ["sh", "-c", %q, "--"]`, codexNotifyCommand(loomCmd))
+	sb.WriteString("\n\n")
+
 	// Emit [agents] section for multi-agent support if configured in registry.
 	emitCodexAgents(sb, pp)
+}
 
-	sb.WriteString("# Agent lifecycle: heartbeat on turn completion (self-bootstraps session/presence)\n")
-	fmt.Fprintf(sb, `notify = ["sh", "-c", "WS_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || printf '%%s' \"$PWD\")\"; WS_HASH=\"$(printf '%%s' \"$WS_ROOT\" | cksum | cut -d' ' -f1)\"; AGENT_ID_FILE=\"${HOME}/.cache/loom/agent-id-codex-${WS_HASH}\"; mkdir -p \"$(dirname \"$AGENT_ID_FILE\")\"; if [ -s \"$AGENT_ID_FILE\" ]; then AGENT_ID=\"$(cat \"$AGENT_ID_FILE\")\"; else AGENT_ID=\"codex-${WS_HASH}\"; printf '%%s' \"$AGENT_ID\" > \"$AGENT_ID_FILE\"; fi; exec %s agent heartbeat --agent-id \"$AGENT_ID\" --status active --ensure-session --infer-namespace --agent-type codex --description \"Codex notify session\" --quiet 2>>\"${TMPDIR:-/tmp}/loom-agent-hooks.log\" || true"]`, loomCmd)
-	sb.WriteString("\n\n")
+func codexNotifyCommand(loomCmd string) string {
+	return fmt.Sprintf(`WS_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || printf '%%s' "$PWD")"; WS_HASH="$(printf '%%s' "$WS_ROOT" | cksum | cut -d' ' -f1)"; CACHE_DIR="${HOME}/.cache/loom"; AGENT_ID_FILE="${CACHE_DIR}/agent-id-codex-${WS_HASH}"; HEARTBEAT_STAMP_FILE="${CACHE_DIR}/notify-heartbeat-codex-${WS_HASH}.stamp"; mkdir -p "$CACHE_DIR"; if [ -s "$AGENT_ID_FILE" ]; then AGENT_ID="$(cat "$AGENT_ID_FILE")"; else AGENT_ID="codex-${WS_HASH}"; printf '%%s' "$AGENT_ID" > "$AGENT_ID_FILE"; fi; NOW="$(date +%%s)"; LAST="$(cat "$HEARTBEAT_STAMP_FILE" 2>/dev/null || true)"; case "$LAST" in ''|*[!0-9]*) ;; *) if [ $((NOW - LAST)) -lt 15 ]; then exit 0; fi ;; esac; printf '%%s' "$NOW" > "$HEARTBEAT_STAMP_FILE"; exec %s agent heartbeat --agent-id "$AGENT_ID" --status active --ensure-session --infer-namespace --agent-type codex --description "Codex notify session" --quiet 2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log" || true`, loomCmd)
 }
 
 // emitCodexAgents writes the [agents] TOML section for Codex multi-agent support.

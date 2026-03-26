@@ -519,7 +519,7 @@ hooks: git-setup
 
 # Pre-commit (run manually)
 pre-commit:
-	@if command -v pre-commit >/dev/null 2>&1; then \
+	@if [ -f .pre-commit-config.yaml ] && command -v pre-commit >/dev/null 2>&1; then \
 		bash scripts/dev/with-clean-git-env.sh pre-commit run --all-files; \
 	else \
 		./scripts/hooks/pre-commit-native.sh; \

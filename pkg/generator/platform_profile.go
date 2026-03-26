@@ -30,13 +30,14 @@ type HookProfile struct {
 	File             string   `yaml:"file"`
 	Type             string   `yaml:"type"` // "json" (default) or "typescript"
 	Events           []string `yaml:"events"`
+	PolicyRefs       []string `yaml:"policy_refs"` // Shared policy keys resolved from registry data.
 	AgentID          string   `yaml:"agent_id"`
 	AgentType        string   `yaml:"agent_type"`
 	Description      string   `yaml:"description"`
 	SessionEndEvent  string   `yaml:"session_end_event"`
 	HeartbeatEvent   string   `yaml:"heartbeat_event"`
 	HeartbeatMatcher string   `yaml:"heartbeat_matcher"`
-	Extras           []string `yaml:"extras"` // e.g. ["preToolUse_guardrails", "postToolUse_formatters"]
+	Extras           []string `yaml:"extras"` // e.g. ["postToolUse_formatters", "postToolUse_taskSync"]
 }
 
 // LoomProxyProfile configures the loom proxy command arguments for a platform.
