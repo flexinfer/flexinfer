@@ -2,7 +2,7 @@
 #
 # Model: Qwen3.5-27B, GPTQ INT4 (self-quantized pipeline, clean weights).
 # Source: Longhorn PVC with clean (non-abliterated) GPTQ INT4 weights from gfx906 pipeline.
-# Image: vllm:rocm-gfx1100-v018 (native Qwen3.5 support on vLLM 0.18).
+# Image: vllm:rocm-gfx1100-qwen35-patched-nodiag (patched Qwen3.5 loader without debug diagnostics).
 # Weights: ~16.6 GiB GPTQ INT4 (5 shards + metadata).
 #
 # maxModelLen=4096 to minimize KV cache budget.
@@ -14,7 +14,7 @@ metadata:
   name: qwen35-27b-opus-distill
   namespace: flexinfer-system
   annotations:
-    flexinfer.ai/reconcile-token: "qwen35-gfx1100-v018"
+    flexinfer.ai/reconcile-token: "qwen35-gfx1100-patched-nodiag"
 spec:
   backend: vllm
   source: pvc://qwen35-27b-opus-distill-gptq/qwen35-27b-opus-distill-gptq/gptq-w4-g128

@@ -166,7 +166,7 @@ llamacpp:
 
 vllm:
   rocmImage: registry.harbor.lan/library/vllm-api:rocm-navi-fp8e5-v2
-  gfx1100Image: registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-v018
+  gfx1100Image: registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched-nodiag
 
 diffusers:
   rocmImage: registry.harbor.lan/library/diffusers-api:rocm-0cbf9b7
