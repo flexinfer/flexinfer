@@ -715,6 +715,15 @@ forward_use_cache = env_bool("ABLITERATION_FORWARD_USE_CACHE", False)
 resume_enabled = env_bool("ABLITERATION_RESUME", True)
 model_policies = load_model_policies()
 
+# Explicit targeted-layer retries should recompute fresh activations/directions.
+# Reusing cached tensors from a broader or older intervention invalidates the run.
+if resume_enabled and target_layers != "auto":
+    resume_enabled = False
+    print(
+        "Disabling abliteration resume because explicit TARGET_LAYERS were requested; "
+        "fresh checkpoints are required for a trustworthy retry."
+    )
+
 emit_progress("start", phase="abliterating", model=model_dir, num_samples=num_samples)
 cleanup_stale_save_dirs()
 os.makedirs(checkpoint_dir, exist_ok=True)

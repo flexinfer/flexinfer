@@ -890,7 +890,7 @@ publish_unified_rocm_gfx906:
           --opt platform=linux/amd64 \
           --import-cache "type=registry,ref=${REGISTRY}/runtime:unified-gfx906" \
           --export-cache "type=inline" \
-          --output "type=image,\"name=${REGISTRY}/runtime:unified-gfx906,${REGISTRY}/runtime:unified-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"; then
+          --output "type=image,\"name=${REGISTRY}/runtime:unified-gfx906,${REGISTRY}/runtime:unified-gfx906-v4,${REGISTRY}/runtime:unified-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"; then
           break
         fi
         if [ "${i}" -eq "${attempts}" ]; then
