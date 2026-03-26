@@ -354,12 +354,23 @@ func (p *callPipeline) releaseConnection() {
 	if p.conn != nil {
 		// If the context was cancelled (client disconnect), the upstream
 		// connection may be in an indeterminate state (server still processing
-		// the request). Close it instead of returning it to the pool to avoid
-		// response corruption on subsequent callers.
+		// the request). Mark it unhealthy and return it through the pool so the
+		// pool decrements active connection accounting before closing it.
 		cancelled := p.ctx != nil && p.ctx.Err() != nil
 		if cancelled {
-			if p.conn.Transport != nil {
-				_ = p.conn.Transport.Close()
+			p.conn.Healthy = false
+			if p.target == router.TargetLocal {
+				if p.daemon.pool != nil {
+					p.daemon.pool.Put(p.conn)
+				} else if p.conn.Transport != nil {
+					_ = p.conn.Transport.Close()
+				}
+			} else {
+				if p.daemon.hubPool != nil {
+					p.daemon.hubPool.Put(p.conn)
+				} else if p.conn.Transport != nil {
+					_ = p.conn.Transport.Close()
+				}
 			}
 		} else if p.target == router.TargetLocal {
 			if p.daemon.pool != nil {

@@ -691,6 +691,10 @@ ios:archive-export:
   tags:
     - macos
   needs: []
+  # This job runs repo-local signing/export scripts, so it must opt out of the
+  # global no-checkout mode and fetch a working tree first.
+  variables:
+    GIT_STRATEGY: fetch
   script:
     - chmod +x scripts/mobile/import-certificate.sh scripts/mobile/archive_export.sh scripts/mobile/cleanup-signing.sh
     - ./scripts/mobile/import-certificate.sh

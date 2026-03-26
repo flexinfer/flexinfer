@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workflow deprecation** (`internal/hud/domain/mobile`): Migration flags on approval surface to prepare transition away from workflow endpoints.
 
 ### Fixed
+- **Daemon connection saturation recovery** (`internal/daemon`, `cmd/loom`): Cancelled daemon and hub calls now return pooled connections through the pool so capacity counters do not leak; proxy retry classification also treats retryable route/connect pressure errors as transport resets, and `loom/status` now surfaces local and hub pool pressure snapshots for diagnosis.
+- **iOS export CI checkout** (`.gitlab-ci.yml`): `ios:archive-export` now overrides the global `GIT_STRATEGY: none` setting with `fetch` so the signing and export scripts are present when the manual macOS job runs on `main` or tag pipelines.
 - **Mobile HUD live-state filtering** (`internal/hud/domain/mobile`, `internal/hud/coordination`): Agent and coordination surfaces now ignore ended and summarized sessions when building live mobile snapshots, preventing ghost offline agents, stale session metadata on active agents, and inflated namespace counts after daemon/HUD refresh races.
 - **Mobile dashboard agent totals** (`internal/hud/domain/mobile`): Dashboard headline counts now use the same unified live-agent view as the Agents tab, so active session-only agents are reflected consistently after daemon reloads.
 - **Local dev reload smoke** (`scripts/dev`): `make dev-upgrade` and `make dev-reload` now wait on the embedded HUD/mobile API readiness path instead of treating the heavier mobile task feed as the reload health gate, reducing false unhealthy warnings after daemon fallback restarts.

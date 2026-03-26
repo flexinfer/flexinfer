@@ -70,6 +70,17 @@ func TestClassifyInternalError_RouteFallback(t *testing.T) {
 	}
 }
 
+func TestClassifyInternalError_RouteConnectionSaturation(t *testing.T) {
+	err := errors.New("max connections reached for gitlab")
+	code, retryable := classifyInternalError(err, stageRoute)
+	if code != "CONNECTION_ERROR" {
+		t.Errorf("code = %q, want CONNECTION_ERROR", code)
+	}
+	if !retryable {
+		t.Error("connection saturation should be retryable")
+	}
+}
+
 func TestClassifyInternalError_Execute(t *testing.T) {
 	err := errors.New("connection reset by peer")
 	code, retryable := classifyInternalError(err, stageExecute)

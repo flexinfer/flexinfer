@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/crb2nu/loom/internal/pool"
 	"github.com/crb2nu/loom/internal/router"
 	"github.com/crb2nu/loom/pkg/registry"
 )
@@ -136,16 +137,27 @@ func negotiateProtocolVersion(raw json.RawMessage) string {
 }
 
 type statusResult struct {
-	Running             bool     `json:"running"`
-	Servers             int      `json:"servers"`
-	ActiveConns         int      `json:"activeConns"`
-	IdleConns           int      `json:"idleConns"`
-	Processes           []string `json:"processes"`
-	ActiveRPCs          int64    `json:"activeRPCs"`
-	DrainReady          bool     `json:"drainReady"`
-	Draining            bool     `json:"draining"`
-	DaemonEpoch         int64    `json:"daemonEpoch"`
-	ActiveProxySessions int      `json:"activeProxySessions"`
+	Running             bool          `json:"running"`
+	Servers             int           `json:"servers"`
+	ActiveConns         int           `json:"activeConns"`
+	IdleConns           int           `json:"idleConns"`
+	LocalPool           *poolPressure `json:"localPool,omitempty"`
+	HubPool             *poolPressure `json:"hubPool,omitempty"`
+	Processes           []string      `json:"processes"`
+	ActiveRPCs          int64         `json:"activeRPCs"`
+	DrainReady          bool          `json:"drainReady"`
+	Draining            bool          `json:"draining"`
+	DaemonEpoch         int64         `json:"daemonEpoch"`
+	ActiveProxySessions int           `json:"activeProxySessions"`
+}
+
+type poolPressure struct {
+	ActiveConns int     `json:"activeConns"`
+	IdleConns   int     `json:"idleConns"`
+	MaxIdle     int     `json:"maxIdle"`
+	MaxOpen     int     `json:"maxOpen"`
+	PressurePct float64 `json:"pressurePct"`
+	AtCapacity  bool    `json:"atCapacity"`
 }
 
 func (d *Daemon) handleStatus(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
@@ -162,6 +174,8 @@ func (d *Daemon) handleStatus(ctx context.Context, msg *mcp.Message) (*mcp.Messa
 		Servers:             len(d.registry.Servers),
 		ActiveConns:         stats.ActiveConns,
 		IdleConns:           stats.IdleConns,
+		LocalPool:           d.poolPressure(d.pool, false),
+		HubPool:             d.poolPressure(d.hubPool, true),
 		Processes:           d.procMgr.List(),
 		ActiveRPCs:          rpcs,
 		DrainReady:          rpcs == 0,
@@ -170,6 +184,29 @@ func (d *Daemon) handleStatus(ctx context.Context, msg *mcp.Message) (*mcp.Messa
 		ActiveProxySessions: activeSessions,
 	}
 	return mcp.NewResponse(msg.ID, result)
+}
+
+func (d *Daemon) poolPressure(p *pool.Pool, hub bool) *poolPressure {
+	if p == nil {
+		return nil
+	}
+	stats := p.Stats()
+	maxIdle, maxOpen, _ := d.fileCfg.Resources.GetPoolConfig()
+	if hub {
+		maxIdle, maxOpen, _ = d.fileCfg.Resources.GetHubPoolConfig()
+	}
+	pressure := 0.0
+	if maxOpen > 0 {
+		pressure = float64(stats.ActiveConns) / float64(maxOpen) * 100
+	}
+	return &poolPressure{
+		ActiveConns: stats.ActiveConns,
+		IdleConns:   stats.IdleConns,
+		MaxIdle:     maxIdle,
+		MaxOpen:     maxOpen,
+		PressurePct: pressure,
+		AtCapacity:  maxOpen > 0 && stats.ActiveConns >= maxOpen,
+	}
 }
 
 type serversResult struct {
