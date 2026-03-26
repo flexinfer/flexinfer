@@ -2,6 +2,7 @@ package skills
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -18,6 +20,7 @@ const (
 	hostedAgentSkillsIndexPath = "/.well-known/agent-skills/index.json"
 	hostedSkillsIndexPath      = "/.well-known/skills/index.json"
 	hostedFetchTimeout         = 30 * time.Second
+	HostedMetadataFilename     = ".loom-hosted-skill.json"
 )
 
 // HostedCatalog describes a discovered hosted skills source.
@@ -40,6 +43,29 @@ type HostedImportResult struct {
 	Name        string
 	Destination string
 	Files       []string
+}
+
+// HostedInstallMetadata tracks Loom-managed hosted skill provenance.
+type HostedInstallMetadata struct {
+	Name       string   `json:"name"`
+	SourceURL  string   `json:"source_url"`
+	IndexURL   string   `json:"index_url"`
+	Path       string   `json:"path,omitempty"`
+	Files      []string `json:"files"`
+	ImportedAt string   `json:"imported_at"`
+	ManagedBy  string   `json:"managed_by"`
+}
+
+// HostedInstalledSkill describes one Loom-managed hosted skill installed on disk.
+type HostedInstalledSkill struct {
+	Name         string
+	SourceURL    string
+	IndexURL     string
+	Path         string
+	Destination  string
+	Files        []string
+	ImportedAt   string
+	MetadataPath string
 }
 
 // DiscoverHostedCatalog fetches the hosted skills index from the preferred
@@ -114,6 +140,7 @@ func ImportHostedSkills(source, destRoot string, selected []string) ([]HostedImp
 		rootURL := hostedResolveSkillRoot(skillRootURL, skill, installName)
 		destDir := filepath.Join(destRoot, installName)
 		written := make([]string, 0, len(files))
+		relativeFiles := make([]string, 0, len(files))
 
 		for _, rel := range files {
 			rel, err = sanitizeHostedRelativePath(rel)
@@ -132,6 +159,19 @@ func ImportHostedSkills(source, destRoot string, selected []string) ([]HostedImp
 				return nil, fmt.Errorf("write %s: %w", dst, err)
 			}
 			written = append(written, filepath.ToSlash(filepath.Join(installName, filepath.FromSlash(rel))))
+			relativeFiles = append(relativeFiles, rel)
+		}
+
+		if err := writeHostedMetadata(destDir, HostedInstallMetadata{
+			Name:       installName,
+			SourceURL:  catalog.SourceURL,
+			IndexURL:   catalog.IndexURL,
+			Path:       skill.Path,
+			Files:      relativeFiles,
+			ImportedAt: time.Now().UTC().Format(time.RFC3339),
+			ManagedBy:  "loom",
+		}); err != nil {
+			return nil, fmt.Errorf("write metadata for %s: %w", installName, err)
 		}
 
 		if len(written) == 0 {
@@ -145,6 +185,82 @@ func ImportHostedSkills(source, destRoot string, selected []string) ([]HostedImp
 	}
 
 	return results, nil
+}
+
+// ListHostedSkills returns Loom-managed hosted skills installed under destRoot.
+func ListHostedSkills(destRoot string) ([]HostedInstalledSkill, error) {
+	entries, err := os.ReadDir(destRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	skills := make([]HostedInstalledSkill, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		skillDir := filepath.Join(destRoot, entry.Name())
+		metadataPath := filepath.Join(skillDir, HostedMetadataFilename)
+		meta, err := readHostedMetadata(metadataPath)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", metadataPath, err)
+		}
+		if meta == nil {
+			continue
+		}
+		skills = append(skills, HostedInstalledSkill{
+			Name:         meta.Name,
+			SourceURL:    meta.SourceURL,
+			IndexURL:     meta.IndexURL,
+			Path:         meta.Path,
+			Destination:  skillDir,
+			Files:        append([]string(nil), meta.Files...),
+			ImportedAt:   meta.ImportedAt,
+			MetadataPath: metadataPath,
+		})
+	}
+
+	sort.Slice(skills, func(i, j int) bool { return skills[i].Name < skills[j].Name })
+	return skills, nil
+}
+
+// RemoveHostedSkills removes Loom-managed hosted skills from destRoot.
+func RemoveHostedSkills(destRoot string, selected []string, removeAll bool) ([]HostedInstalledSkill, error) {
+	if !removeAll && len(selected) == 0 {
+		return nil, fmt.Errorf("at least one skill must be selected")
+	}
+
+	installed, err := ListHostedSkills(destRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	selectedSet := make(map[string]struct{}, len(selected))
+	for _, name := range selected {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		selectedSet[name] = struct{}{}
+	}
+
+	removed := make([]HostedInstalledSkill, 0)
+	for _, skill := range installed {
+		if !removeAll {
+			if _, ok := selectedSet[skill.Name]; !ok {
+				continue
+			}
+		}
+		if err := os.RemoveAll(skill.Destination); err != nil {
+			return nil, fmt.Errorf("remove %s: %w", skill.Destination, err)
+		}
+		removed = append(removed, skill)
+	}
+
+	return removed, nil
 }
 
 func normalizeHostedSource(source string) (*url.URL, error) {
@@ -295,7 +411,12 @@ func sanitizeHostedRelativePath(rel string) (string, error) {
 }
 
 func fetchURL(client *http.Client, target *url.URL) ([]byte, error) {
-	resp, err := client.Get(target.String())
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -306,6 +427,36 @@ func fetchURL(client *http.Client, target *url.URL) ([]byte, error) {
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+func writeHostedMetadata(destDir string, metadata HostedInstallMetadata) error {
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(destDir, HostedMetadataFilename), append(data, '\n'), 0o644)
+}
+
+func readHostedMetadata(path string) (*HostedInstallMetadata, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var metadata HostedInstallMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(metadata.ManagedBy) != "loom" || strings.TrimSpace(metadata.Name) == "" {
+		return nil, nil
+	}
+	return &metadata, nil
 }
 
 func cloneURL(src *url.URL) *url.URL {

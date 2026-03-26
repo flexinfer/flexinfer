@@ -118,6 +118,15 @@ func TestImportHostedSkills_WritesBundleToHome(t *testing.T) {
 	if info.Mode()&0o111 == 0 {
 		t.Fatalf("expected scripts/run.sh to be executable, mode=%v", info.Mode())
 	}
+
+	metadataPath := filepath.Join(skillDir, HostedMetadataFilename)
+	metadata, err := readHostedMetadata(metadataPath)
+	if err != nil {
+		t.Fatalf("readHostedMetadata: %v", err)
+	}
+	if metadata == nil || metadata.Name != "deploy" {
+		t.Fatalf("unexpected metadata: %#v", metadata)
+	}
 }
 
 func TestImportHostedSkills_RejectsPathTraversal(t *testing.T) {
@@ -132,5 +141,53 @@ func TestImportHostedSkills_RejectsPathTraversal(t *testing.T) {
 	_, err := ImportHostedSkills(srv.URL, t.TempDir(), nil)
 	if err == nil || !strings.Contains(err.Error(), "path traversal") {
 		t.Fatalf("expected path traversal error, got %v", err)
+	}
+}
+
+func TestListAndRemoveHostedSkills(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc(hostedAgentSkillsIndexPath, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"skills":[{"name":"deploy","description":"Deploy things","files":["SKILL.md"]},{"name":"lint","description":"Lint things","files":["SKILL.md"]}]}`))
+	})
+	mux.HandleFunc("/.well-known/agent-skills/deploy/SKILL.md", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("# Deploy\n"))
+	})
+	mux.HandleFunc("/.well-known/agent-skills/lint/SKILL.md", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("# Lint\n"))
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	dest := t.TempDir()
+	if _, err := ImportHostedSkills(srv.URL, dest, nil); err != nil {
+		t.Fatalf("ImportHostedSkills: %v", err)
+	}
+
+	installed, err := ListHostedSkills(dest)
+	if err != nil {
+		t.Fatalf("ListHostedSkills: %v", err)
+	}
+	if len(installed) != 2 {
+		t.Fatalf("expected 2 installed skills, got %d", len(installed))
+	}
+
+	removed, err := RemoveHostedSkills(dest, []string{"deploy"}, false)
+	if err != nil {
+		t.Fatalf("RemoveHostedSkills: %v", err)
+	}
+	if len(removed) != 1 || removed[0].Name != "deploy" {
+		t.Fatalf("unexpected removed skills: %#v", removed)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "deploy")); !os.IsNotExist(err) {
+		t.Fatalf("expected deploy skill dir removed, stat err=%v", err)
+	}
+
+	installed, err = ListHostedSkills(dest)
+	if err != nil {
+		t.Fatalf("ListHostedSkills after remove: %v", err)
+	}
+	if len(installed) != 1 || installed[0].Name != "lint" {
+		t.Fatalf("unexpected remaining skills: %#v", installed)
 	}
 }
