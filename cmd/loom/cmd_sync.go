@@ -444,8 +444,8 @@ func newSyncCmd() *cobra.Command {
 	// Sync skills subcommand
 	syncSkillsCmd := &cobra.Command{
 		Use:   "skills [profile]",
-		Short: "Generate and sync skills for a profile (or all profiles)",
-		Long: `Generate skill files from skills-registry.yaml and sync them to home directories.
+		Short: "Generate, discover, and sync skills",
+		Long: `Generate skill files from skills-registry.yaml, discover hosted skill catalogs, and sync them to home directories.
 
 Example:
   loom sync skills claude     # Generate + sync skills for Claude
@@ -479,6 +479,79 @@ Example:
 		},
 	}
 	syncSkillsCmd.Flags().Bool("repo-only", false, "Only update repository skill files, do not sync to home")
+
+	syncSkillsDiscoverCmd := &cobra.Command{
+		Use:   "discover <source>",
+		Short: "Discover hosted skills from a skills.sh-compatible source",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			source := args[0]
+			catalog, err := skills.DiscoverHostedCatalog(source)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Discovered %d skill(s) from %s\n", len(catalog.Skills), catalog.IndexURL)
+			for _, skill := range catalog.Skills {
+				name := strings.TrimSpace(skill.Name)
+				if name == "" {
+					continue
+				}
+				desc := strings.TrimSpace(skill.Description)
+				if desc != "" {
+					fmt.Printf("  - %s: %s\n", name, desc)
+				} else {
+					fmt.Printf("  - %s\n", name)
+				}
+			}
+			return nil
+		},
+	}
+	syncSkillsCmd.AddCommand(syncSkillsDiscoverCmd)
+
+	syncSkillsImportCmd := &cobra.Command{
+		Use:   "import <profile> <source>",
+		Short: "Import hosted SKILL.md bundles into a profile home directory",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			profile := args[0]
+			source := args[1]
+			selectedSkills, _ := cmd.Flags().GetStringArray("skill")
+
+			cwd, _ := os.Getwd()
+			mgr, err := sync.NewManager(cwd)
+			if err != nil {
+				return err
+			}
+
+			p, err := mgr.GetProfile(profile)
+			if err != nil {
+				return err
+			}
+			if p.SkillsHomePath == "" {
+				return fmt.Errorf("profile %s does not define a skills home path", profile)
+			}
+
+			destRoot := resolveSkillsHomePath(p.SkillsHomePath, mgr.HomeDir)
+			results, err := skills.ImportHostedSkills(source, destRoot, selectedSkills)
+			if err != nil {
+				return err
+			}
+
+			if len(results) == 0 {
+				fmt.Printf("No hosted skills imported from %s\n", source)
+				return nil
+			}
+
+			fmt.Printf("Imported %d skill bundle(s) into %s\n", len(results), destRoot)
+			for _, result := range results {
+				fmt.Printf("  - %s (%d file(s))\n", result.Name, len(result.Files))
+			}
+			return nil
+		},
+	}
+	syncSkillsImportCmd.Flags().StringArray("skill", nil, "Only import matching skill names (repeatable)")
+	syncSkillsCmd.AddCommand(syncSkillsImportCmd)
 	syncCmd.AddCommand(syncSkillsCmd)
 
 	// Sync status subcommand
@@ -531,4 +604,17 @@ Example:
 	syncCmd.AddCommand(newSyncAgentTokensCmd())
 
 	return syncCmd
+}
+
+func resolveSkillsHomePath(raw, homeDir string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	raw = strings.ReplaceAll(raw, "$HOME", homeDir)
+	raw = strings.ReplaceAll(raw, "${HOME}", homeDir)
+	if filepath.IsAbs(raw) {
+		return filepath.Clean(raw)
+	}
+	return filepath.Join(homeDir, raw)
 }
