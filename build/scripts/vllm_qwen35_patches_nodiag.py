@@ -752,6 +752,7 @@ new_load_weights_end = """        loader = AutoWeightsLoader(
             # Find model directory — try _name_or_path, then common paths
             _model_dir = None
             for _cand in [
+                _fix_os.environ.get("FLEXINFER_MODEL_PATH", ""),
                 getattr(self.config, "_name_or_path", ""),
             ]:
                 if _cand and _fix_os.path.exists(_fix_os.path.join(_cand, "model.safetensors.index.json")):

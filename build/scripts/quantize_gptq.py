@@ -346,6 +346,59 @@ def apply_runtime_overrides(policy, config=None):
     return overrides
 
 
+def ensure_qwen35_text_config(path):
+    """Backfill nested text_config for Qwen3.5 text-only exports.
+
+    vLLM's Qwen3_5Config defaults text_config to a 4096-wide model when the
+    field is absent, even if the top-level checkpoint metadata is 27B/5120-wide.
+    Persisting text_config into the saved artifact keeps runtime loading honest.
+    """
+    with open(path) as f:
+        cfg = json.load(f)
+    if cfg.get("model_type") != "qwen3_5" or "text_config" in cfg:
+        return False
+    keys = [
+        "vocab_size",
+        "hidden_size",
+        "intermediate_size",
+        "num_hidden_layers",
+        "num_attention_heads",
+        "num_key_value_heads",
+        "hidden_act",
+        "max_position_embeddings",
+        "initializer_range",
+        "rms_norm_eps",
+        "use_cache",
+        "tie_word_embeddings",
+        "rope_parameters",
+        "attention_bias",
+        "attention_dropout",
+        "head_dim",
+        "linear_conv_kernel_dim",
+        "linear_key_head_dim",
+        "linear_value_head_dim",
+        "linear_num_key_heads",
+        "linear_num_value_heads",
+        "layer_types",
+        "pad_token_id",
+        "bos_token_id",
+        "eos_token_id",
+        "full_attention_interval",
+        "partial_rotary_factor",
+        "attn_output_gate",
+        "mlp_only_layers",
+        "mamba_ssm_dtype",
+        "dtype",
+        "mtp_num_hidden_layers",
+        "mtp_use_dedicated_embeddings",
+    ]
+    cfg["text_config"] = {k: cfg[k] for k in keys if k in cfg}
+    cfg["text_config"]["model_type"] = "qwen3_5_text"
+    with open(path, "w") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    return True
+
+
 # ── Read config from environment ──────────────────────────────────────
 model_dir = os.environ["MODEL_DIR"]
 out_dir = os.environ["OUT_DIR"]
@@ -1101,6 +1154,10 @@ def save_with_progress(model, tokenizer, save_dir):
 
 emit_progress("progress", phase="saving", percent=90.5, detail="saving model shards")
 save_with_progress(model, tokenizer, save_tmp)
+
+saved_cfg_path = os.path.join(save_tmp, "config.json")
+if os.path.exists(saved_cfg_path) and ensure_qwen35_text_config(saved_cfg_path):
+    print("Backfilled nested text_config in saved Qwen3.5 checkpoint")
 
 # Validate before promoting
 shard_files = [f for f in os.listdir(save_tmp) if f.endswith(".safetensors")]

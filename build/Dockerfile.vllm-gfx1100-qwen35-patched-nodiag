@@ -1,3 +1,5 @@
 FROM registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched
 
 COPY build/scripts/vllm_qwen35_patches_nodiag.py /opt/patches/patch.py
+COPY build/scripts/vllm-patched-entrypoint.sh /opt/patches/entrypoint.sh
+RUN chmod +x /opt/patches/entrypoint.sh
