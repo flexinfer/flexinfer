@@ -1379,13 +1379,32 @@ print(
     f"Max refusal direction norm: {norms[max_norm_layer]:.4f} at layer {max_norm_layer}"
 )
 
-# Refusal direction norm guard: abort if the max norm exceeds the threshold.
-# A very high norm (>100) typically means the computed direction captures model
-# capability rather than just refusal behavior — applying it would destroy coherence.
-if norms[max_norm_layer] > REFUSAL_NORM_THRESHOLD:
+# Refusal direction norm guard: evaluate the layers we are actually about to edit.
+# For hybrid architectures, late untouched layers can retain large refusal norms
+# even when we intentionally target only a safer middle-layer slice.
+target_norm_pairs = [(layer_idx, norms[layer_idx]) for layer_idx in layer_indices]
+if not target_norm_pairs:
+    msg = "ABORTING: No valid target layers selected for abliteration."
+    print(msg)
+    emit_progress("error", phase="abliterating", detail=msg)
+    raise RuntimeError(msg)
+guard_layer, guard_norm = max(target_norm_pairs, key=lambda item: item[1])
+emit_snapshot(
+    "refusal_directions_guard_window",
+    guard_layer=guard_layer,
+    guard_norm=round(guard_norm, 4),
+    target_layer_count=len(layer_indices),
+)
+print(
+    f"Max targeted refusal direction norm: {guard_norm:.4f} at layer {guard_layer}"
+)
+
+# A very high norm (>100) on the targeted layer set typically means the computed
+# direction captures capability rather than just refusal behavior.
+if guard_norm > REFUSAL_NORM_THRESHOLD:
     msg = (
-        f"ABORTING: Max refusal direction norm {norms[max_norm_layer]:.2f} at layer "
-        f"{max_norm_layer} exceeds threshold {REFUSAL_NORM_THRESHOLD}. "
+        f"ABORTING: Max targeted refusal direction norm {guard_norm:.2f} at layer "
+        f"{guard_layer} exceeds threshold {REFUSAL_NORM_THRESHOLD}. "
         f"This indicates the refusal direction captures capability, not just refusal. "
         f"Consider increasing NUM_SAMPLES or adjusting TARGET_LAYERS."
     )
