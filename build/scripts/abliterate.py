@@ -274,6 +274,23 @@ def release_memory(stage=None, **kwargs):
         emit_snapshot(stage, **kwargs)
 
 
+def model_input_device(model):
+    """Pick a real execution device for sharded/offloaded models.
+
+    With accelerate dispatch, `model.device` may be `meta` or otherwise
+    misleading. Prefer the first real parameter device and fall back to CPU,
+    which accelerate hooks can still handle correctly.
+    """
+    try:
+        for param in model.parameters():
+            device = getattr(param, "device", None)
+            if device is not None and getattr(device, "type", None) != "meta":
+                return device
+    except Exception:
+        pass
+    return torch.device("cpu")
+
+
 def verify_saved_artifacts(path):
     p = Path(path)
     if not p.exists():
@@ -1202,7 +1219,8 @@ def collect_activation_means_from_hidden_states(prompts, stage, base_percent):
             max_length=prompt_max_length,
             padding=False,
         )
-        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        input_device = model_input_device(model)
+        inputs = {k: v.to(input_device) for k, v in inputs.items()}
         with torch.inference_mode():
             out = model(
                 **inputs,
@@ -1269,7 +1287,8 @@ def collect_activation_means_with_hooks(prompts, stage, base_percent):
                 max_length=prompt_max_length,
                 padding=False,
             )
-            inputs = {k: v.to(model.device) for k, v in inputs.items()}
+            input_device = model_input_device(model)
+            inputs = {k: v.to(input_device) for k, v in inputs.items()}
             captured.clear()
             with torch.inference_mode():
                 outputs = model(
@@ -1494,15 +1513,7 @@ if validate_perplexity:
         "In the year 2024, the most popular programming language was",
     ]
 
-    # Determine input device: with device_map=auto, model.device may return
-    # 'meta' or an incorrect device. Use the first real parameter's device,
-    # falling back to CPU which accelerate's dispatch hooks handle correctly.
-    try:
-        input_device = next(model.parameters()).device
-        if input_device.type == "meta":
-            input_device = torch.device("cpu")
-    except StopIteration:
-        input_device = torch.device("cpu")
+    input_device = model_input_device(model)
 
     total_loss = 0.0
     total_tokens = 0
