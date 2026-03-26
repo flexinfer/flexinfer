@@ -389,6 +389,12 @@ func TestAbliterationWrapperScript(t *testing.T) {
 	if !strings.Contains(script, ".abliteration-checkpoint.json") {
 		t.Error("wrapper script should dump the last checkpoint on failure")
 	}
+	if !strings.Contains(script, ".download_complete") {
+		t.Error("wrapper script should wait for the downloader completion marker")
+	}
+	if !strings.Contains(script, "Waiting for source weights to finish downloading") {
+		t.Error("wrapper script should log when abliteration is waiting for source weights")
+	}
 	if !strings.Contains(script, "ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP") {
 		t.Error("wrapper script should support disabling transformers caching allocator warmup")
 	}

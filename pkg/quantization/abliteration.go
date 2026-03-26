@@ -417,6 +417,34 @@ echo "Skip vision: ${SKIP_VISION}"
 echo "Device map: ${DEVICE_MAP}"
 echo "Start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+# Wait for the downloader stage to finish rebuilding the source weights before
+# we try to load the model. Spec-change retries can briefly recreate the
+# downloader and abliteration Jobs in the same reconcile window.
+DOWNLOAD_MARKER="${MODEL_DIR}/.download_complete"
+DOWNLOAD_READY="false"
+for attempt in $(seq 1 180); do
+    WEIGHT_COUNT=$(find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) 2>/dev/null | wc -l | tr -d ' ')
+    if [ -f "${DOWNLOAD_MARKER}" ] && [ "${WEIGHT_COUNT}" -gt 0 ]; then
+        DOWNLOAD_READY="true"
+        break
+    fi
+    if [ "${attempt}" -eq 1 ] || [ $((attempt % 6)) -eq 0 ]; then
+        MARKER_STATE="missing"
+        if [ -f "${DOWNLOAD_MARKER}" ]; then
+            MARKER_STATE="present"
+        fi
+        emit_event "abliteration_waiting_for_download" "attempt" "${attempt}" "marker" "${MARKER_STATE}" "weight_files" "${WEIGHT_COUNT}"
+        echo "Waiting for source weights to finish downloading (attempt ${attempt}/180, marker=${MARKER_STATE}, weight_files=${WEIGHT_COUNT})"
+    fi
+    sleep 10
+done
+if [ "${DOWNLOAD_READY}" != "true" ]; then
+    msg="Timed out waiting for downloaded source weights in ${MODEL_DIR}"
+    echo "${msg}"
+    emit_event "abliteration_error" "model" "${MODEL_DIR}" "detail" "${msg}"
+    exit 1
+fi
+
 # Short-circuit: if abliteration already completed (status file + weight files exist),
 # re-emit the metadata and exit 0. This handles the case where the Job is recreated
 # (TTL GC + controller restart) after a successful abliteration.
