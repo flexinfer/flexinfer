@@ -1448,8 +1448,17 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "direct_init_kwargs[\"low_cpu_mem_usage\"] = True") {
 		t.Error("expected GPTQ wrapper script to enable low_cpu_mem_usage=true for incremental shard loading")
 	}
-	if !contains(script, "Patched quantize_gptq.py to disable GPTQ offload_to_disk for Qwen3.5 direct load") {
+	if !contains(script, "Patched quantize_gptq.py for Qwen3.5 direct load + text-only module tree") {
 		t.Error("expected GPTQ wrapper script to retain bundled-script fallback patch for stale runtime images")
+	}
+	if !contains(script, "Adapted GPTQModel module tree for text-only Qwen3.5 causal LM (model.layers.*)") {
+		t.Error("expected GPTQ wrapper script to patch GPTQModel's Qwen3.5 module tree for text-only loads")
+	}
+	if !contains(script, `module_tree[:3] != ["model", "language_model", "layers"]`) {
+		t.Error("expected GPTQ wrapper script to detect the composite Qwen3.5 module root before rewriting it")
+	}
+	if !contains(script, `model_definition.module_tree = ["model", "layers", *copy.deepcopy(module_tree[3:])]`) {
+		t.Error("expected GPTQ wrapper script to rewrite Qwen3.5 module roots to model.layers")
 	}
 	// init_empty_weights injection for non-CPU device maps (GPU path)
 	if !contains(script, "from accelerate import init_empty_weights") {
