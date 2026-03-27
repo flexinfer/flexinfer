@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local dev reload smoke** (`scripts/dev`): `make dev-upgrade` and `make dev-reload` now wait on the embedded HUD/mobile API readiness path instead of treating the heavier mobile task feed as the reload health gate, reducing false unhealthy warnings after daemon fallback restarts.
 
 ### Changed
+- **Daemon restart tracing surfaces** (`internal/daemon`): health-monitor auto-restart attempts now emit dedicated restart spans, and `loom/otel-status` reports `server_restart_lifecycle` as an explicit runtime trace surface instead of a generic runtime placeholder.
 - **CI pipeline parallelism** (`.gitlab-ci.yml`): `build:binaries`, `test:unit`, `test:race`, and `test:enterprise-smoke` now use `needs: [prepare:go-cache]` to fan out in parallel after prepare instead of waiting for full stage gates (~3-8 min saved).
 - **MCP build parallelism** (`.gitlab-ci.yml`): `MCP_BUILD_JOBS` default increased from 2 to 4 to match CPU limit.
 - **Dockerfile optimization** (`Dockerfile`): Combined 3 binary build `RUN` layers into 1 with parallel MCP server builds (`xargs -P4`) and `-trimpath`.
