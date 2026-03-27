@@ -382,8 +382,19 @@ func classifyHealthEntry(entry ServerHealthEntry) healthClass {
 		return healthClassIdle
 	}
 
-	// Unavailable target or sustained failures indicate down.
-	if entry.Target == "unavailable" || (!entry.Healthy && entry.ConsecFails > 3) {
+	// A running server can briefly lose its active health target during
+	// refresh races between loom/health and loom/servers. Treat that as
+	// degraded until we have sustained failures, otherwise mobile/desktop
+	// surfaces can show false "server down" criticals.
+	if entry.Target == "unavailable" {
+		if entry.ConsecFails > 3 {
+			return healthClassDown
+		}
+		return healthClassDegraded
+	}
+
+	// Sustained failures indicate down.
+	if !entry.Healthy && entry.ConsecFails > 3 {
 		return healthClassDown
 	}
 

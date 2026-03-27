@@ -39,12 +39,22 @@ func TestClassifyHealthEntry(t *testing.T) {
 			want: healthClassIdle,
 		},
 		{
-			name: "running server with unavailable target is down",
+			name: "running server with unavailable target is degraded while failures are transient",
 			entry: ServerHealthEntry{
 				Running:     true,
 				Target:      "unavailable",
 				Healthy:     false,
 				ConsecFails: 0,
+			},
+			want: healthClassDegraded,
+		},
+		{
+			name: "running server with unavailable target and sustained failures is down",
+			entry: ServerHealthEntry{
+				Running:     true,
+				Target:      "unavailable",
+				Healthy:     false,
+				ConsecFails: 4,
 			},
 			want: healthClassDown,
 		},
