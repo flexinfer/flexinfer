@@ -28,13 +28,13 @@ var skipDirs = map[string]struct{}{
 
 const maxDiscoverDepth = 6
 
-// DiscoverProjects walks workspaceRoot to find directories containing
-// <profileRepoDir>/settings.json (e.g. .claude/settings.json). Returns
-// absolute paths to project roots (the parent of the profile directory).
-// If skipWorktrees is true, directories named ".worktrees" are skipped.
-func DiscoverProjects(workspaceRoot, profileRepoDir string, skipWorktrees bool) ([]string, error) {
+// DiscoverProjectsWithFile walks workspaceRoot to find directories containing
+// <profileRepoDir>/<relativeFile>. Returns absolute paths to project roots
+// (the parent of the profile directory). If skipWorktrees is true, directories
+// named ".worktrees" are skipped.
+func DiscoverProjectsWithFile(workspaceRoot, profileRepoDir, relativeFile string, skipWorktrees bool) ([]string, error) {
 	workspaceRoot = filepath.Clean(workspaceRoot)
-	settingsRel := filepath.Join(profileRepoDir, "settings.json")
+	targetRel := filepath.Join(profileRepoDir, relativeFile)
 
 	var projects []string
 
@@ -80,8 +80,8 @@ func DiscoverProjects(workspaceRoot, profileRepoDir string, skipWorktrees bool) 
 			return fs.SkipDir
 		}
 
-		// Check if this directory contains <profileRepoDir>/settings.json
-		candidate := filepath.Join(path, settingsRel)
+		// Check if this directory contains <profileRepoDir>/<relativeFile>.
+		candidate := filepath.Join(path, targetRel)
 		if _, err := os.Stat(candidate); err == nil {
 			projects = append(projects, path)
 		}
@@ -93,4 +93,12 @@ func DiscoverProjects(workspaceRoot, profileRepoDir string, skipWorktrees bool) 
 	}
 
 	return projects, nil
+}
+
+// DiscoverProjects walks workspaceRoot to find directories containing
+// <profileRepoDir>/settings.json (e.g. .claude/settings.json). Returns
+// absolute paths to project roots (the parent of the profile directory).
+// If skipWorktrees is true, directories named ".worktrees" are skipped.
+func DiscoverProjects(workspaceRoot, profileRepoDir string, skipWorktrees bool) ([]string, error) {
+	return DiscoverProjectsWithFile(workspaceRoot, profileRepoDir, "settings.json", skipWorktrees)
 }

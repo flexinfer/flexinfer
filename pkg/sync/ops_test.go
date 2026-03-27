@@ -1567,6 +1567,74 @@ func TestSyncToHome_RepoOnlySkipsHomeOnlyCodex(t *testing.T) {
 	}
 }
 
+func TestSyncAllProjects_StripsHomeManagedSettingsKeys(t *testing.T) {
+	repoDir := t.TempDir()
+	workspaceDir := t.TempDir()
+
+	m, _ := NewManager(repoDir)
+
+	projectSettings := filepath.Join(workspaceDir, "project-a", ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(projectSettings), 0o755); err != nil {
+		t.Fatalf("mkdir project settings dir: %v", err)
+	}
+	content := []byte(`{"hooks":{"session":true},"permissions":{"allow":["Bash"]},"theme":"dark"}`)
+	if err := os.WriteFile(projectSettings, content, 0o644); err != nil {
+		t.Fatalf("write project settings: %v", err)
+	}
+
+	updated, err := m.SyncAllProjects("claude", workspaceDir, false, false)
+	if err != nil {
+		t.Fatalf("SyncAllProjects failed: %v", err)
+	}
+	if updated != 1 {
+		t.Fatalf("updated = %d, want 1", updated)
+	}
+
+	got, err := os.ReadFile(projectSettings)
+	if err != nil {
+		t.Fatalf("read project settings: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("parse stripped settings: %v", err)
+	}
+	if _, ok := parsed["hooks"]; ok {
+		t.Fatal("expected hooks removed from workspace project settings")
+	}
+	if _, ok := parsed["permissions"]; ok {
+		t.Fatal("expected permissions removed from workspace project settings")
+	}
+	if parsed["theme"] != "dark" {
+		t.Fatalf("expected theme preserved, got %#v", parsed["theme"])
+	}
+}
+
+func TestCleanAllProjectsGenerated_RemovesWorkspaceCopiesForHomeManagedProfiles(t *testing.T) {
+	repoDir := t.TempDir()
+	workspaceDir := t.TempDir()
+
+	m, _ := NewManager(repoDir)
+
+	projectConfig := filepath.Join(workspaceDir, "project-a", ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(projectConfig), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	if err := os.WriteFile(projectConfig, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	updated, err := m.CleanAllProjectsGenerated("codex", workspaceDir, false, false)
+	if err != nil {
+		t.Fatalf("CleanAllProjectsGenerated failed: %v", err)
+	}
+	if updated != 1 {
+		t.Fatalf("updated = %d, want 1", updated)
+	}
+	if Exists(projectConfig) {
+		t.Fatal("expected stale project codex config to be removed")
+	}
+}
+
 // =============================================================================
 // SkillsDirectToHome Tests
 // =============================================================================

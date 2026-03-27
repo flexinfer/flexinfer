@@ -63,11 +63,38 @@ func MergeHooksIntoSettings(existingData []byte, canonicalHooks json.RawMessage)
 	return out, changed, nil
 }
 
+// StripSettingsKeys removes selected top-level keys from a settings.json blob.
+// Missing or invalid JSON is treated as an empty object.
+func StripSettingsKeys(existingData []byte, keys ...string) ([]byte, bool, error) {
+	var m map[string]json.RawMessage
+
+	if len(existingData) > 0 {
+		if err := json.Unmarshal(existingData, &m); err != nil {
+			m = make(map[string]json.RawMessage)
+		}
+	} else {
+		m = make(map[string]json.RawMessage)
+	}
+
+	for _, key := range keys {
+		delete(m, key)
+	}
+
+	out, err := marshalOrderedSettings(m)
+	if err != nil {
+		return nil, false, fmt.Errorf("marshal settings: %w", err)
+	}
+
+	changed := !bytes.Equal(normalizeJSON(existingData), normalizeJSON(out))
+	return out, changed, nil
+}
+
 // marshalOrderedSettings produces indented JSON with deterministic key order:
-// hooks, permissions, then remaining keys alphabetically.
+// hooks, permissions, experimental, general, tools, security, then remaining
+// keys alphabetically.
 func marshalOrderedSettings(m map[string]json.RawMessage) ([]byte, error) {
 	// Collect keys in priority order
-	priority := []string{"hooks", "permissions"}
+	priority := []string{"hooks", "permissions", "experimental", "general", "tools", "security"}
 	var remaining []string
 	seen := map[string]bool{}
 	for _, k := range priority {
@@ -152,11 +179,17 @@ func MergeSettingsForHome(homeData, repoData []byte) ([]byte, bool, error) {
 // StripHooksFromFile reads a settings.json file, removes the hooks key,
 // and writes it back. Returns true if the file was modified.
 func StripHooksFromFile(path string) (bool, error) {
+	return StripSettingsKeysFromFile(path, "hooks")
+}
+
+// StripSettingsKeysFromFile reads a settings.json file, removes the provided
+// top-level keys, and writes it back. Returns true if the file was modified.
+func StripSettingsKeysFromFile(path string, keys ...string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false, err
 	}
-	stripped, changed, err := MergeHooksIntoSettings(data, nil)
+	stripped, changed, err := StripSettingsKeys(data, keys...)
 	if err != nil {
 		return false, err
 	}

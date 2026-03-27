@@ -43,6 +43,9 @@ type Profile struct {
 	// from both repo and home (e.g. Gemini CLI reading ~/.gemini/skills/ and
 	// <repo>/.gemini/skills/ simultaneously).
 	SkillsDirectToHome bool
+	// HomeManagedSettingsKeys lists settings.json keys that should only live at
+	// the user/home level and should be stripped from workspace project copies.
+	HomeManagedSettingsKeys []string
 
 	// DefaultLoomMode generates a single loom proxy entry instead of individual servers.
 	// Useful for platforms that can't resolve template patterns at runtime (e.g. Claude Code).
@@ -108,6 +111,7 @@ func (m *Manager) registerProfiles() {
 		SecretFiles:           []string{"auth.json"},
 		GeneratorTarget:       "kilocode",
 		GeneratedFile:         "config.toml",
+		GeneratedDirectToHome: true,
 		SyncGeneratedOnly:     true,
 		SkillsTarget:          "kilocode",
 		SkillsManifest:        ".loom-skills-manifest.json",
@@ -131,7 +135,11 @@ func (m *Manager) registerProfiles() {
 		SkillsManifest:      ".loom-skills-manifest.json",
 		SkillsDirectToHome:  true,
 		SkillsHomePath:      "$HOME/.claude/commands",
-		DefaultLoomMode:     true,
+		HomeManagedSettingsKeys: []string{
+			"hooks",
+			"permissions",
+		},
+		DefaultLoomMode: true,
 	}
 
 	m.Profiles["claude_desktop"] = &Profile{
@@ -160,7 +168,14 @@ func (m *Manager) registerProfiles() {
 		SkillsManifest:      ".loom-skills-manifest.json",
 		SkillsHomePath:      "$HOME/.gemini/skills",
 		SkillsDirectToHome:  true,
-		DefaultLoomMode:     true,
+		HomeManagedSettingsKeys: []string{
+			"hooks",
+			"experimental",
+			"general",
+			"tools",
+			"security",
+		},
+		DefaultLoomMode: true,
 	}
 
 	m.Profiles["antigravity"] = &Profile{

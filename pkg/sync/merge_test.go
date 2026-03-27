@@ -301,6 +301,72 @@ func TestStripHooksFromFile_NoHooks(t *testing.T) {
 	}
 }
 
+func TestStripSettingsKeys_RemovesRequestedKeys(t *testing.T) {
+	existing := []byte(`{
+		"hooks": {"session": true},
+		"permissions": {"allow": ["Bash"]},
+		"theme": "dark",
+		"tools": {"allowed": ["git"]}
+	}`)
+
+	merged, changed, err := StripSettingsKeys(existing, "hooks", "permissions", "tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true")
+	}
+
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(merged, &result); err != nil {
+		t.Fatalf("parse merged: %v", err)
+	}
+	if _, ok := result["hooks"]; ok {
+		t.Fatal("expected hooks stripped")
+	}
+	if _, ok := result["permissions"]; ok {
+		t.Fatal("expected permissions stripped")
+	}
+	if _, ok := result["tools"]; ok {
+		t.Fatal("expected tools stripped")
+	}
+	if _, ok := result["theme"]; !ok {
+		t.Fatal("expected unrelated theme key preserved")
+	}
+}
+
+func TestStripSettingsKeysFromFile(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/settings.json"
+	data := []byte(`{"hooks": {"session": true}, "permissions": {"allow": ["Bash"]}, "theme": "dark"}`)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := StripSettingsKeysFromFile(path, "hooks", "permissions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected changed=true")
+	}
+
+	result, _ := os.ReadFile(path)
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(result, &m); err != nil {
+		t.Fatalf("parse stripped file: %v", err)
+	}
+	if _, ok := m["hooks"]; ok {
+		t.Fatal("expected hooks stripped")
+	}
+	if _, ok := m["permissions"]; ok {
+		t.Fatal("expected permissions stripped")
+	}
+	if _, ok := m["theme"]; !ok {
+		t.Fatal("expected theme preserved")
+	}
+}
+
 func indexOf(s, substr string) int {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {

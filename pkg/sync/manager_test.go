@@ -370,6 +370,37 @@ func TestCodexProfile_GeneratesDirectlyToHome(t *testing.T) {
 	}
 }
 
+func TestCLIProfiles_HomeManagedConfigBehavior(t *testing.T) {
+	m, err := NewManager("/tmp/test-repo")
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	kilo := m.Get("kilocode")
+	if kilo == nil {
+		t.Fatal("kilocode profile not found")
+	}
+	if !kilo.GeneratedDirectToHome {
+		t.Fatal("expected GeneratedDirectToHome=true for kilocode")
+	}
+
+	claude := m.Get("claude")
+	if claude == nil {
+		t.Fatal("claude profile not found")
+	}
+	if len(claude.HomeManagedSettingsKeys) == 0 {
+		t.Fatal("expected claude HomeManagedSettingsKeys to be populated")
+	}
+
+	gemini := m.Get("gemini")
+	if gemini == nil {
+		t.Fatal("gemini profile not found")
+	}
+	if len(gemini.HomeManagedSettingsKeys) == 0 {
+		t.Fatal("expected gemini HomeManagedSettingsKeys to be populated")
+	}
+}
+
 // Test that the manager uses the actual user home directory
 func TestNewManager_UsesRealHomeDir(t *testing.T) {
 	m, err := NewManager("/tmp/repo")

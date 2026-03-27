@@ -138,3 +138,22 @@ func TestDiscoverProjectsEmptyWorkspace(t *testing.T) {
 		t.Fatalf("expected 0 projects in empty workspace, got %d", len(projects))
 	}
 }
+
+func TestDiscoverProjectsWithFile(t *testing.T) {
+	root := t.TempDir()
+
+	setupProjectTree(t, root, []string{
+		"project-a/.codex/config.toml",
+		"project-b/.codex/config.toml",
+		"deep/nested/project-c/.codex/config.toml",
+	})
+
+	projects, err := DiscoverProjectsWithFile(root, ".codex", "config.toml", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(projects) != 3 {
+		t.Fatalf("expected 3 projects, got %d: %v", len(projects), projects)
+	}
+}
