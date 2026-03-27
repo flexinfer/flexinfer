@@ -8,6 +8,7 @@ All configuration is read from environment variables set by the controller:
 """
 import copy
 import gc
+import inspect
 import json
 import math
 import os
@@ -913,6 +914,29 @@ def resolve_checkpoint_index(model_dir):
     return candidates[0]
 
 
+def load_state_dict_materialized(module, state_dict, *, strict=False):
+    """Load checkpoint shards into meta-backed modules when assign=True exists."""
+
+    load_kwargs = {"strict": strict}
+    try:
+        if "assign" in inspect.signature(module.load_state_dict).parameters:
+            load_kwargs["assign"] = True
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        return module.load_state_dict(state_dict, **load_kwargs)
+    except TypeError as exc:
+        if "assign" not in load_kwargs or "assign" not in str(exc):
+            raise
+        print(
+            "WARN: load_state_dict(assign=True) unsupported by this runtime; "
+            "retrying without assign"
+        )
+        load_kwargs.pop("assign", None)
+        return module.load_state_dict(state_dict, **load_kwargs)
+
+
 def patch_defuser_transformers_prerelease_gate():
     import defuser.defuser as defuser_impl
     import transformers
@@ -1032,7 +1056,7 @@ def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
             detail=f"loading shard {idx}/{len(shard_files)}",
         )
         state_dict = load_state_dict(shard_file, map_location="cpu")
-        incompatible = model.load_state_dict(state_dict, strict=False)
+        incompatible = load_state_dict_materialized(model, state_dict, strict=False)
         loaded_keys.update(state_dict.keys())
         unexpected_keys.update(incompatible.unexpected_keys)
         del state_dict
