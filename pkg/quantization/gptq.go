@@ -401,21 +401,23 @@ if "quantize_device_map" not in src:
         src = 'import os as _os_dm\nquantize_device_map = _os_dm.environ.get("QUANTIZE_DEVICE_MAP", "cpu")\n' + src
 
 # Combined replacement: from_config through model.eval()
-# Uses regex to find from_config line robustly, then replaces everything
-# through model.eval() with init_empty_weights + load_checkpoint_and_dispatch.
-fc_pattern = re.compile(r'^([ \t]+)model = model_definition\.loader\.from_config\(config, \*\*init_kwargs\)', re.MULTILINE)
+# Uses regex to find the active loader call robustly, then replaces everything
+# through model.eval() with init_empty_weights + load_checkpoint_in_model while
+# preserving whichever loader class the bundled script selected.
+fc_pattern = re.compile(r'^([ \t]+)model = ([A-Za-z_][A-Za-z0-9_\.]*)\.from_config\(config, \*\*init_kwargs\)', re.MULTILINE)
 fc_match = fc_pattern.search(src)
 eval_marker = '    model.eval()'
 eval_found = eval_marker in src
 
 if fc_match and eval_found:
     indent = fc_match.group(1)
+    loader_expr = fc_match.group(2)
     start_idx = fc_match.start()
     end_idx = src.index(eval_marker, fc_match.end()) + len(eval_marker)
     replacement = (
         f'{indent}from accelerate import init_empty_weights\n'
         f'{indent}with init_empty_weights():\n'
-        f'{indent}    model = model_definition.loader.from_config(config, **init_kwargs)\n'
+        f'{indent}    model = {loader_expr}.from_config(config, **init_kwargs)\n'
         f'{indent}print("Model skeleton created on meta device (no memory allocated)")\n'
         f'{indent}# --- Injected by controller: load_checkpoint_in_model (no dispatch hooks) ---\n'
         f'{indent}if quantize_device_map and quantize_device_map != "cpu":\n'
