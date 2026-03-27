@@ -631,9 +631,9 @@ func generateTomlConfig(p *GenerateParams) error {
 			sb.WriteString(fmt.Sprintf("%s = %d\n", field, spec.Timeout))
 		}
 
-		// Always-allow only emitted when platform supports description (proxy for
-		// "has extended TOML schema"). Platforms with strict schemas skip this.
-		if profile.Features.SupportsDescription && len(spec.AlwaysAllow) > 0 {
+		// Codex omits description/hint fields but still supports always_allow on
+		// server entries, so don't couple allowlist emission to description support.
+		if (profile.Features.SupportsDescription || profile.Features.RequiresPreamble) && len(spec.AlwaysAllow) > 0 {
 			allowJSON, _ := json.Marshal(spec.AlwaysAllow)
 			sb.WriteString(fmt.Sprintf("always_allow = %s\n", string(allowJSON)))
 		}

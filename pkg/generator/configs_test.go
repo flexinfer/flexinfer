@@ -324,6 +324,37 @@ func TestEmitCodexPreamble_NotifyRemainsTopLevel(t *testing.T) {
 	}
 }
 
+func TestGenerateTomlConfig_CodexLoomModeEmitsAlwaysAllow(t *testing.T) {
+	tmpDir := t.TempDir()
+	profile, err := GetPlatformProfile("codex")
+	if err != nil {
+		t.Fatalf("GetPlatformProfile(codex): %v", err)
+	}
+
+	params := &GenerateParams{
+		Reg:           testRegistry(),
+		OutputDir:     tmpDir,
+		Target:        "codex",
+		Profile:       profile,
+		LoomMode:      true,
+		LoomBinary:    "/opt/loom/bin/loom",
+		WorkspaceRoot: "/tmp/workspace",
+	}
+
+	if err := generateTomlConfig(params); err != nil {
+		t.Fatalf("generateTomlConfig(codex): %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "codex", "config.toml"))
+	if err != nil {
+		t.Fatalf("read generated config: %v", err)
+	}
+
+	if !strings.Contains(string(content), `always_allow = ["*"]`) {
+		t.Fatalf("expected generated codex config to auto-allow loom proxy tools, got:\n%s", string(content))
+	}
+}
+
 func TestGenerateHooksConfig_WritesAndValidates(t *testing.T) {
 	tmpDir := t.TempDir()
 	reg := testRegistry()
