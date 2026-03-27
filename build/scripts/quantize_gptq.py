@@ -8,7 +8,6 @@ All configuration is read from environment variables set by the controller:
 """
 import copy
 import gc
-import inspect
 import json
 import math
 import os
@@ -916,25 +915,16 @@ def resolve_checkpoint_index(model_dir):
 
 def load_state_dict_materialized(module, state_dict, *, strict=False):
     """Load checkpoint shards into meta-backed modules when assign=True exists."""
-
-    load_kwargs = {"strict": strict}
     try:
-        if "assign" in inspect.signature(module.load_state_dict).parameters:
-            load_kwargs["assign"] = True
-    except (TypeError, ValueError):
-        pass
-
-    try:
-        return module.load_state_dict(state_dict, **load_kwargs)
+        return module.load_state_dict(state_dict, strict=strict, assign=True)
     except TypeError as exc:
-        if "assign" not in load_kwargs or "assign" not in str(exc):
+        if "assign" not in str(exc):
             raise
         print(
             "WARN: load_state_dict(assign=True) unsupported by this runtime; "
             "retrying without assign"
         )
-        load_kwargs.pop("assign", None)
-        return module.load_state_dict(state_dict, **load_kwargs)
+        return module.load_state_dict(state_dict, strict=strict)
 
 
 def patch_defuser_transformers_prerelease_gate():
