@@ -88,7 +88,7 @@ func killLoomdBySocket(socketPath string) error {
 			pattern = "loomd([[:space:]]|$)"
 		}
 	}
-	cmd := exec.Command("pkill", "-TERM", "-f", pattern) //nolint:noctx
+	cmd := exec.Command("pkill", "-TERM", "-f", pattern) //nolint:noctx // pkill is fire-and-forget
 	_ = cmd.Run()                                        // pkill returns non-zero when no matches
 	return nil
 }
