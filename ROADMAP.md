@@ -1,6 +1,6 @@
 # Project Roadmap
 
-> Last Updated: March 5, 2026
+> Last Updated: March 27, 2026
 
 ## Current Status
 
@@ -114,13 +114,13 @@ These build on shipped work and address immediate quality and reliability.
   - ~~Ship color-blind safe status indicators (shape variants alongside color).~~ ✅ Done
   - ~~Lazy-load heavy panels (Topology, Graph, Lifecycle).~~ ✅ Done
 
-- [ ] **Raise test coverage to 40%+** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/2))
+- [x] **Raise test coverage to 40%+** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/2)) ✅ Target met
   - ~~Add smoke tests for 10 MCP servers (youtube, itchio, crypto, release, morph-fast-apply, alertmanager, minio, substack, qdrant, morph-embeddings).~~ ✅ Done
   - ~~Add enterprise edge-case tests (RBAC, audit, cost, OAuth).~~ ✅ Done
   - ~~Add agentcontext gap-fill tests (workflows, memory hierarchy, service).~~ ✅ Done
-  - Add daemon lifecycle tests: flock contention, socket cleanup, proxy autostart, graceful shutdown.
-  - Add integration tests for Docker + K8s devbox backends under monorepo layouts.
-  - Current: 30.4% (up from 29.3%). Target: 40%.
+  - Target reached: 40.7% coverage on branch pipeline `#5635` (merge commit `bc2c5b99`).
+  - Follow-on hardening still worth doing: daemon lifecycle tests (flock contention, socket cleanup, proxy autostart, graceful shutdown).
+  - Follow-on hardening still worth doing: integration tests for Docker + K8s devbox backends under monorepo layouts.
 
 - [ ] **Onboarding and docs consistency** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/6))
   - ~~Add `docs/ENTERPRISE_SECURITY.md` covering RBAC, audit, cost, OAuth.~~ ✅ Done
@@ -134,17 +134,17 @@ These build on shipped work and address immediate quality and reliability.
 
 Derived from commit-window review (`2026-02-15` to `2026-02-17`) to reduce regression risk before expanding Tier 3 scope.
 
-- [ ] **Harden daemon tool-call pipeline extraction** (in progress via `8c2c50d`) ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/20))
+- [x] **Harden daemon tool-call pipeline extraction** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/20)) ✅ Complete
   - ✅ Stage 1 complete: `handleCall` orchestration now delegates to `internal/daemon/callpipeline.go`.
   - ✅ Stage 2 complete: isolated side effects (audit/cost/cache/metrics) into dedicated pipeline helpers and added targeted stage-failure tests for route/connect + transport paths.
-  - Next: unify/centralize error-envelope construction for parse/build/route stages and add end-to-end pipeline stage-boundary regression tests.
-  - Target outcome: lower conflict/churn in `internal/daemon/daemon.go` and clearer test seams.
+  - ✅ 2026-03-27: centralized parse/build/route error-envelope construction and added pipeline stage-boundary regression coverage.
+  - Target outcome achieved: lower conflict/churn in `internal/daemon/daemon.go` and clearer test seams.
 
-- [ ] **Finish agent contract convergence across HUD/CLI/bridge** (in progress via `8c2c50d`) ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/21))
+- [x] **Finish agent contract convergence across HUD/CLI/bridge** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/21)) ✅ Complete
   - ✅ Stage 1 complete: shared contracts for context-inspect + nudge policy in `internal/hud/bridge/agent_contracts.go`.
   - ✅ 2026-03-24: agent-context sessions/tasks now carry explicit `project`, `pipeline_ref`, and `workflow_id` links through MCP tools, HUD bridge, and mobile task projections; workspace-style namespaces such as `services/loom-core/...` now preserve full repo identity during orchestration grouping.
-  - Next: split and dedupe command/bridge surfaces (`cmd/loom/cmd_agent.go`, `internal/hud/bridge/agent.go`, `internal/hud/api_agent.go`) and align error envelopes.
-  - Target outcome: single contract model for context-inspect, nudge queue, and policy mutation surfaces.
+  - ✅ 2026-03-27: session-start, session-end, and heartbeat now share normalized request validation across the bridge contract layer, HUD fleet handlers, and CLI fallback commands.
+  - Target outcome achieved: single contract model for context-inspect, session lifecycle, nudge queue, and policy mutation surfaces.
 
 - [x] **Split oversized HUD panel/state surfaces** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/22)) ✅ Complete
   - ✅ 2026-02-17: moved diagnostics polling/fetch/mutation logic into `presenceDiagnosticsStore` and kept `PresenceDiagnosticsTab.svelte` view-only; added TUI claim-conflict visibility in `internal/tui/panels/presence.go` for HUD/TUI parity.
@@ -152,7 +152,8 @@ Derived from commit-window review (`2026-02-15` to `2026-02-17`) to reduce regre
   - Target outcome: safer iteration for Fleet orchestration UX work ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/13)).
 
 - [ ] **Refactor devbox K8s backend by concern** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/23))
-  - Separate build pod orchestration from runtime lifecycle logic in `internal/devbox/backend/k8s.go`.
+  - `internal/devbox/backend/` is now partially decomposed (`k8s_build.go`, `k8s_runtime.go`, `k8s_sync.go`, `k8s_wait.go`, `k8s_objects.go`), but further seam cleanup and integration coverage still remain.
+  - Continue separating build pod orchestration from runtime lifecycle logic where `K8sBackend` still couples concerns across files/tests.
   - Target outcome: faster iteration and stronger integration-test coverage for Roadmap Issue #2 remaining devbox work.
 
 - [x] **Reduce HUD dist artifact churn in feature commits** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/24)) ✅ Complete
@@ -173,9 +174,9 @@ These address capabilities the market now expects from production MCP infrastruc
   - ✅ 2026-02-26 slice: expanded `pkg/mcpotel` tracing to `mcp-github`, `mcp-github-actions`, `mcp-jira`, and `mcp-slack`.
   - ✅ 2026-02-26 slice: completed `pkg/mcpotel` adoption across the remaining MCP binaries (`cmd/mcp-*/main.go` handlers traced).
   - ✅ 2026-02-26 slice: added `pkg/mcplog` `MCP_LOG_FORMAT` (`text`/`json`) plus automatic `trace_id`/`span_id` enrichment for context-aware logs.
-  - Instrument tool call latency, server spawn/restart, proxy connection lifecycle in `loomd`.
-  - Add OTLP gRPC export to configurable endpoint (Prometheus, Grafana, Jaeger).
-  - Expose OTel-compatible metrics in HUD health views.
+  - ✅ 2026-03-27 slice: daemon runtime now initializes/shuts down its tracer from env/config and `loom/otel-status` reports runtime state instead of config-only intent.
+  - Next: instrument tool call latency, server spawn/restart, and proxy connection lifecycle in `loomd`.
+  - Next: extend daemon/runtime export and HUD surfaces from status visibility into fuller OTel-compatible metrics parity.
   - *Rationale: Industry standard. Positions Loom alongside (not against) Langfuse, Datadog, Splunk.*
 
 - [ ] **OpenAI Responses orchestration (experimental track)** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/63), [Plan](.loom/36-implementation-plan-openai-responses-orchestration-2026-03-04.md))
