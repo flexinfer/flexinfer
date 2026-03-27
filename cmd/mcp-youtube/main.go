@@ -18,8 +18,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
-	"github.com/crb2nu/loom/pkg/mcplog"
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 	"github.com/crb2nu/loom/pkg/strutil"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -47,31 +46,16 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	logger := mcplog.NewDefault()
-	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-youtube",
-
-		logger)
+	srv, cleanup, err := mcpscaffold.NewServer(ctx, "mcp-youtube", version,
+		mcpscaffold.WithInstructions("YouTube transcript server. Use get_transcript to extract video transcripts."),
+	)
 	if err != nil {
-		logger.
-			Warn("OTel tracer init failed",
-
-				"error",
-				err)
+		return err
 	}
-	defer func() {
-		_ = shutdownTracer(ctx)
-	}()
-	tracer := mcpotel.Tracer(
-		tp,
-		"mcp-youtube")
-
-	logger.Info("starting server", "name", "mcp-youtube", "version", version)
-
-	server := mcp.NewServer("mcp-youtube", version)
-	server.SetInstructions("YouTube transcript server. Use get_transcript to extract video transcripts.")
+	defer func() { _ = cleanup(ctx) }()
 
 	// get_transcript - Get transcript from a YouTube video
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "get_transcript",
 		Description: "Get the transcript/captions from a YouTube video",
 		InputSchema: mcp.InputSchema{
@@ -92,12 +76,10 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"url"},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleGetTranscript)
 
-		// get_video_info - Get video metadata
-		tracer, "get_transcript", handleGetTranscript))
-
-	server.AddTool(mcp.Tool{
+	// get_video_info - Get video metadata
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "get_video_info",
 		Description: "Get metadata about a YouTube video (title, duration, author, etc.)",
 		InputSchema: mcp.InputSchema{
@@ -110,9 +92,9 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"url"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "get_video_info", handleGetVideoInfo))
+	}, handleGetVideoInfo)
 
-	return server.Run(ctx)
+	return srv.Run(ctx)
 }
 
 // extractVideoID extracts the video ID from various YouTube URL formats

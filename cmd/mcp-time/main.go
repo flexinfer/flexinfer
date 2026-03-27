@@ -12,8 +12,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
-	"github.com/crb2nu/loom/pkg/mcplog"
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -27,29 +26,16 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	logger := mcplog.NewDefault()
-	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-time",
-
-		logger)
-	if err !=
-		nil {
-		logger.Warn("OTel tracer init failed",
-
-			"error", err)
+	srv, cleanup, err := mcpscaffold.NewServer(ctx, "mcp-time", version,
+		mcpscaffold.WithInstructions("Fast Go-native time server. Tools: get_current_time, convert_timezone, add_duration, list_timezones, wait"),
+	)
+	if err != nil {
+		return err
 	}
-	defer func() {
-		_ = shutdownTracer(ctx)
-	}()
-	tracer :=
-		mcpotel.Tracer(tp, "mcp-time")
-
-	logger.Info("starting server", "name", "mcp-time", "version", version)
-
-	server := mcp.NewServer("mcp-time", version)
-	server.SetInstructions("Fast Go-native time server. Tools: get_current_time, convert_timezone, add_duration, list_timezones, wait")
+	defer func() { _ = cleanup(ctx) }()
 
 	// get_current_time - Get current time in a timezone
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "get_current_time",
 		Description: "Get the current time in a specified timezone",
 		InputSchema: mcp.InputSchema{
@@ -61,12 +47,10 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleGetCurrentTime)
 
-		// convert_timezone - Convert time between timezones
-		tracer, "get_current_time", handleGetCurrentTime))
-
-	server.AddTool(mcp.Tool{
+	// convert_timezone - Convert time between timezones
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "convert_timezone",
 		Description: "Convert a time from one timezone to another",
 		InputSchema: mcp.InputSchema{
@@ -87,12 +71,10 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"time", "to_timezone"},
 		},
-	}, mcpotel.TracedToolHandler(tracer,
+	}, handleConvertTimezone)
 
-		// add_duration - Add or subtract duration from a time
-		"convert_timezone", handleConvertTimezone))
-
-	server.AddTool(mcp.Tool{
+	// add_duration - Add or subtract duration from a time
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "add_duration",
 		Description: "Add or subtract a duration from a time",
 		InputSchema: mcp.InputSchema{
@@ -113,24 +95,20 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"duration"},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleAddDuration)
 
-		// list_timezones - List common timezones
-		tracer, "add_duration", handleAddDuration))
-
-	server.AddTool(mcp.Tool{
+	// list_timezones - List common timezones
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "list_timezones",
 		Description: "List common IANA timezone names",
 		InputSchema: mcp.InputSchema{
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleListTimezones)
 
-		// wait - Sleep for a duration
-		tracer, "list_timezones", handleListTimezones))
-
-	server.AddTool(mcp.Tool{
+	// wait - Sleep for a duration
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "wait",
 		Description: "Wait (sleep) for a duration",
 		InputSchema: mcp.InputSchema{
@@ -143,9 +121,9 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"duration"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "wait", handleWait))
+	}, handleWait)
 
-	return server.Run(ctx)
+	return srv.Run(ctx)
 }
 
 func parseDurationWithDays(durationStr string) (time.Duration, error) {
