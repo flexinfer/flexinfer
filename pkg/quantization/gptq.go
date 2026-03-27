@@ -396,6 +396,10 @@ from pathlib import Path
 
 path = Path(os.environ.get("GPTQ_SCRIPT", "/opt/flexinfer/scripts/quantize_gptq.py"))
 src = path.read_text()
+src = src.replace(
+    'def load_state_dict_materialized(module, state_dict, *, strict=False):\n    """Load checkpoint shards into meta-backed modules when assign=True exists."""\n\n    load_kwargs = {"strict": strict}\n    try:\n        if "assign" in inspect.signature(module.load_state_dict).parameters:\n            load_kwargs["assign"] = True\n    except (TypeError, ValueError):\n        pass\n\n    try:\n        return module.load_state_dict(state_dict, **load_kwargs)\n    except TypeError as exc:\n        if "assign" not in load_kwargs or "assign" not in str(exc):\n            raise\n        print(\n            "WARN: load_state_dict(assign=True) unsupported by this runtime; "\n            "retrying without assign"\n        )\n        load_kwargs.pop("assign", None)\n        return module.load_state_dict(state_dict, **load_kwargs)\n',
+    'def load_state_dict_materialized(module, state_dict, strict=False):\n    """Load checkpoint shards into meta-backed modules when assign=True exists."""\n    try:\n        return module.load_state_dict(state_dict, strict=strict, assign=True)\n    except TypeError as exc:\n        if "assign" not in str(exc):\n            raise\n        print("WARN: load_state_dict(assign=True) unsupported by this runtime; retrying without assign")\n        return module.load_state_dict(state_dict, strict=strict)\n',
+)
 
 # Add env var read near top of script (after imports)
 if "quantize_device_map" not in src:
