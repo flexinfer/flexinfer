@@ -611,12 +611,7 @@ func (d *Daemon) handleOTelStatus(ctx context.Context, msg *mcp.Message) (*mcp.M
 	tracedServers, totalServers := d.computeTracedServerCoverage()
 	coverage := formatCoverage(tracedServers, totalServers)
 
-	runtimeSurfaces := map[string]bool{
-		"rpc_dispatch":                true,
-		"server_connect":              true,
-		"client_connection_lifecycle": true,
-		"transport_recovery_events":   true,
-	}
+	runtimeSurfaces := runtimeTraceSurfaces()
 	runtimeTraceCount := 0
 	for _, enabled := range runtimeSurfaces {
 		if enabled {
@@ -644,6 +639,16 @@ func (d *Daemon) handleOTelStatus(ctx context.Context, msg *mcp.Message) (*mcp.M
 		"runtime_trace_coverage":    runtimeTraceCoverage,
 	}
 	return mcp.NewResponse(msg.ID, result)
+}
+
+func runtimeTraceSurfaces() map[string]bool {
+	return map[string]bool{
+		"rpc_dispatch":                true,
+		"server_connect_and_spawn":    true,
+		"server_restart_lifecycle":    true,
+		"client_connection_lifecycle": true,
+		"transport_recovery_events":   true,
+	}
 }
 
 func (d *Daemon) computeTracedServerCoverage() (traced, total int) {

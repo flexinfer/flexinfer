@@ -6,6 +6,11 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ServerHealthStatus represents the health state of a server.
@@ -317,8 +322,23 @@ func (h *HealthMonitor) checkServer(ctx context.Context, serverName string) {
 
 // handleRestart attempts to restart an unhealthy server.
 func (h *HealthMonitor) handleRestart(serverName string, status *ServerHealthStatus) {
+	tracer := otel.GetTracerProvider().Tracer("loomd")
+	if h.daemon != nil {
+		tracer = h.daemon.daemonTracer()
+	}
+	_, span := tracer.Start(context.Background(), "daemon.server.restart",
+		trace.WithAttributes(
+			attribute.String("server.name", serverName),
+			attribute.Int("server.restart_count", status.RestartCount),
+			attribute.Int("server.max_restarts", h.maxRestarts),
+			attribute.Bool("daemon.proc_manager_available", h.daemon != nil && h.daemon.procMgr != nil),
+		),
+	)
+	defer span.End()
+
 	// Check cooldown
 	if !status.LastRestart.IsZero() && time.Since(status.LastRestart) < h.restartCooldown {
+		span.AddEvent("daemon.server.restart.skipped_cooldown")
 		return
 	}
 
@@ -328,31 +348,48 @@ func (h *HealthMonitor) handleRestart(serverName string, status *ServerHealthSta
 			"server", serverName,
 			"restarts", status.RestartCount)
 		status.AutoRestartFailed = true
+		span.SetStatus(codes.Error, "max restarts exceeded")
+		span.AddEvent("daemon.server.restart.exhausted")
+		return
+	}
+
+	if h.daemon == nil || h.daemon.procMgr == nil {
+		span.AddEvent("daemon.server.restart.skipped_no_proc_manager")
 		return
 	}
 
 	h.logger.Info("attempting auto-restart",
 		"server", serverName,
 		"restart_count", status.RestartCount+1)
+	span.AddEvent("daemon.server.restart.attempt",
+		trace.WithAttributes(
+			attribute.Int("server.next_restart_count", status.RestartCount+1),
+		),
+	)
 
 	// Perform restart via process manager
-	if h.daemon.procMgr != nil {
-		// Stop the server
-		if err := h.daemon.procMgr.Stop(serverName); err != nil {
-			h.logger.Warn("failed to stop server during restart", "server", serverName, "error", err)
-		}
+	if err := h.daemon.procMgr.Stop(serverName); err != nil {
+		h.logger.Warn("failed to stop server during restart", "server", serverName, "error", err)
+		span.RecordError(err)
+		span.AddEvent("daemon.server.restart.stop_failed",
+			trace.WithAttributes(attribute.String("error", err.Error())),
+		)
+	}
 
-		// Give it a moment to clean up
-		time.Sleep(1 * time.Second)
+	// Give it a moment to clean up
+	time.Sleep(1 * time.Second)
 
-		// Start it again - it will be started on next request
-		status.RestartCount++
-		status.LastRestart = time.Now()
+	// Start it again - it will be started on next request
+	status.RestartCount++
+	status.LastRestart = time.Now()
+	span.SetAttributes(attribute.Int("server.restart_count", status.RestartCount))
+	span.AddEvent("daemon.server.restart.completed",
+		trace.WithAttributes(attribute.Int("server.restart_count", status.RestartCount)),
+	)
 
-		// Update Prometheus metrics
-		if h.daemon.metrics != nil {
-			h.daemon.metrics.ProcessRestarts.WithLabelValues(serverName).Inc()
-		}
+	// Update Prometheus metrics
+	if h.daemon.metrics != nil {
+		h.daemon.metrics.RecordProcessRestart(serverName)
 	}
 }
 

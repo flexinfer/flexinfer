@@ -195,6 +195,9 @@ func TestHandleOTelStatus_IncludesRuntimeSurfaceCoverage(t *testing.T) {
 	if !strings.Contains(payload, `"runtime_trace_surfaces"`) {
 		t.Fatalf("expected runtime_trace_surfaces in payload: %s", payload)
 	}
+	if !strings.Contains(payload, `"server_restart_lifecycle":true`) {
+		t.Fatalf("expected server_restart_lifecycle in payload: %s", payload)
+	}
 	if !strings.Contains(payload, `"runtime_trace_coverage":"100%"`) {
 		t.Fatalf("expected runtime_trace_coverage in payload: %s", payload)
 	}
@@ -368,6 +371,42 @@ func TestCallPipeline_RecordTransportSpanEvent(t *testing.T) {
 	}
 	if got := attrString(events[0].Attributes, "server.name"); got != "mcp-gitlab" {
 		t.Fatalf("server.name event attr = %q, want mcp-gitlab", got)
+	}
+}
+
+func TestHealthMonitorHandleRestart_EmitsRestartSpanWithoutProcMgr(t *testing.T) {
+	d, recorder := setupDaemonTracer(t)
+	d.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	h := &HealthMonitor{
+		daemon:          d,
+		logger:          d.logger,
+		restartCooldown: time.Minute,
+		maxRestarts:     3,
+	}
+
+	h.handleRestart("mcp-gitlab", &ServerHealthStatus{})
+
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	span := spans[0]
+	if span.Name() != "daemon.server.restart" {
+		t.Fatalf("span name = %q, want daemon.server.restart", span.Name())
+	}
+	if got := attrString(span.Attributes(), "server.name"); got != "mcp-gitlab" {
+		t.Fatalf("server.name attr = %q, want mcp-gitlab", got)
+	}
+	if got, ok := attrBool(span.Attributes(), "daemon.proc_manager_available"); !ok || got {
+		t.Fatalf("daemon.proc_manager_available = %v (present=%v), want false", got, ok)
+	}
+	events := span.Events()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Name != "daemon.server.restart.skipped_no_proc_manager" {
+		t.Fatalf("event name = %q, want daemon.server.restart.skipped_no_proc_manager", events[0].Name)
 	}
 }
 
