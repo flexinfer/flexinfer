@@ -71,8 +71,9 @@ variables:
   # checkout and fetch sources explicitly inside jobs instead.
   GIT_STRATEGY: "none"
   # Minimum test coverage threshold (percentage)
-  # Lowered from 30% to accommodate SSH tunnel code which requires actual SSH server to test
-  COVERAGE_THRESHOLD: "24"
+  # Raised to 35% (actual coverage ~39.4%). Original was 30%, lowered to 24% for SSH
+  # tunnel code, then raised to 35% in Cycle 3 debt remediation (2026-03-27).
+  COVERAGE_THRESHOLD: "35"
   IMAGE_REGISTRY: registry.flexinfer.ai
   IMAGE_REGISTRIES: "registry.harbor.lan registry.flexinfer.ai"
   CUSTOM_SERVER_IMAGE_REPO: mcp/custom-server
