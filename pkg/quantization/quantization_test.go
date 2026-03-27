@@ -1454,6 +1454,15 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "Adapted GPTQModel module tree for text-only Qwen3.5 causal LM (model.layers.*)") {
 		t.Error("expected GPTQ wrapper script to patch GPTQModel's Qwen3.5 module tree for text-only loads")
 	}
+	if !contains(script, "def load_state_dict_materialized(module, state_dict, strict=False):") {
+		t.Error("expected GPTQ wrapper script to inject a helper that materializes meta-backed shard loads")
+	}
+	if !contains(script, "module.load_state_dict(state_dict, strict=strict, assign=True)") {
+		t.Error("expected GPTQ wrapper script to prefer load_state_dict(assign=True) when materializing checkpoint shards")
+	}
+	if !contains(script, "load_state_dict_materialized(model, state_dict, strict=False)") {
+		t.Error("expected GPTQ wrapper script CPU shard loader to use the meta-materializing load helper")
+	}
 	if !contains(script, `module_tree[:3] != ["model", "language_model", "layers"]`) {
 		t.Error("expected GPTQ wrapper script to detect the composite Qwen3.5 module root before rewriting it")
 	}
