@@ -616,6 +616,42 @@ func TestBuildBuildahPodSpec_GitCloneMode(t *testing.T) {
 	}
 }
 
+func TestBuildBuildahPodSpec_TarPipeMode(t *testing.T) {
+	k := testK8sBackend()
+	k.syncMode = "tar-pipe"
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core")
+
+	wsVol := pod.Spec.Volumes[0]
+	if wsVol.EmptyDir == nil {
+		t.Fatal("expected emptyDir workspace volume in tar-pipe mode for build pod")
+	}
+	if wsVol.PersistentVolumeClaim != nil {
+		t.Fatal("should not have PVC in tar-pipe mode for build pod")
+	}
+	if wsVol.EmptyDir.SizeLimit == nil || wsVol.EmptyDir.SizeLimit.String() != "5Gi" {
+		t.Fatalf("expected 5Gi emptyDir size limit, got %#v", wsVol.EmptyDir.SizeLimit)
+	}
+	if len(pod.Spec.InitContainers) != 0 {
+		t.Fatalf("expected 0 initContainers in tar-pipe mode for build pod, got %d", len(pod.Spec.InitContainers))
+	}
+}
+
+func TestBuildBuildahPodSpec_NFSMode(t *testing.T) {
+	k := testK8sBackend()
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core")
+
+	wsVol := pod.Spec.Volumes[0]
+	if wsVol.PersistentVolumeClaim == nil {
+		t.Fatal("expected NFS PVC workspace volume in default build pod mode")
+	}
+	if wsVol.PersistentVolumeClaim.ClaimName != "devbox-workspace-nfs" {
+		t.Fatalf("unexpected PVC name: %q", wsVol.PersistentVolumeClaim.ClaimName)
+	}
+	if len(pod.Spec.InitContainers) != 0 {
+		t.Fatalf("expected 0 initContainers in NFS mode for build pod, got %d", len(pod.Spec.InitContainers))
+	}
+}
+
 func TestBuild_MonorepoContextCompletesWithFakeK8s(t *testing.T) {
 	workspaceRoot := t.TempDir()
 	contextDir := filepath.Join(workspaceRoot, "services", "loom-core")
