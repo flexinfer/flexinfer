@@ -24,25 +24,23 @@ type heartbeatResponse struct {
 	Nudges     []json.RawMessage `json:"nudges,omitempty"`
 }
 
-func heartbeatWithFallback(cmd *cobra.Command, port string, agentID, status string) (*heartbeatResponse, error) {
-	body := map[string]any{
-		"agent_id": agentID,
-	}
-	if status != "" {
-		body["status"] = status
+func heartbeatWithFallback(cmd *cobra.Command, port string, req bridge.HeartbeatRequest) (*heartbeatResponse, error) {
+	req, err := req.ToRequest()
+	if err != nil {
+		return nil, err
 	}
 
 	data, err := withAgentFallback(
 		"agent heartbeat",
 		func() (json.RawMessage, error) {
-			return hudPostWithRetry(port, "/api/agent/heartbeat", body,
+			return hudPostWithRetry(port, "/api/agent/heartbeat", req,
 				3*time.Second,
 				[]time.Duration{50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond},
 			)
 		},
 		func() (json.RawMessage, error) {
 			return withAgentBridge(cmd, func(agentBridge *bridge.AgentBridge) (json.RawMessage, error) {
-				if _, err := agentBridge.PresenceHeartbeat(agentID, bridge.PresenceHeartbeatParams{Status: status}); err != nil {
+				if _, err := agentBridge.PresenceHeartbeat(req.AgentID, req.HeartbeatParams()); err != nil {
 					return nil, err
 				}
 				return json.Marshal(map[string]bool{"ok": true})
@@ -94,7 +92,14 @@ don't have native session-start hooks.`,
 				namespace = inferGitNamespace()
 			}
 
-			resp, err := heartbeatWithFallback(cmd, port, agentID, status)
+			req := bridge.HeartbeatRequest{
+				AgentID:     agentID,
+				Status:      status,
+				AgentType:   agentType,
+				Description: description,
+				Namespace:   namespace,
+			}
+			resp, err := heartbeatWithFallback(cmd, port, req)
 			if err != nil && ensureSession {
 				startNamespace := namespace
 				startAgentType := agentType
@@ -122,7 +127,7 @@ don't have native session-start hooks.`,
 					}
 				}
 				if ensureErr == nil && err == nil {
-					resp, err = heartbeatWithFallback(cmd, port, agentID, status)
+					resp, err = heartbeatWithFallback(cmd, port, req)
 				} else {
 					if ensureErr != nil {
 						err = fmt.Errorf("%v (ensure-session failed: %w)", err, ensureErr)
@@ -232,7 +237,11 @@ running, exits silently. On SIGINT/SIGTERM, sends a final deregister and exits.`
 			for {
 				select {
 				case <-ticker.C:
-					_, err := heartbeatWithFallback(cmd, port, agentID, "active")
+					_, err := heartbeatWithFallback(cmd, port, bridge.HeartbeatRequest{
+						AgentID:   agentID,
+						AgentType: agentType,
+						Status:    "active",
+					})
 					if err != nil && !quiet {
 						fmt.Fprintf(os.Stderr, "keepalive: heartbeat: %v\n", err)
 					}

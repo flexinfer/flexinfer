@@ -19,8 +19,10 @@ func (d *FleetDomain) handleAgentSessionStart(w http.ResponseWriter, r *http.Req
 		d.deps.WriteError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
-	if body.AgentID == "" {
-		d.deps.WriteError(w, http.StatusBadRequest, "agent_id is required", nil)
+	var err error
+	body, err = body.ToParams()
+	if err != nil {
+		d.deps.WriteError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
@@ -55,8 +57,10 @@ func (d *FleetDomain) handleAgentSessionEnd(w http.ResponseWriter, r *http.Reque
 		d.deps.WriteError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
-	if body.SessionID == "" && body.AgentID == "" {
-		d.deps.WriteError(w, http.StatusBadRequest, "session_id or agent_id is required", nil)
+	var err error
+	body, err = body.ToParams()
+	if err != nil {
+		d.deps.WriteError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 
@@ -89,8 +93,10 @@ func (d *FleetDomain) handleAgentHeartbeat(w http.ResponseWriter, r *http.Reques
 		d.deps.WriteError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
-	if body.AgentID == "" {
-		d.deps.WriteError(w, http.StatusBadRequest, "agent_id is required", nil)
+	var err error
+	body, err = body.ToRequest()
+	if err != nil {
+		d.deps.WriteError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 	var ensureSessionErr error
