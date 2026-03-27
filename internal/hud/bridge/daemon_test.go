@@ -695,7 +695,7 @@ func handleConnWithNotifications(conn net.Conn, m *mockHandlers) {
 			"method":  "notifications/tools/list_changed",
 		})
 		notif = append(notif, '\n')
-		conn.Write(notif) //nolint:errcheck
+		conn.Write(notif) //nolint:errcheck // test helper; connection errors caught by test assertions
 
 		m.mu.RLock()
 		fn, ok := m.methods[req.Method]
@@ -732,7 +732,7 @@ func handleConnWithNotifications(conn net.Conn, m *mockHandlers) {
 			}
 		}
 		resp = append(resp, '\n')
-		conn.Write(resp) //nolint:errcheck
+		conn.Write(resp) //nolint:errcheck // test helper; connection errors caught by test assertions
 	}
 }
 

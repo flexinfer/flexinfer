@@ -230,7 +230,6 @@ lint:
         exit 1
       fi
     - $(go env GOPATH)/bin/golangci-lint run --timeout 30m ${GO_APP_PKGS}
-  allow_failure: true
 
 vet:
   <<: *go-template
