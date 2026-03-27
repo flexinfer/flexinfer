@@ -1458,6 +1458,15 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "load_checkpoint_in_model") {
 		t.Error("expected GPTQ wrapper script to use load_checkpoint_in_model for shard-by-shard loading")
 	}
+	if !contains(script, "fc_pattern = re.compile(r'^([ \\t]+)model = ([A-Za-z_][A-Za-z0-9_\\.]*)\\.from_config\\(config, \\*\\*init_kwargs\\)'") {
+		t.Error("expected GPTQ wrapper script to match both model_definition.loader and loader_cls from_config calls")
+	}
+	if !contains(script, "loader_expr = fc_match.group(2)") {
+		t.Error("expected GPTQ wrapper script to preserve the bundled loader expression when rewriting from_config")
+	}
+	if !contains(script, "model = {loader_expr}.from_config(config, **init_kwargs)") {
+		t.Error("expected GPTQ wrapper script replacement to keep the matched loader expression")
+	}
 }
 
 func TestGPUQuantizationJob_CustomTimeout(t *testing.T) {
