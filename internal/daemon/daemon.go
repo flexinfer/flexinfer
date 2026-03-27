@@ -28,6 +28,7 @@ import (
 	"github.com/crb2nu/loom/internal/pool"
 	"github.com/crb2nu/loom/internal/process"
 	"github.com/crb2nu/loom/internal/router"
+	"github.com/crb2nu/loom/pkg/mcpotel"
 	"github.com/crb2nu/loom/pkg/profiles"
 	"github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/sync"
@@ -154,6 +155,10 @@ type Daemon struct {
 
 	tracer trace.Tracer
 
+	otelShutdown     mcpotel.ShutdownFunc
+	otelRuntimeState daemonOTelState
+	otelShutdownOnce gosync.Once
+
 	// hudApp is the embedded HUD application (nil when not enabled).
 	hudApp hudAppStopper
 }
@@ -244,6 +249,12 @@ func New(cfg Config) (*Daemon, error) {
 	}
 	logger := slog.New(handler)
 
+	otelTP, otelShutdown, otelRuntimeState, otelErr := initDaemonOTel(context.Background(), fileCfg.OTel, logger)
+	if otelErr != nil {
+		logger.Warn("failed to initialize daemon OTel tracing", "error", otelErr)
+	}
+	runtimeTracer := mcpotel.Tracer(otelTP, otelRuntimeState.ServiceName)
+
 	// Load registry
 	var reg *registry.Registry
 	var repoRoot string
@@ -303,7 +314,7 @@ func New(cfg Config) (*Daemon, error) {
 		MaxOpen:     poolMaxOpen,
 		IdleTimeout: poolIdleTimeout,
 		DialFunc: func(ctx context.Context, serverName string) (mcp.Transport, error) {
-			tracer := otel.Tracer("loomd")
+			tracer := runtimeTracer
 			if d != nil {
 				tracer = d.daemonTracer()
 			}
@@ -466,7 +477,9 @@ func New(cfg Config) (*Daemon, error) {
 		respCache:          NewResponseCache(fileCfg.Cache),
 		routingPreferences: routingPrefs,
 		done:               make(chan struct{}),
-		tracer:             otel.Tracer("loomd"),
+		tracer:             runtimeTracer,
+		otelShutdown:       otelShutdown,
+		otelRuntimeState:   otelRuntimeState,
 	}
 
 	// Initialize daemon-wide call concurrency semaphore
@@ -773,6 +786,13 @@ func (d *Daemon) IsDraining() bool {
 // Stop stops the daemon.
 func (d *Daemon) Stop() (err error) {
 	_, span := d.daemonTracer().Start(context.Background(), "daemon.stop")
+	defer func() {
+		d.otelShutdownOnce.Do(func() {
+			if d.otelShutdown != nil {
+				_ = d.otelShutdown(context.Background())
+			}
+		})
+	}()
 	defer func() {
 		if err != nil {
 			span.RecordError(err)

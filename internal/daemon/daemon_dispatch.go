@@ -611,24 +611,37 @@ func (d *Daemon) handleOTelStatus(ctx context.Context, msg *mcp.Message) (*mcp.M
 	tracedServers, totalServers := d.computeTracedServerCoverage()
 	coverage := formatCoverage(tracedServers, totalServers)
 
-	// Runtime daemon tracing surfaces that complement per-server pkg/mcpotel spans.
 	runtimeSurfaces := map[string]bool{
 		"rpc_dispatch":                true,
 		"server_connect":              true,
 		"client_connection_lifecycle": true,
 		"transport_recovery_events":   true,
 	}
+	runtimeTraceCount := 0
+	for _, enabled := range runtimeSurfaces {
+		if enabled {
+			runtimeTraceCount++
+		}
+	}
+	runtimeTraceCoverage := formatCoverage(runtimeTraceCount, len(runtimeSurfaces))
 
 	result := map[string]any{
-		"otlp_endpoint":          endpoint,
-		"otlp_configured":        endpoint != "",
-		"log_format":             logFormat,
-		"json_logs_enabled":      logFormat == "json",
-		"traced_servers":         tracedServers,
-		"total_servers":          totalServers,
-		"trace_coverage":         coverage,
-		"runtime_trace_surfaces": runtimeSurfaces,
-		"runtime_trace_coverage": "100%",
+		"otlp_endpoint":             endpoint,
+		"otlp_configured":           endpoint != "",
+		"log_format":                logFormat,
+		"json_logs_enabled":         logFormat == "json",
+		"traced_servers":            tracedServers,
+		"total_servers":             totalServers,
+		"trace_coverage":            coverage,
+		"runtime_otlp_configured":   d.otelRuntimeState.Configured,
+		"runtime_otlp_enabled":      d.otelRuntimeState.Enabled,
+		"runtime_otlp_endpoint":     d.otelRuntimeState.Endpoint,
+		"runtime_otlp_protocol":     d.otelRuntimeState.Protocol,
+		"runtime_otlp_service_name": d.otelRuntimeState.ServiceName,
+		"runtime_otlp_sample_rate":  d.otelRuntimeState.SampleRate,
+		"runtime_otlp_error":        d.otelRuntimeState.InitError,
+		"runtime_trace_surfaces":    runtimeSurfaces,
+		"runtime_trace_coverage":    runtimeTraceCoverage,
 	}
 	return mcp.NewResponse(msg.ID, result)
 }
