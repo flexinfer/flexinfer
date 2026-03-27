@@ -44,60 +44,10 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 		resources.Limits[corev1.ResourceCPU] = resource.MustParse(fmt.Sprintf("%dm", int(opts.CPUs*1000)))
 	}
 
-	var volumes []corev1.Volume
-	var volumeMounts []corev1.VolumeMount
-	var initContainers []corev1.Container
-
-	switch {
-	case k.syncMode == "tar-pipe":
-		// Tar-pipe mode: emptyDir workspace populated post-start via SyncWorkspace().
-		// No initContainer needed — files are streamed in after pod is running.
-		volumes = []corev1.Volume{
-			{
-				Name: "workspace",
-				VolumeSource: corev1.VolumeSource{
-					EmptyDir: &corev1.EmptyDirVolumeSource{},
-				},
-			},
-		}
-		volumeMounts = []corev1.VolumeMount{
-			{Name: "workspace", MountPath: "/workspace"},
-		}
-
-	case k.gitEnabled():
-		// Git-clone mode: emptyDir workspace populated by initContainer.
-		// Eliminates NFS dependency — each pod gets fresh source from git.
-		volumes = []corev1.Volume{
-			{
-				Name: "workspace",
-				VolumeSource: corev1.VolumeSource{
-					EmptyDir: &corev1.EmptyDirVolumeSource{},
-				},
-			},
-		}
-		volumeMounts = []corev1.VolumeMount{
-			{Name: "workspace", MountPath: "/workspace"},
-		}
-		initContainers = []corev1.Container{
-			k.gitCloneInitContainer(opts.WorkDir),
-		}
-
-	default:
-		// NFS PVC mode (legacy): shared workspace via NFS.
-		volumes = []corev1.Volume{
-			{
-				Name: "workspace",
-				VolumeSource: corev1.VolumeSource{
-					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: k.workspacePVC,
-					},
-				},
-			},
-		}
-		volumeMounts = []corev1.VolumeMount{
-			{Name: "workspace", MountPath: "/workspace"},
-		}
-	}
+	workspace := k.workspacePlan(opts.WorkDir, nil)
+	volumes := []corev1.Volume{workspace.volume}
+	volumeMounts := append([]corev1.VolumeMount{}, workspace.volumeMounts...)
+	initContainers := append([]corev1.Container{}, workspace.initContainers...)
 
 	// Add secret volume mounts (e.g., auth token files for agent CLIs).
 	for i, sm := range opts.SecretMounts {
@@ -214,9 +164,8 @@ func (k *K8sBackend) registryTag(tag string) string {
 	return k.registry + "/" + tag
 }
 
-func boolPtr(b bool) *bool                               { return &b }
-func int32Ptr(i int32) *int32                            { return &i }
-func resourcePtr(q resource.Quantity) *resource.Quantity { return &q }
+func boolPtr(b bool) *bool    { return &b }
+func int32Ptr(i int32) *int32 { return &i }
 
 // workDir returns the working directory, defaulting to "/workspace".
 func workDir(dir string) string {
