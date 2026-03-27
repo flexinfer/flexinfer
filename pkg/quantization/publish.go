@@ -84,7 +84,7 @@ func BuildPublishJob(params JobParams, spec *aiv1alpha1.PublishSpec) (*batchv1.J
 			{
 				Name:            "publisher",
 				Image:           image,
-				ImagePullPolicy: corev1.PullAlways,
+				ImagePullPolicy: ImagePullPolicyForImage(image),
 				Command:         []string{"/bin/sh", "-c"},
 				Args:            []string{script},
 				Env:             env,

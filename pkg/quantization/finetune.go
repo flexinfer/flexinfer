@@ -121,7 +121,7 @@ func BuildFinetuneJob(params JobParams, spec *aiv1alpha1.FinetuneSpec) (*batchv1
 			{
 				Name:            "finetuner",
 				Image:           image,
-				ImagePullPolicy: corev1.PullAlways,
+				ImagePullPolicy: ImagePullPolicyForImage(image),
 				Command:         []string{"/bin/bash", "-c"},
 				Args:            []string{script},
 				Env:             append(env, ftEnv...),
