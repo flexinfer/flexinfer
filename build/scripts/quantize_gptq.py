@@ -399,6 +399,55 @@ def ensure_qwen35_text_config(path):
     return True
 
 
+def _rewrite_module_tree_prefix(module_tree, old_prefix, new_prefix):
+    if not isinstance(module_tree, list):
+        return module_tree
+    if module_tree[: len(old_prefix)] != old_prefix:
+        return module_tree
+    rewritten = copy.deepcopy(module_tree)
+    return list(new_prefix) + rewritten[len(old_prefix) :]
+
+
+def adapt_model_definition_for_loaded_model(model_definition, model):
+    """Align GPTQModel's module tree with the instantiated HF model layout.
+
+    Qwen3.5's GPTQModel definition targets the composite VLM wrapper
+    (`model.language_model.layers.*`), but our direct quantization path loads the
+    text-only causal LM (`model.layers.*`). If we do not rewrite the root paths,
+    GPTQModel reaches calibration capture and then fails to enumerate layers.
+    """
+
+    if model is None or not hasattr(model, "model"):
+        return
+
+    inner_model = getattr(model, "model", None)
+    if inner_model is None or not hasattr(inner_model, "layers"):
+        return
+
+    module_tree = getattr(model_definition, "module_tree", None)
+    rewritten_tree = _rewrite_module_tree_prefix(
+        module_tree,
+        ["model", "language_model", "layers"],
+        ["model", "layers"],
+    )
+    if rewritten_tree is module_tree:
+        return
+
+    model_definition.module_tree = rewritten_tree
+    if getattr(model_definition, "pre_lm_head_norm_module", None) == (
+        "model.language_model.norm"
+    ):
+        model_definition.pre_lm_head_norm_module = "model.norm"
+    if getattr(model_definition, "rotary_embedding", None) == (
+        "model.language_model.rotary_emb"
+    ):
+        model_definition.rotary_embedding = "model.rotary_emb"
+    print(
+        "Adapted GPTQModel module tree for text-only Qwen3.5 causal LM "
+        "(model.layers.*)"
+    )
+
+
 # ── Read config from environment ──────────────────────────────────────
 model_dir = os.environ["MODEL_DIR"]
 out_dir = os.environ["OUT_DIR"]
@@ -998,6 +1047,7 @@ def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
     defuser.convert_model(model, cleanup_original=False)
     model._model_init_kwargs = init_kwargs.copy()
     model.eval()
+    adapt_model_definition_for_loaded_model(model_definition, model)
 
     # Dispatch model across devices if device_map is not cpu-only.
     if quantize_device_map and quantize_device_map != "cpu":

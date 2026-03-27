@@ -367,9 +367,17 @@ src = src.replace(
     'qcfg_kwargs = dict(bits=bits, group_size=group_size, sym=sym, desc_act=desc_act)\nif dynamic_config is not None:\n    qcfg_kwargs["dynamic"] = dynamic_config',
     'qcfg_kwargs = dict(bits=bits, group_size=group_size, sym=sym, desc_act=desc_act)\nif dynamic_config is not None:\n    qcfg_kwargs["dynamic"] = dynamic_config\nif force_direct_load:\n    qcfg_kwargs["offload_to_disk"] = False\n    print(f"Disabled GPTQ offload_to_disk for model_type={model_type or \'unknown\'}")',
 )
+src = src.replace(
+    'def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):',
+    'def adapt_model_definition_for_loaded_model(model_definition, model):\n    """Align GPTQModel module roots with the instantiated HF model layout."""\n    if model is None or not hasattr(model, "model"):\n        return\n    inner_model = getattr(model, "model", None)\n    if inner_model is None or not hasattr(inner_model, "layers"):\n        return\n    module_tree = getattr(model_definition, "module_tree", None)\n    if not isinstance(module_tree, list) or module_tree[:3] != ["model", "language_model", "layers"]:\n        return\n    model_definition.module_tree = ["model", "layers", *copy.deepcopy(module_tree[3:])]\n    if getattr(model_definition, "pre_lm_head_norm_module", None) == "model.language_model.norm":\n        model_definition.pre_lm_head_norm_module = "model.norm"\n    if getattr(model_definition, "rotary_embedding", None) == "model.language_model.rotary_emb":\n        model_definition.rotary_embedding = "model.rotary_emb"\n    print("Adapted GPTQModel module tree for text-only Qwen3.5 causal LM (model.layers.*)")\n\n\ndef load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):',
+)
+src = src.replace(
+    '    model._model_init_kwargs = init_kwargs.copy()\n    model.eval()',
+    '    model._model_init_kwargs = init_kwargs.copy()\n    model.eval()\n    adapt_model_definition_for_loaded_model(model_definition, model)',
+)
 path.write_text(src)
 PY
-    echo "Patched quantize_gptq.py to disable GPTQ offload_to_disk for Qwen3.5 direct load"
+    echo "Patched quantize_gptq.py for Qwen3.5 direct load + text-only module tree"
 fi
 
 # Inject init_empty_weights + load_checkpoint_in_model into quantize_gptq.py.
