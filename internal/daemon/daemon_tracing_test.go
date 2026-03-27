@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -199,6 +200,143 @@ func TestHandleOTelStatus_IncludesRuntimeSurfaceCoverage(t *testing.T) {
 	}
 	if !strings.Contains(payload, `"traced_servers":1`) || !strings.Contains(payload, `"total_servers":2`) {
 		t.Fatalf("expected traced/total server counts in payload: %s", payload)
+	}
+}
+
+func TestInitDaemonOTel_UsesRuntimeConfigAndEnvPrecedence(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://env-collector:4318")
+	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+
+	sampleRate := 0.25
+	tp, shutdown, state, err := initDaemonOTel(context.Background(), OTelConfig{
+		Endpoint:    "http://file-collector:4318",
+		Protocol:    "http",
+		ServiceName: "loomd-custom",
+		SampleRate:  &sampleRate,
+	}, slog.Default())
+	if err != nil {
+		t.Fatalf("initDaemonOTel error: %v", err)
+	}
+	if shutdown == nil {
+		t.Fatal("expected shutdown func")
+	}
+	if state.Endpoint != "http://env-collector:4318" {
+		t.Fatalf("endpoint = %q, want env override", state.Endpoint)
+	}
+	if !state.Configured {
+		t.Fatal("expected configured runtime state")
+	}
+	if !state.Enabled {
+		t.Fatal("expected enabled runtime state")
+	}
+	if state.Protocol != "grpc" {
+		t.Fatalf("protocol = %q, want grpc", state.Protocol)
+	}
+	if state.ServiceName != "loomd-custom" {
+		t.Fatalf("service name = %q, want loomd-custom", state.ServiceName)
+	}
+	if state.SampleRate != 0.25 {
+		t.Fatalf("sample rate = %v, want 0.25", state.SampleRate)
+	}
+	_, isSDK := tp.(*sdktrace.TracerProvider)
+	if !isSDK {
+		t.Fatalf("provider type = %T, want *sdktrace.TracerProvider", tp)
+	}
+	if err := shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown error: %v", err)
+	}
+}
+
+func TestHandleOTelStatus_IncludesRuntimeOTelState(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	t.Setenv("MCP_LOG_FORMAT", "json")
+
+	d := &Daemon{
+		cfg: Config{Target: "dev"},
+		otelRuntimeState: daemonOTelState{
+			Configured:  true,
+			Enabled:     true,
+			Endpoint:    "http://collector:4318",
+			Protocol:    "grpc",
+			ServiceName: "loomd-custom",
+			SampleRate:  0.5,
+		},
+		registry: &registry.Registry{
+			Servers: []*registry.Server{
+				{
+					Name: "mcp-gitlab",
+					Common: &registry.TargetSpec{
+						Command: "./bin/mcp-gitlab",
+					},
+				},
+			},
+		},
+	}
+
+	msg := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: 2}
+	resp, err := d.handleOTelStatus(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("handleOTelStatus error: %v", err)
+	}
+	if resp == nil || resp.Result == nil {
+		t.Fatal("expected response payload")
+	}
+
+	var got struct {
+		RuntimeConfigured bool    `json:"runtime_otlp_configured"`
+		RuntimeEnabled    bool    `json:"runtime_otlp_enabled"`
+		RuntimeEndpoint   string  `json:"runtime_otlp_endpoint"`
+		RuntimeProtocol   string  `json:"runtime_otlp_protocol"`
+		RuntimeService    string  `json:"runtime_otlp_service_name"`
+		RuntimeSampleRate float64 `json:"runtime_otlp_sample_rate"`
+		RuntimeError      string  `json:"runtime_otlp_error"`
+		RuntimeCoverage   string  `json:"runtime_trace_coverage"`
+	}
+	if err := json.Unmarshal(resp.Result, &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if !got.RuntimeConfigured || !got.RuntimeEnabled {
+		t.Fatalf("runtime OTel state = %+v, want configured+enabled", got)
+	}
+	if got.RuntimeEndpoint != "http://collector:4318" {
+		t.Fatalf("runtime endpoint = %q, want collector URL", got.RuntimeEndpoint)
+	}
+	if got.RuntimeProtocol != "grpc" {
+		t.Fatalf("runtime protocol = %q, want grpc", got.RuntimeProtocol)
+	}
+	if got.RuntimeService != "loomd-custom" {
+		t.Fatalf("runtime service = %q, want loomd-custom", got.RuntimeService)
+	}
+	if got.RuntimeSampleRate != 0.5 {
+		t.Fatalf("runtime sample rate = %v, want 0.5", got.RuntimeSampleRate)
+	}
+	if got.RuntimeError != "" {
+		t.Fatalf("runtime error = %q, want empty", got.RuntimeError)
+	}
+	if got.RuntimeCoverage != "100%" {
+		t.Fatalf("runtime coverage = %q, want 100%%", got.RuntimeCoverage)
+	}
+}
+
+func TestStop_ShutsDownOtelTracerOnce(t *testing.T) {
+	var calls atomic.Int32
+	d := &Daemon{
+		done: make(chan struct{}),
+		otelShutdown: func(context.Context) error {
+			calls.Add(1)
+			return nil
+		},
+	}
+
+	if err := d.Stop(); err != nil {
+		t.Fatalf("first stop returned error: %v", err)
+	}
+	if err := d.Stop(); err != nil {
+		t.Fatalf("second stop returned error: %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("shutdown calls = %d, want 1", got)
 	}
 }
 

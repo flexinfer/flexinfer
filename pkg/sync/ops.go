@@ -862,11 +862,10 @@ func (m *Manager) SyncAll(backup bool, regen bool, repoOnly bool, hubMode bool, 
 	return nil
 }
 
-// SyncAllProjects strips hooks from all workspace projects that have a matching
-// <profileRepoDir>/settings.json. Hooks should only live at the user level
-// (~/.claude/settings.json) to prevent duplicate execution — Claude Code runs
-// hooks from all ancestor .claude/settings.json files in the directory hierarchy.
-// Other top-level keys (permissions, mcpServers, etc.) are preserved.
+// SyncAllProjects strips home-managed settings keys from all workspace projects
+// that have a matching <profileRepoDir>/settings.json. Hooks and approval
+// settings should live at the user level only, preventing duplicate execution
+// and per-project approval drift across the workspace.
 func (m *Manager) SyncAllProjects(profileName, workspaceRoot string, skipWorktrees, dryRun bool) (int, error) {
 	p, err := m.GetProfile(profileName)
 	if err != nil {
@@ -884,6 +883,9 @@ func (m *Manager) SyncAllProjects(profileName, workspaceRoot string, skipWorktre
 	if !hasSettings {
 		return 0, fmt.Errorf("profile %s does not generate settings.json", profileName)
 	}
+	if len(p.HomeManagedSettingsKeys) == 0 {
+		return 0, nil
+	}
 
 	// Discover projects
 	projects, err := DiscoverProjects(workspaceRoot, p.RepoDir, skipWorktrees)
@@ -899,8 +901,7 @@ func (m *Manager) SyncAllProjects(profileName, workspaceRoot string, skipWorktre
 			continue // No settings file — nothing to strip
 		}
 
-		// Strip hooks (pass nil to remove the hooks key)
-		merged, changed, err := MergeHooksIntoSettings(existing, nil)
+		merged, changed, err := StripSettingsKeys(existing, p.HomeManagedSettingsKeys...)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: merge failed for %s: %v\n", settingsPath, err)
 			continue
@@ -913,7 +914,7 @@ func (m *Manager) SyncAllProjects(profileName, workspaceRoot string, skipWorktre
 		}
 
 		if dryRun {
-			fmt.Printf("  %-40s would strip hooks\n", rel)
+			fmt.Printf("  %-40s would strip home-managed settings\n", rel)
 			updated++
 			continue
 		}
@@ -923,7 +924,64 @@ func (m *Manager) SyncAllProjects(profileName, workspaceRoot string, skipWorktre
 			continue
 		}
 
-		fmt.Printf("  %-40s stripped hooks\n", rel)
+		fmt.Printf("  %-40s stripped home-managed settings\n", rel)
+		updated++
+	}
+
+	return updated, nil
+}
+
+// CleanAllProjectsGenerated removes stale generated config files from
+// workspace projects for profiles whose config is managed directly in the home
+// directory. This keeps home-level config authoritative across projects.
+func (m *Manager) CleanAllProjectsGenerated(profileName, workspaceRoot string, skipWorktrees, dryRun bool) (int, error) {
+	p, err := m.GetProfile(profileName)
+	if err != nil {
+		return 0, err
+	}
+	if !p.GeneratedDirectToHome || p.GeneratedFile == "" {
+		return 0, nil
+	}
+
+	projects, err := DiscoverProjectsWithFile(workspaceRoot, p.RepoDir, p.GeneratedFile, skipWorktrees)
+	if err != nil {
+		return 0, fmt.Errorf("discover projects: %w", err)
+	}
+
+	files := []string{p.GeneratedFile}
+	files = append(files, p.ExtraGeneratedFiles...)
+
+	updated := 0
+	for _, projRoot := range projects {
+		rel, _ := filepath.Rel(workspaceRoot, projRoot)
+		removedAny := false
+
+		for _, name := range files {
+			if name == "" {
+				continue
+			}
+			target := filepath.Join(projRoot, p.RepoDir, name)
+			if !Exists(target) {
+				continue
+			}
+			removedAny = true
+			if dryRun {
+				continue
+			}
+			if err := os.Remove(target); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: remove failed for %s: %v\n", target, err)
+				continue
+			}
+		}
+
+		if !removedAny {
+			continue
+		}
+		if dryRun {
+			fmt.Printf("  %-40s would remove stale generated config\n", rel)
+		} else {
+			fmt.Printf("  %-40s removed stale generated config\n", rel)
+		}
 		updated++
 	}
 

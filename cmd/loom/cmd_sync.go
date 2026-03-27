@@ -384,27 +384,32 @@ func newSyncCmd() *cobra.Command {
 					if p == nil {
 						return nil
 					}
-					hasSettings := false
-					for _, f := range p.ExtraGeneratedFiles {
-						if f == "settings.json" {
-							hasSettings = true
-							break
+					totalUpdated := 0
+
+					if len(p.HomeManagedSettingsKeys) > 0 {
+						fmt.Printf("\nStripping %s home-managed settings from workspace projects (approvals/hooks live at user level only):\n", pName)
+						n, err := mgr.SyncAllProjects(pName, wsRoot, skipWorktrees, dryRun)
+						if err != nil {
+							return fmt.Errorf("propagate %s settings: %w", pName, err)
 						}
+						totalUpdated += n
 					}
-					if !hasSettings {
-						return nil
+
+					if p.GeneratedDirectToHome {
+						fmt.Printf("\nRemoving stale %s generated config from workspace projects (home-level config is authoritative):\n", pName)
+						n, err := mgr.CleanAllProjectsGenerated(pName, wsRoot, skipWorktrees, dryRun)
+						if err != nil {
+							return fmt.Errorf("propagate %s generated cleanup: %w", pName, err)
+						}
+						totalUpdated += n
 					}
-					fmt.Printf("\nStripping %s hooks from workspace projects (hooks live at user level only):\n", pName)
-					n, err := mgr.SyncAllProjects(pName, wsRoot, skipWorktrees, dryRun)
-					if err != nil {
-						return fmt.Errorf("propagate %s: %w", pName, err)
-					}
-					if n == 0 {
+
+					if totalUpdated == 0 {
 						fmt.Println("  All projects already up-to-date.")
 					} else if dryRun {
-						fmt.Printf("  %d project(s) would be updated.\n", n)
+						fmt.Printf("  %d project(s) would be updated.\n", totalUpdated)
 					} else {
-						fmt.Printf("  %d project(s) updated.\n", n)
+						fmt.Printf("  %d project(s) updated.\n", totalUpdated)
 					}
 					return nil
 				}
