@@ -59,7 +59,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		CurrentHash:          currentHash,
 		HashAnnotationKey:    annotationQuantSpecHash,
 		TriggerAnnotationKey: annotationRequantize,
-		JobSuffixesToDelete:  []string{"-abliterate", "-quantize", "-downloader"},
+		JobSuffixesToDelete:  []string{"-abliterate", "-quantize", "-downloader", "-quantize-image-warmup"},
 		EventReason:          "RequantizationTriggered",
 	})
 	if err != nil {
@@ -186,6 +186,43 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			if statusErr := r.Status().Update(ctx, modelCache); statusErr != nil {
 				return ctrl.Result{}, statusErr
 			}
+			return ctrl.Result{}, nil
+		}
+
+		warmState, warmDetail, warmErr := r.ensureImageWarmup(ctx, modelCache, imageWarmupRequest{
+			JobName:      modelCache.Name + "-quantize-image-warmup",
+			Phase:        "quantization",
+			Image:        newJob.Spec.Template.Spec.Containers[0].Image,
+			NodeSelector: effectiveNodeSelector,
+			Tolerations:  tolerations,
+		})
+		if warmErr != nil {
+			return ctrl.Result{}, warmErr
+		}
+		if warmState == imageWarmupPending {
+			progress := int32(1)
+			if modelCache.Status.Quantization == nil {
+				modelCache.Status.Quantization = &aiv1alpha1.QuantizationStatus{}
+			}
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseQuantizing
+			modelCache.Status.Quantization.Progress = &progress
+			modelCache.Status.Quantization.ProgressDetail = warmDetail
+			modelCache.Status.Quantization.FailureMessage = ""
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: requeueShort}, nil
+		}
+		if warmState == imageWarmupFailed {
+			if modelCache.Status.Quantization == nil {
+				modelCache.Status.Quantization = &aiv1alpha1.QuantizationStatus{}
+			}
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+			modelCache.Status.Quantization.FailureMessage = warmDetail
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizationFailed", warmDetail)
 			return ctrl.Result{}, nil
 		}
 

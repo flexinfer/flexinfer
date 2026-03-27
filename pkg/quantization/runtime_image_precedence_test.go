@@ -5,7 +5,17 @@ import (
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	corev1 "k8s.io/api/core/v1"
 )
+
+func TestImagePullPolicyForImage(t *testing.T) {
+	if got := ImagePullPolicyForImage("registry.harbor.lan/flexinfer/runtime@sha256:deadbeef"); got != corev1.PullIfNotPresent {
+		t.Fatalf("ImagePullPolicyForImage(digest) = %s, want %s", got, corev1.PullIfNotPresent)
+	}
+	if got := ImagePullPolicyForImage("registry.harbor.lan/flexinfer/runtime:unified-gfx906-v4"); got != corev1.PullAlways {
+		t.Fatalf("ImagePullPolicyForImage(tag) = %s, want %s", got, corev1.PullAlways)
+	}
+}
 
 func TestAbliterationJobUsesProfileAbliterationKey(t *testing.T) {
 	t.Setenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE", "true")

@@ -139,6 +139,53 @@ func TestReconcileQuantizationCreatesJobAndSeedsHash(t *testing.T) {
 	assert.Equal(t, "dedicated", job.Spec.Template.Spec.Tolerations[0].Key)
 }
 
+func TestReconcileQuantizationWarmsRuntimeImageBeforeWorkerJob(t *testing.T) {
+	cache := newQuantizationCache("quant-warmup")
+	cache.Spec.NodeSelector["flexinfer.ai/gpu.arch"] = "gfx906"
+	r, cl := newQuantizationTestReconciler(t, nil, cache)
+
+	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, requeueShort, result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseQuantizing, updated.Status.Phase)
+	require.NotNil(t, updated.Status.Quantization)
+	assert.Contains(t, updated.Status.Quantization.ProgressDetail, "warming quantization image")
+
+	warmup := &batchv1.Job{}
+	err = cl.Get(context.Background(), client.ObjectKey{Name: "quant-warmup-quantize-image-warmup", Namespace: "default"}, warmup)
+	require.NoError(t, err)
+	assert.Equal(t, "image-warmer", warmup.Spec.Template.Spec.Containers[0].Name)
+
+	job := &batchv1.Job{}
+	err = cl.Get(context.Background(), client.ObjectKey{Name: "quant-warmup-quantize", Namespace: "default"}, job)
+	assert.Error(t, err)
+}
+
+func TestReconcileQuantizationCreatesWorkerAfterWarmupSucceeds(t *testing.T) {
+	cache := newQuantizationCache("quant-warmup-done")
+	cache.Spec.NodeSelector["flexinfer.ai/gpu.arch"] = "gfx906"
+	warmup := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "quant-warmup-done-quantize-image-warmup",
+			Namespace: "default",
+		},
+		Status: batchv1.JobStatus{
+			Succeeded: 1,
+		},
+	}
+	r, cl := newQuantizationTestReconciler(t, nil, cache, warmup)
+
+	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, requeueLong, result.RequeueAfter)
+
+	job := &batchv1.Job{}
+	err = cl.Get(context.Background(), client.ObjectKey{Name: "quant-warmup-done-quantize", Namespace: "default"}, job)
+	require.NoError(t, err)
+}
+
 func TestReconcileQuantizationUnsupportedFormatMarksFailed(t *testing.T) {
 	cache := newQuantizationCache("quant-invalid")
 	cache.Spec.Quantization.Format = aiv1alpha1.QuantizationFormat("INVALID")

@@ -94,7 +94,7 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 			{
 				Name:            "quantizer",
 				Image:           image,
-				ImagePullPolicy: corev1.PullAlways,
+				ImagePullPolicy: ImagePullPolicyForImage(image),
 				Command:         []string{"/bin/bash", "-c"},
 				Args:            []string{script},
 				Env:             env,

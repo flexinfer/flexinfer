@@ -59,7 +59,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		CurrentHash:          currentHash,
 		HashAnnotationKey:    annotationAblitSpecHash,
 		TriggerAnnotationKey: annotationReabliterate,
-		JobSuffixesToDelete:  []string{"-abliterate", "-quantize", "-downloader"},
+		JobSuffixesToDelete:  []string{"-abliterate", "-quantize", "-downloader", "-abliterate-image-warmup"},
 		EventReason:          "ReabliterationTriggered",
 	})
 	if err != nil {
@@ -210,6 +210,43 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			if statusErr := r.Status().Update(ctx, modelCache); statusErr != nil {
 				return ctrl.Result{}, statusErr
 			}
+			return ctrl.Result{}, nil
+		}
+
+		warmState, warmDetail, warmErr := r.ensureImageWarmup(ctx, modelCache, imageWarmupRequest{
+			JobName:      modelCache.Name + "-abliterate-image-warmup",
+			Phase:        "abliteration",
+			Image:        newJob.Spec.Template.Spec.Containers[0].Image,
+			NodeSelector: effectiveNodeSelector,
+			Tolerations:  tolerations,
+		})
+		if warmErr != nil {
+			return ctrl.Result{}, warmErr
+		}
+		if warmState == imageWarmupPending {
+			progress := int32(1)
+			if modelCache.Status.Abliteration == nil {
+				modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
+			}
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseAbliterating
+			modelCache.Status.Abliteration.Progress = &progress
+			modelCache.Status.Abliteration.ProgressDetail = warmDetail
+			modelCache.Status.Abliteration.FailureMessage = ""
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: requeueShort}, nil
+		}
+		if warmState == imageWarmupFailed {
+			if modelCache.Status.Abliteration == nil {
+				modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
+			}
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+			modelCache.Status.Abliteration.FailureMessage = warmDetail
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "AbliterationFailed", warmDetail)
 			return ctrl.Result{}, nil
 		}
 

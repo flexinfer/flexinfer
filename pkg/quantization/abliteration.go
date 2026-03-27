@@ -137,7 +137,7 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 			{
 				Name:            "abliterator",
 				Image:           image,
-				ImagePullPolicy: corev1.PullAlways,
+				ImagePullPolicy: ImagePullPolicyForImage(image),
 				Command:         []string{"/bin/bash", "-c"},
 				Args:            []string{script},
 				Env:             append(env, ablitEnv...),
