@@ -114,7 +114,7 @@ Designed for use in Claude Code SessionStart hooks.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port := resolvePort(cmd)
 
-			result, err := startSessionWithFallback(cmd, port, bridge.SessionStartParams{
+			params, err := (bridge.SessionStartParams{
 				Namespace:             namespace,
 				AgentID:               agentID,
 				AgentType:             agentType,
@@ -124,7 +124,15 @@ Designed for use in Claude Code SessionStart hooks.`,
 				AutoRecallQuery:       autoRecallQuery,
 				AutoRecallTokenBudget: autoRecallTokenBudget,
 				ParentSessionID:       parentSessionID,
-			})
+			}).ToParams()
+			if err != nil {
+				if quiet {
+					return nil
+				}
+				return err
+			}
+
+			result, err := startSessionWithFallback(cmd, port, params)
 			if err != nil {
 				if quiet {
 					return nil // Silent failure for hooks.
@@ -174,12 +182,20 @@ Designed for use in Claude Code Stop hooks.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			port := resolvePort(cmd)
 
-			result, err := endSessionWithFallback(cmd, port, bridge.SessionEndParams{
+			params, err := (bridge.SessionEndParams{
 				SessionID:    sessionID,
 				AgentID:      agentID,
 				Summarize:    &summarize,
 				SummaryAsync: summaryAsync,
-			})
+			}).ToParams()
+			if err != nil {
+				if quiet {
+					return nil
+				}
+				return err
+			}
+
+			result, err := endSessionWithFallback(cmd, port, params)
 			if err != nil {
 				if quiet {
 					return nil

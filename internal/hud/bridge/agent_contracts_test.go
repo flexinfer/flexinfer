@@ -92,6 +92,42 @@ func TestSessionRequestPath(t *testing.T) {
 	}
 }
 
+func TestSessionStartParamsToParams(t *testing.T) {
+	params, err := (SessionStartParams{
+		Namespace:          " loom-core/main ",
+		Project:            " services/loom-core ",
+		AgentID:            " codex-1 ",
+		AgentType:          " codex ",
+		Description:        " ship fix ",
+		AutoRecallStrategy: " DEEP ",
+		AutoRecallQuery:    " recent context ",
+		PipelineProject:    " services/loom-core ",
+		ParentSessionID:    " sess-parent ",
+	}).ToParams()
+	if err != nil {
+		t.Fatalf("ToParams() error: %v", err)
+	}
+	if params.AgentID != "codex-1" {
+		t.Fatalf("expected trimmed agent_id, got %q", params.AgentID)
+	}
+	if params.Namespace != "loom-core/main" {
+		t.Fatalf("expected trimmed namespace, got %q", params.Namespace)
+	}
+	if params.AutoRecallStrategy != "deep" {
+		t.Fatalf("expected normalized auto_recall_strategy=deep, got %q", params.AutoRecallStrategy)
+	}
+	if params.ParentSessionID != "sess-parent" {
+		t.Fatalf("expected trimmed parent_session_id, got %q", params.ParentSessionID)
+	}
+}
+
+func TestSessionStartParamsValidateError(t *testing.T) {
+	_, err := (SessionStartParams{}).ToParams()
+	if err == nil || !strings.Contains(err.Error(), "agent_id is required") {
+		t.Fatalf("expected missing agent_id error, got %v", err)
+	}
+}
+
 func TestSessionListRequestParams(t *testing.T) {
 	params, err := (SessionListRequest{
 		AgentID:   " codex-1 ",
@@ -131,6 +167,29 @@ func TestSessionPruneRequestParams(t *testing.T) {
 	}
 }
 
+func TestSessionEndParamsToParams(t *testing.T) {
+	params, err := (SessionEndParams{
+		SessionID: " sess-1 ",
+		AgentID:   " codex-1 ",
+	}).ToParams()
+	if err != nil {
+		t.Fatalf("ToParams() error: %v", err)
+	}
+	if params.SessionID != "sess-1" {
+		t.Fatalf("expected trimmed session_id, got %q", params.SessionID)
+	}
+	if params.AgentID != "codex-1" {
+		t.Fatalf("expected trimmed agent_id, got %q", params.AgentID)
+	}
+}
+
+func TestSessionEndParamsValidateError(t *testing.T) {
+	_, err := (SessionEndParams{}).ToParams()
+	if err == nil || !strings.Contains(err.Error(), "session_id or agent_id is required") {
+		t.Fatalf("expected missing session identifier error, got %v", err)
+	}
+}
+
 func TestTaskUpdateRequestToParams(t *testing.T) {
 	params, err := (TaskUpdateRequest{
 		TaskID:     " task-1 ",
@@ -148,6 +207,43 @@ func TestTaskUpdateRequestToParams(t *testing.T) {
 	}
 	if params.Resolution != "done" {
 		t.Fatalf("expected trimmed resolution, got %q", params.Resolution)
+	}
+}
+
+func TestHeartbeatRequestToRequest(t *testing.T) {
+	req, err := (HeartbeatRequest{
+		AgentID:             " codex-1 ",
+		SessionID:           " sess-1 ",
+		Status:              " ACTIVE ",
+		AgentType:           " codex ",
+		Description:         " pairing ",
+		Namespace:           " services/loom-core/main ",
+		ActiveFiles:         []string{" cmd/loom/cmd_agent.go ", "", "cmd/loom/cmd_agent.go", " internal/hud/app.go "},
+		CurrentTask:         " tighten contracts ",
+		Branch:              " codex/issue-21 ",
+		HeartbeatTTLSeconds: -5,
+	}).ToRequest()
+	if err != nil {
+		t.Fatalf("ToRequest() error: %v", err)
+	}
+	if req.AgentID != "codex-1" {
+		t.Fatalf("expected trimmed agent_id, got %q", req.AgentID)
+	}
+	if req.Status != "active" {
+		t.Fatalf("expected normalized status=active, got %q", req.Status)
+	}
+	if len(req.ActiveFiles) != 2 || req.ActiveFiles[0] != "cmd/loom/cmd_agent.go" || req.ActiveFiles[1] != "internal/hud/app.go" {
+		t.Fatalf("unexpected normalized active_files: %#v", req.ActiveFiles)
+	}
+	if req.HeartbeatTTLSeconds != 0 {
+		t.Fatalf("expected negative ttl clamped to 0, got %d", req.HeartbeatTTLSeconds)
+	}
+}
+
+func TestHeartbeatRequestValidateError(t *testing.T) {
+	_, err := (HeartbeatRequest{}).ToRequest()
+	if err == nil || !strings.Contains(err.Error(), "agent_id is required") {
+		t.Fatalf("expected missing agent_id error, got %v", err)
 	}
 }
 

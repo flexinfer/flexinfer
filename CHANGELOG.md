@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Workflow deprecation** (`internal/hud/domain/mobile`): Migration flags on approval surface to prepare transition away from workflow endpoints.
 
 ### Fixed
+- **Agent session contract parity** (`internal/hud/bridge`, `internal/hud/domain/fleet`, `cmd/loom`): session-start, session-end, and heartbeat flows now share normalized request validation across the bridge contract layer, HUD fleet handlers, and CLI fallback commands, reducing transport-specific whitespace/default drift.
 - **Daemon connection saturation recovery** (`internal/daemon`, `cmd/loom`): Cancelled daemon and hub calls now return pooled connections through the pool so capacity counters do not leak; proxy retry classification also treats retryable route/connect pressure errors as transport resets, and `loom/status` now surfaces local and hub pool pressure snapshots for diagnosis.
 - **Daemon OTel runtime wiring** (`internal/daemon`): daemon startup now initializes the OpenTelemetry provider from env/file config when present, shutdown flushes the configured tracer once, and `loom/otel-status` reports runtime OTel state alongside the existing coverage summary.
 - **Codex Loom auto-approval and mobile health severity** (`pkg/generator`, `internal/hud/monitor`): Codex loom-proxy configs now emit `always_allow = ["*"]` so Loom tools stay auto-approved after sync, and transient monitor/router health gaps now surface as degraded instead of down to avoid false critical server-down states in the mobile dashboard.

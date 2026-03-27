@@ -24,6 +24,61 @@ const (
 	DefaultSessionPruneStatus  = "ended,summarized"
 )
 
+// Normalize trims string fields and canonicalizes option values.
+func (p SessionStartParams) Normalize() SessionStartParams {
+	p.Namespace = strings.TrimSpace(p.Namespace)
+	p.Project = strings.TrimSpace(p.Project)
+	p.AgentID = strings.TrimSpace(p.AgentID)
+	p.AgentType = strings.TrimSpace(p.AgentType)
+	p.Description = strings.TrimSpace(p.Description)
+	p.AutoRecallStrategy = normalizeAutoRecallStrategy(p.AutoRecallStrategy)
+	p.AutoRecallQuery = strings.TrimSpace(p.AutoRecallQuery)
+	p.PipelineProject = strings.TrimSpace(p.PipelineProject)
+	p.ParentSessionID = strings.TrimSpace(p.ParentSessionID)
+	return p
+}
+
+// Validate ensures the request is semantically valid.
+func (p SessionStartParams) Validate() error {
+	if strings.TrimSpace(p.AgentID) == "" {
+		return fmt.Errorf("agent_id is required")
+	}
+	return nil
+}
+
+// ToParams returns the normalized bridge params for session start.
+func (p SessionStartParams) ToParams() (SessionStartParams, error) {
+	p = p.Normalize()
+	if err := p.Validate(); err != nil {
+		return SessionStartParams{}, err
+	}
+	return p, nil
+}
+
+// Normalize trims string fields.
+func (p SessionEndParams) Normalize() SessionEndParams {
+	p.SessionID = strings.TrimSpace(p.SessionID)
+	p.AgentID = strings.TrimSpace(p.AgentID)
+	return p
+}
+
+// Validate ensures the request is semantically valid.
+func (p SessionEndParams) Validate() error {
+	if strings.TrimSpace(p.SessionID) == "" && strings.TrimSpace(p.AgentID) == "" {
+		return fmt.Errorf("session_id or agent_id is required")
+	}
+	return nil
+}
+
+// ToParams returns the normalized bridge params for session end.
+func (p SessionEndParams) ToParams() (SessionEndParams, error) {
+	p = p.Normalize()
+	if err := p.Validate(); err != nil {
+		return SessionEndParams{}, err
+	}
+	return p, nil
+}
+
 // ContextInspectRequest defines the shared request contract for context-inspect
 // across HUD handlers, CLI callers, and bridge fallback logic.
 type ContextInspectRequest struct {
@@ -487,6 +542,40 @@ type HeartbeatRequest struct {
 	CurrentTask         string   `json:"current_task,omitempty"`
 	Branch              string   `json:"branch,omitempty"`
 	HeartbeatTTLSeconds int      `json:"heartbeat_ttl_seconds,omitempty"`
+}
+
+// Normalize trims string fields and normalizes list values.
+func (r HeartbeatRequest) Normalize() HeartbeatRequest {
+	r.AgentID = strings.TrimSpace(r.AgentID)
+	r.SessionID = strings.TrimSpace(r.SessionID)
+	r.Status = strings.ToLower(strings.TrimSpace(r.Status))
+	r.AgentType = strings.TrimSpace(r.AgentType)
+	r.Description = strings.TrimSpace(r.Description)
+	r.Namespace = strings.TrimSpace(r.Namespace)
+	r.ActiveFiles = NormalizeStringList(r.ActiveFiles)
+	r.CurrentTask = strings.TrimSpace(r.CurrentTask)
+	r.Branch = strings.TrimSpace(r.Branch)
+	if r.HeartbeatTTLSeconds < 0 {
+		r.HeartbeatTTLSeconds = 0
+	}
+	return r
+}
+
+// Validate ensures the request is semantically valid.
+func (r HeartbeatRequest) Validate() error {
+	if strings.TrimSpace(r.AgentID) == "" {
+		return fmt.Errorf("agent_id is required")
+	}
+	return nil
+}
+
+// ToRequest returns the normalized heartbeat request.
+func (r HeartbeatRequest) ToRequest() (HeartbeatRequest, error) {
+	r = r.Normalize()
+	if err := r.Validate(); err != nil {
+		return HeartbeatRequest{}, err
+	}
+	return r, nil
 }
 
 // HeartbeatParams extracts bridge-level heartbeat params from the request.
