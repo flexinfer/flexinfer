@@ -36,6 +36,7 @@ const (
 	stageAuth       = "authorize"
 	stagePolicy     = "policy"
 	stageCache      = "cache"
+	stageGate       = "gate"
 	stageRoute      = "route"
 	stageBuild      = "build"
 	stageExecute    = "execute"
@@ -268,7 +269,7 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return p.internalErrorWithAudit("", err.Error())
+		return p.internalErrorWithAudit("", err)
 	}
 
 	p.routingPreference = RoutingHealthBased
@@ -344,7 +345,7 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return p.internalErrorWithAudit(p.targetStr, err.Error())
+		return p.internalErrorWithAudit(p.targetStr, err)
 	}
 
 	return nil
@@ -405,19 +406,29 @@ func (p *callPipeline) buildForwardRequest() (*mcp.Message, *mcp.Message) {
 		}
 		if len(p.params.Arguments) > 0 {
 			var args map[string]any
-			_ = json.Unmarshal(p.params.Arguments, &args)
+			if err := json.Unmarshal(p.params.Arguments, &args); err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return nil, p.internalErrorWithAudit(p.targetStr, fmt.Errorf("decode forward request arguments: %w", err))
+			}
 			callParams["arguments"] = args
 		} else {
 			callParams["arguments"] = map[string]any{}
 		}
-		forwardParams, _ = json.Marshal(callParams)
+		var err error
+		forwardParams, err = json.Marshal(callParams)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, p.internalErrorWithAudit(p.targetStr, fmt.Errorf("encode forward request params: %w", err))
+		}
 	}
 
 	req, err := mcp.NewRequest(p.msg.ID, p.method, forwardParams)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, p.internalError(err)
+		return nil, p.internalErrorWithAudit(p.targetStr, err)
 	}
 	return req, nil
 }
@@ -547,7 +558,7 @@ func (p *callPipeline) retryLocalAfterLocalSendFailure(err error, req *mcp.Messa
 	if connectErr := p.connectTarget(router.TargetLocal, "local transport send retry"); connectErr != nil {
 		combined := fmt.Errorf("local send failed: %v; local retry failed: %w", err, connectErr)
 		p.daemon.metrics.RecordRequest(p.serverName, p.method, "error", p.targetStr, time.Since(start))
-		return p.internalErrorWithAudit(p.targetStr, combined.Error()), true
+		return p.internalErrorWithAudit(p.targetStr, combined), true
 	}
 
 	return p.execute(req), true
@@ -702,7 +713,7 @@ func (p *callPipeline) retryLocalAfterHubFailure(stage string, err error, req *m
 	if connectErr := p.connectTarget(router.TargetLocal, "prefer-hub fallback after hub transport failure"); connectErr != nil {
 		combined := fmt.Errorf("hub %s failed: %v; local retry failed: %w", stage, err, connectErr)
 		p.daemon.metrics.RecordRequest(p.serverName, p.method, "error", p.targetStr, time.Since(start))
-		return p.internalErrorWithAudit(p.targetStr, combined.Error()), true
+		return p.internalErrorWithAudit(p.targetStr, combined), true
 	}
 
 	return p.execute(req), true
@@ -770,76 +781,33 @@ func (p *callPipeline) recordTransportSpanEvent(name string, attrs ...attribute.
 	span.AddEvent(name, trace.WithAttributes(attrs...))
 }
 
-// errorResponse builds a JSON-RPC error message for the current pipeline call.
-// All pipeline error constructors funnel through this method so that envelope
-// structure (JSONRPC version, ID, optional Data) is defined in one place.
-func (p *callPipeline) errorResponse(code int, message string, data any) *mcp.Message {
-	return &mcp.Message{
-		JSONRPC: mcp.JSONRPCVersion,
-		ID:      p.msg.ID,
-		Error: &mcp.Error{
-			Code:    code,
-			Message: message,
-			Data:    data,
-		},
-	}
-}
-
 func (p *callPipeline) invalidParamsError(message string) *mcp.Message {
-	code := "INVALID_INPUT"
-	if strings.Contains(message, "could not resolve server for tool") {
-		code = "TOOL_NOT_FOUND"
-	} else if strings.Contains(message, "missing server") {
-		code = "SERVER_NOT_FOUND"
-	}
-	return p.errorResponse(mcp.InvalidParams, message,
-		newPipelineError(code, p.serverName, p.toolName, p.stage, false))
+	return newErrorResponse(p.msg.ID, mcp.InvalidParams, message,
+		newInvalidInputPipelineError(p.serverName, p.toolName, p.stage, message))
 }
 
 func (p *callPipeline) internalError(err error) *mcp.Message {
-	code, retryable := classifyInternalError(err, p.stage)
-	return p.errorResponse(mcp.InternalError, err.Error(),
-		newPipelineError(code, p.serverName, p.toolName, p.stage, retryable))
+	return newErrorResponse(p.msg.ID, mcp.InternalError, err.Error(),
+		newInternalPipelineError(p.serverName, p.toolName, p.stage, err))
 }
 
-func (p *callPipeline) internalErrorWithAudit(target, message string) *mcp.Message {
-	p.emitErrorAudit(target, message)
-	code, retryable := classifyInternalError(fmt.Errorf("%s", message), p.stage)
-	return p.errorResponse(mcp.InternalError, message,
-		newPipelineError(code, p.serverName, p.toolName, p.stage, retryable))
+func (p *callPipeline) internalErrorWithAudit(target string, err error) *mcp.Message {
+	p.emitErrorAudit(target, err.Error())
+	return newErrorResponse(p.msg.ID, mcp.InternalError, err.Error(),
+		newInternalPipelineError(p.serverName, p.toolName, p.stage, err))
 }
 
 func (p *callPipeline) rbacDeniedError(decision AccessDecision) *mcp.Message {
 	reason := fmt.Sprintf("access denied: agent %q with role %q cannot call %s__%s (%s)",
 		decision.AgentID, decision.Role, decision.Server, decision.Tool, decision.Reason)
-	code := "RBAC_DENIED"
-	retryable := false
-	retryAfter := ""
-	if decision.ReasonCode == "rate_limited" {
-		code = "RATE_LIMITED"
-		retryable = true
-		retryAfter = "60s"
-	}
-	ped := newPipelineError(code, p.serverName, p.toolName, stageAuth, retryable)
-	ped.RetryAfter = retryAfter
-	ped.Details = map[string]any{
-		"reason_code": decision.ReasonCode,
-		"agent_id":    decision.AgentID,
-		"role":        decision.Role,
-	}
-	return p.errorResponse(mcp.InvalidRequest, reason, ped)
+	return newErrorResponse(p.msg.ID, mcp.InvalidRequest, reason,
+		newRBACDeniedPipelineError(p.serverName, p.toolName, decision))
 }
 
 func (p *callPipeline) policyDeniedError(decision GatewayPolicyDecision) *mcp.Message {
-	ped := newPipelineError("POLICY_DENIED", p.serverName, p.toolName, stagePolicy, false)
-	ped.Details = map[string]any{
-		"policy_rule_id":     decision.RuleID,
-		"policy_reason_code": decision.ReasonCode,
-		"policy_stage":       decision.Stage,
-		"policy_action":      decision.Action,
-	}
-	return p.errorResponse(mcp.InvalidRequest,
-		fmt.Sprintf("policy denied: %s (%s)", decision.ReasonCode, decision.Reason), ped)
+	return newErrorResponse(p.msg.ID, mcp.InvalidRequest,
+		fmt.Sprintf("policy denied: %s (%s)", decision.ReasonCode, decision.Reason),
+		newPolicyDeniedPipelineError(p.serverName, p.toolName, decision))
 }
 
 func (p *callPipeline) recordSuccessMetrics(duration time.Duration) {

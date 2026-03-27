@@ -30,15 +30,8 @@ func (d *Daemon) handleCall(ctx context.Context, msg *mcp.Message) (*mcp.Message
 func (d *Daemon) handleCallWithOptions(ctx context.Context, msg *mcp.Message, skipSemaphore bool) (*mcp.Message, error) {
 	// Reject new calls while daemon is draining.
 	if d.draining.Load() {
-		return &mcp.Message{
-			JSONRPC: mcp.JSONRPCVersion,
-			ID:      msg.ID,
-			Error: &mcp.Error{
-				Code:    mcp.InternalError,
-				Message: "daemon is draining, retry after backoff",
-				Data:    newPipelineError("DAEMON_DRAINING", "", "", "gate", true),
-			},
-		}, nil
+		return newErrorResponse(msg.ID, mcp.InternalError,
+			"daemon is draining, retry after backoff", newGatePipelineError("DAEMON_DRAINING")), nil
 	}
 
 	d.activeRPCs.Add(1)
@@ -50,15 +43,8 @@ func (d *Daemon) handleCallWithOptions(ctx context.Context, msg *mcp.Message, sk
 		case d.callSem <- struct{}{}:
 			defer func() { <-d.callSem }()
 		case <-ctx.Done():
-			return &mcp.Message{
-				JSONRPC: mcp.JSONRPCVersion,
-				ID:      msg.ID,
-				Error: &mcp.Error{
-					Code:    mcp.InternalError,
-					Message: "call concurrency limit reached",
-					Data:    newPipelineError("CONCURRENCY_LIMIT", "", "", "gate", true),
-				},
-			}, nil
+			return newErrorResponse(msg.ID, mcp.InternalError,
+				"call concurrency limit reached", newGatePipelineError("CONCURRENCY_LIMIT")), nil
 		}
 	}
 

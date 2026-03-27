@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"strings"
+
+	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
 // PipelineErrorData provides machine-readable metadata in call pipeline errors.
@@ -29,6 +31,68 @@ func newPipelineError(code, server, tool, stage string, retryable bool) *Pipelin
 		Stage:     stage,
 		Retryable: retryable,
 	}
+}
+
+func newErrorResponse(id any, rpcCode int, message string, data any) *mcp.Message {
+	return &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      id,
+		Error: &mcp.Error{
+			Code:    rpcCode,
+			Message: message,
+			Data:    data,
+		},
+	}
+}
+
+func newInvalidInputPipelineError(server, tool, stage, message string) *PipelineErrorData {
+	code := "INVALID_INPUT"
+	if strings.Contains(message, "could not resolve server for tool") {
+		code = "TOOL_NOT_FOUND"
+	} else if strings.Contains(message, "missing server") {
+		code = "SERVER_NOT_FOUND"
+	}
+	return newPipelineError(code, server, tool, stage, false)
+}
+
+func newInternalPipelineError(server, tool, stage string, err error) *PipelineErrorData {
+	code, retryable := classifyInternalError(err, stage)
+	return newPipelineError(code, server, tool, stage, retryable)
+}
+
+func newGatePipelineError(code string) *PipelineErrorData {
+	return newPipelineError(code, "", "", stageGate, true)
+}
+
+func newRBACDeniedPipelineError(server, tool string, decision AccessDecision) *PipelineErrorData {
+	code := "RBAC_DENIED"
+	retryable := false
+	retryAfter := ""
+	if decision.ReasonCode == "rate_limited" {
+		code = "RATE_LIMITED"
+		retryable = true
+		retryAfter = "60s"
+	}
+
+	ped := newPipelineError(code, server, tool, stageAuth, retryable)
+	ped.RetryAfter = retryAfter
+	ped.Details = map[string]any{
+		"reason_code": decision.ReasonCode,
+		"agent_id":    decision.AgentID,
+		"role":        decision.Role,
+	}
+	return ped
+}
+
+func newPolicyDeniedPipelineError(server, tool string, decision GatewayPolicyDecision) *PipelineErrorData {
+	ped := newPipelineError("POLICY_DENIED", server, tool, stagePolicy, false)
+	ped.Details = map[string]any{
+		"policy_rule_id":     decision.RuleID,
+		"policy_reason_code": decision.ReasonCode,
+		"policy_stage":       decision.Stage,
+		"policy_action":      decision.Action,
+	}
+	return ped
 }
 
 // classifyInternalError returns a pipeline error code based on the error and

@@ -2754,6 +2754,49 @@ func TestHandleCall_StageBoundaryAuditRegression(t *testing.T) {
 		}
 	})
 
+	t.Run("build_stage", func(t *testing.T) {
+		d := newCallPipelineTestDaemon()
+		auditPath := enableAuditAndCostForTest(t, d)
+		p := newCallPipeline(d, context.Background(), &mcp.Message{
+			JSONRPC: mcp.JSONRPCVersion,
+			ID:      make(chan int),
+			Method:  "loom/call",
+		})
+		p.serverName = "github"
+		p.toolName = "query"
+		p.method = "tools/call"
+		p.params.Arguments = json.RawMessage(`{`)
+		p.targetStr = "local"
+		p.auditStart = time.Now()
+
+		_, resp := p.buildForwardRequest()
+		if resp.Error == nil {
+			t.Fatal("expected build failure")
+		}
+
+		ped, ok := resp.Error.Data.(*PipelineErrorData)
+		if !ok {
+			t.Fatalf("Data type = %T, want *PipelineErrorData", resp.Error.Data)
+		}
+		if ped.Stage != stageBuild {
+			t.Fatalf("stage = %q, want %q", ped.Stage, stageBuild)
+		}
+		if ped.Code != "SERVER_ERROR" {
+			t.Fatalf("code = %q, want SERVER_ERROR", ped.Code)
+		}
+
+		entries := readAuditEntries(t, auditPath)
+		if len(entries) != 1 {
+			t.Fatalf("audit entries = %d, want 1", len(entries))
+		}
+		if entries[0].PipelineStage != stageBuild {
+			t.Fatalf("pipeline_stage = %q, want %q", entries[0].PipelineStage, stageBuild)
+		}
+		if entries[0].Status != "error" {
+			t.Fatalf("status = %q, want error", entries[0].Status)
+		}
+	})
+
 	t.Run("execute_stage", func(t *testing.T) {
 		d := newCallPipelineTestDaemon()
 		auditPath := enableAuditAndCostForTest(t, d)
@@ -3260,7 +3303,7 @@ func TestCallPipeline_ErrorEnvelopeExhaustive(t *testing.T) {
 		p.toolName = "status"
 		p.auditStart = time.Now()
 
-		resp := p.internalErrorWithAudit("local", "dial failed")
+		resp := p.internalErrorWithAudit("local", errors.New("dial failed"))
 		assertEnvelope(t, resp, mcp.InternalError)
 
 		// Verify audit entry was written.
@@ -3803,7 +3846,7 @@ func TestInternalError_AndWithAudit_ProduceSameCodes(t *testing.T) {
 			p.auditStart = time.Now()
 
 			resp1 := p.internalError(fmt.Errorf("%s", tc.errMsg))
-			resp2 := p.internalErrorWithAudit("local", tc.errMsg)
+			resp2 := p.internalErrorWithAudit("local", fmt.Errorf("%s", tc.errMsg))
 
 			ped1 := resp1.Error.Data.(*PipelineErrorData)
 			ped2 := resp2.Error.Data.(*PipelineErrorData)
@@ -4210,7 +4253,7 @@ func TestErrorEnvelope_AllPathsProducePipelineErrorData(t *testing.T) {
 	}{
 		{"invalidParams", p.invalidParamsError("bad input")},
 		{"internalError", p.internalError(errors.New("something broke"))},
-		{"internalErrorWithAudit", p.internalErrorWithAudit("local", "transport died")},
+		{"internalErrorWithAudit", p.internalErrorWithAudit("local", errors.New("transport died"))},
 		{"rbacDenied", p.rbacDeniedError(AccessDecision{
 			Allowed:    false,
 			Reason:     "not authorized",
