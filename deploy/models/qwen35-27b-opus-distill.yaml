@@ -14,7 +14,7 @@ metadata:
   name: qwen35-27b-opus-distill
   namespace: flexinfer-system
   annotations:
-    flexinfer.ai/reconcile-token: "qwen35-gfx1100-patched-nodiag-textcfg-noneager"
+    flexinfer.ai/reconcile-token: "qwen35-gfx1100-patched-nodiag-textcfg-eager"
 spec:
   backend: vllm
   source: pvc://qwen35-27b-opus-distill-gptq/qwen35-27b-opus-distill-gptq/gptq-w4-g128
@@ -25,7 +25,7 @@ spec:
   serverless:
     enabled: true
     minReplicas: 0
-    idleTimeout: 1m
+    idleTimeout: 60m
     coldStartTimeout: 15m
   config:
     quantization: gptq
@@ -33,16 +33,14 @@ spec:
     maxModelLen: 4096
     gpuMemoryUtilization: "0.95"
     maxNumSeqs: 2
-    enforceEager: false
+    enforceEager: true
     trustRemoteCode: true
     servedModelName: qwen35-27b-opus-distill
     enableToolCalling: true
     toolCallParser: hermes
     maxNumBatchedTokens: 2048
     disableLogStats: false
-    # Keep this ondemand so the runtime does not reclaim the GPTQ PVC while
-    # abliteration/quantization jobs are using it. Wake it explicitly via the CR.
-    warmPolicy: ondemand
+    warmPolicy: primary
     hipVisibleDevices: "0"
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
