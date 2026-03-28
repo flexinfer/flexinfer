@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local dev reload smoke** (`scripts/dev`): `make dev-upgrade` and `make dev-reload` now wait on the embedded HUD/mobile API readiness path instead of treating the heavier mobile task feed as the reload health gate, reducing false unhealthy warnings after daemon fallback restarts.
 
 ### Changed
+- **proxy.go monolith split** (`cmd/loom`): Split 1,686-line `proxy.go` into `proxy_transport.go` (RPC/stdio), `proxy_session.go` (lease/epoch), `proxy_heartbeat.go` (HUD heartbeat), and `proxy_handlers.go` (MCP dispatch). DEBT-023.
+- **workflow.go monolith split** (`pkg/agentcontext`): Split 1,641-line `workflow.go` into `workflow_engine.go` (public API), `workflow_executor.go` (DAG execution), `workflow_expr.go` (condition eval), and `workflow_persist.go` (Qdrant persistence). DEBT-024.
+- **sync/ops.go platform split** (`pkg/sync`): Split 1,609-line `ops.go` into per-platform files: `ops_gemini.go`, `ops_claude.go`, `ops_codex.go`, and `ops_helpers.go`. DEBT-025.
+- **HUD domain test coverage** (`internal/hud`): Added tests for 4 previously untested domain packages: autofix, alerting, handoff, and memory. DEBT-033.
 - **CI lint now blocking** (`.gitlab-ci.yml`): Removed `allow_failure: true` from golangci-lint job; lint failures now block merges. All 37 first-party `//nolint` suppressions annotated with justification comments.
 - **CI coverage threshold raised** (`.gitlab-ci.yml`): Coverage threshold increased from 24% to 35% (actual coverage is ~40.7%).
 - **Roadmap reconciliation files archived** (`docs/`): 20 older reconciliation files moved to `.loom/archive/roadmap-reconciliations/`.
