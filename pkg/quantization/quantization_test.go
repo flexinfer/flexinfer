@@ -1463,6 +1463,18 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "load_state_dict_materialized(model, state_dict, strict=False)") {
 		t.Error("expected GPTQ wrapper script CPU shard loader to use the meta-materializing load helper")
 	}
+	if !contains(script, "def patch_gptq_save_meta_tensors():") {
+		t.Error("expected GPTQ wrapper script to inject a helper that strips meta-backed tensors before save")
+	}
+	if !contains(script, "patch_gptq_save_meta_tensors()") {
+		t.Error("expected GPTQ wrapper script to invoke the save-path meta tensor patch helper")
+	}
+	if !contains(script, `gptq_writer.get_state_dict_for_save = _patched_get_state_dict_for_save`) {
+		t.Error("expected GPTQ wrapper script to patch GPTQModel writer save state_dict resolution")
+	}
+	if !contains(script, "Patched GPTQModel save path to skip meta-backed tensors") {
+		t.Error("expected GPTQ wrapper script to announce the save-path meta tensor patch")
+	}
 	if !contains(script, `module_tree[:3] != ["model", "language_model", "layers"]`) {
 		t.Error("expected GPTQ wrapper script to detect the composite Qwen3.5 module root before rewriting it")
 	}

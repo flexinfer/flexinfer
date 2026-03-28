@@ -448,6 +448,44 @@ def adapt_model_definition_for_loaded_model(model_definition, model):
     )
 
 
+def patch_gptq_save_meta_tensors():
+    """Skip meta-backed tensors before GPTQModel streams safetensors shards."""
+
+    import gptqmodel.utils.model as gptq_utils_model
+    from gptqmodel.models import writer as gptq_writer
+
+    if getattr(gptq_utils_model, "_flexinfer_meta_save_patch", False):
+        return
+
+    original_get_state_dict_for_save = gptq_utils_model.get_state_dict_for_save
+
+    def _patched_get_state_dict_for_save(model, offload_root=None):
+        state_dict = original_get_state_dict_for_save(model, offload_root)
+        dropped = []
+        for name, entry in list(state_dict.items()):
+            source = getattr(entry, "source", None)
+            if not isinstance(source, torch.Tensor):
+                continue
+            if getattr(source, "is_meta", False) or source.device.type == "meta":
+                dropped.append(name)
+                del state_dict[name]
+        if dropped:
+            preview = ", ".join(dropped[:8])
+            extra = len(dropped) - min(len(dropped), 8)
+            suffix = f" ... (+{extra} more)" if extra > 0 else ""
+            print(
+                "Dropped "
+                f"{len(dropped)} meta-backed tensors from save state_dict: "
+                f"{preview}{suffix}"
+            )
+        return state_dict
+
+    gptq_utils_model.get_state_dict_for_save = _patched_get_state_dict_for_save
+    gptq_writer.get_state_dict_for_save = _patched_get_state_dict_for_save
+    gptq_utils_model._flexinfer_meta_save_patch = True
+    print("Patched GPTQModel save path to skip meta-backed tensors")
+
+
 # ── Read config from environment ──────────────────────────────────────
 model_dir = os.environ["MODEL_DIR"]
 out_dir = os.environ["OUT_DIR"]
@@ -778,6 +816,8 @@ from transformers import AutoConfig
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 from transformers.modeling_utils import get_checkpoint_shard_files, load_state_dict
+
+patch_gptq_save_meta_tensors()
 
 try:
     total_vram = torch.cuda.get_device_properties(0).total_memory
