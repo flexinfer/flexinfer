@@ -12,8 +12,7 @@ import (
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
-	"github.com/crb2nu/loom/pkg/mcplog"
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -33,14 +32,13 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	logger := mcplog.NewDefault()
-
-	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-gitlab", logger)
+	srv, cleanup, err := mcpscaffold.NewServer(ctx, "mcp-gitlab", version,
+		mcpscaffold.WithInstructions("Fast Go-native GitLab MCP server. Supports projects, issues, merge requests, and more."),
+	)
 	if err != nil {
-		logger.Warn("OTel tracer init failed", "error", err)
+		return err
 	}
-	defer func() { _ = shutdownTracer(ctx) }()
-	tracer := mcpotel.Tracer(tp, "mcp-gitlab")
+	defer func() { _ = cleanup(ctx) }()
 
 	token := env.StringWithFallbacks("GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_TOKEN")
 	apiURL := strings.TrimSuffix(env.String("GITLAB_API_URL", "https://gitlab.com/api/v4"), "/")
@@ -51,28 +49,25 @@ func run(ctx context.Context) error {
 		httpClient: httpclient.NewDefault(),
 	}
 
-	logger.Info("starting server", "name", "mcp-gitlab", "version", version, "api_url", apiURL)
-
-	server := mcp.NewServer("mcp-gitlab", version)
-	server.SetInstructions("Fast Go-native GitLab MCP server. Supports projects, issues, merge requests, and more.")
+	srv.Logger.Info("starting server", "name", "mcp-gitlab", "version", version, "api_url", apiURL)
 
 	// Register all tools
-	registerRepositoryTools(server, gl, tracer)
-	registerIssueTools(server, gl, tracer)
-	registerMergeRequestTools(server, gl, tracer)
-	registerPipelineTools(server, gl, tracer)
+	registerRepositoryTools(srv, gl)
+	registerIssueTools(srv, gl)
+	registerMergeRequestTools(srv, gl)
+	registerPipelineTools(srv, gl)
 
 	// verify_token
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "verify_token",
 		Description: "Verify GitLab API token status and scopes",
 		InputSchema: mcp.InputSchema{
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "verify_token", gl.handleVerifyToken))
+	}, gl.handleVerifyToken)
 
-	return server.Run(ctx)
+	return srv.Run(ctx)
 }
 
 // Utility functions

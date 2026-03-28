@@ -58,6 +58,10 @@ Scale: each dimension 1-5. Score = (impact×35 + risk×30 + drag×20 + effort_in
 | ~~DEBT-039~~ | done | debt/wave4-cycle4 (knowledge_graph.go split: 1,250 → 6 files) |
 | ~~DEBT-040~~ | done | debt/wave4-cycle4 (qdrant.go split: 1,229 → 4 files) |
 | ~~DEBT-046~~ | done | debt/wave4-cycle4 (domain_adapters.go split: 825 → 5 files) |
+| ~~DEBT-043~~ | done | debt/wave4-w2-cycle4 (callpipeline.go split: 1,055 → 5 files) |
+| ~~DEBT-042~~ | done | debt/wave4-w2-cycle4 (daemon_toolcache.go split: 1,073 → 5 files) |
+| ~~DEBT-044~~ | done | debt/wave4-w2-cycle4 (qdrant client.go split: 1,052 → 4 files) |
+| ~~DEBT-047~~ | done | debt/wave4-w2-cycle4 (7 MCP servers migrated to mcpscaffold) |
 
 ## Suggested Cut Lines
 
@@ -68,4 +72,5 @@ Scale: each dimension 1-5. Score = (impact×35 + risk×30 + drag×20 + effort_in
 
 ## Cycle 4
 
-- ~~Wave 1: DEBT-041, DEBT-038, DEBT-039, DEBT-040, DEBT-046~~ — **shipped** (debt/wave4-cycle4)
+- ~~Wave 1: DEBT-041, DEBT-038, DEBT-039, DEBT-040, DEBT-046~~ — **shipped** (MR !130, d9de04db)
+- ~~Wave 2: DEBT-043, DEBT-042, DEBT-044, DEBT-047~~ — **shipped** (debt/wave4-w2-cycle4)

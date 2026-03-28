@@ -9,15 +9,13 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 	"github.com/crb2nu/loom/pkg/validate"
-
-	"go.opentelemetry.io/otel/trace"
 )
 
-func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tracer) {
+func registerPipelineTools(srv *mcpscaffold.Server, gl *gitlabServer) {
 	// list_pipelines
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "list_pipelines",
 		Description: "List pipelines for a project",
 		InputSchema: mcp.InputSchema{
@@ -46,10 +44,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "list_pipelines", gl.handleListPipelines))
-
+	}, gl.handleListPipelines)
 	// get_pipeline
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "get_pipeline",
 		Description: "Get a single pipeline by ID",
 		InputSchema: mcp.InputSchema{
@@ -66,10 +63,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "get_pipeline", gl.handleGetPipeline))
-
+	}, gl.handleGetPipeline)
 	// create_pipeline
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "create_pipeline",
 		Description: "Create/run a pipeline for a project",
 		InputSchema: mcp.InputSchema{
@@ -98,10 +94,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "ref"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "create_pipeline", gl.handleCreatePipeline))
-
+	}, gl.handleCreatePipeline)
 	// cancel_pipeline
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "cancel_pipeline",
 		Description: "Cancel a running pipeline",
 		InputSchema: mcp.InputSchema{
@@ -118,10 +113,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "cancel_pipeline", gl.handleCancelPipeline))
-
+	}, gl.handleCancelPipeline)
 	// retry_pipeline
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "retry_pipeline",
 		Description: "Retry a pipeline",
 		InputSchema: mcp.InputSchema{
@@ -138,10 +132,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "retry_pipeline", gl.handleRetryPipeline))
-
+	}, gl.handleRetryPipeline)
 	// list_pipeline_jobs
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "list_pipeline_jobs",
 		Description: "List jobs for a pipeline",
 		InputSchema: mcp.InputSchema{
@@ -170,10 +163,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "list_pipeline_jobs", gl.handleListPipelineJobs))
-
+	}, gl.handleListPipelineJobs)
 	// get_job
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "get_job",
 		Description: "Get a single job by ID",
 		InputSchema: mcp.InputSchema{
@@ -190,10 +182,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "job_id"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "get_job", gl.handleGetJob))
-
+	}, gl.handleGetJob)
 	// get_job_trace
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "get_job_trace",
 		Description: "Fetch job log/trace text",
 		InputSchema: mcp.InputSchema{
@@ -218,10 +209,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "job_id"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "get_job_trace", gl.handleGetJobTrace))
-
+	}, gl.handleGetJobTrace)
 	// retry_job
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "retry_job",
 		Description: "Retry a job",
 		InputSchema: mcp.InputSchema{
@@ -238,10 +228,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "job_id"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "retry_job", gl.handleRetryJob))
-
+	}, gl.handleRetryJob)
 	// play_job
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "play_job",
 		Description: "Play (trigger) a manual job",
 		InputSchema: mcp.InputSchema{
@@ -270,10 +259,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "job_id"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "play_job", gl.handlePlayJob))
-
+	}, gl.handlePlayJob)
 	// cancel_job
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "cancel_job",
 		Description: "Cancel a job",
 		InputSchema: mcp.InputSchema{
@@ -290,10 +278,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "job_id"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "cancel_job", gl.handleCancelJob))
-
+	}, gl.handleCancelJob)
 	// pipeline_summary - comprehensive view in single call
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "pipeline_summary",
 		Description: "Get comprehensive pipeline summary including jobs, status counts, and optionally test report. Fetches pipeline + jobs concurrently.",
 		InputSchema: mcp.InputSchema{
@@ -318,10 +305,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "pipeline_summary", gl.handlePipelineSummary))
-
+	}, gl.handlePipelineSummary)
 	// get_test_report - parse JUnit test report from pipeline
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "get_test_report",
 		Description: "Get JUnit test report from a pipeline. Returns summary and failed test details.",
 		InputSchema: mcp.InputSchema{
@@ -346,10 +332,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "get_test_report", gl.handleGetTestReport))
-
+	}, gl.handleGetTestReport)
 	// get_artifacts - download job artifacts or specific files
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "get_artifacts",
 		Description: "Download job artifacts or a specific file within artifacts. Returns content inline (text) or base64 (binary).",
 		InputSchema: mcp.InputSchema{
@@ -374,10 +359,9 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "job_id"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "get_artifacts", gl.handleGetArtifacts))
-
+	}, gl.handleGetArtifacts)
 	// poll_pipeline - poll pipeline until terminal state
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "poll_pipeline",
 		Description: "Poll pipeline until it reaches a terminal state (success, failed, canceled, skipped, manual). Blocks for up to timeout_seconds.",
 		InputSchema: mcp.InputSchema{
@@ -406,9 +390,8 @@ func registerPipelineTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tr
 			},
 			Required: []string{"project", "pipeline_id"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "poll_pipeline", gl.handlePollPipeline))
+	}, gl.handlePollPipeline)
 }
-
 func (g *gitlabServer) handleListPipelines(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
@@ -416,11 +399,9 @@ func (g *gitlabServer) handleListPipelines(ctx context.Context, args map[string]
 	status := v.String("status", "")
 	perPage := normalizePerPage(v.Int("per_page", 20), 20)
 	page := normalizePage(v.Int("page", 1))
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
-
 	q := url.Values{}
 	q.Set("per_page", fmt.Sprintf("%d", perPage))
 	q.Set("page", fmt.Sprintf("%d", page))
@@ -431,26 +412,22 @@ func (g *gitlabServer) handleListPipelines(ctx context.Context, args map[string]
 		q.Set("status", status)
 	}
 	path := fmt.Sprintf("/projects/%s/pipelines?%s", encodeProject(project), q.Encode())
-
 	pipelines, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 	return mcp.JSONResult(map[string]any{"pipelines": pipelines, "count": len(pipelines), "pagination": meta})
 }
-
 func (g *gitlabServer) handleGetPipeline(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
 	pipelineID := v.RequiredInt("pipeline_id")
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 	if errResult := validatePositiveIntParam("pipeline_id", pipelineID); errResult != nil {
 		return errResult, nil
 	}
-
 	path := fmt.Sprintf("/projects/%s/pipelines/%d", encodeProject(project), pipelineID)
 	result, err := g.request(ctx, "GET", path, nil)
 	if err != nil {
@@ -458,23 +435,19 @@ func (g *gitlabServer) handleGetPipeline(ctx context.Context, args map[string]an
 	}
 	return mcp.JSONResult(result)
 }
-
 func (g *gitlabServer) handleCreatePipeline(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
 	ref := v.Required("ref")
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
-
 	payload := map[string]any{
 		"ref": ref,
 	}
 	if vars, ok := args["variables"].([]any); ok && len(vars) > 0 {
 		payload["variables"] = vars
 	}
-
 	path := fmt.Sprintf("/projects/%s/pipeline", encodeProject(project))
 	result, err := g.request(ctx, "POST", path, payload)
 	if err != nil {
@@ -482,19 +455,16 @@ func (g *gitlabServer) handleCreatePipeline(ctx context.Context, args map[string
 	}
 	return mcp.JSONResult(result)
 }
-
 func (g *gitlabServer) handleCancelPipeline(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
 	pipelineID := v.RequiredInt("pipeline_id")
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 	if errResult := validatePositiveIntParam("pipeline_id", pipelineID); errResult != nil {
 		return errResult, nil
 	}
-
 	path := fmt.Sprintf("/projects/%s/pipelines/%d/cancel", encodeProject(project), pipelineID)
 	result, err := g.request(ctx, "POST", path, nil)
 	if err != nil {
@@ -502,19 +472,16 @@ func (g *gitlabServer) handleCancelPipeline(ctx context.Context, args map[string
 	}
 	return mcp.JSONResult(result)
 }
-
 func (g *gitlabServer) handleRetryPipeline(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
 	pipelineID := v.RequiredInt("pipeline_id")
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 	if errResult := validatePositiveIntParam("pipeline_id", pipelineID); errResult != nil {
 		return errResult, nil
 	}
-
 	path := fmt.Sprintf("/projects/%s/pipelines/%d/retry", encodeProject(project), pipelineID)
 	result, err := g.request(ctx, "POST", path, nil)
 	if err != nil {
@@ -522,7 +489,6 @@ func (g *gitlabServer) handleRetryPipeline(ctx context.Context, args map[string]
 	}
 	return mcp.JSONResult(result)
 }
-
 func (g *gitlabServer) handleListPipelineJobs(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
@@ -530,21 +496,18 @@ func (g *gitlabServer) handleListPipelineJobs(ctx context.Context, args map[stri
 	scope := v.String("scope", "")
 	perPage := normalizePerPage(v.Int("per_page", 100), 100)
 	page := normalizePage(v.Int("page", 1))
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 	if errResult := validatePositiveIntParam("pipeline_id", pipelineID); errResult != nil {
 		return errResult, nil
 	}
-
 	q := url.Values{}
 	q.Set("per_page", fmt.Sprintf("%d", perPage))
 	q.Set("page", fmt.Sprintf("%d", page))
 	if scope != "" {
 		q.Set("scope", scope)
 	}
-
 	path := fmt.Sprintf("/projects/%s/pipelines/%d/jobs?%s", encodeProject(project), pipelineID, q.Encode())
 	jobs, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
@@ -552,19 +515,16 @@ func (g *gitlabServer) handleListPipelineJobs(ctx context.Context, args map[stri
 	}
 	return mcp.JSONResult(map[string]any{"jobs": jobs, "count": len(jobs), "pagination": meta})
 }
-
 func (g *gitlabServer) handleGetJob(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
 	jobID := v.RequiredInt("job_id")
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 	if errResult := validatePositiveIntParam("job_id", jobID); errResult != nil {
 		return errResult, nil
 	}
-
 	path := fmt.Sprintf("/projects/%s/jobs/%d", encodeProject(project), jobID)
 	job, err := g.request(ctx, "GET", path, nil)
 	if err != nil {
@@ -572,33 +532,28 @@ func (g *gitlabServer) handleGetJob(ctx context.Context, args map[string]any) (*
 	}
 	return mcp.JSONResult(job)
 }
-
 func (g *gitlabServer) handleGetJobTrace(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
 	jobID := v.RequiredInt("job_id")
 	tailLines := v.Int("tail_lines", 200)
 	maxBytes := v.Int("max_bytes", 200_000)
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 	if errResult := validatePositiveIntParam("job_id", jobID); errResult != nil {
 		return errResult, nil
 	}
-
 	if tailLines <= 0 {
 		tailLines = 200
 	}
 	if maxBytes <= 0 {
 		maxBytes = 200_000
 	}
-
 	trace, contentType, truncated, err := g.fetchJobTraceTail(ctx, project, jobID, tailLines, maxBytes)
 	if err != nil {
 		return nil, err
 	}
-
 	return mcp.JSONResult(map[string]any{
 		"ok":           true,
 		"project":      project,
@@ -616,19 +571,16 @@ func (g *gitlabServer) handleGetJobTrace(ctx context.Context, args map[string]an
 		"trace": trace,
 	})
 }
-
 func (g *gitlabServer) handleRetryJob(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
 	jobID := v.RequiredInt("job_id")
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 	if errResult := validatePositiveIntParam("job_id", jobID); errResult != nil {
 		return errResult, nil
 	}
-
 	path := fmt.Sprintf("/projects/%s/jobs/%d/retry", encodeProject(project), jobID)
 	job, err := g.request(ctx, "POST", path, nil)
 	if err != nil {
@@ -636,24 +588,20 @@ func (g *gitlabServer) handleRetryJob(ctx context.Context, args map[string]any) 
 	}
 	return mcp.JSONResult(job)
 }
-
 func (g *gitlabServer) handlePlayJob(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
 	jobID := v.RequiredInt("job_id")
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 	if errResult := validatePositiveIntParam("job_id", jobID); errResult != nil {
 		return errResult, nil
 	}
-
 	var payload any
 	if vars, ok := args["job_variables"].([]any); ok && len(vars) > 0 {
 		payload = map[string]any{"job_variables": vars}
 	}
-
 	path := fmt.Sprintf("/projects/%s/jobs/%d/play", encodeProject(project), jobID)
 	job, err := g.request(ctx, "POST", path, payload)
 	if err != nil {
@@ -661,19 +609,16 @@ func (g *gitlabServer) handlePlayJob(ctx context.Context, args map[string]any) (
 	}
 	return mcp.JSONResult(job)
 }
-
 func (g *gitlabServer) handleCancelJob(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
 	jobID := v.RequiredInt("job_id")
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 	if errResult := validatePositiveIntParam("job_id", jobID); errResult != nil {
 		return errResult, nil
 	}
-
 	path := fmt.Sprintf("/projects/%s/jobs/%d/cancel", encodeProject(project), jobID)
 	job, err := g.request(ctx, "POST", path, nil)
 	if err != nil {

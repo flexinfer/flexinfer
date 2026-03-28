@@ -9,15 +9,13 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/mcperror"
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 	"github.com/crb2nu/loom/pkg/validate"
-
-	"go.opentelemetry.io/otel/trace"
 )
 
-func registerIssueTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tracer) {
+func registerIssueTools(srv *mcpscaffold.Server, gl *gitlabServer) {
 	// create_issue
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "create_issue",
 		Description: "Create a new issue in a project",
 		InputSchema: mcp.InputSchema{
@@ -47,10 +45,9 @@ func registerIssueTools(server *mcp.Server, gl *gitlabServer, tracer trace.Trace
 			},
 			Required: []string{"project", "title"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "create_issue", gl.handleCreateIssue))
-
+	}, gl.handleCreateIssue)
 	// update_issue
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "update_issue",
 		Description: "Update an issue in a project (labels, assignees, state, and fields)",
 		InputSchema: mcp.InputSchema{
@@ -97,10 +94,9 @@ func registerIssueTools(server *mcp.Server, gl *gitlabServer, tracer trace.Trace
 			},
 			Required: []string{"project", "issue_iid"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "update_issue", gl.handleUpdateIssue))
-
+	}, gl.handleUpdateIssue)
 	// list_issues
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "list_issues",
 		Description: "List issues for a project",
 		InputSchema: mcp.InputSchema{
@@ -129,20 +125,17 @@ func registerIssueTools(server *mcp.Server, gl *gitlabServer, tracer trace.Trace
 			},
 			Required: []string{"project"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "list_issues", gl.handleListIssues))
+	}, gl.handleListIssues)
 }
-
 func (g *gitlabServer) handleCreateIssue(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
 	title := v.Required("title")
 	description := v.String("description", "")
 	labels := v.String("labels", "")
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
-
 	payload := map[string]any{"title": title}
 	if description != "" {
 		payload["description"] = description
@@ -157,17 +150,13 @@ func (g *gitlabServer) handleCreateIssue(ctx context.Context, args map[string]an
 	if len(assigneeIDs) > 0 {
 		payload["assignee_ids"] = assigneeIDs
 	}
-
 	path := fmt.Sprintf("/projects/%s/issues", encodeProject(project))
-
 	result, err := g.request(ctx, "POST", path, payload)
 	if err != nil {
 		return nil, err
 	}
-
 	return mcp.JSONResult(result)
 }
-
 func (g *gitlabServer) handleListIssues(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
@@ -175,24 +164,19 @@ func (g *gitlabServer) handleListIssues(ctx context.Context, args map[string]any
 	labels := v.String("labels", "")
 	perPage := normalizePerPage(v.Int("per_page", 20), 20)
 	page := normalizePage(v.Int("page", 1))
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
-
 	path := fmt.Sprintf("/projects/%s/issues?state=%s&per_page=%d&page=%d", encodeProject(project), state, perPage, page)
 	if labels != "" {
 		path += "&labels=" + url.QueryEscape(labels)
 	}
-
 	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-
 	return mcp.JSONResult(map[string]any{"issues": result, "count": len(result), "pagination": meta})
 }
-
 func (g *gitlabServer) handleUpdateIssue(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
@@ -203,14 +187,12 @@ func (g *gitlabServer) handleUpdateIssue(ctx context.Context, args map[string]an
 	addLabels := v.String("add_labels", "")
 	removeLabels := v.String("remove_labels", "")
 	stateEvent := v.Enum("state_event", "", "close", "reopen")
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 	if issueIID <= 0 {
 		return mcp.ErrorResult(mcperror.InvalidParam("issue_iid", "must be greater than 0")), nil
 	}
-
 	payload := map[string]any{}
 	if title != "" {
 		payload["title"] = title
@@ -240,13 +222,10 @@ func (g *gitlabServer) handleUpdateIssue(ctx context.Context, args map[string]an
 	if len(payload) == 0 {
 		return mcp.ErrorResult(mcperror.RequiredParam("at least one update field")), nil
 	}
-
 	path := fmt.Sprintf("/projects/%s/issues/%d", encodeProject(project), issueIID)
-
 	result, err := g.request(ctx, "PUT", path, payload)
 	if err != nil {
 		return nil, err
 	}
-
 	return mcp.JSONResult(result)
 }
