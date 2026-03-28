@@ -19,6 +19,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/crb2nu/loom/pkg/launchctl"
 	"github.com/spf13/cobra"
 )
 
@@ -265,7 +266,7 @@ func installAgentTokenSync() error {
 
 	// Unload existing if present.
 	if _, err := os.Stat(plistDest); err == nil {
-		_ = exec.Command("launchctl", "unload", plistDest).Run() //nolint:noctx,gosec // launchctl is a fire-and-forget system call
+		_ = launchctl.Unload(context.Background(), plistDest)
 	}
 
 	if err := os.WriteFile(plistDest, []byte(plistData), 0644); err != nil {
@@ -273,7 +274,7 @@ func installAgentTokenSync() error {
 	}
 
 	// Load the service.
-	if err := exec.Command("launchctl", "load", plistDest).Run(); err != nil { //nolint:noctx,gosec // launchctl is a fire-and-forget system call
+	if err := launchctl.Load(context.Background(), plistDest); err != nil {
 		return fmt.Errorf("launchctl load: %w", err)
 	}
 
@@ -289,7 +290,7 @@ func uninstallAgentTokenSync() error {
 	home, _ := os.UserHomeDir()
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", agentTokenSyncLabel+".plist")
 
-	_ = exec.Command("launchctl", "unload", plistPath).Run() //nolint:noctx,gosec // launchctl is a fire-and-forget system call
+	_ = launchctl.Unload(context.Background(), plistPath)
 
 	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove plist: %w", err)

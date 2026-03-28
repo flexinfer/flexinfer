@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local dev reload smoke** (`scripts/dev`): `make dev-upgrade` and `make dev-reload` now wait on the embedded HUD/mobile API readiness path instead of treating the heavier mobile task feed as the reload health gate, reducing false unhealthy warnings after daemon fallback restarts.
 
 ### Changed
+- **fleet.go split** (`internal/tui/panels`): Split 1,004-line `fleet.go` into `fleet_render.go` (344 lines), `fleet_filtering.go` (127 lines), and `fleet_status.go` (298 lines). Residual fleet.go retains types, model, and interactive state (264 lines). DEBT-045.
+- **noctx consolidation** (`pkg/launchctl`): Extract `pkg/launchctl` package with context-aware `Load`/`Unload`/`Start`/`Stop`/`Kill`/`FindProcessByPort`/`KillPID` helpers wrapping `exec.CommandContext`. Eliminates 14 `//nolint:noctx` suppressions across `daemon_control.go`, `hud_control.go`, `cmd_sync_agent_tokens.go`, and `bridge/daemon.go`. DEBT-048.
+- **mcp-godot tests** (`cmd/mcp-godot`): Add 21 unit tests covering `NewGodotClient`, `NewLogReader`, `ReadRecent`, `TailStream`, and `Close` idempotency. DEBT-049.
 - **callpipeline.go split** (`internal/daemon`): Split 1,055-line `callpipeline.go` into `callpipeline_stages.go` (parse/auth/policy/cache/route/build/execute), `callpipeline_routing.go` (connection/retry), `callpipeline_errors.go` (error builders/metrics/audit), and `callpipeline_timeout.go` (timeout resolution). DEBT-043.
 - **daemon_toolcache.go split** (`internal/daemon`): Split 1,073-line `daemon_toolcache.go` into `daemon_tools_handlers.go` (MCP handlers), `daemon_tools_cache.go` (refresh logic), `daemon_resources.go` (resource handling), and `daemon_tools_fetch.go` (server I/O). DEBT-042.
 - **qdrant client.go split** (`pkg/codebase/qdrant`): Split 1,052-line `client.go` into `collections.go` (lifecycle), `search.go` (query/scroll), and `serialize.go` (filters/conversion). DEBT-044.
