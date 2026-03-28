@@ -53,10 +53,12 @@ func (d *Daemon) startEmbeddedHUD(ctx context.Context, mux *http.ServeMux) error
 	if err := app.StartMonitors(ctx); err != nil {
 		return err
 	}
-	app.RefreshMonitors()
-
 	app.RegisterRoutes(mux)
 	d.hudApp = app
+
+	// Refresh snapshots in the background so slow monitor warm-up does not block
+	// route registration and the HUD HTTP listener from becoming probeable.
+	go app.RefreshMonitors()
 
 	logger.Info("embedded HUD started",
 		"spawn", hudCfg.SpawnEnabled,

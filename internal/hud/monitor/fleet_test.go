@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 )
@@ -228,5 +230,98 @@ func TestFleetMonitor_RefreshForceBypassesDebounce(t *testing.T) {
 	}
 	if statusCalls != 2 {
 		t.Fatalf("expected forced refresh to bypass debounce, got %d status calls", statusCalls)
+	}
+}
+
+func TestFleetMonitor_ConcurrentRefreshesCollapse(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+	client, agent := newBridges(t, sockPath)
+
+	var statusCalls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+
+	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
+		if statusCalls.Add(1) == 1 {
+			close(started)
+			<-release
+		}
+		return bridge.StatusResult{
+			Running:     true,
+			Servers:     1,
+			ActiveConns: 1,
+			Processes:   []string{"git"},
+		}, nil
+	})
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, err
+		}
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return toolEnvelope(map[string]any{"sessions": []map[string]any{}}), nil
+		case "agent_context__agent_task_list":
+			return toolEnvelope(map[string]any{"tasks": []map[string]any{}}), nil
+		case "agent_context__agent_memory_stats":
+			return toolEnvelope(map[string]any{"total_items": 0, "total_tokens": 0}), nil
+		case "agent_context__agent_graph_stats":
+			return toolEnvelope(map[string]any{"entity_count": 0, "relation_count": 0}), nil
+		case "agent_context__agent_workflow_list":
+			return toolEnvelope(map[string]any{"workflows": []map[string]any{}}), nil
+		case "agent_context__agent_presence_list":
+			return toolEnvelope(map[string]any{"agents": []map[string]any{}}), nil
+		case "agent_context__agent_file_claim_list":
+			return toolEnvelope(map[string]any{"claims": []map[string]any{}}), nil
+		case "agent_context__agent_worktree_list":
+			return toolEnvelope(map[string]any{"worktrees": []map[string]any{}}), nil
+		case "agent_context__agent_handoff_list":
+			return toolEnvelope(map[string]any{"handoffs": []map[string]any{}}), nil
+		default:
+			return nil, fmt.Errorf("unexpected tool: %s", req.Name)
+		}
+	})
+
+	monitor := NewFleetMonitor(client, agent, nil)
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- monitor.Refresh()
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first refresh to start")
+	}
+
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- monitor.Refresh()
+	}()
+
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("second refresh failed: %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("expected concurrent refresh to collapse immediately")
+	}
+
+	close(release)
+
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("first refresh failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first refresh to finish")
+	}
+
+	if got := statusCalls.Load(); got != 1 {
+		t.Fatalf("expected only one in-flight status call, got %d", got)
 	}
 }

@@ -119,6 +119,7 @@ type FleetMonitor struct {
 	spawns SpawnLister // optional -- nil when spawn orchestrator not configured
 
 	lastRefresh time.Time // debounce: skip Refresh() if <2s since last
+	refreshing  bool      // coalesce concurrent refreshes into a single in-flight run
 
 	// Handoff notification dedup: tracks handoff IDs already notified.
 	notifiedHandoffs map[string]bool
@@ -227,17 +228,29 @@ func (m *FleetMonitor) RefreshForce() error {
 func (m *FleetMonitor) refresh(force bool) error {
 	prev := m.Snapshot()
 
+	// Coalesce concurrent refreshes so heartbeat-triggered refresh storms do not
+	// pile up overlapping agent-context calls while one refresh is already busy.
+	m.Lock()
+	if m.refreshing {
+		m.Unlock()
+		m.Logger.Debug("fleet refresh skipped; refresh already in flight")
+		return nil
+	}
+
 	// Debounce: skip if less than 2s since last refresh to prevent stampede
 	// when multiple handlers fire go Refresh() concurrently.
-	if !force {
-		m.RLock()
-		if time.Since(m.lastRefresh) < 2*time.Second {
-			m.RUnlock()
-			m.Logger.Debug("fleet refresh debounced")
-			return nil
-		}
-		m.RUnlock()
+	if !force && time.Since(m.lastRefresh) < 2*time.Second {
+		m.Unlock()
+		m.Logger.Debug("fleet refresh debounced")
+		return nil
 	}
+	m.refreshing = true
+	m.Unlock()
+	defer func() {
+		m.Lock()
+		m.refreshing = false
+		m.Unlock()
+	}()
 
 	snap := FleetSnapshot{
 		UpdatedAt: time.Now(),
