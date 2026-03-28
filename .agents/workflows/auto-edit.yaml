@@ -29,7 +29,7 @@ steps:
   - id: recall
     name: "Recall Context"
     step_type: tool
-    tool_name: agent_context_recall_enhanced
+    tool_name: agent_recall
     server_name: agent-context
     tool_args:
       query: "${input.edit_instruction}"

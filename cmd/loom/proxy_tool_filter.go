@@ -146,7 +146,6 @@ func selectCoreDeveloperTools(tools []mcp.Tool, limit int) []mcp.Tool {
 		"agent_context__agent_session_start",
 		"agent_context__agent_session_list",
 		"agent_context__agent_recall",
-		"agent_context__agent_context_recall_enhanced",
 		"agent_context__agent_context_add",
 		"agent_context__agent_task_add",
 		"agent_context__agent_task_update",
