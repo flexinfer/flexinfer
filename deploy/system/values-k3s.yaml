@@ -175,7 +175,7 @@ diffusers:
 
 quantization:
   useRuntimeForQuantize: true
-  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:8b9b93aa310eeb648f6381f8cff6194dc86492549a975b922337c18a17628d6c"
+  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:5313caa93a63831aa1f7bdc8b7c2232433453c98ccddc0269113a9cc161292f7"
   gptqDeviceMap: "auto"
   gptqModelPolicies:
     - name: qwen3.5-text
@@ -241,7 +241,7 @@ runtime:
       nodeSelector:
         kubernetes.io/hostname: cblevins-5930k
     - name: gfx906
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:8b9b93aa310eeb648f6381f8cff6194dc86492549a975b922337c18a17628d6c"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:5313caa93a63831aa1f7bdc8b7c2232433453c98ccddc0269113a9cc161292f7"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1
