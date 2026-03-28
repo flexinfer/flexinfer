@@ -298,6 +298,16 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		modelPolicies = defaultAbliterationModelPoliciesJSON()
 	}
 
+	normThreshold := "100"
+	if spec.NormThreshold != nil && *spec.NormThreshold != "" {
+		normThreshold = *spec.NormThreshold
+	}
+
+	ablitateLmHead := "true"
+	if spec.AblitateLmHead != nil && !*spec.AblitateLmHead {
+		ablitateLmHead = "false"
+	}
+
 	return []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
 		{Name: "NUM_SAMPLES", Value: fmt.Sprintf("%d", numSamples)},
@@ -322,6 +332,8 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		{Name: "ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP", Value: skipCachingAllocatorWarmup},
 		{Name: "ABLITERATION_SAFE_SHARDED_LOAD", Value: safeShardedLoad},
 		{Name: "ABLITERATION_MODEL_POLICIES", Value: modelPolicies},
+		{Name: "ABLITERATION_NORM_THRESHOLD", Value: normThreshold},
+		{Name: "ABLITERATION_ABLITERATE_LM_HEAD", Value: ablitateLmHead},
 		{Name: "SAFETENSORS_FAST_GPU", Value: "0"},
 		{Name: "HF_SAFETENSORS_MMAP", Value: "0"},
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
