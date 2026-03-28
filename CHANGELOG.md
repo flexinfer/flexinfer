@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mobile dashboard agent totals** (`internal/hud/domain/mobile`): Dashboard headline counts now use the same unified live-agent view as the Agents tab, so active session-only agents are reflected consistently after daemon reloads.
 - **Local dev reload smoke** (`scripts/dev`): `make dev-upgrade` and `make dev-reload` now wait on the embedded HUD/mobile API readiness path instead of treating the heavier mobile task feed as the reload health gate, reducing false unhealthy warnings after daemon fallback restarts.
 
+### Security
+- **gRPC security upgrade** (`go.mod`): Upgrade `google.golang.org/grpc` v1.78.0 → v1.79.3 to fix GO-2026-4762 (authorization bypass via missing leading slash in `:path` header).
+
 ### Changed
 - **fleet.go split** (`internal/tui/panels`): Split 1,004-line `fleet.go` into `fleet_render.go` (344 lines), `fleet_filtering.go` (127 lines), and `fleet_status.go` (298 lines). Residual fleet.go retains types, model, and interactive state (264 lines). DEBT-045.
 - **noctx consolidation** (`pkg/launchctl`): Extract `pkg/launchctl` package with context-aware `Load`/`Unload`/`Start`/`Stop`/`Kill`/`FindProcessByPort`/`KillPID` helpers wrapping `exec.CommandContext`. Eliminates 14 `//nolint:noctx` suppressions across `daemon_control.go`, `hud_control.go`, `cmd_sync_agent_tokens.go`, and `bridge/daemon.go`. DEBT-048.
