@@ -56,7 +56,7 @@ func (m *mockDeps) WriteJSON(w http.ResponseWriter, status int, v any) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v) //nolint:errcheck
+	json.NewEncoder(w).Encode(v) //nolint:errcheck // test helper; assertion failures catch issues
 }
 func (m *mockDeps) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	if m.handleSSE != nil {
@@ -220,7 +220,7 @@ func TestPipelineResponseCorrelationField(t *testing.T) {
 	resp2 := testPipelineResp{AgentID: "test"}
 	data2, _ := json.Marshal(resp2)
 	var parsed2 map[string]any
-	json.Unmarshal(data2, &parsed2) //nolint:errcheck
+	json.Unmarshal(data2, &parsed2) //nolint:errcheck // test helper; assertion failures catch issues
 	if _, exists := parsed2["correlation"]; exists {
 		t.Error("expected empty correlation to be omitted from JSON")
 	}

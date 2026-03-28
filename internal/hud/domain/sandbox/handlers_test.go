@@ -32,7 +32,7 @@ func (m *mockDeps) WriteJSON(w http.ResponseWriter, status int, v any) {
 	m.lastJSONCode = status
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v) //nolint:errcheck
+	json.NewEncoder(w).Encode(v) //nolint:errcheck // test helper; assertion failures catch issues
 }
 
 func (m *mockDeps) WriteError(w http.ResponseWriter, status int, msg string, _ error) {
@@ -40,7 +40,7 @@ func (m *mockDeps) WriteError(w http.ResponseWriter, status int, msg string, _ e
 	m.lastErrCode = status
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg}) //nolint:errcheck
+	json.NewEncoder(w).Encode(map[string]string{"error": msg}) //nolint:errcheck // test helper; assertion failures catch issues
 }
 
 func (m *mockDeps) SandboxSnapshot() map[string]any {
@@ -102,7 +102,7 @@ func TestHandleSandbox_Available(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	var body map[string]any
-	json.NewDecoder(rec.Body).Decode(&body) //nolint:errcheck
+	json.NewDecoder(rec.Body).Decode(&body) //nolint:errcheck // test helper; assertion failures catch issues
 	if body["available"] != true {
 		t.Errorf("expected available=true, got %v", body["available"])
 	}
@@ -124,7 +124,7 @@ func TestHandleSandbox_Unavailable(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	var body map[string]any
-	json.NewDecoder(rec.Body).Decode(&body) //nolint:errcheck
+	json.NewDecoder(rec.Body).Decode(&body) //nolint:errcheck // test helper; assertion failures catch issues
 	if body["available"] != false {
 		t.Errorf("expected available=false, got %v", body["available"])
 	}
@@ -143,7 +143,7 @@ func TestHandleSandboxPolicy_Cached(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	var body map[string]any
-	json.NewDecoder(rec.Body).Decode(&body) //nolint:errcheck
+	json.NewDecoder(rec.Body).Decode(&body) //nolint:errcheck // test helper; assertion failures catch issues
 	if body["configured"] != true {
 		t.Errorf("expected configured=true, got %v", body["configured"])
 	}
@@ -165,7 +165,7 @@ func TestHandleSandboxPolicy_NoPolicyFile(t *testing.T) {
 		t.Errorf("expected 1 cache set call, got %d", deps.cacheSetCalls)
 	}
 	var body map[string]any
-	json.NewDecoder(rec.Body).Decode(&body) //nolint:errcheck
+	json.NewDecoder(rec.Body).Decode(&body) //nolint:errcheck // test helper; assertion failures catch issues
 	if body["configured"] != false {
 		t.Errorf("expected configured=false, got %v", body["configured"])
 	}
@@ -185,7 +185,7 @@ func TestHandleSandboxStart_Success(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	var resp map[string]any
-	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck
+	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck // test helper; assertion failures catch issues
 	if resp["ok"] != true {
 		t.Errorf("expected ok=true, got %v", resp["ok"])
 	}
@@ -208,7 +208,7 @@ func TestHandleSandboxStart_NilResult(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	var resp map[string]any
-	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck
+	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck // test helper; assertion failures catch issues
 	if resp["ok"] != true {
 		t.Errorf("expected ok=true, got %v", resp["ok"])
 	}
@@ -269,7 +269,7 @@ func TestHandleSandboxStop_Success(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	var resp map[string]any
-	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck
+	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck // test helper; assertion failures catch issues
 	if resp["ok"] != true {
 		t.Errorf("expected ok=true, got %v", resp["ok"])
 	}

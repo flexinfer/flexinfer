@@ -13,8 +13,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
-	"github.com/crb2nu/loom/pkg/mcplog"
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -34,35 +33,30 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	logger := mcplog.NewDefault()
-	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-asus-router", logger)
+	srv, cleanup, err := mcpscaffold.NewServer(ctx, "mcp-asus-router", version,
+		mcpscaffold.WithInstructions("ASUS Router management via SSH"),
+	)
 	if err != nil {
-		logger.Warn("OTel tracer init failed", "error", err)
+		return err
 	}
-	defer func() { _ = shutdownTracer(ctx) }()
-	tracer := mcpotel.Tracer(tp, "mcp-asus-router")
-	wrap := func(name string, h mcp.ToolHandler) mcp.ToolHandler {
-		return mcpotel.TracedToolHandler(tracer, name, h)
-	}
-	logger.Info("starting server", "name", "mcp-asus-router", "version", version, "host", hostAlias)
+	defer func() { _ = cleanup(ctx) }()
 
-	server := mcp.NewServer("mcp-asus-router", version)
-	server.SetInstructions("ASUS Router management via SSH")
+	srv.Logger.Info("router config", "host", hostAlias)
 
 	// Register tools
-	registerTools(server, wrap)
+	registerTools(srv)
 
-	return server.Run(ctx)
+	return srv.Run(ctx)
 }
 
-func registerTools(server *mcp.Server, wrap func(string, mcp.ToolHandler) mcp.ToolHandler) {
-	server.AddTool(mcp.Tool{
+func registerTools(srv *mcpscaffold.Server) {
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "router_status",
 		Description: "Uptime, WAN, and memory utilization snapshot.",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
-	}, wrap("router_status", handleStatus))
+	}, handleStatus)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "router_logread",
 		Description: "Tail BusyBox syslog (logread -n <lines>).",
 		InputSchema: mcp.InputSchema{
@@ -71,9 +65,9 @@ func registerTools(server *mcp.Server, wrap func(string, mcp.ToolHandler) mcp.To
 				"lines": map[string]any{"type": "integer", "minimum": 10, "maximum": 2000},
 			},
 		},
-	}, wrap("router_logread", handleLogread))
+	}, handleLogread)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "router_kernelTail",
 		Description: "Tail kernel messages (dmesg | tail).",
 		InputSchema: mcp.InputSchema{
@@ -82,9 +76,9 @@ func registerTools(server *mcp.Server, wrap func(string, mcp.ToolHandler) mcp.To
 				"lines": map[string]any{"type": "integer", "minimum": 10, "maximum": 500},
 			},
 		},
-	}, wrap("router_kernelTail", handleKernelTail))
+	}, handleKernelTail)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "router_execCommand",
 		Description: "Run a whitelisted maintenance command",
 		InputSchema: mcp.InputSchema{
@@ -97,9 +91,9 @@ func registerTools(server *mcp.Server, wrap func(string, mcp.ToolHandler) mcp.To
 			},
 			Required: []string{"command"},
 		},
-	}, wrap("router_execCommand", handleExecCommand))
+	}, handleExecCommand)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "router_reboot",
 		Description: "Reboot the ASUS router (requires confirm=true).",
 		InputSchema: mcp.InputSchema{
@@ -109,19 +103,19 @@ func registerTools(server *mcp.Server, wrap func(string, mcp.ToolHandler) mcp.To
 			},
 			Required: []string{"confirm"},
 		},
-	}, wrap("router_reboot", handleReboot))
+	}, handleReboot)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "router_wanStatus",
 		Description: "WAN IP, gateway, DNS, and link snapshot.",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
-	}, wrap("router_wanStatus", handleWanStatus))
+	}, handleWanStatus)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "router_wifiStatus",
 		Description: "Wi-Fi chanspec/bandwidth and assoc list.",
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]any{}},
-	}, wrap("router_wifiStatus", handleWifiStatus))
+	}, handleWifiStatus)
 }
 
 // SSH Helper

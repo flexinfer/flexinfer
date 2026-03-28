@@ -265,7 +265,7 @@ func installAgentTokenSync() error {
 
 	// Unload existing if present.
 	if _, err := os.Stat(plistDest); err == nil {
-		_ = exec.Command("launchctl", "unload", plistDest).Run() //nolint:noctx,gosec
+		_ = exec.Command("launchctl", "unload", plistDest).Run() //nolint:noctx,gosec // launchctl is a fire-and-forget system call
 	}
 
 	if err := os.WriteFile(plistDest, []byte(plistData), 0644); err != nil {
@@ -273,7 +273,7 @@ func installAgentTokenSync() error {
 	}
 
 	// Load the service.
-	if err := exec.Command("launchctl", "load", plistDest).Run(); err != nil { //nolint:noctx,gosec
+	if err := exec.Command("launchctl", "load", plistDest).Run(); err != nil { //nolint:noctx,gosec // launchctl is a fire-and-forget system call
 		return fmt.Errorf("launchctl load: %w", err)
 	}
 
@@ -289,7 +289,7 @@ func uninstallAgentTokenSync() error {
 	home, _ := os.UserHomeDir()
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", agentTokenSyncLabel+".plist")
 
-	_ = exec.Command("launchctl", "unload", plistPath).Run() //nolint:noctx,gosec
+	_ = exec.Command("launchctl", "unload", plistPath).Run() //nolint:noctx,gosec // launchctl is a fire-and-forget system call
 
 	if err := os.Remove(plistPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove plist: %w", err)

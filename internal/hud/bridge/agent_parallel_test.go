@@ -395,7 +395,7 @@ func TestAgentBridge_HandoffList_PartialFailure(t *testing.T) {
 			Name      string         `json:"name"`
 			Arguments map[string]any `json:"arguments"`
 		}
-		json.Unmarshal(params, &req) //nolint:errcheck
+		json.Unmarshal(params, &req) //nolint:errcheck // test helper; assertion failures catch issues
 
 		switch req.Name {
 		case "agent_context__agent_presence_list":

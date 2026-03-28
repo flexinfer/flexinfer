@@ -146,7 +146,7 @@ func installHudService() error {
 	fmt.Printf("Mobile token: %s\n", token)
 
 	// Load the service.
-	cmd := exec.Command("launchctl", "load", plistDest) //nolint:noctx
+	cmd := exec.Command("launchctl", "load", plistDest) //nolint:noctx // launchctl is a fire-and-forget system call; context cancellation not applicable
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("launchctl load: %w", err)
 	}
@@ -185,7 +185,7 @@ func uninstallHudService() error {
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", hudLaunchdLabel+".plist")
 
 	// Unload first.
-	cmd := exec.Command("launchctl", "unload", plistPath) //nolint:noctx
+	cmd := exec.Command("launchctl", "unload", plistPath) //nolint:noctx // launchctl is a fire-and-forget system call; context cancellation not applicable
 	_ = cmd.Run()
 
 	// Remove plist.
@@ -198,7 +198,7 @@ func uninstallHudService() error {
 }
 
 func startHudService() error {
-	cmd := exec.Command("launchctl", "start", hudLaunchdLabel) //nolint:noctx
+	cmd := exec.Command("launchctl", "start", hudLaunchdLabel) //nolint:noctx // launchctl is a fire-and-forget system call; context cancellation not applicable
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("launchctl start %s: %w", hudLaunchdLabel, err)
 	}
@@ -207,14 +207,14 @@ func startHudService() error {
 }
 
 func stopHudService() error {
-	cmd := exec.Command("launchctl", "stop", hudLaunchdLabel) //nolint:noctx
+	cmd := exec.Command("launchctl", "stop", hudLaunchdLabel) //nolint:noctx // launchctl is a fire-and-forget system call; context cancellation not applicable
 	if err := cmd.Run(); err != nil {
 		// Fallback: kill by port.
-		killCmd := exec.Command("lsof", "-ti", ":3333") //nolint:noctx
+		killCmd := exec.Command("lsof", "-ti", ":3333") //nolint:noctx // launchctl is a fire-and-forget system call; context cancellation not applicable
 		out, killErr := killCmd.Output()
 		if killErr == nil && len(out) > 0 {
 			pid := string(out[:len(out)-1])     // trim newline
-			_ = exec.Command("kill", pid).Run() //nolint:noctx
+			_ = exec.Command("kill", pid).Run() //nolint:noctx // launchctl is a fire-and-forget system call; context cancellation not applicable
 			fmt.Printf("HUD stopped (killed PID %s)\n", pid)
 			return nil
 		}

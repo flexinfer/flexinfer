@@ -11,8 +11,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
-	"github.com/crb2nu/loom/pkg/mcplog"
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 	"github.com/crb2nu/loom/pkg/pathsec"
 	"github.com/crb2nu/loom/pkg/validate"
 )
@@ -49,30 +48,18 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	logger := mcplog.NewDefault()
-	tp, shutdownTracer, err := mcpotel.InitTracer(ctx,
-
-		"mcp-filesystem",
-		logger,
+	srv, cleanup, err := mcpscaffold.NewServer(ctx, "mcp-filesystem", version,
+		mcpscaffold.WithInstructions("Safe filesystem access. Tools: list_directory, read_file, search_files"),
 	)
-	if err !=
-		nil {
-		logger.Warn("OTel tracer init failed",
-
-			"error", err)
+	if err != nil {
+		return err
 	}
-	defer func() {
-		_ = shutdownTracer(ctx)
-	}()
-	tracer := mcpotel.Tracer(tp, "mcp-filesystem")
+	defer func() { _ = cleanup(ctx) }()
 
-	logger.Info("starting server", "name", "mcp-filesystem", "version", version, "root", allowedRoot)
-
-	server := mcp.NewServer("mcp-filesystem", version)
-	server.SetInstructions("Safe filesystem access. Tools: list_directory, read_file, search_files")
+	srv.Logger.Info("filesystem root", "root", allowedRoot)
 
 	// list_directory
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "list_directory",
 		Description: "List contents of a directory",
 		InputSchema: mcp.InputSchema{
@@ -85,12 +72,10 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"path"},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleListDirectory)
 
-		// read_file
-		tracer, "list_directory", handleListDirectory))
-
-	server.AddTool(mcp.Tool{
+	// read_file
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "read_file",
 		Description: "Read contents of a file",
 		InputSchema: mcp.InputSchema{
@@ -103,12 +88,10 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"path"},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleReadFile)
 
-		// search_files (simple glob)
-		tracer, "read_file", handleReadFile))
-
-	server.AddTool(mcp.Tool{
+	// search_files (simple glob)
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "search_files",
 		Description: "Search for files matching a glob pattern",
 		InputSchema: mcp.InputSchema{
@@ -125,9 +108,9 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"root", "pattern"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "search_files", handleSearchFiles))
+	}, handleSearchFiles)
 
-	return server.Run(ctx)
+	return srv.Run(ctx)
 }
 
 func handleListDirectory(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

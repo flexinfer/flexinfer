@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **MCP server scaffold package** (`pkg/mcpscaffold`): `NewServer()` factory and `AddTracedTool()` helper that eliminate ~65 lines of duplicated initialization boilerplate per MCP server. Five servers migrated as proof (time, filesystem, asus-router, youtube, confluence).
 - **Pipeline-aware agent lifecycle** (`internal/hud/bridge`): Explicit `PipelineRef` foreign keys on Session and Task, replacing branch-name heuristics; `WorkflowID` on Task for workflow-step tracing; `pipeline_event` context entries; auto-detection in WorkStart.
 - **Mobile session activity endpoint** (`internal/hud/domain/mobile`): `GET /api/sessions/{id}/activity` returns unified tasks + pipelines with correlation type.
 - **Mobile pipelines endpoint** (`internal/hud/domain/mobile`): `GET /api/mobile/v1/pipelines` with cold-start refresh, fallback to recent pipelines, and agent-branch correlation.
@@ -27,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local dev reload smoke** (`scripts/dev`): `make dev-upgrade` and `make dev-reload` now wait on the embedded HUD/mobile API readiness path instead of treating the heavier mobile task feed as the reload health gate, reducing false unhealthy warnings after daemon fallback restarts.
 
 ### Changed
+- **CI lint now blocking** (`.gitlab-ci.yml`): Removed `allow_failure: true` from golangci-lint job; lint failures now block merges. All 37 first-party `//nolint` suppressions annotated with justification comments.
+- **CI coverage threshold raised** (`.gitlab-ci.yml`): Coverage threshold increased from 24% to 35% (actual coverage is ~40.7%).
+- **Roadmap reconciliation files archived** (`docs/`): 20 older reconciliation files moved to `.loom/archive/roadmap-reconciliations/`.
 - **Daemon restart tracing surfaces** (`internal/daemon`): health-monitor auto-restart attempts now emit dedicated restart spans, and `loom/otel-status` reports `server_restart_lifecycle` as an explicit runtime trace surface instead of a generic runtime placeholder.
 - **Devbox K8s workspace planning** (`internal/devbox/backend`): runtime and build pods now share a single workspace-mode planner for `tar-pipe`, `git-clone`, and PVC-backed execution, with added build-side coverage for tar-pipe and default NFS behavior.
 - **CI pipeline parallelism** (`.gitlab-ci.yml`): `build:binaries`, `test:unit`, `test:race`, and `test:enterprise-smoke` now use `needs: [prepare:go-cache]` to fan out in parallel after prepare instead of waiting for full stage gates (~3-8 min saved).
