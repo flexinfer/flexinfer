@@ -407,8 +407,8 @@ func TestHandleMemoryDemote_Error(t *testing.T) {
 func TestHandleMemoryItems_Success(t *testing.T) {
 	caller := &testCaller{
 		callToolFn: func(name string, _ map[string]any) (json.RawMessage, error) {
-			if name == "agent_context__agent_memory_recall" {
-				return wrapToolResult(`{"items":[{"id":"m1","title":"Test Memory","content":"content","tier":"working","importance":"high","original_tokens":100}]}`), nil
+			if name == "agent_context__agent_recall" {
+				return wrapToolResult(`{"memory_items":[{"id":"m1","title":"Test Memory","content":"content","tier":"working","importance":"high","original_tokens":100}]}`), nil
 			}
 			return nil, fmt.Errorf("unexpected tool: %s", name)
 		},
@@ -441,9 +441,9 @@ func TestHandleMemoryItems_WithQueryParams(t *testing.T) {
 	var capturedArgs map[string]any
 	caller := &testCaller{
 		callToolFn: func(name string, args map[string]any) (json.RawMessage, error) {
-			if name == "agent_context__agent_memory_recall" {
+			if name == "agent_context__agent_recall" {
 				capturedArgs = args
-				return wrapToolResult(`{"items":[]}`), nil
+				return wrapToolResult(`{"memory_items":[]}`), nil
 			}
 			return nil, fmt.Errorf("unexpected tool: %s", name)
 		},

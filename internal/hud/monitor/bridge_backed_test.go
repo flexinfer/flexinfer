@@ -143,9 +143,9 @@ func TestMemoryMonitor_BridgeBackedRefreshAndMutations(t *testing.T) {
 				"total_items":       totalItems,
 				"total_tokens":      90,
 			}), nil
-		case "agent_context__agent_memory_recall":
+		case "agent_context__agent_recall":
 			return toolEnvelope(map[string]any{
-				"items": []map[string]any{
+				"memory_items": []map[string]any{
 					{"id": "mem-1", "title": "first", "tier": "working", "importance": "medium", "importance_score": 0.5, "original_tokens": 10},
 				},
 			}), nil
