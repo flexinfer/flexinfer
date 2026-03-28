@@ -230,6 +230,9 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		if !strings.Contains(script, "Patched GPTQModel writer.py") {
 			t.Error("wrapper missing writer.py patch")
 		}
+		if !strings.Contains(script, "Patched GPTQModel save path to skip meta-backed tensors") {
+			t.Error("wrapper missing save-path meta tensor patch")
+		}
 	})
 }
 
