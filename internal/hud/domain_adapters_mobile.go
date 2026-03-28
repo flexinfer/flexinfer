@@ -1,0 +1,103 @@
+// domain_adapters_mobile.go provides mobile and spawn domain adapters.
+package hud
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/crb2nu/loom/internal/hud/domain/mobile"
+	domainspawn "github.com/crb2nu/loom/internal/hud/domain/spawn"
+	pkgspawn "github.com/crb2nu/loom/internal/spawn"
+)
+
+// --- Mobile adapter helpers ---
+
+// mobileEventLogAdapter wraps *EventLog to satisfy mobile.EventLogOps,
+// converting hud.TimelineEntry to mobile.TimelineEntry.
+type mobileEventLogAdapter struct {
+	log *EventLog
+}
+
+func (e *mobileEventLogAdapter) All(limit int) []mobile.TimelineEntry {
+	entries := e.log.All(limit)
+	result := make([]mobile.TimelineEntry, len(entries))
+	for i, entry := range entries {
+		result[i] = mobile.TimelineEntry{
+			Timestamp: entry.Timestamp,
+			EventType: entry.EventType,
+			AgentID:   entry.AgentID,
+			AgentType: entry.AgentType,
+			Data:      entry.Data,
+		}
+	}
+	return result
+}
+
+func (e *mobileEventLogAdapter) AllExcluding(limit int, excludeTypes ...string) []mobile.TimelineEntry {
+	entries := e.log.AllExcluding(limit, excludeTypes...)
+	result := make([]mobile.TimelineEntry, len(entries))
+	for i, entry := range entries {
+		result[i] = mobile.TimelineEntry{
+			Timestamp: entry.Timestamp,
+			EventType: entry.EventType,
+			AgentID:   entry.AgentID,
+			AgentType: entry.AgentType,
+			Data:      entry.Data,
+		}
+	}
+	return result
+}
+
+// mobileSpawnerAdapter wraps *SpawnOrchestrator to satisfy mobile.SpawnerOps.
+type mobileSpawnerAdapter struct {
+	s *SpawnOrchestrator
+}
+
+func (sa *mobileSpawnerAdapter) Spawn(ctx context.Context, req pkgspawn.Request) (string, error) {
+	return sa.s.Spawn(ctx, req)
+}
+
+func (sa *mobileSpawnerAdapter) GetSpawn(spawnID string) (*pkgspawn.State, bool) {
+	return sa.s.GetSpawn(spawnID)
+}
+
+func (sa *mobileSpawnerAdapter) ListSpawns() []*pkgspawn.State {
+	return sa.s.ListSpawns()
+}
+
+func (sa *mobileSpawnerAdapter) StopSpawn(ctx context.Context, spawnID string) error {
+	return sa.s.StopSpawn(ctx, spawnID)
+}
+
+func (sa *mobileSpawnerAdapter) Projects() []string {
+	return sa.s.Projects()
+}
+
+// --- Spawn domain Deps adapter ---
+
+// spawnDepsAdapter wraps *App to satisfy domainspawn.Deps. A separate adapter
+// is needed because *App.Spawner() returns mobile.SpawnerOps (for the mobile
+// domain), while spawn.Deps requires spawn.SpawnerOps. Both interfaces have
+// identical method sets but are distinct Go types.
+type spawnDepsAdapter struct {
+	app *App
+}
+
+func (s *spawnDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	s.app.WriteJSON(w, status, v)
+}
+
+func (s *spawnDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	s.app.WriteError(w, status, msg, err)
+}
+
+func (s *spawnDepsAdapter) RequireAdminToken(w http.ResponseWriter, r *http.Request) bool {
+	return s.app.RequireAdminToken(w, r)
+}
+
+func (s *spawnDepsAdapter) Spawner() domainspawn.SpawnerOps {
+	if s.app.spawner == nil {
+		return nil
+	}
+	return s.app.spawner
+}
