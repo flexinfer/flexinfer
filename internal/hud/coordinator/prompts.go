@@ -128,7 +128,7 @@ Available MCP tools you can reference in tool steps:
 - server_name: "morph_fast_apply", tool_name: "morph_edit_file" — Morphic code edit (params: file_path, instruction, code_update)
 - server_name: "devbox", tool_name: "devbox_exec" — Run commands in sandbox (params: project, command, agent_id)
 - server_name: "devbox", tool_name: "devbox_build" — Build sandbox image (params: project, agent_id)
-- server_name: "agent-context", tool_name: "agent_context_recall_enhanced" — Recall context (params: query, session_id, token_budget)
+- server_name: "agent-context", tool_name: "agent_recall" — Recall context (params: query, scope, session_id, token_budget)
 - server_name: "agent-context", tool_name: "agent_session_start" — Start agent session (params: namespace, agent_id, description)
 - server_name: "agent-context", tool_name: "agent_session_end" — End agent session (params: session_id, summarize)
 

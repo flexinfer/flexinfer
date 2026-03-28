@@ -103,24 +103,27 @@ func (a *AgentBridge) MemoryStats() (*MemoryStatsResult, error) {
 }
 
 // MemoryRecall retrieves memory items by tier and/or query.
+// Uses the unified agent_recall tool with scope="memory".
 func (a *AgentBridge) MemoryRecall(tier, query string, limit int) ([]MemoryItem, error) {
-	args := map[string]any{}
+	args := map[string]any{
+		"scope": "memory",
+	}
 	if tier != "" {
-		args["tiers"] = []string{tier}
+		args["memory_tiers"] = []string{tier}
 	}
 	if query != "" {
 		args["query"] = query
 	}
 	if limit > 0 {
-		args["limit"] = limit
+		args["token_budget"] = limit * 200 // approximate tokens per item
 	}
 	var result struct {
-		Items []MemoryItem `json:"items"`
+		MemoryItems []MemoryItem `json:"memory_items"`
 	}
-	if err := a.callAgentTool("agent_memory_recall", args, &result); err != nil {
+	if err := a.callAgentTool("agent_recall", args, &result); err != nil {
 		return nil, err
 	}
-	return result.Items, nil
+	return result.MemoryItems, nil
 }
 
 // MemoryAdd adds a new memory item.

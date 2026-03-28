@@ -170,31 +170,42 @@ func (a *AgentBridge) GraphFindPath(fromID, toID string, maxDepth int) ([]Entity
 }
 
 // AnnotationGet retrieves code annotations, optionally filtered by file.
+// Uses agent_context_search with entry_types=["annotation"].
 func (a *AgentBridge) AnnotationGet(filePath string) ([]AnnotationInfo, error) {
-	args := map[string]any{}
+	args := map[string]any{
+		"query":       "annotations",
+		"entry_types": []string{"annotation"},
+	}
 	if filePath != "" {
 		args["file_path"] = filePath
 	}
 	var result struct {
-		Annotations []AnnotationInfo `json:"annotations"`
+		Entries []AnnotationInfo `json:"entries"`
 	}
-	if err := a.callAgentTool("agent_code_annotations_get", args, &result); err != nil {
+	if err := a.callAgentTool("agent_context_search", args, &result); err != nil {
 		return nil, err
 	}
-	return result.Annotations, nil
+	return result.Entries, nil
 }
 
 // AnnotationAdd creates a code annotation.
+// Uses agent_context_add with entry_type="annotation".
 func (a *AgentBridge) AnnotationAdd(filePath, content, category string, line int) error {
-	args := map[string]any{
-		"file_path": filePath,
-		"content":   content,
+	entry := map[string]any{
+		"entry_type": "annotation",
+		"title":      content,
+		"content":    content,
+		"file_path":  filePath,
 	}
 	if category != "" {
-		args["category"] = category
+		entry["annotation_type"] = category
 	}
 	if line > 0 {
-		args["line"] = line
+		entry["line_start"] = line
 	}
-	return a.callAgentTool("agent_code_annotate", args, nil)
+	args := map[string]any{
+		"session_id": "",
+		"entries":    []map[string]any{entry},
+	}
+	return a.callAgentTool("agent_context_add", args, nil)
 }
