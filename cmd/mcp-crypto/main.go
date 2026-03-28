@@ -16,8 +16,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
-	"github.com/crb2nu/loom/pkg/mcplog"
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -31,29 +30,16 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	logger := mcplog.NewDefault()
-	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-crypto",
-
-		logger)
+	srv, cleanup, err := mcpscaffold.NewServer(ctx, "mcp-crypto", version,
+		mcpscaffold.WithInstructions("Cryptographic and encoding utilities. Tools: random_string, uuid_v4, hash_string, base64_encode, base64_decode"),
+	)
 	if err != nil {
-		logger.Warn("OTel tracer init failed",
-
-			"error", err,
-		)
+		return err
 	}
-	defer func() {
-		_ =
-			shutdownTracer(ctx)
-	}()
-	tracer := mcpotel.Tracer(tp, "mcp-crypto")
-
-	logger.Info("starting server", "name", "mcp-crypto", "version", version)
-
-	server := mcp.NewServer("mcp-crypto", version)
-	server.SetInstructions("Cryptographic and encoding utilities. Tools: random_string, uuid_v4, hash_string, base64_encode, base64_decode")
+	defer func() { _ = cleanup(ctx) }()
 
 	// random_string
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "random_string",
 		Description: "Generate a cryptographically secure random string",
 		InputSchema: mcp.InputSchema{
@@ -69,24 +55,20 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleRandomString)
 
-		// uuid_v4
-		tracer, "random_string", handleRandomString))
-
-	server.AddTool(mcp.Tool{
+	// uuid_v4
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "uuid_v4",
 		Description: "Generate a UUID v4",
 		InputSchema: mcp.InputSchema{
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleUUID)
 
-		// hash_string
-		tracer, "uuid_v4", handleUUID))
-
-	server.AddTool(mcp.Tool{
+	// hash_string
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "hash_string",
 		Description: "Hash a string using MD5 or SHA256",
 		InputSchema: mcp.InputSchema{
@@ -104,12 +86,10 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"text"},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleHashString)
 
-		// base64_encode
-		tracer, "hash_string", handleHashString))
-
-	server.AddTool(mcp.Tool{
+	// base64_encode
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "base64_encode",
 		Description: "Encode text to Base64",
 		InputSchema: mcp.InputSchema{
@@ -122,12 +102,10 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"text"},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleBase64Encode)
 
-		// base64_decode
-		tracer, "base64_encode", handleBase64Encode))
-
-	server.AddTool(mcp.Tool{
+	// base64_decode
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "base64_decode",
 		Description: "Decode Base64 text",
 		InputSchema: mcp.InputSchema{
@@ -140,9 +118,9 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"text"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "base64_decode", handleBase64Decode))
+	}, handleBase64Decode)
 
-	return server.Run(ctx)
+	return srv.Run(ctx)
 }
 
 func handleRandomString(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {

@@ -9,11 +9,8 @@ import (
 	"fmt"
 	"os"
 
-	"gitlab.flexinfer.ai/libs/mcp-go"
-
 	"github.com/crb2nu/loom/pkg/lifecycle"
-	"github.com/crb2nu/loom/pkg/mcplog"
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 )
 
 var version = "0.1.0"
@@ -26,21 +23,15 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	logger := mcplog.NewDefault()
-
-	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-quality", logger)
+	srv, cleanup, err := mcpscaffold.NewServer(ctx, "mcp-quality", version,
+		mcpscaffold.WithInstructions("Code quality analysis tools. Run lint, test, security, and architectural checks on changed files. Use quality_check for a combined gate before committing."),
+	)
 	if err != nil {
-		logger.Warn("OTel tracer init failed", "error", err)
+		return err
 	}
-	defer func() { _ = shutdownTracer(ctx) }()
-	tracer := mcpotel.Tracer(tp, "mcp-quality")
+	defer func() { _ = cleanup(ctx) }()
 
-	logger.Info("starting server", "name", "mcp-quality", "version", version)
+	registerTools(srv)
 
-	server := mcp.NewServer("mcp-quality", version)
-	server.SetInstructions("Code quality analysis tools. Run lint, test, security, and architectural checks on changed files. Use quality_check for a combined gate before committing.")
-
-	registerTools(server, tracer)
-
-	return server.Run(ctx)
+	return srv.Run(ctx)
 }

@@ -11,8 +11,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
-	"github.com/crb2nu/loom/pkg/mcplog"
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -26,32 +25,15 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	logger := mcplog.NewDefault()
-	tp,
-		shutdownTracer,
-
-		err :=
-		mcpotel.InitTracer(ctx,
-			"mcp-itchio",
-
-			logger)
+	srv, cleanup, err := mcpscaffold.NewServer(ctx, "mcp-itchio", version,
+		mcpscaffold.WithInstructions("itch.io distribution management via Butler CLI. Tools: itchio_upload, itchio_status, itchio_version_history"),
+	)
 	if err != nil {
-		logger.
-			Warn("OTel tracer init failed", "error",
-				err)
+		return err
 	}
-	defer func() {
-		_ = shutdownTracer(ctx)
-	}()
-	tracer := mcpotel.Tracer(
-		tp, "mcp-itchio")
+	defer func() { _ = cleanup(ctx) }()
 
-	logger.Info("starting server", "name", "mcp-itchio", "version", version)
-
-	server := mcp.NewServer("mcp-itchio", version)
-	server.SetInstructions("itch.io distribution management via Butler CLI. Tools: itchio_upload, itchio_status, itchio_version_history")
-
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "itchio_upload",
 		Description: "Upload a build to itch.io via Butler. Pushes a file to the specified channel with delta patching.",
 		InputSchema: mcp.InputSchema{
@@ -76,9 +58,9 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"file", "project", "channel"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "itchio_upload", handleUpload))
+	}, handleUpload)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "itchio_status",
 		Description: "Check the current status of all channels for an itch.io project",
 		InputSchema: mcp.InputSchema{
@@ -91,9 +73,9 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"project"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "itchio_status", handleStatus))
+	}, handleStatus)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "itchio_version_history",
 		Description: "List version history for a specific channel",
 		InputSchema: mcp.InputSchema{
@@ -110,9 +92,9 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"project", "channel"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "itchio_version_history", handleVersionHistory))
+	}, handleVersionHistory)
 
-	return server.Run(ctx)
+	return srv.Run(ctx)
 }
 
 func findButler() (string, error) {

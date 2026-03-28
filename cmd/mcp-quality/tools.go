@@ -2,43 +2,42 @@ package main
 
 import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
-	"go.opentelemetry.io/otel/trace"
 
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 )
 
-func registerTools(server *mcp.Server, tracer trace.Tracer) {
-	server.AddTool(mcp.Tool{
+func registerTools(srv *mcpscaffold.Server) {
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "quality_lint",
 		Description: "Run golangci-lint on changed Go files. Returns structured lint issues with file, line, message, and fix hints.",
 		InputSchema: qualityInputSchema(),
-	}, mcpotel.TracedToolHandler(tracer, "quality_lint", handleLint))
+	}, handleLint)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "quality_test",
 		Description: "Run Go tests for packages with changed files. Returns test results with pass/fail status and coverage delta.",
 		InputSchema: qualityInputSchema(),
-	}, mcpotel.TracedToolHandler(tracer, "quality_test", handleTest))
+	}, handleTest)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "quality_security",
 		Description: "Run gosec and govulncheck security scanners. Returns structured security findings.",
 		InputSchema: qualityInputSchema(),
-	}, mcpotel.TracedToolHandler(tracer, "quality_security", handleSecurity))
+	}, handleSecurity)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "quality_check",
 		Description: "Combined quality gate: runs lint + test + security in one call. Returns aggregated pass/fail with structured remediation hints. Run this before committing.",
 		InputSchema: qualityInputSchema(),
-	}, mcpotel.TracedToolHandler(tracer, "quality_check", handleCheck))
+	}, handleCheck)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "quality_coverage",
 		Description: "Measure test coverage for changed packages. Returns per-package coverage percentages.",
 		InputSchema: qualityInputSchema(),
-	}, mcpotel.TracedToolHandler(tracer, "quality_coverage", handleCoverage))
+	}, handleCoverage)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "quality_arch",
 		Description: "Check architectural constraints (package import rules). Validates Go import graph against rules in .loom/arch-rules.yaml.",
 		InputSchema: mcp.InputSchema{
@@ -50,7 +49,7 @@ func registerTools(server *mcp.Server, tracer trace.Tracer) {
 				},
 			},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "quality_arch", handleArch))
+	}, handleArch)
 }
 
 func qualityInputSchema() mcp.InputSchema {

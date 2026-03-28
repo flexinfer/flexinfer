@@ -10,12 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.flexinfer.ai/libs/mcp-go"
-
 	"github.com/crb2nu/loom/pkg/env"
 	"github.com/crb2nu/loom/pkg/lifecycle"
-	"github.com/crb2nu/loom/pkg/mcplog"
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 )
 
 var version = "0.2.0"
@@ -28,15 +25,18 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	logger := mcplog.NewDefault()
-
-	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-devbox", logger)
+	srv, cleanup, err := mcpscaffold.NewServer(ctx, "mcp-devbox", version,
+		mcpscaffold.WithInstructions("Project-aware dev sandbox executor. Builds isolated containers with auto-detected runtimes and deps. "+
+			"Tools: devbox_exec, devbox_build, devbox_status, devbox_stop, devbox_detect, "+
+			"devbox_read_file, devbox_write_file, devbox_exec_async, devbox_exec_poll, "+
+			"devbox_metrics, devbox_summary"),
+	)
 	if err != nil {
-		logger.Warn("OTel tracer init failed", "error", err)
+		return err
 	}
-	defer func() { _ = shutdownTracer(ctx) }()
-	tracer := mcpotel.Tracer(tp, "mcp-devbox")
+	defer func() { _ = cleanup(ctx) }()
 
+	logger := srv.Logger
 	logger.Info("starting server", "name", "mcp-devbox", "version", version,
 		"backend", env.String("DEVBOX_BACKEND", "docker"))
 
@@ -143,13 +143,7 @@ func run(ctx context.Context) error {
 	mgr.asyncExecs = newAsyncRegistry()
 	go mgr.asyncExecs.cleanupLoop(ctx)
 
-	server := mcp.NewServer("mcp-devbox", version)
-	server.SetInstructions("Project-aware dev sandbox executor. Builds isolated containers with auto-detected runtimes and deps. " +
-		"Tools: devbox_exec, devbox_build, devbox_status, devbox_stop, devbox_detect, " +
-		"devbox_read_file, devbox_write_file, devbox_exec_async, devbox_exec_poll, " +
-		"devbox_metrics, devbox_summary")
-
-	registerTools(server, mgr, tracer)
+	registerTools(srv.Server, mgr, srv.Tracer)
 
 	// Reconcile stale state entries (pods evicted, node reboots)
 	mgr.reconcileState(ctx)
@@ -166,7 +160,7 @@ func run(ctx context.Context) error {
 	// Cleanup on shutdown
 	defer mgr.shutdownAll(context.Background())
 
-	return server.Run(ctx)
+	return srv.Run(ctx)
 }
 
 // builderImage returns the builder image, checking DEVBOX_BUILDER_IMAGE first,

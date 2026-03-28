@@ -8,15 +8,13 @@ import (
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 	"github.com/crb2nu/loom/pkg/validate"
-
-	"go.opentelemetry.io/otel/trace"
 )
 
-func registerMergeRequestTools(server *mcp.Server, gl *gitlabServer, tracer trace.Tracer) {
+func registerMergeRequestTools(srv *mcpscaffold.Server, gl *gitlabServer) {
 	// create_merge_request
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "create_merge_request",
 		Description: "Create a new merge request",
 		InputSchema: mcp.InputSchema{
@@ -49,10 +47,9 @@ func registerMergeRequestTools(server *mcp.Server, gl *gitlabServer, tracer trac
 			},
 			Required: []string{"project", "source_branch", "target_branch", "title"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "create_merge_request", gl.handleCreateMergeRequest))
-
+	}, gl.handleCreateMergeRequest)
 	// get_merge_request
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "get_merge_request",
 		Description: "Get a merge request by IID",
 		InputSchema: mcp.InputSchema{
@@ -69,10 +66,9 @@ func registerMergeRequestTools(server *mcp.Server, gl *gitlabServer, tracer trac
 			},
 			Required: []string{"project", "merge_request_iid"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "get_merge_request", gl.handleGetMergeRequest))
-
+	}, gl.handleGetMergeRequest)
 	// list_merge_requests
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "list_merge_requests",
 		Description: "List merge requests for a project",
 		InputSchema: mcp.InputSchema{
@@ -105,10 +101,9 @@ func registerMergeRequestTools(server *mcp.Server, gl *gitlabServer, tracer trac
 			},
 			Required: []string{"project"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "list_merge_requests", gl.handleListMergeRequests))
-
+	}, gl.handleListMergeRequests)
 	// merge_merge_request
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "merge_merge_request",
 		Description: "Merge a merge request immediately or request GitLab auto-merge",
 		InputSchema: mcp.InputSchema{
@@ -149,9 +144,8 @@ func registerMergeRequestTools(server *mcp.Server, gl *gitlabServer, tracer trac
 			},
 			Required: []string{"project", "merge_request_iid"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "merge_merge_request", gl.handleMergeMergeRequest))
+	}, gl.handleMergeMergeRequest)
 }
-
 func (g *gitlabServer) handleCreateMergeRequest(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
@@ -160,11 +154,9 @@ func (g *gitlabServer) handleCreateMergeRequest(ctx context.Context, args map[st
 	title := v.Required("title")
 	description := v.String("description", "")
 	removeSourceBranch := v.Bool("remove_source_branch", false)
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
-
 	payload := map[string]any{
 		"source_branch":        sourceBranch,
 		"target_branch":        targetBranch,
@@ -174,39 +166,30 @@ func (g *gitlabServer) handleCreateMergeRequest(ctx context.Context, args map[st
 	if description != "" {
 		payload["description"] = description
 	}
-
 	path := fmt.Sprintf("/projects/%s/merge_requests", encodeProject(project))
-
 	result, err := g.request(ctx, "POST", path, payload)
 	if err != nil {
 		return nil, err
 	}
-
 	return mcp.JSONResult(result)
 }
-
 func (g *gitlabServer) handleGetMergeRequest(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
 	mergeRequestIID := v.RequiredInt("merge_request_iid")
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 	if errResult := validatePositiveIntParam("merge_request_iid", mergeRequestIID); errResult != nil {
 		return errResult, nil
 	}
-
 	path := fmt.Sprintf("/projects/%s/merge_requests/%d", encodeProject(project), mergeRequestIID)
-
 	result, err := g.request(ctx, "GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
-
 	return mcp.JSONResult(result)
 }
-
 func (g *gitlabServer) handleListMergeRequests(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
@@ -215,11 +198,9 @@ func (g *gitlabServer) handleListMergeRequests(ctx context.Context, args map[str
 	targetBranch := v.String("target_branch", "")
 	perPage := normalizePerPage(v.Int("per_page", 20), 20)
 	page := normalizePage(v.Int("page", 1))
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
-
 	q := url.Values{}
 	q.Set("state", state)
 	q.Set("per_page", fmt.Sprintf("%d", perPage))
@@ -230,17 +211,13 @@ func (g *gitlabServer) handleListMergeRequests(ctx context.Context, args map[str
 	if targetBranch != "" {
 		q.Set("target_branch", targetBranch)
 	}
-
 	path := fmt.Sprintf("/projects/%s/merge_requests?%s", encodeProject(project), q.Encode())
-
 	result, meta, err := g.requestListWithMeta(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-
 	return mcp.JSONResult(map[string]any{"merge_requests": result, "count": len(result), "pagination": meta})
 }
-
 func (g *gitlabServer) handleMergeMergeRequest(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
@@ -251,14 +228,12 @@ func (g *gitlabServer) handleMergeMergeRequest(ctx context.Context, args map[str
 	sha := v.String("sha", "")
 	mergeCommitMessage := v.String("merge_commit_message", "")
 	squashCommitMessage := v.String("squash_commit_message", "")
-
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 	if errResult := validatePositiveIntParam("merge_request_iid", mergeRequestIID); errResult != nil {
 		return errResult, nil
 	}
-
 	payload := map[string]any{}
 	if autoMerge {
 		payload["auto_merge"] = true
@@ -278,18 +253,14 @@ func (g *gitlabServer) handleMergeMergeRequest(ctx context.Context, args map[str
 	if squashCommitMessage != "" {
 		payload["squash_commit_message"] = squashCommitMessage
 	}
-
 	var body any
 	if len(payload) > 0 {
 		body = payload
 	}
-
 	path := fmt.Sprintf("/projects/%s/merge_requests/%d/merge", encodeProject(project), mergeRequestIID)
-
 	result, err := g.request(ctx, "PUT", path, body)
 	if err != nil {
 		return nil, err
 	}
-
 	return mcp.JSONResult(result)
 }
