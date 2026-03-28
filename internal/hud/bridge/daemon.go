@@ -12,7 +12,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
@@ -20,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/crb2nu/loom/pkg/launchctl"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
@@ -137,7 +137,7 @@ func (c *DaemonClient) maybeAutostart(err error) bool {
 		return false
 	}
 	c.lastAutostart = time.Now()
-	_ = exec.Command("launchctl", "start", "com.loom.daemon").Run() //nolint:noctx // best-effort
+	_ = launchctl.Start(context.Background(), "com.loom.daemon")
 	return true
 }
 

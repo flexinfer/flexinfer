@@ -62,6 +62,9 @@ Scale: each dimension 1-5. Score = (impact×35 + risk×30 + drag×20 + effort_in
 | ~~DEBT-042~~ | done | debt/wave4-w2-cycle4 (daemon_toolcache.go split: 1,073 → 5 files) |
 | ~~DEBT-044~~ | done | debt/wave4-w2-cycle4 (qdrant client.go split: 1,052 → 4 files) |
 | ~~DEBT-047~~ | done | debt/wave4-w2-cycle4 (7 MCP servers migrated to mcpscaffold) |
+| ~~DEBT-045~~ | done | debt/wave3-cycle4 (fleet.go split: 1,004 → 4 files) |
+| ~~DEBT-048~~ | done | debt/wave3-cycle4 (pkg/launchctl: 14 noctx suppressions eliminated) |
+| ~~DEBT-049~~ | done | debt/wave3-cycle4 (mcp-godot: 21 unit tests added) |
 
 ## Suggested Cut Lines
 
@@ -74,3 +77,4 @@ Scale: each dimension 1-5. Score = (impact×35 + risk×30 + drag×20 + effort_in
 
 - ~~Wave 1: DEBT-041, DEBT-038, DEBT-039, DEBT-040, DEBT-046~~ — **shipped** (MR !130, d9de04db)
 - ~~Wave 2: DEBT-043, DEBT-042, DEBT-044, DEBT-047~~ — **shipped** (debt/wave4-w2-cycle4)
+- ~~Wave 3: DEBT-045, DEBT-048, DEBT-049~~ — **shipped** (debt/wave3-cycle4)
