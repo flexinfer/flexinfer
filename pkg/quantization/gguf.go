@@ -64,7 +64,11 @@ func (b *GGUFJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		ggufType = DefaultGGUFType
 	}
 
+	// Container memory priority: spec > GPUProfile > hardcoded default.
 	memoryGB := int32(DefaultGGUFMemoryGB)
+	if params.MemoryConfig.ContainerMemoryGB > 0 {
+		memoryGB = params.MemoryConfig.ContainerMemoryGB
+	}
 	if params.Spec.MaxMemoryGB != nil {
 		memoryGB = *params.Spec.MaxMemoryGB
 	}

@@ -191,8 +191,9 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			NodeSelector: effectiveNodeSelector,
 			GPUVendor:    gpuVendorFromNodeSelector(effectiveNodeSelector),
 			GPUArch:      ablGPUArch,
+			MemoryConfig: quantization.DefaultGPUMemoryConfig(),
 		}
-		// Look up GPUProfile for abliteration-specific image override.
+		// Look up GPUProfile for abliteration-specific image and memory config overrides.
 		// Uses key "abliteration" (NOT "gptq") since the abliteration script
 		// lives in a different image than the GPTQ quantizer.
 		if r.GPUProfiles != nil && ablGPUArch != "" {
@@ -200,6 +201,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 				if img, ok := backend.QuantizerImageFromProfile(profile, "abliteration"); ok {
 					params.ProfileQuantizerImage = img
 				}
+				params.MemoryConfig = quantization.GPUMemoryConfigFromProfile(profile)
 			}
 		}
 

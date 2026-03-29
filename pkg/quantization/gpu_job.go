@@ -8,7 +8,45 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
+
+// GPUMemoryConfig holds memory sizing from GPUProfile or defaults.
+type GPUMemoryConfig struct {
+	// ContainerMemoryGB is the K8s container memory limit.
+	ContainerMemoryGB int32
+	// MaxGPUMemoryGB is the GPU memory budget for accelerate device_map.
+	MaxGPUMemoryGB int32
+	// MaxCPUMemoryGB is the CPU memory budget for offloading.
+	MaxCPUMemoryGB int32
+}
+
+// DefaultGPUMemoryConfig returns the default memory configuration.
+func DefaultGPUMemoryConfig() GPUMemoryConfig {
+	return GPUMemoryConfig{
+		ContainerMemoryGB: DefaultGPUQuantizationMemoryGB,
+		MaxGPUMemoryGB:    20,
+		MaxCPUMemoryGB:    32,
+	}
+}
+
+// GPUMemoryConfigFromProfile creates a GPUMemoryConfig from a GPUProfile, with defaults.
+func GPUMemoryConfigFromProfile(profile *aiv1alpha2.GPUProfileSpec) GPUMemoryConfig {
+	cfg := DefaultGPUMemoryConfig()
+	if profile != nil {
+		if profile.ContainerMemoryGB != nil {
+			cfg.ContainerMemoryGB = *profile.ContainerMemoryGB
+		}
+		if profile.MaxGPUMemoryGB != nil {
+			cfg.MaxGPUMemoryGB = *profile.MaxGPUMemoryGB
+		}
+		if profile.MaxCPUMemoryGB != nil {
+			cfg.MaxCPUMemoryGB = *profile.MaxCPUMemoryGB
+		}
+	}
+	return cfg
+}
 
 // quantizationCPUCores returns the CPU core count for quantization jobs.
 // Reads FLEXINFER_GPTQ_CPU_CORES env var, falls back to DefaultGPUQuantizationCPU.

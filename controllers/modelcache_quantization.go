@@ -167,14 +167,16 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			NodeSelector: effectiveNodeSelector,
 			GPUVendor:    gpu.VendorFromLabels(effectiveNodeSelector),
 			GPUArch:      gpuArch,
+			MemoryConfig: quantization.DefaultGPUMemoryConfig(),
 		}
-		// Look up GPUProfile for quantizer image override.
+		// Look up GPUProfile for quantizer image and memory config overrides.
 		if r.GPUProfiles != nil && gpuArch != "" {
 			if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok {
 				format := string(modelCache.Spec.Quantization.Format)
 				if img, ok := backend.QuantizerImageFromProfile(profile, format); ok {
 					params.ProfileQuantizerImage = img
 				}
+				params.MemoryConfig = quantization.GPUMemoryConfigFromProfile(profile)
 			}
 		}
 

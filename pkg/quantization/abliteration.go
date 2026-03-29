@@ -101,7 +101,11 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 		return nil, fmt.Errorf("abliteration spec is nil")
 	}
 
+	// Container memory priority: spec > GPUProfile > hardcoded default.
 	memoryGB := int32(DefaultAbliterationMemoryGB)
+	if params.MemoryConfig.ContainerMemoryGB > 0 {
+		memoryGB = params.MemoryConfig.ContainerMemoryGB
+	}
 	if ablitSpec.MaxMemoryGB != nil && *ablitSpec.MaxMemoryGB > 0 {
 		memoryGB = *ablitSpec.MaxMemoryGB
 	}
@@ -112,7 +116,7 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 	}
 
 	image := ResolveImage(ImageFormatAbliteration, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
-	ablitEnv := abliterationEnv(params.ModelPath, params.GPUArch, ablitSpec)
+	ablitEnv := abliterationEnv(params.ModelPath, params.GPUArch, ablitSpec, params.MemoryConfig)
 	script := abliterationWrapperScript()
 
 	backoffLimit := int32(2)
@@ -195,7 +199,7 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 }
 
 // abliterationEnv returns environment variables for the abliteration script.
-func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpec) []corev1.EnvVar {
+func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpec, memCfg GPUMemoryConfig) []corev1.EnvVar {
 	numSamples := int32(DefaultAbliterationNumSamples)
 	maxMemoryGB := int32(DefaultAbliterationMemoryGB)
 	if spec.NumSamples != nil && *spec.NumSamples > 0 {
@@ -276,13 +280,23 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 	if resume == "" {
 		resume = "true"
 	}
+	// CPU memory priority: env var > GPUProfile > heuristic from container limit.
 	cpuMaxMemoryGB := os.Getenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB")
 	if cpuMaxMemoryGB == "" {
-		cpuMaxMemoryGB = fmt.Sprintf("%d", abliterationCPUMaxMemoryGB(maxMemoryGB))
+		if memCfg.MaxCPUMemoryGB > 0 {
+			cpuMaxMemoryGB = fmt.Sprintf("%d", memCfg.MaxCPUMemoryGB)
+		} else {
+			cpuMaxMemoryGB = fmt.Sprintf("%d", abliterationCPUMaxMemoryGB(maxMemoryGB))
+		}
 	}
+	// GPU memory priority: env var > GPUProfile > arch-based heuristic.
 	gpuMaxMemoryGB := os.Getenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB")
 	if gpuMaxMemoryGB == "" {
-		gpuMaxMemoryGB = fmt.Sprintf("%d", abliterationGPUMaxMemoryGB(spec.UseGPU, gpuArch))
+		if memCfg.MaxGPUMemoryGB > 0 {
+			gpuMaxMemoryGB = fmt.Sprintf("%d", memCfg.MaxGPUMemoryGB)
+		} else {
+			gpuMaxMemoryGB = fmt.Sprintf("%d", abliterationGPUMaxMemoryGB(spec.UseGPU, gpuArch))
+		}
 	}
 	offloadDir := os.Getenv("FLEXINFER_ABLITERATION_OFFLOAD_DIR")
 	if offloadDir == "" {

@@ -198,13 +198,15 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 			NodeSelector: modelCache.Spec.NodeSelector,
 			GPUVendor:    gpu.VendorFromLabels(modelCache.Spec.NodeSelector),
 			GPUArch:      ftGPUArch,
+			MemoryConfig: quantization.DefaultGPUMemoryConfig(),
 		}
-		// Look up GPUProfile for image override (finetune reuses GPTQ image).
+		// Look up GPUProfile for image and memory config overrides (finetune reuses GPTQ image).
 		if r.GPUProfiles != nil && ftGPUArch != "" {
 			if profile, ok := r.GPUProfiles.Lookup(ftGPUArch); ok {
 				if img, ok := backend.QuantizerImageFromProfile(profile, "gptq"); ok {
 					params.ProfileQuantizerImage = img
 				}
+				params.MemoryConfig = quantization.GPUMemoryConfigFromProfile(profile)
 			}
 		}
 

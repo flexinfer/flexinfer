@@ -59,6 +59,21 @@ type GPUProfileSpec struct {
 	// +optional
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
+	// MaxGPUMemoryGB is the max GPU memory budget for accelerate device_map (e.g., 12 for gfx906 16GB VRAM).
+	// Used as ABLITERATION_GPU_MAX_MEMORY_GB env var in abliteration jobs.
+	// +optional
+	MaxGPUMemoryGB *int32 `json:"maxGPUMemoryGB,omitempty"`
+
+	// MaxCPUMemoryGB is the max CPU memory budget for offloading (e.g., 56 for 62GiB node).
+	// Used as ABLITERATION_CPU_MAX_MEMORY_GB env var in abliteration jobs.
+	// +optional
+	MaxCPUMemoryGB *int32 `json:"maxCPUMemoryGB,omitempty"`
+
+	// ContainerMemoryGB is the K8s container memory limit for quantization/abliteration jobs.
+	// Replaces hardcoded DefaultGPUQuantizationMemoryGB.
+	// +optional
+	ContainerMemoryGB *int32 `json:"containerMemoryGB,omitempty"`
+
 	// Quantization declares which quantization formats and images are available.
 	// +optional
 	Quantization *QuantizationProfile `json:"quantization,omitempty"`
