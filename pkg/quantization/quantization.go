@@ -60,6 +60,11 @@ type JobParams struct {
 	// ProfileQuantizerImage is an optional image override from a GPUProfile CR.
 	// When set, it takes priority over env var and hardcoded defaults.
 	ProfileQuantizerImage string
+
+	// MemoryConfig holds GPUProfile-derived memory sizing for container limits
+	// and GPU/CPU memory budgets. When zero-valued, builders fall back to their
+	// own defaults (DefaultGPUQuantizationMemoryGB, etc.).
+	MemoryConfig GPUMemoryConfig
 }
 
 // FormatBackendCompatibility maps quantization formats to compatible backends.

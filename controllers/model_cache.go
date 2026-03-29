@@ -660,13 +660,15 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 		GPUArch:      quantGPUArch,
 		NodeSelector: model.Spec.NodeSelector,
 		Tolerations:  tolerations,
+		MemoryConfig: quantization.DefaultGPUMemoryConfig(),
 	}
-	// Look up GPUProfile for quantizer image override.
+	// Look up GPUProfile for quantizer image and memory config overrides.
 	if r.GPUProfiles != nil && quantGPUArch != "" {
 		if profile, ok := r.GPUProfiles.Lookup(quantGPUArch); ok {
 			if img, ok := backend.QuantizerImageFromProfile(profile, string(spec.Format)); ok {
 				params.ProfileQuantizerImage = img
 			}
+			params.MemoryConfig = quantization.GPUMemoryConfigFromProfile(profile)
 		}
 	}
 

@@ -194,7 +194,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		SkipVisionLayers: ablitBoolPtr(true),
 	}
 
-	env := abliterationEnv("my-model", "gfx1100", spec)
+	env := abliterationEnv("my-model", "gfx1100", spec, DefaultGPUMemoryConfig())
 
 	envMap := make(map[string]string)
 	for _, e := range env {
@@ -208,7 +208,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"num samples", "NUM_SAMPLES", "64"},
 		{"target layers", "TARGET_LAYERS", "10-55"},
 		{"weight matrices", "WEIGHT_MATRICES", "o_proj,down_proj"},
-		{"ablate lm_head", "ABLITERATION_ABLITERATE_LM_HEAD", "false"},
+		{"ablate lm_head", "ABLITERATION_ABLITERATE_LM_HEAD", "true"},
 		{"skip vision", "SKIP_VISION", "true"},
 		{"device map auto", "DEVICE_MAP", "auto"},
 		{"progress interval", "ABLITERATION_PROGRESS_INTERVAL", "10"},
@@ -259,7 +259,7 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	t.Setenv("FLEXINFER_ABLITERATION_SAFE_SHARDED_LOAD", "true")
 	t.Setenv("FLEXINFER_ABLITERATION_MODEL_POLICIES", `[{"name":"custom"}]`)
 
-	env := abliterationEnv("my-model", "gfx1100", &aiv1alpha1.AbliterationSpec{})
+	env := abliterationEnv("my-model", "gfx1100", &aiv1alpha1.AbliterationSpec{}, DefaultGPUMemoryConfig())
 	envMap := make(map[string]string)
 	for _, e := range env {
 		envMap[e.Name] = e.Value
@@ -320,7 +320,7 @@ func TestAbliterationEnv_CPUMode(t *testing.T) {
 		UseGPU: false,
 	}
 
-	env := abliterationEnv("test-model", "gfx906", spec)
+	env := abliterationEnv("test-model", "gfx906", spec, DefaultGPUMemoryConfig())
 
 	for _, e := range env {
 		if e.Name == "DEVICE_MAP" {
@@ -338,7 +338,7 @@ func TestAbliterationEnv_AblateLMHeadOptIn(t *testing.T) {
 		WeightMatrices: []string{"o_proj", "lm_head"},
 	}
 
-	env := abliterationEnv("test-model", "gfx1100", spec)
+	env := abliterationEnv("test-model", "gfx1100", spec, DefaultGPUMemoryConfig())
 	envMap := make(map[string]string)
 	for _, e := range env {
 		envMap[e.Name] = e.Value
@@ -357,7 +357,7 @@ func TestAbliterationEnv_GFX906DisablesCachingAllocatorWarmup(t *testing.T) {
 		UseGPU: true,
 	}
 
-	env := abliterationEnv("test-model", "gfx906", spec)
+	env := abliterationEnv("test-model", "gfx906", spec, DefaultGPUMemoryConfig())
 	envMap := make(map[string]string)
 	for _, e := range env {
 		envMap[e.Name] = e.Value

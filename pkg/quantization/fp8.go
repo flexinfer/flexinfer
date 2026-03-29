@@ -54,7 +54,11 @@ func (b *FP8JobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		return nil, err
 	}
 
+	// Container memory priority: spec > GPUProfile > hardcoded default.
 	memoryGB := int32(DefaultGPUQuantizationMemoryGB)
+	if params.MemoryConfig.ContainerMemoryGB > 0 {
+		memoryGB = params.MemoryConfig.ContainerMemoryGB
+	}
 	if params.Spec.MaxMemoryGB != nil {
 		memoryGB = *params.Spec.MaxMemoryGB
 	}

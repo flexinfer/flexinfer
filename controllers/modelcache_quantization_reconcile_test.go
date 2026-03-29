@@ -288,6 +288,9 @@ func TestReconcileQuantizationFailedCapturesFailureMessage(t *testing.T) {
 	started := metav1.NewTime(time.Unix(1_700_000_000, 0))
 
 	cache := newQuantizationCache("quant-failed")
+	// Disable auto-retry so failure goes straight to Failed status
+	noRetries := int32(0)
+	cache.Spec.MaxRetries = &noRetries
 	r, cl := newQuantizationTestReconciler(t, nil,
 		cache,
 		&batchv1.Job{

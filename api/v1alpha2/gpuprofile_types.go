@@ -59,6 +59,21 @@ type GPUProfileSpec struct {
 	// +optional
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
+	// MaxGPUMemoryGB is the max GPU memory budget for accelerate device_map (e.g., 12 for gfx906 16GB VRAM).
+	// Used as ABLITERATION_GPU_MAX_MEMORY_GB env var in abliteration jobs.
+	// +optional
+	MaxGPUMemoryGB *int32 `json:"maxGPUMemoryGB,omitempty"`
+
+	// MaxCPUMemoryGB is the max CPU memory budget for offloading (e.g., 56 for 62GiB node).
+	// Used as ABLITERATION_CPU_MAX_MEMORY_GB env var in abliteration jobs.
+	// +optional
+	MaxCPUMemoryGB *int32 `json:"maxCPUMemoryGB,omitempty"`
+
+	// ContainerMemoryGB is the K8s container memory limit for quantization/abliteration jobs.
+	// Replaces hardcoded DefaultGPUQuantizationMemoryGB.
+	// +optional
+	ContainerMemoryGB *int32 `json:"containerMemoryGB,omitempty"`
+
 	// Quantization declares which quantization formats and images are available.
 	// +optional
 	Quantization *QuantizationProfile `json:"quantization,omitempty"`
@@ -68,6 +83,11 @@ type GPUProfileSpec struct {
 	// instead of creating per-model Deployments.
 	// +optional
 	Runtime *RuntimeProfile `json:"runtime,omitempty"`
+
+	// ImagePullPolicy overrides the default pull policy for all images on this GPU architecture.
+	// If not set, ImagePullPolicyForImage() logic is used.
+	// +optional
+	ImagePullPolicy *corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 }
 
 // GPUFeatures declares hardware capability flags.
@@ -99,6 +119,11 @@ type QuantizationProfile struct {
 	// Images maps quantization format to the container image used for quantization jobs.
 	// +optional
 	Images map[string]string `json:"images,omitempty"`
+
+	// ImagePullPolicy overrides the pull policy for quantization job images.
+	// Takes precedence over GPUProfileSpec.ImagePullPolicy for quantization jobs.
+	// +optional
+	ImagePullPolicy *corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 }
 
 // RuntimeProfile configures the persistent flexinfer-runtime container for a GPU architecture.
@@ -110,6 +135,11 @@ type RuntimeProfile struct {
 	// Port is the runtime API port. Defaults to 8080.
 	// +optional
 	Port *int32 `json:"port,omitempty"`
+
+	// ImagePullPolicy overrides the pull policy for runtime images.
+	// Takes precedence over GPUProfileSpec.ImagePullPolicy for runtime pods.
+	// +optional
+	ImagePullPolicy *corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 }
 
 // GPUProfileStatus holds observed state from the controller.
