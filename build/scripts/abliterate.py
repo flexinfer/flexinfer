@@ -1412,6 +1412,8 @@ print(
 # Refusal direction norm guard: evaluate the layers we are actually about to edit.
 # For hybrid architectures, late untouched layers can retain large refusal norms
 # even when we intentionally target only a safer middle-layer slice.
+# The global max often lands on a non-targeted layer (e.g. GDN layer 63) and is
+# irrelevant -- the guard should only check layers we actually abliterate.
 target_norm_pairs = [(layer_idx, norms[layer_idx]) for layer_idx in layer_indices]
 if not target_norm_pairs:
     msg = "ABORTING: No valid target layers selected for abliteration."
@@ -1427,8 +1429,9 @@ emit_snapshot(
 )
 print(f"Max targeted refusal direction norm: {guard_norm:.4f} at layer {guard_layer}")
 
-# A very high norm (>100) on the targeted layer set typically means the computed
-# direction captures capability rather than just refusal behavior.
+# Refusal direction norm guard: abort if the max targeted norm exceeds the threshold.
+# A very high norm (>100) typically means the computed direction captures model
+# capability rather than just refusal behavior -- applying it would destroy coherence.
 if guard_norm > REFUSAL_NORM_THRESHOLD:
     msg = (
         f"ABORTING: Max targeted refusal direction norm {guard_norm:.2f} at layer "
@@ -1784,8 +1787,8 @@ print(f"Save completed in {time.time() - save_start:.1f}s")
 # ── Write metadata ────────────────────────────────────────────────────
 meta = {
     "layersModified": layers_modified,
-    "refusalDirNorm": f"{norms[max_norm_layer]:.6f}",
-    "maxNormLayer": max_norm_layer,
+    "refusalDirNorm": f"{guard_norm:.6f}",
+    "maxNormLayer": guard_layer,
 }
 meta_json = json.dumps(meta)
 print(f"Metadata: {meta_json}")
