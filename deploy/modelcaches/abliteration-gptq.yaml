@@ -61,6 +61,8 @@ spec:
     timeoutSeconds: 14400
     nodeSelector:
       kubernetes.io/hostname: cblevins-radeonvii
+    normThreshold: "100"       # Abort if refusal direction norm > 100
+    ablitateLmHead: true       # Abliterate lm_head using only full-attention layer directions
   quantization:
     format: GPTQ
     bits: 4
