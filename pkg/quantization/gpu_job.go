@@ -26,8 +26,8 @@ type GPUMemoryConfig struct {
 func DefaultGPUMemoryConfig() GPUMemoryConfig {
 	return GPUMemoryConfig{
 		ContainerMemoryGB: DefaultGPUQuantizationMemoryGB,
-		MaxGPUMemoryGB:    20,
-		MaxCPUMemoryGB:    32,
+		MaxGPUMemoryGB:    0, // 0 = use arch-specific heuristic as fallback
+		MaxCPUMemoryGB:    0, // 0 = use arch-specific heuristic as fallback
 	}
 }
 

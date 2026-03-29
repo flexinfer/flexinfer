@@ -139,7 +139,7 @@ func TestBuildFinetuneJob_GeneratesExpectedPodSpec(t *testing.T) {
 	if container.Name != "finetuner" {
 		t.Fatalf("container.Name = %q", container.Name)
 	}
-	if container.ImagePullPolicy != corev1.PullAlways {
+	if container.ImagePullPolicy != corev1.PullIfNotPresent {
 		t.Fatalf("container.ImagePullPolicy = %s", container.ImagePullPolicy)
 	}
 	if got := container.Resources.Requests[corev1.ResourceCPU]; got.String() != "8" {

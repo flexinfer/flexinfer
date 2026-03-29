@@ -208,7 +208,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"num samples", "NUM_SAMPLES", "64"},
 		{"target layers", "TARGET_LAYERS", "10-55"},
 		{"weight matrices", "WEIGHT_MATRICES", "o_proj,down_proj"},
-		{"ablate lm_head", "ABLITERATION_ABLITERATE_LM_HEAD", "false"},
+		{"ablate lm_head", "ABLITERATION_ABLITERATE_LM_HEAD", "true"},
 		{"skip vision", "SKIP_VISION", "true"},
 		{"device map auto", "DEVICE_MAP", "auto"},
 		{"progress interval", "ABLITERATION_PROGRESS_INTERVAL", "10"},
