@@ -12,8 +12,8 @@ func TestImagePullPolicyForImage(t *testing.T) {
 	if got := ImagePullPolicyForImage("registry.harbor.lan/flexinfer/runtime@sha256:deadbeef"); got != corev1.PullIfNotPresent {
 		t.Fatalf("ImagePullPolicyForImage(digest) = %s, want %s", got, corev1.PullIfNotPresent)
 	}
-	if got := ImagePullPolicyForImage("registry.harbor.lan/flexinfer/runtime:unified-gfx906-v4"); got != corev1.PullAlways {
-		t.Fatalf("ImagePullPolicyForImage(tag) = %s, want %s", got, corev1.PullAlways)
+	if got := ImagePullPolicyForImage("registry.harbor.lan/flexinfer/runtime:unified-gfx906-v4"); got != corev1.PullIfNotPresent {
+		t.Fatalf("ImagePullPolicyForImage(named tag) = %s, want %s", got, corev1.PullIfNotPresent)
 	}
 }
 

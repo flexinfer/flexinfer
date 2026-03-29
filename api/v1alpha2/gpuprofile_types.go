@@ -68,6 +68,11 @@ type GPUProfileSpec struct {
 	// instead of creating per-model Deployments.
 	// +optional
 	Runtime *RuntimeProfile `json:"runtime,omitempty"`
+
+	// ImagePullPolicy overrides the default pull policy for all images on this GPU architecture.
+	// If not set, ImagePullPolicyForImage() logic is used.
+	// +optional
+	ImagePullPolicy *corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 }
 
 // GPUFeatures declares hardware capability flags.
@@ -99,6 +104,11 @@ type QuantizationProfile struct {
 	// Images maps quantization format to the container image used for quantization jobs.
 	// +optional
 	Images map[string]string `json:"images,omitempty"`
+
+	// ImagePullPolicy overrides the pull policy for quantization job images.
+	// Takes precedence over GPUProfileSpec.ImagePullPolicy for quantization jobs.
+	// +optional
+	ImagePullPolicy *corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 }
 
 // RuntimeProfile configures the persistent flexinfer-runtime container for a GPU architecture.
@@ -110,6 +120,11 @@ type RuntimeProfile struct {
 	// Port is the runtime API port. Defaults to 8080.
 	// +optional
 	Port *int32 `json:"port,omitempty"`
+
+	// ImagePullPolicy overrides the pull policy for runtime images.
+	// Takes precedence over GPUProfileSpec.ImagePullPolicy for runtime pods.
+	// +optional
+	ImagePullPolicy *corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 }
 
 // GPUProfileStatus holds observed state from the controller.
