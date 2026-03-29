@@ -71,6 +71,32 @@ for cache_dir in ["/root/.triton/cache", "/tmp/.triton/cache"]:
     shutil.rmtree(cache_dir, ignore_errors=True)
 print("0c. Cleared Triton cache")
 
+# 0d. Polyfill layer_type_validation in qwen3_5.py config
+# vLLM 0.17.0's qwen3_5.py imports layer_type_validation from transformers, but
+# transformers 5.3.0.dev0 (pinned for Qwen3.5 support) doesn't export it yet.
+# Replace the import with a try/except that provides a no-op fallback.
+q35_config_path = f"{BASE}/transformers_utils/configs/qwen3_5.py"
+try:
+    with open(q35_config_path) as f:
+        q35_config_content = f.read()
+    old_import = "from transformers.configuration_utils import PretrainedConfig, layer_type_validation"
+    new_import = """from transformers.configuration_utils import PretrainedConfig
+try:
+    from transformers.configuration_utils import layer_type_validation
+except ImportError:
+    def layer_type_validation(layer_types, num_hidden_layers):
+        if layer_types is not None and len(layer_types) != num_hidden_layers:
+            raise ValueError(f"layer_types length ({len(layer_types)}) != num_hidden_layers ({num_hidden_layers})")"""
+    if old_import in q35_config_content:
+        q35_config_content = q35_config_content.replace(old_import, new_import)
+        with open(q35_config_path, "w") as f:
+            f.write(q35_config_content)
+        print("0d. Polyfilled layer_type_validation import in qwen3_5.py config")
+    else:
+        print("0d. layer_type_validation import already patched or not found")
+except FileNotFoundError:
+    print("0d. SKIP: qwen3_5.py config not found (vLLM version may not have it)")
+
 # 1. Register qwen3_5_text config type
 config_path = f"{BASE}/transformers_utils/config.py"
 with open(config_path) as f:
