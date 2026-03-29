@@ -64,11 +64,12 @@ spec:
     # avoid the early/late full-attention blocks that previously produced extreme
     # refusal norms and coherence collapse.
     targetLayers: "27,31,35"
-    # gfx906 repeatedly fails during accelerate.dispatch_model() when the
-    # abliterator tries to shard the BF16 model onto the GPU. Keep the job on
-    # the radeonvii node, but run the abliteration step on CPU to get a stable
-    # custom source model; quantization still uses the GPU below.
-    useGPU: false
+    # GPU+CPU split verified working on gfx906 (2026-03-29):
+    #   Requires controller env overrides on radeonvii (16GB VRAM):
+    #     FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB=12
+    #     FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB=56
+    #   ~9s/prompt steady-state vs ~16s/prompt pure CPU.
+    useGPU: true
     maxMemoryGB: 96            # 128GB node, 54GB model + GPU offload headroom
     timeoutSeconds: 14400
     nodeSelector:
