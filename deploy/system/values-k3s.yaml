@@ -257,7 +257,7 @@ runtime:
       nodeSelector:
         kubernetes.io/hostname: cblevins-5930k
     - name: gfx906
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:5313caa93a63831aa1f7bdc8b7c2232433453c98ccddc0269113a9cc161292f7"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:9f8cbaf1055ac39fbf7ac7fd92626425bf057c4598b17cab4cc8ce2719bf5a0d"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1
@@ -266,6 +266,7 @@ runtime:
       memoryRequest: "4Gi"
       nodeSelector:
         kubernetes.io/hostname: cblevins-radeonvii
+        flexinfer.ai/pause: "true"  # Pause during qwen35-9b abliteration+quantization pipeline
 
 grafanaDashboard:
   enabled: true

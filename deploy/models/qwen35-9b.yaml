@@ -1,0 +1,66 @@
+# Qwen3.5-9B via vLLM on AMD gfx1100
+#
+# Lightweight subagent model — GPTQ INT4 ~6 GB allows concurrent deployment.
+# Shares cblevins-5930k GPU with FluxPony imagegen and 27B text gen.
+#
+# Source: OCI pull cache (Harbor, published by qwen35-9b-gptq pipeline).
+# Image: Same Qwen3.5-patched vLLM as 27B (identical qwen3_5_text architecture).
+#
+# maxModelLen=8192 for subagent tasks (tool calls, code gen).
+# maxNumSeqs=4 for concurrent orchestrator requests.
+#
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen35-9b
+  namespace: flexinfer-system
+spec:
+  backend: vllm
+  source: pvc://qwen35-9b-oci/qwen35-9b
+  gpu:
+    vendor: amd
+    count: 1
+    shared: gfx1100-5930k-primary
+    priority: 175
+    vramEstimateMB: 6000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 10m
+  config:
+    quantization: gptq
+    dtype: "half"
+    maxModelLen: 8192
+    gpuMemoryUtilization: "0.90"
+    maxNumSeqs: 4
+    enforceEager: true
+    trustRemoteCode: true
+    servedModelName: qwen35-9b
+    enableToolCalling: true
+    toolCallParser: hermes
+    maxNumBatchedTokens: 4096
+    disableLogStats: false
+    warmPolicy: primary
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "2"
+      memory: 8Gi
+    limits:
+      cpu: "4"
+      memory: 24Gi
+  serviceLabels:
+    - qwen35-9b
+    - qwen35-9b-subagent
+  litellm:
+    enabled: true
+    servedModelName: qwen35-9b
+    aliases:
+      - qwen35-9b-subagent
+      - qwen35-subagent
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

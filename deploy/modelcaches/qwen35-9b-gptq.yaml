@@ -1,0 +1,72 @@
+# Qwen3.5-9B → Abliteration → GPTQ INT4 Pipeline
+# Same qwen3_5_text architecture as 27B, 32 layers (24 GDN + 8 full attention).
+# Target: lightweight subagent model for concurrent deployment alongside 27B orchestrator.
+#
+# Pipeline: Download BF16 → Abliterate → GPTQ INT4 → Publish to Harbor OCI
+# Node: cblevins-radeonvii (gfx906, 128GB RAM)
+#
+# Full-attention layers: 3, 7, 11, 15, 19, 23, 27, 31
+# Abliteration targets middle full-attention layers: 11, 15, 19
+#
+# Disk: BF16 ~19.3 GB + GPTQ INT4 ~5-6 GB + workspace → 60 Gi PVC
+# GPU: 1x Radeon VII (gfx906, 16GB VRAM)
+#
+# Abliteration GPU memory (gfx906-specific):
+#   useGPU: true → device_map=auto, splits model across GPU+CPU.
+#   Radeon VII = 16 GB VRAM. Controller env var overrides required:
+#     FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB=12
+#     FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB=56
+#   9B model is much smaller than 27B so abliteration should be faster.
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen35-9b-gptq
+  namespace: flexinfer-system
+spec:
+  source: "Qwen/Qwen3.5-9B"
+  storageStrategy: SharedPVC
+  storageSize: "60Gi"
+  clusterStorageClassName: nvme-1r-gpu
+  secretRef: "hf-token"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  download:
+    maxMemoryGB: 8
+    hfTransfer: false
+    backoffLimit: 3
+  abliteration:
+    skipGDNLayers: true        # Skip all 24 GDN layers
+    numSamples: 256
+    # 9B full-attention layers: 3, 7, 11, 15, 19, 23, 27, 31
+    # Target middle layers where refusal steering is strongest.
+    targetLayers: "11,15,19"
+    useGPU: true
+    maxMemoryGB: 48            # 128GB node, 19GB model + GPU offload headroom
+    timeoutSeconds: 7200       # 2 hours (smaller model, faster than 27B)
+    nodeSelector:
+      kubernetes.io/hostname: cblevins-radeonvii
+    normThreshold: "100"       # Abort if refusal direction norm > 100
+    ablitateLmHead: true       # Abliterate lm_head using only full-attention layer directions
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    dynamicExclusion: "none"
+    useGPU: true
+    maxMemoryGB: 48            # 128GB node, 19GB model + GPTQ overhead
+    timeoutSeconds: 14400      # 4 hours (generous, 9B should be ~30 min)
+    nodeSelector:
+      kubernetes.io/hostname: cblevins-radeonvii
+    calibration:
+      maxSeqLen: 2048
+      maxSamples: 128
+  publish:
+    targets:
+      - oci
+    ociRef: "registry.harbor.lan/flexinfer/qwen35-9b:gptq-w4-g128"
+    secretRef: "harbor-oci-creds"
+    maxMemoryGB: 8
+    timeoutSeconds: 7200
