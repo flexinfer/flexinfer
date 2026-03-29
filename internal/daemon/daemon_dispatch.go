@@ -87,6 +87,12 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 		resp, err = d.handleSessionStatus(ctx, msg)
 	case "loom/session/close":
 		resp, err = d.handleSessionClose(ctx, msg)
+	case "loom/orchestra/query":
+		resp, err = d.handleOrchestraQuery(ctx, msg)
+	case "loom/orchestra/gather":
+		resp, err = d.handleOrchestraGather(ctx, msg)
+	case "loom/orchestra/status":
+		resp, err = d.handleOrchestraStatus(ctx, msg)
 	default:
 		resp = mcp.NewErrorResponse(msg.ID, mcp.MethodNotFound, fmt.Sprintf("unknown method: %s", msg.Method))
 	}

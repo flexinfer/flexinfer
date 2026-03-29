@@ -132,6 +132,15 @@ func (d *Daemon) Start(ctx context.Context) (err error) {
 		}
 	}()
 
+	// Start orchestra in background (non-fatal).
+	go func() {
+		orchCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := d.startEmbeddedOrchestra(orchCtx); err != nil {
+			d.logger.Error("orchestra init failed", "error", err)
+		}
+	}()
+
 	// Initialize proxy session manager
 	sessMax := d.fileCfg.HTTP.MaxSessions
 	if sessMax <= 0 {

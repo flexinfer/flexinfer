@@ -173,7 +173,7 @@ func (c *Coordinator) Start() error {
 
 	c.broadcastEvent("coordinator.health", map[string]any{
 		"flexinfer_healthy": true,
-		"circuit_state":     c.client.breaker.State().String(),
+		"circuit_state":     c.client.Breaker().State().String(),
 		"model":             c.config.DefaultModel,
 	})
 
@@ -206,8 +206,8 @@ func (c *Coordinator) Status() CoordinatorStatus {
 		Enabled:      true,
 		Healthy:      c.healthy,
 		Model:        c.config.DefaultModel,
-		CircuitState: c.client.breaker.State().String(),
-		Failures:     c.client.breaker.Failures(),
+		CircuitState: c.client.Breaker().State().String(),
+		Failures:     c.client.Breaker().Failures(),
 		Subsystems: SubsystemMap{
 			Summarizer: c.config.EnableSummarizer,
 			Compressor: c.config.EnableCompressor,
@@ -260,7 +260,7 @@ func (c *Coordinator) SummarizeSession(ctx context.Context, sessionID string) (*
 	if c.summarizer == nil {
 		return nil, fmt.Errorf("summarizer is disabled")
 	}
-	if !c.client.breaker.IsAvailable() {
+	if !c.client.Breaker().IsAvailable() {
 		return nil, ErrUnavailable
 	}
 	if !c.acquireSem() {
@@ -276,7 +276,7 @@ func (c *Coordinator) RunCompression(ctx context.Context) (*CompactionResult, er
 	if c.compressor == nil {
 		return nil, fmt.Errorf("compressor is disabled")
 	}
-	if !c.client.breaker.IsAvailable() {
+	if !c.client.Breaker().IsAvailable() {
 		return nil, ErrUnavailable
 	}
 	if !c.acquireSem() {
@@ -292,7 +292,7 @@ func (c *Coordinator) PlanWorkflow(ctx context.Context, goal, namespace string) 
 	if c.planner == nil {
 		return nil, fmt.Errorf("planner is disabled")
 	}
-	if !c.client.breaker.IsAvailable() {
+	if !c.client.Breaker().IsAvailable() {
 		return nil, ErrUnavailable
 	}
 	if !c.acquireSem() {
@@ -366,7 +366,7 @@ func (c *Coordinator) poll() bool {
 	// ── Health check ───────────────────────────────────────────────
 	// Skip when circuit is open — the breaker's half-open probe handles recovery.
 	prevHealthy := c.isHealthy()
-	if c.client.breaker.IsAvailable() {
+	if c.client.Breaker().IsAvailable() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		err := c.client.HealthCheck(ctx)
 		cancel()
@@ -378,7 +378,7 @@ func (c *Coordinator) poll() bool {
 			if prevHealthy {
 				c.broadcastEvent("coordinator.health", map[string]any{
 					"flexinfer_healthy": false,
-					"circuit_state":     c.client.breaker.State().String(),
+					"circuit_state":     c.client.Breaker().State().String(),
 				})
 			}
 			c.recordHealthMetrics(false)
@@ -391,7 +391,7 @@ func (c *Coordinator) poll() bool {
 		if !prevHealthy {
 			c.broadcastEvent("coordinator.health", map[string]any{
 				"flexinfer_healthy": true,
-				"circuit_state":     c.client.breaker.State().String(),
+				"circuit_state":     c.client.Breaker().State().String(),
 				"model":             c.config.DefaultModel,
 			})
 		}
@@ -409,7 +409,7 @@ func (c *Coordinator) poll() bool {
 	// ── Subsystems — each gets its own short context ───────────────
 	// Check circuit before each step to bail fast on cascading failures.
 
-	if c.summarizer != nil && c.client.breaker.IsAvailable() {
+	if c.summarizer != nil && c.client.Breaker().IsAvailable() {
 		if c.acquireSem() {
 			ctx, cancel := context.WithTimeout(context.Background(), c.config.SubsystemTimeout)
 			count, err := c.summarizer.SweepEndedSessions(ctx, c.config.MaxSweepSessions)
@@ -424,7 +424,7 @@ func (c *Coordinator) poll() bool {
 		}
 	}
 
-	if c.triager != nil && c.client.breaker.IsAvailable() {
+	if c.triager != nil && c.client.Breaker().IsAvailable() {
 		if c.acquireSem() {
 			ctx, cancel := context.WithTimeout(context.Background(), c.config.SubsystemTimeout)
 			result, err := c.triager.TriageRecent(ctx)
@@ -443,7 +443,7 @@ func (c *Coordinator) poll() bool {
 		}
 	}
 
-	if c.extractor != nil && c.client.breaker.IsAvailable() {
+	if c.extractor != nil && c.client.Breaker().IsAvailable() {
 		if c.acquireSem() {
 			ctx, cancel := context.WithTimeout(context.Background(), c.config.SubsystemTimeout)
 			result, err := c.extractor.ExtractRecent(ctx)
@@ -461,7 +461,7 @@ func (c *Coordinator) poll() bool {
 		}
 	}
 
-	if c.compressor != nil && c.client.breaker.IsAvailable() {
+	if c.compressor != nil && c.client.Breaker().IsAvailable() {
 		if c.acquireSem() {
 			ctx, cancel := context.WithTimeout(context.Background(), c.config.SubsystemTimeout)
 			result, err := c.compressor.RunCompactionCycle(ctx)
@@ -498,7 +498,7 @@ func (c *Coordinator) recordHealthMetrics(healthy bool) {
 	failures := c.consecutiveFail
 	c.mu.RUnlock()
 	c.metrics.UpdateHealth(healthy, failures)
-	c.metrics.UpdateCircuit(c.client.breaker.State())
+	c.metrics.UpdateCircuit(c.client.Breaker().State())
 }
 
 // recordPollMetrics records the poll cycle duration if metrics are available.

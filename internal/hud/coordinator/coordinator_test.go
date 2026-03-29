@@ -316,7 +316,7 @@ func TestErrUnavailable_WhenCircuitOpen(t *testing.T) {
 	c := NewCoordinator(cfg, nil, nil, slog.Default())
 
 	// Trip the circuit breaker.
-	c.client.breaker.Execute(func() error { return fmt.Errorf("fail") })
+	c.client.Breaker().Execute(func() error { return fmt.Errorf("fail") })
 
 	// All API methods should return ErrUnavailable.
 	_, err := c.PlanWorkflow(context.TODO(), "test", "")

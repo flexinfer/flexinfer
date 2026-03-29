@@ -205,6 +205,13 @@ func visibleTools(base []mcp.Tool) []mcp.Tool {
 	return out
 }
 
+// allVisibleTools returns all visible tools including orchestra synthetic tools.
+func (d *Daemon) allVisibleTools(base []mcp.Tool) []mcp.Tool {
+	out := visibleTools(base)
+	out = append(out, d.orchestraSyntheticTools()...)
+	return out
+}
+
 func bulkSyntheticTool(server string) mcp.Tool {
 	return mcp.Tool{
 		Name:        server + "__" + syntheticBulkToolName,

@@ -81,7 +81,7 @@ func (d *Daemon) handleTools(ctx context.Context, msg *mcp.Message) (*mcp.Messag
 			}()
 		}
 		result := toolsResult{
-			Tools:       visibleTools(cachedTools),
+			Tools:       d.allVisibleTools(cachedTools),
 			CachedAt:    cachedAt,
 			ServerCount: len(d.registry.Servers),
 		}
@@ -99,7 +99,7 @@ func (d *Daemon) handleTools(ctx context.Context, msg *mcp.Message) (*mcp.Messag
 			d.refreshToolCacheDeduplicated(bgCtx)
 		}()
 		result := toolsResult{
-			Tools:       visibleTools(staticTools),
+			Tools:       d.allVisibleTools(staticTools),
 			CachedAt:    time.Now(),
 			ServerCount: len(d.registry.Servers),
 		}
@@ -123,7 +123,7 @@ func (d *Daemon) handleTools(ctx context.Context, msg *mcp.Message) (*mcp.Messag
 	}
 
 	result := toolsResult{
-		Tools:       visibleTools(tools),
+		Tools:       d.allVisibleTools(tools),
 		CachedAt:    d.toolCache.updatedAt,
 		ServerCount: len(d.registry.Servers),
 	}

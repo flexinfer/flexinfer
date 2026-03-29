@@ -96,6 +96,14 @@ func (d *Daemon) handleCallWithOptions(ctx context.Context, msg *mcp.Message, sk
 		return resp, nil
 	}
 
+	if pipeline.isOrchestraTool() {
+		resp := pipeline.executeOrchestraTool()
+		if scanned := pipeline.scanOutputForPII(resp); scanned != nil {
+			return scanned, nil
+		}
+		return resp, nil
+	}
+
 	if resp := pipeline.tryCachedResponse(); resp != nil {
 		return resp, nil
 	}
