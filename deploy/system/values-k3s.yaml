@@ -39,6 +39,10 @@ controller:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists
       effect: NoSchedule
+    - key: dedicated
+      operator: Equal
+      value: gpu
+      effect: NoSchedule
 
 agent:
   enabled: true
@@ -84,10 +88,18 @@ proxy:
   timeouts:
     queue: "25m"
     coldStart: "25m"
-  # Only run on amd64 nodes (no ARM64 images available)
+  # Only run on amd64 control-plane nodes
   nodeSelector:
     kubernetes.io/arch: amd64
     node.flexstack.io/class: control-plane
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: dedicated
+      operator: Equal
+      value: gpu
+      effect: NoSchedule
 
 tenancy:
   enabled: false
@@ -127,13 +139,17 @@ scheduler:
     requests:
       cpu: 100m
       memory: 128Mi
-  # Only run on amd64 nodes (no ARM64 images available)
+  # Only run on amd64 control-plane nodes
   nodeSelector:
     kubernetes.io/arch: amd64
     node.flexstack.io/class: control-plane
   tolerations:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists
+      effect: NoSchedule
+    - key: dedicated
+      operator: Equal
+      value: gpu
       effect: NoSchedule
   weights:
     tps: 0.7
