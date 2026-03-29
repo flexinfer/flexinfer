@@ -56,6 +56,11 @@ func memoryRequestForLimitGB(limitGB int32) int32 {
 	return requestGB
 }
 
+// abliterationCPUMaxMemoryGB computes the CPU memory budget for accelerate's max_memory dict.
+// With device_map=auto, layers that don't fit in GPU+CPU spill to disk offload (mmap from
+// NFS-backed PVC), which is 10x slower. For Qwen3.5-27B BF16 (~54GB), gpu=12 + cpu=32 = 44GB
+// causes ~10GB disk offload stall. Override via FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB=56.
+// TODO: derive from node allocatable memory instead of hardcoding a cap.
 func abliterationCPUMaxMemoryGB(limitGB int32) int32 {
 	if limitGB <= 0 {
 		return 12
@@ -70,6 +75,12 @@ func abliterationCPUMaxMemoryGB(limitGB int32) int32 {
 	return cpuGB
 }
 
+// abliterationGPUMaxMemoryGB returns the GPU memory budget for accelerate's max_memory dict.
+// WARNING: Must not exceed physical VRAM. transformers 5.x caching_allocator_warmup calls
+// torch.empty(max_memory_bytes) on the GPU -- if this exceeds VRAM, gfx906 returns
+// "HIP error: invalid argument" (not OOM). Radeon VII = 16GB, use 12 with headroom.
+// Override via FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB.
+// TODO: read from GPUProfile.spec.vramMB instead of hardcoding.
 func abliterationGPUMaxMemoryGB(useGPU bool, gpuArch string) int32 {
 	if !useGPU {
 		return 0
@@ -298,6 +309,16 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		modelPolicies = defaultAbliterationModelPoliciesJSON()
 	}
 
+	normThreshold := "100"
+	if spec.NormThreshold != nil && *spec.NormThreshold != "" {
+		normThreshold = *spec.NormThreshold
+	}
+
+	ablitateLmHead := "true"
+	if spec.AblitateLmHead != nil && !*spec.AblitateLmHead {
+		ablitateLmHead = "false"
+	}
+
 	return []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
 		{Name: "NUM_SAMPLES", Value: fmt.Sprintf("%d", numSamples)},
@@ -322,6 +343,8 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		{Name: "ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP", Value: skipCachingAllocatorWarmup},
 		{Name: "ABLITERATION_SAFE_SHARDED_LOAD", Value: safeShardedLoad},
 		{Name: "ABLITERATION_MODEL_POLICIES", Value: modelPolicies},
+		{Name: "ABLITERATION_NORM_THRESHOLD", Value: normThreshold},
+		{Name: "ABLITERATION_ABLITERATE_LM_HEAD", Value: ablitateLmHead},
 		{Name: "SAFETENSORS_FAST_GPU", Value: "0"},
 		{Name: "HF_SAFETENSORS_MMAP", Value: "0"},
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},

@@ -74,6 +74,12 @@ spec:
                   (and before quantization if both are set). Abliteration removes the "refusal
                   direction" from transformer weights via contrastive activation analysis.
                 properties:
+                  ablitateLmHead:
+                    default: true
+                    description: |-
+                      AblitateLmHead controls whether the lm_head output projection is abliterated.
+                      Set to false to skip lm_head modification (safer for hybrid architectures).
+                    type: boolean
                   maxMemoryGB:
                     description: MaxMemoryGB for the abliteration container. Default
                       56 (27B BF16 + overhead).
@@ -85,6 +91,14 @@ spec:
                     description: NodeSelector overrides spec.nodeSelector for abliteration
                       jobs.
                     type: object
+                  normThreshold:
+                    default: "100"
+                    description: |-
+                      NormThreshold is the max allowed L2 norm of the refusal direction.
+                      Abliteration aborts if any layer's norm exceeds this value.
+                      The controller also validates this after the job completes.
+                      Format: numeric string (e.g., "100"). Default "100".
+                    type: string
                   numSamples:
                     default: 128
                     description: NumSamples is the number of contrastive prompt pairs

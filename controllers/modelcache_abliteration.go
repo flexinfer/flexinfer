@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -301,6 +302,32 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		if meta != nil {
 			ablitStatus.LayersModified = meta.LayersModified
 			ablitStatus.RefusalDirNorm = meta.RefusalDirNorm
+		}
+
+		// Validate refusal direction norm against threshold.
+		if meta != nil && meta.RefusalDirNorm != "" {
+			normVal, parseErr := strconv.ParseFloat(meta.RefusalDirNorm, 64)
+			if parseErr == nil {
+				threshold := float64(100)
+				if modelCache.Spec.Abliteration != nil && modelCache.Spec.Abliteration.NormThreshold != nil {
+					if t, err := strconv.ParseFloat(*modelCache.Spec.Abliteration.NormThreshold, 64); err == nil {
+						threshold = t
+					}
+				}
+				if normVal > threshold {
+					ablitStatus.FailureMessage = fmt.Sprintf(
+						"refusal direction norm %.2f exceeds threshold %.0f — abliteration likely corrupted",
+						normVal, threshold)
+					modelCache.Status.Abliteration = ablitStatus
+					modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+					r.Recorder.Event(modelCache, corev1.EventTypeWarning, "AbliterationNormExceeded",
+						ablitStatus.FailureMessage)
+					if err := r.Status().Update(ctx, modelCache); err != nil {
+						return ctrl.Result{}, err
+					}
+					return ctrl.Result{}, nil
+				}
+			}
 		}
 
 		if duration, ok := quantizationDurationFromJobStatus(ablitJob); ok {

@@ -710,9 +710,11 @@ checkpoint_dir = os.path.join(model_dir, ".abliteration-cache")
 num_samples = int(os.environ["NUM_SAMPLES"])
 target_layers = os.environ["TARGET_LAYERS"]
 weight_matrices = os.environ["WEIGHT_MATRICES"].split(",")
-ablate_lm_head = os.environ.get(
-    "ABLITERATION_ABLITERATE_LM_HEAD", "false"
-).lower() in ("true", "1", "yes")
+ablate_lm_head = os.environ.get("ABLITERATION_ABLITERATE_LM_HEAD", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 skip_vision = os.environ["SKIP_VISION"] == "true"
 skip_gdn = os.environ.get("SKIP_GDN_LAYERS", "true") == "true"
 device_map = os.environ["DEVICE_MAP"]
@@ -1410,6 +1412,8 @@ print(
 # Refusal direction norm guard: evaluate the layers we are actually about to edit.
 # For hybrid architectures, late untouched layers can retain large refusal norms
 # even when we intentionally target only a safer middle-layer slice.
+# The global max often lands on a non-targeted layer (e.g. GDN layer 63) and is
+# irrelevant -- the guard should only check layers we actually abliterate.
 target_norm_pairs = [(layer_idx, norms[layer_idx]) for layer_idx in layer_indices]
 if not target_norm_pairs:
     msg = "ABORTING: No valid target layers selected for abliteration."
@@ -1423,12 +1427,11 @@ emit_snapshot(
     guard_norm=round(guard_norm, 4),
     target_layer_count=len(layer_indices),
 )
-print(
-    f"Max targeted refusal direction norm: {guard_norm:.4f} at layer {guard_layer}"
-)
+print(f"Max targeted refusal direction norm: {guard_norm:.4f} at layer {guard_layer}")
 
-# A very high norm (>100) on the targeted layer set typically means the computed
-# direction captures capability rather than just refusal behavior.
+# Refusal direction norm guard: abort if the max targeted norm exceeds the threshold.
+# A very high norm (>100) typically means the computed direction captures model
+# capability rather than just refusal behavior -- applying it would destroy coherence.
 if guard_norm > REFUSAL_NORM_THRESHOLD:
     msg = (
         f"ABORTING: Max targeted refusal direction norm {guard_norm:.2f} at layer "
@@ -1474,21 +1477,28 @@ print(f"Abliterated {layers_modified} layers")
 write_checkpoint("layers_abliterated", layersModified=layers_modified)
 emit_snapshot("layers_abliterated", layers_modified=layers_modified)
 
-# ── Optional lm_head abliteration ────────────────────────────────────
-mean_refusal = torch.stack(refusal_dirs).mean(0)
-mean_refusal = mean_refusal / mean_refusal.norm()
+# ── Abliterate lm_head ───────────────────────────────────────────────
+# CRITICAL: Only average refusal directions from layer_indices (post-GDN filter).
+# GDN layer directions capture recurrence dynamics, not refusal behavior —
+# including them corrupts the lm_head output distribution.
+abliterate_lm_head = os.environ.get(
+    "ABLITERATION_ABLITERATE_LM_HEAD", "true"
+).lower() in ("true", "1", "yes")
 
-if ablate_lm_head and hasattr(model, "lm_head"):
+if abliterate_lm_head and hasattr(model, "lm_head"):
+    mean_refusal = torch.stack([refusal_dirs[i] for i in layer_indices]).mean(0)
+    mean_refusal = mean_refusal / mean_refusal.norm()
     lm = model.lm_head
     dev = lm.weight.device
     d = mean_refusal.to(dev)
     proj = lm.weight.data.float() @ d
     lm.weight.data -= torch.outer(proj, d).to(lm.weight.dtype)
+    del mean_refusal
     print("Abliterated lm_head")
-else:
-    print("Skipped lm_head abliteration")
+elif not abliterate_lm_head:
+    print("Skipping lm_head abliteration (ABLITERATION_ABLITERATE_LM_HEAD=false)")
 
-del refusal_dirs, mean_refusal, decoder_layers
+del refusal_dirs, decoder_layers
 release_memory("saving_prerelease")
 
 # ── Post-abliteration perplexity validation ──────────────────────────
@@ -1548,21 +1558,67 @@ if validate_perplexity:
         perplexity = float("nan")
 
     if math.isnan(perplexity):
-        norm_val = norms[max_norm_layer]
+        # Fallback: generation-based coherence check.
+        # With device_map=cpu, model(**inputs, labels=...) returns NaN loss
+        # (accelerate dispatch hooks don't route correctly). Use model.generate()
+        # on test prompts and check for degeneration signals instead.
+        print("Perplexity inconclusive (NaN) — running generation coherence check...")
+        coherence_prompts = [
+            "The capital of France is",
+            "2 + 2 =",
+            "Hello, how are you",
+        ]
+        degenerate_count = 0
+        for cp in coherence_prompts:
+            try:
+                inputs = tokenizer(cp, return_tensors="pt")
+                inputs = {k: v.to(input_device) for k, v in inputs.items()}
+                with torch.inference_mode():
+                    gen_ids = model.generate(
+                        **inputs, max_new_tokens=32, do_sample=False
+                    )
+                gen_text = tokenizer.decode(
+                    gen_ids[0][inputs["input_ids"].shape[1] :],
+                    skip_special_tokens=True,
+                )
+                if not gen_text.strip():
+                    degenerate_count += 1
+                elif len(set(gen_text.split())) <= 2 and len(gen_text) > 10:
+                    degenerate_count += 1  # repetition loop
+                elif any(c * 5 in gen_text for c in "!?.#*"):
+                    degenerate_count += 1  # character loops
+                print(f"  '{cp}' -> '{gen_text[:80]}'")
+            except Exception as e:
+                print(f"  WARNING: Generation failed for '{cp}': {e}")
+                degenerate_count += 1
+
+        if degenerate_count >= 2:
+            msg = (
+                f"ABORTING: Generation coherence check failed ({degenerate_count}/"
+                f"{len(coherence_prompts)} degenerate). Abliterated model is corrupted."
+            )
+            print(msg)
+            emit_progress("error", phase="validating", detail=msg)
+            raise RuntimeError(msg)
+
         print(
-            f"WARNING: Perplexity validation inconclusive (NaN) — model may be "
-            f"offloaded. Norm guard passed (norm={norm_val:.4f}), proceeding."
+            f"Generation coherence check passed "
+            f"({degenerate_count}/{len(coherence_prompts)} degenerate)"
         )
         emit_progress(
             "progress",
             phase="validating",
             percent=87.0,
-            detail="perplexity=NaN (inconclusive, norm guard passed)",
+            detail=f"perplexity=NaN, generation coherence passed ({degenerate_count}/{len(coherence_prompts)})",
             perplexity=None,
             avgLoss=None,
         )
         write_checkpoint(
-            "perplexity_validated", perplexity=None, avgLoss=None, inconclusive=True
+            "perplexity_validated",
+            perplexity=None,
+            avgLoss=None,
+            inconclusive=True,
+            generationCoherencePassed=True,
         )
     else:
         print(
@@ -1731,8 +1787,8 @@ print(f"Save completed in {time.time() - save_start:.1f}s")
 # ── Write metadata ────────────────────────────────────────────────────
 meta = {
     "layersModified": layers_modified,
-    "refusalDirNorm": f"{norms[max_norm_layer]:.6f}",
-    "maxNormLayer": max_norm_layer,
+    "refusalDirNorm": f"{guard_norm:.6f}",
+    "maxNormLayer": guard_layer,
 }
 meta_json = json.dumps(meta)
 print(f"Metadata: {meta_json}")

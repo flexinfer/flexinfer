@@ -296,6 +296,20 @@ type AbliterationSpec struct {
 	// +optional
 	SkipGDNLayers *bool `json:"skipGDNLayers,omitempty"`
 
+	// NormThreshold is the max allowed L2 norm of the refusal direction.
+	// Abliteration aborts if any layer's norm exceeds this value.
+	// The controller also validates this after the job completes.
+	// Format: numeric string (e.g., "100"). Default "100".
+	// +kubebuilder:default="100"
+	// +optional
+	NormThreshold *string `json:"normThreshold,omitempty"`
+
+	// AblitateLmHead controls whether the lm_head output projection is abliterated.
+	// Set to false to skip lm_head modification (safer for hybrid architectures).
+	// +kubebuilder:default=true
+	// +optional
+	AblitateLmHead *bool `json:"ablitateLmHead,omitempty"`
+
 	// NodeSelector overrides spec.nodeSelector for abliteration jobs.
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
