@@ -1,9 +1,9 @@
-# Qwen3.5-9B via vLLM on AMD gfx1100
+# Qwen3.5-9B via vLLM on AMD gfx1100 — dedicated on cblevins-5930k
 #
-# Lightweight subagent model — GPTQ INT4 ~6 GB allows concurrent deployment.
-# Shares cblevins-5930k GPU with FluxPony imagegen and 27B text gen.
+# Abliterated + GPTQ INT4 ~7.7 GB subagent model.
+# Standalone deployment — 5930k GPU is dedicated to this model.
 #
-# Source: OCI pull cache (Harbor, published by qwen35-9b-gptq pipeline).
+# Source: Locally staged from Harbor OCI (qwen35-9b:gptq-w4-g128).
 # Image: Same Qwen3.5-patched vLLM as 27B (identical qwen3_5_text architecture).
 #
 # maxModelLen=8192 for subagent tasks (tool calls, code gen).
@@ -16,23 +16,23 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  source: pvc://qwen35-9b-oci/qwen35-9b
+  source: local://qwen35-9b
+  cache:
+    strategy: Local
   gpu:
     vendor: amd
     count: 1
-    shared: gfx1100-5930k-primary
-    priority: 175
     vramEstimateMB: 6000
   serverless:
     enabled: true
-    minReplicas: 0
+    minReplicas: 1
     idleTimeout: 30m
     coldStartTimeout: 10m
   config:
     quantization: gptq
     dtype: "half"
     maxModelLen: 8192
-    gpuMemoryUtilization: "0.90"
+    gpuMemoryUtilization: "0.95"
     maxNumSeqs: 4
     enforceEager: true
     trustRemoteCode: true

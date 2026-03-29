@@ -266,7 +266,6 @@ runtime:
       memoryRequest: "4Gi"
       nodeSelector:
         kubernetes.io/hostname: cblevins-radeonvii
-        flexinfer.ai/pause: "true"  # Pause during qwen35-9b abliteration+quantization pipeline
 
 grafanaDashboard:
   enabled: true

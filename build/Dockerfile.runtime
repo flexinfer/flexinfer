@@ -245,6 +245,14 @@ RUN if command -v pip >/dev/null 2>&1; then \
 COPY build/scripts/ /opt/flexinfer/scripts/
 RUN chmod +x /opt/flexinfer/scripts/*.sh /opt/flexinfer/scripts/*.py 2>/dev/null || true
 
+# ── Apply vLLM Qwen3.5 patches at build time ────────────────────────
+# Patches vLLM 0.17.0 on-disk Python files for Qwen3.5 GDN text model support.
+# Native support expected in vLLM >=0.18.0; remove this step when upgrading.
+RUN if [ "${INCLUDE_VLLM}" = "true" ] && [ -f /opt/flexinfer/scripts/vllm_qwen35_patches_nodiag.py ]; then \
+      python3 /opt/flexinfer/scripts/vllm_qwen35_patches_nodiag.py && \
+      echo "vLLM Qwen3.5 patches applied at build time"; \
+    fi
+
 # ── Verify ROCm PyTorch was not replaced by CUDA ────────────────────
 RUN if [ "${GPU_VENDOR}" = "amd" ] && command -v python3 >/dev/null 2>&1; then \
       python3 -c "import torch; assert torch.version.hip is not None, 'CUDA torch detected!'; print('OK: PyTorch', torch.__version__, 'HIP', torch.version.hip)"; \

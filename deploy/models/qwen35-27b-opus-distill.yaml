@@ -1,9 +1,8 @@
-# Qwen3.5-27B via vLLM on AMD gfx1100
+# Qwen3.5-27B via vLLM on AMD gfx1100 — dedicated on cblevins-7900xtx
 #
-# Model: Qwen3.5-27B, GPTQ INT4 (self-quantized pipeline, clean weights).
-# Source: Longhorn PVC with clean (non-abliterated) GPTQ INT4 weights from gfx906 pipeline.
-# Image: vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg (patched Qwen3.5 loader plus text_config normalization).
-# Weights: ~16.6 GiB GPTQ INT4 (5 shards + metadata).
+# GPTQ INT4 ~16.6 GiB, clean weights (no abliteration).
+# Source: Local via OCI pull from Harbor (qwen35-27b-opus-distill:gptq-w4-g128).
+# Runtime: Unified runtime with vLLM Qwen3.5 patches baked in at build time.
 #
 # maxModelLen=4096 to minimize KV cache budget.
 # maxNumSeqs=2 to reduce concurrent memory pressure.
@@ -13,11 +12,11 @@ kind: Model
 metadata:
   name: qwen35-27b-opus-distill
   namespace: flexinfer-system
-  annotations:
-    flexinfer.ai/reconcile-token: "qwen35-gfx1100-patched-nodiag-textcfg-eager"
 spec:
   backend: vllm
-  source: pvc://qwen35-27b-opus-distill-gptq/qwen35-27b-opus-distill-gptq/gptq-w4-g128
+  source: local://qwen35-27b-opus-distill
+  cache:
+    strategy: Local
   gpu:
     vendor: amd
     count: 2

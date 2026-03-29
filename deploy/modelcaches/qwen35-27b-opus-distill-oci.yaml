@@ -1,11 +1,8 @@
-# OCI Pull Cache for Qwen3.5-27B GPTQ INT4
-# Pulls quantized model from Harbor OCI registry into shared PVC.
-# Both 7900xtx and 5930k Model CRs source from this PVC.
+# OCI Pull Cache for Qwen3.5-27B-Opus-Distill GPTQ INT4
+# Pulls quantized model from Harbor OCI registry into local-path PVC on 7900xtx.
+# Model CR sources from this PVC for serving.
 #
-# Pipeline: ModelCache(quantize) → Publish → Harbor OCI → ModelCache(oci) → Model CRs
-#
-# This cache depends on the publish step completing first.
-# The OCI artifact is published by the qwen35-27b-opus-distill-gptq ModelCache.
+# Pipeline: ModelCache(gptq) → Publish → Harbor OCI → ModelCache(oci) → Model CR
 ---
 apiVersion: ai.flexinfer/v1alpha1
 kind: ModelCache
@@ -16,12 +13,14 @@ spec:
   source: "oci://registry.harbor.lan/flexinfer/qwen35-27b-opus-distill:gptq-w4-g128"
   modelPath: "qwen35-27b-opus-distill"
   storageStrategy: SharedPVC
-  storageSize: "25Gi"
-  clusterStorageClassName: nvme-1r-gpu
+  storageSize: "30Gi"
+  clusterStorageClassName: local-path
   secretRef: "harbor-oci-creds"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
   download:
-    maxMemoryGB: 4
+    maxMemoryGB: 8
     backoffLimit: 3
-  retentionPriority: 50
+  retentionPriority: 80
   evictionPolicy: LRU
   evictionThresholdPercent: 85
