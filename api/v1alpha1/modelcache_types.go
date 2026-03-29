@@ -798,6 +798,12 @@ type ModelCacheStatus struct {
 	// +optional
 	LastFailurePhase string `json:"lastFailurePhase,omitempty"`
 
+	// CurrentPhase tracks which pipeline phase is currently active.
+	// Values: "download", "abliteration", "finetune", "quantization", "publish", "ready".
+	// Used by phase guards to enforce strict pipeline ordering.
+	// +optional
+	CurrentPhase string `json:"currentPhase,omitempty"`
+
 	// Conditions represent the latest available observations of the state
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`

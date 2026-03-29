@@ -53,6 +53,31 @@ import (
 func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelCache *aiv1alpha1.ModelCache, pvcName, modelPath string) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
+	// Phase guard: download must complete before quantization can start.
+	if !downloadCompleted(&modelCache.Status) {
+		log.Info("Download not yet complete, waiting before quantization",
+			"cache", modelCache.Name, "phase", modelCache.Status.Phase)
+		return ctrl.Result{RequeueAfter: requeueLong}, nil
+	}
+
+	// Phase guard: abliteration (if configured) must complete before quantization.
+	if modelCache.Spec.Abliteration != nil {
+		if !abliterationCompleted(modelCache.Status.Abliteration) {
+			log.Info("Abliteration not yet complete, waiting before quantization",
+				"cache", modelCache.Name, "phase", modelCache.Status.Phase)
+			return ctrl.Result{RequeueAfter: requeueLong}, nil
+		}
+	}
+
+	// Phase guard: finetune (if configured) must complete before quantization.
+	if modelCache.Spec.Finetune != nil {
+		if !finetuneCompleted(modelCache.Status.Finetune) {
+			log.Info("Finetune not yet complete, waiting before quantization",
+				"cache", modelCache.Name, "phase", modelCache.Status.Phase)
+			return ctrl.Result{RequeueAfter: requeueLong}, nil
+		}
+	}
+
 	currentHash := quantSpecHash(modelCache.Spec.Quantization)
 
 	changed, err := r.detectAndApplySpecChange(ctx, modelCache, specChangeParams{

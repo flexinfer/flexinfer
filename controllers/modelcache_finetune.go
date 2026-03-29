@@ -57,6 +57,22 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 
 	log := log.FromContext(ctx)
 
+	// Phase guard: download must complete before finetune can start.
+	if !downloadCompleted(&modelCache.Status) {
+		log.Info("Download not yet complete, waiting before finetune",
+			"cache", modelCache.Name, "phase", modelCache.Status.Phase)
+		return ctrl.Result{RequeueAfter: requeueLong}, nil
+	}
+
+	// Phase guard: abliteration (if configured) must complete before finetune.
+	if modelCache.Spec.Abliteration != nil {
+		if !abliterationCompleted(modelCache.Status.Abliteration) {
+			log.Info("Abliteration not yet complete, waiting before finetune",
+				"cache", modelCache.Name, "phase", modelCache.Status.Phase)
+			return ctrl.Result{RequeueAfter: requeueLong}, nil
+		}
+	}
+
 	finetuneMode := "qlora"
 	if modelCache.Spec.Finetune.Mode != nil {
 		finetuneMode = string(*modelCache.Spec.Finetune.Mode)

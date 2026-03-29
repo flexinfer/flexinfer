@@ -94,25 +94,7 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			log.Info("Download job GC'd but download already complete, skipping re-creation",
 				"cache", modelCache.Name, "phase", modelCache.Status.Phase)
 			modelCache.Status.Path = fmt.Sprintf("%s:%s", pvcName, modelPath)
-			if modelCache.Spec.Abliteration != nil {
-				return r.reconcileAbliteration(ctx, modelCache, pvcName, modelPath)
-			}
-			if modelCache.Spec.Finetune != nil {
-				return r.reconcileFinetune(ctx, modelCache, pvcName, modelPath)
-			}
-			if modelCache.Spec.Quantization != nil {
-				return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
-			}
-			if modelCache.Spec.Publish != nil {
-				return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
-			}
-			if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
-				modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
-				if err := r.Status().Update(ctx, modelCache); err != nil {
-					return ctrl.Result{}, err
-				}
-			}
-			return ctrl.Result{}, nil
+			return r.reconcileDownstreamPhases(ctx, modelCache, pvcName, modelPath)
 		}
 
 		// Create Downloader Job - use OCI job for OCI sources
@@ -133,6 +115,7 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 
 		// Update status to Provisioning
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
+		modelCache.Status.CurrentPhase = "download"
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -164,35 +147,17 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			modelCache.Status.OCIRegistry = extractOCIRegistry(modelCache.Spec.Source)
 		}
 
-		// If abliteration is requested, handle it before finetune/quantization
-		if modelCache.Spec.Abliteration != nil {
-			return r.reconcileAbliteration(ctx, modelCache, pvcName, modelPath)
-		}
-
-		// If finetuning is requested, handle it before quantization
-		if modelCache.Spec.Finetune != nil {
-			return r.reconcileFinetune(ctx, modelCache, pvcName, modelPath)
-		}
-
-		// If quantization is requested, handle it before marking Ready
-		if modelCache.Spec.Quantization != nil {
-			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
-		}
-
-		// If publishing is requested, handle it before marking Ready
-		if modelCache.Spec.Publish != nil {
-			return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
-		}
-
-		if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
-			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+		// Persist download completion before dispatching to downstream phases.
+		// This ensures the phase guards in downstream reconcilers see a completed download
+		// even if the controller restarts between status update and job creation.
+		if modelCache.Status.CurrentPhase == "download" || modelCache.Status.CurrentPhase == "" {
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
-			log.Info("ModelCache is Ready", "path", modelCache.Status.Path)
-			r.Recorder.Event(modelCache, corev1.EventTypeNormal, "CacheReady",
-				fmt.Sprintf("Model cached successfully at %s", modelCache.Status.Path))
 		}
+
+		// Dispatch to downstream phases in strict order.
+		return r.reconcileDownstreamPhases(ctx, modelCache, pvcName, modelPath)
 	} else if job.Status.Failed > 0 {
 		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "download_failed").Inc()
 
@@ -231,6 +196,59 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 	// Emit metrics for SharedPVC caches as well (the Memory strategy already does this).
 	r.updateCacheMetrics(modelCache, "")
 
+	return ctrl.Result{}, nil
+}
+
+// reconcileDownstreamPhases dispatches to the next pending pipeline phase in strict order:
+// Abliteration -> Finetune -> Quantization -> Publish -> Ready.
+// Each phase reconciler has its own guard that verifies upstream completion, providing
+// defense-in-depth against race conditions even if called out of order.
+func (r *ModelCacheReconciler) reconcileDownstreamPhases(ctx context.Context, modelCache *aiv1alpha1.ModelCache, pvcName, modelPath string) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	// Phase 1: Abliteration (if configured) must complete before finetune/quantize.
+	if modelCache.Spec.Abliteration != nil {
+		if !abliterationCompleted(modelCache.Status.Abliteration) {
+			modelCache.Status.CurrentPhase = "abliteration"
+			return r.reconcileAbliteration(ctx, modelCache, pvcName, modelPath)
+		}
+	}
+
+	// Phase 2: Finetune (if configured) must complete before quantize.
+	if modelCache.Spec.Finetune != nil {
+		if !finetuneCompleted(modelCache.Status.Finetune) {
+			modelCache.Status.CurrentPhase = "finetune"
+			return r.reconcileFinetune(ctx, modelCache, pvcName, modelPath)
+		}
+	}
+
+	// Phase 3: Quantization (if configured) must complete before publish.
+	if modelCache.Spec.Quantization != nil {
+		if !quantizationCompleted(modelCache.Status.Quantization) {
+			modelCache.Status.CurrentPhase = "quantization"
+			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
+		}
+	}
+
+	// Phase 4: Publish (if configured) must complete before Ready.
+	if modelCache.Spec.Publish != nil {
+		if modelCache.Status.Publish == nil {
+			modelCache.Status.CurrentPhase = "publish"
+			return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+		}
+	}
+
+	// All phases complete — mark Ready.
+	if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
+		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+		modelCache.Status.CurrentPhase = "ready"
+		if err := r.Status().Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+		log.Info("ModelCache is Ready", "path", modelCache.Status.Path)
+		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "CacheReady",
+			fmt.Sprintf("Model cached successfully at %s", modelCache.Status.Path))
+	}
 	return ctrl.Result{}, nil
 }
 

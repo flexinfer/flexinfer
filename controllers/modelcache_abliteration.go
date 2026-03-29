@@ -54,6 +54,13 @@ import (
 func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelCache *aiv1alpha1.ModelCache, pvcName, modelPath string) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
+	// Phase guard: download must complete before abliteration can start.
+	if !downloadCompleted(&modelCache.Status) {
+		log.Info("Download not yet complete, waiting before abliteration",
+			"cache", modelCache.Name, "phase", modelCache.Status.Phase)
+		return ctrl.Result{RequeueAfter: requeueLong}, nil
+	}
+
 	currentHash := ablitSpecHash(modelCache.Spec.Abliteration)
 
 	changed, err := r.detectAndApplySpecChange(ctx, modelCache, specChangeParams{
