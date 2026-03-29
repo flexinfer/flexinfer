@@ -143,6 +143,11 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 
 	// 3. Check Job Status
 	if job.Status.Succeeded > 0 {
+		// Reset retry counter on success (download phase completed).
+		if modelCache.Status.RetryCount > 0 {
+			r.resetRetryCount(modelCache)
+		}
+
 		// Record download job duration metric
 		if job.Status.StartTime != nil && job.Status.CompletionTime != nil {
 			dur := job.Status.CompletionTime.Sub(job.Status.StartTime.Time).Seconds()
@@ -190,12 +195,37 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 		}
 	} else if job.Status.Failed > 0 {
 		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "download_failed").Inc()
+
+		// Check if we should auto-retry.
+		if shouldRetry, backoff := r.shouldRetryFailedPhase(modelCache, "download"); shouldRetry {
+			r.recordFailure(modelCache, "download")
+			log.Info("Download job failed, scheduling retry",
+				"cache", modelCache.Name,
+				"retryCount", modelCache.Status.RetryCount,
+				"backoff", backoff)
+
+			// Delete the failed job so the controller recreates it on next reconcile.
+			if err := r.deleteFailedJob(ctx, modelCache.Namespace, jobName); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "DownloadRetry",
+				fmt.Sprintf("Download failed, retry %d/%d in %s",
+					modelCache.Status.RetryCount, modelCache.Spec.GetMaxRetries(), backoff))
+			return ctrl.Result{RequeueAfter: backoff}, nil
+		}
+
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
 		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "CacheFailed",
-			"Model download job failed - check job logs for details")
+			fmt.Sprintf("Model download job failed after %d retries - check job logs for details",
+				modelCache.Status.RetryCount))
 	}
 
 	// Emit metrics for SharedPVC caches as well (the Memory strategy already does this).

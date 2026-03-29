@@ -286,6 +286,11 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 
 	// Check abliteration job status.
 	if ablitJob.Status.Succeeded > 0 {
+		// Reset retry counter on success (abliteration phase completed).
+		if modelCache.Status.RetryCount > 0 {
+			r.resetRetryCount(modelCache)
+		}
+
 		log.Info("Abliteration job succeeded", "cache", modelCache.Name)
 		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "abliterate")
 
@@ -422,6 +427,34 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "abliteration_failed").Inc()
 
 		failureMsg := captureAbliterationFailureLogs(ctx, r.Client, r.KubeClient, modelCache.Namespace, ablitJob.Name)
+
+		// Check if we should auto-retry.
+		if shouldRetry, backoff := r.shouldRetryFailedPhase(modelCache, "abliteration"); shouldRetry {
+			r.recordFailure(modelCache, "abliteration")
+			log.Info("Abliteration job failed, scheduling retry",
+				"cache", modelCache.Name,
+				"retryCount", modelCache.Status.RetryCount,
+				"backoff", backoff)
+
+			if err := r.deleteFailedJob(ctx, modelCache.Namespace, ablitJobName); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseAbliterating
+			if modelCache.Status.Abliteration == nil {
+				modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
+			}
+			modelCache.Status.Abliteration.FailureMessage = ""
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "AbliterationRetry",
+				fmt.Sprintf("Abliteration failed, retry %d/%d in %s: %s",
+					modelCache.Status.RetryCount, modelCache.Spec.GetMaxRetries(), backoff,
+					truncateString(failureMsg, 200)))
+			return ctrl.Result{RequeueAfter: backoff}, nil
+		}
+
 		ablitStatus := &aiv1alpha1.AbliterationStatus{
 			FailureMessage: failureMsg,
 		}
@@ -434,9 +467,10 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			return ctrl.Result{}, err
 		}
 
-		eventMsg := "Abliteration job failed"
+		eventMsg := fmt.Sprintf("Abliteration job failed after %d retries", modelCache.Status.RetryCount)
 		if failureMsg != "" {
-			eventMsg = fmt.Sprintf("Abliteration job failed: %s", truncateString(failureMsg, 200))
+			eventMsg = fmt.Sprintf("Abliteration job failed after %d retries: %s",
+				modelCache.Status.RetryCount, truncateString(failureMsg, 200))
 		}
 		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "AbliterationFailed", eventMsg)
 		return ctrl.Result{}, nil

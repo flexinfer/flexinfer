@@ -266,6 +266,11 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 	// Check quantization job status
 	if quantJob.Status.Succeeded > 0 {
+		// Reset retry counter on success (quantization phase completed).
+		if modelCache.Status.RetryCount > 0 {
+			r.resetRetryCount(modelCache)
+		}
+
 		log.Info("Quantization job succeeded", "cache", modelCache.Name)
 		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "quantize")
 
@@ -408,6 +413,35 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "quantization_failed").Inc()
 
 		failureMsg := captureQuantizationFailureLogs(ctx, r.Client, r.KubeClient, modelCache.Namespace, quantJob.Name)
+
+		// Check if we should auto-retry.
+		if shouldRetry, backoff := r.shouldRetryFailedPhase(modelCache, "quantization"); shouldRetry {
+			r.recordFailure(modelCache, "quantization")
+			log.Info("Quantization job failed, scheduling retry",
+				"cache", modelCache.Name,
+				"retryCount", modelCache.Status.RetryCount,
+				"backoff", backoff)
+
+			if err := r.deleteFailedJob(ctx, modelCache.Namespace, quantJobName); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseQuantizing
+			if modelCache.Status.Quantization == nil {
+				modelCache.Status.Quantization = &aiv1alpha1.QuantizationStatus{}
+			}
+			modelCache.Status.Quantization.FailureMessage = ""
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizationRetry",
+				fmt.Sprintf("Quantization failed, retry %d/%d in %s: %s",
+					modelCache.Status.RetryCount, modelCache.Spec.GetMaxRetries(), backoff,
+					truncateString(failureMsg, 200)))
+			metrics.QuantizationJobsTotal.WithLabelValues(modelCache.Name, "retried").Inc()
+			return ctrl.Result{RequeueAfter: backoff}, nil
+		}
+
 		quantStatus := &aiv1alpha1.QuantizationStatus{
 			Format:         string(modelCache.Spec.Quantization.Format),
 			Type:           quantizationTypeFromSpec(modelCache.Spec.Quantization),
@@ -425,9 +459,10 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			return ctrl.Result{}, err
 		}
 
-		eventMsg := "Quantization job failed"
+		eventMsg := fmt.Sprintf("Quantization job failed after %d retries", modelCache.Status.RetryCount)
 		if failureMsg != "" {
-			eventMsg = fmt.Sprintf("Quantization job failed: %s", truncateString(failureMsg, 200))
+			eventMsg = fmt.Sprintf("Quantization job failed after %d retries: %s",
+				modelCache.Status.RetryCount, truncateString(failureMsg, 200))
 		}
 		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizationFailed", eventMsg)
 		metrics.QuantizationJobsTotal.WithLabelValues(modelCache.Name, "failed").Inc()

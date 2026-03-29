@@ -725,6 +725,23 @@ type ModelCacheSpec struct {
 	// When nil, defaults are applied: 16Gi memory, hf_transfer auto-enabled, 3 retries.
 	// +optional
 	Download *DownloadSpec `json:"download,omitempty"`
+
+	// MaxRetries is the maximum number of automatic retries before marking as permanently failed.
+	// Applies to all pipeline phases (download, abliteration, finetune, quantization, publish).
+	// Uses exponential backoff between retries: min(30s * 2^retryCount, 10m).
+	// Default: 3.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=10
+	// +optional
+	MaxRetries *int32 `json:"maxRetries,omitempty"`
+}
+
+// GetMaxRetries returns the configured maximum retries, or the default of 3.
+func (s *ModelCacheSpec) GetMaxRetries() int32 {
+	if s.MaxRetries != nil {
+		return *s.MaxRetries
+	}
+	return 3
 }
 
 // FlashLoaderSpec configures the flash-loader init container for fast model loading.
@@ -768,6 +785,18 @@ type ModelCacheStatus struct {
 	// Phase represents the current lifecycle state
 	// +optional
 	Phase ModelCachePhase `json:"phase,omitempty"`
+
+	// RetryCount tracks how many times the current phase has been retried
+	// +optional
+	RetryCount int32 `json:"retryCount,omitempty"`
+
+	// LastFailureTime records when the last failure occurred
+	// +optional
+	LastFailureTime *metav1.Time `json:"lastFailureTime,omitempty"`
+
+	// LastFailurePhase records which phase last failed
+	// +optional
+	LastFailurePhase string `json:"lastFailurePhase,omitempty"`
 
 	// Conditions represent the latest available observations of the state
 	// +optional
@@ -873,6 +902,7 @@ type ModelCacheStatus struct {
 //+kubebuilder:printcolumn:name="Ready",type="integer",JSONPath=".status.readyNodes"
 //+kubebuilder:printcolumn:name="Total",type="integer",JSONPath=".status.totalNodes"
 //+kubebuilder:printcolumn:name="Path",type="string",JSONPath=".status.path"
+//+kubebuilder:printcolumn:name="Retries",type="integer",JSONPath=".status.retryCount",priority=1
 //+kubebuilder:printcolumn:name="Size",type="integer",JSONPath=".status.cacheSizeBytes",priority=1
 //+kubebuilder:printcolumn:name="LastAccess",type="date",JSONPath=".status.lastAccessTime",priority=1
 //+kubebuilder:printcolumn:name="Evictions",type="integer",JSONPath=".status.evictionCount",priority=1

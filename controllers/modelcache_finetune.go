@@ -254,6 +254,11 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 
 	// Check finetune job status.
 	if finetuneJob.Status.Succeeded > 0 {
+		// Reset retry counter on success (finetune phase completed).
+		if modelCache.Status.RetryCount > 0 {
+			r.resetRetryCount(modelCache)
+		}
+
 		log.Info("Finetune job succeeded", "cache", modelCache.Name)
 		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "finetune")
 
@@ -351,9 +356,39 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		log.Info("Finetune job failed", "cache", modelCache.Name)
 		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "finetune")
 		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "finetune_failed").Inc()
-		metrics.FinetuneJobsTotal.WithLabelValues(modelCache.Name, "failed").Inc()
 
 		failureMsg := captureFinetuneFailureLogs(ctx, r.Client, modelCache.Namespace, finetuneJob.Name)
+
+		// Check if we should auto-retry.
+		if shouldRetry, backoff := r.shouldRetryFailedPhase(modelCache, "finetune"); shouldRetry {
+			r.recordFailure(modelCache, "finetune")
+			log.Info("Finetune job failed, scheduling retry",
+				"cache", modelCache.Name,
+				"retryCount", modelCache.Status.RetryCount,
+				"backoff", backoff)
+
+			if err := r.deleteFailedJob(ctx, modelCache.Namespace, finetuneJobName); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFinetuning
+			if modelCache.Status.Finetune == nil {
+				modelCache.Status.Finetune = &aiv1alpha1.FinetuneStatus{}
+			}
+			modelCache.Status.Finetune.FailureMessage = ""
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "FinetuneRetry",
+				fmt.Sprintf("Finetune failed, retry %d/%d in %s: %s",
+					modelCache.Status.RetryCount, modelCache.Spec.GetMaxRetries(), backoff,
+					truncateString(failureMsg, 200)))
+			metrics.FinetuneJobsTotal.WithLabelValues(modelCache.Name, "retried").Inc()
+			return ctrl.Result{RequeueAfter: backoff}, nil
+		}
+
+		metrics.FinetuneJobsTotal.WithLabelValues(modelCache.Name, "failed").Inc()
+
 		ftStatus := &aiv1alpha1.FinetuneStatus{
 			FailureMessage: failureMsg,
 		}
@@ -366,9 +401,10 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 			return ctrl.Result{}, err
 		}
 
-		eventMsg := "Finetune job failed"
+		eventMsg := fmt.Sprintf("Finetune job failed after %d retries", modelCache.Status.RetryCount)
 		if failureMsg != "" {
-			eventMsg = fmt.Sprintf("Finetune job failed: %s", truncateString(failureMsg, 200))
+			eventMsg = fmt.Sprintf("Finetune job failed after %d retries: %s",
+				modelCache.Status.RetryCount, truncateString(failureMsg, 200))
 		}
 		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "FinetuneFailed", eventMsg)
 		return ctrl.Result{}, nil

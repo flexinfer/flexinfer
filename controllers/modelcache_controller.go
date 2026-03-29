@@ -82,6 +82,13 @@ func (r *ModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	defer r.updateCacheMetrics(modelCache, "")
 
+	// Check for manual retry reset annotation before anything else.
+	if resetDone, resetErr := r.handleResetRetriesAnnotation(ctx, modelCache); resetErr != nil {
+		return ctrl.Result{}, resetErr
+	} else if resetDone {
+		return ctrl.Result{Requeue: true}, nil
+	}
+
 	// Initialize status
 	if modelCache.Status.Phase == "" {
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhasePending

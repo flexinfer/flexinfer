@@ -133,6 +133,11 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 
 	// Check publish job status.
 	if publishJob.Status.Succeeded > 0 {
+		// Reset retry counter on success (publish phase completed).
+		if modelCache.Status.RetryCount > 0 {
+			r.resetRetryCount(modelCache)
+		}
+
 		log.Info("Publish job succeeded", "cache", modelCache.Name)
 		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "publish")
 
@@ -174,6 +179,34 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "publish_failed").Inc()
 
 		failureMsg := capturePublishFailureLogs(ctx, r.Client, modelCache.Namespace, publishJob.Name)
+
+		// Check if we should auto-retry.
+		if shouldRetry, backoff := r.shouldRetryFailedPhase(modelCache, "publish"); shouldRetry {
+			r.recordFailure(modelCache, "publish")
+			log.Info("Publish job failed, scheduling retry",
+				"cache", modelCache.Name,
+				"retryCount", modelCache.Status.RetryCount,
+				"backoff", backoff)
+
+			if err := r.deleteFailedJob(ctx, modelCache.Namespace, publishJobName); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhasePublishing
+			if modelCache.Status.Publish == nil {
+				modelCache.Status.Publish = &aiv1alpha1.PublishStatus{}
+			}
+			modelCache.Status.Publish.FailureMessage = ""
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "PublishRetry",
+				fmt.Sprintf("Publish failed, retry %d/%d in %s: %s",
+					modelCache.Status.RetryCount, modelCache.Spec.GetMaxRetries(), backoff,
+					truncateString(failureMsg, 200)))
+			return ctrl.Result{RequeueAfter: backoff}, nil
+		}
+
 		pubStatus := &aiv1alpha1.PublishStatus{
 			FailureMessage: failureMsg,
 		}
@@ -186,9 +219,10 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 			return ctrl.Result{}, err
 		}
 
-		eventMsg := "Publish job failed"
+		eventMsg := fmt.Sprintf("Publish job failed after %d retries", modelCache.Status.RetryCount)
 		if failureMsg != "" {
-			eventMsg = fmt.Sprintf("Publish job failed: %s", truncateString(failureMsg, 200))
+			eventMsg = fmt.Sprintf("Publish job failed after %d retries: %s",
+				modelCache.Status.RetryCount, truncateString(failureMsg, 200))
 		}
 		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "PublishFailed", eventMsg)
 		return ctrl.Result{}, nil
