@@ -742,6 +742,21 @@ elif policy_state:
 with open(cfg_path, "w") as f:
     json.dump(cfg, f, indent=2)
 
+# ── VLM artifact cleanup ──────────────────────────────────────────────
+# After extracting text_config from a VLM wrapper, remove processor files
+# that cause GPTQModel's AutoProcessor to attempt VLM loading.
+if policy is not None and policy.get("extract_text_config"):
+    vlm_artifacts = [
+        "preprocessor_config.json",
+        "video_preprocessor_config.json",
+        "chat_template.json",
+    ]
+    for artifact in vlm_artifacts:
+        artifact_path = os.path.join(model_dir, artifact)
+        if os.path.exists(artifact_path):
+            os.remove(artifact_path)
+            print(f"Removed VLM artifact: {artifact}")
+
 ensure_policy_python_packages(policy)
 
 effective_max_seq_len = effective_calibration_setting(
