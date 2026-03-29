@@ -31,10 +31,10 @@ controller:
     requests:
       cpu: 100m
       memory: 256Mi
-  # Only run on amd64 control-plane nodes
+  # Only run on amd64 control-plane node (cblevins-7900xtx)
   nodeSelector:
     kubernetes.io/arch: amd64
-    node.flexstack.io/class: control-plane
+    kubernetes.io/hostname: cblevins-7900xtx
   tolerations:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists
@@ -84,10 +84,10 @@ proxy:
   timeouts:
     queue: "25m"
     coldStart: "25m"
-  # Only run on amd64 nodes (no ARM64 images available)
+  # Only run on amd64 control-plane node (cblevins-7900xtx)
   nodeSelector:
     kubernetes.io/arch: amd64
-    node.flexstack.io/class: control-plane
+    kubernetes.io/hostname: cblevins-7900xtx
 
 tenancy:
   enabled: false
@@ -127,10 +127,10 @@ scheduler:
     requests:
       cpu: 100m
       memory: 128Mi
-  # Only run on amd64 nodes (no ARM64 images available)
+  # Only run on amd64 control-plane node (cblevins-7900xtx)
   nodeSelector:
     kubernetes.io/arch: amd64
-    node.flexstack.io/class: control-plane
+    kubernetes.io/hostname: cblevins-7900xtx
   tolerations:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists
