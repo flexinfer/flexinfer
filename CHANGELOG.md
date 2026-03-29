@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **gRPC security upgrade** (`go.mod`): Upgrade `google.golang.org/grpc` v1.78.0 → v1.79.3 to fix GO-2026-4762 (authorization bypass via missing leading slash in `:path` header).
 
 ### Changed
+- **schema.go split** (`pkg/agentcontext`): Split 1,257-line `schema.go` into `schema_workflow.go` (311), `schema_graph.go` (196), `schema_memory.go` (204), and `schema_presence.go` (119). Residual schema.go retains core types and utility functions (447 lines). DEBT-050.
+- **svc_context.go split** (`pkg/agentcontext`): Split 1,098-line `svc_context.go` into `svc_context_add.go` (364), `svc_context_search.go` (173), `svc_context_summary.go` (238), and `svc_context_annotations.go` (322). Residual retains struct and constructor (43 lines). DEBT-051.
+- **daemon_dispatch.go split** (`internal/daemon`): Split 928-line `daemon_dispatch.go` into `daemon_dispatch_status.go` (375), `daemon_dispatch_ops.go` (237), and `daemon_dispatch_otel.go` (217). Residual retains message router (129 lines). DEBT-052.
+- **ops.go split** (`pkg/sync`): Split 969-line `ops.go` into `ops_sync.go` (466), `ops_regen.go` (331), and `ops_validate.go` (146). Residual retains discovery helpers (55 lines). DEBT-053.
 - **fleet.go split** (`internal/tui/panels`): Split 1,004-line `fleet.go` into `fleet_render.go` (344 lines), `fleet_filtering.go` (127 lines), and `fleet_status.go` (298 lines). Residual fleet.go retains types, model, and interactive state (264 lines). DEBT-045.
 - **noctx consolidation** (`pkg/launchctl`): Extract `pkg/launchctl` package with context-aware `Load`/`Unload`/`Start`/`Stop`/`Kill`/`FindProcessByPort`/`KillPID` helpers wrapping `exec.CommandContext`. Eliminates 14 `//nolint:noctx` suppressions across `daemon_control.go`, `hud_control.go`, `cmd_sync_agent_tokens.go`, and `bridge/daemon.go`. DEBT-048.
 - **mcp-godot tests** (`cmd/mcp-godot`): Add 21 unit tests covering `NewGodotClient`, `NewLogReader`, `ReadRecent`, `TailStream`, and `Close` idempotency. DEBT-049.
