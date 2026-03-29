@@ -39,6 +39,10 @@ controller:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists
       effect: NoSchedule
+    - key: dedicated
+      operator: Equal
+      value: gpu
+      effect: NoSchedule
 
 agent:
   enabled: true
@@ -88,6 +92,14 @@ proxy:
   nodeSelector:
     kubernetes.io/arch: amd64
     kubernetes.io/hostname: cblevins-7900xtx
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: dedicated
+      operator: Equal
+      value: gpu
+      effect: NoSchedule
 
 tenancy:
   enabled: false
@@ -134,6 +146,10 @@ scheduler:
   tolerations:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists
+      effect: NoSchedule
+    - key: dedicated
+      operator: Equal
+      value: gpu
       effect: NoSchedule
   weights:
     tps: 0.7
