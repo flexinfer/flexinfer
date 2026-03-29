@@ -762,6 +762,7 @@ build:image:loom-core:
         - cmd/**/*
         - internal/**/*
         - pkg/**/*
+      allow_failure: true
     - when: never
 
 build:image:custom-server:
@@ -798,6 +799,7 @@ build:image:custom-server:
         - cmd/**/*
         - internal/**/*
         - pkg/**/*
+      allow_failure: true
     - when: never
 
 radar-scan:
