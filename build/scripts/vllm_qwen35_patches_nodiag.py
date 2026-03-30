@@ -936,6 +936,97 @@ new_load_weights_end = """        loader = AutoWeightsLoader(
             print(f"  16. ERROR in post-load fixup: {_fix_e}", flush=True)
             _fix_tb.print_exc()
 
+        # ── 16b. Fix MERGED unquantized modules (in_proj_ba) ──────────────
+        # in_proj_ba merges in_proj_b (shard 0) + in_proj_a (shard 1).
+        # Both sub-projections are FP16 (unquantized) in the checkpoint, but
+        # vLLM creates in_proj_ba as QuantLinear because --quantization gptq.
+        # The weight loader silently drops .weight tensors on QuantLinear
+        # (it only handles .qweight/.scales/.qzeros), so in_proj_ba retains
+        # random qweight initialization -> garbage gating -> garbage output.
+        import safetensors.torch as _st16b
+        import torch as _t16b
+        try:
+            # Re-resolve model dir and weight map (self-contained)
+            _ba_model_dir = None
+            for _ba_cand in [
+                _fix_os.environ.get("FLEXINFER_MODEL_PATH", ""),
+                getattr(self.config, "_name_or_path", ""),
+            ]:
+                if _ba_cand and _fix_os.path.exists(
+                    _fix_os.path.join(_ba_cand, "model.safetensors.index.json")
+                ):
+                    _ba_model_dir = _ba_cand
+                    break
+            if not _ba_model_dir and _fix_os.path.isdir("/models"):
+                for _ba_root, _, _ba_files in _fix_os.walk("/models"):
+                    if "model.safetensors.index.json" in _ba_files:
+                        _ba_model_dir = _ba_root
+                        break
+            if _ba_model_dir:
+                _ba_idx_path = _fix_os.path.join(
+                    _ba_model_dir, "model.safetensors.index.json"
+                )
+                with open(_ba_idx_path) as _ba_f:
+                    _ba_wmap = _fix_json.load(_ba_f).get("weight_map", {})
+                _fixed_ba = 0
+                _ba_shard_cache = {}
+                for _mname, _mod in self.model.named_modules():
+                    if not _mname.endswith(".in_proj_ba"):
+                        continue
+                    if not hasattr(_mod, "qweight"):
+                        continue
+                    # This is a QuantLinear that should be nn.Linear
+                    _b_key = f"model.{_mname}".replace(
+                        ".in_proj_ba", ".in_proj_b.weight"
+                    )
+                    _a_key = f"model.{_mname}".replace(
+                        ".in_proj_ba", ".in_proj_a.weight"
+                    )
+                    if _b_key not in _ba_wmap or _a_key not in _ba_wmap:
+                        continue
+                    # Load b and a weights from safetensors
+                    _b_path = _fix_os.path.join(_ba_model_dir, _ba_wmap[_b_key])
+                    _a_path = _fix_os.path.join(_ba_model_dir, _ba_wmap[_a_key])
+                    if _b_path not in _ba_shard_cache:
+                        _ba_shard_cache[_b_path] = _st16b.load_file(
+                            _b_path, device="cpu"
+                        )
+                    if _a_path not in _ba_shard_cache:
+                        _ba_shard_cache[_a_path] = _st16b.load_file(
+                            _a_path, device="cpu"
+                        )
+                    _b_w = _ba_shard_cache[_b_path][_b_key]
+                    _a_w = _ba_shard_cache[_a_path][_a_key]
+                    # Concatenate [b, a] matching output_sizes=[num_v_heads]*2
+                    _combined = _t16b.cat([_b_w, _a_w], dim=0)
+                    _out_f, _in_f = _combined.shape
+                    _new_lin = _nn.Linear(_in_f, _out_f, bias=False)
+                    _dev = next(_mod.parameters()).device
+                    _dtype = next(_mod.parameters()).dtype
+                    _new_lin.weight.data = _combined.to(device=_dev, dtype=_dtype)
+                    # Replace in parent module
+                    _parent_name, _child_name = _mname.rsplit(".", 1)
+                    _parent = self.model.get_submodule(_parent_name)
+                    setattr(_parent, _child_name, _new_lin)
+                    _fixed_ba += 1
+                del _ba_shard_cache
+                if _fixed_ba > 0:
+                    print(
+                        f"  16b. FIXED {_fixed_ba} merged in_proj_ba modules "
+                        f"(QuantLinear -> nn.Linear with FP16 weights)",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        "  16b. No in_proj_ba QuantLinear modules found", flush=True
+                    )
+            else:
+                print("  16b. SKIP: no model dir found", flush=True)
+        except Exception as _fix_ba_e:
+            import traceback as _fix_ba_tb
+            print(f"  16b. ERROR in in_proj_ba fixup: {_fix_ba_e}", flush=True)
+            _fix_ba_tb.print_exc()
+
         return _loaded
 
 
@@ -1029,6 +1120,32 @@ else:
                         print(f"  16. Fixed {_lp}: QuantLinear -> nn.Linear({_if}, {_of}) on {_dev}", flush=True)
                     del _loaded_shards
                     print(f"  16. FIXED {_fixed} unquantized layers" if _fixed else "  16. No fixable layers", flush=True)
+            # 16b. Fix merged in_proj_ba (QuantLinear with unquantized sub-projections)
+            import safetensors.torch as _st16b
+            _fixed_ba = 0
+            if _model_dir:
+                for _mn2, _m2 in self.model.named_modules():
+                    if not _mn2.endswith(".in_proj_ba") or not hasattr(_m2, "qweight"):
+                        continue
+                    _pfx = f"model.{_mn2}"
+                    _bk = _pfx.replace(".in_proj_ba", ".in_proj_b.weight")
+                    _ak = _pfx.replace(".in_proj_ba", ".in_proj_a.weight")
+                    if _bk not in _wmap or _ak not in _wmap:
+                        continue
+                    _bw = _st16b.load_file(_fix_os.path.join(_model_dir, _wmap[_bk]), device="cpu")[_bk]
+                    _aw = _st16b.load_file(_fix_os.path.join(_model_dir, _wmap[_ak]), device="cpu")[_ak]
+                    import torch as _t16b
+                    _comb = _t16b.cat([_bw, _aw], dim=0)
+                    _of2, _if2 = _comb.shape
+                    _nl2 = _nn.Linear(_if2, _of2, bias=False)
+                    _dv = next(_m2.parameters()).device
+                    _dt2 = next(_m2.parameters()).dtype
+                    _nl2.weight.data = _comb.to(device=_dv, dtype=_dt2)
+                    _pn, _cn = _mn2.rsplit(".", 1)
+                    setattr(self.model.get_submodule(_pn), _cn, _nl2)
+                    _fixed_ba += 1
+            if _fixed_ba > 0:
+                print(f"  16b. FIXED {_fixed_ba} merged in_proj_ba QuantLinear -> nn.Linear", flush=True)
         except Exception as _fix_e:
             print(f"  16. ERROR: {_fix_e}", flush=True)"""
         )
