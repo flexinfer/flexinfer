@@ -1446,10 +1446,59 @@ if guard_norm > REFUSAL_NORM_THRESHOLD:
     emit_progress("error", phase="abliterating", detail=msg)
     raise RuntimeError(msg)
 
-# ── Orthogonalize weight matrices ─────────────────────────────────────
-emit_progress(
-    "progress", phase="abliterating", percent=75.0, detail="orthogonalizing weights"
+# ── Pre-abliteration baseline perplexity ──────────────────────────────
+# Diagnostic: measure perplexity BEFORE orthogonalization to verify
+# the loaded model is coherent. If baseline is already bad, the issue
+# is model loading, not abliteration.
+pre_validate = os.environ.get("ABLITERATION_PRE_VALIDATE", "true").lower() in (
+    "true",
+    "1",
+    "yes",
 )
+if pre_validate:
+    print("Running pre-abliteration baseline perplexity check...", flush=True)
+    _pre_prompts = ["2+2=", "The capital of France is", "Hello, my name is"]
+    _pre_device = model_input_device(model)
+    _pre_loss, _pre_tokens = 0.0, 0
+    model.eval()
+    with torch.inference_mode():
+        for _vp in _pre_prompts:
+            try:
+                _inp = tokenizer(
+                    _vp, return_tensors="pt", truncation=True, max_length=128
+                )
+                _inp = {k: v.to(_pre_device) for k, v in _inp.items()}
+                _out = model(**_inp, labels=_inp["input_ids"])
+                _lv = _out.loss.item()
+                if not math.isnan(_lv):
+                    _pre_loss += _lv * _inp["input_ids"].numel()
+                    _pre_tokens += _inp["input_ids"].numel()
+            except Exception as _e:
+                print(f"  Pre-validation prompt failed: {_e}", flush=True)
+    if _pre_tokens > 0:
+        _pre_avg = _pre_loss / _pre_tokens
+        _pre_ppl = float(torch.exp(torch.tensor(_pre_avg)).item())
+        print(
+            f"Pre-abliteration baseline perplexity: {_pre_ppl:.2f} (avg loss: {_pre_avg:.4f})",
+            flush=True,
+        )
+        emit_snapshot(
+            "pre_abliteration_perplexity", perplexity=_pre_ppl, avg_loss=_pre_avg
+        )
+    else:
+        print("Pre-abliteration baseline: all prompts failed (NaN loss)", flush=True)
+    del _pre_prompts, _pre_loss, _pre_tokens
+
+# ── Orthogonalize weight matrices ─────────────────────────────────────
+ablation_strength = float(os.environ.get("ABLITERATION_STRENGTH", "1.0"))
+emit_progress(
+    "progress",
+    phase="abliterating",
+    percent=75.0,
+    detail=f"orthogonalizing weights (strength={ablation_strength})",
+)
+if ablation_strength != 1.0:
+    print(f"Using fractional ablation strength: {ablation_strength}", flush=True)
 
 layers_modified = 0
 for layer_idx in layer_indices:
@@ -1463,10 +1512,10 @@ for layer_idx in layer_indices:
             W = param.data.float()
             if W.shape[1] == d.shape[0]:
                 proj = W @ d
-                param.data -= torch.outer(proj, d).to(param.dtype)
+                param.data -= ablation_strength * torch.outer(proj, d).to(param.dtype)
             elif W.shape[0] == d.shape[0]:
                 proj = W.t() @ d
-                param.data -= torch.outer(d, proj).to(param.dtype)
+                param.data -= ablation_strength * torch.outer(d, proj).to(param.dtype)
             else:
                 print(
                     f"  Skipping {name}: shape {tuple(W.shape)} incompatible with direction dim {d.shape[0]}"
@@ -1495,7 +1544,7 @@ if abliterate_lm_head and hasattr(model, "lm_head"):
     dev = lm.weight.device
     d = mean_refusal.to(dev)
     proj = lm.weight.data.float() @ d
-    lm.weight.data -= torch.outer(proj, d).to(lm.weight.dtype)
+    lm.weight.data -= ablation_strength * torch.outer(proj, d).to(lm.weight.dtype)
     del mean_refusal
     print("Abliterated lm_head")
 elif not abliterate_lm_head:
