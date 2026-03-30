@@ -811,10 +811,9 @@ new_load_weights_end = """        loader = AutoWeightsLoader(
                     _model_dir = _cand
                     break
             if not _model_dir and _fix_os.path.isdir("/models"):
-                for _d in _fix_os.listdir("/models"):
-                    _p = _fix_os.path.join("/models", _d)
-                    if _fix_os.path.exists(_fix_os.path.join(_p, "model.safetensors.index.json")):
-                        _model_dir = _p
+                for _root, _dirs, _files in _fix_os.walk("/models"):
+                    if "model.safetensors.index.json" in _files:
+                        _model_dir = _root
                         break
             _index_path = _fix_os.path.join(_model_dir, "model.safetensors.index.json") if _model_dir else ""
             if _fix_os.path.exists(_index_path):
@@ -980,10 +979,9 @@ else:
                     _model_dir = _cand
                     break
             if not _model_dir and _fix_os.path.isdir("/models"):
-                for _d in _fix_os.listdir("/models"):
-                    _p = _fix_os.path.join("/models", _d)
-                    if _fix_os.path.exists(_fix_os.path.join(_p, "model.safetensors.index.json")):
-                        _model_dir = _p
+                for _root, _dirs, _files in _fix_os.walk("/models"):
+                    if "model.safetensors.index.json" in _files:
+                        _model_dir = _root
                         break
             _index_path = _fix_os.path.join(_model_dir, "model.safetensors.index.json") if _model_dir else ""
             if _fix_os.path.exists(_index_path):
