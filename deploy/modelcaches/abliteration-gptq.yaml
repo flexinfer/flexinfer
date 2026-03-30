@@ -6,33 +6,18 @@
 #   2. After download, controller creates GPTQ quantization job (Quantizing)
 #   3. Quantized files stored in gptq-w4-g128/ subdirectory on PVC (Ready)
 #
-# Abliteration RE-ENABLED (2026-03-25) with layered safeguards:
-#   1. GDN layer skip (skipGDNLayers: true) — never touch the 48 GDN linear-attention
-#      layers whose out_proj participates in recurrence
-#   2. Core-layer targeting — only edit the middle full-attention layers where refusal
-#      steering is strongest; leave early/late full-attention blocks untouched
-#   2. Norm guard — aborts if refusal direction norm > 100 (original run was 152.96)
-#   3. Perplexity validation — aborts before save if model perplexity > 50
-# See docs/dev/qwen35-gptq-root-cause.md for full root cause analysis.
+# Abliteration DISABLED (2026-03-30):
+#   Previous abliteration corrupted model weights (norm=152.96 across all 64 layers).
+#   The abliteration job also fails on radeonvii for the 27B model (timeout after 4h).
+#   Re-quantizing from clean FP16 without abliteration to get a working model first.
+#   Re-enable abliteration after the model is verified working.
 #
 # Disk requirements:
 #   27B BF16: ~54 GB download + ~15 GB GPTQ output + working headroom → 160 GB PVC
 #
-# GPU requirements: 1x AMD GPU for abliteration + quantization
+# GPU requirements: 1x AMD GPU for quantization
 # Node: cblevins-radeonvii (gfx906, 128GB RAM) — uses community PyTorch build
 #   (mixa3607/pytorch-gfx906) with transformers>=5 for Qwen3.5 support.
-#
-# Abliteration GPU memory (gfx906-specific):
-#   useGPU: true → device_map=auto, splits model across GPU+CPU.
-#   Radeon VII = 16 GB VRAM. Controller env var overrides required:
-#     FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB=12  (default 20 exceeds VRAM → HIP crash)
-#     FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB=56  (default caps at 32 → disk offload stall)
-#   GPU+CPU split: ~9s/prompt steady-state (vs ~16s/prompt pure CPU).
-#
-# PVC contention:
-#   SharedPVC is RWO. Runtime pod on 7900xtx must be paused during abliteration.
-#   Patch runtime deployment nodeSelector to nonexistent node before starting.
-#   See memory/abliteration-gfx906.md for detailed runbook.
 ---
 # Qwen3.5-27B Opus-Reasoning-Distilled → GPTQ INT4
 # SFT from Claude 4.6 Opus reasoning, BF16 ~54 GB.
@@ -53,29 +38,8 @@ spec:
     maxMemoryGB: 16
     hfTransfer: false
     backoffLimit: 3
-  abliteration:
-    skipGDNLayers: true        # Skip all 48 GDN layers
-    # 27B Qwen3.5 produced an extreme refusal norm at 128 samples. Bump the
-    # contrastive set so the retry recomputes fresh activations/checkpoints and
-    # better separates refusal behavior from general capability.
-    numSamples: 256
-    # Qwen3.5 full-attention blocks are every 4th layer. Keep the intervention in
-    # the middle of the network where refusal steering tends to be strongest, and
-    # avoid the early/late full-attention blocks that previously produced extreme
-    # refusal norms and coherence collapse.
-    targetLayers: "27,31,35"
-    # GPU+CPU split verified working on gfx906 (2026-03-29):
-    #   Requires controller env overrides on radeonvii (16GB VRAM):
-    #     FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB=12
-    #     FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB=56
-    #   ~9s/prompt steady-state vs ~16s/prompt pure CPU.
-    useGPU: true
-    maxMemoryGB: 96            # 128GB node, 54GB model + GPU offload headroom
-    timeoutSeconds: 14400
-    nodeSelector:
-      kubernetes.io/hostname: cblevins-radeonvii
-    normThreshold: "100"       # Abort if refusal direction norm > 100
-    ablitateLmHead: true       # Abliterate lm_head using only full-attention layer directions
+  # abliteration: disabled — re-enable after model is verified working
+  # See git history for previous abliteration config with safeguards
   quantization:
     format: GPTQ
     bits: 4
