@@ -1,6 +1,6 @@
 # Qwen3.5-27B via vLLM on AMD gfx1100 — dedicated on cblevins-7900xtx
 #
-# GPTQ INT4 ~16.6 GiB, clean weights (no abliteration).
+# GPTQ INT4 ~10 GiB (all layers quantized), clean weights (no abliteration).
 # Source: Local via OCI pull from Harbor (qwen35-27b-opus-distill:gptq-w4-g128).
 # Runtime: Unified runtime with vLLM Qwen3.5 patches baked in at build time.
 #

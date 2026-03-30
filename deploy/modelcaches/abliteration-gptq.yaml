@@ -13,7 +13,7 @@
 #   Re-enable abliteration after the model is verified working.
 #
 # Disk requirements:
-#   27B BF16: ~54 GB download + ~15 GB GPTQ output + working headroom → 160 GB PVC
+#   27B BF16: ~54 GB download + ~10 GB GPTQ output + working headroom → 160 GB PVC
 #
 # GPU requirements: 1x AMD GPU for quantization
 # Node: cblevins-radeonvii (gfx906, 128GB RAM) — uses community PyTorch build
@@ -46,7 +46,7 @@ spec:
     groupSize: 128
     sym: true
     descAct: false
-    dynamicExclusion: "gdn"
+    dynamicExclusion: "none"
     useGPU: true
     maxMemoryGB: 96            # 128GB node, 54GB model + GPTQ overhead
     timeoutSeconds: 28800
