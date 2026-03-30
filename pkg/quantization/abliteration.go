@@ -607,6 +607,29 @@ if os.environ.get('ABLITERATION_SAFE_SHARDED_LOAD', 'false').lower() == 'true':
             )
             raise
         print('Safe sharded load patch: dispatch complete', flush=True)
+        # Post-dispatch fixup: move orphan params/buffers that accelerate missed.
+        # infer_auto_device_map only tracks submodules. Registered parameters
+        # and buffers (like GDN dt_bias, A_log) stay on CPU even when their
+        # parent module was dispatched to GPU. Fix by walking the module tree
+        # and moving any misplaced tensors to match the module execution device.
+        import torch
+        _fixed = 0
+        for name, module in model.named_modules():
+            exec_device = getattr(module, '_hf_hook', None)
+            if exec_device is not None:
+                exec_device = getattr(exec_device, 'execution_device', None)
+            if exec_device is None:
+                continue
+            for pname, param in list(module.named_parameters(recurse=False)):
+                if param.device != exec_device:
+                    module._parameters[pname] = param.to(exec_device)
+                    _fixed += 1
+            for bname, buf in list(module.named_buffers(recurse=False)):
+                if buf is not None and buf.device != exec_device:
+                    module._buffers[bname] = buf.to(exec_device)
+                    _fixed += 1
+        if _fixed > 0:
+            print(f'Safe sharded load patch: fixed {_fixed} orphan params/buffers to match dispatch device', flush=True)
         return model
     AutoModelForCausalLM.from_pretrained = _safe_sharded_from_pretrained
     print('Patched AutoModelForCausalLM.from_pretrained for gfx906 safe sharded load')
