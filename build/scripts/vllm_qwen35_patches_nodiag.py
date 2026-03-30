@@ -71,49 +71,64 @@ for cache_dir in ["/root/.triton/cache", "/tmp/.triton/cache"]:
     shutil.rmtree(cache_dir, ignore_errors=True)
 print("0c. Cleared Triton cache")
 
-# 0d. Polyfill layer_type_validation in qwen3_5.py config
-# vLLM 0.17.0's qwen3_5.py imports layer_type_validation from transformers, but
+# 0d. Polyfill layer_type_validation in qwen3_5.py AND qwen3_5_moe.py configs
+# vLLM 0.17.0 imports layer_type_validation from transformers, but
 # transformers 5.3.0.dev0 (pinned for Qwen3.5 support) doesn't export it yet.
-# Replace the import with a try/except that provides a no-op fallback.
+# Replace the import with a try/except that provides a fallback.
+# qwen3_5.py imports it directly; qwen3_5_moe.py also imports it and is loaded
+# when qwen3_5.py model module imports qwen3_5_moe config.
 q35_config_path = f"{BASE}/transformers_utils/configs/qwen3_5.py"
-try:
-    with open(q35_config_path) as f:
-        q35_config_content = f.read()
-    old_import = "from transformers.configuration_utils import PretrainedConfig, layer_type_validation"
-    new_import = """from transformers.configuration_utils import PretrainedConfig
+q35_moe_config_path = f"{BASE}/transformers_utils/configs/qwen3_5_moe.py"
+old_import = "from transformers.configuration_utils import PretrainedConfig, layer_type_validation"
+new_import = """from transformers.configuration_utils import PretrainedConfig
 try:
     from transformers.configuration_utils import layer_type_validation
 except ImportError:
     def layer_type_validation(layer_types, num_hidden_layers):
         if layer_types is not None and len(layer_types) != num_hidden_layers:
             raise ValueError(f"layer_types length ({len(layer_types)}) != num_hidden_layers ({num_hidden_layers})")"""
-    if old_import in q35_config_content:
-        q35_config_content = q35_config_content.replace(old_import, new_import)
-        with open(q35_config_path, "w") as f:
-            f.write(q35_config_content)
-        print("0d. Polyfilled layer_type_validation import in qwen3_5.py config")
-    else:
-        print("0d. layer_type_validation import already patched or not found")
-except FileNotFoundError:
-    print("0d. SKIP: qwen3_5.py config not found (vLLM version may not have it)")
+for cfg_name, cfg_path in [
+    ("qwen3_5.py", q35_config_path),
+    ("qwen3_5_moe.py", q35_moe_config_path),
+]:
+    try:
+        with open(cfg_path) as f:
+            content = f.read()
+        if old_import in content:
+            content = content.replace(old_import, new_import)
+            with open(cfg_path, "w") as f:
+                f.write(content)
+            print(f"0d. Polyfilled layer_type_validation import in {cfg_name}")
+        else:
+            print(
+                f"0d. layer_type_validation import already patched or not found in {cfg_name}"
+            )
+    except FileNotFoundError:
+        print(f"0d. SKIP: {cfg_name} not found (vLLM version may not have it)")
 
 # 0e. Fix ignore_keys_at_rope_validation: list → set
 # vLLM 0.17.0 passes a list but transformers 5.3.0.dev0 _check_received_keys does
 # `received_keys -= ignore_keys` which requires a set (TypeError on list).
-try:
-    with open(q35_config_path) as f:
-        q35_config_content = f.read()
-    old_rope_keys = 'kwargs["ignore_keys_at_rope_validation"] = [\n            "mrope_section",\n            "mrope_interleaved",\n        ]'
-    new_rope_keys = 'kwargs["ignore_keys_at_rope_validation"] = {\n            "mrope_section",\n            "mrope_interleaved",\n        }'
-    if old_rope_keys in q35_config_content:
-        q35_config_content = q35_config_content.replace(old_rope_keys, new_rope_keys)
-        with open(q35_config_path, "w") as f:
-            f.write(q35_config_content)
-        print("0e. Fixed ignore_keys_at_rope_validation: list → set")
-    else:
-        print("0e. ignore_keys_at_rope_validation already patched or not found")
-except FileNotFoundError:
-    print("0e. SKIP: qwen3_5.py config not found")
+old_rope_keys = 'kwargs["ignore_keys_at_rope_validation"] = [\n            "mrope_section",\n            "mrope_interleaved",\n        ]'
+new_rope_keys = 'kwargs["ignore_keys_at_rope_validation"] = {\n            "mrope_section",\n            "mrope_interleaved",\n        }'
+for cfg_name, cfg_path in [
+    ("qwen3_5.py", q35_config_path),
+    ("qwen3_5_moe.py", q35_moe_config_path),
+]:
+    try:
+        with open(cfg_path) as f:
+            content = f.read()
+        if old_rope_keys in content:
+            content = content.replace(old_rope_keys, new_rope_keys)
+            with open(cfg_path, "w") as f:
+                f.write(content)
+            print(f"0e. Fixed ignore_keys_at_rope_validation: list → set in {cfg_name}")
+        else:
+            print(
+                f"0e. ignore_keys_at_rope_validation already patched or not found in {cfg_name}"
+            )
+    except FileNotFoundError:
+        print(f"0e. SKIP: {cfg_name} not found")
 
 # 1. Register qwen3_5_text config type
 config_path = f"{BASE}/transformers_utils/config.py"

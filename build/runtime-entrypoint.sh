@@ -9,13 +9,17 @@ if [ -f /etc/flexinfer/runtime.env ]; then
     set +a
 fi
 
-# ── Normalize Qwen3.5 text-only model configs ────────────────────────
+# ── Normalize Qwen3.5 model configs ──────────────────────────────────
 # The Go runtime starts vLLM with model paths under /models/.
-# Qwen3.5 text-only checkpoints need:
-#   1. text_config added (vLLM defaults to wrong dimensions without it)
+# Qwen3.5 checkpoints need:
+#   1. text_config handling:
+#      - VLM (qwen3_5): add text_config sub-dict if missing
+#      - Text-only (qwen3_5_text): REMOVE text_config if present
+#        (transformers stores it as raw dict, vLLM's get_text_config()
+#         returns it, hasattr(dict, "num_attention_heads") fails)
 #   2. M-RoPE fields stripped (triggers unsupported M-RoPE path)
 #   3. TokenizersBackend → PreTrainedTokenizerFast (transformers 5.x compat)
-# This runs once at container startup, modifying config files on the hostPath.
+# This runs at container startup, modifying config files on the hostPath.
 normalize_qwen35_configs() {
     local models_dir="/models"
     [ -d "$models_dir" ] || return 0
@@ -24,23 +28,28 @@ normalize_qwen35_configs() {
         local model_type
         model_type=$(python3 -c "import json; print(json.load(open('$cfg')).get('model_type',''))" 2>/dev/null) || continue
 
-        # Only process Qwen3.5 text-only models
+        # Only process Qwen3.5 models
         case "$model_type" in
             qwen3_5_text|qwen3_5) ;;
             *) continue ;;
         esac
 
         python3 - "$cfg" <<'NORMALIZE_PY' || echo "[entrypoint] WARNING: config normalization failed for $cfg"
-import json, sys, os
+import json, sys
 
 path = sys.argv[1]
 with open(path) as f:
     cfg = json.load(f)
 
 changed = False
+model_type = cfg.get("model_type", "")
 
-# 1. Add text_config if missing
-if "text_config" not in cfg:
+# 1. text_config handling depends on model type:
+#    - qwen3_5 (VLM): needs text_config sub-dict for proper config nesting
+#    - qwen3_5_text (text-only): must NOT have text_config key
+#      (PretrainedConfig stores it as raw dict; get_text_config() returns it;
+#       hasattr(dict, attr) fails for all config attributes)
+if model_type == "qwen3_5" and "text_config" not in cfg:
     keys = [
         "vocab_size", "hidden_size", "intermediate_size", "num_hidden_layers",
         "num_attention_heads", "num_key_value_heads", "hidden_act",
@@ -58,28 +67,30 @@ if "text_config" not in cfg:
     text_cfg["model_type"] = "qwen3_5_text"
     cfg["text_config"] = text_cfg
     changed = True
-    print(f"[entrypoint] Added text_config to {path}")
+    print(f"[entrypoint] Added text_config to VLM config {path}")
+elif model_type == "qwen3_5_text" and "text_config" in cfg:
+    del cfg["text_config"]
+    changed = True
+    print(f"[entrypoint] Removed text_config from text-only model {path}")
 
-# 2. Normalize architectures to Qwen3_5ForCausalLM (both top-level and text_config)
+# 2. Normalize architectures to Qwen3_5ForCausalLM (top-level only)
 target_arch = ["Qwen3_5ForCausalLM"]
-for section_name, section in [("top-level", cfg), ("text_config", cfg.get("text_config", {}))]:
-    archs = section.get("architectures", [])
-    if archs != target_arch:
-        section["architectures"] = target_arch
-        changed = True
-        print(f"[entrypoint] Fixed {section_name} architectures → {target_arch} in {path}")
+archs = cfg.get("architectures", [])
+if archs != target_arch:
+    cfg["architectures"] = target_arch
+    changed = True
+    print(f"[entrypoint] Fixed architectures -> {target_arch} in {path}")
 
 # 3. Strip M-RoPE config (text-only models use standard RoPE)
-for target in [cfg, cfg.get("text_config", {})]:
-    for k in ["mrope_section", "mrope_interleaved"]:
-        if k in target:
-            del target[k]
-            changed = True
-    rp = target.get("rope_parameters", {})
-    for k in ["mrope_section", "mrope_interleaved"]:
-        if k in rp:
-            del rp[k]
-            changed = True
+for k in ["mrope_section", "mrope_interleaved"]:
+    if k in cfg:
+        del cfg[k]
+        changed = True
+rp = cfg.get("rope_parameters", {})
+for k in ["mrope_section", "mrope_interleaved"]:
+    if k in rp:
+        del rp[k]
+        changed = True
 
 if changed:
     with open(path, "w") as f:
