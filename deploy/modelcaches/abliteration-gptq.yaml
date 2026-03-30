@@ -12,7 +12,8 @@
 #      layers whose out_proj participates in recurrence
 #   2. Core-layer targeting — only edit the middle full-attention layers where refusal
 #      steering is strongest; leave early/late full-attention blocks untouched
-#   3. Norm guard — aborts if refusal direction norm > 100 (original run was 152.96)
+#   3. Norm guard — aborts if refusal direction norm > threshold (250 for 3-layer target;
+#      individual layer norms are higher when fewer layers are targeted)
 #   4. Perplexity validation — aborts before save if model perplexity > 50
 #
 # Key insight: abliteration and quantization exclusions are INDEPENDENT.
@@ -68,7 +69,7 @@ spec:
     timeoutSeconds: 14400
     nodeSelector:
       kubernetes.io/hostname: cblevins-radeonvii
-    normThreshold: "100"       # Abort if refusal direction norm > 100
+    normThreshold: "250"       # Per-layer norm limit (3 target layers → higher per-layer norms expected)
     ablitateLmHead: true       # Abliterate lm_head using only full-attention layer directions
   quantization:
     format: GPTQ
