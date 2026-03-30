@@ -184,10 +184,14 @@ type QuantizationSpec struct {
 	// quantization (kept at full precision). Defaults to "auto".
 	//   - "auto": auto-detect hybrid architectures and exclude attention/expert/
 	//     vision/MTP modules (matches official Qwen GPTQ-Int4 approach).
+	//     Produces larger models (~25 GB for 27B) — needs multi-GPU.
+	//   - "gdn": exclude only GDN (linear_attn) layers but keep full attention
+	//     quantized. Fits single-GPU (24 GB) while preserving GDN recurrence
+	//     quality. Use for Qwen3.5 on single-GPU deployments.
 	//   - "none": quantize all modules to the target bit width (pure INT4).
-	//     Produces smaller models that fit on smaller VRAM cards.
+	//     WARNING: corrupts GDN recurrence in Qwen3.5 — produces garbage.
 	// Only used for GPTQ format.
-	// +kubebuilder:validation:Enum=auto;none
+	// +kubebuilder:validation:Enum=auto;gdn;none
 	// +optional
 	DynamicExclusion *string `json:"dynamicExclusion,omitempty"`
 

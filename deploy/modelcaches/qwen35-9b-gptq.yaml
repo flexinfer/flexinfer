@@ -54,7 +54,7 @@ spec:
     groupSize: 128
     sym: true
     descAct: false
-    dynamicExclusion: "none"
+    dynamicExclusion: "gdn"
     useGPU: true
     maxMemoryGB: 48            # 128GB node, 19GB model + GPTQ overhead
     timeoutSeconds: 14400      # 4 hours (generous, 9B should be ~30 min)

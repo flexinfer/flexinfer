@@ -86,6 +86,12 @@ spec:
                 description: Backends maps backend name (e.g. "vllm", "diffusers")
                   to its support profile.
                 type: object
+              containerMemoryGB:
+                description: |-
+                  ContainerMemoryGB is the K8s container memory limit for quantization/abliteration jobs.
+                  Replaces hardcoded DefaultGPUQuantizationMemoryGB.
+                format: int32
+                type: integer
               deviceCount:
                 description: |-
                   DeviceCount is the total number of GPU resources reported by the K8s device plugin
@@ -268,10 +274,32 @@ spec:
                   int8:
                     type: boolean
                 type: object
+              imagePullPolicy:
+                description: |-
+                  ImagePullPolicy overrides the default pull policy for all images on this GPU architecture.
+                  If not set, ImagePullPolicyForImage() logic is used.
+                type: string
+              maxCPUMemoryGB:
+                description: |-
+                  MaxCPUMemoryGB is the max CPU memory budget for offloading (e.g., 56 for 62GiB node).
+                  Used as ABLITERATION_CPU_MAX_MEMORY_GB env var in abliteration jobs.
+                format: int32
+                type: integer
+              maxGPUMemoryGB:
+                description: |-
+                  MaxGPUMemoryGB is the max GPU memory budget for accelerate device_map (e.g., 12 for gfx906 16GB VRAM).
+                  Used as ABLITERATION_GPU_MAX_MEMORY_GB env var in abliteration jobs.
+                format: int32
+                type: integer
               quantization:
                 description: Quantization declares which quantization formats and
                   images are available.
                 properties:
+                  imagePullPolicy:
+                    description: |-
+                      ImagePullPolicy overrides the pull policy for quantization job images.
+                      Takes precedence over GPUProfileSpec.ImagePullPolicy for quantization jobs.
+                    type: string
                   images:
                     additionalProperties:
                       type: string
@@ -295,6 +323,11 @@ spec:
                     description: |-
                       Image is the unified runtime container image for this architecture.
                       Example: "registry.harbor.lan/flexinfer/runtime:rocm-gfx1100"
+                    type: string
+                  imagePullPolicy:
+                    description: |-
+                      ImagePullPolicy overrides the pull policy for runtime images.
+                      Takes precedence over GPUProfileSpec.ImagePullPolicy for runtime pods.
                     type: string
                   port:
                     description: Port is the runtime API port. Defaults to 8080.

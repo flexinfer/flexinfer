@@ -30,6 +30,10 @@ spec:
     - jsonPath: .status.path
       name: Path
       type: string
+    - jsonPath: .status.retryCount
+      name: Retries
+      priority: 1
+      type: integer
     - jsonPath: .status.cacheSizeBytes
       name: Size
       priority: 1
@@ -369,6 +373,16 @@ spec:
                   Used for capacity planning and eviction decisions.
                 format: int64
                 type: integer
+              maxRetries:
+                description: |-
+                  MaxRetries is the maximum number of automatic retries before marking as permanently failed.
+                  Applies to all pipeline phases (download, abliteration, finetune, quantization, publish).
+                  Uses exponential backoff between retries: min(30s * 2^retryCount, 10m).
+                  Default: 3.
+                format: int32
+                maximum: 10
+                minimum: 0
+                type: integer
               modelGroup:
                 description: |-
                   ModelGroup associates this cache with a named group for coordinated eviction.
@@ -497,11 +511,16 @@ spec:
                       quantization (kept at full precision). Defaults to "auto".
                         - "auto": auto-detect hybrid architectures and exclude attention/expert/
                           vision/MTP modules (matches official Qwen GPTQ-Int4 approach).
+                          Produces larger models (~25 GB for 27B) — needs multi-GPU.
+                        - "gdn": exclude only GDN (linear_attn) layers but keep full attention
+                          quantized. Fits single-GPU (24 GB) while preserving GDN recurrence
+                          quality. Use for Qwen3.5 on single-GPU deployments.
                         - "none": quantize all modules to the target bit width (pure INT4).
-                          Produces smaller models that fit on smaller VRAM cards.
+                          WARNING: corrupts GDN recurrence in Qwen3.5 — produces garbage.
                       Only used for GPTQ format.
                     enum:
                     - auto
+                    - gdn
                     - none
                     type: string
                   format:
@@ -717,6 +736,12 @@ spec:
                   - type
                   type: object
                 type: array
+              currentPhase:
+                description: |-
+                  CurrentPhase tracks which pipeline phase is currently active.
+                  Values: "download", "abliteration", "finetune", "quantization", "publish", "ready".
+                  Used by phase guards to enforce strict pipeline ordering.
+                type: string
               evictionCount:
                 description: |-
                   EvictionCount tracks how many times this cache has been evicted since creation.
@@ -766,6 +791,13 @@ spec:
                 description: |-
                   LastAccessTime is the most recent time this cache was accessed by a ModelDeployment.
                   Updated when a deployment references this cache.
+                format: date-time
+                type: string
+              lastFailurePhase:
+                description: LastFailurePhase records which phase last failed
+                type: string
+              lastFailureTime:
+                description: LastFailureTime records when the last failure occurred
                 format: date-time
                 type: string
               ociDigest:
@@ -929,6 +961,11 @@ spec:
                   Nil when cache is not currently resident. Used for residency calculations.
                 format: date-time
                 type: string
+              retryCount:
+                description: RetryCount tracks how many times the current phase has
+                  been retried
+                format: int32
+                type: integer
               sizeBytes:
                 description: SizeBytes is the size of the cached model
                 type: string

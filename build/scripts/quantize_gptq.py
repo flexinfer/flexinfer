@@ -795,7 +795,18 @@ if force_direct_load:
 if dynamic_exclusion == "none":
     dynamic_config = None
     print("Dynamic exclusion disabled (mode=none) -- all modules will be quantized")
+elif dynamic_exclusion == "gdn":
+    # GDN-only exclusion: keep GDN (linear_attn) layers at full precision while
+    # quantizing everything else including full-attention layers.  This preserves
+    # GDN delta-rule recurrence quality while fitting in 24 GB VRAM (~21-23 GB).
+    dynamic_config = {
+        "-:.*linear_attn.*": {},
+    }
+    print(f"GDN exclusion (mode=gdn): keeping linear_attn modules at full precision")
+    print(f"Dynamic exclusion patterns: {list(dynamic_config.keys())}")
 else:
+    # "auto" mode — auto-detect hybrid architectures and exclude attention/expert/
+    # vision/MTP modules (matches official Qwen GPTQ-Int4 approach).
     with open(cfg_path) as f:
         cfg_recheck = json.load(f)
     dynamic_config = None

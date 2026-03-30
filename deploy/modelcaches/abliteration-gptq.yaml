@@ -46,7 +46,7 @@ spec:
     groupSize: 128
     sym: true
     descAct: false
-    dynamicExclusion: "none"
+    dynamicExclusion: "gdn"
     useGPU: true
     maxMemoryGB: 96            # 128GB node, 54GB model + GPTQ overhead
     timeoutSeconds: 28800
