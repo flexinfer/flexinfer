@@ -38,6 +38,23 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 		span.End()
 	}()
 
+	// Guard: core services (router, pool, processManager) may not be
+	// initialized yet when the embedded HUD fires monitor refreshes during
+	// daemon startup. Allow only methods that don't depend on them.
+	if d.router == nil {
+		switch msg.Method {
+		case "initialize", "notifications/initialized",
+			"loom/call", "tools/call", // pipeline handles its own nil-router errors
+			"loom/rbac-config", "loom/rbac-simulate",
+			"loom/otel-status",
+			"loom/session/open", "loom/session/heartbeat", "loom/session/status", "loom/session/close",
+			"loom/orchestra/query", "loom/orchestra/gather", "loom/orchestra/status":
+			// These methods are safe without full daemon initialization.
+		default:
+			return mcp.NewResponse(msg.ID, map[string]any{"status": "starting"})
+		}
+	}
+
 	switch msg.Method {
 	case "initialize":
 		resp, err = d.handleInitialize(ctx, msg)

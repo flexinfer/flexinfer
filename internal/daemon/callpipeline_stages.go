@@ -46,6 +46,10 @@ func (p *callPipeline) parseAndResolve() *mcp.Message {
 	}
 
 	if p.serverName == "" && p.toolName != "" {
+		if p.daemon.router == nil {
+			return p.internalError(fmt.Errorf("daemon is starting"))
+		}
+
 		var args map[string]any
 		if len(p.params.Arguments) > 0 {
 			_ = json.Unmarshal(p.params.Arguments, &args)
@@ -189,6 +193,13 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 	p.stage = stageRoute
 	span := p.startStageSpan("daemon.pipeline.route")
 	defer span.End()
+
+	if p.daemon.router == nil {
+		err := fmt.Errorf("daemon is starting")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return p.internalError(err)
+	}
 
 	decision, err := p.daemon.router.Route(p.ctx, p.serverName)
 	if err != nil {
