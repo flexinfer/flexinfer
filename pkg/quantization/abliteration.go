@@ -581,7 +581,18 @@ if os.environ.get('ABLITERATION_SAFE_SHARDED_LOAD', 'false').lower() == 'true':
         _elapsed = __import__('time').time() - load_start
         print(f'Safe sharded load patch: loaded all shards in {_elapsed:.1f}s', flush=True)
         from accelerate import dispatch_model, infer_auto_device_map
-        inferred_map = infer_auto_device_map(model, max_memory=kwargs.get('max_memory'))
+        # Prevent sub-layer splitting for decoder layers.  GDN linear_attn
+        # modules register dt_bias/A_log as parameters (not submodules).
+        # Granular dispatch puts child projections on one device while these
+        # orphan params stay on CPU, causing forward-pass device mismatches.
+        no_split = list(getattr(model, '_no_split_modules', None) or [])
+        for _mod in model.modules():
+            _cls = type(_mod).__name__
+            if 'DecoderLayer' in _cls and _cls not in no_split:
+                no_split.append(_cls)
+                print(f'Safe sharded load patch: added {_cls} to no_split_module_classes', flush=True)
+                break
+        inferred_map = infer_auto_device_map(model, max_memory=kwargs.get('max_memory'), no_split_module_classes=no_split if no_split else None)
         gpu_layers = sum(1 for value in inferred_map.values() if value != 'cpu')
         cpu_layers = sum(1 for value in inferred_map.values() if value == 'cpu')
         gpu_targets = [f'{key}->{value}' for key, value in inferred_map.items() if value != 'cpu']
