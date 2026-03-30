@@ -575,6 +575,22 @@ if os.environ.get('ABLITERATION_SAFE_SHARDED_LOAD', 'false').lower() == 'true':
             if index == 1 or index % 25 == 0 or index == len(shard_files):
                 print(f'Safe sharded load patch: loading shard {index}/{len(shard_files)}', flush=True)
             state_dict = load_state_dict(shard_file, map_location='cpu')
+            # VLM checkpoints use 'model.language_model.' prefix for text
+            # weights, but ForCausalLM expects 'model.' directly.  Remap keys
+            # so load_state_dict(strict=False) actually matches.
+            remapped = {}
+            needs_remap = False
+            for key, value in state_dict.items():
+                if 'language_model.' in key:
+                    remapped[key.replace('model.language_model.', 'model.')] = value
+                    needs_remap = True
+                else:
+                    remapped[key] = value
+            if needs_remap:
+                if index == 1:
+                    print('Safe sharded load patch: remapping VLM language_model keys -> model keys', flush=True)
+                state_dict = remapped
+            del remapped
             model.load_state_dict(state_dict, strict=False)
             del state_dict
             gc.collect()
