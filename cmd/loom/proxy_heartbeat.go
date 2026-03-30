@@ -9,10 +9,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/crb2nu/loom/internal/hud"
 )
 
 // proxyHeartbeat fires an async heartbeat to the HUD for proxy-level agent identification.
@@ -40,7 +41,7 @@ func proxyHeartbeat(agentType string) {
 
 	// Try port file first, fall back to default.
 	port := "3333"
-	if data, err := os.ReadFile(filepath.Join(os.TempDir(), "loom-hud.port")); err == nil {
+	if data, err := os.ReadFile(hud.PortFilePath()); err == nil {
 		if p := strings.TrimSpace(string(data)); p != "" {
 			port = p
 		}

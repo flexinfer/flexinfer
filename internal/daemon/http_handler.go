@@ -44,7 +44,10 @@ func (d *Daemon) newStreamableHTTPHandler() *mcp.StreamableHTTPServer {
 func (d *Daemon) startHTTPListener(ctx context.Context) error {
 	addr := d.cfg.HTTPAddr
 	if addr == "" {
-		return nil // HTTP listener not configured
+		if !d.fileCfg.EmbeddedHUD.Enabled {
+			return nil // Neither HTTP listener nor embedded HUD configured
+		}
+		addr = "localhost:0" // Auto-assign port for embedded HUD
 	}
 
 	// Initialize auth before creating the handler
