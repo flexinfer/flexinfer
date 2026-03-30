@@ -389,15 +389,15 @@ PY
     echo "Patched quantize_gptq.py for Qwen3.5 direct load + text-only module tree"
 fi
 
-# Inject init_empty_weights + load_checkpoint_in_model into quantize_gptq.py.
+# Inject conditional model loading into quantize_gptq.py.
 # Replaces from_config + shard loading + dispatch in a SINGLE combined replacement.
-# from_config alone allocates 54GB bf16 tensors; init_empty_weights creates on meta
-# device (0 bytes). load_checkpoint_in_model materializes weights on target devices
-# WITHOUT adding accelerate dispatch hooks (which conflict with GPTQModel's
-# shell_module_materialize). Peak RSS = CPU portion only, not the full model.
-# Apply this rewrite for both GPU and CPU device maps. The injected CPU branch
-# already streams checkpoint shards, but without the init_empty_weights wrapper
-# we still pay the full from_config allocation cost up front.
+# GPU path: init_empty_weights creates meta skeleton (0 bytes), then
+# load_checkpoint_in_model materializes weights on target devices WITHOUT adding
+# accelerate dispatch hooks (which conflict with GPTQModel's shell_module_materialize).
+# CPU path: from_config creates real CPU tensors directly (peak RSS = model size),
+# then shard loading replaces parameter data. This avoids meta tensors entirely,
+# which prevents GPTQModel shell_module_materialize crash ("Cannot copy out of
+# meta tensor"). CPU nodes (128GB+) have enough RAM for the direct allocation.
 if [ -f "${GPTQ_SCRIPT}" ]; then
     python3 - <<'DEVICE_MAP_PY'
 import os, re, sys
@@ -446,14 +446,13 @@ if fc_match and eval_found:
     start_idx = fc_match.start()
     end_idx = src.index(eval_marker, fc_match.end()) + len(eval_marker)
     replacement = (
-        f'{indent}from accelerate import init_empty_weights\n'
-        f'{indent}with init_empty_weights():\n'
-        f'{indent}    model = {loader_expr}.from_config(config, **init_kwargs)\n'
-        f'{indent}print("Model skeleton created on meta device (no memory allocated)")\n'
-        f'{indent}# --- Injected by controller: load_checkpoint_in_model (no dispatch hooks) ---\n'
+        f'{indent}# --- Injected by controller: conditional meta-device loading ---\n'
         f'{indent}if quantize_device_map and quantize_device_map != "cpu":\n'
-        f'{indent}    from accelerate import infer_auto_device_map, load_checkpoint_in_model\n'
+        f'{indent}    from accelerate import init_empty_weights, infer_auto_device_map, load_checkpoint_in_model\n'
         f'{indent}    from accelerate.utils import get_max_memory\n'
+        f'{indent}    with init_empty_weights():\n'
+        f'{indent}        model = {loader_expr}.from_config(config, **init_kwargs)\n'
+        f'{indent}    print("Model skeleton created on meta device (no memory allocated)")\n'
         f'{indent}    max_mem = get_max_memory()\n'
         f'{indent}    for dev_id in list(max_mem.keys()):\n'
         f'{indent}        if dev_id != "cpu":\n'
@@ -468,6 +467,10 @@ if fc_match and eval_found:
         f'{indent}    )\n'
         f'{indent}    print("Model loaded via load_checkpoint_in_model (no dispatch hooks)")\n'
         f'{indent}else:\n'
+        f'{indent}    # CPU path: create real tensors directly (no meta device) to avoid\n'
+        f'{indent}    # GPTQModel shell_module_materialize crash on meta tensors.\n'
+        f'{indent}    model = {loader_expr}.from_config(config, **init_kwargs)\n'
+        f'{indent}    print(f"Model instantiated on CPU (device_map={{quantize_device_map}})")\n'
         f'{indent}    index_filename = resolve_checkpoint_index(model_dir)\n'
         f'{indent}    shard_files, shard_metadata = get_checkpoint_shard_files(\n'
         f'{indent}        model_dir, index_filename, local_files_only=True,\n'
