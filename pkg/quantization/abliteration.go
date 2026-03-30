@@ -554,7 +554,8 @@ if os.environ.get('ABLITERATION_SAFE_SHARDED_LOAD', 'false').lower() == 'true':
         build_start = __import__('time').time()
         print(f'Safe sharded load patch: constructing model from config dtype={dtype}', flush=True)
         model = AutoModelForCausalLM.from_config(config, trust_remote_code=trust_remote_code, torch_dtype=dtype)
-        print(f'Safe sharded load patch: model constructed in {__import__("time").time() - build_start:.1f}s', flush=True)
+        _elapsed = __import__('time').time() - build_start
+        print(f'Safe sharded load patch: model constructed in {_elapsed:.1f}s', flush=True)
         if hasattr(model, 'tie_weights'):
             print('Safe sharded load patch: tying weights', flush=True)
             model.tie_weights()
@@ -577,7 +578,8 @@ if os.environ.get('ABLITERATION_SAFE_SHARDED_LOAD', 'false').lower() == 'true':
             model.load_state_dict(state_dict, strict=False)
             del state_dict
             gc.collect()
-        print(f'Safe sharded load patch: loaded all shards in {__import__("time").time() - load_start:.1f}s', flush=True)
+        _elapsed = __import__('time').time() - load_start
+        print(f'Safe sharded load patch: loaded all shards in {_elapsed:.1f}s', flush=True)
         from accelerate import dispatch_model, infer_auto_device_map
         inferred_map = infer_auto_device_map(model, max_memory=kwargs.get('max_memory'))
         gpu_layers = sum(1 for value in inferred_map.values() if value != 'cpu')
@@ -598,8 +600,9 @@ if os.environ.get('ABLITERATION_SAFE_SHARDED_LOAD', 'false').lower() == 'true':
                 offload_buffers=kwargs.get('offload_buffers', False),
             )
         except Exception as exc:
+            _elapsed = __import__('time').time() - dispatch_start
             print(
-                f'Safe sharded load patch: dispatch failed after {__import__("time").time() - dispatch_start:.1f}s: {type(exc).__name__}: {exc}',
+                f'Safe sharded load patch: dispatch failed after {_elapsed:.1f}s: {type(exc).__name__}: {exc}',
                 flush=True,
             )
             raise
