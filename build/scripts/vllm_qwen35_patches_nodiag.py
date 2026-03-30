@@ -97,6 +97,24 @@ except ImportError:
 except FileNotFoundError:
     print("0d. SKIP: qwen3_5.py config not found (vLLM version may not have it)")
 
+# 0e. Fix ignore_keys_at_rope_validation: list → set
+# vLLM 0.17.0 passes a list but transformers 5.3.0.dev0 _check_received_keys does
+# `received_keys -= ignore_keys` which requires a set (TypeError on list).
+try:
+    with open(q35_config_path) as f:
+        q35_config_content = f.read()
+    old_rope_keys = 'kwargs["ignore_keys_at_rope_validation"] = [\n            "mrope_section",\n            "mrope_interleaved",\n        ]'
+    new_rope_keys = 'kwargs["ignore_keys_at_rope_validation"] = {\n            "mrope_section",\n            "mrope_interleaved",\n        }'
+    if old_rope_keys in q35_config_content:
+        q35_config_content = q35_config_content.replace(old_rope_keys, new_rope_keys)
+        with open(q35_config_path, "w") as f:
+            f.write(q35_config_content)
+        print("0e. Fixed ignore_keys_at_rope_validation: list → set")
+    else:
+        print("0e. ignore_keys_at_rope_validation already patched or not found")
+except FileNotFoundError:
+    print("0e. SKIP: qwen3_5.py config not found")
+
 # 1. Register qwen3_5_text config type
 config_path = f"{BASE}/transformers_utils/config.py"
 with open(config_path) as f:
