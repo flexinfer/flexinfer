@@ -621,13 +621,15 @@ if os.environ.get('ABLITERATION_SAFE_SHARDED_LOAD', 'false').lower() == 'true':
             if exec_device is None:
                 continue
             for pname, param in list(module.named_parameters(recurse=False)):
-                if param.device != exec_device:
-                    module._parameters[pname] = param.to(exec_device)
-                    _fixed += 1
+                if param.is_meta or param.device == exec_device:
+                    continue
+                module._parameters[pname] = param.to(exec_device)
+                _fixed += 1
             for bname, buf in list(module.named_buffers(recurse=False)):
-                if buf is not None and buf.device != exec_device:
-                    module._buffers[bname] = buf.to(exec_device)
-                    _fixed += 1
+                if buf is None or buf.is_meta or buf.device == exec_device:
+                    continue
+                module._buffers[bname] = buf.to(exec_device)
+                _fixed += 1
         if _fixed > 0:
             print(f'Safe sharded load patch: fixed {_fixed} orphan params/buffers to match dispatch device', flush=True)
         return model
