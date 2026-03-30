@@ -2,12 +2,16 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/crb2nu/loom/internal/hud"
 )
 
 func TestHeartbeatRateLimiting(t *testing.T) {
@@ -182,4 +186,57 @@ func TestResolveProxyIdentity_GeneratesStableProcessScopedID(t *testing.T) {
 	if !strings.Contains(id1, pidFragment) {
 		t.Fatalf("expected id %q to include pid fragment %q", id1, pidFragment)
 	}
+}
+
+// TestProxyHeartbeat_ReadsCanonicalPortFile verifies that proxyHeartbeat reads
+// the port from hud.PortFilePath() (the canonical ~/.config/loom/hud.port)
+// instead of the old hardcoded /tmp/loom-hud.port path.
+func TestProxyHeartbeat_ReadsCanonicalPortFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Start a test HTTP server that records heartbeat requests.
+	var received atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/agent/heartbeat" {
+			received.Store(true)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// Extract the port from the test server URL.
+	parts := strings.SplitN(srv.URL, ":", 3)
+	port := parts[2] // "PORT" from "http://127.0.0.1:PORT"
+
+	// Write the port to the canonical location.
+	_, err := hud.WritePortFile(mustAtoi(port))
+	if err != nil {
+		t.Fatalf("WritePortFile: %v", err)
+	}
+	defer hud.RemovePortFile()
+
+	// Reset heartbeat state so the call goes through.
+	lastHeartbeat.Store(0)
+	proxyIdentityOnce = sync.Once{}
+	proxyAgentID = ""
+	proxyNamespaceOnce = sync.Once{}
+
+	// proxyHeartbeat should discover the test server via the port file.
+	proxyHeartbeat("test-agent")
+
+	// Give a moment for the HTTP request to complete.
+	time.Sleep(100 * time.Millisecond)
+
+	if !received.Load() {
+		t.Fatal("proxyHeartbeat did not send request to the server discovered via hud.PortFilePath()")
+	}
+}
+
+func mustAtoi(s string) int {
+	var n int
+	for _, c := range s {
+		n = n*10 + int(c-'0')
+	}
+	return n
 }

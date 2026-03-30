@@ -8,9 +8,16 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/crb2nu/loom/pkg/flexinfer"
 	"github.com/crb2nu/loom/pkg/openairesponses"
 )
+
+// tokensPerIteration is the rough estimate of tokens consumed per orchestration
+// loop iteration, used to derive max iterations from a token budget.
+const tokensPerIteration = 512
 
 // QueryRequest defines parameters for an orchestrated query.
 type QueryRequest struct {
@@ -47,6 +54,7 @@ type Router struct {
 	lister   ToolLister
 	registry *DomainRegistry
 	metrics  *Metrics
+	tracer   trace.Tracer
 	logger   *slog.Logger
 }
 
@@ -72,6 +80,11 @@ func (r *Router) SetMetrics(m *Metrics) {
 	r.metrics = m
 }
 
+// SetTracer sets the OpenTelemetry tracer for trace span instrumentation.
+func (r *Router) SetTracer(t trace.Tracer) {
+	r.tracer = t
+}
+
 // Registry returns the domain registry for external registration.
 func (r *Router) Registry() *DomainRegistry {
 	return r.registry
@@ -80,6 +93,17 @@ func (r *Router) Registry() *DomainRegistry {
 // Query executes an orchestrated query, optionally classifying the domain first.
 func (r *Router) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
 	start := time.Now()
+
+	if r.tracer != nil {
+		var span trace.Span
+		ctx, span = r.tracer.Start(ctx, "orchestra.query",
+			trace.WithAttributes(attribute.String("query", req.Query)),
+		)
+		defer func() {
+			span.SetAttributes(attribute.Int("domain_count", len(req.Domains)))
+			span.End()
+		}()
+	}
 
 	if err := r.cfg.RequireEnabled(); err != nil {
 		return QueryResult{}, err
@@ -138,6 +162,17 @@ func (r *Router) Status() map[string]any {
 
 // classify uses the router model to determine which domains to query.
 func (r *Router) classify(ctx context.Context, query string) ([]string, error) {
+	if r.tracer != nil {
+		var span trace.Span
+		ctx, span = r.tracer.Start(ctx, "orchestra.classify",
+			trace.WithAttributes(attribute.String("query", query)),
+		)
+		defer span.End()
+		// classified_domains is set below after validation.
+		defer func() {}() // placeholder; actual attribute set after valid slice built
+		_ = span          // used below
+	}
+
 	allDomains := r.registry.List()
 	if len(allDomains) == 0 {
 		return nil, nil
@@ -165,12 +200,28 @@ func (r *Router) classify(ctx context.Context, query string) ([]string, error) {
 		}
 	}
 
+	if r.tracer != nil {
+		span := trace.SpanFromContext(ctx)
+		span.SetAttributes(attribute.StringSlice("classified_domains", valid))
+	}
+
 	r.logger.Debug("classified query", "query", query, "domains", valid)
 	return valid, nil
 }
 
 // dispatch runs subagents for the specified domains in parallel.
 func (r *Router) dispatch(ctx context.Context, domains []string, req QueryRequest) (QueryResult, error) {
+	if r.tracer != nil {
+		var span trace.Span
+		ctx, span = r.tracer.Start(ctx, "orchestra.dispatch",
+			trace.WithAttributes(
+				attribute.StringSlice("domains", domains),
+				attribute.Int("concurrent_limit", r.cfg.MaxConcurrent),
+			),
+		)
+		defer span.End()
+	}
+
 	sem := make(chan struct{}, r.cfg.MaxConcurrent)
 
 	results := make([]DomainResult, len(domains))
@@ -238,10 +289,33 @@ func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryReque
 		model = agent.Model
 	}
 
+	if r.tracer != nil {
+		var span trace.Span
+		ctx, span = r.tracer.Start(ctx, "orchestra.subagent",
+			trace.WithAttributes(
+				attribute.String("domain", domain),
+				attribute.String("model", model),
+			),
+		)
+		defer span.End()
+	}
+
 	maxIter := r.cfg.MaxIterations
 	if agent.TokenBudget > 0 {
-		// Could adjust based on token budget; for now use max iterations.
-		_ = agent.TokenBudget
+		estimatedIter := agent.TokenBudget / tokensPerIteration
+		if estimatedIter > 0 && estimatedIter < maxIter {
+			maxIter = estimatedIter
+		}
+		r.logger.Debug("token budget adjusted iterations",
+			"domain", domain,
+			"budget", agent.TokenBudget,
+			"max_iter", maxIter,
+		)
+	}
+
+	if r.tracer != nil {
+		span := trace.SpanFromContext(ctx)
+		span.SetAttributes(attribute.Int("max_iterations", maxIter))
 	}
 
 	adapter := NewSubAgentAdapter(agent, r.lister)
@@ -296,6 +370,7 @@ func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryReque
 	return DomainResult{
 		Domain:     domain,
 		Answer:     loopResult.Final.OutputText,
+		Tokens:     len(loopResult.ToolResults) * tokensPerIteration, // estimate from iterations
 		LatencyMs:  latencyMs,
 		Iterations: loopResult.Iterations,
 	}
@@ -303,6 +378,14 @@ func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryReque
 
 // synthesize combines results from multiple domains into a single answer.
 func (r *Router) synthesize(ctx context.Context, results []DomainResult, query string) string {
+	if r.tracer != nil {
+		var span trace.Span
+		ctx, span = r.tracer.Start(ctx, "orchestra.synthesize",
+			trace.WithAttributes(attribute.Int("result_count", len(results))),
+		)
+		defer span.End()
+	}
+
 	// If only one domain with a result, return it directly.
 	var successResults []DomainResult
 	for _, dr := range results {

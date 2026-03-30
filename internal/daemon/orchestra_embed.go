@@ -53,6 +53,11 @@ func (d *Daemon) startEmbeddedOrchestra(ctx context.Context) error {
 		d.logger.Warn("orchestra: failed to load YAML domains", "path", yamlPath, "error", err)
 	}
 
+	// Wire OTel tracer if the daemon has one configured.
+	if t := d.daemonTracer(); t != nil {
+		router.SetTracer(t)
+	}
+
 	d.orchestra = router
 
 	d.logger.Info("orchestra started",

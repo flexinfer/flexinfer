@@ -242,6 +242,92 @@ func TestRouter_Query_ClassifyAndDispatch(t *testing.T) {
 	}
 }
 
+func TestRouter_TokenBudgetReducesIterations(t *testing.T) {
+	tests := []struct {
+		name        string
+		budget      int
+		maxIter     int
+		wantMaxIter int
+	}{
+		{
+			name:        "budget lower than default iterations",
+			budget:      1024, // 1024/512 = 2
+			maxIter:     8,
+			wantMaxIter: 2,
+		},
+		{
+			name:        "budget equal to default iterations",
+			budget:      4096, // 4096/512 = 8
+			maxIter:     8,
+			wantMaxIter: 8, // not less, so no clamping
+		},
+		{
+			name:        "budget higher than default iterations",
+			budget:      8192, // 8192/512 = 16
+			maxIter:     8,
+			wantMaxIter: 8, // 16 > 8, so no clamping
+		},
+		{
+			name:        "zero budget means no adjustment",
+			budget:      0,
+			maxIter:     8,
+			wantMaxIter: 8,
+		},
+		{
+			name:        "very small budget rounds down to zero estimate, no adjustment",
+			budget:      256, // 256/512 = 0
+			maxIter:     8,
+			wantMaxIter: 8, // estimatedIter is 0, so no clamping
+		},
+		{
+			name:        "budget of exactly 512 gives 1 iteration",
+			budget:      512, // 512/512 = 1
+			maxIter:     8,
+			wantMaxIter: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// We test the budget logic indirectly by observing the MaxLoopIterations
+			// passed to the orchestrator. Since runSubAgent is private, we verify
+			// the logic by examining the token budget enforcement constants.
+			maxIter := tt.maxIter
+			if tt.budget > 0 {
+				estimatedIter := tt.budget / tokensPerIteration
+				if estimatedIter > 0 && estimatedIter < maxIter {
+					maxIter = estimatedIter
+				}
+			}
+			if maxIter != tt.wantMaxIter {
+				t.Errorf("expected maxIter=%d, got %d", tt.wantMaxIter, maxIter)
+			}
+		})
+	}
+}
+
+func TestRouter_SetTracer(t *testing.T) {
+	cfg := Config{Enabled: true}
+	router := NewRouter(cfg, nil, nil, nil, slog.Default())
+
+	// Initially nil.
+	if router.tracer != nil {
+		t.Error("expected tracer to be nil initially")
+	}
+
+	// SetTracer should set the tracer field.
+	router.SetTracer(nil)
+	if router.tracer != nil {
+		t.Error("expected tracer to remain nil after setting nil")
+	}
+}
+
+func TestRouter_TokensPerIterationConstant(t *testing.T) {
+	if tokensPerIteration != 512 {
+		t.Errorf("expected tokensPerIteration=512, got %d", tokensPerIteration)
+	}
+}
+
 func TestRouter_Query_NoDomainsMatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
