@@ -1,0 +1,2 @@
+FROM registry.harbor.lan/flexinfer/runtime:unified-gfx906-v8
+COPY build/scripts/abliterate.py /opt/flexinfer/scripts/abliterate.py

@@ -805,13 +805,16 @@ if active_policy and active_policy.get("tokenizer_fix_mistral_regex") is not Non
     )
 try:
     tokenizer = AutoTokenizer.from_pretrained(model_dir, **tokenizer_kwargs)
-except TypeError as exc:
-    if (
+except (TypeError, AttributeError) as exc:
+    if isinstance(exc, TypeError) and (
         "fix_mistral_regex" not in str(exc)
         or "fix_mistral_regex" not in tokenizer_kwargs
     ):
         raise
-    print(f"Tokenizer fix_mistral_regex load path failed: {exc}", flush=True)
+    print(
+        f"Tokenizer fix_mistral_regex load path failed: {type(exc).__name__}: {exc}",
+        flush=True,
+    )
     print("Retrying without explicit kwarg and applying patch manually", flush=True)
     tokenizer_kwargs.pop("fix_mistral_regex", None)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, **tokenizer_kwargs)
