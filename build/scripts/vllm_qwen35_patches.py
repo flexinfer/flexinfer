@@ -1555,3 +1555,34 @@ else:
     else:
         print("16. FAILED: Could not find any AutoWeightsLoader pattern in qwen3_5.py")
         print("    Manual intervention required")
+
+# ── Section 17: Bypass gdn_attention_core custom op (ROCm tensor copy bug) ──
+#
+# torch.ops.vllm.gdn_attention_core() wraps _forward_core() but on ROCm the
+# custom op tensor copy corrupts core_attn_out, producing garbage output from
+# every GDN layer.  Replace the custom op call with a direct _forward_core()
+# call, which uses pure PyTorch/FLA operators and works correctly on ROCm.
+with open(qwen3_next_path) as f:
+    qn_content = f.read()
+
+old_custom_op = """        torch.ops.vllm.gdn_attention_core(
+            mixed_qkv,
+            b,
+            a,
+            core_attn_out,
+            self.prefix,
+        )"""
+
+new_direct_call = """        # PATCHED: bypass custom op (ROCm tensor copy bug), call _forward_core directly
+        self._forward_core(mixed_qkv, b, a, core_attn_out)"""
+
+if old_custom_op in qn_content:
+    qn_content = qn_content.replace(old_custom_op, new_direct_call, 1)
+    with open(qwen3_next_path, "w") as f:
+        f.write(qn_content)
+    print("17. PATCHED: gdn_attention_core custom op bypassed → direct _forward_core()")
+elif "# PATCHED: bypass custom op" in qn_content:
+    print("17. Already patched: custom op bypass present")
+else:
+    print("17. WARNING: Could not find gdn_attention_core custom op call to bypass")
+    print("    The method signature or formatting may have changed")
