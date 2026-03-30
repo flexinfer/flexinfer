@@ -70,7 +70,7 @@ spec:
     nodeSelector:
       kubernetes.io/hostname: cblevins-radeonvii
     normThreshold: "250"       # Per-layer norm limit (3 target layers → higher per-layer norms expected)
-    ablitateLmHead: true       # Abliterate lm_head using only full-attention layer directions
+    ablitateLmHead: false      # lm_head too destructive with 3-layer targeting (ppl 373K with true)
   quantization:
     format: GPTQ
     bits: 4
