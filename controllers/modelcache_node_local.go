@@ -127,7 +127,7 @@ fi
 
 mkdir -p "$DEST_DIR"
 echo "Pulling OCI artifact $MODEL_REF to $DEST_DIR..."
-oras pull "$MODEL_REF" -o "$DEST_DIR"
+oras pull "$MODEL_REF" -o "$DEST_DIR" --allow-path-traversal
 touch "$MARKER"
 echo "Sync complete, entering sleep"
 while true; do sleep 3600; done

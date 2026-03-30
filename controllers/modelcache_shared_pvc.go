@@ -707,7 +707,7 @@ mkdir -p "$DEST_DIR"
 RETRY_DELAY=10
 for i in $(seq 1 $MAX_RETRIES); do
     echo "Pulling OCI artifact $MODEL_REF to $DEST_DIR (attempt $i/$MAX_RETRIES)..."
-    if oras pull "$MODEL_REF" -o "$DEST_DIR" %s; then
+    if oras pull "$MODEL_REF" -o "$DEST_DIR" --allow-path-traversal %s; then
         echo "Download complete."
         break
     fi

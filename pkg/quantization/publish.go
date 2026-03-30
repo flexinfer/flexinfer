@@ -247,16 +247,13 @@ if [ -n "${OCI_USERNAME:-}" ] && [ -n "${OCI_PASSWORD:-}" ]; then
   echo "{\"event\":\"progress\",\"phase\":\"authenticated\",\"percent\":5}"
 fi
 
-ARTIFACTS=""
-for fpath in $(find "$MODEL_DIR" -type f); do
-  rel=$(echo "$fpath" | sed "s|^$MODEL_DIR/||")
-  ARTIFACTS="$ARTIFACTS $fpath:$rel"
-done
-
 echo "{\"event\":\"progress\",\"phase\":\"pushing\",\"percent\":10,\"detail\":\"$FILE_COUNT files\"}"
 
+# Push from MODEL_DIR so ORAS uses relative paths as artifact titles.
+# ORAS v1.x sets title annotation from the argument path; absolute paths
+# cause "path traversal disallowed" on pull.
 START_TIME=$(date +%s)
-oras push $INSECURE_FLAG --disable-path-validation "$OCI_REF" $ARTIFACTS --artifact-type "application/vnd.flexinfer.model.v1" 2>&1 | tee /tmp/oras-output.log
+(cd "$MODEL_DIR" && oras push $INSECURE_FLAG --disable-path-validation "$OCI_REF" $(find . -type f | sed 's|^\./||') --artifact-type "application/vnd.flexinfer.model.v1") 2>&1 | tee /tmp/oras-output.log
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
