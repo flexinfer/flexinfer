@@ -60,7 +60,14 @@ if "text_config" not in cfg:
     changed = True
     print(f"[entrypoint] Added text_config to {path}")
 
-# 2. Strip M-RoPE config (text-only models use standard RoPE)
+# 2. Normalize architectures to Qwen3_5ForCausalLM
+archs = cfg.get("architectures", [])
+if archs and archs != ["Qwen3_5ForCausalLM"]:
+    cfg["architectures"] = ["Qwen3_5ForCausalLM"]
+    changed = True
+    print(f"[entrypoint] Fixed architectures {archs} → ['Qwen3_5ForCausalLM'] in {path}")
+
+# 3. Strip M-RoPE config (text-only models use standard RoPE)
 for target in [cfg, cfg.get("text_config", {})]:
     for k in ["mrope_section", "mrope_interleaved"]:
         if k in target:

@@ -130,20 +130,31 @@ if "qwen3_5_text" not in content:
 else:
     print("1. qwen3_5_text already registered")
 
-# 2. Register Qwen3_5ForCausalLM in model registry
+# 2. Register Qwen3_5ForCausalLM + Qwen3_5TextModel in model registry
+# Qwen3_5TextConfig (model_type="qwen3_5_text") auto-generates architecture name
+# "Qwen3_5TextModel" via PretrainedConfig. Must register both aliases.
 registry_path = f"{BASE}/model_executor/models/registry.py"
 with open(registry_path) as f:
     content = f.read()
+changed_registry = False
 if "Qwen3_5ForCausalLM" not in content:
     content = content.replace(
         '"Qwen3NextForCausalLM": ("qwen3_next", "Qwen3NextForCausalLM"),',
         '"Qwen3NextForCausalLM": ("qwen3_next", "Qwen3NextForCausalLM"),\n    "Qwen3_5ForCausalLM": ("qwen3_5", "Qwen3_5ForCausalLM"),',
     )
+    changed_registry = True
+if "Qwen3_5TextModel" not in content:
+    content = content.replace(
+        '"Qwen3_5ForCausalLM": ("qwen3_5", "Qwen3_5ForCausalLM"),',
+        '"Qwen3_5ForCausalLM": ("qwen3_5", "Qwen3_5ForCausalLM"),\n    "Qwen3_5TextModel": ("qwen3_5", "Qwen3_5ForCausalLM"),',
+    )
+    changed_registry = True
+if changed_registry:
     with open(registry_path, "w") as f:
         f.write(content)
-    print("2. Registered Qwen3_5ForCausalLM in model registry")
+    print("2. Registered Qwen3_5ForCausalLM + Qwen3_5TextModel in model registry")
 else:
-    print("2. Qwen3_5ForCausalLM already registered")
+    print("2. Both Qwen3_5 entries already registered")
 
 # 3. Patch qwen3_5.py
 qwen35_path = f"{BASE}/model_executor/models/qwen3_5.py"
