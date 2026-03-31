@@ -24,7 +24,7 @@ normalize_qwen35_configs() {
     local models_dir="/models"
     [ -d "$models_dir" ] || return 0
 
-    find "$models_dir" -maxdepth 3 -name config.json -type f 2>/dev/null | while read -r cfg; do
+    find "$models_dir" -maxdepth 5 -name config.json -type f 2>/dev/null | while read -r cfg; do
         local model_type
         model_type=$(python3 -c "import json; print(json.load(open('$cfg')).get('model_type',''))" 2>/dev/null) || continue
 
