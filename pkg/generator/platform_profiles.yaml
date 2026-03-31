@@ -14,6 +14,7 @@ platforms:
       file: "settings.json"
       events: ["sessionStart", "sessionEnd", "preToolUse", "postToolUse"]
       policy_refs: ["gitops_flux"]
+      enforcement: "native"
       agent_id: "claude-code"
       agent_type: "claude-code"
       description: "Claude Code session"
@@ -47,6 +48,8 @@ platforms:
     config_root: "mcpServers"
     hooks:
       enabled: false
+      policy_refs: ["gitops_flux"]
+      enforcement: "proxy"
     capabilities:
       mcp_servers: true
       permissions: false
@@ -69,6 +72,8 @@ platforms:
       enabled: true
       file: "settings.json"
       events: ["sessionStart", "sessionEnd", "postToolUse"]
+      policy_refs: ["gitops_flux"]
+      enforcement: "native"
       agent_id: "gemini-cli"
       agent_type: "gemini-cli"
       description: "Gemini CLI session"
@@ -97,6 +102,8 @@ platforms:
       enabled: true
       file: "config.toml"
       events: ["notify"]
+      policy_refs: ["gitops_flux"]
+      enforcement: "proxy"
     loom_proxy:
       agent_hint: "codex"
       tool_profile: "llm-core"
@@ -127,6 +134,8 @@ platforms:
       file: "plugins/loom-hooks.ts"
       type: "typescript"
       events: ["sessionCreated", "sessionDeleted", "sessionIdle", "toolExecuteAfter"]
+      policy_refs: ["gitops_flux"]
+      enforcement: "plugin"
     capabilities:
       mcp_servers: true
       permissions: false
@@ -148,6 +157,8 @@ platforms:
     config_root: "mcpServers"
     hooks:
       enabled: false
+      policy_refs: ["gitops_flux"]
+      enforcement: "proxy"
     capabilities:
       mcp_servers: true
       permissions: false
@@ -170,6 +181,8 @@ platforms:
     config_root: "mcpServers"
     hooks:
       enabled: false
+      policy_refs: ["gitops_flux"]
+      enforcement: "proxy"
     loom_proxy:
       agent_hint: "antigravity"
       tool_profile: "antigravity-core"
@@ -195,6 +208,8 @@ platforms:
     config_file: "config.toml"
     hooks:
       enabled: false
+      policy_refs: ["gitops_flux"]
+      enforcement: "proxy"
     loom_proxy:
       agent_hint: "kilocode"
     capabilities:
@@ -218,6 +233,8 @@ platforms:
     config_root: "mcpServers"
     hooks:
       enabled: false
+      policy_refs: ["gitops_flux"]
+      enforcement: "proxy"
     loom_proxy:
       agent_hint: "zed"
     capabilities:

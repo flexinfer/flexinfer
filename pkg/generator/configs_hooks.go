@@ -99,15 +99,71 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 }
 
 // appendHookPolicies dispatches shared policy refs to their hook implementations.
-func appendHookPolicies(hooks map[string]any, reg *registry.Registry, policyRefs []string) {
-	for _, ref := range policyRefs {
+// For native enforcement platforms (preToolUse support), it generates PreToolUse
+// guard hooks. For proxy/plugin enforcement, policies are enforced at the loom
+// proxy layer, so no PreToolUse hooks are needed.
+func appendHookPolicies(hooks map[string]any, reg *registry.Registry, hp HookProfile) {
+	for _, ref := range hp.PolicyRefs {
 		switch ref {
 		case "gitops_flux":
-			if policyHooks := claudeGitopsFluxGuardrailHooks(reg); len(policyHooks) > 0 {
-				hooks["PreToolUse"] = appendHookBlocks(hooks["PreToolUse"], policyHooks...)
+			if hp.Enforcement == "native" {
+				if policyHooks := gitopsFluxGuardrailHooks(reg); len(policyHooks) > 0 {
+					hooks["PreToolUse"] = appendHookBlocks(hooks["PreToolUse"], policyHooks...)
+				}
 			}
+			// For "proxy" and "plugin" enforcement, policies are enforced at the
+			// loom proxy layer. No PreToolUse hooks are generated; the proxy
+			// intercepts blocked commands before they reach the platform.
 		}
 	}
+}
+
+// PolicyEnforcementSummary describes how a policy ref is enforced for a platform.
+type PolicyEnforcementSummary struct {
+	PolicyRef   string // e.g. "gitops_flux"
+	Enforcement string // "native", "proxy", or "plugin"
+	Description string // Human-readable enforcement description
+}
+
+// PlatformPolicySummaries returns enforcement summaries for all policy refs
+// defined on a platform. Used by config generators to annotate proxy-enforced
+// policies in generated config comments.
+func PlatformPolicySummaries(hp HookProfile) []PolicyEnforcementSummary {
+	summaries := make([]PolicyEnforcementSummary, 0, len(hp.PolicyRefs))
+	for _, ref := range hp.PolicyRefs {
+		desc := ""
+		switch hp.Enforcement {
+		case "native":
+			desc = "enforced via PreToolUse hooks in settings.json"
+		case "proxy":
+			desc = "enforced at loom proxy layer (no native hook support)"
+		case "plugin":
+			desc = "enforced via plugin hooks"
+		default:
+			desc = "enforcement method not specified"
+		}
+		summaries = append(summaries, PolicyEnforcementSummary{
+			PolicyRef:   ref,
+			Enforcement: hp.Enforcement,
+			Description: desc,
+		})
+	}
+	return summaries
+}
+
+// FormatPolicyComment returns a comment block documenting how policies are
+// enforced for a given platform. Returns empty string if no policy refs exist.
+func FormatPolicyComment(hp HookProfile, prefix string) string {
+	summaries := PlatformPolicySummaries(hp)
+	if len(summaries) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(prefix + "Policy enforcement:\n")
+	for _, s := range summaries {
+		sb.WriteString(fmt.Sprintf("%s  - %s: %s\n", prefix, s.PolicyRef, s.Description))
+	}
+	return sb.String()
 }
 
 // appendHookExtras dispatches profile-defined extras to their hook implementations.

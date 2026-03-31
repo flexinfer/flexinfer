@@ -24,6 +24,7 @@ type PlatformHealth struct {
 	Hooks        string              `json:"hooks"`                 // "ok", "stale", "missing", "n/a"
 	Perms        string              `json:"perms"`                 // "ok", "drift", "missing", "n/a"
 	Schema       string              `json:"schema"`                // "ok", "errors", "n/a"
+	Policy       string              `json:"policy"`                // "ok", "stale", "not-configured", "n/a"
 	Status       string              `json:"status"`                // "healthy", "stale", "not_configured"
 	ConfigPath   string              `json:"config_path,omitempty"` // path checked
 	Details      []string            `json:"details,omitempty"`
@@ -69,6 +70,7 @@ func DoctorCheck(reg *registry.Registry, platform, configDir string) *PlatformHe
 		Hooks:      "n/a",
 		Perms:      "n/a",
 		Schema:     "n/a",
+		Policy:     "n/a",
 		Status:     "healthy",
 		ConfigPath: configDir,
 	}
@@ -91,6 +93,9 @@ func DoctorCheck(reg *registry.Registry, platform, configDir string) *PlatformHe
 	default:
 		checkBasicHealth(health, platform, configDir)
 	}
+
+	// Check policy enforcement health.
+	checkPolicyHealth(health, platform, configDir)
 
 	// Attach vendor capability matrix and check for feature mismatches.
 	health.Capabilities = GetVendorCapabilities(platform)
@@ -514,9 +519,47 @@ func platformDirNames(platform string) (workspace, home string) {
 	}
 }
 
+// PolicyHashFilename is the name of the file written to home config dirs during
+// sync. Mirrors the constant in pkg/sync to avoid a circular import.
+const PolicyHashFilename = ".loom-policy-hash"
+
+// checkPolicyHealth sets the Policy field on a PlatformHealth based on whether
+// the platform has native hook support or relies on proxy-level enforcement.
+func checkPolicyHealth(health *PlatformHealth, platform, configDir string) {
+	profile, err := GetPlatformProfile(platform)
+	if err != nil {
+		// Unknown platform -- skip policy check.
+		health.Policy = "n/a"
+		return
+	}
+
+	if profile.Hooks.Enabled {
+		// Platform supports native hooks -- check whether a policy hash was
+		// recorded during sync and whether it is still current.
+		hashPath := filepath.Join(configDir, PolicyHashFilename)
+		if _, err := os.Stat(hashPath); err != nil {
+			health.Policy = "not-configured"
+			health.Details = append(health.Details, "policy hash not found (run: loom sync "+platform+" --regen)")
+		} else {
+			// Hash file exists -- we report "ok" here because the actual
+			// staleness comparison requires the registry path, which is done
+			// in loom sync status. Doctor just checks that the mechanism is
+			// in place.
+			health.Policy = "ok"
+		}
+	} else {
+		// Hookless platform -- policy enforcement happens at the proxy level.
+		health.Policy = "n/a"
+		health.Details = append(health.Details, "Policy enforcement: proxy-level (no native hooks)")
+	}
+}
+
 // deriveStatus computes the overall platform status from individual check results.
 func deriveStatus(h *PlatformHealth) string {
 	if h.Hooks == "stale" || h.Perms == "drift" || h.Perms == "missing" {
+		return "stale"
+	}
+	if h.Policy == "stale" {
 		return "stale"
 	}
 	if h.Schema == "errors" {

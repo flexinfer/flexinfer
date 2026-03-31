@@ -31,6 +31,7 @@ type HookProfile struct {
 	Type             string   `yaml:"type"` // "json" (default) or "typescript"
 	Events           []string `yaml:"events"`
 	PolicyRefs       []string `yaml:"policy_refs"` // Shared policy keys resolved from registry data.
+	Enforcement      string   `yaml:"enforcement"` // "native" (PreToolUse), "proxy" (loom proxy), "plugin" (plugin hooks)
 	AgentID          string   `yaml:"agent_id"`
 	AgentType        string   `yaml:"agent_type"`
 	Description      string   `yaml:"description"`

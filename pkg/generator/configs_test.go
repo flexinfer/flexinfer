@@ -1752,3 +1752,359 @@ func TestProfileDrivenConfig_CodexUsesToolTimeoutSec(t *testing.T) {
 		t.Error("codex should not have generic 'timeout' field")
 	}
 }
+
+// --- Policy refs and enforcement tests ---
+
+func TestAllPlatforms_HavePolicyRefs(t *testing.T) {
+	names := AllPlatformNames()
+	if len(names) < 8 {
+		t.Fatalf("expected at least 8 platforms, got %d", len(names))
+	}
+
+	for _, name := range names {
+		profile, err := GetPlatformProfile(name)
+		if err != nil {
+			t.Fatalf("GetPlatformProfile(%q): %v", name, err)
+		}
+		if len(profile.Hooks.PolicyRefs) == 0 {
+			t.Errorf("platform %q has no policy_refs defined", name)
+		}
+		found := false
+		for _, ref := range profile.Hooks.PolicyRefs {
+			if ref == "gitops_flux" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("platform %q does not reference gitops_flux policy", name)
+		}
+	}
+}
+
+func TestAllPlatforms_HaveEnforcement(t *testing.T) {
+	validEnforcements := map[string]bool{
+		"native": true,
+		"proxy":  true,
+		"plugin": true,
+	}
+
+	for _, name := range AllPlatformNames() {
+		profile, err := GetPlatformProfile(name)
+		if err != nil {
+			t.Fatalf("GetPlatformProfile(%q): %v", name, err)
+		}
+		enforcement := profile.Hooks.Enforcement
+		if enforcement == "" {
+			t.Errorf("platform %q has no enforcement field", name)
+			continue
+		}
+		if !validEnforcements[enforcement] {
+			t.Errorf("platform %q has invalid enforcement %q (expected native/proxy/plugin)", name, enforcement)
+		}
+	}
+}
+
+func TestNativeEnforcementPlatforms(t *testing.T) {
+	// Claude and Gemini should have native enforcement.
+	for _, name := range []string{"claude", "gemini"} {
+		profile, err := GetPlatformProfile(name)
+		if err != nil {
+			t.Fatalf("GetPlatformProfile(%q): %v", name, err)
+		}
+		if profile.Hooks.Enforcement != "native" {
+			t.Errorf("platform %q should have native enforcement, got %q", name, profile.Hooks.Enforcement)
+		}
+	}
+}
+
+func TestProxyEnforcementPlatforms(t *testing.T) {
+	// These platforms rely on the loom proxy for enforcement.
+	proxyPlatforms := []string{"codex", "vscode", "antigravity", "kilocode", "zed", "claude_desktop"}
+	for _, name := range proxyPlatforms {
+		profile, err := GetPlatformProfile(name)
+		if err != nil {
+			t.Fatalf("GetPlatformProfile(%q): %v", name, err)
+		}
+		if profile.Hooks.Enforcement != "proxy" {
+			t.Errorf("platform %q should have proxy enforcement, got %q", name, profile.Hooks.Enforcement)
+		}
+	}
+}
+
+func TestPluginEnforcementPlatforms(t *testing.T) {
+	profile, err := GetPlatformProfile("opencode")
+	if err != nil {
+		t.Fatalf("GetPlatformProfile(opencode): %v", err)
+	}
+	if profile.Hooks.Enforcement != "plugin" {
+		t.Errorf("opencode should have plugin enforcement, got %q", profile.Hooks.Enforcement)
+	}
+}
+
+func TestGeminiHooksConfig_IncludesGitOpsPolicy(t *testing.T) {
+	geminiProfile, _ := GetPlatformProfile("gemini")
+	config := geminiHooksConfigFromRegistry(testRegistry(), geminiProfile, "")
+
+	hooks, ok := config["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("expected hooks map in gemini config")
+	}
+
+	// Gemini now has native enforcement, so PreToolUse should be present
+	// with the gitops_flux guardrail hooks (same shape as Claude).
+	preToolUse, ok := hooks["PreToolUse"].([]map[string]any)
+	if !ok || len(preToolUse) == 0 {
+		t.Fatal("expected PreToolUse hooks from shared gitops_flux policy in gemini config")
+	}
+
+	foundPolicyMessage := false
+	for _, block := range preToolUse {
+		entries, _ := block["hooks"].([]map[string]any)
+		for _, entry := range entries {
+			cmd, _ := entry["command"].(string)
+			if strings.Contains(cmd, "kubectl edit") &&
+				strings.Contains(cmd, "GitOps policy:") {
+				foundPolicyMessage = true
+			}
+		}
+	}
+
+	if !foundPolicyMessage {
+		t.Fatalf("expected shared GitOps policy hook in gemini PreToolUse: %#v", preToolUse)
+	}
+}
+
+func TestCodexPreamble_IncludesProxyEnforcementAnnotation(t *testing.T) {
+	var sb strings.Builder
+	emitCodexPreamble(&sb, testRegistry(), "/tmp/workspace", "")
+	content := sb.String()
+
+	if !strings.Contains(content, "Policy enforcement:") {
+		t.Error("expected policy enforcement annotation in codex preamble")
+	}
+	if !strings.Contains(content, "gitops_flux") {
+		t.Error("expected gitops_flux policy reference in codex preamble")
+	}
+	if !strings.Contains(content, "proxy") {
+		t.Error("expected proxy enforcement annotation in codex preamble")
+	}
+}
+
+func TestPlatformPolicySummaries(t *testing.T) {
+	tests := []struct {
+		name        string
+		hp          HookProfile
+		wantLen     int
+		wantEnforce string
+	}{
+		{
+			name: "native enforcement",
+			hp: HookProfile{
+				PolicyRefs:  []string{"gitops_flux"},
+				Enforcement: "native",
+			},
+			wantLen:     1,
+			wantEnforce: "native",
+		},
+		{
+			name: "proxy enforcement",
+			hp: HookProfile{
+				PolicyRefs:  []string{"gitops_flux"},
+				Enforcement: "proxy",
+			},
+			wantLen:     1,
+			wantEnforce: "proxy",
+		},
+		{
+			name: "plugin enforcement",
+			hp: HookProfile{
+				PolicyRefs:  []string{"gitops_flux"},
+				Enforcement: "plugin",
+			},
+			wantLen:     1,
+			wantEnforce: "plugin",
+		},
+		{
+			name:    "no policy refs",
+			hp:      HookProfile{},
+			wantLen: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			summaries := PlatformPolicySummaries(tt.hp)
+			if len(summaries) != tt.wantLen {
+				t.Fatalf("expected %d summaries, got %d", tt.wantLen, len(summaries))
+			}
+			if tt.wantLen > 0 {
+				if summaries[0].Enforcement != tt.wantEnforce {
+					t.Errorf("expected enforcement %q, got %q", tt.wantEnforce, summaries[0].Enforcement)
+				}
+				if summaries[0].PolicyRef != "gitops_flux" {
+					t.Errorf("expected policy ref gitops_flux, got %q", summaries[0].PolicyRef)
+				}
+				if summaries[0].Description == "" {
+					t.Error("expected non-empty description")
+				}
+			}
+		})
+	}
+}
+
+func TestFormatPolicyComment(t *testing.T) {
+	t.Run("proxy enforcement", func(t *testing.T) {
+		hp := HookProfile{
+			PolicyRefs:  []string{"gitops_flux"},
+			Enforcement: "proxy",
+		}
+		comment := FormatPolicyComment(hp, "# ")
+		if comment == "" {
+			t.Fatal("expected non-empty comment")
+		}
+		if !strings.Contains(comment, "gitops_flux") {
+			t.Error("comment should mention gitops_flux")
+		}
+		if !strings.Contains(comment, "proxy") {
+			t.Error("comment should mention proxy enforcement")
+		}
+	})
+
+	t.Run("native enforcement", func(t *testing.T) {
+		hp := HookProfile{
+			PolicyRefs:  []string{"gitops_flux"},
+			Enforcement: "native",
+		}
+		comment := FormatPolicyComment(hp, "# ")
+		if comment == "" {
+			t.Fatal("expected non-empty comment")
+		}
+		if !strings.Contains(comment, "PreToolUse") {
+			t.Error("native enforcement comment should mention PreToolUse")
+		}
+	})
+
+	t.Run("no policy refs", func(t *testing.T) {
+		hp := HookProfile{}
+		comment := FormatPolicyComment(hp, "# ")
+		if comment != "" {
+			t.Errorf("expected empty comment for no policy refs, got %q", comment)
+		}
+	})
+}
+
+func TestGeneratedTomlConfig_KilocodeIncludesPolicyComment(t *testing.T) {
+	tmpDir := t.TempDir()
+	profile, err := GetPlatformProfile("kilocode")
+	if err != nil {
+		t.Fatalf("GetPlatformProfile(kilocode): %v", err)
+	}
+
+	params := &GenerateParams{
+		Reg:       testRegistry(),
+		OutputDir: tmpDir,
+		Target:    "kilocode",
+		Profile:   profile,
+		LoomMode:  true,
+	}
+
+	if err := generateTomlConfig(params); err != nil {
+		t.Fatalf("generateTomlConfig(kilocode): %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "kilocode", "config.toml"))
+	if err != nil {
+		t.Fatalf("read generated config: %v", err)
+	}
+
+	if !strings.Contains(string(content), "Policy enforcement:") {
+		t.Error("kilocode TOML config should include policy enforcement comment")
+	}
+	if !strings.Contains(string(content), "gitops_flux") {
+		t.Error("kilocode TOML config should reference gitops_flux policy")
+	}
+	if !strings.Contains(string(content), "proxy") {
+		t.Error("kilocode TOML config should mention proxy enforcement")
+	}
+}
+
+func TestGeneratedJSONConfig_VSCodeIncludesPolicyMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	profile, err := GetPlatformProfile("vscode")
+	if err != nil {
+		t.Fatalf("GetPlatformProfile(vscode): %v", err)
+	}
+
+	params := &GenerateParams{
+		Reg:       testRegistry(),
+		OutputDir: tmpDir,
+		Target:    "vscode",
+		Profile:   profile,
+		LoomMode:  true,
+	}
+
+	if err := generateJSONConfig(params); err != nil {
+		t.Fatalf("generateJSONConfig(vscode): %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "vscode", "mcp.json"))
+	if err != nil {
+		t.Fatalf("read generated config: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(content, &parsed); err != nil {
+		t.Fatalf("generated mcp.json is not valid JSON: %v", err)
+	}
+
+	policyMeta, ok := parsed["_loom_policy"].(map[string]any)
+	if !ok {
+		t.Fatal("expected _loom_policy metadata in generated vscode config")
+	}
+	if _, ok := policyMeta["gitops_flux"]; !ok {
+		t.Error("expected gitops_flux entry in _loom_policy metadata")
+	}
+}
+
+func TestAppendHookPolicies_ProxyEnforcementNoPreToolUse(t *testing.T) {
+	// For platforms with proxy enforcement, appendHookPolicies should not add
+	// any PreToolUse hooks.
+	hooks := map[string]any{}
+	hp := HookProfile{
+		PolicyRefs:  []string{"gitops_flux"},
+		Enforcement: "proxy",
+	}
+	appendHookPolicies(hooks, testRegistry(), hp)
+
+	if _, ok := hooks["PreToolUse"]; ok {
+		t.Error("proxy enforcement should not add PreToolUse hooks")
+	}
+}
+
+func TestAppendHookPolicies_NativeEnforcementAddsPreToolUse(t *testing.T) {
+	hooks := map[string]any{}
+	hp := HookProfile{
+		PolicyRefs:  []string{"gitops_flux"},
+		Enforcement: "native",
+	}
+	appendHookPolicies(hooks, testRegistry(), hp)
+
+	preToolUse, ok := hooks["PreToolUse"].([]map[string]any)
+	if !ok || len(preToolUse) == 0 {
+		t.Fatal("native enforcement should add PreToolUse hooks")
+	}
+}
+
+func TestAppendHookPolicies_PluginEnforcementNoPreToolUse(t *testing.T) {
+	hooks := map[string]any{}
+	hp := HookProfile{
+		PolicyRefs:  []string{"gitops_flux"},
+		Enforcement: "plugin",
+	}
+	appendHookPolicies(hooks, testRegistry(), hp)
+
+	if _, ok := hooks["PreToolUse"]; ok {
+		t.Error("plugin enforcement should not add PreToolUse hooks")
+	}
+}

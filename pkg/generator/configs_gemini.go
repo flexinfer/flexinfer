@@ -73,6 +73,10 @@ func geminiHooksConfigFromRegistry(reg *registry.Registry, profile *PlatformProf
 // geminiHooks returns the hooks block for Gemini CLI settings.json.
 func geminiHooks(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
 	hooks := buildPlatformHooks(reg, profile.Hooks, loomBinary)
+
+	// Append shared policy hooks (Gemini now has native enforcement via policy_refs).
+	appendHookPolicies(hooks, reg, profile.Hooks)
+
 	appendHookExtras(hooks, profile.Hooks.Extras, loomBinary)
 	return hooks
 }
