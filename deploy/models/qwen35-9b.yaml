@@ -16,7 +16,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  source: local://qwen35-9b
+  source: pvc://qwen35-9b-oci/qwen35-9b
   cache:
     strategy: Local
   gpu:
