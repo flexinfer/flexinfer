@@ -67,13 +67,15 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 		}
 
 		// Gate on PVC readiness — don't create jobs against a PVC that is
-		// still being provisioned or is being deleted (Terminating).
+		// being deleted (Terminating) or in a terminal error state.
+		// Note: Pending PVCs with WaitForFirstConsumer binding mode are OK —
+		// the downloader pod triggers volume binding when it schedules.
 		if pvc.DeletionTimestamp != nil {
 			log.Info("PVC is terminating, waiting for cleanup", "pvc", pvcName)
 			return ctrl.Result{RequeueAfter: requeueMedium}, nil
 		}
-		if pvc.Status.Phase != corev1.ClaimBound {
-			log.Info("PVC not yet bound, waiting", "pvc", pvcName, "phase", pvc.Status.Phase)
+		if pvc.Status.Phase == corev1.ClaimLost {
+			log.Info("PVC is lost, waiting for recovery", "pvc", pvcName)
 			return ctrl.Result{RequeueAfter: requeueMedium}, nil
 		}
 	}
