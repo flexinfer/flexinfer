@@ -100,9 +100,7 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 				return ctrl.Result{}, err
 			}
 
-			// Clear annotation and seed source hash BEFORE status update.
-			// Must update metadata first — Status().Update() bumps resourceVersion,
-			// which would cause a conflict on the subsequent metadata Update().
+			// Clear annotation and seed source hash via metadata update.
 			if modelCache.Annotations == nil {
 				modelCache.Annotations = make(map[string]string)
 			}
@@ -112,6 +110,14 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			if err := r.Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
+
+			// Refetch to get the latest resourceVersion after metadata update,
+			// then apply status changes. Without refetch, the status update may
+			// conflict if the metadata update bumped resourceVersion.
+			if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			r.resetDownloadStatusFields(modelCache)
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -143,10 +149,15 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			}
 			modelCache.Annotations[annotationSourceHash] = currentHash
 
-			// Update metadata (annotations) first, then status.
 			if err := r.Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
+
+			// Refetch after metadata update, then apply status changes.
+			if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			r.resetDownloadStatusFields(modelCache)
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -1029,7 +1040,13 @@ func (r *ModelCacheReconciler) resetDownloadState(ctx context.Context, mc *aiv1a
 		}
 	}
 
-	// Clear all status fields so the pipeline re-runs from scratch.
+	r.resetDownloadStatusFields(mc)
+	return nil
+}
+
+// resetDownloadStatusFields clears all status fields so the pipeline re-runs from scratch.
+// Separated from resetDownloadState so it can be called after a refetch.
+func (r *ModelCacheReconciler) resetDownloadStatusFields(mc *aiv1alpha1.ModelCache) {
 	mc.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
 	mc.Status.CurrentPhase = ""
 	mc.Status.Path = ""
@@ -1045,8 +1062,6 @@ func (r *ModelCacheReconciler) resetDownloadState(ctx context.Context, mc *aiv1a
 	mc.Status.RetryCount = 0
 	mc.Status.LastFailureTime = nil
 	mc.Status.LastFailurePhase = ""
-
-	return nil
 }
 
 // probeOCIDigest resolves the remote OCI manifest digest using oras manifest fetch.
