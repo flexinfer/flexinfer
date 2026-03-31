@@ -498,7 +498,14 @@ sym = os.environ.get("SYM", "True") == "True"
 desc_act = os.environ.get("DESC_ACT", "False") == "True"
 gpu_memory_fraction = float(os.environ.get("GPU_MEMORY_FRACTION", "0.80"))
 dynamic_exclusion = os.environ.get("DYNAMIC_EXCLUSION", "auto")
-dataset_name = os.environ.get("DATASET", "mit-han-lab/pile-val-backup")
+dataset_raw = os.environ.get("DATASET", "mit-han-lab/pile-val-backup")
+# Support "name:config" format (e.g. "wikitext:wikitext-2-raw-v1") — colon
+# separates HuggingFace dataset name from config/subset. "org/name" format
+# (e.g. "mit-han-lab/pile-val-backup") is passed through as-is.
+if ":" in dataset_raw:
+    dataset_name, dataset_config = dataset_raw.split(":", 1)
+else:
+    dataset_name, dataset_config = dataset_raw, None
 hessian_repair_enabled = env_bool("GPTQ_HESSIAN_REPAIR", True)
 hessian_sanitize_nonfinite = env_bool("GPTQ_HESSIAN_SANITIZE_NONFINITE", True)
 hessian_diag_floor_scale = env_float("GPTQ_HESSIAN_DIAG_FLOOR_SCALE", 1e-6)
@@ -575,7 +582,7 @@ effective_max_tokens = max_samples * max_seq_len
 
 def calibration_cache_fingerprint():
     return {
-        "dataset": dataset_name,
+        "dataset": dataset_raw,
         "max_seq_len": effective_max_seq_len,
         "max_samples": effective_max_samples,
         "model_dir": os.path.basename(model_dir.rstrip("/")),
@@ -1201,19 +1208,30 @@ emit_progress("progress", phase="quantizing", percent=5.0, detail="model loaded"
 # ── Calibration dataset ────────────────────────────────────────────────
 examples = load_cached_examples(model_dir)
 if examples is None:
-    dataset = load_dataset(dataset_name, split="validation")
+    ds_args = [dataset_name]
+    if dataset_config:
+        ds_args.append(dataset_config)
+    dataset = load_dataset(*ds_args, split="validation")
     examples = []
     total_tokens = 0
-    for sample in dataset.select(range(min(effective_max_samples, len(dataset)))):
+    for sample in dataset:
+        if (
+            len(examples) >= effective_max_samples
+            or total_tokens >= effective_max_tokens
+        ):
+            break
+        text = sample.get("text", "")
+        if not text.strip():
+            continue
         tok = tokenizer(
-            sample["text"],
+            text,
             return_tensors="pt",
             max_length=effective_max_seq_len,
             truncation=True,
         )
         sample_tokens = int(tok.input_ids.shape[-1])
-        if total_tokens >= effective_max_tokens:
-            break
+        if sample_tokens <= 1:
+            continue
         remaining_tokens = effective_max_tokens - total_tokens
         if sample_tokens > remaining_tokens:
             truncated = max(1, remaining_tokens)
@@ -1224,12 +1242,8 @@ if examples is None:
             sample_tokens = truncated
         else:
             tok = {"input_ids": tok.input_ids, "attention_mask": tok.attention_mask}
-        if sample_tokens <= 0:
-            break
         examples.append(tok)
         total_tokens += sample_tokens
-        if total_tokens >= effective_max_tokens:
-            break
     checkpoint_state = dict(quant_checkpoint_state)
     checkpoint_state["stage"] = "calibration_ready"
     checkpoint_state["calibration_samples"] = len(examples)

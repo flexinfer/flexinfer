@@ -512,6 +512,66 @@ path.write_text(src)
 DEVICE_MAP_PY
 fi
 
+# Patch dataset loading to handle "name:config" format (e.g. wikitext:wikitext-2-raw-v1).
+# HuggingFace load_dataset needs separate (name, config) args for datasets with configs.
+if [ -f "${GPTQ_SCRIPT}" ] && grep -q 'dataset_name = os.environ.get("DATASET"' "${GPTQ_SCRIPT}" 2>/dev/null; then
+    python3 - <<'DATASET_PY'
+from pathlib import Path
+
+p = Path("/opt/flexinfer/scripts/quantize_gptq.py")
+src = p.read_text()
+src = src.replace(
+    'dataset_name = os.environ.get("DATASET", "mit-han-lab/pile-val-backup")',
+    'dataset_raw = os.environ.get("DATASET", "mit-han-lab/pile-val-backup")\n'
+    '# Support "name:config" format (e.g. "wikitext:wikitext-2-raw-v1")\n'
+    'if ":" in dataset_raw:\n'
+    '    dataset_name, dataset_config = dataset_raw.split(":", 1)\n'
+    'else:\n'
+    '    dataset_name, dataset_config = dataset_raw, None',
+)
+src = src.replace(
+    '    dataset = load_dataset(dataset_name, split="validation")',
+    '    ds_args = [dataset_name]\n'
+    '    if dataset_config:\n'
+    '        ds_args.append(dataset_config)\n'
+    '    dataset = load_dataset(*ds_args, split="validation")',
+)
+src = src.replace('"dataset": dataset_name,', '"dataset": dataset_raw,')
+# Fix empty-sample handling: iterate over all entries, skip blanks, collect up to max_samples.
+# Original code used dataset.select(range(max_samples)) which breaks on datasets with empty rows.
+src = src.replace(
+    '    for sample in dataset.select(range(min(effective_max_samples, len(dataset)))):\n'
+    '        tok = tokenizer(\n'
+    '            sample["text"],',
+    '    for sample in dataset:\n'
+    '        if len(examples) >= effective_max_samples or total_tokens >= effective_max_tokens:\n'
+    '            break\n'
+    '        text = sample.get("text", "")\n'
+    '        if not text.strip():\n'
+    '            continue\n'
+    '        tok = tokenizer(\n'
+    '            text,',
+)
+src = src.replace(
+    '        if sample_tokens <= 0:\n'
+    '            break\n',
+    '        if sample_tokens <= 1:\n'
+    '            continue\n',
+)
+# Remove the trailing total_tokens break (now handled at loop top)
+src = src.replace(
+    '        examples.append(tok)\n'
+    '        total_tokens += sample_tokens\n'
+    '        if total_tokens >= effective_max_tokens:\n'
+    '            break',
+    '        examples.append(tok)\n'
+    '        total_tokens += sample_tokens',
+)
+p.write_text(src)
+print("Patched dataset loading for name:config format + empty sample handling")
+DATASET_PY
+fi
+
 # Auto-detect gfx900 (Radeon VII).
 if command -v rocminfo &>/dev/null; then
     GPU_GFX=$(rocminfo 2>/dev/null | grep -oP 'gfx\d+' | head -1 || true)
