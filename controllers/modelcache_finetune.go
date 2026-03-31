@@ -117,6 +117,10 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
+		// Persist annotation changes AFTER the status reset succeeds.
+		if err := r.Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	}
 

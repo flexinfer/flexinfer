@@ -100,6 +100,12 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
+		// Persist annotation changes (hash update, trigger cleared) AFTER
+		// the status reset succeeds. This prevents the race where the trigger
+		// is consumed but the status reset fails.
+		if err := r.Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	}
 

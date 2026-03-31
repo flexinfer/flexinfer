@@ -46,11 +46,17 @@ type specChangeParams struct {
 }
 
 // detectAndApplySpecChange checks whether the pipeline spec has changed (hash
-// mismatch or explicit trigger annotation). If so, it deletes the listed jobs,
-// updates annotations, and records an event.
+// mismatch or explicit trigger annotation). If so, it deletes the listed jobs
+// and prepares annotations in-memory.
 //
-// Returns (true, nil) when a spec change was detected and applied — the caller
-// should reset strategy-specific status fields and requeue. Returns (false, nil)
+// IMPORTANT: This function does NOT persist annotation changes. It only mutates
+// the in-memory object. The caller MUST persist annotations (via r.Update) AFTER
+// successfully updating the status. This prevents the race condition where the
+// trigger annotation is consumed but the status reset fails, leaving the cache
+// in a "trigger consumed, status not reset" state that requires manual intervention.
+//
+// Returns (true, nil) when a spec change was detected — the caller should reset
+// status fields, persist status, then persist annotations. Returns (false, nil)
 // when no change was detected.
 func (r *ModelCacheReconciler) detectAndApplySpecChange(
 	ctx context.Context,
@@ -95,15 +101,13 @@ func (r *ModelCacheReconciler) detectAndApplySpecChange(
 		}
 	}
 
-	// Update annotations: store new hash, clear trigger.
+	// Prepare annotations in-memory only. The caller persists these AFTER
+	// the status reset succeeds, ensuring atomicity of the operation.
 	if mc.Annotations == nil {
 		mc.Annotations = make(map[string]string)
 	}
 	mc.Annotations[params.HashAnnotationKey] = params.CurrentHash
 	delete(mc.Annotations, params.TriggerAnnotationKey)
-	if err := r.Update(ctx, mc); err != nil {
-		return false, err
-	}
 
 	r.Recorder.Event(mc, corev1.EventTypeNormal, params.EventReason,
 		fmt.Sprintf("%s triggered (%s), jobs deleted", params.EventReason, reason))

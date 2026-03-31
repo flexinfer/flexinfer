@@ -81,6 +81,10 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
+		// Persist annotation changes AFTER the status reset succeeds.
+		if err := r.Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	}
 
