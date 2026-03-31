@@ -97,6 +97,7 @@ MCP is now the de facto standard for AI-tool integration (8M+ downloads, 5,800+ 
   - Routed mobile deep links through clearer destination groups and staged session/connection mutations behind advanced controls.
   - Reframed the HUD landing tab as `Now`, shifted overview toward attention-first triage, and renamed top-level groups to a more operator-oriented vocabulary.
   - Elevated Dispatch and Server Catalog into clearer first-class operator surfaces with stronger summaries, hierarchy, and empty-state guidance.
+  - Follow-up mobile polish now degrades missing pipeline data into a local unavailable state and groups agents by recovered project/runtime context so unscoped Claude processes stop reading as a flat list.
 
 - ✅ **Sync/worktree workflow polish**
   - Added session-start nudge recommending worktree allocation on `main`/`master`.
