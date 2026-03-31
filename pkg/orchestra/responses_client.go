@@ -219,10 +219,12 @@ func (c *FlexInferResponsesClient) parseTurnResponse(resp *chatCompletionRespons
 	terminal := len(toolCalls) == 0
 
 	return openairesponses.TurnResponse{
-		ResponseID: resp.ID,
-		OutputText: choice.Message.Content,
-		ToolCalls:  toolCalls,
-		Terminal:   terminal,
+		ResponseID:       resp.ID,
+		OutputText:       choice.Message.Content,
+		ToolCalls:        toolCalls,
+		Terminal:         terminal,
+		PromptTokens:     resp.Usage.PromptTokens,
+		CompletionTokens: resp.Usage.CompletionTokens,
 	}, nil
 }
 

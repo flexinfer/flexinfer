@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: orchestra
+    component: mcp-server
+    mcp.server/name: orchestra
+    mcp.server/type: custom
+  name: orchestra
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orchestra
+  template:
+    metadata:
+      annotations:
+        mcp.server/categories: ai,orchestration,operations
+        mcp.server/description: MCP orchestra for local-model tool orchestration via FlexInfer
+      labels:
+        app: orchestra
+        component: mcp-server
+        mcp.server/name: orchestra
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - env:
+            # Orchestra configuration
+            - name: ORCHESTRA_ENABLED
+              value: "1"
+            - name: FLEXINFER_URL
+              valueFrom:
+                secretKeyRef:
+                  key: FLEXINFER_URL
+                  name: loom-secrets
+            - name: MCP_HUB_URL
+              value: http://gateway:8080
+            - name: ORCHESTRA_ROUTER_MODEL
+              valueFrom:
+                secretKeyRef:
+                  key: ORCHESTRA_ROUTER_MODEL
+                  name: loom-secrets
+                  optional: true
+            - name: ORCHESTRA_SUBAGENT_MODEL
+              valueFrom:
+                secretKeyRef:
+                  key: ORCHESTRA_SUBAGENT_MODEL
+                  name: loom-secrets
+                  optional: true
+            # Logging
+            - name: LOG_LEVEL
+              value: info
+            # MCP transport settings
+            - name: MCP_TRANSPORT
+              value: websocket
+            - name: MCP_WS_PORT
+              value: "8080"
+            - name: MCP_SERVER_NAME
+              value: orchestra
+            - name: MCP_SERVER_COMMAND
+              value: /app/services/loom-core/bin/mcp-orchestra
+          image: registry.harbor.lan/mcp/custom-server:latest
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          name: orchestra
+          ports:
+            - containerPort: 8080
+              name: websocket
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000

@@ -42,8 +42,8 @@ func TestRouter_Status(t *testing.T) {
 		t.Errorf("unexpected router_model: %v", status["router_model"])
 	}
 	domains := status["domains"].([]string)
-	if len(domains) != 4 {
-		t.Errorf("expected 4 default domains, got %d", len(domains))
+	if len(domains) != 6 {
+		t.Errorf("expected 6 default domains, got %d", len(domains))
 	}
 }
 
@@ -54,8 +54,8 @@ func TestRouter_Registry(t *testing.T) {
 	// Default domains should be registered.
 	reg := router.Registry()
 	names := reg.Names()
-	if len(names) != 4 {
-		t.Errorf("expected 4 domains, got %d", len(names))
+	if len(names) != 6 {
+		t.Errorf("expected 6 domains, got %d", len(names))
 	}
 
 	// Register a custom domain.

@@ -74,8 +74,8 @@ func TestDomainRegistry_ToolToDomains(t *testing.T) {
 
 func TestDefaultDomains(t *testing.T) {
 	domains := DefaultDomains()
-	if len(domains) != 4 {
-		t.Fatalf("expected 4 default domains, got %d", len(domains))
+	if len(domains) != 6 {
+		t.Fatalf("expected 6 default domains, got %d", len(domains))
 	}
 
 	names := make([]string, len(domains))
@@ -90,7 +90,7 @@ func TestDefaultDomains(t *testing.T) {
 	}
 
 	sort.Strings(names)
-	expected := []string{"ci-pipeline", "cluster-ops", "codebase", "observability"}
+	expected := []string{"agent-fleet", "ci-pipeline", "cluster-ops", "codebase", "infra-ops", "observability"}
 	for i, n := range names {
 		if n != expected[i] {
 			t.Errorf("expected domain %q, got %q", expected[i], n)

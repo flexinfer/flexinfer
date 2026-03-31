@@ -17,13 +17,14 @@ func TestDefaultCompoundTools(t *testing.T) {
 	t.Parallel()
 
 	tools := DefaultCompoundTools()
-	if len(tools) != 3 {
-		t.Fatalf("expected 3 compound tools, got %d", len(tools))
+	if len(tools) != 4 {
+		t.Fatalf("expected 4 compound tools, got %d", len(tools))
 	}
 
 	expectedNames := map[string]bool{
 		"orchestra__cluster_status": true,
 		"orchestra__ci_status":      true,
+		"orchestra__fleet_status":   true,
 		"orchestra__system_health":  true,
 	}
 
@@ -58,7 +59,8 @@ func TestDefaultCompoundTools_DomainAssignment(t *testing.T) {
 	}{
 		{"orchestra__cluster_status", []string{"cluster-ops", "observability"}},
 		{"orchestra__ci_status", []string{"ci-pipeline", "codebase"}},
-		{"orchestra__system_health", []string{"cluster-ops", "ci-pipeline", "observability"}},
+		{"orchestra__fleet_status", []string{"agent-fleet"}},
+		{"orchestra__system_health", []string{"cluster-ops", "ci-pipeline", "infra-ops", "observability"}},
 	}
 
 	for _, tc := range cases {
@@ -84,6 +86,7 @@ func TestIsCompoundTool(t *testing.T) {
 	}{
 		{"orchestra__cluster_status", true},
 		{"orchestra__ci_status", true},
+		{"orchestra__fleet_status", true},
 		{"orchestra__system_health", true},
 		{"orchestra__unknown", false},
 		{"git__git_status", false},
@@ -101,8 +104,8 @@ func TestCompoundToolDefinitions(t *testing.T) {
 	t.Parallel()
 
 	defs := CompoundToolDefinitions()
-	if len(defs) != 3 {
-		t.Fatalf("expected 3 tool definitions, got %d", len(defs))
+	if len(defs) != 4 {
+		t.Fatalf("expected 4 tool definitions, got %d", len(defs))
 	}
 
 	for _, def := range defs {

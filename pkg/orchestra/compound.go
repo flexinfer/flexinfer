@@ -37,10 +37,16 @@ func DefaultCompoundTools() []CompoundTool {
 			Query:       "What is the current CI/CD status? Show recent pipeline runs, their status, and any open merge requests.",
 		},
 		{
+			Name:        "orchestra__fleet_status",
+			Description: "Get the current agent fleet status including active sessions, pending tasks, and agent presence.",
+			Domains:     []string{"agent-fleet"},
+			Query:       "What agents are currently active? List their sessions, pending tasks, and presence status.",
+		},
+		{
 			Name:        "orchestra__system_health",
-			Description: "Get a comprehensive system health report across cluster, CI, and observability.",
-			Domains:     []string{"cluster-ops", "ci-pipeline", "observability"},
-			Query:       "Provide a comprehensive system health report covering cluster state, CI pipelines, and any active alerts or anomalies.",
+			Description: "Get a comprehensive system health report across cluster, CI, infrastructure, and observability.",
+			Domains:     []string{"cluster-ops", "ci-pipeline", "infra-ops", "observability"},
+			Query:       "Provide a comprehensive system health report covering cluster state, CI pipelines, infrastructure status, and any active alerts or anomalies.",
 		},
 	}
 }
