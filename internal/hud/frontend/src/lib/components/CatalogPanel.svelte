@@ -11,6 +11,8 @@
   let servers = $derived(catalogStore.filteredServers);
   let sortKey = $state('name');
   let sortDir = $state('asc');
+  let runningCount = $derived(catalogStore.servers.filter((s) => s.running).length);
+  let hasActiveFilters = $derived(catalogStore.searchQuery.trim() !== '' || catalogStore.categoryFilter !== 'all');
 
   let sorted = $derived.by(() => {
     const items = [...servers];
@@ -67,29 +69,45 @@
 </script>
 
 <PanelShell
-  title="Catalog"
+  title="Server Catalog"
   icon={'\u2630'}
   count={catalogStore.servers.length}
   loading={catalogStore.loading}
   empty={sorted.length === 0}
   emptyIcon={'\u25A1'}
-  emptyMessage="No servers found"
-  emptyHint="Check registry path or clear filters"
+  emptyMessage={hasActiveFilters ? 'No servers match the current filters' : 'No servers registered'}
+  emptyHint={hasActiveFilters ? 'Clear search or category filters to broaden the catalog' : 'Check the registry path or sync the catalog'}
 >
+  {#snippet header()}
+    <div class="catalog-intro">
+      <div class="catalog-summary">
+        <div class="catalog-summary-eyebrow">Registry overview</div>
+        <div class="catalog-summary-line">
+          {catalogStore.enabledCount} enabled · {catalogStore.disabledCount} disabled · {runningCount} running
+        </div>
+        <div class="catalog-summary-copy">
+          This is the authoritative operator view of deployed server surfaces. Search it to understand capability, readiness, and what can be safely toggled.
+        </div>
+      </div>
+    </div>
+  {/snippet}
+
   {#snippet toolbar()}
     <FilterBar
       search={catalogStore.searchQuery}
-      placeholder="Search servers\u2026"
+      placeholder="Search servers by name, description, or category\u2026"
       {filters}
       resultCount={sorted.length}
       onSearch={handleSearch}
       onFilter={handleFilter}
       onClear={clearFilters}
     />
-    <div class="catalog-stats">
-      <span class="stat-chip enabled">{catalogStore.enabledCount} enabled</span>
-      <span class="stat-chip disabled">{catalogStore.disabledCount} disabled</span>
-    </div>
+  {/snippet}
+
+  {#snippet emptyAction()}
+    {#if hasActiveFilters}
+      <button class="btn btn-ghost btn-sm" onclick={clearFilters}>Clear filters</button>
+    {/if}
   {/snippet}
 
   <div class="catalog-table-wrap">
@@ -97,24 +115,27 @@
       <thead>
         <tr>
           <th class="sortable" onclick={() => handleSort('enabled')}>
-            Status {sortKey === 'enabled' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
+            State {sortKey === 'enabled' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
           </th>
           <th class="sortable" onclick={() => handleSort('name')}>
-            Name {sortKey === 'name' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
+            Registry entry {sortKey === 'name' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
           </th>
-          <th>Description</th>
-          <th>Categories</th>
+          <th>Capability</th>
+          <th>Tags</th>
           <th class="sortable" onclick={() => handleSort('running')}>
-            Running {sortKey === 'running' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
+            Runtime {sortKey === 'running' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
           </th>
-          <th>Action</th>
+          <th>Toggle</th>
         </tr>
       </thead>
       <tbody>
         {#each sorted as srv (srv.name)}
           <tr class:disabled={!srv.enabled}>
-            <td>
+            <td class="cell-state">
               <span class="status-dot" class:on={srv.enabled} class:off={!srv.enabled}></span>
+              <span class="state-label" class:enabled={srv.enabled} class:disabled={!srv.enabled}>
+                {srv.enabled ? 'enabled' : 'disabled'}
+              </span>
             </td>
             <td class="cell-name">{srv.name}</td>
             <td class="cell-desc">{srv.description || '\u2014'}</td>
@@ -154,28 +175,42 @@
 </PanelShell>
 
 <style>
-  .catalog-stats {
+  .catalog-intro {
     display: flex;
+    flex-direction: column;
     gap: var(--space-2);
-    padding: 0 var(--space-3) var(--space-2);
+    padding: var(--space-2) var(--space-3) var(--space-1);
   }
 
-  .stat-chip {
-    font-size: var(--text-xs);
-    font-family: var(--font-mono);
-    padding: 2px 8px;
-    border-radius: var(--radius-sm);
+  .catalog-summary {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-3);
     border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--bg-tertiary) 72%, transparent), var(--bg-secondary));
   }
 
-  .stat-chip.enabled {
-    color: var(--success);
-    border-color: var(--success);
-  }
-
-  .stat-chip.disabled {
+  .catalog-summary-eyebrow {
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
     color: var(--fg-muted);
-    border-color: var(--border);
+    font-weight: 600;
+  }
+
+  .catalog-summary-line {
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--fg-primary);
+  }
+
+  .catalog-summary-copy {
+    font-size: var(--text-sm);
+    color: var(--fg-muted);
+    max-width: 72ch;
+    line-height: var(--leading-normal);
   }
 
   .catalog-table-wrap {
@@ -232,6 +267,10 @@
     opacity: 0.5;
   }
 
+  .cell-state {
+    white-space: nowrap;
+  }
+
   .cell-name {
     font-family: var(--font-mono);
     font-weight: 500;
@@ -250,6 +289,22 @@
     display: flex;
     gap: 4px;
     flex-wrap: wrap;
+  }
+
+  .state-label {
+    margin-left: 6px;
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+  }
+
+  .state-label.enabled {
+    color: var(--success);
+  }
+
+  .state-label.disabled {
+    color: var(--fg-muted);
   }
 
   .running-tag {
@@ -318,17 +373,17 @@
 
   .badge {
     display: inline-block;
-    font-size: var(--text-xs);
-    font-family: var(--font-mono);
-    padding: 1px 6px;
+    font-size: 10px;
+    padding: 1px 4px;
     border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
     color: var(--fg-muted);
-    white-space: nowrap;
+    font-family: var(--font-mono);
   }
 
   .catalog-footer {
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-2) var(--space-3) 0;
     border-top: 1px solid var(--border);
+    margin-top: var(--space-2);
   }
 </style>

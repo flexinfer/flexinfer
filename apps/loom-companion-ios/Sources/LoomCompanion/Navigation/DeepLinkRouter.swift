@@ -11,6 +11,14 @@ enum DeepLink: Equatable {
     case alerts
     case connection
 
+    enum DestinationGroup {
+        case dashboard
+        case people
+        case work
+        case alerts
+        case connection
+    }
+
     /// Parse a URL into a DeepLink.
     static func from(_ url: URL) -> DeepLink? {
         guard url.scheme == "loom" else { return nil }
@@ -52,6 +60,21 @@ enum DeepLink: Equatable {
 
         default:
             return nil
+        }
+    }
+
+    var destinationGroup: DestinationGroup {
+        switch self {
+        case .dashboard:
+            return .dashboard
+        case .session, .sessions:
+            return .people
+        case .workflow, .tasks:
+            return .work
+        case .alerts:
+            return .alerts
+        case .connection:
+            return .connection
         }
     }
 }

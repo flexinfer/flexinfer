@@ -1,6 +1,6 @@
 // Hash-based SPA router for the HUD.
-// Supports grouped views: #agents/fleet, #tasks/workflows, #overview
-// Backward-compatible: old hashes (#fleet, #servers) redirect to new grouped paths.
+// Supports grouped views with legacy hash compatibility.
+// Top-level labels are intentionally operator-oriented while IDs stay stable.
 
 export interface RouteState {
   view: string;
@@ -22,7 +22,7 @@ export interface ViewDef {
 export const views: ViewDef[] = [
   {
     id: 'agents',
-    label: 'Agents',
+    label: 'Operations',
     icon: '\u25C8',
     key: '1',
     default: 'fleet',
@@ -36,7 +36,7 @@ export const views: ViewDef[] = [
   },
   {
     id: 'infra',
-    label: 'Servers',
+    label: 'Infrastructure',
     icon: '\u2665',
     key: '2',
     default: 'servers',
@@ -47,7 +47,7 @@ export const views: ViewDef[] = [
   },
   {
     id: 'tasks',
-    label: 'Tasks',
+    label: 'Work',
     icon: '\u2611',
     key: '3',
     default: 'tasks',
@@ -58,7 +58,7 @@ export const views: ViewDef[] = [
   },
   {
     id: 'knowledge',
-    label: 'Knowledge',
+    label: 'Context',
     icon: '\u29BE',
     key: '4',
     default: 'feed',
@@ -82,7 +82,7 @@ export const views: ViewDef[] = [
   },
   {
     id: 'sandbox',
-    label: 'Sandbox',
+    label: 'Labs',
     icon: '\u2B22',
     key: '6',
     default: 'sandbox',

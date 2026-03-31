@@ -12,13 +12,21 @@ struct ContentView: View {
     @State private var pendingSessionDeepLinkID: String?
     @State private var pendingWorkflowDeepLinkID: String?
     @State private var pendingEndSessionPrefillID: String?
+    @State private var selectedPeopleSection: PeopleSection = .agents
 
     enum AppTab {
         case dashboard
-        case agents
-        case ops
+        case people
+        case work
         case alerts
         case connection
+    }
+
+    enum PeopleSection: String, CaseIterable, Identifiable {
+        case agents
+        case sessions
+
+        var id: String { rawValue }
     }
 
     var body: some View {
@@ -44,6 +52,9 @@ struct ContentView: View {
         .onChange(of: selectedTab) { _, _ in
             HapticManager.selection()
         }
+        .onChange(of: selectedPeopleSection) { _, _ in
+            HapticManager.selection()
+        }
         .onChange(of: pendingDeepLink) { _, link in
             guard let link else { return }
             handleDeepLink(link)
@@ -52,23 +63,24 @@ struct ContentView: View {
     }
 
     private func handleDeepLink(_ link: DeepLink) {
-        switch link {
+        switch link.destinationGroup {
         case .dashboard:
             selectedTab = .dashboard
-        case .session(let id):
-            pendingSessionDeepLinkID = id
-            selectedTab = .agents
-        case .sessions:
-            selectedTab = .agents
-        case .workflow(let id, let approve):
-            if approve {
-                // Trigger approval via API, then navigate to ops.
-                Task { await approveWorkflowFromDeepLink(workflowId: id) }
+        case .people:
+            if case let .session(id) = link {
+                pendingSessionDeepLinkID = id
             }
-            pendingWorkflowDeepLinkID = id
-            selectedTab = .ops
-        case .tasks:
-            selectedTab = .ops
+            selectedPeopleSection = .sessions
+            selectedTab = .people
+        case .work:
+            if case let .workflow(id, approve) = link {
+                if approve {
+                    // Trigger approval via API, then navigate to work.
+                    Task { await approveWorkflowFromDeepLink(workflowId: id) }
+                }
+                pendingWorkflowDeepLinkID = id
+            }
+            selectedTab = .work
         case .alerts:
             selectedTab = .alerts
         case .connection:
@@ -87,7 +99,7 @@ struct ContentView: View {
                 .workflowApprove(id: workflowId, stepId: pendingStep.id)
             )
         } catch {
-            // Best-effort — user can manually approve in the ops view.
+            // Best-effort - user can manually approve in the work view.
             print("[DeepLink] Workflow approval failed: \(error)")
         }
     }
@@ -110,26 +122,23 @@ struct ContentView: View {
             NavigationStack {
                 DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster) { action in
                     switch action {
-                    case .agents: selectedTab = .agents
-                    case .connection: selectedTab = .connection
-                    case .liveActivities: selectedTab = .agents
+                    case .agents:
+                        selectedPeopleSection = .agents
+                        selectedTab = .people
+                    case .connection:
+                        selectedTab = .connection
+                    case .liveActivities:
+                        selectedPeopleSection = .sessions
+                        selectedTab = .people
                     }
                 }
             }
             .tabItem { Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent") }
             .tag(AppTab.dashboard)
 
-            AgentsListView(
-                apiClient: connectionVM.buildAPIClient(),
-                broadcaster: sseBroadcaster,
-                deepLinkSessionID: $pendingSessionDeepLinkID,
-                onPrefillEndSession: { sessionID in
-                    pendingEndSessionPrefillID = sessionID
-                    selectedTab = .ops
-                }
-            )
-            .tabItem { Label("Agents", systemImage: "person.2.wave.2") }
-            .tag(AppTab.agents)
+            peopleTab
+                .tabItem { Label("People", systemImage: "person.2.wave.2") }
+                .tag(AppTab.people)
 
             NavigationStack {
                 OpsView(
@@ -139,18 +148,19 @@ struct ContentView: View {
                     prefillEndSessionID: $pendingEndSessionPrefillID
                 )
             }
-            .tabItem { Label("Ops", systemImage: "square.grid.2x2") }
-            .tag(AppTab.ops)
+            .tabItem { Label("Work", systemImage: "square.grid.2x2") }
+            .tag(AppTab.work)
 
             NavigationStack {
                 AlertsListView(viewModel: alertsViewModel) { action, alert in
                     switch action {
                     case .viewSession:
                         pendingSessionDeepLinkID = alert.relatedSessionId
-                        selectedTab = .agents
+                        selectedPeopleSection = .sessions
+                        selectedTab = .people
                     case .viewWorkflow:
                         pendingWorkflowDeepLinkID = alert.relatedWorkflowId
-                        selectedTab = .ops
+                        selectedTab = .work
                     case .viewDashboard:
                         selectedTab = .dashboard
                     case .acknowledge:
@@ -179,12 +189,12 @@ struct ContentView: View {
                 Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent")
                     .contentShape(Rectangle())
                     .onTapGesture { selectedTab = .dashboard }
-                Label("Agents", systemImage: "person.2.wave.2")
+                Label("People", systemImage: "person.2.wave.2")
                     .contentShape(Rectangle())
-                    .onTapGesture { selectedTab = .agents }
-                Label("Ops", systemImage: "square.grid.2x2")
+                    .onTapGesture { selectedTab = .people }
+                Label("Work", systemImage: "square.grid.2x2")
                     .contentShape(Rectangle())
-                    .onTapGesture { selectedTab = .ops }
+                    .onTapGesture { selectedTab = .work }
                 Label {
                     Text("Alerts")
                 } icon: {
@@ -213,22 +223,19 @@ struct ContentView: View {
             case .dashboard:
                 DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster) { action in
                     switch action {
-                    case .agents: selectedTab = .agents
-                    case .connection: selectedTab = .connection
-                    case .liveActivities: selectedTab = .agents
+                    case .agents:
+                        selectedPeopleSection = .agents
+                        selectedTab = .people
+                    case .connection:
+                        selectedTab = .connection
+                    case .liveActivities:
+                        selectedPeopleSection = .sessions
+                        selectedTab = .people
                     }
                 }
-            case .agents:
-                AgentsListView(
-                    apiClient: connectionVM.buildAPIClient(),
-                    broadcaster: sseBroadcaster,
-                    deepLinkSessionID: $pendingSessionDeepLinkID,
-                    onPrefillEndSession: { sessionID in
-                        pendingEndSessionPrefillID = sessionID
-                        selectedTab = .ops
-                    }
-                )
-            case .ops:
+            case .people:
+                peopleTab
+            case .work:
                 OpsView(
                     apiClient: connectionVM.buildAPIClient(),
                     broadcaster: sseBroadcaster,
@@ -240,10 +247,11 @@ struct ContentView: View {
                     switch action {
                     case .viewSession:
                         pendingSessionDeepLinkID = alert.relatedSessionId
-                        selectedTab = .agents
+                        selectedPeopleSection = .sessions
+                        selectedTab = .people
                     case .viewWorkflow:
                         pendingWorkflowDeepLinkID = alert.relatedWorkflowId
-                        selectedTab = .ops
+                        selectedTab = .work
                     case .viewDashboard:
                         selectedTab = .dashboard
                     case .acknowledge:
@@ -257,6 +265,44 @@ struct ContentView: View {
                 )
             }
         }
+    }
+
+    @ViewBuilder
+    private var peopleTab: some View {
+        VStack(spacing: 12) {
+            Picker("People Section", selection: $selectedPeopleSection) {
+                Text("Agents").tag(PeopleSection.agents)
+                Text("Sessions").tag(PeopleSection.sessions)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.top, 8)
+
+            Group {
+                switch selectedPeopleSection {
+                case .agents:
+                    AgentsListView(
+                        apiClient: connectionVM.buildAPIClient(),
+                        broadcaster: sseBroadcaster,
+                        deepLinkSessionID: $pendingSessionDeepLinkID,
+                        onPrefillEndSession: { sessionID in
+                            pendingEndSessionPrefillID = sessionID
+                            selectedTab = .work
+                        }
+                    )
+                case .sessions:
+                    SessionsListView(
+                        apiClient: connectionVM.buildAPIClient(),
+                        deepLinkSessionID: $pendingSessionDeepLinkID,
+                        onPrefillEndSession: { sessionID in
+                            pendingEndSessionPrefillID = sessionID
+                            selectedTab = .work
+                        }
+                    )
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - SSE Lifecycle
