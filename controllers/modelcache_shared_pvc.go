@@ -100,7 +100,21 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 				return ctrl.Result{}, err
 			}
 
-			// Clear annotation and seed source hash via metadata update.
+			// Status update FIRST (doesn't trigger reconcile), then metadata.
+			// r.Update() on the main resource triggers a new reconcile; if status
+			// hasn't been cleared yet, the triggered reconcile sees Path != ""
+			// and skips download via downloadGCdShouldProceed.
+			r.resetDownloadStatusFields(modelCache)
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			// Refetch to get fresh resourceVersion after status update.
+			if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			// Now clear annotation and seed source hash via metadata update.
 			if modelCache.Annotations == nil {
 				modelCache.Annotations = make(map[string]string)
 			}
@@ -108,17 +122,6 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			delete(modelCache.Annotations, annotationRedownload)
 
 			if err := r.Update(ctx, modelCache); err != nil {
-				return ctrl.Result{}, err
-			}
-
-			// Refetch to get the latest resourceVersion after metadata update,
-			// then apply status changes. Without refetch, the status update may
-			// conflict if the metadata update bumped resourceVersion.
-			if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
-				return ctrl.Result{}, err
-			}
-			r.resetDownloadStatusFields(modelCache)
-			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
 
@@ -144,21 +147,22 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 				return ctrl.Result{}, err
 			}
 
+			// Status update first (doesn't trigger reconcile), then metadata.
+			r.resetDownloadStatusFields(modelCache)
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			// Refetch, then update annotations.
+			if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
 			if modelCache.Annotations == nil {
 				modelCache.Annotations = make(map[string]string)
 			}
 			modelCache.Annotations[annotationSourceHash] = currentHash
 
 			if err := r.Update(ctx, modelCache); err != nil {
-				return ctrl.Result{}, err
-			}
-
-			// Refetch after metadata update, then apply status changes.
-			if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
-				return ctrl.Result{}, err
-			}
-			r.resetDownloadStatusFields(modelCache)
-			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
 
