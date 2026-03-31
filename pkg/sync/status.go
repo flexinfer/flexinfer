@@ -47,12 +47,19 @@ type DriftItem struct {
 	Status   DriftStatus
 }
 
+// PolicyHashFilename is the filename written to home config dirs during sync.
+// It records the SHA256 hash of the registry's policy-relevant data so that
+// loom doctor and loom sync status can detect when the registry changed without
+// a re-sync.
+const PolicyHashFilename = ".loom-policy-hash"
+
 // SyncStatus represents the sync state of a profile.
 type SyncStatus struct {
 	Profile      string
 	RepoExists   bool
 	HomeExists   bool
 	InSync       bool
+	PolicyStatus string // "in-sync", "stale", "not-configured"
 	DriftDetails []DriftItem
 	LastSyncTime time.Time
 	RepoPath     string
@@ -139,6 +146,10 @@ func (m *Manager) GetSyncStatus(profileName string) (*SyncStatus, error) {
 			}
 		}
 	}
+
+	// Check policy hash for staleness.
+	regPath := discoverRegistryPath(m.RepoRoot)
+	status.PolicyStatus = m.checkPolicyStatus(homePath, regPath)
 
 	return status, nil
 }
@@ -558,4 +569,58 @@ func filterTOMLSections(content string, ignoreKeys []string) string {
 	}
 
 	return strings.Join(result, "\n")
+}
+
+// ComputePolicyHash returns a SHA256 hex hash of the registry file. This hash
+// is written to home config dirs during sync and compared later for staleness
+// detection. Any registry change (servers, permissions, sandbox policy) triggers
+// a "stale" signal that is cleared by the next sync.
+func ComputePolicyHash(registryPath string) (string, error) {
+	data, err := os.ReadFile(registryPath)
+	if err != nil {
+		return "", err
+	}
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:]), nil
+}
+
+// ReadPolicyHash reads the previously-synced policy hash from a home config dir.
+func ReadPolicyHash(homePath string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(homePath, PolicyHashFilename))
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// WritePolicyHash writes the policy hash to a home config dir.
+func WritePolicyHash(homePath, hash string) error {
+	if err := os.MkdirAll(homePath, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(homePath, PolicyHashFilename), []byte(hash+"\n"), 0o644)
+}
+
+// checkPolicyStatus computes the policy sync status for a profile by comparing
+// the current registry hash against the hash recorded during last sync.
+func (m *Manager) checkPolicyStatus(homePath, registryPath string) string {
+	if registryPath == "" {
+		return "not-configured"
+	}
+
+	currentHash, err := ComputePolicyHash(registryPath)
+	if err != nil {
+		return "not-configured"
+	}
+
+	savedHash, err := ReadPolicyHash(homePath)
+	if err != nil {
+		// Hash file does not exist -- never synced with policy tracking.
+		return "not-configured"
+	}
+
+	if currentHash == savedHash {
+		return "in-sync"
+	}
+	return "stale"
 }

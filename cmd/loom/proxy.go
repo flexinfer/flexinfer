@@ -18,6 +18,8 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/internal/daemon"
+	"github.com/crb2nu/loom/pkg/policy"
+	"github.com/crb2nu/loom/pkg/registry"
 )
 
 // agentHintGlobal stores the --agent-hint flag value for proxy-level heartbeats.
@@ -155,6 +157,10 @@ func runProxy(socketPath string) error {
 			sessionKeepaliveIdle = time.Duration(fileCfg.Proxy.IdleHeartbeatIntervalMs) * time.Millisecond
 		}
 	}
+
+	// Initialize registry-driven policy engine for guardrail enforcement.
+	// Falls back to hard-coded defaults when the registry is unavailable.
+	proxyPolicyEngine = initProxyPolicyEngine()
 
 	// Check session disable env var.
 	proxySessionDisabled = os.Getenv("LOOM_PROXY_SESSION_DISABLE") == "1"
@@ -500,4 +506,19 @@ func startDaemonInBackground(socketPath string) error {
 		LogFile:    logFile,
 		Timeout:    3 * time.Second,
 	})
+}
+
+// initProxyPolicyEngine loads the MCP registry and builds a policy engine from
+// its guardrails section. Returns DefaultEngine when the registry is missing or
+// cannot be loaded.
+func initProxyPolicyEngine() *policy.Engine {
+	regPath, found := registry.FindRegistry()
+	if !found {
+		return policy.DefaultEngine()
+	}
+	reg, err := registry.Load(regPath)
+	if err != nil {
+		return policy.DefaultEngine()
+	}
+	return policy.NewEngineFromRegistry(reg)
 }

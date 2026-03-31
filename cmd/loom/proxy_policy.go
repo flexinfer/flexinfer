@@ -2,19 +2,31 @@ package main
 
 import (
 	"encoding/json"
-	"regexp"
-	"strings"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+
+	"github.com/crb2nu/loom/pkg/policy"
 )
 
-const proxyFluxFirstPolicyMessage = "GitOps policy: kubectl edit and kubectl set env are blocked in loom proxy. Edit the manifest in Git, commit and push the change, then run flux reconcile."
+// proxyPolicyEngine is the package-level policy engine initialized at proxy
+// startup. When no registry is available it falls back to the hard-coded
+// default rules (kubectl edit / kubectl set env).
+var proxyPolicyEngine *policy.Engine
 
-var proxyUnsafeKubectlCommandPattern = regexp.MustCompile(`(?i)\bkubectl\b(?:\s+\S+)*\s+(?:edit\b|set\s+env\b)`)
-
-// proxyFluxPolicyResponse inspects a tool call request and blocks imperative
-// kubectl edit/set env flows before the daemon sees them.
+// proxyFluxPolicyResponse inspects a tool call request and blocks commands
+// that violate any registered guardrail policy before the daemon sees them.
+// The function signature is kept for backward compatibility with existing
+// call sites; it delegates to the registry-driven policy engine.
 func proxyFluxPolicyResponse(msg *mcp.Message) (*mcp.Message, bool) {
+	engine := proxyPolicyEngine
+	if engine == nil {
+		engine = policy.DefaultEngine()
+	}
+	return proxyPolicyCheck(engine, msg)
+}
+
+// proxyPolicyCheck evaluates a single MCP message against the given engine.
+func proxyPolicyCheck(engine *policy.Engine, msg *mcp.Message) (*mcp.Message, bool) {
 	if msg == nil {
 		return nil, false
 	}
@@ -27,58 +39,8 @@ func proxyFluxPolicyResponse(msg *mcp.Message) (*mcp.Message, bool) {
 		return nil, false
 	}
 
-	if !proxyContainsUnsafeKubectlCommand(params.Name) && !proxyContainsUnsafeKubectlCommandJSON(params.Arguments) {
-		return nil, false
+	if denial, blocked := engine.Check(params.Name, params.Arguments); blocked {
+		return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, denial), true
 	}
-
-	return mcp.NewErrorResponse(msg.ID, mcp.InvalidParams, proxyFluxFirstPolicyMessage), true
-}
-
-func proxyContainsUnsafeKubectlCommandJSON(raw json.RawMessage) bool {
-	if len(raw) == 0 || string(raw) == "null" {
-		return false
-	}
-
-	var decoded any
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return proxyContainsUnsafeKubectlCommand(string(raw))
-	}
-	return proxyContainsUnsafeKubectlCommand(decoded)
-}
-
-func proxyContainsUnsafeKubectlCommand(v any) bool {
-	switch typed := v.(type) {
-	case string:
-		return proxyUnsafeKubectlCommandPattern.MatchString(strings.Join(strings.Fields(typed), " "))
-	case []any:
-		parts := make([]string, 0, len(typed))
-		for _, item := range typed {
-			switch child := item.(type) {
-			case string:
-				parts = append(parts, child)
-			default:
-				if proxyContainsUnsafeKubectlCommand(child) {
-					return true
-				}
-			}
-		}
-		if proxyUnsafeKubectlCommandPattern.MatchString(strings.Join(parts, " ")) {
-			return true
-		}
-		for _, item := range typed {
-			if proxyContainsUnsafeKubectlCommand(item) {
-				return true
-			}
-		}
-		return false
-	case map[string]any:
-		for _, item := range typed {
-			if proxyContainsUnsafeKubectlCommand(item) {
-				return true
-			}
-		}
-		return false
-	default:
-		return false
-	}
+	return nil, false
 }

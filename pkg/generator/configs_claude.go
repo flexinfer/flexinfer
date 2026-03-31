@@ -29,7 +29,7 @@ func claudeHooks(reg *registry.Registry, profile *PlatformProfile, loomBinary st
 	hooks := buildPlatformHooks(reg, profile.Hooks, loomBinary)
 
 	// Append shared policy hooks before the remaining profile-specific extras.
-	appendHookPolicies(hooks, reg, profile.Hooks.PolicyRefs)
+	appendHookPolicies(hooks, reg, profile.Hooks)
 
 	// Append extras defined in the profile (e.g. postToolUse_formatters, postToolUse_taskSync).
 	appendHookExtras(hooks, profile.Hooks.Extras, loomBinary)
@@ -149,9 +149,10 @@ func gitopsFluxGuardrailRegex(policy *gitopsFluxGuardrailPolicy) string {
 	return `^[[:space:]]*(` + strings.Join(parts, "|") + `)([[:space:]]|$)`
 }
 
-// claudeGitopsFluxGuardrailHooks returns the PreToolUse hooks backed by shared
-// GitOps/Flux policy data from platform_permissions.agents.
-func claudeGitopsFluxGuardrailHooks(reg *registry.Registry) []map[string]any {
+// gitopsFluxGuardrailHooks returns the PreToolUse hooks backed by shared
+// GitOps/Flux policy data from platform_permissions.agents. Used by any
+// platform with native enforcement (preToolUse support).
+func gitopsFluxGuardrailHooks(reg *registry.Registry) []map[string]any {
 	policy := gitopsFluxGuardrailPolicyFromRegistry(reg)
 	if policy == nil {
 		return nil

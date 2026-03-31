@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Registry-driven proxy policy engine** (`pkg/policy`): Proxy enforcement now reads blocked commands and denial messages from `registry.yaml` guardrails instead of hard-coded Go constants, enabling new policies via YAML without recompilation.
+- **Platform policy refs** (`pkg/generator`): All 8+ platforms in `platform_profiles.yaml` now declare `policy_refs` and an `enforcement` mode (native, proxy, or plugin). Claude and Gemini use native hook enforcement; Codex, Kilocode, Antigravity, VS Code, and Zed annotate proxy-level enforcement.
+- **Policy health tracking** (`pkg/sync`, `pkg/generator/doctor.go`): `loom doctor` reports per-platform policy status and enforcement mode. `loom sync status` tracks guardrails hash staleness.
 - **Standalone orchestra MCP binary** (`cmd/mcp-orchestra`): New standalone binary with `HubToolLister` and `HubToolCaller` that route tool calls through the MCP gateway, enabling orchestra to run as an independent k3s service decoupled from `loomd`.
 - **Orchestra k3s deployment** (`k8s/base/servers/orchestra`): Deployment, service, and configmap manifests following the agent-context pattern; registered in gateway registry for service discovery.
 - **Orchestra domains** (`pkg/orchestra`): Add `agent-fleet` (presence/session/task tools) and `infra-ops` (flux/helm tools) domains, bringing total from 4 to 6. New `orchestra__fleet_status` compound tool.

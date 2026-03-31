@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -408,5 +409,220 @@ func TestResolveConfigDir_IgnoresEmptyWorkspaceDir(t *testing.T) {
 	got := resolveConfigDir("codex", workspaceRoot, homeDir)
 	if got != homeCodexDir {
 		t.Errorf("resolveConfigDir = %s, want %s", got, homeCodexDir)
+	}
+}
+
+// =============================================================================
+// Policy Health Tests
+// =============================================================================
+
+func TestCheckPolicyHealth_HooksPlatformWithHash(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write a policy hash file to simulate a synced platform.
+	if err := os.WriteFile(filepath.Join(tmpDir, PolicyHashFilename), []byte("abc123\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	health := &PlatformHealth{
+		Platform: "claude",
+		Policy:   "n/a",
+	}
+	checkPolicyHealth(health, "claude", tmpDir)
+
+	if health.Policy != "ok" {
+		t.Errorf("policy = %s, want ok", health.Policy)
+	}
+}
+
+func TestCheckPolicyHealth_HooksPlatformWithoutHash(t *testing.T) {
+	tmpDir := t.TempDir()
+	// No policy hash file.
+
+	health := &PlatformHealth{
+		Platform: "claude",
+		Policy:   "n/a",
+	}
+	checkPolicyHealth(health, "claude", tmpDir)
+
+	if health.Policy != "not-configured" {
+		t.Errorf("policy = %s, want not-configured", health.Policy)
+	}
+
+	// Should have a detail message suggesting regen.
+	found := false
+	for _, d := range health.Details {
+		if strings.Contains(d, "policy hash not found") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected detail about missing policy hash, got: %v", health.Details)
+	}
+}
+
+func TestCheckPolicyHealth_HooklessPlatform(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	health := &PlatformHealth{
+		Platform: "antigravity",
+		Policy:   "n/a",
+	}
+	checkPolicyHealth(health, "antigravity", tmpDir)
+
+	if health.Policy != "n/a" {
+		t.Errorf("policy = %s, want n/a for hookless platform", health.Policy)
+	}
+
+	// Should have a detail about proxy-level enforcement.
+	found := false
+	for _, d := range health.Details {
+		if strings.Contains(d, "proxy-level") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected proxy-level detail for hookless platform, got: %v", health.Details)
+	}
+}
+
+func TestCheckPolicyHealth_GeminiHooksEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Gemini has hooks.enabled: true in the profile.
+	health := &PlatformHealth{
+		Platform: "gemini",
+		Policy:   "n/a",
+	}
+	checkPolicyHealth(health, "gemini", tmpDir)
+
+	if health.Policy != "not-configured" {
+		t.Errorf("policy = %s, want not-configured (no hash file)", health.Policy)
+	}
+}
+
+func TestCheckPolicyHealth_ZedHookless(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	health := &PlatformHealth{
+		Platform: "zed",
+		Policy:   "n/a",
+	}
+	checkPolicyHealth(health, "zed", tmpDir)
+
+	if health.Policy != "n/a" {
+		t.Errorf("policy = %s, want n/a for zed (no native hooks)", health.Policy)
+	}
+}
+
+func TestCheckPolicyHealth_CodexHooksEnabled(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write a hash file.
+	if err := os.WriteFile(filepath.Join(tmpDir, PolicyHashFilename), []byte("hash123\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	health := &PlatformHealth{
+		Platform: "codex",
+		Policy:   "n/a",
+	}
+	checkPolicyHealth(health, "codex", tmpDir)
+
+	if health.Policy != "ok" {
+		t.Errorf("policy = %s, want ok", health.Policy)
+	}
+}
+
+func TestDeriveStatus_StalePolicyMakesStale(t *testing.T) {
+	h := &PlatformHealth{
+		Platform: "claude",
+		Hooks:    "ok",
+		Perms:    "ok",
+		Schema:   "ok",
+		Policy:   "stale",
+	}
+	got := deriveStatus(h)
+	if got != "stale" {
+		t.Errorf("deriveStatus() = %s, want stale when policy is stale", got)
+	}
+}
+
+func TestDeriveStatus_PolicyOkDoesNotAffectStatus(t *testing.T) {
+	h := &PlatformHealth{
+		Platform: "claude",
+		Hooks:    "ok",
+		Perms:    "ok",
+		Schema:   "ok",
+		Policy:   "ok",
+	}
+	got := deriveStatus(h)
+	if got != "healthy" {
+		t.Errorf("deriveStatus() = %s, want healthy", got)
+	}
+}
+
+func TestDeriveStatus_PolicyNADoesNotAffectStatus(t *testing.T) {
+	h := &PlatformHealth{
+		Platform: "antigravity",
+		Hooks:    "n/a",
+		Perms:    "n/a",
+		Schema:   "n/a",
+		Policy:   "n/a",
+	}
+	got := deriveStatus(h)
+	if got != "healthy" {
+		t.Errorf("deriveStatus() = %s, want healthy for hookless platform", got)
+	}
+}
+
+func TestDoctorCheck_IncludesPolicyField(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a Claude config dir with settings.json.
+	claudeProfile, _ := GetPlatformProfile("claude")
+	expectedHooks := claudeHooks(nil, claudeProfile, "")
+	expectedPerms := claudePermissions(nil)
+	settings := map[string]any{
+		"hooks":       expectedHooks,
+		"permissions": expectedPerms,
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "settings.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	health := DoctorCheck(nil, "claude", tmpDir)
+
+	// Policy should be "not-configured" because no hash file exists.
+	if health.Policy != "not-configured" {
+		t.Errorf("policy = %s, want not-configured", health.Policy)
+	}
+
+	// Now write a policy hash and check again.
+	if err := os.WriteFile(filepath.Join(tmpDir, PolicyHashFilename), []byte("somehash\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	health2 := DoctorCheck(nil, "claude", tmpDir)
+	if health2.Policy != "ok" {
+		t.Errorf("policy = %s, want ok after hash file created", health2.Policy)
+	}
+}
+
+func TestDoctorCheckAll_ReportsPolicyStatus(t *testing.T) {
+	tmpDir := t.TempDir()
+	report := DoctorCheckAll(nil, tmpDir, tmpDir)
+
+	for _, h := range report.Platforms {
+		// All should be not_configured since tmpDir has no platform dirs.
+		// Policy field should be set (either "n/a" for unconfigured platforms).
+		if h.Policy == "" {
+			t.Errorf("[%s] policy field should not be empty", h.Platform)
+		}
 	}
 }

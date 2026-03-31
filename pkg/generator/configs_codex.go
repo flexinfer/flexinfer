@@ -73,6 +73,15 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 		fmt.Fprintf(sb, "web_search = %q\n\n", webSearchMode)
 	}
 
+	// Emit policy enforcement annotations from platform profile.
+	codexProfile, _ := GetPlatformProfile("codex")
+	if codexProfile != nil {
+		if comment := FormatPolicyComment(codexProfile.Hooks, "# "); comment != "" {
+			sb.WriteString(comment)
+			sb.WriteString("\n")
+		}
+	}
+
 	sb.WriteString("# Git safety policy: treat pre-existing dirty worktrees as baseline context.\n")
 	if policy.DirtyWorktreeMode == "continue_scoped_commits" {
 		sb.WriteString("# Continue on current branch/worktree; stage+commit only files changed for the active task.\n")

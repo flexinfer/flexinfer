@@ -686,3 +686,186 @@ func TestGetAllSyncStatus_ReturnsAllProfiles(t *testing.T) {
 		t.Errorf("expected %d statuses, got %d", len(m.Profiles), len(statuses))
 	}
 }
+
+// =============================================================================
+// Policy Hash Tests
+// =============================================================================
+
+func TestComputePolicyHash_ConsistentHash(t *testing.T) {
+	tmpDir := t.TempDir()
+	regFile := filepath.Join(tmpDir, "registry.yaml")
+
+	content := []byte("version: 1\nservers: []\nplatform_permissions:\n  agents:\n    settings:\n      dirty_worktree_mode: continue\n")
+	if err := os.WriteFile(regFile, content, 0644); err != nil {
+		t.Fatalf("write registry: %v", err)
+	}
+
+	hash1, err := ComputePolicyHash(regFile)
+	if err != nil {
+		t.Fatalf("ComputePolicyHash failed: %v", err)
+	}
+
+	hash2, err := ComputePolicyHash(regFile)
+	if err != nil {
+		t.Fatalf("ComputePolicyHash second call failed: %v", err)
+	}
+
+	if hash1 != hash2 {
+		t.Errorf("hash not consistent: %q != %q", hash1, hash2)
+	}
+
+	// SHA256 hex is 64 characters
+	if len(hash1) != 64 {
+		t.Errorf("hash length = %d, want 64", len(hash1))
+	}
+}
+
+func TestComputePolicyHash_DifferentContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	reg1 := filepath.Join(tmpDir, "reg1.yaml")
+	reg2 := filepath.Join(tmpDir, "reg2.yaml")
+
+	os.WriteFile(reg1, []byte("version: 1\nservers: []"), 0644)
+	os.WriteFile(reg2, []byte("version: 2\nservers: []"), 0644)
+
+	hash1, _ := ComputePolicyHash(reg1)
+	hash2, _ := ComputePolicyHash(reg2)
+
+	if hash1 == hash2 {
+		t.Error("different content should produce different hashes")
+	}
+}
+
+func TestComputePolicyHash_NonExistent(t *testing.T) {
+	_, err := ComputePolicyHash("/nonexistent/registry.yaml")
+	if err == nil {
+		t.Error("expected error for non-existent file")
+	}
+}
+
+func TestReadWritePolicyHash(t *testing.T) {
+	tmpDir := t.TempDir()
+	expectedHash := "abc123def456"
+
+	if err := WritePolicyHash(tmpDir, expectedHash); err != nil {
+		t.Fatalf("WritePolicyHash failed: %v", err)
+	}
+
+	got, err := ReadPolicyHash(tmpDir)
+	if err != nil {
+		t.Fatalf("ReadPolicyHash failed: %v", err)
+	}
+
+	if got != expectedHash {
+		t.Errorf("ReadPolicyHash = %q, want %q", got, expectedHash)
+	}
+}
+
+func TestReadPolicyHash_NotExists(t *testing.T) {
+	tmpDir := t.TempDir()
+	_, err := ReadPolicyHash(tmpDir)
+	if err == nil {
+		t.Error("expected error when policy hash file does not exist")
+	}
+}
+
+func TestCheckPolicyStatus_InSync(t *testing.T) {
+	tmpDir := t.TempDir()
+	regFile := filepath.Join(tmpDir, "mcp", "context", "registry.yaml")
+	homeDir := filepath.Join(tmpDir, "home", ".claude")
+
+	// Create registry
+	os.MkdirAll(filepath.Dir(regFile), 0755)
+	os.MkdirAll(homeDir, 0755)
+	os.WriteFile(regFile, []byte("version: 1\nservers: []"), 0644)
+
+	// Compute and write hash
+	hash, _ := ComputePolicyHash(regFile)
+	WritePolicyHash(homeDir, hash)
+
+	m, _ := NewManager(tmpDir)
+	status := m.checkPolicyStatus(homeDir, regFile)
+
+	if status != "in-sync" {
+		t.Errorf("checkPolicyStatus = %q, want in-sync", status)
+	}
+}
+
+func TestCheckPolicyStatus_Stale(t *testing.T) {
+	tmpDir := t.TempDir()
+	regFile := filepath.Join(tmpDir, "mcp", "context", "registry.yaml")
+	homeDir := filepath.Join(tmpDir, "home", ".claude")
+
+	// Create registry with original content
+	os.MkdirAll(filepath.Dir(regFile), 0755)
+	os.MkdirAll(homeDir, 0755)
+	os.WriteFile(regFile, []byte("version: 1\nservers: []"), 0644)
+
+	// Write hash for old content
+	hash, _ := ComputePolicyHash(regFile)
+	WritePolicyHash(homeDir, hash)
+
+	// Modify registry
+	os.WriteFile(regFile, []byte("version: 2\nservers: []\nplatform_permissions:\n  agents:\n    settings:\n      new_field: true"), 0644)
+
+	m, _ := NewManager(tmpDir)
+	status := m.checkPolicyStatus(homeDir, regFile)
+
+	if status != "stale" {
+		t.Errorf("checkPolicyStatus = %q, want stale", status)
+	}
+}
+
+func TestCheckPolicyStatus_NotConfigured_NoRegistry(t *testing.T) {
+	tmpDir := t.TempDir()
+	m, _ := NewManager(tmpDir)
+	status := m.checkPolicyStatus(tmpDir, "")
+
+	if status != "not-configured" {
+		t.Errorf("checkPolicyStatus = %q, want not-configured", status)
+	}
+}
+
+func TestCheckPolicyStatus_NotConfigured_NoHashFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	regFile := filepath.Join(tmpDir, "registry.yaml")
+	homeDir := filepath.Join(tmpDir, "home")
+
+	os.WriteFile(regFile, []byte("version: 1"), 0644)
+	os.MkdirAll(homeDir, 0755)
+
+	m, _ := NewManager(tmpDir)
+	status := m.checkPolicyStatus(homeDir, regFile)
+
+	if status != "not-configured" {
+		t.Errorf("checkPolicyStatus = %q, want not-configured", status)
+	}
+}
+
+func TestGetSyncStatus_IncludesPolicyStatus(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	// Create matching files for a sync'd profile
+	profileDir := filepath.Join(repoDir, "test-profile")
+	os.MkdirAll(profileDir, 0755)
+	os.WriteFile(filepath.Join(profileDir, "config.toml"), []byte("content"), 0644)
+	os.WriteFile(filepath.Join(homeDir, "config.toml"), []byte("content"), 0644)
+
+	m, _ := NewManager(repoDir)
+	m.Profiles["test"] = &Profile{
+		Name:    "test",
+		RepoDir: "test-profile",
+		HomeDir: homeDir,
+	}
+
+	status, err := m.GetSyncStatus("test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Without a registry, policy status should be "not-configured"
+	if status.PolicyStatus != "not-configured" {
+		t.Errorf("PolicyStatus = %q, want not-configured", status.PolicyStatus)
+	}
+}

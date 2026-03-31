@@ -84,6 +84,7 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 				fmt.Printf("Generated %d skill files directly to %s\n", len(manifest.Generated), homePath)
 			}
 		}
+		writePolicyHashForProfile(m.RepoRoot, homePath)
 		return nil
 	}
 
@@ -264,6 +265,7 @@ func (m *Manager) SyncToHome(profileName string, backup bool, regen bool, repoOn
 		}
 	}
 
+	writePolicyHashForProfile(m.RepoRoot, homePath)
 	return nil
 }
 
@@ -463,4 +465,21 @@ func (m *Manager) PullFromHome(profileName string, backup bool) error {
 	}
 
 	return CopyDir(homePath, repoPath, p.Excludes)
+}
+
+// writePolicyHashForProfile discovers the registry and writes its hash to the
+// home config directory so that staleness detection works on subsequent checks.
+func writePolicyHashForProfile(repoRoot, homePath string) {
+	regPath := discoverRegistryPath(repoRoot)
+	if regPath == "" {
+		return
+	}
+	hash, err := ComputePolicyHash(regPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not compute policy hash: %v\n", err)
+		return
+	}
+	if err := WritePolicyHash(homePath, hash); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not write policy hash to %s: %v\n", homePath, err)
+	}
 }

@@ -60,6 +60,16 @@ func generateJSONConfig(p *GenerateParams) error {
 	}
 
 	config := map[string]any{rootKey: servers}
+
+	// Annotate proxy-enforced policies in JSON configs via a metadata field.
+	if summaries := PlatformPolicySummaries(profile.Hooks); len(summaries) > 0 {
+		policyMeta := make(map[string]string, len(summaries))
+		for _, s := range summaries {
+			policyMeta[s.PolicyRef] = s.Description
+		}
+		config["_loom_policy"] = policyMeta
+	}
+
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return err
@@ -155,7 +165,13 @@ func generateTomlConfig(p *GenerateParams) error {
 		sb.WriteString(fmt.Sprintf("# To regenerate: loom sync %s --regen\n", target))
 	}
 	sb.WriteString(fmt.Sprintf("# Generated MCP configuration for %s\n", target))
-	sb.WriteString("# Source: mcp/context/registry.yaml\n\n")
+	sb.WriteString("# Source: mcp/context/registry.yaml\n")
+
+	// Emit policy enforcement annotations for platforms with policy refs.
+	if comment := FormatPolicyComment(profile.Hooks, "# "); comment != "" {
+		sb.WriteString(comment)
+	}
+	sb.WriteString("\n")
 
 	// Platforms with requires_preamble get a config preamble (e.g., Codex's
 	// approval_policy, features, sandbox_mode, and notify hook).
