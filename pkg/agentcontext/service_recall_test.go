@@ -227,6 +227,245 @@ func TestNormalizeLegacyEnhancedScope(t *testing.T) {
 	}
 }
 
+func TestHandleUnifiedRecall_GraphScope(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	kg := NewKnowledgeGraph()
+	_ = kg.AddEntity(&Entity{
+		ID:          "ent-router-1",
+		Type:        EntityTypeFunction,
+		Name:        "OrchestraRouter",
+		Description: "Routes MCP tool calls to orchestra backends",
+		Namespace:   "loom/orchestra",
+	})
+	_ = kg.AddEntity(&Entity{
+		ID:          "ent-router-2",
+		Type:        EntityTypeService,
+		Name:        "RouterService",
+		Description: "HTTP router for the orchestra service",
+		Namespace:   "loom/orchestra",
+	})
+	_ = kg.AddEntity(&Entity{
+		ID:          "ent-unrelated",
+		Type:        EntityTypeConcept,
+		Name:        "MemoryHierarchy",
+		Description: "Tiered memory for agent context",
+		Namespace:   "loom/memory",
+	})
+
+	svc := &Service{
+		cfg: Config{
+			DefaultTokenBudget:   4000,
+			DefaultRecencyWeight: 0.2,
+		},
+		metrics:        GetMetrics(),
+		knowledgeGraph: kg,
+	}
+
+	result, err := svc.HandleUnifiedRecall(context.Background(), map[string]any{
+		"query":             "Router",
+		"scope":             "graph",
+		"token_budget":      0,
+		"include_tasks":     false,
+		"include_decisions": false,
+		"include_summaries": false,
+	})
+	if err != nil {
+		t.Fatalf("HandleUnifiedRecall error: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("expected non-error result, got %#v", result)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &payload); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+
+	if payload["scope"] != "graph" {
+		t.Fatalf("scope = %v, want graph", payload["scope"])
+	}
+
+	graphEntities, ok := payload["graph_entities"].([]any)
+	if !ok {
+		t.Fatalf("graph_entities missing or wrong type: %T", payload["graph_entities"])
+	}
+	if len(graphEntities) != 2 {
+		t.Fatalf("graph_entities count = %d, want 2", len(graphEntities))
+	}
+
+	// Verify count includes graph entities.
+	count := int(payload["count"].(float64))
+	if count != 2 {
+		t.Fatalf("count = %d, want 2", count)
+	}
+
+	graphCount := int(payload["graph_count"].(float64))
+	if graphCount != 2 {
+		t.Fatalf("graph_count = %d, want 2", graphCount)
+	}
+
+	// Verify no context entries returned (scope=graph should skip context).
+	if _, exists := payload["entries"]; exists {
+		t.Fatal("scope=graph should not return context entries")
+	}
+}
+
+func TestHandleUnifiedRecall_AllScopeIncludesGraph(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	kg := NewKnowledgeGraph()
+	_ = kg.AddEntity(&Entity{
+		ID:          "ent-all-1",
+		Type:        EntityTypeFunction,
+		Name:        "AllScopeTarget",
+		Description: "Entity for all-scope test",
+		Namespace:   "test",
+	})
+
+	svc := &Service{
+		cfg: Config{
+			DefaultTokenBudget:   4000,
+			DefaultRecencyWeight: 0.2,
+		},
+		metrics:         GetMetrics(),
+		memoryHierarchy: NewMemoryHierarchy(),
+		knowledgeGraph:  kg,
+	}
+
+	result, err := svc.HandleUnifiedRecall(context.Background(), map[string]any{
+		"query":             "AllScopeTarget",
+		"scope":             "all",
+		"token_budget":      0,
+		"include_tasks":     false,
+		"include_decisions": false,
+		"include_summaries": false,
+	})
+	if err != nil {
+		t.Fatalf("HandleUnifiedRecall error: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &payload); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+
+	if payload["scope"] != "all" {
+		t.Fatalf("scope = %v, want all", payload["scope"])
+	}
+
+	graphEntities, ok := payload["graph_entities"].([]any)
+	if !ok {
+		t.Fatalf("graph_entities missing or wrong type: %T", payload["graph_entities"])
+	}
+	if len(graphEntities) != 1 {
+		t.Fatalf("graph_entities count = %d, want 1", len(graphEntities))
+	}
+
+	// Verify count includes graph entity.
+	count := int(payload["count"].(float64))
+	if count < 1 {
+		t.Fatalf("count = %d, want >= 1", count)
+	}
+}
+
+func TestHandleUnifiedRecall_GraphScopeNilGraph(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	svc := &Service{
+		cfg: Config{
+			DefaultTokenBudget:   4000,
+			DefaultRecencyWeight: 0.2,
+		},
+		metrics:        GetMetrics(),
+		knowledgeGraph: nil,
+	}
+
+	result, err := svc.HandleUnifiedRecall(context.Background(), map[string]any{
+		"query":             "anything",
+		"scope":             "graph",
+		"token_budget":      0,
+		"include_tasks":     false,
+		"include_decisions": false,
+		"include_summaries": false,
+	})
+	if err != nil {
+		t.Fatalf("HandleUnifiedRecall error: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("expected non-error result, got %#v", result)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &payload); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+
+	// Should have zero count and no graph_entities key.
+	count := int(payload["count"].(float64))
+	if count != 0 {
+		t.Fatalf("count = %d, want 0", count)
+	}
+	if _, exists := payload["graph_entities"]; exists {
+		t.Fatal("expected no graph_entities for nil knowledge graph")
+	}
+}
+
+func TestHandleUnifiedRecall_GraphScopeWithNamespace(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	kg := NewKnowledgeGraph()
+	_ = kg.AddEntity(&Entity{
+		ID:          "ent-ns-1",
+		Type:        EntityTypeFunction,
+		Name:        "HandleRouter",
+		Description: "Handler in orchestra namespace",
+		Namespace:   "loom/orchestra",
+	})
+	_ = kg.AddEntity(&Entity{
+		ID:          "ent-ns-2",
+		Type:        EntityTypeFunction,
+		Name:        "HandleRouter",
+		Description: "Handler in different namespace",
+		Namespace:   "loom/other",
+	})
+
+	svc := &Service{
+		cfg: Config{
+			DefaultTokenBudget:   4000,
+			DefaultRecencyWeight: 0.2,
+		},
+		metrics:        GetMetrics(),
+		knowledgeGraph: kg,
+	}
+
+	result, err := svc.HandleUnifiedRecall(context.Background(), map[string]any{
+		"query":             "Router",
+		"scope":             "graph",
+		"namespace":         "loom/orchestra",
+		"token_budget":      0,
+		"include_tasks":     false,
+		"include_decisions": false,
+		"include_summaries": false,
+	})
+	if err != nil {
+		t.Fatalf("HandleUnifiedRecall error: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &payload); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+
+	graphEntities, ok := payload["graph_entities"].([]any)
+	if !ok {
+		t.Fatalf("graph_entities missing: %T", payload["graph_entities"])
+	}
+	if len(graphEntities) != 1 {
+		t.Fatalf("graph_entities count = %d, want 1 (namespace filtered)", len(graphEntities))
+	}
+}
+
 func TestHandleDeprecatedEnhancedRecall_DefaultRouteToUnified(t *testing.T) {
 	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
 

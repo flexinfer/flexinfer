@@ -18,9 +18,11 @@ var (
 
 // LoopResult captures the final output of a non-stream orchestration run.
 type LoopResult struct {
-	Final       TurnResponse
-	Iterations  int
-	ToolResults []ToolResult
+	Final                 TurnResponse
+	Iterations            int
+	ToolResults           []ToolResult
+	TotalPromptTokens     int
+	TotalCompletionTokens int
 }
 
 // Orchestrator executes non-stream Responses turns with optional tool loops.
@@ -57,6 +59,7 @@ func (o *Orchestrator) Run(ctx context.Context, req TurnRequest, identity Execut
 
 	current := req
 	allToolResults := make([]ToolResult, 0, 8)
+	var totalPromptTokens, totalCompletionTokens int
 
 	for iteration := 1; iteration <= o.Config.MaxLoopIterations; iteration++ {
 		// Token preflight: check budget and compact if needed.
@@ -75,6 +78,9 @@ func (o *Orchestrator) Run(ctx context.Context, req TurnRequest, identity Execut
 			return LoopResult{}, fmt.Errorf("responses create iteration %d: %w", iteration, err)
 		}
 
+		totalPromptTokens += resp.PromptTokens
+		totalCompletionTokens += resp.CompletionTokens
+
 		toolCalls := resp.ToolCalls
 		if o.Adapter != nil && len(toolCalls) > 0 {
 			resolved := make([]ToolCall, 0, len(toolCalls))
@@ -90,9 +96,11 @@ func (o *Orchestrator) Run(ctx context.Context, req TurnRequest, identity Execut
 
 		if resp.Terminal || len(toolCalls) == 0 {
 			return LoopResult{
-				Final:       resp,
-				Iterations:  iteration,
-				ToolResults: allToolResults,
+				Final:                 resp,
+				Iterations:            iteration,
+				ToolResults:           allToolResults,
+				TotalPromptTokens:     totalPromptTokens,
+				TotalCompletionTokens: totalCompletionTokens,
 			}, nil
 		}
 

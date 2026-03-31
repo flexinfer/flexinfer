@@ -30,7 +30,7 @@ func (d *Daemon) orchestraSyntheticTools() []mcp.Tool {
 					"domains": map[string]any{
 						"type":        "array",
 						"items":       map[string]any{"type": "string"},
-						"description": "Optional domain filter. If empty, the router auto-classifies. Available: cluster-ops, codebase, ci-pipeline, observability.",
+						"description": "Optional domain filter. If empty, the router auto-classifies. Available: agent-fleet, ci-pipeline, cluster-ops, codebase, infra-ops, observability.",
 					},
 					"max_tokens": map[string]any{
 						"type":        "integer",
@@ -53,7 +53,7 @@ func (d *Daemon) orchestraSyntheticTools() []mcp.Tool {
 					"domains": map[string]any{
 						"type":        "array",
 						"items":       map[string]any{"type": "string"},
-						"description": "Domains to query. Required. Available: cluster-ops, codebase, ci-pipeline, observability.",
+						"description": "Domains to query. Required. Available: agent-fleet, ci-pipeline, cluster-ops, codebase, infra-ops, observability.",
 					},
 				},
 				Required: []string{"query", "domains"},

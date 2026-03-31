@@ -6255,3 +6255,487 @@ skills:
         enabled: true
         type: command
         output_format: markdown
+
+  # =========================================================================
+  # Migrated Skills - from .agents/skills/ hand-maintained docs
+  # =========================================================================
+
+  - name: testing-guidelines
+    categories: [testing, quality]
+    common:
+      description: |
+        Universal testing instructions: test commands by language (Go, Python, TypeScript, Rust), coverage requirements, pre-commit checklist, and CI/CD stage expectations.
+      instructions: |
+        # Testing Guidelines
+
+        Universal testing instructions for AI coding agents working in this workspace.
+
+        ## Test Commands by Language
+
+        ### Go
+        ```bash
+        go test ./...                           # Run all tests
+        go test -v ./path/to/pkg                # Verbose output for specific package
+        go test -race ./...                     # With race detector
+        go test -cover ./...                    # With coverage
+        go test ./path -run TestName -v         # Single test
+        ```
+
+        ### Python
+        ```bash
+        pytest tests/                           # Run all tests
+        pytest tests/test_file.py -v           # Specific file
+        pytest tests/test_file.py::test_func   # Single test
+        pytest --cov=src tests/                # With coverage
+        ```
+
+        ### TypeScript/Node.js
+        ```bash
+        npm test                                # Run all tests
+        npm test -- --watch                     # Watch mode
+        npm test -- tests/file.test.ts         # Specific file
+        ```
+
+        ### Rust
+        ```bash
+        cargo test                              # Run all tests
+        cargo test test_name                    # Single test
+        cargo test -- --nocapture               # Show print output
+        ```
+
+        ## Test Coverage Requirements
+
+        - New features: >80% coverage
+        - Bug fixes: Must include regression test
+        - Refactors: Maintain existing coverage
+
+        ## Before Committing
+
+        1. Run tests locally: `make test` or language-specific command
+        2. Check for linting errors: `make lint`
+        3. Verify no sensitive data in test fixtures
+
+        ## CI/CD Notes
+
+        All projects use GitLab CI with these standard stages:
+        - `lint` - Code style checks
+        - `test` - Unit and integration tests
+        - `build` - Compile/bundle
+        - `publish` - Deploy (manual, on tags)
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: rule
+      claude:
+        enabled: true
+        type: rule
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+      antigravity:
+        enabled: true
+        type: rule
+
+  - name: deployment-practices
+    categories: [deployment, operations]
+    common:
+      description: |
+        Deployment procedures for the workspace: GitOps workflow via Flux CD, Kubernetes cluster access (K3s and Harvester), deployment checklist, rollback procedures, container registry conventions, and troubleshooting commands.
+      instructions: |
+        # Deployment Guidelines
+
+        Deployment procedures for AI coding agents working in this workspace.
+
+        ## GitOps Workflow
+
+        All deployments go through Git - never direct `kubectl apply` in production.
+
+        ### Standard Flow
+        1. Make changes to manifests in `platform/gitops/`
+        2. Commit and push to appropriate branch
+        3. Flux CD reconciles automatically
+        4. Verify with `flux get kustomizations -A`
+
+        ### Quick Commands
+        ```bash
+        # Check Flux status
+        flux get kustomizations -A
+        flux logs -A --follow
+
+        # Force reconcile
+        flux reconcile kustomization system -n flux-system
+        flux reconcile kustomization apps -n flux-system
+
+        # Suspend/Resume (for maintenance)
+        flux suspend kustomization apps -n flux-system
+        flux resume kustomization apps -n flux-system
+        ```
+
+        ## Kubernetes Clusters
+
+        ### K3s (App Workloads)
+        ```bash
+        export KUBECONFIG=~/workspace/platform/gitops/.kube/k3s.yaml
+        # Or use alias: kc-k3s
+        ```
+
+        ### Harvester (Infrastructure)
+        ```bash
+        export KUBECONFIG=~/workspace/platform/gitops/.kube/harvester-admin.yaml
+        # Or use alias: kc-harv
+        ```
+
+        ## Deployment Checklist
+
+        - [ ] Image version is pinned (no `:latest`)
+        - [ ] Resource limits/requests are set
+        - [ ] Health probes configured (liveness/readiness)
+        - [ ] Secrets are encrypted with SOPS
+        - [ ] Ingress/Service configured correctly
+        - [ ] Monitoring/alerting in place
+
+        ## Rollback Procedures
+
+        ```bash
+        # View deployment history
+        kubectl rollout history deployment/<name> -n <namespace>
+
+        # Rollback to previous version
+        kubectl rollout undo deployment/<name> -n <namespace>
+
+        # Rollback to specific revision
+        kubectl rollout undo deployment/<name> --to-revision=<N> -n <namespace>
+        ```
+
+        ## Container Registry
+
+        - Registry: `registry.harbor.lan/library/<service>:<tag>`
+        - Push after build: `make docker push`
+        - Always use semantic versioning for tags
+
+        ## Troubleshooting
+
+        ```bash
+        # Check pod status
+        kubectl get pods -n <namespace>
+        kubectl describe pod <pod-name> -n <namespace>
+
+        # View logs
+        kubectl logs -f deployment/<name> -n <namespace>
+
+        # Events (sorted by time)
+        kubectl get events -n <namespace> --sort-by=.lastTimestamp
+        ```
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: rule
+      claude:
+        enabled: true
+        type: rule
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+      antigravity:
+        enabled: true
+        type: rule
+
+  - name: rust-acceleration
+    categories: [performance, rust]
+    common:
+      description: |
+        Guide for accelerating performance-critical Python and TypeScript code with Rust: PyO3 for native Python extensions, wasm-bindgen for TypeScript/JavaScript via WebAssembly, project structure templates, CI pipeline configs, testing strategies, and troubleshooting.
+      instructions: |
+        # Rust Acceleration Guide
+
+        Performance-critical code in Python and TypeScript libraries can be accelerated using Rust:
+        - **PyO3** for Python native extensions (10-100x faster than pure Python)
+        - **wasm-bindgen** for TypeScript/JavaScript via WebAssembly (5-50x faster)
+
+        ## When to Use Rust Acceleration
+
+        **Good candidates:**
+        - CPU-bound algorithms (parsing, graph algorithms, math)
+        - Tight loops processing large datasets
+        - Operations called thousands of times per second
+        - Code that would benefit from parallelization (Rayon)
+
+        **Not worth it:**
+        - I/O-bound code (network, disk)
+        - Simple CRUD operations
+        - Code that runs once per request
+        - Prototyping or rapidly changing code
+
+        ## Performance Expectations
+
+        | Workload | PyO3 Speedup | WASM Speedup |
+        |----------|--------------|--------------|
+        | AST parsing | 10-50x | 5-20x |
+        | Graph layout | 20-100x | 10-50x |
+        | Numeric computation | 5-20x | 3-10x |
+        | String processing | 3-10x | 2-5x |
+
+        ---
+
+        ## PyO3 for Python Libraries
+
+        ### Project Structure
+
+        ```
+        libs/py-<name>/
+        +-- src/<package>/           # Python package
+        |   +-- __init__.py
+        |   +-- module.py            # Delegates to Rust
+        +-- rust/                    # Rust crate
+        |   +-- Cargo.toml
+        |   +-- src/
+        |       +-- lib.rs           # PyO3 module entry
+        |       +-- *.rs             # Implementation modules
+        +-- pyproject.toml           # maturin build config
+        +-- tests/
+        ```
+
+        ### Cargo.toml Template
+
+        ```toml
+        [package]
+        name = "<package>_core"
+        version = "0.1.0"
+        edition = "2021"
+
+        [lib]
+        name = "<package>_core"
+        crate-type = ["cdylib"]
+
+        [dependencies]
+        pyo3 = { version = "0.22", features = ["extension-module"] }
+        rayon = "1.10"              # Parallel processing
+        serde = { version = "1.0", features = ["derive"] }
+        serde_json = "1.0"
+        ```
+
+        ### PyO3 Module Entry (lib.rs)
+
+        ```rust
+        use pyo3::prelude::*;
+
+        mod parser;
+        mod processor;
+
+        #[pyfunction]
+        #[pyo3(signature = (input, options=None))]
+        fn process_data(input: &str, options: Option<&str>) -> PyResult<Vec<String>> {
+            let opts = options.unwrap_or("{}");
+            processor::process(input, opts)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+        }
+
+        #[pymodule]
+        fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+            m.add_function(wrap_pyfunction!(process_data, m)?)?;
+            Ok(())
+        }
+        ```
+
+        ### Python Integration Pattern
+
+        ```python
+        # src/<package>/__init__.py
+        try:
+            from ._core import process_data, DataProcessor
+            RUST_AVAILABLE = True
+        except ImportError:
+            RUST_AVAILABLE = False
+            from .fallback import process_data, DataProcessor
+        ```
+
+        ### Build Commands
+
+        ```bash
+        # Development (editable install)
+        cd libs/py-<name>/rust
+        maturin develop
+
+        # Release build
+        maturin build --release
+        ```
+
+        ---
+
+        ## WASM for TypeScript Libraries
+
+        ### Project Structure
+
+        ```
+        libs/<name>/
+        +-- src/                     # TypeScript source
+        |   +-- index.ts
+        |   +-- wasm/
+        |       +-- index.ts         # WASM wrappers + fallbacks
+        +-- crates/<name>-wasm/      # Rust WASM crate
+        |   +-- Cargo.toml
+        |   +-- src/
+        |       +-- lib.rs           # wasm-bindgen exports
+        |       +-- *.rs
+        +-- pkg/                     # Generated WASM package
+        +-- package.json
+        +-- tsconfig.json
+        ```
+
+        ### Cargo.toml Template
+
+        ```toml
+        [package]
+        name = "<name>-wasm"
+        version = "0.1.0"
+        edition = "2021"
+
+        [lib]
+        crate-type = ["cdylib", "rlib"]
+
+        [dependencies]
+        wasm-bindgen = "0.2"
+        serde = { version = "1.0", features = ["derive"] }
+        serde-wasm-bindgen = "0.6"
+
+        [profile.release]
+        opt-level = "z"
+        lto = true
+        ```
+
+        ### wasm-bindgen Exports (lib.rs)
+
+        ```rust
+        use wasm_bindgen::prelude::*;
+
+        #[wasm_bindgen]
+        pub fn compute(input: &str) -> String {
+            algorithm::process(input)
+        }
+        ```
+
+        ### TypeScript Wrapper with Fallback
+
+        ```typescript
+        let wasmModule: typeof import("../../pkg") | null = null;
+
+        async function loadWasm(): Promise<boolean> {
+          if (wasmModule) return true;
+          try {
+            wasmModule = await import("../../pkg");
+          } catch {
+            wasmModule = null;
+          }
+          return wasmModule !== null;
+        }
+
+        export async function compute(input: string): Promise<string> {
+          if (await loadWasm()) {
+            return wasmModule!.compute(input);
+          }
+          return fallback.compute(input);
+        }
+        ```
+
+        ### Build Commands
+
+        ```bash
+        # Build WASM
+        cd crates/<name>-wasm
+        wasm-pack build --target bundler --out-dir ../../pkg
+
+        # Build TypeScript
+        pnpm build
+        ```
+
+        ---
+
+        ## Testing Accelerated Code
+
+        ### Benchmark Tests (Python)
+
+        ```python
+        @pytest.mark.benchmark
+        def test_rust_vs_python(benchmark):
+            data = generate_test_data(10000)
+            rust_result = benchmark(process_data, data)
+            python_result = fallback_process(data)
+            assert rust_result == python_result
+        ```
+
+        ### Benchmark Tests (TypeScript)
+
+        ```typescript
+        describe("WASM performance", () => {
+          it("produces same results as fallback", async () => {
+            const wasmResult = await compute(input);
+            const fallbackResult = fallbackCompute(input);
+            expect(wasmResult).toEqual(fallbackResult);
+          });
+        });
+        ```
+
+        ---
+
+        ## Troubleshooting
+
+        ### PyO3 Issues
+
+        | Problem | Solution |
+        |---------|----------|
+        | `ImportError: _core not found` | Run `maturin develop` to build |
+        | Segfault in Rust code | Check for null pointers, use `Option<T>` |
+        | GIL deadlock | Release GIL with `py.allow_threads()` |
+
+        ### WASM Issues
+
+        | Problem | Solution |
+        |---------|----------|
+        | `TypeError: ... is not a function` | Ensure WASM loaded before sync calls |
+        | Memory growth errors | Use `wasm-opt` with memory limits |
+        | Large bundle size | Enable `lto = true` and `opt-level = "z"` |
+
+        ## Checklist for Adding Rust Acceleration
+
+        - [ ] Profile existing code to identify bottlenecks
+        - [ ] Create `rust/` or `crates/` directory with Cargo.toml
+        - [ ] Implement core algorithm in Rust with tests
+        - [ ] Add PyO3/wasm-bindgen exports
+        - [ ] Create TypeScript/Python wrappers with fallbacks
+        - [ ] Add benchmark tests comparing Rust vs fallback
+        - [ ] Update CI pipeline with Rust build stage
+        - [ ] Verify parity between Rust and fallback implementations
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: rule
+      claude:
+        enabled: true
+        type: rule
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+      antigravity:
+        enabled: true
+        type: rule

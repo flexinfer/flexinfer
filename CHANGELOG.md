@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Standalone orchestra MCP binary** (`cmd/mcp-orchestra`): New standalone binary with `HubToolLister` and `HubToolCaller` that route tool calls through the MCP gateway, enabling orchestra to run as an independent k3s service decoupled from `loomd`.
+- **Orchestra k3s deployment** (`k8s/base/servers/orchestra`): Deployment, service, and configmap manifests following the agent-context pattern; registered in gateway registry for service discovery.
+- **Orchestra domains** (`pkg/orchestra`): Add `agent-fleet` (presence/session/task tools) and `infra-ops` (flux/helm tools) domains, bringing total from 4 to 6. New `orchestra__fleet_status` compound tool.
+- **Agent recall graph scope** (`pkg/agentcontext`): `agent_recall` now supports `scope=graph` and `scope=all` to query the in-memory knowledge graph backend via `FindEntities()`.
+- **Skills registry entries** (`mcp/context/skills-registry.yaml`): Add `testing-guidelines`, `deployment-practices`, and `rust-acceleration` (56→59 entries).
+
+### Fixed
+- **Orchestra token metrics** (`pkg/orchestra`): `loom_orchestra_tokens_total` now increments with real prompt/completion token counts from FlexInfer `resp.Usage` instead of the `len(toolResults)*512` estimate. `DomainResult.Tokens` reflects actual usage.
+- **Orchestra classify span** (`pkg/orchestra/router.go`): Remove dead `defer func(){}()` and redundant `SpanFromContext` re-fetch; use captured span variable directly.
 - **MCP server scaffold package** (`pkg/mcpscaffold`): `NewServer()` factory and `AddTracedTool()` helper that eliminate ~65 lines of duplicated initialization boilerplate per MCP server. Five servers migrated as proof (time, filesystem, asus-router, youtube, confluence).
 - **Pipeline-aware agent lifecycle** (`internal/hud/bridge`): Explicit `PipelineRef` foreign keys on Session and Task, replacing branch-name heuristics; `WorkflowID` on Task for workflow-step tracing; `pipeline_event` context entries; auto-detection in WorkStart.
 - **Mobile session activity endpoint** (`internal/hud/domain/mobile`): `GET /api/sessions/{id}/activity` returns unified tasks + pipelines with correlation type.

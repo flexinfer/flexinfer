@@ -162,15 +162,12 @@ func (r *Router) Status() map[string]any {
 
 // classify uses the router model to determine which domains to query.
 func (r *Router) classify(ctx context.Context, query string) ([]string, error) {
+	var classifySpan trace.Span
 	if r.tracer != nil {
-		var span trace.Span
-		ctx, span = r.tracer.Start(ctx, "orchestra.classify",
+		ctx, classifySpan = r.tracer.Start(ctx, "orchestra.classify",
 			trace.WithAttributes(attribute.String("query", query)),
 		)
-		defer span.End()
-		// classified_domains is set below after validation.
-		defer func() {}() // placeholder; actual attribute set after valid slice built
-		_ = span          // used below
+		defer classifySpan.End()
 	}
 
 	allDomains := r.registry.List()
@@ -200,9 +197,8 @@ func (r *Router) classify(ctx context.Context, query string) ([]string, error) {
 		}
 	}
 
-	if r.tracer != nil {
-		span := trace.SpanFromContext(ctx)
-		span.SetAttributes(attribute.StringSlice("classified_domains", valid))
+	if classifySpan != nil {
+		classifySpan.SetAttributes(attribute.StringSlice("classified_domains", valid))
 	}
 
 	r.logger.Debug("classified query", "query", query, "domains", valid)
@@ -370,7 +366,7 @@ func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryReque
 	return DomainResult{
 		Domain:     domain,
 		Answer:     loopResult.Final.OutputText,
-		Tokens:     len(loopResult.ToolResults) * tokensPerIteration, // estimate from iterations
+		Tokens:     loopResult.TotalPromptTokens + loopResult.TotalCompletionTokens,
 		LatencyMs:  latencyMs,
 		Iterations: loopResult.Iterations,
 	}

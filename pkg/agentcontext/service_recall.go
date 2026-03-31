@@ -522,6 +522,7 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 
 	includeContext := scope == "context" || scope == "all"
 	includeMemory := scope == "memory" || scope == "all"
+	includeGraph := scope == "graph" || scope == "all"
 
 	resp := map[string]any{
 		"ok":           true,
@@ -602,6 +603,22 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 			totalCount += len(items)
 			resp["memory_items"] = items
 			resp["memory_count"] = len(items)
+		}
+	}
+
+	// --- Graph backend ---
+	// When scope is "graph" or "all", query the knowledge graph for matching entities.
+	// Uses FindEntities with the query text as a name pattern for text-based matching.
+	if includeGraph && s.knowledgeGraph != nil {
+		entities := s.knowledgeGraph.FindEntities("", namespace, query, 20)
+		if len(entities) > 0 {
+			graphEntities := make([]map[string]any, len(entities))
+			for i, e := range entities {
+				graphEntities[i] = entityToMap(e)
+			}
+			totalCount += len(graphEntities)
+			resp["graph_entities"] = graphEntities
+			resp["graph_count"] = len(graphEntities)
 		}
 	}
 

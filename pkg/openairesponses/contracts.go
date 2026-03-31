@@ -127,12 +127,14 @@ func (r TurnRequest) Validate() error {
 
 // TurnResponse defines the normalized orchestration output for one loop step.
 type TurnResponse struct {
-	ResponseID     string
-	ConversationID string
-	OutputText     string
-	ToolCalls      []ToolCall
-	Terminal       bool
-	RawPayload     json.RawMessage
+	ResponseID       string
+	ConversationID   string
+	OutputText       string
+	ToolCalls        []ToolCall
+	Terminal         bool
+	RawPayload       json.RawMessage
+	PromptTokens     int
+	CompletionTokens int
 }
 
 // ToolExecutor executes resolved Loom tool calls.

@@ -21,7 +21,7 @@ func NewSubagentTelemetry(domain string, metrics *Metrics) *SubagentTelemetry {
 func (t *SubagentTelemetry) RecordTurnStart(_ context.Context, _ openairesponses.TurnRequest, _ openairesponses.ExecutionIdentity) {
 }
 
-func (t *SubagentTelemetry) RecordTurnEnd(_ context.Context, _ openairesponses.TurnResponse, err error, _ openairesponses.ExecutionIdentity) {
+func (t *SubagentTelemetry) RecordTurnEnd(_ context.Context, resp openairesponses.TurnResponse, err error, _ openairesponses.ExecutionIdentity) {
 	if t.metrics == nil {
 		return
 	}
@@ -30,6 +30,13 @@ func (t *SubagentTelemetry) RecordTurnEnd(_ context.Context, _ openairesponses.T
 		status = "error"
 	}
 	t.metrics.SubagentCallTotal.WithLabelValues(t.domain, status).Inc()
+
+	if resp.PromptTokens > 0 {
+		t.metrics.TokensTotal.WithLabelValues(t.domain, "prompt").Add(float64(resp.PromptTokens))
+	}
+	if resp.CompletionTokens > 0 {
+		t.metrics.TokensTotal.WithLabelValues(t.domain, "completion").Add(float64(resp.CompletionTokens))
+	}
 }
 
 func (t *SubagentTelemetry) RecordToolCall(_ context.Context, call openairesponses.ToolCall, _ openairesponses.ToolResult, err error, _ openairesponses.ExecutionIdentity) {

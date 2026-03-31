@@ -181,6 +181,101 @@ func TestSubagentTelemetry_RecordToolCall_MultipleIncrements(t *testing.T) {
 	}
 }
 
+func TestSubagentTelemetry_RecordTurnEnd_TokenMetrics(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	tel := NewSubagentTelemetry("my-domain", m)
+
+	tel.RecordTurnEnd(
+		context.Background(),
+		openairesponses.TurnResponse{
+			PromptTokens:     150,
+			CompletionTokens: 75,
+		},
+		nil,
+		openairesponses.ExecutionIdentity{},
+	)
+
+	promptVal := counterValue(t, m.TokensTotal, "my-domain", "prompt")
+	if promptVal != 150 {
+		t.Errorf("expected TokensTotal prompt=150, got %v", promptVal)
+	}
+
+	completionVal := counterValue(t, m.TokensTotal, "my-domain", "completion")
+	if completionVal != 75 {
+		t.Errorf("expected TokensTotal completion=75, got %v", completionVal)
+	}
+}
+
+func TestSubagentTelemetry_RecordTurnEnd_TokenMetricsAccumulate(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	tel := NewSubagentTelemetry("my-domain", m)
+
+	// Simulate two turns with token counts.
+	tel.RecordTurnEnd(
+		context.Background(),
+		openairesponses.TurnResponse{
+			PromptTokens:     100,
+			CompletionTokens: 50,
+		},
+		nil,
+		openairesponses.ExecutionIdentity{},
+	)
+	tel.RecordTurnEnd(
+		context.Background(),
+		openairesponses.TurnResponse{
+			PromptTokens:     200,
+			CompletionTokens: 80,
+		},
+		nil,
+		openairesponses.ExecutionIdentity{},
+	)
+
+	promptVal := counterValue(t, m.TokensTotal, "my-domain", "prompt")
+	if promptVal != 300 {
+		t.Errorf("expected TokensTotal prompt=300, got %v", promptVal)
+	}
+
+	completionVal := counterValue(t, m.TokensTotal, "my-domain", "completion")
+	if completionVal != 130 {
+		t.Errorf("expected TokensTotal completion=130, got %v", completionVal)
+	}
+}
+
+func TestSubagentTelemetry_RecordTurnEnd_ZeroTokensNotRecorded(t *testing.T) {
+	t.Parallel()
+
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	tel := NewSubagentTelemetry("my-domain", m)
+
+	// Response with zero tokens should not increment the counter.
+	tel.RecordTurnEnd(
+		context.Background(),
+		openairesponses.TurnResponse{
+			PromptTokens:     0,
+			CompletionTokens: 0,
+		},
+		nil,
+		openairesponses.ExecutionIdentity{},
+	)
+
+	promptVal := counterValue(t, m.TokensTotal, "my-domain", "prompt")
+	if promptVal != 0 {
+		t.Errorf("expected TokensTotal prompt=0 for zero tokens, got %v", promptVal)
+	}
+
+	completionVal := counterValue(t, m.TokensTotal, "my-domain", "completion")
+	if completionVal != 0 {
+		t.Errorf("expected TokensTotal completion=0 for zero tokens, got %v", completionVal)
+	}
+}
+
 // counterValue reads the current value of a prometheus.CounterVec for given labels.
 func counterValue(t *testing.T, cv *prometheus.CounterVec, labels ...string) float64 {
 	t.Helper()

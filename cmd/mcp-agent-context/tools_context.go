@@ -230,7 +230,7 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_recall",
-		Description: "Unified recall across context and memory backends. Use scope to control which backends are queried: 'context' (default), 'memory', or 'all'. Replaces agent_context_recall, agent_context_recall_enhanced, and agent_memory_recall.",
+		Description: "Unified recall across context, memory, and knowledge graph backends. Use scope to control which backends are queried: 'context' (default), 'memory', 'graph', or 'all'. Replaces agent_context_recall, agent_context_recall_enhanced, and agent_memory_recall.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
@@ -240,8 +240,8 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 				},
 				"scope": map[string]any{
 					"type":        "string",
-					"enum":        []string{"context", "memory", "all"},
-					"description": "Which backends to query: 'context' (default), 'memory', or 'all'.",
+					"enum":        []string{"context", "memory", "graph", "all"},
+					"description": "Which backends to query: 'context' (default), 'memory', 'graph', or 'all'.",
 				},
 				"agent_id": map[string]any{
 					"type":        "string",

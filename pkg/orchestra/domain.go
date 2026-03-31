@@ -76,9 +76,30 @@ func (r *DomainRegistry) ToolToDomains() map[string][]string {
 	return m
 }
 
-// DefaultDomains returns the four built-in orchestration domains.
+// DefaultDomains returns the built-in orchestration domains.
 func DefaultDomains() []SubAgent {
 	return []SubAgent{
+		{
+			Name:        "agent-fleet",
+			Description: "Agent presence, sessions, tasks, and recall across the fleet",
+			Tools: []string{
+				"agent_context__agent_presence_list",
+				"agent_context__agent_session_list",
+				"agent_context__agent_task_list",
+				"agent_context__agent_recall",
+			},
+		},
+		{
+			Name:        "ci-pipeline",
+			Description: "CI/CD pipeline status, merge requests, and job results",
+			Tools: []string{
+				"gitlab__list_pipelines",
+				"gitlab__get_pipeline",
+				"gitlab__list_merge_requests",
+				"gitlab__pipeline_summary",
+				"gitlab__list_pipeline_jobs",
+			},
+		},
 		{
 			Name:        "cluster-ops",
 			Description: "Kubernetes cluster health, pods, deployments, services, and logs",
@@ -102,14 +123,14 @@ func DefaultDomains() []SubAgent {
 			},
 		},
 		{
-			Name:        "ci-pipeline",
-			Description: "CI/CD pipeline status, merge requests, and job results",
+			Name:        "infra-ops",
+			Description: "Flux GitOps kustomizations, Helm releases, and infrastructure status",
 			Tools: []string{
-				"gitlab__list_pipelines",
-				"gitlab__get_pipeline",
-				"gitlab__list_merge_requests",
-				"gitlab__pipeline_summary",
-				"gitlab__list_pipeline_jobs",
+				"flux__flux_get_kustomizations",
+				"flux__flux_get_helmreleases",
+				"flux__flux_logs",
+				"helm__helm_list",
+				"helm__helm_status",
 			},
 		},
 		{
