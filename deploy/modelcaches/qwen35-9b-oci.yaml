@@ -17,7 +17,7 @@ spec:
   modelPath: "qwen35-9b"
   storageStrategy: SharedPVC
   storageSize: "10Gi"
-  clusterStorageClassName: nvme-1r-gpu
+  clusterStorageClassName: local-path
   secretRef: "harbor-oci-creds"
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k

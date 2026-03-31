@@ -791,6 +791,16 @@ echo "Successfully cached model from $MODEL_REF"
 	// BackoffLimit controls Kubernetes-level job retries (in addition to in-script retries)
 	backoffLimit := DefaultDownloadBackoffLimit
 
+	// OCI download jobs don't need GPU — propagate nodeSelector so the pod
+	// lands on the same node as the Longhorn volume, and tolerate GPU taints
+	// so it CAN schedule on dedicated GPU nodes.
+	tolerations := []corev1.Toleration{{
+		Key:      "dedicated",
+		Operator: corev1.TolerationOpEqual,
+		Value:    "gpu",
+		Effect:   corev1.TaintEffectNoSchedule,
+	}}
+
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      m.Name + "-downloader",
@@ -806,6 +816,8 @@ echo "Successfully cached model from $MODEL_REF"
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Tolerations:   tolerations,
+					NodeSelector:  m.Spec.NodeSelector,
 					Containers: []corev1.Container{{
 						Name:         "downloader",
 						Image:        orasImage,
