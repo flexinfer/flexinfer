@@ -232,7 +232,7 @@ runtime:
   terminationGracePeriodSeconds: 60
   profiles:
     - name: gfx1100
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:b8ce58d18d86aab2cd1093913a2f5d929a4325830f2cb424cd6f7cd781664985"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:ce17dfecfc0666e9d3c254502786b08ce95671b13486476edd41dcab6af0d3a3"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
@@ -247,7 +247,7 @@ runtime:
         - name: ROCR_VISIBLE_DEVICES
           value: "0"
     - name: gfx1100-5930k
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:b8ce58d18d86aab2cd1093913a2f5d929a4325830f2cb424cd6f7cd781664985"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:ce17dfecfc0666e9d3c254502786b08ce95671b13486476edd41dcab6af0d3a3"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 1
