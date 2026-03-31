@@ -16,7 +16,7 @@ spec:
   backend: vllm
   source: pvc://qwen35-27b-opus-distill-gptq/qwen35-27b-opus-distill-gptq/gptq-w4-g128
   cache:
-    strategy: SharedPVC
+    strategy: Local
   gpu:
     vendor: amd
     count: 2

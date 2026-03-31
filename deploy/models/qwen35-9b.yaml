@@ -20,7 +20,7 @@ spec:
   backend: vllm
   source: HF://Qwen/Qwen3.5-9B
   cache:
-    strategy: SharedPVC
+    strategy: Local
     size: 20Gi
     storageClass: local-path
   gpu:
