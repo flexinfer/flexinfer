@@ -83,6 +83,8 @@ type ModelReconciler struct {
 	// When non-nil and a runtime pod exists on the target node, models
 	// are loaded via the runtime API instead of creating Deployments.
 	Runtime *RuntimeReconciler
+
+	mgr ctrl.Manager // set by SetupWithManager, used for startup sweep
 }
 
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=models,verbs=get;list;watch;create;update;patch;delete
@@ -397,6 +399,7 @@ func (r *ModelReconciler) pruneFailedModelPods(ctx context.Context, model *aiv1a
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.mgr = mgr
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiv1alpha2.Model{}).
 		Owns(&appsv1.Deployment{}).
@@ -405,6 +408,55 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&batchv1.Job{}).
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.requestsForRuntimePod)).
 		Complete(r)
+}
+
+// Start implements manager.Runnable. It performs a one-time sweep after the
+// informer cache is synced, re-enqueuing any Model in an intermediate state
+// (Loading, Pending) that may have lost its requeue timer during a controller
+// restart.
+func (r *ModelReconciler) Start(ctx context.Context) error {
+	// Wait for the cache to be synced before listing models.
+	if !r.mgr.GetCache().WaitForCacheSync(ctx) {
+		return fmt.Errorf("cache sync failed during startup sweep")
+	}
+
+	log := log.FromContext(ctx).WithName("startup-sweep")
+	log.Info("Running startup reconcile sweep for models in intermediate states")
+
+	var models aiv1alpha2.ModelList
+	if err := r.List(ctx, &models); err != nil {
+		log.Error(err, "Failed to list models during startup sweep")
+		return nil // non-fatal: controller still runs, models just won't be re-enqueued
+	}
+
+	poked := 0
+	for i := range models.Items {
+		m := &models.Items[i]
+		phase := m.Status.Phase
+		if phase == aiv1alpha2.ModelPhaseLoading || phase == aiv1alpha2.ModelPhasePending {
+			// Touch an annotation to trigger the informer watch event and
+			// re-enqueue this model for reconciliation.
+			if m.Annotations == nil {
+				m.Annotations = make(map[string]string)
+			}
+			m.Annotations["flexinfer.ai/startup-sweep"] = time.Now().UTC().Format(time.RFC3339)
+			if err := r.Update(ctx, m); err != nil {
+				log.Error(err, "Failed to poke model during startup sweep", "model", m.Name)
+				continue
+			}
+			poked++
+			log.Info("Re-enqueued model from startup sweep", "model", m.Name, "phase", phase)
+		}
+	}
+
+	log.Info("Startup sweep complete", "total", len(models.Items), "reEnqueued", poked)
+	return nil
+}
+
+// NeedLeaderElection implements manager.LeaderElectionRunnable.
+// The sweep must only run on the elected leader to avoid duplicate reconciles.
+func (r *ModelReconciler) NeedLeaderElection() bool {
+	return true
 }
 
 func (r *ModelReconciler) requestsForRuntimePod(ctx context.Context, obj client.Object) []ctrl.Request {

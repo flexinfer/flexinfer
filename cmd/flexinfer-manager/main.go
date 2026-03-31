@@ -139,15 +139,22 @@ func main() {
 	}
 
 	// Model v1alpha2 controller - simplified single-resource API
-	if err = (&controllers.ModelReconciler{
+	modelReconciler := &controllers.ModelReconciler{
 		Client:      mgr.GetClient(),
 		Scheme:      mgr.GetScheme(),
 		Recorder:    mgr.GetEventRecorderFor("model-controller"),
 		APIReader:   mgr.GetAPIReader(),
 		GPUProfiles: gpuProfileReconciler,
 		Runtime:     runtimeReconciler,
-	}).SetupWithManager(mgr); err != nil {
+	}
+	if err = modelReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Model")
+		os.Exit(1)
+	}
+	// Register startup sweep: re-enqueues models stuck in intermediate states
+	// (Loading, Pending) after controller restart.
+	if err = mgr.Add(modelReconciler); err != nil {
+		setupLog.Error(err, "unable to register model startup sweep")
 		os.Exit(1)
 	}
 	// ModelCatalog controller - registry sync and model discovery
