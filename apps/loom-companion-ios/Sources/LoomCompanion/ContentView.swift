@@ -270,11 +270,27 @@ struct ContentView: View {
     @ViewBuilder
     private var peopleTab: some View {
         VStack(spacing: 12) {
-            Picker("People Section", selection: $selectedPeopleSection) {
-                Text("Agents").tag(PeopleSection.agents)
-                Text("Sessions").tag(PeopleSection.sessions)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("People")
+                    .font(.largeTitle.bold())
+                    .foregroundStyle(LoomColors.textPrimary)
+
+                Text(selectedPeopleSection == .agents
+                     ? "See who is active right now and open the sessions behind each agent."
+                     : "Review live sessions, open details, and decide which ones need attention.")
+                    .font(.subheadline)
+                    .foregroundStyle(LoomColors.textSecondary)
+
+                Text("Create and end sessions from Work when you need to change state.")
+                    .font(.caption)
+                    .foregroundStyle(LoomColors.textTertiary)
+
+                Picker("People Section", selection: $selectedPeopleSection) {
+                    Text("Agents").tag(PeopleSection.agents)
+                    Text("Sessions").tag(PeopleSection.sessions)
+                }
+                .pickerStyle(.segmented)
             }
-            .pickerStyle(.segmented)
             .padding(.horizontal)
             .padding(.top, 8)
 
@@ -285,6 +301,7 @@ struct ContentView: View {
                         apiClient: connectionVM.buildAPIClient(),
                         broadcaster: sseBroadcaster,
                         deepLinkSessionID: $pendingSessionDeepLinkID,
+                        embeddedInPeopleTab: true,
                         onPrefillEndSession: { sessionID in
                             pendingEndSessionPrefillID = sessionID
                             selectedTab = .work
@@ -294,6 +311,7 @@ struct ContentView: View {
                     SessionsListView(
                         apiClient: connectionVM.buildAPIClient(),
                         deepLinkSessionID: $pendingSessionDeepLinkID,
+                        embeddedInPeopleTab: true,
                         onPrefillEndSession: { sessionID in
                             pendingEndSessionPrefillID = sessionID
                             selectedTab = .work

@@ -12,17 +12,20 @@ struct AgentsListView: View {
     private let onPrefillEndSession: ((String) -> Void)?
     private let apiClient: any LoomAPIClientProtocol
     private let broadcaster: SSEEventBroadcaster?
+    private let embeddedInPeopleTab: Bool
 
     init(
         apiClient: APIClient?,
         broadcaster: SSEEventBroadcaster? = nil,
         deepLinkSessionID: Binding<String?> = .constant(nil),
+        embeddedInPeopleTab: Bool = false,
         onPrefillEndSession: ((String) -> Void)? = nil
     ) {
         let client: any LoomAPIClientProtocol = apiClient ?? NoOpAgentsClient()
         self.apiClient = client
         self.broadcaster = broadcaster
         _deepLinkSessionID = deepLinkSessionID
+        self.embeddedInPeopleTab = embeddedInPeopleTab
         self.onPrefillEndSession = onPrefillEndSession
         _viewModel = State(initialValue: AgentsViewModel(apiClient: client))
     }
@@ -57,7 +60,8 @@ struct AgentsListView: View {
                     }
                 }
             }
-            .navigationTitle("Agents")
+            .navigationTitle(embeddedInPeopleTab ? "" : "Agents")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: String.self) { sessionId in
                 SessionDetailView(sessionId: sessionId, apiClient: apiClient)
             }
@@ -67,11 +71,13 @@ struct AgentsListView: View {
                 HapticManager.light()
             }
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showingCreateSheet = true
-                    } label: {
-                        Label("New Session", systemImage: "plus")
+                if !embeddedInPeopleTab {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            showingCreateSheet = true
+                        } label: {
+                            Label("New Session", systemImage: "plus")
+                        }
                     }
                 }
             }
@@ -104,14 +110,16 @@ struct AgentsListView: View {
                     ContentUnavailableView {
                         Label("No Agents", systemImage: "person.2.wave.2")
                     } description: {
-                        Text("Agents appear here when coding agents connect via presence or sessions. Start an agent from your terminal or spawn one from the Ops tab.")
+                        Text("Agents appear here when coding agents connect via presence or sessions. Start an agent from your terminal or spawn one from the Work tab.")
                     } actions: {
-                        Button {
-                            showingCreateSheet = true
-                        } label: {
-                            Label("Create Session", systemImage: "plus.circle")
+                        if !embeddedInPeopleTab {
+                            Button {
+                                showingCreateSheet = true
+                            } label: {
+                                Label("Create Session", systemImage: "plus.circle")
+                            }
+                            .buttonStyle(.borderedProminent)
                         }
-                        .buttonStyle(.borderedProminent)
                     }
                 } else if viewModel.filteredAgents.isEmpty && !viewModel.agents.isEmpty {
                     ContentUnavailableView.search(text: viewModel.searchText)

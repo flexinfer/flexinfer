@@ -32,9 +32,9 @@ struct OpsView: View {
     @State private var showSessionControls = false
 
     enum OpsSegment: String, CaseIterable, Identifiable {
-        case work = "Work"
-        case agents = "Agents"
-        case knowledge = "Knowledge"
+        case work = "Queue"
+        case agents = "Runtime"
+        case knowledge = "Context"
 
         var id: String { rawValue }
     }
@@ -72,10 +72,13 @@ struct OpsView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if let warningMessage = viewModel.warningMessage {
-                    Text(warningMessage)
+                    Label(warningMessage, systemImage: "exclamationmark.circle")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(LoomColors.textSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(LoomColors.statusInfo.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
                 if let statusMessage = viewModel.mutationStatusMessage {
                     Text(statusMessage)
@@ -204,7 +207,7 @@ struct OpsView: View {
                         .font(LoomTypography.headlineMedium)
                         .foregroundStyle(LoomColors.textPrimary)
 
-                    Text("Tasks and pipeline activity stay up front; session mutation controls stay tucked away.")
+                    Text("Queue keeps the active worklist up front. Runtime tools and context stay one step away instead of competing for the same space.")
                         .font(LoomTypography.caption)
                         .foregroundStyle(LoomColors.textTertiary)
 
@@ -496,10 +499,10 @@ struct OpsView: View {
                 LoomCard {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Spawn Agent")
+                            Text("Launch Runtime")
                                 .font(LoomTypography.headlineMedium)
                                 .foregroundStyle(LoomColors.textPrimary)
-                            Text("Launch a headless AI agent in K8s")
+                            Text("Spawn a headless agent or warm a sandbox when you need to create capacity.")
                                 .font(LoomTypography.caption)
                                 .foregroundStyle(LoomColors.textSecondary)
                         }
@@ -517,6 +520,10 @@ struct OpsView: View {
                     Text("Presence Summary")
                         .font(LoomTypography.headlineMedium)
                         .foregroundStyle(LoomColors.textPrimary)
+
+                    Text("Use runtime status to spot whether the fleet is available before opening the deeper People views.")
+                        .font(LoomTypography.caption)
+                        .foregroundStyle(LoomColors.textTertiary)
 
                     #if canImport(Charts)
                     FleetCompositionChart(

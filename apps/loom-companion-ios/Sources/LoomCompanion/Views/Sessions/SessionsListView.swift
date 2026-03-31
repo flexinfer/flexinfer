@@ -11,15 +11,18 @@ struct SessionsListView: View {
     @Binding private var deepLinkSessionID: String?
     private let onPrefillEndSession: ((String) -> Void)?
     private let apiClient: any LoomAPIClientProtocol
+    private let embeddedInPeopleTab: Bool
 
     init(
         apiClient: APIClient?,
         deepLinkSessionID: Binding<String?> = .constant(nil),
+        embeddedInPeopleTab: Bool = false,
         onPrefillEndSession: ((String) -> Void)? = nil
     ) {
         let client: any LoomAPIClientProtocol = apiClient ?? NoOpClient()
         self.apiClient = client
         _deepLinkSessionID = deepLinkSessionID
+        self.embeddedInPeopleTab = embeddedInPeopleTab
         self.onPrefillEndSession = onPrefillEndSession
         _viewModel = State(initialValue: SessionsViewModel(apiClient: client))
     }
@@ -66,7 +69,8 @@ struct SessionsListView: View {
                     }
                 }
             }
-            .navigationTitle("Sessions")
+            .navigationTitle(embeddedInPeopleTab ? "" : "Sessions")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: String.self) { sessionId in
                 SessionDetailView(sessionId: sessionId, apiClient: apiClient)
             }
@@ -75,11 +79,13 @@ struct SessionsListView: View {
                 await viewModel.load()
             }
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showingCreateSheet = true
-                    } label: {
-                        Label("New Session", systemImage: "plus")
+                if !embeddedInPeopleTab {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            showingCreateSheet = true
+                        } label: {
+                            Label("New Session", systemImage: "plus")
+                        }
                     }
                 }
             }
@@ -112,14 +118,16 @@ struct SessionsListView: View {
                     ContentUnavailableView {
                         Label("No Sessions", systemImage: "person.2.circle")
                     } description: {
-                        Text("Agent sessions appear here when coding agents connect. Start a session from the Ops tab or launch an agent from your terminal.")
+                        Text("Agent sessions appear here when coding agents connect. Start a session from the Work tab or launch an agent from your terminal.")
                     } actions: {
-                        Button {
-                            showingCreateSheet = true
-                        } label: {
-                            Label("Create Session", systemImage: "plus.circle")
+                        if !embeddedInPeopleTab {
+                            Button {
+                                showingCreateSheet = true
+                            } label: {
+                                Label("Create Session", systemImage: "plus.circle")
+                            }
+                            .buttonStyle(.borderedProminent)
                         }
-                        .buttonStyle(.borderedProminent)
                     }
                 } else if viewModel.filteredSessions.isEmpty && !viewModel.sessions.isEmpty {
                     ContentUnavailableView.search(text: viewModel.searchText)
