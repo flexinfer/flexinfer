@@ -2,11 +2,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: flexinfer-system
 resources:
-  # === cblevins-7900xtx (24 GB gfx1100) — primary text generation ===
-  - qwen35-27b-opus-distill.yaml    # vLLM, GPTQ INT4, ~15 GiB VRAM
+  # === cblevins-7900xtx (24 GB gfx1100) — primary orchestrator ===
+  - qwen35-27b-opus-distill.yaml    # vLLM, GPTQ INT4, ~17 GiB VRAM, serverless
 
-  # === cblevins-5930k (24 GB gfx1100) — dedicated 9B text generation ===
-  - qwen35-9b.yaml                  # vLLM, GPTQ INT4, ~7.5 GiB VRAM, always-on
+  # === cblevins-5930k (24 GB gfx1100) — subagent + code gen (shared group) ===
+  - qwen35-9b.yaml                  # vLLM, GPTQ INT4, ~7.5 GiB VRAM, always-on (priority 200)
+  - omnicoder-9b.yaml               # vLLM, GPTQ INT4, ~7.2 GiB VRAM, on-demand (priority 100)
 
   # === cblevins-radeonvii (16 GB gfx906) — image editing / inpainting ===
   - sdxl-inpainting-radeonvii.yaml   # diffusers, SDXL inpainting, ~12 GiB VRAM

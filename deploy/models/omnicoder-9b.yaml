@@ -1,34 +1,34 @@
-# Qwen3.5-9B via vLLM on AMD gfx1100 — dedicated on cblevins-5930k
+# OmniCoder-9B via vLLM on AMD gfx1100 — shared group on cblevins-5930k
 #
-# Abliterated + GPTQ INT4 ~7.7 GB subagent model.
-# Standalone deployment — 5930k GPU is dedicated to this model.
+# Abliterated + GPTQ INT4 ~7.2 GB coding-focused model.
+# Shares GPU with qwen35-9b via 5930k-textgen group (swap on demand).
 #
-# Source: Locally staged from Harbor OCI (qwen35-9b:gptq-w4-g128).
+# Source: Locally staged from Harbor OCI (omnicoder-9b:gptq-w4-g128).
 # Image: Same Qwen3.5-patched vLLM as 27B (identical qwen3_5_text architecture).
 #
-# maxModelLen=8192 for subagent tasks (tool calls, code gen).
-# maxNumSeqs=4 for concurrent orchestrator requests.
+# maxModelLen=8192 for code generation tasks.
+# maxNumSeqs=4 for concurrent requests.
 #
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
-  name: qwen35-9b
+  name: omnicoder-9b
   namespace: flexinfer-system
 spec:
   backend: vllm
-  source: local://qwen35-9b
+  source: local://omnicoder-9b
   cache:
     strategy: Local
   gpu:
     vendor: amd
     count: 1
-    vramEstimateMB: 6000
+    vramEstimateMB: 8000
     shared: 5930k-textgen
-    priority: 200
+    priority: 100
   serverless:
     enabled: true
-    minReplicas: 1
-    idleTimeout: 30m
+    minReplicas: 0
+    idleTimeout: 10m
     coldStartTimeout: 10m
   config:
     quantization: gptq
@@ -38,12 +38,12 @@ spec:
     maxNumSeqs: 4
     enforceEager: true
     trustRemoteCode: true
-    servedModelName: qwen35-9b
+    servedModelName: omnicoder-9b
     enableToolCalling: true
     toolCallParser: hermes
     maxNumBatchedTokens: 4096
     disableLogStats: false
-    warmPolicy: primary
+    warmPolicy: ondemand
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
   resources:
@@ -54,14 +54,14 @@ spec:
       cpu: "4"
       memory: 24Gi
   serviceLabels:
-    - qwen35-9b
-    - qwen35-9b-subagent
+    - omnicoder-9b
+    - code-gen
   litellm:
     enabled: true
-    servedModelName: qwen35-9b
+    servedModelName: omnicoder-9b
     aliases:
-      - qwen35-9b-subagent
-      - qwen35-subagent
+      - omnicoder
+      - code-gen
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"

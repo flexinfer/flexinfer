@@ -1,0 +1,28 @@
+# OCI Pull Cache for OmniCoder-9B GPTQ INT4
+# Pulls quantized model from Harbor OCI registry into local-path PVC on 5930k.
+# Model CR sources from this PVC for serving.
+#
+# Pipeline: ModelCache(omnicoder-9b-gptq) → Publish → Harbor OCI → ModelCache(oci) → Model CR
+#
+# Depends on omnicoder-9b-gptq publish step completing first.
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: omnicoder-9b-oci
+  namespace: flexinfer-system
+spec:
+  source: "oci://registry.harbor.lan/flexinfer/omnicoder-9b:gptq-w4-g128"
+  modelPath: "omnicoder-9b"
+  storageStrategy: SharedPVC
+  storageSize: "10Gi"
+  clusterStorageClassName: local-path
+  secretRef: "harbor-oci-creds"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  download:
+    maxMemoryGB: 4
+    backoffLimit: 3
+  retentionPriority: 50
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85

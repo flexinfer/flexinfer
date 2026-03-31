@@ -1,0 +1,63 @@
+# OmniCoder-9B → Abliteration → GPTQ INT4 Pipeline
+# Based on Qwen3.5-9B (qwen3_5_text architecture, 32 layers: 24 GDN + 8 full attention).
+# Tesslate/OmniCoder-9B: coding-focused instruction-tuned model.
+#
+# Pipeline: Download BF16 → Abliterate → GPTQ INT4 → Publish to Harbor OCI
+# Node: cblevins-7900xtx (gfx1100, 24GB VRAM, 62GB RAM)
+#
+# Full-attention layers: 3, 7, 11, 15, 19, 23, 27, 31
+# Abliteration targets middle full-attention layers (auto selection)
+#
+# Disk: BF16 ~19.3 GB + GPTQ INT4 ~7 GB + workspace → 60 Gi PVC
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: omnicoder-9b-gptq
+  namespace: flexinfer-system
+spec:
+  source: "Tesslate/OmniCoder-9B"
+  storageStrategy: SharedPVC
+  storageSize: "60Gi"
+  clusterStorageClassName: nvme-1r-gpu
+  secretRef: "hf-token"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  download:
+    maxMemoryGB: 8
+    hfTransfer: false
+    backoffLimit: 3
+  abliteration:
+    skipGDNLayers: true
+    skipVisionLayers: true
+    numSamples: 128
+    targetLayers: "auto"
+    useGPU: true
+    maxMemoryGB: 48
+    timeoutSeconds: 7200
+    normThreshold: "100"
+    ablitateLmHead: true
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    dynamicExclusion: "none"
+    useGPU: true
+    maxMemoryGB: 48
+    timeoutSeconds: 14400
+    calibration:
+      dataset: "wikitext:wikitext-2-raw-v1"
+      maxSeqLen: 2048
+      maxSamples: 128
+  publish:
+    targets:
+      - oci
+    ociRef: "registry.harbor.lan/flexinfer/omnicoder-9b:gptq-w4-g128"
+    secretRef: "harbor-oci-creds"
+    maxMemoryGB: 8
+    timeoutSeconds: 7200
+  retentionPriority: 50
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85

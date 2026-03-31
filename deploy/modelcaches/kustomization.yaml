@@ -4,10 +4,16 @@ namespace: flexinfer-system
 resources:
   # MLC compiled model references (shared NFS PVC)
   - mlc-shared-caches.yaml
-  # gptq-quantization.yaml — removed: 14B quant superseded by 27B opus distill
-  # Abliteration + GPTQ pipeline (Download → Abliterate → Quantize)
-  - abliteration-gptq.yaml
-  # OCI pull cache for GPTQ quantized model (Harbor → shared PVC → Model CRs)
-  - qwen35-27b-opus-distill-oci.yaml
-  # Finetune pipeline test (Download → QLoRA Finetune → Quantize)
+
+  # === Abliteration + GPTQ pipelines (Download → Abliterate → Quantize → Publish) ===
+  - abliteration-gptq.yaml           # qwen35-27b-opus-distill-gptq (radeonvii)
+  - qwen35-9b-gptq.yaml             # qwen35-9b-gptq (radeonvii)
+  - omnicoder-9b-gptq.yaml          # omnicoder-9b-gptq (7900xtx)
+
+  # === OCI pull caches (Harbor → local PVC → Model CRs) ===
+  - qwen35-27b-opus-distill-oci.yaml # → cblevins-7900xtx
+  - qwen35-9b-oci.yaml              # → cblevins-5930k
+  - omnicoder-9b-oci.yaml           # → cblevins-5930k
+
+  # === Finetune pipeline ===
   - finetune-test.yaml
