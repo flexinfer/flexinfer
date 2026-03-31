@@ -159,6 +159,23 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 		if meta != nil {
 			pubStatus.OCIDigest = meta.OCIDigest
 			pubStatus.HuggingFaceCommit = meta.HFCommit
+			if meta.PushedTags != "" {
+				pubStatus.PublishedTags = strings.Split(meta.PushedTags, ",")
+			}
+		}
+
+		// Track digest history for rollback visibility (prepend, cap at 5).
+		if modelCache.Status.Publish != nil && modelCache.Status.Publish.OCIDigest != "" {
+			oldDigest := modelCache.Status.Publish.OCIDigest
+			prev := pubStatus.PreviousDigests
+			if modelCache.Status.Publish.PreviousDigests != nil {
+				prev = modelCache.Status.Publish.PreviousDigests
+			}
+			prev = append([]string{oldDigest}, prev...)
+			if len(prev) > 5 {
+				prev = prev[:5]
+			}
+			pubStatus.PreviousDigests = prev
 		}
 
 		modelCache.Status.Publish = pubStatus
@@ -259,11 +276,12 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 
 // publishJobMetadata is parsed from the publisher container's termination log.
 type publishJobMetadata struct {
-	Target    string `json:"target,omitempty"`
-	OCIRef    string `json:"ociRef,omitempty"`
-	OCIDigest string `json:"ociDigest,omitempty"`
-	HFRepo    string `json:"hfRepo,omitempty"`
-	HFCommit  string `json:"hfCommit,omitempty"`
+	Target     string `json:"target,omitempty"`
+	OCIRef     string `json:"ociRef,omitempty"`
+	OCIDigest  string `json:"ociDigest,omitempty"`
+	PushedTags string `json:"pushedTags,omitempty"`
+	HFRepo     string `json:"hfRepo,omitempty"`
+	HFCommit   string `json:"hfCommit,omitempty"`
 }
 
 // readPublishMetadataFromPods reads publish metadata from pod termination logs.

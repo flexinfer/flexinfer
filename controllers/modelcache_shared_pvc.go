@@ -18,9 +18,13 @@ package controllers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
@@ -86,6 +91,69 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 		modelPath = *modelCache.Spec.ModelPath
 	}
 
+	// Check for redownload annotation — clears cache and re-pulls from scratch.
+	if modelCache.Annotations != nil && modelCache.Annotations[annotationRedownload] == "true" {
+		if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady ||
+			modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseFailed {
+			log.Info("Redownload annotation detected, resetting pipeline", "cache", modelCache.Name)
+			if err := r.resetDownloadState(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			// Seed source hash and clear annotation.
+			if modelCache.Annotations == nil {
+				modelCache.Annotations = make(map[string]string)
+			}
+			modelCache.Annotations[annotationSourceHash] = sourceHash(modelCache.Spec.Source)
+			delete(modelCache.Annotations, annotationRedownload)
+
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			r.Recorder.Event(modelCache, corev1.EventTypeNormal, "Redownload",
+				"Redownload triggered via annotation, pipeline reset")
+			return ctrl.Result{Requeue: true}, nil
+		}
+	}
+
+	// Check for source change — if spec.source changed, auto-trigger redownload.
+	if isOCISource(modelCache.Spec.Source) {
+		currentHash := sourceHash(modelCache.Spec.Source)
+		storedHash := ""
+		if modelCache.Annotations != nil {
+			storedHash = modelCache.Annotations[annotationSourceHash]
+		}
+		if storedHash != "" && storedHash != currentHash &&
+			(modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady ||
+				modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseFailed) {
+			log.Info("Source change detected, resetting pipeline",
+				"cache", modelCache.Name, "oldHash", storedHash, "newHash", currentHash)
+			if err := r.resetDownloadState(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			if modelCache.Annotations == nil {
+				modelCache.Annotations = make(map[string]string)
+			}
+			modelCache.Annotations[annotationSourceHash] = currentHash
+
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			r.Recorder.Event(modelCache, corev1.EventTypeNormal, "SourceChanged",
+				fmt.Sprintf("Source changed (hash %s → %s), pipeline reset", storedHash, currentHash))
+			return ctrl.Result{Requeue: true}, nil
+		}
+	}
+
 	// 2. Check if data is populated via Downloader Job
 	jobName := modelCache.Name + "-downloader"
 	job := &batchv1.Job{}
@@ -113,6 +181,20 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 		log.Info("Creating Downloader Job", "Job", newJob.Name, "modelPath", modelPath, "isOCI", isOCISource(modelCache.Spec.Source))
 		if err := r.Create(ctx, newJob); err != nil {
 			return ctrl.Result{}, err
+		}
+
+		// Seed source hash on first download (backward compatible — existing caches
+		// without the annotation are unaffected until their next download).
+		if isOCISource(modelCache.Spec.Source) {
+			if modelCache.Annotations == nil {
+				modelCache.Annotations = make(map[string]string)
+			}
+			if _, ok := modelCache.Annotations[annotationSourceHash]; !ok {
+				modelCache.Annotations[annotationSourceHash] = sourceHash(modelCache.Spec.Source)
+				if err := r.Update(ctx, modelCache); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
 		}
 
 		// Update status to Provisioning
@@ -147,6 +229,13 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			now := metav1.Now()
 			modelCache.Status.OCIPulledAt = &now
 			modelCache.Status.OCIRegistry = extractOCIRegistry(modelCache.Spec.Source)
+
+			// Read digest from termination log (same pattern as publish).
+			meta := readOCIDownloadMetadata(ctx, r.Client, modelCache.Namespace, job.Name)
+			if meta != nil && meta.OCIDigest != "" {
+				modelCache.Status.OCIDigest = meta.OCIDigest
+				log.Info("Captured OCI download digest", "digest", meta.OCIDigest)
+			}
 		}
 
 		// Persist download completion before dispatching to downstream phases.
@@ -256,6 +345,44 @@ func (r *ModelCacheReconciler) reconcileDownstreamPhases(ctx context.Context, mo
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "CacheReady",
 			fmt.Sprintf("Model cached successfully at %s", modelCache.Status.Path))
 	}
+
+	// OCI Freshness Probe: periodically check if the upstream OCI tag has a newer digest.
+	if isOCISource(modelCache.Spec.Source) && modelCache.Spec.OCIPollInterval != nil && *modelCache.Spec.OCIPollInterval != "" {
+		pollInterval, parseErr := time.ParseDuration(*modelCache.Spec.OCIPollInterval)
+		if parseErr == nil && pollInterval > 0 {
+			shouldProbe := modelCache.Status.OCILastProbeAt == nil ||
+				time.Since(modelCache.Status.OCILastProbeAt.Time) >= pollInterval
+			if shouldProbe {
+				remoteDigest := r.probeOCIDigest(ctx, modelCache)
+				now := metav1.Now()
+				modelCache.Status.OCILastProbeAt = &now
+				if remoteDigest != "" {
+					modelCache.Status.OCIRemoteDigest = remoteDigest
+					if modelCache.Status.OCIDigest != "" && remoteDigest != modelCache.Status.OCIDigest {
+						log.Info("OCI upstream changed, triggering re-download",
+							"cache", modelCache.Name,
+							"local", modelCache.Status.OCIDigest,
+							"remote", remoteDigest)
+						if err := r.resetDownloadState(ctx, modelCache); err != nil {
+							return ctrl.Result{}, err
+						}
+						if err := r.Status().Update(ctx, modelCache); err != nil {
+							return ctrl.Result{}, err
+						}
+						r.Recorder.Event(modelCache, corev1.EventTypeNormal, "OCIStaleDetected",
+							fmt.Sprintf("Upstream OCI digest changed (%s → %s), re-downloading",
+								truncateDigest(modelCache.Status.OCIDigest), truncateDigest(remoteDigest)))
+						return ctrl.Result{Requeue: true}, nil
+					}
+				}
+				if err := r.Status().Update(ctx, modelCache); err != nil {
+					return ctrl.Result{}, err
+				}
+			}
+			return ctrl.Result{RequeueAfter: pollInterval}, nil
+		}
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -683,6 +810,7 @@ RETRY_DELAY=10
 # Skip if already downloaded
 if [ -d "$DEST_DIR" ] && [ "$(ls -A $DEST_DIR 2>/dev/null)" ]; then
     echo "Model already cached at $DEST_DIR"
+    printf '{"cached":true}\n' > /dev/termination-log
     exit 0
 fi
 
@@ -714,7 +842,7 @@ mkdir -p "$DEST_DIR"
 RETRY_DELAY=10
 for i in $(seq 1 $MAX_RETRIES); do
     echo "Pulling OCI artifact $MODEL_REF to $DEST_DIR (attempt $i/$MAX_RETRIES)..."
-    if oras pull "$MODEL_REF" -o "$DEST_DIR" --allow-path-traversal %s; then
+    if oras pull "$MODEL_REF" -o "$DEST_DIR" --allow-path-traversal %s 2>&1 | tee /tmp/oras-output.log; then
         echo "Download complete."
         break
     fi
@@ -727,9 +855,14 @@ for i in $(seq 1 $MAX_RETRIES); do
     RETRY_DELAY=$((RETRY_DELAY * 2))
 done
 
+# Extract digest from oras output and write termination log
+DIGEST=$(grep 'Digest: sha256:' /tmp/oras-output.log | head -1 | sed 's/.*Digest: //' || echo "")
+FILE_COUNT=$(ls -1 "$DEST_DIR" 2>/dev/null | wc -l | tr -d ' ')
+echo "{\"ociDigest\":\"$DIGEST\",\"ociRef\":\"$MODEL_REF\",\"fileCount\":$FILE_COUNT}" > /dev/termination-log
+
 # Show downloaded contents
 ls -la "$DEST_DIR"
-echo "Successfully cached model from $MODEL_REF"
+echo "Successfully cached model from $MODEL_REF (digest: $DIGEST)"
 `, registryRef, modelPath, registryHost, insecureFlag, insecureFlag, insecureFlag)
 
 	volumes := []corev1.Volume{{
@@ -826,12 +959,14 @@ echo "Successfully cached model from $MODEL_REF"
 					Tolerations:   tolerations,
 					NodeSelector:  m.Spec.NodeSelector,
 					Containers: []corev1.Container{{
-						Name:         "downloader",
-						Image:        orasImage,
-						Command:      []string{"/bin/sh", "-c"},
-						Args:         []string{downloadScript},
-						Env:          envVars,
-						VolumeMounts: volumeMounts,
+						Name:                     "downloader",
+						Image:                    orasImage,
+						Command:                  []string{"/bin/sh", "-c"},
+						Args:                     []string{downloadScript},
+						Env:                      envVars,
+						VolumeMounts:             volumeMounts,
+						TerminationMessagePath:   "/dev/termination-log",
+						TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceCPU:    resource.MustParse("100m"),
@@ -852,4 +987,106 @@ echo "Successfully cached model from $MODEL_REF"
 		return nil, err
 	}
 	return job, nil
+}
+
+// ociDownloadMetadata is parsed from the OCI downloader container's termination log.
+type ociDownloadMetadata struct {
+	OCIDigest string `json:"ociDigest,omitempty"`
+	OCIRef    string `json:"ociRef,omitempty"`
+	FileCount int    `json:"fileCount,omitempty"`
+	Cached    bool   `json:"cached,omitempty"`
+}
+
+// readOCIDownloadMetadata reads download metadata from pod termination logs.
+func readOCIDownloadMetadata(ctx context.Context, c client.Client, namespace, jobName string) *ociDownloadMetadata {
+	return ReadJobMetadata[ociDownloadMetadata](ctx, c, namespace, jobName, "downloader")
+}
+
+// sourceHash computes a short SHA-256 hash of the spec.source string for change detection.
+func sourceHash(source string) string {
+	h := sha256.Sum256([]byte(source))
+	return hex.EncodeToString(h[:8]) // 16-char hex prefix
+}
+
+// resetDownloadState deletes all pipeline jobs and clears status fields to trigger a fresh download.
+func (r *ModelCacheReconciler) resetDownloadState(ctx context.Context, mc *aiv1alpha1.ModelCache) error {
+	log := log.FromContext(ctx)
+	log.Info("Resetting download state for re-download", "cache", mc.Name)
+
+	propagation := metav1.DeletePropagationBackground
+	for _, suffix := range []string{"-downloader", "-abliterate", "-finetune", "-quantize", "-publish"} {
+		jobName := mc.Name + suffix
+		existingJob := &batchv1.Job{}
+		if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: mc.Namespace}, existingJob); err == nil {
+			if err := r.Delete(ctx, existingJob, &client.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !errors.IsNotFound(err) {
+				return fmt.Errorf("deleting job %s: %w", jobName, err)
+			}
+			log.Info("Deleted job for re-download", "job", jobName)
+		}
+	}
+
+	// Clear all status fields so the pipeline re-runs from scratch.
+	mc.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
+	mc.Status.CurrentPhase = ""
+	mc.Status.Path = ""
+	mc.Status.OCIDigest = ""
+	mc.Status.OCIPulledAt = nil
+	mc.Status.OCIRegistry = ""
+	mc.Status.OCIRemoteDigest = ""
+	mc.Status.OCILastProbeAt = nil
+	mc.Status.Abliteration = nil
+	mc.Status.Finetune = nil
+	mc.Status.Quantization = nil
+	mc.Status.Publish = nil
+	mc.Status.RetryCount = 0
+	mc.Status.LastFailureTime = nil
+	mc.Status.LastFailurePhase = ""
+
+	return nil
+}
+
+// probeOCIDigest resolves the remote OCI manifest digest using oras manifest fetch.
+// Returns the digest string (e.g. "sha256:abc...") or empty string on error.
+// This runs in the controller process, not a job — use short timeout.
+func (r *ModelCacheReconciler) probeOCIDigest(ctx context.Context, mc *aiv1alpha1.ModelCache) string {
+	log := log.FromContext(ctx)
+	registryRef := parseOCISource(mc.Spec.Source)
+	registryHost := extractOCIRegistry(mc.Spec.Source)
+
+	insecure := ""
+	if strings.HasSuffix(registryHost, ".lan") {
+		insecure = "--insecure"
+	}
+
+	// Use oras resolve to get the remote digest without pulling content.
+	// This is a lightweight HEAD request to the registry.
+	args := []string{"resolve", registryRef}
+	if insecure != "" {
+		args = append(args, insecure)
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(probeCtx, "oras", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Info("OCI freshness probe failed", "cache", mc.Name, "error", err, "output", string(out))
+		return ""
+	}
+
+	digest := strings.TrimSpace(string(out))
+	if strings.HasPrefix(digest, "sha256:") {
+		return digest
+	}
+	return ""
+}
+
+// truncateDigest returns a short form of an OCI digest for log/event messages.
+func truncateDigest(digest string) string {
+	digest = strings.TrimPrefix(digest, "sha256:")
+	if len(digest) > 12 {
+		return "sha256:" + digest[:12]
+	}
+	return digest
 }

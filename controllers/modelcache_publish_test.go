@@ -167,4 +167,31 @@ func TestBuildPublishJob(t *testing.T) {
 	}
 }
 
+func TestPublishJobTagPolicyEnvVars(t *testing.T) {
+	ociRef := "registry.harbor.lan/models/test:v1"
+	policy := "timestamp"
+	params := quantization.JobParams{
+		Name:      "test-model",
+		Namespace: "default",
+		PVCName:   "test-pvc",
+		ModelPath: "/models/test",
+	}
+	spec := &aiv1alpha1.PublishSpec{
+		Targets:        []aiv1alpha1.PublishTarget{aiv1alpha1.PublishTargetOCI},
+		OCIRef:         &ociRef,
+		TagPolicy:      &policy,
+		AdditionalTags: []string{"latest", "stable"},
+	}
+
+	job, err := quantization.BuildPublishJob(params, spec)
+	require.NoError(t, err)
+
+	envMap := make(map[string]string)
+	for _, e := range job.Spec.Template.Spec.Containers[0].Env {
+		envMap[e.Name] = e.Value
+	}
+	assert.Equal(t, "timestamp", envMap["OCI_TAG_POLICY"])
+	assert.Equal(t, "latest,stable", envMap["OCI_ADDITIONAL_TAGS"])
+}
+
 func int64Ptr(v int64) *int64 { return &v }

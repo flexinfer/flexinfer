@@ -401,6 +401,13 @@ spec:
                   NodeSelector restricts which nodes should cache the model.
                   Used with NodeLocal strategy. Defaults to nodes with nvidia.com/gpu.present=true.
                 type: object
+              ociPollInterval:
+                description: |-
+                  OCIPollInterval enables periodic freshness checks for OCI sources.
+                  When set (e.g. "1h", "30m"), the controller resolves the remote OCI tag digest
+                  and triggers a re-download if the upstream has changed.
+                  Disabled by default (nil or empty string).
+                type: string
               ociRegistrySecretRef:
                 description: |-
                   OCIRegistrySecretRef is the name of a kubernetes.io/dockerconfigjson secret
@@ -412,6 +419,13 @@ spec:
                   When set, the controller creates a publish Job after the last pipeline phase succeeds.
                   Pipeline: Download → [Abliterate] → [Finetune] → [Quantize] → [Publish] → Ready.
                 properties:
+                  additionalTags:
+                    description: |-
+                      AdditionalTags lists extra tags to apply after push (server-side via oras tag, no re-upload).
+                      Example: ["latest", "stable"].
+                    items:
+                      type: string
+                    type: array
                   huggingFaceRepo:
                     description: |-
                       HuggingFaceRepo is the HuggingFace repository to upload to (e.g. "myorg/qwen3-gptq-int4").
@@ -432,6 +446,18 @@ spec:
                     description: |-
                       SecretRef is the name of the K8s secret containing credentials.
                       Expected keys: OCI_USERNAME, OCI_PASSWORD (for OCI), HF_TOKEN (for HuggingFace).
+                    type: string
+                  tagPolicy:
+                    default: overwrite
+                    description: |-
+                      TagPolicy controls how OCI tags are generated during publish.
+                        - "overwrite" (default): push to the exact tag in OCIRef.
+                        - "timestamp": append -YYYYMMDD-HHMMSS to the base tag.
+                        - "digest-suffix": append -sha256-<first12> of the pushed digest.
+                    enum:
+                    - overwrite
+                    - timestamp
+                    - digest-suffix
                     type: string
                   targets:
                     description: Targets lists the publish destinations.
@@ -805,6 +831,11 @@ spec:
                   OCIDigest is the immutable digest of the OCI artifact that was pulled.
                   Format: sha256:<hash>. Only set for OCI/ORAS sources.
                 type: string
+              ociLastProbeAt:
+                description: OCILastProbeAt is the timestamp of the last OCI freshness
+                  probe.
+                format: date-time
+                type: string
               ociPulledAt:
                 description: |-
                   OCIPulledAt is the timestamp when the OCI artifact was last pulled.
@@ -815,6 +846,11 @@ spec:
                 description: |-
                   OCIRegistry is the registry hostname where the artifact was pulled from.
                   Extracted from the source URL for observability.
+                type: string
+              ociRemoteDigest:
+                description: |-
+                  OCIRemoteDigest is the most recently observed remote OCI digest.
+                  Compared against OCIDigest to detect upstream changes.
                 type: string
               path:
                 description: Path is the path where the model is accessible (volume
@@ -838,6 +874,13 @@ spec:
                   ociDigest:
                     description: OCIDigest is the digest of the published OCI artifact.
                     type: string
+                  previousDigests:
+                    description: |-
+                      PreviousDigests tracks the last 5 published OCI digests for rollback visibility.
+                      Most recent digest is first.
+                    items:
+                      type: string
+                    type: array
                   progress:
                     description: Progress is the current job progress percentage (0-100).
                     format: int32
@@ -850,6 +893,13 @@ spec:
                     description: PublishedAt is the timestamp when publishing completed.
                     format: date-time
                     type: string
+                  publishedTags:
+                    description: |-
+                      PublishedTags lists all OCI tags that were applied during the last publish.
+                      Includes the primary tag and any additional tags from spec.publish.additionalTags.
+                    items:
+                      type: string
+                    type: array
                   startedAt:
                     description: StartedAt is the timestamp when the publish job started.
                     format: date-time

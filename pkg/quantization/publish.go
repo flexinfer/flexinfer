@@ -152,6 +152,16 @@ func publishEnv(modelPath string, spec *aiv1alpha1.PublishSpec) []corev1.EnvVar 
 		env = append(env, corev1.EnvVar{Name: "HF_REPO", Value: *spec.HuggingFaceRepo})
 	}
 
+	// Pass tag policy and additional tags to the publish script.
+	tagPolicy := "overwrite"
+	if spec.TagPolicy != nil && *spec.TagPolicy != "" {
+		tagPolicy = *spec.TagPolicy
+	}
+	env = append(env, corev1.EnvVar{Name: "OCI_TAG_POLICY", Value: tagPolicy})
+	if len(spec.AdditionalTags) > 0 {
+		env = append(env, corev1.EnvVar{Name: "OCI_ADDITIONAL_TAGS", Value: strings.Join(spec.AdditionalTags, ",")})
+	}
+
 	// Inject credentials from secret via env vars.
 	if spec.SecretRef != nil && *spec.SecretRef != "" {
 		secretRef := &corev1.SecretKeySelector{
@@ -247,25 +257,76 @@ if [ -n "${OCI_USERNAME:-}" ] && [ -n "${OCI_PASSWORD:-}" ]; then
   echo "{\"event\":\"progress\",\"phase\":\"authenticated\",\"percent\":5}"
 fi
 
+# Apply tag policy to modify OCI_REF before push.
+TAG_POLICY="${OCI_TAG_POLICY:-overwrite}"
+PUSH_REF="$OCI_REF"
+case "$TAG_POLICY" in
+  timestamp)
+    BASE_REF=$(echo "$OCI_REF" | sed 's/:.*$//')
+    BASE_TAG=$(echo "$OCI_REF" | grep -o ':[^:]*$' | tr -d ':')
+    [ -z "$BASE_TAG" ] && BASE_TAG="latest"
+    TS=$(date -u +%Y%m%d-%H%M%S)
+    PUSH_REF="${BASE_REF}:${BASE_TAG}-${TS}"
+    echo "Tag policy: timestamp → pushing as $PUSH_REF"
+    ;;
+  digest-suffix)
+    # Will be modified after push once we have the digest
+    echo "Tag policy: digest-suffix → will re-tag after push"
+    ;;
+  *)
+    echo "Tag policy: overwrite → pushing as $PUSH_REF"
+    ;;
+esac
+
 echo "{\"event\":\"progress\",\"phase\":\"pushing\",\"percent\":10,\"detail\":\"$FILE_COUNT files\"}"
 
 # Push from MODEL_DIR so ORAS uses relative paths as artifact titles.
 # ORAS v1.x sets title annotation from the argument path; absolute paths
 # cause "path traversal disallowed" on pull.
 START_TIME=$(date +%s)
-(cd "$MODEL_DIR" && oras push $INSECURE_FLAG --disable-path-validation "$OCI_REF" $(find . -type f | sed 's|^\./||') --artifact-type "application/vnd.flexinfer.model.v1") 2>&1 | tee /tmp/oras-output.log
+(cd "$MODEL_DIR" && oras push $INSECURE_FLAG --disable-path-validation "$PUSH_REF" $(find . -type f | sed 's|^\./||') --artifact-type "application/vnd.flexinfer.model.v1") 2>&1 | tee /tmp/oras-output.log
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
 DIGEST=$(grep 'Digest: sha256:' /tmp/oras-output.log | head -1 | sed 's/.*Digest: //' || echo "")
 
+PUSHED_TAGS="$PUSH_REF"
+
+# For digest-suffix policy, create an additional tag with the digest prefix.
+if [ "$TAG_POLICY" = "digest-suffix" ] && [ -n "$DIGEST" ]; then
+  BASE_REF=$(echo "$OCI_REF" | sed 's/:.*$//')
+  BASE_TAG=$(echo "$OCI_REF" | grep -o ':[^:]*$' | tr -d ':')
+  [ -z "$BASE_TAG" ] && BASE_TAG="latest"
+  SHORT_DIGEST=$(echo "$DIGEST" | sed 's/sha256://' | cut -c1-12)
+  DIGEST_TAG="${BASE_REF}:${BASE_TAG}-sha256-${SHORT_DIGEST}"
+  echo "Creating digest-suffix tag: $DIGEST_TAG"
+  oras tag $INSECURE_FLAG "$PUSH_REF" "${BASE_TAG}-sha256-${SHORT_DIGEST}" 2>&1 || echo "WARNING: digest-suffix tagging failed"
+  PUSHED_TAGS="${PUSHED_TAGS},${DIGEST_TAG}"
+fi
+
+# Apply additional tags (server-side, no re-upload).
+if [ -n "${OCI_ADDITIONAL_TAGS:-}" ]; then
+  echo "{\"event\":\"progress\",\"phase\":\"tagging\",\"percent\":90}"
+  IFS=',' read -r TAGS_STR <<EOF
+${OCI_ADDITIONAL_TAGS}
+EOF
+  for tag in $(echo "$TAGS_STR" | tr ',' ' '); do
+    [ -z "$tag" ] && continue
+    BASE_REF=$(echo "$OCI_REF" | sed 's/:.*$//')
+    EXTRA_REF="${BASE_REF}:${tag}"
+    echo "Applying additional tag: $EXTRA_REF"
+    oras tag $INSECURE_FLAG "$PUSH_REF" "$tag" 2>&1 || echo "WARNING: additional tagging failed for $tag"
+    PUSHED_TAGS="${PUSHED_TAGS},${EXTRA_REF}"
+  done
+fi
+
 echo "{\"event\":\"complete\",\"phase\":\"publishing\",\"target\":\"oci\",\"duration_seconds\":$DURATION,\"digest\":\"$DIGEST\"}"
 
 cat > /dev/termination-log <<TERMEOF
-{"target":"oci","ociRef":"$OCI_REF","ociDigest":"$DIGEST","durationSeconds":$DURATION,"totalBytes":$TOTAL_BYTES,"fileCount":$FILE_COUNT}
+{"target":"oci","ociRef":"$PUSH_REF","ociDigest":"$DIGEST","pushedTags":"$PUSHED_TAGS","durationSeconds":$DURATION,"totalBytes":$TOTAL_BYTES,"fileCount":$FILE_COUNT}
 TERMEOF
 
-echo "Published to $OCI_REF (digest: $DIGEST) in ${DURATION}s"
+echo "Published to $PUSH_REF (digest: $DIGEST) in ${DURATION}s"
 `
 }
 

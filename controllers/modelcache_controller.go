@@ -41,6 +41,8 @@ const (
 	annotationReabliterate     = "flexinfer.ai/reabliterate"
 	annotationFinetuneSpecHash = "flexinfer.ai/finetune-spec-hash"
 	annotationRefinetune       = "flexinfer.ai/refinetune"
+	annotationSourceHash       = "flexinfer.ai/source-hash"
+	annotationRedownload       = "flexinfer.ai/redownload"
 
 	// DefaultDownloadMemoryGB is the default memory limit for download jobs (in GiB).
 	DefaultDownloadMemoryGB = 16

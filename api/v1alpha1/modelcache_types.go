@@ -532,6 +532,20 @@ type PublishSpec struct {
 	// +kubebuilder:validation:Maximum=43200
 	// +optional
 	TimeoutSeconds *int64 `json:"timeoutSeconds,omitempty"`
+
+	// TagPolicy controls how OCI tags are generated during publish.
+	//   - "overwrite" (default): push to the exact tag in OCIRef.
+	//   - "timestamp": append -YYYYMMDD-HHMMSS to the base tag.
+	//   - "digest-suffix": append -sha256-<first12> of the pushed digest.
+	// +kubebuilder:validation:Enum=overwrite;timestamp;"digest-suffix"
+	// +kubebuilder:default="overwrite"
+	// +optional
+	TagPolicy *string `json:"tagPolicy,omitempty"`
+
+	// AdditionalTags lists extra tags to apply after push (server-side via oras tag, no re-upload).
+	// Example: ["latest", "stable"].
+	// +optional
+	AdditionalTags []string `json:"additionalTags,omitempty"`
 }
 
 // PublishStatus records the result of model publishing.
@@ -564,6 +578,16 @@ type PublishStatus struct {
 	// FailureMessage contains the error message on failure.
 	// +optional
 	FailureMessage string `json:"failureMessage,omitempty"`
+
+	// PublishedTags lists all OCI tags that were applied during the last publish.
+	// Includes the primary tag and any additional tags from spec.publish.additionalTags.
+	// +optional
+	PublishedTags []string `json:"publishedTags,omitempty"`
+
+	// PreviousDigests tracks the last 5 published OCI digests for rollback visibility.
+	// Most recent digest is first.
+	// +optional
+	PreviousDigests []string `json:"previousDigests,omitempty"`
 }
 
 // DownloadSpec configures the model download job.
@@ -729,6 +753,13 @@ type ModelCacheSpec struct {
 	// When nil, defaults are applied: 16Gi memory, hf_transfer auto-enabled, 3 retries.
 	// +optional
 	Download *DownloadSpec `json:"download,omitempty"`
+
+	// OCIPollInterval enables periodic freshness checks for OCI sources.
+	// When set (e.g. "1h", "30m"), the controller resolves the remote OCI tag digest
+	// and triggers a re-download if the upstream has changed.
+	// Disabled by default (nil or empty string).
+	// +optional
+	OCIPollInterval *string `json:"ociPollInterval,omitempty"`
 
 	// MaxRetries is the maximum number of automatic retries before marking as permanently failed.
 	// Applies to all pipeline phases (download, abliteration, finetune, quantization, publish).
@@ -903,6 +934,15 @@ type ModelCacheStatus struct {
 	// Extracted from the source URL for observability.
 	// +optional
 	OCIRegistry string `json:"ociRegistry,omitempty"`
+
+	// OCILastProbeAt is the timestamp of the last OCI freshness probe.
+	// +optional
+	OCILastProbeAt *metav1.Time `json:"ociLastProbeAt,omitempty"`
+
+	// OCIRemoteDigest is the most recently observed remote OCI digest.
+	// Compared against OCIDigest to detect upstream changes.
+	// +optional
+	OCIRemoteDigest string `json:"ociRemoteDigest,omitempty"`
 }
 
 //+kubebuilder:object:root=true

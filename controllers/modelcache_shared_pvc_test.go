@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
@@ -89,6 +90,117 @@ func TestDownloadGCdShouldProceed(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestSourceHash(t *testing.T) {
+	tests := []struct {
+		name    string
+		sourceA string
+		sourceB string
+		same    bool
+	}{
+		{
+			name:    "identical sources produce same hash",
+			sourceA: "oci://registry.harbor.lan/models/qwen3:v1",
+			sourceB: "oci://registry.harbor.lan/models/qwen3:v1",
+			same:    true,
+		},
+		{
+			name:    "different tags produce different hashes",
+			sourceA: "oci://registry.harbor.lan/models/qwen3:v1",
+			sourceB: "oci://registry.harbor.lan/models/qwen3:v2",
+			same:    false,
+		},
+		{
+			name:    "different registries produce different hashes",
+			sourceA: "oci://registry.harbor.lan/models/qwen3:v1",
+			sourceB: "oci://ghcr.io/models/qwen3:v1",
+			same:    false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hashA := sourceHash(tt.sourceA)
+			hashB := sourceHash(tt.sourceB)
+			assert.Len(t, hashA, 16, "hash should be 16 hex chars")
+			if tt.same {
+				assert.Equal(t, hashA, hashB)
+			} else {
+				assert.NotEqual(t, hashA, hashB)
+			}
+		})
+	}
+}
+
+func TestTruncateDigest(t *testing.T) {
+	tests := []struct {
+		name   string
+		digest string
+		want   string
+	}{
+		{
+			name:   "full sha256 digest truncated to 12 chars",
+			digest: "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+			want:   "sha256:abcdef123456",
+		},
+		{
+			name:   "short digest returned with prefix re-added",
+			digest: "sha256:abc",
+			want:   "abc",
+		},
+		{
+			name:   "empty digest",
+			digest: "",
+			want:   "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateDigest(tt.digest)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestOCIDownloadJobHasTerminationLog(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := aiv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme() error = %v", err)
+	}
+	r := &ModelCacheReconciler{Scheme: scheme}
+	cache := &aiv1alpha1.ModelCache{}
+	cache.Name = "test-oci-model"
+	cache.Namespace = "default"
+	cache.Spec.Source = "oci://registry.harbor.lan/models/test:v1"
+
+	job, err := r.jobForOCIDownload(cache, "test-pvc", "test-model")
+	assert.NoError(t, err)
+
+	c := job.Spec.Template.Spec.Containers[0]
+	assert.Equal(t, "/dev/termination-log", c.TerminationMessagePath)
+	assert.Equal(t, corev1.TerminationMessageReadFile, c.TerminationMessagePolicy)
+
+	script := c.Args[0]
+	assert.Contains(t, script, "termination-log", "script should write termination log")
+	assert.Contains(t, script, "ociDigest", "script should capture digest in termination log")
+}
+
+func TestOCIDownloadJobCacheHitWritesTerminationLog(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := aiv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme() error = %v", err)
+	}
+	r := &ModelCacheReconciler{Scheme: scheme}
+	cache := &aiv1alpha1.ModelCache{}
+	cache.Name = "test-oci-cached"
+	cache.Namespace = "default"
+	cache.Spec.Source = "oci://registry.harbor.lan/models/test:v1"
+
+	job, err := r.jobForOCIDownload(cache, "test-pvc", "test-model")
+	assert.NoError(t, err)
+
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+	assert.Contains(t, script, `"cached":true`, "cache-hit should write cached:true termination log")
 }
 
 func TestJobForDownloadCleansStaleDerivedArtifactsBeforeReuse(t *testing.T) {

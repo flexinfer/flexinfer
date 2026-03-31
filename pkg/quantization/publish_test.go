@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
 
 func TestShouldUseInsecure(t *testing.T) {
@@ -89,4 +91,73 @@ func TestOCIPublishScript(t *testing.T) {
 	assert.Contains(t, script, "OCI_REF")
 	assert.Contains(t, script, "OCI_INSECURE")
 	assert.Contains(t, script, "termination-log")
+}
+
+func TestOCIPublishScriptTagPolicies(t *testing.T) {
+	script := ociPublishScript()
+
+	t.Run("supports timestamp tag policy", func(t *testing.T) {
+		assert.Contains(t, script, "OCI_TAG_POLICY")
+		assert.Contains(t, script, "timestamp")
+	})
+
+	t.Run("supports digest-suffix tag policy", func(t *testing.T) {
+		assert.Contains(t, script, "digest-suffix")
+	})
+
+	t.Run("supports additional tags", func(t *testing.T) {
+		assert.Contains(t, script, "OCI_ADDITIONAL_TAGS")
+		assert.Contains(t, script, "oras tag")
+	})
+
+	t.Run("includes pushedTags in termination log", func(t *testing.T) {
+		assert.Contains(t, script, "pushedTags")
+	})
+}
+
+func TestPublishEnvTagPolicy(t *testing.T) {
+	ociRef := "registry.harbor.lan/models/test:v1"
+
+	t.Run("default tag policy is overwrite", func(t *testing.T) {
+		spec := &aiv1alpha1.PublishSpec{
+			Targets: []aiv1alpha1.PublishTarget{aiv1alpha1.PublishTargetOCI},
+			OCIRef:  &ociRef,
+		}
+		env := publishEnv("/models/test", spec)
+		envMap := make(map[string]string)
+		for _, e := range env {
+			envMap[e.Name] = e.Value
+		}
+		assert.Equal(t, "overwrite", envMap["OCI_TAG_POLICY"])
+		assert.Empty(t, envMap["OCI_ADDITIONAL_TAGS"])
+	})
+
+	t.Run("timestamp tag policy propagated", func(t *testing.T) {
+		policy := "timestamp"
+		spec := &aiv1alpha1.PublishSpec{
+			Targets:   []aiv1alpha1.PublishTarget{aiv1alpha1.PublishTargetOCI},
+			OCIRef:    &ociRef,
+			TagPolicy: &policy,
+		}
+		env := publishEnv("/models/test", spec)
+		envMap := make(map[string]string)
+		for _, e := range env {
+			envMap[e.Name] = e.Value
+		}
+		assert.Equal(t, "timestamp", envMap["OCI_TAG_POLICY"])
+	})
+
+	t.Run("additional tags joined with comma", func(t *testing.T) {
+		spec := &aiv1alpha1.PublishSpec{
+			Targets:        []aiv1alpha1.PublishTarget{aiv1alpha1.PublishTargetOCI},
+			OCIRef:         &ociRef,
+			AdditionalTags: []string{"latest", "stable"},
+		}
+		env := publishEnv("/models/test", spec)
+		envMap := make(map[string]string)
+		for _, e := range env {
+			envMap[e.Name] = e.Value
+		}
+		assert.Equal(t, "latest,stable", envMap["OCI_ADDITIONAL_TAGS"])
+	})
 }
