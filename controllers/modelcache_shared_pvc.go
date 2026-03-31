@@ -100,17 +100,19 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 				return ctrl.Result{}, err
 			}
 
-			// Seed source hash and clear annotation.
+			// Clear annotation and seed source hash BEFORE status update.
+			// Must update metadata first — Status().Update() bumps resourceVersion,
+			// which would cause a conflict on the subsequent metadata Update().
 			if modelCache.Annotations == nil {
 				modelCache.Annotations = make(map[string]string)
 			}
 			modelCache.Annotations[annotationSourceHash] = sourceHash(modelCache.Spec.Source)
 			delete(modelCache.Annotations, annotationRedownload)
 
-			if err := r.Status().Update(ctx, modelCache); err != nil {
+			if err := r.Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
-			if err := r.Update(ctx, modelCache); err != nil {
+			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
 
@@ -141,10 +143,11 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			}
 			modelCache.Annotations[annotationSourceHash] = currentHash
 
-			if err := r.Status().Update(ctx, modelCache); err != nil {
+			// Update metadata (annotations) first, then status.
+			if err := r.Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
-			if err := r.Update(ctx, modelCache); err != nil {
+			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
 
@@ -358,10 +361,11 @@ func (r *ModelCacheReconciler) reconcileDownstreamPhases(ctx context.Context, mo
 				modelCache.Status.OCILastProbeAt = &now
 				if remoteDigest != "" {
 					modelCache.Status.OCIRemoteDigest = remoteDigest
-					if modelCache.Status.OCIDigest != "" && remoteDigest != modelCache.Status.OCIDigest {
+					localDigest := modelCache.Status.OCIDigest
+					if localDigest != "" && remoteDigest != localDigest {
 						log.Info("OCI upstream changed, triggering re-download",
 							"cache", modelCache.Name,
-							"local", modelCache.Status.OCIDigest,
+							"local", localDigest,
 							"remote", remoteDigest)
 						if err := r.resetDownloadState(ctx, modelCache); err != nil {
 							return ctrl.Result{}, err
@@ -371,7 +375,7 @@ func (r *ModelCacheReconciler) reconcileDownstreamPhases(ctx context.Context, mo
 						}
 						r.Recorder.Event(modelCache, corev1.EventTypeNormal, "OCIStaleDetected",
 							fmt.Sprintf("Upstream OCI digest changed (%s → %s), re-downloading",
-								truncateDigest(modelCache.Status.OCIDigest), truncateDigest(remoteDigest)))
+								truncateDigest(localDigest), truncateDigest(remoteDigest)))
 						return ctrl.Result{Requeue: true}, nil
 					}
 				}
