@@ -1,6 +1,6 @@
 # Project Roadmap
 
-> Last Updated: March 27, 2026
+> Last Updated: March 31, 2026
 
 ## Current Status
 
@@ -92,6 +92,12 @@ MCP is now the de facto standard for AI-tool integration (8M+ downloads, 5,800+ 
   - Added HUD status output (including cache backend) to `loom status`.
   - Added `make hud-install-service` and HUD restart wiring in `make dev-upgrade`.
 
+- ✅ **Mobile + HUD information architecture polish (2026-03-31)**
+  - Reframed the companion app around `Dashboard`, `People`, `Work`, `Alerts`, and `Connection`, with `People` explicitly split into `Agents` and `Sessions`.
+  - Routed mobile deep links through clearer destination groups and staged session/connection mutations behind advanced controls.
+  - Reframed the HUD landing tab as `Now`, shifted overview toward attention-first triage, and renamed top-level groups to a more operator-oriented vocabulary.
+  - Elevated Dispatch and Server Catalog into clearer first-class operator surfaces with stronger summaries, hierarchy, and empty-state guidance.
+
 - ✅ **Sync/worktree workflow polish**
   - Added session-start nudge recommending worktree allocation on `main`/`master`.
   - Added Antigravity `settings.json` hooks stub generation and sync parity.
@@ -168,6 +174,7 @@ These address capabilities the market now expects from production MCP infrastruc
   - Add a mandatory milestone exit scope-gate check for M0-M5 mobile companion work.
   - Route desktop-parity and other out-of-scope asks into post-v1 backlog issues before implementation.
   - Keep v1 constrained to monitoring + session lifecycle controls unless explicitly re-baselined.
+  - 2026-03-31 IA pass: mobile navigation now biases toward `People` and `Work`, and advanced session/connection mutations are visually staged behind the primary monitoring workflow.
 
 - [ ] **OTel trace export from daemon** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/12))
   - ✅ 2026-02-26 slice: added `pkg/mcpotel` tracing wrappers to `mcp-alertmanager`, `mcp-grafana`, and `mcp-loki` (tool spans + error status propagation).
@@ -221,12 +228,14 @@ These position Loom Core in ways competitors cannot easily replicate.
   - Surface file claim conflicts in HUD when agents touch overlapping files.
   - Add merge orchestration assistance after parallel agents complete work.
   - Improve cross-agent context transfer via the handoff system.
+  - 2026-03-31 IA pass: Dispatch now reads as a coordination-first operator surface, but merge orchestration and deeper action flows remain future work.
   - *Rationale: Market is moving to "developer as fleet commander" pattern (Augment Intent, GitHub Agent HQ, Cursor Parallel Agents).*
 
 - [ ] **MCP server catalog and discovery** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/14))
   - Add `loom catalog list` for browsable server catalog with capabilities and env requirements.
   - Add `loom catalog enable <server>` for one-command server activation.
   - Add HUD catalog view for browse, enable/disable, and per-server health.
+  - 2026-03-31 IA pass: HUD catalog framing now better supports discovery and trust, while CLI parity and deeper capability metadata remain open.
   - *Rationale: 40+ curated Go servers is a unique asset. Docker MCP Toolkit has a catalog; Loom should too.*
 
 - [ ] **Security hardening layer** ([#25](https://gitlab.flexinfer.ai/services/loom-core/-/issues/25), [#26](https://gitlab.flexinfer.ai/services/loom-core/-/issues/26), [#27](https://gitlab.flexinfer.ai/services/loom-core/-/issues/27), [#29](https://gitlab.flexinfer.ai/services/loom-core/-/issues/29))
