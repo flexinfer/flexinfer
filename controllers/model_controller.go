@@ -348,6 +348,14 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	// No runtime available — use Deployment-based flow.
+	// Skip deployment creation for idle models with zero desired replicas.
+	// These are typically shared-group models where the runtime detection is
+	// intermittent (cache timing). Creating a 0-replica deployment only causes
+	// a flip-flop: the runtime path deletes it on the next reconcile.
+	if desiredReplicas == 0 && model.Status.Phase == aiv1alpha2.ModelPhaseIdle {
+		return ctrl.Result{RequeueAfter: requeueMedium}, nil
+	}
+
 	// Restore Service selector if it was cleared during runtime management.
 	if err := r.restoreServiceSelector(ctx, model); err != nil {
 		log.Error(err, "Failed to restore Service selector")
