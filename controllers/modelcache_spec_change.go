@@ -110,3 +110,18 @@ func (r *ModelCacheReconciler) detectAndApplySpecChange(
 
 	return true, nil
 }
+
+// specChangeNeedsReprocess returns true if a phase has a pending spec change
+// (hash mismatch or trigger annotation). Used by reconcileDownstreamPhases to
+// bypass the completion guard and allow detectAndApplySpecChange to run even
+// when a phase is already complete.
+func specChangeNeedsReprocess(mc *aiv1alpha1.ModelCache, triggerKey, hashKey, currentHash string) bool {
+	if mc.Annotations != nil && mc.Annotations[triggerKey] == "true" {
+		return true
+	}
+	storedHash := ""
+	if mc.Annotations != nil {
+		storedHash = mc.Annotations[hashKey]
+	}
+	return storedHash != "" && storedHash != currentHash
+}

@@ -209,8 +209,11 @@ func (r *ModelCacheReconciler) reconcileDownstreamPhases(ctx context.Context, mo
 	log := log.FromContext(ctx)
 
 	// Phase 1: Abliteration (if configured) must complete before finetune/quantize.
+	// Also re-enter the phase reconciler when a spec change is pending so that
+	// detectAndApplySpecChange can reset status and trigger re-processing.
 	if modelCache.Spec.Abliteration != nil {
-		if !abliterationCompleted(modelCache.Status.Abliteration) {
+		if !abliterationCompleted(modelCache.Status.Abliteration) ||
+			specChangeNeedsReprocess(modelCache, annotationReabliterate, annotationAblitSpecHash, ablitSpecHash(modelCache.Spec.Abliteration)) {
 			modelCache.Status.CurrentPhase = "abliteration"
 			return r.reconcileAbliteration(ctx, modelCache, pvcName, modelPath)
 		}
@@ -218,7 +221,8 @@ func (r *ModelCacheReconciler) reconcileDownstreamPhases(ctx context.Context, mo
 
 	// Phase 2: Finetune (if configured) must complete before quantize.
 	if modelCache.Spec.Finetune != nil {
-		if !finetuneCompleted(modelCache.Status.Finetune) {
+		if !finetuneCompleted(modelCache.Status.Finetune) ||
+			specChangeNeedsReprocess(modelCache, annotationRefinetune, annotationFinetuneSpecHash, finetuneSpecHash(modelCache.Spec.Finetune)) {
 			modelCache.Status.CurrentPhase = "finetune"
 			return r.reconcileFinetune(ctx, modelCache, pvcName, modelPath)
 		}
@@ -226,7 +230,8 @@ func (r *ModelCacheReconciler) reconcileDownstreamPhases(ctx context.Context, mo
 
 	// Phase 3: Quantization (if configured) must complete before publish.
 	if modelCache.Spec.Quantization != nil {
-		if !quantizationCompleted(modelCache.Status.Quantization) {
+		if !quantizationCompleted(modelCache.Status.Quantization) ||
+			specChangeNeedsReprocess(modelCache, annotationRequantize, annotationQuantSpecHash, quantSpecHash(modelCache.Spec.Quantization)) {
 			modelCache.Status.CurrentPhase = "quantization"
 			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
 		}

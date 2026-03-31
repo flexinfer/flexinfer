@@ -100,18 +100,21 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 	}
 
 	// Update service. Avoid clobbering immutable fields (e.g., clusterIP/clusterIPs).
+	// Do NOT overwrite .Spec.Selector here — it is managed separately:
+	//  - Set on creation (above)
+	//  - Cleared by removeRuntimeServiceSelector for runtime-managed models
+	//  - Restored by restoreServiceSelector when falling back to Deployment flow
+	// Overwriting it here causes an infinite reconcile loop when runtime management
+	// clears the selector and ensureService re-adds it on the next reconcile.
 	existingPorts := service.Spec.Ports
-	existingSelector := service.Spec.Selector
 	existingLabels := service.Labels
 	existingAnnotations := service.Annotations
 
 	service.Spec.Ports = desiredService.Spec.Ports
-	service.Spec.Selector = desiredService.Spec.Selector
 	service.Labels = desiredService.Labels
 	service.Annotations = applyManagedAnnotations(service.Annotations, annotations, managedModelAnnotations)
 
 	if apiequality.Semantic.DeepEqual(service.Spec.Ports, existingPorts) &&
-		apiequality.Semantic.DeepEqual(service.Spec.Selector, existingSelector) &&
 		apiequality.Semantic.DeepEqual(service.Labels, existingLabels) &&
 		apiequality.Semantic.DeepEqual(service.Annotations, existingAnnotations) {
 		return nil
@@ -119,6 +122,27 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 
 	log.Info("Updating Service", "name", model.Name)
 	return r.Update(ctx, service)
+}
+
+// restoreServiceSelector re-adds the selector to a Service that was previously
+// cleared by removeRuntimeServiceSelector. Called when a model falls back from
+// runtime-managed to deployment-managed flow.
+func (r *ModelReconciler) restoreServiceSelector(ctx context.Context, model *aiv1alpha2.Model) error {
+	svc := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, svc); err != nil {
+		if errors.IsNotFound(err) {
+			return nil // Service will be created by ensureService
+		}
+		return err
+	}
+	desired := r.selectorLabelsForModel(model)
+	if apiequality.Semantic.DeepEqual(svc.Spec.Selector, desired) {
+		return nil
+	}
+	svc.Spec.Selector = desired
+	log := log.FromContext(ctx)
+	log.Info("Restoring selector on Service for deployment management", "service", svc.Name)
+	return r.Update(ctx, svc)
 }
 
 // ensureDeployment creates or updates the Deployment for the model.

@@ -348,6 +348,11 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	// No runtime available — use Deployment-based flow.
+	// Restore Service selector if it was cleared during runtime management.
+	if err := r.restoreServiceSelector(ctx, model); err != nil {
+		log.Error(err, "Failed to restore Service selector")
+		return ctrl.Result{}, err
+	}
 	// Ensure Deployment exists with correct spec
 	if err := r.ensureDeployment(ctx, model, b, gpuVendor, gpuArch, desiredReplicas); err != nil {
 		log.Error(err, "Failed to ensure Deployment")
