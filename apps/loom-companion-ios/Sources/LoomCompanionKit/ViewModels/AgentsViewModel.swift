@@ -115,6 +115,7 @@ public final class AgentsViewModel {
                     || agent.description.lowercased().contains(query)
                     || agent.currentTask.lowercased().contains(query)
                     || agent.branch.lowercased().contains(query)
+                    || (agent.project?.lowercased().contains(query) ?? false)
                     || (agent.namespace?.lowercased().contains(query) ?? false)
                 if !matches { return false }
             }
@@ -122,8 +123,91 @@ public final class AgentsViewModel {
         }
     }
 
+    public var groupedAgents: [UnifiedAgentGroup] {
+        var grouped: [String: UnifiedAgentGroup] = [:]
+        for agent in filteredAgents {
+            let descriptor = groupDescriptor(for: agent)
+            let existingAgents = grouped[descriptor.id]?.agents ?? []
+            grouped[descriptor.id] = UnifiedAgentGroup(
+                id: descriptor.id,
+                title: descriptor.title,
+                subtitle: descriptor.subtitle,
+                agents: existingAgents + [agent]
+            )
+        }
+
+        return grouped.values.sorted { lhs, rhs in
+            let leftRank = groupSortRank(lhs.id)
+            let rightRank = groupSortRank(rhs.id)
+            if leftRank != rightRank {
+                return leftRank < rightRank
+            }
+            if lhs.agents.count != rhs.agents.count {
+                return lhs.agents.count > rhs.agents.count
+            }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+    }
+
     /// Unique agent types from current agents, for filter dropdown.
     public var availableTypes: [String] {
         Array(Set(agents.map(\.agentType))).sorted()
+    }
+
+    private func groupDescriptor(for agent: UnifiedAgent) -> (id: String, title: String, subtitle: String?) {
+        if let project = normalized(agent.project) {
+            return (
+                "project:\(project)",
+                project.components(separatedBy: "/").last ?? project,
+                project
+            )
+        }
+        if let namespace = normalized(agent.namespace) {
+            return (
+                "namespace:\(namespace)",
+                namespace.components(separatedBy: "/").last ?? namespace,
+                "Namespace \(namespace)"
+            )
+        }
+        if let branch = normalized(agent.branch) {
+            return (
+                "branch:\(branch)",
+                branch,
+                "Branch group"
+            )
+        }
+        let runtime = displayAgentType(agent.agentType)
+        return (
+            "runtime:\(runtime.lowercased())",
+            runtime,
+            "Ungrouped runtime"
+        )
+    }
+
+    private func groupSortRank(_ id: String) -> Int {
+        if id.hasPrefix("project:") { return 0 }
+        if id.hasPrefix("namespace:") { return 1 }
+        if id.hasPrefix("branch:") { return 2 }
+        return 3
+    }
+
+    private func normalized(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty
+        else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private func displayAgentType(_ agentType: String) -> String {
+        let trimmed = agentType.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Runtime" }
+        return trimmed
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "-", with: " ")
+            .split(separator: " ")
+            .map { $0.capitalized }
+            .joined(separator: " ")
     }
 }

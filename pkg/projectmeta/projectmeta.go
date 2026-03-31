@@ -37,6 +37,31 @@ func FromNamespace(namespace string) string {
 	return ns
 }
 
+// FromPath derives a project identifier from a workspace-relative or absolute
+// path that contains one of the workspace namespace roots.
+func FromPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+
+	segments := strings.FieldsFunc(trimmed, func(r rune) bool {
+		return r == '/' || r == '\\'
+	})
+	for i := 0; i+1 < len(segments); i++ {
+		if _, ok := workspaceNamespaceRoots[segments[i]]; !ok {
+			continue
+		}
+		next := strings.TrimSpace(segments[i+1])
+		if next == "" || next == "." || next == ".." {
+			continue
+		}
+		return segments[i] + "/" + next
+	}
+
+	return ""
+}
+
 // Canonical returns the preferred project identifier from the available link
 // metadata. Explicit values win; namespace-derived values are the fallback.
 func Canonical(explicitProject, namespace string) string {

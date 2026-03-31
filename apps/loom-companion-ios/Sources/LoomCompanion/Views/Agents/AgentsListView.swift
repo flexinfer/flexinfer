@@ -39,24 +39,30 @@ struct AgentsListView: View {
                     pipelineAgentCount: viewModel.agents.filter { $0.pipelineCount > 0 }.count
                 )
 
-                ForEach(viewModel.filteredAgents) { agent in
-                    if agent.hasSession, let sessionId = agent.sessionId {
-                        NavigationLink(value: sessionId) {
-                            AgentRowView(agent: agent)
-                        }
-                        .swipeActions(edge: .trailing) {
-                            if agent.sessionStatus == "active" {
-                                Button(role: .destructive) {
-                                    HapticManager.medium()
-                                    onPrefillEndSession?(sessionId)
-                                } label: {
-                                    Label("End Session", systemImage: "stop.circle")
+                ForEach(viewModel.groupedAgents) { group in
+                    Section {
+                        ForEach(group.agents) { agent in
+                            if agent.hasSession, let sessionId = agent.sessionId {
+                                NavigationLink(value: sessionId) {
+                                    AgentRowView(agent: agent)
                                 }
-                                .tint(LoomColors.statusCritical)
+                                .swipeActions(edge: .trailing) {
+                                    if agent.sessionStatus == "active" {
+                                        Button(role: .destructive) {
+                                            HapticManager.medium()
+                                            onPrefillEndSession?(sessionId)
+                                        } label: {
+                                            Label("End Session", systemImage: "stop.circle")
+                                        }
+                                        .tint(LoomColors.statusCritical)
+                                    }
+                                }
+                            } else {
+                                AgentRowView(agent: agent)
                             }
                         }
-                    } else {
-                        AgentRowView(agent: agent)
+                    } header: {
+                        agentGroupHeader(group)
                     }
                 }
             }
@@ -185,6 +191,27 @@ struct AgentsListView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func agentGroupHeader(_ group: UnifiedAgentGroup) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(group.title)
+                    .font(LoomTypography.bodyMedium)
+                    .foregroundStyle(LoomColors.textPrimary)
+                Text("\(group.agents.count)")
+                    .font(LoomTypography.monoCaption)
+                    .foregroundStyle(LoomColors.textTertiary)
+            }
+            if let subtitle = group.subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(LoomTypography.caption)
+                    .foregroundStyle(LoomColors.textTertiary)
+                    .lineLimit(1)
+            }
+        }
+        .textCase(nil)
     }
 }
 

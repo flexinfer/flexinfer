@@ -309,7 +309,7 @@ public final class OpsViewModel {
         // Only surface warnings for core section failures; optional/advanced
         // sections (reasoning, graph, control plane, sandbox, topology) failing
         // is expected when the server doesn't expose those endpoints yet.
-        let coreSections: Set<String> = ["tasks", "presence", "stream", "pipelines"]
+        let coreSections: Set<String> = ["tasks", "presence", "stream"]
         let coreFailures = failedSections.filter { coreSections.contains($0) }
         if !coreFailures.isEmpty {
             warningMessage = "Some sections are unavailable: \(coreFailures.joined(separator: ", "))"

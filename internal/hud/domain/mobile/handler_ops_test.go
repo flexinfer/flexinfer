@@ -298,7 +298,7 @@ func TestHandleMobilePipelines_FallsBackToRecentRelevantPipelinesWhenNoActiveOne
 	}
 }
 
-func TestHandleMobilePipelines_ReturnsUpstreamErrorWhenNoPipelineDataIsAvailable(t *testing.T) {
+func TestHandleMobilePipelines_DegradesGracefullyWhenNoPipelineDataIsAvailable(t *testing.T) {
 	deps := newTestMockDeps()
 	deps.agent = bridge.NewAgentBridge(&failingPipelineOpsCaller{})
 	deps.monitors = Monitors{
@@ -314,22 +314,28 @@ func TestHandleMobilePipelines_ReturnsUpstreamErrorWhenNoPipelineDataIsAvailable
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("expected 502, got %d; body: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
 	}
 
 	var env Envelope
 	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
 		t.Fatalf("decode envelope: %v", err)
 	}
-	if env.OK {
-		t.Fatal("expected ok=false")
+	if !env.OK {
+		t.Fatalf("expected ok=true, got error %#v", env.Error)
 	}
-	errBody, ok := env.Error.(map[string]any)
+	data, ok := env.Data.(map[string]any)
 	if !ok {
-		t.Fatalf("expected error map, got %T", env.Error)
+		t.Fatalf("expected data map, got %T", env.Data)
 	}
-	if errBody["code"] != "upstream_unavailable" {
-		t.Fatalf("expected upstream_unavailable error, got %#v", errBody)
+	if available, _ := data["available"].(bool); available {
+		t.Fatalf("expected available=false, got %#v", data["available"])
+	}
+	if pipelines, ok := data["pipelines"].([]any); !ok || len(pipelines) != 0 {
+		t.Fatalf("expected empty pipelines array, got %#v", data["pipelines"])
+	}
+	if recent, ok := data["recent_pipelines"].([]any); !ok || len(recent) != 0 {
+		t.Fatalf("expected empty recent_pipelines array, got %#v", data["recent_pipelines"])
 	}
 }

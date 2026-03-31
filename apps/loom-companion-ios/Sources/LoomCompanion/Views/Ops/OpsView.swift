@@ -1011,7 +1011,16 @@ struct OpsView: View {
                     opsMetric(label: "Pending", value: summary.pending, icon: "clock", color: LoomColors.statusIdle)
                 }
 
-                if !viewModel.pipelines.isEmpty {
+                if !viewModel.pipelinesAvailable && viewModel.pipelines.isEmpty && viewModel.recentPipelines.isEmpty {
+                    VStack(alignment: .leading, spacing: LoomSpacing.xs) {
+                        Label("Pipeline monitoring is unavailable right now", systemImage: "wifi.exclamationmark")
+                            .font(LoomTypography.bodyRegular)
+                            .foregroundStyle(LoomColors.textSecondary)
+                        Text("Runtime, tasks, and sessions are still live. CI cards will repopulate automatically when pipeline data comes back.")
+                            .font(LoomTypography.caption)
+                            .foregroundStyle(LoomColors.textTertiary)
+                    }
+                } else if !viewModel.pipelines.isEmpty {
                     VStack(alignment: .leading, spacing: LoomSpacing.xs) {
                         Text("Active Pipelines")
                             .font(LoomTypography.caption)

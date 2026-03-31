@@ -383,7 +383,18 @@ func (d *MobileDomain) handleMobilePipelines(w http.ResponseWriter, r *http.Requ
 	}
 
 	if len(active) == 0 && len(recent) == 0 && pipelineErr != nil {
-		d.writeMobileError(w, http.StatusBadGateway, "upstream_unavailable", "failed to load pipelines")
+		d.writeMobileJSON(w, http.StatusOK, map[string]any{
+			"pipelines":        []any{},
+			"recent_pipelines": []any{},
+			"summary": map[string]any{
+				"running":       0,
+				"passed":        0,
+				"failed":        0,
+				"pending":       0,
+				"last_activity": "",
+			},
+			"available": false,
+		})
 		return
 	}
 

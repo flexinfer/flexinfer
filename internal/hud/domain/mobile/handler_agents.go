@@ -217,6 +217,11 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	taskFeed := buildMobileTaskFeed(snap.Tasks, snap)
+	taskHints := buildMobileAgentHintsFromTasks(taskFeed)
+	worktreeHints := buildMobileAgentHintsFromWorktrees(snap.Worktrees)
+	claimHints := buildMobileAgentHintsFromClaims(snap.FileClaims)
+
 	for _, pa := range snap.Agents {
 		status := normalizeMobilePresenceStatus(pa.Status)
 		agentType := pa.AgentType
@@ -257,6 +262,10 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 				ua.Description = sess.Description
 			}
 		}
+		applyMobileAgentHint(ua, taskHints[pa.AgentID])
+		applyMobileAgentHint(ua, worktreeHints[pa.AgentID])
+		applyMobileAgentHint(ua, claimHints[pa.AgentID])
+		applyMobileAgentHint(ua, buildMobileAgentHintFromActiveFiles(pa.ActiveFiles, pa.Branch))
 		agentMap[pa.AgentID] = ua
 	}
 
@@ -333,12 +342,15 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	taskCountsByAgent := summarizeMobileTaskCountsByAgent(buildMobileTaskFeed(snap.Tasks, snap))
+	taskCountsByAgent := summarizeMobileTaskCountsByAgent(taskFeed)
 	for _, ua := range agentMap {
 		if counts, ok := taskCountsByAgent[ua.AgentID]; ok {
 			ua.TaskCount = counts.Pending + counts.InProgress + counts.Blocked + counts.Completed
 			ua.BlockedTasks = counts.Blocked
 		}
+		applyMobileAgentHint(ua, taskHints[ua.AgentID])
+		applyMobileAgentHint(ua, worktreeHints[ua.AgentID])
+		applyMobileAgentHint(ua, claimHints[ua.AgentID])
 	}
 
 	// Correlate pipelines by branch.
@@ -424,6 +436,148 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 		"agents":  agents,
 		"summary": summary,
 	})
+}
+
+type mobileAgentHint struct {
+	Project   string
+	Namespace string
+	Branch    string
+	UpdatedAt time.Time
+	Strength  int
+}
+
+func buildMobileAgentHintsFromTasks(tasks []taskDTO) map[string]mobileAgentHint {
+	hints := make(map[string]mobileAgentHint)
+	for _, task := range tasks {
+		agentID := strings.TrimSpace(task.AgentID)
+		if agentID == "" {
+			continue
+		}
+		hint := mobileAgentHint{
+			Project:   projectmeta.Canonical(task.Project, task.Namespace),
+			Namespace: strings.TrimSpace(task.Namespace),
+			UpdatedAt: parseMobileTime(task.UpdatedAt),
+		}
+		if hint.Project != "" {
+			hint.Strength += 2
+		}
+		if hint.Namespace != "" {
+			hint.Strength++
+		}
+		if hint.Strength == 0 {
+			continue
+		}
+		hints[agentID] = mergeMobileAgentHint(hints[agentID], hint)
+	}
+	return hints
+}
+
+func buildMobileAgentHintsFromWorktrees(worktrees []bridge.WorktreeInfo) map[string]mobileAgentHint {
+	hints := make(map[string]mobileAgentHint)
+	for _, worktree := range worktrees {
+		agentID := strings.TrimSpace(worktree.AgentID)
+		if agentID == "" {
+			continue
+		}
+		hint := mobileAgentHint{
+			Project:   projectmeta.FromPath(worktree.WorktreePath),
+			Branch:    strings.TrimSpace(worktree.Branch),
+			UpdatedAt: parseMobileTime(worktree.CreatedAt),
+		}
+		if hint.Project != "" {
+			hint.Strength += 2
+		}
+		if hint.Branch != "" {
+			hint.Strength++
+		}
+		if hint.Strength == 0 {
+			continue
+		}
+		hints[agentID] = mergeMobileAgentHint(hints[agentID], hint)
+	}
+	return hints
+}
+
+func buildMobileAgentHintsFromClaims(claims []bridge.FileClaimInfo) map[string]mobileAgentHint {
+	hints := make(map[string]mobileAgentHint)
+	for _, claim := range claims {
+		agentID := strings.TrimSpace(claim.AgentID)
+		if agentID == "" {
+			continue
+		}
+		project := projectmeta.FromPath(claim.FilePath)
+		if project == "" {
+			continue
+		}
+		hint := mobileAgentHint{
+			Project:   project,
+			UpdatedAt: parseMobileTime(claim.CreatedAt),
+			Strength:  2,
+		}
+		hints[agentID] = mergeMobileAgentHint(hints[agentID], hint)
+	}
+	return hints
+}
+
+func buildMobileAgentHintFromActiveFiles(activeFiles []string, branch string) mobileAgentHint {
+	hint := mobileAgentHint{Branch: strings.TrimSpace(branch)}
+	if hint.Branch != "" {
+		hint.Strength++
+	}
+	for _, path := range activeFiles {
+		if project := projectmeta.FromPath(path); project != "" {
+			hint.Project = project
+			hint.Strength += 2
+			break
+		}
+	}
+	return hint
+}
+
+func mergeMobileAgentHint(current, next mobileAgentHint) mobileAgentHint {
+	if next.Strength == 0 {
+		return current
+	}
+	if current.Strength == 0 {
+		return next
+	}
+	if next.Strength > current.Strength {
+		return next
+	}
+	if next.Strength == current.Strength && next.UpdatedAt.After(current.UpdatedAt) {
+		return next
+	}
+	if current.Project == "" && next.Project != "" {
+		current.Project = next.Project
+	}
+	if current.Namespace == "" && next.Namespace != "" {
+		current.Namespace = next.Namespace
+	}
+	if current.Branch == "" && next.Branch != "" {
+		current.Branch = next.Branch
+	}
+	if current.UpdatedAt.IsZero() || next.UpdatedAt.After(current.UpdatedAt) {
+		current.UpdatedAt = next.UpdatedAt
+	}
+	if next.Strength > current.Strength {
+		current.Strength = next.Strength
+	}
+	return current
+}
+
+func applyMobileAgentHint(agent *unifiedAgent, hint mobileAgentHint) {
+	if agent == nil || hint.Strength == 0 {
+		return
+	}
+	if agent.Project == "" && hint.Project != "" {
+		agent.Project = hint.Project
+	}
+	if agent.Namespace == "" && hint.Namespace != "" {
+		agent.Namespace = hint.Namespace
+	}
+	if agent.Branch == "" && hint.Branch != "" {
+		agent.Branch = hint.Branch
+	}
 }
 
 func mobileSessionIsLive(status string) bool {

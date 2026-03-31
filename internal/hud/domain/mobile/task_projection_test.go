@@ -444,6 +444,82 @@ func TestHandleMobileAgents_IgnoresHistoricalSessionOnlyEntries(t *testing.T) {
 	}
 }
 
+func TestHandleMobileAgents_BackfillsProjectFromWorktreeAndClaims(t *testing.T) {
+	snap := monitor.FleetSnapshot{
+		Agents: []bridge.PresenceInfo{
+			{
+				AgentID:       "claude-code-1",
+				Status:        "active",
+				AgentType:     "claude-code",
+				Description:   "working without a live session",
+				LastHeartbeat: "2026-03-25T19:30:00Z",
+				ActiveFiles: []string{
+					"/Users/cblevins/workspace/services/loom-core/internal/hud/domain/mobile/handler_agents.go",
+				},
+			},
+		},
+		FileClaims: []bridge.FileClaimInfo{
+			{
+				ID:        "claim-1",
+				AgentID:   "claude-code-1",
+				FilePath:  "/Users/cblevins/workspace/services/loom-core/apps/loom-companion-ios/Sources/LoomCompanion/Views/Agents/AgentsListView.swift",
+				CreatedAt: "2026-03-25T19:20:00Z",
+			},
+		},
+		Worktrees: []bridge.WorktreeInfo{
+			{
+				AssignmentID: "wt-1",
+				AgentID:      "claude-code-1",
+				WorktreePath: "/Users/cblevins/workspace/services/loom-core/.worktrees/info-arch-mobile-hud",
+				Branch:       "codex/info-arch-mobile-hud",
+				CreatedAt:    "2026-03-25T19:10:00Z",
+			},
+		},
+	}
+
+	deps := newTestMockDeps()
+	deps.monitors = Monitors{Fleet: &monitor.FleetMonitor{}}
+	deps.monitors.Fleet.Update(snap)
+	d := New(deps)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/mobile/v1/agents", d.handleMobileAgents)
+
+	req := newAuthRequest("GET", "/api/mobile/v1/agents")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var env Envelope
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+
+	data, ok := env.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected data map, got %T", env.Data)
+	}
+
+	agents, ok := data["agents"].([]any)
+	if !ok || len(agents) != 1 {
+		t.Fatalf("expected one agent, got %#v", data["agents"])
+	}
+
+	agent, ok := agents[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected agent object, got %T", agents[0])
+	}
+	if got := agent["project"]; got != "services/loom-core" {
+		t.Fatalf("expected project services/loom-core, got %v", got)
+	}
+	if got := agent["branch"]; got != "codex/info-arch-mobile-hud" {
+		t.Fatalf("expected worktree branch backfill, got %v", got)
+	}
+}
+
 func TestHandleMobileTasks_ReturnsUpstreamErrorWhenNoTaskDataIsAvailable(t *testing.T) {
 	deps := newTestMockDeps()
 	deps.agent = bridge.NewAgentBridge(&failingTaskFeedCaller{})
