@@ -3,7 +3,7 @@ kind: Kustomization
 namespace: flexinfer-system
 resources:
   # === cblevins-7900xtx (24 GB gfx1100) — primary orchestrator ===
-  - qwen35-27b-opus-distill.yaml    # vLLM, GPTQ INT4, ~17 GiB VRAM, serverless
+  - qwen35-27b-opus-distill.yaml    # vLLM, GPTQ INT4, ~17 GiB VRAM, always-on
 
   # === cblevins-5930k (24 GB gfx1100) — subagent + code gen (shared group) ===
   - qwen35-9b.yaml                  # vLLM, GPTQ INT4, ~7.5 GiB VRAM, always-on (priority 200)

@@ -1,14 +1,10 @@
 # Qwen3.5-9B via vLLM on AMD gfx1100 — dedicated on cblevins-5930k
 #
-# FP16 (~15 GB) — no quantization.
-# GPTQ INT4 produces gibberish on ROCm because the GDN (linear_attention)
-# layers require higher precision. gptq_gemm kernel is buggy on ROCm and
-# moe_wna16 (official method) is CUDA-only. FP16 fits in 24 GB VRAM.
+# GPTQ INT4 (~7.5 GiB), abliterated (skipGDNLayers=true, 3 target layers).
+# Source: GPTQ cache PVC — abliteration + quantization pipeline on radeonvii.
+# Runtime: Unified runtime with vLLM Qwen3.5 patches baked in at build time.
 #
-# Source: HuggingFace Qwen3.5-9B (abliteration not applied in FP16 mode).
-# Image: Unified runtime with vLLM Qwen3.5 support.
-#
-# maxModelLen=4096 to leave room for KV cache in FP16 mode.
+# maxModelLen=4096 to minimize KV cache budget.
 # maxNumSeqs=2 to reduce concurrent memory pressure.
 #
 apiVersion: ai.flexinfer/v1alpha2
@@ -18,15 +14,13 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  source: HF://Qwen/Qwen3.5-9B
+  source: pvc://qwen35-9b-gptq/qwen35-9b-gptq/gptq-w4-g128
   cache:
     strategy: Local
-    size: 20Gi
-    storageClass: local-path
   gpu:
     vendor: amd
     count: 1
-    vramEstimateMB: 15000
+    vramEstimateMB: 8000
     shared: 5930k-textgen
     priority: 200
   serverless:
@@ -35,6 +29,7 @@ spec:
     idleTimeout: 30m
     coldStartTimeout: 15m
   config:
+    quantization: gptq
     dtype: "half"
     maxModelLen: 4096
     gpuMemoryUtilization: "0.95"
