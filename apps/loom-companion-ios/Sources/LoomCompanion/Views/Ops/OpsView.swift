@@ -29,6 +29,7 @@ struct OpsView: View {
     @State private var chainDisplayLimit = 8
     @State private var pipelineDisplayLimit = 8
     @State private var showLegacyWorkflows = false
+    @State private var showSessionControls = false
 
     enum OpsSegment: String, CaseIterable, Identifiable {
         case work = "Work"
@@ -111,7 +112,7 @@ struct OpsView: View {
             }
             .padding()
         }
-        .navigationTitle("Ops")
+        .navigationTitle("Work")
         .task {
             await viewModel.load()
             resolveDeepLinkWorkflow()
@@ -199,9 +200,13 @@ struct OpsView: View {
         VStack(spacing: LoomSpacing.cardSpacing) {
             LoomCard {
                 VStack(alignment: .leading, spacing: LoomSpacing.sm) {
-                    Text("Tasks")
+                    Text("Primary Work")
                         .font(LoomTypography.headlineMedium)
                         .foregroundStyle(LoomColors.textPrimary)
+
+                    Text("Tasks and pipeline activity stay up front; session mutation controls stay tucked away.")
+                        .font(LoomTypography.caption)
+                        .foregroundStyle(LoomColors.textTertiary)
 
                     HStack {
                         opsMetric(label: "Pending", value: viewModel.taskCounts.pending, icon: "clock", color: LoomColors.statusIdle)
@@ -301,7 +306,7 @@ struct OpsView: View {
                         HStack(spacing: LoomSpacing.xs) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(LoomColors.statusDegraded)
-                            Text("Legacy workflows")
+                            Text("Legacy approvals")
                                 .font(LoomTypography.headlineMedium)
                                 .foregroundStyle(LoomColors.textSecondary)
                             Spacer()
@@ -316,24 +321,71 @@ struct OpsView: View {
                             .font(LoomTypography.caption)
                             .foregroundStyle(LoomColors.textTertiary)
 
-                        HStack {
-                            Text("Approvals in queue")
-                                .font(LoomTypography.bodyRegular)
-                                .foregroundStyle(LoomColors.textTertiary)
-                            Spacer()
-                            AnimatedCounter(viewModel.pendingApprovals)
-                                .font(LoomTypography.counterMedium)
-                                .foregroundStyle(viewModel.pendingApprovals > 0 ? LoomColors.statusDegraded : LoomColors.textTertiary)
-                        }
+                        DisclosureGroup(isExpanded: $showLegacyWorkflows) {
+                            VStack(alignment: .leading, spacing: LoomSpacing.sm) {
+                                HStack {
+                                    Text("Approvals in queue")
+                                        .font(LoomTypography.bodyRegular)
+                                        .foregroundStyle(LoomColors.textTertiary)
+                                    Spacer()
+                                    AnimatedCounter(viewModel.pendingApprovals)
+                                        .font(LoomTypography.counterMedium)
+                                        .foregroundStyle(viewModel.pendingApprovals > 0 ? LoomColors.statusDegraded : LoomColors.textTertiary)
+                                }
 
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                showLegacyWorkflows.toggle()
+                                if viewModel.workflows.isEmpty {
+                                    Text("No legacy workflows")
+                                        .font(LoomTypography.bodyRegular)
+                                        .foregroundStyle(LoomColors.textTertiary)
+                                } else {
+                                    ForEach(Array(viewModel.workflows.prefix(workflowDisplayLimit))) { workflow in
+                                        NavigationLink {
+                                            OpsWorkflowDetailView(
+                                                workflow: workflow,
+                                                loadDetail: viewModel.loadWorkflowDetail(id:)
+                                            )
+                                        } label: {
+                                            HStack(spacing: LoomSpacing.sm) {
+                                                StatusAccentBar(color: workflowStatusColor(workflow.status))
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    HStack(spacing: 6) {
+                                                        Text(workflow.name ?? workflow.id)
+                                                            .font(LoomTypography.bodyMedium)
+                                                            .foregroundStyle(LoomColors.textSecondary)
+                                                            .lineLimit(1)
+                                                        StatusBadge(
+                                                            workflow.status.rawValue,
+                                                            color: workflowStatusColor(workflow.status)
+                                                        )
+                                                    }
+                                                    Text(workflow.currentStep ?? "No current step")
+                                                        .font(LoomTypography.caption)
+                                                        .foregroundStyle(LoomColors.textTertiary)
+                                                }
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                            }
+                                            .padding(.vertical, 2)
+                                        }
+                                    }
+                                    if viewModel.workflows.count > workflowDisplayLimit {
+                                        Button {
+                                            withAnimation(.easeInOut(duration: 0.25)) {
+                                                workflowDisplayLimit += 8
+                                            }
+                                            HapticManager.light()
+                                        } label: {
+                                            Text("Show \(min(8, viewModel.workflows.count - workflowDisplayLimit)) More")
+                                                .font(LoomTypography.caption)
+                                                .foregroundStyle(LoomColors.accent)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 6)
+                                        }
+                                    }
+                                }
                             }
-                            HapticManager.light()
                         } label: {
                             HStack {
-                                Text(showLegacyWorkflows ? "Hide legacy workflows" : "Show legacy workflows")
+                                Text(showLegacyWorkflows ? "Hide legacy approvals" : "Show legacy approvals")
                                     .font(LoomTypography.caption)
                                     .foregroundStyle(LoomColors.accent)
                                 Spacer()
@@ -343,138 +395,96 @@ struct OpsView: View {
                             }
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
-
-                        if showLegacyWorkflows {
-                            if viewModel.workflows.isEmpty {
-                                Text("No legacy workflows")
-                                    .font(LoomTypography.bodyRegular)
-                                    .foregroundStyle(LoomColors.textTertiary)
-                            } else {
-                                ForEach(Array(viewModel.workflows.prefix(workflowDisplayLimit))) { workflow in
-                                    NavigationLink {
-                                        OpsWorkflowDetailView(
-                                            workflow: workflow,
-                                            loadDetail: viewModel.loadWorkflowDetail(id:)
-                                        )
-                                    } label: {
-                                        HStack(spacing: LoomSpacing.sm) {
-                                            StatusAccentBar(color: workflowStatusColor(workflow.status))
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                HStack(spacing: 6) {
-                                                    Text(workflow.name ?? workflow.id)
-                                                        .font(LoomTypography.bodyMedium)
-                                                        .foregroundStyle(LoomColors.textSecondary)
-                                                        .lineLimit(1)
-                                                    StatusBadge(
-                                                        workflow.status.rawValue,
-                                                        color: workflowStatusColor(workflow.status)
-                                                    )
-                                                }
-                                                Text(workflow.currentStep ?? "No current step")
-                                                    .font(LoomTypography.caption)
-                                                    .foregroundStyle(LoomColors.textTertiary)
-                                            }
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                        }
-                                        .padding(.vertical, 2)
-                                    }
-                                }
-                                if viewModel.workflows.count > workflowDisplayLimit {
-                                    Button {
-                                        withAnimation(.easeInOut(duration: 0.25)) {
-                                            workflowDisplayLimit += 8
-                                        }
-                                        HapticManager.light()
-                                    } label: {
-                                        Text("Show \(min(8, viewModel.workflows.count - workflowDisplayLimit)) More")
-                                            .font(LoomTypography.caption)
-                                            .foregroundStyle(LoomColors.accent)
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 6)
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
                 .cardAppear(index: 2)
             }
 
             LoomCard {
-                VStack(alignment: .leading, spacing: LoomSpacing.md) {
-                    Text("Session Actions")
-                        .font(LoomTypography.headlineMedium)
-                        .foregroundStyle(LoomColors.textPrimary)
+                VStack(alignment: .leading, spacing: LoomSpacing.sm) {
+                    DisclosureGroup(isExpanded: $showSessionControls) {
+                        VStack(alignment: .leading, spacing: LoomSpacing.md) {
+                            Text("Scoped mobile mutations: session create/end only.")
+                                .font(LoomTypography.caption)
+                                .foregroundStyle(LoomColors.textTertiary)
 
-                    Text("Scoped mobile mutations: session create/end only.")
-                        .font(LoomTypography.caption)
-                        .foregroundStyle(LoomColors.textTertiary)
-
-                    Text("Start Session")
-                        .font(LoomTypography.bodyMedium)
-                    TextField("Agent ID", text: $createAgentID)
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        #endif
-                    TextField("Namespace (optional)", text: $createNamespace)
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled()
-                    TextField("Description (optional)", text: $createDescription)
-                        .textFieldStyle(.roundedBorder)
-                    Toggle("Auto recall", isOn: $createAutoRecall)
-
-                    Button {
-                        viewModel.clearMutationMessages()
-                        showCreateConfirmation = true
-                    } label: {
-                        if viewModel.isMutatingSession {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                        } else {
                             Text("Start Session")
-                                .frame(maxWidth: .infinity)
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(createAgentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isMutatingSession)
+                                .font(LoomTypography.bodyMedium)
+                            TextField("Agent ID", text: $createAgentID)
+                                .textFieldStyle(.roundedBorder)
+                                .autocorrectionDisabled()
+                                #if os(iOS)
+                                .textInputAutocapitalization(.never)
+                                #endif
+                            TextField("Namespace (optional)", text: $createNamespace)
+                                .textFieldStyle(.roundedBorder)
+                                .autocorrectionDisabled()
+                            TextField("Description (optional)", text: $createDescription)
+                                .textFieldStyle(.roundedBorder)
+                            Toggle("Auto recall", isOn: $createAutoRecall)
 
-                    Divider()
+                            Button {
+                                viewModel.clearMutationMessages()
+                                showCreateConfirmation = true
+                            } label: {
+                                if viewModel.isMutatingSession {
+                                    ProgressView()
+                                        .frame(maxWidth: .infinity)
+                                } else {
+                                    Text("Start Session")
+                                        .frame(maxWidth: .infinity)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(createAgentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isMutatingSession)
 
-                    Text("End Session")
-                        .font(LoomTypography.bodyMedium)
-                    TextField("Session ID", text: $endSessionID)
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        #endif
-                    Toggle("Include summary", isOn: $endWithSummary)
+                            Divider()
 
-                    Button(role: .destructive) {
-                        viewModel.clearMutationMessages()
-                        showEndConfirmation = true
-                    } label: {
-                        if viewModel.isMutatingSession {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                        } else {
                             Text("End Session")
-                                .frame(maxWidth: .infinity)
+                                .font(LoomTypography.bodyMedium)
+                            TextField("Session ID", text: $endSessionID)
+                                .textFieldStyle(.roundedBorder)
+                                .autocorrectionDisabled()
+                                #if os(iOS)
+                                .textInputAutocapitalization(.never)
+                                #endif
+                            Toggle("Include summary", isOn: $endWithSummary)
+
+                            Button(role: .destructive) {
+                                viewModel.clearMutationMessages()
+                                showEndConfirmation = true
+                            } label: {
+                                if viewModel.isMutatingSession {
+                                    ProgressView()
+                                        .frame(maxWidth: .infinity)
+                                } else {
+                                    Text("End Session")
+                                        .frame(maxWidth: .infinity)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(endSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isMutatingSession)
                         }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Advanced session controls")
+                                    .font(LoomTypography.headlineMedium)
+                                    .foregroundStyle(LoomColors.textPrimary)
+                                Text("Open only when you need to create or end a session from mobile.")
+                                    .font(LoomTypography.caption)
+                                    .foregroundStyle(LoomColors.textTertiary)
+                            }
+                            Spacer()
+                            Image(systemName: showSessionControls ? "chevron.up" : "chevron.down")
+                                .font(.caption2)
+                                .foregroundStyle(LoomColors.accent)
+                        }
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.bordered)
-                    .disabled(endSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isMutatingSession)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            Text("Mutations require proper mobile scopes.")
-                .font(LoomTypography.caption)
-                .foregroundStyle(LoomColors.textTertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

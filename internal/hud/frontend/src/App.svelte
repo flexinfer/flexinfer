@@ -196,10 +196,10 @@
         class:active={router.view === overviewId}
         onclick={() => { router.navigate(overviewId); }}
         aria-current={router.view === overviewId ? 'page' : undefined}
-        title="Overview (` or o)"
+        title="What needs attention now? (` or o)"
       >
         <span class="nav-tab-icon">{'\u25A3'}</span>
-        <span class="nav-tab-label">Overview</span>
+        <span class="nav-tab-label">Now</span>
         <kbd class="nav-tab-key">o</kbd>
       </button>
 

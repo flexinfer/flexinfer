@@ -11,29 +11,29 @@
   import { costStore } from '../stores/cost.svelte.ts';
   import { rbacStore } from '../stores/rbac.svelte.ts';
   import { coordinationStore } from '../stores/coordination.svelte.ts';
-  import SparkLine from '../widgets/SparkLine.svelte';
-  import Gauge from '../widgets/Gauge.svelte';
-  import DonutChart from '../widgets/DonutChart.svelte';
 
-  /**
-   * OverviewPanel renders a KPI strip at the top followed by all panels
-   * simultaneously as a compact mini-dashboard grid.
-   */
-
-  // --- Loading state ---
   let initialLoad = $state(true);
-
-  // --- Daily KPIs ---
-  let kpis = $state({ sessions_today: 0, tokens_today: 0, tasks_completed_today: 0, active_agents: 0, pending_approvals: 0, file_conflicts: 0, conflict_details: [] });
+  let kpis = $state({
+    sessions_today: 0,
+    tokens_today: 0,
+    tasks_completed_today: 0,
+    active_agents: 0,
+    pending_approvals: 0,
+    file_conflicts: 0,
+    conflict_details: [],
+  });
 
   async function fetchKPIs() {
     try {
       const res = await globalThis.fetch('/api/kpis');
       if (res.ok) {
         kpis = await res.json();
-        initialLoad = false;
       }
-    } catch { /* non-critical */ }
+    } catch {
+      // Non-critical: the landing view can still render from the live stores.
+    } finally {
+      initialLoad = false;
+    }
   }
 
   $effect(() => {
@@ -54,8 +54,6 @@
   let activeTasks = $derived(taskStore.inProgressCount);
   let blockedTasks = $derived(taskStore.blockedCount);
   let coordinationSummary = $derived(coordinationStore.summary);
-  let attentionAgents = $derived(coordinationStore.topAttentionAgents);
-  let riskyNamespaces = $derived(coordinationStore.riskyNamespaces);
   let activeBlockers = $derived(coordinationStore.activeBlockers);
   let topRelations = $derived(coordinationStore.relations.slice(0, 4));
 
@@ -65,11 +63,9 @@
   let totalTokens = $derived(memoryStore.stats.total_tokens ?? 0);
   let compressionRatio = $derived(memoryStore.stats.compression?.ratio ?? 0);
 
-  // --- Daemon status ---
   let daemonRunning = $derived(fleetStore.status?.running ?? false);
   let processCount = $derived(fleetStore.status?.processes?.length ?? 0);
 
-  // --- Graph stats ---
   let graphEntities = $derived(graphStore.stats?.total_entities ?? 0);
   let graphTopTypes = $derived.by(() => {
     const types = graphStore.stats?.entity_types ?? {};
@@ -89,33 +85,28 @@
       if (diff < 60) return `${diff}s ago`;
       if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
       return `${Math.floor(diff / 3600)}h ago`;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   });
 
-  let activeWorkflows = $derived(workflowStore.activeWorkflows.length);
   let pendingApprovals = $derived(
     workflowStore.activeWorkflows.filter(w => w.status === 'waiting_approval').length
   );
 
-  // Cost tracking
   let costEnabled = $derived(costStore.enabled);
-  let totalCalls = $derived(costStore.totalCalls);
-  let totalCached = $derived(costStore.totalCached);
-  let totalDenied = $derived(costStore.totalDenied);
-  let totalErrors = $derived(costStore.totalErrors);
-
-  // RBAC
   let rbacEnabled = $derived(rbacStore.enabled);
   let rbacDeniedCount = $derived(rbacStore.deniedCount);
   let auditEnabled = $derived(rbacStore.auditEnabled);
 
-  // OTel status (fetched inline)
   let otelStatus = $state({ otlp_configured: false, traced_servers: 0, total_servers: 0 });
   async function fetchOTelStatus() {
     try {
       const res = await globalThis.fetch('/api/otel');
       if (res.ok) otelStatus = await res.json();
-    } catch { /* non-critical */ }
+    } catch {
+      // Non-critical.
+    }
   }
   $effect(() => {
     fetchOTelStatus();
@@ -131,66 +122,9 @@
     };
   });
 
-  // Rolling history buffers for mini sparklines (plain arrays to avoid circular deps).
-  const _healthBuf = [];
-  const _memoryBuf = [];
-  let healthHistory = $state([]);
-  let memoryHistory = $state([]);
-
-  $effect(() => {
-    const sc = serverCount;
-    const hc = healthyCount;
-    if (sc > 0) {
-      _healthBuf.push(Math.round((hc / sc) * 100));
-      if (_healthBuf.length > 20) _healthBuf.shift();
-      healthHistory = [..._healthBuf];
-    }
-  });
-
-  $effect(() => {
-    const total = workingItems + shortItems + longItems;
-    if (total > 0 || _memoryBuf.length > 0) {
-      _memoryBuf.push(total);
-      if (_memoryBuf.length > 20) _memoryBuf.shift();
-      memoryHistory = [..._memoryBuf];
-    }
-  });
-
-  // Rolling token trend buffer.
-  const _tokenBuf = [];
-  let tokenHistory = $state([]);
-
-  $effect(() => {
-    const t = kpis.tokens_today;
-    if (t > 0 || _tokenBuf.length > 0) {
-      _tokenBuf.push(t);
-      if (_tokenBuf.length > 20) _tokenBuf.shift();
-      tokenHistory = [..._tokenBuf];
-    }
-  });
-
-  // Nearest-to-completion active workflow progress.
-  let bestWorkflowProgress = $derived.by(() => {
-    const active = workflowStore.activeWorkflows;
-    if (!active.length) return -1;
-    let best = -1;
-    for (const wf of active) {
-      const p = wf.progress;
-      if (typeof p === 'number' && p > best) best = p;
-      // Fallback: derive from steps if no progress field.
-      if (p == null && wf.steps?.length) {
-        const done = wf.steps.filter(s => s.status === 'completed' || s.status === 'approved').length;
-        const derived = done / wf.steps.length;
-        if (derived > best) best = derived;
-      }
-    }
-    return best;
-  });
-
-  // Tick counter to refresh "last updated" text periodically.
   let _tick = $state(0);
   $effect(() => {
-    const t = setInterval(() => { _tick++ }, 10000);
+    const t = setInterval(() => { _tick++; }, 10000);
     return () => clearInterval(t);
   });
 
@@ -207,304 +141,322 @@
   function navigate(panel) {
     router.navigate(panel);
   }
+
+  let heroSummary = $derived.by(() => {
+    const conflict = kpis.conflict_details?.[0];
+
+    if (kpis.file_conflicts > 0) {
+      return {
+        eyebrow: 'Coordination pressure',
+        headline: 'File conflicts need attention',
+        detail: conflict
+          ? `${conflict.path} is shared by ${conflict.agents.join(', ')}`
+          : `${kpis.file_conflicts} file conflict${kpis.file_conflicts === 1 ? '' : 's'} detected`,
+        tone: 'alert',
+      };
+    }
+
+    if (downCount > 0) {
+      return {
+        eyebrow: 'Infrastructure watch',
+        headline: 'Server health needs attention',
+        detail: `${downCount} server${downCount === 1 ? '' : 's'} down · ${serverCount} monitored`,
+        tone: 'alert',
+      };
+    }
+
+    if (blockedTasks > 0 || coordinationSummary.cross_agent_blockers > 0) {
+      return {
+        eyebrow: 'Work queue',
+        headline: 'Blocked work needs attention',
+        detail: `${blockedTasks} blocked task${blockedTasks === 1 ? '' : 's'} · ${coordinationSummary.cross_agent_blockers} cross-agent blocker${coordinationSummary.cross_agent_blockers === 1 ? '' : 's'}`,
+        tone: 'alert',
+      };
+    }
+
+    if (pendingApprovals > 0) {
+      return {
+        eyebrow: 'Approvals pending',
+        headline: 'Workflow approvals are waiting',
+        detail: `${pendingApprovals} workflow decision${pendingApprovals === 1 ? '' : 's'} ready for review`,
+        tone: 'alert',
+      };
+    }
+
+    return {
+      eyebrow: 'Landing surface',
+      headline: 'No active pressure right now',
+      detail: 'The overview is quiet. Open a lane below when you want deeper detail.',
+      tone: 'calm',
+    };
+  });
+
+  let heroSignals = $derived.by(() => [
+    { label: 'today sessions', value: kpis.sessions_today },
+    { label: 'tasks completed', value: kpis.tasks_completed_today },
+    { label: 'active agents', value: agentCount },
+    { label: 'approvals waiting', value: pendingApprovals },
+  ]);
+
+  let priorityLinks = $derived.by(() => [
+    {
+      route: 'fleet',
+      label: 'Fleet',
+      value: `${sessionCount} sessions`,
+      detail: coordinationSummary.conflict_files > 0
+        ? `${coordinationSummary.conflict_files} conflict${coordinationSummary.conflict_files === 1 ? '' : 's'}`
+        : `${coordinationSummary.namespaces_at_risk} namespace${coordinationSummary.namespaces_at_risk === 1 ? '' : 's'} at risk`,
+    },
+    {
+      route: 'servers',
+      label: 'Servers',
+      value: serverCount > 0 ? `${healthyCount}/${serverCount} healthy` : 'No servers',
+      detail: downCount > 0
+        ? `${downCount} down`
+        : `${daemonRunning ? 'daemon running' : 'daemon stopped'} · ${processCount} processes`,
+    },
+    {
+      route: 'tasks',
+      label: 'Work',
+      value: `${pendingTasks} pending`,
+      detail: `${activeTasks} active · ${blockedTasks} blocked`,
+    },
+    {
+      route: 'workflows',
+      label: 'Approvals',
+      value: `${pendingApprovals} waiting`,
+      detail: pendingApprovals > 0 ? 'Workflow decisions are waiting' : 'No approval pressure',
+    },
+  ]);
+
+  let primaryCards = $derived.by(() => [
+    {
+      route: 'fleet',
+      label: 'Coordination pressure',
+      value: `${sessionCount} sessions`,
+      detail: `${agentCount} active agents · ${namespaceCount} namespaces · ${coordinationSummary.namespaces_at_risk} at risk`,
+      foot: activeBlockers.length > 0
+        ? `${activeBlockers[0].task_title} is blocked by ${activeBlockers[0].blocked_by_task_title || activeBlockers[0].blocked_by_task_id}`
+        : topRelations.length > 0
+          ? `${topRelations[0].source_label} ↔ ${topRelations[0].target_label}`
+          : 'No active relation hotspots',
+      alert: coordinationSummary.conflict_files > 0 || coordinationSummary.cross_agent_blockers > 0 || coordinationSummary.agents_needing_attention > 0,
+      tags: [
+        {
+          label: 'Conflicts',
+          active: coordinationSummary.conflict_files > 0,
+          note: coordinationSummary.conflict_files > 0 ? String(coordinationSummary.conflict_files) : 'clear',
+        },
+        {
+          label: 'Attention',
+          active: coordinationSummary.agents_needing_attention > 0,
+          note: coordinationSummary.agents_needing_attention > 0 ? String(coordinationSummary.agents_needing_attention) : 'clear',
+        },
+        {
+          label: 'Risk',
+          active: coordinationSummary.namespaces_at_risk > 0,
+          note: coordinationSummary.namespaces_at_risk > 0 ? String(coordinationSummary.namespaces_at_risk) : 'clear',
+        },
+      ],
+    },
+    {
+      route: 'servers',
+      label: 'Runtime health',
+      value: serverCount > 0 ? `${healthyCount}/${serverCount} healthy` : 'No servers',
+      detail: `${downCount > 0 ? `${downCount} down` : 'All servers reachable'} · ${daemonRunning ? 'daemon running' : 'daemon stopped'} · ${processCount} processes`,
+      foot: `${otelStatus.otlp_configured ? 'OTel configured' : 'OTel off'} · ${costEnabled ? 'cost tracking on' : 'cost tracking off'}`,
+      alert: downCount > 0 || !daemonRunning,
+      tags: [
+        {
+          label: 'RBAC',
+          active: rbacEnabled,
+          note: rbacEnabled && rbacDeniedCount > 0 ? `${rbacDeniedCount} denied` : (rbacEnabled ? 'on' : 'off'),
+        },
+        {
+          label: 'Audit',
+          active: auditEnabled,
+          note: auditEnabled ? 'on' : 'off',
+        },
+        {
+          label: 'OTel',
+          active: otelStatus.otlp_configured,
+          note: otelStatus.otlp_configured ? 'on' : 'off',
+        },
+        {
+          label: 'Cost',
+          active: costEnabled,
+          note: costEnabled ? 'on' : 'off',
+        },
+      ],
+    },
+    {
+      route: 'tasks',
+      label: 'Work queue',
+      value: `${pendingTasks} pending`,
+      detail: `${activeTasks} active · ${blockedTasks} blocked`,
+      foot: pendingApprovals > 0
+        ? `${pendingApprovals} approvals waiting`
+        : `${coordinationSummary.cross_agent_blockers} cross-agent blockers`,
+      alert: blockedTasks > 0 || pendingApprovals > 0 || coordinationSummary.cross_agent_blockers > 0,
+      tags: [
+        {
+          label: 'Approvals',
+          active: pendingApprovals > 0,
+          note: pendingApprovals > 0 ? String(pendingApprovals) : 'clear',
+        },
+        {
+          label: 'Blocked',
+          active: blockedTasks > 0,
+          note: blockedTasks > 0 ? String(blockedTasks) : 'clear',
+        },
+        {
+          label: 'Cross-agent',
+          active: coordinationSummary.cross_agent_blockers > 0,
+          note: coordinationSummary.cross_agent_blockers > 0 ? String(coordinationSummary.cross_agent_blockers) : 'clear',
+        },
+      ],
+    },
+  ]);
+
+  let supportSurfaces = $derived.by(() => [
+    {
+      route: 'memory',
+      label: 'Memory',
+      value: `${workingItems + shortItems + longItems} items`,
+      detail: `${totalTokens.toLocaleString()} tokens · ${compressionRatio > 0 ? `${Math.round(compressionRatio * 100)}% compressed` : 'no compression data'}`,
+    },
+    {
+      route: 'stream',
+      label: 'Stream',
+      value: `${streamCount} entries`,
+      detail: lastStreamAge ? `last update ${lastStreamAge}` : 'no stream data',
+    },
+    {
+      route: 'sandbox',
+      label: 'Sandbox',
+      value: `${sandboxStore.runningCount} running`,
+      detail: sandboxStore.available
+        ? `${sandboxStore.totalExecs} exec${sandboxStore.totalExecs === 1 ? '' : 's'} · ${sandboxStore.totalBuilds} build${sandboxStore.totalBuilds === 1 ? '' : 's'}`
+        : 'offline',
+    },
+    {
+      route: 'graph',
+      label: 'Graph',
+      value: `${graphEntities} entities`,
+      detail: graphTopTypes,
+    },
+  ]);
 </script>
 
 <div class="panel overview-panel">
   {#if initialLoad}
-    <!-- Skeleton loading state -->
-    <div class="kpi-strip">
-      {#each Array(6) as _}
-        <div class="kpi-tile"><div class="skeleton skeleton-bar" style="width: 60%; margin: 0 auto;"></div><div class="skeleton skeleton-text" style="width: 80%; margin: 4px auto 0;"></div></div>
-      {/each}
-    </div>
-    <div class="overview-grid">
-      {#each Array(6) as _}
-        <div class="tile tile-skeleton">
-          <div class="tile-header"><div class="skeleton skeleton-text" style="width: 50%;"></div></div>
-          <div class="tile-body">
-            <div class="skeleton skeleton-bar" style="width: 40%;"></div>
-            <div class="skeleton skeleton-text" style="width: 70%; margin-top: 6px;"></div>
-          </div>
+    <section class="overview-hero hero-skeleton">
+      <div class="hero-copy">
+        <div class="skeleton skeleton-text" style="width: 120px;"></div>
+        <div class="skeleton skeleton-bar" style="width: min(540px, 78%); height: 30px; margin-top: 10px;"></div>
+        <div class="skeleton skeleton-text" style="width: min(520px, 70%); margin-top: 10px;"></div>
+        <div class="hero-signals">
+          {#each Array(4) as _}
+            <div class="signal-chip signal-chip-skeleton"></div>
+          {/each}
+        </div>
+      </div>
+      <div class="hero-rail">
+        {#each Array(4) as _}
+          <div class="rail-item rail-item-skeleton"></div>
+        {/each}
+      </div>
+    </section>
+
+    <div class="focus-grid">
+      {#each Array(3) as _}
+        <div class="focus-card focus-card-skeleton">
+          <div class="skeleton skeleton-text" style="width: 45%;"></div>
+          <div class="skeleton skeleton-bar" style="width: 65%; height: 24px; margin-top: 10px;"></div>
+          <div class="skeleton skeleton-text" style="width: 80%; margin-top: 10px;"></div>
         </div>
       {/each}
     </div>
   {:else}
-  <!-- Daily KPI Strip -->
-  <div class="kpi-strip">
-    <div class="kpi-tile">
-      <div class="kpi-value">{kpis.sessions_today}</div>
-      <div class="kpi-label">Sessions Today</div>
-    </div>
-    <div class="kpi-tile">
-      <div class="kpi-value-row">
-        <div class="kpi-value">{kpis.tokens_today?.toLocaleString?.() ?? kpis.tokens_today}</div>
-        {#if tokenHistory.length >= 2}
-          <SparkLine data={tokenHistory} width={60} height={24} color="var(--accent)" />
-        {/if}
-      </div>
-      <div class="kpi-label">Tokens Today</div>
-    </div>
-    <div class="kpi-tile">
-      <div class="kpi-value">{kpis.tasks_completed_today}</div>
-      <div class="kpi-label">Tasks Done</div>
-    </div>
-    <div class="kpi-tile">
-      <div class="kpi-value">{kpis.active_agents}</div>
-      <div class="kpi-label">Active Agents</div>
-    </div>
-    <div class="kpi-tile" class:kpi-alert={kpis.file_conflicts > 0}>
-      <div class="kpi-value">{kpis.file_conflicts}</div>
-      <div class="kpi-label">Conflicts</div>
-      {#if kpis.conflict_details?.length > 0}
-        <div class="conflict-details">
-          {#each kpis.conflict_details.slice(0, 3) as cd}
-            <div class="conflict-line">{cd.path}: {cd.agents.join(', ')}</div>
-          {/each}
-          {#if kpis.conflict_details.length > 3}
-            <div class="conflict-line conflict-more">+{kpis.conflict_details.length - 3} more</div>
-          {/if}
+    <section class="overview-hero" class:hero-alert={heroSummary.tone === 'alert'}>
+      <div class="hero-copy">
+        <div class="hero-eyebrow">{heroSummary.eyebrow}</div>
+        <h1 class="hero-title">{heroSummary.headline}</h1>
+        <p class="hero-detail">{heroSummary.detail}</p>
+        <div class="hero-note">
+          Today: {kpis.sessions_today} sessions · {kpis.tasks_completed_today} tasks completed
         </div>
-      {/if}
-    </div>
-    <div class="kpi-tile" class:kpi-alert={kpis.pending_approvals > 0}>
-      <div class="kpi-value">{kpis.pending_approvals}</div>
-      <div class="kpi-label">Approvals</div>
-    </div>
-  </div>
-
-  <div class="coordination-strip">
-    <div class="coord-card">
-      <div class="coord-label">Coordination</div>
-      <div class="coord-value">{coordinationSummary.shared_branches} shared / {coordinationSummary.conflict_files} conflicted</div>
-      <div class="coord-meta">{coordinationSummary.agents_needing_attention} attention agents · {coordinationSummary.idle_claim_holders} idle holders</div>
-    </div>
-    <div class="coord-card">
-      <div class="coord-label">Delivery Lanes</div>
-      <div class="coord-value">{coordinationSummary.active_namespaces} active namespaces</div>
-      <div class="coord-meta">{coordinationSummary.namespaces_at_risk} at risk · {coordinationSummary.orphan_tasks} orphan tasks</div>
-      {#if riskyNamespaces.length > 0}
-        <div class="coord-list-item">{riskyNamespaces[0].namespace}: {riskyNamespaces[0].attention_reasons?.[0] ?? 'attention required'}</div>
-      {/if}
-    </div>
-    <div class="coord-card">
-      <div class="coord-label">Attention Agents</div>
-      {#if attentionAgents.length > 0}
-        <div class="coord-list">
-          {#each attentionAgents.slice(0, 3) as agent}
-            <div class="coord-list-item">{agent.agent_id}: {(agent.attention_reasons?.[0] ?? 'attention')}</div>
+        <div class="hero-signals">
+          {#each heroSignals as signal (signal.label)}
+            <div class="signal-chip">
+              <span>{signal.label}</span>
+              <strong>{signal.value}</strong>
+            </div>
           {/each}
         </div>
-      {:else}
-        <div class="coord-meta">No active coordination pressure</div>
-      {/if}
-    </div>
-    <div class="coord-card">
-      <div class="coord-label">Dependency Radar</div>
-      <div class="coord-value">{coordinationSummary.cross_agent_blockers} cross-agent blockers</div>
-      {#if activeBlockers.length > 0}
-        <div class="coord-list">
-          {#each activeBlockers.slice(0, 2) as blocker}
-            <div class="coord-list-item">{blocker.task_title} → {blocker.blocked_by_task_title || blocker.blocked_by_task_id}</div>
+      </div>
+
+      <div class="hero-rail">
+        <div class="rail-label">Priority lanes</div>
+        <div class="rail-title">Open the lane that needs detail.</div>
+        <div class="rail-stack">
+          {#each priorityLinks as link (link.route)}
+            <button class="rail-item" onclick={() => navigate(link.route)}>
+              <span class="rail-item-label">{link.label}</span>
+              <strong>{link.value}</strong>
+              <small>{link.detail}</small>
+            </button>
           {/each}
         </div>
-      {:else if topRelations.length > 0}
-        <div class="coord-list">
-          {#each topRelations.slice(0, 2) as relation}
-            <div class="coord-list-item">{relation.source_label} ↔ {relation.target_label}</div>
-          {/each}
-        </div>
-      {:else}
-        <div class="coord-meta">No active relation hotspots</div>
-      {/if}
-    </div>
-  </div>
+      </div>
+    </section>
 
-  <div class="overview-grid">
-    <!-- Fleet tile -->
-    <button class="tile" class:tile-warn={coordinationSummary.conflict_files > 0} onclick={() => navigate('fleet')}>
-      <div class="tile-header">
-        <span class="tile-icon">◈</span>
-        <span class="tile-title">Fleet</span>
-        {#if coordinationSummary.conflict_files > 0}<span class="tile-badge-alert">{coordinationSummary.conflict_files}</span>{/if}
+    <section class="section">
+      <div class="section-heading">
+        <span class="section-label">Primary surfaces</span>
+        <span class="section-note">These are the first places to look when the HUD is asking for attention.</span>
       </div>
-      <div class="tile-body">
-        <div class="tile-metric">{sessionCount} <span class="tile-unit">sessions</span></div>
-        <div class="tile-detail">{agentCount} agents · {namespaceCount} ns · {coordinationSummary.namespaces_at_risk} at risk</div>
+      <div class="focus-grid">
+        {#each primaryCards as card (card.route)}
+          <button
+            class="focus-card"
+            class:focus-card-alert={card.alert}
+            onclick={() => navigate(card.route)}
+          >
+            <div class="card-head">
+              <span class="card-title">{card.label}</span>
+              <span class="card-cta">Open</span>
+            </div>
+            <div class="card-value">{card.value}</div>
+            <div class="card-detail">{card.detail}</div>
+            <div class="card-tags">
+              {#each card.tags as tag (tag.label)}
+                <span class="card-tag" class:tag-on={tag.active} class:tag-off={!tag.active}>
+                  {tag.label} · {tag.note}
+                </span>
+              {/each}
+            </div>
+            <div class="card-foot">{card.foot}</div>
+          </button>
+        {/each}
       </div>
-      {#if agoText(fleetStore.lastUpdated)}<div class="tile-footer">{agoText(fleetStore.lastUpdated)}</div>{/if}
-    </button>
+    </section>
 
-    <!-- Health tile -->
-    <button class="tile" class:tile-warn={downCount > 0} onclick={() => navigate('servers')}>
-      <div class="tile-header">
-        <span class="tile-icon">♥</span>
-        <span class="tile-title">Health</span>
-        {#if downCount > 0}<span class="tile-badge-alert">{downCount}</span>{/if}
+    <section class="section support-section">
+      <div class="section-heading">
+        <span class="section-label">Supporting surfaces</span>
+        <span class="section-note">Open these when the primary lanes are quiet.</span>
       </div>
-      <div class="tile-body">
-        <div class="tile-metric-row">
-          <div class="tile-metric">{healthyCount}<span class="tile-unit">/{serverCount} ok</span></div>
-          {#if healthHistory.length >= 2}
-            <SparkLine data={healthHistory} width={60} height={24} color="var(--success)" />
-          {/if}
-        </div>
-        {#if serverCount > 0}
-          <Gauge value={healthyCount} max={serverCount} color="var(--success)" showPercentage={false} />
-        {/if}
-        <div class="tile-detail" class:tile-alert={downCount > 0}>
-          {downCount > 0 ? `${downCount} down` : 'all healthy'}
-        </div>
+      <div class="support-grid">
+        {#each supportSurfaces as surface (surface.route)}
+          <button class="support-card" onclick={() => navigate(surface.route)}>
+            <span class="support-label">{surface.label}</span>
+            <strong>{surface.value}</strong>
+            <small>{surface.detail}</small>
+          </button>
+        {/each}
       </div>
-      {#if agoText(healthStore.lastUpdated)}<div class="tile-footer">{agoText(healthStore.lastUpdated)}</div>{/if}
-    </button>
-
-    <!-- Tasks tile -->
-    <button class="tile" class:tile-warn={blockedTasks > 0} onclick={() => navigate('tasks')}>
-      <div class="tile-header">
-        <span class="tile-icon">☑</span>
-        <span class="tile-title">Tasks</span>
-        {#if blockedTasks > 0}<span class="tile-badge-alert">{blockedTasks}</span>{/if}
-      </div>
-      <div class="tile-body">
-        <div class="tile-metric-row">
-          <div>
-            <div class="tile-metric">{pendingTasks} <span class="tile-unit">pending</span></div>
-            <div class="tile-detail">{activeTasks} active · {blockedTasks} blocked</div>
-          </div>
-          {#if pendingTasks + activeTasks + blockedTasks > 0}
-            <DonutChart
-              segments={[
-                { label: 'Pending', value: pendingTasks, color: 'var(--warning)' },
-                { label: 'Active', value: activeTasks, color: 'var(--success)' },
-                { label: 'Blocked', value: blockedTasks, color: 'var(--error)' },
-              ]}
-              size={48}
-              thickness={6}
-              centerValue={String(pendingTasks + activeTasks + blockedTasks)}
-            />
-          {/if}
-        </div>
-        {#if coordinationSummary.cross_agent_blockers > 0}
-          <div class="tile-detail tile-alert">{coordinationSummary.cross_agent_blockers} x-agent blockers</div>
-        {/if}
-      </div>
-      {#if agoText(taskStore.lastUpdated)}<div class="tile-footer">{agoText(taskStore.lastUpdated)}</div>{/if}
-    </button>
-
-    <!-- Memory tile -->
-    <button class="tile" onclick={() => navigate('memory')}>
-      <div class="tile-header">
-        <span class="tile-icon">⦾</span>
-        <span class="tile-title">Memory</span>
-      </div>
-      <div class="tile-body">
-        <div class="tile-metric-row">
-          <div class="tile-metric tile-tier">
-            <span class="tier-w" title="Working memory">{workingItems}<span class="tier-label">W</span></span>
-            <span class="tier-s" title="Short-term memory">{shortItems}<span class="tier-label">S</span></span>
-            <span class="tier-l" title="Long-term memory">{longItems}<span class="tier-label">L</span></span>
-          </div>
-          {#if memoryHistory.length >= 2}
-            <SparkLine data={memoryHistory} width={60} height={24} color="var(--tier-short)" />
-          {/if}
-        </div>
-        <div class="tile-detail">{totalTokens.toLocaleString()} tokens{#if compressionRatio > 0} · {Math.round(compressionRatio * 100)}% compressed{/if}</div>
-      </div>
-      {#if agoText(memoryStore.lastUpdated)}<div class="tile-footer">{agoText(memoryStore.lastUpdated)}</div>{/if}
-    </button>
-
-    <!-- Stream tile -->
-    <button class="tile" onclick={() => navigate('stream')}>
-      <div class="tile-header">
-        <span class="tile-icon">≡</span>
-        <span class="tile-title">Stream</span>
-      </div>
-      <div class="tile-body">
-        <div class="tile-metric">{streamCount} <span class="tile-unit">entries</span></div>
-        <div class="tile-detail">{lastStreamAge ? `last: ${lastStreamAge}` : 'no data'}</div>
-      </div>
-      {#if agoText(streamStore.lastUpdated)}<div class="tile-footer">{agoText(streamStore.lastUpdated)}</div>{/if}
-    </button>
-
-    <!-- Sandbox tile -->
-    <button class="tile" onclick={() => navigate('sandbox')}>
-      <div class="tile-header">
-        <span class="tile-icon">{'\u2B22'}</span>
-        <span class="tile-title">Sandbox</span>
-      </div>
-      <div class="tile-body">
-        <div class="tile-metric">{sandboxStore.runningCount} <span class="tile-unit">running</span></div>
-        <div class="tile-detail">{sandboxStore.available ? `${sandboxStore.totalExecs} execs · ${sandboxStore.totalBuilds} builds` : 'offline'}</div>
-      </div>
-      {#if agoText(sandboxStore.lastUpdated)}<div class="tile-footer">{agoText(sandboxStore.lastUpdated)}</div>{/if}
-    </button>
-
-    <!-- Workflows tile -->
-    <button class="tile" onclick={() => navigate('workflows')}>
-      <div class="tile-header">
-        <span class="tile-icon">⚙</span>
-        <span class="tile-title">Workflows</span>
-      </div>
-      <div class="tile-body">
-        <div class="tile-metric">{activeWorkflows} <span class="tile-unit">active</span></div>
-        <div class="tile-detail" class:tile-alert={pendingApprovals > 0}>
-          {pendingApprovals > 0 ? `${pendingApprovals} awaiting approval` : 'none waiting'}
-        </div>
-        {#if bestWorkflowProgress >= 0}
-          <div class="tile-progress-track">
-            <div class="tile-progress-fill" style="width: {(bestWorkflowProgress * 100).toFixed(0)}%"></div>
-          </div>
-        {/if}
-      </div>
-      {#if agoText(workflowStore.lastUpdated)}<div class="tile-footer">{agoText(workflowStore.lastUpdated)}</div>{/if}
-    </button>
-
-    <!-- Cost tile -->
-    {#if costEnabled}
-      <button class="tile" onclick={() => navigate('servers')}>
-        <div class="tile-header">
-          <span class="tile-icon">$</span>
-          <span class="tile-title">Cost</span>
-        </div>
-        <div class="tile-body">
-          <div class="tile-metric">{totalCalls.toLocaleString()} <span class="tile-unit">calls</span></div>
-          <div class="tile-detail">{totalCached} cached · {totalDenied} denied · {totalErrors} errors</div>
-        </div>
-        {#if costStore.lastUpdated}<div class="tile-footer">{agoText(costStore.lastUpdated)}</div>{/if}
-      </button>
-    {/if}
-
-    <!-- Daemon tile -->
-    <button class="tile" class:tile-alert-bg={!daemonRunning} onclick={() => navigate('servers')}>
-      <div class="tile-header">
-        <span class="tile-icon">{'\u2699'}</span>
-        <span class="tile-title">Daemon</span>
-      </div>
-      <div class="tile-body">
-        <div class="tile-metric">{daemonRunning ? 'Running' : 'Down'}</div>
-        <div class="tile-detail">{processCount} processes · {fleetStore.status?.servers ?? 0} servers</div>
-        <div class="tile-badges">
-          <span class="tile-badge" class:badge-active={rbacEnabled} class:badge-off={!rbacEnabled}>RBAC: {rbacEnabled ? 'active' : 'off'}{#if rbacEnabled && rbacDeniedCount > 0} ({rbacDeniedCount}){/if}</span>
-          <span class="tile-badge" class:badge-active={auditEnabled} class:badge-off={!auditEnabled}>Audit: {auditEnabled ? 'active' : 'off'}</span>
-          <span class="tile-badge" class:badge-active={otelStatus.otlp_configured} class:badge-off={!otelStatus.otlp_configured}>OTel: {otelStatus.otlp_configured ? 'active' : 'off'}</span>
-          <span class="tile-badge" class:badge-active={costEnabled} class:badge-off={!costEnabled}>Cost: {costEnabled ? 'active' : 'off'}</span>
-        </div>
-      </div>
-    </button>
-
-    <!-- Graph tile -->
-    <button class="tile" onclick={() => navigate('graph')}>
-      <div class="tile-header">
-        <span class="tile-icon">{'\u25C8'}</span>
-        <span class="tile-title">Graph</span>
-      </div>
-      <div class="tile-body">
-        <div class="tile-metric">{graphEntities} <span class="tile-unit">entities</span></div>
-        <div class="tile-detail">{graphTopTypes}</div>
-      </div>
-      {#if agoText(graphStore.lastUpdated)}<div class="tile-footer">{agoText(graphStore.lastUpdated)}</div>{/if}
-    </button>
-  </div>
+    </section>
   {/if}
 </div>
 
@@ -513,77 +465,152 @@
     display: flex;
     flex-direction: column;
     padding: 16px;
-    gap: 12px;
+    gap: 16px;
   }
 
-  /* KPI Strip */
-  .kpi-strip {
+  .overview-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.9fr);
+    gap: 14px;
+    padding: 18px;
+    border-radius: var(--radius-lg);
+    border: 1px solid color-mix(in srgb, var(--border) 72%, var(--accent) 28%);
+    background:
+      radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 18%, transparent), transparent 42%),
+      linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 88%, var(--accent) 12%), var(--bg-secondary));
+    box-shadow: var(--shadow-md);
+  }
+
+  .hero-alert {
+    border-color: rgba(231, 179, 18, 0.35);
+  }
+
+  .hero-copy {
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    width: 100%;
+    flex-direction: column;
+    gap: 10px;
   }
 
-  .kpi-tile {
-    flex: 1;
-    min-width: 90px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 8px 10px;
-    text-align: center;
-  }
-
-  .kpi-value {
-    font-size: 18px;
+  .hero-eyebrow,
+  .rail-label,
+  .section-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-secondary);
     font-weight: 700;
+  }
+
+  .hero-title {
+    margin: 0;
+    font-size: clamp(24px, 2.6vw, 34px);
+    line-height: 1.05;
+    color: var(--fg-primary);
+    letter-spacing: -0.02em;
+  }
+
+  .hero-detail {
+    margin: 0;
+    max-width: 62ch;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--fg-muted);
+  }
+
+  .hero-note {
+    font-size: 11px;
     font-family: var(--font-mono);
-    font-feature-settings: 'tnum';
+    color: var(--fg-secondary);
+  }
+
+  .hero-signals {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    max-width: 560px;
+  }
+
+  .signal-chip {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: baseline;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-primary) 55%, transparent);
+    font-family: var(--font-mono);
+  }
+
+  .signal-chip span {
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--fg-muted);
+  }
+
+  .signal-chip strong {
+    font-size: 14px;
+    color: var(--fg-primary);
+  }
+
+  .hero-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--bg-primary) 42%, transparent);
+    border: 1px solid color-mix(in srgb, var(--border) 72%, var(--accent) 28%);
+  }
+
+  .rail-title {
+    font-size: 16px;
+    font-weight: 700;
     color: var(--fg-primary);
     line-height: 1.2;
   }
 
-  .kpi-label {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--fg-muted);
-    margin-top: 2px;
-  }
-
-  .kpi-alert .kpi-value {
-    color: var(--warning);
-  }
-
-  .kpi-alert {
-    border-color: rgba(231, 179, 18, 0.3);
-  }
-
-  .overview-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 12px;
-    width: 100%;
-  }
-
-  .coordination-strip {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 10px;
-  }
-
-  .coord-card {
-    background: linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 88%, var(--accent) 12%), var(--bg-secondary));
-    border: 1px solid color-mix(in srgb, var(--border) 75%, var(--accent) 25%);
-    border-radius: var(--radius-md);
-    padding: 10px 12px;
+  .rail-stack {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    min-height: 92px;
+    gap: 8px;
   }
 
-  .coord-label {
+  .rail-item {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    text-align: left;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    cursor: pointer;
+    transition: border-color var(--transition-normal),
+                transform var(--transition-normal),
+                box-shadow var(--transition-normal);
+  }
+
+  .rail-item:hover {
+    border-color: rgba(233, 93, 116, 0.3);
+    transform: translateY(-1px);
+    box-shadow: 0 0 12px var(--glow-accent), var(--shadow-sm);
+  }
+
+  .rail-item strong {
+    font-size: 14px;
+    color: var(--fg-primary);
+    font-family: var(--font-mono);
+  }
+
+  .rail-item small {
+    font-size: 11px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+  }
+
+  .rail-item-label {
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
@@ -591,79 +618,82 @@
     font-weight: 700;
   }
 
-  .coord-value {
-    font-size: 16px;
-    font-family: var(--font-mono);
-    color: var(--fg-primary);
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
   }
 
-  .coord-meta {
+  .section-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .section-note {
     font-size: 11px;
     color: var(--fg-muted);
     font-family: var(--font-mono);
   }
 
-  .coord-list {
+  .focus-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 12px;
+  }
+
+  .focus-card {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-  }
-
-  .coord-list-item {
-    font-size: 11px;
-    color: var(--fg-primary);
-    font-family: var(--font-mono);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .tile {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 10px 12px;
-    cursor: pointer;
+    gap: 8px;
     text-align: left;
+    padding: 14px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    cursor: pointer;
     transition: border-color var(--transition-normal),
-                box-shadow var(--transition-normal),
-                transform var(--transition-normal);
+                transform var(--transition-normal),
+                box-shadow var(--transition-normal);
   }
 
-  .tile:hover {
+  .focus-card:hover {
     border-color: rgba(233, 93, 116, 0.3);
-    box-shadow: 0 0 12px var(--glow-accent), var(--shadow-md);
     transform: translateY(-2px);
+    box-shadow: 0 0 12px var(--glow-accent), var(--shadow-md);
   }
 
-  .tile-header {
+  .focus-card-alert {
+    border-color: rgba(231, 179, 18, 0.35);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 88%, var(--warning) 12%), var(--bg-secondary));
+  }
+
+  .card-head {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-bottom: 6px;
+    justify-content: space-between;
+    gap: 12px;
   }
 
-  .tile-icon {
-    font-size: 14px;
-    color: var(--accent);
-  }
-
-  .tile-title {
+  .card-title {
     font-size: 10px;
-    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--fg-secondary);
+    font-weight: 700;
   }
 
-  .tile-body {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+  .card-cta {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    font-weight: 700;
   }
 
-  .tile-metric {
-    font-size: 20px;
+  .card-value {
+    font-size: 22px;
     font-weight: 700;
     font-family: var(--font-mono);
     font-feature-settings: 'tnum';
@@ -671,168 +701,113 @@
     line-height: 1.1;
   }
 
-  .tile-unit {
-    font-size: 11px;
-    font-weight: 400;
-    color: var(--fg-muted);
-  }
-
-  .tile-detail {
+  .card-detail,
+  .card-foot,
+  .support-card small {
     font-size: 11px;
     color: var(--fg-muted);
     font-family: var(--font-mono);
+    line-height: 1.4;
   }
 
-  .tile-alert {
-    color: var(--warning);
-  }
-
-  .tile-metric-row {
+  .card-tags {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-
-  .tile-footer {
-    font-size: 9px;
-    font-family: var(--font-mono);
-    color: var(--fg-muted);
-    margin-top: 6px;
-    opacity: 0.7;
-  }
-
-  .tile-tier {
-    display: flex;
-    gap: 10px;
-    font-size: 18px;
-  }
-
-  .tier-w { color: var(--tier-working); }
-  .tier-s { color: var(--tier-short); }
-  .tier-l { color: var(--tier-long); }
-
-  .tier-label {
-    font-size: 9px;
-    font-weight: 400;
-    opacity: 0.6;
-    margin-left: 1px;
-    vertical-align: super;
-  }
-
-  .kpi-value-row {
-    display: flex;
-    align-items: center;
-    justify-content: center;
     gap: 6px;
-  }
-
-  .conflict-details {
-    margin-top: 4px;
-    text-align: left;
-  }
-
-  .conflict-line {
-    font-size: 9px;
-    font-family: var(--font-mono);
-    color: var(--warning);
-    line-height: 1.3;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .conflict-more {
-    opacity: 0.7;
-  }
-
-  .tile-progress-track {
-    height: 4px;
-    background: var(--bg-tertiary);
-    border-radius: 2px;
-    overflow: hidden;
-    margin-top: 4px;
-  }
-
-  .tile-progress-fill {
-    height: 100%;
-    background: var(--success);
-    border-radius: 2px;
-    transition: width 0.3s ease;
-  }
-
-  .tile-progress-fill.health-warn {
-    background: var(--warning);
-  }
-
-  .tile-warn {
-    border-color: rgba(231, 179, 18, 0.35);
-    box-shadow: inset 0 0 0 1px rgba(231, 179, 18, 0.08);
-  }
-
-  .tile-badge-alert {
-    margin-left: auto;
-    font-size: 9px;
-    font-family: var(--font-mono);
-    font-weight: 700;
-    min-width: 16px;
-    height: 16px;
-    line-height: 16px;
-    text-align: center;
-    border-radius: 8px;
-    background: var(--warning);
-    color: var(--bg-primary);
-    padding: 0 4px;
-  }
-
-  .tile-alert-bg {
-    border-color: rgba(231, 68, 68, 0.3);
-    background: rgba(231, 68, 68, 0.06);
-  }
-
-  .tile-alert-bg .tile-metric {
-    color: var(--error, #e74444);
-  }
-
-  .tile-badges {
-    display: flex;
-    gap: 4px;
     flex-wrap: wrap;
-    margin-top: 4px;
   }
 
-  .tile-badge {
+  .card-tag {
     font-size: 9px;
     font-family: var(--font-mono);
-    padding: 1px 5px;
-    border-radius: 3px;
-    letter-spacing: 0.03em;
-  }
-
-  .badge-active {
-    background: rgba(76, 175, 80, 0.15);
-    color: var(--success, #4caf50);
-  }
-
-  .badge-off {
-    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
     color: var(--fg-muted);
+    background: color-mix(in srgb, var(--bg-primary) 45%, transparent);
   }
 
-  .tile-skeleton {
+  .tag-on {
+    color: var(--fg-primary);
+    border-color: color-mix(in srgb, var(--accent) 50%, var(--border) 50%);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+
+  .tag-off {
+    opacity: 0.72;
+  }
+
+  .support-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 10px;
+  }
+
+  .support-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    text-align: left;
+    padding: 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    cursor: pointer;
+    transition: border-color var(--transition-normal),
+                transform var(--transition-normal),
+                box-shadow var(--transition-normal);
+  }
+
+  .support-card:hover {
+    border-color: rgba(233, 93, 116, 0.3);
+    transform: translateY(-1px);
+    box-shadow: 0 0 10px var(--glow-accent), var(--shadow-sm);
+  }
+
+  .support-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-secondary);
+    font-weight: 700;
+  }
+
+  .support-card strong {
+    font-size: 14px;
+    color: var(--fg-primary);
+    font-family: var(--font-mono);
+  }
+
+  .hero-skeleton,
+  .focus-card-skeleton {
     cursor: default;
-    min-height: 80px;
   }
 
-  .tile-skeleton:hover {
-    border-color: var(--border);
-    box-shadow: none;
-    transform: none;
+  .signal-chip-skeleton,
+  .rail-item-skeleton {
+    min-height: 42px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+  }
+
+  .focus-card-skeleton {
+    min-height: 176px;
+  }
+
+  @media (max-width: 840px) {
+    .overview-hero {
+      grid-template-columns: 1fr;
+    }
   }
 
   @media (max-width: 600px) {
-    .overview-grid {
-      grid-template-columns: repeat(2, 1fr);
+    .hero-signals {
+      grid-template-columns: 1fr;
+    }
+
+    .section-heading {
+      align-items: flex-start;
+      flex-direction: column;
     }
   }
 </style>

@@ -2,6 +2,7 @@
   import { coordinationStore } from '../stores/coordination.svelte.ts';
   import { presenceActionsStore } from '../stores/presenceActions.svelte.ts';
   import PanelShell from './shared/PanelShell.svelte';
+  import EmptyState from './shared/EmptyState.svelte';
   import MetricCard from './shared/MetricCard.svelte';
   import DispatchTaskModal from './presence/DispatchTaskModal.svelte';
 
@@ -15,6 +16,7 @@
   let blockers = $derived(coordinationStore.activeBlockers);
   let namespaces = $derived(coordinationStore.riskyNamespaces);
   let relations = $derived(coordinationStore.relations);
+  let attentionAgents = $derived(coordinationStore.topAttentionAgents);
 
   let sortKey = $state('attention');
   let sortDir = $state('desc');
@@ -59,30 +61,51 @@
 </script>
 
 <PanelShell
-  title="Fleet Dispatch"
+  title="Dispatch"
   icon={'\u2692'}
   count={agents.length}
   loading={coordinationStore.loading}
   empty={agents.length === 0}
   emptyIcon={'\u25C8'}
   emptyMessage="No agents registered"
-  emptyHint="Start agents to see fleet dispatch options"
+  emptyHint="Start agents to see coordination and dispatch signals"
 >
   {#snippet header()}
-    <div class="dispatch-metrics">
-      <MetricCard label="Active Namespaces" value={summary.active_namespaces} />
-      <MetricCard label="At Risk" value={summary.namespaces_at_risk} color={summary.namespaces_at_risk > 0 ? 'var(--warning)' : 'var(--fg-primary)'} />
-      <MetricCard label="Conflicts" value={summary.conflict_files} color={summary.conflict_files > 0 ? 'var(--error)' : 'var(--fg-primary)'} />
-      <MetricCard label="X-Agent Blockers" value={summary.cross_agent_blockers} color={summary.cross_agent_blockers > 0 ? 'var(--warning)' : 'var(--fg-primary)'} />
-      <MetricCard label="Orphan Tasks" value={summary.orphan_tasks} />
-      <MetricCard label="Idle Holders" value={summary.idle_claim_holders} color={summary.idle_claim_holders > 0 ? 'var(--warning)' : 'var(--fg-primary)'} />
+    <div class="dispatch-intro">
+      <div class="dispatch-summary">
+        <div class="dispatch-summary-eyebrow">Coordination now</div>
+        <div class="dispatch-summary-line">
+          {summary.agents_needing_attention} agent{summary.agents_needing_attention === 1 ? '' : 's'} need attention
+          {#if summary.cross_agent_blockers > 0}
+            · {summary.cross_agent_blockers} cross-agent blocker{summary.cross_agent_blockers === 1 ? '' : 's'}
+          {/if}
+          {#if summary.conflict_files > 0}
+            · {summary.conflict_files} conflicted file{summary.conflict_files === 1 ? '' : 's'}
+          {/if}
+        </div>
+        <div class="dispatch-summary-copy">
+          Route work where it can move, keep blockers visible, and watch for namespaces that need a human nudge before they stall.
+        </div>
+      </div>
+      <div class="dispatch-metrics">
+        <MetricCard label="Active Namespaces" value={summary.active_namespaces} />
+        <MetricCard label="At Risk" value={summary.namespaces_at_risk} color={summary.namespaces_at_risk > 0 ? 'var(--warning)' : 'var(--fg-primary)'} />
+        <MetricCard label="Conflicts" value={summary.conflict_files} color={summary.conflict_files > 0 ? 'var(--error)' : 'var(--fg-primary)'} />
+        <MetricCard label="X-Agent Blockers" value={summary.cross_agent_blockers} color={summary.cross_agent_blockers > 0 ? 'var(--warning)' : 'var(--fg-primary)'} />
+        <MetricCard label="Orphan Tasks" value={summary.orphan_tasks} />
+        <MetricCard label="Idle Holders" value={summary.idle_claim_holders} color={summary.idle_claim_holders > 0 ? 'var(--warning)' : 'var(--fg-primary)'} />
+      </div>
     </div>
   {/snippet}
 
   <div class="dispatch-layout">
-    <!-- Agent table -->
     <section class="dispatch-section">
-      <h3 class="section-title">Agents</h3>
+      <div class="section-head">
+        <h3 class="section-title">Agent roster</h3>
+        <div class="section-subtitle">
+          {attentionAgents.length} attention agent{attentionAgents.length === 1 ? '' : 's'} · {namespaces.length} risky namespace{namespaces.length === 1 ? '' : 's'}
+        </div>
+      </div>
       <div class="table-wrap">
         <table class="dispatch-table">
           <thead>
@@ -157,10 +180,12 @@
       </div>
     </section>
 
-    <!-- Blockers sidebar -->
-    {#if blockers.length > 0}
-      <section class="dispatch-section blockers-section">
-        <h3 class="section-title">Active Blockers ({blockers.length})</h3>
+    <section class="dispatch-section">
+      <div class="section-head">
+        <h3 class="section-title">Blocking chains</h3>
+        <div class="section-subtitle">Dependencies that may need a human nudge or reroute</div>
+      </div>
+      {#if blockers.length > 0}
         <div class="blocker-list">
           {#each blockers as blocker (blocker.task_id + blocker.blocked_by_task_id)}
             <div class="blocker-card" class:cross-agent={blocker.cross_agent}>
@@ -176,13 +201,22 @@
             </div>
           {/each}
         </div>
-      </section>
-    {/if}
+      {:else}
+        <EmptyState
+          icon={'\u2713'}
+          heading="No active blockers"
+          description="The current dependency graph is clear enough for direct dispatch."
+          compact
+        />
+      {/if}
+    </section>
 
-    <!-- Conflict relations -->
-    {#if relations.length > 0}
-      <section class="dispatch-section">
-        <h3 class="section-title">Relations ({relations.length})</h3>
+    <section class="dispatch-section">
+      <div class="section-head">
+        <h3 class="section-title">Relation map</h3>
+        <div class="section-subtitle">Cross-links and pressure points worth checking before work expands</div>
+      </div>
+      {#if relations.length > 0}
         <div class="relation-list">
           {#each relations.slice(0, 8) as rel}
             <div class="relation-card" class:severe={rel.severity === 'high'}>
@@ -194,8 +228,15 @@
             </div>
           {/each}
         </div>
-      </section>
-    {/if}
+      {:else}
+        <EmptyState
+          icon={'\u25C8'}
+          heading="No active relations"
+          description="There are no pressure points that need a coordination review right now."
+          compact
+        />
+      {/if}
+    </section>
   </div>
 </PanelShell>
 
@@ -205,8 +246,46 @@
   .dispatch-metrics {
     display: flex;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
+    padding: 0;
     overflow-x: auto;
+  }
+
+  .dispatch-intro {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3) var(--space-3);
+  }
+
+  .dispatch-summary {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--bg-tertiary) 72%, transparent), var(--bg-secondary));
+  }
+
+  .dispatch-summary-eyebrow {
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+    font-weight: 600;
+  }
+
+  .dispatch-summary-line {
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--fg-primary);
+  }
+
+  .dispatch-summary-copy {
+    font-size: var(--text-sm);
+    color: var(--fg-muted);
+    max-width: 72ch;
+    line-height: var(--leading-normal);
   }
 
   .dispatch-layout {
@@ -230,6 +309,21 @@
     color: var(--fg-muted);
     margin: 0 0 var(--space-2) 0;
     padding: 0;
+  }
+
+  .section-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+  }
+
+  .section-subtitle {
+    font-size: var(--text-xs);
+    color: var(--fg-muted);
+    text-align: right;
+    line-height: var(--leading-tight);
   }
 
   .table-wrap {
