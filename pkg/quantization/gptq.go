@@ -612,6 +612,17 @@ fi
 mkdir -p "${OUT_DIR}"
 mkdir -p /workspace/offload
 
+# torchao can core-dump (SIGABRT) on torch dev builds (e.g. 2.9.1+git) due to
+# incompatible cpp extensions. GPTQModel imports torchao transitively, so a
+# broken torchao kills the entire quantization pipeline. Remove proactively —
+# GPTQModel works fine without it. Only skip removal on gfx906 (no torchao).
+if [ "${PYTORCH_ROCM_ARCH:-}" != "gfx906" ] && [ "${GPU_GFX:-}" != "gfx906" ]; then
+    if pip show torchao >/dev/null 2>&1; then
+        echo "Removing torchao (incompatible cpp extensions crash on this torch build)..."
+        python3 -m pip uninstall -y torchao >/dev/null 2>&1 || true
+    fi
+fi
+
 # GPTQModel runtime dependencies are baked into the unified runtime image for
 # quantizer-enabled profiles. Keep this fast-fail guard so older images still
 # self-heal, but do not pay the install penalty when the image is already baked.
@@ -626,13 +637,9 @@ GPTQ_PIP_ARGS=(
     "pillow>=11.3.0"
     "protobuf>=7.34.0"
 )
-# torchao wheels currently SIGILL on older Broadwell-class x86 hosts used with
-# gfx906/gfx900 quantization. GPTQModel still works there without torchao, so
-# keep it on newer arches only.
-if [ "${PYTORCH_ROCM_ARCH:-}" != "gfx906" ] && [ "${GPU_GFX:-}" != "gfx900" ] && [ "${GPU_GFX:-}" != "gfx906" ]; then
-    GPTQ_PY_IMPORTS="${GPTQ_PY_IMPORTS}, torchao"
-    GPTQ_PIP_ARGS+=("torchao>=0.16.0")
-else
+# torchao is removed early (crashes on torch dev builds). Skip arch-specific
+# handling on gfx1100. On gfx906: SIGILL on Broadwell, also skip.
+if [ "${PYTORCH_ROCM_ARCH:-}" = "gfx906" ] || [ "${GPU_GFX:-}" = "gfx900" ] || [ "${GPU_GFX:-}" = "gfx906" ]; then
     echo "Skipping torchao on gfx906/gfx900; wheel triggers SIGILL on older x86 hosts"
     # pypcre wheels SIGILL on Broadwell-era hosts. GPTQModel only needs a
     # pcre module; a stdlib re shim is sufficient for its import path here.
@@ -643,15 +650,23 @@ PY
     export PYTHONPATH="/tmp${PYTHONPATH:+:${PYTHONPATH}}"
     GPTQ_PY_IMPORTS="import tokenicer; from gptqmodel import GPTQModel, QuantizeConfig"
 fi
-if ! python3 -c "${GPTQ_PY_IMPORTS}" >/dev/null 2>&1; then
-    if [ -f /etc/flexinfer/quantizer-deps-baked ]; then
-        echo "ERROR: GPTQModel runtime deps are expected in the image but imports are missing"
-        python3 -c "${GPTQ_PY_IMPORTS}"
-        exit 1
+
+# Ensure gptqmodel + deps are available. Use pip show (no Python import) to
+# avoid SIGABRT from broken native extensions in the import chain.
+if ! pip show gptqmodel >/dev/null 2>&1; then
+    echo "Installing GPTQModel (--no-build-isolation --no-deps)..."
+    python3 -m pip install --no-cache-dir --no-build-isolation --no-deps "gptqmodel>=2.8.0" 2>&1 | tail -3
+fi
+# Check required deps via pip show (fast, no import side-effects).
+MISSING_DEPS=()
+for dep in tokenicer pypcre kernels accelerate; do
+    if ! pip show "$dep" >/dev/null 2>&1; then
+        MISSING_DEPS+=("$dep")
     fi
-    echo "Installing missing GPTQModel runtime dependencies..."
-    python3 -m pip install --no-cache-dir --quiet "${GPTQ_PIP_ARGS[@]}" >/dev/null
-    python3 -c "${GPTQ_PY_IMPORTS}" >/dev/null
+done
+if [ ${#MISSING_DEPS[@]} -gt 0 ]; then
+    echo "Installing missing deps: ${MISSING_DEPS[*]}..."
+    python3 -m pip install --no-cache-dir --quiet "${GPTQ_PIP_ARGS[@]}" 2>&1 | tail -3
 fi
 
 # MAGMA fallback: vllm-dev base images lack MAGMA (GPU) and LAPACK (CPU),
