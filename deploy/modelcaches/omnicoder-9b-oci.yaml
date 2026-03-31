@@ -16,7 +16,7 @@ spec:
   modelPath: "omnicoder-9b"
   storageStrategy: SharedPVC
   storageSize: "10Gi"
-  clusterStorageClassName: local-path
+  clusterStorageClassName: nvme-1r-gpu
   secretRef: "harbor-oci-creds"
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
