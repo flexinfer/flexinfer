@@ -1,8 +1,10 @@
-# Qwen3.5-27B via vLLM on AMD gfx1100 — dedicated on cblevins-7900xtx
+# Qwen3.5-27B via vLLM on AMD gfx1100 — keep cold until rebuilt GPTQ is ready
 #
 # GPTQ INT4 ~17 GiB (all layers quantized), abliterated (attention layers only,
 # skipGDNLayers=true). Source: GPTQ cache PVC with re-quantized weights.
 # Runtime: Unified runtime with vLLM Qwen3.5 patches baked in at build time.
+# Keep this serverless and cold until the Radeon VII rebuild finishes publishing
+# a known-good GPTQ artifact; 9B temporarily owns the warm slot on this node.
 #
 # maxModelLen=4096 to minimize KV cache budget.
 # maxNumSeqs=2 to reduce concurrent memory pressure.
@@ -19,12 +21,14 @@ spec:
     strategy: Local
   gpu:
     vendor: amd
-    count: 2
+    count: 1
+    shared: 7900xtx-textgen
     vramEstimateMB: 18000
+    priority: 100
   serverless:
     enabled: true
-    minReplicas: 1
-    idleTimeout: 60m
+    minReplicas: 0
+    idleTimeout: 10m
     coldStartTimeout: 15m
   config:
     quantization: gptq
@@ -39,7 +43,7 @@ spec:
     toolCallParser: hermes
     maxNumBatchedTokens: 2048
     disableLogStats: false
-    warmPolicy: primary
+    warmPolicy: ondemand
     hipVisibleDevices: "0"
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
