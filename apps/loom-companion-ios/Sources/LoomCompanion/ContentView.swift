@@ -122,9 +122,11 @@ struct ContentView: View {
             NavigationStack {
                 DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster) { action in
                     switch action {
-                    case .agents:
+                    case .people:
                         selectedPeopleSection = .agents
                         selectedTab = .people
+                    case .work:
+                        selectedTab = .work
                     case .connection:
                         selectedTab = .connection
                     case .liveActivities:
@@ -223,9 +225,11 @@ struct ContentView: View {
             case .dashboard:
                 DashboardView(apiClient: connectionVM.buildAPIClient(), healthMonitor: healthMonitor, alertsViewModel: alertsViewModel, broadcaster: sseBroadcaster) { action in
                     switch action {
-                    case .agents:
+                    case .people:
                         selectedPeopleSection = .agents
                         selectedTab = .people
+                    case .work:
+                        selectedTab = .work
                     case .connection:
                         selectedTab = .connection
                     case .liveActivities:

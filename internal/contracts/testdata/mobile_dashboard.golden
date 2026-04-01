@@ -4,7 +4,17 @@
   "coordination": {
     "active_blockers": [],
     "attention_agents": [],
-    "attention_lanes": [],
+    "attention_lanes": [
+      {
+        "id": "services/loom-core/mobile",
+        "label": "Work lane",
+        "route": "work",
+        "scope": "3 tasks",
+        "severity": "critical",
+        "summary": "blocked tasks",
+        "type": "namespace"
+      }
+    ],
     "risky_namespaces": [],
     "summary": {
       "active_namespaces": 2,

@@ -38,6 +38,15 @@ mapfile -t STAGED_GO_PACKAGES < <(
     | awk '!seen[$0]++ { print ($0 == "." ? "./" : "./" $0) }'
 )
 
+mapfile -t BUILDABLE_GO_PACKAGES < <(
+  for pkg in "${STAGED_GO_PACKAGES[@]}"; do
+    # Skip test-only packages so contract fixture edits don't fail go build.
+    if [[ "$("${WITH_CLEAN_GIT_ENV}" go list -f '{{len .GoFiles}}' "${pkg}" 2>/dev/null || echo "0")" -gt 0 ]]; then
+      printf '%s\n' "${pkg}"
+    fi
+  done
+)
+
 check_tool() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo -e "${YELLOW}Warning: $1 not found, skipping $2${NC}"
@@ -85,7 +94,9 @@ else
 fi
 
 echo -n "Checking build... "
-if ! "${WITH_CLEAN_GIT_ENV}" go build "${STAGED_GO_PACKAGES[@]}" 2>&1; then
+if [[ ${#BUILDABLE_GO_PACKAGES[@]} -eq 0 ]]; then
+  echo -e "${GREEN}No buildable Go packages staged, skipping.${NC}"
+elif ! "${WITH_CLEAN_GIT_ENV}" go build "${BUILDABLE_GO_PACKAGES[@]}" 2>&1; then
   echo -e "${RED}FAILED${NC}"
   FAILED=1
 else

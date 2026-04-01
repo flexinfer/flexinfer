@@ -15,6 +15,30 @@
       "down_servers": 0,
       "idle_servers": 0
     },
+    "coordination": {
+      "summary": {
+        "active_namespaces": 2,
+        "namespaces_at_risk": 1,
+        "agents_needing_attention": 1,
+        "shared_branches": 1,
+        "conflict_files": 0,
+        "cross_agent_blockers": 1,
+        "orphan_tasks": 0,
+        "idle_claim_holders": 0,
+        "merge_ready_branches": 0
+      },
+      "attention_lanes": [
+        {
+          "type": "namespace",
+          "id": "services/loom-core/mobile",
+          "label": "Work lane",
+          "route": "work",
+          "scope": "3 tasks",
+          "summary": "blocked tasks",
+          "severity": "critical"
+        }
+      ]
+    },
     "recent_timeline": [
       {
         "timestamp": "2026-02-23T11:59:00Z",

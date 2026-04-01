@@ -19,6 +19,8 @@ struct DashboardDataTests {
         #expect(dash.idleAgents == 1)
         #expect(dash.offlineAgents == 0)
         #expect(dash.updatedAt == "2026-02-23T12:00:00Z")
+        #expect(dash.coordination.attentionLanes.count == 1)
+        #expect(dash.coordination.attentionLanes[0].route == "work")
     }
 
     @Test("Decodes health summary")
@@ -81,6 +83,37 @@ struct DashboardDataTests {
         let heartbeat = try #require(envelope.data?.lastHeartbeat)
         #expect(heartbeat.agentId == "claude-code")
         #expect(heartbeat.count1h == 12)
+    }
+
+    @Test("Decodes coordination summary defaults when omitted")
+    func decodesCoordinationDefaults() throws {
+        let json = """
+        {
+          "ok": true,
+          "data": {
+            "daemon_running": true,
+            "server_count": 1,
+            "active_sessions": 0,
+            "active_agents": 0,
+            "idle_agents": 0,
+            "offline_agents": 0,
+            "updated_at": "2026-02-23T12:00:00Z",
+            "health": {
+              "total_servers": 1,
+              "healthy_servers": 1,
+              "degraded_servers": 0,
+              "down_servers": 0,
+              "idle_servers": 0
+            },
+            "recent_timeline": []
+          }
+        }
+        """
+
+        let envelope = try JSONDecoder().decode(APIEnvelope<DashboardData>.self, from: Data(json.utf8))
+        let coordination = try #require(envelope.data?.coordination)
+        #expect(coordination.attentionLanes.isEmpty)
+        #expect(coordination.summary.crossAgentBlockers == 0)
     }
 
     @Test("Health status healthy when no degraded or down")
