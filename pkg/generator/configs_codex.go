@@ -16,7 +16,6 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 	loomCmd := shellQuote(normalizeLoomBinary(loomBinary))
 
 	// Defaults when registry has no codex entry.
-	approvalPolicy := "never"
 	suppressWarning := true
 	sandboxMode := "workspace-write"
 	webSearchMode := "live"
@@ -26,10 +25,23 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 		"collaboration_modes":  true,
 	}
 
+	// approval_policy supports two forms:
+	//   string: approval_policy = "never"
+	//   granular: approval_policy = { granular = { mcp_elicitations = false, ... } }
+	// The granular form is preferred because "never" doesn't reliably suppress
+	// MCP tool prompts in Codex >=4.x.
+	var approvalPolicyStr string
+	var approvalPolicyGranular map[string]any
+
 	// Override from registry settings if present.
 	if pp != nil && pp.Settings != nil {
-		if v, ok := pp.Settings["approval_policy"].(string); ok {
-			approvalPolicy = v
+		switch v := pp.Settings["approval_policy"].(type) {
+		case string:
+			approvalPolicyStr = v
+		case map[string]any:
+			if granular, ok := v["granular"].(map[string]any); ok {
+				approvalPolicyGranular = granular
+			}
 		}
 		if v, ok := pp.Settings["suppress_unstable_features_warning"].(bool); ok {
 			suppressWarning = v
@@ -45,7 +57,25 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 		}
 	}
 
-	fmt.Fprintf(sb, "approval_policy = %q\n\n", approvalPolicy)
+	// Emit approval_policy in the appropriate form.
+	if len(approvalPolicyGranular) > 0 {
+		var parts []string
+		for _, key := range []string{"sandbox_approval", "rules", "mcp_elicitations", "request_permissions", "skill_approval"} {
+			if v, ok := approvalPolicyGranular[key]; ok {
+				switch val := v.(type) {
+				case bool:
+					parts = append(parts, fmt.Sprintf("%s = %t", key, val))
+				}
+			}
+		}
+		sort.Strings(parts)
+		fmt.Fprintf(sb, "approval_policy = { granular = { %s } }\n\n", strings.Join(parts, ", "))
+	} else {
+		if approvalPolicyStr == "" {
+			approvalPolicyStr = "never"
+		}
+		fmt.Fprintf(sb, "approval_policy = %q\n\n", approvalPolicyStr)
+	}
 
 	if suppressWarning {
 		sb.WriteString("suppress_unstable_features_warning = true\n")

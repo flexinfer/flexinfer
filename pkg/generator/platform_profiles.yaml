@@ -212,6 +212,8 @@ platforms:
       enforcement: "proxy"
     loom_proxy:
       agent_hint: "kilocode"
+      tool_profile: "llm-core"
+      max_tools: 140
     capabilities:
       mcp_servers: true
       permissions: false

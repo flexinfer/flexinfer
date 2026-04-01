@@ -1,5 +1,5 @@
 version: 1
-updated: 2026-02-19
+updated: 2026-03-31
 notes: |
   Canonical MCP server registry shared by Codex CLI, Claude Code, and Kilo Code.
 
@@ -1091,9 +1091,9 @@ servers:
       kilocode:
         timeout: 180
         always_allow:
-          - morph_embeddings.embed
-          - morph_embeddings.upsert
-          - morph_embeddings.search
+          - morph_embeddings_embed
+          - morph_embeddings_upsert
+          - morph_embeddings_search
         env:
           MORPH_API_KEY: "${env:MORPH_API_KEY}"
           MORPH_QDRANT_API_KEY: "${env:MORPH_QDRANT_API_KEY}"
@@ -1795,7 +1795,15 @@ platform_permissions:
 
   codex:
     settings:
-      approval_policy: "never"
+      # Granular approval policy: disable all prompt categories including MCP tool calls.
+      # "never" string form doesn't reliably suppress MCP elicitations in Codex >=4.x.
+      approval_policy:
+        granular:
+          sandbox_approval: false
+          rules: false
+          mcp_elicitations: false
+          request_permissions: false
+          skill_approval: false
       suppress_unstable_features_warning: true
       sandbox_mode: "workspace-write"
       web_search: "live"
