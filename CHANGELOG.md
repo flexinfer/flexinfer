@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Skills registry entries** (`mcp/context/skills-registry.yaml`): Add `testing-guidelines`, `deployment-practices`, and `rust-acceleration` (56→59 entries).
 
 ### Fixed
+- **Mobile dashboard attention lanes** (`internal/hud/domain/mobile`, `internal/hud/frontend`, `apps/loom-companion-ios`): mobile dashboard payloads now expose labeled attention lanes with route and severity metadata, the iOS companion surfaces them as first-class dashboard actions, and the HUD overview rail prioritizes the same shared attention targets for triage.
 - **Orchestra token metrics** (`pkg/orchestra`): `loom_orchestra_tokens_total` now increments with real prompt/completion token counts from FlexInfer `resp.Usage` instead of the `len(toolResults)*512` estimate. `DomainResult.Tokens` reflects actual usage.
 - **Orchestra classify span** (`pkg/orchestra/router.go`): Remove dead `defer func(){}()` and redundant `SpanFromContext` re-fetch; use captured span variable directly.
 - **MCP server scaffold package** (`pkg/mcpscaffold`): `NewServer()` factory and `AddTracedTool()` helper that eliminate ~65 lines of duplicated initialization boilerplate per MCP server. Five servers migrated as proof (time, filesystem, asus-router, youtube, confluence).
