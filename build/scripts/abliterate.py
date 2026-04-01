@@ -59,6 +59,19 @@ DEFAULT_MODEL_POLICIES = [
     },
 ]
 
+STAGE_ORDER = {
+    "starting": 0,
+    "loaded_model": 10,
+    "harmful_activations_complete": 20,
+    "harmless_activations_complete": 30,
+    "refusal_directions_computed": 40,
+    "layers_abliterated": 50,
+    "perplexity_validated": 60,
+    "saving": 70,
+    "saved_staging": 80,
+    "complete": 90,
+}
+
 
 # ── Telemetry helper ──────────────────────────────────────────────────
 def emit_progress(event_type, **kwargs):
@@ -186,6 +199,28 @@ def write_checkpoint(stage, status="running", **kwargs):
     }
     payload.update(kwargs)
     write_json_atomic(checkpoint_path, payload)
+
+
+def load_checkpoint(path):
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            payload = json.load(f)
+    except Exception as exc:
+        print(f"WARN: failed to load checkpoint {path}: {exc}", flush=True)
+        return None
+    if not isinstance(payload, dict):
+        print(f"WARN: ignoring non-object checkpoint payload at {path}", flush=True)
+        return None
+    return payload
+
+
+def checkpoint_stage_at_least(checkpoint, stage):
+    if not checkpoint:
+        return False
+    current_stage = str(checkpoint.get("stage", "")).strip()
+    return STAGE_ORDER.get(current_stage, -1) >= STAGE_ORDER.get(stage, 1 << 30)
 
 
 def tensor_cache_path(name):
@@ -341,6 +376,20 @@ def materialize_state_dict_for_save(model):
         )
 
     return materialized, source
+
+
+def model_uses_disk_offload(model):
+    device_map = getattr(model, "hf_device_map", None)
+    if isinstance(device_map, dict) and any(str(value) == "disk" for value in device_map.values()):
+        return True
+    try:
+        for module in model.modules():
+            hook = getattr(module, "_hf_hook", None)
+            if hook is not None and getattr(hook, "offload", False):
+                return True
+    except Exception:
+        return False
+    return False
 
 
 def parse_size_to_bytes(value):
@@ -746,8 +795,21 @@ if resume_enabled and target_layers != "auto":
 emit_progress("start", phase="abliterating", model=model_dir, num_samples=num_samples)
 cleanup_stale_save_dirs()
 os.makedirs(checkpoint_dir, exist_ok=True)
-write_checkpoint("starting", model=model_dir)
-emit_snapshot("starting")
+prior_checkpoint = load_checkpoint(checkpoint_path)
+prior_stage = ""
+if prior_checkpoint:
+    prior_stage = str(prior_checkpoint.get("stage", "")).strip()
+    print(
+        "Found prior abliteration checkpoint: "
+        f"stage={prior_stage or 'unknown'} status={prior_checkpoint.get('status', 'unknown')}",
+        flush=True,
+    )
+write_checkpoint(
+    "starting",
+    model=model_dir,
+    resumedFromStage=prior_stage or None,
+)
+emit_snapshot("starting", resumed_from_stage=prior_stage or None)
 emit_runtime_capabilities()
 
 print(f"Loading config from {model_dir}...")
@@ -1501,54 +1563,78 @@ if ablation_strength != 1.0:
     print(f"Using fractional ablation strength: {ablation_strength}", flush=True)
 
 layers_modified = 0
-for layer_idx in layer_indices:
-    direction = refusal_dirs[layer_idx]
-    layer = decoder_layers[layer_idx]
-    modified_any = False
-    for name, param in layer.named_parameters():
-        if any(wm in name for wm in weight_matrices):
-            dev = param.device
-            d = direction.to(dev)
-            W = param.data.float()
-            if W.shape[1] == d.shape[0]:
-                proj = W @ d
-                param.data -= ablation_strength * torch.outer(proj, d).to(param.dtype)
-            elif W.shape[0] == d.shape[0]:
-                proj = W.t() @ d
-                param.data -= ablation_strength * torch.outer(d, proj).to(param.dtype)
-            else:
-                print(
-                    f"  Skipping {name}: shape {tuple(W.shape)} incompatible with direction dim {d.shape[0]}"
-                )
-                continue
-            modified_any = True
-    if modified_any:
-        layers_modified += 1
+if checkpoint_stage_at_least(prior_checkpoint, "layers_abliterated"):
+    layers_modified = int(prior_checkpoint.get("layersModified") or len(layer_indices))
+    emit_progress(
+        "progress",
+        phase="abliterating",
+        percent=75.0,
+        detail=f"resumed after {prior_stage}",
+    )
+    emit_snapshot(
+        "layers_abliterated_resumed",
+        prior_stage=prior_stage or "unknown",
+        layers_modified=layers_modified,
+    )
+    print(
+        f"Checkpoint stage {prior_stage or 'unknown'} indicates weights were already "
+        "abliterated; skipping a second orthogonalization pass",
+        flush=True,
+    )
+else:
+    for layer_idx in layer_indices:
+        direction = refusal_dirs[layer_idx]
+        layer = decoder_layers[layer_idx]
+        modified_any = False
+        for name, param in layer.named_parameters():
+            if any(wm in name for wm in weight_matrices):
+                dev = param.device
+                d = direction.to(dev)
+                W = param.data.float()
+                if W.shape[1] == d.shape[0]:
+                    proj = W @ d
+                    param.data -= ablation_strength * torch.outer(proj, d).to(
+                        param.dtype
+                    )
+                elif W.shape[0] == d.shape[0]:
+                    proj = W.t() @ d
+                    param.data -= ablation_strength * torch.outer(d, proj).to(
+                        param.dtype
+                    )
+                else:
+                    print(
+                        f"  Skipping {name}: shape {tuple(W.shape)} incompatible with direction dim {d.shape[0]}"
+                    )
+                    continue
+                modified_any = True
+        if modified_any:
+            layers_modified += 1
 
-print(f"Abliterated {layers_modified} layers")
-write_checkpoint("layers_abliterated", layersModified=layers_modified)
-emit_snapshot("layers_abliterated", layers_modified=layers_modified)
+    print(f"Abliterated {layers_modified} layers")
 
-# ── Abliterate lm_head ───────────────────────────────────────────────
-# CRITICAL: Only average refusal directions from layer_indices (post-GDN filter).
-# GDN layer directions capture recurrence dynamics, not refusal behavior —
-# including them corrupts the lm_head output distribution.
-abliterate_lm_head = os.environ.get(
-    "ABLITERATION_ABLITERATE_LM_HEAD", "true"
-).lower() in ("true", "1", "yes")
+    # ── Abliterate lm_head ───────────────────────────────────────────
+    # CRITICAL: Only average refusal directions from layer_indices (post-GDN filter).
+    # GDN layer directions capture recurrence dynamics, not refusal behavior —
+    # including them corrupts the lm_head output distribution.
+    abliterate_lm_head = os.environ.get(
+        "ABLITERATION_ABLITERATE_LM_HEAD", "true"
+    ).lower() in ("true", "1", "yes")
 
-if abliterate_lm_head and hasattr(model, "lm_head"):
-    mean_refusal = torch.stack([refusal_dirs[i] for i in layer_indices]).mean(0)
-    mean_refusal = mean_refusal / mean_refusal.norm()
-    lm = model.lm_head
-    dev = lm.weight.device
-    d = mean_refusal.to(dev)
-    proj = lm.weight.data.float() @ d
-    lm.weight.data -= ablation_strength * torch.outer(proj, d).to(lm.weight.dtype)
-    del mean_refusal
-    print("Abliterated lm_head")
-elif not abliterate_lm_head:
-    print("Skipping lm_head abliteration (ABLITERATION_ABLITERATE_LM_HEAD=false)")
+    if abliterate_lm_head and hasattr(model, "lm_head"):
+        mean_refusal = torch.stack([refusal_dirs[i] for i in layer_indices]).mean(0)
+        mean_refusal = mean_refusal / mean_refusal.norm()
+        lm = model.lm_head
+        dev = lm.weight.device
+        d = mean_refusal.to(dev)
+        proj = lm.weight.data.float() @ d
+        lm.weight.data -= ablation_strength * torch.outer(proj, d).to(lm.weight.dtype)
+        del mean_refusal
+        print("Abliterated lm_head")
+    elif not abliterate_lm_head:
+        print("Skipping lm_head abliteration (ABLITERATION_ABLITERATE_LM_HEAD=false)")
+
+    write_checkpoint("layers_abliterated", layersModified=layers_modified)
+    emit_snapshot("layers_abliterated", layers_modified=layers_modified)
 
 del refusal_dirs, decoder_layers
 release_memory("saving_prerelease")
@@ -1724,14 +1810,6 @@ emit_progress(
     percent=89.0,
     detail=f"save policy {save_policy}",
 )
-write_checkpoint(
-    "saving",
-    percent=88.0,
-    stagingDir=save_dir,
-    savePolicy=save_policy,
-    saveDetails=save_details,
-    saveImpl=configured_save_impl,
-)
 emit_snapshot("saving_prepare", save_policy=save_policy)
 
 if save_policy != "inplace":
@@ -1751,8 +1829,31 @@ if active_policy and active_policy.get("save_max_shard_size"):
     save_max_shard_size = str(active_policy["save_max_shard_size"]).strip()
 if save_format not in {"bin", "safetensors"}:
     raise RuntimeError(f"unknown ABLITERATION_SAVE_FORMAT={save_format}")
-if configured_save_impl not in {"streaming", "materialized"}:
+effective_save_impl = configured_save_impl
+if configured_save_impl == "streaming" and model_uses_disk_offload(model):
+    effective_save_impl = "materialized"
+    print(
+        "Forcing materialized save because streaming export can read stale tensors "
+        "from disk-offloaded modules",
+        flush=True,
+    )
+    emit_snapshot(
+        "saving_impl_override",
+        requested_impl=configured_save_impl,
+        effective_impl=effective_save_impl,
+        reason="disk_offload",
+    )
+if effective_save_impl not in {"streaming", "materialized"}:
     raise RuntimeError(f"unknown ABLITERATION_SAVE_IMPL={configured_save_impl}")
+write_checkpoint(
+    "saving",
+    percent=88.0,
+    stagingDir=save_dir,
+    savePolicy=save_policy,
+    saveDetails=save_details,
+    requestedSaveImpl=configured_save_impl,
+    saveImpl=effective_save_impl,
+)
 if save_format == "safetensors":
     print(f"Using {save_format} save path for model_type={model_type or 'unknown'}")
 
@@ -1766,7 +1867,7 @@ if save_format == "safetensors":
         removed = remove_weight_artifacts(model_dir)
         print(f"Removed {len(removed)} old weight artifacts for in-place save")
         emit_snapshot("saving_inplace_prepare", removed_artifacts=len(removed))
-    if configured_save_impl == "streaming":
+    if effective_save_impl == "streaming":
         state_dict_source, shard_count = save_streaming_safetensors(
             model,
             save_dir,
@@ -1838,6 +1939,7 @@ print(f"Save completed in {time.time() - save_start:.1f}s")
 
 # ── Write metadata ────────────────────────────────────────────────────
 meta = {
+    "status": "complete",
     "layersModified": layers_modified,
     "refusalDirNorm": f"{guard_norm:.6f}",
     "maxNormLayer": guard_layer,
