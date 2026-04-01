@@ -1,7 +1,9 @@
-# Qwen3.5-9B via vLLM on AMD gfx1100 — dedicated on cblevins-5930k
+# Qwen3.5-9B via vLLM on AMD gfx1100 — temporary primary on cblevins-7900xtx
 #
 # GPTQ INT4 (~7.5 GiB), abliterated (skipGDNLayers=true, 3 target layers).
 # Source: GPTQ cache PVC — abliteration + quantization pipeline on radeonvii.
+# While the 27B rebuild is still in-flight, keep 9B warm on the otherwise idle
+# 7900 XTX node so 5930k can stay image-first.
 # Runtime: Unified runtime with vLLM Qwen3.5 patches baked in at build time.
 #
 # maxModelLen=4096 to minimize KV cache budget.
@@ -21,7 +23,7 @@ spec:
     vendor: amd
     count: 1
     vramEstimateMB: 8000
-    shared: 5930k-textgen
+    shared: 7900xtx-textgen
     priority: 200
   serverless:
     enabled: true
@@ -43,7 +45,7 @@ spec:
     disableLogStats: false
     warmPolicy: primary
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
       cpu: "2"
