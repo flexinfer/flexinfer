@@ -148,7 +148,17 @@ func TestMobileDashboardContract(t *testing.T) {
 			"risky_namespaces": []any{},
 			"active_blockers":  []any{},
 			"top_relations":    []any{},
-			"attention_lanes":  []any{},
+			"attention_lanes": []any{
+				map[string]any{
+					"type":     "namespace",
+					"id":       "services/loom-core/mobile",
+					"label":    "Work lane",
+					"route":    "work",
+					"scope":    "3 tasks",
+					"summary":  "blocked tasks",
+					"severity": "critical",
+				},
+			},
 		},
 		"recent_timeline": []any{},
 	}

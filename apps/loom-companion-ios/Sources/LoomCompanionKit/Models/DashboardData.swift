@@ -12,6 +12,108 @@ public struct LastHeartbeat: Decodable, Sendable {
     }
 }
 
+public struct DashboardCoordinationSummary: Decodable, Sendable, Hashable {
+    public let activeNamespaces: Int
+    public let namespacesAtRisk: Int
+    public let agentsNeedingAttention: Int
+    public let sharedBranches: Int
+    public let conflictFiles: Int
+    public let crossAgentBlockers: Int
+    public let orphanTasks: Int
+    public let idleClaimHolders: Int
+    public let mergeReadyBranches: Int
+
+    enum CodingKeys: String, CodingKey {
+        case activeNamespaces = "active_namespaces"
+        case namespacesAtRisk = "namespaces_at_risk"
+        case agentsNeedingAttention = "agents_needing_attention"
+        case sharedBranches = "shared_branches"
+        case conflictFiles = "conflict_files"
+        case crossAgentBlockers = "cross_agent_blockers"
+        case orphanTasks = "orphan_tasks"
+        case idleClaimHolders = "idle_claim_holders"
+        case mergeReadyBranches = "merge_ready_branches"
+    }
+
+    public init(
+        activeNamespaces: Int,
+        namespacesAtRisk: Int,
+        agentsNeedingAttention: Int,
+        sharedBranches: Int,
+        conflictFiles: Int,
+        crossAgentBlockers: Int,
+        orphanTasks: Int,
+        idleClaimHolders: Int,
+        mergeReadyBranches: Int
+    ) {
+        self.activeNamespaces = activeNamespaces
+        self.namespacesAtRisk = namespacesAtRisk
+        self.agentsNeedingAttention = agentsNeedingAttention
+        self.sharedBranches = sharedBranches
+        self.conflictFiles = conflictFiles
+        self.crossAgentBlockers = crossAgentBlockers
+        self.orphanTasks = orphanTasks
+        self.idleClaimHolders = idleClaimHolders
+        self.mergeReadyBranches = mergeReadyBranches
+    }
+}
+
+public struct DashboardAttentionLane: Decodable, Sendable, Hashable {
+    public let type: String
+    public let id: String
+    public let label: String
+    public let route: String
+    public let scope: String
+    public let summary: String
+    public let severity: String
+
+    public var stableID: String { "\(type):\(id)" }
+}
+
+public struct DashboardCoordination: Decodable, Sendable, Hashable {
+    public let summary: DashboardCoordinationSummary
+    public let attentionLanes: [DashboardAttentionLane]
+
+    enum CodingKeys: String, CodingKey {
+        case summary
+        case attentionLanes = "attention_lanes"
+    }
+
+    public init(
+        summary: DashboardCoordinationSummary = DashboardCoordinationSummary(
+            activeNamespaces: 0,
+            namespacesAtRisk: 0,
+            agentsNeedingAttention: 0,
+            sharedBranches: 0,
+            conflictFiles: 0,
+            crossAgentBlockers: 0,
+            orphanTasks: 0,
+            idleClaimHolders: 0,
+            mergeReadyBranches: 0
+        ),
+        attentionLanes: [DashboardAttentionLane] = []
+    ) {
+        self.summary = summary
+        self.attentionLanes = attentionLanes
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.summary = try container.decodeIfPresent(DashboardCoordinationSummary.self, forKey: .summary) ?? DashboardCoordinationSummary(
+            activeNamespaces: 0,
+            namespacesAtRisk: 0,
+            agentsNeedingAttention: 0,
+            sharedBranches: 0,
+            conflictFiles: 0,
+            crossAgentBlockers: 0,
+            orphanTasks: 0,
+            idleClaimHolders: 0,
+            mergeReadyBranches: 0
+        )
+        self.attentionLanes = try container.decodeIfPresent([DashboardAttentionLane].self, forKey: .attentionLanes) ?? []
+    }
+}
+
 /// Dashboard aggregate matching the mobile v1 dashboard endpoint response.
 public struct DashboardData: Decodable, Sendable {
     public let daemonRunning: Bool
@@ -22,10 +124,11 @@ public struct DashboardData: Decodable, Sendable {
     public let offlineAgents: Int
     public let updatedAt: String
     public let health: HealthSummary
+    public let coordination: DashboardCoordination
     public let recentTimeline: [TimelineEntry]
     public let lastHeartbeat: LastHeartbeat?
 
-    public init(daemonRunning: Bool, serverCount: Int, activeSessions: Int, activeAgents: Int, idleAgents: Int, offlineAgents: Int, updatedAt: String, health: HealthSummary, recentTimeline: [TimelineEntry], lastHeartbeat: LastHeartbeat? = nil) {
+    public init(daemonRunning: Bool, serverCount: Int, activeSessions: Int, activeAgents: Int, idleAgents: Int, offlineAgents: Int, updatedAt: String, health: HealthSummary, coordination: DashboardCoordination = DashboardCoordination(), recentTimeline: [TimelineEntry], lastHeartbeat: LastHeartbeat? = nil) {
         self.daemonRunning = daemonRunning
         self.serverCount = serverCount
         self.activeSessions = activeSessions
@@ -34,6 +137,7 @@ public struct DashboardData: Decodable, Sendable {
         self.offlineAgents = offlineAgents
         self.updatedAt = updatedAt
         self.health = health
+        self.coordination = coordination
         self.recentTimeline = recentTimeline
         self.lastHeartbeat = lastHeartbeat
     }
@@ -47,6 +151,7 @@ public struct DashboardData: Decodable, Sendable {
         case offlineAgents = "offline_agents"
         case updatedAt = "updated_at"
         case health
+        case coordination
         case recentTimeline = "recent_timeline"
         case lastHeartbeat = "last_heartbeat"
     }
@@ -61,6 +166,7 @@ public struct DashboardData: Decodable, Sendable {
         self.offlineAgents = try container.decodeIfPresent(Int.self, forKey: .offlineAgents) ?? 0
         self.updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
         self.health = try container.decodeIfPresent(HealthSummary.self, forKey: .health) ?? HealthSummary(totalServers: 0, healthyServers: 0, degradedServers: 0, downServers: 0, idleServers: 0)
+        self.coordination = try container.decodeIfPresent(DashboardCoordination.self, forKey: .coordination) ?? DashboardCoordination()
         self.recentTimeline = try container.decodeIfPresent([TimelineEntry].self, forKey: .recentTimeline) ?? []
         self.lastHeartbeat = try container.decodeIfPresent(LastHeartbeat.self, forKey: .lastHeartbeat)
     }

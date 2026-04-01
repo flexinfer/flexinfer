@@ -55,6 +55,8 @@
   let blockedTasks = $derived(taskStore.blockedCount);
   let coordinationSummary = $derived(coordinationStore.summary);
   let activeBlockers = $derived(coordinationStore.activeBlockers);
+  let riskyNamespaces = $derived(coordinationStore.riskyNamespaces);
+  let topAttentionAgents = $derived(coordinationStore.topAttentionAgents);
   let topRelations = $derived(coordinationStore.relations.slice(0, 4));
 
   let workingItems = $derived(memoryStore.stats.working_memory?.items ?? 0);
@@ -197,6 +199,65 @@
     { label: 'active agents', value: agentCount },
     { label: 'approvals waiting', value: pendingApprovals },
   ]);
+
+  let attentionLanes = $derived.by(() => {
+    const lanes = [];
+
+    if (downCount > 0 || !daemonRunning) {
+      lanes.push({
+        route: 'servers',
+        label: 'Runtime lane',
+        value: downCount > 0 ? `${downCount} down` : 'Daemon offline',
+        detail: daemonRunning
+          ? `${healthyCount}/${serverCount} healthy · ${processCount} processes`
+          : 'Bring the daemon and server health back into a safe state',
+      });
+    }
+
+    if (blockedTasks > 0 || coordinationSummary.cross_agent_blockers > 0) {
+      lanes.push({
+        route: 'dispatch',
+        label: 'Blocked work',
+        value: `${blockedTasks} blocked`,
+        detail: activeBlockers.length > 0
+          ? `${activeBlockers[0].task_title} blocked by ${activeBlockers[0].blocked_by_task_title || activeBlockers[0].blocked_by_task_id}`
+          : `${coordinationSummary.cross_agent_blockers} cross-agent blocker${coordinationSummary.cross_agent_blockers === 1 ? '' : 's'}`,
+      });
+    }
+
+    if (pendingApprovals > 0) {
+      lanes.push({
+        route: 'workflows',
+        label: 'Approvals',
+        value: `${pendingApprovals} waiting`,
+        detail: 'Review workflow decisions before the queue drifts further.',
+      });
+    }
+
+    if (coordinationSummary.agents_needing_attention > 0) {
+      lanes.push({
+        route: 'fleet',
+        label: 'Attention agents',
+        value: `${coordinationSummary.agents_needing_attention} flagged`,
+        detail: topAttentionAgents.length > 0
+          ? `${topAttentionAgents[0].agent_id} · ${(topAttentionAgents[0].attention_reasons || []).slice(0, 2).join(' · ') || 'needs coordination review'}`
+          : 'Open Fleet to inspect the agents currently under pressure.',
+      });
+    }
+
+    if (coordinationSummary.namespaces_at_risk > 0) {
+      lanes.push({
+        route: 'dispatch',
+        label: 'Risky namespaces',
+        value: `${coordinationSummary.namespaces_at_risk} at risk`,
+        detail: riskyNamespaces.length > 0
+          ? `${riskyNamespaces[0].namespace} · ${(riskyNamespaces[0].attention_reasons || []).slice(0, 2).join(' · ')}`
+          : 'Open Dispatch to review the namespaces with the most coordination pressure.',
+      });
+    }
+
+    return lanes.slice(0, 4);
+  });
 
   let priorityLinks = $derived.by(() => [
     {
@@ -397,17 +458,37 @@
       </div>
 
       <div class="hero-rail">
-        <div class="rail-label">Priority lanes</div>
-        <div class="rail-title">Open the lane that needs detail.</div>
+        <div class="rail-label">{attentionLanes.length > 0 ? 'Attention lanes' : 'Priority lanes'}</div>
+        <div class="rail-title">{attentionLanes.length > 0 ? 'Start with the lane that needs action next.' : 'Open the lane that needs detail.'}</div>
         <div class="rail-stack">
-          {#each priorityLinks as link (link.route)}
-            <button class="rail-item" onclick={() => navigate(link.route)}>
-              <span class="rail-item-label">{link.label}</span>
-              <strong>{link.value}</strong>
-              <small>{link.detail}</small>
-            </button>
-          {/each}
+          {#if attentionLanes.length > 0}
+            {#each attentionLanes as lane (lane.route + lane.label)}
+              <button class="rail-item" onclick={() => navigate(lane.route)}>
+                <span class="rail-item-label">{lane.label}</span>
+                <strong>{lane.value}</strong>
+                <small>{lane.detail}</small>
+              </button>
+            {/each}
+          {:else}
+            {#each priorityLinks as link (link.route)}
+              <button class="rail-item" onclick={() => navigate(link.route)}>
+                <span class="rail-item-label">{link.label}</span>
+                <strong>{link.value}</strong>
+                <small>{link.detail}</small>
+              </button>
+            {/each}
+          {/if}
         </div>
+        {#if attentionLanes.length > 0}
+          <div class="rail-quicklinks">
+            {#each priorityLinks as link (link.route)}
+              <button class="quicklink-chip" onclick={() => navigate(link.route)}>
+                <span>{link.label}</span>
+                <strong>{link.value}</strong>
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
     </section>
 
@@ -577,6 +658,13 @@
     gap: 8px;
   }
 
+  .rail-quicklinks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 2px;
+  }
+
   .rail-item {
     display: flex;
     flex-direction: column;
@@ -616,6 +704,25 @@
     letter-spacing: 0.08em;
     color: var(--fg-secondary);
     font-weight: 700;
+  }
+
+  .quicklink-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-primary) 50%, transparent);
+    color: var(--fg-secondary);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    cursor: pointer;
+  }
+
+  .quicklink-chip strong {
+    color: var(--fg-primary);
+    font-size: 11px;
   }
 
   .section {

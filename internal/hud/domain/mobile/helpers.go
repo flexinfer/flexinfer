@@ -326,25 +326,45 @@ func buildMobileAttentionLanes(snapshot coordination.Snapshot) []map[string]any 
 		if !agent.NeedsAttention {
 			continue
 		}
+		summary := strings.Join(limitMobileSlice(agent.AttentionReasons, 2), " · ")
 		lanes = append(lanes, map[string]any{
-			"type":    "agent",
-			"id":      agent.AgentID,
-			"scope":   preferMobileValue(agent.Namespace, "unscoped"),
-			"summary": strings.Join(limitMobileSlice(agent.AttentionReasons, 2), " · "),
+			"type":     "agent",
+			"id":       agent.AgentID,
+			"label":    "Agent lane",
+			"route":    "people",
+			"scope":    preferMobileValue(agent.Namespace, "unscoped"),
+			"summary":  summary,
+			"severity": mobileAttentionSeverity(summary),
 		})
 	}
 	for _, namespace := range limitMobileSlice(snapshot.Namespaces, 3) {
 		if !namespace.NeedsAttention {
 			continue
 		}
+		summary := strings.Join(limitMobileSlice(namespace.AttentionReasons, 2), " · ")
 		lanes = append(lanes, map[string]any{
-			"type":    "namespace",
-			"id":      namespace.Namespace,
-			"scope":   fmt.Sprintf("%d tasks", namespace.TaskCount),
-			"summary": strings.Join(limitMobileSlice(namespace.AttentionReasons, 2), " · "),
+			"type":     "namespace",
+			"id":       namespace.Namespace,
+			"label":    "Work lane",
+			"route":    "work",
+			"scope":    fmt.Sprintf("%d tasks", namespace.TaskCount),
+			"summary":  summary,
+			"severity": mobileAttentionSeverity(summary),
 		})
 	}
 	return limitMobileSlice(lanes, 6)
+}
+
+func mobileAttentionSeverity(summary string) string {
+	summary = strings.ToLower(strings.TrimSpace(summary))
+	switch {
+	case strings.Contains(summary, "conflict"), strings.Contains(summary, "blocked"), strings.Contains(summary, "orphan"):
+		return "critical"
+	case summary == "":
+		return "info"
+	default:
+		return "warning"
+	}
 }
 
 func preferMobileValue(value, fallback string) string {

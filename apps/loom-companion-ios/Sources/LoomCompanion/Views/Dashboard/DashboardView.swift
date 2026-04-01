@@ -14,7 +14,8 @@ struct DashboardView: View {
     @State private var refreshTimer: Timer?
 
     enum DashboardNavAction {
-        case agents
+        case people
+        case work
         case connection
         case liveActivities
     }
@@ -65,21 +66,29 @@ struct DashboardView: View {
 
                     Button {
                         HapticManager.selection()
-                        onNavigate?(.agents)
+                        onNavigate?(.people)
                     } label: {
                         FleetSummaryCard(dashboard: dashboard)
                     }
                     .buttonStyle(.plain)
                     .cardAppear(index: 1)
 
+                    if !dashboard.coordination.attentionLanes.isEmpty {
+                        AttentionLanesCard(lanes: dashboard.coordination.attentionLanes) { lane in
+                            HapticManager.selection()
+                            onNavigate?(navigationAction(for: lane))
+                        }
+                        .cardAppear(index: 2)
+                    }
+
                     if let counts = viewModel.taskCounts,
                        counts.pending + counts.inProgress + counts.blocked > 0 {
                         ActiveWorkCard(counts: counts)
-                            .cardAppear(index: 2)
+                            .cardAppear(index: 3)
                     }
 
                     TimelineListView(entries: dashboard.recentTimeline)
-                        .cardAppear(index: 3)
+                        .cardAppear(index: 4)
 
                     if let agoText = updatedAgo {
                         HStack {
@@ -188,6 +197,17 @@ struct DashboardView: View {
         if diff < 60 { return "\(diff)s ago" }
         if diff < 3600 { return "\(diff / 60)m ago" }
         return "\(diff / 3600)h ago"
+    }
+
+    private func navigationAction(for lane: DashboardAttentionLane) -> DashboardNavAction {
+        switch lane.route {
+        case "people":
+            return .people
+        case "connection":
+            return .connection
+        default:
+            return .work
+        }
     }
 
     private var criticalAlertBanner: some View {

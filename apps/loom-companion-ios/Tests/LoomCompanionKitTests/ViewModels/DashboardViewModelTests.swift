@@ -13,6 +13,20 @@ struct DashboardViewModelTests {
             activeAgents: 2, idleAgents: 0, offlineAgents: 0,
             updatedAt: "2026-02-23T12:00:00Z",
             health: HealthSummary(totalServers: 3, healthyServers: 3, degradedServers: 0, downServers: 0, idleServers: 0),
+            coordination: DashboardCoordination(
+                summary: DashboardCoordinationSummary(
+                    activeNamespaces: 1,
+                    namespacesAtRisk: 0,
+                    agentsNeedingAttention: 0,
+                    sharedBranches: 0,
+                    conflictFiles: 0,
+                    crossAgentBlockers: 0,
+                    orphanTasks: 0,
+                    idleClaimHolders: 0,
+                    mergeReadyBranches: 0
+                ),
+                attentionLanes: []
+            ),
             recentTimeline: []
         )
 
@@ -44,6 +58,7 @@ struct DashboardViewModelTests {
             activeAgents: 0, idleAgents: 0, offlineAgents: 0,
             updatedAt: "2026-02-24T00:00:00Z",
             health: HealthSummary(totalServers: 1, healthyServers: 1, degradedServers: 0, downServers: 0, idleServers: 0),
+            coordination: DashboardCoordination(),
             recentTimeline: []
         )
 
@@ -78,6 +93,7 @@ struct DashboardViewModelTests {
             activeAgents: 0, idleAgents: 0, offlineAgents: 0,
             updatedAt: "2026-02-24T00:00:00Z",
             health: HealthSummary(totalServers: 1, healthyServers: 1, degradedServers: 0, downServers: 0, idleServers: 0),
+            coordination: DashboardCoordination(),
             recentTimeline: []
         )
 
@@ -123,6 +139,7 @@ struct DashboardViewModelTests {
             activeAgents: 0, idleAgents: 0, offlineAgents: 0,
             updatedAt: "2026-02-24T00:00:00Z",
             health: HealthSummary(totalServers: 1, healthyServers: 1, degradedServers: 0, downServers: 0, idleServers: 0),
+            coordination: DashboardCoordination(),
             recentTimeline: []
         )
 
@@ -151,6 +168,7 @@ struct DashboardViewModelTests {
             activeAgents: 0, idleAgents: 0, offlineAgents: 0,
             updatedAt: "2026-02-24T00:00:00Z",
             health: HealthSummary(totalServers: 1, healthyServers: 1, degradedServers: 0, downServers: 0, idleServers: 0),
+            coordination: DashboardCoordination(),
             recentTimeline: []
         )
 
