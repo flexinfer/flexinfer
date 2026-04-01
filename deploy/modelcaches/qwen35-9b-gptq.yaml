@@ -47,7 +47,7 @@ spec:
     nodeSelector:
       kubernetes.io/hostname: cblevins-radeonvii
     normThreshold: "100"       # Abort if refusal direction norm > 100
-    ablitateLmHead: true       # Abliterate lm_head using only full-attention layer directions
+    ablitateLmHead: false      # Avoid lm_head corruption on offloaded saves; fixed image will rerun safely
   quantization:
     format: GPTQ
     bits: 4
