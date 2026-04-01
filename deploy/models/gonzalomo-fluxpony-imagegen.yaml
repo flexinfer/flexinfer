@@ -11,7 +11,9 @@ spec:
   gpu:
     vendor: amd
     count: 1
-    shared: radeonvii-models
+    # Share the 5930k runtime with the text models so one single-GPU node
+    # never has two independent "active" contenders fighting the same runtime.
+    shared: 5930k-textgen
     priority: 200
     vramEstimateMB: 12000
   serverless:
@@ -41,7 +43,7 @@ spec:
     compilationCache: "true"
     hipVisibleDevices: "0"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-radeonvii
+    kubernetes.io/hostname: cblevins-5930k
   resources:
     requests:
       cpu: "2"

@@ -8,14 +8,16 @@ spec:
   source: HF://diffusers/stable-diffusion-xl-1.0-inpainting-0.1
   gpu:
     vendor: amd
-    shared: radeonvii-models
-    priority: 250
+    # Keep every 5930k contender in the same shared group so the unified
+    # runtime serializes image/text swaps cleanly on the single GPU.
+    shared: 5930k-textgen
+    priority: 200
     count: 1
     vramEstimateMB: 12000
   serverless:
     enabled: true
-    # Leave the Radeon VII image model cold by default so maintenance and
-    # quantization jobs can claim the GPU without Flux immediately warming it.
+    # Leave the shared 5930k image-edit model cold by default. It should only
+    # preempt the text side when there is real image-edit traffic.
     minReplicas: 0
     idleTimeout: 5m
     coldStartTimeout: 10m
@@ -28,9 +30,8 @@ spec:
     pipelineMode: inpainting
     modelFamily: "sdxl"
     cpuOffload: 'true'
-    # gfx906 still needs the fixed SDXL VAE or decodes trend gray/washed out.
-    # Keep the main pipeline in fp32 for stability, but load the VAE from the
-    # staged cache path so we do not rely on the base model's decoder.
+    # Keep the main pipeline in fp32 for stability, but load the fixed VAE from
+    # the staged cache path so we do not rely on the base model's decoder.
     useFp16: '0'
     vaeRepo: "madebyollin/sdxl-vae-fp16-fix"
     vaePath: ".vae/sdxl-vae-fp16-fix"
@@ -42,7 +43,7 @@ spec:
     compilationCache: "true"
     hipVisibleDevices: '0'
   nodeSelector:
-    kubernetes.io/hostname: cblevins-radeonvii
+    kubernetes.io/hostname: cblevins-5930k
   resources:
     requests:
       cpu: '2'
