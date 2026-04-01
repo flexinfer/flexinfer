@@ -1,0 +1,72 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gonzalomo-fluxpony-imagegen
+  namespace: flexinfer-system
+spec:
+  backend: diffusers
+  source: HF://stablediffusionapi/gonzalomoxlfluxpony-v30unitydmd
+  cache:
+    strategy: Local
+  gpu:
+    vendor: amd
+    count: 1
+    shared: radeonvii-models
+    priority: 200
+    vramEstimateMB: 12000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 10m
+    coldStartTimeout: 30m
+  config:
+    # Gonzalomo FluxPony is an SDXL model despite the FLUX-like name.
+    modelFamily: "sdxl"
+    cpuOffload: "true"
+    # The staged repo publishes fp16-named component weights only
+    # (for example `model.fp16.safetensors`), so the runtime must request
+    # the fp16 diffusers variant to load the local cache successfully.
+    useFp16: "1"
+    vaeRepo: "madebyollin/sdxl-vae-fp16-fix"
+    vaePath: ".vae/sdxl-vae-fp16-fix"
+    # This Unity DMD checkpoint ships with Euler + ~30 steps as its published
+    # inference recipe. Generic SDXL DPM++/45-step defaults oversoften the
+    # image and can produce a washed-out "negative" look on ROCm.
+    guidanceScale: "7.5"
+    numInferenceSteps: "30"
+    scheduler: "euler"
+    negativePrompt: "painting, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, deformed, ugly, blurry, bad anatomy, bad proportions, extra limbs, cloned face, skinny, glitchy, double torso, extra arms, extra hands, mangled fingers, missing lips, ugly face, distorted face, extra legs, anime"
+    warmupResolutions: "512x512"
+    warmPolicy: ondemand
+    compilationCache: "true"
+    hipVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  resources:
+    requests:
+      cpu: "2"
+      memory: 12Gi
+    limits:
+      cpu: "4"
+      memory: 24Gi
+  serviceLabels:
+    - image-gen
+    - text-to-image
+    - dall-e-3
+    - flux-image-gen
+    - fluxpony-image-gen
+    - imagegen
+  litellm:
+    enabled: true
+    servedModelName: gonzalomo-fluxpony-imagegen
+    aliases:
+      - image-gen
+      - dall-e-3
+      - flux-image-gen
+      - text-to-image
+      - fluxpony-image-gen
+      - gonzalomo-fluxpony
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

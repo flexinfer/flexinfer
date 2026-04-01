@@ -10,6 +10,7 @@ resources:
   - omnicoder-9b.yaml               # vLLM, GPTQ INT4, ~7.2 GiB VRAM, on-demand (priority 100)
 
   # === cblevins-radeonvii (16 GB gfx906) — image editing / inpainting ===
+  - gonzalomo-fluxpony-imagegen.yaml # diffusers, SDXL text-to-image, on-demand (priority 200)
   - sdxl-inpainting-radeonvii.yaml   # diffusers, SDXL inpainting, ~12 GiB VRAM
 
   # === cblevins-gtx980ti (6 GB sm_52) — embeddings ===
