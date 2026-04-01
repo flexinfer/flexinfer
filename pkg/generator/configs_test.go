@@ -44,7 +44,15 @@ func testRegistry() *registry.Registry {
 			},
 			"codex": {
 				Settings: map[string]any{
-					"approval_policy":                    "never",
+					"approval_policy": map[string]any{
+						"granular": map[string]any{
+							"sandbox_approval":    false,
+							"rules":               false,
+							"mcp_elicitations":    false,
+							"request_permissions": false,
+							"skill_approval":      false,
+						},
+					},
 					"suppress_unstable_features_warning": true,
 					"sandbox_mode":                       "workspace-write",
 					"features": map[string]any{
@@ -252,7 +260,7 @@ func TestEmitCodexPreamble(t *testing.T) {
 	content := sb.String()
 
 	for _, want := range []string{
-		`approval_policy = "never"`,
+		`mcp_elicitations = false`,
 		`suppress_unstable_features_warning = true`,
 		`sandbox_mode = "workspace-write"`,
 		`writable_roots = ["/tmp/workspace"]`,
@@ -324,7 +332,7 @@ func TestEmitCodexPreamble_NotifyRemainsTopLevel(t *testing.T) {
 	}
 }
 
-func TestGenerateTomlConfig_CodexLoomModeEmitsAlwaysAllow(t *testing.T) {
+func TestGenerateTomlConfig_CodexOmitsAlwaysAllow(t *testing.T) {
 	tmpDir := t.TempDir()
 	profile, err := GetPlatformProfile("codex")
 	if err != nil {
@@ -350,8 +358,15 @@ func TestGenerateTomlConfig_CodexLoomModeEmitsAlwaysAllow(t *testing.T) {
 		t.Fatalf("read generated config: %v", err)
 	}
 
-	if !strings.Contains(string(content), `always_allow = ["*"]`) {
-		t.Fatalf("expected generated codex config to auto-allow loom proxy tools, got:\n%s", string(content))
+	// Codex does not support always_allow on MCP server entries.
+	// Tool approval is controlled by approval_policy (granular.mcp_elicitations).
+	if strings.Contains(string(content), `always_allow`) {
+		t.Fatalf("expected codex config to NOT emit always_allow (not a valid Codex key), got:\n%s", string(content))
+	}
+
+	// Verify granular approval_policy is emitted with mcp_elicitations = false.
+	if !strings.Contains(string(content), `mcp_elicitations = false`) {
+		t.Fatalf("expected codex config to emit granular approval_policy with mcp_elicitations = false, got:\n%s", string(content))
 	}
 }
 

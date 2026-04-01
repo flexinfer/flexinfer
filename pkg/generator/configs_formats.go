@@ -167,16 +167,18 @@ func generateTomlConfig(p *GenerateParams) error {
 	sb.WriteString(fmt.Sprintf("# Generated MCP configuration for %s\n", target))
 	sb.WriteString("# Source: mcp/context/registry.yaml\n")
 
-	// Emit policy enforcement annotations for platforms with policy refs.
-	if comment := FormatPolicyComment(profile.Hooks, "# "); comment != "" {
-		sb.WriteString(comment)
-	}
-	sb.WriteString("\n")
-
 	// Platforms with requires_preamble get a config preamble (e.g., Codex's
-	// approval_policy, features, sandbox_mode, and notify hook).
+	// approval_policy, features, sandbox_mode, and notify hook) which includes
+	// its own policy comment — skip the duplicate here.
 	if profile.Features.RequiresPreamble {
+		sb.WriteString("\n")
 		emitCodexPreamble(&sb, p.Reg, p.WorkspaceRoot, p.LoomBinary)
+	} else {
+		// Emit policy enforcement annotations for platforms with policy refs.
+		if comment := FormatPolicyComment(profile.Hooks, "# "); comment != "" {
+			sb.WriteString(comment)
+		}
+		sb.WriteString("\n")
 	}
 
 	// Sort keys for deterministic output
@@ -216,9 +218,10 @@ func generateTomlConfig(p *GenerateParams) error {
 			sb.WriteString(fmt.Sprintf("%s = %d\n", field, spec.Timeout))
 		}
 
-		// Codex omits description/hint fields but still supports always_allow on
-		// server entries, so don't couple allowlist emission to description support.
-		if (profile.Features.SupportsDescription || profile.Features.RequiresPreamble) && len(spec.AlwaysAllow) > 0 {
+		// Emit always_allow for platforms that support it (e.g. Kilocode).
+		// Codex does NOT support always_allow on MCP server entries — tool
+		// approval is controlled by approval_policy (granular.mcp_elicitations).
+		if profile.Features.SupportsDescription && !profile.Features.RequiresPreamble && len(spec.AlwaysAllow) > 0 {
 			allowJSON, _ := json.Marshal(spec.AlwaysAllow)
 			sb.WriteString(fmt.Sprintf("always_allow = %s\n", string(allowJSON)))
 		}
