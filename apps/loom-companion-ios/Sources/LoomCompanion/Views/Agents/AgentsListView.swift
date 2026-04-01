@@ -12,17 +12,20 @@ struct AgentsListView: View {
     private let onPrefillEndSession: ((String) -> Void)?
     private let apiClient: any LoomAPIClientProtocol
     private let broadcaster: SSEEventBroadcaster?
+    private let embeddedInPeopleTab: Bool
 
     init(
         apiClient: APIClient?,
         broadcaster: SSEEventBroadcaster? = nil,
         deepLinkSessionID: Binding<String?> = .constant(nil),
+        embeddedInPeopleTab: Bool = false,
         onPrefillEndSession: ((String) -> Void)? = nil
     ) {
         let client: any LoomAPIClientProtocol = apiClient ?? NoOpAgentsClient()
         self.apiClient = client
         self.broadcaster = broadcaster
         _deepLinkSessionID = deepLinkSessionID
+        self.embeddedInPeopleTab = embeddedInPeopleTab
         self.onPrefillEndSession = onPrefillEndSession
         _viewModel = State(initialValue: AgentsViewModel(apiClient: client))
     }
@@ -36,28 +39,35 @@ struct AgentsListView: View {
                     pipelineAgentCount: viewModel.agents.filter { $0.pipelineCount > 0 }.count
                 )
 
-                ForEach(viewModel.filteredAgents) { agent in
-                    if agent.hasSession, let sessionId = agent.sessionId {
-                        NavigationLink(value: sessionId) {
-                            AgentRowView(agent: agent)
-                        }
-                        .swipeActions(edge: .trailing) {
-                            if agent.sessionStatus == "active" {
-                                Button(role: .destructive) {
-                                    HapticManager.medium()
-                                    onPrefillEndSession?(sessionId)
-                                } label: {
-                                    Label("End Session", systemImage: "stop.circle")
+                ForEach(viewModel.groupedAgents) { group in
+                    Section {
+                        ForEach(group.agents) { agent in
+                            if agent.hasSession, let sessionId = agent.sessionId {
+                                NavigationLink(value: sessionId) {
+                                    AgentRowView(agent: agent)
                                 }
-                                .tint(LoomColors.statusCritical)
+                                .swipeActions(edge: .trailing) {
+                                    if agent.sessionStatus == "active" {
+                                        Button(role: .destructive) {
+                                            HapticManager.medium()
+                                            onPrefillEndSession?(sessionId)
+                                        } label: {
+                                            Label("End Session", systemImage: "stop.circle")
+                                        }
+                                        .tint(LoomColors.statusCritical)
+                                    }
+                                }
+                            } else {
+                                AgentRowView(agent: agent)
                             }
                         }
-                    } else {
-                        AgentRowView(agent: agent)
+                    } header: {
+                        agentGroupHeader(group)
                     }
                 }
             }
-            .navigationTitle("Agents")
+            .navigationTitle(embeddedInPeopleTab ? "" : "Agents")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: String.self) { sessionId in
                 SessionDetailView(sessionId: sessionId, apiClient: apiClient)
             }
@@ -67,11 +77,13 @@ struct AgentsListView: View {
                 HapticManager.light()
             }
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showingCreateSheet = true
-                    } label: {
-                        Label("New Session", systemImage: "plus")
+                if !embeddedInPeopleTab {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            showingCreateSheet = true
+                        } label: {
+                            Label("New Session", systemImage: "plus")
+                        }
                     }
                 }
             }
@@ -104,14 +116,16 @@ struct AgentsListView: View {
                     ContentUnavailableView {
                         Label("No Agents", systemImage: "person.2.wave.2")
                     } description: {
-                        Text("Agents appear here when coding agents connect via presence or sessions. Start an agent from your terminal or spawn one from the Ops tab.")
+                        Text("Agents appear here when coding agents connect via presence or sessions. Start an agent from your terminal or spawn one from the Work tab.")
                     } actions: {
-                        Button {
-                            showingCreateSheet = true
-                        } label: {
-                            Label("Create Session", systemImage: "plus.circle")
+                        if !embeddedInPeopleTab {
+                            Button {
+                                showingCreateSheet = true
+                            } label: {
+                                Label("Create Session", systemImage: "plus.circle")
+                            }
+                            .buttonStyle(.borderedProminent)
                         }
-                        .buttonStyle(.borderedProminent)
                     }
                 } else if viewModel.filteredAgents.isEmpty && !viewModel.agents.isEmpty {
                     ContentUnavailableView.search(text: viewModel.searchText)
@@ -177,6 +191,27 @@ struct AgentsListView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func agentGroupHeader(_ group: UnifiedAgentGroup) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(group.title)
+                    .font(LoomTypography.bodyMedium)
+                    .foregroundStyle(LoomColors.textPrimary)
+                Text("\(group.agents.count)")
+                    .font(LoomTypography.monoCaption)
+                    .foregroundStyle(LoomColors.textTertiary)
+            }
+            if let subtitle = group.subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(LoomTypography.caption)
+                    .foregroundStyle(LoomColors.textTertiary)
+                    .lineLimit(1)
+            }
+        }
+        .textCase(nil)
     }
 }
 

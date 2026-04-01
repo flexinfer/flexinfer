@@ -31,3 +31,23 @@ func TestCanonical(t *testing.T) {
 		t.Fatalf("Canonical(namespace) = %q, want loom-core", got)
 	}
 }
+
+func TestFromPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "/Users/cblevins/workspace/services/loom-core", want: "services/loom-core"},
+		{path: "/Users/cblevins/workspace/services/loom-core/.worktrees/mobile-ui", want: "services/loom-core"},
+		{path: "platform/gitops/clusters/k3s", want: "platform/gitops"},
+		{path: `C:\workspace\apps\loom\Sources\App.swift`, want: "apps/loom"},
+		{path: "", want: ""},
+		{path: "/tmp/not-a-workspace/path", want: ""},
+	}
+
+	for _, tc := range tests {
+		if got := FromPath(tc.path); got != tc.want {
+			t.Fatalf("FromPath(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
