@@ -84,6 +84,7 @@
 		AFED48DE9C9328A10D542700 /* SessionTasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E77474862988D0C330061E27 /* SessionTasksView.swift */; };
 		B03747CEFD8DAB35671BF975 /* StatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B2A65F47D87C55A22DF2C6F /* StatusBadge.swift */; };
 		B160EB1AC83AB4898CFA7B0F /* LiveActivityHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30139D278B540C98AE965B6D /* LiveActivityHelpers.swift */; };
+		B32E898B83206292D72AD14D /* AttentionLanesCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A048D43A81CB4769491775B /* AttentionLanesCard.swift */; };
 		B636A47B4F338A2BFC9743F2 /* AgentsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8EBAD7BBD75B088B1545875 /* AgentsListView.swift */; };
 		B6F6347DAF13C5995D105AE8 /* SessionEntryBreakdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DC84E6AC9D1E37BCC3497FE /* SessionEntryBreakdownView.swift */; };
 		BA4BFDAF7460757C230C1995 /* OpsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C5E25ADF1909F821B3221D7 /* OpsView.swift */; };
@@ -225,6 +226,7 @@
 		688362B0681E39784FE702D9 /* SessionDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDetailView.swift; sourceTree = "<group>"; };
 		688B2D28C7B1A98136D0787C /* AgentDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentDetailView.swift; sourceTree = "<group>"; };
 		69611C28D852731CE58ABE15 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		6A048D43A81CB4769491775B /* AttentionLanesCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttentionLanesCard.swift; sourceTree = "<group>"; };
 		6C288D842D503B7776E8F0AB /* SessionMetadataView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionMetadataView.swift; sourceTree = "<group>"; };
 		6CCA5BB226DF7900CF791225 /* AgentFilterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentFilterView.swift; sourceTree = "<group>"; };
 		6DF3DC44CF14DC2FB3F085E0 /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
@@ -603,6 +605,7 @@
 			isa = PBXGroup;
 			children = (
 				80F942D468E002C7585986BA /* ActiveWorkCard.swift */,
+				6A048D43A81CB4769491775B /* AttentionLanesCard.swift */,
 				8128EBBB2219D0A2C14482ED /* DashboardView.swift */,
 				1CF7388A60BCC73E46496965 /* FleetSummaryCard.swift */,
 				CFBB16BC786E0CA1239A1927 /* HealthStatusCard.swift */,
@@ -751,6 +754,7 @@
 				9FA7BCACDC8754FB334F3EBD /* AlertsListView.swift in Sources */,
 				88EF45DE6FDE4DFC9372693C /* AnimatedCounter.swift in Sources */,
 				1B0B0A7F79331CB320989053 /* AppDelegate.swift in Sources */,
+				B32E898B83206292D72AD14D /* AttentionLanesCard.swift in Sources */,
 				5CBA7A390991726272361590 /* CheckFleetHealthIntent.swift in Sources */,
 				0034FF0A8F95401700D87E5C /* CompactSparkline.swift in Sources */,
 				761BFE6B0B2350CEB2C400E2 /* ConnectionDiagnosticsView.swift in Sources */,

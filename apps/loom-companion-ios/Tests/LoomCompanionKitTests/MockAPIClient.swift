@@ -98,6 +98,9 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
             if let r = sandboxStartResponse as? T { return r }
         case .sandboxStop:
             if let r = sandboxStopResponse as? T { return r }
+        case .spawnAgent, .spawnList, .spawnConfig, .spawnDetail, .spawnStop,
+             .agents, .workflowApprove, .workflowReject, .handoffs, .namespaces:
+            break
         case .audit, .ping, .eventsStream:
             break
         }

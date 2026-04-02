@@ -2,6 +2,7 @@ import Testing
 import Foundation
 @testable import LoomCompanionKit
 
+@MainActor
 @Suite("DashboardViewModel")
 struct DashboardViewModelTests {
 

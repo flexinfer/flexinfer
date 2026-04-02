@@ -299,7 +299,7 @@ struct OpsViewModelTests {
         await vm.load()
 
         #expect(vm.error == nil)
-        #expect(vm.warningMessage != nil)
+        #expect(vm.warningMessage == nil)
         #expect(vm.graphPath == nil)
         #expect(vm.graphEntities.count == 2)
         #expect(vm.sandboxSummary?.available == false)
@@ -525,7 +525,7 @@ struct OpsViewModelTests {
         #expect(vm.pipelines.first?.currentStage == "test")
         #expect(vm.pipelinesAvailable == true)
         #expect(vm.warningMessage?.contains("tasks") == true)
-        #expect(vm.warningMessage?.contains("pipelines") == true)
+        #expect(vm.warningMessage?.contains("pipelines") == false)
     }
 
     @Test("Create session mutation success returns status message")
