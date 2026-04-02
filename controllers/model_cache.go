@@ -349,6 +349,18 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 			job := &batchv1.Job{}
 			err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
 			if errors.IsNotFound(err) {
+				if cacheConditionReadyForGeneration(original, "CacheStage") {
+					model.Status.Cache.Ready = true
+					model.Status.Cache.JobName = jobName
+					model.Status.Cache.JobPhase = "Succeeded"
+					model.Status.Cache.Message = "local cache previously staged"
+					setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "CacheStage", "local cache previously staged")
+					if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+						return false, err
+					}
+					return true, nil
+				}
+
 				newJob, err := r.jobForLocalHFPrefetch(model)
 				if err != nil {
 					return false, fmt.Errorf("build local HF cache stage job: %w", err)
@@ -903,4 +915,17 @@ func modelCondition(conds []metav1.Condition, condType string) *metav1.Condition
 		}
 	}
 	return nil
+}
+
+func cacheConditionReadyForGeneration(model *aiv1alpha2.Model, reason string) bool {
+	if model == nil || model.Status.Cache == nil || !model.Status.Cache.Ready {
+		return false
+	}
+	cond := modelCondition(model.Status.Conditions, aiv1alpha2.ConditionModelCached)
+	if cond == nil {
+		return false
+	}
+	return cond.Status == metav1.ConditionTrue &&
+		cond.Reason == reason &&
+		cond.ObservedGeneration == model.Generation
 }
