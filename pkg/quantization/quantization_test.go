@@ -1427,8 +1427,11 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "GPTQ_PY_IMPORTS=\"import tokenicer, pcre, kernels\"") {
 		t.Error("expected GPTQ wrapper script to define the base GPTQModel runtime dependency imports")
 	}
-	if !contains(script, "GPTQ_PIP_ARGS+=(") || !contains(script, "\"torchao>=0.16.0\"") {
-		t.Error("expected GPTQ wrapper script to add torchao only on compatible arches")
+	if !contains(script, "python3 -m pip uninstall -y torchao") {
+		t.Error("expected GPTQ wrapper script to proactively remove torchao on unstable torch builds")
+	}
+	if contains(script, "\"torchao>=0.16.0\"") {
+		t.Error("expected GPTQ wrapper script to avoid reinstalling torchao after removing it")
 	}
 	if !contains(script, "Skipping torchao on gfx906/gfx900; wheel triggers SIGILL on older x86 hosts") {
 		t.Error("expected GPTQ wrapper script to explain why torchao is skipped on gfx906/gfx900")

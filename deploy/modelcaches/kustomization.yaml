@@ -14,6 +14,3 @@ resources:
   - qwen35-27b-opus-distill-oci.yaml # → cblevins-7900xtx
   - qwen35-9b-oci.yaml              # → cblevins-5930k
   - omnicoder-9b-oci.yaml           # → cblevins-5930k
-
-  # === Finetune pipeline ===
-  - finetune-test.yaml
