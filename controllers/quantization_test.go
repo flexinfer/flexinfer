@@ -133,6 +133,7 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 		It("Should mark the ModelCache as Failed", func() {
 			ctx := context.Background()
 			cacheName := "test-quant-fail"
+			noRetries := int32(0)
 
 			By("Creating a ModelCache with quantization")
 			modelCache := &aiv1alpha1.ModelCache{
@@ -143,6 +144,7 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 				Spec: aiv1alpha1.ModelCacheSpec{
 					Source:          "some-model/failing",
 					StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+					MaxRetries:      &noRetries,
 					Quantization: &aiv1alpha1.QuantizationSpec{
 						Format:   aiv1alpha1.QuantizationFormatGGUF,
 						GGUFType: "Q4_K_M",
@@ -548,18 +550,18 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 			cache.Annotations[annotationRequantize] = "true"
 			Expect(k8sClient.Update(ctx, cache)).To(Succeed())
 
-			By("Verifying the controller resets phase and clears annotation")
-			Eventually(func() aiv1alpha1.ModelCachePhase {
+			By("Verifying the controller resets status and eventually clears the trigger annotation")
+			Eventually(func() string {
 				c := &aiv1alpha1.ModelCache{}
 				if err := k8sClient.Get(ctx, cacheKey, c); err != nil {
-					return ""
+					return "get-error"
 				}
-				return c.Status.Phase
-			}, time.Minute, time.Second).Should(Equal(aiv1alpha1.ModelCachePhaseProvisioning))
-
-			Expect(k8sClient.Get(ctx, cacheKey, cache)).To(Succeed())
-			Expect(cache.Annotations[annotationRequantize]).To(BeEmpty())
-			Expect(cache.Status.Quantization).To(BeNil())
+				trigger := ""
+				if c.Annotations != nil {
+					trigger = c.Annotations[annotationRequantize]
+				}
+				return fmt.Sprintf("%s|%s|%t", c.Status.Phase, trigger, c.Status.Quantization == nil)
+			}, time.Minute, time.Second).Should(Equal("Provisioning||true"))
 		})
 	})
 })

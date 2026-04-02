@@ -57,6 +57,12 @@ func init() {
 func TestMain(m *testing.M) {
 	flag.Parse()
 
+	promotionGateMode := os.Getenv("FLEXINFER_E2E_PROMOTION_GATE") == "1"
+	if promotionGateMode {
+		fmt.Println("Running e2e promotion-gate contract tests")
+		os.Exit(m.Run())
+	}
+
 	if testing.Short() {
 		fmt.Println("Skipping e2e tests in short mode")
 		os.Exit(0)

@@ -112,11 +112,16 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 
 	var readyLeader *aiv1alpha2.Model
 	var recentLeader *aiv1alpha2.Model
+	var runnableFallbackLeader *aiv1alpha2.Model
 	var fallbackLeader *aiv1alpha2.Model
 	var demandedLeader *aiv1alpha2.Model
 	var warmPrimaryLeader *aiv1alpha2.Model
 	for _, m := range groupModels {
 		fallbackLeader = better(fallbackLeader, m)
+		if !sharedModelCanTakeDemand(m) {
+			continue
+		}
+		runnableFallbackLeader = better(runnableFallbackLeader, m)
 		if isWarmPrimaryModel(m) {
 			warmPrimaryLeader = better(warmPrimaryLeader, m)
 		}
@@ -125,9 +130,6 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 			continue
 		}
 		if m.Status.LastActiveTime == nil {
-			continue
-		}
-		if !sharedModelCanTakeDemand(m) {
 			continue
 		}
 		if now.Sub(m.Status.LastActiveTime.Time) < 5*time.Minute {
@@ -157,6 +159,9 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	}
 	if warmPrimaryLeader != nil {
 		return warmPrimaryLeader
+	}
+	if runnableFallbackLeader != nil {
+		return runnableFallbackLeader
 	}
 	return fallbackLeader
 }

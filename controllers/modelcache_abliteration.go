@@ -86,16 +86,11 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
-		if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
-			return ctrl.Result{}, err
-		}
-		if modelCache.Annotations == nil {
-			modelCache.Annotations = make(map[string]string)
-		}
-		modelCache.Annotations[annotationAblitSpecHash] = currentHash
-		delete(modelCache.Annotations, annotationReabliterate)
 		// Persist annotation changes AFTER the status reset succeeds.
-		if err := r.Update(ctx, modelCache); err != nil {
+		if err := r.updateModelCacheAnnotations(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, func(annotations map[string]string) {
+			annotations[annotationAblitSpecHash] = currentHash
+			delete(annotations, annotationReabliterate)
+		}); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
@@ -234,6 +229,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "AbliterationFailed",
 				fmt.Sprintf("Failed to build abliteration job: %s", buildErr))
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+			modelCache.Status.CurrentPhase = "abliteration"
 			if statusErr := r.Status().Update(ctx, modelCache); statusErr != nil {
 				return ctrl.Result{}, statusErr
 			}
@@ -256,6 +252,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 				modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
 			}
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseAbliterating
+			modelCache.Status.CurrentPhase = "abliteration"
 			modelCache.Status.Abliteration.Progress = &progress
 			modelCache.Status.Abliteration.ProgressDetail = warmDetail
 			modelCache.Status.Abliteration.FailureMessage = ""
@@ -269,6 +266,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 				modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
 			}
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+			modelCache.Status.CurrentPhase = "abliteration"
 			modelCache.Status.Abliteration.FailureMessage = warmDetail
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
@@ -296,6 +294,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		}
 
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseAbliterating
+		modelCache.Status.CurrentPhase = "abliteration"
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -351,6 +350,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 						normVal, threshold)
 					modelCache.Status.Abliteration = ablitStatus
 					modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+					modelCache.Status.CurrentPhase = "abliteration"
 					r.Recorder.Event(modelCache, corev1.EventTypeWarning, "AbliterationNormExceeded",
 						ablitStatus.FailureMessage)
 					if err := r.Status().Update(ctx, modelCache); err != nil {
@@ -383,6 +383,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 
 		// No finetune, quantization, or publish — mark Ready.
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+		modelCache.Status.CurrentPhase = "ready"
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -400,6 +401,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
 		}
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseAbliterating
+		modelCache.Status.CurrentPhase = "abliteration"
 		modelCache.Status.Finetune = nil
 		modelCache.Status.Quantization = nil
 		modelCache.Status.Publish = nil
@@ -465,6 +467,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			}
 
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseAbliterating
+			modelCache.Status.CurrentPhase = "abliteration"
 			if modelCache.Status.Abliteration == nil {
 				modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
 			}
@@ -487,6 +490,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		}
 		modelCache.Status.Abliteration = ablitStatus
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+		modelCache.Status.CurrentPhase = "abliteration"
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}

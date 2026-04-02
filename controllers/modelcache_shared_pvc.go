@@ -108,20 +108,11 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
-
-			// Refetch to get fresh resourceVersion after status update.
-			if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
-				return ctrl.Result{}, err
-			}
-
 			// Now clear annotation and seed source hash via metadata update.
-			if modelCache.Annotations == nil {
-				modelCache.Annotations = make(map[string]string)
-			}
-			modelCache.Annotations[annotationSourceHash] = sourceHash(modelCache.Spec.Source)
-			delete(modelCache.Annotations, annotationRedownload)
-
-			if err := r.Update(ctx, modelCache); err != nil {
+			if err := r.updateModelCacheAnnotations(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, func(annotations map[string]string) {
+				annotations[annotationSourceHash] = sourceHash(modelCache.Spec.Source)
+				delete(annotations, annotationRedownload)
+			}); err != nil {
 				return ctrl.Result{}, err
 			}
 
@@ -152,17 +143,9 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
-
-			// Refetch, then update annotations.
-			if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
-				return ctrl.Result{}, err
-			}
-			if modelCache.Annotations == nil {
-				modelCache.Annotations = make(map[string]string)
-			}
-			modelCache.Annotations[annotationSourceHash] = currentHash
-
-			if err := r.Update(ctx, modelCache); err != nil {
+			if err := r.updateModelCacheAnnotations(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, func(annotations map[string]string) {
+				annotations[annotationSourceHash] = currentHash
+			}); err != nil {
 				return ctrl.Result{}, err
 			}
 

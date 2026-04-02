@@ -101,24 +101,35 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		return ctrl.Result{}, err
 	}
 
+	// Preserve in-flight runtime loads unless the model has already been
+	// preempted. This avoids tearing down a load that the runtime is already
+	// progressing through because cache state or desired replicas briefly
+	// changed under us.
+	if status, err := r.Runtime.CheckModelHealth(ctx, endpoint, model.Name); err == nil && status != nil && status.State == "Loading" && model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
+		if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhaseLoading, false, "RuntimeLoading", "Model is loading via runtime"); err != nil {
+			log.Error(err, "Failed to preserve loading phase for runtime-managed model")
+		}
+		return ctrl.Result{RequeueAfter: requeueShort}, nil
+	}
+
 	// If we don't want the model running, unload it from the runtime.
 	if desiredReplicas == 0 || !cacheReady {
-		// Direct runtime activation can race the controller's serverless reconcile
-		// loop. If the runtime already reports this model as Loading, preserve it
-		// long enough for LastActiveTime/phase updates to catch up.
-		if cacheReady && desiredReplicas == 0 && model.Spec.IsServerless() {
-			status, err := r.Runtime.CheckModelHealth(ctx, endpoint, model.Name)
-			if err != nil {
-				log.V(1).Info("Failed to check runtime model health before unload", "error", err)
-			} else if status != nil && status.State == "Loading" {
-				if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseLoading); err != nil {
-					log.Error(err, "Failed to preserve loading phase for runtime-managed model")
-				}
-				return ctrl.Result{RequeueAfter: requeueShort}, nil
-			}
-		}
 		r.unloadFromRuntime(ctx, model, endpoint)
-		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
+		if model.Status.Phase == aiv1alpha2.ModelPhasePreempted {
+			model.Status.Endpoint = ""
+			reason := aiv1alpha2.ReasonPreempted
+			message := "Model was preempted by higher priority model"
+			if !cacheReady {
+				reason = "CacheNotReady"
+				message = "Waiting for cache to be ready"
+			}
+			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, reason, message)
+			r.removeRuntimeEndpoints(ctx, model)
+			if err := r.Status().Update(ctx, model); err != nil {
+				log.Error(err, "Failed to update preempted runtime status")
+			}
+			return ctrl.Result{RequeueAfter: requeueAfter}, nil
+		} else {
 			phase := aiv1alpha2.ModelPhaseIdle
 			reason := aiv1alpha2.ReasonWaitingForActivation
 			message := "Model is idle, waiting for traffic"
