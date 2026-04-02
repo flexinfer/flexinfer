@@ -18,6 +18,12 @@ stages:
 default:
   interruptible: true
 
+.rules-validation: &rules-validation
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_MERGE_REQUEST_ID
+    - if: $CI_COMMIT_TAG
+
 variables:
   # Keep in sync with Harbor mirror: registry.harbor.lan/library/golang:${GO_VERSION}
   # Bump promptly on Go security releases; Trivy/govulncheck will flag vulnerable stdlib builds.
@@ -63,6 +69,7 @@ variables:
 lint:
   stage: lint
   <<: *go-cache
+  <<: *rules-validation
   before_script:
     - mkdir -p .go .go/cache
     - export GOPATH=${CI_PROJECT_DIR}/.go
@@ -86,6 +93,7 @@ lint:
 fmt:
   stage: lint
   <<: *go-cache
+  <<: *rules-validation
   script:
     - |
       files="$(git ls-files '*.go')"
@@ -99,6 +107,7 @@ fmt:
 helm:
   stage: lint
   image: registry.harbor.lan/library/helm:3.15.4
+  <<: *rules-validation
   script:
     - helm lint charts/flexinfer
     - helm template flexinfer charts/flexinfer --namespace flexinfer-system >/dev/null
@@ -106,6 +115,7 @@ helm:
 vet:
   stage: lint
   <<: *go-cache
+  <<: *rules-validation
   script:
     - go vet ./...
 
@@ -113,6 +123,7 @@ vet:
 unit_test:
   stage: test
   <<: *go-cache
+  <<: *rules-validation
   variables:
     # Minimum code coverage percentage required to pass CI.
     # Raise this as coverage improves; lowering requires justification.
@@ -138,18 +149,21 @@ unit_test:
 gpugroup_test:
   stage: test
   <<: *go-cache
+  <<: *rules-validation
   script:
     - SKIP_ENVTEST=1 go test -v ./controllers/... -run "GPUGroup" -timeout 5m
 
 proxy_test:
   stage: test
   <<: *go-cache
+  <<: *rules-validation
   script:
     - go test -v ./internal/proxy/... -timeout 2m
 
 race_test:
   stage: test
   <<: *go-cache
+  <<: *rules-validation
   script:
     - echo "Running tests with race detector..."
     - CGO_ENABLED=1 go test -race ./... -short -timeout 10m
@@ -158,6 +172,7 @@ race_test:
 integration_test:
   stage: test
   <<: *go-cache
+  <<: *rules-validation
   script:
     - go install sigs.k8s.io/controller-runtime/tools/setup-envtest@${ENVTEST_VERSION}
     - export KUBEBUILDER_ASSETS=$(setup-envtest use 1.28.x -p path)
@@ -218,6 +233,7 @@ e2e_test:
 build_manager:
   stage: build
   <<: *go-cache
+  <<: *rules-validation
   script:
     - go build -o bin/manager cmd/flexinfer-manager/main.go
   artifacts:
@@ -228,6 +244,7 @@ build_manager:
 build_agent:
   stage: build
   <<: *go-cache
+  <<: *rules-validation
   script:
     - GOOS=linux GOARCH=amd64 go build -o bin/agent cmd/flexinfer-agent/main.go
   artifacts:
@@ -238,6 +255,7 @@ build_agent:
 build_proxy:
   stage: build
   <<: *go-cache
+  <<: *rules-validation
   script:
     - go build -o bin/proxy ./cmd/flexinfer-proxy/
   artifacts:
@@ -248,6 +266,7 @@ build_proxy:
 build_scheduler:
   stage: build
   <<: *go-cache
+  <<: *rules-validation
   script:
     - go build -o bin/scheduler cmd/flexinfer-sched/main.go
   artifacts:
@@ -258,6 +277,7 @@ build_scheduler:
 build_benchmarker:
   stage: build
   <<: *go-cache
+  <<: *rules-validation
   script:
     - go build -o bin/benchmarker cmd/flexinfer-bench/main.go
   artifacts:
@@ -268,6 +288,7 @@ build_benchmarker:
 build_flash_loader:
   stage: build
   <<: *go-cache
+  <<: *rules-validation
   script:
     - go build -o bin/flash-loader ./cmd/flexinfer-flash-loader/
   artifacts:
