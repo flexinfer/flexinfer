@@ -23,6 +23,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -864,6 +865,92 @@ func TestEnsureCacheLocalHFStageJobRunning(t *testing.T) {
 
 	cached := getModelFromClient(t, cl, model.Namespace, model.Name)
 	assertCacheStatus(t, cached, false, "Running", "local cache staging job running", "CacheStage", false)
+}
+
+func TestEnsureCacheLocalHFStageJobMissingUsesCurrentReadyStatus(t *testing.T) {
+	model := modelWithCache("hf-local-missing", "flexinfer-system", "HF://org/model", &aiv1alpha2.CacheSpec{
+		Strategy: "Local",
+	})
+	model.Generation = 3
+	model.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": "node-a"}
+	model.Status.Cache = &aiv1alpha2.CacheStatus{
+		Strategy: "Local",
+		Ready:    true,
+		JobName:  "hf-local-missing-cache-stage",
+		JobPhase: "Succeeded",
+		Message:  "artifact staged to local cache",
+	}
+	model.Status.Conditions = []metav1.Condition{
+		{
+			Type:               aiv1alpha2.ConditionModelCached,
+			Status:             metav1.ConditionTrue,
+			Reason:             "CacheStage",
+			Message:            "artifact staged to local cache",
+			ObservedGeneration: 3,
+		},
+	}
+
+	r, cl := newModelCacheReconciler(t, model)
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "vllm"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if !ready {
+		t.Fatal("ensureCache() ready = false, want true when local HF cache was already staged for this generation")
+	}
+
+	cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+	assertCacheStatus(t, cached, true, "Succeeded", "local cache previously staged", "CacheStage", true)
+
+	job := &batchv1.Job{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: "hf-local-missing-cache-stage", Namespace: model.Namespace}, job); err == nil {
+		t.Fatal("expected no new cache stage job when local HF cache was already staged for this generation")
+	} else if !apierrors.IsNotFound(err) {
+		t.Fatalf("Get(stage job) error = %v, want not found", err)
+	}
+}
+
+func TestEnsureCacheLocalHFStageJobMissingWithStaleGenerationRestages(t *testing.T) {
+	model := modelWithCache("hf-local-stale", "flexinfer-system", "HF://org/model", &aiv1alpha2.CacheSpec{
+		Strategy: "Local",
+	})
+	model.Generation = 3
+	model.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": "node-a"}
+	model.Status.Cache = &aiv1alpha2.CacheStatus{
+		Strategy: "Local",
+		Ready:    true,
+		JobName:  "hf-local-stale-cache-stage",
+		JobPhase: "Succeeded",
+		Message:  "artifact staged to local cache",
+	}
+	model.Status.Conditions = []metav1.Condition{
+		{
+			Type:               aiv1alpha2.ConditionModelCached,
+			Status:             metav1.ConditionTrue,
+			Reason:             "CacheStage",
+			Message:            "artifact staged to local cache",
+			ObservedGeneration: 2,
+		},
+	}
+
+	r, cl := newModelCacheReconciler(t, model)
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "vllm"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if ready {
+		t.Fatal("ensureCache() ready = true, want false when cached status is stale for the current generation")
+	}
+
+	cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+	assertCacheStatus(t, cached, false, "Pending", "staging HF model into local cache", "CacheStage", false)
+
+	job := &batchv1.Job{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: "hf-local-stale-cache-stage", Namespace: model.Namespace}, job); err != nil {
+		t.Fatalf("Get(stage job) error = %v, want created job", err)
+	}
 }
 
 func TestEnsureCacheSharedPVCHFPrefetchFailed(t *testing.T) {
