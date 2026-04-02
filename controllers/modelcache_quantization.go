@@ -80,26 +80,38 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 	currentHash := quantSpecHash(modelCache.Spec.Quantization)
 
+	suffixes := []string{"-quantize", "-quantize-image-warmup", "-downloader", "-publish"}
+	if modelCache.Spec.Finetune != nil {
+		suffixes = append(suffixes, "-finetune")
+	}
+	if modelCache.Spec.Abliteration != nil {
+		suffixes = append(suffixes, "-abliterate", "-abliterate-image-warmup")
+	}
+
 	changed, err := r.detectAndApplySpecChange(ctx, modelCache, specChangeParams{
 		CurrentHash:          currentHash,
 		HashAnnotationKey:    annotationQuantSpecHash,
 		TriggerAnnotationKey: annotationRequantize,
-		JobSuffixesToDelete:  []string{"-abliterate", "-quantize", "-downloader", "-quantize-image-warmup"},
+		JobSuffixesToDelete:  suffixes,
 		EventReason:          "RequantizationTriggered",
 	})
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if changed {
-		// Reset quantization status and phase back to Provisioning.
-		// Clear Path so the download guard re-runs the download job.
-		modelCache.Status.Quantization = nil
-		modelCache.Status.Abliteration = nil
-		modelCache.Status.Path = ""
-		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
+		// Reset the pipeline so the cache rebuilds from a clean download.
+		r.resetDownloadStatusFields(modelCache)
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
+		if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+		if modelCache.Annotations == nil {
+			modelCache.Annotations = make(map[string]string)
+		}
+		modelCache.Annotations[annotationQuantSpecHash] = currentHash
+		delete(modelCache.Annotations, annotationRequantize)
 		// Persist annotation changes (hash update, trigger cleared) AFTER
 		// the status reset succeeds. This prevents the race where the trigger
 		// is consumed but the status reset fails.

@@ -88,12 +88,14 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 
 	currentHash := finetuneSpecHash(modelCache.Spec.Finetune)
 
-	// Build suffix list: finetune and quantize always, plus upstream if abliteration is configured.
-	suffixes := []string{"-finetune", "-quantize"}
+	// Reset all downstream artifacts when finetune is reprocessed so publish
+	// cannot race against stale outputs from an earlier run.
+	suffixes := []string{"-finetune", "-downloader", "-publish"}
+	if modelCache.Spec.Quantization != nil {
+		suffixes = append(suffixes, "-quantize", "-quantize-image-warmup")
+	}
 	if modelCache.Spec.Abliteration != nil {
-		suffixes = append(suffixes, "-abliterate", "-downloader")
-	} else {
-		suffixes = append(suffixes, "-downloader")
+		suffixes = append(suffixes, "-abliterate", "-abliterate-image-warmup")
 	}
 
 	changed, err := r.detectAndApplySpecChange(ctx, modelCache, specChangeParams{
@@ -107,16 +109,18 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		return ctrl.Result{}, err
 	}
 	if changed {
-		modelCache.Status.Finetune = nil
-		modelCache.Status.Quantization = nil
-		if modelCache.Spec.Abliteration != nil {
-			modelCache.Status.Abliteration = nil
-		}
-		modelCache.Status.Path = ""
-		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
+		r.resetDownloadStatusFields(modelCache)
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
+		if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+		if modelCache.Annotations == nil {
+			modelCache.Annotations = make(map[string]string)
+		}
+		modelCache.Annotations[annotationFinetuneSpecHash] = currentHash
+		delete(modelCache.Annotations, annotationRefinetune)
 		// Persist annotation changes AFTER the status reset succeeds.
 		if err := r.Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
