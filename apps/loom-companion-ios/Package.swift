@@ -16,11 +16,6 @@ let package = Package(
             name: "LoomCompanionKit",
             path: "Sources/LoomCompanionKit"
         ),
-        .executableTarget(
-            name: "LoomCompanion",
-            dependencies: ["LoomCompanionKit"],
-            path: "Sources/LoomCompanion"
-        ),
         .testTarget(
             name: "LoomCompanionKitTests",
             dependencies: ["LoomCompanionKit"],

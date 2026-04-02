@@ -54,6 +54,10 @@ struct DashboardDataTests {
         let json = """
         {
           "ok": true,
+          "meta": {
+            "request_id": "req-dashboard-heartbeat",
+            "timestamp": "2026-02-23T12:00:00Z"
+          },
           "data": {
             "daemon_running": true,
             "server_count": 5,
@@ -90,6 +94,10 @@ struct DashboardDataTests {
         let json = """
         {
           "ok": true,
+          "meta": {
+            "request_id": "req-dashboard-coordination",
+            "timestamp": "2026-02-23T12:00:00Z"
+          },
           "data": {
             "daemon_running": true,
             "server_count": 1,
