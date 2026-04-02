@@ -11,8 +11,9 @@ stages:
   - test
   - build
   - promote
-  - publish
   - security
+  - publish
+  - security-images
 
 default:
   interruptible: true
@@ -21,6 +22,7 @@ variables:
   # Keep in sync with Harbor mirror: registry.harbor.lan/library/golang:${GO_VERSION}
   # Bump promptly on Go security releases; Trivy/govulncheck will flag vulnerable stdlib builds.
   GO_VERSION: "1.25.8"
+  ENVTEST_VERSION: "release-0.23"
   # Disable CGO for static binaries where possible
   CGO_ENABLED: "0"
   REGISTRY: "registry.harbor.lan/flexinfer"
@@ -157,7 +159,7 @@ integration_test:
   stage: test
   <<: *go-cache
   script:
-    - go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+    - go install sigs.k8s.io/controller-runtime/tools/setup-envtest@${ENVTEST_VERSION}
     - export KUBEBUILDER_ASSETS=$(setup-envtest use 1.28.x -p path)
     - go test -v ./controllers/...
 
@@ -1557,7 +1559,7 @@ go_mod_outdated:
 # Trivy vulnerability scanning for container images
 # Fails pipeline on HIGH or CRITICAL CVEs in production images
 .trivy-scan: &trivy-scan
-  stage: security
+  stage: security-images
   image: registry.harbor.lan/library/trivy:0.58.0
   variables:
     TRIVY_NO_PROGRESS: "true"

@@ -72,7 +72,8 @@ cd "${CLONE_DIR}"
 
 echo ">> Tidying Go modules & building binaries…"
 go mod download
-go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+ENVTEST_VERSION="${ENVTEST_VERSION:-release-0.23}"
+go install sigs.k8s.io/controller-runtime/tools/setup-envtest@"${ENVTEST_VERSION}"
 export KUBEBUILDER_ASSETS="$(setup-envtest use 1.28.3 -p path)"
 make build
 go test $(go list ./... | grep -v controllers)

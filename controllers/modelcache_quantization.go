@@ -163,6 +163,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			}
 			if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 				modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+				modelCache.Status.CurrentPhase = "ready"
 				if err := r.Status().Update(ctx, modelCache); err != nil {
 					return ctrl.Result{}, err
 				}
@@ -176,6 +177,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizationFailed",
 				fmt.Sprintf("Unsupported quantization format: %s", builderErr))
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+			modelCache.Status.CurrentPhase = "quantization"
 			if statusErr := r.Status().Update(ctx, modelCache); statusErr != nil {
 				return ctrl.Result{}, statusErr
 			}
@@ -228,6 +230,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizationFailed",
 				fmt.Sprintf("Failed to build quantization job: %s", buildErr))
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+			modelCache.Status.CurrentPhase = "quantization"
 			if statusErr := r.Status().Update(ctx, modelCache); statusErr != nil {
 				return ctrl.Result{}, statusErr
 			}
@@ -250,6 +253,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 				modelCache.Status.Quantization = &aiv1alpha1.QuantizationStatus{}
 			}
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseQuantizing
+			modelCache.Status.CurrentPhase = "quantization"
 			modelCache.Status.Quantization.Progress = &progress
 			modelCache.Status.Quantization.ProgressDetail = warmDetail
 			modelCache.Status.Quantization.FailureMessage = ""
@@ -263,6 +267,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 				modelCache.Status.Quantization = &aiv1alpha1.QuantizationStatus{}
 			}
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+			modelCache.Status.CurrentPhase = "quantization"
 			modelCache.Status.Quantization.FailureMessage = warmDetail
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
@@ -292,6 +297,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 		// Transition to Quantizing phase
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseQuantizing
+		modelCache.Status.CurrentPhase = "quantization"
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -378,6 +384,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 		// Dispatch to publish if configured, otherwise mark Ready.
 		if modelCache.Spec.Publish != nil {
+			modelCache.Status.CurrentPhase = "publish"
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -389,6 +396,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		}
 
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+		modelCache.Status.CurrentPhase = "ready"
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -437,6 +445,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 				modelCache.Status.Quantization = &aiv1alpha1.QuantizationStatus{}
 			}
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseQuantizing
+			modelCache.Status.CurrentPhase = "quantization"
 			modelCache.Status.Publish = nil
 			modelCache.Status.Quantization.FailureMessage = ""
 			modelCache.Status.Quantization.Progress = &pct
@@ -470,6 +479,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			}
 
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseQuantizing
+			modelCache.Status.CurrentPhase = "quantization"
 			if modelCache.Status.Quantization == nil {
 				modelCache.Status.Quantization = &aiv1alpha1.QuantizationStatus{}
 			}
@@ -498,6 +508,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		}
 		modelCache.Status.Quantization = quantStatus
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+		modelCache.Status.CurrentPhase = "quantization"
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}

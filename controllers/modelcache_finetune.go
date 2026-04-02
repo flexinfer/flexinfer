@@ -239,6 +239,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "FinetuneFailed",
 				fmt.Sprintf("Failed to build finetune job: %s", buildErr))
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+			modelCache.Status.CurrentPhase = "finetune"
 			if statusErr := r.Status().Update(ctx, modelCache); statusErr != nil {
 				return ctrl.Result{}, statusErr
 			}
@@ -264,6 +265,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		}
 
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFinetuning
+		modelCache.Status.CurrentPhase = "finetune"
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -337,6 +339,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 
 		// No quantization or publish — mark Ready.
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+		modelCache.Status.CurrentPhase = "ready"
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -362,6 +365,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 				modelCache.Status.Finetune = &aiv1alpha1.FinetuneStatus{}
 			}
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFinetuning
+			modelCache.Status.CurrentPhase = "finetune"
 			modelCache.Status.Quantization = nil
 			modelCache.Status.Publish = nil
 			modelCache.Status.Finetune.FailureMessage = ""
@@ -396,6 +400,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 			}
 
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFinetuning
+			modelCache.Status.CurrentPhase = "finetune"
 			if modelCache.Status.Finetune == nil {
 				modelCache.Status.Finetune = &aiv1alpha1.FinetuneStatus{}
 			}
@@ -421,6 +426,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		}
 		modelCache.Status.Finetune = ftStatus
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+		modelCache.Status.CurrentPhase = "finetune"
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}

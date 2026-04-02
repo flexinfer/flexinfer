@@ -129,6 +129,7 @@ func TestReconcileQuantizationCreatesJobAndSeedsHash(t *testing.T) {
 
 	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
 	assert.Equal(t, aiv1alpha1.ModelCachePhaseQuantizing, updated.Status.Phase)
+	assert.Equal(t, "quantization", updated.Status.CurrentPhase)
 	require.NotNil(t, updated.Annotations)
 	assert.Equal(t, quantSpecHash(updated.Spec.Quantization), updated.Annotations[annotationQuantSpecHash])
 
@@ -150,6 +151,7 @@ func TestReconcileQuantizationWarmsRuntimeImageBeforeWorkerJob(t *testing.T) {
 
 	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
 	assert.Equal(t, aiv1alpha1.ModelCachePhaseQuantizing, updated.Status.Phase)
+	assert.Equal(t, "quantization", updated.Status.CurrentPhase)
 	require.NotNil(t, updated.Status.Quantization)
 	assert.Contains(t, updated.Status.Quantization.ProgressDetail, "warming quantization image")
 
@@ -224,6 +226,7 @@ func TestReconcileQuantizationActiveJobUpdatesProgress(t *testing.T) {
 
 	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
 	assert.Equal(t, aiv1alpha1.ModelCachePhaseQuantizing, updated.Status.Phase)
+	assert.Equal(t, "quantization", updated.Status.CurrentPhase)
 	require.NotNil(t, updated.Status.Quantization)
 	require.NotNil(t, updated.Status.Quantization.Progress)
 	assert.Greater(t, *updated.Status.Quantization.Progress, int32(0))
@@ -268,6 +271,7 @@ func TestReconcileQuantizationSucceededMarksReadyAndCapturesMetadata(t *testing.
 
 	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
 	assert.Equal(t, aiv1alpha1.ModelCachePhaseReady, updated.Status.Phase)
+	assert.Equal(t, "ready", updated.Status.CurrentPhase)
 	assert.EqualValues(t, 4000, updated.Status.CacheSizeBytes)
 	assert.Equal(t, "/models/base/gptq-w4-g128", updated.Status.Path)
 
@@ -318,6 +322,7 @@ func TestReconcileQuantizationFailedCapturesFailureMessage(t *testing.T) {
 
 	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
 	assert.Equal(t, aiv1alpha1.ModelCachePhaseFailed, updated.Status.Phase)
+	assert.Equal(t, "quantization", updated.Status.CurrentPhase)
 	require.NotNil(t, updated.Status.Quantization)
 	assert.Equal(t, "W4_G128", updated.Status.Quantization.Type)
 	assert.Equal(t, "python traceback: boom", updated.Status.Quantization.FailureMessage)

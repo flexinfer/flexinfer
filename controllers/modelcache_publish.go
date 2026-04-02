@@ -52,6 +52,7 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 	if modelCache.Status.Publish != nil && modelCache.Status.Publish.FailureMessage == "" {
 		if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+			modelCache.Status.CurrentPhase = "ready"
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -72,6 +73,7 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 				"cache", modelCache.Name)
 			if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 				modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+				modelCache.Status.CurrentPhase = "ready"
 				if err := r.Status().Update(ctx, modelCache); err != nil {
 					return ctrl.Result{}, err
 				}
@@ -103,6 +105,7 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "PublishFailed",
 				fmt.Sprintf("Failed to build publish job: %s", buildErr))
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+			modelCache.Status.CurrentPhase = "publish"
 			if statusErr := r.Status().Update(ctx, modelCache); statusErr != nil {
 				return ctrl.Result{}, statusErr
 			}
@@ -119,6 +122,7 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 		}
 
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhasePublishing
+		modelCache.Status.CurrentPhase = "publish"
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -180,6 +184,7 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 
 		modelCache.Status.Publish = pubStatus
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+		modelCache.Status.CurrentPhase = "ready"
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -210,6 +215,7 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 			}
 
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhasePublishing
+			modelCache.Status.CurrentPhase = "publish"
 			if modelCache.Status.Publish == nil {
 				modelCache.Status.Publish = &aiv1alpha1.PublishStatus{}
 			}
@@ -232,6 +238,7 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 		}
 		modelCache.Status.Publish = pubStatus
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+		modelCache.Status.CurrentPhase = "publish"
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -260,6 +267,7 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 			if modelCache.Status.Publish == nil {
 				modelCache.Status.Publish = &aiv1alpha1.PublishStatus{}
 			}
+			modelCache.Status.CurrentPhase = "publish"
 			modelCache.Status.Publish.Progress = &pct
 			modelCache.Status.Publish.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
 			if publishJob.Status.StartTime != nil {
