@@ -91,6 +91,10 @@ func TestOCIPublishScript(t *testing.T) {
 	assert.Contains(t, script, "OCI_REF")
 	assert.Contains(t, script, "OCI_INSECURE")
 	assert.Contains(t, script, "termination-log")
+	assert.Contains(t, script, "write_publish_metadata")
+	assert.Contains(t, script, "fail_publish")
+	assert.Contains(t, script, "\"status\"")
+	assert.Contains(t, script, "\"error\"")
 }
 
 func TestOCIPublishScriptTagPolicies(t *testing.T) {
