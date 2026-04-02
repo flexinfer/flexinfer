@@ -59,4 +59,45 @@ extension LoomAPIError {
             return false
         }
     }
+
+    public var dashboardTitle: String {
+        switch self {
+        case .noToken:
+            return "Reconnect Required"
+        case .invalidURL:
+            return "Invalid Server URL"
+        case .networkError:
+            return "Server Unreachable"
+        case .decodingError:
+            return "Unexpected Server Response"
+        case let .apiError(code, _, _):
+            switch code {
+            case .unauthorized, .tokenRevoked:
+                return "Authentication Failed"
+            case .forbidden:
+                return "Permission Denied"
+            case .notFound:
+                return "Mobile Route Missing"
+            case .rateLimited:
+                return "Rate Limited"
+            case .notConfigured:
+                return "Server Not Configured"
+            case .upstreamError:
+                return "Upstream Service Error"
+            case .badRequest, .unknown:
+                return "Request Failed"
+            }
+        }
+    }
+
+    public var shouldSuggestConnectionTab: Bool {
+        switch self {
+        case .noToken, .invalidURL, .networkError:
+            return true
+        case let .apiError(code, _, _):
+            return code == .unauthorized || code == .tokenRevoked || code == .notFound
+        case .decodingError:
+            return false
+        }
+    }
 }

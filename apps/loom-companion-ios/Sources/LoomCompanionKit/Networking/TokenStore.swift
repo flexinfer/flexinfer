@@ -20,7 +20,13 @@ public final class TokenStore: Sendable {
 
     public func loadToken() -> String? {
         guard let data = loadKeychainItem(account: Self.tokenAccount) else { return nil }
-        return String(data: data, encoding: .utf8)
+        guard let token = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !token.isEmpty
+        else {
+            return nil
+        }
+        return token
     }
 
     public func deleteToken() {

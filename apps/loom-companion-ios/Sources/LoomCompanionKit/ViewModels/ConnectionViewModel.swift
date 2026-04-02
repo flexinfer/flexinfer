@@ -21,34 +21,32 @@ public final class ConnectionViewModel {
     @ObservationIgnored
     private var apiClient: APIClient?
 
+    struct RestoredConnectionState: Equatable {
+        let profile: ConnectionProfile
+        let token: String
+    }
+
     public init(tokenStore: TokenStore = TokenStore()) {
         self.tokenStore = tokenStore
 
-        // Restore saved profile
-        if var profile = tokenStore.loadProfile(), tokenStore.hasToken {
-            // Migrate LAN profiles from http:// to https:// (HUD serves HTTPS only).
-            if profile.mode == .lan, profile.baseURL.hasPrefix("http://") {
-                let migrated = ConnectionProfile(
-                    name: profile.name,
-                    baseURL: profile.baseURL.replacingOccurrences(of: "http://", with: "https://"),
-                    mode: profile.mode,
-                    cloudflareAccessClientID: profile.cloudflareAccessClientID,
-                    cloudflareAccessClientSecret: profile.cloudflareAccessClientSecret
-                )
-                try? tokenStore.saveProfile(migrated)
-                profile = migrated
+        if let profile = tokenStore.loadProfile() {
+            let normalizedProfile = Self.normalizedStoredProfile(profile)
+            if normalizedProfile != profile {
+                try? tokenStore.saveProfile(normalizedProfile)
             }
-            baseURLInput = profile.baseURL
-            connectionMode = profile.mode
-            cloudflareAccessClientIDInput = profile.cloudflareAccessClientID ?? ""
-            cloudflareAccessClientSecretInput = profile.cloudflareAccessClientSecret ?? ""
-            isAuthenticated = true
+
+            baseURLInput = normalizedProfile.baseURL
+            connectionMode = normalizedProfile.mode
+            cloudflareAccessClientIDInput = normalizedProfile.cloudflareAccessClientID ?? ""
+            cloudflareAccessClientSecretInput = normalizedProfile.cloudflareAccessClientSecret ?? ""
+            isAuthenticated = Self.restoredConnection(profile: normalizedProfile, rawToken: tokenStore.loadToken()) != nil
         }
     }
 
     /// Attempt to pair with the Loom HUD instance.
     public func pair() async {
-        guard !baseURLInput.isEmpty, !tokenInput.isEmpty else {
+        let trimmedToken = tokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !baseURLInput.isEmpty, !trimmedToken.isEmpty else {
             pairingError = "Base URL and token are required"
             return
         }
@@ -81,7 +79,7 @@ public final class ConnectionViewModel {
 
         let client = APIClient(
             baseURL: url,
-            token: tokenInput,
+            token: trimmedToken,
             cloudflareAccessClientID: connectionMode == .gateway ? cloudflareAccessClientID : nil,
             cloudflareAccessClientSecret: connectionMode == .gateway ? cloudflareAccessClientSecret : nil,
             allowsInsecureTLS: connectionMode == .lan
@@ -115,6 +113,7 @@ public final class ConnectionViewModel {
         // Save credentials
         let normalizedBaseURL = url.absoluteString
         baseURLInput = normalizedBaseURL
+        tokenInput = trimmedToken
         let profile = ConnectionProfile(
             name: "default",
             baseURL: normalizedBaseURL,
@@ -123,7 +122,7 @@ public final class ConnectionViewModel {
             cloudflareAccessClientSecret: connectionMode == .gateway ? cloudflareAccessClientSecret : nil
         )
         do {
-            try tokenStore.saveToken(tokenInput)
+            try tokenStore.saveToken(trimmedToken)
             try tokenStore.saveProfile(profile)
         } catch {
             pairingError = "Failed to save credentials"
@@ -147,18 +146,21 @@ public final class ConnectionViewModel {
 
     /// Build an APIClient from stored credentials.
     public func buildAPIClient() -> APIClient? {
-        guard let token = tokenStore.loadToken(),
-              let profile = tokenStore.loadProfile(),
-              let url = URL(string: profile.baseURL)
+        guard let profile = tokenStore.loadProfile(),
+              let restored = Self.restoredConnection(profile: profile, rawToken: tokenStore.loadToken()),
+              let url = URL(string: restored.profile.baseURL)
         else {
             return nil
         }
+        if restored.profile != profile {
+            try? tokenStore.saveProfile(restored.profile)
+        }
         return APIClient(
             baseURL: url,
-            token: token,
-            cloudflareAccessClientID: profile.cloudflareAccessClientID,
-            cloudflareAccessClientSecret: profile.cloudflareAccessClientSecret,
-            allowsInsecureTLS: profile.mode == .lan
+            token: restored.token,
+            cloudflareAccessClientID: restored.profile.cloudflareAccessClientID,
+            cloudflareAccessClientSecret: restored.profile.cloudflareAccessClientSecret,
+            allowsInsecureTLS: restored.profile.mode == .lan
         )
     }
 
@@ -172,9 +174,7 @@ public final class ConnectionViewModel {
         if trimmed.contains("://") {
             withScheme = trimmed
         } else {
-            // Both modes default to HTTPS. The HUD serves HTTPS even locally
-            // (with a self-signed cert handled by InsecureTLSDelegate in LAN mode).
-            withScheme = "https://\(trimmed)"
+            withScheme = mode == .gateway ? "https://\(trimmed)" : "http://\(trimmed)"
         }
 
         guard var components = URLComponents(string: withScheme),
@@ -194,6 +194,75 @@ public final class ConnectionViewModel {
     private func normalizedOptional(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    static func restoredConnection(profile: ConnectionProfile, rawToken: String?) -> RestoredConnectionState? {
+        guard let token = rawToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !token.isEmpty
+        else {
+            return nil
+        }
+
+        let normalizedProfile = normalizedStoredProfile(profile)
+        guard !normalizedProfile.baseURL.isEmpty else {
+            return nil
+        }
+
+        return RestoredConnectionState(profile: normalizedProfile, token: token)
+    }
+
+    static func normalizedStoredProfile(_ profile: ConnectionProfile) -> ConnectionProfile {
+        let repairedBaseURL = repairedLegacyLANBaseURL(profile)
+        guard let normalizedURL = normalizedBaseURL(repairedBaseURL, mode: profile.mode) else {
+            return profile
+        }
+
+        return ConnectionProfile(
+            name: profile.name,
+            baseURL: normalizedURL.absoluteString,
+            mode: profile.mode,
+            cloudflareAccessClientID: profile.cloudflareAccessClientID,
+            cloudflareAccessClientSecret: profile.cloudflareAccessClientSecret
+        )
+    }
+
+    private static func repairedLegacyLANBaseURL(_ profile: ConnectionProfile) -> String {
+        guard profile.mode == .lan,
+              let url = URL(string: profile.baseURL),
+              url.scheme?.lowercased() == "https",
+              let host = url.host,
+              hostLooksLocal(host)
+        else {
+            return profile.baseURL
+        }
+
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.scheme = "http"
+        return components?.url?.absoluteString ?? profile.baseURL
+    }
+
+    private static func hostLooksLocal(_ host: String) -> Bool {
+        let normalized = host.lowercased()
+        if normalized == "localhost" || normalized == "::1" || normalized == "127.0.0.1" || normalized.hasSuffix(".local") {
+            return true
+        }
+
+        let octets = normalized.split(separator: ".").compactMap { Int($0) }
+        guard octets.count == 4 else {
+            return false
+        }
+
+        if octets[0] == 10 {
+            return true
+        }
+        if octets[0] == 192, octets[1] == 168 {
+            return true
+        }
+        if octets[0] == 172, (16 ... 31).contains(octets[1]) {
+            return true
+        }
+
+        return false
     }
 }
 

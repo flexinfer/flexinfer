@@ -112,14 +112,21 @@ struct DashboardView: View {
                     }
                 } else if let error = viewModel.error {
                     ContentUnavailableView {
-                        Label("Connection Error", systemImage: "wifi.exclamationmark")
+                        Label(error.dashboardTitle, systemImage: "wifi.exclamationmark")
                     } description: {
                         Text(error.description)
                     } actions: {
                         Button("Retry") {
-                            Task { await viewModel.load() }
+                            Task { await refreshDashboard() }
                         }
                         .buttonStyle(.borderedProminent)
+
+                        if error.shouldSuggestConnectionTab {
+                            Button("Open Connection") {
+                                onNavigate?(.connection)
+                            }
+                            .buttonStyle(.bordered)
+                        }
                     }
                 } else {
                     ContentUnavailableView {
@@ -128,7 +135,7 @@ struct DashboardView: View {
                         Text("Connect to a Loom server to view health, fleet, and task data. Check your connection settings in the Connection tab.")
                     } actions: {
                         Button("Refresh") {
-                            Task { await viewModel.load() }
+                            Task { await refreshDashboard() }
                         }
                         .buttonStyle(.borderedProminent)
                     }
@@ -161,15 +168,15 @@ struct DashboardView: View {
             refreshTimer = nil
         }
         .refreshable {
-            await viewModel.load()
+            await refreshDashboard()
             HapticManager.light()
         }
         .task {
-            healthMonitor.onPollRefresh = { [weak viewModel] in
-                await viewModel?.load()
+            healthMonitor.onPollRefresh = {
+                await refreshDashboard()
             }
 
-            await viewModel.load()
+            await refreshDashboard()
 
             if let broadcaster {
                 viewModel.startListening(broadcaster: broadcaster)
@@ -207,6 +214,16 @@ struct DashboardView: View {
             return .connection
         default:
             return .work
+        }
+    }
+
+    @MainActor
+    private func refreshDashboard() async {
+        await viewModel.load()
+        if let error = viewModel.error {
+            healthMonitor.handleAPIError(error)
+        } else {
+            healthMonitor.handleSuccess()
         }
     }
 
