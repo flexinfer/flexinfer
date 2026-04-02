@@ -1439,12 +1439,11 @@ func TestEnsureServicePreservesClusterIP(t *testing.T) {
 		t.Fatalf("expected port %d, got %d", expectedPort, updated.Spec.Ports[0].Port)
 	}
 
-	// Verify selector is set
-	if updated.Spec.Selector == nil {
-		t.Fatal("expected selector to be set")
-	}
-	if updated.Spec.Selector[LabelModel] != model.Name {
-		t.Fatalf("expected selector %s=%s, got %v", LabelModel, model.Name, updated.Spec.Selector)
+	// ensureService intentionally leaves selector management alone on updates.
+	// Runtime-managed flows clear the selector separately, and deployment flows
+	// restore it via restoreServiceSelector.
+	if updated.Spec.Selector != nil {
+		t.Fatalf("expected selector to remain unchanged on service update, got %v", updated.Spec.Selector)
 	}
 }
 
