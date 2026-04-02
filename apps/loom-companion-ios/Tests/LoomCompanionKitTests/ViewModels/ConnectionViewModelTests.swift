@@ -174,4 +174,54 @@ struct ConnectionViewModelTests {
         let url = ConnectionViewModel.normalizedBaseURL("http:///not-a-host", mode: .lan)
         #expect(url == nil)
     }
+
+    @Test("Stored LAN connection preserves http and trims token")
+    func restoredConnectionPreservesLANHTTP() {
+        let profile = ConnectionProfile(
+            name: "default",
+            baseURL: "http://192.168.50.176:3333",
+            mode: .lan
+        )
+
+        let restored = ConnectionViewModel.restoredConnection(profile: profile, rawToken: "  mobile-token  ")
+
+        #expect(restored?.profile.baseURL == "http://192.168.50.176:3333")
+        #expect(restored?.token == "mobile-token")
+    }
+
+    @Test("Stored LAN connection repairs legacy local https migration")
+    func restoredConnectionRepairsLegacyLANHTTPS() {
+        let profile = ConnectionProfile(
+            name: "default",
+            baseURL: "https://192.168.50.176:3333",
+            mode: .lan
+        )
+
+        let restored = ConnectionViewModel.restoredConnection(profile: profile, rawToken: "mobile-token")
+
+        #expect(restored?.profile.baseURL == "http://192.168.50.176:3333")
+    }
+
+    @Test("Stored connection rejects blank token")
+    func restoredConnectionRejectsBlankToken() {
+        let profile = ConnectionProfile(
+            name: "default",
+            baseURL: "http://192.168.50.176:3333",
+            mode: .lan
+        )
+
+        let restored = ConnectionViewModel.restoredConnection(profile: profile, rawToken: "   ")
+
+        #expect(restored == nil)
+    }
+
+    @Test("Dashboard error titles are specific")
+    func dashboardErrorTitles() {
+        #expect(LoomAPIError.noToken.dashboardTitle == "Reconnect Required")
+        #expect(LoomAPIError.invalidURL(url: "bad").dashboardTitle == "Invalid Server URL")
+        #expect(LoomAPIError.networkError(underlying: "offline").dashboardTitle == "Server Unreachable")
+        #expect(LoomAPIError.apiError(code: .unauthorized, message: "bad token", requestId: "r1").dashboardTitle == "Authentication Failed")
+        #expect(LoomAPIError.apiError(code: .forbidden, message: "denied", requestId: "r2").dashboardTitle == "Permission Denied")
+        #expect(LoomAPIError.apiError(code: .notFound, message: "missing", requestId: "r3").dashboardTitle == "Mobile Route Missing")
+    }
 }

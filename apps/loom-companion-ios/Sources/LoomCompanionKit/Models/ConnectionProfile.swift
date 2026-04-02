@@ -7,7 +7,7 @@ public enum ConnectionMode: String, Codable, Sendable {
 }
 
 /// A saved connection profile for a Loom HUD instance.
-public struct ConnectionProfile: Codable, Identifiable, Sendable {
+public struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
     public var id: String { name }
 
     public let name: String
