@@ -15,7 +15,7 @@ import time
 import sys
 import re
 from typing import Optional, List
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 
 import torch
 
@@ -172,6 +172,7 @@ class ImageGenerationRequest(BaseModel):
     # This keeps SDXL Turbo fast by default (few steps, low/zero guidance).
     num_inference_steps: Optional[int] = Field(default=None, ge=1, le=100)
     guidance_scale: Optional[float] = Field(default=None, ge=0.0, le=20.0)
+    scheduler: Optional[str] = None
     # Optional seed for reproducible generation. If None, uses random seed.
     seed: Optional[int] = None
     # ControlNet: base64-encoded control image (e.g. canny edges, depth map)
@@ -379,6 +380,17 @@ def _default_negative_prompt() -> Optional[str]:
     return os.environ.get("DEFAULT_NEGATIVE_PROMPT") or None
 
 
+def _resolve_negative_prompt(value: Optional[str]) -> Optional[str]:
+    """Resolve request negative prompt semantics.
+
+    None means "use the server default". An explicit empty string means
+    "disable the negative prompt for this request".
+    """
+    if value is None:
+        return _default_negative_prompt()
+    return value.strip()
+
+
 def _default_strength() -> float:
     """Return the default denoising strength for inpainting."""
     val = _env_float("DEFAULT_STRENGTH")
@@ -479,6 +491,43 @@ def _apply_scheduler(pipe, scheduler_name: Optional[str]):
             f"WARNING: Unknown scheduler '{scheduler_name}', keeping default. Options: {list(scheduler_map.keys())}"
         )
     sys.stdout.flush()
+
+
+@contextmanager
+def _temporary_scheduler(pipe, scheduler_name: Optional[str]):
+    """Temporarily override the pipeline scheduler for a single request."""
+    if scheduler_name is None:
+        yield
+        return
+
+    original_scheduler = pipe.scheduler
+    _apply_scheduler(pipe, scheduler_name)
+    try:
+        yield
+    finally:
+        pipe.scheduler = original_scheduler
+
+
+async def _prepare_pipeline_for_request(requested_model: Optional[str]):
+    """Resolve request model selection, including checkpoint hot-swap aliases."""
+    global pipeline
+
+    if requested_model and pipeline is not None:
+        ckpt_path = _resolve_checkpoint(requested_model)
+        if ckpt_path:
+            ckpt_stem = os.path.splitext(os.path.basename(ckpt_path))[0]
+            if ckpt_stem != current_model:
+                print(
+                    f"Auto-swapping to checkpoint '{ckpt_stem}' for request.model '{requested_model}'"
+                )
+                async with _generation_lock:
+                    await asyncio.to_thread(_swap_checkpoint, ckpt_path)
+
+    model_id = os.environ.get("MODEL_ID") or os.environ.get("MODEL") or requested_model
+    if not model_id:
+        raise HTTPException(status_code=400, detail="No model specified")
+
+    return model_id, load_pipeline(model_id)
 
 
 def _compile_mode() -> Optional[str]:
@@ -1798,31 +1847,7 @@ async def refresh_checkpoints():
 
 @app.post("/v1/images/generations")
 async def generate_images(request: ImageGenerationRequest):
-    global pipeline
-
-    # Check if request.model refers to a hot-swap checkpoint BEFORE checking
-    # MODEL_ID env var. The proxy may route "gonzalomo-v70-photo-xl" here,
-    # and MODEL_ID will always be the base SDXL model ID.
-    swap_model = request.model
-    if swap_model and pipeline is not None:
-        ckpt_path = _resolve_checkpoint(swap_model)
-        if ckpt_path:
-            ckpt_stem = os.path.splitext(os.path.basename(ckpt_path))[0]
-            if ckpt_stem != current_model:
-                print(
-                    f"Auto-swapping to checkpoint '{ckpt_stem}' for request.model '{swap_model}'"
-                )
-                async with _generation_lock:
-                    await asyncio.to_thread(_swap_checkpoint, ckpt_path)
-
-    # Prioritize environment variable (set by FlexInfer ModelDeployment) over request model
-    # request.model may be an alias like "image-gen" rather than the actual HuggingFace model ID
-    model_id = os.environ.get("MODEL_ID") or os.environ.get("MODEL") or request.model
-    if not model_id:
-        raise HTTPException(status_code=400, detail="No model specified")
-
-    # Load pipeline if needed
-    pipe = load_pipeline(model_id)
+    model_id, pipe = await _prepare_pipeline_for_request(request.model)
 
     steps = (
         request.num_inference_steps
@@ -1834,7 +1859,8 @@ async def generate_images(request: ImageGenerationRequest):
         if request.guidance_scale is not None
         else _default_guidance_scale(model_id)
     )
-    negative_prompt = request.negative_prompt or _default_negative_prompt()
+    negative_prompt = _resolve_negative_prompt(request.negative_prompt)
+    scheduler_name = request.scheduler.strip() if request.scheduler is not None else None
 
     # Parse size
     try:
@@ -1845,10 +1871,12 @@ async def generate_images(request: ImageGenerationRequest):
     # Diagnostic logging — shows whether params came from the request or defaults
     _src_steps = "request" if request.num_inference_steps is not None else "default"
     _src_guidance = "request" if request.guidance_scale is not None else "default"
-    _src_neg = "request" if request.negative_prompt else "default"
+    _src_neg = "request" if request.negative_prompt is not None else "default"
+    _src_scheduler = "request" if request.scheduler is not None else "default"
     print(
         f"[gen] model={model_id} size={width}x{height} "
         f"steps={steps}({_src_steps}) guidance={guidance_scale}({_src_guidance}) "
+        f"scheduler={scheduler_name or type(pipe.scheduler).__name__}({_src_scheduler}) "
         f"neg_prompt={'set' if negative_prompt else 'none'}({_src_neg}) "
         f"n={request.n} seed={request.seed}"
     )
@@ -1867,44 +1895,45 @@ async def generate_images(request: ImageGenerationRequest):
             if request.seed is not None:
                 img_seed = request.seed + i
                 gen = torch.Generator(device="cpu").manual_seed(img_seed)
-            with torch.inference_mode():
-                if is_fill:
-                    # Text2image via fill: blank canvas + full mask = generate from scratch
-                    blank = Image.new("RGB", (width, height), (128, 128, 128))
-                    mask = Image.new("L", (width, height), 255)
-                    gen_kwargs = {
-                        "prompt": request.prompt,
-                        "image": blank,
-                        "mask_image": mask,
-                        "num_inference_steps": steps,
-                        "guidance_scale": guidance_scale,
-                        "height": height,
-                        "width": width,
-                    }
-                else:
-                    gen_kwargs = {
-                        "prompt": request.prompt,
-                        "num_inference_steps": steps,
-                        "guidance_scale": guidance_scale,
-                        "width": width,
-                        "height": height,
-                    }
-                    # FLUX doesn't support negative_prompt
-                    if not _pipeline_is_flux_like(pipe, model_id) and negative_prompt:
-                        gen_kwargs["negative_prompt"] = negative_prompt
-                    # ControlNet: decode base64 control image and pass conditioning scale
-                    if PIPELINE_MODE == "controlnet" and request.control_image:
-                        ctrl_bytes = base64.b64decode(request.control_image)
-                        gen_kwargs["control_image"] = _decode_image(ctrl_bytes)
-                        cn_scale = (
-                            request.controlnet_conditioning_scale
-                            if request.controlnet_conditioning_scale is not None
-                            else float(os.environ.get("CONTROLNET_SCALE", "1.0"))
-                        )
-                        gen_kwargs["controlnet_conditioning_scale"] = cn_scale
-                if gen is not None:
-                    gen_kwargs["generator"] = gen
-                result = pipe(**gen_kwargs)
+            with _temporary_scheduler(pipe, scheduler_name):
+                with torch.inference_mode():
+                    if is_fill:
+                        # Text2image via fill: blank canvas + full mask = generate from scratch
+                        blank = Image.new("RGB", (width, height), (128, 128, 128))
+                        mask = Image.new("L", (width, height), 255)
+                        gen_kwargs = {
+                            "prompt": request.prompt,
+                            "image": blank,
+                            "mask_image": mask,
+                            "num_inference_steps": steps,
+                            "guidance_scale": guidance_scale,
+                            "height": height,
+                            "width": width,
+                        }
+                    else:
+                        gen_kwargs = {
+                            "prompt": request.prompt,
+                            "num_inference_steps": steps,
+                            "guidance_scale": guidance_scale,
+                            "width": width,
+                            "height": height,
+                        }
+                        # FLUX doesn't support negative_prompt
+                        if not _pipeline_is_flux_like(pipe, model_id) and negative_prompt:
+                            gen_kwargs["negative_prompt"] = negative_prompt
+                        # ControlNet: decode base64 control image and pass conditioning scale
+                        if PIPELINE_MODE == "controlnet" and request.control_image:
+                            ctrl_bytes = base64.b64decode(request.control_image)
+                            gen_kwargs["control_image"] = _decode_image(ctrl_bytes)
+                            cn_scale = (
+                                request.controlnet_conditioning_scale
+                                if request.controlnet_conditioning_scale is not None
+                                else float(os.environ.get("CONTROLNET_SCALE", "1.0"))
+                            )
+                            gen_kwargs["controlnet_conditioning_scale"] = cn_scale
+                    if gen is not None:
+                        gen_kwargs["generator"] = gen
+                    result = pipe(**gen_kwargs)
             img = result.images[0]
             buffer = io.BytesIO()
             img.save(buffer, format="PNG")
@@ -1941,6 +1970,7 @@ async def edit_images(
     strength: Optional[float] = Form(None),
     image_guidance_scale: Optional[float] = Form(None),
     negative_prompt: Optional[str] = Form(None),
+    scheduler: Optional[str] = Form(None),
     controlnet_conditioning_scale: Optional[float] = Form(None),
 ):
     """OpenAI-compatible image editing endpoint.
@@ -1949,13 +1979,7 @@ async def edit_images(
     and controlnet modes depending on PIPELINE_MODE. When no image is
     provided, falls back to text-to-image generation (blank canvas + full mask).
     """
-    global pipeline
-
-    model_id = os.environ.get("MODEL_ID") or os.environ.get("MODEL") or model
-    if not model_id:
-        raise HTTPException(status_code=400, detail="No model specified")
-
-    pipe = load_pipeline(model_id)
+    model_id, pipe = await _prepare_pipeline_for_request(model)
 
     if PIPELINE_MODE not in ("inpainting", "instruct", "img2img", "controlnet"):
         raise HTTPException(
@@ -1979,7 +2003,8 @@ async def edit_images(
         if guidance_scale is not None
         else _default_guidance_scale(model_id)
     )
-    neg = negative_prompt or _default_negative_prompt()
+    neg = _resolve_negative_prompt(negative_prompt)
+    scheduler_name = scheduler.strip() if scheduler is not None else None
 
     def _run_edit():
         # img2img and controlnet require an input image
@@ -1999,28 +2024,29 @@ async def edit_images(
             full_mask = Image.new("L", (w, h), 255)
             results = []
             for _ in range(n):
-                with torch.inference_mode():
-                    if _pipeline_is_flux_like(pipe, model_id):
-                        result = pipe(
-                            prompt=prompt,
-                            image=blank,
-                            mask_image=full_mask,
-                            num_inference_steps=steps,
-                            guidance_scale=cfg_scale,
-                            height=h,
-                            width=w,
-                        )
-                    else:
-                        s = strength if strength is not None else _default_strength()
-                        result = pipe(
-                            prompt=prompt,
-                            image=blank,
-                            mask_image=full_mask,
-                            strength=s,
-                            guidance_scale=cfg_scale,
-                            num_inference_steps=steps,
-                            negative_prompt=neg,
-                        )
+                with _temporary_scheduler(pipe, scheduler_name):
+                    with torch.inference_mode():
+                        if _pipeline_is_flux_like(pipe, model_id):
+                            result = pipe(
+                                prompt=prompt,
+                                image=blank,
+                                mask_image=full_mask,
+                                num_inference_steps=steps,
+                                guidance_scale=cfg_scale,
+                                height=h,
+                                width=w,
+                            )
+                        else:
+                            s = strength if strength is not None else _default_strength()
+                            result = pipe(
+                                prompt=prompt,
+                                image=blank,
+                                mask_image=full_mask,
+                                strength=s,
+                                guidance_scale=cfg_scale,
+                                num_inference_steps=steps,
+                                negative_prompt=neg,
+                            )
                 img = result.images[0]
                 buffer = io.BytesIO()
                 img.save(buffer, format="PNG")
@@ -2037,80 +2063,81 @@ async def edit_images(
 
         results = []
         for _ in range(n):
-            with torch.inference_mode():
-                if PIPELINE_MODE == "inpainting":
-                    if mask_bytes is not None:
-                        mask_img = _decode_mask(mask_bytes, src_img.size)
-                    else:
-                        # No mask provided — default to full white mask (edit everywhere).
-                        # This matches OpenAI API behaviour where mask is optional.
-                        print("inpainting: no mask provided, using full white mask")
-                        mask_img = Image.new("L", src_img.size, 255)
-                    if _pipeline_is_flux_like(pipe, model_id):
-                        # FluxFillPipeline: no strength, no negative_prompt
+            with _temporary_scheduler(pipe, scheduler_name):
+                with torch.inference_mode():
+                    if PIPELINE_MODE == "inpainting":
+                        if mask_bytes is not None:
+                            mask_img = _decode_mask(mask_bytes, src_img.size)
+                        else:
+                            # No mask provided — default to full white mask (edit everywhere).
+                            # This matches OpenAI API behaviour where mask is optional.
+                            print("inpainting: no mask provided, using full white mask")
+                            mask_img = Image.new("L", src_img.size, 255)
+                        if _pipeline_is_flux_like(pipe, model_id):
+                            # FluxFillPipeline: no strength, no negative_prompt
+                            result = pipe(
+                                prompt=prompt,
+                                image=src_img,
+                                mask_image=mask_img,
+                                guidance_scale=cfg_scale,
+                                num_inference_steps=steps,
+                                height=src_img.size[1],
+                                width=src_img.size[0],
+                            )
+                        else:
+                            s = strength if strength is not None else _default_strength()
+                            result = pipe(
+                                prompt=prompt,
+                                image=src_img,
+                                mask_image=mask_img,
+                                strength=s,
+                                guidance_scale=cfg_scale,
+                                num_inference_steps=steps,
+                                negative_prompt=neg,
+                            )
+                    elif PIPELINE_MODE == "instruct":
+                        img_scale = (
+                            image_guidance_scale
+                            if image_guidance_scale is not None
+                            else _default_image_guidance_scale()
+                        )
                         result = pipe(
                             prompt=prompt,
                             image=src_img,
-                            mask_image=mask_img,
                             guidance_scale=cfg_scale,
+                            image_guidance_scale=img_scale,
                             num_inference_steps=steps,
-                            height=src_img.size[1],
-                            width=src_img.size[0],
                         )
-                    else:
+                    elif PIPELINE_MODE == "img2img":
                         s = strength if strength is not None else _default_strength()
-                        result = pipe(
-                            prompt=prompt,
-                            image=src_img,
-                            mask_image=mask_img,
-                            strength=s,
-                            guidance_scale=cfg_scale,
-                            num_inference_steps=steps,
-                            negative_prompt=neg,
+                        gen_kwargs = {
+                            "prompt": prompt,
+                            "image": src_img,
+                            "strength": s,
+                            "num_inference_steps": steps,
+                            "guidance_scale": cfg_scale,
+                        }
+                        if not _pipeline_is_flux_like(pipe, model_id) and neg:
+                            gen_kwargs["negative_prompt"] = neg
+                        result = pipe(**gen_kwargs)
+                    elif PIPELINE_MODE == "controlnet":
+                        cn_scale = (
+                            controlnet_conditioning_scale
+                            if controlnet_conditioning_scale is not None
+                            else float(os.environ.get("CONTROLNET_SCALE", "1.0"))
                         )
-                elif PIPELINE_MODE == "instruct":
-                    img_scale = (
-                        image_guidance_scale
-                        if image_guidance_scale is not None
-                        else _default_image_guidance_scale()
-                    )
-                    result = pipe(
-                        prompt=prompt,
-                        image=src_img,
-                        guidance_scale=cfg_scale,
-                        image_guidance_scale=img_scale,
-                        num_inference_steps=steps,
-                    )
-                elif PIPELINE_MODE == "img2img":
-                    s = strength if strength is not None else _default_strength()
-                    gen_kwargs = {
-                        "prompt": prompt,
-                        "image": src_img,
-                        "strength": s,
-                        "num_inference_steps": steps,
-                        "guidance_scale": cfg_scale,
-                    }
-                    if not _pipeline_is_flux_like(pipe, model_id) and neg:
-                        gen_kwargs["negative_prompt"] = neg
-                    result = pipe(**gen_kwargs)
-                elif PIPELINE_MODE == "controlnet":
-                    cn_scale = (
-                        controlnet_conditioning_scale
-                        if controlnet_conditioning_scale is not None
-                        else float(os.environ.get("CONTROLNET_SCALE", "1.0"))
-                    )
-                    gen_kwargs = {
-                        "prompt": prompt,
-                        "image": src_img,
-                        "controlnet_conditioning_scale": cn_scale,
-                        "num_inference_steps": steps,
-                        "guidance_scale": cfg_scale,
-                    }
-                    if control_image_bytes is not None:
-                        gen_kwargs["control_image"] = _decode_image(control_image_bytes)
-                    if not _pipeline_is_flux_like(pipe, model_id) and neg:
-                        gen_kwargs["negative_prompt"] = neg
-                    result = pipe(**gen_kwargs)
+                        gen_kwargs = {
+                            "prompt": prompt,
+                            "image": src_img,
+                            "controlnet_conditioning_scale": cn_scale,
+                            "num_inference_steps": steps,
+                            "guidance_scale": cfg_scale,
+                        }
+                        if control_image_bytes is not None:
+                            gen_kwargs["control_image"] = _decode_image(control_image_bytes)
+                        if not _pipeline_is_flux_like(pipe, model_id) and neg:
+                            gen_kwargs["negative_prompt"] = neg
+                        result = pipe(**gen_kwargs)
 
             img = result.images[0]
             buffer = io.BytesIO()
@@ -2147,13 +2174,7 @@ async def image_variations(
     Produces N variations of the input image. Uses img2img with an empty
     prompt and moderate strength, or FluxFillPipeline with a full mask.
     """
-    global pipeline
-
-    model_id = os.environ.get("MODEL_ID") or os.environ.get("MODEL") or model
-    if not model_id:
-        raise HTTPException(status_code=400, detail="No model specified")
-
-    pipe = load_pipeline(model_id)
+    model_id, pipe = await _prepare_pipeline_for_request(model)
 
     image_bytes = await image.read()
     s = strength if strength is not None else 0.6
