@@ -331,6 +331,10 @@ func TestReconcileQuantizationSpecChangeResetsStateAndDeletesJobs(t *testing.T) 
 	cache.Status.Path = "/models/base/gptq-w4-g128"
 	cache.Status.Quantization = &aiv1alpha1.QuantizationStatus{Type: "W4_G128"}
 	cache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{RefusalDirNorm: "1.0"}
+	cache.Status.Publish = &aiv1alpha1.PublishStatus{OCIDigest: "sha256:stale"}
+	cache.Spec.Publish = &aiv1alpha1.PublishSpec{
+		Targets: []aiv1alpha1.PublishTarget{aiv1alpha1.PublishTargetOCI},
+	}
 	cache.Annotations = map[string]string{
 		annotationQuantSpecHash: "stale-hash",
 	}
@@ -338,8 +342,9 @@ func TestReconcileQuantizationSpecChangeResetsStateAndDeletesJobs(t *testing.T) 
 	r, cl := newQuantizationTestReconciler(t, nil,
 		cache,
 		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "quant-reset-quantize", Namespace: "default"}},
-		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "quant-reset-abliterate", Namespace: "default"}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "quant-reset-quantize-image-warmup", Namespace: "default"}},
 		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "quant-reset-downloader", Namespace: "default"}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "quant-reset-publish", Namespace: "default"}},
 	)
 
 	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
@@ -351,13 +356,92 @@ func TestReconcileQuantizationSpecChangeResetsStateAndDeletesJobs(t *testing.T) 
 	assert.Empty(t, updated.Status.Path)
 	assert.Nil(t, updated.Status.Quantization)
 	assert.Nil(t, updated.Status.Abliteration)
+	assert.Nil(t, updated.Status.Publish)
 	require.NotNil(t, updated.Annotations)
 	assert.Equal(t, quantSpecHash(updated.Spec.Quantization), updated.Annotations[annotationQuantSpecHash])
 
 	for _, jobName := range []string{
 		"quant-reset-quantize",
-		"quant-reset-abliterate",
+		"quant-reset-quantize-image-warmup",
 		"quant-reset-downloader",
+		"quant-reset-publish",
+	} {
+		job := &batchv1.Job{}
+		err := cl.Get(context.Background(), client.ObjectKey{Name: jobName, Namespace: "default"}, job)
+		assert.Error(t, err, "expected %s to be deleted", jobName)
+	}
+}
+
+func TestReconcileAbliterationSpecChangeResetsAllDownstreamStateAndDeletesJobs(t *testing.T) {
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ablit-reset",
+			Namespace: "default",
+			Annotations: map[string]string{
+				annotationAblitSpecHash: "stale-hash",
+			},
+		},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:          "HF://org/model",
+			StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.vendor": "AMD",
+				"flexinfer.ai/gpu.arch":   "gfx1100",
+			},
+			Abliteration: &aiv1alpha1.AbliterationSpec{
+				UseGPU: true,
+			},
+			Quantization: &aiv1alpha1.QuantizationSpec{
+				Format:    aiv1alpha1.QuantizationFormatGPTQ,
+				Bits:      int32Ptr(4),
+				GroupSize: int32Ptr(128),
+				UseGPU:    true,
+			},
+			Publish: &aiv1alpha1.PublishSpec{
+				Targets: []aiv1alpha1.PublishTarget{aiv1alpha1.PublishTargetOCI},
+			},
+		},
+		Status: aiv1alpha1.ModelCacheStatus{
+			Phase:        aiv1alpha1.ModelCachePhaseReady,
+			CurrentPhase: "ready",
+			Path:         "/models/base/gptq-w4-g128",
+			Abliteration: &aiv1alpha1.AbliterationStatus{RefusalDirNorm: "1.0"},
+			Quantization: &aiv1alpha1.QuantizationStatus{Type: "W4_G128"},
+			Publish:      &aiv1alpha1.PublishStatus{OCIDigest: "sha256:stale"},
+		},
+	}
+
+	r, cl := newQuantizationTestReconciler(t, nil,
+		cache,
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "ablit-reset-abliterate", Namespace: "default"}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "ablit-reset-abliterate-image-warmup", Namespace: "default"}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "ablit-reset-quantize", Namespace: "default"}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "ablit-reset-quantize-image-warmup", Namespace: "default"}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "ablit-reset-downloader", Namespace: "default"}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "ablit-reset-publish", Namespace: "default"}},
+	)
+
+	result, err := r.reconcileAbliteration(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, requeueShort, result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseProvisioning, updated.Status.Phase)
+	assert.Empty(t, updated.Status.CurrentPhase)
+	assert.Empty(t, updated.Status.Path)
+	assert.Nil(t, updated.Status.Abliteration)
+	assert.Nil(t, updated.Status.Quantization)
+	assert.Nil(t, updated.Status.Publish)
+	require.NotNil(t, updated.Annotations)
+	assert.Equal(t, ablitSpecHash(updated.Spec.Abliteration), updated.Annotations[annotationAblitSpecHash])
+
+	for _, jobName := range []string{
+		"ablit-reset-abliterate",
+		"ablit-reset-abliterate-image-warmup",
+		"ablit-reset-quantize",
+		"ablit-reset-quantize-image-warmup",
+		"ablit-reset-downloader",
+		"ablit-reset-publish",
 	} {
 		job := &batchv1.Job{}
 		err := cl.Get(context.Background(), client.ObjectKey{Name: jobName, Namespace: "default"}, job)

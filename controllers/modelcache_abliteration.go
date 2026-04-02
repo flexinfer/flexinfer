@@ -63,24 +63,37 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 
 	currentHash := ablitSpecHash(modelCache.Spec.Abliteration)
 
+	suffixes := []string{"-abliterate", "-abliterate-image-warmup", "-downloader", "-publish"}
+	if modelCache.Spec.Finetune != nil {
+		suffixes = append(suffixes, "-finetune")
+	}
+	if modelCache.Spec.Quantization != nil {
+		suffixes = append(suffixes, "-quantize", "-quantize-image-warmup")
+	}
+
 	changed, err := r.detectAndApplySpecChange(ctx, modelCache, specChangeParams{
 		CurrentHash:          currentHash,
 		HashAnnotationKey:    annotationAblitSpecHash,
 		TriggerAnnotationKey: annotationReabliterate,
-		JobSuffixesToDelete:  []string{"-abliterate", "-quantize", "-downloader", "-abliterate-image-warmup"},
+		JobSuffixesToDelete:  suffixes,
 		EventReason:          "ReabliterationTriggered",
 	})
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if changed {
-		modelCache.Status.Abliteration = nil
-		modelCache.Status.Quantization = nil
-		modelCache.Status.Path = ""
-		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
+		r.resetDownloadStatusFields(modelCache)
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
+		if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+		if modelCache.Annotations == nil {
+			modelCache.Annotations = make(map[string]string)
+		}
+		modelCache.Annotations[annotationAblitSpecHash] = currentHash
+		delete(modelCache.Annotations, annotationReabliterate)
 		// Persist annotation changes AFTER the status reset succeeds.
 		if err := r.Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
