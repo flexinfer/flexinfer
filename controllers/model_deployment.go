@@ -38,6 +38,7 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/modelmeta"
 )
 
 // ensureService creates or updates the Service for the model.
@@ -63,6 +64,7 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 		if model.Spec.LiteLLM != nil && model.Spec.LiteLLM.CopilotAlias != "" {
 			annotations[AnnotationLiteLLMCopilot] = model.Spec.LiteLLM.CopilotAlias
 		}
+		modelmeta.ApplyTokenLimitAnnotations(annotations, modelmeta.ResolveTokenLimits(&model.Spec))
 	}
 
 	// Add service labels for routing
@@ -446,6 +448,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 					}
 					capsJSON, _ := json.Marshal(resolveCapabilities(model, b))
 					annotations[AnnotationLiteLLMCapabilities] = string(capsJSON)
+					modelmeta.ApplyTokenLimitAnnotations(annotations, modelmeta.ResolveTokenLimits(&model.Spec))
 				}
 				if len(model.Spec.ServiceLabels) > 0 {
 					annotations[AnnotationServiceLabels] = strings.Join(model.Spec.ServiceLabels, ",")

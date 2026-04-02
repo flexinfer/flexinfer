@@ -16,6 +16,7 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -533,6 +534,48 @@ func TestHandleModels_WithServiceLabels(t *testing.T) {
 	assert.Len(t, serviceLabels, 2)
 	assert.Contains(t, serviceLabels, "textgen")
 	assert.Contains(t, serviceLabels, "chat")
+}
+
+func TestHandleModels_WithRuntimeModelTokenLimits(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "pvc://runtime-model/model",
+			Config: &apiextensionsv1.JSON{
+				Raw: []byte(`{"maxModelLen":8192,"maxOutputTokens":4096}`),
+			},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhaseReady,
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, model))
+
+	req := httptest.NewRequest("GET", "/v1/models", nil)
+	w := httptest.NewRecorder()
+
+	p.handleModels(w, req)
+
+	resp := w.Result()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var response OpenAIModelsResponse
+	err := json.NewDecoder(resp.Body).Decode(&response)
+	require.NoError(t, err)
+	require.Len(t, response.Data, 1)
+
+	m := response.Data[0]
+	assert.Equal(t, "runtime-model", m.ID)
+	assert.Equal(t, float64(8192), m.Metadata["context_window"])
+	assert.Equal(t, float64(8192), m.Metadata["max_input_tokens"])
+	assert.Equal(t, float64(4096), m.Metadata["max_output_tokens"])
 }
 
 func TestHandleModels_MethodNotAllowed(t *testing.T) {

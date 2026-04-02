@@ -1,6 +1,10 @@
 package controllers
 
-import "time"
+import (
+	"time"
+
+	"github.com/flexinfer/flexinfer/pkg/modelmeta"
+)
 
 const (
 	huggingFaceRepositoryBaseURL = "https://huggingface.co"
@@ -46,10 +50,13 @@ const (
 	AnnotationKVCacheUsage  = "flexinfer.ai/kv-cache-usage"
 
 	// LiteLLM proxy annotations.
-	AnnotationLiteLLMServedModel  = "litellm.flexinfer.ai/served-model"
-	AnnotationLiteLLMAliases      = "litellm.flexinfer.ai/aliases"
-	AnnotationLiteLLMCopilot      = "litellm.flexinfer.ai/copilot-model"
-	AnnotationLiteLLMCapabilities = "litellm.flexinfer.ai/capabilities"
+	AnnotationLiteLLMServedModel     = "litellm.flexinfer.ai/served-model"
+	AnnotationLiteLLMAliases         = "litellm.flexinfer.ai/aliases"
+	AnnotationLiteLLMCopilot         = "litellm.flexinfer.ai/copilot-model"
+	AnnotationLiteLLMCapabilities    = "litellm.flexinfer.ai/capabilities"
+	AnnotationLiteLLMContextWindow   = modelmeta.AnnotationLiteLLMContextWindow
+	AnnotationLiteLLMMaxInputTokens  = modelmeta.AnnotationLiteLLMMaxInputTokens
+	AnnotationLiteLLMMaxOutputTokens = modelmeta.AnnotationLiteLLMMaxOutputTokens
 )
 
 // Label keys used on Pods, Jobs, and Deployments.

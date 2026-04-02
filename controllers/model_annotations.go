@@ -27,6 +27,9 @@ var managedModelAnnotations = []string{
 	AnnotationLiteLLMAliases,
 	AnnotationLiteLLMCopilot,
 	AnnotationLiteLLMCapabilities,
+	AnnotationLiteLLMContextWindow,
+	AnnotationLiteLLMMaxInputTokens,
+	AnnotationLiteLLMMaxOutputTokens,
 	AnnotationServiceLabels,
 }
 

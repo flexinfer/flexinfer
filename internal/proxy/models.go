@@ -7,6 +7,7 @@ import (
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/modelmeta"
 	"github.com/flexinfer/flexinfer/pkg/validation"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -168,6 +169,8 @@ func (p *Proxy) modelToOpenAI(m *aiv1alpha2.Model) OpenAIModel {
 	if len(m.Spec.ServiceLabels) > 0 {
 		metadata["service_labels"] = m.Spec.ServiceLabels
 	}
+
+	modelmeta.ApplyTokenLimitMetadata(metadata, modelmeta.ResolveTokenLimits(&m.Spec))
 
 	return OpenAIModel{
 		ID:       m.Name,
