@@ -224,17 +224,56 @@ func ociPublishScript() string {
 	return `
 apk add --no-cache curl >/dev/null 2>&1 || true
 
+json_escape() {
+  printf '%s' "${1:-}" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' '
+}
+
+PUBLISH_STATUS="failed"
+PUBLISH_PHASE="init"
+PUBLISH_ERROR=""
+PUBLISH_DIGEST=""
+PUSH_REF="${OCI_REF:-}"
+PUSHED_TAGS=""
+TOTAL_BYTES=0
+FILE_COUNT=0
+START_TIME=0
+
+write_publish_metadata() {
+  rc="${1:-0}"
+  end_time=$(date +%s 2>/dev/null || echo 0)
+  duration=0
+  if [ "${START_TIME:-0}" -gt 0 ] 2>/dev/null; then
+    duration=$((end_time - START_TIME))
+  fi
+  if [ "$rc" -eq 0 ]; then
+    PUBLISH_STATUS="success"
+  fi
+  cat > /dev/termination-log <<TERMEOF
+{"target":"oci","status":"$(json_escape "$PUBLISH_STATUS")","phase":"$(json_escape "$PUBLISH_PHASE")","ociRef":"$(json_escape "${PUSH_REF:-${OCI_REF:-}}")","ociDigest":"$(json_escape "$PUBLISH_DIGEST")","pushedTags":"$(json_escape "$PUSHED_TAGS")","durationSeconds":$duration,"totalBytes":${TOTAL_BYTES:-0},"fileCount":${FILE_COUNT:-0},"error":"$(json_escape "$PUBLISH_ERROR")"}
+TERMEOF
+}
+
+fail_publish() {
+  PUBLISH_ERROR="${1:-publish failed}"
+  write_publish_metadata 1
+  echo "ERROR: $PUBLISH_ERROR" >&2
+  exit 1
+}
+
 if ! command -v oras >/dev/null 2>&1; then
+  PUBLISH_PHASE="install_oras"
   echo "oras not found, installing v1.2.0..."
-  curl -fsSL https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz | tar -xz -C /usr/local/bin oras
+  if ! curl -fsSL https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz | tar -xz -C /usr/local/bin oras; then
+    fail_publish "failed to install oras v1.2.0"
+  fi
   echo "oras installed successfully"
 fi
 
 if [ -z "${MODEL_DIR:-}" ] || [ -z "${OCI_REF:-}" ]; then
-  echo "ERROR: MODEL_DIR and OCI_REF are required" >&2; exit 1
+  fail_publish "MODEL_DIR and OCI_REF are required"
 fi
 if [ ! -d "$MODEL_DIR" ]; then
-  echo "ERROR: MODEL_DIR does not exist: $MODEL_DIR" >&2; exit 1
+  fail_publish "MODEL_DIR does not exist: $MODEL_DIR"
 fi
 
 REGISTRY=$(echo "$OCI_REF" | cut -d'/' -f1)
@@ -253,7 +292,10 @@ done
 echo "{\"event\":\"start\",\"phase\":\"publishing\",\"target\":\"oci\",\"total_bytes\":$TOTAL_BYTES,\"file_count\":$FILE_COUNT}"
 
 if [ -n "${OCI_USERNAME:-}" ] && [ -n "${OCI_PASSWORD:-}" ]; then
-  oras login $INSECURE_FLAG "$REGISTRY" -u "$OCI_USERNAME" -p "$OCI_PASSWORD"
+  PUBLISH_PHASE="authenticating"
+  if ! oras login $INSECURE_FLAG "$REGISTRY" -u "$OCI_USERNAME" -p "$OCI_PASSWORD"; then
+    fail_publish "oras login failed for registry $REGISTRY"
+  fi
   echo "{\"event\":\"progress\",\"phase\":\"authenticated\",\"percent\":5}"
 fi
 
@@ -278,34 +320,48 @@ case "$TAG_POLICY" in
     ;;
 esac
 
+PUSHED_TAGS="$PUSH_REF"
+PUBLISH_PHASE="pushing"
 echo "{\"event\":\"progress\",\"phase\":\"pushing\",\"percent\":10,\"detail\":\"$FILE_COUNT files\"}"
 
 # Push from MODEL_DIR so ORAS uses relative paths as artifact titles.
 # ORAS v1.x sets title annotation from the argument path; absolute paths
 # cause "path traversal disallowed" on pull.
 START_TIME=$(date +%s)
-(cd "$MODEL_DIR" && oras push $INSECURE_FLAG --disable-path-validation "$PUSH_REF" $(find . -type f | sed 's|^\./||') --artifact-type "application/vnd.flexinfer.model.v1") 2>&1 | tee /tmp/oras-output.log
+if ! (cd "$MODEL_DIR" && oras push $INSECURE_FLAG --disable-path-validation "$PUSH_REF" $(find . -type f | sed 's|^\./||') --artifact-type "application/vnd.flexinfer.model.v1") > /tmp/oras-output.log 2>&1; then
+  cat /tmp/oras-output.log
+  PUBLISH_ERROR=$(tail -n 20 /tmp/oras-output.log | tr '\n' ' ')
+  fail_publish "${PUBLISH_ERROR:-oras push failed}"
+fi
+cat /tmp/oras-output.log
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
 DIGEST=$(grep 'Digest: sha256:' /tmp/oras-output.log | head -1 | sed 's/.*Digest: //' || echo "")
+PUBLISH_DIGEST="$DIGEST"
 
-PUSHED_TAGS="$PUSH_REF"
+if [ -z "$DIGEST" ]; then
+  fail_publish "oras push completed without reporting a digest"
+fi
 
 # For digest-suffix policy, create an additional tag with the digest prefix.
 if [ "$TAG_POLICY" = "digest-suffix" ] && [ -n "$DIGEST" ]; then
+  PUBLISH_PHASE="tagging"
   BASE_REF=$(echo "$OCI_REF" | sed 's/:.*$//')
   BASE_TAG=$(echo "$OCI_REF" | grep -o ':[^:]*$' | tr -d ':')
   [ -z "$BASE_TAG" ] && BASE_TAG="latest"
   SHORT_DIGEST=$(echo "$DIGEST" | sed 's/sha256://' | cut -c1-12)
   DIGEST_TAG="${BASE_REF}:${BASE_TAG}-sha256-${SHORT_DIGEST}"
   echo "Creating digest-suffix tag: $DIGEST_TAG"
-  oras tag $INSECURE_FLAG "$PUSH_REF" "${BASE_TAG}-sha256-${SHORT_DIGEST}" 2>&1 || echo "WARNING: digest-suffix tagging failed"
+  if ! oras tag $INSECURE_FLAG "$PUSH_REF" "${BASE_TAG}-sha256-${SHORT_DIGEST}" 2>&1; then
+    fail_publish "oras tag failed for digest-suffix tag $DIGEST_TAG"
+  fi
   PUSHED_TAGS="${PUSHED_TAGS},${DIGEST_TAG}"
 fi
 
 # Apply additional tags (server-side, no re-upload).
 if [ -n "${OCI_ADDITIONAL_TAGS:-}" ]; then
+  PUBLISH_PHASE="tagging"
   echo "{\"event\":\"progress\",\"phase\":\"tagging\",\"percent\":90}"
   IFS=',' read -r TAGS_STR <<EOF
 ${OCI_ADDITIONAL_TAGS}
@@ -315,16 +371,18 @@ EOF
     BASE_REF=$(echo "$OCI_REF" | sed 's/:.*$//')
     EXTRA_REF="${BASE_REF}:${tag}"
     echo "Applying additional tag: $EXTRA_REF"
-    oras tag $INSECURE_FLAG "$PUSH_REF" "$tag" 2>&1 || echo "WARNING: additional tagging failed for $tag"
+    if ! oras tag $INSECURE_FLAG "$PUSH_REF" "$tag" 2>&1; then
+      fail_publish "oras tag failed for additional tag $EXTRA_REF"
+    fi
     PUSHED_TAGS="${PUSHED_TAGS},${EXTRA_REF}"
   done
 fi
 
+PUBLISH_PHASE="complete"
+PUBLISH_STATUS="success"
 echo "{\"event\":\"complete\",\"phase\":\"publishing\",\"target\":\"oci\",\"duration_seconds\":$DURATION,\"digest\":\"$DIGEST\"}"
 
-cat > /dev/termination-log <<TERMEOF
-{"target":"oci","ociRef":"$PUSH_REF","ociDigest":"$DIGEST","pushedTags":"$PUSHED_TAGS","durationSeconds":$DURATION,"totalBytes":$TOTAL_BYTES,"fileCount":$FILE_COUNT}
-TERMEOF
+write_publish_metadata 0
 
 echo "Published to $PUSH_REF (digest: $DIGEST) in ${DURATION}s"
 `

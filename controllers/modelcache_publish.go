@@ -166,6 +166,17 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 			if meta.PushedTags != "" {
 				pubStatus.PublishedTags = strings.Split(meta.PushedTags, ",")
 			}
+			log.Info("Publish job succeeded",
+				"cache", modelCache.Name,
+				"target", meta.Target,
+				"status", meta.Status,
+				"phase", meta.Phase,
+				"ociRef", meta.OCIRef,
+				"ociDigest", meta.OCIDigest,
+				"pushedTags", meta.PushedTags,
+				"durationSeconds", meta.Duration,
+				"fileCount", meta.FileCount,
+				"totalBytes", meta.TotalBytes)
 		}
 
 		// Track digest history for rollback visibility (prepend, cap at 5).
@@ -200,7 +211,23 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "publish")
 		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "publish_failed").Inc()
 
+		meta := r.readPublishMetadataFromPods(ctx, modelCache.Namespace, publishJob.Name)
 		failureMsg := capturePublishFailureLogs(ctx, r.Client, modelCache.Namespace, publishJob.Name)
+		if meta != nil {
+			if strings.TrimSpace(failureMsg) == "" && strings.TrimSpace(meta.Error) != "" {
+				failureMsg = strings.TrimSpace(meta.Error)
+			}
+			log.Info("Publish job failure details",
+				"cache", modelCache.Name,
+				"target", meta.Target,
+				"status", meta.Status,
+				"phase", meta.Phase,
+				"ociRef", meta.OCIRef,
+				"durationSeconds", meta.Duration,
+				"fileCount", meta.FileCount,
+				"totalBytes", meta.TotalBytes,
+				"error", meta.Error)
+		}
 
 		// Check if we should auto-retry.
 		if shouldRetry, backoff := r.shouldRetryFailedPhase(modelCache, "publish"); shouldRetry {
@@ -285,11 +312,17 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 // publishJobMetadata is parsed from the publisher container's termination log.
 type publishJobMetadata struct {
 	Target     string `json:"target,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Phase      string `json:"phase,omitempty"`
 	OCIRef     string `json:"ociRef,omitempty"`
 	OCIDigest  string `json:"ociDigest,omitempty"`
 	PushedTags string `json:"pushedTags,omitempty"`
 	HFRepo     string `json:"hfRepo,omitempty"`
 	HFCommit   string `json:"hfCommit,omitempty"`
+	Error      string `json:"error,omitempty"`
+	TotalBytes int64  `json:"totalBytes,omitempty"`
+	FileCount  int64  `json:"fileCount,omitempty"`
+	Duration   int64  `json:"durationSeconds,omitempty"`
 }
 
 // readPublishMetadataFromPods reads publish metadata from pod termination logs.
