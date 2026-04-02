@@ -86,16 +86,11 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
-		if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
-			return ctrl.Result{}, err
-		}
-		if modelCache.Annotations == nil {
-			modelCache.Annotations = make(map[string]string)
-		}
-		modelCache.Annotations[annotationAblitSpecHash] = currentHash
-		delete(modelCache.Annotations, annotationReabliterate)
 		// Persist annotation changes AFTER the status reset succeeds.
-		if err := r.Update(ctx, modelCache); err != nil {
+		if err := r.updateModelCacheAnnotations(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, func(annotations map[string]string) {
+			annotations[annotationAblitSpecHash] = currentHash
+			delete(annotations, annotationReabliterate)
+		}); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: requeueShort}, nil

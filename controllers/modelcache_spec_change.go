@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -128,4 +129,26 @@ func specChangeNeedsReprocess(mc *aiv1alpha1.ModelCache, triggerKey, hashKey, cu
 		storedHash = mc.Annotations[hashKey]
 	}
 	return storedHash != "" && storedHash != currentHash
+}
+
+// updateModelCacheAnnotations retries metadata-only annotation updates after a
+// status transition. This prevents reset triggers from lingering when the
+// follow-up Update races with another reconcile and hits a resourceVersion
+// conflict after the status reset already succeeded.
+func (r *ModelCacheReconciler) updateModelCacheAnnotations(
+	ctx context.Context,
+	key types.NamespacedName,
+	mutate func(map[string]string),
+) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest := &aiv1alpha1.ModelCache{}
+		if err := r.Get(ctx, key, latest); err != nil {
+			return err
+		}
+		if latest.Annotations == nil {
+			latest.Annotations = make(map[string]string)
+		}
+		mutate(latest.Annotations)
+		return r.Update(ctx, latest)
+	})
 }

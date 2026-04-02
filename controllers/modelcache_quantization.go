@@ -104,18 +104,13 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
-		if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
-			return ctrl.Result{}, err
-		}
-		if modelCache.Annotations == nil {
-			modelCache.Annotations = make(map[string]string)
-		}
-		modelCache.Annotations[annotationQuantSpecHash] = currentHash
-		delete(modelCache.Annotations, annotationRequantize)
 		// Persist annotation changes (hash update, trigger cleared) AFTER
 		// the status reset succeeds. This prevents the race where the trigger
 		// is consumed but the status reset fails.
-		if err := r.Update(ctx, modelCache); err != nil {
+		if err := r.updateModelCacheAnnotations(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, func(annotations map[string]string) {
+			annotations[annotationQuantSpecHash] = currentHash
+			delete(annotations, annotationRequantize)
+		}); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: requeueShort}, nil

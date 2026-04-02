@@ -113,16 +113,11 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
-		if err := r.Get(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, modelCache); err != nil {
-			return ctrl.Result{}, err
-		}
-		if modelCache.Annotations == nil {
-			modelCache.Annotations = make(map[string]string)
-		}
-		modelCache.Annotations[annotationFinetuneSpecHash] = currentHash
-		delete(modelCache.Annotations, annotationRefinetune)
 		// Persist annotation changes AFTER the status reset succeeds.
-		if err := r.Update(ctx, modelCache); err != nil {
+		if err := r.updateModelCacheAnnotations(ctx, types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}, func(annotations map[string]string) {
+			annotations[annotationFinetuneSpecHash] = currentHash
+			delete(annotations, annotationRefinetune)
+		}); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
