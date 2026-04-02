@@ -236,6 +236,28 @@ func TestChooseSharedGroupLeader_Comprehensive(t *testing.T) {
 			wantName: "qwen-demand",
 		},
 		{
+			name: "cache-not-ready ready model does not beat runnable fallback",
+			models: func() []*aiv1alpha2.Model {
+				staleReady := makeSharedModel("stale-ready", 200, aiv1alpha2.ModelPhaseReady, nil, nil)
+				staleReady.Status.Cache = &aiv1alpha2.CacheStatus{Ready: false}
+				runnable := makeSharedModel("runnable-pending", 100, aiv1alpha2.ModelPhasePending, nil, nil)
+				runnable.Status.Cache = &aiv1alpha2.CacheStatus{Ready: true}
+				return []*aiv1alpha2.Model{staleReady, runnable}
+			}(),
+			wantName: "runnable-pending",
+		},
+		{
+			name: "all cache-not-ready models still fall back to priority",
+			models: func() []*aiv1alpha2.Model {
+				high := makeSharedModel("high", 200, aiv1alpha2.ModelPhaseReady, nil, nil)
+				high.Status.Cache = &aiv1alpha2.CacheStatus{Ready: false}
+				low := makeSharedModel("low", 100, aiv1alpha2.ModelPhasePending, nil, nil)
+				low.Status.Cache = &aiv1alpha2.CacheStatus{Ready: false}
+				return []*aiv1alpha2.Model{low, high}
+			}(),
+			wantName: "high",
+		},
+		{
 			name: "recent leader within 5min preferred over fallback",
 			models: []*aiv1alpha2.Model{
 				makeSharedModel("fallback", 100, aiv1alpha2.ModelPhasePending, nil, nil),
