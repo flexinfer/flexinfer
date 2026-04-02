@@ -511,10 +511,20 @@ def _temporary_scheduler(pipe, scheduler_name: Optional[str]):
 async def _prepare_pipeline_for_request(requested_model: Optional[str]):
     """Resolve request model selection, including checkpoint hot-swap aliases."""
     global pipeline
+    base_model_id = os.environ.get("MODEL_ID") or os.environ.get("MODEL")
 
-    if requested_model and pipeline is not None:
+    if requested_model:
         ckpt_path = _resolve_checkpoint(requested_model)
         if ckpt_path:
+            if not base_model_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Checkpoint aliases require MODEL_ID or MODEL to be set",
+                )
+
+            if pipeline is None:
+                load_pipeline(base_model_id)
+
             ckpt_stem = os.path.splitext(os.path.basename(ckpt_path))[0]
             if ckpt_stem != current_model:
                 print(
@@ -522,8 +532,9 @@ async def _prepare_pipeline_for_request(requested_model: Optional[str]):
                 )
                 async with _generation_lock:
                     await asyncio.to_thread(_swap_checkpoint, ckpt_path)
+            return ckpt_stem, pipeline
 
-    model_id = os.environ.get("MODEL_ID") or os.environ.get("MODEL") or requested_model
+    model_id = base_model_id or requested_model
     if not model_id:
         raise HTTPException(status_code=400, detail="No model specified")
 
