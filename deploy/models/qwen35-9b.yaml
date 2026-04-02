@@ -6,7 +6,8 @@
 # 7900 XTX node so 5930k can stay image-first.
 # Runtime: Unified runtime with vLLM Qwen3.5 patches baked in at build time.
 #
-# maxModelLen=4096 to minimize KV cache budget.
+# maxModelLen=8192 so default LiteLLM/OpenWebUI 8K output requests do not
+# immediately bounce at the vLLM layer while 9B is the temporary primary.
 # maxNumSeqs=2 to reduce concurrent memory pressure.
 #
 apiVersion: ai.flexinfer/v1alpha2
@@ -33,7 +34,7 @@ spec:
   config:
     quantization: gptq
     dtype: "half"
-    maxModelLen: 4096
+    maxModelLen: 8192
     gpuMemoryUtilization: "0.65"
     maxNumSeqs: 2
     enforceEager: true
