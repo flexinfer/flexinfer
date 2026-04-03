@@ -7,6 +7,7 @@ resources:
   # for the Gemma4 rollout. Keep the manifests on disk for rollback/reference,
   # but do not reconcile them here.
   - gemma4-e4b-turboquant.yaml      # vLLM + TurboQuant experiment, always-on
+  - gemma4-e4b-turboquant-canary.yaml # vLLM CUSTOM/TurboQuant canary, on-demand
 
   # === cblevins-5930k (24 GB gfx1100) — subagent + code gen (shared group) ===
   - omnicoder-9b.yaml               # vLLM, GPTQ INT4, ~7.2 GiB VRAM, on-demand (priority 100)
