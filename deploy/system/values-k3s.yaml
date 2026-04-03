@@ -238,7 +238,7 @@ runtime:
   terminationGracePeriodSeconds: 60
   profiles:
     - name: gfx1100
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:482c4b53cf2659d220a085fb17b4bfc702d7713783c9e42674bf8f148a6ae670"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:ef99f9f3d85cff31d35a4b3c7b80cbcff7c0892aca9bbefc47812d83ba8f983d"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
@@ -255,7 +255,7 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx1100-5930k
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:482c4b53cf2659d220a085fb17b4bfc702d7713783c9e42674bf8f148a6ae670"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:ef99f9f3d85cff31d35a4b3c7b80cbcff7c0892aca9bbefc47812d83ba8f983d"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 1
