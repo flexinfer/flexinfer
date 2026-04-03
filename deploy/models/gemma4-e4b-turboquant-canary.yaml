@@ -17,7 +17,7 @@ spec:
     vendor: amd
     count: 1
     vramEstimateMB: 18000
-    shared: 7900xtx-textgen
+    shared: 5930k-textgen
     priority: 250
   serverless:
     enabled: true
@@ -41,7 +41,7 @@ spec:
     disableLogStats: false
     warmPolicy: primary
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-5930k
   resources:
     requests:
       cpu: "4"
