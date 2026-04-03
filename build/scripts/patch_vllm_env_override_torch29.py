@@ -205,6 +205,43 @@ GPU_MODEL_RUNNER_PADDED_RESHAPE_NEW = """                    )
                     try:
 """
 
+GPU_MODEL_RUNNER_VIEW_OLD = """                    kv_caches[layer_name] = (
+                        kv_cache_raw_tensors[layer_name]
+                        .view(dtype)
+                        .view(kv_cache_shape)
+                        .permute(*inv_order)
+                    )
+"""
+
+GPU_MODEL_RUNNER_VIEW_NEW = """                    try:
+                        kv_caches[layer_name] = (
+                            kv_cache_raw_tensors[layer_name]
+                            .view(dtype)
+                            .view(kv_cache_shape)
+                            .permute(*inv_order)
+                        )
+                    except RuntimeError as e:
+                        logger.error(
+                            "KV reshape failed for layer=%s target=%s spec=%s "
+                            "kv_quant_mode=%s page_size_bytes=%s page_size_padded=%s "
+                            "num_blocks=%s kernel_num_blocks=%s raw_numel=%s "
+                            "view_numel=%s kv_cache_shape=%s stride_order=%s",
+                            layer_name,
+                            self.shared_kv_cache_layers.get(layer_name),
+                            kv_cache_spec,
+                            getattr(kv_cache_spec, "kv_quant_mode", None),
+                            getattr(kv_cache_spec, "page_size_bytes", None),
+                            getattr(kv_cache_spec, "page_size_padded", None),
+                            num_blocks,
+                            kernel_num_blocks,
+                            raw_tensor.numel(),
+                            raw_tensor.view(dtype).numel(),
+                            kv_cache_shape,
+                            kv_cache_stride_order,
+                        )
+                        raise
+"""
+
 ATTENTION_OVERRIDE_OLD = """        # llm-compressor mdls need to set cache_dtype to "fp8" manually.
         kv_cache_scheme = getattr(quant_config, "kv_cache_scheme", None)
         if kv_cache_scheme is not None:
@@ -318,6 +355,11 @@ def main() -> int:
         gpu_model_runner,
         GPU_MODEL_RUNNER_PADDED_RESHAPE_OLD,
         GPU_MODEL_RUNNER_PADDED_RESHAPE_NEW,
+    )
+    _replace_once(
+        gpu_model_runner,
+        GPU_MODEL_RUNNER_VIEW_OLD,
+        GPU_MODEL_RUNNER_VIEW_NEW,
     )
     _replace_once(attention, ATTENTION_OVERRIDE_OLD, ATTENTION_OVERRIDE_NEW)
     _replace_once(attention, ATTENTION_BACKEND_OLD, ATTENTION_BACKEND_NEW)
