@@ -69,14 +69,31 @@ fi
 code_pattern='^(cmd/|internal/|pkg/|scripts/|Makefile$|go\.mod$|go\.sum$|\.gitlab-ci\.yml$|\.github/workflows/)'
 docs_pattern='^(README\.md$|CHANGELOG\.md$|ROADMAP\.md$|AGENTS\.md$|docs/)'
 
+# Generated/build artifacts that match code_pattern but don't require docs.
+# These are machine-produced outputs, not user-facing code changes.
+generated_pattern='(/dist/|/testdata/|_golden\.|\.min\.js$|\.min\.css$|\.snap$)'
+
 code_changes="$(printf '%s\n' "$changed_files" | grep -E "$code_pattern" || true)"
 docs_changes="$(printf '%s\n' "$changed_files" | grep -E "$docs_pattern" || true)"
 
-if [[ -n "$code_changes" && -z "$docs_changes" ]]; then
+# Strip generated artifacts from the code change list.
+if [[ -n "$code_changes" ]]; then
+  significant_changes="$(printf '%s\n' "$code_changes" | grep -vE "$generated_pattern" || true)"
+else
+  significant_changes=""
+fi
+
+if [[ -n "$significant_changes" && -z "$docs_changes" ]]; then
   echo "docs-guardrail: code-facing changes detected without doc updates"
   echo ""
-  echo "Changed code-facing files:"
-  printf '%s\n' "$code_changes"
+  echo "Documentation-significant files:"
+  printf '%s\n' "$significant_changes"
+  if [[ "$code_changes" != "$significant_changes" ]]; then
+    skipped="$(printf '%s\n' "$code_changes" | grep -E "$generated_pattern" || true)"
+    echo ""
+    echo "Excluded (generated artifacts):"
+    printf '%s\n' "$skipped"
+  fi
   echo ""
   echo "Expected at least one change in README.md, CHANGELOG.md, ROADMAP.md, AGENTS.md, or docs/."
   echo "If this is intentional, include [skip-docs-check] in the commit message."

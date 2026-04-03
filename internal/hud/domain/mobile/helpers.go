@@ -352,7 +352,34 @@ func buildMobileAttentionLanes(snapshot coordination.Snapshot) []map[string]any 
 			"severity": mobileAttentionSeverity(summary),
 		})
 	}
-	return limitMobileSlice(lanes, 6)
+
+	// Merge-ready lane: surface branches ready to merge for quick dispatch.
+	if snapshot.Summary.MergeReadyBranches > 0 {
+		lanes = append(lanes, map[string]any{
+			"type":     "merge",
+			"id":       "merge-ready",
+			"label":    "Merge ready",
+			"route":    "dispatch",
+			"scope":    fmt.Sprintf("%d branch%s", snapshot.Summary.MergeReadyBranches, pluralSE(snapshot.Summary.MergeReadyBranches)),
+			"summary":  fmt.Sprintf("%d branch%s ready to merge", snapshot.Summary.MergeReadyBranches, pluralSE(snapshot.Summary.MergeReadyBranches)),
+			"severity": "info",
+		})
+	}
+
+	// File conflict lane: surface active file conflicts needing resolution.
+	if snapshot.Summary.ConflictFiles > 0 {
+		lanes = append(lanes, map[string]any{
+			"type":     "conflict",
+			"id":       "file-conflicts",
+			"label":    "File conflicts",
+			"route":    "dispatch",
+			"scope":    fmt.Sprintf("%d file%s", snapshot.Summary.ConflictFiles, pluralS(snapshot.Summary.ConflictFiles)),
+			"summary":  fmt.Sprintf("%d file%s claimed by multiple agents", snapshot.Summary.ConflictFiles, pluralS(snapshot.Summary.ConflictFiles)),
+			"severity": "critical",
+		})
+	}
+
+	return limitMobileSlice(lanes, 8)
 }
 
 func mobileAttentionSeverity(summary string) string {
@@ -373,6 +400,20 @@ func preferMobileValue(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func pluralS(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func pluralSE(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "es"
 }
 
 func limitMobileSlice[T any](items []T, limit int) []T {

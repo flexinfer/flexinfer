@@ -9,6 +9,7 @@ export interface CoordinationSummary {
   cross_agent_blockers: number;
   orphan_tasks: number;
   idle_claim_holders: number;
+  merge_ready_branches: number;
 }
 
 export interface CoordinationNamespace {
@@ -42,6 +43,8 @@ export interface CoordinationAgent {
   blocking_others: number;
   blocked_by_others: number;
   idle_holding_claims: boolean;
+  merge_ready: boolean;
+  merge_blockers?: string[];
   needs_attention: boolean;
   attention_reasons?: string[];
 }
@@ -90,6 +93,7 @@ const EMPTY_SUMMARY: CoordinationSummary = {
   cross_agent_blockers: 0,
   orphan_tasks: 0,
   idle_claim_holders: 0,
+  merge_ready_branches: 0,
 };
 
 class CoordinationStore {

@@ -103,6 +103,21 @@ class TaskStore {
     return this.tasks.filter((t) => t.status === 'blocked').length;
   }
 
+  get dispatchedTasks(): Task[] {
+    return this.tasks.filter((t) => t.tags?.includes('dispatched'));
+  }
+
+  get dispatchedInFlightCount(): number {
+    return this.dispatchedTasks.filter((t) => t.status === 'pending' || t.status === 'in_progress').length;
+  }
+
+  get dispatchedCompletionRate(): number {
+    const dispatched = this.dispatchedTasks;
+    if (dispatched.length === 0) return 0;
+    const completed = dispatched.filter((t) => t.status === 'completed').length;
+    return Math.round((completed / dispatched.length) * 100);
+  }
+
   async fetch(): Promise<void> {
     this.loading = true;
     this.error = null;

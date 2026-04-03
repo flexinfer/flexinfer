@@ -11,6 +11,8 @@
   import { costStore } from '../stores/cost.svelte.ts';
   import { rbacStore } from '../stores/rbac.svelte.ts';
   import { coordinationStore } from '../stores/coordination.svelte.ts';
+  import { mergeQueueStore } from '../stores/mergeQueue.svelte.ts';
+  import { orchestrationStore } from '../stores/orchestration.svelte.ts';
 
   let initialLoad = $state(true);
   let kpis = $state({
@@ -115,12 +117,16 @@
     costStore.startPolling(30000);
     rbacStore.startPolling(30000);
     coordinationStore.startPolling(30000);
+    mergeQueueStore.startPolling(30000);
+    orchestrationStore.startPolling(30000);
     const t = setInterval(fetchOTelStatus, 30000);
     return () => {
       clearInterval(t);
       costStore.stopPolling();
       rbacStore.stopPolling();
       coordinationStore.stopPolling();
+      mergeQueueStore.stopPolling();
+      orchestrationStore.stopPolling();
     };
   });
 
@@ -155,6 +161,7 @@
           ? `${conflict.path} is shared by ${conflict.agents.join(', ')}`
           : `${kpis.file_conflicts} file conflict${kpis.file_conflicts === 1 ? '' : 's'} detected`,
         tone: 'alert',
+        action: { label: 'Resolve conflicts', route: 'dispatch' },
       };
     }
 
@@ -164,6 +171,7 @@
         headline: 'Server health needs attention',
         detail: `${downCount} server${downCount === 1 ? '' : 's'} down · ${serverCount} monitored`,
         tone: 'alert',
+        action: { label: 'Check servers', route: 'servers' },
       };
     }
 
@@ -173,6 +181,7 @@
         headline: 'Blocked work needs attention',
         detail: `${blockedTasks} blocked task${blockedTasks === 1 ? '' : 's'} · ${coordinationSummary.cross_agent_blockers} cross-agent blocker${coordinationSummary.cross_agent_blockers === 1 ? '' : 's'}`,
         tone: 'alert',
+        action: { label: 'Unblock tasks', route: 'dispatch' },
       };
     }
 
@@ -182,6 +191,7 @@
         headline: 'Workflow approvals are waiting',
         detail: `${pendingApprovals} workflow decision${pendingApprovals === 1 ? '' : 's'} ready for review`,
         tone: 'alert',
+        action: { label: 'Review approvals', route: 'workflows' },
       };
     }
 
@@ -190,14 +200,15 @@
       headline: 'No active pressure right now',
       detail: 'The overview is quiet. Open a lane below when you want deeper detail.',
       tone: 'calm',
+      action: null,
     };
   });
 
   let heroSignals = $derived.by(() => [
-    { label: 'today sessions', value: kpis.sessions_today },
-    { label: 'tasks completed', value: kpis.tasks_completed_today },
     { label: 'active agents', value: agentCount },
-    { label: 'approvals waiting', value: pendingApprovals },
+    { label: 'tasks completed', value: kpis.tasks_completed_today },
+    { label: 'system load', value: orchestrationStore.systemLoadPct },
+    { label: 'merge ready', value: coordinationSummary.merge_ready_branches ?? 0 },
   ]);
 
   let attentionLanes = $derived.by(() => {
@@ -207,6 +218,7 @@
       lanes.push({
         route: 'servers',
         label: 'Runtime lane',
+        action: 'Investigate',
         value: downCount > 0 ? `${downCount} down` : 'Daemon offline',
         detail: daemonRunning
           ? `${healthyCount}/${serverCount} healthy · ${processCount} processes`
@@ -218,6 +230,7 @@
       lanes.push({
         route: 'dispatch',
         label: 'Blocked work',
+        action: 'Unblock',
         value: `${blockedTasks} blocked`,
         detail: activeBlockers.length > 0
           ? `${activeBlockers[0].task_title} blocked by ${activeBlockers[0].blocked_by_task_title || activeBlockers[0].blocked_by_task_id}`
@@ -229,6 +242,7 @@
       lanes.push({
         route: 'workflows',
         label: 'Approvals',
+        action: 'Review',
         value: `${pendingApprovals} waiting`,
         detail: 'Review workflow decisions before the queue drifts further.',
       });
@@ -238,6 +252,7 @@
       lanes.push({
         route: 'fleet',
         label: 'Attention agents',
+        action: 'Inspect',
         value: `${coordinationSummary.agents_needing_attention} flagged`,
         detail: topAttentionAgents.length > 0
           ? `${topAttentionAgents[0].agent_id} · ${(topAttentionAgents[0].attention_reasons || []).slice(0, 2).join(' · ') || 'needs coordination review'}`
@@ -249,6 +264,7 @@
       lanes.push({
         route: 'dispatch',
         label: 'Risky namespaces',
+        action: 'Review',
         value: `${coordinationSummary.namespaces_at_risk} at risk`,
         detail: riskyNamespaces.length > 0
           ? `${riskyNamespaces[0].namespace} · ${(riskyNamespaces[0].attention_reasons || []).slice(0, 2).join(' · ')}`
@@ -256,7 +272,41 @@
       });
     }
 
-    return lanes.slice(0, 4);
+    if (orchestrationStore.hasRecommendations) {
+      const top = orchestrationStore.recommendations[0];
+      lanes.push({
+        route: 'dispatch',
+        label: 'Smart dispatch',
+        action: 'Dispatch',
+        value: `${orchestrationStore.recommendations.length} suggested`,
+        detail: top
+          ? `${top.task_title} → ${top.recommended_agent} (${Math.round(top.score * 100)}% match)`
+          : 'AI-recommended agent-task pairings are ready for review.',
+      });
+    }
+
+    const mergeReady = coordinationSummary.merge_ready_branches ?? 0;
+    if (mergeReady > 0) {
+      lanes.push({
+        route: 'dispatch',
+        label: 'Merge ready',
+        action: 'Merge',
+        value: `${mergeReady} branch${mergeReady === 1 ? '' : 'es'}`,
+        detail: 'Branches passed merge checks and are ready to land.',
+      });
+    }
+
+    if (mergeQueueStore.hasConflicts) {
+      lanes.push({
+        route: 'dispatch',
+        label: 'File conflicts',
+        action: 'Resolve',
+        value: `${mergeQueueStore.conflicts.length} pair${mergeQueueStore.conflicts.length === 1 ? '' : 's'}`,
+        detail: 'Agents are claiming overlapping files. Resolve before merging.',
+      });
+    }
+
+    return lanes.slice(0, 5);
   });
 
   let priorityLinks = $derived.by(() => [
@@ -377,7 +427,44 @@
         },
       ],
     },
+    {
+      route: 'dispatch',
+      label: 'Fleet orchestration',
+      value: orchestrationStore.systemLoadPct,
+      detail: `${orchestrationStore.recommendations.length} suggestion${orchestrationStore.recommendations.length === 1 ? '' : 's'} · ${(coordinationSummary.merge_ready_branches ?? 0)} merge-ready · ${mergeQueueStore.conflicts.length} conflict${mergeQueueStore.conflicts.length === 1 ? '' : 's'}`,
+      foot: orchestrationStore.hasRecommendations
+        ? `Top: ${orchestrationStore.recommendations[0].task_title} → ${orchestrationStore.recommendations[0].recommended_agent}`
+        : 'No pending dispatch recommendations',
+      alert: orchestrationStore.hasRecommendations || mergeQueueStore.hasConflicts || (coordinationSummary.merge_ready_branches ?? 0) > 0,
+      tags: [
+        {
+          label: 'Suggestions',
+          active: orchestrationStore.hasRecommendations,
+          note: orchestrationStore.hasRecommendations ? String(orchestrationStore.recommendations.length) : 'none',
+        },
+        {
+          label: 'Merge',
+          active: (coordinationSummary.merge_ready_branches ?? 0) > 0,
+          note: (coordinationSummary.merge_ready_branches ?? 0) > 0 ? String(coordinationSummary.merge_ready_branches) : 'none',
+        },
+        {
+          label: 'Conflicts',
+          active: mergeQueueStore.hasConflicts,
+          note: mergeQueueStore.hasConflicts ? String(mergeQueueStore.conflicts.length) : 'clear',
+        },
+      ],
+    },
   ]);
+
+  let sortedPrimaryCards = $derived.by(() => {
+    const cards = primaryCards;
+    const alertCards = cards.filter((c) => c.alert);
+    const calmCards = cards.filter((c) => !c.alert);
+    return [...alertCards, ...calmCards];
+  });
+
+  let hasAttention = $derived(attentionLanes.length > 0);
+  let supportExpanded = $state(false);
 
   let supportSurfaces = $derived.by(() => [
     {
@@ -444,9 +531,15 @@
         <div class="hero-eyebrow">{heroSummary.eyebrow}</div>
         <h1 class="hero-title">{heroSummary.headline}</h1>
         <p class="hero-detail">{heroSummary.detail}</p>
-        <div class="hero-note">
-          Today: {kpis.sessions_today} sessions · {kpis.tasks_completed_today} tasks completed
-        </div>
+        {#if heroSummary.action}
+          <button class="hero-action" onclick={() => navigate(heroSummary.action.route)}>
+            {heroSummary.action.label} &rarr;
+          </button>
+        {:else}
+          <div class="hero-note">
+            Today: {kpis.sessions_today} sessions · {kpis.tasks_completed_today} tasks completed
+          </div>
+        {/if}
         <div class="hero-signals">
           {#each heroSignals as signal (signal.label)}
             <div class="signal-chip">
@@ -464,7 +557,10 @@
           {#if attentionLanes.length > 0}
             {#each attentionLanes as lane (lane.route + lane.label)}
               <button class="rail-item" onclick={() => navigate(lane.route)}>
-                <span class="rail-item-label">{lane.label}</span>
+                <div class="rail-item-head">
+                  <span class="rail-item-label">{lane.label}</span>
+                  <span class="rail-item-action">{lane.action}</span>
+                </div>
                 <strong>{lane.value}</strong>
                 <small>{lane.detail}</small>
               </button>
@@ -495,48 +591,77 @@
     <section class="section">
       <div class="section-heading">
         <span class="section-label">Primary surfaces</span>
-        <span class="section-note">These are the first places to look when the HUD is asking for attention.</span>
+        <span class="section-note">{hasAttention ? 'Alert surfaces are promoted. Calm surfaces are compacted below.' : 'These are the first places to look when the HUD is asking for attention.'}</span>
       </div>
       <div class="focus-grid">
-        {#each primaryCards as card (card.route)}
-          <button
-            class="focus-card"
-            class:focus-card-alert={card.alert}
-            onclick={() => navigate(card.route)}
-          >
-            <div class="card-head">
-              <span class="card-title">{card.label}</span>
-              <span class="card-cta">Open</span>
-            </div>
-            <div class="card-value">{card.value}</div>
-            <div class="card-detail">{card.detail}</div>
-            <div class="card-tags">
-              {#each card.tags as tag (tag.label)}
-                <span class="card-tag" class:tag-on={tag.active} class:tag-off={!tag.active}>
-                  {tag.label} · {tag.note}
-                </span>
-              {/each}
-            </div>
-            <div class="card-foot">{card.foot}</div>
-          </button>
+        {#each sortedPrimaryCards as card (card.route)}
+          {#if card.alert}
+            <button
+              class="focus-card focus-card-alert"
+              onclick={() => navigate(card.route)}
+            >
+              <div class="card-head">
+                <span class="card-title">{card.label}</span>
+                <span class="card-cta">Open</span>
+              </div>
+              <div class="card-value">{card.value}</div>
+              <div class="card-detail">{card.detail}</div>
+              <div class="card-tags">
+                {#each card.tags as tag (tag.label)}
+                  <span class="card-tag" class:tag-on={tag.active} class:tag-off={!tag.active}>
+                    {tag.label} · {tag.note}
+                  </span>
+                {/each}
+              </div>
+              <div class="card-foot">{card.foot}</div>
+            </button>
+          {:else}
+            <button
+              class="focus-card focus-card-calm"
+              onclick={() => navigate(card.route)}
+            >
+              <div class="card-head">
+                <span class="card-title">{card.label}</span>
+                <span class="card-value-inline">{card.value}</span>
+                <span class="card-cta">Open</span>
+              </div>
+              {#if !hasAttention}
+                <div class="card-detail">{card.detail}</div>
+                <div class="card-tags">
+                  {#each card.tags as tag (tag.label)}
+                    <span class="card-tag" class:tag-on={tag.active} class:tag-off={!tag.active}>
+                      {tag.label} · {tag.note}
+                    </span>
+                  {/each}
+                </div>
+              {/if}
+            </button>
+          {/if}
         {/each}
       </div>
     </section>
 
     <section class="section support-section">
-      <div class="section-heading">
+      <button class="section-heading section-toggle" onclick={() => { supportExpanded = !supportExpanded; }}>
         <span class="section-label">Supporting surfaces</span>
-        <span class="section-note">Open these when the primary lanes are quiet.</span>
-      </div>
-      <div class="support-grid">
-        {#each supportSurfaces as surface (surface.route)}
-          <button class="support-card" onclick={() => navigate(surface.route)}>
-            <span class="support-label">{surface.label}</span>
-            <strong>{surface.value}</strong>
-            <small>{surface.detail}</small>
-          </button>
-        {/each}
-      </div>
+        {#if !supportExpanded}
+          <span class="section-collapsed-summary">
+            {supportSurfaces.map((s) => `${s.label}: ${s.value}`).join(' · ')}
+          </span>
+        {/if}
+        <span class="section-chevron" class:section-chevron-open={supportExpanded}>{'\u25B8'}</span>
+      </button>
+      {#if supportExpanded || !hasAttention}
+        <div class="support-grid">
+          {#each supportSurfaces as surface (surface.route)}
+            <button class="support-card" onclick={() => navigate(surface.route)}>
+              <span class="support-label">{surface.label}</span>
+              <strong>{surface.value}</strong>
+              <small>{surface.detail}</small>
+            </button>
+          {/each}
+        </div>
+      {/if}
     </section>
   {/if}
 </div>
@@ -602,6 +727,27 @@
     font-size: 11px;
     font-family: var(--font-mono);
     color: var(--fg-secondary);
+  }
+
+  .hero-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--border) 40%);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+  }
+
+  .hero-action:hover {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    border-color: var(--accent);
   }
 
   .hero-signals {
@@ -698,12 +844,31 @@
     font-family: var(--font-mono);
   }
 
+  .rail-item-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
   .rail-item-label {
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--fg-secondary);
     font-weight: 700;
+  }
+
+  .rail-item-action {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    padding: 1px 6px;
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
   }
 
   .quicklink-chip {
@@ -744,6 +909,41 @@
     font-family: var(--font-mono);
   }
 
+  .section-toggle {
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    width: 100%;
+    text-align: left;
+  }
+
+  .section-toggle:hover .section-label {
+    color: var(--fg-primary);
+  }
+
+  .section-collapsed-summary {
+    font-size: 10px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    margin-left: 8px;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .section-chevron {
+    font-size: 10px;
+    color: var(--fg-muted);
+    transition: transform var(--transition-fast);
+    flex-shrink: 0;
+  }
+
+  .section-chevron-open {
+    transform: rotate(90deg);
+  }
+
   .focus-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -774,6 +974,24 @@
   .focus-card-alert {
     border-color: rgba(231, 179, 18, 0.35);
     background: linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 88%, var(--warning) 12%), var(--bg-secondary));
+  }
+
+  .focus-card-calm {
+    opacity: 0.82;
+    padding: 10px 14px;
+  }
+
+  .focus-card-calm:hover {
+    opacity: 1;
+  }
+
+  .card-value-inline {
+    font-size: 13px;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    color: var(--fg-primary);
+    margin-left: auto;
+    margin-right: 8px;
   }
 
   .card-head {

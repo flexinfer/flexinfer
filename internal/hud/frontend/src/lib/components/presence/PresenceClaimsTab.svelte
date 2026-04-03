@@ -1,5 +1,6 @@
 <script>
   import { toastStore } from '../../stores/toasts.svelte.ts';
+  import { presenceActionsStore } from '../../stores/presenceActions.svelte.ts';
   import { formatTime, truncatePath } from '../../utils/format.ts';
   import Badge from '../../widgets/Badge.svelte';
   import DataTable from '../shared/DataTable.svelte';
@@ -51,8 +52,24 @@
     selectedClaimIds = new Set();
   }
 
+  function nudgeAgent(agentId) {
+    presenceActionsStore.onOpenNudge(agentId);
+  }
+
+  async function bulkReleaseConflicts() {
+    let released = 0;
+    for (const conflict of fileConflicts) {
+      for (const agentId of conflict.agents) {
+        await onReleaseClaim(agentId, conflict.path);
+        released++;
+      }
+    }
+    toastStore.success(`${released} conflicting claims released`);
+  }
+
   let claimBulkActions = $derived([
     { label: 'Release Selected', variant: 'danger', onclick: bulkReleaseClaims },
+    ...(fileConflicts.length > 0 ? [{ label: 'Release All Conflicts', variant: 'danger', onclick: bulkReleaseConflicts }] : []),
   ]);
 
   let typeCounts = $derived.by(() => {
@@ -87,6 +104,11 @@
         <div class="conflict-detail">
           <span class="text-mono text-xs">{shortPath(conflict.path)}</span>
           <span class="text-muted text-xs">→ {conflict.agents.join(', ')}</span>
+          {#each conflict.agents as agentId}
+            <button class="btn btn-xs btn-nudge-inline" onclick={() => nudgeAgent(agentId)} title="Nudge {agentId}">
+              Nudge
+            </button>
+          {/each}
         </div>
       {/each}
     </div>
@@ -174,5 +196,21 @@
 
   .btn-danger:hover {
     background: rgba(233, 93, 116, 0.22);
+  }
+
+  .btn-nudge-inline {
+    padding: 1px 6px;
+    font-size: 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    margin-left: 4px;
+  }
+
+  .btn-nudge-inline:hover {
+    background: var(--accent);
+    color: var(--bg-primary);
   }
 </style>

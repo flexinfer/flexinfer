@@ -24,6 +24,7 @@ class CatalogStore {
 
   searchQuery = $state('');
   categoryFilter = $state('all');
+  statusFilter = $state<'all' | 'enabled' | 'disabled' | 'running'>('all');
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -37,8 +38,15 @@ class CatalogStore {
     return [...set].sort();
   }
 
+  get runningCount(): number {
+    return this.servers.filter((s) => s.running).length;
+  }
+
   get filteredServers(): CatalogServer[] {
     let result = [...this.servers];
+    if (this.statusFilter === 'enabled') result = result.filter((s) => s.enabled);
+    else if (this.statusFilter === 'disabled') result = result.filter((s) => !s.enabled);
+    else if (this.statusFilter === 'running') result = result.filter((s) => s.running);
     if (this.categoryFilter !== 'all') {
       result = result.filter((s) =>
         s.categories?.some((c) => c.toLowerCase() === this.categoryFilter.toLowerCase())
@@ -112,6 +120,10 @@ class CatalogStore {
   filterByCategory(category: string): void {
     this.categoryFilter = category;
     this.fetch();
+  }
+
+  filterByStatus(status: 'all' | 'enabled' | 'disabled' | 'running'): void {
+    this.statusFilter = status;
   }
 
   startPolling(intervalMs = 30000): void {
