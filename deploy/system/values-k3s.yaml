@@ -24,6 +24,7 @@ controller:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
     tag: "master"
+    pullPolicy: IfNotPresent
   resources:
     limits:
       cpu: 1000m
@@ -31,10 +32,11 @@ controller:
     requests:
       cpu: 100m
       memory: 256Mi
-  # Only run on amd64 control-plane nodes
+  # Pin the controller to a healthy control-plane GPU node with the image cached.
   nodeSelector:
     kubernetes.io/arch: amd64
-    node.flexstack.io/class: control-plane
+    kubernetes.io/hostname: cblevins-7900xtx
+    node-role.kubernetes.io/control-plane: "true"
   tolerations:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists
@@ -73,6 +75,7 @@ proxy:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-proxy
     tag: "master"
+    pullPolicy: IfNotPresent
   service:
     type: ClusterIP
     port: 80
@@ -88,10 +91,11 @@ proxy:
   timeouts:
     queue: "25m"
     coldStart: "25m"
-  # Only run on amd64 control-plane nodes
+  # Keep the proxy on a healthy control-plane services node with the image cached.
   nodeSelector:
     kubernetes.io/arch: amd64
-    node.flexstack.io/class: control-plane
+    kubernetes.io/hostname: cblevins-5930k
+    node-role.kubernetes.io/control-plane: "true"
   tolerations:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists
@@ -122,6 +126,7 @@ scheduler:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-scheduler
     tag: "master"
+    pullPolicy: IfNotPresent
   # kube-scheduler sidecar uses upstream k8s image (keep as-is)
   kubeScheduler:
     image:
@@ -139,10 +144,11 @@ scheduler:
     requests:
       cpu: 100m
       memory: 128Mi
-  # Only run on amd64 control-plane nodes
+  # Pin the scheduler to a healthy control-plane GPU node with the image cached.
   nodeSelector:
     kubernetes.io/arch: amd64
-    node.flexstack.io/class: control-plane
+    kubernetes.io/hostname: cblevins-7900xtx
+    node-role.kubernetes.io/control-plane: "true"
   tolerations:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists
