@@ -18,7 +18,7 @@ spec:
     count: 1
     vramEstimateMB: 18000
     shared: 7900xtx-textgen
-    priority: 150
+    priority: 250
   serverless:
     enabled: true
     minReplicas: 0
