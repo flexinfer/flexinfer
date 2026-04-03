@@ -2,6 +2,7 @@
   import { catalogStore } from '../stores/catalog.svelte.ts';
   import PanelShell from './shared/PanelShell.svelte';
   import FilterBar from './shared/FilterBar.svelte';
+  import MetricCard from './shared/MetricCard.svelte';
 
   $effect(() => {
     catalogStore.startPolling(30000);
@@ -11,8 +12,13 @@
   let servers = $derived(catalogStore.filteredServers);
   let sortKey = $state('name');
   let sortDir = $state('asc');
-  let runningCount = $derived(catalogStore.servers.filter((s) => s.running).length);
-  let hasActiveFilters = $derived(catalogStore.searchQuery.trim() !== '' || catalogStore.categoryFilter !== 'all');
+  let viewMode = $state('table');
+  let expandedServer = $state('');
+  let hasActiveFilters = $derived(
+    catalogStore.searchQuery.trim() !== '' ||
+    catalogStore.categoryFilter !== 'all' ||
+    catalogStore.statusFilter !== 'all'
+  );
 
   let sorted = $derived.by(() => {
     const items = [...servers];
@@ -39,6 +45,13 @@
     },
   ]);
 
+  const statusChips = [
+    { value: 'all', label: 'All' },
+    { value: 'enabled', label: 'Enabled' },
+    { value: 'disabled', label: 'Disabled' },
+    { value: 'running', label: 'Running' },
+  ];
+
   function handleSearch(val) {
     catalogStore.search(val);
   }
@@ -52,6 +65,7 @@
   function clearFilters() {
     catalogStore.search('');
     catalogStore.filterByCategory('all');
+    catalogStore.filterByStatus('all');
   }
 
   function handleSort(key) {
@@ -63,8 +77,19 @@
     }
   }
 
+  function toggleExpand(name) {
+    expandedServer = expandedServer === name ? '' : name;
+  }
+
   async function toggleServer(name, currentEnabled) {
     await catalogStore.toggleServer(name, !currentEnabled);
+  }
+
+  function toggleConsequence(srv) {
+    if (srv.enabled) {
+      return srv.running ? 'Disabling will stop this running server' : 'Disabling will prevent this server from starting';
+    }
+    return 'Enabling will allow this server to accept connections';
   }
 </script>
 
@@ -79,29 +104,48 @@
   emptyHint={hasActiveFilters ? 'Clear search or category filters to broaden the catalog' : 'Check the registry path or sync the catalog'}
 >
   {#snippet header()}
-    <div class="catalog-intro">
-      <div class="catalog-summary">
-        <div class="catalog-summary-eyebrow">Registry overview</div>
-        <div class="catalog-summary-line">
-          {catalogStore.enabledCount} enabled · {catalogStore.disabledCount} disabled · {runningCount} running
-        </div>
-        <div class="catalog-summary-copy">
-          This is the authoritative operator view of deployed server surfaces. Search it to understand capability, readiness, and what can be safely toggled.
-        </div>
+    <div class="catalog-header">
+      <div class="catalog-metrics">
+        <MetricCard label="Total" value={catalogStore.servers.length} compact />
+        <MetricCard label="Enabled" value={catalogStore.enabledCount} color="var(--success)" compact />
+        <MetricCard label="Disabled" value={catalogStore.disabledCount} color="var(--fg-muted)" compact />
+        <MetricCard label="Running" value={catalogStore.runningCount} color="var(--info)" badge={catalogStore.runningCount === catalogStore.enabledCount ? 'all up' : ''} badgeVariant="success" compact />
       </div>
     </div>
   {/snippet}
 
   {#snippet toolbar()}
-    <FilterBar
-      search={catalogStore.searchQuery}
-      placeholder="Search servers by name, description, or category\u2026"
-      {filters}
-      resultCount={sorted.length}
-      onSearch={handleSearch}
-      onFilter={handleFilter}
-      onClear={clearFilters}
-    />
+    <div class="catalog-toolbar">
+      <FilterBar
+        search={catalogStore.searchQuery}
+        placeholder="Search servers by name, description, or category\u2026"
+        {filters}
+        resultCount={sorted.length}
+        onSearch={handleSearch}
+        onFilter={handleFilter}
+        onClear={clearFilters}
+      />
+      <div class="catalog-controls">
+        <div class="status-chips">
+          {#each statusChips as chip (chip.value)}
+            <button
+              class="status-chip"
+              class:active={catalogStore.statusFilter === chip.value}
+              onclick={() => catalogStore.filterByStatus(chip.value)}
+            >
+              {chip.label}
+              {#if chip.value === 'enabled'}<span class="chip-count">{catalogStore.enabledCount}</span>{/if}
+              {#if chip.value === 'disabled'}<span class="chip-count">{catalogStore.disabledCount}</span>{/if}
+              {#if chip.value === 'running'}<span class="chip-count">{catalogStore.runningCount}</span>{/if}
+            </button>
+          {/each}
+        </div>
+        <div class="view-toggle">
+          <button class="view-btn" class:active={viewMode === 'table'} onclick={() => { viewMode = 'table'; }} title="Table view">{'\u2630'}</button>
+          <button class="view-btn" class:active={viewMode === 'cards'} onclick={() => { viewMode = 'cards'; }} title="Card view">{'\u25A3'}</button>
+        </div>
+      </div>
+    </div>
   {/snippet}
 
   {#snippet emptyAction()}
@@ -110,62 +154,129 @@
     {/if}
   {/snippet}
 
-  <div class="catalog-table-wrap">
-    <table class="catalog-table">
-      <thead>
-        <tr>
-          <th class="sortable" onclick={() => handleSort('enabled')}>
-            State {sortKey === 'enabled' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
-          </th>
-          <th class="sortable" onclick={() => handleSort('name')}>
-            Registry entry {sortKey === 'name' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
-          </th>
-          <th>Capability</th>
-          <th>Tags</th>
-          <th class="sortable" onclick={() => handleSort('running')}>
-            Runtime {sortKey === 'running' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
-          </th>
-          <th>Toggle</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each sorted as srv (srv.name)}
-          <tr class:disabled={!srv.enabled}>
-            <td class="cell-state">
-              <span class="status-dot" class:on={srv.enabled} class:off={!srv.enabled}></span>
-              <span class="state-label" class:enabled={srv.enabled} class:disabled={!srv.enabled}>
-                {srv.enabled ? 'enabled' : 'disabled'}
-              </span>
-            </td>
-            <td class="cell-name">{srv.name}</td>
-            <td class="cell-desc">{srv.description || '\u2014'}</td>
-            <td class="cell-cats">
-              {#each srv.categories ?? [] as cat}
-                <span class="badge">{cat}</span>
-              {/each}
-            </td>
-            <td>
-              {#if srv.running}
-                <span class="running-tag">running</span>
-              {:else}
-                <span class="stopped-tag">stopped</span>
-              {/if}
-            </td>
-            <td>
-              <button
-                class="btn btn-sm"
-                class:btn-danger={srv.enabled}
-                class:btn-primary={!srv.enabled}
-                onclick={() => toggleServer(srv.name, srv.enabled)}
-              >
-                {srv.enabled ? 'Disable' : 'Enable'}
-              </button>
-            </td>
+  {#if viewMode === 'table'}
+    <div class="catalog-table-wrap">
+      <table class="catalog-table">
+        <thead>
+          <tr>
+            <th class="sortable" onclick={() => handleSort('enabled')}>
+              State {sortKey === 'enabled' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
+            </th>
+            <th class="sortable" onclick={() => handleSort('name')}>
+              Server {sortKey === 'name' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
+            </th>
+            <th>Description</th>
+            <th>Categories</th>
+            <th class="sortable" onclick={() => handleSort('running')}>
+              Runtime {sortKey === 'running' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
+            </th>
+            <th>Action</th>
           </tr>
-        {/each}
-      </tbody>
-    </table>
-  </div>
+        </thead>
+        <tbody>
+          {#each sorted as srv (srv.name)}
+            <tr class:disabled-row={!srv.enabled}>
+              <td class="cell-state">
+                <span class="status-dot" class:on={srv.enabled} class:off={!srv.enabled}></span>
+                <span class="state-label" class:state-enabled={srv.enabled} class:state-disabled={!srv.enabled}>
+                  {srv.enabled ? 'enabled' : 'disabled'}
+                </span>
+              </td>
+              <td class="cell-name">
+                <button class="name-btn" onclick={() => toggleExpand(srv.name)}>
+                  <span class="expand-icon" class:expanded={expandedServer === srv.name}>{'\u25B8'}</span>
+                  {srv.name}
+                </button>
+              </td>
+              <td class="cell-desc" title={srv.description}>{srv.description || '\u2014'}</td>
+              <td class="cell-cats">
+                {#each srv.categories ?? [] as cat}
+                  <span class="cat-badge">{cat}</span>
+                {/each}
+              </td>
+              <td>
+                {#if srv.running}
+                  <span class="runtime-tag runtime-running">running</span>
+                {:else}
+                  <span class="runtime-tag runtime-stopped">stopped</span>
+                {/if}
+              </td>
+              <td>
+                <button
+                  class="toggle-btn"
+                  class:toggle-disable={srv.enabled}
+                  class:toggle-enable={!srv.enabled}
+                  onclick={() => toggleServer(srv.name, srv.enabled)}
+                  title={toggleConsequence(srv)}
+                >
+                  {srv.enabled ? 'Disable' : 'Enable'}
+                </button>
+              </td>
+            </tr>
+            {#if expandedServer === srv.name}
+              <tr class="detail-row">
+                <td colspan="6">
+                  <div class="detail-content">
+                    <div class="detail-section">
+                      <span class="detail-label">Description</span>
+                      <span class="detail-value">{srv.description || 'No description provided'}</span>
+                    </div>
+                    <div class="detail-section">
+                      <span class="detail-label">Categories</span>
+                      <span class="detail-value">{(srv.categories ?? []).join(', ') || 'None'}</span>
+                    </div>
+                    <div class="detail-section">
+                      <span class="detail-label">State</span>
+                      <span class="detail-value">{srv.enabled ? 'Enabled' : 'Disabled'} · {srv.running ? 'Running' : 'Stopped'}</span>
+                    </div>
+                    <div class="detail-section">
+                      <span class="detail-label">Toggle effect</span>
+                      <span class="detail-value detail-consequence">{toggleConsequence(srv)}</span>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            {/if}
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else}
+    <div class="catalog-cards">
+      {#each sorted as srv (srv.name)}
+        <div class="server-card" class:server-card-disabled={!srv.enabled}>
+          <div class="server-card-head">
+            <span class="status-dot" class:on={srv.enabled} class:off={!srv.enabled}></span>
+            <span class="server-card-name">{srv.name}</span>
+            {#if srv.running}
+              <span class="runtime-tag runtime-running">running</span>
+            {:else}
+              <span class="runtime-tag runtime-stopped">stopped</span>
+            {/if}
+          </div>
+          <div class="server-card-desc">{srv.description || 'No description'}</div>
+          {#if (srv.categories ?? []).length > 0}
+            <div class="server-card-cats">
+              {#each srv.categories ?? [] as cat}
+                <span class="cat-badge">{cat}</span>
+              {/each}
+            </div>
+          {/if}
+          <div class="server-card-foot">
+            <span class="toggle-hint">{toggleConsequence(srv)}</span>
+            <button
+              class="toggle-btn"
+              class:toggle-disable={srv.enabled}
+              class:toggle-enable={!srv.enabled}
+              onclick={() => toggleServer(srv.name, srv.enabled)}
+            >
+              {srv.enabled ? 'Disable' : 'Enable'}
+            </button>
+          </div>
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   {#if catalogStore.registryPath}
     <div class="catalog-footer">
@@ -175,44 +286,96 @@
 </PanelShell>
 
 <style>
-  .catalog-intro {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
+  .catalog-header {
     padding: var(--space-2) var(--space-3) var(--space-1);
   }
 
-  .catalog-summary {
+  .catalog-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--space-2);
+  }
+
+  .catalog-toolbar {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
-    padding: var(--space-3);
+    gap: var(--space-2);
+  }
+
+  .catalog-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: 0 var(--space-3);
+  }
+
+  .status-chips {
+    display: flex;
+    gap: 4px;
+  }
+
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 999px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: linear-gradient(180deg, color-mix(in srgb, var(--bg-tertiary) 72%, transparent), var(--bg-secondary));
-  }
-
-  .catalog-summary-eyebrow {
+    background: transparent;
+    color: var(--fg-secondary);
     font-size: var(--text-xs);
-    text-transform: uppercase;
-    letter-spacing: var(--tracking-wide);
-    color: var(--fg-muted);
-    font-weight: 600;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition: all var(--transition-fast);
   }
 
-  .catalog-summary-line {
-    font-size: var(--text-base);
-    font-weight: 600;
+  .status-chip:hover {
+    border-color: var(--fg-muted);
     color: var(--fg-primary);
   }
 
-  .catalog-summary-copy {
-    font-size: var(--text-sm);
-    color: var(--fg-muted);
-    max-width: 72ch;
-    line-height: var(--leading-normal);
+  .status-chip.active {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
+    font-weight: 600;
   }
 
+  .chip-count {
+    font-size: 9px;
+    opacity: 0.7;
+  }
+
+  .view-toggle {
+    display: flex;
+    gap: 2px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .view-btn {
+    padding: 4px 8px;
+    background: transparent;
+    border: none;
+    color: var(--fg-muted);
+    cursor: pointer;
+    font-size: var(--text-sm);
+    transition: background var(--transition-fast), color var(--transition-fast);
+  }
+
+  .view-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--fg-primary);
+  }
+
+  .view-btn.active {
+    background: var(--bg-tertiary);
+    color: var(--fg-primary);
+  }
+
+  /* ---- Table View ---- */
   .catalog-table-wrap {
     overflow-x: auto;
     flex: 1;
@@ -259,12 +422,16 @@
     vertical-align: middle;
   }
 
-  .catalog-table tr:hover {
+  .catalog-table tr:hover:not(.detail-row) {
     background: var(--bg-tertiary);
   }
 
-  .catalog-table tr.disabled {
+  .disabled-row {
     opacity: 0.5;
+  }
+
+  .disabled-row:hover {
+    opacity: 0.7;
   }
 
   .cell-state {
@@ -272,10 +439,35 @@
   }
 
   .cell-name {
+    white-space: nowrap;
+  }
+
+  .name-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
     font-family: var(--font-mono);
     font-weight: 500;
+    font-size: inherit;
     color: var(--fg-primary);
-    white-space: nowrap;
+  }
+
+  .name-btn:hover {
+    color: var(--accent);
+  }
+
+  .expand-icon {
+    font-size: 9px;
+    color: var(--fg-muted);
+    transition: transform var(--transition-fast);
+  }
+
+  .expand-icon.expanded {
+    transform: rotate(90deg);
   }
 
   .cell-desc {
@@ -299,67 +491,196 @@
     letter-spacing: var(--tracking-wide);
   }
 
-  .state-label.enabled {
+  .state-enabled {
     color: var(--success);
   }
 
-  .state-label.disabled {
+  .state-disabled {
     color: var(--fg-muted);
   }
 
-  .running-tag {
+  .runtime-tag {
     font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+  }
+
+  .runtime-running {
     color: var(--success);
-    font-family: var(--font-mono);
+    background: rgba(34, 178, 85, 0.1);
   }
 
-  .stopped-tag {
-    font-size: var(--text-xs);
+  .runtime-stopped {
     color: var(--fg-muted);
-    font-family: var(--font-mono);
+    background: var(--bg-tertiary);
   }
 
-  .btn-sm {
+  /* ---- Detail Row ---- */
+  .detail-row td {
+    padding: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .detail-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3) var(--space-3);
+    background: color-mix(in srgb, var(--bg-tertiary) 50%, transparent);
+    border-top: 1px dashed var(--border);
+  }
+
+  .detail-section {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .detail-label {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+  }
+
+  .detail-value {
+    font-size: var(--text-sm);
+    color: var(--fg-secondary);
+    line-height: var(--leading-normal);
+  }
+
+  .detail-consequence {
+    color: var(--warning);
+    font-style: italic;
+  }
+
+  /* ---- Toggle Buttons ---- */
+  .toggle-btn {
     font-size: var(--text-xs);
-    padding: 2px 8px;
+    padding: 3px 10px;
     border-radius: var(--radius-sm);
     cursor: pointer;
     border: 1px solid var(--border);
     background: var(--bg-tertiary);
     color: var(--fg-secondary);
-    transition: background var(--transition-fast);
+    font-weight: 500;
+    transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
   }
 
-  .btn-sm:hover {
-    background: var(--bg-hover);
+  .toggle-btn:hover {
     color: var(--fg-primary);
   }
 
-  .btn-sm.btn-danger {
-    border-color: var(--error);
+  .toggle-disable {
+    border-color: rgba(233, 93, 116, 0.3);
     color: var(--error);
   }
 
-  .btn-sm.btn-danger:hover {
+  .toggle-disable:hover {
     background: var(--error);
     color: var(--bg-primary);
+    border-color: var(--error);
   }
 
-  .btn-sm.btn-primary {
-    border-color: var(--success);
+  .toggle-enable {
+    border-color: rgba(34, 178, 85, 0.3);
     color: var(--success);
   }
 
-  .btn-sm.btn-primary:hover {
+  .toggle-enable:hover {
     background: var(--success);
     color: var(--bg-primary);
+    border-color: var(--success);
   }
 
+  /* ---- Card View ---- */
+  .catalog-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .server-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+
+  .server-card:hover {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border) 60%);
+    box-shadow: 0 0 8px var(--glow-accent);
+  }
+
+  .server-card-disabled {
+    opacity: 0.55;
+  }
+
+  .server-card-disabled:hover {
+    opacity: 0.75;
+  }
+
+  .server-card-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .server-card-name {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: var(--text-sm);
+    color: var(--fg-primary);
+    flex: 1;
+  }
+
+  .server-card-desc {
+    font-size: var(--text-sm);
+    color: var(--fg-muted);
+    line-height: var(--leading-normal);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .server-card-cats {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  .server-card-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-top: auto;
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--border);
+  }
+
+  .toggle-hint {
+    font-size: 10px;
+    color: var(--fg-muted);
+    font-style: italic;
+    flex: 1;
+  }
+
+  /* ---- Shared ---- */
   .status-dot {
     display: inline-block;
     width: 8px;
     height: 8px;
     border-radius: 50%;
+    flex-shrink: 0;
   }
 
   .status-dot.on {
@@ -371,10 +692,10 @@
     background: var(--fg-muted);
   }
 
-  .badge {
+  .cat-badge {
     display: inline-block;
     font-size: 10px;
-    padding: 1px 4px;
+    padding: 1px 5px;
     border-radius: var(--radius-sm);
     background: var(--bg-tertiary);
     color: var(--fg-muted);
@@ -385,5 +706,20 @@
     padding: var(--space-2) var(--space-3) 0;
     border-top: 1px solid var(--border);
     margin-top: var(--space-2);
+  }
+
+  @media (max-width: 640px) {
+    .catalog-metrics {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    .catalog-controls {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .detail-content {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
