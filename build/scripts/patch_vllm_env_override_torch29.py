@@ -174,16 +174,34 @@ GPU_MODEL_RUNNER_PADDED_RESHAPE_OLD = """                    )
 
 GPU_MODEL_RUNNER_PADDED_RESHAPE_NEW = """                    )
                     dtype = kv_cache_spec.dtype
-                    view_numel = raw_tensor.view(dtype).numel()
-                    target_numel = 1
-                    for dim in kv_cache_shape:
-                        target_numel *= dim
-                    if view_numel != target_numel and kv_cache_shape[-1] > 0:
-                        base_numel = target_numel // kv_cache_shape[-1]
-                        if base_numel > 0 and view_numel % base_numel == 0:
-                            padded_last_dim = view_numel // base_numel
-                            if padded_last_dim > kv_cache_shape[-1]:
-                                kv_cache_shape = (*kv_cache_shape[:-1], padded_last_dim)
+                    padded_last_dim = None
+                    page_size_padded = getattr(kv_cache_spec, "page_size_padded", None)
+                    if page_size_padded is not None and kv_cache_shape[-1] > 0:
+                        dtype_size = get_dtype_size(dtype)
+                        denom = (
+                            2
+                            * kv_cache_spec.block_size
+                            * kv_cache_spec.num_kv_heads
+                            * dtype_size
+                        )
+                        if denom > 0 and page_size_padded % denom == 0:
+                            padded_last_dim = page_size_padded // denom
+
+                    if padded_last_dim is None:
+                        view_numel = raw_tensor.view(dtype).numel()
+                        target_numel = 1
+                        for dim in kv_cache_shape:
+                            target_numel *= dim
+                        if view_numel != target_numel and kv_cache_shape[-1] > 0:
+                            base_numel = target_numel // kv_cache_shape[-1]
+                            if base_numel > 0 and view_numel % base_numel == 0:
+                                padded_last_dim = view_numel // base_numel
+
+                    if (
+                        padded_last_dim is not None
+                        and padded_last_dim > kv_cache_shape[-1]
+                    ):
+                        kv_cache_shape = (*kv_cache_shape[:-1], padded_last_dim)
                     try:
 """
 
