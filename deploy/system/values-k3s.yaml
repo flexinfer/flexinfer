@@ -232,7 +232,7 @@ runtime:
   terminationGracePeriodSeconds: 60
   profiles:
     - name: gfx1100
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:e71f530b8102f9a6b8adb00b1bc96c35707c9eb0e0443408ba28984d30dca7ad"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:1a165a2ab5cb57bd68f21c5311e191d7c73cd3ac7a33cb0a040f2156cb5c7953"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2

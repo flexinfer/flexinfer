@@ -26,6 +26,23 @@ ARG INCLUDE_BITSANDBYTES=false
 ARG INCLUDE_STEAM=false
 ARG INCLUDE_QUANTIZER=false
 ARG TRANSFORMERS_CONSTRAINT=">=5.0"
+ARG TRANSFORMERS_INSTALL_MODE=constraint
+ARG TRANSFORMERS_REPO=https://github.com/huggingface/transformers.git
+ARG TRANSFORMERS_REF=main
+ARG VLLM_INSTALL_MODE=wheel
+ARG VLLM_VERSION=0.17.0+rocm700
+ARG VLLM_EXTRA_INDEX_URL=https://wheels.vllm.ai/rocm/0.17.0/rocm700
+ARG VLLM_REPO=https://github.com/vllm-project/vllm.git
+ARG VLLM_REF=main
+ARG VLLM_SOURCE_PATCH_SCRIPT=
+ARG VLLM_EXTRA_DEPS_PROFILE=full
+ARG INSTALL_QWEN35_FASTPATH=true
+ARG INCLUDE_TURBOQUANT=false
+ARG TURBOQUANT_INSTALL_MODE=none
+ARG TURBOQUANT_VERSION=1.4.0
+ARG TURBOQUANT_REPO=https://github.com/Alberto-Codes/turboquant-vllm.git
+ARG TURBOQUANT_REF=main
+ARG TURBOQUANT_SOURCE_PATCH_SCRIPT=
 # Builder base image — ROCm dev or CUDA devel depending on vendor
 ARG LLAMACPP_BUILD_IMAGE=rocm/dev-ubuntu-24.04:6.4.4
 # CUDA architecture for NVIDIA builds
@@ -124,6 +141,23 @@ ARG INCLUDE_BITSANDBYTES
 ARG INCLUDE_STEAM
 ARG INCLUDE_QUANTIZER
 ARG TRANSFORMERS_CONSTRAINT
+ARG TRANSFORMERS_INSTALL_MODE
+ARG TRANSFORMERS_REPO
+ARG TRANSFORMERS_REF
+ARG VLLM_INSTALL_MODE
+ARG VLLM_VERSION
+ARG VLLM_EXTRA_INDEX_URL
+ARG VLLM_REPO
+ARG VLLM_REF
+ARG VLLM_SOURCE_PATCH_SCRIPT
+ARG VLLM_EXTRA_DEPS_PROFILE
+ARG INSTALL_QWEN35_FASTPATH
+ARG INCLUDE_TURBOQUANT
+ARG TURBOQUANT_INSTALL_MODE
+ARG TURBOQUANT_VERSION
+ARG TURBOQUANT_REPO
+ARG TURBOQUANT_REF
+ARG TURBOQUANT_SOURCE_PATCH_SCRIPT
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -131,11 +165,29 @@ ENV PYTHONUNBUFFERED=1
 ENV GPU_VENDOR=${GPU_VENDOR}
 ENV GPU_ARCH=${GPU_ARCH}
 
+COPY build/scripts/ /opt/flexinfer/scripts/
+RUN chmod +x /opt/flexinfer/scripts/*.sh /opt/flexinfer/scripts/*.py 2>/dev/null || true
+
+# ── Quarantine stale AMD ROCm apt sources ────────────────────────────
+# Some ROCm base images ship an apt source that resolves only inside AMD's
+# internal network. When that host is unreachable, apt emits hard warnings and
+# can become a source of build flakiness. Disable only the broken source.
+RUN if [ "${GPU_VENDOR}" = "amd" ]; then \
+      if ! getent hosts compute-artifactory.amd.com >/dev/null 2>&1; then \
+        for src in /etc/apt/sources.list.d/*.list; do \
+          [ -e "${src}" ] || continue; \
+          if grep -Eq 'compute-artifactory\.amd\.com|rocm-osdb-24\.04-deb|compute-rocm-rel-7\.2' "${src}" 2>/dev/null; then \
+            mv "${src}" "${src}.disabled" && echo "Disabled stale AMD apt source: ${src}"; \
+          fi; \
+        done; \
+      fi; \
+    fi
+
 # ── System dependencies ──────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl tini jq lsof procps psmisc \
     $(if [ "${GPU_VENDOR}" = "amd" ]; then echo "hipblas rocblas"; fi) \
-    $(if [ "${INCLUDE_VLLM}" = "true" ]; then echo "build-essential git pkg-config python3-dev"; fi) \
+    $(if [ "${INCLUDE_VLLM}" = "true" ] || [ "${VLLM_INSTALL_MODE}" = "source" ] || [ "${TRANSFORMERS_INSTALL_MODE}" = "source" ]; then echo "build-essential git pkg-config python3-dev"; fi) \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Fix urllib3 (DEFAULT_CIPHERS removed in 2.0, breaks ROCm base) ──
@@ -145,16 +197,26 @@ RUN if [ "${GPU_VENDOR}" = "amd" ] && command -v pip >/dev/null 2>&1; then \
 
 # ── Diffusers stack (conditional) ────────────────────────────────────
 # --no-deps prevents CUDA torch contamination on ROCm base images.
-# TRANSFORMERS_CONSTRAINT and INCLUDE_BITSANDBYTES vary per profile:
+# TRANSFORMERS_CONSTRAINT / TRANSFORMERS_INSTALL_MODE and INCLUDE_BITSANDBYTES vary per profile:
 #   gfx1100: transformers>=5.0, bitsandbytes=true (pip wheel has gfx1100 HIP kernels)
 #   gfx906:  transformers>=4.57,<5 (PyTorch 2.3), bitsandbytes=false (no gfx906 HIP kernels in pip)
+#   gfx1100-gemma4-experimental: transformers from main branch source
 RUN if [ "${INCLUDE_DIFFUSERS}" = "true" ] && command -v pip >/dev/null 2>&1; then \
       BNB_FLAG=""; \
       if [ "${INCLUDE_BITSANDBYTES}" = "true" ]; then BNB_FLAG="bitsandbytes"; fi; \
+      if [ "${TRANSFORMERS_INSTALL_MODE}" = "source" ]; then \
+        rm -rf /tmp/transformers-src && \
+        git clone --depth 1 "${TRANSFORMERS_REPO}" /tmp/transformers-src && \
+        cd /tmp/transformers-src && \
+        git fetch --depth 1 origin "${TRANSFORMERS_REF}" && \
+        git checkout FETCH_HEAD && \
+        pip install --no-cache-dir /tmp/transformers-src; \
+      else \
+        pip install --no-cache-dir --no-deps "transformers${TRANSFORMERS_CONSTRAINT}"; \
+      fi; \
       pip install --no-cache-dir --no-deps \
         "diffusers>=0.30.0" \
         accelerate \
-        "transformers${TRANSFORMERS_CONSTRAINT}" \
         ${BNB_FLAG}; \
       pip install --no-cache-dir \
         safetensors \
@@ -172,28 +234,92 @@ RUN if [ "${INCLUDE_DIFFUSERS}" = "true" ] && command -v pip >/dev/null 2>&1; th
     fi
 
 # ── vLLM (conditional) ──────────────────────────────────────────────
-# vLLM 0.17.0 (V1-only engine) with ROCm 7.0 pre-built wheel.
+# vLLM is either installed from the pinned ROCm wheel (stable runtime path) or
+# from a source ref (experimental runtime path for Gemma4 bring-up).
 # --no-deps prevents replacing ROCm PyTorch from the base image.
 # transformers>=5.0 required for Qwen3.5 model_type recognition.
 # Qwen3.5's fast path needs both flash-linear-attention and causal-conv1d.
 # Do not silently swallow causal-conv1d failures; otherwise the unified runtime
 # ships a guaranteed slow path for this model family.
 RUN if [ "${INCLUDE_VLLM}" = "true" ] && command -v pip >/dev/null 2>&1; then \
-      pip install --no-cache-dir --no-deps \
-        "vllm==0.17.0+rocm700" \
-        --extra-index-url https://wheels.vllm.ai/rocm/0.17.0/rocm700; \
-      pip install --no-cache-dir \
-        "transformers>=5.0" \
-        partial-json-parser msgspec gguf aiohttp \
-        lm-format-enforcer outlines mistral_common \
-        compressed-tensors depyf cloudpickle \
-        prometheus-client prometheus-fastapi-instrumentator \
-        py-cpuinfo psutil pyzmq uvloop \
-        flash-linear-attention; \
-      export ROCM_PATH="${ROCM_PATH:-/opt/rocm}" HIP_PATH="${HIP_PATH:-/opt/rocm}" MAX_JOBS="${MAX_JOBS:-$(nproc)}"; \
-      export HIP_ARCHITECTURES="${GPU_ARCH}" HCC_AMDGPU_TARGET="${GPU_ARCH}" PYTORCH_ROCM_ARCH="${GPU_ARCH}"; \
-      pip install --no-cache-dir --no-build-isolation "causal-conv1d>=1.5.0.post8"; \
-      python3 -c 'import importlib.util; missing=[name for name in ("fla","causal_conv1d") if importlib.util.find_spec(name) is None]; assert not missing, f"missing Qwen3.5 fast-path deps: {missing}"; print("Qwen3.5 fast-path deps installed")'; \
+      if [ "${VLLM_INSTALL_MODE}" = "source" ]; then \
+        pip uninstall -y vllm 2>/dev/null || true; \
+        rm -rf /var/lib/jenkins/vllm /workspace/vllm /tmp/vllm-src; \
+        git clone --depth 1 "${VLLM_REPO}" /tmp/vllm-src && \
+        cd /tmp/vllm-src && \
+        git fetch --depth 1 origin "${VLLM_REF}" && \
+        git checkout FETCH_HEAD && \
+        if [ -n "${VLLM_SOURCE_PATCH_SCRIPT}" ]; then \
+          python3 "/opt/flexinfer/scripts/$(basename "${VLLM_SOURCE_PATCH_SCRIPT}")" /tmp/vllm-src; \
+        fi && \
+        if [ "${GPU_VENDOR}" = "amd" ]; then \
+          export PYTORCH_ROCM_ARCH="${GPU_ARCH}" HCC_AMDGPU_TARGET="${GPU_ARCH}"; \
+          export CMAKE_ARGS="${CMAKE_ARGS:+${CMAKE_ARGS} }-DGPU_TARGETS=${GPU_ARCH}"; \
+          echo "Constraining vLLM ROCm build to GPU_TARGETS=${GPU_ARCH}"; \
+        fi && \
+        pip install --no-cache-dir cmake ninja packaging "setuptools>=74" wheel jinja2 && \
+        pip install --no-cache-dir --no-build-isolation /tmp/vllm-src; \
+      else \
+        pip install --no-cache-dir --no-deps \
+          "vllm==${VLLM_VERSION}" \
+          --extra-index-url "${VLLM_EXTRA_INDEX_URL}"; \
+      fi; \
+      if [ "${TRANSFORMERS_INSTALL_MODE}" = "source" ]; then \
+        rm -rf /tmp/transformers-src && \
+        git clone --depth 1 "${TRANSFORMERS_REPO}" /tmp/transformers-src && \
+        cd /tmp/transformers-src && \
+        git fetch --depth 1 origin "${TRANSFORMERS_REF}" && \
+        git checkout FETCH_HEAD && \
+        pip install --no-cache-dir /tmp/transformers-src; \
+      else \
+        pip install --no-cache-dir "transformers${TRANSFORMERS_CONSTRAINT}"; \
+      fi; \
+      if [ "${VLLM_EXTRA_DEPS_PROFILE}" = "minimal" ]; then \
+        pip install --no-cache-dir \
+          partial-json-parser msgspec gguf aiohttp \
+          lm-format-enforcer mistral_common \
+          depyf cloudpickle \
+          prometheus-client prometheus-fastapi-instrumentator \
+          py-cpuinfo psutil pyzmq uvloop; \
+      else \
+        pip install --no-cache-dir \
+          partial-json-parser msgspec gguf aiohttp \
+          lm-format-enforcer outlines mistral_common \
+          compressed-tensors depyf cloudpickle \
+          prometheus-client prometheus-fastapi-instrumentator \
+          py-cpuinfo psutil pyzmq uvloop; \
+      fi; \
+      if [ "${INSTALL_QWEN35_FASTPATH}" = "true" ]; then \
+        export ROCM_PATH="${ROCM_PATH:-/opt/rocm}" HIP_PATH="${HIP_PATH:-/opt/rocm}" MAX_JOBS="${MAX_JOBS:-$(nproc)}"; \
+        export HIP_ARCHITECTURES="${GPU_ARCH}" HCC_AMDGPU_TARGET="${GPU_ARCH}" PYTORCH_ROCM_ARCH="${GPU_ARCH}"; \
+        pip install --no-cache-dir flash-linear-attention; \
+        pip install --no-cache-dir --no-build-isolation "causal-conv1d>=1.5.0.post8"; \
+        python3 -c 'import importlib.util; missing=[name for name in ("fla","causal_conv1d") if importlib.util.find_spec(name) is None]; assert not missing, f"missing Qwen3.5 fast-path deps: {missing}"; print("Qwen3.5 fast-path deps installed")'; \
+      else \
+        echo "Skipping Qwen3.5 fast-path deps for this vLLM profile"; \
+      fi; \
+      python3 -c 'import pathlib, transformers, vllm; root = pathlib.Path(vllm.__file__).resolve().parent / "model_executor" / "models"; hits = sorted(p.name for p in root.glob("gemma4*.py")); print("transformers", transformers.__version__); print("vLLM", vllm.__version__, "Gemma4 model files:", hits if hits else "none")'; \
+    fi
+
+# ── TurboQuant vLLM plugin (conditional) ────────────────────────────
+# Install without deps so the plugin cannot rewrite the experimental Gemma4
+# runtime stack. This must stay opt-in because the plugin currently declares
+# transformers<5 while the Gemma4 path uses transformers@main.
+RUN if [ "${INCLUDE_TURBOQUANT}" = "true" ] && command -v pip >/dev/null 2>&1; then \
+      if [ "${TURBOQUANT_INSTALL_MODE}" = "source" ]; then \
+        rm -rf /tmp/turboquant-src && \
+        git clone --depth 1 "${TURBOQUANT_REPO}" /tmp/turboquant-src && \
+        cd /tmp/turboquant-src && \
+        git fetch --depth 1 origin "${TURBOQUANT_REF}" && \
+        git checkout FETCH_HEAD && \
+        if [ -n "${TURBOQUANT_SOURCE_PATCH_SCRIPT}" ]; then \
+          python3 "/opt/flexinfer/scripts/$(basename "${TURBOQUANT_SOURCE_PATCH_SCRIPT}")" /tmp/turboquant-src; \
+        fi && \
+        pip install --no-cache-dir --no-deps /tmp/turboquant-src; \
+      else \
+        pip install --no-cache-dir --no-deps "turboquant-vllm==${TURBOQUANT_VERSION}"; \
+      fi; \
+      python3 -c 'import importlib.metadata as md; eps = [e.name for e in md.entry_points(group="vllm.general_plugins") if e.name == "tq4_backend"]; print("turboquant-vllm", md.version("turboquant-vllm")); print("tq4_entrypoints", eps)'; \
     fi
 
 # ── Steam headless (conditional) ──────────────────────────────────────
@@ -241,14 +367,10 @@ RUN if command -v pip >/dev/null 2>&1; then \
       pip install --no-cache-dir py-spy memray; \
     fi
 
-# ── Quantization/abliteration/finetune scripts ──────────────────────
-COPY build/scripts/ /opt/flexinfer/scripts/
-RUN chmod +x /opt/flexinfer/scripts/*.sh /opt/flexinfer/scripts/*.py 2>/dev/null || true
-
 # ── Apply vLLM Qwen3.5 patches at build time ────────────────────────
-# Patches vLLM 0.17.0 on-disk Python files for Qwen3.5 GDN text model support.
-# Native support expected in vLLM >=0.18.0; remove this step when upgrading.
-RUN if [ "${INCLUDE_VLLM}" = "true" ] && [ -f /opt/flexinfer/scripts/vllm_qwen35_patches_nodiag.py ]; then \
+# Patches the pinned wheel path for Qwen3.5 GDN text model support.
+# Source-based experimental builds should carry native support already.
+RUN if [ "${INCLUDE_VLLM}" = "true" ] && [ "${VLLM_INSTALL_MODE}" = "wheel" ] && [ -f /opt/flexinfer/scripts/vllm_qwen35_patches_nodiag.py ]; then \
       python3 /opt/flexinfer/scripts/vllm_qwen35_patches_nodiag.py && \
       echo "vLLM Qwen3.5 patches applied at build time"; \
     fi

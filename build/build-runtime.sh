@@ -58,14 +58,14 @@ done
 # ── Helper: read config value ────────────────────────────────────────
 cfg() {
     local path="$1"
-    yq "${path}" "${CONFIG}"
+    yq -r "${path}" "${CONFIG}"
 }
 
 # ── Helper: read profile value with fallback ─────────────────────────
 pcfg() {
     local profile="$1" field="$2" default="${3:-}"
     local val
-    val=$(yq ".profiles.${profile}.${field} // \"\"" "${CONFIG}")
+    val=$(yq -r ".profiles[\"${profile}\"] | .${field}" "${CONFIG}" 2>/dev/null || true)
     if [ -z "${val}" ] || [ "${val}" = "null" ]; then
         echo "${default}"
     else
@@ -79,7 +79,7 @@ build_profile() {
 
     # Validate profile exists
     local exists
-    exists=$(yq ".profiles | has(\"${profile}\")" "${CONFIG}")
+    exists=$(yq -r ".profiles | has(\"${profile}\")" "${CONFIG}")
     if [ "${exists}" != "true" ]; then
         echo "ERROR: Unknown profile '${profile}'. Available:" >&2
         yq '.profiles | keys | .[]' "${CONFIG}" | sed 's/^/  /' >&2
@@ -105,17 +105,38 @@ build_profile() {
 
     # Backend flags
     local include_vllm include_llamacpp include_ollama include_diffusers include_steam include_quantizer
+    local include_turboquant
     include_vllm=$(pcfg "${profile}" "backends.vllm" "false")
     include_llamacpp=$(pcfg "${profile}" "backends.llamacpp" "true")
     include_ollama=$(pcfg "${profile}" "backends.ollama" "true")
     include_diffusers=$(pcfg "${profile}" "backends.diffusers" "false")
     include_steam=$(pcfg "${profile}" "backends.steam" "false")
     include_quantizer=$(pcfg "${profile}" "include_quantizer" "false")
+    include_turboquant=$(pcfg "${profile}" "include_turboquant" "false")
 
-    # Diffusers-specific config
-    local include_bitsandbytes transformers_constraint
+    # Python/runtime package config
+    local include_bitsandbytes transformers_constraint transformers_install_mode transformers_repo transformers_ref
+    local vllm_install_mode vllm_version vllm_extra_index_url vllm_repo vllm_ref vllm_source_patch_script
+    local vllm_extra_deps_profile install_qwen35_fastpath
+    local turboquant_install_mode turboquant_version turboquant_repo turboquant_ref turboquant_source_patch_script
     include_bitsandbytes=$(pcfg "${profile}" "include_bitsandbytes" "false")
     transformers_constraint=$(pcfg "${profile}" "transformers_constraint" ">=5.0")
+    transformers_install_mode=$(pcfg "${profile}" "transformers_install_mode" "constraint")
+    transformers_repo=$(pcfg "${profile}" "transformers_repo" "https://github.com/huggingface/transformers.git")
+    transformers_ref=$(pcfg "${profile}" "transformers_ref" "main")
+    vllm_install_mode=$(pcfg "${profile}" "vllm_install_mode" "wheel")
+    vllm_version=$(pcfg "${profile}" "vllm_version" "0.17.0+rocm700")
+    vllm_extra_index_url=$(pcfg "${profile}" "vllm_extra_index_url" "https://wheels.vllm.ai/rocm/0.17.0/rocm700")
+    vllm_repo=$(pcfg "${profile}" "vllm_repo" "https://github.com/vllm-project/vllm.git")
+    vllm_ref=$(pcfg "${profile}" "vllm_ref" "main")
+    vllm_source_patch_script=$(pcfg "${profile}" "vllm_source_patch_script" "")
+    vllm_extra_deps_profile=$(pcfg "${profile}" "vllm_extra_deps_profile" "full")
+    install_qwen35_fastpath=$(pcfg "${profile}" "install_qwen35_fastpath" "true")
+    turboquant_install_mode=$(pcfg "${profile}" "turboquant_install_mode" "none")
+    turboquant_version=$(pcfg "${profile}" "turboquant_version" "1.4.0")
+    turboquant_repo=$(pcfg "${profile}" "turboquant_repo" "https://github.com/Alberto-Codes/turboquant-vllm.git")
+    turboquant_ref=$(pcfg "${profile}" "turboquant_ref" "main")
+    turboquant_source_patch_script=$(pcfg "${profile}" "turboquant_source_patch_script" "")
 
     # Determine builder image
     local llamacpp_build_image cuda_architectures
@@ -143,10 +164,10 @@ build_profile() {
     echo "GPU_VENDOR=${gpu_vendor}" >> "${env_file}"
     echo "GPU_ARCH=${gpu_arch}" >> "${env_file}"
     local env_keys
-    env_keys=$(yq ".profiles.${profile}.env | keys | .[]" "${CONFIG}" 2>/dev/null || true)
+    env_keys=$(yq -r ".profiles[\"${profile}\"].env | keys | .[]" "${CONFIG}" 2>/dev/null || true)
     for key in ${env_keys}; do
         local val
-        val=$(yq ".profiles.${profile}.env.${key}" "${CONFIG}")
+        val=$(yq -r ".profiles[\"${profile}\"].env.${key}" "${CONFIG}")
         echo "${key}=${val}" >> "${env_file}"
     done
     # Ensure cleanup on exit
@@ -176,6 +197,23 @@ build_profile() {
         "--build-arg" "INCLUDE_STEAM=${include_steam}"
         "--build-arg" "INCLUDE_QUANTIZER=${include_quantizer}"
         "--build-arg" "TRANSFORMERS_CONSTRAINT=${transformers_constraint}"
+        "--build-arg" "TRANSFORMERS_INSTALL_MODE=${transformers_install_mode}"
+        "--build-arg" "TRANSFORMERS_REPO=${transformers_repo}"
+        "--build-arg" "TRANSFORMERS_REF=${transformers_ref}"
+        "--build-arg" "VLLM_INSTALL_MODE=${vllm_install_mode}"
+        "--build-arg" "VLLM_VERSION=${vllm_version}"
+        "--build-arg" "VLLM_EXTRA_INDEX_URL=${vllm_extra_index_url}"
+        "--build-arg" "VLLM_REPO=${vllm_repo}"
+        "--build-arg" "VLLM_REF=${vllm_ref}"
+        "--build-arg" "VLLM_SOURCE_PATCH_SCRIPT=${vllm_source_patch_script}"
+        "--build-arg" "VLLM_EXTRA_DEPS_PROFILE=${vllm_extra_deps_profile}"
+        "--build-arg" "INSTALL_QWEN35_FASTPATH=${install_qwen35_fastpath}"
+        "--build-arg" "INCLUDE_TURBOQUANT=${include_turboquant}"
+        "--build-arg" "TURBOQUANT_INSTALL_MODE=${turboquant_install_mode}"
+        "--build-arg" "TURBOQUANT_VERSION=${turboquant_version}"
+        "--build-arg" "TURBOQUANT_REPO=${turboquant_repo}"
+        "--build-arg" "TURBOQUANT_REF=${turboquant_ref}"
+        "--build-arg" "TURBOQUANT_SOURCE_PATCH_SCRIPT=${turboquant_source_patch_script}"
         "--build-arg" "LLAMACPP_BUILD_IMAGE=${llamacpp_build_image}"
         "--build-arg" "CUDA_ARCHITECTURES=${cuda_architectures}"
     )
@@ -191,7 +229,8 @@ build_profile() {
     echo "  Tag:    ${full_tag}"
     echo "  Base:   ${base_image}"
     echo "  Vendor: ${gpu_vendor} / ${gpu_arch}"
-    echo "  Backends: vllm=${include_vllm} llamacpp=${include_llamacpp} ollama=${include_ollama} diffusers=${include_diffusers} steam=${include_steam} quantizer=${include_quantizer}"
+    echo "  Backends: vllm=${include_vllm} llamacpp=${include_llamacpp} ollama=${include_ollama} diffusers=${include_diffusers} steam=${include_steam} quantizer=${include_quantizer} turboquant=${include_turboquant}"
+    echo "  Python: transformers=${transformers_install_mode}:${transformers_ref} vllm=${vllm_install_mode}:$(if [ "${vllm_install_mode}" = "wheel" ]; then echo "${vllm_version}"; else echo "${vllm_ref}"; fi) turboquant=${turboquant_install_mode}:$(if [ "${turboquant_install_mode}" = "none" ]; then echo none; elif [ "${turboquant_install_mode}" = "source" ]; then echo "${turboquant_ref}"; else echo "${turboquant_version}"; fi)"
     echo ""
 
     if [ "${DRY_RUN}" = "true" ]; then

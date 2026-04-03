@@ -111,6 +111,21 @@ if command -v python3 >/dev/null 2>&1; then
     normalize_qwen35_configs
 fi
 
+if [ "${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC:-}" = "turboquant" ]; then
+    echo "[entrypoint] TurboQuant requested via FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC=turboquant"
+    case "${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS:-planned}" in
+        plugin)
+            echo "[entrypoint] TurboQuant plugin is bundled in this image; vLLM CUSTOM attention can activate it per-model"
+            ;;
+        planned)
+            echo "[entrypoint] No vLLM KV-cache TurboQuant integration is bundled in this image yet; using the standard cache path"
+            ;;
+        *)
+            echo "[entrypoint] TurboQuant status=${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS}; continuing with configured runtime path"
+            ;;
+    esac
+fi
+
 case "$1" in
     flexinfer-runtime)
         shift

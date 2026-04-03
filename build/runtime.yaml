@@ -53,6 +53,155 @@ profiles:
       PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512"
     build_context: 7900xtx
 
+  gfx1100-gemma4-experimental:
+    tag: "runtime:rocm-gfx1100-gemma4-experimental"
+    gpu_vendor: amd
+    gpu_arch: gfx1100
+    # Start from AMD's Navi image so we inherit a ROCm/PyTorch stack known to
+    # boot on RDNA3, then replace the bundled vLLM install from source.
+    base_image: "rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0"
+    rocm_dev_image: "rocm/dev-ubuntu-24.04:6.4.4"
+    amdgpu_targets: gfx1100
+    backends:
+      vllm: true
+      llamacpp: false
+      ollama: false
+      diffusers: false
+      steam: false
+    include_bitsandbytes: false
+    include_quantizer: false
+    vllm_install_mode: source
+    vllm_extra_deps_profile: minimal
+    install_qwen35_fastpath: false
+    vllm_repo: "https://github.com/vllm-project/vllm.git"
+    vllm_ref: "main"
+    vllm_source_patch_script: "build/scripts/patch_vllm_env_override_torch29.py"
+    transformers_install_mode: source
+    transformers_repo: "https://github.com/huggingface/transformers.git"
+    transformers_ref: "main"
+    env:
+      ROCM_PATH: /opt/rocm
+      HIP_PATH: /opt/rocm
+      HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+      PYTORCH_ROCM_ARCH: gfx1100
+      TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "1"
+      HIP_FORCE_DEV_KERNARG: "1"
+      TORCH_BLAS_PREFER_HIPBLASLT: "1"
+      VLLM_ROCM_USE_AITER: "0"
+      VLLM_TARGET_DEVICE: rocm
+      MIOPEN_FIND_MODE: "2"
+      PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512"
+      FLEXINFER_EXPERIMENTAL_MODEL_FAMILY: gemma4
+      # Plumbing only. This image does not yet patch vLLM kernels to enable
+      # TurboQuant; the flag exists so test pods can carry the intent explicitly.
+      FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC: turboquant
+      FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS: planned
+    build_context: 7900xtx
+
+  gfx1100-gemma4-turboquant-experimental:
+    tag: "runtime:rocm-gfx1100-gemma4-turboquant-experimental"
+    gpu_vendor: amd
+    gpu_arch: gfx1100
+    base_image: "rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0"
+    rocm_dev_image: "rocm/dev-ubuntu-24.04:6.4.4"
+    amdgpu_targets: gfx1100
+    backends:
+      vllm: true
+      llamacpp: false
+      ollama: false
+      diffusers: false
+      steam: false
+    include_bitsandbytes: false
+    include_quantizer: false
+    include_turboquant: true
+    vllm_install_mode: source
+    vllm_extra_deps_profile: minimal
+    install_qwen35_fastpath: false
+    vllm_repo: "https://github.com/vllm-project/vllm.git"
+    vllm_ref: "main"
+    vllm_source_patch_script: "build/scripts/patch_vllm_env_override_torch29.py"
+    transformers_install_mode: source
+    transformers_repo: "https://github.com/huggingface/transformers.git"
+    transformers_ref: "main"
+    turboquant_install_mode: source
+    turboquant_repo: "https://github.com/Alberto-Codes/turboquant-vllm.git"
+    turboquant_ref: "9d19b87cef462cf0abd5643f6d052ac5a3bc99b6"
+    turboquant_source_patch_script: "build/scripts/patch_turboquant_quantizer_gpu_qr.py"
+    env:
+      ROCM_PATH: /opt/rocm
+      HIP_PATH: /opt/rocm
+      HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+      PYTORCH_ROCM_ARCH: gfx1100
+      TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "1"
+      HIP_FORCE_DEV_KERNARG: "1"
+      TORCH_BLAS_PREFER_HIPBLASLT: "1"
+      VLLM_ROCM_USE_AITER: "0"
+      VLLM_TARGET_DEVICE: rocm
+      MIOPEN_FIND_MODE: "2"
+      PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512"
+      FLEXINFER_EXPERIMENTAL_MODEL_FAMILY: gemma4
+      FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC: turboquant
+      FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS: plugin
+      TQ4_USE_FUSED_PAGED: "0"
+      TQ4_USE_INT8_PREFILL: "0"
+      TQ4_USE_PYTORCH_CODEC: "1"
+      TQ4_K_BITS: "4"
+      TQ4_V_BITS: "4"
+    build_context: 7900xtx
+
+  gfx1100-textgen-turboquant:
+    tag: "runtime:rocm-gfx1100-textgen-turboquant"
+    gpu_vendor: amd
+    gpu_arch: gfx1100
+    # Dedicated managed runtime for cblevins-7900xtx text generation. Keep the
+    # surface area narrow: vLLM + Gemma4 + TurboQuant plugin only.
+    base_image: "rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0"
+    rocm_dev_image: "rocm/dev-ubuntu-24.04:6.4.4"
+    amdgpu_targets: gfx1100
+    backends:
+      vllm: true
+      llamacpp: false
+      ollama: false
+      diffusers: false
+      steam: false
+    include_bitsandbytes: false
+    include_quantizer: false
+    include_turboquant: true
+    vllm_install_mode: source
+    vllm_extra_deps_profile: minimal
+    install_qwen35_fastpath: false
+    vllm_repo: "https://github.com/vllm-project/vllm.git"
+    vllm_ref: "main"
+    vllm_source_patch_script: "build/scripts/patch_vllm_env_override_torch29.py"
+    transformers_install_mode: source
+    transformers_repo: "https://github.com/huggingface/transformers.git"
+    transformers_ref: "main"
+    turboquant_install_mode: source
+    turboquant_repo: "https://github.com/Alberto-Codes/turboquant-vllm.git"
+    turboquant_ref: "9d19b87cef462cf0abd5643f6d052ac5a3bc99b6"
+    turboquant_source_patch_script: "build/scripts/patch_turboquant_quantizer_gpu_qr.py"
+    env:
+      ROCM_PATH: /opt/rocm
+      HIP_PATH: /opt/rocm
+      HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+      PYTORCH_ROCM_ARCH: gfx1100
+      TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "1"
+      HIP_FORCE_DEV_KERNARG: "1"
+      TORCH_BLAS_PREFER_HIPBLASLT: "1"
+      VLLM_ROCM_USE_AITER: "0"
+      VLLM_TARGET_DEVICE: rocm
+      MIOPEN_FIND_MODE: "2"
+      PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512"
+      FLEXINFER_EXPERIMENTAL_MODEL_FAMILY: gemma4
+      FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC: turboquant
+      FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS: plugin
+      TQ4_USE_FUSED_PAGED: "0"
+      TQ4_USE_INT8_PREFILL: "0"
+      TQ4_USE_PYTORCH_CODEC: "1"
+      TQ4_K_BITS: "4"
+      TQ4_V_BITS: "4"
+    build_context: 7900xtx
+
   gfx906:
     tag: "runtime:rocm-gfx906"
     gpu_vendor: amd
