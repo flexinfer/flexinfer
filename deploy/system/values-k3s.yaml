@@ -252,6 +252,20 @@ runtime:
           value: "0"
         - name: ROCR_VISIBLE_DEVICES
           value: "0"
+        - name: MIOPEN_CUSTOM_CACHE_DIR
+          value: "/var/lib/flexinfer/compile-cache/runtime/miopen"
+        - name: MIOPEN_USER_DB_PATH
+          value: "/var/lib/flexinfer/compile-cache/runtime/miopen/user.db"
+        - name: VLLM_CACHE_ROOT
+          value: "/var/lib/flexinfer/compile-cache/runtime/vllm"
+        - name: XDG_CACHE_HOME
+          value: "/var/lib/flexinfer/compile-cache/runtime/xdg"
+        - name: TORCHINDUCTOR_CACHE_DIR
+          value: "/var/lib/flexinfer/compile-cache/runtime/inductor"
+        - name: TRITON_CACHE_DIR
+          value: "/var/lib/flexinfer/compile-cache/runtime/triton"
+        - name: TORCH_HOME
+          value: "/var/lib/flexinfer/compile-cache/runtime/torch"
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx1100-5930k
@@ -265,6 +279,20 @@ runtime:
       nodeSelector:
         kubernetes.io/hostname: cblevins-5930k
       env:
+        - name: MIOPEN_CUSTOM_CACHE_DIR
+          value: "/var/lib/flexinfer/compile-cache/runtime/miopen"
+        - name: MIOPEN_USER_DB_PATH
+          value: "/var/lib/flexinfer/compile-cache/runtime/miopen/user.db"
+        - name: VLLM_CACHE_ROOT
+          value: "/var/lib/flexinfer/compile-cache/runtime/vllm"
+        - name: XDG_CACHE_HOME
+          value: "/var/lib/flexinfer/compile-cache/runtime/xdg"
+        - name: TORCHINDUCTOR_CACHE_DIR
+          value: "/var/lib/flexinfer/compile-cache/runtime/inductor"
+        - name: TRITON_CACHE_DIR
+          value: "/var/lib/flexinfer/compile-cache/runtime/triton"
+        - name: TORCH_HOME
+          value: "/var/lib/flexinfer/compile-cache/runtime/torch"
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx906
