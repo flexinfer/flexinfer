@@ -64,7 +64,7 @@ spec:
     - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
       value: "1"
   runtime:
-    image: registry.harbor.lan/flexinfer/runtime@sha256:3d0d29aa1eac97b3a9c52f4bf21e2b0d0fd2ace639ca746f1c3cf85e0d9607e8
+    image: registry.harbor.lan/flexinfer/runtime@sha256:04bdf584a5def034417164a9f3c487b371626cc01b54d6e3d6f526a941e6cac9
   quantization:
     supported:
       - gptq

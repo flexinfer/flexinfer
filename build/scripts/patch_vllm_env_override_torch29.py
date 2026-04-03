@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Patch vLLM env_override.py for torch 2.9 CaptureOutput compatibility."""
+"""Patch vLLM source for FlexInfer's Gemma4 ROCm runtime needs.
+
+This currently applies two upstream source patches:
+1. env_override.py Torch 2.9 CaptureOutput compatibility.
+2. KV-sharing helper fix so shared layers added back to
+   UniformTypeKVCacheSpecs inherit their target layer spec entry.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +13,7 @@ import pathlib
 import sys
 
 
-OLD = """    from torch._dynamo.convert_frame import GraphCaptureOutput
+ENV_OVERRIDE_OLD = """    from torch._dynamo.convert_frame import GraphCaptureOutput
 
     _original_get_runtime_env = GraphCaptureOutput.get_runtime_env
 
@@ -37,7 +43,7 @@ OLD = """    from torch._dynamo.convert_frame import GraphCaptureOutput
     GraphCaptureOutput.get_runtime_env = _patched_get_runtime_env
 """
 
-NEW = """    try:
+ENV_OVERRIDE_NEW = """    try:
         from torch._dynamo.convert_frame import GraphCaptureOutput as _CaptureOutput
     except ImportError:
         # torch 2.9 exposes CaptureOutput instead of GraphCaptureOutput.
@@ -77,6 +83,42 @@ NEW = """    try:
         )
 """
 
+KV_SHARING_OLD = """    for layer_name, target_layer_name in shared_kv_cache_layers.items():
+        tgt_kv_cache_group = layer_to_kv_cache_group[target_layer_name]
+        tgt_kv_cache_group.layer_names.append(layer_name)
+
+        if runner_only_attn_layers is not None:
+            runner_only_attn_layers.add(layer_name)
+"""
+
+KV_SHARING_NEW = """    for layer_name, target_layer_name in shared_kv_cache_layers.items():
+        tgt_kv_cache_group = layer_to_kv_cache_group[target_layer_name]
+        tgt_kv_cache_group.layer_names.append(layer_name)
+        if isinstance(tgt_kv_cache_group.kv_cache_spec, UniformTypeKVCacheSpecs):
+            tgt_kv_cache_group.kv_cache_spec.kv_cache_specs[layer_name] = (
+                tgt_kv_cache_group.kv_cache_spec.kv_cache_specs[target_layer_name]
+            )
+
+        if runner_only_attn_layers is not None:
+            runner_only_attn_layers.add(layer_name)
+"""
+
+
+def _replace_once(
+    path: pathlib.Path,
+    old: str,
+    new: str,
+) -> None:
+    text = path.read_text()
+    if new in text:
+        print(f"already patched: {path}")
+        return
+    if old not in text:
+        print(f"unexpected file contents: {path}", file=sys.stderr)
+        raise SystemExit(1)
+    path.write_text(text.replace(old, new, 1))
+    print(f"patched: {path}")
+
 
 def main() -> int:
     if len(sys.argv) != 2:
@@ -84,20 +126,11 @@ def main() -> int:
         return 2
 
     root = pathlib.Path(sys.argv[1])
-    target = root / "vllm" / "env_override.py"
-    text = target.read_text()
+    env_override = root / "vllm" / "env_override.py"
+    kv_sharing = root / "vllm" / "v1" / "worker" / "utils.py"
 
-    if NEW in text:
-        print(f"already patched: {target}")
-        return 0
-
-    if OLD not in text:
-        print(f"unexpected env_override.py contents: {target}", file=sys.stderr)
-        return 1
-
-    text = text.replace(OLD, NEW, 1)
-    target.write_text(text)
-    print(f"patched: {target}")
+    _replace_once(env_override, ENV_OVERRIDE_OLD, ENV_OVERRIDE_NEW)
+    _replace_once(kv_sharing, KV_SHARING_OLD, KV_SHARING_NEW)
     return 0
 
 
