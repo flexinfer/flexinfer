@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/crb2nu/loom/internal/hubproto"
 )
@@ -59,8 +61,16 @@ func (d *Daemon) hubKeepalivePing() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	_, span := d.daemonTracer().Start(ctx, "daemon.hub.keepalive",
+		trace.WithAttributes(attribute.String("mcp.server", serverName)),
+	)
+	defer span.End()
+
 	conn, err := d.hubPool.Get(ctx, serverName)
 	if err != nil {
+		span.AddEvent("daemon.hub.keepalive.skip", trace.WithAttributes(
+			attribute.String("reason", "no connection available"),
+		))
 		d.logger.Debug("hub keepalive: no connection available", "server", serverName, "error", err)
 		return
 	}
@@ -75,6 +85,9 @@ func (d *Daemon) hubKeepalivePing() {
 	sendErr := conn.Transport.Send(sendCtx, pingEnv)
 	sendCancel()
 	if sendErr != nil {
+		span.AddEvent("daemon.hub.keepalive.send_fail", trace.WithAttributes(
+			attribute.String("error", sendErr.Error()),
+		))
 		d.logger.Warn("hub keepalive: send failed, clearing connection",
 			"server", serverName, "error", sendErr)
 		conn.Healthy = false
@@ -88,6 +101,9 @@ func (d *Daemon) hubKeepalivePing() {
 	resp, recvErr := conn.Transport.Recv(recvCtx)
 	recvCancel()
 	if recvErr != nil {
+		span.AddEvent("daemon.hub.keepalive.recv_fail", trace.WithAttributes(
+			attribute.String("error", recvErr.Error()),
+		))
 		d.logger.Warn("hub keepalive: recv failed, clearing connection",
 			"server", serverName, "error", recvErr)
 		conn.Healthy = false
@@ -101,6 +117,7 @@ func (d *Daemon) hubKeepalivePing() {
 	d.handlePongResponse(resp)
 
 	// Success: return healthy connection to pool (keeps it warm).
+	span.AddEvent("daemon.hub.keepalive.success")
 	d.hubPool.Put(conn)
 	d.logger.Debug("hub keepalive: probe succeeded", "server", serverName)
 }

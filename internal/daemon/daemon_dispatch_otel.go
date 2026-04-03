@@ -148,6 +148,7 @@ func (d *Daemon) handleOTelStatus(ctx context.Context, msg *mcp.Message) (*mcp.M
 		"runtime_otlp_service_name": d.otelRuntimeState.ServiceName,
 		"runtime_otlp_sample_rate":  d.otelRuntimeState.SampleRate,
 		"runtime_otlp_error":        d.otelRuntimeState.InitError,
+		"runtime_meter_enabled":     d.otelMetrics != nil,
 		"runtime_trace_surfaces":    runtimeSurfaces,
 		"runtime_trace_coverage":    runtimeTraceCoverage,
 	}
@@ -161,6 +162,9 @@ func runtimeTraceSurfaces() map[string]bool {
 		"server_restart_lifecycle":    true,
 		"client_connection_lifecycle": true,
 		"transport_recovery_events":   true,
+		"daemon_otel_metrics":         true,
+		"session_lifecycle":           true,
+		"hub_keepalive":               true,
 	}
 }
 

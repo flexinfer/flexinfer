@@ -141,6 +141,31 @@ func (ct *CostTracker) Record(rec UsageRecord) {
 	}
 }
 
+// AddBytes adds byte counts to an existing bucket without creating a new call record.
+// This is useful when byte sizes are computed separately from the initial Record call.
+func (ct *CostTracker) AddBytes(agentID, server, tool string, reqBytes, resBytes int64) {
+	if reqBytes == 0 && resBytes == 0 {
+		return
+	}
+	key := agentID + "|" + server + "|" + tool
+
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+
+	b, ok := ct.buckets[key]
+	if !ok {
+		// No existing bucket — create one (byte-only record).
+		b = &UsageBucket{
+			AgentID: agentID,
+			Server:  server,
+			Tool:    tool,
+		}
+		ct.buckets[key] = b
+	}
+	b.TotalReqBytes += reqBytes
+	b.TotalResBytes += resBytes
+}
+
 // Snapshot returns a point-in-time aggregation of all usage data.
 func (ct *CostTracker) Snapshot() CostSnapshot {
 	ct.mu.RLock()

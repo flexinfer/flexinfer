@@ -128,8 +128,8 @@ func (d *Daemon) handleCallWithOptions(ctx context.Context, msg *mcp.Message, sk
 	return execResp, nil
 }
 
-// emitAudit writes a structured audit entry and cost record if enabled.
-func (d *Daemon) emitAudit(params callParams, server, tool, target string, start time.Time, status, errMsg string, cached bool, policy *GatewayPolicyDecision, pipelineStage string) {
+// emitAudit writes a structured audit entry, cost record, and OTel metrics if enabled.
+func (d *Daemon) emitAudit(params callParams, server, tool, target string, start time.Time, status, errMsg string, cached bool, policy *GatewayPolicyDecision, pipelineStage string, reqBytes, resBytes int64) {
 	durationMs := time.Since(start).Milliseconds()
 
 	policyRuleID := ""
@@ -163,13 +163,19 @@ func (d *Daemon) emitAudit(params callParams, server, tool, target string, start
 			costStatus = "cached"
 		}
 		d.cost.Record(UsageRecord{
-			AgentID:    params.AgentID,
-			AgentType:  params.AgentType,
-			Server:     server,
-			Tool:       tool,
-			DurationMs: durationMs,
-			Status:     costStatus,
+			AgentID:       params.AgentID,
+			AgentType:     params.AgentType,
+			Server:        server,
+			Tool:          tool,
+			DurationMs:    durationMs,
+			RequestBytes:  reqBytes,
+			ResponseBytes: resBytes,
+			Status:        costStatus,
 		})
+	}
+
+	if d.otelMetrics != nil {
+		d.otelMetrics.RecordToolCallFromAudit(server, tool, params.AgentID, status, target, durationMs, reqBytes, resBytes)
 	}
 }
 
@@ -196,6 +202,10 @@ func (d *Daemon) logAccessDecision(decision AccessDecision) {
 		d.eventBus.Publish(EventAccessDenied, decision)
 	}
 	d.metrics.RBACDenied.Inc()
+
+	if d.otelMetrics != nil {
+		d.otelMetrics.RecordRBACDenied(context.Background(), decision.AgentID, decision.Server, decision.Tool)
+	}
 
 	// Record in ring buffer for HUD visibility.
 	d.recordDenied(decision)

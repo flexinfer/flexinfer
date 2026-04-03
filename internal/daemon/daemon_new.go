@@ -346,6 +346,9 @@ func New(cfg Config) (*Daemon, error) {
 	// Initialize cost tracker (nil when disabled)
 	d.cost = NewCostTracker(fileCfg.Cost, logger)
 
+	// Initialize OTel metric instruments (noop when provider not configured)
+	d.otelMetrics = NewDaemonOTelMetrics()
+
 	// Initialize OAuth 2.1 authorization server (nil when disabled)
 	if fileCfg.HTTP.OAuth.Enabled && cfg.HTTPAddr != "" {
 		issuer := fileCfg.HTTP.OAuth.Issuer

@@ -52,6 +52,9 @@ type callPipeline struct {
 	callMu    *gosync.Mutex
 	lockHeld  bool
 
+	reqBytes int64 // request payload size in bytes (populated in execute stage)
+	resBytes int64 // response payload size in bytes (populated in execute stage)
+
 	routingPreference       RoutingPreference
 	preferHubRetryEligible  bool
 	localRetryUsed          bool

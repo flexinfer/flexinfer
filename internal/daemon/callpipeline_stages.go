@@ -108,7 +108,7 @@ func (p *callPipeline) authorize() *mcp.Message {
 		return nil
 	}
 	span.SetStatus(codes.Error, decision.Reason)
-	p.daemon.emitAudit(p.params, p.serverName, p.toolName, "", p.auditStart, "denied", decision.Reason, false, nil, p.stage)
+	p.daemon.emitAudit(p.params, p.serverName, p.toolName, "", p.auditStart, "denied", decision.Reason, false, nil, p.stage, 0, 0)
 	return p.rbacDeniedError(decision)
 }
 
@@ -146,6 +146,7 @@ func (p *callPipeline) enforceRequestPolicy() *mcp.Message {
 		false,
 		&decision,
 		p.stage,
+		0, 0,
 	)
 	return p.policyDeniedError(decision)
 }
@@ -174,8 +175,11 @@ func (p *callPipeline) tryCachedResponse() *mcp.Message {
 			attribute.String("mcp.tool", p.toolName),
 		))
 		p.daemon.metrics.RecordResponseCacheHit(p.serverName, p.toolName)
+		if p.daemon.otelMetrics != nil {
+			p.daemon.otelMetrics.RecordCacheOp(p.ctx, p.serverName, p.toolName, "hit")
+		}
 		p.daemon.logger.Debug("response cache hit", "server", p.serverName, "tool", p.toolName)
-		p.daemon.emitAudit(p.params, p.serverName, p.toolName, "local", p.auditStart, "success", "", true, nil, p.stage)
+		p.daemon.emitAudit(p.params, p.serverName, p.toolName, "local", p.auditStart, "success", "", true, nil, p.stage, 0, 0)
 		resp, _ := mcp.NewResponse(p.msg.ID, json.RawMessage(cached))
 		return resp
 	}
@@ -186,6 +190,9 @@ func (p *callPipeline) tryCachedResponse() *mcp.Message {
 		attribute.String("mcp.tool", p.toolName),
 	))
 	p.daemon.metrics.RecordResponseCacheMiss(p.serverName, p.toolName)
+	if p.daemon.otelMetrics != nil {
+		p.daemon.otelMetrics.RecordCacheOp(p.ctx, p.serverName, p.toolName, "miss")
+	}
 	return nil
 }
 
@@ -415,6 +422,15 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	p.recordSuccessMetrics(duration)
 	p.markLocalActivity()
 	p.cacheSuccessResponse(resp)
+
+	// Compute byte sizes for cost tracking and OTel metrics.
+	if req != nil && req.Params != nil {
+		p.reqBytes = int64(len(req.Params))
+	}
+	if resp != nil && resp.Result != nil {
+		p.resBytes = int64(len(resp.Result))
+	}
+
 	p.emitResponseAudit(resp)
 	p.emitDecompHintIfLarge(resp)
 	return resp

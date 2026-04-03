@@ -724,7 +724,7 @@ func (p *callPipeline) executeSyntheticBulk() *mcp.Message {
 
 	duration := time.Since(p.auditStart)
 	p.daemon.metrics.RecordRequest(p.serverName, p.method, "success", "synthetic", duration)
-	p.daemon.emitAudit(p.params, p.serverName, p.toolName, "synthetic", p.auditStart, "success", "", false, nil, p.stage)
+	p.daemon.emitAudit(p.params, p.serverName, p.toolName, "synthetic", p.auditStart, "success", "", false, nil, p.stage, 0, 0)
 	p.emitDecompHintIfLarge(resp)
 	return resp
 }

@@ -139,11 +139,11 @@ func (p *callPipeline) emitResponseAudit(resp *mcp.Message) {
 		status = "error"
 		errMsg = resp.Error.Message
 	}
-	p.daemon.emitAudit(p.params, p.serverName, p.toolName, p.targetStr, p.auditStart, status, errMsg, false, nil, p.stage)
+	p.daemon.emitAudit(p.params, p.serverName, p.toolName, p.targetStr, p.auditStart, status, errMsg, false, nil, p.stage, p.reqBytes, p.resBytes)
 }
 
 func (p *callPipeline) emitErrorAudit(target, errMsg string) {
-	p.daemon.emitAudit(p.params, p.serverName, p.toolName, target, p.auditStart, "error", errMsg, false, nil, p.stage)
+	p.daemon.emitAudit(p.params, p.serverName, p.toolName, target, p.auditStart, "error", errMsg, false, nil, p.stage, 0, 0)
 }
 
 func (p *callPipeline) emitDecompHintIfLarge(resp *mcp.Message) {

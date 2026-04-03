@@ -667,13 +667,23 @@ func (c *DaemonClient) RBACConfig() (*RBACConfigResult, error) {
 
 // OTelStatusResult holds the response from loom/otel-status.
 type OTelStatusResult struct {
-	OTLPEndpoint    string `json:"otlp_endpoint"`
-	OTLPConfigured  bool   `json:"otlp_configured"`
-	LogFormat       string `json:"log_format"`
-	JSONLogsEnabled bool   `json:"json_logs_enabled"`
-	TracedServers   int    `json:"traced_servers"`
-	TotalServers    int    `json:"total_servers"`
-	TraceCoverage   string `json:"trace_coverage"`
+	OTLPEndpoint         string          `json:"otlp_endpoint"`
+	OTLPConfigured       bool            `json:"otlp_configured"`
+	LogFormat            string          `json:"log_format"`
+	JSONLogsEnabled      bool            `json:"json_logs_enabled"`
+	TracedServers        int             `json:"traced_servers"`
+	TotalServers         int             `json:"total_servers"`
+	TraceCoverage        string          `json:"trace_coverage"`
+	RuntimeConfigured    bool            `json:"runtime_otlp_configured"`
+	RuntimeEnabled       bool            `json:"runtime_otlp_enabled"`
+	RuntimeEndpoint      string          `json:"runtime_otlp_endpoint"`
+	RuntimeProtocol      string          `json:"runtime_otlp_protocol"`
+	RuntimeServiceName   string          `json:"runtime_otlp_service_name"`
+	RuntimeSampleRate    float64         `json:"runtime_otlp_sample_rate"`
+	RuntimeError         string          `json:"runtime_otlp_error"`
+	RuntimeMeterEnabled  bool            `json:"runtime_meter_enabled"`
+	RuntimeTraceSurfaces map[string]bool `json:"runtime_trace_surfaces"`
+	RuntimeTraceCoverage string          `json:"runtime_trace_coverage"`
 }
 
 // OTelStatus returns observability/OTel configuration status.

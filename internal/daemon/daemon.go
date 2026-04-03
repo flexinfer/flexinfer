@@ -99,6 +99,7 @@ type Daemon struct {
 	policy              *GatewayPolicyEnforcer          // Gateway policy enforcer for request hooks
 	audit               *AuditLogger                    // Structured audit logger
 	cost                *CostTracker                    // Usage tracking and attribution
+	otelMetrics         *DaemonOTelMetrics              // OTel metric instruments
 	oauth               *OAuthServer                    // OAuth 2.1 authorization server
 	authMiddleware      func(http.Handler) http.Handler // Auth middleware for HTTP (Phase 3)
 	routingPreferences  map[string]RoutingPreference    // Per-server routing overrides
