@@ -838,6 +838,7 @@ REGISTER_OLD = """    # Monkey-patch Attention.get_kv_cache_spec to return TQ4 s
 
 REGISTER_NEW = """    # Monkey-patch Attention.get_kv_cache_spec to return TQ4 spec
     from vllm.model_executor.layers.attention.attention import Attention
+    from vllm.platforms.interface import AttentionBackendEnum
     from vllm.v1.kv_cache_interface import ChunkedLocalAttentionSpec, SlidingWindowSpec
 
     if _original_get_kv_cache_spec is None:
@@ -845,6 +846,12 @@ REGISTER_NEW = """    # Monkey-patch Attention.get_kv_cache_spec to return TQ4 s
 
     def _tq4_get_kv_cache_spec(self, vllm_config):
         spec = _original_get_kv_cache_spec(self, vllm_config)
+        attention_backend = None
+        if vllm_config is not None:
+            attention_config = getattr(vllm_config, "attention_config", None)
+            attention_backend = getattr(attention_config, "backend", None)
+        if attention_backend != AttentionBackendEnum.CUSTOM:
+            return spec
         padded = _tq4_page_size_padded(spec, vllm_config)
 
         if isinstance(spec, FullAttentionSpec) and not isinstance(
