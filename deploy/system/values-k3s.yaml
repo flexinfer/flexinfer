@@ -23,7 +23,7 @@ controller:
   replicas: 1
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
-    tag: "668584b4"
+    tag: "cd3d3dc6"
     pullPolicy: IfNotPresent
   resources:
     limits:
