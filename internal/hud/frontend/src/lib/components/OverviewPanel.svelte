@@ -11,6 +11,8 @@
   import { costStore } from '../stores/cost.svelte.ts';
   import { rbacStore } from '../stores/rbac.svelte.ts';
   import { coordinationStore } from '../stores/coordination.svelte.ts';
+  import { mergeQueueStore } from '../stores/mergeQueue.svelte.ts';
+  import { orchestrationStore } from '../stores/orchestration.svelte.ts';
 
   let initialLoad = $state(true);
   let kpis = $state({
@@ -115,12 +117,16 @@
     costStore.startPolling(30000);
     rbacStore.startPolling(30000);
     coordinationStore.startPolling(30000);
+    mergeQueueStore.startPolling(30000);
+    orchestrationStore.startPolling(30000);
     const t = setInterval(fetchOTelStatus, 30000);
     return () => {
       clearInterval(t);
       costStore.stopPolling();
       rbacStore.stopPolling();
       coordinationStore.stopPolling();
+      mergeQueueStore.stopPolling();
+      orchestrationStore.stopPolling();
     };
   });
 
@@ -194,10 +200,10 @@
   });
 
   let heroSignals = $derived.by(() => [
-    { label: 'today sessions', value: kpis.sessions_today },
-    { label: 'tasks completed', value: kpis.tasks_completed_today },
     { label: 'active agents', value: agentCount },
-    { label: 'approvals waiting', value: pendingApprovals },
+    { label: 'tasks completed', value: kpis.tasks_completed_today },
+    { label: 'system load', value: orchestrationStore.systemLoadPct },
+    { label: 'merge ready', value: coordinationSummary.merge_ready_branches ?? 0 },
   ]);
 
   let attentionLanes = $derived.by(() => {
@@ -256,7 +262,38 @@
       });
     }
 
-    return lanes.slice(0, 4);
+    if (orchestrationStore.hasRecommendations) {
+      const top = orchestrationStore.recommendations[0];
+      lanes.push({
+        route: 'dispatch',
+        label: 'Smart dispatch',
+        value: `${orchestrationStore.recommendations.length} suggested`,
+        detail: top
+          ? `${top.task_title} → ${top.recommended_agent} (${Math.round(top.score * 100)}% match)`
+          : 'AI-recommended agent-task pairings are ready for review.',
+      });
+    }
+
+    const mergeReady = coordinationSummary.merge_ready_branches ?? 0;
+    if (mergeReady > 0) {
+      lanes.push({
+        route: 'dispatch',
+        label: 'Merge ready',
+        value: `${mergeReady} branch${mergeReady === 1 ? '' : 'es'}`,
+        detail: 'Branches passed merge checks and are ready to land.',
+      });
+    }
+
+    if (mergeQueueStore.hasConflicts) {
+      lanes.push({
+        route: 'dispatch',
+        label: 'File conflicts',
+        value: `${mergeQueueStore.conflicts.length} pair${mergeQueueStore.conflicts.length === 1 ? '' : 's'}`,
+        detail: 'Agents are claiming overlapping files. Resolve before merging.',
+      });
+    }
+
+    return lanes.slice(0, 5);
   });
 
   let priorityLinks = $derived.by(() => [
@@ -374,6 +411,33 @@
           label: 'Cross-agent',
           active: coordinationSummary.cross_agent_blockers > 0,
           note: coordinationSummary.cross_agent_blockers > 0 ? String(coordinationSummary.cross_agent_blockers) : 'clear',
+        },
+      ],
+    },
+    {
+      route: 'dispatch',
+      label: 'Fleet orchestration',
+      value: orchestrationStore.systemLoadPct,
+      detail: `${orchestrationStore.recommendations.length} suggestion${orchestrationStore.recommendations.length === 1 ? '' : 's'} · ${(coordinationSummary.merge_ready_branches ?? 0)} merge-ready · ${mergeQueueStore.conflicts.length} conflict${mergeQueueStore.conflicts.length === 1 ? '' : 's'}`,
+      foot: orchestrationStore.hasRecommendations
+        ? `Top: ${orchestrationStore.recommendations[0].task_title} → ${orchestrationStore.recommendations[0].recommended_agent}`
+        : 'No pending dispatch recommendations',
+      alert: orchestrationStore.hasRecommendations || mergeQueueStore.hasConflicts || (coordinationSummary.merge_ready_branches ?? 0) > 0,
+      tags: [
+        {
+          label: 'Suggestions',
+          active: orchestrationStore.hasRecommendations,
+          note: orchestrationStore.hasRecommendations ? String(orchestrationStore.recommendations.length) : 'none',
+        },
+        {
+          label: 'Merge',
+          active: (coordinationSummary.merge_ready_branches ?? 0) > 0,
+          note: (coordinationSummary.merge_ready_branches ?? 0) > 0 ? String(coordinationSummary.merge_ready_branches) : 'none',
+        },
+        {
+          label: 'Conflicts',
+          active: mergeQueueStore.hasConflicts,
+          note: mergeQueueStore.hasConflicts ? String(mergeQueueStore.conflicts.length) : 'clear',
         },
       ],
     },
