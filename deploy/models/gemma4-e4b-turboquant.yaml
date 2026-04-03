@@ -33,10 +33,11 @@ spec:
     maxModelLen: 16384
     gpuMemoryUtilization: "0.80"
     maxNumSeqs: 1
-    enforceEager: true
     trustRemoteCode: true
     attentionBackend: CUSTOM
     servedModelName: gemma4-e4b-turboquant
+    enableToolCalling: true
+    toolCallParser: hermes
     enablePrefixCaching: false
     maxNumBatchedTokens: 2048
     disableLogStats: false
