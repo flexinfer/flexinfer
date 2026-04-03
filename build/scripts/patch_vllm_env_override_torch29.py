@@ -183,9 +183,16 @@ ATTENTION_OVERRIDE_NEW = """        # llm-compressor models may advertise a kv-c
         # non-quantized request to win over that override.
         kv_cache_scheme = getattr(quant_config, "kv_cache_scheme", None)
         hf_config = getattr(vllm_config.model_config, "hf_config", None)
-        model_type = getattr(hf_config, "model_type", None)
+        text_hf_config = getattr(hf_config, "text_config", None)
+        model_types = {
+            getattr(hf_config, "model_type", None),
+            getattr(text_hf_config, "model_type", None),
+        }
         explicit_nonquant_kv = (
-            model_type == "gemma4"
+            any(
+                isinstance(model_type, str) and model_type.startswith("gemma4")
+                for model_type in model_types
+            )
             and cache_config is not None
             and cache_config.cache_dtype in ("float16", "bfloat16")
         )
