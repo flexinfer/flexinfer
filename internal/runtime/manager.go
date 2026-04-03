@@ -33,10 +33,11 @@ const (
 
 // LoadRequest describes a model to load into the runtime.
 type LoadRequest struct {
-	Backend   string         `json:"backend"`
-	Model     string         `json:"model"`
-	ModelPath string         `json:"modelPath,omitempty"`
-	Config    map[string]any `json:"config,omitempty"`
+	Backend   string          `json:"backend"`
+	Model     string          `json:"model"`
+	ModelPath string          `json:"modelPath,omitempty"`
+	Config    map[string]any  `json:"config,omitempty"`
+	Env       []corev1.EnvVar `json:"env,omitempty"`
 }
 
 // LoadedModel tracks a running backend subprocess and its model.
@@ -186,8 +187,9 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	// Set LOCAL_MODEL_PATH so backends that use env-based model discovery
 	// (e.g. diffusers server-diffusers.py) find the correct subdirectory.
 	if modelPath != "" {
-		env = append(env, corev1.EnvVar{Name: "LOCAL_MODEL_PATH", Value: modelPath})
+		env = overlayEnvVars(env, []corev1.EnvVar{{Name: "LOCAL_MODEL_PATH", Value: modelPath}})
 	}
+	env = overlayEnvVars(env, req.Env)
 
 	// Determine the executable.
 	var executable string
@@ -623,6 +625,31 @@ func inferCommand(backendName string) (string, []string) {
 	default:
 		return backendName, nil
 	}
+}
+
+func overlayEnvVars(base []corev1.EnvVar, overlay []corev1.EnvVar) []corev1.EnvVar {
+	if len(overlay) == 0 {
+		return base
+	}
+
+	merged := make([]corev1.EnvVar, 0, len(base)+len(overlay))
+	indexByName := make(map[string]int, len(base)+len(overlay))
+
+	for _, env := range base {
+		indexByName[env.Name] = len(merged)
+		merged = append(merged, env)
+	}
+
+	for _, env := range overlay {
+		if idx, ok := indexByName[env.Name]; ok {
+			merged[idx] = env
+			continue
+		}
+		indexByName[env.Name] = len(merged)
+		merged = append(merged, env)
+	}
+
+	return merged
 }
 
 // streamLogs reads from r line-by-line and logs each line.

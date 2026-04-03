@@ -9,6 +9,7 @@ import (
 	_ "github.com/flexinfer/flexinfer/backend" // register all backends
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
@@ -128,4 +129,23 @@ func TestInferCommand(t *testing.T) {
 			assert.Equal(t, tt.expectedArgs, args)
 		})
 	}
+}
+
+func TestOverlayEnvVarsReplacesByName(t *testing.T) {
+	base := []corev1.EnvVar{
+		{Name: "A", Value: "one"},
+		{Name: "B", Value: "two"},
+	}
+	overlay := []corev1.EnvVar{
+		{Name: "B", Value: "override"},
+		{Name: "C", Value: "three"},
+	}
+
+	got := overlayEnvVars(base, overlay)
+
+	assert.Equal(t, []corev1.EnvVar{
+		{Name: "A", Value: "one"},
+		{Name: "B", Value: "override"},
+		{Name: "C", Value: "three"},
+	}, got)
 }
