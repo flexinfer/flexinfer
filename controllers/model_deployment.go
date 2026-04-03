@@ -64,6 +64,8 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 		if model.Spec.LiteLLM != nil && model.Spec.LiteLLM.CopilotAlias != "" {
 			annotations[AnnotationLiteLLMCopilot] = model.Spec.LiteLLM.CopilotAlias
 		}
+		capsJSON, _ := json.Marshal(resolveCapabilities(model, b))
+		annotations[AnnotationLiteLLMCapabilities] = string(capsJSON)
 		modelmeta.ApplyTokenLimitAnnotations(annotations, modelmeta.ResolveTokenLimits(&model.Spec))
 	}
 

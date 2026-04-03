@@ -27,12 +27,12 @@ spec:
   config:
     dtype: "half"
     kvCacheDtype: float16
+    kvCacheCodec: turboquant
     maxModelLen: 16384
     gpuMemoryUtilization: "0.92"
     maxNumSeqs: 1
     maxNumBatchedTokens: 512
     trustRemoteCode: true
-    attentionBackend: CUSTOM
     servedModelName: gemma4-e4b-turboquant-canary
     enableToolCalling: true
     toolCallParser: gemma4

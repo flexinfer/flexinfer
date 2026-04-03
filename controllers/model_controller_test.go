@@ -32,8 +32,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -1444,6 +1446,63 @@ func TestEnsureServicePreservesClusterIP(t *testing.T) {
 	// restore it via restoreServiceSelector.
 	if updated.Spec.Selector != nil {
 		t.Fatalf("expected selector to remain unchanged on service update, got %v", updated.Spec.Selector)
+	}
+}
+
+func TestEnsureServiceAddsLiteLLMCapabilitiesAnnotation(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	enabled := true
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gemma-tools",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			LiteLLM: &aiv1alpha2.LiteLLMSpec{
+				Enabled: ptr.To(enabled),
+			},
+			Config: mustJSONConfig(map[string]any{
+				"enableToolCalling": true,
+			}),
+		},
+	}
+
+	b, ok := backend.Get("vllm")
+	if !ok {
+		t.Fatal("backend vllm not found")
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		Build()
+
+	r := &ModelReconciler{
+		Client: fakeClient,
+		Scheme: s,
+	}
+
+	ctx := context.Background()
+	if err := r.ensureService(ctx, model, b); err != nil {
+		t.Fatalf("ensureService() error: %v", err)
+	}
+
+	svc := &corev1.Service{}
+	if err := fakeClient.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, svc); err != nil {
+		t.Fatalf("failed to fetch service: %v", err)
+	}
+
+	got := svc.Annotations[AnnotationLiteLLMCapabilities]
+	want := `{"toolCalling":true,"vision":false,"imageGeneration":false}`
+	if got != want {
+		t.Fatalf("expected %s=%q, got %q", AnnotationLiteLLMCapabilities, want, got)
 	}
 }
 

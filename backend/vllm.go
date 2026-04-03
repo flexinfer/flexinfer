@@ -70,8 +70,9 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--gpu-memory-utilization", memUtil)
 	}
 
-	// Explicit attention backend override.
-	if attentionBackend := spec.ConfigString("attentionBackend", ""); attentionBackend != "" {
+	// Attention backend override. kvCacheCodec=turboquant promotes the managed
+	// intent into the vLLM CUSTOM path unless the manifest explicitly overrides it.
+	if attentionBackend := resolveVLLMAttentionBackend(spec); attentionBackend != "" {
 		args = append(args, "--attention-backend", attentionBackend)
 	}
 
@@ -233,7 +234,27 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		})
 	}
 
+	if strings.EqualFold(spec.ConfigString("kvCacheCodec", ""), "turboquant") {
+		env = append(env,
+			corev1.EnvVar{Name: "FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC", Value: "turboquant"},
+			corev1.EnvVar{Name: "FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS", Value: "plugin"},
+		)
+	}
+
 	return env
+}
+
+func resolveVLLMAttentionBackend(spec *ModelSpec) string {
+	if spec == nil {
+		return ""
+	}
+	if attentionBackend := spec.ConfigString("attentionBackend", ""); attentionBackend != "" {
+		return attentionBackend
+	}
+	if strings.EqualFold(spec.ConfigString("kvCacheCodec", ""), "turboquant") {
+		return "CUSTOM"
+	}
+	return ""
 }
 
 func (b *VLLMBackend) ReadinessProbe() *corev1.Probe {

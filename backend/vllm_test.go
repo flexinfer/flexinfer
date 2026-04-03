@@ -168,6 +168,53 @@ func TestVLLMBackendArgs_AttentionBackend(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_TurboQuantCodecDefaultsToCustomAttention(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]any{
+			"kvCacheCodec": "turboquant",
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--attention-backend"]; v != "CUSTOM" {
+		t.Errorf("expected --attention-backend=CUSTOM, got %q", v)
+	}
+}
+
+func TestVLLMBackendArgs_ExplicitAttentionBackendOverridesTurboQuantCodec(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]any{
+			"kvCacheCodec":     "turboquant",
+			"attentionBackend": "TRITON_ATTN",
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--attention-backend"]; v != "TRITON_ATTN" {
+		t.Errorf("expected --attention-backend=TRITON_ATTN, got %q", v)
+	}
+}
+
 func TestVLLMBackendArgs_HybridKVCacheManagerExplicitEnable(t *testing.T) {
 	b := &VLLMBackend{}
 
@@ -495,6 +542,31 @@ func TestVLLMBackendEnv_HIPVisibleDevices_MirrorsROCR(t *testing.T) {
 	}
 	if v, ok := envMap["ROCR_VISIBLE_DEVICES"]; !ok || v != "1" {
 		t.Errorf("expected ROCR_VISIBLE_DEVICES=1, got %q", v)
+	}
+}
+
+func TestVLLMBackendEnv_TurboQuantCodecAddsRuntimeHints(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+		Config: map[string]any{
+			"kvCacheCodec": "turboquant",
+		},
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if v := envMap["FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC"]; v != "turboquant" {
+		t.Errorf("expected FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC=turboquant, got %q", v)
+	}
+	if v := envMap["FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS"]; v != "plugin" {
+		t.Errorf("expected FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS=plugin, got %q", v)
 	}
 }
 
