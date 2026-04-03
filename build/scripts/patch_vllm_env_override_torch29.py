@@ -99,7 +99,17 @@ KV_SHARING_OLD = """    for layer_name, target_layer_name in shared_kv_cache_lay
             runner_only_attn_layers.add(layer_name)
 """
 
-KV_SHARING_NEW = KV_SHARING_OLD
+KV_SHARING_NEW = """    for layer_name, target_layer_name in shared_kv_cache_layers.items():
+        tgt_kv_cache_group = layer_to_kv_cache_group[target_layer_name]
+        tgt_kv_cache_group.layer_names.append(layer_name)
+        if isinstance(tgt_kv_cache_group.kv_cache_spec, UniformTypeKVCacheSpecs):
+            tgt_kv_cache_group.kv_cache_spec.kv_cache_specs[layer_name] = (
+                tgt_kv_cache_group.kv_cache_spec.kv_cache_specs[target_layer_name]
+            )
+
+        if runner_only_attn_layers is not None:
+            runner_only_attn_layers.add(layer_name)
+"""
 
 GPU_MODEL_RUNNER_OLD = """                layer_kv_cache_spec = kv_cache_group_spec.kv_cache_spec
                 if isinstance(layer_kv_cache_spec, UniformTypeKVCacheSpecs):
