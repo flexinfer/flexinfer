@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """Patch vLLM source for FlexInfer's Gemma4 ROCm runtime needs.
 
-This currently applies two upstream source patches:
+This currently applies six source patches:
 1. env_override.py Torch 2.9 CaptureOutput compatibility.
-2. KV-sharing helper fix so shared layers added back to
-   UniformTypeKVCacheSpecs inherit their target layer spec entry.
+2. KV-sharing helper fix so shared layers are restored for metadata only,
+   without incorrectly allocating duplicate KV cache tensors.
+3. GPU model runner metadata fix so shared layers inherit their target
+   layer's KV cache spec when grouping attention backends.
+4. GPU model runner reshape fix so per-token-head scale padding is
+   respected when deriving backend KV tensor shapes.
+5. Attention-layer fix so explicit non-quantized KV cache dtypes are honored
+   for Gemma4 instead of being silently overridden back to quantized KV mode.
+6. Backend selection fix so Gemma4 models keep TRITON attention when an
+   explicit non-quantized KV cache dtype is requested.
 """
 
 from __future__ import annotations
@@ -91,24 +99,136 @@ KV_SHARING_OLD = """    for layer_name, target_layer_name in shared_kv_cache_lay
             runner_only_attn_layers.add(layer_name)
 """
 
-KV_SHARING_NEW = """    for layer_name, target_layer_name in shared_kv_cache_layers.items():
-        tgt_kv_cache_group = layer_to_kv_cache_group[target_layer_name]
-        tgt_kv_cache_group.layer_names.append(layer_name)
-        if isinstance(tgt_kv_cache_group.kv_cache_spec, UniformTypeKVCacheSpecs):
-            tgt_kv_cache_group.kv_cache_spec.kv_cache_specs[layer_name] = (
-                tgt_kv_cache_group.kv_cache_spec.kv_cache_specs[target_layer_name]
-            )
+KV_SHARING_NEW = KV_SHARING_OLD
 
-        if runner_only_attn_layers is not None:
-            runner_only_attn_layers.add(layer_name)
+GPU_MODEL_RUNNER_OLD = """                layer_kv_cache_spec = kv_cache_group_spec.kv_cache_spec
+                if isinstance(layer_kv_cache_spec, UniformTypeKVCacheSpecs):
+                    layer_kv_cache_spec = layer_kv_cache_spec.kv_cache_specs[layer_name]
+"""
+
+GPU_MODEL_RUNNER_NEW = """                layer_kv_cache_spec = kv_cache_group_spec.kv_cache_spec
+                if isinstance(layer_kv_cache_spec, UniformTypeKVCacheSpecs):
+                    if layer_name in layer_kv_cache_spec.kv_cache_specs:
+                        layer_kv_cache_spec = layer_kv_cache_spec.kv_cache_specs[layer_name]
+                    else:
+                        layer_kv_cache_spec = layer_kv_cache_spec.kv_cache_specs[
+                            self.shared_kv_cache_layers[layer_name]
+                        ]
+"""
+
+GPU_MODEL_RUNNER_RESHAPE_OLD = """                    kv_cache_shape = attn_backend.get_kv_cache_shape(
+                        kernel_num_blocks,
+                        kernel_block_size,
+                        kv_cache_spec.num_kv_heads,
+                        kv_cache_spec.head_size,
+                        cache_dtype_str=self.cache_config.cache_dtype,
+                    )
+"""
+
+GPU_MODEL_RUNNER_RESHAPE_NEW = """                    kv_cache_shape = attn_backend.get_kv_cache_shape(
+                        kernel_num_blocks,
+                        kernel_block_size,
+                        kv_cache_spec.num_kv_heads,
+                        kv_cache_spec.head_size,
+                        cache_dtype_str=(
+                            "fp8_per_token_head"
+                            if getattr(kv_cache_spec, "kv_quant_mode", None).name
+                            == "FP8_PER_TOKEN_HEAD"
+                            else "int8_per_token_head"
+                            if getattr(kv_cache_spec, "kv_quant_mode", None).name
+                            == "INT8_PER_TOKEN_HEAD"
+                            else self.cache_config.cache_dtype
+                        ),
+                    )
+"""
+
+GPU_MODEL_RUNNER_PADDED_RESHAPE_OLD = """                    )
+                    dtype = kv_cache_spec.dtype
+                    try:
+"""
+
+GPU_MODEL_RUNNER_PADDED_RESHAPE_NEW = """                    )
+                    dtype = kv_cache_spec.dtype
+                    view_numel = raw_tensor.view(dtype).numel()
+                    target_numel = 1
+                    for dim in kv_cache_shape:
+                        target_numel *= dim
+                    if view_numel != target_numel and kv_cache_shape[-1] > 0:
+                        base_numel = target_numel // kv_cache_shape[-1]
+                        if base_numel > 0 and view_numel % base_numel == 0:
+                            padded_last_dim = view_numel // base_numel
+                            if padded_last_dim > kv_cache_shape[-1]:
+                                kv_cache_shape = (*kv_cache_shape[:-1], padded_last_dim)
+                    try:
+"""
+
+ATTENTION_OVERRIDE_OLD = """        # llm-compressor mdls need to set cache_dtype to "fp8" manually.
+        kv_cache_scheme = getattr(quant_config, "kv_cache_scheme", None)
+        if kv_cache_scheme is not None:
+            kv_cache_dtype = "fp8"
+            calculate_kv_scales = False
+            if cache_config is not None:
+                cache_config.cache_dtype = "fp8"
+                cache_config.calculate_kv_scales = False
+
+        # Check if per-head quant scales are required based on kv_cache_scheme
+        use_per_head_quant_scales = (
+            kv_cache_scheme is not None
+            and kv_cache_scheme.get("strategy") == "attn_head"
+        )
+"""
+
+ATTENTION_OVERRIDE_NEW = """        # llm-compressor models may advertise a kv-cache quantization scheme,
+        # but Gemma4 on the ROCm/TRITON path currently needs the explicit
+        # non-quantized request to win over that override.
+        kv_cache_scheme = getattr(quant_config, "kv_cache_scheme", None)
+        hf_config = getattr(vllm_config.model_config, "hf_config", None)
+        model_type = getattr(hf_config, "model_type", None)
+        explicit_nonquant_kv = (
+            model_type == "gemma4"
+            and cache_config is not None
+            and cache_config.cache_dtype in ("float16", "bfloat16")
+        )
+        if kv_cache_scheme is not None and not explicit_nonquant_kv:
+            kv_cache_dtype = "fp8"
+            calculate_kv_scales = False
+            if cache_config is not None:
+                cache_config.cache_dtype = "fp8"
+                cache_config.calculate_kv_scales = False
+        elif explicit_nonquant_kv:
+            kv_cache_scheme = None
+            kv_cache_dtype = cache_config.cache_dtype
+            calculate_kv_scales = False
+
+        # Check if per-head quant scales are required based on kv_cache_scheme
+        use_per_head_quant_scales = (
+            kv_cache_scheme is not None
+            and kv_cache_scheme.get("strategy") == "attn_head"
+        )
+"""
+
+ATTENTION_BACKEND_OLD = """                kv_cache_dtype,
+                use_mla=False,
+                has_sink=self.has_sink,
+                use_mm_prefix=self.use_mm_prefix,
+                use_per_head_quant_scales=use_per_head_quant_scales,
+                attn_type=attn_type,
+            )
+"""
+
+ATTENTION_BACKEND_NEW = """                kv_cache_dtype,
+                use_mla=False,
+                has_sink=self.has_sink,
+                use_mm_prefix=self.use_mm_prefix,
+                use_per_head_quant_scales=(
+                    use_per_head_quant_scales and not explicit_nonquant_kv
+                ),
+                attn_type=attn_type,
+            )
 """
 
 
-def _replace_once(
-    path: pathlib.Path,
-    old: str,
-    new: str,
-) -> None:
+def _replace_once(path: pathlib.Path, old: str, new: str) -> None:
     text = path.read_text()
     if new in text:
         print(f"already patched: {path}")
@@ -128,9 +248,24 @@ def main() -> int:
     root = pathlib.Path(sys.argv[1])
     env_override = root / "vllm" / "env_override.py"
     kv_sharing = root / "vllm" / "v1" / "worker" / "utils.py"
+    gpu_model_runner = root / "vllm" / "v1" / "worker" / "gpu_model_runner.py"
+    attention = root / "vllm" / "model_executor" / "layers" / "attention" / "attention.py"
 
     _replace_once(env_override, ENV_OVERRIDE_OLD, ENV_OVERRIDE_NEW)
     _replace_once(kv_sharing, KV_SHARING_OLD, KV_SHARING_NEW)
+    _replace_once(gpu_model_runner, GPU_MODEL_RUNNER_OLD, GPU_MODEL_RUNNER_NEW)
+    _replace_once(
+        gpu_model_runner,
+        GPU_MODEL_RUNNER_RESHAPE_OLD,
+        GPU_MODEL_RUNNER_RESHAPE_NEW,
+    )
+    _replace_once(
+        gpu_model_runner,
+        GPU_MODEL_RUNNER_PADDED_RESHAPE_OLD,
+        GPU_MODEL_RUNNER_PADDED_RESHAPE_NEW,
+    )
+    _replace_once(attention, ATTENTION_OVERRIDE_OLD, ATTENTION_OVERRIDE_NEW)
+    _replace_once(attention, ATTENTION_BACKEND_OLD, ATTENTION_BACKEND_NEW)
     return 0
 
 

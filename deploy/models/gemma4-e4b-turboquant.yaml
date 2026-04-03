@@ -3,11 +3,11 @@
 # Source: staged on llm-models-nfs at google/gemma-4-E4B-it, then copied into
 # node-local cache for the runtime-managed service on cblevins-7900xtx.
 #
-# Runtime: unified runtime with the experimental TurboQuant-capable image.
-# Live serving now prefers vLLM's ROCm AITER unified attention path rather
-# than the custom TurboQuant backend for better runtime efficiency.
+# Runtime: unified runtime with the textgen/turboquant-capable image.
+# The managed path is currently pinned to the stable TRITON KV-cache flow while
+# TurboQuant-on-ROCm remains experimental in the runtime image.
 #
-# Sized for real interactive use on the 7900 XTX runtime-managed path.
+# Sized conservatively for the stable managed path on the 7900 XTX.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -18,7 +18,6 @@ spec:
   source: pvc://llm-models-nfs/google/gemma-4-E4B-it
   cache:
     strategy: Local
-    compilationCache: {}
   gpu:
     vendor: amd
     count: 1
@@ -32,18 +31,18 @@ spec:
     coldStartTimeout: 15m
   config:
     dtype: "half"
+    kvCacheDtype: float16
     maxModelLen: 4096
     gpuMemoryUtilization: "0.92"
     maxNumSeqs: 1
     trustRemoteCode: true
-    attentionBackend: ROCM_AITER_UNIFIED_ATTN
+    attentionBackend: TRITON_ATTN
     servedModelName: gemma4-e4b-turboquant
     enableToolCalling: true
     toolCallParser: gemma4
     reasoningParser: gemma4
     enablePrefixCaching: true
-    disableHybridKVCacheManager: true
-    maxNumBatchedTokens: 1024
+    maxNumBatchedTokens: 512
     disableLogStats: false
     warmPolicy: primary
   nodeSelector:
