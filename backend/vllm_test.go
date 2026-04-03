@@ -168,6 +168,29 @@ func TestVLLMBackendArgs_AttentionBackend(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_HybridKVCacheManagerExplicitEnable(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]any{
+			"disableHybridKVCacheManager": false,
+		},
+	}
+
+	args := b.Args(spec)
+	found := false
+	for _, a := range args {
+		if a == "--no-disable-hybrid-kv-cache-manager" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected --no-disable-hybrid-kv-cache-manager to be present")
+	}
+}
+
 func TestVLLMBackendArgs_ToolCalling(t *testing.T) {
 	b := &VLLMBackend{}
 

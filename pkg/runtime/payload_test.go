@@ -56,6 +56,39 @@ func TestBuildLoadPayloadForModelAddsCompilationCacheAndStartupTimeout(t *testin
 	})
 }
 
+func TestBuildLoadPayloadForModelAutoEnablesCompilationCacheForSharedAMDModels(t *testing.T) {
+	b, ok := backend.Get("vllm")
+	require.True(t, ok)
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gemma4-e4b",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://google/gemma-4-E4B-it",
+			GPU: &aiv1alpha2.GPUSpec{
+				Vendor: aiv1alpha2.GPUVendorAMD,
+				Shared: "7900xtx-textgen",
+			},
+		},
+	}
+
+	data, err := BuildLoadPayloadForModel(model, b, BuildLoadOptions{
+		ModelBasePath: "/models",
+		GPUVendor:     backend.GPUVendorAMD,
+	})
+	require.NoError(t, err)
+
+	var payload LoadPayload
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Contains(t, payload.Env, EnvVar{
+		Name:  "VLLM_CACHE_ROOT",
+		Value: "/var/lib/flexinfer/compile-cache/flexinfer-system/gemma4-e4b/vllm",
+	})
+}
+
 func TestBuildLoadPayloadForModelUsesGPUProfileDeviceDefaults(t *testing.T) {
 	b, ok := backend.Get("llamacpp")
 	require.True(t, ok)

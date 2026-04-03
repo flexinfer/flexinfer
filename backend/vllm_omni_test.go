@@ -108,6 +108,29 @@ func TestVLLMOmniBackendArgs_AttentionBackend(t *testing.T) {
 	}
 }
 
+func TestVLLMOmniBackendArgs_HybridKVCacheManagerExplicitEnable(t *testing.T) {
+	b := &VLLMOmniBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]any{
+			"disableHybridKVCacheManager": false,
+		},
+	}
+
+	args := b.Args(spec)
+	found := false
+	for _, a := range args {
+		if a == "--no-disable-hybrid-kv-cache-manager" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected --no-disable-hybrid-kv-cache-manager to be present")
+	}
+}
+
 func TestVLLMOmniBackendArgs_Tokenizer(t *testing.T) {
 	b := &VLLMOmniBackend{}
 

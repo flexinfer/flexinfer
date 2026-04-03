@@ -61,8 +61,10 @@ spec:
       value: "1"
     - name: PYTORCH_ROCM_ARCH
       value: gfx1100
+    - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
+      value: "1"
   runtime:
-    image: registry.harbor.lan/flexinfer/runtime@sha256:631eef0bc405e9832c4d13897b5fbc0b45d7e8a51d4e52dba8763d6bec4dd546
+    image: registry.harbor.lan/flexinfer/runtime@sha256:3d0d29aa1eac97b3a9c52f4bf21e2b0d0fd2ace639ca746f1c3cf85e0d9607e8
   quantization:
     supported:
       - gptq

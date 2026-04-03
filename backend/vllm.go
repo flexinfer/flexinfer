@@ -140,6 +140,13 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 				args = append(args, "--no-prefix-caching")
 			}
 		}
+		if _, ok := spec.Config["disableHybridKVCacheManager"]; ok {
+			if spec.ConfigBool("disableHybridKVCacheManager", false) {
+				args = append(args, "--disable-hybrid-kv-cache-manager")
+			} else {
+				args = append(args, "--no-disable-hybrid-kv-cache-manager")
+			}
+		}
 	}
 
 	// Tool calling support
@@ -285,6 +292,8 @@ func (b *VLLMBackend) CompilationCacheEnvVars(cacheMountPath string) []corev1.En
 	return []corev1.EnvVar{
 		{Name: "MIOPEN_CUSTOM_CACHE_DIR", Value: cacheMountPath + "/miopen"},
 		{Name: "MIOPEN_USER_DB_PATH", Value: cacheMountPath + "/miopen/user.db"},
+		{Name: "VLLM_CACHE_ROOT", Value: cacheMountPath + "/vllm"},
+		{Name: "XDG_CACHE_HOME", Value: cacheMountPath + "/xdg"},
 		{Name: "TORCHINDUCTOR_CACHE_DIR", Value: cacheMountPath + "/inductor"},
 		{Name: "TRITON_CACHE_DIR", Value: cacheMountPath + "/triton"},
 		{Name: "TORCH_HOME", Value: cacheMountPath + "/torch"},

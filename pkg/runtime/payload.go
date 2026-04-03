@@ -131,19 +131,32 @@ func BuildLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts B
 // ResolveCompilationCachePath returns the in-container path that should back
 // persistent GPU kernel caches for a runtime-managed model.
 func ResolveCompilationCachePath(model *aiv1alpha2.Model) (string, bool) {
-	if model == nil || model.Spec.Cache == nil || model.Spec.Cache.CompilationCache == nil {
-		return "", false
-	}
-	cc := model.Spec.Cache.CompilationCache
-	if cc.Enabled != nil && !*cc.Enabled {
+	if model == nil {
 		return "", false
 	}
 
 	basePath := "/var/lib/flexinfer/compile-cache"
-	if cc.HostPath != "" {
-		basePath = cc.HostPath
+	if model.Spec.Cache != nil && model.Spec.Cache.CompilationCache != nil {
+		cc := model.Spec.Cache.CompilationCache
+		if cc.Enabled != nil && !*cc.Enabled {
+			return "", false
+		}
+		if cc.HostPath != "" {
+			basePath = cc.HostPath
+		}
+		return filepath.Join(basePath, model.Namespace, model.Name), true
 	}
-	return filepath.Join(basePath, model.Namespace, model.Name), true
+
+	// Keep runtime-managed loads aligned with controller-managed pods:
+	// shared AMD models get persistent compile cache by default.
+	if model.Spec.IsShared() {
+		vendor := model.Spec.GetGPUVendor()
+		if vendor == aiv1alpha2.GPUVendorAMD || vendor == aiv1alpha2.GPUVendorAuto {
+			return filepath.Join(basePath, model.Namespace, model.Name), true
+		}
+	}
+
+	return "", false
 }
 
 func usesLocalCache(model *aiv1alpha2.Model) bool {
