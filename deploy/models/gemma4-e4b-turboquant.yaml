@@ -42,7 +42,7 @@ spec:
     toolCallParser: gemma4
     reasoningParser: gemma4
     enablePrefixCaching: true
-    disableHybridKVCacheManager: false
+    disableHybridKVCacheManager: true
     maxNumBatchedTokens: 1024
     disableLogStats: false
     warmPolicy: primary
