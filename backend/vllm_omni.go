@@ -73,6 +73,10 @@ func (b *VLLMOmniBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--gpu-memory-utilization", memUtil)
 	}
 
+	if attentionBackend := spec.ConfigString("attentionBackend", ""); attentionBackend != "" {
+		args = append(args, "--attention-backend", attentionBackend)
+	}
+
 	// Trust remote code (often needed for omni models)
 	if spec.ConfigBool("trustRemoteCode", false) {
 		args = append(args, "--trust-remote-code")

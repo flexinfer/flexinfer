@@ -85,6 +85,29 @@ func TestVLLMOmniBackendArgs_MemoryTuning(t *testing.T) {
 	}
 }
 
+func TestVLLMOmniBackendArgs_AttentionBackend(t *testing.T) {
+	b := &VLLMOmniBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]any{
+			"attentionBackend": "ROCM_AITER_UNIFIED_ATTN",
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--attention-backend"]; v != "ROCM_AITER_UNIFIED_ATTN" {
+		t.Errorf("expected --attention-backend=ROCM_AITER_UNIFIED_ATTN, got %q", v)
+	}
+}
+
 func TestVLLMOmniBackendArgs_Tokenizer(t *testing.T) {
 	b := &VLLMOmniBackend{}
 

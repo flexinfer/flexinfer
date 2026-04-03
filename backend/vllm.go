@@ -70,6 +70,11 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--gpu-memory-utilization", memUtil)
 	}
 
+	// Explicit attention backend override.
+	if attentionBackend := spec.ConfigString("attentionBackend", ""); attentionBackend != "" {
+		args = append(args, "--attention-backend", attentionBackend)
+	}
+
 	// Trust remote code
 	if spec.ConfigBool("trustRemoteCode", false) {
 		args = append(args, "--trust-remote-code")
