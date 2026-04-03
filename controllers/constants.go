@@ -15,6 +15,9 @@ const (
 	requeueShort  = 5 * time.Second  // waiting for pod/job readiness
 	requeueMedium = 10 * time.Second // waiting for cache / LoRA load
 	requeueLong   = 30 * time.Second // slow operations, default requeue
+	// runtimeLoadRetryBackoff suppresses duplicate runtime load requests for a
+	// short window while the runtime is still surfacing model health.
+	runtimeLoadRetryBackoff = 20 * time.Second
 
 	// httpClientTimeout is the default timeout for outbound HTTP calls
 	// made by controllers (e.g., runtime API, LoRA adapter loading).

@@ -158,6 +158,14 @@ func (r *ModelReconciler) reconcileViaRuntime(
 	}
 
 	if status == nil {
+		if shouldDeferRuntimeLoadRetry(model) {
+			log.V(1).Info("Deferring duplicate runtime load request while prior load is still settling",
+				"model", model.Name,
+				"backoff", runtimeLoadRetryBackoff,
+			)
+			return ctrl.Result{RequeueAfter: requeueShort}, nil
+		}
+
 		// Model not loaded — send load request.
 		if err := r.loadViaRuntime(ctx, model, b, gpuVendor, endpoint, gpuArch); err != nil {
 			log.Error(err, "Failed to load model via runtime")
@@ -236,6 +244,28 @@ func isTransientRuntimeLoadError(err error) bool {
 	return strings.Contains(msg, "connection refused") ||
 		strings.Contains(msg, "Client.Timeout exceeded") ||
 		strings.Contains(msg, "EOF")
+}
+
+func shouldDeferRuntimeLoadRetry(model *aiv1alpha2.Model) bool {
+	if model == nil || model.Status.Phase != aiv1alpha2.ModelPhaseLoading {
+		return false
+	}
+
+	ready := modelCondition(model.Status.Conditions, aiv1alpha2.ConditionModelReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse {
+		return false
+	}
+	if ready.ObservedGeneration != model.Generation {
+		return false
+	}
+	if ready.Reason != "RuntimeLoading" && ready.Reason != "RuntimeStarting" {
+		return false
+	}
+	if ready.LastTransitionTime.IsZero() {
+		return false
+	}
+
+	return time.Since(ready.LastTransitionTime.Time) < runtimeLoadRetryBackoff
 }
 
 func (r *ModelReconciler) updateRuntimeStatus(
