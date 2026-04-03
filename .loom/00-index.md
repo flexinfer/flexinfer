@@ -4,6 +4,17 @@
 
 - Workspace snapshot: `00-workspace-snapshot.md`
 - MCP inventory: `00-mcp-inventory.md`
+- Technical debt inventory (cycle 6): `tech-debt-inventory-cycle6.md`
+- Technical debt ranking (cycle 6): `tech-debt-priority-cycle6.md`
+- Technical debt plan (cycle 6): `tech-debt-plan-cycle6.md`
+- Research (mobile app + HUD polish, 2026-03-31): `70-research-mobile-hud-polish-2026-03-31.md`
+- Product spec (mobile app + HUD polish, 2026-03-31): `71-product-spec-mobile-hud-polish-2026-03-31.md`
+- Implementation plan (mobile app + HUD polish, 2026-03-31): `72-implementation-plan-mobile-hud-polish-2026-03-31.md`
+- Implementation plan (universal hooks GitOps first, 2026-03-25): `62-implementation-plan-universal-hooks-gitops-2026-03-25.md`
+- Implementation plan (planning baseline refresh, 2026-03-26): `63-implementation-plan-planning-baseline-refresh-2026-03-26.md`
+- Planning (next-gen skills, agents, orchestration, 2026-03-29): `64-planning-next-gen-skills-agents-orchestration-2026-03-29.md`
+- Technical debt plan (cycle 4): `tech-debt-plan-cycle4.md`
+- Technical debt plan (cycle 5): `tech-debt-plan-cycle5.md`
 - Research (developer setup flow, 2026-03-18): `19-research-developer-setup-flow-2026-03-18.md`
 - Product spec (developer setup flow, 2026-03-18): `23-product-spec-developer-setup-flow-2026-03-18.md`
 - Implementation plan (developer setup flow, 2026-03-18): `42-implementation-plan-developer-setup-flow-2026-03-18.md`
@@ -21,6 +32,35 @@
 - Prior HUD/TUI slice handoff: `55-ralph-slice-handoff-hud-tui-presence-2026-02-17.md`
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
+
+## Current Planning Addendum (2026-04-02)
+
+- Active planning slice: Cycle 6 technical debt execution, with HUD/runtime decomposition now leading the queue.
+- New planning docs:
+  - `tech-debt-inventory-cycle6.md`
+  - `tech-debt-priority-cycle6.md`
+  - `tech-debt-plan-cycle6.md`
+- Recent execution status:
+  - `DEBT-062` landed: race CI no longer pulls `cmd/mcp-orchestra` into the headerless `fi-accel` lane
+  - `DEBT-063` landed: iOS SwiftPM tests run cleanly again and the generated Xcode project now includes `AttentionLanesCard.swift`
+  - `DEBT-064` is the next active slice: reduce `internal/hud/app.go` to a small composition root by moving startup wiring into focused helpers
+- Execution stance for this wave:
+  - keep structural changes mostly mechanical first
+  - preserve HUD startup flags, route behavior, and monitor ordering while splitting code
+  - continue verifying every slice with real local checks plus GitLab CI before merge
+
+## Current Planning Addendum (2026-03-31)
+
+- Active planning slice: UX and functionality polish across the iOS companion app and the HUD web dashboard.
+- New planning docs:
+  - `70-research-mobile-hud-polish-2026-03-31.md`
+  - `71-product-spec-mobile-hud-polish-2026-03-31.md`
+  - `72-implementation-plan-mobile-hud-polish-2026-03-31.md`
+- Planning stance for this slice:
+  - prioritize information architecture, operator flow clarity, and shared interaction patterns over adding net-new risky controls
+  - keep mobile mutations scoped to already-approved high-confidence flows unless the product spec explicitly re-baselines that boundary
+  - use direct file reads for HUD/mobile frontend evidence because `codebase_memory` still has Go-only coverage in this session
+  - 2026-04-01 continuation slice landed on top of this plan: backend attention-lane contract enrichment, iOS dashboard "Next Attention" surfacing, and a more action-oriented HUD overview rail
 
 ## Current Planning Addendum (2026-03-18)
 

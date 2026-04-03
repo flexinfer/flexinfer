@@ -1,0 +1,67 @@
+{
+  "items": [
+    {
+      "id": "DEBT-062",
+      "title": "Stabilize race CI for fi-accel-linked orchestration packages",
+      "component": "cmd/mcp-orchestra + CI test:race",
+      "impact": 4,
+      "risk_reduction": 5,
+      "drag_reduction": 4,
+      "effort": 2
+    },
+    {
+      "id": "DEBT-063",
+      "title": "Repair iOS SwiftPM mobile test harness",
+      "component": "apps/loom-companion-ios",
+      "impact": 4,
+      "risk_reduction": 4,
+      "drag_reduction": 4,
+      "effort": 3
+    },
+    {
+      "id": "DEBT-064",
+      "title": "Split HUD bootstrap and monitor wiring in app.go",
+      "component": "internal/hud/app.go",
+      "impact": 4,
+      "risk_reduction": 3,
+      "drag_reduction": 4,
+      "effort": 3
+    },
+    {
+      "id": "DEBT-065",
+      "title": "Reduce docs-guardrail false positives for generated/test artifacts",
+      "component": "scripts/ci/check_docs_guardrails.sh",
+      "impact": 3,
+      "risk_reduction": 2,
+      "drag_reduction": 4,
+      "effort": 2
+    },
+    {
+      "id": "DEBT-066",
+      "title": "Migrate largest remaining MCP servers onto mcpscaffold",
+      "component": "cmd/mcp-*",
+      "impact": 3,
+      "risk_reduction": 2,
+      "drag_reduction": 4,
+      "effort": 3
+    },
+    {
+      "id": "DEBT-067",
+      "title": "Split cmd_sync.go into generate, sync, pull, and backup slices",
+      "component": "cmd/loom/cmd_sync.go",
+      "impact": 3,
+      "risk_reduction": 2,
+      "drag_reduction": 3,
+      "effort": 3
+    },
+    {
+      "id": "DEBT-068",
+      "title": "Decompose session lifecycle service in svc_sessions.go",
+      "component": "pkg/agentcontext/svc_sessions.go",
+      "impact": 3,
+      "risk_reduction": 3,
+      "drag_reduction": 3,
+      "effort": 3
+    }
+  ]
+}

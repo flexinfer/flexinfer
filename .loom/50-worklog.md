@@ -1,5 +1,59 @@
 # Worklog
 
+## 2026-04-02 (session 29) — Cycle 6 debt planning and feedback-loop repairs
+
+- What changed:
+  - Added the Cycle 6 technical debt artifact set: inventory, ranking, scoring input, and remediation plan.
+  - Closed `DEBT-062` by tightening the `test:race` package boundary so `cmd/mcp-orchestra` no longer drags `fi-accel` headers into the headerless CI lane.
+  - Closed `DEBT-063` by removing the app executable target from SwiftPM package tests, updating stale mobile test fixtures/expectations, and resyncing the generated Xcode project so `AttentionLanesCard.swift` is compiled by the app target.
+  - Verified the iOS harness fix all the way through branch CI and merged it as MR `!145`.
+- Why:
+  - Cycle 6 started with feedback-loop debt because broken CI and blocked mobile package tests were slowing every active HUD/mobile slice behind them.
+  - Landing the first two items clears the path for the next structural HUD runtime cleanup.
+- Verification:
+  - `go test` / targeted race package selection checks for the `DEBT-062` branch
+  - `swift test --package-path apps/loom-companion-ios`
+  - `xcodebuild -project apps/loom-companion-ios/LoomCompanion.xcodeproj -scheme LoomCompanion -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 17' CODE_SIGNING_ALLOWED=NO build`
+  - GitLab pipeline `#6168` on MR `!145`
+- Sources:
+  - [S1] `.loom/tech-debt-inventory-cycle6.md`
+  - [S2] `.loom/tech-debt-priority-cycle6.md`
+  - [S3] `.loom/tech-debt-plan-cycle6.md`
+  - [S4] `.gitlab-ci.yml`
+  - [S5] `apps/loom-companion-ios/Package.swift`
+  - [S6] `apps/loom-companion-ios/Tests/LoomCompanionKitTests/MockAPIClient.swift`
+  - [S7] `apps/loom-companion-ios/Tests/LoomCompanionKitTests/Models/DashboardDataTests.swift`
+  - [S8] `apps/loom-companion-ios/Tests/LoomCompanionKitTests/ViewModels/OpsViewModelTests.swift`
+  - [S9] `apps/loom-companion-ios/LoomCompanion.xcodeproj/project.pbxproj`
+
+## 2026-04-01 (session 28) — Mobile HUD attention-lane continuation
+
+- What changed:
+  - Refreshed `.loom/00-workspace-snapshot.md` with the current repo state and kept the loom-mode inventory baseline from `.loom/00-mcp-inventory.md`.
+  - Extended the mobile dashboard coordination payload so attention lanes now carry `label`, `route`, and `severity` metadata in addition to `type`, `id`, `scope`, and `summary`.
+  - Added `DashboardCoordination` and `DashboardAttentionLane` decoding to `LoomCompanionKit`, plus fixture/test coverage for the new dashboard payload shape.
+  - Added a new iOS `AttentionLanesCard` and wired `DashboardView`/`ContentView` so dashboard quick actions can jump operators directly into `People` or `Work`.
+  - Refocused the HUD overview hero rail to surface action-first attention lanes before the older static quick links, while keeping the quick links available as secondary chips.
+  - Updated the mobile dashboard contract golden file to freeze the richer attention-lane element shape.
+- Why:
+  - The backend already had shared coordination signals, but the mobile dashboard and HUD landing surface were not both using that vocabulary to answer "what should I open next?"
+  - This slice improves cross-surface coherence without expanding risky mutation scope or taking on a wide refactor.
+- Verification:
+  - `python /Users/cblevins/.codex/skills/plan-loom-core/scripts/workspace_snapshot.py --root .`
+  - `go test ./internal/contracts/... ./internal/hud/... -count=1`
+  - `pnpm --dir internal/hud/frontend build`
+  - `swift build --package-path apps/loom-companion-ios --target LoomCompanionKit`
+  - `swift test --package-path apps/loom-companion-ios` — blocked by the package-wide `LoomCompanion` executable target importing `UIKit` from `Sources/LoomCompanion/AppDelegate.swift` under the macOS SwiftPM runner in this environment
+- Sources:
+  - [S1] `.loom/72-implementation-plan-mobile-hud-polish-2026-03-31.md`
+  - [S2] `internal/hud/domain/mobile/helpers.go:323`
+  - [S3] `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/DashboardData.swift:15`
+  - [S4] `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/AttentionLanesCard.swift:4`
+  - [S5] `apps/loom-companion-ios/Sources/LoomCompanion/Views/Dashboard/DashboardView.swift:16`
+  - [S6] `apps/loom-companion-ios/Sources/LoomCompanion/ContentView.swift:125`
+  - [S7] `internal/hud/frontend/src/lib/components/OverviewPanel.svelte:203`
+  - [S8] `internal/contracts/testdata/mobile_dashboard.golden:1`
+
 ## 2026-03-16 (session 27) — Synthetic bulk MCP server operations
 
 - What changed:
