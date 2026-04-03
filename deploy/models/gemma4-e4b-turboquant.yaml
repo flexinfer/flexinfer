@@ -1,0 +1,65 @@
+# Gemma 4 E4B via vLLM on AMD gfx1100.
+#
+# Source: staged on llm-models-nfs at google/gemma-4-E4B-it, then copied into
+# node-local cache for the runtime-managed service on cblevins-7900xtx.
+#
+# Runtime: unified runtime with the experimental TurboQuant-capable image.
+# Activation is per-model through attentionBackend=CUSTOM.
+#
+# Sized for real interactive use on the 7900 XTX runtime-managed path.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gemma4-e4b-turboquant
+  namespace: flexinfer-system
+spec:
+  backend: vllm
+  source: pvc://llm-models-nfs/google/gemma-4-E4B-it
+  cache:
+    strategy: Local
+  gpu:
+    vendor: amd
+    count: 1
+    vramEstimateMB: 18000
+    shared: 7900xtx-textgen
+    priority: 200
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 15m
+  config:
+    dtype: "half"
+    maxModelLen: 16384
+    gpuMemoryUtilization: "0.80"
+    maxNumSeqs: 1
+    enforceEager: true
+    trustRemoteCode: true
+    attentionBackend: CUSTOM
+    servedModelName: gemma4-e4b-turboquant
+    enablePrefixCaching: false
+    maxNumBatchedTokens: 2048
+    disableLogStats: false
+    warmPolicy: primary
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 24Gi
+  serviceLabels:
+    - gemma4-e4b-turboquant
+    - gemma4-e4b
+  litellm:
+    enabled: true
+    servedModelName: gemma4-e4b-turboquant
+    aliases:
+      - gemma4-e4b
+      - gemma4-e4b-chat
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

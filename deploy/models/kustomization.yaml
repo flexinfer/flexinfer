@@ -3,10 +3,12 @@ kind: Kustomization
 namespace: flexinfer-system
 resources:
   # === cblevins-7900xtx (24 GB gfx1100) — primary orchestrator ===
-  - qwen35-27b-opus-distill.yaml    # vLLM, GPTQ INT4, ~17 GiB VRAM, always-on
+  # qwen35-27b-opus-distill.yaml and qwen35-9b.yaml are intentionally disabled
+  # for the Gemma4 rollout. Keep the manifests on disk for rollback/reference,
+  # but do not reconcile them here.
+  - gemma4-e4b-turboquant.yaml      # vLLM + TurboQuant experiment, always-on
 
   # === cblevins-5930k (24 GB gfx1100) — subagent + code gen (shared group) ===
-  - qwen35-9b.yaml                  # vLLM, GPTQ INT4, ~7.5 GiB VRAM, always-on (priority 200)
   - omnicoder-9b.yaml               # vLLM, GPTQ INT4, ~7.2 GiB VRAM, on-demand (priority 100)
 
   # === cblevins-radeonvii (16 GB gfx906) — image editing / inpainting ===
