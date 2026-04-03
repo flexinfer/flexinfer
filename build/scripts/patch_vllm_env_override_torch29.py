@@ -13,6 +13,8 @@ This currently applies six source patches:
    for Gemma4 instead of being silently overridden back to quantized KV mode.
 6. Backend selection fix so Gemma4 models keep TRITON attention when an
    explicit non-quantized KV cache dtype is requested.
+7. TRITON reshape/cache fix so explicit float16/bfloat16 KV cache dtypes are
+   treated as valid non-quantized modes during cudagraph capture.
 """
 
 from __future__ import annotations
@@ -314,6 +316,31 @@ ATTENTION_BACKEND_NEW = """                kv_cache_dtype,
             )
 """
 
+TRITON_RESHAPE_OLD = """    assert kv_cache_dtype == "auto" or is_quantized_kv_cache(kv_cache_dtype), (
+        f"unsupported kv_cache_dtype (str), got {kv_cache_dtype}."
+    )
+    kv_cache_torch_dtype = (
+        current_platform.fp8_dtype()
+        if is_quantized_kv_cache(kv_cache_dtype)
+        else key_cache.dtype
+    )
+"""
+
+TRITON_RESHAPE_NEW = """    nonquantized_kv_cache_dtype = kv_cache_dtype in {
+        "auto",
+        "float16",
+        "bfloat16",
+    }
+    assert nonquantized_kv_cache_dtype or is_quantized_kv_cache(kv_cache_dtype), (
+        f"unsupported kv_cache_dtype (str), got {kv_cache_dtype}."
+    )
+    kv_cache_torch_dtype = (
+        current_platform.fp8_dtype()
+        if is_quantized_kv_cache(kv_cache_dtype)
+        else key_cache.dtype
+    )
+"""
+
 
 def _replace_once(path: pathlib.Path, old: str, new: str) -> None:
     text = path.read_text()
@@ -337,6 +364,7 @@ def main() -> int:
     kv_sharing = root / "vllm" / "v1" / "worker" / "utils.py"
     gpu_model_runner = root / "vllm" / "v1" / "worker" / "gpu_model_runner.py"
     attention = root / "vllm" / "model_executor" / "layers" / "attention" / "attention.py"
+    triton_reshape = root / "vllm" / "v1" / "attention" / "ops" / "triton_reshape_and_cache_flash.py"
 
     _replace_once(env_override, ENV_OVERRIDE_OLD, ENV_OVERRIDE_NEW)
     _replace_once(kv_sharing, KV_SHARING_OLD, KV_SHARING_NEW)
@@ -363,6 +391,7 @@ def main() -> int:
     )
     _replace_once(attention, ATTENTION_OVERRIDE_OLD, ATTENTION_OVERRIDE_NEW)
     _replace_once(attention, ATTENTION_BACKEND_OLD, ATTENTION_BACKEND_NEW)
+    _replace_once(triton_reshape, TRITON_RESHAPE_OLD, TRITON_RESHAPE_NEW)
     return 0
 
 
