@@ -32,7 +32,7 @@ spec:
   config:
     dtype: "half"
     kvCacheDtype: float16
-    maxModelLen: 4096
+    maxModelLen: 16384
     gpuMemoryUtilization: "0.92"
     maxNumSeqs: 1
     trustRemoteCode: true
