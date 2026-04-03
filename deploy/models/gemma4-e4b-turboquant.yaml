@@ -4,8 +4,8 @@
 # node-local cache for the runtime-managed service on cblevins-7900xtx.
 #
 # Runtime: unified runtime with the experimental TurboQuant-capable image.
-# Live serving uses vLLM's native Gemma4 backend selection so heterogeneous
-# 256/512 head sizes land on a supported ROCm attention backend.
+# Activation is per-model through attentionBackend=CUSTOM. Upstream Gemma4's
+# native ROCm path still trips a KV-cache reshape failure on this stack.
 #
 # Sized for real interactive use on the 7900 XTX runtime-managed path.
 apiVersion: ai.flexinfer/v1alpha2
@@ -35,6 +35,7 @@ spec:
     gpuMemoryUtilization: "0.80"
     maxNumSeqs: 1
     trustRemoteCode: true
+    attentionBackend: CUSTOM
     servedModelName: gemma4-e4b-turboquant
     enableToolCalling: true
     toolCallParser: gemma4
