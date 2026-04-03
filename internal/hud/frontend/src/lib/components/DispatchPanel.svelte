@@ -1,14 +1,26 @@
 <script>
   import { coordinationStore } from '../stores/coordination.svelte.ts';
   import { presenceActionsStore } from '../stores/presenceActions.svelte.ts';
+  import { mergeQueueStore } from '../stores/mergeQueue.svelte.ts';
+  import { orchestrationStore } from '../stores/orchestration.svelte.ts';
   import PanelShell from './shared/PanelShell.svelte';
   import EmptyState from './shared/EmptyState.svelte';
   import MetricCard from './shared/MetricCard.svelte';
   import DispatchTaskModal from './presence/DispatchTaskModal.svelte';
+  import RecommendationsSection from './dispatch/RecommendationsSection.svelte';
+  import MergeQueueSection from './dispatch/MergeQueueSection.svelte';
+  import FileConflictsSection from './dispatch/FileConflictsSection.svelte';
+  import DispatchHistorySection from './dispatch/DispatchHistorySection.svelte';
 
   $effect(() => {
     coordinationStore.startPolling(15000);
-    return () => { coordinationStore.stopPolling(); };
+    mergeQueueStore.startPolling(30000);
+    orchestrationStore.startPolling(30000);
+    return () => {
+      coordinationStore.stopPolling();
+      mergeQueueStore.stopPolling();
+      orchestrationStore.stopPolling();
+    };
   });
 
   let summary = $derived(coordinationStore.summary);
@@ -17,6 +29,11 @@
   let namespaces = $derived(coordinationStore.riskyNamespaces);
   let relations = $derived(coordinationStore.relations);
   let attentionAgents = $derived(coordinationStore.topAttentionAgents);
+
+  let recsCollapsed = $state(!orchestrationStore.hasRecommendations);
+  let mergeCollapsed = $state(mergeQueueStore.totalCount === 0);
+  let conflictsCollapsed = $state(!mergeQueueStore.hasConflicts);
+  let historyCollapsed = $state(true);
 
   let sortKey = $state('attention');
   let sortDir = $state('desc');
@@ -94,11 +111,15 @@
         <MetricCard label="X-Agent Blockers" value={summary.cross_agent_blockers} color={summary.cross_agent_blockers > 0 ? 'var(--warning)' : 'var(--fg-primary)'} />
         <MetricCard label="Orphan Tasks" value={summary.orphan_tasks} />
         <MetricCard label="Idle Holders" value={summary.idle_claim_holders} color={summary.idle_claim_holders > 0 ? 'var(--warning)' : 'var(--fg-primary)'} />
+        <MetricCard label="Merge Ready" value={summary.merge_ready_branches ?? 0} color={(summary.merge_ready_branches ?? 0) > 0 ? 'var(--success)' : 'var(--fg-primary)'} />
+        <MetricCard label="System Load" value={orchestrationStore.systemLoadPct} color={orchestrationStore.systemLoad > 0.8 ? 'var(--error)' : orchestrationStore.systemLoad > 0.5 ? 'var(--warning)' : 'var(--fg-primary)'} />
       </div>
     </div>
   {/snippet}
 
   <div class="dispatch-layout">
+    <RecommendationsSection bind:collapsed={recsCollapsed} />
+
     <section class="dispatch-section">
       <div class="section-head">
         <h3 class="section-title">Agent roster</h3>
@@ -122,6 +143,7 @@
                 Blockers {sortKey === 'blockers' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
               </th>
               <th>Claims</th>
+              <th>Merge</th>
               <th class="sortable" onclick={() => handleSort('attention')}>
                 Attention {sortKey === 'attention' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
               </th>
@@ -157,6 +179,15 @@
                   {agent.claim_count}
                   {#if agent.conflict_files > 0}
                     <span class="conflict-badge">{agent.conflict_files} conflict</span>
+                  {/if}
+                </td>
+                <td class="cell-num">
+                  {#if agent.merge_ready}
+                    <span class="merge-ready-badge">{'\u2713'} ready</span>
+                  {:else if agent.merge_blockers?.length}
+                    <span class="merge-blocked-badge">{agent.merge_blockers.length} blocker{agent.merge_blockers.length === 1 ? '' : 's'}</span>
+                  {:else}
+                    \u2014
                   {/if}
                 </td>
                 <td>
@@ -237,6 +268,10 @@
         />
       {/if}
     </section>
+
+    <MergeQueueSection bind:collapsed={mergeCollapsed} />
+    <FileConflictsSection bind:collapsed={conflictsCollapsed} />
+    <DispatchHistorySection bind:collapsed={historyCollapsed} />
   </div>
 </PanelShell>
 
@@ -430,6 +465,24 @@
   .conflict-badge {
     background: rgba(var(--error-rgb, 255, 85, 85), 0.15);
     color: var(--error);
+  }
+
+  .merge-ready-badge {
+    display: inline-block;
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: var(--radius-sm);
+    background: rgba(var(--success-rgb, 80, 200, 120), 0.15);
+    color: var(--success);
+  }
+
+  .merge-blocked-badge {
+    display: inline-block;
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: var(--radius-sm);
+    background: rgba(var(--warning-rgb, 255, 170, 51), 0.15);
+    color: var(--warning);
   }
 
   .attention-indicator {

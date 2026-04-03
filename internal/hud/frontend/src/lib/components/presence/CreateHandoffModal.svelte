@@ -16,6 +16,26 @@
     <label class="form-label" for="handoff-context">Additional Details</label>
     <textarea id="handoff-context" bind:value={presenceActionsStore.newHandoffContext} placeholder="Relevant findings, constraints, and follow-up notes..." class="form-input" rows="4"></textarea>
   </div>
+  <div class="form-group">
+    <label class="form-label" for="handoff-type">Handoff Type</label>
+    <div class="type-selector">
+      <button class="type-btn" class:active={presenceActionsStore.newHandoffType === 'summary_only'} onclick={() => presenceActionsStore.newHandoffType = 'summary_only'}>Summary Only</button>
+      <button class="type-btn" class:active={presenceActionsStore.newHandoffType === 'selective'} onclick={() => presenceActionsStore.newHandoffType = 'selective'}>Selective</button>
+      <button class="type-btn" class:active={presenceActionsStore.newHandoffType === 'full'} onclick={() => presenceActionsStore.newHandoffType = 'full'}>Full</button>
+    </div>
+  </div>
+  {#if presenceActionsStore.newHandoffType === 'full'}
+    <div class="form-group">
+      <label class="form-label" for="handoff-token-budget">Token Budget</label>
+      <input id="handoff-token-budget" type="number" bind:value={presenceActionsStore.newHandoffTokenBudget} placeholder="Max tokens (0 = unlimited)" class="form-input" min="0" />
+    </div>
+  {/if}
+  {#if presenceActionsStore.newHandoffType === 'selective'}
+    <div class="form-group">
+      <label class="form-label" for="handoff-entry-ids">Entry IDs (comma-separated)</label>
+      <input id="handoff-entry-ids" type="text" value={presenceActionsStore.newHandoffEntryIds.join(', ')} oninput={(e) => presenceActionsStore.newHandoffEntryIds = e.target.value.split(',').map(s => s.trim()).filter(Boolean)} placeholder="entry-1, entry-2, ..." class="form-input" />
+    </div>
+  {/if}
   <div class="form-actions">
     <button class="btn btn-ghost" onclick={() => presenceActionsStore.closeHandoffModal()}>Cancel</button>
     <button class="btn btn-primary" onclick={() => presenceActionsStore.submitHandoff()} disabled={presenceActionsStore.creatingHandoff || !presenceActionsStore.newHandoffTo.trim() || !presenceActionsStore.newHandoffSummary.trim()}>
@@ -46,5 +66,28 @@
     justify-content: flex-end;
     gap: 8px;
     margin-top: 16px;
+  }
+  .type-selector {
+    display: flex;
+    gap: 4px;
+  }
+  .type-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--fg-secondary);
+    cursor: pointer;
+    transition: all 100ms;
+  }
+  .type-btn.active {
+    border-color: var(--accent);
+    background: rgba(var(--accent-rgb, 100, 160, 255), 0.12);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .type-btn:hover:not(.active) {
+    border-color: var(--fg-muted);
   }
 </style>

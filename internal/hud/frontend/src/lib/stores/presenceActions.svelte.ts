@@ -22,6 +22,9 @@ class PresenceActionsStore {
   newHandoffTo = $state('');
   newHandoffSummary = $state('');
   newHandoffContext = $state('');
+  newHandoffType = $state<'full' | 'selective' | 'summary_only'>('summary_only');
+  newHandoffEntryIds = $state<string[]>([]);
+  newHandoffTokenBudget = $state(0);
   creatingHandoff = $state(false);
 
   showDispatchModal = $state(false);
@@ -74,18 +77,28 @@ class PresenceActionsStore {
 
     this.creatingHandoff = true;
     try {
-      await createHandoff({
+      const payload: Parameters<typeof createHandoff>[0] = {
         target_agent_id: this.newHandoffTo.trim(),
         instructions: this.newHandoffContext.trim()
           ? `${this.newHandoffSummary.trim()}\n\n${this.newHandoffContext.trim()}`
           : this.newHandoffSummary.trim(),
-        handoff_type: 'summary_only',
-      });
+        handoff_type: this.newHandoffType,
+      };
+      if (this.newHandoffType === 'selective' && this.newHandoffEntryIds.length > 0) {
+        payload.entry_ids = this.newHandoffEntryIds;
+      }
+      if (this.newHandoffType === 'full' && this.newHandoffTokenBudget > 0) {
+        payload.token_budget = this.newHandoffTokenBudget;
+      }
+      await createHandoff(payload);
       toastStore.success('Handoff created');
       this.showHandoffModal = false;
       this.newHandoffTo = '';
       this.newHandoffSummary = '';
       this.newHandoffContext = '';
+      this.newHandoffType = 'summary_only';
+      this.newHandoffEntryIds = [];
+      this.newHandoffTokenBudget = 0;
       await this.refreshHandoffs();
     } catch {
       toastStore.error('Failed to create handoff');
@@ -110,6 +123,13 @@ class PresenceActionsStore {
 
   onOpenDispatch(agentId: string): void {
     this.dispatchTargetAgent = agentId;
+    this.showDispatchModal = true;
+  }
+
+  onOpenDispatchWithDefaults(agentId: string, title: string, priority?: string): void {
+    this.dispatchTargetAgent = agentId;
+    this.dispatchTitle = title;
+    if (priority) this.dispatchPriority = priority;
     this.showDispatchModal = true;
   }
 
