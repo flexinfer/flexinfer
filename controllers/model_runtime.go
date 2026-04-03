@@ -18,13 +18,16 @@ package controllers
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
+	"net"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -159,8 +162,13 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		if err := r.loadViaRuntime(ctx, model, b, gpuVendor, endpoint, gpuArch); err != nil {
 			log.Error(err, "Failed to load model via runtime")
 			r.Recorder.Event(model, corev1.EventTypeWarning, "RuntimeLoadFailed", err.Error())
-			model.Status.Phase = aiv1alpha2.ModelPhaseFailed
-			if err := r.Status().Update(ctx, model); err != nil {
+			if isTransientRuntimeLoadError(err) {
+				if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhaseLoading, false, "RuntimeStarting", "Runtime pod is starting; retrying model load"); err != nil {
+					log.Error(err, "Failed to update phase after transient runtime load failure")
+				}
+				return ctrl.Result{RequeueAfter: requeueShort}, nil
+			}
+			if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhaseFailed, false, "RuntimeLoadFailed", err.Error()); err != nil {
 				log.Error(err, "failed to update Model status", "model", model.Name)
 			}
 			return ctrl.Result{RequeueAfter: requeueAfter}, nil
@@ -213,6 +221,23 @@ func (r *ModelReconciler) reconcileViaRuntime(
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
+func isTransientRuntimeLoadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if stderrors.Is(err, context.DeadlineExceeded) || stderrors.Is(err, context.Canceled) {
+		return true
+	}
+	var netErr net.Error
+	if stderrors.As(err, &netErr) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "Client.Timeout exceeded") ||
+		strings.Contains(msg, "EOF")
+}
+
 func (r *ModelReconciler) updateRuntimeStatus(
 	ctx context.Context,
 	model *aiv1alpha2.Model,
@@ -261,13 +286,13 @@ func (r *ModelReconciler) deleteLegacyDeploymentForRuntime(ctx context.Context, 
 	deployment := &appsv1.Deployment{}
 	key := types.NamespacedName{Name: model.Name, Namespace: model.Namespace}
 	if err := r.Get(ctx, key, deployment); err != nil {
-		if errors.IsNotFound(err) {
+		if k8serrors.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("getting legacy deployment: %w", err)
 	}
 
-	if err := r.Delete(ctx, deployment); err != nil && !errors.IsNotFound(err) {
+	if err := r.Delete(ctx, deployment); err != nil && !k8serrors.IsNotFound(err) {
 		return fmt.Errorf("deleting legacy deployment: %w", err)
 	}
 	log.Info("Deleted legacy Deployment for runtime-managed model", "deployment", deployment.Name)
@@ -329,7 +354,7 @@ func (r *ModelReconciler) ensureRuntimeEndpoints(ctx context.Context, model *aiv
 
 	existing := &corev1.Endpoints{}
 	err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, existing)
-	if errors.IsNotFound(err) {
+	if k8serrors.IsNotFound(err) {
 		log.Info("Creating runtime Endpoints", "name", model.Name, "podIP", podIP, "port", port)
 		return r.Create(ctx, desired)
 	}
