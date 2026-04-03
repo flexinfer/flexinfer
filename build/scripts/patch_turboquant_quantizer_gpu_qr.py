@@ -838,7 +838,6 @@ REGISTER_OLD = """    # Monkey-patch Attention.get_kv_cache_spec to return TQ4 s
 
 REGISTER_NEW = """    # Monkey-patch Attention.get_kv_cache_spec to return TQ4 spec
     from vllm.model_executor.layers.attention.attention import Attention
-    from vllm.platforms.interface import AttentionBackendEnum
     from vllm.v1.kv_cache_interface import ChunkedLocalAttentionSpec, SlidingWindowSpec
 
     if _original_get_kv_cache_spec is None:
