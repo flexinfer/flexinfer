@@ -142,6 +142,21 @@ GPU_MODEL_RUNNER_RESHAPE_NEW = """                    kv_cache_shape = attn_back
                     )
 """
 
+GPU_MODEL_RUNNER_SHARED_SKIP_OLD = """            for layer_name in group.layer_names:
+                if layer_name in self.runner_only_attn_layers:
+                    continue
+                raw_tensor = kv_cache_raw_tensors[layer_name]
+"""
+
+GPU_MODEL_RUNNER_SHARED_SKIP_NEW = """            for layer_name in group.layer_names:
+                if (
+                    layer_name in self.runner_only_attn_layers
+                    or layer_name in self.shared_kv_cache_layers
+                ):
+                    continue
+                raw_tensor = kv_cache_raw_tensors[layer_name]
+"""
+
 GPU_MODEL_RUNNER_PADDED_RESHAPE_OLD = """                    )
                     dtype = kv_cache_spec.dtype
                     try:
@@ -265,6 +280,11 @@ def main() -> int:
         gpu_model_runner,
         GPU_MODEL_RUNNER_RESHAPE_OLD,
         GPU_MODEL_RUNNER_RESHAPE_NEW,
+    )
+    _replace_once(
+        gpu_model_runner,
+        GPU_MODEL_RUNNER_SHARED_SKIP_OLD,
+        GPU_MODEL_RUNNER_SHARED_SKIP_NEW,
     )
     _replace_once(
         gpu_model_runner,
