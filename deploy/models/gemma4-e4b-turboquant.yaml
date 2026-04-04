@@ -55,16 +55,14 @@ spec:
       cpu: "8"
       memory: 24Gi
   serviceLabels:
-    - gemma4-e4b-fast
     - gemma4-e4b
-    - gemma4-e4b-turboquant
+    - gemma4-e4b-fast
   litellm:
     enabled: true
     servedModelName: gemma4-e4b-fast
     aliases:
       - gemma4-e4b
       - gemma4-e4b-fast
-      - gemma4-e4b-turboquant
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"
