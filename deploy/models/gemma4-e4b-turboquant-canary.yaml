@@ -29,7 +29,7 @@ spec:
     kvCacheDtype: float16
     kvCacheCodec: turboquant
     maxModelLen: 32768
-    gpuMemoryUtilization: "0.92"
+    gpuMemoryUtilization: "0.86"
     maxNumSeqs: 1
     maxNumBatchedTokens: 256
     trustRemoteCode: true
