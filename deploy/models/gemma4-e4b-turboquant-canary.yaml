@@ -1,8 +1,8 @@
 # Gemma 4 E4B via vLLM CUSTOM attention on AMD gfx1100.
 #
-# This is the managed long-context canary for the TurboQuant path on the
+# This is the managed long-context profile for the TurboQuant path on the
 # unified runtime. It stays scale-to-zero until requested so the stable
-# TRITON-backed Gemma service remains the default serving path.
+# TRITON-backed fast profile remains the default serving path.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -51,13 +51,11 @@ spec:
       memory: 24Gi
   serviceLabels:
     - gemma4-e4b-turboquant-canary
-    - gemma4-e4b-canary
+    - gemma4-e4b-long
   litellm:
     enabled: true
     servedModelName: gemma4-e4b-turboquant-canary
     aliases:
-      - gemma4-e4b-canary
-      - gemma4-e4b-tq4
       - gemma4-e4b-long
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"

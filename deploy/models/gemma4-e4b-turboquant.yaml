@@ -7,7 +7,7 @@
 # The managed path is currently pinned to the stable TRITON KV-cache flow while
 # TurboQuant-on-ROCm remains experimental in the runtime image.
 #
-# Sized conservatively for the stable managed path on the 7900 XTX.
+# Stable fast profile on the 7900 XTX.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -57,12 +57,13 @@ spec:
   serviceLabels:
     - gemma4-e4b-turboquant
     - gemma4-e4b
+    - gemma4-e4b-fast
   litellm:
     enabled: true
     servedModelName: gemma4-e4b-turboquant
     aliases:
       - gemma4-e4b
-      - gemma4-e4b-chat
+      - gemma4-e4b-fast
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"
