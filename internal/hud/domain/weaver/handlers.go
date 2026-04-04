@@ -83,8 +83,18 @@ func (d *WeaverDomain) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 
-	// Derive metrics from history.
-	raw, err := br.Call("loom/weaver/history", nil)
+	// Try lifetime metrics endpoint first.
+	raw, err := br.Call("loom/weaver/metrics", nil)
+	if err == nil {
+		var metrics map[string]any
+		if json.Unmarshal(raw, &metrics) == nil {
+			d.deps.WriteJSON(w, http.StatusOK, metrics)
+			return
+		}
+	}
+
+	// Fallback: derive from history.
+	raw, err = br.Call("loom/weaver/history", nil)
 	if err != nil {
 		d.deps.WriteJSON(w, http.StatusOK, emptyMetrics())
 		return

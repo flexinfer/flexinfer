@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -51,6 +52,7 @@ const maxHistoryEntries = 100
 // QueryHistoryEntry records a completed orchestrated query for HUD display.
 type QueryHistoryEntry struct {
 	Timestamp   time.Time `json:"timestamp"`
+	QueryID     string    `json:"query_id"`
 	Query       string    `json:"query"`
 	Domains     []string  `json:"domains"`
 	Status      string    `json:"status"`
@@ -105,14 +107,27 @@ func (r *Router) Registry() *DomainRegistry {
 	return r.registry
 }
 
+// MetricsSummary returns lifetime metrics for HUD display.
+func (r *Router) MetricsSummary() map[string]any {
+	if r.metrics == nil {
+		return nil
+	}
+	return r.metrics.Summary()
+}
+
 // Query executes an orchestrated query, optionally classifying the domain first.
 func (r *Router) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
 	start := time.Now()
+	queryID := uuid.New().String()[:8]
+	qlog := r.logger.With("query_id", queryID)
 
 	if r.tracer != nil {
 		var span trace.Span
 		ctx, span = r.tracer.Start(ctx, "weaver.query",
-			trace.WithAttributes(attribute.String("query", req.Query)),
+			trace.WithAttributes(
+				attribute.String("query", req.Query),
+				attribute.String("query_id", queryID),
+			),
 		)
 		defer func() {
 			span.SetAttributes(attribute.Int("domain_count", len(req.Domains)))
@@ -126,11 +141,11 @@ func (r *Router) Query(ctx context.Context, req QueryRequest) (QueryResult, erro
 
 	domains := req.Domains
 	if len(domains) == 0 {
-		classified, err := r.classify(ctx, req.Query)
+		classified, err := r.classify(ctx, req.Query, qlog)
 		if err != nil {
 			r.recordQuery(start, "error")
 			r.recordHistory(QueryHistoryEntry{
-				Timestamp: start, Query: req.Query, Domains: domains,
+				Timestamp: start, QueryID: queryID, Query: req.Query, Domains: domains,
 				Status: "error", LatencyMs: time.Since(start).Milliseconds(),
 			})
 			return QueryResult{}, fmt.Errorf("classify: %w", err)
@@ -141,7 +156,7 @@ func (r *Router) Query(ctx context.Context, req QueryRequest) (QueryResult, erro
 	if len(domains) == 0 {
 		r.recordQuery(start, "no_match")
 		r.recordHistory(QueryHistoryEntry{
-			Timestamp: start, Query: req.Query,
+			Timestamp: start, QueryID: queryID, Query: req.Query,
 			Status: "no_match", LatencyMs: time.Since(start).Milliseconds(),
 		})
 		return QueryResult{
@@ -150,11 +165,11 @@ func (r *Router) Query(ctx context.Context, req QueryRequest) (QueryResult, erro
 		}, nil
 	}
 
-	result, err := r.dispatch(ctx, domains, req)
+	result, err := r.dispatch(ctx, domains, req, qlog)
 	if err != nil {
 		r.recordQuery(start, "error")
 		r.recordHistory(QueryHistoryEntry{
-			Timestamp: start, Query: req.Query, Domains: domains,
+			Timestamp: start, QueryID: queryID, Query: req.Query, Domains: domains,
 			Status: "error", LatencyMs: time.Since(start).Milliseconds(),
 		})
 		return QueryResult{}, err
@@ -163,7 +178,7 @@ func (r *Router) Query(ctx context.Context, req QueryRequest) (QueryResult, erro
 	result.LatencyMs = time.Since(start).Milliseconds()
 	r.recordQuery(start, "ok")
 	r.recordHistory(QueryHistoryEntry{
-		Timestamp: start, Query: req.Query, Domains: domains,
+		Timestamp: start, QueryID: queryID, Query: req.Query, Domains: domains,
 		Status: "ok", LatencyMs: result.LatencyMs, TotalTokens: result.TotalTokens,
 	})
 	return result, nil
@@ -192,7 +207,7 @@ func (r *Router) Status() map[string]any {
 }
 
 // classify uses the router model to determine which domains to query.
-func (r *Router) classify(ctx context.Context, query string) ([]string, error) {
+func (r *Router) classify(ctx context.Context, query string, logger *slog.Logger) ([]string, error) {
 	var classifySpan trace.Span
 	if r.tracer != nil {
 		ctx, classifySpan = r.tracer.Start(ctx, "weaver.classify",
@@ -216,7 +231,7 @@ func (r *Router) classify(ctx context.Context, query string) ([]string, error) {
 		Domains []string `json:"domains"`
 	}
 	if err := json.Unmarshal([]byte(resp), &result); err != nil {
-		r.logger.Warn("failed to parse classification response", "response", resp, "error", err)
+		logger.Warn("failed to parse classification response", "response", resp, "error", err)
 		return nil, nil
 	}
 
@@ -232,12 +247,12 @@ func (r *Router) classify(ctx context.Context, query string) ([]string, error) {
 		classifySpan.SetAttributes(attribute.StringSlice("classified_domains", valid))
 	}
 
-	r.logger.Debug("classified query", "query", query, "domains", valid)
+	logger.Debug("classified query", "query", query, "domains", valid)
 	return valid, nil
 }
 
 // dispatch runs subagents for the specified domains in parallel.
-func (r *Router) dispatch(ctx context.Context, domains []string, req QueryRequest) (QueryResult, error) {
+func (r *Router) dispatch(ctx context.Context, domains []string, req QueryRequest, logger *slog.Logger) (QueryResult, error) {
 	if r.tracer != nil {
 		var span trace.Span
 		ctx, span = r.tracer.Start(ctx, "weaver.dispatch",
@@ -275,7 +290,7 @@ func (r *Router) dispatch(ctx context.Context, domains []string, req QueryReques
 			subCtx, cancel := context.WithTimeout(ctx, r.cfg.Timeout)
 			defer cancel()
 
-			dr := r.runSubAgent(subCtx, agent, req)
+			dr := r.runSubAgent(subCtx, agent, req, logger)
 
 			mu.Lock()
 			results[idx] = dr
@@ -296,7 +311,7 @@ func (r *Router) dispatch(ctx context.Context, domains []string, req QueryReques
 	}
 
 	// Synthesize if multiple domains returned results.
-	answer := r.synthesize(ctx, results, req.Query)
+	answer := r.synthesize(ctx, results, req.Query, logger)
 
 	return QueryResult{
 		Answer:        answer,
@@ -307,7 +322,7 @@ func (r *Router) dispatch(ctx context.Context, domains []string, req QueryReques
 }
 
 // runSubAgent executes the orchestration loop for a single domain.
-func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryRequest) DomainResult {
+func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryRequest, logger *slog.Logger) DomainResult {
 	start := time.Now()
 	domain := agent.Name
 
@@ -333,7 +348,7 @@ func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryReque
 		if estimatedIter > 0 && estimatedIter < maxIter {
 			maxIter = estimatedIter
 		}
-		r.logger.Debug("token budget adjusted iterations",
+		logger.Debug("token budget adjusted iterations",
 			"domain", domain,
 			"budget", agent.TokenBudget,
 			"max_iter", maxIter,
@@ -386,7 +401,7 @@ func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryReque
 	}
 
 	if err != nil {
-		r.logger.Warn("subagent failed", "domain", domain, "error", err, "latency_ms", latencyMs)
+		logger.Warn("subagent failed", "domain", domain, "error", err, "latency_ms", latencyMs)
 		return DomainResult{
 			Domain:    domain,
 			Error:     err.Error(),
@@ -404,7 +419,7 @@ func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryReque
 }
 
 // synthesize combines results from multiple domains into a single answer.
-func (r *Router) synthesize(ctx context.Context, results []DomainResult, query string) string {
+func (r *Router) synthesize(ctx context.Context, results []DomainResult, query string, logger *slog.Logger) string {
 	if r.tracer != nil {
 		var span trace.Span
 		ctx, span = r.tracer.Start(ctx, "weaver.synthesize",
@@ -442,7 +457,7 @@ func (r *Router) synthesize(ctx context.Context, results []DomainResult, query s
 
 	synth, err := r.client.CompleteSimple(synthCtx, r.cfg.RouterModel, prompt, r.applyModelPrefix(r.cfg.RouterModel, userMsg), 1024)
 	if err != nil {
-		r.logger.Warn("synthesis failed, returning concatenated results", "error", err)
+		logger.Warn("synthesis failed, returning concatenated results", "error", err)
 		return input
 	}
 	return synth
@@ -465,6 +480,10 @@ func (r *Router) recordHistory(entry QueryHistoryEntry) {
 	r.history = append(r.history, entry)
 	if len(r.history) > maxHistoryEntries {
 		r.history = r.history[len(r.history)-maxHistoryEntries:]
+	}
+	// Update lifetime metrics.
+	if r.metrics != nil {
+		r.metrics.RecordQuery(entry.Status, entry.LatencyMs, entry.TotalTokens)
 	}
 }
 
