@@ -37,7 +37,7 @@ spec:
     maxNumSeqs: 1
     trustRemoteCode: true
     attentionBackend: TRITON_ATTN
-    servedModelName: gemma4-e4b-turboquant
+    servedModelName: gemma4-e4b-fast
     enableToolCalling: true
     toolCallParser: gemma4
     reasoningParser: gemma4
@@ -55,15 +55,16 @@ spec:
       cpu: "8"
       memory: 24Gi
   serviceLabels:
-    - gemma4-e4b-turboquant
-    - gemma4-e4b
     - gemma4-e4b-fast
+    - gemma4-e4b
+    - gemma4-e4b-turboquant
   litellm:
     enabled: true
-    servedModelName: gemma4-e4b-turboquant
+    servedModelName: gemma4-e4b-fast
     aliases:
       - gemma4-e4b
       - gemma4-e4b-fast
+      - gemma4-e4b-turboquant
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"

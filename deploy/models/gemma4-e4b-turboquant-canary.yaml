@@ -33,7 +33,7 @@ spec:
     maxNumSeqs: 1
     maxNumBatchedTokens: 128
     trustRemoteCode: true
-    servedModelName: gemma4-e4b-turboquant-canary
+    servedModelName: gemma4-e4b-long
     enableToolCalling: true
     toolCallParser: gemma4
     reasoningParser: gemma4
@@ -50,13 +50,14 @@ spec:
       cpu: "8"
       memory: 24Gi
   serviceLabels:
-    - gemma4-e4b-turboquant-canary
     - gemma4-e4b-long
+    - gemma4-e4b-turboquant-canary
   litellm:
     enabled: true
-    servedModelName: gemma4-e4b-turboquant-canary
+    servedModelName: gemma4-e4b-long
     aliases:
       - gemma4-e4b-long
+      - gemma4-e4b-turboquant-canary
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"
