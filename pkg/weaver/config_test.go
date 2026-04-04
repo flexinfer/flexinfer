@@ -2,6 +2,7 @@ package weaver
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -248,5 +249,151 @@ func TestModelBehavior_Gemma4_NoPrefix(t *testing.T) {
 	}
 	if b.UserMessagePrefix != "" {
 		t.Errorf("expected empty prefix for gemma-4, got %q", b.UserMessagePrefix)
+	}
+}
+
+func TestLoadBehaviorsFromFile_Valid(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "behaviors.yaml")
+	content := `behaviors:
+  - prefix: "qwen3"
+    user_message_prefix: "/no_think\n"
+  - prefix: "deepseek"
+    user_message_prefix: "<think>off</think>\n"
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	bs, err := LoadBehaviorsFromFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(bs) != 2 {
+		t.Fatalf("expected 2 behaviors, got %d", len(bs))
+	}
+	if bs["qwen3"].UserMessagePrefix != "/no_think\n" {
+		t.Errorf("qwen3 prefix: got %q", bs["qwen3"].UserMessagePrefix)
+	}
+	if bs["deepseek"].UserMessagePrefix != "<think>off</think>\n" {
+		t.Errorf("deepseek prefix: got %q", bs["deepseek"].UserMessagePrefix)
+	}
+}
+
+func TestLoadBehaviorsFromFile_MissingFile(t *testing.T) {
+	bs, err := LoadBehaviorsFromFile("/nonexistent/path/behaviors.yaml")
+	if err != nil {
+		t.Errorf("expected nil error for missing file, got: %v", err)
+	}
+	if bs != nil {
+		t.Errorf("expected nil behaviors for missing file, got: %v", bs)
+	}
+}
+
+func TestLoadBehaviorsFromFile_EmptyPath(t *testing.T) {
+	bs, err := LoadBehaviorsFromFile("")
+	if err != nil {
+		t.Errorf("expected nil error for empty path, got: %v", err)
+	}
+	if bs != nil {
+		t.Errorf("expected nil behaviors for empty path, got: %v", bs)
+	}
+}
+
+func TestLoadBehaviorsFromFile_InvalidYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.yaml")
+	if err := os.WriteFile(path, []byte("{{invalid yaml"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadBehaviorsFromFile(path)
+	if err == nil {
+		t.Error("expected error for invalid YAML")
+	}
+}
+
+func TestLoadBehaviorsFromFile_OverridesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "behaviors.yaml")
+	content := `behaviors:
+  - prefix: "qwen3"
+    user_message_prefix: "custom_prefix\n"
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Start with defaults.
+	behaviors := DefaultModelBehaviors()
+
+	// Load and merge.
+	bs, err := LoadBehaviorsFromFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for k, v := range bs {
+		behaviors[k] = v
+	}
+
+	// Verify override took effect.
+	if behaviors["qwen3"].UserMessagePrefix != "custom_prefix\n" {
+		t.Errorf("expected custom prefix, got %q", behaviors["qwen3"].UserMessagePrefix)
+	}
+}
+
+func TestLoadBehaviorsFromFile_SkipsEmptyPrefix(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "behaviors.yaml")
+	content := `behaviors:
+  - prefix: ""
+    user_message_prefix: "ignored\n"
+  - prefix: "valid"
+    user_message_prefix: "kept\n"
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	bs, err := LoadBehaviorsFromFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(bs) != 1 {
+		t.Fatalf("expected 1 behavior (empty prefix skipped), got %d", len(bs))
+	}
+	if _, ok := bs["valid"]; !ok {
+		t.Error("expected 'valid' behavior to be present")
+	}
+}
+
+func TestLoadBehaviorsFromFile_EmptyBehaviors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "behaviors.yaml")
+	content := `behaviors: []
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	bs, err := LoadBehaviorsFromFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bs != nil {
+		t.Errorf("expected nil for empty behaviors list, got: %v", bs)
+	}
+}
+
+func TestDefaultBehaviorsPath(t *testing.T) {
+	path := DefaultBehaviorsPath()
+	if path == "" {
+		t.Skip("could not determine home directory")
+	}
+	if !filepath.IsAbs(path) {
+		t.Errorf("expected absolute path, got %q", path)
+	}
+	if filepath.Base(path) != "weaver-behaviors.yaml" {
+		t.Errorf("expected weaver-behaviors.yaml, got %q", filepath.Base(path))
 	}
 }

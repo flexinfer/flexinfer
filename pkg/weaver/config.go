@@ -6,10 +6,13 @@ package weaver
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/crb2nu/loom/pkg/env"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -160,4 +163,57 @@ func (c Config) RequireEnabled() error {
 		return nil
 	}
 	return fmt.Errorf("weaver is disabled; set %s=1", EnvEnabled)
+}
+
+// behaviorsFile is the YAML schema for weaver-behaviors.yaml.
+type behaviorsFile struct {
+	Behaviors []struct {
+		Prefix            string `yaml:"prefix"`
+		UserMessagePrefix string `yaml:"user_message_prefix"`
+	} `yaml:"behaviors"`
+}
+
+// DefaultBehaviorsPath returns the default path for the behaviors YAML file.
+func DefaultBehaviorsPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".config", "loom", "weaver-behaviors.yaml")
+}
+
+// LoadBehaviorsFromFile reads model behaviors from a YAML file.
+// Returns nil, nil if the file does not exist (missing file is not an error).
+// Returns nil, error if the file exists but cannot be parsed.
+func LoadBehaviorsFromFile(path string) (map[string]ModelBehavior, error) {
+	if path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read behaviors file: %w", err)
+	}
+
+	var bf behaviorsFile
+	if err := yaml.Unmarshal(data, &bf); err != nil {
+		return nil, fmt.Errorf("parse behaviors YAML: %w", err)
+	}
+
+	if len(bf.Behaviors) == 0 {
+		return nil, nil
+	}
+
+	result := make(map[string]ModelBehavior, len(bf.Behaviors))
+	for _, b := range bf.Behaviors {
+		if b.Prefix == "" {
+			continue
+		}
+		result[b.Prefix] = ModelBehavior{
+			UserMessagePrefix: b.UserMessagePrefix,
+		}
+	}
+	return result, nil
 }
