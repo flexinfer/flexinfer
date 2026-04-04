@@ -345,9 +345,20 @@ old = '''        else:
             turtle_model = None'''
 new = '''        else:
             print("loading model directly to CPU (not using meta device or turtle_model)-----------")
+            import os as _dm_os
             direct_init_kwargs = model_init_kwargs.copy()
-            direct_init_kwargs.pop("device_map", None)
-            direct_init_kwargs["low_cpu_mem_usage"] = True
+            _gpu_vram_mb = int(_dm_os.environ.get("GPU_VRAM_MB", "0"))
+            _dm_mode = _dm_os.environ.get("QUANTIZE_DEVICE_MAP", "cpu")
+            if _gpu_vram_mb > 0 and _dm_mode == "auto" and torch.cuda.is_available():
+                _gpu_frac = float(_dm_os.environ.get("GPU_MEMORY_FRACTION", "0.80"))
+                _gpu_bytes = int(_gpu_vram_mb * 1024 * 1024 * _gpu_frac)
+                direct_init_kwargs["device_map"] = "auto"
+                direct_init_kwargs["max_memory"] = {0: _gpu_bytes, "cpu": "120GiB"}
+                direct_init_kwargs["low_cpu_mem_usage"] = True
+                print(f"GPU-split loading: GPU={_gpu_vram_mb}MB fraction={_gpu_frac} ({_gpu_bytes // (1024**3)}GiB usable)")
+            else:
+                direct_init_kwargs.pop("device_map", None)
+                direct_init_kwargs["low_cpu_mem_usage"] = True
             model = cls.loader.from_pretrained(model_local_path, config=config, **direct_init_kwargs)
             if getattr(model, "config", None) is config:
                 model.config = copy.deepcopy(config)
