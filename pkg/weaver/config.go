@@ -20,6 +20,7 @@ const (
 	EnvTokenBudget   = "WEAVER_TOKEN_BUDGET"
 	EnvTimeout       = "WEAVER_TIMEOUT"
 	EnvMaxConcurrent = "WEAVER_MAX_CONCURRENT"
+	EnvHTTPTimeout   = "WEAVER_HTTP_TIMEOUT"
 
 	// Deprecated: Use WEAVER_* equivalents.
 	EnvMaxIterationsDeprecated = "ORCHESTRA_MAX_ITERATIONS"
@@ -33,6 +34,7 @@ const (
 	DefaultTokenBudget   = 4096
 	DefaultTimeout       = 30 * time.Second
 	DefaultMaxConcurrent = 4
+	DefaultHTTPTimeout   = 60 * time.Second
 )
 
 // ModelBehavior holds model-specific adjustments applied before LLM calls.
@@ -71,6 +73,7 @@ type Config struct {
 	TokenBudget    int
 	Timeout        time.Duration
 	MaxConcurrent  int
+	HTTPTimeout    time.Duration
 	ModelBehaviors map[string]ModelBehavior
 }
 
@@ -110,6 +113,7 @@ func LoadConfigFromEnv() Config {
 		TokenBudget:    envIntWithFallback(EnvTokenBudget, EnvTokenBudgetDeprecated, DefaultTokenBudget),
 		Timeout:        envDurationWithFallback(EnvTimeout, EnvTimeoutDeprecated, DefaultTimeout),
 		MaxConcurrent:  envIntWithFallback(EnvMaxConcurrent, EnvMaxConcurrentDeprecated, DefaultMaxConcurrent),
+		HTTPTimeout:    env.Duration(EnvHTTPTimeout, DefaultHTTPTimeout),
 		ModelBehaviors: DefaultModelBehaviors(),
 	}
 	if cfg.MaxIterations <= 0 {
@@ -123,6 +127,9 @@ func LoadConfigFromEnv() Config {
 	}
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = DefaultMaxConcurrent
+	}
+	if cfg.HTTPTimeout <= 0 {
+		cfg.HTTPTimeout = DefaultHTTPTimeout
 	}
 	return cfg
 }

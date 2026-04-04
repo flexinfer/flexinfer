@@ -3,6 +3,7 @@ package weaver
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestLoadConfigFromEnv_Defaults(t *testing.T) {
@@ -14,6 +15,7 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	os.Unsetenv(EnvTokenBudget)
 	os.Unsetenv(EnvTimeout)
 	os.Unsetenv(EnvMaxConcurrent)
+	os.Unsetenv(EnvHTTPTimeout)
 	os.Unsetenv(EnvMaxIterationsDeprecated)
 	os.Unsetenv(EnvTokenBudgetDeprecated)
 	os.Unsetenv(EnvTimeoutDeprecated)
@@ -42,6 +44,9 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	if cfg.MaxConcurrent != DefaultMaxConcurrent {
 		t.Errorf("expected max concurrent %d, got %d", DefaultMaxConcurrent, cfg.MaxConcurrent)
 	}
+	if cfg.HTTPTimeout != DefaultHTTPTimeout {
+		t.Errorf("expected HTTP timeout %v, got %v", DefaultHTTPTimeout, cfg.HTTPTimeout)
+	}
 }
 
 func TestLoadConfigFromEnv_Custom(t *testing.T) {
@@ -52,6 +57,7 @@ func TestLoadConfigFromEnv_Custom(t *testing.T) {
 	t.Setenv(EnvTokenBudget, "8192")
 	t.Setenv(EnvTimeout, "60s")
 	t.Setenv(EnvMaxConcurrent, "8")
+	t.Setenv(EnvHTTPTimeout, "120s")
 
 	cfg := LoadConfigFromEnv()
 
@@ -72,6 +78,9 @@ func TestLoadConfigFromEnv_Custom(t *testing.T) {
 	}
 	if cfg.MaxConcurrent != 8 {
 		t.Errorf("expected 8, got %d", cfg.MaxConcurrent)
+	}
+	if cfg.HTTPTimeout != 120*time.Second {
+		t.Errorf("expected 120s, got %v", cfg.HTTPTimeout)
 	}
 }
 
