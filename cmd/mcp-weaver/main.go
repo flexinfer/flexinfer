@@ -101,8 +101,8 @@ Environment:
 - MCP_HUB_URL: MCP gateway URL for tool routing (required)
 - WEAVER_ROUTER_MODEL: Model for query classification
 - WEAVER_SUBAGENT_MODEL: Model for domain subagents
-- ORCHESTRA_MAX_ITERATIONS: Max tool-call iterations per subagent
-- ORCHESTRA_MAX_CONCURRENT: Max parallel domain dispatches`)
+- WEAVER_MAX_ITERATIONS: Max tool-call iterations per subagent
+- WEAVER_MAX_CONCURRENT: Max parallel domain dispatches`)
 
 	registerWeaverTools(server, router, logger)
 

@@ -11,8 +11,8 @@ import (
 	"github.com/crb2nu/loom/pkg/weaver"
 )
 
-// handleOrchestraQuery handles loom/weaver/query requests.
-func (d *Daemon) handleOrchestraQuery(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+// handleWeaverQuery handles loom/weaver/query requests.
+func (d *Daemon) handleWeaverQuery(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	if d.weaver == nil {
 		return newErrorResponse(msg.ID, mcp.InternalError,
 			"weaver is not enabled", nil), nil
@@ -53,8 +53,8 @@ func (d *Daemon) handleOrchestraQuery(ctx context.Context, msg *mcp.Message) (*m
 	return mcp.NewResponse(msg.ID, result)
 }
 
-// handleOrchestraGather handles loom/weaver/gather requests.
-func (d *Daemon) handleOrchestraGather(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+// handleWeaverGather handles loom/weaver/gather requests.
+func (d *Daemon) handleWeaverGather(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	if d.weaver == nil {
 		return newErrorResponse(msg.ID, mcp.InternalError,
 			"weaver is not enabled", nil), nil
@@ -93,8 +93,8 @@ func (d *Daemon) handleOrchestraGather(ctx context.Context, msg *mcp.Message) (*
 	return mcp.NewResponse(msg.ID, result)
 }
 
-// handleOrchestraStatus handles loom/weaver/status requests.
-func (d *Daemon) handleOrchestraStatus(_ context.Context, msg *mcp.Message) (*mcp.Message, error) {
+// handleWeaverStatus handles loom/weaver/status requests.
+func (d *Daemon) handleWeaverStatus(_ context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	if d.weaver == nil {
 		return mcp.NewResponse(msg.ID, map[string]any{
 			"enabled": false,
@@ -103,8 +103,8 @@ func (d *Daemon) handleOrchestraStatus(_ context.Context, msg *mcp.Message) (*mc
 	return mcp.NewResponse(msg.ID, d.weaver.Status())
 }
 
-// handleOrchestraHistory handles loom/weaver/history requests.
-func (d *Daemon) handleOrchestraHistory(_ context.Context, msg *mcp.Message) (*mcp.Message, error) {
+// handleWeaverHistory handles loom/weaver/history requests.
+func (d *Daemon) handleWeaverHistory(_ context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	if d.weaver == nil {
 		return mcp.NewResponse(msg.ID, map[string]any{
 			"entries": []any{},

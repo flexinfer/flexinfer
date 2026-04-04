@@ -5,6 +5,7 @@ package weaver
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -15,10 +16,16 @@ const (
 	EnvEnabled       = "WEAVER_ENABLED"
 	EnvRouterModel   = "WEAVER_ROUTER_MODEL"
 	EnvSubagentModel = "WEAVER_SUBAGENT_MODEL"
-	EnvMaxIterations = "ORCHESTRA_MAX_ITERATIONS"
-	EnvTokenBudget   = "ORCHESTRA_TOKEN_BUDGET"
-	EnvTimeout       = "ORCHESTRA_TIMEOUT"
-	EnvMaxConcurrent = "ORCHESTRA_MAX_CONCURRENT"
+	EnvMaxIterations = "WEAVER_MAX_ITERATIONS"
+	EnvTokenBudget   = "WEAVER_TOKEN_BUDGET"
+	EnvTimeout       = "WEAVER_TIMEOUT"
+	EnvMaxConcurrent = "WEAVER_MAX_CONCURRENT"
+
+	// Deprecated: Use WEAVER_* equivalents.
+	EnvMaxIterationsDeprecated = "ORCHESTRA_MAX_ITERATIONS"
+	EnvTokenBudgetDeprecated   = "ORCHESTRA_TOKEN_BUDGET"
+	EnvTimeoutDeprecated       = "ORCHESTRA_TIMEOUT"
+	EnvMaxConcurrentDeprecated = "ORCHESTRA_MAX_CONCURRENT"
 
 	DefaultRouterModel   = "gemma-4-turboquant"
 	DefaultSubagentModel = "gemma-4-turboquant"
@@ -67,16 +74,42 @@ type Config struct {
 	ModelBehaviors map[string]ModelBehavior
 }
 
+// envIntWithFallback reads newKey first; if unset, falls back to oldKey
+// (logging a deprecation warning). Returns defaultVal when neither is set.
+func envIntWithFallback(newKey, oldKey string, defaultVal int) int {
+	if v := env.Int(newKey, 0); v != 0 {
+		return v
+	}
+	if v := env.Int(oldKey, 0); v != 0 {
+		slog.Warn("deprecated env var, use new name", "old", oldKey, "new", newKey)
+		return v
+	}
+	return defaultVal
+}
+
+// envDurationWithFallback reads newKey first; if unset, falls back to oldKey
+// (logging a deprecation warning). Returns defaultVal when neither is set.
+func envDurationWithFallback(newKey, oldKey string, defaultVal time.Duration) time.Duration {
+	if v := env.Duration(newKey, 0); v != 0 {
+		return v
+	}
+	if v := env.Duration(oldKey, 0); v != 0 {
+		slog.Warn("deprecated env var, use new name", "old", oldKey, "new", newKey)
+		return v
+	}
+	return defaultVal
+}
+
 // LoadConfigFromEnv reads weaver configuration from environment variables.
 func LoadConfigFromEnv() Config {
 	cfg := Config{
 		Enabled:        env.Bool(EnvEnabled, false),
 		RouterModel:    env.String(EnvRouterModel, DefaultRouterModel),
 		SubagentModel:  env.String(EnvSubagentModel, DefaultSubagentModel),
-		MaxIterations:  env.Int(EnvMaxIterations, DefaultMaxIterations),
-		TokenBudget:    env.Int(EnvTokenBudget, DefaultTokenBudget),
-		Timeout:        env.Duration(EnvTimeout, DefaultTimeout),
-		MaxConcurrent:  env.Int(EnvMaxConcurrent, DefaultMaxConcurrent),
+		MaxIterations:  envIntWithFallback(EnvMaxIterations, EnvMaxIterationsDeprecated, DefaultMaxIterations),
+		TokenBudget:    envIntWithFallback(EnvTokenBudget, EnvTokenBudgetDeprecated, DefaultTokenBudget),
+		Timeout:        envDurationWithFallback(EnvTimeout, EnvTimeoutDeprecated, DefaultTimeout),
+		MaxConcurrent:  envIntWithFallback(EnvMaxConcurrent, EnvMaxConcurrentDeprecated, DefaultMaxConcurrent),
 		ModelBehaviors: DefaultModelBehaviors(),
 	}
 	if cfg.MaxIterations <= 0 {

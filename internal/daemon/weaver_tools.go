@@ -106,27 +106,27 @@ func (p *callPipeline) executeWeaverTool() *mcp.Message {
 
 	switch toolName {
 	case "weaver__query":
-		return p.daemon.handleOrchestraToolQuery(p.ctx, p.msg)
+		return p.daemon.handleWeaverToolQuery(p.ctx, p.msg)
 	case "weaver__gather":
-		return p.daemon.handleOrchestraToolGather(p.ctx, p.msg)
+		return p.daemon.handleWeaverToolGather(p.ctx, p.msg)
 	default:
 		// Compound tools.
 		return p.daemon.handleWeaverToolCompound(p.ctx, p.msg, toolName)
 	}
 }
 
-// handleOrchestraToolQuery handles weaver__query via the call pipeline.
-func (d *Daemon) handleOrchestraToolQuery(ctx context.Context, msg *mcp.Message) *mcp.Message {
-	resp, err := d.handleOrchestraQuery(ctx, msg)
+// handleWeaverToolQuery handles weaver__query via the call pipeline.
+func (d *Daemon) handleWeaverToolQuery(ctx context.Context, msg *mcp.Message) *mcp.Message {
+	resp, err := d.handleWeaverQuery(ctx, msg)
 	if err != nil {
 		return newErrorResponse(msg.ID, mcp.InternalError, err.Error(), nil)
 	}
 	return resp
 }
 
-// handleOrchestraToolGather handles weaver__gather via the call pipeline.
-func (d *Daemon) handleOrchestraToolGather(ctx context.Context, msg *mcp.Message) *mcp.Message {
-	resp, err := d.handleOrchestraGather(ctx, msg)
+// handleWeaverToolGather handles weaver__gather via the call pipeline.
+func (d *Daemon) handleWeaverToolGather(ctx context.Context, msg *mcp.Message) *mcp.Message {
+	resp, err := d.handleWeaverGather(ctx, msg)
 	if err != nil {
 		return newErrorResponse(msg.ID, mcp.InternalError, err.Error(), nil)
 	}

@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoadConfigFromEnv_Defaults(t *testing.T) {
-	// Clear any env vars that might be set.
+	// Clear any env vars that might be set (both new and deprecated names).
 	os.Unsetenv(EnvEnabled)
 	os.Unsetenv(EnvRouterModel)
 	os.Unsetenv(EnvSubagentModel)
@@ -14,6 +14,10 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	os.Unsetenv(EnvTokenBudget)
 	os.Unsetenv(EnvTimeout)
 	os.Unsetenv(EnvMaxConcurrent)
+	os.Unsetenv(EnvMaxIterationsDeprecated)
+	os.Unsetenv(EnvTokenBudgetDeprecated)
+	os.Unsetenv(EnvTimeoutDeprecated)
+	os.Unsetenv(EnvMaxConcurrentDeprecated)
 
 	cfg := LoadConfigFromEnv()
 
@@ -68,6 +72,46 @@ func TestLoadConfigFromEnv_Custom(t *testing.T) {
 	}
 	if cfg.MaxConcurrent != 8 {
 		t.Errorf("expected 8, got %d", cfg.MaxConcurrent)
+	}
+}
+
+func TestLoadConfigFromEnv_DeprecatedFallback(t *testing.T) {
+	// Set only the deprecated ORCHESTRA_* env vars and verify they still work.
+	t.Setenv(EnvMaxIterationsDeprecated, "15")
+	t.Setenv(EnvTokenBudgetDeprecated, "16384")
+	t.Setenv(EnvTimeoutDeprecated, "45s")
+	t.Setenv(EnvMaxConcurrentDeprecated, "6")
+
+	cfg := LoadConfigFromEnv()
+
+	if cfg.MaxIterations != 15 {
+		t.Errorf("expected max iterations 15 from deprecated env, got %d", cfg.MaxIterations)
+	}
+	if cfg.TokenBudget != 16384 {
+		t.Errorf("expected token budget 16384 from deprecated env, got %d", cfg.TokenBudget)
+	}
+	if cfg.Timeout != 45*1e9 { // 45s in nanoseconds
+		t.Errorf("expected timeout 45s from deprecated env, got %v", cfg.Timeout)
+	}
+	if cfg.MaxConcurrent != 6 {
+		t.Errorf("expected max concurrent 6 from deprecated env, got %d", cfg.MaxConcurrent)
+	}
+}
+
+func TestLoadConfigFromEnv_NewOverridesDeprecated(t *testing.T) {
+	// When both new and deprecated are set, new takes precedence.
+	t.Setenv(EnvMaxIterations, "20")
+	t.Setenv(EnvMaxIterationsDeprecated, "10")
+	t.Setenv(EnvTokenBudget, "32768")
+	t.Setenv(EnvTokenBudgetDeprecated, "8192")
+
+	cfg := LoadConfigFromEnv()
+
+	if cfg.MaxIterations != 20 {
+		t.Errorf("expected new WEAVER_MAX_ITERATIONS=20 to win, got %d", cfg.MaxIterations)
+	}
+	if cfg.TokenBudget != 32768 {
+		t.Errorf("expected new WEAVER_TOKEN_BUDGET=32768 to win, got %d", cfg.TokenBudget)
 	}
 }
 

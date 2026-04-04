@@ -105,13 +105,13 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 	case "loom/session/close":
 		resp, err = d.handleSessionClose(ctx, msg)
 	case "loom/weaver/query":
-		resp, err = d.handleOrchestraQuery(ctx, msg)
+		resp, err = d.handleWeaverQuery(ctx, msg)
 	case "loom/weaver/gather":
-		resp, err = d.handleOrchestraGather(ctx, msg)
+		resp, err = d.handleWeaverGather(ctx, msg)
 	case "loom/weaver/status":
-		resp, err = d.handleOrchestraStatus(ctx, msg)
+		resp, err = d.handleWeaverStatus(ctx, msg)
 	case "loom/weaver/history":
-		resp, err = d.handleOrchestraHistory(ctx, msg)
+		resp, err = d.handleWeaverHistory(ctx, msg)
 	default:
 		resp = mcp.NewErrorResponse(msg.ID, mcp.MethodNotFound, fmt.Sprintf("unknown method: %s", msg.Method))
 	}
