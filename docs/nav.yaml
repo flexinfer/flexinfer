@@ -47,6 +47,8 @@ sections:
         path: dev/backends.md
       - title: Gemma4 ROCm Status
         path: dev/gemma4-rocm-status.md
+      - title: Gemma4 Benchmarking
+        path: dev/gemma4-benchmarking.md
       - title: Testing
         path: dev/testing.md
       - title: Release & Images

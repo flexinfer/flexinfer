@@ -202,7 +202,7 @@ Current profile shape:
 | Model ID | `maxModelLen` | `maxNumBatchedTokens` | `kvCacheCodec` |
 |----------|---------------|-----------------------|----------------|
 | `gemma4-e4b` / `gemma4-e4b-fast` | `16384` | `512` | standard float16 KV cache |
-| `gemma4-e4b-long` | `32768` | `128` | `turboquant` |
+| `gemma4-e4b-long` | `32768` | `160` | `turboquant` |
 
 Example request routing:
 

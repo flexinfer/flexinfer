@@ -31,6 +31,7 @@ This directory is the canonical documentation for `services/flexinfer`.
 | [Architecture](dev/architecture.md) | System design and components |
 | [Backends](dev/backends.md) | Supported inference backends |
 | [Gemma4 ROCm Status](dev/gemma4-rocm-status.md) | Live status for Gemma 4 fast/long profiles on gfx1100 |
+| [Gemma4 Benchmarking](dev/gemma4-benchmarking.md) | Benchmark workflow for fast/long, warm/cold, and prompt matrices |
 | [Testing](dev/testing.md) | Running tests |
 | [Release & Images](dev/release.md) | Building and releasing |
 

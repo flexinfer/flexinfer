@@ -24,14 +24,15 @@ Update this document whenever a tuning change lands or a new blocker is found.
 | Model ID | `maxModelLen` | `maxNumBatchedTokens` | `gpuMemoryUtilization` | Serverless |
 |----------|---------------|-----------------------|------------------------|------------|
 | `gemma4-e4b` / `gemma4-e4b-fast` | `16384` | `512` | `0.92` | `minReplicas: 1` |
-| `gemma4-e4b-long` | `32768` | `128` | `0.80` | `minReplicas: 0` |
+| `gemma4-e4b-long` | `32768` | `160` | `0.80` | `minReplicas: 0` |
 
 ## Latest baseline
 
 Source:
 
 - `scripts/bench-gemma4-profiles.sh`
-- run id: `gemma4-20260404T091120-f0bf7e`
+- `scripts/bench-gemma4-suite.sh` for broader warm/cold and phase-matrix runs
+- run id: `gemma4-20260404T091910-e32744`
 
 Environment:
 
@@ -45,16 +46,19 @@ Results:
 
 | Model ID | Prompt tokens | Elapsed | Prompt tok/s | Completion tok/s | Notes |
 |----------|---------------|---------|--------------|------------------|-------|
-| `gemma4-e4b` | `73` | `0.987s` | `73.93` | `64.81` | Default alias health check |
-| `gemma4-e4b-fast` | `10035` | `5.389s` | `1862.28` | `11.88` | Stable fast path |
-| `gemma4-e4b-long` | `10035` | `29.481s` | `340.38` | `2.17` | Warmed short-context TurboQuant |
-| `gemma4-e4b-long` | `30035` | `134.645s` | `223.07` | `0.48` | Warmed long-context TurboQuant |
+| `gemma4-e4b` | `73` | `0.880s` | `82.96` | `57.96` | Default alias health check |
+| `gemma4-e4b-fast` | `10035` | `5.317s` | `1887.31` | `12.04` | Stable fast path |
+| `gemma4-e4b-long` | `10035` | `25.802s` | `388.92` | `2.48` | Warmed short-context TurboQuant |
+| `gemma4-e4b-long` | `30035` | `112.088s` | `267.96` | `0.57` | Warmed long-context TurboQuant |
 
 Interpretation:
 
 - The fast profile is in a good place for interactive use on the 7900 XTX.
 - The long profile is functional at ~30k prompt tokens, but its prefill path is
   still the main performance bottleneck.
+- Raising `gemma4-e4b-long` from `maxNumBatchedTokens=128` to `160` improved the
+  warmed long-context leg from roughly `223` to `268` prompt tok/s and the
+  warmed 10k leg from roughly `340` to `389` prompt tok/s.
 - Cold-start noise and prefix-cache artifacts must be excluded from measurements
   or the fast profile numbers will be misleading.
 
