@@ -74,6 +74,14 @@ type GPUProfileSpec struct {
 	// +optional
 	ContainerMemoryGB *int32 `json:"containerMemoryGB,omitempty"`
 
+	// GPUDriverMemoryMB is the estimated system RAM consumed by the GPU driver
+	// (HIP/GTT on ROCm, CUDA driver on NVIDIA) outside the container's cgroup.
+	// When set, the controller inflates job memory requests/limits by this amount
+	// so the K8s scheduler correctly accounts for total node memory consumption.
+	// Example: 12288 for gfx1100 (~12 GiB HIP/GTT overhead during quantization).
+	// +optional
+	GPUDriverMemoryMB *int32 `json:"gpuDriverMemoryMB,omitempty"`
+
 	// Quantization declares which quantization formats and images are available.
 	// +optional
 	Quantization *QuantizationProfile `json:"quantization,omitempty"`

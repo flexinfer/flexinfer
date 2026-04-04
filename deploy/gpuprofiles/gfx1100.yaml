@@ -65,6 +65,8 @@ spec:
       value: "1"
   runtime:
     image: registry.harbor.lan/flexinfer/runtime@sha256:04631a8db20fb7c2ea62a9846938b155d031d180c962477e011936765bcfeb88
+  containerMemoryGB: 48
+  gpuDriverMemoryMB: 12288
   quantization:
     supported:
       - gptq

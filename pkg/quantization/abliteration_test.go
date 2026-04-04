@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -583,5 +584,99 @@ func TestResolveImage_Abliteration_DefaultNvidia(t *testing.T) {
 	img := ResolveImage(ImageFormatAbliteration, "", "nvidia", "")
 	if img != DefaultGPTQImage {
 		t.Errorf("ResolveImage(Abliteration, nvidia) = %q, want %q", img, DefaultGPTQImage)
+	}
+}
+
+func TestBuildAbliterationJob_GPUDriverMemoryInflation(t *testing.T) {
+	spec := &aiv1alpha1.AbliterationSpec{
+		MaxMemoryGB: ablitInt32Ptr(32),
+		UseGPU:      true,
+	}
+	params := JobParams{
+		Name:      "test-driver-mem",
+		Namespace: "flexinfer-system",
+		PVCName:   "test-pvc",
+		ModelPath: "test-model",
+		GPUVendor: "amd",
+		GPUArch:   "gfx1100",
+		MemoryConfig: GPUMemoryConfig{
+			GPUDriverMemoryMB: 12288, // 12 GiB
+		},
+	}
+
+	job, err := BuildAbliterationJob(params, spec)
+	if err != nil {
+		t.Fatalf("BuildAbliterationJob returned error: %v", err)
+	}
+
+	container := job.Spec.Template.Spec.Containers[0]
+
+	// memoryGB=32, driverOverhead=12288/1024=12 → schedulingMemoryGB=44
+	memLimit := container.Resources.Limits["memory"]
+	if memLimit.String() != "44Gi" {
+		t.Errorf("memory limit = %q, want 44Gi (32 + 12 driver overhead)", memLimit.String())
+	}
+
+	// memoryRequestForLimitGB(44) = 44*4/5 = 35
+	memReq := container.Resources.Requests["memory"]
+	if memReq.String() != "35Gi" {
+		t.Errorf("memory request = %q, want 35Gi", memReq.String())
+	}
+}
+
+func TestBuildAbliterationJob_NoDriverMemoryOverhead(t *testing.T) {
+	spec := &aiv1alpha1.AbliterationSpec{
+		MaxMemoryGB: ablitInt32Ptr(32),
+		UseGPU:      true,
+	}
+	params := JobParams{
+		Name:      "test-no-driver",
+		Namespace: "flexinfer-system",
+		PVCName:   "test-pvc",
+		ModelPath: "test-model",
+		GPUVendor: "amd",
+		GPUArch:   "gfx1100",
+		MemoryConfig: GPUMemoryConfig{
+			GPUDriverMemoryMB: 0, // no overhead
+		},
+	}
+
+	job, err := BuildAbliterationJob(params, spec)
+	if err != nil {
+		t.Fatalf("BuildAbliterationJob returned error: %v", err)
+	}
+
+	container := job.Spec.Template.Spec.Containers[0]
+
+	// No inflation: limit stays at 32
+	memLimit := container.Resources.Limits["memory"]
+	if memLimit.String() != "32Gi" {
+		t.Errorf("memory limit = %q, want 32Gi (no driver overhead)", memLimit.String())
+	}
+}
+
+func TestGPUMemoryConfigFromProfile_DriverMemory(t *testing.T) {
+	driverMB := int32(12288)
+	containerGB := int32(48)
+	profile := &aiv1alpha2.GPUProfileSpec{
+		ContainerMemoryGB: &containerGB,
+		GPUDriverMemoryMB: &driverMB,
+	}
+
+	cfg := GPUMemoryConfigFromProfile(profile)
+	if cfg.GPUDriverMemoryMB != 12288 {
+		t.Errorf("GPUDriverMemoryMB = %d, want 12288", cfg.GPUDriverMemoryMB)
+	}
+	if cfg.ContainerMemoryGB != 48 {
+		t.Errorf("ContainerMemoryGB = %d, want 48", cfg.ContainerMemoryGB)
+	}
+}
+
+func TestGPUMemoryConfigFromProfile_NilDriverMemory(t *testing.T) {
+	profile := &aiv1alpha2.GPUProfileSpec{}
+
+	cfg := GPUMemoryConfigFromProfile(profile)
+	if cfg.GPUDriverMemoryMB != 0 {
+		t.Errorf("GPUDriverMemoryMB = %d, want 0 (default)", cfg.GPUDriverMemoryMB)
 	}
 }

@@ -3,7 +3,7 @@
 # Architecture: gemma4_text (nested text_config, same pattern as Qwen3.5 VLMs)
 #
 # Pipeline: Download BF16 → GPTQ INT4
-# Node: cblevins-5930k (gfx1100, 24GB VRAM) — avoids contention with live FP16 on 7900xtx
+# Node: cblevins-radeonvii (gfx906, 16GB HBM2, 128GB DDR4) — moved from 5930k to avoid node OOMKill
 #
 # Disk: BF16 ~8 GB + GPTQ INT4 ~4 GB + workspace → 30 Gi PVC
 ---
@@ -19,7 +19,7 @@ spec:
   clusterStorageClassName: bulk-1r-stable
   secretRef: "hf-token"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-radeonvii
   download:
     maxMemoryGB: 8
     hfTransfer: false
@@ -32,7 +32,7 @@ spec:
     descAct: false
     dynamicExclusion: "none"
     useGPU: true
-    maxMemoryGB: 32
+    maxMemoryGB: 48
     timeoutSeconds: 7200
     calibration:
       dataset: "wikitext:wikitext-2-raw-v1"

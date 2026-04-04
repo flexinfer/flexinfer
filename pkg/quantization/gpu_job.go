@@ -20,6 +20,10 @@ type GPUMemoryConfig struct {
 	MaxGPUMemoryGB int32
 	// MaxCPUMemoryGB is the CPU memory budget for offloading.
 	MaxCPUMemoryGB int32
+	// GPUDriverMemoryMB is the out-of-cgroup GPU driver overhead (HIP/GTT on ROCm).
+	// When > 0, job memory requests/limits are inflated by this amount so the K8s
+	// scheduler reserves enough node RAM for the true total footprint.
+	GPUDriverMemoryMB int32
 }
 
 // DefaultGPUMemoryConfig returns the default memory configuration.
@@ -43,6 +47,9 @@ func GPUMemoryConfigFromProfile(profile *aiv1alpha2.GPUProfileSpec) GPUMemoryCon
 		}
 		if profile.MaxCPUMemoryGB != nil {
 			cfg.MaxCPUMemoryGB = *profile.MaxCPUMemoryGB
+		}
+		if profile.GPUDriverMemoryMB != nil {
+			cfg.GPUDriverMemoryMB = *profile.GPUDriverMemoryMB
 		}
 	}
 	return cfg
@@ -119,6 +126,14 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 	}
 	gpuResource := corev1.ResourceName(gpuResourceName)
 
+	// Account for GPU driver memory (HIP/GTT) that lives outside the cgroup.
+	// Inflate both request and limit so the K8s scheduler reserves enough node
+	// RAM for the true total footprint (in-cgroup process + out-of-cgroup driver).
+	schedulingMemoryGB := memoryGB
+	if params.MemoryConfig.GPUDriverMemoryMB > 0 {
+		schedulingMemoryGB += params.MemoryConfig.GPUDriverMemoryMB / 1024
+	}
+
 	// Set memory allocator config for AMD GPUs to reduce fragmentation.
 	var env []corev1.EnvVar
 	if params.GPUVendor == "amd" {
@@ -143,11 +158,11 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 				Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{
 						corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", quantizationCPUCores())),
-						corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryRequestForLimitGB(memoryGB))),
+						corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryRequestForLimitGB(schedulingMemoryGB))),
 						gpuResource:           resource.MustParse("1"),
 					},
 					Limits: corev1.ResourceList{
-						corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryGB)),
+						corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", schedulingMemoryGB)),
 						gpuResource:           resource.MustParse("1"),
 					},
 				},

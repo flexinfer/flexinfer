@@ -656,6 +656,11 @@ func (in *GPUProfileSpec) DeepCopyInto(out *GPUProfileSpec) {
 		*out = new(int32)
 		**out = **in
 	}
+	if in.GPUDriverMemoryMB != nil {
+		in, out := &in.GPUDriverMemoryMB, &out.GPUDriverMemoryMB
+		*out = new(int32)
+		**out = **in
+	}
 	if in.Quantization != nil {
 		in, out := &in.Quantization, &out.Quantization
 		*out = new(QuantizationProfile)
