@@ -219,6 +219,21 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
+    position: relative;
+    transition: border-color var(--transition-fast);
+  }
+
+  .agent-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--surface-highlight);
+    pointer-events: none;
+  }
+
+  .agent-card:hover {
+    border-color: color-mix(in srgb, var(--info) 30%, var(--border));
   }
 
   .agent-header {
@@ -260,7 +275,7 @@
   .recommendation {
     font-size: var(--text-xs);
     color: var(--warning);
-    background: rgba(231, 179, 18, 0.08);
+    background: var(--warning-dim);
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-sm);
     border-left: 2px solid var(--warning);
@@ -276,16 +291,17 @@
     padding: var(--space-1) var(--space-3);
     font-size: var(--text-xs);
     font-weight: 500;
-    background: rgba(231, 179, 18, 0.15);
+    background: var(--warning-dim);
     color: var(--warning);
-    border: 1px solid rgba(231, 179, 18, 0.3);
+    border: 1px solid rgba(255, 184, 48, 0.25);
     border-radius: var(--radius-sm);
     cursor: pointer;
-    transition: background 0.2s;
+    transition: background var(--transition-fast), box-shadow var(--transition-fast);
   }
 
   .compact-btn:hover:not(:disabled) {
-    background: rgba(231, 179, 18, 0.25);
+    background: rgba(255, 184, 48, 0.18);
+    box-shadow: 0 0 8px var(--glow-warning);
   }
 
   .compact-btn:disabled {

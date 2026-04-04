@@ -633,34 +633,44 @@
     display: flex;
     flex-direction: column;
     overflow-y: auto;
-    gap: 16px;
+    gap: var(--space-4);
   }
 
   /* Tier Overview */
   .tier-overview {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
-    gap: 16px;
+    gap: var(--space-4);
   }
 
   .tier-col {
+    position: relative;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: var(--border-radius);
+    border-radius: var(--radius-md);
     border-top: 3px solid var(--tier-color);
-    padding: 14px 16px;
+    padding: var(--space-3) var(--space-4);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
+  }
+
+  .tier-col::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--surface-highlight);
+    pointer-events: none;
   }
 
   .tier-name {
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 600;
     color: var(--fg-primary);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: var(--tracking-wide);
   }
 
   .tier-tokens {
@@ -675,58 +685,78 @@
   /* Stats row */
   .stats-row {
     display: flex;
-    gap: 16px;
+    gap: var(--space-4);
   }
 
   /* Compression */
   .compression-section {
+    position: relative;
     flex: 1;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: var(--border-radius);
-    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .compression-section::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--surface-highlight);
+    pointer-events: none;
   }
 
   .compression-cards {
     display: grid;
     grid-template-columns: repeat(6, 1fr);
-    gap: 12px;
+    gap: var(--space-3);
   }
 
   /* Compaction */
   .compaction-section {
+    position: relative;
     flex: 0 0 auto;
     min-width: 260px;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: var(--border-radius);
-    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .compaction-section::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--surface-highlight);
+    pointer-events: none;
   }
 
   .compaction-cards {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
+    gap: var(--space-3);
   }
 
   .comp-card {
     text-align: center;
-    padding: 8px;
+    padding: var(--space-2);
   }
 
   .comp-card .metric-value {
-    font-size: 18px;
+    font-size: var(--text-lg);
     font-weight: 700;
     font-family: var(--font-mono);
     color: var(--fg-primary);
-    line-height: 1.1;
+    line-height: var(--leading-tight);
   }
 
   .comp-card .metric-label {
-    font-size: 9px;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--fg-muted);
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-dim);
     margin-top: 4px;
   }
 
@@ -738,32 +768,44 @@
     min-height: 200px;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: var(--border-radius);
+    border-radius: var(--radius-md);
     overflow: hidden;
   }
 
   .browser-toolbar {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 8px 12px 0;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3) 0;
+  }
+
+  .browser-toolbar::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0, 200, 255, 0.06) 50%, transparent);
+    pointer-events: none;
   }
 
   .tier-tabs {
     display: flex;
     gap: 2px;
     background: var(--bg-tertiary);
-    border-radius: var(--border-radius);
+    border-radius: var(--radius-md);
     padding: 2px;
   }
 
   .tier-tab {
     padding: 4px 10px;
-    font-size: 11px;
+    font-size: var(--text-sm);
     font-weight: 500;
     border-radius: var(--radius-sm);
     color: var(--fg-secondary);
-    transition: background 0.15s, color 0.15s;
+    transition: background var(--transition-fast), color var(--transition-fast);
   }
 
   .tier-tab:hover {
@@ -773,14 +815,14 @@
   .active-tab {
     background: var(--bg-secondary) !important;
     color: var(--tab-color, var(--fg-primary)) !important;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 0 6px var(--glow-accent);
   }
 
   .expand-icon {
-    font-size: 8px;
+    font-size: var(--text-2xs);
     flex-shrink: 0;
     width: 10px;
-    color: var(--fg-muted);
+    color: var(--fg-dim);
   }
 
   .expand-content {
@@ -793,19 +835,20 @@
 
   .content-pre {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-sm);
     color: var(--fg-secondary);
     white-space: pre-wrap;
     word-break: break-word;
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     margin: 0;
   }
 
   .importance-text {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-sm);
     font-weight: 600;
     text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
   }
 
   .actions-cell {
@@ -820,9 +863,9 @@
     align-items: center;
     justify-content: center;
     border-radius: var(--radius-sm);
-    font-size: 14px;
+    font-size: var(--text-base);
     font-weight: 700;
-    transition: background 0.15s;
+    transition: background var(--transition-fast);
   }
 
   .promote-btn {
@@ -830,7 +873,7 @@
   }
 
   .promote-btn:hover {
-    background: rgba(34, 178, 85, 0.15);
+    background: var(--success-dim);
   }
 
   .demote-btn {
@@ -838,16 +881,16 @@
   }
 
   .demote-btn:hover {
-    background: rgba(231, 179, 18, 0.15);
+    background: var(--warning-dim);
   }
 
   .delete-btn {
     color: var(--error);
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
 
   .delete-btn:hover {
-    background: rgba(230, 30, 63, 0.15);
+    background: var(--error-dim);
   }
 
   /* Add memory form */
@@ -858,12 +901,12 @@
 
   .add-form textarea {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: var(--text-sm);
     background: var(--bg-primary);
     color: var(--fg-primary);
     border: 1px solid var(--border);
-    border-radius: var(--border-radius);
-    padding: 8px;
+    border-radius: var(--radius-md);
+    padding: var(--space-2);
     resize: vertical;
     outline: none;
   }
@@ -874,7 +917,7 @@
 
   .form-row {
     display: flex;
-    gap: 12px;
+    gap: var(--space-3);
   }
 
   .form-row .form-field {

@@ -340,10 +340,11 @@
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     color: var(--accent);
     font-weight: 600;
+    box-shadow: 0 0 6px var(--glow-accent);
   }
 
   .chip-count {
-    font-size: 9px;
+    font-size: var(--text-2xs);
     opacity: 0.7;
   }
 
@@ -366,13 +367,14 @@
   }
 
   .view-btn:hover {
-    background: var(--bg-tertiary);
+    background: var(--bg-elevated);
     color: var(--fg-primary);
   }
 
   .view-btn.active {
     background: var(--bg-tertiary);
     color: var(--fg-primary);
+    box-shadow: 0 0 6px var(--glow-accent);
   }
 
   /* ---- Table View ---- */
@@ -417,7 +419,7 @@
 
   .catalog-table td {
     padding: var(--space-2) var(--space-3);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-subtle);
     color: var(--fg-secondary);
     vertical-align: middle;
   }
@@ -461,7 +463,7 @@
   }
 
   .expand-icon {
-    font-size: 9px;
+    font-size: var(--text-2xs);
     color: var(--fg-muted);
     transition: transform var(--transition-fast);
   }
@@ -508,7 +510,7 @@
 
   .runtime-running {
     color: var(--success);
-    background: rgba(34, 178, 85, 0.1);
+    background: var(--success-dim);
   }
 
   .runtime-stopped {
@@ -538,11 +540,11 @@
   }
 
   .detail-label {
-    font-size: 9px;
+    font-size: var(--text-2xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: var(--tracking-wide);
-    color: var(--fg-muted);
+    color: var(--fg-dim);
   }
 
   .detail-value {
@@ -574,7 +576,7 @@
   }
 
   .toggle-disable {
-    border-color: rgba(233, 93, 116, 0.3);
+    border-color: rgba(255, 61, 113, 0.2);
     color: var(--error);
   }
 
@@ -585,7 +587,7 @@
   }
 
   .toggle-enable {
-    border-color: rgba(34, 178, 85, 0.3);
+    border-color: rgba(34, 224, 118, 0.2);
     color: var(--success);
   }
 
@@ -604,6 +606,7 @@
   }
 
   .server-card {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
@@ -612,6 +615,15 @@
     border-radius: var(--radius-md);
     background: var(--bg-secondary);
     transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  }
+
+  .server-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--surface-highlight);
+    pointer-events: none;
   }
 
   .server-card:hover {
@@ -668,8 +680,8 @@
   }
 
   .toggle-hint {
-    font-size: 10px;
-    color: var(--fg-muted);
+    font-size: var(--text-xs);
+    color: var(--fg-dim);
     font-style: italic;
     flex: 1;
   }
@@ -694,7 +706,7 @@
 
   .cat-badge {
     display: inline-block;
-    font-size: 10px;
+    font-size: var(--text-xs);
     padding: 1px 5px;
     border-radius: var(--radius-sm);
     background: var(--bg-tertiary);

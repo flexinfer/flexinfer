@@ -157,44 +157,58 @@
   .tab-bar {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 6px 0;
+    gap: 2px;
+    padding: var(--space-1) 0;
     border-bottom: 1px solid var(--border);
-    margin-bottom: 8px;
+    margin-bottom: var(--space-2);
+    position: relative;
+  }
+
+  .tab-bar::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0, 200, 255, 0.06) 50%, transparent);
+    pointer-events: none;
   }
 
   .tab-btn {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 12px;
+    padding: 6px var(--space-3);
     border-radius: var(--radius-sm);
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 500;
-    color: var(--fg-secondary);
+    color: var(--fg-muted);
     cursor: pointer;
     border: none;
     background: transparent;
-    transition: background 0.1s, color 0.1s;
+    transition: background var(--transition-fast), color var(--transition-fast);
+    letter-spacing: var(--tracking-normal);
   }
 
   .tab-btn:hover {
     background: var(--bg-tertiary);
-    color: var(--fg-primary);
+    color: var(--fg-secondary);
   }
 
   .tab-btn.active {
     background: var(--bg-tertiary);
     color: var(--fg-primary);
+    font-weight: 600;
   }
 
   .tab-count {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--text-xs);
     background: var(--bg-primary);
     padding: 1px 5px;
-    border-radius: var(--radius-md);
-    color: var(--fg-muted);
+    border-radius: var(--radius-full);
+    color: var(--fg-dim);
   }
 
   .status-chips {
@@ -205,32 +219,32 @@
 
   .status-chip {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--text-xs);
     padding: 1px 5px;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-full);
     line-height: 1.3;
   }
 
   .chip-active {
-    background: rgba(52, 211, 153, 0.15);
+    background: var(--success-dim);
     color: var(--success);
   }
 
   .chip-idle {
-    background: rgba(231, 179, 18, 0.12);
+    background: var(--warning-dim);
     color: var(--warning);
   }
 
   .chip-offline {
     background: var(--bg-primary);
-    color: var(--fg-muted);
+    color: var(--fg-dim);
   }
 
   .tab-spacer { flex: 1; }
 
   .agent-filter-toggle {
     display: flex;
-    gap: 4px;
+    gap: 2px;
     margin-right: 6px;
     padding: 2px;
     background: var(--bg-primary);
@@ -241,14 +255,15 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 3px 8px;
-    font-size: 11px;
+    padding: 3px var(--space-2);
+    font-size: var(--text-xs);
     color: var(--fg-muted);
     background: transparent;
     border: none;
     border-radius: var(--radius-sm);
     cursor: pointer;
     line-height: 1;
+    transition: all var(--transition-fast);
   }
 
   .filter-chip:hover {
@@ -259,12 +274,12 @@
   .filter-chip.active {
     color: var(--fg-primary);
     background: var(--bg-tertiary);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+    box-shadow: 0 0 4px rgba(0, 200, 255, 0.1);
   }
 
   .filter-chip-count {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: var(--text-xs);
     color: inherit;
     opacity: 0.85;
   }
@@ -278,14 +293,15 @@
   }
 
   .toggle-btn {
-    padding: 3px 8px;
-    font-size: 12px;
+    padding: 3px var(--space-2);
+    font-size: var(--text-sm);
     color: var(--fg-muted);
     background: transparent;
     border: none;
     border-radius: var(--radius-sm);
     cursor: pointer;
     line-height: 1;
+    transition: all var(--transition-fast);
   }
 
   .toggle-btn:hover {
@@ -295,17 +311,18 @@
 
   .toggle-btn.active {
     color: var(--fg-primary);
-    background: var(--bg-tertiary);
+    background: var(--bg-elevated);
   }
 
   .conflict-badge {
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 600;
     color: var(--warning);
-    padding: 2px 8px;
-    background: rgba(231, 179, 18, 0.12);
+    padding: 2px var(--space-2);
+    background: var(--warning-dim);
     border-radius: var(--radius-sm);
-    border: 1px solid rgba(231, 179, 18, 0.25);
+    border: 1px solid rgba(255, 184, 48, 0.25);
+    box-shadow: 0 0 6px var(--glow-warning);
   }
 
   .tab-content {

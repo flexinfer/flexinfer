@@ -110,34 +110,48 @@
   .panel-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding-bottom: 8px;
+    gap: var(--space-2);
+    padding-bottom: var(--space-2);
     border-bottom: 1px solid var(--border);
-    margin-bottom: 8px;
+    margin-bottom: var(--space-2);
+    position: relative;
+  }
+
+  .panel-header::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0, 200, 255, 0.06) 50%, transparent);
+    pointer-events: none;
   }
 
   .panel-title {
-    font-size: 12px;
+    font-size: var(--text-sm);
     font-weight: 600;
     color: var(--fg-primary);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: var(--tracking-wide);
   }
 
   .count-badge {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-xs);
+    font-weight: 600;
     background: var(--bg-tertiary);
     color: var(--fg-secondary);
-    padding: 1px 6px;
-    border-radius: var(--radius-lg);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border-subtle);
   }
 
   .header-spacer { flex: 1; }
 
   .panel-search-input {
     width: 200px;
-    font-size: 12px;
+    font-size: var(--text-sm);
   }
 
   .timeline-list {
@@ -145,16 +159,16 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
   }
 
   .timeline-entry {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 6px 8px;
+    gap: var(--space-2);
+    padding: 6px var(--space-2);
     border-radius: var(--radius-sm);
-    transition: background 0.1s;
+    transition: background var(--transition-fast);
   }
 
   .timeline-entry:hover {
@@ -163,15 +177,16 @@
 
   .timeline-time {
     font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-muted);
+    font-size: var(--text-xs);
+    color: var(--fg-dim);
     white-space: nowrap;
     min-width: 64px;
     padding-top: 1px;
+    letter-spacing: var(--tracking-normal);
   }
 
   .timeline-icon {
-    font-size: 12px;
+    font-size: var(--text-sm);
     min-width: 16px;
     text-align: center;
     padding-top: 2px;
@@ -190,7 +205,7 @@
 
   .agent-badge {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 500;
   }
 
@@ -202,11 +217,11 @@
   }
 
   .detail-chip {
-    font-size: 10px;
+    font-size: var(--text-xs);
     padding: 1px 5px;
     background: var(--bg-tertiary);
     border-radius: var(--radius-sm);
     color: var(--fg-secondary);
+    border: 1px solid var(--border-subtle);
   }
-
 </style>
