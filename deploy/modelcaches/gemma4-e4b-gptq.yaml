@@ -16,7 +16,7 @@ spec:
   source: "google/gemma-4-E4B-it"
   storageStrategy: SharedPVC
   storageSize: "30Gi"
-  clusterStorageClassName: nvme-1r-gpu
+  clusterStorageClassName: bulk-1r-stable
   secretRef: "hf-token"
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
