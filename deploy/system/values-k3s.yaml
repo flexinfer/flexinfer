@@ -196,7 +196,7 @@ diffusers:
   cudaImage: registry.harbor.lan/library/diffusers-api@sha256:a2f768a4205870422929fbba0da2dc5cb195033ccb16275fb63d888ce271cd40
 
 quantization:
-  useRuntimeForQuantize: true
+  useRuntimeForQuantize: false
   runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:5bdb065f3e143951086056f4a81378e0cb02cb6d5549114913e56a031c028109"
   gptqDeviceMap: "auto"
   gptqModelPolicies:

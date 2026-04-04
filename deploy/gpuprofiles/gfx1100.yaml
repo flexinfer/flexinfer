@@ -72,5 +72,5 @@ spec:
       - gguf
       - exl2
     images:
-      gptq: registry.harbor.lan/flexinfer/runtime@sha256:ce17dfecfc0666e9d3c254502786b08ce95671b13486476edd41dcab6af0d3a3
+      gptq: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100
       abliteration: registry.harbor.lan/flexinfer/runtime:ablitfix

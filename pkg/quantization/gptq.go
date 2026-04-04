@@ -360,11 +360,11 @@ new = '''        else:
             turtle_model = None'''
 if old in src:
     src = src.replace(old, new)
+    path.write_text(src)
+    print("Patched GPTQModel loader.py direct CPU path to disable device_map/meta loading")
 else:
-    raise SystemExit("expected GPTQModel direct CPU load block not found in loader.py")
-path.write_text(src)
+    print("WARN: GPTQModel loader.py direct CPU load block not found (may be a newer version); skipping patch")
 PY
-    echo "Patched GPTQModel loader.py direct CPU path to disable device_map/meta loading"
 fi
 
 # Patch the bundled quantize script so composite text_config models avoid
