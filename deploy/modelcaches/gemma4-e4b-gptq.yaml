@@ -32,12 +32,12 @@ spec:
     descAct: false
     dynamicExclusion: "none"
     useGPU: true
-    maxMemoryGB: 32
+    maxMemoryGB: 40
     timeoutSeconds: 7200
     calibration:
       dataset: "wikitext:wikitext-2-raw-v1"
       maxSeqLen: 2048
-      maxSamples: 128
+      maxSamples: 64
   retentionPriority: 50
   evictionPolicy: LRU
   evictionThresholdPercent: 85

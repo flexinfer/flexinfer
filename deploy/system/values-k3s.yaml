@@ -236,7 +236,7 @@ quantization:
       architectures: [Gemma4ForCausalLM]
       loader: gptqmodel
       calibration_overrides:
-        max_samples: 128
+        max_samples: 64
         max_seq_len: 2048
         max_tokens: 262144
       runtime_overrides:
