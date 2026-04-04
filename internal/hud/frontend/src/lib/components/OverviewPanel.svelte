@@ -150,6 +150,41 @@
     router.navigate(panel);
   }
 
+  /* ── Instrument readouts (signal strip) ── */
+  let instruments = $derived.by(() => [
+    {
+      label: 'Active Agents',
+      value: agentCount,
+      max: Math.max(agentCount, sessionCount, 4),
+      color: 'var(--info)',
+      route: 'fleet',
+    },
+    {
+      label: 'Tasks Done',
+      value: kpis.tasks_completed_today,
+      max: Math.max(kpis.tasks_completed_today, pendingTasks + activeTasks, 8),
+      color: 'var(--success)',
+      route: 'tasks',
+    },
+    {
+      label: 'System Load',
+      value: parseInt(shuttleStore.systemLoadPct) || 0,
+      max: 100,
+      suffix: '%',
+      color: (parseInt(shuttleStore.systemLoadPct) || 0) > 80 ? 'var(--error)' : (parseInt(shuttleStore.systemLoadPct) || 0) > 60 ? 'var(--warning)' : 'var(--info)',
+      route: 'dispatch',
+    },
+    {
+      label: 'Health',
+      value: healthyCount,
+      max: Math.max(serverCount, 1),
+      suffix: `/${serverCount}`,
+      color: downCount > 0 ? 'var(--error)' : 'var(--success)',
+      route: 'servers',
+    },
+  ]);
+
+  /* ── Hero / command summary ── */
   let heroSummary = $derived.by(() => {
     const conflict = kpis.conflict_details?.[0];
 
@@ -196,45 +231,41 @@
     }
 
     return {
-      eyebrow: 'Landing surface',
-      headline: 'No active pressure right now',
-      detail: 'The overview is quiet. Open a lane below when you want deeper detail.',
+      eyebrow: 'System nominal',
+      headline: 'No active pressure',
+      detail: 'All systems operating within normal parameters.',
       tone: 'calm',
       action: null,
     };
   });
 
-  let heroSignals = $derived.by(() => [
-    { label: 'active agents', value: agentCount },
-    { label: 'tasks completed', value: kpis.tasks_completed_today },
-    { label: 'system load', value: shuttleStore.systemLoadPct },
-    { label: 'merge ready', value: coordinationSummary.merge_ready_branches ?? 0 },
-  ]);
-
+  /* ── Attention lanes ── */
   let attentionLanes = $derived.by(() => {
     const lanes = [];
 
     if (downCount > 0 || !daemonRunning) {
       lanes.push({
         route: 'servers',
-        label: 'Runtime lane',
+        label: 'Runtime',
         action: 'Investigate',
         value: downCount > 0 ? `${downCount} down` : 'Daemon offline',
         detail: daemonRunning
-          ? `${healthyCount}/${serverCount} healthy · ${processCount} processes`
-          : 'Bring the daemon and server health back into a safe state',
+          ? `${healthyCount}/${serverCount} healthy · ${processCount} proc`
+          : 'Daemon needs restart',
+        severity: 'error',
       });
     }
 
     if (blockedTasks > 0 || coordinationSummary.cross_agent_blockers > 0) {
       lanes.push({
         route: 'dispatch',
-        label: 'Blocked work',
+        label: 'Blocked',
         action: 'Unblock',
-        value: `${blockedTasks} blocked`,
+        value: `${blockedTasks} task${blockedTasks === 1 ? '' : 's'}`,
         detail: activeBlockers.length > 0
-          ? `${activeBlockers[0].task_title} blocked by ${activeBlockers[0].blocked_by_task_title || activeBlockers[0].blocked_by_task_id}`
-          : `${coordinationSummary.cross_agent_blockers} cross-agent blocker${coordinationSummary.cross_agent_blockers === 1 ? '' : 's'}`,
+          ? `${activeBlockers[0].task_title}`
+          : `${coordinationSummary.cross_agent_blockers} cross-agent`,
+        severity: 'warning',
       });
     }
 
@@ -244,44 +275,30 @@
         label: 'Approvals',
         action: 'Review',
         value: `${pendingApprovals} waiting`,
-        detail: 'Review workflow decisions before the queue drifts further.',
+        detail: 'Workflow decisions ready',
+        severity: 'warning',
       });
     }
 
     if (coordinationSummary.agents_needing_attention > 0) {
       lanes.push({
         route: 'fleet',
-        label: 'Attention agents',
+        label: 'Attention',
         action: 'Inspect',
-        value: `${coordinationSummary.agents_needing_attention} flagged`,
-        detail: topAttentionAgents.length > 0
-          ? `${topAttentionAgents[0].agent_id} · ${(topAttentionAgents[0].attention_reasons || []).slice(0, 2).join(' · ') || 'needs coordination review'}`
-          : 'Open Fleet to inspect the agents currently under pressure.',
-      });
-    }
-
-    if (coordinationSummary.namespaces_at_risk > 0) {
-      lanes.push({
-        route: 'dispatch',
-        label: 'Risky namespaces',
-        action: 'Review',
-        value: `${coordinationSummary.namespaces_at_risk} at risk`,
-        detail: riskyNamespaces.length > 0
-          ? `${riskyNamespaces[0].namespace} · ${(riskyNamespaces[0].attention_reasons || []).slice(0, 2).join(' · ')}`
-          : 'Open Dispatch to review the namespaces with the most coordination pressure.',
+        value: `${coordinationSummary.agents_needing_attention} agent${coordinationSummary.agents_needing_attention === 1 ? '' : 's'}`,
+        detail: topAttentionAgents.length > 0 ? topAttentionAgents[0].agent_id : 'Needs review',
+        severity: 'info',
       });
     }
 
     if (shuttleStore.hasRecommendations) {
-      const top = shuttleStore.recommendations[0];
       lanes.push({
         route: 'dispatch',
-        label: 'Smart dispatch',
-        action: 'Dispatch',
-        value: `${shuttleStore.recommendations.length} suggested`,
-        detail: top
-          ? `${top.task_title} → ${top.recommended_agent} (${Math.round(top.score * 100)}% match)`
-          : 'AI-recommended agent-task pairings are ready for review.',
+        label: 'Dispatch',
+        action: 'Route',
+        value: `${shuttleStore.recommendations.length} suggestion${shuttleStore.recommendations.length === 1 ? '' : 's'}`,
+        detail: shuttleStore.recommendations[0]?.task_title || 'Ready',
+        severity: 'info',
       });
     }
 
@@ -289,891 +306,1098 @@
     if (mergeReady > 0) {
       lanes.push({
         route: 'dispatch',
-        label: 'Merge ready',
-        action: 'Merge',
+        label: 'Merge',
+        action: 'Land',
         value: `${mergeReady} branch${mergeReady === 1 ? '' : 'es'}`,
-        detail: 'Branches passed merge checks and are ready to land.',
+        detail: 'Passed checks, ready to land',
+        severity: 'success',
       });
     }
 
     if (mergeQueueStore.hasConflicts) {
       lanes.push({
         route: 'dispatch',
-        label: 'File conflicts',
+        label: 'Conflicts',
         action: 'Resolve',
         value: `${mergeQueueStore.conflicts.length} pair${mergeQueueStore.conflicts.length === 1 ? '' : 's'}`,
-        detail: 'Agents are claiming overlapping files. Resolve before merging.',
+        detail: 'Overlapping file claims',
+        severity: 'error',
       });
     }
 
     return lanes.slice(0, 5);
   });
 
-  let priorityLinks = $derived.by(() => [
-    {
-      route: 'fleet',
-      label: 'Fleet',
-      value: `${sessionCount} sessions`,
-      detail: coordinationSummary.conflict_files > 0
-        ? `${coordinationSummary.conflict_files} conflict${coordinationSummary.conflict_files === 1 ? '' : 's'}`
-        : `${coordinationSummary.namespaces_at_risk} namespace${coordinationSummary.namespaces_at_risk === 1 ? '' : 's'} at risk`,
-    },
-    {
-      route: 'servers',
-      label: 'Servers',
-      value: serverCount > 0 ? `${healthyCount}/${serverCount} healthy` : 'No servers',
-      detail: downCount > 0
-        ? `${downCount} down`
-        : `${daemonRunning ? 'daemon running' : 'daemon stopped'} · ${processCount} processes`,
-    },
-    {
-      route: 'tasks',
-      label: 'Work',
-      value: `${pendingTasks} pending`,
-      detail: `${activeTasks} active · ${blockedTasks} blocked`,
-    },
-    {
-      route: 'workflows',
-      label: 'Approvals',
-      value: `${pendingApprovals} waiting`,
-      detail: pendingApprovals > 0 ? 'Workflow decisions are waiting' : 'No approval pressure',
-    },
-  ]);
+  let hasAttention = $derived(attentionLanes.length > 0);
 
+  /* ── Primary surface cards ── */
   let primaryCards = $derived.by(() => [
     {
       route: 'fleet',
-      label: 'Coordination pressure',
-      value: `${sessionCount} sessions`,
-      detail: `${agentCount} active agents · ${namespaceCount} namespaces · ${coordinationSummary.namespaces_at_risk} at risk`,
+      label: 'Coordination',
+      value: `${sessionCount}`,
+      unit: `session${sessionCount === 1 ? '' : 's'}`,
+      detail: `${agentCount} active · ${namespaceCount} namespace${namespaceCount === 1 ? '' : 's'}`,
       foot: activeBlockers.length > 0
-        ? `${activeBlockers[0].task_title} is blocked by ${activeBlockers[0].blocked_by_task_title || activeBlockers[0].blocked_by_task_id}`
+        ? `${activeBlockers[0].task_title} blocked`
         : topRelations.length > 0
-          ? `${topRelations[0].source_label} ↔ ${topRelations[0].target_label}`
-          : 'No active relation hotspots',
+          ? `${topRelations[0].source_label} → ${topRelations[0].target_label}`
+          : 'No hotspots',
       alert: coordinationSummary.conflict_files > 0 || coordinationSummary.cross_agent_blockers > 0 || coordinationSummary.agents_needing_attention > 0,
       tags: [
-        {
-          label: 'Conflicts',
-          active: coordinationSummary.conflict_files > 0,
-          note: coordinationSummary.conflict_files > 0 ? String(coordinationSummary.conflict_files) : 'clear',
-        },
-        {
-          label: 'Attention',
-          active: coordinationSummary.agents_needing_attention > 0,
-          note: coordinationSummary.agents_needing_attention > 0 ? String(coordinationSummary.agents_needing_attention) : 'clear',
-        },
-        {
-          label: 'Risk',
-          active: coordinationSummary.namespaces_at_risk > 0,
-          note: coordinationSummary.namespaces_at_risk > 0 ? String(coordinationSummary.namespaces_at_risk) : 'clear',
-        },
+        { label: 'Conflicts', value: coordinationSummary.conflict_files, active: coordinationSummary.conflict_files > 0 },
+        { label: 'Attention', value: coordinationSummary.agents_needing_attention, active: coordinationSummary.agents_needing_attention > 0 },
+        { label: 'Risk', value: coordinationSummary.namespaces_at_risk, active: coordinationSummary.namespaces_at_risk > 0 },
       ],
     },
     {
       route: 'servers',
-      label: 'Runtime health',
-      value: serverCount > 0 ? `${healthyCount}/${serverCount} healthy` : 'No servers',
-      detail: `${downCount > 0 ? `${downCount} down` : 'All servers reachable'} · ${daemonRunning ? 'daemon running' : 'daemon stopped'} · ${processCount} processes`,
-      foot: `${otelStatus.otlp_configured ? 'OTel configured' : 'OTel off'} · ${costEnabled ? 'cost tracking on' : 'cost tracking off'}`,
+      label: 'Runtime',
+      value: serverCount > 0 ? `${healthyCount}` : '—',
+      unit: serverCount > 0 ? `of ${serverCount} healthy` : 'no servers',
+      detail: `${downCount > 0 ? `${downCount} down` : 'All reachable'} · ${daemonRunning ? 'daemon up' : 'daemon down'} · ${processCount} proc`,
+      foot: `${otelStatus.otlp_configured ? 'OTel on' : 'OTel off'} · ${costEnabled ? 'cost on' : 'cost off'}`,
       alert: downCount > 0 || !daemonRunning,
       tags: [
-        {
-          label: 'RBAC',
-          active: rbacEnabled,
-          note: rbacEnabled && rbacDeniedCount > 0 ? `${rbacDeniedCount} denied` : (rbacEnabled ? 'on' : 'off'),
-        },
-        {
-          label: 'Audit',
-          active: auditEnabled,
-          note: auditEnabled ? 'on' : 'off',
-        },
-        {
-          label: 'OTel',
-          active: otelStatus.otlp_configured,
-          note: otelStatus.otlp_configured ? 'on' : 'off',
-        },
-        {
-          label: 'Cost',
-          active: costEnabled,
-          note: costEnabled ? 'on' : 'off',
-        },
+        { label: 'RBAC', value: rbacEnabled && rbacDeniedCount > 0 ? rbacDeniedCount : (rbacEnabled ? 1 : 0), active: rbacEnabled },
+        { label: 'Audit', value: auditEnabled ? 1 : 0, active: auditEnabled },
+        { label: 'OTel', value: otelStatus.otlp_configured ? 1 : 0, active: otelStatus.otlp_configured },
       ],
     },
     {
       route: 'tasks',
-      label: 'Work queue',
-      value: `${pendingTasks} pending`,
+      label: 'Work Queue',
+      value: `${pendingTasks}`,
+      unit: 'pending',
       detail: `${activeTasks} active · ${blockedTasks} blocked`,
       foot: pendingApprovals > 0
-        ? `${pendingApprovals} approvals waiting`
-        : `${coordinationSummary.cross_agent_blockers} cross-agent blockers`,
-      alert: blockedTasks > 0 || pendingApprovals > 0 || coordinationSummary.cross_agent_blockers > 0,
+        ? `${pendingApprovals} approval${pendingApprovals === 1 ? '' : 's'} waiting`
+        : `${coordinationSummary.cross_agent_blockers} cross-agent blocker${coordinationSummary.cross_agent_blockers === 1 ? '' : 's'}`,
+      alert: blockedTasks > 0 || pendingApprovals > 0,
       tags: [
-        {
-          label: 'Approvals',
-          active: pendingApprovals > 0,
-          note: pendingApprovals > 0 ? String(pendingApprovals) : 'clear',
-        },
-        {
-          label: 'Blocked',
-          active: blockedTasks > 0,
-          note: blockedTasks > 0 ? String(blockedTasks) : 'clear',
-        },
-        {
-          label: 'Cross-agent',
-          active: coordinationSummary.cross_agent_blockers > 0,
-          note: coordinationSummary.cross_agent_blockers > 0 ? String(coordinationSummary.cross_agent_blockers) : 'clear',
-        },
+        { label: 'Approvals', value: pendingApprovals, active: pendingApprovals > 0 },
+        { label: 'Blocked', value: blockedTasks, active: blockedTasks > 0 },
+        { label: 'X-agent', value: coordinationSummary.cross_agent_blockers, active: coordinationSummary.cross_agent_blockers > 0 },
       ],
     },
     {
       route: 'dispatch',
-      label: 'Fleet shuttle',
-      value: shuttleStore.systemLoadPct,
-      detail: `${shuttleStore.recommendations.length} suggestion${shuttleStore.recommendations.length === 1 ? '' : 's'} · ${(coordinationSummary.merge_ready_branches ?? 0)} merge-ready · ${mergeQueueStore.conflicts.length} conflict${mergeQueueStore.conflicts.length === 1 ? '' : 's'}`,
+      label: 'Shuttle',
+      value: shuttleStore.systemLoadPct || '0%',
+      unit: 'load',
+      detail: `${shuttleStore.recommendations.length} suggested · ${(coordinationSummary.merge_ready_branches ?? 0)} merge-ready`,
       foot: shuttleStore.hasRecommendations
-        ? `Top: ${shuttleStore.recommendations[0].task_title} → ${shuttleStore.recommendations[0].recommended_agent}`
-        : 'No pending dispatch recommendations',
-      alert: shuttleStore.hasRecommendations || mergeQueueStore.hasConflicts || (coordinationSummary.merge_ready_branches ?? 0) > 0,
+        ? `${shuttleStore.recommendations[0].task_title} → ${shuttleStore.recommendations[0].recommended_agent}`
+        : 'No dispatch recommendations',
+      alert: shuttleStore.hasRecommendations || mergeQueueStore.hasConflicts,
       tags: [
-        {
-          label: 'Suggestions',
-          active: shuttleStore.hasRecommendations,
-          note: shuttleStore.hasRecommendations ? String(shuttleStore.recommendations.length) : 'none',
-        },
-        {
-          label: 'Merge',
-          active: (coordinationSummary.merge_ready_branches ?? 0) > 0,
-          note: (coordinationSummary.merge_ready_branches ?? 0) > 0 ? String(coordinationSummary.merge_ready_branches) : 'none',
-        },
-        {
-          label: 'Conflicts',
-          active: mergeQueueStore.hasConflicts,
-          note: mergeQueueStore.hasConflicts ? String(mergeQueueStore.conflicts.length) : 'clear',
-        },
+        { label: 'Dispatch', value: shuttleStore.recommendations.length, active: shuttleStore.hasRecommendations },
+        { label: 'Merge', value: coordinationSummary.merge_ready_branches ?? 0, active: (coordinationSummary.merge_ready_branches ?? 0) > 0 },
+        { label: 'Conflicts', value: mergeQueueStore.conflicts.length, active: mergeQueueStore.hasConflicts },
       ],
     },
   ]);
 
-  let sortedPrimaryCards = $derived.by(() => {
+  let sortedCards = $derived.by(() => {
     const cards = primaryCards;
-    const alertCards = cards.filter((c) => c.alert);
-    const calmCards = cards.filter((c) => !c.alert);
-    return [...alertCards, ...calmCards];
+    return [...cards.filter(c => c.alert), ...cards.filter(c => !c.alert)];
   });
 
-  let hasAttention = $derived(attentionLanes.length > 0);
+  /* ── Supporting surfaces ── */
   let supportExpanded = $state(false);
 
   let supportSurfaces = $derived.by(() => [
     {
       route: 'memory',
       label: 'Memory',
-      value: `${workingItems + shortItems + longItems} items`,
-      detail: `${totalTokens.toLocaleString()} tokens · ${compressionRatio > 0 ? `${Math.round(compressionRatio * 100)}% compressed` : 'no compression data'}`,
+      value: `${workingItems + shortItems + longItems}`,
+      detail: `${totalTokens.toLocaleString()} tok`,
     },
     {
       route: 'stream',
       label: 'Stream',
-      value: `${streamCount} entries`,
-      detail: lastStreamAge ? `last update ${lastStreamAge}` : 'no stream data',
+      value: `${streamCount}`,
+      detail: lastStreamAge ? lastStreamAge : 'idle',
     },
     {
       route: 'sandbox',
       label: 'Sandbox',
-      value: `${sandboxStore.runningCount} running`,
-      detail: sandboxStore.available
-        ? `${sandboxStore.totalExecs} exec${sandboxStore.totalExecs === 1 ? '' : 's'} · ${sandboxStore.totalBuilds} build${sandboxStore.totalBuilds === 1 ? '' : 's'}`
-        : 'offline',
+      value: `${sandboxStore.runningCount}`,
+      detail: sandboxStore.available ? 'online' : 'offline',
     },
     {
       route: 'graph',
       label: 'Graph',
-      value: `${graphEntities} entities`,
-      detail: graphTopTypes,
+      value: `${graphEntities}`,
+      detail: graphTopTypes.split(' · ')[0] || 'empty',
     },
   ]);
+
+  /* ── SVG ring gauge helper ── */
+  function ringPath(pct) {
+    const r = 18;
+    const circumference = 2 * Math.PI * r;
+    return circumference - (pct / 100) * circumference;
+  }
 </script>
 
-<div class="panel overview-panel">
+<div class="panel overview">
   {#if initialLoad}
-    <section class="overview-hero hero-skeleton">
-      <div class="hero-copy">
-        <div class="skeleton skeleton-text" style="width: 120px;"></div>
-        <div class="skeleton skeleton-bar" style="width: min(540px, 78%); height: 30px; margin-top: 10px;"></div>
-        <div class="skeleton skeleton-text" style="width: min(520px, 70%); margin-top: 10px;"></div>
-        <div class="hero-signals">
-          {#each Array(4) as _}
-            <div class="signal-chip signal-chip-skeleton"></div>
-          {/each}
+    <!-- Skeleton -->
+    <div class="signal-strip">
+      {#each Array(4) as _}
+        <div class="instrument instrument-skeleton">
+          <div class="skeleton skeleton-bar" style="width: 42px; height: 42px; border-radius: 50%;"></div>
+          <div class="inst-data">
+            <div class="skeleton skeleton-text" style="width: 48px;"></div>
+            <div class="skeleton skeleton-bar" style="width: 64px; height: 18px;"></div>
+          </div>
         </div>
-      </div>
-      <div class="hero-rail">
-        {#each Array(4) as _}
-          <div class="rail-item rail-item-skeleton"></div>
-        {/each}
-      </div>
-    </section>
-
-    <div class="focus-grid">
-      {#each Array(3) as _}
-        <div class="focus-card focus-card-skeleton">
-          <div class="skeleton skeleton-text" style="width: 45%;"></div>
-          <div class="skeleton skeleton-bar" style="width: 65%; height: 24px; margin-top: 10px;"></div>
-          <div class="skeleton skeleton-text" style="width: 80%; margin-top: 10px;"></div>
+      {/each}
+    </div>
+    <div class="command-section command-skeleton">
+      <div class="skeleton skeleton-bar" style="width: min(400px, 60%); height: 28px;"></div>
+      <div class="skeleton skeleton-text" style="width: min(320px, 50%); margin-top: 8px;"></div>
+    </div>
+    <div class="surface-grid">
+      {#each Array(4) as _}
+        <div class="surface-card surface-card-skeleton">
+          <div class="skeleton skeleton-text" style="width: 40%;"></div>
+          <div class="skeleton skeleton-bar" style="width: 50%; height: 22px; margin-top: 8px;"></div>
+          <div class="skeleton skeleton-text" style="width: 70%; margin-top: 8px;"></div>
         </div>
       {/each}
     </div>
   {:else}
-    <section class="overview-hero" class:hero-alert={heroSummary.tone === 'alert'}>
-      <div class="hero-copy">
-        <div class="hero-eyebrow">{heroSummary.eyebrow}</div>
-        <h1 class="hero-title">{heroSummary.headline}</h1>
-        <p class="hero-detail">{heroSummary.detail}</p>
+
+    <!-- ═══ Signal Strip ═══ -->
+    <div class="signal-strip">
+      {#each instruments as inst, i (inst.label)}
+        <button
+          class="instrument"
+          onclick={() => navigate(inst.route)}
+          style="animation-delay: {i * 60}ms;"
+        >
+          <div class="inst-ring">
+            <svg viewBox="0 0 44 44" class="ring-svg">
+              <circle cx="22" cy="22" r="18" class="ring-track" />
+              <circle
+                cx="22" cy="22" r="18"
+                class="ring-fill"
+                style="
+                  stroke: {inst.color};
+                  stroke-dasharray: {2 * Math.PI * 18};
+                  stroke-dashoffset: {ringPath(inst.max > 0 ? (inst.value / inst.max) * 100 : 0)};
+                  filter: drop-shadow(0 0 4px {inst.color});
+                "
+              />
+            </svg>
+            <span class="inst-ring-value">{inst.value}{inst.suffix || ''}</span>
+          </div>
+          <div class="inst-data">
+            <span class="inst-label">{inst.label}</span>
+          </div>
+        </button>
+      {/each}
+
+      <div class="strip-divider"></div>
+
+      <!-- Today summary chip -->
+      <div class="strip-summary">
+        <span class="strip-summary-label">Today</span>
+        <span class="strip-summary-value">{kpis.sessions_today} sessions · {kpis.tasks_completed_today} tasks</span>
+      </div>
+    </div>
+
+    <!-- ═══ Command Section ═══ -->
+    <section class="command-section" class:command-alert={heroSummary.tone === 'alert'}>
+      <div class="command-main">
+        <div class="command-eyebrow">{heroSummary.eyebrow}</div>
+        <h1 class="command-title">{heroSummary.headline}</h1>
+        <p class="command-detail">{heroSummary.detail}</p>
         {#if heroSummary.action}
-          <button class="hero-action" onclick={() => navigate(heroSummary.action.route)}>
-            {heroSummary.action.label} &rarr;
+          <button class="command-action" onclick={() => navigate(heroSummary.action.route)}>
+            {heroSummary.action.label}
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
-        {:else}
-          <div class="hero-note">
-            Today: {kpis.sessions_today} sessions · {kpis.tasks_completed_today} tasks completed
-          </div>
-        {/if}
-        <div class="hero-signals">
-          {#each heroSignals as signal (signal.label)}
-            <div class="signal-chip">
-              <span>{signal.label}</span>
-              <strong>{signal.value}</strong>
-            </div>
-          {/each}
-        </div>
-      </div>
-
-      <div class="hero-rail">
-        <div class="rail-label">{attentionLanes.length > 0 ? 'Attention lanes' : 'Priority lanes'}</div>
-        <div class="rail-title">{attentionLanes.length > 0 ? 'Start with the lane that needs action next.' : 'Open the lane that needs detail.'}</div>
-        <div class="rail-stack">
-          {#if attentionLanes.length > 0}
-            {#each attentionLanes as lane (lane.route + lane.label)}
-              <button class="rail-item" onclick={() => navigate(lane.route)}>
-                <div class="rail-item-head">
-                  <span class="rail-item-label">{lane.label}</span>
-                  <span class="rail-item-action">{lane.action}</span>
-                </div>
-                <strong>{lane.value}</strong>
-                <small>{lane.detail}</small>
-              </button>
-            {/each}
-          {:else}
-            {#each priorityLinks as link (link.route)}
-              <button class="rail-item" onclick={() => navigate(link.route)}>
-                <span class="rail-item-label">{link.label}</span>
-                <strong>{link.value}</strong>
-                <small>{link.detail}</small>
-              </button>
-            {/each}
-          {/if}
-        </div>
-        {#if attentionLanes.length > 0}
-          <div class="rail-quicklinks">
-            {#each priorityLinks as link (link.route)}
-              <button class="quicklink-chip" onclick={() => navigate(link.route)}>
-                <span>{link.label}</span>
-                <strong>{link.value}</strong>
-              </button>
-            {/each}
-          </div>
         {/if}
       </div>
-    </section>
 
-    <section class="section">
-      <div class="section-heading">
-        <span class="section-label">Primary surfaces</span>
-        <span class="section-note">{hasAttention ? 'Alert surfaces are promoted. Calm surfaces are compacted below.' : 'These are the first places to look when the HUD is asking for attention.'}</span>
-      </div>
-      <div class="focus-grid">
-        {#each sortedPrimaryCards as card (card.route)}
-          {#if card.alert}
-            <button
-              class="focus-card focus-card-alert"
-              onclick={() => navigate(card.route)}
-            >
-              <div class="card-head">
-                <span class="card-title">{card.label}</span>
-                <span class="card-cta">Open</span>
+      {#if attentionLanes.length > 0}
+        <div class="lane-list">
+          <div class="lane-list-label">Attention lanes</div>
+          {#each attentionLanes as lane (lane.route + lane.label)}
+            <button class="lane-item lane-{lane.severity}" onclick={() => navigate(lane.route)}>
+              <div class="lane-head">
+                <span class="lane-dot" style="background: var(--{lane.severity});"></span>
+                <span class="lane-name">{lane.label}</span>
+                <span class="lane-badge">{lane.action}</span>
               </div>
-              <div class="card-value">{card.value}</div>
-              <div class="card-detail">{card.detail}</div>
-              <div class="card-tags">
-                {#each card.tags as tag (tag.label)}
-                  <span class="card-tag" class:tag-on={tag.active} class:tag-off={!tag.active}>
-                    {tag.label} · {tag.note}
-                  </span>
-                {/each}
-              </div>
-              <div class="card-foot">{card.foot}</div>
-            </button>
-          {:else}
-            <button
-              class="focus-card focus-card-calm"
-              onclick={() => navigate(card.route)}
-            >
-              <div class="card-head">
-                <span class="card-title">{card.label}</span>
-                <span class="card-value-inline">{card.value}</span>
-                <span class="card-cta">Open</span>
-              </div>
-              {#if !hasAttention}
-                <div class="card-detail">{card.detail}</div>
-                <div class="card-tags">
-                  {#each card.tags as tag (tag.label)}
-                    <span class="card-tag" class:tag-on={tag.active} class:tag-off={!tag.active}>
-                      {tag.label} · {tag.note}
-                    </span>
-                  {/each}
-                </div>
-              {/if}
-            </button>
-          {/if}
-        {/each}
-      </div>
-    </section>
-
-    <section class="section support-section">
-      <button class="section-heading section-toggle" onclick={() => { supportExpanded = !supportExpanded; }}>
-        <span class="section-label">Supporting surfaces</span>
-        {#if !supportExpanded}
-          <span class="section-collapsed-summary">
-            {supportSurfaces.map((s) => `${s.label}: ${s.value}`).join(' · ')}
-          </span>
-        {/if}
-        <span class="section-chevron" class:section-chevron-open={supportExpanded}>{'\u25B8'}</span>
-      </button>
-      {#if supportExpanded || !hasAttention}
-        <div class="support-grid">
-          {#each supportSurfaces as surface (surface.route)}
-            <button class="support-card" onclick={() => navigate(surface.route)}>
-              <span class="support-label">{surface.label}</span>
-              <strong>{surface.value}</strong>
-              <small>{surface.detail}</small>
+              <div class="lane-value">{lane.value}</div>
+              <div class="lane-detail">{lane.detail}</div>
             </button>
           {/each}
         </div>
       {/if}
     </section>
+
+    <!-- ═══ Primary Surfaces ═══ -->
+    <section class="surfaces-section">
+      <div class="surfaces-header">
+        <span class="surfaces-label">Surfaces</span>
+        <span class="surfaces-note">{hasAttention ? 'Alert surfaces promoted' : 'Primary monitoring surfaces'}</span>
+      </div>
+
+      <div class="surface-grid">
+        {#each sortedCards as card, i (card.route)}
+          <button
+            class="surface-card"
+            class:surface-alert={card.alert}
+            onclick={() => navigate(card.route)}
+            style="animation-delay: {i * 50}ms;"
+          >
+            <div class="sc-top">
+              <span class="sc-label">{card.label}</span>
+              <span class="sc-cta">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M4 2l4 4-4 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+              </span>
+            </div>
+            <div class="sc-value-row">
+              <span class="sc-value">{card.value}</span>
+              <span class="sc-unit">{card.unit}</span>
+            </div>
+            <div class="sc-detail">{card.detail}</div>
+            <div class="sc-tags">
+              {#each card.tags as tag (tag.label)}
+                <span class="sc-tag" class:tag-active={tag.active} class:tag-idle={!tag.active}>
+                  {tag.label}
+                  {#if tag.active}
+                    <strong>{tag.value}</strong>
+                  {/if}
+                </span>
+              {/each}
+            </div>
+            <div class="sc-foot">{card.foot}</div>
+          </button>
+        {/each}
+      </div>
+    </section>
+
+    <!-- ═══ Supporting Surfaces ═══ -->
+    <section class="support-section">
+      <button class="support-toggle" onclick={() => { supportExpanded = !supportExpanded; }}>
+        <span class="support-toggle-label">Supporting</span>
+        {#if !supportExpanded}
+          <span class="support-inline">
+            {#each supportSurfaces as s (s.route)}
+              <span class="support-chip-inline" onclick={(e) => { e.stopPropagation(); navigate(s.route); }}>
+                <span class="sci-label">{s.label}</span>
+                <strong>{s.value}</strong>
+              </span>
+            {/each}
+          </span>
+        {/if}
+        <span class="support-chevron" class:chevron-open={supportExpanded}>
+          <svg width="10" height="10" viewBox="0 0 10 10"><path d="M3 2l4 3-4 3" fill="currentColor"/></svg>
+        </span>
+      </button>
+
+      {#if supportExpanded || !hasAttention}
+        <div class="support-grid">
+          {#each supportSurfaces as surface (surface.route)}
+            <button class="support-chip" onclick={() => navigate(surface.route)}>
+              <span class="chip-label">{surface.label}</span>
+              <span class="chip-value">{surface.value}</span>
+              <span class="chip-detail">{surface.detail}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
   {/if}
 </div>
 
 <style>
-  .overview-panel {
+  /* ═══ Overview Layout ═══════════════════════════════════════ */
+
+  .overview {
     display: flex;
     flex-direction: column;
-    padding: 16px;
-    gap: 16px;
+    padding: var(--space-4) var(--space-5);
+    gap: var(--space-5);
+    overflow-y: auto;
   }
 
-  .overview-hero {
-    display: grid;
-    grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.9fr);
-    gap: 14px;
-    padding: 18px;
+
+  /* ═══ Signal Strip ══════════════════════════════════════════ */
+
+  .signal-strip {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-lg);
-    border: 1px solid color-mix(in srgb, var(--border) 72%, var(--accent) 28%);
-    background:
-      radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 18%, transparent), transparent 42%),
-      linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 88%, var(--accent) 12%), var(--bg-secondary));
-    box-shadow: var(--shadow-md);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
   }
 
-  .hero-alert {
-    border-color: rgba(231, 179, 18, 0.35);
+  /* Subtle grid pattern */
+  .signal-strip::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0.03;
+    background-image:
+      linear-gradient(var(--fg-muted) 1px, transparent 1px),
+      linear-gradient(90deg, var(--fg-muted) 1px, transparent 1px);
+    background-size: 24px 24px;
+    pointer-events: none;
   }
 
-  .hero-copy {
+  /* Top-edge light */
+  .signal-strip::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 5%,
+      rgba(0, 200, 255, 0.15) 30%,
+      rgba(0, 200, 255, 0.25) 50%,
+      rgba(0, 200, 255, 0.15) 70%,
+      transparent 95%
+    );
+    pointer-events: none;
+  }
+
+  .instrument {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background var(--transition-fast), transform var(--transition-fast);
+    position: relative;
+    z-index: 1;
+    animation: fadeIn 0.25s ease-out both;
+  }
+
+  .instrument:hover {
+    background: rgba(0, 200, 255, 0.05);
+    transform: translateY(-1px);
+  }
+
+  .inst-ring {
+    position: relative;
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+  }
+
+  .ring-svg {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+  }
+
+  .ring-track {
+    fill: none;
+    stroke: var(--border);
+    stroke-width: 2.5;
+  }
+
+  .ring-fill {
+    fill: none;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .inst-ring-value {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--fg-primary);
+    font-feature-settings: 'tnum';
+  }
+
+  .inst-data {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 2px;
   }
 
-  .hero-eyebrow,
-  .rail-label,
-  .section-label {
+  .inst-label {
     font-size: 10px;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--tracking-wide);
     color: var(--fg-secondary);
-    font-weight: 700;
+    white-space: nowrap;
   }
 
-  .hero-title {
-    margin: 0;
-    font-size: clamp(24px, 2.6vw, 34px);
-    line-height: 1.05;
-    color: var(--fg-primary);
-    letter-spacing: -0.02em;
+  .strip-divider {
+    width: 1px;
+    height: 32px;
+    background: var(--border);
+    flex-shrink: 0;
+    margin: 0 var(--space-1);
   }
 
-  .hero-detail {
-    margin: 0;
-    max-width: 62ch;
-    font-size: 14px;
-    line-height: 1.5;
+  .strip-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-left: auto;
+    text-align: right;
+    flex-shrink: 0;
+    z-index: 1;
+  }
+
+  .strip-summary-label {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wider);
     color: var(--fg-muted);
   }
 
-  .hero-note {
+  .strip-summary-value {
     font-size: 11px;
     font-family: var(--font-mono);
     color: var(--fg-secondary);
+    white-space: nowrap;
   }
 
-  .hero-action {
+  .instrument-skeleton {
+    cursor: default;
+    min-width: 120px;
+    padding: var(--space-2) var(--space-3);
+  }
+
+
+  /* ═══ Command Section ═══════════════════════════════════════ */
+
+  .command-section {
+    display: grid;
+    grid-template-columns: 1fr minmax(240px, 0.5fr);
+    gap: var(--space-5);
+    padding: var(--space-5);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    background:
+      radial-gradient(ellipse at 15% 20%, rgba(0, 200, 255, 0.04), transparent 50%),
+      var(--bg-secondary);
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Top-edge glow */
+  .command-section::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 10%,
+      rgba(0, 200, 255, 0.12) 40%,
+      rgba(0, 200, 255, 0.08) 60%,
+      transparent 90%
+    );
+  }
+
+  .command-alert {
+    border-color: rgba(255, 107, 53, 0.2);
+    background:
+      radial-gradient(ellipse at 15% 20%, rgba(255, 107, 53, 0.05), transparent 50%),
+      var(--bg-secondary);
+  }
+
+  .command-alert::after {
+    background: linear-gradient(
+      90deg,
+      transparent 10%,
+      rgba(255, 107, 53, 0.15) 40%,
+      rgba(255, 107, 53, 0.1) 60%,
+      transparent 90%
+    );
+  }
+
+  .command-main {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .command-eyebrow {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+  }
+
+  .command-title {
+    margin: 0;
+    font-size: clamp(22px, 2.4vw, 30px);
+    font-weight: 700;
+    line-height: var(--leading-tight);
+    color: var(--fg-primary);
+    letter-spacing: var(--tracking-tight);
+  }
+
+  .command-detail {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--fg-secondary);
+    line-height: 1.5;
+    max-width: 52ch;
+    font-family: var(--font-mono);
+  }
+
+  .command-action {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     padding: 8px 16px;
+    margin-top: var(--space-2);
     border-radius: var(--radius-sm);
-    border: 1px solid color-mix(in srgb, var(--accent) 60%, var(--border) 40%);
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border: 1px solid rgba(255, 107, 53, 0.35);
+    background: var(--accent-dim);
     color: var(--accent);
     font-size: 12px;
     font-weight: 600;
     font-family: var(--font-mono);
+    letter-spacing: 0.02em;
     cursor: pointer;
-    transition: background var(--transition-fast), border-color var(--transition-fast);
+    transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+    width: fit-content;
   }
 
-  .hero-action:hover {
-    background: color-mix(in srgb, var(--accent) 22%, transparent);
-    border-color: var(--accent);
+  .command-action:hover {
+    background: rgba(255, 107, 53, 0.18);
+    border-color: rgba(255, 107, 53, 0.5);
+    box-shadow: 0 0 16px rgba(255, 107, 53, 0.12);
   }
 
-  .hero-signals {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-    max-width: 560px;
+  .command-action svg {
+    opacity: 0.8;
   }
 
-  .signal-chip {
+  .command-skeleton {
     display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    align-items: baseline;
-    padding: 10px 12px;
-    border-radius: var(--radius-sm);
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-5);
+    border-radius: var(--radius-lg);
     border: 1px solid var(--border);
-    background: color-mix(in srgb, var(--bg-primary) 55%, transparent);
-    font-family: var(--font-mono);
+    background: var(--bg-secondary);
+    min-height: 100px;
   }
 
-  .signal-chip span {
-    font-size: 10px;
-    letter-spacing: 0.05em;
+
+  /* ═══ Attention Lanes ═══════════════════════════════════════ */
+
+  .lane-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .lane-list-label {
+    font-size: 9px;
+    font-weight: 700;
     text-transform: uppercase;
+    letter-spacing: var(--tracking-wider);
     color: var(--fg-muted);
   }
 
-  .signal-chip strong {
-    font-size: 14px;
-    color: var(--fg-primary);
-  }
-
-  .hero-rail {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 12px;
-    border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--bg-primary) 42%, transparent);
-    border: 1px solid color-mix(in srgb, var(--border) 72%, var(--accent) 28%);
-  }
-
-  .rail-title {
-    font-size: 16px;
-    font-weight: 700;
-    color: var(--fg-primary);
-    line-height: 1.2;
-  }
-
-  .rail-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .rail-quicklinks {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding-top: 2px;
-  }
-
-  .rail-item {
+  .lane-item {
     display: flex;
     flex-direction: column;
     gap: 3px;
     text-align: left;
-    padding: 10px 12px;
+    padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
-    background: var(--bg-secondary);
+    background: var(--bg-surface);
     cursor: pointer;
     transition: border-color var(--transition-normal),
-                transform var(--transition-normal),
+                transform var(--transition-fast),
                 box-shadow var(--transition-normal);
   }
 
-  .rail-item:hover {
-    border-color: rgba(233, 93, 116, 0.3);
+  .lane-item:hover {
     transform: translateY(-1px);
-    box-shadow: 0 0 12px var(--glow-accent), var(--shadow-sm);
+    border-color: var(--border-focus);
+    box-shadow: var(--shadow-sm);
   }
 
-  .rail-item strong {
-    font-size: 14px;
-    color: var(--fg-primary);
-    font-family: var(--font-mono);
-  }
-
-  .rail-item small {
-    font-size: 11px;
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-  }
-
-  .rail-item-head {
+  .lane-head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
-  .rail-item-label {
+  .lane-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 4px currentColor;
+  }
+
+  .lane-name {
     font-size: 10px;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--tracking-wide);
     color: var(--fg-secondary);
-    font-weight: 700;
   }
 
-  .rail-item-action {
+  .lane-badge {
+    margin-left: auto;
     font-size: 9px;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.04em;
     color: var(--accent);
     padding: 1px 6px;
-    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border-radius: var(--radius-full);
+    border: 1px solid rgba(255, 107, 53, 0.25);
+    background: var(--accent-dim);
   }
 
-  .quicklink-chip {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 6px 10px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: color-mix(in srgb, var(--bg-primary) 50%, transparent);
-    color: var(--fg-secondary);
+  .lane-value {
+    font-size: 13px;
+    font-weight: 600;
     font-family: var(--font-mono);
-    font-size: 10px;
-    cursor: pointer;
-  }
-
-  .quicklink-chip strong {
     color: var(--fg-primary);
-    font-size: 11px;
   }
 
-  .section {
+  .lane-detail {
+    font-size: 10px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+
+  /* ═══ Surface Grid ══════════════════════════════════════════ */
+
+  .surfaces-section {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--space-3);
   }
 
-  .section-heading {
+  .surfaces-header {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--space-3);
   }
 
-  .section-note {
+  .surfaces-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-secondary);
+  }
+
+  .surfaces-note {
     font-size: 11px;
     color: var(--fg-muted);
     font-family: var(--font-mono);
   }
 
-  .section-toggle {
+  .surface-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-3);
+  }
+
+  .surface-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    text-align: left;
+    padding: var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    transition: border-color var(--transition-normal),
+                transform var(--transition-normal),
+                box-shadow var(--transition-normal);
+    animation: panelSlideIn 0.25s ease-out both;
+  }
+
+  /* Top-edge highlight */
+  .surface-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 10%,
+      rgba(0, 200, 255, 0.1) 50%,
+      transparent 90%
+    );
+  }
+
+  .surface-card:hover {
+    border-color: rgba(0, 200, 255, 0.2);
+    transform: translateY(-2px);
+    box-shadow: 0 0 20px var(--glow-info), var(--shadow-md);
+  }
+
+  .surface-alert {
+    border-color: rgba(255, 107, 53, 0.18);
+  }
+
+  .surface-alert::before {
+    background: linear-gradient(
+      90deg,
+      transparent 10%,
+      rgba(255, 107, 53, 0.15) 50%,
+      transparent 90%
+    );
+  }
+
+  .surface-alert:hover {
+    border-color: rgba(255, 107, 53, 0.3);
+    box-shadow: 0 0 20px var(--glow-accent), var(--shadow-md);
+  }
+
+  .sc-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .sc-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-secondary);
+  }
+
+  .sc-cta {
+    color: var(--fg-muted);
+    opacity: 0;
+    transition: opacity var(--transition-fast), color var(--transition-fast);
+  }
+
+  .surface-card:hover .sc-cta {
+    opacity: 1;
+    color: var(--accent);
+  }
+
+  .sc-value-row {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+  }
+
+  .sc-value {
+    font-size: 28px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    font-feature-settings: 'tnum';
+    color: var(--fg-primary);
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+
+  .sc-unit {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--fg-muted);
+  }
+
+  .sc-detail {
+    font-size: 11px;
+    color: var(--fg-secondary);
+    font-family: var(--font-mono);
+  }
+
+  .sc-tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: var(--space-1);
+  }
+
+  .sc-tag {
+    font-size: 9px;
+    font-family: var(--font-mono);
+    padding: 2px 7px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
+    color: var(--fg-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .tag-active {
+    color: var(--fg-primary);
+    border-color: rgba(255, 107, 53, 0.3);
+    background: var(--accent-dim);
+  }
+
+  .tag-active strong {
+    color: var(--accent);
+  }
+
+  .tag-idle {
+    opacity: 0.55;
+  }
+
+  .sc-foot {
+    font-size: 10px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    margin-top: auto;
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--border-subtle);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .surface-card-skeleton {
+    min-height: 160px;
+    cursor: default;
+  }
+
+
+  /* ═══ Supporting Surfaces ═══════════════════════════════════ */
+
+  .support-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .support-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
     cursor: pointer;
     background: none;
     border: none;
     padding: 0;
     width: 100%;
     text-align: left;
+    color: var(--fg-secondary);
   }
 
-  .section-toggle:hover .section-label {
+  .support-toggle:hover .support-toggle-label {
     color: var(--fg-primary);
   }
 
-  .section-collapsed-summary {
+  .support-toggle-label {
     font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
     color: var(--fg-muted);
-    font-family: var(--font-mono);
-    margin-left: 8px;
-    flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    flex-shrink: 0;
+    transition: color var(--transition-fast);
   }
 
-  .section-chevron {
+  .support-inline {
+    display: flex;
+    gap: var(--space-2);
+    flex: 1;
+    overflow: hidden;
+    margin-left: var(--space-2);
+  }
+
+  .support-chip-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
     font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--fg-muted);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: border-color var(--transition-fast), color var(--transition-fast);
+  }
+
+  .support-chip-inline:hover {
+    border-color: var(--border-focus);
+    color: var(--fg-secondary);
+  }
+
+  .sci-label {
+    color: var(--fg-muted);
+  }
+
+  .support-chip-inline strong {
+    color: var(--fg-secondary);
+    font-weight: 600;
+  }
+
+  .support-chevron {
     color: var(--fg-muted);
     transition: transform var(--transition-fast);
     flex-shrink: 0;
-  }
-
-  .section-chevron-open {
-    transform: rotate(90deg);
-  }
-
-  .focus-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-    gap: 12px;
-  }
-
-  .focus-card {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    text-align: left;
-    padding: 14px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    background: var(--bg-secondary);
-    cursor: pointer;
-    transition: border-color var(--transition-normal),
-                transform var(--transition-normal),
-                box-shadow var(--transition-normal);
-  }
-
-  .focus-card:hover {
-    border-color: rgba(233, 93, 116, 0.3);
-    transform: translateY(-2px);
-    box-shadow: 0 0 12px var(--glow-accent), var(--shadow-md);
-  }
-
-  .focus-card-alert {
-    border-color: rgba(231, 179, 18, 0.35);
-    background: linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 88%, var(--warning) 12%), var(--bg-secondary));
-  }
-
-  .focus-card-calm {
-    opacity: 0.82;
-    padding: 10px 14px;
-  }
-
-  .focus-card-calm:hover {
-    opacity: 1;
-  }
-
-  .card-value-inline {
-    font-size: 13px;
-    font-weight: 600;
-    font-family: var(--font-mono);
-    color: var(--fg-primary);
-    margin-left: auto;
-    margin-right: 8px;
-  }
-
-  .card-head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    margin-left: auto;
   }
 
-  .card-title {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--fg-secondary);
-    font-weight: 700;
-  }
-
-  .card-cta {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--accent);
-    font-weight: 700;
-  }
-
-  .card-value {
-    font-size: 22px;
-    font-weight: 700;
-    font-family: var(--font-mono);
-    font-feature-settings: 'tnum';
-    color: var(--fg-primary);
-    line-height: 1.1;
-  }
-
-  .card-detail,
-  .card-foot,
-  .support-card small {
-    font-size: 11px;
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-    line-height: 1.4;
-  }
-
-  .card-tags {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-
-  .card-tag {
-    font-size: 9px;
-    font-family: var(--font-mono);
-    padding: 2px 6px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    color: var(--fg-muted);
-    background: color-mix(in srgb, var(--bg-primary) 45%, transparent);
-  }
-
-  .tag-on {
-    color: var(--fg-primary);
-    border-color: color-mix(in srgb, var(--accent) 50%, var(--border) 50%);
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-  }
-
-  .tag-off {
-    opacity: 0.72;
+  .chevron-open {
+    transform: rotate(90deg);
   }
 
   .support-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--space-2);
   }
 
-  .support-card {
+  .support-chip {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
     text-align: left;
-    padding: 12px;
+    padding: var(--space-3);
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
     background: var(--bg-secondary);
     cursor: pointer;
     transition: border-color var(--transition-normal),
-                transform var(--transition-normal),
+                transform var(--transition-fast),
                 box-shadow var(--transition-normal);
   }
 
-  .support-card:hover {
-    border-color: rgba(233, 93, 116, 0.3);
+  .support-chip:hover {
+    border-color: rgba(0, 200, 255, 0.2);
     transform: translateY(-1px);
-    box-shadow: 0 0 10px var(--glow-accent), var(--shadow-sm);
+    box-shadow: 0 0 12px var(--glow-info), var(--shadow-xs);
   }
 
-  .support-label {
+  .chip-label {
     font-size: 10px;
+    font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--fg-secondary);
-    font-weight: 700;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
   }
 
-  .support-card strong {
-    font-size: 14px;
+  .chip-value {
+    font-size: 16px;
+    font-weight: 700;
+    font-family: var(--font-mono);
     color: var(--fg-primary);
+  }
+
+  .chip-detail {
+    font-size: 10px;
+    color: var(--fg-muted);
     font-family: var(--font-mono);
   }
 
-  .hero-skeleton,
-  .focus-card-skeleton {
-    cursor: default;
-  }
 
-  .signal-chip-skeleton,
-  .rail-item-skeleton {
-    min-height: 42px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--bg-secondary);
-  }
+  /* ═══ Responsive ════════════════════════════════════════════ */
 
-  .focus-card-skeleton {
-    min-height: 176px;
-  }
-
-  @media (max-width: 840px) {
-    .overview-hero {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  @media (max-width: 600px) {
-    .hero-signals {
+  @media (max-width: 900px) {
+    .command-section {
       grid-template-columns: 1fr;
     }
 
-    .section-heading {
-      align-items: flex-start;
-      flex-direction: column;
+    .surface-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .support-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (max-width: 768px) {
+    .signal-strip {
+      overflow-x: auto;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+      gap: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+    }
+
+    .signal-strip::-webkit-scrollbar {
+      display: none;
+    }
+
+    .instrument {
+      flex-shrink: 0;
+    }
+
+    .strip-summary {
+      display: none;
+    }
+
+    .strip-divider {
+      display: none;
     }
   }
 
   @media (max-width: 480px) {
-    .overview-panel {
-      padding: 10px;
-      gap: 12px;
+    .overview {
+      padding: var(--space-3);
+      gap: var(--space-3);
     }
 
-    .overview-hero {
-      padding: 12px;
-      gap: 10px;
+    .command-title {
+      font-size: clamp(18px, 5vw, 22px);
     }
 
-    .hero-title {
-      font-size: clamp(18px, 5vw, 24px);
-    }
-
-    .hero-detail {
-      font-size: 13px;
-    }
-
-    .hero-action {
+    .command-action {
       width: 100%;
       justify-content: center;
     }
 
-    .focus-grid {
-      grid-template-columns: 1fr;
+    .support-grid {
+      grid-template-columns: 1fr 1fr;
     }
 
-    .focus-card {
-      padding: 10px;
+    .support-inline {
+      display: none;
     }
 
-    .focus-card-calm {
-      padding: 8px 10px;
-    }
-
-    .hero-rail {
-      max-height: 160px;
+    .sc-value {
+      font-size: 22px;
     }
   }
 </style>

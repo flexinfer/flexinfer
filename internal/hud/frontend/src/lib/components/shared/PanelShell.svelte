@@ -110,7 +110,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: var(--space-2);
+    margin-bottom: var(--space-3);
     flex-shrink: 0;
   }
 
@@ -126,7 +126,7 @@
   }
 
   .panel-shell-title {
-    font-size: var(--text-base);
+    font-size: var(--text-lg);
     font-weight: 600;
     color: var(--fg-primary);
     margin: 0;
@@ -136,26 +136,28 @@
   .panel-shell-count {
     font-size: var(--text-xs);
     font-family: var(--font-mono);
-    color: var(--fg-muted);
+    font-weight: 600;
+    color: var(--fg-secondary);
     background: var(--bg-tertiary);
-    padding: 1px 6px;
-    border-radius: var(--radius-sm);
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
   }
 
   .panel-shell-actions {
     display: flex;
     align-items: center;
-    gap: var(--space-1);
+    gap: var(--space-2);
   }
 
   .panel-shell-header-extra {
-    margin-bottom: var(--space-2);
+    margin-bottom: var(--space-3);
     flex-shrink: 0;
   }
 
   .panel-shell-toolbar {
     flex-shrink: 0;
-    margin-bottom: var(--space-2);
+    margin-bottom: var(--space-3);
   }
 
   .panel-shell-content {
@@ -177,8 +179,8 @@
   }
 
   .empty-state-icon {
-    font-size: 32px;
-    opacity: 0.4;
+    font-size: 28px;
+    opacity: 0.35;
   }
 
   .empty-state-message {

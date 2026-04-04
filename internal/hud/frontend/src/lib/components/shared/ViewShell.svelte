@@ -59,13 +59,26 @@
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    position: relative;
+  }
+
+  /* Subtle bottom-edge glow */
+  .view-tabs::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 15%;
+    right: 15%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0, 200, 255, 0.06) 50%, transparent);
+    pointer-events: none;
   }
 
   .view-tab {
     display: flex;
     align-items: center;
     gap: var(--space-1);
-    padding: var(--space-1) var(--space-3);
+    padding: 6px var(--space-3);
     border-radius: var(--radius-sm);
     font-size: var(--text-sm);
     font-weight: 500;
@@ -75,6 +88,7 @@
     cursor: pointer;
     background: none;
     border: none;
+    letter-spacing: var(--tracking-normal);
   }
 
   .view-tab:hover {
@@ -85,17 +99,19 @@
   .view-tab.active {
     background: var(--bg-tertiary);
     color: var(--fg-primary);
+    font-weight: 600;
   }
 
   .view-tab.active::after {
     content: '';
     position: absolute;
     bottom: -5px;
-    left: var(--space-2);
-    right: var(--space-2);
+    left: var(--space-3);
+    right: var(--space-3);
     height: 2px;
     background: var(--info);
     border-radius: 1px;
+    box-shadow: 0 0 6px var(--glow-info);
   }
 
   .view-tab-label {
@@ -105,16 +121,16 @@
   .view-tab-key {
     font-size: 9px;
     font-family: var(--font-mono);
-    color: var(--fg-muted);
-    padding: 0 3px;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    line-height: 1.2;
-    opacity: 0.6;
+    color: var(--fg-dim);
+    padding: 1px 4px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+    line-height: 1;
+    opacity: 0.5;
   }
 
   .view-tab.active .view-tab-key {
-    opacity: 0.8;
+    opacity: 0.7;
   }
 
   .view-content {
