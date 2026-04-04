@@ -38,6 +38,16 @@ func (d *Daemon) startEmbeddedWeaver(ctx context.Context) error {
 		d.logger.Warn("weaver: FlexInfer health check failed, proceeding anyway", "error", err)
 	}
 
+	// Load model behaviors from YAML (overrides defaults in cfg).
+	if bs, err := weaver.LoadBehaviorsFromFile(weaver.DefaultBehaviorsPath()); err != nil {
+		d.logger.Warn("weaver: failed to load behaviors YAML", "error", err)
+	} else if bs != nil {
+		for k, v := range bs {
+			cfg.ModelBehaviors[k] = v
+		}
+		d.logger.Debug("weaver: loaded behaviors from YAML", "count", len(bs))
+	}
+
 	// Create in-process caller for tool dispatch through daemon pipeline.
 	caller := bridge.NewLocalCaller(d.handleMessage)
 	executor := weaver.NewDaemonToolExecutor(caller, cfg.Timeout)
