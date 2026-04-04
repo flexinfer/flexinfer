@@ -85,7 +85,7 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
             // If we can't decode a successful payload, surface a contract error
             // with the actual decode error for diagnostics.
             if (200 ..< 300).contains(statusCode) {
-                throw LoomAPIError.decodingError(underlying: "Invalid API response contract (HTTP \(statusCode)): \(error.localizedDescription)")
+                throw LoomAPIError.decodingError(underlying: "Invalid API response contract (HTTP \(statusCode)): \(Self.decodingErrorDetail(error))")
             }
             // For non-2xx responses, map HTTP status to structured API errors.
             throw mapHTTPError(status: statusCode, data: data)
@@ -140,6 +140,29 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
         {
             request.setValue(id, forHTTPHeaderField: "CF-Access-Client-Id")
             request.setValue(secret, forHTTPHeaderField: "CF-Access-Client-Secret")
+        }
+    }
+
+    /// Extract a human-readable detail string from a DecodingError including the key path.
+    static func decodingErrorDetail(_ error: Error) -> String {
+        guard let decodingError = error as? DecodingError else {
+            return error.localizedDescription
+        }
+        switch decodingError {
+        case let .keyNotFound(key, context):
+            let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            return "missing key '\(key.stringValue)' at path '\(path)'"
+        case let .typeMismatch(type, context):
+            let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            return "type mismatch for \(type) at path '\(path)': \(context.debugDescription)"
+        case let .valueNotFound(type, context):
+            let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            return "null value for \(type) at path '\(path)'"
+        case let .dataCorrupted(context):
+            let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            return "corrupted data at path '\(path)': \(context.debugDescription)"
+        @unknown default:
+            return error.localizedDescription
         }
     }
 

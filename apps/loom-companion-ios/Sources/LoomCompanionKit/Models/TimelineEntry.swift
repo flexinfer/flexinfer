@@ -47,4 +47,10 @@ public struct SessionEventsResponse: Decodable, Sendable {
         case sessionId = "session_id"
         case events
     }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.sessionId = (try? container.decodeIfPresent(String.self, forKey: .sessionId)) ?? ""
+        self.events = (try? container.decodeIfPresent([TimelineEntry].self, forKey: .events)) ?? []
+    }
 }

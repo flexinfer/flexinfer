@@ -10,6 +10,19 @@ public struct LastHeartbeat: Decodable, Sendable {
         case timestamp
         case count1h = "count_1h"
     }
+
+    public init(agentId: String = "", timestamp: String = "", count1h: Int = 0) {
+        self.agentId = agentId
+        self.timestamp = timestamp
+        self.count1h = count1h
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.agentId = try container.decodeIfPresent(String.self, forKey: .agentId) ?? ""
+        self.timestamp = try container.decodeIfPresent(String.self, forKey: .timestamp) ?? ""
+        self.count1h = try container.decodeIfPresent(Int.self, forKey: .count1h) ?? 0
+    }
 }
 
 public struct DashboardCoordinationSummary: Decodable, Sendable, Hashable {
@@ -36,15 +49,15 @@ public struct DashboardCoordinationSummary: Decodable, Sendable, Hashable {
     }
 
     public init(
-        activeNamespaces: Int,
-        namespacesAtRisk: Int,
-        agentsNeedingAttention: Int,
-        sharedBranches: Int,
-        conflictFiles: Int,
-        crossAgentBlockers: Int,
-        orphanTasks: Int,
-        idleClaimHolders: Int,
-        mergeReadyBranches: Int
+        activeNamespaces: Int = 0,
+        namespacesAtRisk: Int = 0,
+        agentsNeedingAttention: Int = 0,
+        sharedBranches: Int = 0,
+        conflictFiles: Int = 0,
+        crossAgentBlockers: Int = 0,
+        orphanTasks: Int = 0,
+        idleClaimHolders: Int = 0,
+        mergeReadyBranches: Int = 0
     ) {
         self.activeNamespaces = activeNamespaces
         self.namespacesAtRisk = namespacesAtRisk
@@ -55,6 +68,19 @@ public struct DashboardCoordinationSummary: Decodable, Sendable, Hashable {
         self.orphanTasks = orphanTasks
         self.idleClaimHolders = idleClaimHolders
         self.mergeReadyBranches = mergeReadyBranches
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.activeNamespaces = try container.decodeIfPresent(Int.self, forKey: .activeNamespaces) ?? 0
+        self.namespacesAtRisk = try container.decodeIfPresent(Int.self, forKey: .namespacesAtRisk) ?? 0
+        self.agentsNeedingAttention = try container.decodeIfPresent(Int.self, forKey: .agentsNeedingAttention) ?? 0
+        self.sharedBranches = try container.decodeIfPresent(Int.self, forKey: .sharedBranches) ?? 0
+        self.conflictFiles = try container.decodeIfPresent(Int.self, forKey: .conflictFiles) ?? 0
+        self.crossAgentBlockers = try container.decodeIfPresent(Int.self, forKey: .crossAgentBlockers) ?? 0
+        self.orphanTasks = try container.decodeIfPresent(Int.self, forKey: .orphanTasks) ?? 0
+        self.idleClaimHolders = try container.decodeIfPresent(Int.self, forKey: .idleClaimHolders) ?? 0
+        self.mergeReadyBranches = try container.decodeIfPresent(Int.self, forKey: .mergeReadyBranches) ?? 0
     }
 }
 
@@ -68,6 +94,21 @@ public struct DashboardAttentionLane: Decodable, Sendable, Hashable {
     public let severity: String
 
     public var stableID: String { "\(type):\(id)" }
+
+    enum CodingKeys: String, CodingKey {
+        case type, id, label, route, scope, summary, severity
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.type = try container.decodeIfPresent(String.self, forKey: .type) ?? ""
+        self.id = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
+        self.label = try container.decodeIfPresent(String.self, forKey: .label) ?? ""
+        self.route = try container.decodeIfPresent(String.self, forKey: .route) ?? ""
+        self.scope = try container.decodeIfPresent(String.self, forKey: .scope) ?? ""
+        self.summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        self.severity = try container.decodeIfPresent(String.self, forKey: .severity) ?? "info"
+    }
 }
 
 public struct DashboardCoordination: Decodable, Sendable, Hashable {
@@ -99,18 +140,8 @@ public struct DashboardCoordination: Decodable, Sendable, Hashable {
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.summary = try container.decodeIfPresent(DashboardCoordinationSummary.self, forKey: .summary) ?? DashboardCoordinationSummary(
-            activeNamespaces: 0,
-            namespacesAtRisk: 0,
-            agentsNeedingAttention: 0,
-            sharedBranches: 0,
-            conflictFiles: 0,
-            crossAgentBlockers: 0,
-            orphanTasks: 0,
-            idleClaimHolders: 0,
-            mergeReadyBranches: 0
-        )
-        self.attentionLanes = try container.decodeIfPresent([DashboardAttentionLane].self, forKey: .attentionLanes) ?? []
+        self.summary = (try? container.decodeIfPresent(DashboardCoordinationSummary.self, forKey: .summary)) ?? DashboardCoordinationSummary()
+        self.attentionLanes = (try? container.decodeIfPresent([DashboardAttentionLane].self, forKey: .attentionLanes)) ?? []
     }
 }
 
@@ -158,16 +189,16 @@ public struct DashboardData: Decodable, Sendable {
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.daemonRunning = try container.decodeIfPresent(Bool.self, forKey: .daemonRunning) ?? false
-        self.serverCount = try container.decodeIfPresent(Int.self, forKey: .serverCount) ?? 0
-        self.activeSessions = try container.decodeIfPresent(Int.self, forKey: .activeSessions) ?? 0
-        self.activeAgents = try container.decodeIfPresent(Int.self, forKey: .activeAgents) ?? 0
-        self.idleAgents = try container.decodeIfPresent(Int.self, forKey: .idleAgents) ?? 0
-        self.offlineAgents = try container.decodeIfPresent(Int.self, forKey: .offlineAgents) ?? 0
-        self.updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) ?? ""
-        self.health = try container.decodeIfPresent(HealthSummary.self, forKey: .health) ?? HealthSummary(totalServers: 0, healthyServers: 0, degradedServers: 0, downServers: 0, idleServers: 0)
-        self.coordination = try container.decodeIfPresent(DashboardCoordination.self, forKey: .coordination) ?? DashboardCoordination()
-        self.recentTimeline = try container.decodeIfPresent([TimelineEntry].self, forKey: .recentTimeline) ?? []
-        self.lastHeartbeat = try container.decodeIfPresent(LastHeartbeat.self, forKey: .lastHeartbeat)
+        self.daemonRunning = (try? container.decodeIfPresent(Bool.self, forKey: .daemonRunning)) ?? false
+        self.serverCount = (try? container.decodeIfPresent(Int.self, forKey: .serverCount)) ?? 0
+        self.activeSessions = (try? container.decodeIfPresent(Int.self, forKey: .activeSessions)) ?? 0
+        self.activeAgents = (try? container.decodeIfPresent(Int.self, forKey: .activeAgents)) ?? 0
+        self.idleAgents = (try? container.decodeIfPresent(Int.self, forKey: .idleAgents)) ?? 0
+        self.offlineAgents = (try? container.decodeIfPresent(Int.self, forKey: .offlineAgents)) ?? 0
+        self.updatedAt = (try? container.decodeIfPresent(String.self, forKey: .updatedAt)) ?? ""
+        self.health = (try? container.decodeIfPresent(HealthSummary.self, forKey: .health)) ?? HealthSummary(totalServers: 0, healthyServers: 0, degradedServers: 0, downServers: 0, idleServers: 0)
+        self.coordination = (try? container.decodeIfPresent(DashboardCoordination.self, forKey: .coordination)) ?? DashboardCoordination()
+        self.recentTimeline = (try? container.decodeIfPresent([TimelineEntry].self, forKey: .recentTimeline)) ?? []
+        self.lastHeartbeat = try? container.decodeIfPresent(LastHeartbeat.self, forKey: .lastHeartbeat)
     }
 }
