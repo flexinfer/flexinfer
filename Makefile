@@ -120,11 +120,11 @@ help:
 	@echo "  make deploy-status  - Show deployment status"
 	@echo ""
 	@echo "HUD (Agent Command Center):"
-	@echo "  make hud           - Build frontend + Go binary, then launch HUD"
-	@echo "  make hud-reload    - Full cycle: build frontend, install, restart HUD"
-	@echo "  make hud-dev       - Launch HUD in dev mode (Vite hot-reload + Go API)"
+	@echo "  make hud           - Build frontend + loomd, then launch with embedded HUD"
+	@echo "  make hud-reload    - Full cycle: build, install, restart loomd with HUD"
+	@echo "  make hud-dev       - Launch HUD in dev mode (Vite hot-reload + loomd API)"
 	@echo "  make hud-build     - Build frontend (pnpm build) + Go binary"
-	@echo "  make hud-install   - Build + install to ~/.local/bin"
+	@echo "  make hud-install   - Build + install loom+loomd to ~/.local/bin"
 	@echo "  make hud-install-service - Install HUD as launchd service (auto-start, Redis)"
 	@echo "  make hud-frontend  - Build only the Svelte frontend"
 	@echo "  make hud-clean     - Remove frontend node_modules and dist"
@@ -799,51 +799,51 @@ hud-frontend:
 hud-build: hud-frontend loom
 	@echo "✓ HUD build complete (bin/loom)"
 
-# Build + install to ~/.local/bin in one step.
-hud-install: hud-build
+# Build + install loom and loomd to ~/.local/bin in one step.
+# HUD is embedded in loomd; loom is the proxy/CLI.
+hud-install: hud-build loomd
 	@chmod +x scripts/install_atomic.sh
 	@scripts/install_atomic.sh bin/loom $(INSTALL_DIR)/loom
-	@echo "✓ Installed to $(INSTALL_DIR)/loom"
-	@echo "  Restart HUD: loom hud --port 3333 --overlay"
+	@scripts/install_atomic.sh bin/loomd $(INSTALL_DIR)/loomd
+	@echo "✓ Installed loom + loomd to $(INSTALL_DIR)/"
+	@echo "  Restart HUD: loomd --hud-port 3333"
 
 # Install HUD as a launchd service (auto-start on login, Redis cache).
 hud-install-service: build
 	@./bin/loom hud install
 
-# Full cycle: build frontend, rebuild+install loom binary, restart running HUD.
+# Full cycle: build frontend, rebuild+install binaries, restart running loomd.
 # This is the one-command target for HUD development iteration.
 hud-reload: hud-install
-	@echo "Restarting HUD process..."
+	@echo "Restarting loomd (embedded HUD)..."
 	@HUD_PID=$$(lsof -ti :3333 2>/dev/null | head -1); \
 	if [ -n "$$HUD_PID" ]; then \
-		HUD_ARGS=$$(ps -p $$HUD_PID -o args= 2>/dev/null || true); \
 		kill $$HUD_PID 2>/dev/null || true; \
 		sleep 1; \
 		if kill -0 $$HUD_PID 2>/dev/null; then kill -9 $$HUD_PID 2>/dev/null || true; fi; \
-		echo "Killed old HUD (PID $$HUD_PID)"; \
+		echo "Killed old process (PID $$HUD_PID)"; \
 	else \
-		HUD_ARGS=""; \
-		echo "No HUD process found on port 3333"; \
+		echo "No process found on port 3333"; \
 	fi; \
-	echo "Starting HUD..."; \
-	nohup $(INSTALL_DIR)/loom hud --port 3333 > /tmp/loom-hud.log 2>&1 & \
+	echo "Starting loomd with embedded HUD..."; \
+	nohup $(INSTALL_DIR)/loomd --hud-port 3333 > /tmp/loomd-hud.log 2>&1 & \
 	NEW_PID=$$!; \
-	sleep 2; \
+	sleep 3; \
 	if kill -0 $$NEW_PID 2>/dev/null; then \
 		HUD_URL=$$(bash scripts/dev/detect_hud_url.sh 3333); \
-		echo "✓ HUD restarted (PID $$NEW_PID) — $$HUD_URL"; \
+		echo "✓ loomd restarted (PID $$NEW_PID) — $$HUD_URL"; \
 	else \
-		echo "ERROR: HUD failed to start. Check /tmp/loom-hud.log"; \
+		echo "ERROR: loomd failed to start. Check /tmp/loomd-hud.log"; \
 		exit 1; \
 	fi
 
-# Launch HUD (builds first if needed)
-hud: hud-build
-	@echo "Launching HUD..."
-	./bin/loom hud
+# Launch loomd with embedded HUD (builds first if needed)
+hud: hud-build loomd
+	@echo "Launching loomd with embedded HUD..."
+	./bin/loomd --hud-port 3333
 
 # Dev mode: start Vite dev server + Go API concurrently
-hud-dev: loom
+hud-dev: loom loomd
 	@echo "Starting HUD in development mode..."
 	@echo "  Frontend: http://localhost:5173 (Vite)"
 	@echo "  API:      http://localhost:9800 (Go)"
@@ -853,7 +853,7 @@ hud-dev: loom
 		cd $(HUD_FRONTEND) && pnpm install; \
 	fi
 	@trap 'kill 0' EXIT; \
-	./bin/loom hud --dev --port 9800 & \
+	./bin/loomd --hud-port 9800 & \
 	cd $(HUD_FRONTEND) && pnpm dev & \
 	wait
 
