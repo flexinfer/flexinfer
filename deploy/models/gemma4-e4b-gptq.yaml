@@ -1,0 +1,66 @@
+# Gemma4 E4B GPTQ INT4 via vLLM on AMD gfx1100.
+#
+# Source: GPTQ-quantized checkpoint from gemma4-e4b-gptq ModelCache pipeline.
+# Expected ~4-5 GiB weights (vs 16.6 GiB FP16), served via ExllamaLinearKernel.
+# Target: 60-70 tok/s decode (vs 15-25 FP16).
+#
+# Uses the experimental runtime image that already serves Gemma4 FP16 (TRITON_ATTN).
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gemma4-e4b-gptq
+  namespace: flexinfer-system
+spec:
+  backend: vllm
+  source: pvc://gemma4-e4b-gptq/gemma4-e4b-gptq/gptq-w4-g128
+  cache:
+    strategy: Local
+  gpu:
+    vendor: amd
+    count: 1
+    vramEstimateMB: 6000
+    shared: 7900xtx-textgen
+    priority: 200
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 15m
+  config:
+    quantization: gptq
+    dtype: "half"
+    maxModelLen: 8192
+    gpuMemoryUtilization: "0.92"
+    maxNumSeqs: 8
+    trustRemoteCode: true
+    attentionBackend: TRITON_ATTN
+    servedModelName: gemma4-e4b-gptq
+    enableToolCalling: true
+    toolCallParser: gemma4
+    reasoningParser: gemma4
+    enablePrefixCaching: true
+    maxNumBatchedTokens: 4096
+    disableLogStats: false
+    warmPolicy: primary
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 24Gi
+  serviceLabels:
+    - gemma4-e4b-gptq
+    - gemma4-e4b
+  litellm:
+    enabled: true
+    servedModelName: gemma4-e4b-gptq
+    aliases:
+      - gemma4-e4b
+      - gemma4-e4b-chat
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

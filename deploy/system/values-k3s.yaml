@@ -227,6 +227,20 @@ quantization:
         attn_implementation: eager
         disable_qwen35_fla: true
         fix_mistral_regex: true
+    - name: gemma4-text
+      match_model_types: [gemma4_text]
+      match_path_substrings: [gemma4, gemma-4]
+      extract_text_config: true
+      copy_root_keys: [bos_token_id, eos_token_id, pad_token_id]
+      remap_model_type: gemma4_text
+      architectures: [Gemma4ForCausalLM]
+      loader: gptqmodel
+      calibration_overrides:
+        max_samples: 128
+        max_seq_len: 2048
+        max_tokens: 262144
+      runtime_overrides:
+        attn_implementation: eager
   images:
     awq: registry.harbor.lan/flexinfer/quantizer:awq-rocm-gfx1100
     gptqRocm: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100

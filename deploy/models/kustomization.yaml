@@ -6,7 +6,8 @@ resources:
   # qwen35-27b-opus-distill.yaml and qwen35-9b.yaml are intentionally disabled
   # for the Gemma4 rollout. Keep the manifests on disk for rollback/reference,
   # but do not reconcile them here.
-  - gemma4-e4b-turboquant.yaml      # vLLM + TurboQuant experiment, always-on
+  - gemma4-e4b-gptq.yaml            # vLLM + GPTQ INT4, ~4 GiB weights, always-on
+  # - gemma4-e4b-turboquant.yaml    # FP16 (kept for rollback reference)
   - gemma4-e4b-turboquant-canary.yaml # vLLM CUSTOM/TurboQuant canary, on-demand
 
   # === cblevins-5930k (24 GB gfx1100) — subagent + code gen (shared group) ===

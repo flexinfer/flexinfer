@@ -107,8 +107,86 @@ NORMALIZE_PY
     done
 }
 
+# ── Normalize Gemma4 model configs ──────────────────────────────────
+# Gemma4 GPTQ checkpoints need:
+#   1. text_config removal: quantizer extracts text_config to top level;
+#      vLLM text-only path must NOT have a nested text_config dict
+#   2. Architectures normalized to Gemma4ForCausalLM
+#   3. Multimodal artifact keys stripped (vision_config, audio_config, etc.)
+normalize_gemma4_configs() {
+    local models_dir="/models"
+    [ -d "$models_dir" ] || return 0
+
+    find "$models_dir" -maxdepth 5 -name config.json -type f 2>/dev/null | while read -r cfg; do
+        local model_type
+        model_type=$(python3 -c "import json; print(json.load(open('$cfg')).get('model_type',''))" 2>/dev/null) || continue
+
+        case "$model_type" in
+            gemma4_text|gemma4) ;;
+            *) continue ;;
+        esac
+
+        python3 - "$cfg" <<'NORMALIZE_GEMMA4_PY' || echo "[entrypoint] WARNING: Gemma4 config normalization failed for $cfg"
+import json, sys
+
+path = sys.argv[1]
+with open(path) as f:
+    cfg = json.load(f)
+
+changed = False
+model_type = cfg.get("model_type", "")
+
+# 1. Remove text_config if present in text-only (gemma4_text) config
+if model_type == "gemma4_text" and "text_config" in cfg:
+    del cfg["text_config"]
+    changed = True
+    print(f"[entrypoint] Removed text_config from Gemma4 text-only model {path}")
+
+# 2. Normalize architectures to Gemma4ForCausalLM
+target_arch = ["Gemma4ForCausalLM"]
+archs = cfg.get("architectures", [])
+if archs != target_arch:
+    cfg["architectures"] = target_arch
+    changed = True
+    print(f"[entrypoint] Fixed Gemma4 architectures -> {target_arch} in {path}")
+
+# 3. Strip multimodal artifact keys (not needed for text-only serving)
+multimodal_keys = [
+    "vision_config", "audio_config", "image_token_id", "audio_token_id",
+    "mm_tokens_per_image", "boi_token_id", "eoi_token_id",
+    "image_token_index", "video_token_index",
+]
+for k in multimodal_keys:
+    if k in cfg:
+        del cfg[k]
+        changed = True
+
+if changed:
+    with open(path, "w") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    print(f"[entrypoint] Gemma4 config normalized: {path}")
+NORMALIZE_GEMMA4_PY
+    done
+}
+
 if command -v python3 >/dev/null 2>&1; then
     normalize_qwen35_configs
+    normalize_gemma4_configs
+fi
+
+if [ "${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC:-}" = "turboquant" ]; then
+    echo "[entrypoint] TurboQuant requested via FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC=turboquant"
+    case "${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS:-planned}" in
+        plugin)
+            echo "[entrypoint] TurboQuant plugin is bundled in this image; vLLM CUSTOM attention can activate it per-model"
+            ;;
+        planned)
+            echo "[entrypoint] No vLLM KV-cache TurboQuant integration is bundled in this image yet; using the standard cache path"
+            ;;
+        *)
+            echo "[entrypoint] TurboQuant status=${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS}; continuing with configured runtime path"
+            ;;
+    esac
 fi
 
 if [ "${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC:-}" = "turboquant" ]; then

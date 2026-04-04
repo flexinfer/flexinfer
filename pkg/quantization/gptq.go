@@ -226,6 +226,24 @@ func defaultGPTQModelPoliciesJSON() string {
 				"fix_mistral_regex":   true,
 			},
 		},
+		{
+			Name:                "gemma4-text",
+			MatchModelTypes:     []string{"gemma4_text"},
+			MatchPathSubstrings: []string{"gemma4", "gemma-4"},
+			ExtractTextConfig:   true,
+			CopyRootKeys:        []string{"bos_token_id", "eos_token_id", "pad_token_id"},
+			RemapModelType:      "gemma4_text",
+			Architectures:       []string{"Gemma4ForCausalLM"},
+			Loader:              "gptqmodel",
+			CalibrationOverrides: map[string]int{
+				"max_samples": 128,
+				"max_seq_len": 2048,
+				"max_tokens":  262144,
+			},
+			RuntimeOverrides: map[string]any{
+				"attn_implementation": "eager",
+			},
+		},
 	}
 	data, err := json.Marshal(policies)
 	if err != nil {
@@ -624,8 +642,9 @@ QUANT_STATUS="${MODEL_DIR}/.quantization-status.json"
 if [ -f "${OUT_DIR}/quantize_config.json" ] && ls "${OUT_DIR}"/*.safetensors &>/dev/null; then
     COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
     SHARD_INDEX="${OUT_DIR}/model.safetensors.index.json"
+    SINGLE_MODEL="${OUT_DIR}/model.safetensors"
     MIN_SIZE=$((ORIGINAL_SIZE / 10))
-    if [ -f "${SHARD_INDEX}" ] && [ "${COMPRESSED_SIZE}" -gt "${MIN_SIZE}" ]; then
+    if { [ -f "${SHARD_INDEX}" ] || [ -f "${SINGLE_MODEL}" ]; } && [ "${COMPRESSED_SIZE}" -gt "${MIN_SIZE}" ]; then
         emit_event "quantization_cached" "model" "${MODEL_DIR}" "type" "${TYPE}" "original_bytes" "${ORIGINAL_SIZE}" "compressed_bytes" "${COMPRESSED_SIZE}"
         echo "Quantization already complete in ${OUT_DIR}"
         echo "Output size: ${COMPRESSED_SIZE} bytes (original: ${ORIGINAL_SIZE})"
@@ -645,9 +664,10 @@ TERMINATION
         fi
         exit 0
     else
-        emit_event "quantization_partial_detected" "model" "${MODEL_DIR}" "type" "${TYPE}" "compressed_bytes" "${COMPRESSED_SIZE}" "min_expected" "${MIN_SIZE}" "has_index" "$([ -f \"${SHARD_INDEX}\" ] && echo yes || echo no)"
+        emit_event "quantization_partial_detected" "model" "${MODEL_DIR}" "type" "${TYPE}" "compressed_bytes" "${COMPRESSED_SIZE}" "min_expected" "${MIN_SIZE}" "has_index" "$([ -f \"${SHARD_INDEX}\" ] && echo yes || echo no)" "has_single" "$([ -f \"${SINGLE_MODEL}\" ] && echo yes || echo no)"
         echo "WARNING: Output dir has quantize_config.json but save appears incomplete"
         echo "  shard_index_exists=$([ -f \"${SHARD_INDEX}\" ] && echo yes || echo no)"
+        echo "  single_model_exists=$([ -f \"${SINGLE_MODEL}\" ] && echo yes || echo no)"
         echo "  compressed_size=${COMPRESSED_SIZE} min_expected=${MIN_SIZE}"
         echo "Cleaning partial output and re-running quantization"
         rm -rf "${OUT_DIR}"

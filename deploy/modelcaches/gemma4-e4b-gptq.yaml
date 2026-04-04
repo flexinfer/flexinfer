@@ -1,0 +1,43 @@
+# Gemma4 E4B-it → GPTQ INT4 Pipeline
+# Source: google/gemma-4-E4B-it (Gemma4ForConditionalGeneration, ~8 GB BF16)
+# Architecture: gemma4_text (nested text_config, same pattern as Qwen3.5 VLMs)
+#
+# Pipeline: Download BF16 → GPTQ INT4
+# Node: cblevins-5930k (gfx1100, 24GB VRAM) — avoids contention with live FP16 on 7900xtx
+#
+# Disk: BF16 ~8 GB + GPTQ INT4 ~4 GB + workspace → 30 Gi PVC
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: gemma4-e4b-gptq
+  namespace: flexinfer-system
+spec:
+  source: "google/gemma-4-E4B-it"
+  storageStrategy: SharedPVC
+  storageSize: "30Gi"
+  clusterStorageClassName: nvme-1r-gpu
+  secretRef: "hf-token"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  download:
+    maxMemoryGB: 8
+    hfTransfer: false
+    backoffLimit: 3
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    dynamicExclusion: "none"
+    useGPU: true
+    maxMemoryGB: 48
+    timeoutSeconds: 7200
+    calibration:
+      dataset: "wikitext:wikitext-2-raw-v1"
+      maxSeqLen: 2048
+      maxSamples: 128
+  retentionPriority: 50
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85
