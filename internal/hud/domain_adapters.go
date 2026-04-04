@@ -20,9 +20,10 @@ import (
 	"github.com/crb2nu/loom/internal/hud/domain/memory"
 	domainmerge "github.com/crb2nu/loom/internal/hud/domain/merge"
 	"github.com/crb2nu/loom/internal/hud/domain/mobile"
-	domainorch "github.com/crb2nu/loom/internal/hud/domain/orchestration"
 	"github.com/crb2nu/loom/internal/hud/domain/sandbox"
+	domainshuttle "github.com/crb2nu/loom/internal/hud/domain/shuttle"
 	domainspawn "github.com/crb2nu/loom/internal/hud/domain/spawn"
+	domainweaver "github.com/crb2nu/loom/internal/hud/domain/weaver"
 	"github.com/crb2nu/loom/internal/hud/domain/workflow"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 	"github.com/crb2nu/loom/pkg/projectmeta"
@@ -42,10 +43,11 @@ func (a *App) initDomainRegistry() {
 	a.domainRegistry.Register(memory.New(&memoryDepsAdapter{app: a}))
 	a.domainRegistry.Register(handoff.New(&handoffDepsAdapter{app: a}))
 	a.domainRegistry.Register(domainmerge.New(&mergeDepsAdapter{app: a}))
-	a.domainRegistry.Register(domainorch.New(&orchDepsAdapter{app: a}))
+	a.domainRegistry.Register(domainshuttle.New(&shuttleDepsAdapter{app: a}))
 	a.domainRegistry.Register(domainctx.New(&ctxDepsAdapter{app: a}))
 	a.domainRegistry.Register(codebase.New(&codebaseDepsAdapter{app: a}))
 	a.domainRegistry.Register(domainalerting.New(&alertingDepsAdapter{app: a}))
+	a.domainRegistry.Register(domainweaver.New(&weaverDepsAdapter{app: a}))
 }
 
 // --- Shared Deps methods (used by multiple domains) ---

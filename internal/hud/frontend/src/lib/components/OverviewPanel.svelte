@@ -12,7 +12,7 @@
   import { rbacStore } from '../stores/rbac.svelte.ts';
   import { coordinationStore } from '../stores/coordination.svelte.ts';
   import { mergeQueueStore } from '../stores/mergeQueue.svelte.ts';
-  import { orchestrationStore } from '../stores/orchestration.svelte.ts';
+  import { shuttleStore } from '../stores/shuttle.svelte.ts';
 
   let initialLoad = $state(true);
   let kpis = $state({
@@ -118,7 +118,7 @@
     rbacStore.startPolling(30000);
     coordinationStore.startPolling(30000);
     mergeQueueStore.startPolling(30000);
-    orchestrationStore.startPolling(30000);
+    shuttleStore.startPolling(30000);
     const t = setInterval(fetchOTelStatus, 30000);
     return () => {
       clearInterval(t);
@@ -126,7 +126,7 @@
       rbacStore.stopPolling();
       coordinationStore.stopPolling();
       mergeQueueStore.stopPolling();
-      orchestrationStore.stopPolling();
+      shuttleStore.stopPolling();
     };
   });
 
@@ -207,7 +207,7 @@
   let heroSignals = $derived.by(() => [
     { label: 'active agents', value: agentCount },
     { label: 'tasks completed', value: kpis.tasks_completed_today },
-    { label: 'system load', value: orchestrationStore.systemLoadPct },
+    { label: 'system load', value: shuttleStore.systemLoadPct },
     { label: 'merge ready', value: coordinationSummary.merge_ready_branches ?? 0 },
   ]);
 
@@ -272,13 +272,13 @@
       });
     }
 
-    if (orchestrationStore.hasRecommendations) {
-      const top = orchestrationStore.recommendations[0];
+    if (shuttleStore.hasRecommendations) {
+      const top = shuttleStore.recommendations[0];
       lanes.push({
         route: 'dispatch',
         label: 'Smart dispatch',
         action: 'Dispatch',
-        value: `${orchestrationStore.recommendations.length} suggested`,
+        value: `${shuttleStore.recommendations.length} suggested`,
         detail: top
           ? `${top.task_title} → ${top.recommended_agent} (${Math.round(top.score * 100)}% match)`
           : 'AI-recommended agent-task pairings are ready for review.',
@@ -429,18 +429,18 @@
     },
     {
       route: 'dispatch',
-      label: 'Fleet orchestration',
-      value: orchestrationStore.systemLoadPct,
-      detail: `${orchestrationStore.recommendations.length} suggestion${orchestrationStore.recommendations.length === 1 ? '' : 's'} · ${(coordinationSummary.merge_ready_branches ?? 0)} merge-ready · ${mergeQueueStore.conflicts.length} conflict${mergeQueueStore.conflicts.length === 1 ? '' : 's'}`,
-      foot: orchestrationStore.hasRecommendations
-        ? `Top: ${orchestrationStore.recommendations[0].task_title} → ${orchestrationStore.recommendations[0].recommended_agent}`
+      label: 'Fleet shuttle',
+      value: shuttleStore.systemLoadPct,
+      detail: `${shuttleStore.recommendations.length} suggestion${shuttleStore.recommendations.length === 1 ? '' : 's'} · ${(coordinationSummary.merge_ready_branches ?? 0)} merge-ready · ${mergeQueueStore.conflicts.length} conflict${mergeQueueStore.conflicts.length === 1 ? '' : 's'}`,
+      foot: shuttleStore.hasRecommendations
+        ? `Top: ${shuttleStore.recommendations[0].task_title} → ${shuttleStore.recommendations[0].recommended_agent}`
         : 'No pending dispatch recommendations',
-      alert: orchestrationStore.hasRecommendations || mergeQueueStore.hasConflicts || (coordinationSummary.merge_ready_branches ?? 0) > 0,
+      alert: shuttleStore.hasRecommendations || mergeQueueStore.hasConflicts || (coordinationSummary.merge_ready_branches ?? 0) > 0,
       tags: [
         {
           label: 'Suggestions',
-          active: orchestrationStore.hasRecommendations,
-          note: orchestrationStore.hasRecommendations ? String(orchestrationStore.recommendations.length) : 'none',
+          active: shuttleStore.hasRecommendations,
+          note: shuttleStore.hasRecommendations ? String(shuttleStore.recommendations.length) : 'none',
         },
         {
           label: 'Merge',

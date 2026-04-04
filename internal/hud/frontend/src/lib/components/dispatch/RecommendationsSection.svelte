@@ -1,11 +1,11 @@
 <script>
-  import { orchestrationStore } from '../../stores/orchestration.svelte.ts';
+  import { shuttleStore } from '../../stores/shuttle.svelte.ts';
   import { presenceActionsStore } from '../../stores/presenceActions.svelte.ts';
   import EmptyState from '../shared/EmptyState.svelte';
 
   let { collapsed = $bindable(false) } = $props();
 
-  let recommendations = $derived(orchestrationStore.recommendations);
+  let recommendations = $derived(shuttleStore.recommendations);
 
   function dispatchRecommendation(rec) {
     presenceActionsStore.onOpenDispatchWithDefaults(rec.recommended_agent, rec.task_title, 'high');

@@ -205,10 +205,10 @@ func visibleTools(base []mcp.Tool) []mcp.Tool {
 	return out
 }
 
-// allVisibleTools returns all visible tools including orchestra synthetic tools.
+// allVisibleTools returns all visible tools including weaver synthetic tools.
 func (d *Daemon) allVisibleTools(base []mcp.Tool) []mcp.Tool {
 	out := visibleTools(base)
-	out = append(out, d.orchestraSyntheticTools()...)
+	out = append(out, d.weaverSyntheticTools()...)
 	return out
 }
 

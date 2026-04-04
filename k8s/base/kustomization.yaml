@@ -122,9 +122,9 @@ resources:
   - servers/agent-context/service.yaml
 
   # === CUSTOM SERVERS ===
-  - servers/orchestra/configmap.yaml
-  - servers/orchestra/deployment.yaml
-  - servers/orchestra/service.yaml
+  - servers/weaver/configmap.yaml
+  - servers/weaver/deployment.yaml
+  - servers/weaver/service.yaml
 
   # === SANDBOX (K8s backend, needs ServiceAccount for pod management) ===
   - servers/devbox/configmap.yaml

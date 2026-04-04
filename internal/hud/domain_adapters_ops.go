@@ -1,4 +1,4 @@
-// domain_adapters_ops.go provides smaller operational domain adapters (graph, handoff, merge, orchestration, context, codebase, alerting, memory).
+// domain_adapters_ops.go provides smaller operational domain adapters (graph, handoff, merge, shuttle, context, codebase, alerting, memory).
 package hud
 
 import (
@@ -11,8 +11,9 @@ import (
 	domainalerting "github.com/crb2nu/loom/internal/hud/domain/alerting"
 	domainctx "github.com/crb2nu/loom/internal/hud/domain/context"
 	"github.com/crb2nu/loom/internal/hud/domain/memory"
+	domainweaver "github.com/crb2nu/loom/internal/hud/domain/weaver"
 	"github.com/crb2nu/loom/internal/hud/monitor"
-	"github.com/crb2nu/loom/internal/hud/orchestration"
+	"github.com/crb2nu/loom/internal/hud/shuttle"
 )
 
 // --- Graph domain Deps adapter ---
@@ -108,31 +109,31 @@ func (m *mergeDepsAdapter) CoordinationSnapshot() coordination.Snapshot {
 	return m.app.fleetMonitor.Snapshot().Coordination
 }
 
-// --- Orchestration domain Deps adapter ---
+// --- Shuttle domain Deps adapter ---
 
-type orchDepsAdapter struct {
+type shuttleDepsAdapter struct {
 	app *App
 }
 
-func (o *orchDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+func (o *shuttleDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
 	o.app.WriteJSON(w, status, v)
 }
 
-func (o *orchDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+func (o *shuttleDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
 	o.app.WriteError(w, status, msg, err)
 }
 
-func (o *orchDepsAdapter) Logger() *slog.Logger { return o.app.Logger() }
+func (o *shuttleDepsAdapter) Logger() *slog.Logger { return o.app.Logger() }
 
-func (o *orchDepsAdapter) OrchestrationEngine() *orchestration.Engine {
-	return o.app.orchEngine
+func (o *shuttleDepsAdapter) ShuttleEngine() *shuttle.Engine {
+	return o.app.shuttleEngine
 }
 
-func (o *orchDepsAdapter) OrchestrationMonitor() *orchestration.OrchestrationMonitor {
-	return o.app.orchMonitor
+func (o *shuttleDepsAdapter) ShuttleMonitor() *shuttle.ShuttleMonitor {
+	return o.app.shuttleMonitor
 }
 
-func (o *orchDepsAdapter) OrchestrationBridge() orchestration.Bridge {
+func (o *shuttleDepsAdapter) ShuttleBridge() shuttle.Bridge {
 	return o.app.agent
 }
 
@@ -211,4 +212,22 @@ func (al *alertingDepsAdapter) AutoFixEngine() domainalerting.AutoFixEngineOps {
 		return nil
 	}
 	return al.app.autofixEngine
+}
+
+// --- Weaver (FlexInfer query) domain Deps adapter ---
+
+type weaverDepsAdapter struct {
+	app *App
+}
+
+func (o *weaverDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	o.app.WriteJSON(w, status, v)
+}
+
+func (o *weaverDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	o.app.WriteError(w, status, msg, err)
+}
+
+func (o *weaverDepsAdapter) WeaverBridge() domainweaver.BridgeCaller {
+	return o.app.client
 }

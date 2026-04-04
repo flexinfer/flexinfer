@@ -16,7 +16,7 @@ import (
 	"github.com/crb2nu/loom/internal/hud/coordinator"
 	"github.com/crb2nu/loom/internal/hud/domain/memory"
 	"github.com/crb2nu/loom/internal/hud/monitor"
-	"github.com/crb2nu/loom/internal/hud/orchestration"
+	"github.com/crb2nu/loom/internal/hud/shuttle"
 	"github.com/crb2nu/loom/pkg/codebase"
 	"github.com/crb2nu/loom/pkg/mcpotel"
 )
@@ -112,9 +112,9 @@ func (a *App) StartMonitors(ctx context.Context) error {
 
 	a.codebaseMonitor = monitor.NewCodebaseMonitor(a.agent, a.logger)
 
-	// Orchestration engine + monitor.
-	a.orchEngine = orchestration.NewEngine(a.logger)
-	a.orchMonitor = orchestration.NewOrchestrationMonitor(a.orchEngine, a.agent, a.logger)
+	// Shuttle engine + monitor.
+	a.shuttleEngine = shuttle.NewEngine(a.logger)
+	a.shuttleMonitor = shuttle.NewShuttleMonitor(a.shuttleEngine, a.agent, a.logger)
 
 	// Alert engine + auto-fix.
 	alertDispatcher := alerting.NewDispatcher(a.sseHub, nil, nil, nil, a.logger)
@@ -157,7 +157,7 @@ func (a *App) StartMonitors(ctx context.Context) error {
 	}
 	a.contextHealthMonitor.Start(5 * time.Second)
 	a.codebaseMonitor.Start(30 * time.Second)
-	a.orchMonitor.Start(3 * time.Second)
+	a.shuttleMonitor.Start(3 * time.Second)
 
 	// Wire pipeline monitor → alert engine callback.
 	if a.pipelineMonitor != nil && a.alertEngine != nil {
@@ -169,7 +169,7 @@ func (a *App) StartMonitors(ctx context.Context) error {
 	a.logger.Info("background monitors started",
 		"fleet", "15s", "health", "5s", "memory", "10s",
 		"workflow", "5s", "stream", "5s", "sandbox", "10s", "cost", "10s",
-		"context-health", "5s", "codebase", "30s", "orchestration", "3s")
+		"context-health", "5s", "codebase", "30s", "shuttle", "3s")
 
 	// Coordinator.
 	if a.config.FlexInferURL != "" {
@@ -254,9 +254,9 @@ func (a *App) RefreshMonitors() {
 			a.logger.Warn("embedded refresh: codebase refresh failed", "error", err)
 		}
 	}
-	if a.orchMonitor != nil {
-		if err := a.orchMonitor.Refresh(); err != nil {
-			a.logger.Warn("embedded refresh: orchestration refresh failed", "error", err)
+	if a.shuttleMonitor != nil {
+		if err := a.shuttleMonitor.Refresh(); err != nil {
+			a.logger.Warn("embedded refresh: shuttle refresh failed", "error", err)
 		}
 	}
 }
@@ -374,8 +374,8 @@ func (a *App) StopMonitors() {
 	if a.codebaseMonitor != nil {
 		a.codebaseMonitor.Stop()
 	}
-	if a.orchMonitor != nil {
-		a.orchMonitor.Stop()
+	if a.shuttleMonitor != nil {
+		a.shuttleMonitor.Stop()
 	}
 	if a.coordinator != nil {
 		a.coordinator.Stop()
@@ -585,15 +585,15 @@ func (a *App) wireMonitorCallbacks() {
 			})
 		})
 	}
-	if a.orchMonitor != nil {
-		a.orchMonitor.OnRefresh(func(snap orchestration.OrchestrationSnapshot) {
+	if a.shuttleMonitor != nil {
+		a.shuttleMonitor.OnRefresh(func(snap shuttle.ShuttleSnapshot) {
 			data, err := json.Marshal(snap)
 			if err != nil {
 				return
 			}
 			a.sseHub.Broadcast(bridge.SSEEvent{
-				ID:        fmt.Sprintf("hud-orchestration-%d", time.Now().UnixMilli()),
-				Type:      "hud.orchestration",
+				ID:        fmt.Sprintf("hud-shuttle-%d", time.Now().UnixMilli()),
+				Type:      "hud.weavertion",
 				Timestamp: time.Now(),
 				Data:      data,
 			})

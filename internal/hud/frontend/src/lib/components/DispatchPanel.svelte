@@ -2,7 +2,7 @@
   import { coordinationStore } from '../stores/coordination.svelte.ts';
   import { presenceActionsStore } from '../stores/presenceActions.svelte.ts';
   import { mergeQueueStore } from '../stores/mergeQueue.svelte.ts';
-  import { orchestrationStore } from '../stores/orchestration.svelte.ts';
+  import { shuttleStore } from '../stores/shuttle.svelte.ts';
   import PanelShell from './shared/PanelShell.svelte';
   import EmptyState from './shared/EmptyState.svelte';
   import MetricCard from './shared/MetricCard.svelte';
@@ -15,11 +15,11 @@
   $effect(() => {
     coordinationStore.startPolling(15000);
     mergeQueueStore.startPolling(30000);
-    orchestrationStore.startPolling(30000);
+    shuttleStore.startPolling(30000);
     return () => {
       coordinationStore.stopPolling();
       mergeQueueStore.stopPolling();
-      orchestrationStore.stopPolling();
+      shuttleStore.stopPolling();
     };
   });
 
@@ -30,7 +30,7 @@
   let relations = $derived(coordinationStore.relations);
   let attentionAgents = $derived(coordinationStore.topAttentionAgents);
 
-  let recsCollapsed = $state(!orchestrationStore.hasRecommendations);
+  let recsCollapsed = $state(!shuttleStore.hasRecommendations);
   let mergeCollapsed = $state(mergeQueueStore.totalCount === 0);
   let conflictsCollapsed = $state(!mergeQueueStore.hasConflicts);
   let historyCollapsed = $state(true);
@@ -112,7 +112,7 @@
         <MetricCard label="Orphan Tasks" value={summary.orphan_tasks} />
         <MetricCard label="Idle Holders" value={summary.idle_claim_holders} color={summary.idle_claim_holders > 0 ? 'var(--warning)' : 'var(--fg-primary)'} />
         <MetricCard label="Merge Ready" value={summary.merge_ready_branches ?? 0} color={(summary.merge_ready_branches ?? 0) > 0 ? 'var(--success)' : 'var(--fg-primary)'} />
-        <MetricCard label="System Load" value={orchestrationStore.systemLoadPct} color={orchestrationStore.systemLoad > 0.8 ? 'var(--error)' : orchestrationStore.systemLoad > 0.5 ? 'var(--warning)' : 'var(--fg-primary)'} />
+        <MetricCard label="System Load" value={shuttleStore.systemLoadPct} color={shuttleStore.systemLoad > 0.8 ? 'var(--error)' : shuttleStore.systemLoad > 0.5 ? 'var(--warning)' : 'var(--fg-primary)'} />
       </div>
     </div>
   {/snippet}

@@ -21,6 +21,7 @@
   import SandboxPanel from './lib/components/SandboxPanel.svelte';
   import SpawnPanel from './lib/components/SpawnPanel.svelte';
   import CatalogPanel from './lib/components/CatalogPanel.svelte';
+  import WeaverPanel from './lib/components/WeaverPanel.svelte';
   import DispatchPanel from './lib/components/DispatchPanel.svelte';
   import TimelinePanel from './lib/components/TimelinePanel.svelte';
   import EmptyState from './lib/components/shared/EmptyState.svelte';
@@ -261,6 +262,8 @@
                   <ServersPanel />
                 {:else if router.subView === 'catalog'}
                   <CatalogPanel />
+                {:else if router.subView === 'weaver'}
+                  <WeaverPanel />
                 {:else if router.subView === 'tasks'}
                   <TasksPanel />
                 {:else if router.subView === 'workflows'}

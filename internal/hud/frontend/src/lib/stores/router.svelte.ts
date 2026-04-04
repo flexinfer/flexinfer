@@ -43,6 +43,7 @@ export const views: ViewDef[] = [
     subViews: [
       { id: 'servers', label: 'Servers', key: 'a' },
       { id: 'catalog', label: 'Catalog', key: 'b' },
+      { id: 'weaver', label: 'Weaver', key: 'c' },
     ],
   },
   {

@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -108,13 +107,6 @@ func (c *Client) Complete(ctx context.Context, req ChatCompletionRequest) (*Chat
 // CompleteSimple is a convenience wrapper for the common case: system prompt +
 // user message -> string response.
 func (c *Client) CompleteSimple(ctx context.Context, model, systemPrompt, userMessage string, maxTokens int) (string, error) {
-	// Qwen3 models include reasoning/thinking tokens by default, which
-	// doubles output size and latency for structured JSON tasks. Prepend
-	// /no_think to suppress chain-of-thought for coordinator prompts.
-	if strings.Contains(strings.ToLower(model), "qwen3") {
-		userMessage = "/no_think\n" + userMessage
-	}
-
 	req := ChatCompletionRequest{
 		Model: model,
 		Messages: []ChatMessage{

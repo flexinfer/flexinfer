@@ -48,7 +48,7 @@ type SpawnState = spawn.State
 
 // SpawnOrchestrator manages the full lifecycle of headless agent spawns.
 // It delegates state management to a spawn.Controller, keeping the HUD layer
-// focused on orchestration concerns (build, deploy, exec, SSE, metrics).
+// focused on shuttle concerns (build, deploy, exec, SSE, metrics).
 type SpawnOrchestrator struct {
 	backend     backend.Backend
 	agentBridge *bridge.AgentBridge
@@ -97,7 +97,7 @@ func DefaultSpawnConfig() SpawnOrchestratorConfig {
 
 // NewSpawnOrchestrator creates a new spawn orchestrator. It initialises a
 // spawn.K8sController backed by a FileStore for persistence and wires it
-// into the HUD orchestration layer.
+// into the HUD shuttle layer.
 func NewSpawnOrchestrator(
 	b backend.Backend,
 	agentBridge *bridge.AgentBridge,

@@ -23,7 +23,7 @@ import (
 	"github.com/crb2nu/loom/internal/hud/coordinator"
 	"github.com/crb2nu/loom/internal/hud/domain"
 	"github.com/crb2nu/loom/internal/hud/monitor"
-	"github.com/crb2nu/loom/internal/hud/orchestration"
+	"github.com/crb2nu/loom/internal/hud/shuttle"
 )
 
 //go:embed frontend/dist
@@ -115,10 +115,10 @@ type App struct {
 	pipelineMonitor      *monitor.PipelineMonitor
 	contextHealthMonitor *monitor.ContextHealthMonitor
 	codebaseMonitor      *monitor.CodebaseMonitor
-	orchMonitor          *orchestration.OrchestrationMonitor
+	shuttleMonitor       *shuttle.ShuttleMonitor
 
-	// Orchestration engine — auto-dispatch, load balancing, conflict prevention.
-	orchEngine *orchestration.Engine
+	// Shuttle engine — auto-dispatch, load balancing, conflict prevention.
+	shuttleEngine *shuttle.Engine
 
 	// Alert engine — pipeline failure alerting and notification dispatch.
 	alertEngine   *alerting.AlertEngine

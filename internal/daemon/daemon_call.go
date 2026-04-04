@@ -96,8 +96,8 @@ func (d *Daemon) handleCallWithOptions(ctx context.Context, msg *mcp.Message, sk
 		return resp, nil
 	}
 
-	if pipeline.isOrchestraTool() {
-		resp := pipeline.executeOrchestraTool()
+	if pipeline.isWeaverTool() {
+		resp := pipeline.executeWeaverTool()
 		if scanned := pipeline.scanOutputForPII(resp); scanned != nil {
 			return scanned, nil
 		}

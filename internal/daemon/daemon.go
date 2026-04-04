@@ -23,10 +23,10 @@ import (
 	"github.com/crb2nu/loom/internal/process"
 	"github.com/crb2nu/loom/internal/router"
 	"github.com/crb2nu/loom/pkg/mcpotel"
-	"github.com/crb2nu/loom/pkg/orchestra"
 	"github.com/crb2nu/loom/pkg/profiles"
 	"github.com/crb2nu/loom/pkg/registry"
 	"github.com/crb2nu/loom/pkg/sync"
+	"github.com/crb2nu/loom/pkg/weaver"
 )
 
 // Config holds daemon configuration.
@@ -143,8 +143,8 @@ type Daemon struct {
 	// hudApp is the embedded HUD application (nil when not enabled).
 	hudApp hudAppStopper
 
-	// orchestra is the MCP orchestra router (nil when not enabled).
-	orchestra *orchestra.Router
+	// weaver is the MCP weaver router (nil when not enabled).
+	weaver *weaver.Router
 }
 
 func (d *Daemon) callLock(serverName string) *gosync.Mutex {

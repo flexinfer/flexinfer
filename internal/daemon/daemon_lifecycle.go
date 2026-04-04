@@ -132,12 +132,12 @@ func (d *Daemon) Start(ctx context.Context) (err error) {
 		}
 	}()
 
-	// Start orchestra in background (non-fatal).
+	// Start weaver in background (non-fatal).
 	go func() {
 		orchCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := d.startEmbeddedOrchestra(orchCtx); err != nil {
-			d.logger.Error("orchestra init failed", "error", err)
+		if err := d.startEmbeddedWeaver(orchCtx); err != nil {
+			d.logger.Error("weaver init failed", "error", err)
 		}
 	}()
 
