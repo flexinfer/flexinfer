@@ -324,21 +324,31 @@
     display: flex;
     flex-direction: column;
     overflow-y: auto;
-    gap: 12px;
+    gap: var(--space-3);
   }
 
   .stats-strip {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 12px;
+    gap: var(--space-3);
   }
 
   .stat-card {
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: var(--border-radius);
-    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-3);
     text-align: left;
+    position: relative;
+  }
+
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--surface-highlight);
+    pointer-events: none;
   }
 
   .stat-value {
@@ -349,11 +359,11 @@
   }
 
   .stat-label {
-    font-size: 9px;
+    font-size: var(--text-2xs);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--fg-muted);
-    margin-top: 4px;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-dim);
+    margin-top: var(--space-1);
   }
 
   .knowledge-layout {
@@ -361,7 +371,7 @@
     min-height: 0;
     display: grid;
     grid-template-columns: minmax(0, 1fr) 280px;
-    gap: 12px;
+    gap: var(--space-3);
   }
 
   .entry-list {
@@ -371,44 +381,54 @@
     min-height: 200px;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: var(--border-radius);
+    border-radius: var(--radius-md);
     overflow: hidden;
   }
 
   .knowledge-rail {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--space-3);
     min-height: 0;
   }
 
   .rail-card {
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: var(--border-radius);
-    padding: 12px;
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--space-3);
+    position: relative;
+  }
+
+  .rail-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--surface-highlight);
+    pointer-events: none;
   }
 
   .rail-card-header {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .rail-card-title {
-    font-size: 10px;
+    font-size: var(--text-xs);
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: var(--tracking-wide);
     color: var(--fg-muted);
   }
 
   .rail-card-meta {
-    font-size: 10px;
+    font-size: var(--text-xs);
     color: var(--fg-secondary);
   }
 
@@ -416,7 +436,7 @@
   .rail-stack {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .rail-list-row,
@@ -424,7 +444,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .rail-label,
@@ -443,9 +463,9 @@
   }
 
   .rail-empty {
-    font-size: 11px;
-    color: var(--fg-muted);
-    line-height: 1.5;
+    font-size: var(--text-sm);
+    color: var(--fg-dim);
+    line-height: var(--leading-normal);
   }
 
   .entry-title {
@@ -458,23 +478,23 @@
   .expand-icon {
     font-size: 8px;
     color: var(--fg-muted);
-    margin-right: 6px;
+    margin-right: var(--space-2);
   }
 
   .expand-content {
     background: var(--bg-primary);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
-    padding: 10px 14px;
-    margin-left: 16px;
+    padding: var(--space-3) var(--space-3);
+    margin-left: var(--space-4);
   }
 
   .expand-meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
-    margin-bottom: 8px;
-    font-size: 11px;
+    gap: var(--space-3);
+    margin-bottom: var(--space-2);
+    font-size: var(--text-sm);
     color: var(--fg-secondary);
   }
 
@@ -484,11 +504,11 @@
 
   .content-pre {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--text-sm);
     color: var(--fg-secondary);
     white-space: pre-wrap;
     word-break: break-word;
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     margin: 0;
   }
 

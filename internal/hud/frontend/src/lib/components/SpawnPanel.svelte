@@ -146,49 +146,72 @@
   .spawn-panel {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: var(--space-4);
   }
 
   .spawn-form {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.75rem;
-    background: var(--color-surface, #1a1a2e);
-    border-radius: 8px;
-    border: 1px solid var(--color-border, #2a2a4a);
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    position: relative;
+  }
+
+  .spawn-form::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--surface-highlight);
+    pointer-events: none;
   }
 
   .form-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    position: relative;
+  }
+
+  .form-header::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0, 200, 255, 0.06) 50%, transparent);
+    pointer-events: none;
   }
 
   .form-title {
     font-weight: 600;
-    font-size: 0.875rem;
-    color: var(--color-text, #e0e0e0);
+    font-size: var(--text-base);
+    color: var(--fg-primary);
   }
 
   .active-count {
-    font-size: 0.75rem;
-    color: var(--color-success, #22c55e);
+    font-size: var(--text-sm);
+    color: var(--success);
     font-variant-numeric: tabular-nums;
   }
 
   .form-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 0.5rem;
+    gap: var(--space-2);
   }
 
   .form-label {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    font-size: 0.75rem;
-    color: var(--color-text-secondary, #8b8ba0);
+    gap: var(--space-1);
+    font-size: var(--text-sm);
+    color: var(--fg-secondary);
+    letter-spacing: var(--tracking-normal);
   }
 
   .form-label.full-width {
@@ -196,13 +219,18 @@
   }
 
   .form-input, .form-select, .form-textarea {
-    padding: 0.375rem 0.5rem;
-    background: var(--color-bg, #0f0f23);
-    border: 1px solid var(--color-border, #2a2a4a);
-    border-radius: 4px;
-    color: var(--color-text, #e0e0e0);
-    font-size: 0.8125rem;
-    font-family: inherit;
+    padding: 6px var(--space-2);
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs);
+    color: var(--fg-primary);
+    font-size: var(--text-sm);
+    font-family: var(--font-mono);
+    transition: border-color var(--transition-fast);
+  }
+
+  .form-input:focus, .form-select:focus, .form-textarea:focus {
+    border-color: var(--border-active);
   }
 
   .form-textarea {
@@ -211,25 +239,27 @@
   }
 
   .form-error {
-    font-size: 0.75rem;
-    color: var(--color-error, #ef4444);
-    padding: 0.25rem 0;
+    font-size: var(--text-sm);
+    color: var(--error);
+    padding: var(--space-1) 0;
   }
 
   .spawn-button {
-    padding: 0.5rem 1rem;
-    background: var(--color-accent, #6366f1);
-    color: white;
+    padding: var(--space-2) var(--space-4);
+    background: var(--accent);
+    color: var(--bg-primary);
     border: none;
-    border-radius: 6px;
-    font-size: 0.8125rem;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
     font-weight: 600;
     cursor: pointer;
-    transition: opacity 0.15s;
+    transition: opacity var(--transition-fast), box-shadow var(--transition-fast);
+    letter-spacing: var(--tracking-normal);
   }
 
   .spawn-button:hover:not(:disabled) {
     opacity: 0.9;
+    box-shadow: 0 0 6px var(--glow-accent);
   }
 
   .spawn-button:disabled {
@@ -240,80 +270,95 @@
   .spawns-list {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: var(--space-2);
   }
 
   .spawn-row {
-    padding: 0.625rem;
-    background: var(--color-surface, #1a1a2e);
-    border-radius: 6px;
-    border: 1px solid var(--color-border, #2a2a4a);
+    padding: var(--space-3);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    position: relative;
+    transition: border-color var(--transition-fast);
+  }
+
+  .spawn-row::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--surface-highlight);
+    pointer-events: none;
   }
 
   .spawn-row.active {
-    border-color: var(--color-success, #22c55e);
-    border-opacity: 0.3;
+    border-color: rgba(34, 224, 118, 0.2);
+    box-shadow: 0 0 6px var(--glow-success);
   }
 
   .spawn-header {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.25rem;
+    gap: var(--space-2);
+    margin-bottom: var(--space-1);
   }
 
   .spawn-project {
     font-weight: 600;
-    font-size: 0.8125rem;
-    color: var(--color-text, #e0e0e0);
+    font-size: var(--text-sm);
+    color: var(--fg-primary);
+    font-family: var(--font-mono);
   }
 
   .spawn-status {
-    font-size: 0.75rem;
+    font-size: var(--text-sm);
     font-weight: 500;
   }
 
   .spawn-duration {
-    font-size: 0.75rem;
-    color: var(--color-text-secondary, #8b8ba0);
+    font-size: var(--text-sm);
+    color: var(--fg-secondary);
     font-variant-numeric: tabular-nums;
+    font-family: var(--font-mono);
     margin-left: auto;
   }
 
   .stop-button {
-    padding: 0.125rem 0.5rem;
-    font-size: 0.6875rem;
+    padding: 2px var(--space-2);
+    font-size: var(--text-xs);
     background: transparent;
-    border: 1px solid var(--color-error, #ef4444);
-    color: var(--color-error, #ef4444);
-    border-radius: 4px;
+    border: 1px solid rgba(255, 61, 113, 0.2);
+    color: var(--error);
+    border-radius: var(--radius-xs);
     cursor: pointer;
+    transition: background var(--transition-fast), border-color var(--transition-fast);
   }
 
   .stop-button:hover {
-    background: var(--color-error, #ef4444);
-    color: white;
+    background: var(--error-dim);
+    border-color: var(--error);
   }
 
   .spawn-task {
-    font-size: 0.75rem;
-    color: var(--color-text-secondary, #8b8ba0);
+    font-size: var(--text-sm);
+    color: var(--fg-secondary);
     line-height: 1.4;
-    margin-bottom: 0.25rem;
+    margin-bottom: var(--space-1);
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    letter-spacing: var(--tracking-normal);
   }
 
   .spawn-meta {
     display: flex;
-    gap: 0.5rem;
-    font-size: 0.6875rem;
-    color: var(--color-text-tertiary, #5b5b7a);
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--fg-dim);
   }
 
   .spawn-error {
-    color: var(--color-error, #ef4444);
+    color: var(--error);
   }
 </style>

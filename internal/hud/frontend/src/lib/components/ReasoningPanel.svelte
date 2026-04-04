@@ -157,19 +157,31 @@
   }
 
   .header-bar {
-    padding: 8px 0;
+    padding: var(--space-2) 0;
     border-bottom: 1px solid var(--border);
-    margin-bottom: 8px;
+    margin-bottom: var(--space-2);
     display: flex;
     align-items: center;
     justify-content: space-between;
+    position: relative;
+  }
+
+  .header-bar::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0, 200, 255, 0.06) 50%, transparent);
+    pointer-events: none;
   }
 
   .header-stats {
     display: flex;
     align-items: center;
-    gap: 16px;
-    font-size: 12px;
+    gap: var(--space-4);
+    font-size: var(--text-sm);
   }
 
   .header-total {
@@ -180,13 +192,13 @@
   .header-stat {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-1);
     color: var(--fg-secondary);
   }
 
   .dot {
-    width: 8px;
-    height: 8px;
+    width: var(--space-2);
+    height: var(--space-2);
     border-radius: 50%;
   }
 
@@ -200,42 +212,54 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .chain-card {
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: var(--border-radius);
+    border-radius: var(--radius-md);
     overflow: hidden;
-    transition: border-color 0.15s ease;
+    transition: border-color var(--transition-fast);
+    position: relative;
+  }
+
+  .chain-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--surface-highlight);
+    pointer-events: none;
   }
 
   .chain-card.expanded {
-    border-color: rgba(1, 135, 153, 0.3);
+    border-color: rgba(0, 200, 255, 0.18);
+    box-shadow: 0 0 6px var(--glow-info);
   }
 
   .chain-header {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-3);
     width: 100%;
-    padding: 12px 16px;
-    font-size: 13px;
+    padding: var(--space-3) var(--space-4);
+    font-size: var(--text-base);
     text-align: left;
     color: var(--fg-primary);
     cursor: pointer;
     border: none;
     background: transparent;
-    transition: background 0.1s;
+    transition: background var(--transition-fast);
+    letter-spacing: var(--tracking-normal);
   }
 
   .chain-header:hover {
-    background: var(--bg-tertiary);
+    background: var(--bg-elevated);
   }
 
   .chain-chevron {
-    font-size: 10px;
+    font-size: var(--text-xs);
     color: var(--fg-muted);
     width: 14px;
     flex-shrink: 0;
@@ -254,7 +278,7 @@
   }
 
   .confidence-pill {
-    font-size: 10px;
+    font-size: var(--text-xs);
     font-family: var(--font-mono);
     font-weight: 600;
     color: var(--bg-primary);
@@ -270,17 +294,17 @@
   /* Steps */
 
   .chain-steps {
-    border-top: 1px solid var(--border);
-    padding: 12px 16px;
+    border-top: 1px solid var(--border-subtle);
+    padding: var(--space-3) var(--space-4);
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--space-3);
   }
 
   .step-row {
     display: flex;
     align-items: flex-start;
-    gap: 12px;
+    gap: var(--space-3);
   }
 
   .step-number {
@@ -292,7 +316,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-family: var(--font-mono);
     font-weight: 600;
     color: var(--fg-secondary);
@@ -305,13 +329,14 @@
   }
 
   .step-description {
-    font-size: 13px;
+    font-size: var(--text-base);
     color: var(--fg-primary);
     line-height: 1.4;
+    letter-spacing: var(--tracking-normal);
   }
 
   .step-evidence {
-    margin-top: 4px;
+    margin-top: var(--space-1);
     font-style: italic;
     line-height: 1.3;
   }
@@ -336,7 +361,7 @@
   .confidence-bar-fill {
     height: 100%;
     border-radius: 2px;
-    transition: width 0.3s ease;
+    transition: width var(--transition-slow);
   }
 
   .confidence-label {
@@ -344,12 +369,12 @@
   }
 
   .empty-steps {
-    padding: 8px 0;
+    padding: var(--space-2) 0;
     text-align: center;
   }
 
   .chain-loading {
-    padding: 8px 16px;
+    padding: var(--space-2) var(--space-4);
   }
 
 </style>

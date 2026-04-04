@@ -300,6 +300,16 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     background: linear-gradient(180deg, color-mix(in srgb, var(--bg-tertiary) 72%, transparent), var(--bg-secondary));
+    position: relative;
+  }
+
+  .dispatch-summary::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--surface-highlight);
+    pointer-events: none;
   }
 
   .dispatch-summary-eyebrow {
@@ -352,11 +362,23 @@
     align-items: baseline;
     gap: var(--space-2);
     margin-bottom: var(--space-2);
+    position: relative;
+  }
+
+  .section-head::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0, 200, 255, 0.06) 50%, transparent);
+    pointer-events: none;
   }
 
   .section-subtitle {
     font-size: var(--text-xs);
-    color: var(--fg-muted);
+    color: var(--fg-dim);
     text-align: right;
     line-height: var(--leading-tight);
   }
@@ -393,6 +415,7 @@
 
   .dispatch-table th.sortable {
     cursor: pointer;
+    transition: color var(--transition-fast);
   }
 
   .dispatch-table th.sortable:hover {
@@ -401,7 +424,7 @@
 
   .dispatch-table td {
     padding: var(--space-1) var(--space-2);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-subtle);
     color: var(--fg-secondary);
     vertical-align: middle;
   }
@@ -412,6 +435,7 @@
 
   .dispatch-table tr.attention {
     border-left: 2px solid var(--warning);
+    background: var(--warning-dim);
   }
 
   .cell-agent {
@@ -428,6 +452,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    color: var(--fg-dim);
   }
 
   .cell-num {
@@ -446,43 +471,47 @@
   .blocking-badge,
   .conflict-badge {
     display: inline-block;
-    font-size: 9px;
-    padding: 1px 4px;
+    font-size: var(--text-2xs);
+    padding: 1px var(--space-1);
     border-radius: var(--radius-sm);
-    margin-left: 4px;
+    margin-left: var(--space-1);
+    font-weight: 600;
+    letter-spacing: var(--tracking-wide);
   }
 
   .blocked-badge {
-    background: rgba(var(--error-rgb, 255, 85, 85), 0.15);
+    background: var(--error-dim);
     color: var(--error);
   }
 
   .blocking-badge {
-    background: rgba(var(--warning-rgb, 255, 170, 51), 0.15);
+    background: var(--warning-dim);
     color: var(--warning);
   }
 
   .conflict-badge {
-    background: rgba(var(--error-rgb, 255, 85, 85), 0.15);
+    background: var(--error-dim);
     color: var(--error);
   }
 
   .merge-ready-badge {
     display: inline-block;
-    font-size: 9px;
-    padding: 1px 4px;
+    font-size: var(--text-2xs);
+    padding: 1px var(--space-1);
     border-radius: var(--radius-sm);
-    background: rgba(var(--success-rgb, 80, 200, 120), 0.15);
+    background: var(--success-dim);
     color: var(--success);
+    font-weight: 600;
   }
 
   .merge-blocked-badge {
     display: inline-block;
-    font-size: 9px;
-    padding: 1px 4px;
+    font-size: var(--text-2xs);
+    padding: 1px var(--space-1);
     border-radius: var(--radius-sm);
-    background: rgba(var(--warning-rgb, 255, 170, 51), 0.15);
+    background: var(--warning-dim);
     color: var(--warning);
+    font-weight: 600;
   }
 
   .attention-indicator {
@@ -496,18 +525,19 @@
 
   .btn-dispatch {
     font-size: var(--text-xs);
-    padding: 2px 8px;
+    padding: 2px var(--space-2);
     border-radius: var(--radius-sm);
     cursor: pointer;
     border: 1px solid var(--accent);
     background: transparent;
     color: var(--accent);
-    transition: background var(--transition-fast);
+    transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
   }
 
   .btn-dispatch:hover {
     background: var(--accent);
     color: var(--bg-primary);
+    box-shadow: 0 0 6px var(--glow-accent);
   }
 
   /* Blockers */
@@ -523,10 +553,22 @@
     border-radius: var(--radius-sm);
     background: var(--bg-tertiary);
     font-size: var(--text-xs);
+    position: relative;
+    transition: border-color var(--transition-fast);
+  }
+
+  .blocker-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--surface-highlight);
+    pointer-events: none;
   }
 
   .blocker-card.cross-agent {
     border-color: var(--warning);
+    box-shadow: 0 0 6px var(--glow-warning);
   }
 
   .blocker-task {
@@ -536,7 +578,7 @@
   }
 
   .blocker-arrow {
-    color: var(--fg-muted);
+    color: var(--fg-dim);
     margin: 2px 0;
   }
 
@@ -546,19 +588,21 @@
   }
 
   .blocker-meta {
-    margin-top: 4px;
-    color: var(--fg-muted);
-    font-size: 10px;
+    margin-top: var(--space-1);
+    color: var(--fg-dim);
+    font-size: var(--text-xs);
   }
 
   .cross-agent-tag {
     display: inline-block;
-    padding: 0 4px;
-    border-radius: 2px;
-    background: rgba(var(--warning-rgb, 255, 170, 51), 0.15);
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-xs);
+    background: var(--warning-dim);
     color: var(--warning);
-    font-size: 9px;
-    margin-left: 4px;
+    font-size: var(--text-2xs);
+    margin-left: var(--space-1);
+    font-weight: 600;
+    letter-spacing: var(--tracking-wide);
   }
 
   /* Relations */
@@ -573,14 +617,20 @@
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     background: var(--bg-tertiary);
     font-size: var(--text-xs);
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+  }
+
+  .relation-card:hover {
+    background: var(--bg-elevated);
   }
 
   .relation-card.severe {
     border-color: var(--error);
+    box-shadow: 0 0 6px var(--glow-error);
   }
 
   .relation-kind {
@@ -588,8 +638,9 @@
     color: var(--accent);
     font-family: var(--font-mono);
     text-transform: uppercase;
-    font-size: 9px;
+    font-size: var(--text-2xs);
     min-width: 60px;
+    letter-spacing: var(--tracking-wide);
   }
 
   .relation-edge {
@@ -598,7 +649,7 @@
   }
 
   .relation-detail {
-    color: var(--fg-muted);
+    color: var(--fg-dim);
     flex: 1;
     text-align: right;
   }
