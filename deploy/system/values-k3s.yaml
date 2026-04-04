@@ -23,7 +23,7 @@ controller:
   replicas: 1
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
-    tag: "cd3d3dc6"
+    tag: "fe1d7723"
     pullPolicy: IfNotPresent
   resources:
     limits:
@@ -238,7 +238,7 @@ runtime:
   terminationGracePeriodSeconds: 60
   profiles:
     - name: gfx1100
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:2e4a6fa2a81f6359626dd263912ce8d9384117e3fe8ccee5fbb43548806fc85e"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:9fbf14371fd2d8d394c452d849f5b3eb26d8b702ba763dbeaa820df839664061"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
@@ -269,7 +269,7 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx1100-5930k
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:2e4a6fa2a81f6359626dd263912ce8d9384117e3fe8ccee5fbb43548806fc85e"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:9fbf14371fd2d8d394c452d849f5b3eb26d8b702ba763dbeaa820df839664061"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 1
