@@ -766,6 +766,43 @@ if policy is not None and policy.get("extract_text_config"):
 
 ensure_policy_python_packages(policy)
 
+# Verify transformers recognizes the model_type before importing heavy modules.
+# After text_config extraction, model_type may be e.g. "gemma4_text" which older
+# transformers versions don't have.  Upgrade transformers if needed (--no-deps to
+# avoid replacing ROCm torch).
+_model_type_to_check = cfg.get("model_type", "")
+if _model_type_to_check:
+    try:
+        from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+
+        if _model_type_to_check not in CONFIG_MAPPING:
+            print(
+                f"transformers does not recognize model_type={_model_type_to_check!r}, "
+                "upgrading transformers..."
+            )
+            subprocess.check_call(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--no-cache-dir",
+                    "--no-deps",
+                    "transformers>=5.5",
+                ],
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+            )
+            # Purge cached transformers modules so the next import gets the new version
+            for _k in list(sys.modules.keys()):
+                if _k.startswith("transformers"):
+                    del sys.modules[_k]
+            print("Upgraded transformers and cleared module cache")
+        else:
+            print(f"transformers recognizes model_type={_model_type_to_check!r}")
+    except Exception as _e:
+        print(f"WARN: transformers model_type check failed: {_e}")
+
 effective_max_seq_len = effective_calibration_setting(
     policy, "max_seq_len", max_seq_len
 )
