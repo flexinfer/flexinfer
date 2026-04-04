@@ -2,6 +2,7 @@ package weaver
 
 import (
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -133,5 +134,42 @@ func TestDomainRegistry_GetMissing(t *testing.T) {
 	_, ok := reg.Get("nonexistent")
 	if ok {
 		t.Error("expected not found")
+	}
+}
+
+func TestDomainRegistry_ValidateTools(t *testing.T) {
+	reg := NewDomainRegistry()
+	reg.Register(SubAgent{
+		Name:  "test-domain",
+		Tools: []string{"existing_tool", "missing_tool"},
+	})
+
+	lister := &fakeToolLister{
+		tools: []ToolInfo{{Name: "existing_tool"}},
+	}
+
+	warnings := reg.ValidateTools(lister)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "missing_tool") {
+		t.Errorf("expected warning about missing_tool, got: %s", warnings[0])
+	}
+}
+
+func TestDomainRegistry_ValidateTools_AllPresent(t *testing.T) {
+	reg := NewDomainRegistry()
+	reg.Register(SubAgent{
+		Name:  "test-domain",
+		Tools: []string{"tool_a", "tool_b"},
+	})
+
+	lister := &fakeToolLister{
+		tools: []ToolInfo{{Name: "tool_a"}, {Name: "tool_b"}},
+	}
+
+	warnings := reg.ValidateTools(lister)
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings, got %d: %v", len(warnings), warnings)
 	}
 }

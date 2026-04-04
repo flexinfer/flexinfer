@@ -328,6 +328,33 @@ func TestRouter_TokensPerIterationConstant(t *testing.T) {
 	}
 }
 
+func TestQuery_HistoryHasQueryID(t *testing.T) {
+	router, _, _ := newTestRouter(t, func(req chatCompletionRequestWithTools, callIdx int) chatCompletionResponseWithTools {
+		// Classification response.
+		if callIdx == 1 {
+			return terminalResponse(`{"domains":["codebase"]}`)
+		}
+		// Subagent response.
+		return terminalResponse("test answer")
+	})
+
+	_, err := router.Query(context.Background(), QueryRequest{Query: "test query"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	history := router.History()
+	if len(history) != 1 {
+		t.Fatalf("expected 1 history entry, got %d", len(history))
+	}
+	if history[0].QueryID == "" {
+		t.Error("expected non-empty query_id in history entry")
+	}
+	if len(history[0].QueryID) != 8 {
+		t.Errorf("expected 8-char query_id, got %q (len=%d)", history[0].QueryID, len(history[0].QueryID))
+	}
+}
+
 func TestRouter_Query_NoDomainsMatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

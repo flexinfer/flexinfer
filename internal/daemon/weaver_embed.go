@@ -60,6 +60,13 @@ func (d *Daemon) startEmbeddedWeaver(ctx context.Context) error {
 
 	d.weaver = router
 
+	// Validate domain tool references against available tools.
+	if warnings := router.Registry().ValidateTools(lister); len(warnings) > 0 {
+		for _, w := range warnings {
+			d.logger.Warn("weaver: " + w)
+		}
+	}
+
 	d.logger.Info("weaver started",
 		"router_model", cfg.RouterModel,
 		"subagent_model", cfg.SubagentModel,

@@ -48,7 +48,7 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 			"loom/rbac-config", "loom/rbac-simulate",
 			"loom/otel-status",
 			"loom/session/open", "loom/session/heartbeat", "loom/session/status", "loom/session/close",
-			"loom/weaver/query", "loom/weaver/gather", "loom/weaver/status", "loom/weaver/history":
+			"loom/weaver/query", "loom/weaver/gather", "loom/weaver/status", "loom/weaver/history", "loom/weaver/metrics":
 			// These methods are safe without full daemon initialization.
 		default:
 			return mcp.NewResponse(msg.ID, map[string]any{"status": "starting"})
@@ -112,6 +112,8 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 		resp, err = d.handleOrchestraStatus(ctx, msg)
 	case "loom/weaver/history":
 		resp, err = d.handleOrchestraHistory(ctx, msg)
+	case "loom/weaver/metrics":
+		resp, err = d.handleWeaverMetrics(ctx, msg)
 	default:
 		resp = mcp.NewErrorResponse(msg.ID, mcp.MethodNotFound, fmt.Sprintf("unknown method: %s", msg.Method))
 	}

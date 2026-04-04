@@ -114,3 +114,21 @@ func (d *Daemon) handleOrchestraHistory(_ context.Context, msg *mcp.Message) (*m
 		"entries": d.weaver.History(),
 	})
 }
+
+// handleWeaverMetrics handles loom/weaver/metrics requests.
+func (d *Daemon) handleWeaverMetrics(_ context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	if d.weaver == nil {
+		return mcp.NewResponse(msg.ID, map[string]any{
+			"total_queries": 0, "avg_latency_ms": 0,
+			"error_rate": 0, "total_tokens": 0, "error_count": 0,
+		})
+	}
+	summary := d.weaver.MetricsSummary()
+	if summary == nil {
+		return mcp.NewResponse(msg.ID, map[string]any{
+			"total_queries": 0, "avg_latency_ms": 0,
+			"error_rate": 0, "total_tokens": 0, "error_count": 0,
+		})
+	}
+	return mcp.NewResponse(msg.ID, summary)
+}

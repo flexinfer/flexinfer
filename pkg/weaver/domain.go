@@ -1,6 +1,9 @@
 package weaver
 
-import "sync"
+import (
+	"fmt"
+	"sync"
+)
 
 // SubAgent defines a domain-specific orchestration agent with a curated tool set.
 type SubAgent struct {
@@ -74,6 +77,32 @@ func (r *DomainRegistry) ToolToDomains() map[string][]string {
 		}
 	}
 	return m
+}
+
+// ValidateTools checks that all tools referenced by registered domains
+// exist in the available tool set. Returns warnings for missing tools.
+func (r *DomainRegistry) ValidateTools(lister ToolLister) []string {
+	available, err := lister.ListTools()
+	if err != nil {
+		return []string{fmt.Sprintf("failed to list tools: %v", err)}
+	}
+	avSet := make(map[string]bool, len(available))
+	for _, t := range available {
+		avSet[t.Name] = true
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var warnings []string
+	for _, d := range r.domains {
+		for _, tool := range d.Tools {
+			if !avSet[tool] {
+				warnings = append(warnings, fmt.Sprintf("domain %q references missing tool %q", d.Name, tool))
+			}
+		}
+	}
+	return warnings
 }
 
 // DefaultDomains returns the built-in orchestration domains.
