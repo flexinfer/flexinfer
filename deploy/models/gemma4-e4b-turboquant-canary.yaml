@@ -31,7 +31,7 @@ spec:
     maxModelLen: 32768
     gpuMemoryUtilization: "0.86"
     maxNumSeqs: 1
-    maxNumBatchedTokens: 256
+    maxNumBatchedTokens: 128
     trustRemoteCode: true
     servedModelName: gemma4-e4b-turboquant-canary
     enableToolCalling: true
