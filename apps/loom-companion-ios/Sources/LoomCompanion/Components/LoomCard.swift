@@ -13,19 +13,27 @@ struct LoomCard<Content: View>: View {
             .padding(LoomSpacing.cardPadding)
             .background {
                 RoundedRectangle(cornerRadius: LoomSpacing.cardCornerRadius, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(colorScheme == .dark ? LoomColors.bgSecondary : Color(.systemBackground))
+                    .overlay {
+                        if colorScheme == .dark {
+                            // Top-edge highlight (instrument panel glow)
+                            RoundedRectangle(cornerRadius: LoomSpacing.cardCornerRadius, style: .continuous)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [LoomColors.info.opacity(0.05), .clear],
+                                        startPoint: .top,
+                                        endPoint: .center
+                                    )
+                                )
+                        }
+                    }
                     .overlay {
                         RoundedRectangle(cornerRadius: LoomSpacing.cardCornerRadius, style: .continuous)
                             .strokeBorder(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(colorScheme == .dark ? 0.12 : 0.3),
-                                        Color.white.opacity(colorScheme == .dark ? 0.04 : 0.1),
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 0.5
+                                colorScheme == .dark
+                                    ? LoomColors.border
+                                    : Color.white.opacity(0.3),
+                                lineWidth: LoomSpacing.cardBorderWidth
                             )
                     }
             }
@@ -47,7 +55,7 @@ extension View {
                     .font(LoomTypography.headlineMedium)
                 Text("All systems operational")
                     .font(LoomTypography.bodyRegular)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(LoomColors.fgSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -58,9 +66,10 @@ extension View {
                     .font(LoomTypography.counterLarge)
                 Text("Active Agents")
                     .font(LoomTypography.labelLarge)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(LoomColors.fgSecondary)
             }
         }
     }
     .padding()
+    .background(LoomColors.bgPrimary)
 }

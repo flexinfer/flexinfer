@@ -65,7 +65,7 @@ struct SessionTimelineChart: View {
                 x: .value("Time", bucket.id),
                 y: .value("Events", bucket.count)
             )
-            .foregroundStyle(LoomColors.accent)
+            .foregroundStyle(LoomColors.info)
             .interpolationMethod(.catmullRom)
             .lineStyle(StrokeStyle(lineWidth: 2))
 
@@ -75,7 +75,7 @@ struct SessionTimelineChart: View {
             )
             .foregroundStyle(
                 LinearGradient(
-                    colors: [LoomColors.accent.opacity(0.3), LoomColors.accent.opacity(0.05)],
+                    colors: [LoomColors.info.opacity(0.3), LoomColors.info.opacity(0.05)],
                     startPoint: .top,
                     endPoint: .bottom
                 )

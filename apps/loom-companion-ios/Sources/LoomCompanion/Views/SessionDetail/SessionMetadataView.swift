@@ -15,46 +15,46 @@ struct SessionMetadataView: View {
 
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                 GridRow {
-                    Text("ID").foregroundStyle(.secondary)
+                    Text("ID").foregroundStyle(LoomColors.fgSecondary)
                     Text(session.id).font(.caption).monospaced()
                 }
                 GridRow {
-                    Text("Agent").foregroundStyle(.secondary)
+                    Text("Agent").foregroundStyle(LoomColors.fgSecondary)
                     Text(session.agentId)
                 }
                 GridRow {
-                    Text("Namespace").foregroundStyle(.secondary)
+                    Text("Namespace").foregroundStyle(LoomColors.fgSecondary)
                     Text(session.namespace)
                 }
                 if !session.description.isEmpty {
                     GridRow {
-                        Text("Description").foregroundStyle(.secondary)
+                        Text("Description").foregroundStyle(LoomColors.fgSecondary)
                         Text(session.description)
                     }
                 }
                 GridRow {
-                    Text("Started").foregroundStyle(.secondary)
+                    Text("Started").foregroundStyle(LoomColors.fgSecondary)
                     Text(session.startedAt)
                 }
                 if let endedAt = session.endedAt {
                     GridRow {
-                        Text("Ended").foregroundStyle(.secondary)
+                        Text("Ended").foregroundStyle(LoomColors.fgSecondary)
                         Text(endedAt)
                     }
                 }
                 GridRow {
-                    Text("Entries").foregroundStyle(.secondary)
+                    Text("Entries").foregroundStyle(LoomColors.fgSecondary)
                     Text("\(session.entryCount)")
                 }
                 GridRow {
-                    Text("Tokens").foregroundStyle(.secondary)
+                    Text("Tokens").foregroundStyle(LoomColors.fgSecondary)
                     Text("\(session.totalTokens)")
                 }
             }
             .font(.subheadline)
         }
         .padding()
-        .background(.regularMaterial)
+        .background(LoomColors.bgSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }

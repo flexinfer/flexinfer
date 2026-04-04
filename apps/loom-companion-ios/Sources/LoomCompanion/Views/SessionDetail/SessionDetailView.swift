@@ -150,7 +150,7 @@ struct SessionDetailView: View {
                             )
                             .symbolEffect(.pulse, isActive: liveActivityStarted)
                         }
-                        .tint(liveActivityStarted ? .green : nil)
+                        .tint(liveActivityStarted ? LoomColors.statusHealthy : nil)
                     }
                     #endif
 

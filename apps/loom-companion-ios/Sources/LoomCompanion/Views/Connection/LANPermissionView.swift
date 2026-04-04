@@ -5,19 +5,19 @@ struct LANPermissionView: View {
         VStack(spacing: 16) {
             Image(systemName: "wifi.exclamationmark")
                 .font(.system(size: 40))
-                .foregroundStyle(.orange)
+                .foregroundStyle(LoomColors.statusDegraded)
 
             Text("Local Network Access Required")
                 .font(.headline)
 
             Text("Loom Companion needs local network access to communicate with your Loom HUD on the same network.")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(LoomColors.fgSecondary)
                 .multilineTextAlignment(.center)
 
             Text("Go to Settings > Privacy & Security > Local Network and enable access for Loom Companion.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(LoomColors.fgSecondary)
                 .multilineTextAlignment(.center)
 
             #if os(iOS)
@@ -33,7 +33,7 @@ struct LANPermissionView: View {
             #endif
         }
         .padding()
-        .background(.regularMaterial)
+        .background(LoomColors.bgSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }

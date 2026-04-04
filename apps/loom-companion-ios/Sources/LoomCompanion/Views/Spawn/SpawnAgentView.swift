@@ -99,7 +99,7 @@ struct SpawnAgentView: View {
         Section("Active Spawns") {
             if viewModel.spawns.isEmpty {
                 Text("No active spawns")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(LoomColors.fgSecondary)
             } else {
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     ForEach(viewModel.spawns) { spawn in
@@ -156,18 +156,18 @@ private struct SpawnRow: View {
 
             Text(spawn.request.taskDescription)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(LoomColors.fgSecondary)
                 .lineLimit(2)
 
             HStack {
                 Text(spawn.agentId)
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(LoomColors.fgMuted)
                 Spacer()
                 if spawn.isActive, let elapsed = elapsedString {
                     Text(elapsed)
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(LoomColors.fgMuted)
                         .monospacedDigit()
                 }
                 if spawn.isActive {
@@ -191,11 +191,11 @@ private struct SpawnRow: View {
 
 private func spawnStatusColor(_ status: String) -> Color {
     switch status {
-    case "running": return .green
-    case "creating": return .blue
-    case "completed": return .secondary
-    case "failed": return .red
-    case "stopped": return .orange
-    default: return .secondary
+    case "running": return LoomColors.statusHealthy
+    case "creating": return LoomColors.info
+    case "completed": return LoomColors.fgMuted
+    case "failed": return LoomColors.statusCritical
+    case "stopped": return LoomColors.statusDegraded
+    default: return LoomColors.fgMuted
     }
 }

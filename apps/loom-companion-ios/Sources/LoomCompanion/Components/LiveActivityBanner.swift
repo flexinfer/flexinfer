@@ -39,7 +39,7 @@ struct LiveActivityBanner: View {
             }) {
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(.green)
+                        .fill(LoomColors.statusHealthy)
                         .frame(width: 8, height: 8)
                         .pulse()
 
@@ -49,7 +49,7 @@ struct LiveActivityBanner: View {
 
                     Image(systemName: "chevron.right")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(LoomColors.fgSecondary)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)

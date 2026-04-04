@@ -11,17 +11,17 @@ struct ConnectionProfileView: View {
 
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                 GridRow {
-                    Text("Name").foregroundStyle(.secondary)
+                    Text("Name").foregroundStyle(LoomColors.fgSecondary)
                     Text(profile.name)
                 }
                 GridRow {
-                    Text("URL").foregroundStyle(.secondary)
+                    Text("URL").foregroundStyle(LoomColors.fgSecondary)
                     Text(profile.baseURL)
                         .monospaced()
                         .font(.caption)
                 }
                 GridRow {
-                    Text("Mode").foregroundStyle(.secondary)
+                    Text("Mode").foregroundStyle(LoomColors.fgSecondary)
                     HStack(spacing: 4) {
                         Image(systemName: profile.mode == .lan ? "wifi" : "globe")
                         Text(profile.mode.rawValue.uppercased())
@@ -29,7 +29,7 @@ struct ConnectionProfileView: View {
                 }
                 if profile.mode == .gateway {
                     GridRow {
-                        Text("CF Access").foregroundStyle(.secondary)
+                        Text("CF Access").foregroundStyle(LoomColors.fgSecondary)
                         Text(profile.hasCloudflareAccessServiceToken ? "Configured" : "Not configured")
                     }
                 }
@@ -37,7 +37,7 @@ struct ConnectionProfileView: View {
             .font(.subheadline)
         }
         .padding()
-        .background(.regularMaterial)
+        .background(LoomColors.bgSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }

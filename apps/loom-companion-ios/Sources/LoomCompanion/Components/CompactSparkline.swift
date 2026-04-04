@@ -4,7 +4,7 @@ import SwiftUI
 /// Works without the Charts framework — uses `Shape` for rendering.
 struct CompactSparkline: View {
     let data: [Double]
-    var lineColor: Color = LoomColors.accent
+    var lineColor: Color = LoomColors.info
     var fillOpacity: Double = 0.15
 
     var body: some View {

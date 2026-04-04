@@ -41,7 +41,7 @@ struct ConnectionDiagnosticsView: View {
                                     .fontWeight(.medium)
                                 Text(remediation.description)
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(LoomColors.fgSecondary)
                             }
                             Spacer()
                         }
@@ -55,10 +55,10 @@ struct ConnectionDiagnosticsView: View {
                                     HStack(alignment: .top, spacing: 6) {
                                         Text("\u{2022}")
                                             .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(LoomColors.fgSecondary)
                                         Text(step)
                                             .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(LoomColors.fgSecondary)
                                     }
                                 }
                             }
@@ -71,7 +71,7 @@ struct ConnectionDiagnosticsView: View {
                                 Text("Polling fallback active (30s interval)")
                                     .font(.caption)
                             }
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(LoomColors.statusDegraded)
                         }
 
                         if let lastPing = healthMonitor.lastPingTime {
@@ -81,7 +81,7 @@ struct ConnectionDiagnosticsView: View {
                                 Text("Last ping: \(lastPing.formatted(.relative(presentation: .named)))")
                                     .font(.caption)
                             }
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(LoomColors.fgSecondary)
                         }
 
                         if case .unreachable = healthMonitor.health, profile?.mode == .lan {
@@ -171,20 +171,20 @@ struct ConnectionDiagnosticsView: View {
                                         if !pushViewModel.policyVersion.isEmpty {
                                             Text("Policy \(pushViewModel.policyVersion)")
                                                 .font(.caption)
-                                                .foregroundStyle(.secondary)
+                                                .foregroundStyle(LoomColors.fgSecondary)
                                         }
                                     }
 
                                     if let statusMessage = pushViewModel.statusMessage, !statusMessage.isEmpty {
                                         Text(statusMessage)
                                             .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(LoomColors.fgSecondary)
                                     }
 
                                     if let errorMessage = pushViewModel.errorMessage, !errorMessage.isEmpty {
                                         Text(errorMessage)
                                             .font(.caption)
-                                            .foregroundStyle(.red)
+                                            .foregroundStyle(LoomColors.statusCritical)
                                     }
 
                                     if !pushViewModel.policyEntries.isEmpty {
@@ -199,7 +199,7 @@ struct ConnectionDiagnosticsView: View {
                                                         .fontWeight(.semibold)
                                                     Text("\(entry.eventType) • \(entry.severity) • \(entry.interruptionLevel)")
                                                         .font(.caption2)
-                                                        .foregroundStyle(.secondary)
+                                                        .foregroundStyle(LoomColors.fgSecondary)
                                                 }
                                             }
                                         }
@@ -223,7 +223,7 @@ struct ConnectionDiagnosticsView: View {
                                         .font(.headline)
                                     Text("Push diagnostics, policy refresh, and disconnect live here.")
                                         .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(LoomColors.fgSecondary)
                                 }
                                 Spacer()
                                 Image(systemName: showAdvancedControls ? "chevron.up" : "chevron.down")
@@ -258,9 +258,9 @@ struct ConnectionDiagnosticsView: View {
 
     private var severityColor: Color {
         switch remediation.severity {
-        case .ok: return .green
-        case .warning: return .orange
-        case .error: return .red
+        case .ok: return LoomColors.statusHealthy
+        case .warning: return LoomColors.statusDegraded
+        case .error: return LoomColors.statusCritical
         }
     }
 }

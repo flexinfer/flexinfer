@@ -18,7 +18,7 @@ struct LoginView: View {
                             .fontWeight(.bold)
                         Text("Connect to your Loom HUD instance")
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(LoomColors.fgSecondary)
                     }
                     .padding(.top, 40)
 
@@ -36,7 +36,7 @@ struct LoginView: View {
 
                         Text(modeDescription)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(LoomColors.fgSecondary)
                     }
 
                     // Base URL
@@ -91,7 +91,7 @@ struct LoginView: View {
 
                             Text("Use these if your gateway is protected by Cloudflare Access service tokens.")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(LoomColors.fgSecondary)
                         }
                     }
 
@@ -99,13 +99,13 @@ struct LoginView: View {
                     if let error = viewModel.pairingError {
                         HStack {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.red)
+                                .foregroundStyle(LoomColors.statusCritical)
                             Text(error)
                                 .font(.caption)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(LoomColors.statusCritical)
                         }
                         .padding(12)
-                        .background(.red.opacity(0.1))
+                        .background(LoomColors.errorDim)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
 

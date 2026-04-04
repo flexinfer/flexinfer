@@ -15,6 +15,7 @@ enum LoomSpacing {
     static let cardPadding: CGFloat = 16
     static let cardCornerRadius: CGFloat = 14
     static let cardSpacing: CGFloat = 12
+    static let cardBorderWidth: CGFloat = 1
 
     // MARK: - List Row
 

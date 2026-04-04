@@ -12,17 +12,17 @@ struct SessionTasksView: View {
                 Spacer()
                 Text("\(tasks.total)")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(LoomColors.fgSecondary)
             }
 
             HStack(spacing: 16) {
-                TaskCountBadge(label: "Pending", count: tasks.pending, color: .orange)
-                TaskCountBadge(label: "In Progress", count: tasks.inProgress, color: .blue)
-                TaskCountBadge(label: "Done", count: tasks.completed, color: .green)
+                TaskCountBadge(label: "Pending", count: tasks.pending, color: LoomColors.statusDegraded)
+                TaskCountBadge(label: "In Progress", count: tasks.inProgress, color: LoomColors.info)
+                TaskCountBadge(label: "Done", count: tasks.completed, color: LoomColors.statusHealthy)
             }
         }
         .padding()
-        .background(.regularMaterial)
+        .background(LoomColors.bgSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
@@ -37,10 +37,10 @@ private struct TaskCountBadge: View {
             Text("\(count)")
                 .font(.title2)
                 .fontWeight(.semibold)
-                .foregroundStyle(count > 0 ? color : .secondary)
+                .foregroundStyle(count > 0 ? color : LoomColors.fgMuted)
             Text(label)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(LoomColors.fgSecondary)
         }
         .frame(maxWidth: .infinity)
     }

@@ -12,13 +12,13 @@ struct SessionEventsView: View {
                 Spacer()
                 Text("\(events.count)")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(LoomColors.fgSecondary)
             }
 
             if events.isEmpty {
                 Text("No events recorded")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(LoomColors.fgSecondary)
                     .padding(.vertical, 8)
             } else {
                 ForEach(events) { entry in
@@ -30,7 +30,7 @@ struct SessionEventsView: View {
             }
         }
         .padding()
-        .background(.regularMaterial)
+        .background(LoomColors.bgSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
@@ -55,17 +55,17 @@ private struct EventRow: View {
                     if let agentId = entry.agentId {
                         Text(agentId)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(LoomColors.fgSecondary)
                     }
 
                     Text(entry.timestamp)
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(LoomColors.fgMuted)
 
                     if entry.data != nil {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(LoomColors.fgMuted)
                     }
                 }
             }
@@ -75,9 +75,9 @@ private struct EventRow: View {
                 Text(formatData(data))
                     .font(.caption2)
                     .monospaced()
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(LoomColors.fgSecondary)
                     .padding(8)
-                    .background(.quaternary)
+                    .background(LoomColors.bgTertiary)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
             }
         }

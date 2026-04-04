@@ -257,7 +257,7 @@ struct DashboardView: View {
                     .foregroundStyle(.white.opacity(0.7))
             }
             .padding(LoomSpacing.md)
-            .background(.red, in: RoundedRectangle(cornerRadius: 10))
+            .background(LoomColors.statusCritical, in: RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
     }

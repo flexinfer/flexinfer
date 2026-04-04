@@ -7,7 +7,7 @@ struct AnimatedCounter: View {
 
     @State private var animatedValue: Int = 0
 
-    init(_ value: Int, font: Font = LoomTypography.counterMedium, color: Color = .primary) {
+    init(_ value: Int, font: Font = LoomTypography.counterMedium, color: Color = LoomColors.fgPrimary) {
         self.value = value
         self.font = font
         self.color = color

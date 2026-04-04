@@ -14,7 +14,7 @@ struct SessionEntriesSection: View {
                 Spacer()
                 Text("\(entries.count)")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(LoomColors.fgSecondary)
             }
 
             ForEach(entries) { entry in
@@ -25,11 +25,11 @@ struct SessionEntriesSection: View {
                         Text(entry.entryType)
                             .font(.caption2)
                             .monospaced()
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(LoomColors.fgSecondary)
                         Spacer()
                         Text(entry.timestamp)
                             .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(LoomColors.fgMuted)
                     }
                 }
                 if entry.id != entries.last?.id {
@@ -38,7 +38,7 @@ struct SessionEntriesSection: View {
             }
         }
         .padding()
-        .background(.regularMaterial)
+        .background(LoomColors.bgSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }

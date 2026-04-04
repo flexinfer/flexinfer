@@ -9,39 +9,39 @@ struct StatusBadge: View {
     init(sessionStatus: SessionStatus) {
         switch sessionStatus {
         case .active:
-            status = "Active"; color = .green; icon = "circle.fill"
+            status = "Active"; color = LoomColors.statusHealthy; icon = "circle.fill"
         case .ended:
-            status = "Ended"; color = .secondary; icon = "checkmark.circle"
+            status = "Ended"; color = LoomColors.fgMuted; icon = "checkmark.circle"
         case .summarized:
-            status = "Summarized"; color = .blue; icon = "doc.text.fill"
+            status = "Summarized"; color = LoomColors.info; icon = "doc.text.fill"
         case .unknown:
-            status = "Unknown"; color = .secondary; icon = nil
+            status = "Unknown"; color = LoomColors.fgMuted; icon = nil
         }
     }
 
     init(healthStatus: OverallHealthStatus) {
         switch healthStatus {
         case .healthy:
-            status = "Healthy"; color = .green; icon = "heart.fill"
+            status = "Healthy"; color = LoomColors.statusHealthy; icon = "heart.fill"
         case .degraded:
-            status = "Degraded"; color = .orange; icon = "exclamationmark.triangle"
+            status = "Degraded"; color = LoomColors.statusDegraded; icon = "exclamationmark.triangle"
         case .critical:
-            status = "Critical"; color = .red; icon = "xmark.octagon.fill"
+            status = "Critical"; color = LoomColors.statusCritical; icon = "xmark.octagon.fill"
         case .unknown:
-            status = "Unknown"; color = .secondary; icon = nil
+            status = "Unknown"; color = LoomColors.fgMuted; icon = nil
         }
     }
 
     init(presenceStatus: MobilePresenceStatus) {
         switch presenceStatus {
         case .active:
-            status = "Active"; color = .green; icon = "circle.fill"
+            status = "Active"; color = LoomColors.statusHealthy; icon = "circle.fill"
         case .idle:
-            status = "Idle"; color = .orange; icon = "moon.fill"
+            status = "Idle"; color = LoomColors.statusDegraded; icon = "moon.fill"
         case .offline:
-            status = "Offline"; color = .gray; icon = "circle.dashed"
+            status = "Offline"; color = LoomColors.statusIdle; icon = "circle.dashed"
         case .unknown:
-            status = "Unknown"; color = .secondary; icon = nil
+            status = "Unknown"; color = LoomColors.fgMuted; icon = nil
         }
     }
 
@@ -67,7 +67,7 @@ struct StatusBadge: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .background(color.opacity(0.15))
+        .background(color.opacity(0.12))
         .foregroundStyle(color)
         .clipShape(Capsule())
     }

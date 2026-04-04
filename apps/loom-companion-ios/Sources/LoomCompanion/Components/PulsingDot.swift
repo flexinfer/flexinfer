@@ -26,7 +26,7 @@ struct PulsingDot: View {
             Circle()
                 .fill(color)
                 .frame(width: size, height: size)
-                .shadow(color: color.opacity(0.5), radius: 3)
+                .shadow(color: color.opacity(0.35), radius: 4)
         }
         .frame(width: size * 2.5, height: size * 2.5)
         .onAppear {

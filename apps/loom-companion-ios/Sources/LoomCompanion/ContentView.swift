@@ -49,6 +49,8 @@ struct ContentView: View {
                 teardownSSE()
             }
         }
+        .tint(LoomColors.info)
+        .preferredColorScheme(.dark)
         .onChange(of: selectedTab) { _, _ in
             HapticManager.selection()
         }
@@ -208,7 +210,7 @@ struct ContentView: View {
                                     .fontWeight(.bold)
                                     .foregroundStyle(.white)
                                     .padding(3)
-                                    .background(.red, in: Circle())
+                                    .background(LoomColors.statusCritical, in: Circle())
                                     .offset(x: 8, y: -8)
                             }
                         }

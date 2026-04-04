@@ -39,7 +39,7 @@ struct CreateSessionView: View {
                 if let error = viewModel.createError {
                     Section {
                         Label(error, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
+                            .foregroundStyle(LoomColors.statusCritical)
                     }
                 }
             }

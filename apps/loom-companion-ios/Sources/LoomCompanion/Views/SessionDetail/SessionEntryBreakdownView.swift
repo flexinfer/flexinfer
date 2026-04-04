@@ -12,7 +12,7 @@ struct SessionEntryBreakdownView: View {
                 Spacer()
                 Text("\(buckets.reduce(0) { $0 + $1.count })")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(LoomColors.fgSecondary)
             }
 
             ForEach(buckets) { bucket in
@@ -25,15 +25,15 @@ struct SessionEntryBreakdownView: View {
                         .font(.subheadline)
                         .fontWeight(.medium)
                     Text("·")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(LoomColors.fgMuted)
                     Text("~\(bucket.estimatedTokens) tok")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(LoomColors.fgSecondary)
                 }
             }
         }
         .padding()
-        .background(.regularMaterial)
+        .background(LoomColors.bgSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }

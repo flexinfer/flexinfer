@@ -12,7 +12,7 @@ struct SessionTopFilesView: View {
                 Spacer()
                 Text("\(files.count)")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(LoomColors.fgSecondary)
             }
 
             ForEach(files) { file in
@@ -25,12 +25,12 @@ struct SessionTopFilesView: View {
                     Spacer()
                     Text("\(file.touchCount)×")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(LoomColors.fgSecondary)
                 }
             }
         }
         .padding()
-        .background(.regularMaterial)
+        .background(LoomColors.bgSecondary)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }

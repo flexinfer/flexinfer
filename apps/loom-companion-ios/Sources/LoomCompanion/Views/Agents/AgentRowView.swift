@@ -68,7 +68,7 @@ struct AgentRowView: View {
                     if agent.needsAttention {
                         Image(systemName: "exclamationmark.circle.fill")
                             .font(.system(size: 10))
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(LoomColors.statusDegraded)
                     }
                 }
 
@@ -139,8 +139,8 @@ struct AgentRowView: View {
         .font(.caption2)
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
-        .background(Color.purple.opacity(0.1))
-        .foregroundStyle(.purple)
+        .background(LoomColors.tierShortTerm.opacity(0.12))
+        .foregroundStyle(LoomColors.tierShortTerm)
         .clipShape(Capsule())
     }
 
@@ -151,13 +151,13 @@ struct AgentRowView: View {
             Text("\(agent.taskCount)")
             if agent.blockedTasks > 0 {
                 Text("(\(agent.blockedTasks) blocked)")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(LoomColors.statusDegraded)
             }
         }
         .font(.caption2)
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
-        .background(Color.gray.opacity(0.1))
+        .background(LoomColors.bgTertiary)
         .foregroundStyle(LoomColors.textSecondary)
         .clipShape(Capsule())
     }

@@ -93,7 +93,7 @@ struct AgentDetailView: View {
                 Spacer()
                 if agent.needsAttention {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(LoomColors.statusDegraded)
                         .font(.system(size: 14))
                 }
             }
@@ -121,8 +121,8 @@ struct AgentDetailView: View {
                             .font(.caption2)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.15))
-                            .foregroundStyle(.orange)
+                            .background(LoomColors.warningDim)
+                            .foregroundStyle(LoomColors.statusDegraded)
                             .clipShape(Capsule())
                     }
                 }
@@ -169,18 +169,18 @@ struct AgentDetailView: View {
             Text("Tasks")
                 .font(LoomTypography.headlineMedium)
             HStack(spacing: LoomSpacing.md) {
-                taskPill(label: "Pending", value: tasks.pending, color: .gray)
-                taskPill(label: "Active", value: tasks.inProgress, color: LoomColors.accent)
-                taskPill(label: "Done", value: tasks.completed, color: .green)
+                taskPill(label: "Pending", value: tasks.pending, color: LoomColors.statusIdle)
+                taskPill(label: "Active", value: tasks.inProgress, color: LoomColors.info)
+                taskPill(label: "Done", value: tasks.completed, color: LoomColors.statusHealthy)
             }
             if agent.blockedTasks > 0 {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(LoomColors.statusDegraded)
                     Text("\(agent.blockedTasks) blocked")
                         .font(LoomTypography.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(LoomColors.statusDegraded)
                 }
             }
         }
@@ -263,11 +263,11 @@ struct AgentDetailView: View {
             ForEach(viewModel.errors) { entry in
                 HStack(spacing: 4) {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(LoomColors.statusCritical)
                         .font(.system(size: 10))
                     Text(entry.title)
                         .font(LoomTypography.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(LoomColors.statusCritical)
                 }
             }
         }

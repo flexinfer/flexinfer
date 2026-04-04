@@ -15,7 +15,7 @@ struct SkeletonView: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius)
-            .fill(Color.gray.opacity(0.15))
+            .fill(LoomColors.bgTertiary)
             .frame(width: width, height: height)
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius)

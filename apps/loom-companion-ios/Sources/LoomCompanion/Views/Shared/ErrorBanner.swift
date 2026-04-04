@@ -36,7 +36,7 @@ struct ErrorBanner: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(LoomColors.fgSecondary)
                 }
             }
             .padding(10)
@@ -82,10 +82,10 @@ struct ErrorBanner: View {
 
     private var bannerColor: Color {
         switch health {
-        case .degradedStream, .rateLimited: return .orange
-        case .authFailure, .permissionDenied, .gatewayRouteMissing: return .red
-        case .unreachable: return .red
-        default: return .secondary
+        case .degradedStream, .rateLimited: return LoomColors.statusDegraded
+        case .authFailure, .permissionDenied, .gatewayRouteMissing: return LoomColors.statusCritical
+        case .unreachable: return LoomColors.statusCritical
+        default: return LoomColors.fgMuted
         }
     }
 }

@@ -26,7 +26,7 @@ struct ActiveWorkCard: View {
 
                 if total > 0 {
                     ProportionBar(segments: [
-                        (Double(counts.pending), Color.orange),
+                        (Double(counts.pending), LoomColors.statusDegraded),
                         (Double(counts.inProgress), LoomColors.statusHealthy),
                         (Double(counts.blocked), LoomColors.statusBlocked),
                     ])

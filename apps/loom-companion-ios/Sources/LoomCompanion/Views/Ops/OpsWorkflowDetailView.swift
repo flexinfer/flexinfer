@@ -98,7 +98,7 @@ struct OpsWorkflowDetailView: View {
             if let error {
                 Section {
                     Text(error)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(LoomColors.statusCritical)
                         .font(LoomTypography.caption)
                 }
             }

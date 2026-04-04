@@ -68,7 +68,7 @@ struct OpsView: View {
                 if let error = viewModel.error {
                     Text(error.description)
                         .font(.subheadline)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(LoomColors.statusCritical)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if let warningMessage = viewModel.warningMessage {
@@ -83,13 +83,13 @@ struct OpsView: View {
                 if let statusMessage = viewModel.mutationStatusMessage {
                     Text(statusMessage)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(LoomColors.fgSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if let mutationErrorMessage = viewModel.mutationErrorMessage {
                     Text(mutationErrorMessage)
                         .font(.footnote)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(LoomColors.statusCritical)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
@@ -790,7 +790,7 @@ struct OpsView: View {
                     if let err = viewModel.sandboxMutationError {
                         Text(err)
                             .font(LoomTypography.caption)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(LoomColors.statusCritical)
                     }
                 }
             }

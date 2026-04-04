@@ -30,14 +30,14 @@ private struct HandoffCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Image(systemName: "arrow.right.circle.fill")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(LoomColors.statusDegraded)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(handoff.fromAgent)
                         .font(.subheadline)
                         .fontWeight(.medium)
                     Text("to \(handoff.toAgent)")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(LoomColors.fgSecondary)
                 }
                 Spacer()
                 statusBadge(handoff.status)
@@ -46,14 +46,14 @@ private struct HandoffCard: View {
             if !handoff.summary.isEmpty {
                 Text(handoff.summary)
                     .font(.caption)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(LoomColors.fgPrimary)
                     .lineLimit(3)
             }
 
             HStack {
                 Text(handoff.createdAt)
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(LoomColors.fgMuted)
                 Spacer()
             }
         }
@@ -79,11 +79,11 @@ private struct HandoffCard: View {
 
     private func statusColor(_ status: String) -> Color {
         switch status {
-        case "pending": return .orange
-        case "accepted": return .green
-        case "rejected": return .red
-        case "viewed": return .blue
-        default: return .secondary
+        case "pending": return LoomColors.statusDegraded
+        case "accepted": return LoomColors.statusHealthy
+        case "rejected": return LoomColors.statusCritical
+        case "viewed": return LoomColors.info
+        default: return LoomColors.fgMuted
         }
     }
 }
