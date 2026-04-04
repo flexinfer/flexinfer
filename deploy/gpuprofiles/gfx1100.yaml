@@ -72,5 +72,5 @@ spec:
       - gguf
       - exl2
     images:
-      gptq: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100-v2
+      gptq: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100-v3
       abliteration: registry.harbor.lan/flexinfer/runtime:ablitfix

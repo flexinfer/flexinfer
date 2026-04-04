@@ -836,15 +836,30 @@ else:
 import torch
 from datasets import load_dataset
 from gptqmodel import GPTQModel, QuantizeConfig
-from gptqmodel.models.auto import check_and_get_model_definition
 from gptqmodel.quantization.gptq import GPTQ
-from gptqmodel.utils.hf import (
-    normalize_hf_config_compat,
-    prepare_remote_model_init_compat,
-    resolve_trust_remote_code,
-)
-from gptqmodel.utils.importer import auto_select_device
-from gptqmodel.utils.model import auto_dtype
+
+# These imports are only needed for the manual_sharded_state_dict loader path.
+# GPTQModel < 6.0 doesn't have normalize_hf_config_compat / prepare_remote_model_init_compat.
+try:
+    from gptqmodel.models.auto import check_and_get_model_definition
+    from gptqmodel.utils.hf import (
+        normalize_hf_config_compat,
+        prepare_remote_model_init_compat,
+        resolve_trust_remote_code,
+    )
+    from gptqmodel.utils.importer import auto_select_device
+    from gptqmodel.utils.model import auto_dtype
+except ImportError:
+    check_and_get_model_definition = None
+    normalize_hf_config_compat = None
+    prepare_remote_model_init_compat = None
+    auto_select_device = None
+    auto_dtype = None
+
+    def resolve_trust_remote_code(model_dir, trust_remote_code=False):
+        return trust_remote_code
+
+
 from transformers import AutoConfig
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
@@ -1036,6 +1051,11 @@ def patch_defuser_transformers_prerelease_gate():
 
 
 def load_model_manual_sharded_state_dict(model_dir, tokenizer, quantize_config):
+    if check_and_get_model_definition is None:
+        raise RuntimeError(
+            "manual_sharded_state_dict loader requires GPTQModel >= 6.0 "
+            "(missing check_and_get_model_definition / normalize_hf_config_compat)"
+        )
     import defuser
 
     trust_remote_code = resolve_trust_remote_code(model_dir, trust_remote_code=True)
