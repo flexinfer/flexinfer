@@ -25,6 +25,17 @@ public struct TimelineEntry: Decodable, Identifiable, Sendable {
         self.agentType = agentType
         self.data = data
     }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.timestamp = try container.decode(String.self, forKey: .timestamp)
+        self.eventType = try container.decode(String.self, forKey: .eventType)
+        self.agentId = try container.decodeIfPresent(String.self, forKey: .agentId)
+        self.agentType = try container.decodeIfPresent(String.self, forKey: .agentType)
+        // Go sends json.RawMessage which can be any JSON type (object, array, string, etc.)
+        // Gracefully fall back to nil when data is not a dictionary.
+        self.data = try? container.decodeIfPresent([String: AnyCodable].self, forKey: .data)
+    }
 }
 
 /// Response wrapper for session events endpoint.

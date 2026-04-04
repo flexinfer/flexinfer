@@ -24,6 +24,15 @@ public struct HealthSummary: Decodable, Sendable {
         self.idleServers = idleServers
     }
 
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.totalServers = try container.decodeIfPresent(Int.self, forKey: .totalServers) ?? 0
+        self.healthyServers = try container.decodeIfPresent(Int.self, forKey: .healthyServers) ?? 0
+        self.degradedServers = try container.decodeIfPresent(Int.self, forKey: .degradedServers) ?? 0
+        self.downServers = try container.decodeIfPresent(Int.self, forKey: .downServers) ?? 0
+        self.idleServers = try container.decodeIfPresent(Int.self, forKey: .idleServers) ?? 0
+    }
+
     /// Overall health status derived from server counts.
     public var overallStatus: OverallHealthStatus {
         if downServers > 0 { return .critical }

@@ -1135,4 +1135,45 @@
       flex-direction: column;
     }
   }
+
+  @media (max-width: 480px) {
+    .overview-panel {
+      padding: 10px;
+      gap: 12px;
+    }
+
+    .overview-hero {
+      padding: 12px;
+      gap: 10px;
+    }
+
+    .hero-title {
+      font-size: clamp(18px, 5vw, 24px);
+    }
+
+    .hero-detail {
+      font-size: 13px;
+    }
+
+    .hero-action {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .focus-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .focus-card {
+      padding: 10px;
+    }
+
+    .focus-card-calm {
+      padding: 8px 10px;
+    }
+
+    .hero-rail {
+      max-height: 160px;
+    }
+  }
 </style>

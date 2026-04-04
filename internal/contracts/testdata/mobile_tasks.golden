@@ -8,6 +8,7 @@
       "conflict_files": 0,
       "cross_agent_blockers": 0,
       "idle_claim_holders": 0,
+      "merge_ready_branches": 0,
       "namespaces_at_risk": 0,
       "orphan_tasks": 0,
       "shared_branches": 0

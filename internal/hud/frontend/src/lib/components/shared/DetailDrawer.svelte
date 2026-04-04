@@ -189,4 +189,18 @@
     border-top: 1px solid var(--border);
     flex-shrink: 0;
   }
+
+  @media (max-width: 480px) {
+    .drawer {
+      width: 100vw !important;
+      border-left: none;
+    }
+    .drawer-close {
+      min-width: 44px;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+  }
 </style>

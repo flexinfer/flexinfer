@@ -82,9 +82,10 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
         do {
             envelope = try JSONDecoder().decode(APIEnvelope<T>.self, from: data)
         } catch {
-            // If we can't decode a successful payload, surface a contract error.
+            // If we can't decode a successful payload, surface a contract error
+            // with the actual decode error for diagnostics.
             if (200 ..< 300).contains(statusCode) {
-                throw LoomAPIError.decodingError(underlying: "Invalid API response contract (HTTP \(statusCode))")
+                throw LoomAPIError.decodingError(underlying: "Invalid API response contract (HTTP \(statusCode)): \(error.localizedDescription)")
             }
             // For non-2xx responses, map HTTP status to structured API errors.
             throw mapHTTPError(status: statusCode, data: data)

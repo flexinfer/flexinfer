@@ -65,6 +65,11 @@
   --space-8: 32px;
   --space-12: 48px;
 
+  /* ---- Breakpoints ---- */
+
+  --bp-mobile: 480px;
+  --bp-tablet: 768px;
+
   /* ---- Layout ---- */
 
   --header-height: 40px;

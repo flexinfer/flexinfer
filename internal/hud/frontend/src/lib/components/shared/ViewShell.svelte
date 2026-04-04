@@ -123,4 +123,28 @@
     display: flex;
     flex-direction: column;
   }
+
+  @media (max-width: 768px) {
+    .view-tabs {
+      overflow-x: auto;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+    .view-tabs::-webkit-scrollbar {
+      display: none;
+    }
+    .view-tab-key {
+      display: none;
+    }
+    .view-tab {
+      min-height: 44px;
+      flex-shrink: 0;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .view-tabs {
+      padding: var(--space-1) var(--space-2);
+    }
+  }
 </style>
