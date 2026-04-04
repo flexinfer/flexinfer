@@ -348,7 +348,7 @@ func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryReque
 	adapter := NewSubAgentAdapter(agent, r.lister)
 	systemPrompt := subAgentSystemPrompt(agent)
 
-	responsesClient := NewFlexInferResponsesClient(r.client, r.cfg.ModelBehaviors, r.logger)
+	responsesClient := NewFlexInferResponsesClient(r.client, r.cfg.ModelBehaviors, r.cfg.HTTPTimeout, r.logger)
 	var telemetry openairesponses.TelemetrySink
 	if r.metrics != nil {
 		telemetry = NewSubagentTelemetry(domain, r.metrics)
@@ -437,7 +437,10 @@ func (r *Router) synthesize(ctx context.Context, results []DomainResult, query s
 	prompt := routerSynthesizePrompt()
 	userMsg := fmt.Sprintf("Original query: %s\n\nDomain results:\n%s", query, input)
 
-	synth, err := r.client.CompleteSimple(ctx, r.cfg.RouterModel, prompt, r.applyModelPrefix(r.cfg.RouterModel, userMsg), 1024)
+	synthCtx, cancel := context.WithTimeout(ctx, r.cfg.Timeout)
+	defer cancel()
+
+	synth, err := r.client.CompleteSimple(synthCtx, r.cfg.RouterModel, prompt, r.applyModelPrefix(r.cfg.RouterModel, userMsg), 1024)
 	if err != nil {
 		r.logger.Warn("synthesis failed, returning concatenated results", "error", err)
 		return input

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,19 +19,25 @@ import (
 // translating TurnRequests into OpenAI-compatible chat completion calls
 // against a local FlexInfer model with function calling support.
 type FlexInferResponsesClient struct {
-	client    *flexinfer.Client
-	behaviors map[string]ModelBehavior
-	logger    *slog.Logger
+	client     *flexinfer.Client
+	behaviors  map[string]ModelBehavior
+	httpClient *http.Client
+	logger     *slog.Logger
 }
 
 // NewFlexInferResponsesClient creates a client that adapts FlexInfer to the
 // openairesponses.ResponsesClient interface. The behaviors map controls
-// per-model adjustments (e.g. Qwen3 /no_think prefix).
-func NewFlexInferResponsesClient(client *flexinfer.Client, behaviors map[string]ModelBehavior, logger *slog.Logger) *FlexInferResponsesClient {
+// per-model adjustments (e.g. Qwen3 /no_think prefix). The httpTimeout
+// configures the shared HTTP client used for all requests.
+func NewFlexInferResponsesClient(client *flexinfer.Client, behaviors map[string]ModelBehavior, httpTimeout time.Duration, logger *slog.Logger) *FlexInferResponsesClient {
+	if httpTimeout <= 0 {
+		httpTimeout = 60 * time.Second
+	}
 	return &FlexInferResponsesClient{
-		client:    client,
-		behaviors: behaviors,
-		logger:    logger.With("component", "weaver-responses-client"),
+		client:     client,
+		behaviors:  behaviors,
+		httpClient: &http.Client{Timeout: httpTimeout},
+		logger:     logger.With("component", "weaver-responses-client"),
 	}
 }
 
@@ -151,54 +158,110 @@ func (c *FlexInferResponsesClient) buildTools(defs []openairesponses.ToolDefinit
 }
 
 func (c *FlexInferResponsesClient) doRequest(ctx context.Context, body []byte) (*chatCompletionResponseWithTools, error) {
-	// Use the underlying FlexInfer client's base URL via circuit breaker.
+	const maxRetries = 2
+	backoffs := [2]time.Duration{500 * time.Millisecond, 1500 * time.Millisecond}
+
 	var result *chatCompletionResponseWithTools
+	var lastErr error
 
-	err := c.client.Breaker().Execute(func() error {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			c.baseURL()+"/v1/chat/completions", bytes.NewReader(body))
-		if err != nil {
-			return fmt.Errorf("create request: %w", err)
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		result = nil
+		err := c.client.Breaker().Execute(func() error {
+			httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+				c.baseURL()+"/v1/chat/completions", bytes.NewReader(body))
+			if err != nil {
+				return fmt.Errorf("create request: %w", err)
+			}
+			httpReq.Header.Set("Content-Type", "application/json")
+			if key := c.apiKey(); key != "" {
+				httpReq.Header.Set("Authorization", "Bearer "+key)
+			}
+
+			start := time.Now()
+			resp, err := c.httpClient.Do(httpReq)
+			latency := time.Since(start)
+			if err != nil {
+				c.logger.Warn("weaver request failed", "latency", latency, "error", err)
+				return fmt.Errorf("request: %w", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+				c.logger.Warn("weaver non-200", "status", resp.StatusCode, "body", string(respBody))
+				return &httpError{StatusCode: resp.StatusCode, Body: string(respBody)}
+			}
+
+			result = &chatCompletionResponseWithTools{}
+			if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+				return fmt.Errorf("decode response: %w", err)
+			}
+
+			c.logger.Debug("weaver completion",
+				"model", result.Model,
+				"latency", latency,
+				"prompt_tokens", result.Usage.PromptTokens,
+				"completion_tokens", result.Usage.CompletionTokens,
+			)
+			return nil
+		})
+
+		if err == nil {
+			return result, nil
 		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		if key := c.apiKey(); key != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+key)
+
+		lastErr = err
+		if !isRetryable(err) {
+			break
 		}
-
-		start := time.Now()
-		httpClient := &http.Client{Timeout: 60 * time.Second}
-		resp, err := httpClient.Do(httpReq)
-		latency := time.Since(start)
-		if err != nil {
-			c.logger.Warn("weaver request failed", "latency", latency, "error", err)
-			return fmt.Errorf("request: %w", err)
+		if attempt < maxRetries {
+			c.logger.Warn("retrying FlexInfer request",
+				"attempt", attempt+1,
+				"max_retries", maxRetries,
+				"error", err,
+			)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoffs[attempt]):
+			}
 		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-			c.logger.Warn("weaver non-200", "status", resp.StatusCode, "body", string(respBody))
-			return fmt.Errorf("status %d: %s", resp.StatusCode, respBody)
-		}
-
-		result = &chatCompletionResponseWithTools{}
-		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-			return fmt.Errorf("decode response: %w", err)
-		}
-
-		c.logger.Debug("weaver completion",
-			"model", result.Model,
-			"latency", latency,
-			"prompt_tokens", result.Usage.PromptTokens,
-			"completion_tokens", result.Usage.CompletionTokens,
-		)
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
 	}
-	return result, nil
+
+	return nil, lastErr
+}
+
+// httpError wraps an HTTP error response for retry classification.
+type httpError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *httpError) Error() string {
+	return fmt.Sprintf("status %d: %s", e.StatusCode, e.Body)
+}
+
+// isRetryable determines whether a request error should be retried.
+// Retries: 5xx status codes, connection errors, timeouts (but not context canceled).
+func isRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	// Don't retry context cancellation from parent.
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	// Don't retry deadline exceeded from parent context.
+	if errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	// Retry 5xx errors.
+	var httpErr *httpError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode >= 500
+	}
+	// Retry connection errors (wrapped as generic errors).
+	return true
 }
 
 func (c *FlexInferResponsesClient) parseTurnResponse(resp *chatCompletionResponseWithTools) (openairesponses.TurnResponse, error) {

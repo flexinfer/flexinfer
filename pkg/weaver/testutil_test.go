@@ -63,6 +63,7 @@ func newTestRouter(t *testing.T, responseFunc func(req chatCompletionRequestWith
 		TokenBudget:    4096,
 		Timeout:        10 * time.Second,
 		MaxConcurrent:  4,
+		HTTPTimeout:    60 * time.Second,
 		ModelBehaviors: DefaultModelBehaviors(),
 	}
 

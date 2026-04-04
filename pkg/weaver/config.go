@@ -19,6 +19,7 @@ const (
 	EnvTokenBudget   = "ORCHESTRA_TOKEN_BUDGET"
 	EnvTimeout       = "ORCHESTRA_TIMEOUT"
 	EnvMaxConcurrent = "ORCHESTRA_MAX_CONCURRENT"
+	EnvHTTPTimeout   = "WEAVER_HTTP_TIMEOUT"
 
 	DefaultRouterModel   = "gemma-4-turboquant"
 	DefaultSubagentModel = "gemma-4-turboquant"
@@ -26,6 +27,7 @@ const (
 	DefaultTokenBudget   = 4096
 	DefaultTimeout       = 30 * time.Second
 	DefaultMaxConcurrent = 4
+	DefaultHTTPTimeout   = 60 * time.Second
 )
 
 // ModelBehavior holds model-specific adjustments applied before LLM calls.
@@ -64,6 +66,7 @@ type Config struct {
 	TokenBudget    int
 	Timeout        time.Duration
 	MaxConcurrent  int
+	HTTPTimeout    time.Duration
 	ModelBehaviors map[string]ModelBehavior
 }
 
@@ -77,6 +80,7 @@ func LoadConfigFromEnv() Config {
 		TokenBudget:    env.Int(EnvTokenBudget, DefaultTokenBudget),
 		Timeout:        env.Duration(EnvTimeout, DefaultTimeout),
 		MaxConcurrent:  env.Int(EnvMaxConcurrent, DefaultMaxConcurrent),
+		HTTPTimeout:    env.Duration(EnvHTTPTimeout, DefaultHTTPTimeout),
 		ModelBehaviors: DefaultModelBehaviors(),
 	}
 	if cfg.MaxIterations <= 0 {
@@ -90,6 +94,9 @@ func LoadConfigFromEnv() Config {
 	}
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = DefaultMaxConcurrent
+	}
+	if cfg.HTTPTimeout <= 0 {
+		cfg.HTTPTimeout = DefaultHTTPTimeout
 	}
 	return cfg
 }
