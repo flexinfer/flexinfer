@@ -31,7 +31,7 @@ spec:
     maxModelLen: 32768
     gpuMemoryUtilization: "0.80"
     maxNumSeqs: 1
-    maxNumBatchedTokens: 128
+    maxNumBatchedTokens: 160
     trustRemoteCode: true
     servedModelName: gemma4-e4b-long
     enableToolCalling: true
