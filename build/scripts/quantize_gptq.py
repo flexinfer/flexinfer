@@ -904,6 +904,7 @@ from transformers.modeling_utils import get_checkpoint_shard_files, load_state_d
 
 patch_gptq_save_meta_tensors()
 
+gpu_vram_mb_env = int(os.environ.get("GPU_VRAM_MB", "0"))
 try:
     total_vram = torch.cuda.get_device_properties(0).total_memory
     torch.cuda.set_per_process_memory_fraction(gpu_memory_fraction)
@@ -911,10 +912,20 @@ try:
         f"Memory: GPU fraction={gpu_memory_fraction} ({int(total_vram * gpu_memory_fraction / (1024**3))}GiB of {total_vram // (1024**3)}GiB), container={max_memory_gb}Gi"
     )
 except (RuntimeError, AssertionError):
-    total_vram = 0
-    print(
-        f"Memory: GPU not available (device_map={quantize_device_map}), container={max_memory_gb}Gi"
-    )
+    if gpu_vram_mb_env > 0 and torch.cuda.is_available():
+        # hipMemGetInfo broken on gfx906 (VMM not supported on Vega20).
+        # Use GPU_VRAM_MB from GPUProfile as fallback.
+        total_vram = gpu_vram_mb_env * 1024 * 1024
+        print(
+            f"Memory: GPU VRAM from profile={gpu_vram_mb_env}MB (hipMemGetInfo broken), "
+            f"fraction={gpu_memory_fraction} ({int(total_vram * gpu_memory_fraction / (1024**3))}GiB), "
+            f"container={max_memory_gb}Gi"
+        )
+    else:
+        total_vram = 0
+        print(
+            f"Memory: GPU not available (device_map={quantize_device_map}), container={max_memory_gb}Gi"
+        )
 
 
 def patch_gptq_hessian_inverse():

@@ -114,7 +114,7 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 
 	image := ResolveImage(ImageFormatGPTQ, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
 
-	env := b.buildEnv(params.ModelPath, bits, groupSize, sym, descAct, memoryGB, gpuMemFraction, dynamicExclusion, params.GPUArch, params.Spec.Calibration)
+	env := b.buildEnv(params.ModelPath, bits, groupSize, sym, descAct, memoryGB, gpuMemFraction, dynamicExclusion, params.GPUArch, params.MemoryConfig.GPUVramMB, params.Spec.Calibration)
 
 	return buildGPUQuantizationJob(
 		params,
@@ -126,7 +126,7 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 }
 
 // buildEnv returns environment variables for the GPTQ quantization script.
-func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, descAct bool, memoryGB int32, gpuMemFraction, dynamicExclusion, gpuArch string, calib *aiv1alpha2.CalibrationSpec) []corev1.EnvVar {
+func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, descAct bool, memoryGB int32, gpuMemFraction, dynamicExclusion, gpuArch string, gpuVramMB int64, calib *aiv1alpha2.CalibrationSpec) []corev1.EnvVar {
 	symStr := "True"
 	if !sym {
 		symStr = "False"
@@ -150,18 +150,12 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 	resumeEnabled := getenvDefault("FLEXINFER_GPTQ_RESUME", "true")
 	calibrationCacheEnabled := getenvDefault("FLEXINFER_GPTQ_CALIBRATION_CACHE", "true")
 	deviceMap := getenvDefault("FLEXINFER_GPTQ_DEVICE_MAP", "auto")
-	// Force CPU model loading on AMD GPUs to avoid GPTQModel's
-	// shell_module_materialize meta tensor crash. When device_map=auto, the
-	// init_empty_weights() injection creates meta tensors that GPTQModel
-	// cannot handle — shell_module_materialize crashes on .to(device).
-	// device_map=cpu skips init_empty_weights entirely, using GPTQModel's
-	// direct from_pretrained path with low_cpu_mem_usage=True. GPU compute
-	// is still used for per-layer quantization; this only affects loading.
-	// The CPU path needs enough memory for the full model in RAM plus GPTQ
-	// overhead (~54GB model + ~4-6GB overhead for 27B). Set maxMemoryGB >= 60.
-	if (gpuArch == "gfx906" || gpuArch == "gfx1100") && deviceMap == "auto" {
-		deviceMap = "cpu"
-	}
+	// GPU path uses init_empty_weights + infer_auto_device_map +
+	// load_checkpoint_in_model, which correctly materializes tensors on the
+	// target device before GPTQModel sees them. Accelerate splits layers
+	// between GPU and CPU RAM based on available memory. Per-layer
+	// quantization moves each layer to GPU individually.
+	// Override with FLEXINFER_GPTQ_DEVICE_MAP=cpu to force CPU-only loading.
 
 	env := []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
@@ -169,6 +163,7 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 		{Name: "BITS", Value: fmt.Sprintf("%d", bits)},
 		{Name: "GROUP_SIZE", Value: fmt.Sprintf("%d", groupSize)},
 		{Name: "MAX_MEMORY_GB", Value: fmt.Sprintf("%d", memoryGB)},
+		{Name: "GPU_VRAM_MB", Value: fmt.Sprintf("%d", gpuVramMB)},
 		{Name: "SYM", Value: symStr},
 		{Name: "DESC_ACT", Value: descActStr},
 		{Name: "GPU_MEMORY_FRACTION", Value: gpuMemFraction},
@@ -235,6 +230,9 @@ func defaultGPTQModelPoliciesJSON() string {
 			RemapModelType:      "gemma4_text",
 			Architectures:       []string{"Gemma4ForCausalLM"},
 			Loader:              "gptqmodel",
+			QuantizeConfigOverride: map[string]any{
+				"offload_to_disk": false,
+			},
 			CalibrationOverrides: map[string]int{
 				"max_samples": 128,
 				"max_seq_len": 2048,
@@ -471,7 +469,17 @@ if fc_match and eval_found:
         f'{indent}    with init_empty_weights():\n'
         f'{indent}        model = {loader_expr}.from_config(config, **init_kwargs)\n'
         f'{indent}    print("Model skeleton created on meta device (no memory allocated)")\n'
-        f'{indent}    max_mem = get_max_memory()\n'
+        f'{indent}    try:\n'
+        f'{indent}        max_mem = get_max_memory()\n'
+        f'{indent}    except Exception:\n'
+        f'{indent}        max_mem = {{}}\n'
+        f'{indent}    # Fallback for gfx906: hipMemGetInfo broken, use GPU_VRAM_MB from GPUProfile\n'
+        f'{indent}    _gpu_vram_mb = int(os.environ.get("GPU_VRAM_MB", "0"))\n'
+        f'{indent}    if _gpu_vram_mb > 0:\n'
+        f'{indent}        _has_gpu_mem = any(v > 0 for k, v in max_mem.items() if k != "cpu")\n'
+        f'{indent}        if not _has_gpu_mem and torch.cuda.is_available():\n'
+        f'{indent}            max_mem[0] = _gpu_vram_mb * 1024 * 1024\n'
+        f'{indent}            print(f"Using GPU_VRAM_MB={{_gpu_vram_mb}}MB as GPU memory (hipMemGetInfo fallback)")\n'
         f'{indent}    for dev_id in list(max_mem.keys()):\n'
         f'{indent}        if dev_id != "cpu":\n'
         f'{indent}            max_mem[dev_id] = int(max_mem[dev_id] * gpu_memory_fraction)\n'

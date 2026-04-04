@@ -24,6 +24,9 @@ type GPUMemoryConfig struct {
 	// When > 0, job memory requests/limits are inflated by this amount so the K8s
 	// scheduler reserves enough node RAM for the true total footprint.
 	GPUDriverMemoryMB int32
+	// GPUVramMB is the usable GPU VRAM from GPUProfile. Passed to quantization
+	// scripts as GPU_VRAM_MB so they can bypass broken hipMemGetInfo (gfx906).
+	GPUVramMB int64
 }
 
 // DefaultGPUMemoryConfig returns the default memory configuration.
@@ -51,6 +54,7 @@ func GPUMemoryConfigFromProfile(profile *aiv1alpha2.GPUProfileSpec) GPUMemoryCon
 		if profile.GPUDriverMemoryMB != nil {
 			cfg.GPUDriverMemoryMB = *profile.GPUDriverMemoryMB
 		}
+		cfg.GPUVramMB = profile.VRAMMB
 	}
 	return cfg
 }

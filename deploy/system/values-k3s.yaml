@@ -237,6 +237,8 @@ quantization:
       loader: gptqmodel
       python_packages:
         - git+https://github.com/huggingface/transformers.git
+      quantize_config_overrides:
+        offload_to_disk: false
       calibration_overrides:
         max_samples: 64
         max_seq_len: 2048
