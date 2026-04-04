@@ -32,7 +32,7 @@ spec:
     descAct: false
     dynamicExclusion: "none"
     useGPU: true
-    maxMemoryGB: 16
+    maxMemoryGB: 48
     timeoutSeconds: 7200
     calibration:
       dataset: "wikitext:wikitext-2-raw-v1"
