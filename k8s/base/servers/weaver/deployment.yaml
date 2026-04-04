@@ -15,8 +15,8 @@ spec:
   template:
     metadata:
       annotations:
-        mcp.server/categories: ai,weavertion,operations
-        mcp.server/description: MCP weaver for local-model tool weavertion via FlexInfer
+        mcp.server/categories: ai,orchestration,operations
+        mcp.server/description: MCP weaver for local-model tool orchestration via FlexInfer
       labels:
         app: weaver
         component: mcp-server

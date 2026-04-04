@@ -338,18 +338,21 @@ data:
           - agent_worktree_status
 
       # === CUSTOM SERVERS ===
-      - name: orchestra
-        url: ws://mcp-orchestra.loom-hub.svc.cluster.local:8080
+      - name: weaver
+        url: ws://mcp-weaver.loom-hub.svc.cluster.local:8080
         categories: [ai, orchestration, operations]
-        description: MCP orchestra for local-model tool orchestration via FlexInfer
+        description: MCP weaver for local-model tool orchestration via FlexInfer
         timeout: 120
         always_allow:
-          - orchestra__query
-          - orchestra__gather
-          - orchestra__cluster_status
-          - orchestra__ci_status
-          - orchestra__system_health
-          - orchestra__fleet_status
+          - weaver__query
+          - weaver__gather
+          - weaver__cluster_status
+          - weaver__ci_status
+          - weaver__system_health
+          - weaver__fleet_status
+          - weaver__deploy_status
+          - weaver__incident_triage
+          - weaver__codebase_overview
 
       # === IN-CLUSTER K8S SERVERS ===
       - name: k8s_apps_k3s

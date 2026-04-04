@@ -10,9 +10,9 @@ data:
         - weaver__fleet_status
     categories:
         - ai
-        - weavertion
+        - orchestration
         - operations
-    description: MCP weaver for local-model tool weavertion via FlexInfer - compound queries, cluster status, CI status, system health, and fleet status
+    description: MCP weaver for local-model tool orchestration via FlexInfer - compound queries, cluster status, CI status, system health, and fleet status
     name: weaver
     timeout: 120
 kind: ConfigMap
