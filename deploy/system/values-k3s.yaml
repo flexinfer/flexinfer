@@ -266,6 +266,8 @@ runtime:
           value: "/var/lib/flexinfer/compile-cache/runtime/triton"
         - name: TORCH_HOME
           value: "/var/lib/flexinfer/compile-cache/runtime/torch"
+        - name: PYTORCH_ALLOC_CONF
+          value: "garbage_collection_threshold:0.7,max_split_size_mb:256,expandable_segments:True"
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx1100-5930k
@@ -293,6 +295,8 @@ runtime:
           value: "/var/lib/flexinfer/compile-cache/runtime/triton"
         - name: TORCH_HOME
           value: "/var/lib/flexinfer/compile-cache/runtime/torch"
+        - name: PYTORCH_ALLOC_CONF
+          value: "garbage_collection_threshold:0.7,max_split_size_mb:256,expandable_segments:True"
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx906
