@@ -162,8 +162,9 @@
   }
 
   .filter-bar-input:focus {
-    border-color: var(--border-focus);
+    border-color: var(--info);
     outline: none;
+    box-shadow: 0 0 4px var(--glow-info);
   }
 
   .filter-bar-shortcut {
@@ -218,8 +219,9 @@
   }
 
   .filter-bar-select:focus {
-    border-color: var(--border-focus);
+    border-color: var(--info);
     outline: none;
+    box-shadow: 0 0 4px var(--glow-info);
   }
 
   .filter-bar-spacer {
@@ -244,13 +246,15 @@
 
   .filter-bar-active {
     font-size: var(--text-xs);
-    color: var(--fg-secondary);
+    color: var(--accent);
     font-family: var(--font-mono);
+    font-weight: 600;
     padding: 3px 8px;
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--border-focus) 45%, var(--border));
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border-radius: var(--radius-full);
+    border: 1px solid rgba(255, 107, 53, 0.25);
+    background: var(--accent-dim);
     white-space: nowrap;
+    box-shadow: 0 0 6px var(--glow-accent);
   }
 
   .filter-bar-actions {

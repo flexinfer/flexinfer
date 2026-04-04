@@ -3,11 +3,11 @@
   let { text = '', variant = 'info' } = $props();
 
   const variantStyles = {
-    info:    { bg: 'rgba(1, 135, 153, 0.15)',   fg: 'var(--info)',    border: 'rgba(1, 135, 153, 0.3)' },
-    success: { bg: 'rgba(34, 178, 85, 0.15)',   fg: 'var(--success)', border: 'rgba(34, 178, 85, 0.3)' },
-    warning: { bg: 'rgba(231, 179, 18, 0.15)',  fg: 'var(--warning)', border: 'rgba(231, 179, 18, 0.3)' },
-    error:   { bg: 'rgba(230, 30, 63, 0.15)',   fg: 'var(--error)',   border: 'rgba(230, 30, 63, 0.3)' },
-    accent:  { bg: 'rgba(233, 93, 116, 0.15)',  fg: 'var(--accent)',  border: 'rgba(233, 93, 116, 0.3)' },
+    info:    { bg: 'var(--info-dim)',    fg: 'var(--info)',    border: 'rgba(0, 200, 255, 0.2)' },
+    success: { bg: 'var(--success-dim)', fg: 'var(--success)', border: 'rgba(34, 224, 118, 0.2)' },
+    warning: { bg: 'var(--warning-dim)', fg: 'var(--warning)', border: 'rgba(255, 184, 48, 0.2)' },
+    error:   { bg: 'var(--error-dim)',   fg: 'var(--error)',   border: 'rgba(255, 61, 113, 0.2)' },
+    accent:  { bg: 'var(--accent-dim)',  fg: 'var(--accent)',  border: 'rgba(255, 107, 53, 0.2)' },
   };
 
   let style = $derived(variantStyles[variant] || variantStyles.info);
@@ -27,10 +27,10 @@
     display: inline-flex;
     align-items: center;
     padding: 1px 6px;
-    border-radius: var(--radius-lg);
-    font-size: 10px;
-    font-weight: 500;
-    letter-spacing: 0.3px;
+    border-radius: var(--radius-full);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: var(--tracking-normal);
     white-space: nowrap;
     border: 1px solid;
     line-height: 1.3;

@@ -109,9 +109,15 @@
   .drawer-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 23, 26, 0.4);
+    background: rgba(6, 12, 16, 0.6);
+    backdrop-filter: blur(4px);
     z-index: 200;
     animation: fadeIn 0.15s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
   }
 
   .drawer {
@@ -122,16 +128,16 @@
     z-index: 201;
     background: var(--bg-secondary);
     border-left: 1px solid var(--border);
-    box-shadow: var(--elevation-3);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4), 0 0 1px rgba(0, 200, 255, 0.1);
     display: flex;
     flex-direction: column;
-    animation: drawerSlideIn var(--duration-normal, 200ms) ease-out;
+    animation: drawerSlideIn var(--duration-normal, 200ms) cubic-bezier(0.4, 0, 0.2, 1);
     outline: none;
   }
 
   @keyframes drawerSlideIn {
-    from { transform: translateX(100%); }
-    to   { transform: translateX(0); }
+    from { transform: translateX(100%); opacity: 0.8; }
+    to   { transform: translateX(0); opacity: 1; }
   }
 
   .drawer-header {
@@ -141,6 +147,19 @@
     padding: var(--space-3) var(--space-4);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    position: relative;
+  }
+
+  /* Top-edge glow on drawer header */
+  .drawer-header::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0, 200, 255, 0.12), transparent);
+    pointer-events: none;
   }
 
   .drawer-header-text {
@@ -158,23 +177,31 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    letter-spacing: var(--tracking-tight);
   }
 
   .drawer-subtitle {
     font-size: var(--text-xs);
-    color: var(--fg-muted);
+    color: var(--fg-dim);
     font-family: var(--font-mono);
+    letter-spacing: var(--tracking-normal);
   }
 
   .drawer-close {
     flex-shrink: 0;
     font-size: var(--text-lg);
     padding: var(--space-1);
+    transition: color var(--transition-fast), background var(--transition-fast);
+  }
+
+  .drawer-close:hover {
+    color: var(--fg-primary);
+    background: var(--bg-tertiary);
   }
 
   .drawer-header-extra {
     padding: var(--space-2) var(--space-4);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
   }
 

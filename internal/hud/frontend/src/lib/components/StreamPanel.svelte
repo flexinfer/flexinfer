@@ -193,45 +193,46 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 0;
+    padding: var(--space-2) 0;
     border-bottom: 1px solid var(--border);
-    gap: 12px;
+    gap: var(--space-3);
     flex-wrap: wrap;
   }
 
   .density-strip {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 6px 0;
-    border-bottom: 1px solid var(--border);
+    gap: var(--space-3);
+    padding: var(--space-1) 0;
+    border-bottom: 1px solid var(--border-subtle);
     flex-wrap: wrap;
   }
 
   .type-dist {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     flex-wrap: wrap;
   }
 
   .type-dist-item {
-    font-size: 10px;
+    font-size: var(--text-xs);
     font-family: var(--font-mono);
     color: var(--fg-muted);
-    border-left: 3px solid;
-    padding-left: 4px;
+    border-left: 2px solid;
+    padding-left: 6px;
+    letter-spacing: var(--tracking-normal);
   }
 
   .filter-pills {
     display: flex;
-    gap: 6px;
+    gap: 4px;
     flex-wrap: wrap;
   }
 
   .header-controls {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .agent-select {
@@ -239,26 +240,28 @@
   }
 
   .pause-btn {
-    padding: 4px 12px;
+    padding: 4px var(--space-3);
     background: var(--bg-tertiary);
-    border-radius: var(--border-radius);
-    font-size: 11px;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
     font-weight: 500;
     display: flex;
     align-items: center;
     gap: 4px;
-    transition: background 0.15s, color 0.15s;
+    transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+    letter-spacing: var(--tracking-normal);
   }
 
   .pause-btn:hover {
-    background: var(--bg-secondary);
+    background: var(--bg-elevated);
     color: var(--fg-primary);
   }
 
   .paused-btn {
-    background: rgba(231, 179, 18, 0.15);
+    background: var(--warning-dim);
     color: var(--warning);
-    border: 1px solid rgba(231, 179, 18, 0.3);
+    border: 1px solid rgba(255, 184, 48, 0.3);
+    box-shadow: 0 0 8px var(--glow-warning);
   }
 
   .pause-icon {
@@ -272,8 +275,8 @@
     position: relative;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: var(--border-radius);
-    margin-top: 8px;
+    border-radius: var(--radius-md);
+    margin-top: var(--space-2);
   }
 
   .paused-overlay {
@@ -283,27 +286,29 @@
     display: flex;
     justify-content: center;
     padding: 4px;
-    background: rgba(231, 179, 18, 0.1);
-    border-bottom: 1px solid rgba(231, 179, 18, 0.3);
+    background: var(--warning-dim);
+    border-bottom: 1px solid rgba(255, 184, 48, 0.3);
+    backdrop-filter: blur(4px);
   }
 
   .paused-text {
     font-family: var(--font-mono);
     font-size: 10px;
     font-weight: 700;
-    letter-spacing: 2px;
+    letter-spacing: 3px;
     color: var(--warning);
-    animation: pulse 2s ease-in-out infinite;
+    animation: glowPulse 2s ease-in-out infinite;
   }
 
   .stream-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    border-bottom: 1px solid rgba(3, 89, 100, 0.5);
-    font-size: 12px;
-    transition: background 0.1s;
+    gap: var(--space-2);
+    padding: 6px var(--space-3);
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: var(--text-sm);
+    transition: background var(--transition-fast);
+    position: relative;
   }
 
   .stream-row:hover {
@@ -315,14 +320,15 @@
   }
 
   .alt-row {
-    background: rgba(0, 23, 26, 0.3);
+    background: rgba(6, 12, 16, 0.4);
   }
 
   .stream-time {
-    color: var(--fg-muted);
-    font-size: 11px;
+    color: var(--fg-dim);
+    font-size: var(--text-xs);
     flex-shrink: 0;
     width: 65px;
+    letter-spacing: var(--tracking-normal);
   }
 
   .stream-agent {
@@ -330,7 +336,7 @@
   }
 
   .stream-ns {
-    font-size: 10px;
+    font-size: var(--text-xs);
     flex-shrink: 0;
     max-width: 120px;
     overflow: hidden;
@@ -342,5 +348,18 @@
     color: var(--fg-primary);
     flex: 1;
     min-width: 0;
+  }
+
+  @media (max-width: 768px) {
+    .stream-header {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .stream-ns {
+      display: none;
+    }
+    .stream-row {
+      min-height: 44px;
+    }
   }
 </style>

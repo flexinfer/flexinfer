@@ -39,22 +39,23 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
-    font-size: 7px;
-    line-height: 10px;
+    font-size: 6px;
+    line-height: 8px;
     text-align: center;
     color: var(--bg-primary);
+    transition: box-shadow var(--transition-normal);
   }
 
   .pulse {
-    animation: dotPulse 1.5s ease-in-out infinite;
+    animation: dotPulse 2s ease-in-out infinite;
   }
 
   @keyframes dotPulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50%      { opacity: 0.5; transform: scale(0.85); }
+    0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 4px currentColor; }
+    50%      { opacity: 0.6; transform: scale(0.9); box-shadow: 0 0 8px currentColor; }
   }
 </style>
