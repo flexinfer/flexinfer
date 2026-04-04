@@ -28,6 +28,31 @@ kubectl -n flexinfer-system get modeldeployments -w
 kubectl -n flexinfer-system describe modeldeployment <name>
 ```
 
+## Current textgen lanes
+
+The current Gemma 4 split is intentionally simple:
+
+- `gemma4-e4b` and `gemma4-e4b-fast`: default fast lane on `cblevins-7900xtx`
+- `gemma4-e4b-long`: long-context TurboQuant lane on `cblevins-5930k`
+
+Useful checks:
+
+```bash
+kubectl -n flexinfer-system get models \
+  gemma4-e4b-turboquant gemma4-e4b-turboquant-canary -o wide
+
+kubectl -n flexinfer-system get pods -o wide | rg 'gemma4-e4b|flexinfer-runtime-gfx1100'
+```
+
+If OpenWebUI or LiteLLM is still surfacing stale model IDs, check the live model
+catalog directly:
+
+```bash
+kubectl -n ai port-forward svc/litellm 8000:8000
+curl -s http://127.0.0.1:8000/v1/models \
+  -H "Authorization: Bearer sk-litellm-master-key" | jq '.data[].id'
+```
+
 ## Debug a model that won't become ready
 
 1. Check events:

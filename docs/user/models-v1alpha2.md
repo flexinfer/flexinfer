@@ -177,3 +177,42 @@ Semantic labels describing the model (for dynamic routing). Example: `["textgen"
 - `services/flexinfer/examples/v1alpha2/model-shared-gpu.yaml`
 - `services/flexinfer/examples/v1alpha2/model-amd-rocm.yaml`
 - `services/flexinfer/examples/v1alpha2/model-image-gen.yaml`
+
+## Current Gemma 4 profiles
+
+The homelab currently exposes two managed `gemma-4-E4B-it` profiles through
+LiteLLM:
+
+| Model ID | Backing Model CR | Node / lane | Intent |
+|----------|------------------|-------------|--------|
+| `gemma4-e4b` | `gemma4-e4b-turboquant` | `cblevins-7900xtx` / `7900xtx-textgen` | Default alias; points to the fast profile |
+| `gemma4-e4b-fast` | `gemma4-e4b-turboquant` | `cblevins-7900xtx` / `7900xtx-textgen` | Lower-latency interactive textgen |
+| `gemma4-e4b-long` | `gemma4-e4b-turboquant-canary` | `cblevins-5930k` / `5930k-textgen` | Long-context TurboQuant profile |
+
+Current operator intent:
+
+- `gemma4-e4b` and `gemma4-e4b-fast` use the same stable managed service.
+- `gemma4-e4b-long` is the separate long-context service with a more
+  conservative batching profile.
+- Old compatibility aliases were removed to keep OpenWebUI and LiteLLM model
+  lists short.
+
+Current profile shape:
+
+| Model ID | `maxModelLen` | `maxNumBatchedTokens` | `kvCacheCodec` |
+|----------|---------------|-----------------------|----------------|
+| `gemma4-e4b` / `gemma4-e4b-fast` | `16384` | `512` | standard float16 KV cache |
+| `gemma4-e4b-long` | `32768` | `128` | `turboquant` |
+
+Example request routing:
+
+```bash
+curl http://litellm.ai.svc:8000/v1/chat/completions \
+  -H "Authorization: Bearer sk-litellm-master-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemma4-e4b-long",
+    "messages": [{"role": "user", "content": "Summarize this long document..."}],
+    "max_tokens": 512
+  }'
+```
