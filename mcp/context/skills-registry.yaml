@@ -4324,6 +4324,7 @@ skills:
         3. **Implement** — write code in the worktree (approval gate)
         4. **Sandbox test** — run tests via devbox
         5. **Pre-commit checks** — lint, fmt, hooks
+        5.5. **Self-Review** — before landing, review your diff against the `pr-self-review` checklist (diff size, debug artifacts, secrets, scope, tests, commit format). Fix any issues first.
         6. **Landing Procedure**
            a. Stage only files for the active task (never `.env`, credentials, or unrelated changes)
            b. Commit with conventional format: `type(scope): description` + `Co-Authored-By` trailer
@@ -4438,6 +4439,7 @@ skills:
         4. **Implement fix** — write the fix with a regression test (approval gate)
         5. **Sandbox test** — run tests via devbox
         6. **Pre-commit checks** — lint, fmt, hooks
+        6.5. **Self-Review** — before landing, review your diff against the `pr-self-review` checklist. Fix any issues first.
         7. **Landing Procedure**
            a. Stage only files for the active fix (never `.env`, credentials, or unrelated changes)
            b. Commit with conventional format: `fix(scope): description` + `Co-Authored-By` trailer
@@ -5512,6 +5514,8 @@ skills:
         2. **Run full test suite**
            - Verify combined changes pass all tests
            - Fix integration issues in the integration branch
+
+        2.5. **Self-Review** — before landing, review the combined diff against the `pr-self-review` checklist (diff size, debug artifacts, secrets, scope, tests, commit format). Fix any issues first.
 
         3. **Landing Procedure**
            a. Push integration branch (`-u` if first push)
@@ -6739,3 +6743,120 @@ skills:
       antigravity:
         enabled: true
         type: rule
+
+  - name: pr-self-review
+    categories: [development, quality, workflow]
+    common:
+      description: |
+        Pre-ship self-review gate. Before creating an MR/PR, review your own diff against a structured checklist: diff size, debug statements, commented code, secrets, test coverage, scope creep, commit format. Self-correct any issues before shipping.
+      instructions: |
+        # PR Self-Review
+
+        Review your own diff before creating an MR/PR. The MR should arrive pre-reviewed.
+
+        ## When to Use
+
+        - Before every MR/PR creation in feature-dev, bugfix, or parallel-slice-ship workflows
+        - After completing implementation and passing quality gates
+        - Before the "push + create MR" step in any shipping workflow
+
+        ## Self-Review Process
+
+        1. Run `git diff main...HEAD` (or appropriate base branch)
+        2. Check diff against each item in the checklist below
+        3. If any item fails: fix, re-stage, re-commit
+        4. Only create the MR when ALL checks pass
+
+        ## Checklist
+
+        ### Diff Size
+        - Total changed lines should be < 500
+        - If larger: document why or split into smaller PRs
+
+        ### No Debug Artifacts
+        Scan for and remove:
+        - `console.log()` (JS/TS)
+        - `fmt.Println()` (Go — use structured logging instead)
+        - `print()` / `pprint()` (Python)
+        - `debugger` / `breakpoint()` statements
+        - New `TODO`/`FIXME` comments (unless tracked)
+
+        ### No Commented-Out Code
+        - Deleted code should be deleted, not commented
+        - No large blocks of `// old code` or `# old code`
+
+        ### No Secrets
+        - No hardcoded API keys, tokens, passwords
+        - No `.env` contents or private keys
+        - No internal URLs or IPs
+
+        ### Test Coverage
+        - All new functions have tests
+        - Bug fixes include regression tests
+        - Existing tests still pass
+
+        ### Scope Check
+        - All changes relate to the PR purpose
+        - No unrelated refactoring or formatting changes
+        - Import changes are minimal
+
+        ### Commit Quality
+        - Conventional format: `type(scope): description`
+        - Message explains why, not just what
+
+        ## Integration with Shipping Workflows
+
+        This self-review should run between the "quality gate" and "create MR" steps:
+
+        ```
+        ... → quality-gate → pr-self-review → push → create-MR → ...
+        ```
+
+        In `feature-dev` and `bugfix` workflows, perform this review after pre-commit checks
+        pass and before pushing/creating the MR.
+
+        ## Self-Correction Loop
+
+        If issues are found:
+        1. Fix the code
+        2. Re-stage changes
+        3. Create a new fixup commit or amend
+        4. Re-run self-review
+        5. Proceed only when clean
+      scripts: []
+      references:
+        - name: self-review-checklist.md
+          path: mcp/skills/pr-self-review/references/self-review-checklist.md
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        instructions_append: |
+          ## Claude Code Integration
+
+          Before creating any MR/PR in feature-dev, bugfix, or parallel-slice-ship workflows:
+          1. Run `git diff main...HEAD --stat` to check diff size
+          2. Run self-review against the checklist
+          3. Use Grep tool to scan for debug artifacts in changed files
+          4. Only proceed to MR creation when all checks pass
+      kilocode:
+        enabled: true
+        type: skill
+      gemini:
+        enabled: true
+        type: instruction
+        instructions_append: |
+          ## Gemini Integration
+
+          Before creating any MR/PR:
+          1. Review `git diff main...HEAD` against the self-review checklist
+          2. Fix any issues before proceeding
+          3. Document self-review results in the PR description
+      antigravity:
+        enabled: true
+        type: command
