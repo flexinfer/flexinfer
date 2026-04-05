@@ -413,7 +413,11 @@ func (o *SpawnOrchestrator) injectAgentConfig(ctx context.Context, containerID, 
 	switch agentType {
 	case "claude-code":
 		// Claude Code reads project-level .claude/settings.json for permissions.
-		settings := `{"permissions":{"allow":["Bash","Read","Write","Edit","Glob","Grep"]}}`
+		// apiKeyHelper extracts the subscription accessToken from the mounted
+		// OAuth JSON (synced from macOS Keychain), falling back to API key env var.
+		// The OAuth file is mounted at /root/.claude.auth/oauth.json (separate from
+		// .claude/ to avoid volume mount shadowing the injected settings.json).
+		settings := `{"permissions":{"allow":["Bash","Read","Write","Edit","Glob","Grep"]},"apiKeyHelper":"python3 -c \"import json,sys; d=json.load(open('/root/.claude.auth/oauth.json')); print(d['claudeAiOauth']['accessToken'])\" 2>/dev/null || echo $ANTHROPIC_API_KEY"}`
 		if err := writeCmd(projectDir+"/.claude", "settings.json", settings); err != nil {
 			return fmt.Errorf("write claude settings: %w", err)
 		}
@@ -654,8 +658,20 @@ func agentSecretMounts(agentType string) []backend.SecretMount {
 				},
 			},
 		}
+	case "claude-code":
+		// Claude Code subscription OAuth token (synced from macOS Keychain).
+		// Mounted as /root/.claude/oauth.json; apiKeyHelper in settings.json
+		// extracts the accessToken at runtime, falling back to ANTHROPIC_API_KEY.
+		return []backend.SecretMount{
+			{
+				SecretName: secretName,
+				MountPath:  "/root/.claude.auth",
+				Items: []backend.SecretMountItem{
+					{Key: "claude-oauth-json", Path: "oauth.json"},
+				},
+			},
+		}
 	default:
-		// Claude Code uses ANTHROPIC_API_KEY env var (no auth file on disk).
 		return nil
 	}
 }

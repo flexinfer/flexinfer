@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"text/template"
@@ -66,12 +67,14 @@ The sync reads tokens from:
   ~/.codex/auth.json
   ~/.gemini/oauth_creds.json
   ~/.gemini/google_accounts.json
+  macOS Keychain "Claude Code-credentials" (extracted via 'security' CLI)
 
 And updates the SOPS-encrypted secret at:
   <gitops>/k3s/devbox/agent-auth-tokens.yaml
 
-Claude is intentionally excluded from this sync path. Cluster Claude agents use
-ANTHROPIC_API_KEY from the agent-api-keys secret rather than ~/.claude/auth.json.
+Claude Code OAuth tokens are extracted from macOS Keychain (where Claude Code
+stores them) and synced as 'claude-oauth-json' in the K8s secret. If Keychain
+extraction fails, Claude agents fall back to ANTHROPIC_API_KEY from agent-api-keys.
 
 Set LOOM_GITOPS_REPO to override the gitops repo path.
 Set LOOM_TOKEN_SYNC_INTERVAL to override the sync interval (seconds, default 21600 = 6h).`,
@@ -177,7 +180,10 @@ func agentTokenSyncStatus() error {
 		age := time.Since(info.ModTime())
 		fmt.Printf("  ✓ %s: %dB, %s old\n", t.label, info.Size(), formatDuration(age))
 	}
-	fmt.Println("  Claude: managed separately via agent-api-keys (ANTHROPIC_API_KEY), not this file sync")
+
+	// Claude Code: check macOS Keychain.
+	claudeStatus := claudeKeychainStatus()
+	fmt.Printf("  %s\n", claudeStatus)
 
 	// SOPS secret freshness.
 	secretPath := filepath.Join(cfg.GitopsRepo, "k3s", "devbox", "agent-auth-tokens.yaml")
@@ -220,6 +226,34 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	}
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
+// claudeKeychainStatus checks macOS Keychain for Claude Code OAuth credentials.
+func claudeKeychainStatus() string {
+	if runtime.GOOS != "darwin" {
+		return "claude: n/a (macOS Keychain not available on this platform)"
+	}
+
+	user := os.Getenv("USER")
+	if user == "" {
+		return "✗ claude: USER env var not set"
+	}
+
+	out, err := exec.CommandContext(context.Background(), "security", "find-generic-password", //nolint:gosec // trusted args
+		"-s", "Claude Code-credentials",
+		"-a", user,
+		"-w",
+	).Output()
+	if err != nil {
+		return "✗ claude: macOS Keychain not found (run 'claude' to authenticate)"
+	}
+
+	// Validate JSON.
+	if len(out) == 0 {
+		return "✗ claude: Keychain entry is empty"
+	}
+
+	return fmt.Sprintf("✓ claude: macOS Keychain (%dB)", len(out))
 }
 
 // installAgentTokenSync creates and loads a launchd plist for periodic token sync.
