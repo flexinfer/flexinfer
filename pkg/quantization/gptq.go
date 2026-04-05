@@ -1036,6 +1036,10 @@ from re import *
 PY
     export PYTHONPATH="/tmp${PYTHONPATH:+:${PYTHONPATH}}"
     GPTQ_PY_IMPORTS="import tokenicer; from gptqmodel import GPTQModel, QuantizeConfig"
+    # Remove pypcre from pip args — it SIGILLs on Broadwell-era gfx906 hosts.
+    # The /tmp/pcre.py shim satisfies GPTQModel's import requirement.
+    GPTQ_PIP_ARGS=("${GPTQ_PIP_ARGS[@]/pypcre*/}")
+    SKIP_PYPCRE_CHECK=1
 fi
 
 # Ensure gptqmodel + deps are available. Use pip show (no Python import) to
@@ -1047,6 +1051,10 @@ fi
 # Check required deps via pip show (fast, no import side-effects).
 MISSING_DEPS=()
 for dep in tokenicer pypcre kernels accelerate; do
+    # Skip pypcre on gfx906 — we use the /tmp/pcre.py re shim instead
+    if [ "$dep" = "pypcre" ] && [ "${SKIP_PYPCRE_CHECK:-}" = "1" ]; then
+        continue
+    fi
     if ! pip show "$dep" >/dev/null 2>&1; then
         MISSING_DEPS+=("$dep")
     fi
