@@ -6739,3 +6739,105 @@ skills:
       antigravity:
         enabled: true
         type: rule
+
+  - name: tdd-dev
+    categories: [development, workflow, testing]
+    common:
+      description: |
+        TDD-first development workflow: write failing tests from requirements (red), implement until green, refactor. Tests are the specification, not the verification. Use when you want deterministic "done" criteria driven by test outcomes.
+      instructions: |
+        # TDD-First Development
+
+        Test-Driven Development workflow where tests come first. The red/green/refactor cycle ensures "done" is defined by passing tests, not by human judgment.
+
+        ## When to Use
+
+        - New features with clear acceptance criteria expressible as tests
+        - Bug fixes where a regression test should exist before the fix
+        - Any change where "done" should be deterministic
+
+        ## The Cycle
+
+        1. **Red** — Write the minimum tests that specify the feature. Run them. They MUST fail.
+        2. **Green** — Implement the minimum code to make all tests pass. No more.
+        3. **Refactor** — Clean up code while keeping tests green.
+
+        ## Workflow Steps
+
+        1. **Initialize session** — `agent_session_start(namespace="<repo>/tdd/<name>", description="...")`; recall prior context
+        2. **Allocate worktree** — `agent_worktree_allocate(branch_name="feat/<name>", base_branch="main")`
+        3. **Write failing tests** — write tests that specify the desired behavior; run them and confirm they FAIL
+        4. **Verify red** — automated gate: test suite must return non-zero exit code
+        5. **Implement** — write minimum code to pass all tests
+        6. **Verify green** — automated gate: test suite must return zero exit code
+        7. **Refactor** — improve code quality while tests stay green
+        8. **Pre-commit** — fmt, lint, test (all must pass)
+        9. **Landing Procedure**
+           a. Stage only files for the active task
+           b. Commit with conventional format: `feat(scope): description` + `Co-Authored-By` trailer
+           c. Push branch (`-u` if first push)
+           d. Create or reuse MR/PR (check existing first; never create duplicates)
+           e. Request auto-merge
+           f. Poll pipeline to terminal state; if red → fix → re-push → re-poll
+           g. Confirm merged or document blocker
+        10. **Post-Merge Cleanup** — delete remote branch, release worktree, delete local branch, end session
+
+        ## Key Principles
+
+        - **Tests are the specification.** If the tests pass, the feature is done. Period.
+        - **Verify-red prevents false greens.** If tests pass before implementation, they're not testing the right thing.
+        - **Minimum implementation.** Write only enough code to pass the tests. YAGNI.
+        - **Refactor under green.** Never refactor with failing tests.
+
+        ## Quick Start
+
+        ```
+        agent_workflow_start(definition_id="tdd-dev", input={
+          namespace: "project/tdd-feature",
+          agent_id: "claude-code",
+          description: "Add input validation",
+          branch_name: "feat/input-validation",
+          base_branch: "main",
+          project: "loom-core"
+        })
+        ```
+
+        Workflow file: `.agents/workflows/tdd-dev.yaml`
+      scripts: []
+      references:
+        - name: tdd-workflow.md
+          path: mcp/skills/tdd-dev/references/tdd-workflow.md
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` for concurrent research calls during context recall
+          - Bundled scripts available at `${SKILL_PATH}/scripts/`
+      claude:
+        enabled: true
+        type: command
+        instructions_append: |
+          ## Claude Code Notes
+          - Use `Task` tool with `isolation: "worktree"` for worktree allocation
+          - Run test suite checks with Bash tool for verify-red/verify-green gates
+      kilocode:
+        enabled: true
+        type: workflow
+        instructions_append: |
+          ## Kilocode Notes
+          - Maps to `.kilocode/workflows/tdd-dev.yaml`
+          - Use staged phases with checkpoints between red/green/refactor
+      gemini:
+        enabled: true
+        type: instruction
+        instructions_append: |
+          ## Gemini Notes
+          - Use checkpointed phased decomposition for the TDD cycle
+          - Record phase transitions (red/green/refactor) as progress markers
+      antigravity:
+        enabled: true
+        type: command

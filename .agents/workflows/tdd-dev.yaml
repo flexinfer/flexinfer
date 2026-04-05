@@ -1,0 +1,177 @@
+# TDD-First Development Workflow
+#
+# Tests are the specification, not the verification.
+# Red -> Green -> Refactor cycle.
+#
+# Usage:
+#   agent_workflow_start(definition_id="tdd-dev", input={
+#     namespace: "project/tdd-feature",
+#     agent_id: "claude-code",
+#     description: "Add input validation",
+#     branch_name: "feat/input-validation",
+#     base_branch: "main",
+#     project: "loom-core"
+#   })
+
+name: "tdd-dev"
+description: "TDD-first development: write failing tests, implement until green, refactor"
+
+steps:
+  - id: init
+    name: "Initialize Session"
+    step_type: tool
+    tool_name: agent_session_start
+    server_name: agent-context
+    tool_args:
+      namespace: "${input.namespace}"
+      agent_id: "${input.agent_id}"
+      description: "TDD: ${input.description}"
+
+  - id: worktree
+    name: "Allocate Worktree"
+    step_type: tool
+    tool_name: agent_worktree_allocate
+    server_name: agent-context
+    tool_args:
+      agent_id: "${input.agent_id}"
+      session_id: "${init.session_id}"
+      branch_name: "${input.branch_name}"
+      base_branch: "${input.base_branch}"
+      purpose: "${input.description}"
+    depends_on: [init]
+
+  - id: recall
+    name: "Recall Context"
+    step_type: tool
+    tool_name: agent_recall
+    server_name: agent-context
+    tool_args:
+      query: "${input.description}"
+      session_id: "${init.session_id}"
+      token_budget: 4000
+    depends_on: [worktree]
+
+  - id: write-tests
+    name: "Write Failing Tests"
+    step_type: approval
+    approval_message: "Context recalled. Write the minimum tests that specify the feature. Tests MUST fail (red) at this point."
+    depends_on: [recall]
+
+  - id: verify-red
+    name: "Verify Tests Fail (Red)"
+    step_type: tool
+    tool_name: devbox_exec
+    server_name: devbox
+    tool_args:
+      project: "${input.project}"
+      command: "make test 2>&1; EXIT=$?; if [ $EXIT -eq 0 ]; then echo 'ERROR: Tests passed but should FAIL (red phase). Add or fix test assertions.'; exit 1; else echo 'GOOD: Tests fail as expected (red phase).'; exit 0; fi"
+      agent_id: "${input.agent_id}"
+    depends_on: [write-tests]
+
+  - id: implement
+    name: "Implement Until Green"
+    step_type: approval
+    approval_message: "Tests are red. Now implement the minimum code to make all tests pass."
+    depends_on: [verify-red]
+
+  - id: verify-green
+    name: "Verify Tests Pass (Green)"
+    step_type: tool
+    tool_name: devbox_exec
+    server_name: devbox
+    tool_args:
+      project: "${input.project}"
+      command: "make test"
+      agent_id: "${input.agent_id}"
+    depends_on: [implement]
+
+  - id: refactor
+    name: "Refactor"
+    step_type: approval
+    approval_message: "Tests pass (green). Refactor if needed -- tests must stay green."
+    depends_on: [verify-green]
+
+  - id: precommit
+    name: "Pre-commit Checks"
+    step_type: tool
+    tool_name: devbox_exec
+    server_name: devbox
+    tool_args:
+      project: "${input.project}"
+      command: "make fmt lint test"
+      agent_id: "${input.agent_id}"
+    depends_on: [refactor]
+
+  - id: commit
+    name: "Commit Changes"
+    step_type: tool
+    tool_name: agent_context_add
+    server_name: agent-context
+    tool_args:
+      session_id: "${init.session_id}"
+      entries:
+        - entry_type: "milestone"
+          title: "TDD cycle complete -- changes committed"
+          content: "Red->Green->Refactor cycle complete. Committed with conventional format."
+    depends_on: [precommit]
+
+  - id: push
+    name: "Push & Check CI"
+    step_type: tool
+    tool_name: agent_context_add
+    server_name: agent-context
+    tool_args:
+      session_id: "${init.session_id}"
+      entries:
+        - entry_type: "milestone"
+          title: "Pushed and CI verified"
+          content: "Pushed branch to remote and verified CI pipeline"
+    depends_on: [commit]
+
+  - id: end
+    name: "End Session"
+    step_type: tool
+    tool_name: agent_session_end
+    server_name: agent-context
+    tool_args:
+      session_id: "${init.session_id}"
+      summarize: true
+    depends_on: [push]
+
+  - id: cleanup
+    name: "Cleanup Worktree"
+    step_type: tool
+    tool_name: agent_worktree_release
+    server_name: agent-context
+    tool_args:
+      assignment_id: "${worktree.assignment_id}"
+      remove_worktree: true
+    depends_on: [end]
+
+input_schema:
+  namespace:
+    type: string
+    required: true
+    description: "Session namespace"
+  agent_id:
+    type: string
+    required: true
+    description: "Agent identifier"
+  description:
+    type: string
+    required: true
+    description: "Feature description"
+  branch_name:
+    type: string
+    required: true
+    description: "Git branch name"
+  base_branch:
+    type: string
+    required: false
+    description: "Base branch (default: main)"
+  project:
+    type: string
+    required: true
+    description: "Devbox project name for testing"
+
+rollback_on_failure: false
