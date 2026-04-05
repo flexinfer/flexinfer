@@ -190,6 +190,12 @@ func appendHookExtras(hooks map[string]any, extras []string, loomBinary string) 
 					hooks[evt] = append(existing, retroHooks...)
 				}
 			}
+		case "sessionStart_testHealth":
+			// Inject test suite health snapshot at session start.
+			testHealthHooks := testHealthSessionStartHooks(loomBinary)
+			if existing, ok := hooks["SessionStart"].([]map[string]any); ok && len(existing) > 0 {
+				hooks["SessionStart"] = append(existing, testHealthHooks...)
+			}
 		}
 	}
 }
@@ -338,6 +344,24 @@ func sessionEndRetroHooks(loomBinary string) []map[string]any {
 					"command": fmt.Sprintf(
 						`INPUT=$(cat); AGENT_CACHE_DIR="${HOME:-${TMPDIR:-/tmp}}/.cache/loom"; WS_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"; WS_HASH="$(printf '%%s' "$WS_ROOT" | cksum | cut -d' ' -f1)"; for f in "$AGENT_CACHE_DIR"/agent-id-*-"${WS_HASH}"*; do [ -s "$f" ] && AGENT_ID="$(cat "$f")" && break; done; SCRIPT="${WS_ROOT}/mcp/skills/session-retro/scripts/session-retro.sh"; if [ -x "$SCRIPT" ]; then LOOM_BINARY=%s AGENT_ID="${AGENT_ID:-unknown}" "$SCRIPT" %s || true; fi; exit 0`,
 						loomCmd, log),
+				},
+			},
+		},
+	}
+}
+
+// testHealthSessionStartHooks returns hook blocks that run a test health snapshot
+// on session start. Emits a systemMessage with test pass/fail counts and build status.
+func testHealthSessionStartHooks(_ string) []map[string]any {
+	log := `2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log"`
+	return []map[string]any{
+		{
+			"hooks": []map[string]any{
+				{
+					"type": "command",
+					"command": fmt.Sprintf(
+						`INPUT=$(cat); REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"; SCRIPT="${REPO_ROOT}/mcp/skills/test-health-inject/scripts/test-health-snapshot.sh"; if [ -x "$SCRIPT" ]; then "$SCRIPT" %s || true; fi; exit 0`,
+						log),
 				},
 			},
 		},
