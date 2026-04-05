@@ -6739,3 +6739,80 @@ skills:
       antigravity:
         enabled: true
         type: rule
+
+  - name: auto-quality-gate
+    categories: [development, workflow, quality, automation]
+    common:
+      description: |
+        Automated verification gate replacing human approval steps. Runs fmt -> lint -> test -> diff-check with language detection (Go/Python/TS/Rust). Success = proceed automatically. Failure = structured error report for self-correction (max 3 retries).
+      instructions: |
+        # Auto Quality Gate
+
+        Automated verification that replaces human "yes, proceed" approval gates.
+
+        ## When to Use
+
+        - As a pre-commit verification step in any development workflow
+        - To replace `step_type: approval` gates with `step_type: tool` gates
+        - Before creating MRs/PRs to ensure code quality
+
+        ## What It Checks
+
+        1. **Format** — language-appropriate formatter (gofmt, black, prettier, cargo fmt)
+        2. **Lint** — language-appropriate linter (golangci-lint, ruff, eslint, clippy)
+        3. **Test** — full test suite (go test, pytest, npm test, cargo test)
+        4. **Diff** — no whitespace errors in staged changes
+
+        ## Failure Protocol
+
+        On failure, the gate emits a structured error report:
+        ```
+        RESULT: FAIL (N failures)
+        Failures:
+          x FORMAT: ...
+          x LINT: ...
+          x TEST: ...
+        ```
+
+        **Self-correction loop:**
+        1. Read the failure report
+        2. Fix the identified issues
+        3. Re-run the quality gate
+        4. Maximum 3 retry attempts before escalating to the user
+
+        ## Integration
+
+        Use `feature-dev-auto` workflow for automated gates:
+        ```
+        agent_workflow_start(definition_id="feature-dev-auto", input={...})
+        ```
+
+        Or run the script directly:
+        ```bash
+        bash mcp/skills/auto-quality-gate/scripts/auto-quality-gate.sh
+        ```
+
+        Workflow file: `.agents/workflows/feature-dev-auto.yaml`
+      scripts:
+        - name: auto-quality-gate.sh
+          path: mcp/skills/auto-quality-gate/scripts/auto-quality-gate.sh
+      references: []
+      assets: []
+      always_allow:
+        - auto-quality-gate.sh
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: skill
+      gemini:
+        enabled: true
+        type: instruction
+      antigravity:
+        enabled: true
+        type: command
