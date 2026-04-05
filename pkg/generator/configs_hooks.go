@@ -182,6 +182,14 @@ func appendHookExtras(hooks map[string]any, extras []string, loomBinary string) 
 			if existing, ok := hooks[event].([]map[string]any); ok {
 				hooks[event] = append(existing, claudePostToolUseTaskSyncHook(loomBinary)...)
 			}
+		case "postSessionEnd_retrospective":
+			// Append retrospective hook to whichever session-end event exists.
+			retroHooks := sessionEndRetroHooks(loomBinary)
+			for _, evt := range []string{"Stop", "SessionEnd"} {
+				if existing, ok := hooks[evt].([]map[string]any); ok && len(existing) > 0 {
+					hooks[evt] = append(existing, retroHooks...)
+				}
+			}
 		}
 	}
 }
@@ -315,4 +323,23 @@ func dirtyWorktreeSessionStartNudgeCommand(policy agentSafetyPolicy) string {
 func mainBranchWorktreeNudgeCommand() string {
 	payload := `{"systemMessage":"You are on main. For feature work or multi-file changes, consider using agent_worktree_allocate() to create an isolated branch and worktree before making changes."}`
 	return fmt.Sprintf(`if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then BRANCH="$(git branch --show-current 2>/dev/null)"; if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then printf '%%s\n' %q; fi; fi; exit 0`, payload)
+}
+
+// sessionEndRetroHooks returns hook blocks that run the session retrospective
+// script after the session-end hook completes.
+func sessionEndRetroHooks(loomBinary string) []map[string]any {
+	loomCmd := shellQuote(normalizeLoomBinary(loomBinary))
+	log := `2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log"`
+	return []map[string]any{
+		{
+			"hooks": []map[string]any{
+				{
+					"type": "command",
+					"command": fmt.Sprintf(
+						`INPUT=$(cat); AGENT_CACHE_DIR="${HOME:-${TMPDIR:-/tmp}}/.cache/loom"; WS_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"; WS_HASH="$(printf '%%s' "$WS_ROOT" | cksum | cut -d' ' -f1)"; for f in "$AGENT_CACHE_DIR"/agent-id-*-"${WS_HASH}"*; do [ -s "$f" ] && AGENT_ID="$(cat "$f")" && break; done; SCRIPT="${WS_ROOT}/mcp/skills/session-retro/scripts/session-retro.sh"; if [ -x "$SCRIPT" ]; then LOOM_BINARY=%s AGENT_ID="${AGENT_ID:-unknown}" "$SCRIPT" %s || true; fi; exit 0`,
+						loomCmd, log),
+				},
+			},
+		},
+	}
 }
