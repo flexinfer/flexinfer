@@ -223,7 +223,7 @@ func (c *FlexInferResponsesClient) doRequest(ctx context.Context, body []byte) (
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(backoffs[attempt]):
+			case <-time.After(backoffs[attempt]): // #nosec G602 -- bounds checked above (attempt < len(backoffs))
 			}
 		}
 	}
