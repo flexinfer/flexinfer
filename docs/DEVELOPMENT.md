@@ -3,6 +3,7 @@
 Preferred entrypoints:
 
 - `docs/dev/local-dev.md` (build/test loops, running locally)
+- `docs/dev/rapid-iteration.md` (fast experimental patch-build-push-probe loops)
 - `docs/dev/architecture.md` (component + code map)
 - `docs/dev/backends.md` (backend plugin system)
 

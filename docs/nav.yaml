@@ -41,6 +41,8 @@ sections:
         path: dev/README.md
       - title: Local Dev
         path: dev/local-dev.md
+      - title: Rapid Iteration
+        path: dev/rapid-iteration.md
       - title: Architecture
         path: dev/architecture.md
       - title: Backends

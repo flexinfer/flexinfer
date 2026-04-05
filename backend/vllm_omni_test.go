@@ -169,8 +169,8 @@ func TestVLLMOmniBackendArgs_PrefixCachingDefaultV1(t *testing.T) {
 		if a == "--enable-prefix-caching" {
 			t.Error("--enable-prefix-caching should not be emitted (default in V1)")
 		}
-		if a == "--no-prefix-caching" {
-			t.Error("--no-prefix-caching should not be emitted when enabled")
+		if a == "--no-enable-prefix-caching" {
+			t.Error("--no-enable-prefix-caching should not be emitted when enabled")
 		}
 	}
 }
@@ -188,7 +188,7 @@ func TestVLLMOmniBackendArgs_PrefixCachingDisable(t *testing.T) {
 	args := b.Args(spec)
 	found := false
 	for _, a := range args {
-		if a == "--no-prefix-caching" {
+		if a == "--no-enable-prefix-caching" {
 			found = true
 		}
 		if a == "--enable-prefix-caching" {
@@ -196,7 +196,7 @@ func TestVLLMOmniBackendArgs_PrefixCachingDisable(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("expected --no-prefix-caching when enablePrefixCaching=false")
+		t.Error("expected --no-enable-prefix-caching when enablePrefixCaching=false")
 	}
 }
 

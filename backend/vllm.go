@@ -117,6 +117,12 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--quantization", quant)
 	}
 
+	// Attention backend override (e.g. FLASH_ATTN, XFORMERS, ROCM_AITER_FA, CUSTOM).
+	// Experimental runtimes such as TurboQuant rely on CUSTOM to activate their plugin backend.
+	if attentionBackend := spec.ConfigString("attentionBackend", ""); attentionBackend != "" {
+		args = append(args, "--attention-backend", attentionBackend)
+	}
+
 	// Tokenizer override — required for GGUF models which lack HF tokenizer files.
 	// Points to the base HF repo (e.g., "Qwen/Qwen3.5-35B-A3B").
 	if tok := spec.ConfigString("tokenizer", ""); tok != "" {
@@ -133,12 +139,13 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--kv-cache-dtype", kvDtype)
 	}
 
-	// Prefix caching is ON by default in vLLM V1 (0.17.0+).
-	// Only emit --no-prefix-caching when explicitly disabled.
+	// Prefix caching is ON by default in vLLM V1.
+	// Newer argparse wiring uses BooleanOptionalAction, so the disable form is
+	// --no-enable-prefix-caching rather than --no-prefix-caching.
 	if spec.Config != nil {
 		if _, ok := spec.Config["enablePrefixCaching"]; ok {
 			if !spec.ConfigBool("enablePrefixCaching", true) {
-				args = append(args, "--no-prefix-caching")
+				args = append(args, "--no-enable-prefix-caching")
 			}
 		}
 		if _, ok := spec.Config["disableHybridKVCacheManager"]; ok {

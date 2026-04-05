@@ -40,6 +40,7 @@ func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destS
 		[]corev1.EnvVar{{Name: "HF_HUB_ENABLE_HF_TRANSFER", Value: "0"}},
 		hfCacheEnvVars("/models/.cache/huggingface")...,
 	)
+	envVars = append(envVars, optionalHFTokenEnvVars()...)
 	if len(hfOpts.allowPatterns) > 0 {
 		allowJSON, err := json.Marshal(hfOpts.allowPatterns)
 		if err != nil {

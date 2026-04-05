@@ -92,15 +92,21 @@ func BuildFinetuneJob(params JobParams, spec *aiv1alpha1.FinetuneSpec) (*batchv1
 		mounts = append(mounts, dsMount)
 	}
 
+	// Account for GPU driver memory (HIP/GTT) that lives outside the cgroup.
+	schedulingMemoryGB := memoryGB
+	if params.MemoryConfig.GPUDriverMemoryMB > 0 {
+		schedulingMemoryGB += params.MemoryConfig.GPUDriverMemoryMB / 1024
+	}
+
 	useGPU := spec.UseGPU == nil || *spec.UseGPU // default true
 	var env []corev1.EnvVar
 	resources := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
 			corev1.ResourceCPU:    resource.MustParse(fmt.Sprintf("%d", DefaultGPUQuantizationCPU)),
-			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryGB)),
+			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", schedulingMemoryGB)),
 		},
 		Limits: corev1.ResourceList{
-			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", memoryGB)),
+			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dGi", schedulingMemoryGB)),
 		},
 	}
 

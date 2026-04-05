@@ -1417,6 +1417,62 @@ if not shard_files or not has_config:
         f"Save validation failed: shards={len(shard_files)} config={has_config}"
     )
 
+# Verify safetensors integrity: ensure each shard's data section covers all tensor offsets.
+# GPTQModel can silently truncate large unquantized tensors (e.g. PLE embedding tables)
+# during sharded save, producing files that pass existence checks but fail at load time
+# with "incomplete metadata, file not fully covered".
+import struct as _struct
+
+for shard_name in shard_files:
+    shard_path = os.path.join(save_tmp, shard_name)
+    fsize = os.path.getsize(shard_path)
+    with open(shard_path, "rb") as sf:
+        hdr_size = _struct.unpack("<Q", sf.read(8))[0]
+        hdr = json.loads(sf.read(hdr_size))
+    data_start = 8 + hdr_size
+    data_available = fsize - data_start
+    max_end = 0
+    for tname, tmeta in hdr.items():
+        if tname == "__metadata__":
+            continue
+        offsets = tmeta.get("data_offsets") or tmeta.get("offsets")
+        if offsets and offsets[1] > max_end:
+            max_end = offsets[1]
+    if max_end == 0:
+        # Fallback: compute expected size from dtype + shape
+        dtype_sizes = {
+            "F16": 2,
+            "BF16": 2,
+            "F32": 4,
+            "I32": 4,
+            "I8": 1,
+            "U8": 1,
+            "F64": 8,
+            "I64": 8,
+            "I16": 2,
+        }
+        expected = 0
+        for tname, tmeta in hdr.items():
+            if tname == "__metadata__":
+                continue
+            dt = tmeta.get("dtype", "F32")
+            shape = tmeta.get("shape", [])
+            elem_size = dtype_sizes.get(dt, 4)
+            tensor_bytes = elem_size
+            for dim in shape:
+                tensor_bytes *= dim
+            expected += tensor_bytes
+        max_end = expected
+    if data_available < max_end:
+        raise RuntimeError(
+            f"Safetensors integrity check failed for {shard_name}: "
+            f"data_section={data_available} bytes but tensors need {max_end} bytes "
+            f"(missing {max_end - data_available} bytes). File is truncated."
+        )
+    print(
+        f"Verified {shard_name}: {fsize} bytes, {len([k for k in hdr if k != '__metadata__'])} tensors OK"
+    )
+
 emit_progress(
     "progress", phase="saving", percent=97.0, detail="promoting output directory"
 )

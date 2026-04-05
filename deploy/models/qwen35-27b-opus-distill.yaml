@@ -9,6 +9,8 @@
 # maxModelLen=4096 to minimize KV cache budget.
 # maxNumSeqs=2 to reduce concurrent memory pressure.
 #
+# Disabled in deploy/models/kustomization.yaml for the Gemma4 rollout on cblevins-7900xtx.
+# Keep this manifest for rollback/reference instead of mutating it in place.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:

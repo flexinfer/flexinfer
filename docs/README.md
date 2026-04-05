@@ -28,6 +28,7 @@ This directory is the canonical documentation for `services/flexinfer`.
 | Guide | Description |
 |-------|-------------|
 | [Local Development](dev/local-dev.md) | Setting up a dev environment |
+| [Rapid Iteration](dev/rapid-iteration.md) | Fast experimental build-probe loops |
 | [Architecture](dev/architecture.md) | System design and components |
 | [Backends](dev/backends.md) | Supported inference backends |
 | [Gemma4 ROCm Status](dev/gemma4-rocm-status.md) | Live status for Gemma 4 fast/long profiles on gfx1100 |

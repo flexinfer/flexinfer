@@ -320,11 +320,12 @@ if [ -n "${WRITER_PY}" ] && grep -q "pre_quantized_size_mb) \* 100" "${WRITER_PY
     echo "Patched GPTQModel writer.py for ZeroDivisionError"
 fi
 
-# GPTQModel's direct CPU path still injects device_map=cpu_device_map. In
-# transformers, any device_map enables meta-device loading/dispatch, which is
-# exactly the path failing for Qwen3.5 here. Strip device_map and enable
-# low_cpu_mem_usage=True so transformers loads shards incrementally (peak RSS
-# ~ model_size + one shard) instead of loading full state_dict at once (~2x).
+# GPTQModel's direct CPU path injects device_map=cpu_device_map. In transformers,
+# any device_map enables meta-device loading/dispatch, which crashes GPTQModel's
+# shell_module_materialize. Strip device_map and enable low_cpu_mem_usage=True so
+# transformers loads shards incrementally (peak RSS ~ model_size + one shard).
+# GPTQModel's quantize() handles GPU placement internally — it moves layers to
+# GPU one at a time via get_best_device() for calibration forward passes.
 LOADER_PY=$(python3 -c "import importlib.util,os; s=importlib.util.find_spec('gptqmodel'); print(os.path.join(os.path.dirname(s.origin),'models','loader.py'))" 2>/dev/null || true)
 if [ -n "${LOADER_PY}" ] && ! grep -q 'direct_init_kwargs.pop("device_map", None)' "${LOADER_PY}" 2>/dev/null; then
     python3 - "${LOADER_PY}" <<'PY'
@@ -345,20 +346,9 @@ old = '''        else:
             turtle_model = None'''
 new = '''        else:
             print("loading model directly to CPU (not using meta device or turtle_model)-----------")
-            import os as _dm_os
             direct_init_kwargs = model_init_kwargs.copy()
-            _gpu_vram_mb = int(_dm_os.environ.get("GPU_VRAM_MB", "0"))
-            _dm_mode = _dm_os.environ.get("QUANTIZE_DEVICE_MAP", "cpu")
-            if _gpu_vram_mb > 0 and _dm_mode == "auto" and torch.cuda.is_available():
-                _gpu_frac = float(_dm_os.environ.get("GPU_MEMORY_FRACTION", "0.80"))
-                _gpu_bytes = int(_gpu_vram_mb * 1024 * 1024 * _gpu_frac)
-                direct_init_kwargs["device_map"] = "auto"
-                direct_init_kwargs["max_memory"] = {0: _gpu_bytes, "cpu": "120GiB"}
-                direct_init_kwargs["low_cpu_mem_usage"] = True
-                print(f"GPU-split loading: GPU={_gpu_vram_mb}MB fraction={_gpu_frac} ({_gpu_bytes // (1024**3)}GiB usable)")
-            else:
-                direct_init_kwargs.pop("device_map", None)
-                direct_init_kwargs["low_cpu_mem_usage"] = True
+            direct_init_kwargs.pop("device_map", None)
+            direct_init_kwargs["low_cpu_mem_usage"] = True
             model = cls.loader.from_pretrained(model_local_path, config=config, **direct_init_kwargs)
             if getattr(model, "config", None) is config:
                 model.config = copy.deepcopy(config)
@@ -414,6 +404,123 @@ src = src.replace(
 path.write_text(src)
 PY
     echo "Patched quantize_gptq.py for Qwen3.5 direct load + text-only module tree"
+fi
+
+# Remap safetensors weight keys for VLM→text-only extraction.
+# When extract_text_config extracts model.language_model config to top level,
+# the text-only model class (e.g. Gemma4ForCausalLM) expects model.layers.*
+# but the checkpoint has model.language_model.layers.*. Rename keys in the
+# safetensors files to match the text-only model structure.
+# Qwen3.5 doesn't need this (flat model.layers.* keys in checkpoint).
+# Only Gemma4+ uses the model.language_model.* prefix.
+# Handles both single-file (model.safetensors) and sharded models (index.json).
+if [ ! -f "${MODEL_DIR}/.flexinfer-weights-remapped" ]; then
+    HAS_SAFETENSORS=false
+    if [ -f "${MODEL_DIR}/model.safetensors.index.json" ] || [ -f "${MODEL_DIR}/model.safetensors" ]; then
+        HAS_SAFETENSORS=true
+    fi
+    if [ "${HAS_SAFETENSORS}" = "true" ]; then
+        python3 - "${MODEL_DIR}" <<'REMAP_KEYS_PY'
+import json, os, sys, time
+from pathlib import Path
+
+model_dir = Path(sys.argv[1])
+
+# Determine shard files: either from index or single file
+index_path = model_dir / "model.safetensors.index.json"
+single_path = model_dir / "model.safetensors"
+
+if index_path.exists():
+    with open(index_path) as f:
+        index = json.load(f)
+    weight_map = index.get("weight_map", {})
+    all_keys = list(weight_map.keys())
+    shard_files = sorted(set(weight_map.values()))
+else:
+    # Single safetensors file — read keys directly
+    from safetensors import safe_open
+    with safe_open(str(single_path), framework="pt") as f:
+        all_keys = list(f.keys())
+    shard_files = ["model.safetensors"]
+    index = None
+
+# Check if any keys use the model.language_model.* prefix
+lm_keys = [k for k in all_keys if k.startswith("model.language_model.")]
+if not lm_keys:
+    print("Weight keys already use flat model.* prefix, no remapping needed")
+    (model_dir / ".flexinfer-weights-remapped").write_text("skipped\n")
+    sys.exit(0)
+
+print(f"Found {len(lm_keys)} keys with model.language_model.* prefix, remapping...")
+
+# Prefixes to strip (multimodal towers not needed for text-only quantization)
+SKIP_PREFIXES = ("model.audio_tower.", "model.vision_tower.", "model.multi_modal_projector.")
+
+from safetensors import safe_open
+from safetensors.torch import save_file
+
+total_remapped = 0
+total_dropped = 0
+
+for shard_name in shard_files:
+    shard_path = model_dir / shard_name
+    if not shard_path.exists():
+        print(f"  WARN: shard {shard_name} not found, skipping")
+        continue
+
+    t0 = time.time()
+    tensors = {}
+    metadata = {}
+    remapped = 0
+    dropped = 0
+
+    with safe_open(str(shard_path), framework="pt") as f:
+        meta = f.metadata()
+        if meta:
+            metadata = dict(meta)
+        for key in f.keys():
+            if any(key.startswith(p) for p in SKIP_PREFIXES):
+                dropped += 1
+                continue
+            new_key = key
+            if key.startswith("model.language_model."):
+                new_key = "model." + key[len("model.language_model."):]
+                remapped += 1
+            tensors[new_key] = f.get_tensor(key)
+
+    # Write back with renamed keys (atomic via temp + rename)
+    tmp_path = str(shard_path) + ".tmp"
+    save_file(tensors, tmp_path, metadata=metadata if metadata else None)
+    os.replace(tmp_path, str(shard_path))
+    elapsed = time.time() - t0
+    sz_gb = shard_path.stat().st_size / (1024**3)
+    print(f"  {shard_name}: {len(tensors)} tensors, {remapped} remapped, {dropped} dropped, {sz_gb:.1f}GB, {elapsed:.1f}s")
+    total_remapped += remapped
+    total_dropped += dropped
+    del tensors  # free memory
+
+# Update the index file if it exists
+if index is not None:
+    new_weight_map = {}
+    for key, shard in index["weight_map"].items():
+        if any(key.startswith(p) for p in SKIP_PREFIXES):
+            continue
+        if key.startswith("model.language_model."):
+            new_key = "model." + key[len("model.language_model."):]
+            new_weight_map[new_key] = shard
+        else:
+            new_weight_map[key] = shard
+    index["weight_map"] = new_weight_map
+    with open(index_path, "w") as f:
+        json.dump(index, f, indent=2)
+
+# Write marker so we don't re-remap on retries
+(model_dir / ".flexinfer-weights-remapped").write_text(
+    f"remapped={total_remapped} dropped={total_dropped}\n"
+)
+print(f"Safetensors weight key remapping complete: {total_remapped} renamed, {total_dropped} dropped")
+REMAP_KEYS_PY
+    fi
 fi
 
 # Inject conditional model loading into quantize_gptq.py.
@@ -607,6 +714,187 @@ src = src.replace(
 p.write_text(src)
 print("Patched dataset loading for name:config format + empty sample handling")
 DATASET_PY
+fi
+
+# Gemma4 GPTQModel compat patches: inject monkey-patches into quantize_gptq.py
+# right before model.quantize(). Fixes two issues:
+# 1. PLE: module_looper doesn't pass per_layer_input -> TypeError on multiply
+# 2. RoPE: module_looper replays position_embeddings from sliding_attention (256-dim)
+#    for full_attention layers (512-dim) -> shape mismatch in apply_rotary_pos_emb
+if [ -f "${GPTQ_SCRIPT}" ] && grep -q 'model.quantize(examples)' "${GPTQ_SCRIPT}" 2>/dev/null; then
+    python3 - <<'GEMMA4_COMPAT_PY'
+from pathlib import Path
+
+p = Path("/opt/flexinfer/scripts/quantize_gptq.py")
+src = p.read_text()
+if "_gemma4_safe_fwd" not in src:
+    gemma4_patch = '''# Gemma4/GPTQModel compat: patch decoder layer forward for two issues:
+# 1. PLE (per_layer_input): module_looper doesn't capture per_layer_input kwarg
+#    computed by parent Gemma4TextModel. Guard: disable PLE when input is None.
+# 2. RoPE (position_embeddings): heterogeneous head_dim (256 sliding vs 512 full)
+#    means position_embeddings captured from sliding layers have wrong dimensions
+#    for full_attention layers. Fix: recompute via stored rotary_emb reference.
+import functools as _ft
+import torch as _torch
+
+_g4_mod = __import__('sys').modules.get('transformers.models.gemma4.modeling_gemma4')
+if _g4_mod is None:
+    try:
+        import importlib
+        _g4_mod = importlib.import_module('transformers.models.gemma4.modeling_gemma4')
+    except (ImportError, ModuleNotFoundError):
+        _g4_mod = None
+
+_g4_cls = getattr(_g4_mod, 'Gemma4TextDecoderLayer', None) or getattr(_g4_mod, 'Gemma4DecoderLayer', None)
+if _g4_cls is not None:
+    # Store rotary_emb and layer_type refs on each decoder layer for RoPE recomputation.
+    # Model nesting: GPTQModel -> HF CausalLM -> TextModel (has rotary_emb + layers).
+    _rotary_emb = None
+    # layer_types may be on top-level config or nested in text_config
+    _layer_types = getattr(model.config, 'layer_types', None)
+    if _layer_types is None:
+        _text_cfg = getattr(model.config, 'text_config', None)
+        if _text_cfg is not None:
+            _layer_types = getattr(_text_cfg, 'layer_types', None)
+    _layers = None
+    # Traverse common nesting patterns to find rotary_emb
+    for _candidate in [
+        getattr(getattr(model, 'model', None), 'model', None),  # GPTQModel.model.model (Gemma4TextModel)
+        getattr(model, 'model', None),                           # GPTQModel.model (if flat)
+        getattr(getattr(getattr(model, 'model', None), 'language_model', None), 'model', None),  # VLM path
+    ]:
+        if _candidate is not None and hasattr(_candidate, 'rotary_emb') and hasattr(_candidate, 'layers'):
+            _rotary_emb = _candidate.rotary_emb
+            _layers = _candidate.layers
+            print(f"Found rotary_emb at {type(_candidate).__name__} ({len(_layers)} layers)")
+            break
+
+    _need_rope_fix = False
+    if _rotary_emb is not None and _layer_types is not None and _layers is not None:
+        _unique_types = set(_layer_types)
+        if len(_unique_types) > 1:
+            _need_rope_fix = True
+            for _i, _lyr in enumerate(_layers):
+                _lyr._g4_rotary_emb = _rotary_emb
+                _lyr._g4_layer_type = _layer_types[_i]
+            print(f"Stored rotary_emb refs on {len(_layers)} layers (types: {_unique_types})")
+
+    _g4_rope_logged = set()  # track which layers we logged recomputation for
+    _g4_orig = _g4_cls.forward
+    @_ft.wraps(_g4_orig)
+    def _gemma4_safe_fwd(self, *args, per_layer_input=None, **kwargs):
+        # --- RoPE dimension fix ---
+        _pe = kwargs.get('position_embeddings')
+        if _pe is not None and hasattr(self, '_g4_rotary_emb'):
+            _cos, _sin = _pe
+            _expected = getattr(self.self_attn, 'head_dim', _cos.shape[-1])
+            if _cos.shape[-1] != _expected:
+                _pid = kwargs.get('position_ids')
+                if _pid is None:
+                    _sl = _cos.shape[-2] if _cos.dim() >= 2 else _cos.shape[0]
+                    _pid = _torch.arange(_sl, device=_cos.device).unsqueeze(0)
+                _new_cos, _new_sin = self._g4_rotary_emb(_cos, _pid, layer_type=self._g4_layer_type)
+                kwargs['position_embeddings'] = (_new_cos, _new_sin)
+                _lidx = getattr(self, 'layer_idx', '?')
+                if _lidx not in _g4_rope_logged:
+                    _g4_rope_logged.add(_lidx)
+                    print(f"Recomputed position_embeddings for layer {_lidx} ({self._g4_layer_type}): {_cos.shape[-1]} -> {_new_cos.shape[-1]}")
+
+        # --- PLE per_layer_input guard ---
+        if per_layer_input is None and getattr(self, 'hidden_size_per_layer_input', 0) > 0:
+            _saved = self.hidden_size_per_layer_input
+            self.hidden_size_per_layer_input = 0
+            try:
+                return _g4_orig(self, *args, per_layer_input=None, **kwargs)
+            finally:
+                self.hidden_size_per_layer_input = _saved
+        return _g4_orig(self, *args, per_layer_input=per_layer_input, **kwargs)
+
+    _g4_cls.forward = _gemma4_safe_fwd
+    _fixes = ["PLE guard"]
+    if _need_rope_fix:
+        _fixes.append("RoPE recompute")
+    print(f"Patched {_g4_cls.__name__}.forward ({', '.join(_fixes)})")
+else:
+    print("INFO: Gemma4 decoder layer class not found, compat patches skipped (non-Gemma4 model)")
+'''
+    src = src.replace(
+        'model.quantize(examples)',
+        gemma4_patch + 'model.quantize(examples)',
+    )
+    p.write_text(src)
+    print("Injected Gemma4 compat patches before model.quantize()")
+else:
+    print("Gemma4 compat patches already present in quantize_gptq.py")
+GEMMA4_COMPAT_PY
+fi
+
+# Inject safetensors integrity validation into quantize_gptq.py after save.
+# GPTQModel can silently truncate large unquantized tensors (e.g. PLE embedding
+# tables) during sharded save over NFS, producing files that pass existence checks
+# but fail at load time with "incomplete metadata, file not fully covered".
+if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "Safetensors integrity check" "${GPTQ_SCRIPT}" 2>/dev/null; then
+    python3 - <<'SAFETENSORS_VALIDATE_PY'
+from pathlib import Path
+
+p = Path("/opt/flexinfer/scripts/quantize_gptq.py")
+src = p.read_text()
+# Find the simple validation block and enhance it with size verification
+old_block = """if not shard_files or not has_config:
+    raise RuntimeError(
+        f"Save validation failed: shards={len(shard_files)} config={has_config}"
+    )"""
+if old_block in src:
+    new_block = old_block + """
+
+# Safetensors integrity check: verify each shard has enough data for its tensors.
+# fsync each file first to flush NFS write buffers to the server.
+import struct as _struct
+
+for shard_name in shard_files:
+    shard_path = os.path.join(save_tmp, shard_name)
+    with open(shard_path, 'rb') as _fsync_f:
+        os.fsync(_fsync_f.fileno())
+    fsize = os.path.getsize(shard_path)
+    with open(shard_path, "rb") as sf:
+        hdr_size = _struct.unpack("<Q", sf.read(8))[0]
+        hdr = json.loads(sf.read(hdr_size))
+    data_start = 8 + hdr_size
+    data_available = fsize - data_start
+    max_end = 0
+    for tname, tmeta in hdr.items():
+        if tname == "__metadata__":
+            continue
+        offsets = tmeta.get("data_offsets") or tmeta.get("offsets")
+        if offsets and offsets[1] > max_end:
+            max_end = offsets[1]
+    if max_end == 0:
+        dtype_sizes = {"F16": 2, "BF16": 2, "F32": 4, "I32": 4, "I8": 1, "U8": 1, "F64": 8, "I64": 8, "I16": 2}
+        expected = 0
+        for tname, tmeta in hdr.items():
+            if tname == "__metadata__":
+                continue
+            dt = tmeta.get("dtype", "F32")
+            shape = tmeta.get("shape", [])
+            elem_size = dtype_sizes.get(dt, 4)
+            tensor_bytes = elem_size
+            for dim in shape:
+                tensor_bytes *= dim
+            expected += tensor_bytes
+        max_end = expected
+    if data_available < max_end:
+        raise RuntimeError(
+            f"Safetensors integrity check failed for {shard_name}: "
+            f"data_section={data_available} bytes but tensors need {max_end} bytes "
+            f"(missing {max_end - data_available} bytes). File is truncated."
+        )
+    print(f"Verified {shard_name}: {fsize} bytes, {len([k for k in hdr if k != '__metadata__'])} tensors OK")"""
+    src = src.replace(old_block, new_block)
+    p.write_text(src)
+    print("Injected safetensors integrity validation after save")
+else:
+    print("INFO: Safetensors validation already present or simple validation block not found")
+SAFETENSORS_VALIDATE_PY
 fi
 
 # Auto-detect gfx900 (Radeon VII).
@@ -914,6 +1202,11 @@ torch.linalg.eigh = safe_eigh
 torch.linalg.svd = safe_svd
 torch.linalg.qr = safe_qr
 print("Patched torch.linalg.cholesky/eigh/svd/qr with MAGMA/LAPACK/scipy fallback")
+
+# Gemma4 compat patches: injected directly into quantize_gptq.py (see
+# GEMMA4_COMPAT_PY block in wrapper script). Handles PLE per_layer_input
+# guard + RoPE position_embeddings recomputation for heterogeneous head_dim.
+
 sys.argv = ['quantize_gptq.py']
 runpy.run_path('/opt/flexinfer/scripts/quantize_gptq.py', run_name='__main__')
 MAGMA_PATCH
@@ -926,6 +1219,45 @@ if ! ls "${OUT_DIR}"/*.safetensors &>/dev/null; then
     echo "ERROR: No safetensors files in output dir"
     exit 1
 fi
+
+# Force NFS write buffers to disk before any size checks. On NFS, kernel-level
+# write buffers can report correct file sizes to stat() even when the NFS server
+# hasn't committed all data. sync + drop_caches forces the kernel to flush and
+# re-read actual sizes from the NFS server.
+echo "Syncing NFS write buffers..."
+sync
+# Drop page cache so subsequent stat() reads true NFS-committed sizes
+echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+
+# Post-save safetensors integrity check (shell-level, after NFS sync).
+# Catches truncation that the Python-level check can miss due to NFS buffering.
+python3 -c "
+import os, struct, json, sys
+base = '${OUT_DIR}'
+errors = []
+for f in sorted(os.listdir(base)):
+    if not f.endswith('.safetensors'):
+        continue
+    path = os.path.join(base, f)
+    sz = os.path.getsize(path)
+    with open(path, 'rb') as fh:
+        hdr_size = struct.unpack('<Q', fh.read(8))[0]
+        hdr = json.loads(fh.read(hdr_size))
+    tensors = {k: v for k, v in hdr.items() if k != '__metadata__'}
+    max_end = max((t['data_offsets'][1] for t in tensors.values()), default=0)
+    expected = 8 + hdr_size + max_end
+    if sz < expected:
+        errors.append(f'{f}: {sz} bytes on disk, header says {expected} (missing {expected - sz} bytes)')
+        print(f'FAIL {f}: TRUNCATED - {sz} < {expected} (missing {expected - sz} bytes)', file=sys.stderr)
+    else:
+        print(f'OK   {f}: {sz} bytes, {len(tensors)} tensors verified')
+if errors:
+    print(f'ERROR: {len(errors)} safetensors file(s) truncated after NFS sync:', file=sys.stderr)
+    for e in errors:
+        print(f'  {e}', file=sys.stderr)
+    sys.exit(1)
+print('All safetensors files passed post-NFS-sync integrity check')
+"
 
 COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"

@@ -276,6 +276,70 @@ func int32PtrFT(v int32) *int32 {
 	return &v
 }
 
+func TestBuildFinetuneJob_GPUDriverMemoryInflation(t *testing.T) {
+	spec := &aiv1alpha1.FinetuneSpec{
+		UseGPU:      boolPtrFT(true),
+		MaxMemoryGB: int32PtrFT(32),
+		Dataset:     aiv1alpha1.FinetuneDatasetSpec{},
+	}
+	params := JobParams{
+		Name:      "test-model",
+		Namespace: "flexinfer-system",
+		PVCName:   "model-pvc",
+		ModelPath: "test-model",
+		GPUVendor: "amd",
+		GPUArch:   "gfx1100",
+		MemoryConfig: GPUMemoryConfig{
+			ContainerMemoryGB: 32,
+			GPUDriverMemoryMB: 12288, // 12 GiB
+		},
+	}
+
+	job, err := BuildFinetuneJob(params, spec)
+	if err != nil {
+		t.Fatalf("BuildFinetuneJob() error = %v", err)
+	}
+
+	container := job.Spec.Template.Spec.Containers[0]
+	// memoryGB=32, driverOverhead=12288/1024=12 → schedulingMemoryGB=44
+	if got := container.Resources.Limits[corev1.ResourceMemory]; got.String() != "44Gi" {
+		t.Fatalf("memory limit = %s, want 44Gi (32+12 driver overhead)", got.String())
+	}
+	if got := container.Resources.Requests[corev1.ResourceMemory]; got.String() != "44Gi" {
+		t.Fatalf("memory request = %s, want 44Gi", got.String())
+	}
+}
+
+func TestBuildFinetuneJob_NoDriverOverhead(t *testing.T) {
+	spec := &aiv1alpha1.FinetuneSpec{
+		UseGPU:      boolPtrFT(true),
+		MaxMemoryGB: int32PtrFT(32),
+		Dataset:     aiv1alpha1.FinetuneDatasetSpec{},
+	}
+	params := JobParams{
+		Name:      "test-model",
+		Namespace: "flexinfer-system",
+		PVCName:   "model-pvc",
+		ModelPath: "test-model",
+		GPUVendor: "amd",
+		GPUArch:   "gfx1100",
+		MemoryConfig: GPUMemoryConfig{
+			ContainerMemoryGB: 32,
+			GPUDriverMemoryMB: 0, // no overhead
+		},
+	}
+
+	job, err := BuildFinetuneJob(params, spec)
+	if err != nil {
+		t.Fatalf("BuildFinetuneJob() error = %v", err)
+	}
+
+	container := job.Spec.Template.Spec.Containers[0]
+	if got := container.Resources.Limits[corev1.ResourceMemory]; got.String() != "32Gi" {
+		t.Fatalf("memory limit = %s, want 32Gi (no driver overhead)", got.String())
+	}
+}
+
 func TestResourceQuantityHelpers(t *testing.T) {
 	q := resource.MustParse("112Gi")
 	if q.String() != "112Gi" {

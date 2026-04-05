@@ -124,12 +124,13 @@ func (b *VLLMOmniBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--kv-cache-dtype", kvDtype)
 	}
 
-	// Prefix caching is ON by default in vLLM V1 (0.17.0+).
-	// Only emit --no-prefix-caching when explicitly disabled.
+	// Prefix caching is ON by default in vLLM V1.
+	// Newer argparse wiring uses BooleanOptionalAction, so the disable form is
+	// --no-enable-prefix-caching rather than --no-prefix-caching.
 	if spec.Config != nil {
 		if _, ok := spec.Config["enablePrefixCaching"]; ok {
 			if !spec.ConfigBool("enablePrefixCaching", true) {
-				args = append(args, "--no-prefix-caching")
+				args = append(args, "--no-enable-prefix-caching")
 			}
 		}
 		if _, ok := spec.Config["disableHybridKVCacheManager"]; ok {

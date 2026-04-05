@@ -47,7 +47,7 @@ spec:
     nodeSelector:
       kubernetes.io/hostname: cblevins-radeonvii
     normThreshold: "100"       # Abort if refusal direction norm > 100
-    ablitateLmHead: false      # Avoid lm_head corruption on offloaded saves; fixed image will rerun safely
+    ablitateLmHead: false      # DISABLED: streaming safetensors save corrupts lm_head when model is offloaded to disk
   quantization:
     format: GPTQ
     bits: 4

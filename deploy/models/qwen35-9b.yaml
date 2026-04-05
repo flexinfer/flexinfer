@@ -1,14 +1,7 @@
-# Qwen3.5-9B via vLLM on AMD gfx1100 — temporary primary on cblevins-7900xtx
+# Disabled from deploy/models/kustomization.yaml.
 #
-# GPTQ INT4 (~7.5 GiB), abliterated (skipGDNLayers=true, 3 target layers).
-# Source: GPTQ cache PVC — abliteration + quantization pipeline on radeonvii.
-# While the 27B rebuild is still in-flight, keep 9B warm on the otherwise idle
-# 7900 XTX node so 5930k can stay image-first.
-# Runtime: Unified runtime with vLLM Qwen3.5 patches baked in at build time.
-#
-# maxModelLen=8192 so default LiteLLM/OpenWebUI 8K output requests do not
-# immediately bounce at the vLLM layer while 9B is the temporary primary.
-# maxNumSeqs=2 to reduce concurrent memory pressure.
+# Historical Qwen3.5-9B manifest retained for rollback/reference only.
+# The active Gemma4 rollout now lives in deploy/models/gemma4-e4b-turboquant.yaml.
 #
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -24,7 +17,7 @@ spec:
     vendor: amd
     count: 1
     vramEstimateMB: 8000
-    shared: 7900xtx-textgen
+    shared: 5930k-textgen
     priority: 200
   serverless:
     enabled: true
@@ -32,10 +25,10 @@ spec:
     idleTimeout: 30m
     coldStartTimeout: 15m
   config:
-    quantization: gptq
     dtype: "half"
-    maxModelLen: 8192
-    gpuMemoryUtilization: "0.65"
+    quantization: gptq
+    maxModelLen: 4096
+    gpuMemoryUtilization: "0.95"
     maxNumSeqs: 2
     enforceEager: true
     trustRemoteCode: true
@@ -46,7 +39,7 @@ spec:
     disableLogStats: false
     warmPolicy: primary
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-5930k
   resources:
     requests:
       cpu: "2"

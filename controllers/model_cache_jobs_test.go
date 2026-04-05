@@ -53,6 +53,16 @@ func TestJobForLocalHFPrefetch(t *testing.T) {
 			t.Fatalf("script missing %q", want)
 		}
 	}
+
+	envNames := map[string]bool{}
+	for _, env := range job.Spec.Template.Spec.Containers[0].Env {
+		envNames[env.Name] = true
+	}
+	for _, want := range []string{"HF_TOKEN", "HUGGINGFACE_HUB_TOKEN"} {
+		if !envNames[want] {
+			t.Fatalf("expected env %q to be injected", want)
+		}
+	}
 }
 
 func TestJobForLocalHFPrefetchWithVAERefreshesIncompleteCache(t *testing.T) {

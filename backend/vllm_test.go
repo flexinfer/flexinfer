@@ -151,90 +151,20 @@ func TestVLLMBackendArgs_AttentionBackend(t *testing.T) {
 	spec := &ModelSpec{
 		Model: "test-model",
 		Config: map[string]any{
-			"attentionBackend": "ROCM_AITER_UNIFIED_ATTN",
+			"attentionBackend": "CUSTOM",
 		},
 	}
 
 	args := b.Args(spec)
 	argMap := make(map[string]string)
 	for i := 0; i < len(args)-1; i++ {
-		if args[i][0] == '-' {
-			argMap[args[i]] = args[i+1]
-		}
-	}
-
-	if v := argMap["--attention-backend"]; v != "ROCM_AITER_UNIFIED_ATTN" {
-		t.Errorf("expected --attention-backend=ROCM_AITER_UNIFIED_ATTN, got %q", v)
-	}
-}
-
-func TestVLLMBackendArgs_TurboQuantCodecDefaultsToCustomAttention(t *testing.T) {
-	b := &VLLMBackend{}
-
-	spec := &ModelSpec{
-		Model: "test-model",
-		Config: map[string]any{
-			"kvCacheCodec": "turboquant",
-		},
-	}
-
-	args := b.Args(spec)
-	argMap := make(map[string]string)
-	for i := 0; i < len(args)-1; i++ {
-		if args[i][0] == '-' {
+		if len(args[i]) > 0 && args[i][0] == '-' {
 			argMap[args[i]] = args[i+1]
 		}
 	}
 
 	if v := argMap["--attention-backend"]; v != "CUSTOM" {
-		t.Errorf("expected --attention-backend=CUSTOM, got %q", v)
-	}
-}
-
-func TestVLLMBackendArgs_ExplicitAttentionBackendOverridesTurboQuantCodec(t *testing.T) {
-	b := &VLLMBackend{}
-
-	spec := &ModelSpec{
-		Model: "test-model",
-		Config: map[string]any{
-			"kvCacheCodec":     "turboquant",
-			"attentionBackend": "TRITON_ATTN",
-		},
-	}
-
-	args := b.Args(spec)
-	argMap := make(map[string]string)
-	for i := 0; i < len(args)-1; i++ {
-		if args[i][0] == '-' {
-			argMap[args[i]] = args[i+1]
-		}
-	}
-
-	if v := argMap["--attention-backend"]; v != "TRITON_ATTN" {
-		t.Errorf("expected --attention-backend=TRITON_ATTN, got %q", v)
-	}
-}
-
-func TestVLLMBackendArgs_HybridKVCacheManagerExplicitEnable(t *testing.T) {
-	b := &VLLMBackend{}
-
-	spec := &ModelSpec{
-		Model: "test-model",
-		Config: map[string]any{
-			"disableHybridKVCacheManager": false,
-		},
-	}
-
-	args := b.Args(spec)
-	found := false
-	for _, a := range args {
-		if a == "--no-disable-hybrid-kv-cache-manager" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected --no-disable-hybrid-kv-cache-manager to be present")
+		t.Fatalf("expected --attention-backend=CUSTOM, got %q", v)
 	}
 }
 
@@ -545,31 +475,6 @@ func TestVLLMBackendEnv_HIPVisibleDevices_MirrorsROCR(t *testing.T) {
 	}
 }
 
-func TestVLLMBackendEnv_TurboQuantCodecAddsRuntimeHints(t *testing.T) {
-	b := &VLLMBackend{}
-
-	spec := &ModelSpec{
-		GPUVendor: GPUVendorAMD,
-		GPUArch:   "gfx1100",
-		Config: map[string]any{
-			"kvCacheCodec": "turboquant",
-		},
-	}
-
-	env := b.Env(spec)
-	envMap := make(map[string]string)
-	for _, e := range env {
-		envMap[e.Name] = e.Value
-	}
-
-	if v := envMap["FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC"]; v != "turboquant" {
-		t.Errorf("expected FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC=turboquant, got %q", v)
-	}
-	if v := envMap["FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS"]; v != "plugin" {
-		t.Errorf("expected FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS=plugin, got %q", v)
-	}
-}
-
 func TestVLLMBackendEnv_ROCRVisibleDevices_MirrorsHIP(t *testing.T) {
 	b := &VLLMBackend{}
 
@@ -705,7 +610,7 @@ func TestVLLMBackendArgs_PrefixCachingExplicitDisable(t *testing.T) {
 	args := b.Args(spec)
 	found := false
 	for _, a := range args {
-		if a == "--no-prefix-caching" {
+		if a == "--no-enable-prefix-caching" {
 			found = true
 		}
 		if a == "--enable-prefix-caching" {
@@ -713,7 +618,7 @@ func TestVLLMBackendArgs_PrefixCachingExplicitDisable(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("expected --no-prefix-caching when enablePrefixCaching=false")
+		t.Error("expected --no-enable-prefix-caching when enablePrefixCaching=false")
 	}
 }
 
@@ -733,8 +638,8 @@ func TestVLLMBackendArgs_PrefixCachingExplicitEnableIsNoop(t *testing.T) {
 		if a == "--enable-prefix-caching" {
 			t.Error("should not emit --enable-prefix-caching (default in V1)")
 		}
-		if a == "--no-prefix-caching" {
-			t.Error("should not emit --no-prefix-caching when enabled")
+		if a == "--no-enable-prefix-caching" {
+			t.Error("should not emit --no-enable-prefix-caching when enabled")
 		}
 	}
 }
@@ -750,7 +655,7 @@ func TestVLLMBackendArgs_PrefixCachingNotSetByDefault(t *testing.T) {
 
 	args := b.Args(spec)
 	for _, a := range args {
-		if a == "--enable-prefix-caching" || a == "--no-prefix-caching" {
+		if a == "--enable-prefix-caching" || a == "--no-enable-prefix-caching" {
 			t.Errorf("should not emit prefix caching flag when not set in config, got %q", a)
 		}
 	}

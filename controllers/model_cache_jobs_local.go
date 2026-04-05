@@ -228,6 +228,7 @@ func (r *ModelReconciler) jobForLocalHFPrefetch(model *aiv1alpha2.Model) (*batch
 		[]corev1.EnvVar{{Name: "HF_HUB_ENABLE_HF_TRANSFER", Value: "0"}},
 		hfCacheEnvVars("/models/.cache/huggingface")...,
 	)
+	envVars = append(envVars, optionalHFTokenEnvVars()...)
 	if len(hfOpts.allowPatterns) > 0 {
 		allowJSON, err := json.Marshal(hfOpts.allowPatterns)
 		if err != nil {
@@ -363,4 +364,29 @@ echo "Local HF staging complete."
 		return nil, err
 	}
 	return job, nil
+}
+
+func optionalHFTokenEnvVars() []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{
+			Name: "HF_TOKEN",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "hf-token"},
+					Key:                  "HF_TOKEN",
+					Optional:             ptr.To(true),
+				},
+			},
+		},
+		{
+			Name: "HUGGINGFACE_HUB_TOKEN",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "hf-token"},
+					Key:                  "HF_TOKEN",
+					Optional:             ptr.To(true),
+				},
+			},
+		},
+	}
 }

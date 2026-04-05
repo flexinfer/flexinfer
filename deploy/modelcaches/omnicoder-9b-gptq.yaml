@@ -8,7 +8,7 @@
 # Full-attention layers: 3, 7, 11, 15, 19, 23, 27, 31
 # Abliteration targets middle full-attention layers (auto selection)
 #
-# Disk: BF16 ~19.3 GB + GPTQ INT4 ~7 GB + workspace → 60 Gi PVC
+# Disk: BF16 ~19.3 GB + GPTQ INT4 ~7 GB + workspace → 80 Gi PVC
 ---
 apiVersion: ai.flexinfer/v1alpha1
 kind: ModelCache
@@ -18,7 +18,7 @@ metadata:
 spec:
   source: "Tesslate/OmniCoder-9B"
   storageStrategy: SharedPVC
-  storageSize: "60Gi"
+  storageSize: "80Gi"
   clusterStorageClassName: nvme-1r-gpu
   secretRef: "hf-token"
   nodeSelector:
