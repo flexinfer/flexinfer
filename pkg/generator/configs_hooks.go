@@ -182,6 +182,12 @@ func appendHookExtras(hooks map[string]any, extras []string, loomBinary string) 
 			if existing, ok := hooks[event].([]map[string]any); ok {
 				hooks[event] = append(existing, claudePostToolUseTaskSyncHook(loomBinary)...)
 			}
+		case "sessionStart_testHealth":
+			// Inject test suite health snapshot at session start.
+			testHealthHooks := testHealthSessionStartHooks(loomBinary)
+			if existing, ok := hooks["SessionStart"].([]map[string]any); ok && len(existing) > 0 {
+				hooks["SessionStart"] = append(existing, testHealthHooks...)
+			}
 		}
 	}
 }
@@ -315,4 +321,22 @@ func dirtyWorktreeSessionStartNudgeCommand(policy agentSafetyPolicy) string {
 func mainBranchWorktreeNudgeCommand() string {
 	payload := `{"systemMessage":"You are on main. For feature work or multi-file changes, consider using agent_worktree_allocate() to create an isolated branch and worktree before making changes."}`
 	return fmt.Sprintf(`if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then BRANCH="$(git branch --show-current 2>/dev/null)"; if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then printf '%%s\n' %q; fi; fi; exit 0`, payload)
+}
+
+// testHealthSessionStartHooks returns hook blocks that run a test health snapshot
+// on session start. Emits a systemMessage with test pass/fail counts and build status.
+func testHealthSessionStartHooks(_ string) []map[string]any {
+	log := `2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log"`
+	return []map[string]any{
+		{
+			"hooks": []map[string]any{
+				{
+					"type": "command",
+					"command": fmt.Sprintf(
+						`INPUT=$(cat); REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"; SCRIPT="${REPO_ROOT}/mcp/skills/test-health-inject/scripts/test-health-snapshot.sh"; if [ -x "$SCRIPT" ]; then "$SCRIPT" %s || true; fi; exit 0`,
+						log),
+				},
+			},
+		},
+	}
 }

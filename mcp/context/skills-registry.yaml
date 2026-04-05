@@ -6739,3 +6739,64 @@ skills:
       antigravity:
         enabled: true
         type: rule
+
+  - name: test-health-inject
+    categories: [development, testing, automation]
+    common:
+      description: |
+        Inject test suite health into session context at startup. Agent starts every session knowing build status, test pass/fail count, and recent failures. Opt-in via sessionStart_testHealth hook extra.
+      instructions: |
+        # Test Health Injection
+
+        "First run the tests." Agents start every session knowing project health state.
+
+        ## When to Use
+
+        - Enable via hook extra for always-on test health awareness
+        - Run manually before starting complex work to understand project state
+
+        ## What It Reports
+
+        - Build status (OK/FAIL)
+        - Test counts: total, passed, failed, skipped
+        - Failed test names (up to 5)
+        - Runtime (capped at 30s timeout)
+        - Last commit reference
+
+        ## Enabling
+
+        Add `sessionStart_testHealth` to the platform's hook extras in the platform profile.
+        Then regenerate: `loom sync <platform> --regen`
+
+        ## Manual Run
+
+        ```bash
+        bash mcp/skills/test-health-inject/scripts/test-health-snapshot.sh
+        ```
+
+        Output is a JSON `systemMessage` injected into session context.
+      scripts:
+        - name: test-health-snapshot.sh
+          path: mcp/skills/test-health-inject/scripts/test-health-snapshot.sh
+      references:
+        - name: test-health-integration.md
+          path: mcp/skills/test-health-inject/references/test-health-integration.md
+      assets: []
+      always_allow:
+        - test-health-snapshot.sh
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: skill
+      gemini:
+        enabled: true
+        type: instruction
+      antigravity:
+        enabled: true
+        type: command
