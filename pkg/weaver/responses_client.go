@@ -214,7 +214,7 @@ func (c *FlexInferResponsesClient) doRequest(ctx context.Context, body []byte) (
 		if !isRetryable(err) {
 			break
 		}
-		if attempt < maxRetries {
+		if attempt < maxRetries && attempt < len(backoffs) {
 			c.logger.Warn("retrying FlexInfer request",
 				"attempt", attempt+1,
 				"max_retries", maxRetries,

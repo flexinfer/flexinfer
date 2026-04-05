@@ -25,7 +25,7 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 		{
 			"type": "command",
 			"command": fmt.Sprintf(
-				`INPUT=$(cat); %s; %s; PARENT_FLAG=""; [ -n "${LOOM_PARENT_SESSION_ID:-}" ] && PARENT_FLAG="--parent-session-id $LOOM_PARENT_SESSION_ID"; %s agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "$AGENT_ID" --agent-type %s --description %q --auto-recall --auto-recall-strategy fast $PARENT_FLAG --quiet %s || true`,
+				`INPUT=$(cat); %s; %s; PARENT_FLAG=""; PARENT_FILE="${AGENT_CACHE_DIR}/parent-session-${AGENT_ID}"; if [ -s "$PARENT_FILE" ]; then PARENT_FLAG="--parent-session-id $(cat "$PARENT_FILE")"; rm -f "$PARENT_FILE"; elif [ -n "${LOOM_PARENT_SESSION_ID:-}" ]; then PARENT_FLAG="--parent-session-id $LOOM_PARENT_SESSION_ID"; fi; %s agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "$AGENT_ID" --agent-type %s --description %q --auto-recall --auto-recall-strategy fast $PARENT_FLAG --quiet %s || true`,
 				bootstrap, staleCleanup, loomCmd, hp.AgentType, hp.Description, log),
 		},
 		{
@@ -81,13 +81,15 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 			},
 		},
 		// Capture parent session ID for subagent session grouping.
+		// Write to a file so the subagent's SessionStart can read it
+		// (env vars don't propagate across hook subprocess boundaries).
 		"SubagentStart": []map[string]any{
 			{
 				"hooks": []map[string]any{
 					{
 						"type": "command",
 						"command": fmt.Sprintf(
-							`INPUT=$(cat); %s; PARENT_SID=$(%s agent session --agent-id "$AGENT_ID" --quiet 2>/dev/null | jq -r '.session.id // empty' 2>/dev/null || true); [ -n "$PARENT_SID" ] && export LOOM_PARENT_SESSION_ID="$PARENT_SID"; exit 0`,
+							`INPUT=$(cat); %s; PARENT_SID=$(%s agent session --agent-id "$AGENT_ID" --quiet 2>/dev/null | jq -r '.session.id // empty' 2>/dev/null || true); PARENT_FILE="${AGENT_CACHE_DIR}/parent-session-${AGENT_ID}"; if [ -n "$PARENT_SID" ]; then printf '%%s' "$PARENT_SID" > "$PARENT_FILE"; else rm -f "$PARENT_FILE"; fi; exit 0`,
 							bootstrap, loomCmd),
 					},
 				},

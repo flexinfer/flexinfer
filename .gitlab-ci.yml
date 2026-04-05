@@ -562,11 +562,11 @@ test:race:
       # Known transitive fi-accel entrypoints:
       #   agentcontext path: cmd/loom, cmd/loomd, cmd/mcp-agent-context, pkg/...
       #                      internal/daemon, internal/hud/*, internal/tui
-      #   openairesponses path: cmd/mcp-orchestra
+      #   openairesponses path: cmd/mcp-orchestra, cmd/mcp-weaver
       if [ ! -f "${CI_PROJECT_DIR}/../../libs/fi-accel/go/lib/linux_amd64/libfi_accel_ffi.so" ] && \
          [ ! -f "${CI_PROJECT_DIR}/../../libs/fi-accel/go/lib/linux_amd64/libfi_accel_ffi.a" ]; then
         echo "fi-accel FFI library not found; excluding fi-accel-linked packages from race tests."
-        mapfile -t PKGS < <(printf '%s\n' "${PKGS[@]}" | grep -Ev '^github.com/crb2nu/loom/(pkg|cmd/(loom$|loomd$|mcp-agent-context|mcp-orchestra)|internal/(daemon|hud|tui|contracts))')
+        mapfile -t PKGS < <(printf '%s\n' "${PKGS[@]}" | grep -Ev '^github.com/crb2nu/loom/(pkg|cmd/(loom$|loomd$|mcp-agent-context|mcp-orchestra|mcp-weaver)|internal/(daemon|hud|tui|contracts))')
       fi
 
       go test -race -short "${PKGS[@]}"

@@ -103,6 +103,11 @@ func (p *callPipeline) connectTarget(target router.Target, reason string) error 
 		return fmt.Errorf("unsupported routing target: %s", target)
 	}
 
+	// Acquire the call lock briefly for bookkeeping (mark activity), then
+	// release it BEFORE pool.Get() which may block waiting for a connection.
+	// The pool is internally thread-safe; holding the call lock during pool
+	// acquisition caused cascade timeouts for concurrent callers (heartbeats,
+	// task-sync) that share the same per-server lock.
 	var (
 		err      error
 		lockWait time.Duration
@@ -119,12 +124,17 @@ func (p *callPipeline) connectTarget(target router.Target, reason string) error 
 		p.daemon.logger.Debug("call lock contention", "server", p.serverName, "wait_ms", lockWait.Milliseconds())
 	}
 
+	// Mark activity under the lock (quick operation).
+	if target == router.TargetLocal && p.daemon.procMgr != nil {
+		p.daemon.procMgr.MarkActivity(p.serverName)
+	}
+
+	// Release the lock before the potentially-blocking pool.Get().
+	p.callMu.Unlock()
+	p.lockHeld = false
+
 	switch target {
 	case router.TargetLocal:
-		// Mark server active before dialing so idle reaper won't classify this call as idle.
-		if p.daemon.procMgr != nil {
-			p.daemon.procMgr.MarkActivity(p.serverName)
-		}
 		if p.daemon.pool == nil {
 			err = fmt.Errorf("local pool not configured")
 		} else {
@@ -151,14 +161,35 @@ func (p *callPipeline) connectTarget(target router.Target, reason string) error 
 	}
 
 	if err != nil {
-		if p.lockHeld && p.callMu != nil {
-			p.callMu.Unlock()
-			p.lockHeld = false
-		}
 		p.daemon.router.RecordFailure(p.serverName, p.target, err)
 		p.daemon.metrics.RecordServerFailure(p.serverName, p.targetStr, "connect")
 		return err
 	}
+
+	// Re-acquire the lock for the RPC send phase. The lock now only
+	// serializes the actual send/recv on the connection, not the wait
+	// for a pool slot.
+	p.callMu, _, err = p.daemon.acquireCallLock(p.ctx, p.serverName)
+	if err != nil {
+		// Connection acquired but can't get lock — return connection to pool.
+		if p.conn != nil {
+			switch target {
+			case router.TargetLocal:
+				if p.daemon.pool != nil {
+					p.daemon.pool.Put(p.conn)
+				}
+			case router.TargetHub:
+				if p.daemon.hubPool != nil {
+					p.daemon.hubPool.Put(p.conn)
+				}
+			}
+			p.conn = nil
+		}
+		p.daemon.router.RecordFailure(p.serverName, p.target, err)
+		p.daemon.metrics.RecordServerFailure(p.serverName, p.targetStr, "call_lock")
+		return err
+	}
+	p.lockHeld = true
 
 	return nil
 }

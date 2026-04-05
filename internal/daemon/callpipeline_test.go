@@ -601,16 +601,18 @@ func TestCallPipelineRouteAndConnect_HubLockOrdering(t *testing.T) {
 	d.router = router.New(router.Config{HubEnabled: true})
 
 	poolGetCalled := false
-	lockHeldDuringDial := false
+	lockNotHeldDuringDial := false
 	d.hubPool = pool.New(pool.Config{
 		MaxIdle:     2,
 		MaxOpen:     2,
 		IdleTimeout: time.Minute,
 		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
 			poolGetCalled = true
+			// The call lock should NOT be held during pool dial to prevent
+			// cascade timeouts for concurrent callers (heartbeats, task-sync).
 			mu := d.callLock("hub_lock_test")
-			lockHeldDuringDial = !mu.TryLock()
-			if !lockHeldDuringDial {
+			lockNotHeldDuringDial = mu.TryLock()
+			if lockNotHeldDuringDial {
 				mu.Unlock()
 			}
 			return &fakeTransport{}, nil
@@ -633,8 +635,8 @@ func TestCallPipelineRouteAndConnect_HubLockOrdering(t *testing.T) {
 	if !poolGetCalled {
 		t.Fatal("hub pool.Get was never called")
 	}
-	if !lockHeldDuringDial {
-		t.Fatal("callLock was not held before hub pool dial")
+	if !lockNotHeldDuringDial {
+		t.Fatal("callLock should not be held during pool dial (prevents heartbeat contention)")
 	}
 }
 
