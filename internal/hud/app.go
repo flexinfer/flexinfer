@@ -91,6 +91,11 @@ type Config struct {
 
 	// Pipeline monitoring (GitLab CI).
 	PipelineProjects string // Comma-separated GitLab project paths to monitor.
+
+	// Inbound webhook event bridge (CI → agent dispatch).
+	WebhookInboundEnabled bool   // Enable inbound webhook endpoints (default: false).
+	WebhookGitLabSecret   string // X-Gitlab-Token secret for verifying GitLab webhooks.
+	WebhookGitHubSecret   string // HMAC secret for verifying GitHub X-Hub-Signature-256.
 }
 
 // App is the HUD application. It holds the daemon client, agent bridge,

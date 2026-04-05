@@ -64,7 +64,7 @@
 # Sync: loom sync <profile> --regen --hub-mode --all-projects --skip-worktrees
 
 version: 1
-updated: 2026-04-03
+updated: 2026-04-05
 skills:
   - name: flux-gitops-operator
     categories: [kubernetes, gitops, operations]
@@ -3564,10 +3564,22 @@ skills:
 
         | Tool | Purpose |
         |------|---------|
-        | `devbox_exec` | Run a command in the sandbox (auto-builds if needed) |
+        | `devbox_exec` | Run a command in the sandbox (auto-builds if needed). Supports `retry` param (max 3) for infrastructure failures. |
+        | `devbox_quality_gate` | Run fmt → lint → test with language auto-detection and structured JSON output |
         | `devbox_build` | Pre-build the sandbox image |
         | `devbox_status` | Check sandbox status |
         | `devbox_stop` | Stop a running sandbox |
+
+        ## Quality Gate
+
+        Use `devbox_quality_gate` instead of manual `devbox_exec` calls for quality verification:
+        ```
+        devbox_quality_gate(project="loom-core", agent_id="claude-code")
+        ```
+        Returns structured JSON: `{language, passed, checks: [{name, passed, exit_code, duration_ms, output_tail}], total_duration_ms}`.
+        Auto-detects language (go, python, node, rust) and runs appropriate fmt/lint/test commands.
+        Includes retry=1 per check for infrastructure resilience. Supports `fail_fast` (default: true)
+        and custom `checks` array (e.g., `["test"]` to skip fmt/lint).
 
         ## Recommended Tools
 

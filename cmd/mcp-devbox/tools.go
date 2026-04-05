@@ -38,6 +38,10 @@ func registerTools(server *mcp.Server, mgr *manager, tracer trace.Tracer) {
 					"type":        "string",
 					"description": "Owning agent ID (used as pod label in K8s backend)",
 				},
+				"retry": map[string]any{
+					"type":        "integer",
+					"description": "Number of retries on infrastructure failures (pod eviction, network). Max 3. Does not retry on non-zero exit codes (test failures).",
+				},
 			},
 			Required: []string{"project", "command"},
 		},
@@ -234,4 +238,32 @@ func registerTools(server *mcp.Server, mgr *manager, tracer trace.Tracer) {
 			Properties: map[string]any{},
 		},
 	}, mcpotel.TracedToolHandler(tracer, "devbox_summary", mgr.handleSummary))
+
+	server.AddTool(mcp.Tool{
+		Name:        "devbox_quality_gate",
+		Description: "Run fmt → lint → test quality gate with language auto-detection. Returns structured JSON with per-check results. Uses retry for infrastructure resilience.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"project": map[string]any{
+					"type":        "string",
+					"description": "Project name or path under workspace root",
+				},
+				"agent_id": map[string]any{
+					"type":        "string",
+					"description": "Owning agent ID",
+				},
+				"checks": map[string]any{
+					"type":        "array",
+					"description": "Checks to run (default: [\"fmt\", \"lint\", \"test\"])",
+					"items":       map[string]any{"type": "string"},
+				},
+				"fail_fast": map[string]any{
+					"type":        "boolean",
+					"description": "Stop on first failing check (default: true)",
+				},
+			},
+			Required: []string{"project"},
+		},
+	}, mcpotel.TracedToolHandler(tracer, "devbox_quality_gate", mgr.handleQualityGate))
 }

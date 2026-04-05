@@ -3,10 +3,12 @@ package hud
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/crb2nu/loom/internal/hud/domain/mobile"
 	domainspawn "github.com/crb2nu/loom/internal/hud/domain/spawn"
+	domainwebhook "github.com/crb2nu/loom/internal/hud/domain/webhook"
 	pkgspawn "github.com/crb2nu/loom/internal/spawn"
 )
 
@@ -100,4 +102,45 @@ func (s *spawnDepsAdapter) Spawner() domainspawn.SpawnerOps {
 		return nil
 	}
 	return s.app.spawner
+}
+
+// --- Webhook domain Deps adapter ---
+
+type webhookDepsAdapter struct {
+	app *App
+}
+
+func (w *webhookDepsAdapter) WriteJSON(wr http.ResponseWriter, status int, v any) {
+	w.app.WriteJSON(wr, status, v)
+}
+
+func (w *webhookDepsAdapter) WriteError(wr http.ResponseWriter, status int, msg string, err error) {
+	w.app.WriteError(wr, status, msg, err)
+}
+
+func (w *webhookDepsAdapter) RequireAdminToken(wr http.ResponseWriter, r *http.Request) bool {
+	return w.app.RequireAdminToken(wr, r)
+}
+
+func (w *webhookDepsAdapter) Logger() *slog.Logger {
+	return w.app.logger
+}
+
+func (w *webhookDepsAdapter) BroadcastAgentEvent(eventType string, payload any) {
+	w.app.BroadcastAgentEvent(eventType, payload)
+}
+
+func (w *webhookDepsAdapter) Spawner() domainwebhook.SpawnerOps {
+	if w.app.spawner == nil {
+		return nil
+	}
+	return w.app.spawner
+}
+
+func (w *webhookDepsAdapter) WebhookConfig() domainwebhook.WebhookCfg {
+	return domainwebhook.WebhookCfg{
+		InboundEnabled: w.app.config.WebhookInboundEnabled,
+		GitLabSecret:   w.app.config.WebhookGitLabSecret,
+		GitHubSecret:   w.app.config.WebhookGitHubSecret,
+	}
 }

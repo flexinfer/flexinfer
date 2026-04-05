@@ -13,6 +13,7 @@ import (
 	"github.com/crb2nu/loom/internal/devbox/detect"
 	"github.com/crb2nu/loom/internal/devbox/dockerfile"
 	"github.com/crb2nu/loom/internal/devbox/state"
+	"github.com/crb2nu/loom/pkg/poll"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -23,8 +24,12 @@ func (m *manager) handleExec(ctx context.Context, args map[string]any) (*mcp.Cal
 	timeoutStr := v.String("timeout", "2m")
 	maxLines := v.Int("max_lines", m.cfg.maxTailLines)
 	agentID := v.String("agent_id", "")
+	retry := v.Int("retry", 0)
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
+	}
+	if retry > 3 {
+		retry = 3
 	}
 
 	timeout, err := time.ParseDuration(timeoutStr)
@@ -75,14 +80,24 @@ func (m *manager) handleExec(ctx context.Context, args map[string]any) (*mcp.Cal
 	m.logger.Info("exec", "project", projectName, "agent", agentID, "command", command)
 
 	start := time.Now()
-	result, err := m.backend.Exec(ctx, backend.ExecOpts{
-		ContainerID: containerID,
-		Command:     command,
-		WorkDir:     m.projectWorkDir(projectDir),
-		Env:         envVars,
-		TimeoutSec:  int(timeout.Seconds()),
-		MaxLines:    maxLines,
-	})
+	var result *backend.ExecResult
+	execFn := func(ctx context.Context) error {
+		var execErr error
+		result, execErr = m.backend.Exec(ctx, backend.ExecOpts{
+			ContainerID: containerID,
+			Command:     command,
+			WorkDir:     m.projectWorkDir(projectDir),
+			Env:         envVars,
+			TimeoutSec:  int(timeout.Seconds()),
+			MaxLines:    maxLines,
+		})
+		return execErr
+	}
+	if retry > 0 {
+		err = poll.RetryWithBackoff(ctx, retry+1, time.Second, 4*time.Second, execFn)
+	} else {
+		err = execFn(ctx)
+	}
 	execDuration := time.Since(start).Seconds()
 	if err != nil {
 		if m.metrics != nil {

@@ -60,12 +60,12 @@ steps:
   - id: quality-gate
     name: "Automated Quality Gate"
     step_type: tool
-    tool_name: devbox_exec
+    tool_name: devbox_quality_gate
     server_name: devbox
     tool_args:
       project: "${input.project}"
-      command: "bash mcp/skills/auto-quality-gate/scripts/auto-quality-gate.sh"
       agent_id: "${input.agent_id}"
+      fail_fast: true
     depends_on: [implement]
 
   - id: commit

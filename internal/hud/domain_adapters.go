@@ -24,6 +24,7 @@ import (
 	domainshuttle "github.com/crb2nu/loom/internal/hud/domain/shuttle"
 	domainspawn "github.com/crb2nu/loom/internal/hud/domain/spawn"
 	domainweaver "github.com/crb2nu/loom/internal/hud/domain/weaver"
+	domainwebhook "github.com/crb2nu/loom/internal/hud/domain/webhook"
 	"github.com/crb2nu/loom/internal/hud/domain/workflow"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 	"github.com/crb2nu/loom/pkg/projectmeta"
@@ -48,6 +49,7 @@ func (a *App) initDomainRegistry() {
 	a.domainRegistry.Register(codebase.New(&codebaseDepsAdapter{app: a}))
 	a.domainRegistry.Register(domainalerting.New(&alertingDepsAdapter{app: a}))
 	a.domainRegistry.Register(domainweaver.New(&weaverDepsAdapter{app: a}))
+	a.domainRegistry.Register(domainwebhook.New(&webhookDepsAdapter{app: a}))
 }
 
 // --- Shared Deps methods (used by multiple domains) ---
