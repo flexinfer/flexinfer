@@ -26,6 +26,10 @@ spec:
     # warm image-edit model on Local cache so auxiliary assets like the fixed
     # VAE live beside the staged model and survive runtime reloads cleanly.
     strategy: Local
+    flashLoader:
+      # Shared models stage through host /dev/shm, and this SDXL cache is
+      # larger than the Radeon VII node's available tmpfs headroom.
+      enabled: false
   config:
     pipelineMode: inpainting
     modelFamily: "sdxl"
