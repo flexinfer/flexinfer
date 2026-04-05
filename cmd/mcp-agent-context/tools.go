@@ -28,4 +28,5 @@ func registerTools(server *mcp.Server, svc *agentcontext.Service, tracer trace.T
 	registerFileClaimTools(server, svc, tracer)
 	registerWorktreeTools(server, svc, tracer)
 	registerCompactionTools(server, svc, tracer)
+	registerRecipeTools(server, svc, tracer)
 }

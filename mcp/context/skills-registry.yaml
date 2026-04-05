@@ -6739,3 +6739,68 @@ skills:
       antigravity:
         enabled: true
         type: rule
+
+  - name: agent-recipes
+    categories: [knowledge, memory, automation]
+    common:
+      description: |
+        Structured recipe library for proven solutions. Recipes have required proof (file reference, test command, or URL). Use when recording a novel solution or recalling how a problem class was previously solved.
+      instructions: |
+        # Agent Recipes
+
+        Structured knowledge library with proven, deterministic solutions.
+
+        ## When to Use
+
+        - **Add a recipe** when you solve a problem that took significant effort or debugging
+        - **Recall recipes** before implementing -- check if a proven solution already exists
+        - **List recipes** to see all available solutions for a language or tag
+
+        ## Key Principle: Proof is Required
+
+        Every recipe must have proof that it works:
+        - File reference: `pkg/foo/bar.go:42-58`
+        - Test command: `go test ./pkg/foo -run TestBar -v`
+        - URL: canonical documentation link
+
+        ## Tools
+
+        | Tool | Purpose |
+        |------|---------|
+        | `agent_recipe_add` | Add a new recipe with problem, solution, and proof |
+        | `agent_recipe_recall` | Search recipes by query, tags, language, scope |
+        | `agent_recipe_list` | List all recipes with optional filters |
+
+        ## Recipe Schema
+
+        | Field | Required | Description |
+        |-------|----------|-------------|
+        | `title` | Yes | Short descriptive title |
+        | `problem` | Yes | What problem this solves |
+        | `solution` | Yes | How to solve it (with code) |
+        | `proof` | Yes | Evidence it works |
+        | `tags` | No | Categorization tags |
+        | `language` | No | Programming language |
+        | `scope` | No | project / workspace / universal |
+      scripts: []
+      references:
+        - name: recipe-schema.md
+          path: mcp/skills/agent-recipes/references/recipe-schema.md
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: skill
+      gemini:
+        enabled: true
+        type: instruction
+      antigravity:
+        enabled: true
+        type: command
