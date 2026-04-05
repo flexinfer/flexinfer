@@ -6865,6 +6865,48 @@ skills:
       assets: []
       always_allow:
         - auto-quality-gate.sh
+  - name: session-retro
+    categories: [workflow, learning, automation]
+    common:
+      description: |
+        Automated session retrospective that extracts failures, novel solutions, and friction points from session summaries. Runs automatically on session end (when enabled) or on-demand. Queues proposed instruction amendments for batch review.
+      instructions: |
+        # Session Retrospective
+
+        Automated post-session retrospective that compounds institutional learning.
+
+        ## When to Use
+
+        - Automatically via `postSessionEnd_retrospective` hook extra (opt-in)
+        - Manually after completing a complex task to capture learnings
+        - During batch review sessions to process the retro queue
+
+        ## What It Does
+
+        1. Reads the session summary from `loom agent session --agent-id`
+        2. Extracts: failures encountered, novel solutions, workflow friction, instruction gaps
+        3. Writes structured findings to `.loom/local/retro-<timestamp>.md`
+        4. Appends to rolling `.loom/local/retro-queue.md` for batch human review
+
+        ## Batch Review Process
+
+        Periodically review `.loom/local/retro-queue.md`:
+        - Identify recurring patterns across sessions
+        - Convert proven solutions into agent recipes
+        - Update AGENTS.md or skill instructions with gap fixes
+        - Archive processed retros to `.loom/archive/`
+
+        ## Hook Integration
+
+        To enable automatic retrospective on session end, add `postSessionEnd_retrospective`
+        to the platform's `extras` list in the platform profile.
+      scripts:
+        - name: session-retro.sh
+          path: mcp/skills/session-retro/scripts/session-retro.sh
+      references: []
+      assets: []
+      always_allow:
+        - session-retro.sh
     targets:
       codex:
         enabled: true
