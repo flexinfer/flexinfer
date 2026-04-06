@@ -7,8 +7,8 @@ resources:
   # for the Gemma4 rollout. Keep the manifests on disk for rollback/reference,
   # but do not reconcile them here.
   - gemma4-e4b-gptq.yaml            # vLLM + GPTQ INT4, ~4 GiB weights, always-on
-  # - gemma4-e4b-turboquant.yaml    # FP16 (kept for rollback reference)
-  - gemma4-e4b-turboquant-canary.yaml # vLLM CUSTOM/TurboQuant canary, on-demand
+  - gemma4-e4b-turboquant.yaml      # FP16, scale-to-zero fallback (minReplicas=0)
+  - gemma4-e4b-multimodal.yaml      # FP16 multimodal, scale-to-zero (minReplicas=0)
 
   # === cblevins-5930k (24 GB gfx1100) — subagent + code gen (shared group) ===
   - omnicoder-9b.yaml               # vLLM, GPTQ INT4, ~7.2 GiB VRAM, on-demand (priority 100)
