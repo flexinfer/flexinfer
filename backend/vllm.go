@@ -180,6 +180,16 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--speculative-config", specConfig)
 	}
 
+	// Multimodal input limits (e.g., "image=4,audio=2")
+	if mmLimit := spec.ConfigString("limitMmPerPrompt", ""); mmLimit != "" {
+		args = append(args, "--limit-mm-per-prompt", mmLimit)
+	}
+
+	// Multimodal processor kwargs (JSON)
+	if mmKwargs := spec.ConfigString("mmProcessorKwargs", ""); mmKwargs != "" {
+		args = append(args, "--mm-processor-kwargs", mmKwargs)
+	}
+
 	return args
 }
 

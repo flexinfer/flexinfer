@@ -184,6 +184,11 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 			}
 		}
 	}
+	// Per-model image override takes highest precedence.
+	if model.Spec.Image != "" {
+		log.V(1).Info("Using per-model image override", "model", model.Name, "image", model.Spec.Image)
+		image = model.Spec.Image
+	}
 	port := b.Port()
 	command := b.Command()
 	args := b.Args(spec)

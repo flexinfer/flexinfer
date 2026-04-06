@@ -15,6 +15,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-textgen-turboquant
   source: pvc://llm-models-nfs/google/gemma-4-E4B-it
   cache:
     strategy: Local

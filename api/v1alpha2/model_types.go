@@ -215,6 +215,11 @@ type ModelSpec struct {
 	// +kubebuilder:validation:Required
 	Backend string `json:"backend"`
 
+	// Image overrides the container image for this model's backend.
+	// When set, takes precedence over GPUProfile and backend-default images.
+	// +optional
+	Image string `json:"image,omitempty"`
+
 	// Source is the model source URI.
 	// Formats:
 	//   - HF://org/model        - HuggingFace model

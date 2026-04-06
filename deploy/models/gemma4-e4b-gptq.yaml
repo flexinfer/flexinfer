@@ -12,9 +12,10 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-experimental
   source: pvc://gemma4-e4b-gptq/gemma4-e4b-gptq/gptq-w4-g128
   cache:
-    strategy: Local
+    strategy: SharedPVC
   gpu:
     vendor: amd
     count: 1

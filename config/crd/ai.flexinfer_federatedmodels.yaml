@@ -342,6 +342,11 @@ spec:
                     - message: gpu.shared must be empty when gpu.vendor is cpu
                       rule: self.vendor != 'cpu' || !has(self.shared) || size(self.shared)
                         == 0
+                  image:
+                    description: |-
+                      Image overrides the container image for this model's backend.
+                      When set, takes precedence over GPUProfile and backend-default images.
+                    type: string
                   kvCache:
                     description: |-
                       KVCache configures KV-cache pressure management.

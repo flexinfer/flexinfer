@@ -951,6 +951,71 @@ func TestVLLMBackendArgs_SpeculativeConfig(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_LimitMmPerPrompt(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]any{
+			"limitMmPerPrompt": "image=4,audio=2",
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--limit-mm-per-prompt"]; v != "image=4,audio=2" {
+		t.Errorf("expected --limit-mm-per-prompt=image=4,audio=2, got %q", v)
+	}
+}
+
+func TestVLLMBackendArgs_MmProcessorKwargs(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]any{
+			"mmProcessorKwargs": `{"max_image_size": 512}`,
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--mm-processor-kwargs"]; v != `{"max_image_size": 512}` {
+		t.Errorf("expected --mm-processor-kwargs={\"max_image_size\": 512}, got %q", v)
+	}
+}
+
+func TestVLLMBackendArgs_MmArgsNotSetByDefault(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model:  "test-model",
+		Config: map[string]any{},
+	}
+
+	args := b.Args(spec)
+	for _, a := range args {
+		if a == "--limit-mm-per-prompt" {
+			t.Error("expected --limit-mm-per-prompt to be absent by default")
+		}
+		if a == "--mm-processor-kwargs" {
+			t.Error("expected --mm-processor-kwargs to be absent by default")
+		}
+	}
+}
+
 func TestVLLMBackendArgs_DisableLogStats(t *testing.T) {
 	b := &VLLMBackend{}
 
