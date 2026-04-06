@@ -132,6 +132,16 @@ func (k *K8sBackend) Namespace() string {
 	return k.namespace
 }
 
+// RestConfig returns the Kubernetes REST config for StreamExec callers.
+func (k *K8sBackend) RestConfig() *rest.Config {
+	return k.restConfig
+}
+
+// NFSFlush returns whether NFS cache flush is enabled.
+func (k *K8sBackend) NFSFlush() bool {
+	return k.nfsFlush
+}
+
 func (k *K8sBackend) Health(ctx context.Context) error {
 	_, err := k.clientset.CoreV1().Namespaces().Get(ctx, k.namespace, metav1.GetOptions{})
 	if err != nil {

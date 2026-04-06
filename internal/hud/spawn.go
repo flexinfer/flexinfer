@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/crb2nu/loom/internal/devbox/backend"
 	"github.com/crb2nu/loom/internal/devbox/detect"
@@ -68,6 +71,19 @@ type SpawnOrchestrator struct {
 	workspaceRoot string
 	// projects lists available project names for the spawn picker.
 	projects []string
+
+	// telemetry holds live SpawnTelemetryAccumulators for running spawns.
+	// map[spawnID]*bridge.SpawnTelemetryAccumulator
+	telemetry sync.Map
+}
+
+// streamExecCapable is satisfied by *backend.K8sBackend. It provides the
+// low-level K8s client/config needed by backend.StreamExec.
+type streamExecCapable interface {
+	Clientset() kubernetes.Interface
+	RestConfig() *rest.Config
+	Namespace() string
+	NFSFlush() bool
 }
 
 // SpawnOrchestratorConfig holds configuration for the spawn orchestrator.
@@ -216,6 +232,33 @@ func (o *SpawnOrchestrator) Spawn(ctx context.Context, req SpawnRequest) (string
 	return spawnID, nil
 }
 
+// newSpawnParser creates the appropriate JSONL parser for the given agent type.
+// Returns nil for agent types that don't support structured telemetry.
+func newSpawnParser(agentType string, sink SpawnEventSink, agentID string, broadcast SpawnEventBroadcaster, logger *slog.Logger) SpawnLineParser {
+	switch agentType {
+	case "claude-code":
+		return NewClaudeJSONLParser(sink, agentID, broadcast, logger)
+	case "codex":
+		return NewCodexJSONLParser(sink, agentID, broadcast, logger)
+	default:
+		return nil
+	}
+}
+
+// broadcastTelemetryEvent broadcasts a telemetry event via SSE.
+func (o *SpawnOrchestrator) broadcastTelemetryEvent(eventType string, agentID string, data any) {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	o.sseHub.Broadcast(bridge.SSEEvent{
+		ID:        fmt.Sprintf("%s-%s-%d", eventType, agentID, time.Now().UnixMilli()),
+		Type:      eventType,
+		Timestamp: time.Now(),
+		Data:      payload,
+	})
+}
+
 // runSpawn executes the full spawn lifecycle in a background goroutine.
 func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	ctx, span := o.tracer.Start(context.Background(), "agent.spawn",
@@ -321,16 +364,46 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	heartbeatCtx, heartbeatCancel := context.WithCancel(ctx)
 	go o.runHeartbeatLoop(heartbeatCtx, state)
 
-	// Step 6: Execute agent CLI (blocking until agent exits or timeout).
+	// Step 6: Execute agent CLI with real-time JSONL telemetry parsing.
 	o.logger.Info("executing agent", "spawn_id", spawnID, "agent_type", req.AgentType, "pod", startResult.ContainerID)
 	_, execSpan := o.tracer.Start(ctx, "agent.spawn.agent_exec")
 	agentCmd := buildAgentCommand(req.AgentType, req.TaskDescription, state.AgentID)
-	execResult, execErr := o.backend.Exec(ctx, backend.ExecOpts{
-		ContainerID: startResult.ContainerID,
-		Command:     agentCmd,
-		WorkDir:     "/workspace/" + req.Project,
-		TimeoutSec:  req.TimeoutMinutes * 60,
+
+	// Create telemetry accumulator and JSONL parser for real-time parsing.
+	acc := bridge.NewSpawnTelemetryAccumulator()
+	o.telemetry.Store(spawnID, acc)
+
+	broadcaster := SpawnEventBroadcaster(func(eventType string, agentID string, data any) {
+		o.broadcastTelemetryEvent(eventType, agentID, data)
 	})
+	parser := newSpawnParser(req.AgentType, acc, state.AgentID, broadcaster, o.logger)
+
+	var execResult *backend.ExecResult
+	var execErr error
+
+	// Use streaming exec if backend supports it and we have a parser; fall back to buffered.
+	if sec, ok := o.backend.(streamExecCapable); ok && parser != nil {
+		execResult, execErr = backend.StreamExec(ctx,
+			sec.Clientset(), sec.RestConfig(), sec.Namespace(), sec.NFSFlush(),
+			backend.StreamExecOpts{
+				ContainerID: startResult.ContainerID,
+				Command:     agentCmd,
+				WorkDir:     "/workspace/" + req.Project,
+				TimeoutSec:  req.TimeoutMinutes * 60,
+				OnLine: func(line []byte) {
+					parser.HandleLine(line)
+				},
+			},
+		)
+	} else {
+		// Fallback: buffered exec (no real-time telemetry).
+		execResult, execErr = o.backend.Exec(ctx, backend.ExecOpts{
+			ContainerID: startResult.ContainerID,
+			Command:     agentCmd,
+			WorkDir:     "/workspace/" + req.Project,
+			TimeoutSec:  req.TimeoutMinutes * 60,
+		})
+	}
 	execSpan.End()
 	heartbeatCancel()
 
@@ -513,6 +586,13 @@ func (o *SpawnOrchestrator) StopSpawn(ctx context.Context, spawnID string) error
 
 // failSpawn marks a spawn as failed, cleans up the K8s pod, and broadcasts the event.
 func (o *SpawnOrchestrator) failSpawn(ctx context.Context, state *SpawnState, reason string) {
+	// Attach partial telemetry snapshot (valuable for debugging failures).
+	if accVal, ok := o.telemetry.LoadAndDelete(state.SpawnID); ok {
+		acc := accVal.(*bridge.SpawnTelemetryAccumulator)
+		snap := acc.Snapshot()
+		state.Telemetry = &snap
+	}
+
 	state.Status = SpawnStatusFailed
 	state.Error = reason
 	now := time.Now()
@@ -555,6 +635,13 @@ func (o *SpawnOrchestrator) failSpawn(ctx context.Context, state *SpawnState, re
 
 // completeSpawn marks a spawn as completed.
 func (o *SpawnOrchestrator) completeSpawn(ctx context.Context, state *SpawnState) {
+	// Attach final telemetry snapshot if available.
+	if accVal, ok := o.telemetry.LoadAndDelete(state.SpawnID); ok {
+		acc := accVal.(*bridge.SpawnTelemetryAccumulator)
+		snap := acc.Snapshot()
+		state.Telemetry = &snap
+	}
+
 	state.Status = SpawnStatusCompleted
 	now := time.Now()
 	state.EndedAt = &now
@@ -581,6 +668,23 @@ func (o *SpawnOrchestrator) completeSpawn(ctx context.Context, state *SpawnState
 			Summarize: &summarize,
 		})
 	}()
+}
+
+// GetSpawnTelemetry returns a snapshot of the current telemetry for a spawn.
+// For running spawns, it reads from the live accumulator. For completed/failed
+// spawns, telemetry is attached to the State directly.
+func (o *SpawnOrchestrator) GetSpawnTelemetry(spawnID string) (*bridge.SpawnTelemetry, bool) {
+	// Check live accumulator first (spawn still running).
+	if accVal, ok := o.telemetry.Load(spawnID); ok {
+		acc := accVal.(*bridge.SpawnTelemetryAccumulator)
+		snap := acc.Snapshot()
+		return &snap, true
+	}
+	// Fall back to completed state's attached telemetry.
+	if state, ok := o.ctrl.Get(spawnID); ok && state.Telemetry != nil {
+		return state.Telemetry, true
+	}
+	return nil, false
 }
 
 // ListSpawns returns all spawn states.

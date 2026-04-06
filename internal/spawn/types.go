@@ -4,7 +4,11 @@
 // truth instead of local JSON files.
 package spawn
 
-import "time"
+import (
+	"time"
+
+	"github.com/crb2nu/loom/internal/hud/bridge"
+)
 
 // Status tracks the lifecycle state of a spawned agent.
 type Status string
@@ -36,14 +40,15 @@ type Request struct {
 
 // State holds the state of a spawned agent.
 type State struct {
-	SpawnID   string     `json:"spawn_id"`
-	AgentID   string     `json:"agent_id"`
-	PodName   string     `json:"pod_name"`
-	Status    Status     `json:"status"`
-	Request   Request    `json:"request"`
-	StartedAt time.Time  `json:"started_at"`
-	EndedAt   *time.Time `json:"ended_at,omitempty"`
-	Error     string     `json:"error,omitempty"`
+	SpawnID   string                 `json:"spawn_id"`
+	AgentID   string                 `json:"agent_id"`
+	PodName   string                 `json:"pod_name"`
+	Status    Status                 `json:"status"`
+	Request   Request                `json:"request"`
+	StartedAt time.Time              `json:"started_at"`
+	EndedAt   *time.Time             `json:"ended_at,omitempty"`
+	Error     string                 `json:"error,omitempty"`
+	Telemetry *bridge.SpawnTelemetry `json:"telemetry,omitempty"`
 }
 
 // IsTerminal returns true if the status represents a terminal spawn state.
