@@ -230,6 +230,9 @@ func defaultGPTQModelPoliciesJSON() string {
 			RemapModelType:      "gemma4_text",
 			Architectures:       []string{"Gemma4ForCausalLM"},
 			Loader:              "gptqmodel",
+			PythonPackages: []string{
+				"git+https://github.com/huggingface/transformers.git@91b1ab1fdfa81a552644a92fbe3e8d88de40e167",
+			},
 			QuantizeConfigOverride: map[string]any{
 				"offload_to_disk": false,
 			},
