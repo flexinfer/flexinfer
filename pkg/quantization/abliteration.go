@@ -38,6 +38,7 @@ type abliterationModelPolicy struct {
 	TokenizerFixMistralRegex *bool    `json:"tokenizer_fix_mistral_regex,omitempty"`
 	SaveFormat               string   `json:"save_format,omitempty"`
 	SaveMaxShardSize         string   `json:"save_max_shard_size,omitempty"`
+	LoadAutoClass            string   `json:"load_auto_class,omitempty"`
 }
 
 // memoryRequestForLimitGB keeps large single-node jobs schedulable by requesting
@@ -372,6 +373,14 @@ func defaultAbliterationModelPoliciesJSON() string {
 			TokenizerFixMistralRegex: &trueVal,
 			SaveFormat:               "safetensors",
 			SaveMaxShardSize:         "1GB",
+		},
+		{
+			Name:                "gemma4-text",
+			MatchModelTypes:     []string{"gemma4", "gemma4_text"},
+			MatchPathSubstrings: []string{"gemma4", "gemma-4"},
+			SaveFormat:          "safetensors",
+			SaveMaxShardSize:    "1GB",
+			LoadAutoClass:       "AutoModelForConditionalGeneration",
 		},
 	}
 	data, err := json.Marshal(policies)

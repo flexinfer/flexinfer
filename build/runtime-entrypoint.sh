@@ -189,25 +189,16 @@ if [ "${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC:-}" = "turboquant" ]; then
     esac
 fi
 
-if [ "${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC:-}" = "turboquant" ]; then
-    echo "[entrypoint] TurboQuant requested via FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC=turboquant"
-    case "${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS:-planned}" in
-        plugin)
-            echo "[entrypoint] TurboQuant plugin is bundled in this image; vLLM CUSTOM attention can activate it per-model"
-            ;;
-        planned)
-            echo "[entrypoint] No vLLM KV-cache TurboQuant integration is bundled in this image yet; using the standard cache path"
-            ;;
-        *)
-            echo "[entrypoint] TurboQuant status=${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS}; continuing with configured runtime path"
-            ;;
-    esac
-fi
-
 case "$1" in
     flexinfer-runtime)
         shift
         exec flexinfer-runtime --gpu-vendor "${GPU_VENDOR}" --gpu-arch "${GPU_ARCH}" "$@"
+        ;;
+    --*)
+        # vLLM flags passed directly (e.g. --host 0.0.0.0 --port 8000 ...).
+        # The controller sets container args without a command prefix when
+        # using runtime images that have this entrypoint.
+        exec python3 -m vllm.entrypoints.openai.api_server "$@"
         ;;
     *)
         exec "$@"

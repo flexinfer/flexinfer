@@ -57,6 +57,17 @@ DEFAULT_MODEL_POLICIES = [
         "save_format": "safetensors",
         "save_max_shard_size": "1GB",
     },
+    {
+        "name": "gemma4-text",
+        "match_model_types": ["gemma4", "gemma4_text"],
+        "match_path_substrings": ["gemma4", "gemma-4"],
+        "save_format": "safetensors",
+        "save_max_shard_size": "1GB",
+        # Gemma4 top-level config is Gemma4ForConditionalGeneration (VLM).
+        # AutoModelForCausalLM cannot load model_type=gemma4; we need
+        # the conditional generation class, then navigate to language_model.
+        "load_auto_class": "AutoModelForConditionalGeneration",
+    },
 ]
 
 STAGE_ORDER = {
@@ -380,7 +391,9 @@ def materialize_state_dict_for_save(model):
 
 def model_uses_disk_offload(model):
     device_map = getattr(model, "hf_device_map", None)
-    if isinstance(device_map, dict) and any(str(value) == "disk" for value in device_map.values()):
+    if isinstance(device_map, dict) and any(
+        str(value) == "disk" for value in device_map.values()
+    ):
         return True
     try:
         for module in model.modules():
@@ -856,7 +869,19 @@ if device_map != "cpu":
     print(
         f"Using constrained max_memory: gpu={gpu_max_memory_gb}GiB cpu={cpu_max_memory_gb}GiB offload={offload_dir}"
     )
-model = AutoModelForCausalLM.from_pretrained(model_dir, **load_kwargs)
+
+# Use the auto class specified by model policy (e.g. AutoModelForConditionalGeneration
+# for VLMs like Gemma4 where AutoModelForCausalLM cannot load model_type=gemma4).
+load_auto_class_name = (active_policy or {}).get("load_auto_class", "")
+if load_auto_class_name == "AutoModelForConditionalGeneration":
+    from transformers import AutoModelForConditionalGeneration
+
+    print(
+        f"Using AutoModelForConditionalGeneration (policy: {active_policy.get('name', 'unnamed')})"
+    )
+    model = AutoModelForConditionalGeneration.from_pretrained(model_dir, **load_kwargs)
+else:
+    model = AutoModelForCausalLM.from_pretrained(model_dir, **load_kwargs)
 model.eval()
 print(f"Model loaded in {time.time() - load_start:.1f}s")
 
@@ -1160,6 +1185,14 @@ print(f"Activation capture mode: {activation_capture_mode}")
 # ── Identify decoder layers ───────────────────────────────────────────
 if hasattr(model, "model") and hasattr(model.model, "layers"):
     decoder_layers = model.model.layers
+elif (
+    hasattr(model, "language_model")
+    and hasattr(model.language_model, "model")
+    and hasattr(model.language_model.model, "layers")
+):
+    # Gemma4ForConditionalGeneration: language_model is Gemma4ForCausalLM,
+    # language_model.model is Gemma4TextModel, .layers is the decoder stack.
+    decoder_layers = model.language_model.model.layers
 elif hasattr(model, "model") and hasattr(model.model, "text_model"):
     decoder_layers = model.model.text_model.model.layers
 elif hasattr(model, "transformer") and hasattr(model.transformer, "h"):
@@ -1620,18 +1653,28 @@ else:
         "ABLITERATION_ABLITERATE_LM_HEAD", "true"
     ).lower() in ("true", "1", "yes")
 
-    if abliterate_lm_head and hasattr(model, "lm_head"):
+    # Resolve lm_head: direct attribute for CausalLM, nested for ConditionalGeneration.
+    lm_head_module = None
+    if hasattr(model, "lm_head"):
+        lm_head_module = model.lm_head
+    elif hasattr(model, "language_model") and hasattr(model.language_model, "lm_head"):
+        lm_head_module = model.language_model.lm_head
+
+    if abliterate_lm_head and lm_head_module is not None:
         mean_refusal = torch.stack([refusal_dirs[i] for i in layer_indices]).mean(0)
         mean_refusal = mean_refusal / mean_refusal.norm()
-        lm = model.lm_head
-        dev = lm.weight.device
+        dev = lm_head_module.weight.device
         d = mean_refusal.to(dev)
-        proj = lm.weight.data.float() @ d
-        lm.weight.data -= ablation_strength * torch.outer(proj, d).to(lm.weight.dtype)
+        proj = lm_head_module.weight.data.float() @ d
+        lm_head_module.weight.data -= ablation_strength * torch.outer(proj, d).to(
+            lm_head_module.weight.dtype
+        )
         del mean_refusal
         print("Abliterated lm_head")
     elif not abliterate_lm_head:
         print("Skipping lm_head abliteration (ABLITERATION_ABLITERATE_LM_HEAD=false)")
+    elif lm_head_module is None:
+        print("WARN: lm_head not found in model, skipping lm_head abliteration")
 
     write_checkpoint("layers_abliterated", layersModified=layers_modified)
     emit_snapshot("layers_abliterated", layers_modified=layers_modified)

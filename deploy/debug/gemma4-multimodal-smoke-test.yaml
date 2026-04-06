@@ -1,0 +1,221 @@
+# Gemma4 E4B multimodal smoke test.
+#
+# Validates that the gemma4-experimental runtime image correctly loads
+# the vision tower and can process image inputs via vLLM's multimodal
+# pipeline (Gemma4ForConditionalGeneration).
+#
+# Prerequisites:
+#   - GPU must be free (scale down other models or wait for idle)
+#   - Model weights available on llm-models-nfs PVC
+#
+# Usage:
+#   kubectl apply -f deploy/debug/gemma4-multimodal-smoke-test.yaml
+#   kubectl logs -f job/gemma4-multimodal-smoke -n flexinfer-system
+#   kubectl delete -f deploy/debug/gemma4-multimodal-smoke-test.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gemma4-multimodal-smoke
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+data:
+  test.py: |
+    #!/usr/bin/env python3
+    """Gemma4 E4B multimodal smoke test.
+
+    Loads the model with vLLM and sends a text+image prompt to verify
+    the vision tower loads and processes image inputs correctly.
+
+    NOTE: Must use if __name__ == '__main__' guard because vLLM V1
+    forces spawn multiprocessing (CUDA already initialized).
+    """
+    import os
+    import sys
+    import time
+    import json
+
+    def main():
+        print("=" * 70)
+        print("Gemma4 E4B Multimodal Smoke Test")
+        print("=" * 70)
+        sys.stdout.flush()
+
+        MODEL_DIR = os.environ.get("MODEL_DIR", "/models/google/gemma-4-E4B-it")
+        MAX_MODEL_LEN = int(os.environ.get("MAX_MODEL_LEN", "4096"))
+        GPU_MEM_UTIL = float(os.environ.get("GPU_MEM_UTIL", "0.90"))
+
+        # Suppress noisy env var warnings from vLLM
+        for var in ["VLLM_USE_TRITON_FLASH_ATTN"]:
+            os.environ.pop(var, None)
+
+        print(f"Model: {MODEL_DIR}")
+        print(f"Max model len: {MAX_MODEL_LEN}")
+        print(f"GPU memory utilization: {GPU_MEM_UTIL}")
+        sys.stdout.flush()
+
+        # Check model files exist
+        config_path = os.path.join(MODEL_DIR, "config.json")
+        if not os.path.isfile(config_path):
+            print(f"ERROR: config.json not found at {config_path}")
+            sys.exit(1)
+        with open(config_path) as f:
+            cfg = json.load(f)
+        print(f"Model type: {cfg.get('model_type', 'unknown')}")
+        print(f"Architectures: {cfg.get('architectures', [])}")
+        has_vision = "vision_config" in cfg
+        has_audio = "audio_config" in cfg
+        print(f"Vision config: {'yes' if has_vision else 'no'}")
+        print(f"Audio config: {'yes' if has_audio else 'no'}")
+        sys.stdout.flush()
+
+        print("\n--- Loading vLLM engine ---")
+        t0 = time.time()
+        from vllm import LLM, SamplingParams
+
+        llm = LLM(
+            model=MODEL_DIR,
+            trust_remote_code=True,
+            dtype="bfloat16",
+            max_model_len=MAX_MODEL_LEN,
+            gpu_memory_utilization=GPU_MEM_UTIL,
+            limit_mm_per_prompt={"image": 1},
+            enforce_eager=True,
+        )
+        t_load = time.time() - t0
+        print(f"Engine loaded in {t_load:.1f}s")
+        sys.stdout.flush()
+
+        # --- Test 1: Text-only chat ---
+        print("\n--- Test 1: Text-only chat ---")
+        text_messages = [
+            {"role": "user", "content": "What is the capital of France? Answer in one word."},
+        ]
+        t0 = time.time()
+        text_out = llm.chat(text_messages, SamplingParams(max_tokens=32, temperature=0.0))
+        t_text = time.time() - t0
+        text_response = text_out[0].outputs[0].text.strip()
+        print(f"Response: {text_response}")
+        print(f"Time: {t_text:.2f}s")
+        if "paris" in text_response.lower():
+            print("PASS: Text-only chat produces correct response")
+        else:
+            print("WARN: Text response may be incorrect")
+        sys.stdout.flush()
+
+        # --- Test 2: Image+text multimodal chat ---
+        print("\n--- Test 2: Image+text multimodal chat ---")
+
+        import base64
+        from io import BytesIO
+        try:
+            from PIL import Image
+            img = Image.new("RGB", (64, 64), color=(255, 0, 0))
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+            img_b64 = base64.b64encode(buf.getvalue()).decode()
+            data_url = f"data:image/png;base64,{img_b64}"
+            print("Created test image: 64x64 red square")
+        except ImportError:
+            print("ERROR: PIL not available, cannot create test image")
+            sys.exit(1)
+
+        vision_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                    {"type": "text", "text": "What color is this image? Answer in one word."},
+                ],
+            },
+        ]
+        t0 = time.time()
+        try:
+            vision_out = llm.chat(vision_messages, SamplingParams(max_tokens=32, temperature=0.0))
+            t_vision = time.time() - t0
+            vision_response = vision_out[0].outputs[0].text.strip()
+            print(f"Response: {vision_response}")
+            print(f"Time: {t_vision:.2f}s")
+            if "red" in vision_response.lower():
+                print("PASS: Vision chat correctly identifies image color")
+            else:
+                print("WARN: Vision response may be incorrect (expected 'red')")
+        except Exception as exc:
+            t_vision = time.time() - t0
+            print(f"FAIL: Vision chat failed after {t_vision:.2f}s: {exc}")
+            import traceback
+            traceback.print_exc()
+        sys.stdout.flush()
+
+        print("\n" + "=" * 70)
+        print("Smoke test complete")
+        print("=" * 70)
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gemma4-multimodal-smoke
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-7900xtx
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "dedicated"
+          operator: "Equal"
+          value: "gpu"
+          effect: "NoSchedule"
+      containers:
+        - name: smoke-test
+          image: registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-experimental
+          imagePullPolicy: Always
+          command: ["python3", "/scripts/test.py"]
+          env:
+            - name: MODEL_DIR
+              value: /models/google/gemma-4-E4B-it
+            - name: MAX_MODEL_LEN
+              value: "4096"
+            - name: GPU_MEM_UTIL
+              value: "0.90"
+            - name: VLLM_ATTENTION_BACKEND
+              value: TRITON_ATTN
+            - name: HF_HUB_OFFLINE
+              value: "1"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              cpu: "4"
+              memory: 24Gi
+              amd.com/gpu: "1"
+            limits:
+              cpu: "8"
+              memory: 32Gi
+              amd.com/gpu: "1"
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: llm-models-nfs
+        - name: scripts
+          configMap:
+            name: gemma4-multimodal-smoke

@@ -27,7 +27,7 @@ spec:
     priority: 200
   serverless:
     enabled: true
-    minReplicas: 1
+    minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 15m
   config:
@@ -56,13 +56,11 @@ spec:
       cpu: "8"
       memory: 24Gi
   serviceLabels:
-    - gemma4-e4b
     - gemma4-e4b-fast
   litellm:
     enabled: true
     servedModelName: gemma4-e4b-fast
     aliases:
-      - gemma4-e4b
       - gemma4-e4b-fast
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"

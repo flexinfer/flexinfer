@@ -240,6 +240,12 @@ func TestAbliterationEnv_Content(t *testing.T) {
 	if got := envMap["ABLITERATION_MODEL_POLICIES"]; !strings.Contains(got, "qwen3.5-save-safetensors") {
 		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want default qwen3.5 policy JSON", got)
 	}
+	if got := envMap["ABLITERATION_MODEL_POLICIES"]; !strings.Contains(got, "gemma4-text") {
+		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want default gemma4-text policy JSON", got)
+	}
+	if got := envMap["ABLITERATION_MODEL_POLICIES"]; !strings.Contains(got, "AutoModelForConditionalGeneration") {
+		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want gemma4 load_auto_class", got)
+	}
 }
 
 func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
