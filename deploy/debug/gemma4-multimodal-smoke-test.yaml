@@ -196,6 +196,8 @@ spec:
               value: TRITON_ATTN
             - name: HF_HUB_OFFLINE
               value: "1"
+            - name: HIP_VISIBLE_DEVICES
+              value: "0"
           volumeMounts:
             - name: models
               mountPath: /models
@@ -207,11 +209,11 @@ spec:
             requests:
               cpu: "4"
               memory: 24Gi
-              amd.com/gpu: "1"
+              amd.com/gpu: "2"
             limits:
               cpu: "8"
               memory: 32Gi
-              amd.com/gpu: "1"
+              amd.com/gpu: "2"
       volumes:
         - name: models
           persistentVolumeClaim:
