@@ -33,7 +33,9 @@ spec:
   abliteration:
     numSamples: 256
     targetLayers: "auto"
-    weightMatrices: '["o_proj", "down_proj"]'
+    weightMatrices:
+      - o_proj
+      - down_proj
     useGPU: true
     maxMemoryGB: 96
     timeoutSeconds: 14400
