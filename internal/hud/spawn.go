@@ -422,8 +422,27 @@ func (o *SpawnOrchestrator) injectAgentConfig(ctx context.Context, containerID, 
 			return fmt.Errorf("write claude settings: %w", err)
 		}
 	case "codex":
-		// Codex reads ~/.codex/config.toml for agent approval mode.
-		config := "[agent]\napproval = \"auto-edit\"\n"
+		// Full Codex config with sandbox and multi-agent features.
+		//
+		// TODO(spawn): add MCP proxy section once the loom binary is available
+		// in spawned pods. Currently agentCLIInstallLines only installs the
+		// agent CLI via npm; adding a `COPY --from=loom-builder` stage or an
+		// npm-published loom package would enable:
+		//   [mcp_servers.loom]
+		//   command = "loom"
+		//   args = ["proxy", "--stdio"]
+		config := `[agent]
+approval = "auto-edit"
+
+[sandbox]
+mode = "workspace-write"
+network_access = true
+
+[features]
+multi_agent = true
+collaboration_modes = true
+unified_exec = true
+`
 		if err := writeCmd("/root/.codex", "config.toml", config); err != nil {
 			return fmt.Errorf("write codex config: %w", err)
 		}
@@ -441,9 +460,17 @@ func (o *SpawnOrchestrator) injectAgentConfig(ctx context.Context, containerID, 
 func buildAgentCommand(agentType, task, agentID string) string {
 	switch agentType {
 	case "claude-code":
-		return fmt.Sprintf(`claude -p %q --dangerously-skip-permissions --output-format json --max-turns 50`, task)
+		// stream-json emits one JSONL event per line for real-time telemetry parsing.
+		return fmt.Sprintf(`claude -p %q --dangerously-skip-permissions --output-format stream-json --max-turns 50`, task)
 	case "codex":
-		return fmt.Sprintf(`codex exec --full-auto --json %q`, task)
+		// Wrap with EXIT trap so loom session-end fires even without a native hook.
+		// The trap is best-effort: if the loom binary is not in the pod PATH,
+		// stderr is suppressed via 2>/dev/null and the HUD-side completeSpawn /
+		// failSpawn will still call EndSession as a fallback.
+		return fmt.Sprintf(
+			`trap 'loom agent session-end --agent-id %q --summarize --summary-async --quiet 2>/dev/null' EXIT; codex exec --full-auto --json %q`,
+			agentID, task,
+		)
 	case "gemini":
 		return fmt.Sprintf(`gemini -p %q --yolo`, task)
 	default:

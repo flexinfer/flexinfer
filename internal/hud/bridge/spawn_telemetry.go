@@ -69,33 +69,22 @@ type SpawnTelemetryAccumulator struct {
 	mu        sync.Mutex
 	data      SpawnTelemetry
 	toolStart map[string]time.Time // tool_use_id -> start time
-	seenMsgID map[string]bool      // dedup parallel tool calls sharing same message ID
 }
 
 // NewSpawnTelemetryAccumulator creates a new accumulator ready for use.
 func NewSpawnTelemetryAccumulator() *SpawnTelemetryAccumulator {
 	return &SpawnTelemetryAccumulator{
 		toolStart: make(map[string]time.Time),
-		seenMsgID: make(map[string]bool),
 		data: SpawnTelemetry{
 			ModelUsage: make(map[string]ModelUse),
 		},
 	}
 }
 
-// AddTokens accumulates token counts. The msgID parameter deduplicates parallel
-// tool calls that share the same Claude message ID; pass an empty string to skip
-// deduplication.
-func (a *SpawnTelemetryAccumulator) AddTokens(input, output, cacheCreate, cacheRead int, msgID string) {
+// AddTokens accumulates token counts for the spawn session.
+func (a *SpawnTelemetryAccumulator) AddTokens(input, output, cacheCreate, cacheRead int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	if msgID != "" {
-		if a.seenMsgID[msgID] {
-			return
-		}
-		a.seenMsgID[msgID] = true
-	}
 
 	a.data.TokenUsage.InputTokens += input
 	a.data.TokenUsage.OutputTokens += output
@@ -177,14 +166,20 @@ func (a *SpawnTelemetryAccumulator) SetExternalSessionID(id string) {
 	a.data.ExternalSessionID = id
 }
 
-// SetResult sets final cost, turn count, stop reason, and per-model usage.
-func (a *SpawnTelemetryAccumulator) SetResult(costUSD float64, turns int, stopReason string, modelUsage map[string]ModelUse) {
+// SetResult sets final cost, turn count, and stop reason.
+func (a *SpawnTelemetryAccumulator) SetResult(costUSD float64, turns int, stopReason string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	a.data.TotalCostUSD = costUSD
 	a.data.TurnCount = turns
 	a.data.StopReason = stopReason
+}
+
+// SetModelUsage sets per-model cost and token breakdown (Claude-specific).
+func (a *SpawnTelemetryAccumulator) SetModelUsage(modelUsage map[string]ModelUse) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
 	if modelUsage != nil {
 		a.data.ModelUsage = make(map[string]ModelUse, len(modelUsage))

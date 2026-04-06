@@ -146,7 +146,7 @@ func TestSpawnAccumulator_ConcurrentSafety(t *testing.T) {
 		wg.Add(4)
 		go func(n int) {
 			defer wg.Done()
-			acc.AddTokens(10, 5, 2, 1, "")
+			acc.AddTokens(10, 5, 2, 1)
 		}(i)
 		go func(n int) {
 			defer wg.Done()
@@ -173,34 +173,25 @@ func TestSpawnAccumulator_ConcurrentSafety(t *testing.T) {
 	}
 }
 
-// --- Token deduplication by message ID ---
+// --- Token accumulation ---
 
-func TestSpawnAccumulator_TokenDeduplication(t *testing.T) {
+func TestSpawnAccumulator_TokenAccumulation(t *testing.T) {
 	acc := NewSpawnTelemetryAccumulator()
 
-	// First call with msg-1 should be counted
-	acc.AddTokens(100, 50, 10, 5, "msg-1")
-	// Second call with same msg-1 should be deduplicated
-	acc.AddTokens(100, 50, 10, 5, "msg-1")
-	// Different msg-2 should be counted
-	acc.AddTokens(200, 100, 20, 10, "msg-2")
-	// Empty msgID should always be counted
-	acc.AddTokens(30, 15, 3, 1, "")
+	acc.AddTokens(100, 50, 10, 5)
+	acc.AddTokens(200, 100, 20, 10)
+	acc.AddTokens(30, 15, 3, 1)
 
 	snap := acc.Snapshot()
-	// 100 + 200 + 30 = 330
 	if snap.TokenUsage.InputTokens != 330 {
 		t.Errorf("InputTokens: got %d, want 330", snap.TokenUsage.InputTokens)
 	}
-	// 50 + 100 + 15 = 165
 	if snap.TokenUsage.OutputTokens != 165 {
 		t.Errorf("OutputTokens: got %d, want 165", snap.TokenUsage.OutputTokens)
 	}
-	// 10 + 20 + 3 = 33
 	if snap.TokenUsage.CacheCreationTokens != 33 {
 		t.Errorf("CacheCreationTokens: got %d, want 33", snap.TokenUsage.CacheCreationTokens)
 	}
-	// 5 + 10 + 1 = 16
 	if snap.TokenUsage.CacheReadTokens != 16 {
 		t.Errorf("CacheReadTokens: got %d, want 16", snap.TokenUsage.CacheReadTokens)
 	}
@@ -294,12 +285,13 @@ func TestSpawnAccumulator_FileChangesCap(t *testing.T) {
 func TestSpawnAccumulator_SnapshotIndependence(t *testing.T) {
 	acc := NewSpawnTelemetryAccumulator()
 
-	acc.AddTokens(100, 50, 10, 5, "")
+	acc.AddTokens(100, 50, 10, 5)
 	acc.StartToolCall("t1", "Bash", "")
 	acc.AddFileChange("main.go", "create")
 	acc.AddError("execution", "test error")
 	acc.SetExternalSessionID("session-1")
-	acc.SetResult(0.05, 3, "end_turn", map[string]ModelUse{
+	acc.SetResult(0.05, 3, "end_turn")
+	acc.SetModelUsage(map[string]ModelUse{
 		"claude-opus-4": {CostUSD: 0.05, InputTokens: 100, OutputTokens: 50},
 	})
 	acc.SetLastMessage("First message")
@@ -308,12 +300,12 @@ func TestSpawnAccumulator_SnapshotIndependence(t *testing.T) {
 	snap := acc.Snapshot()
 
 	// Modify the original accumulator after snapshot
-	acc.AddTokens(200, 100, 20, 10, "")
+	acc.AddTokens(200, 100, 20, 10)
 	acc.StartToolCall("t2", "Read", "")
 	acc.AddFileChange("util.go", "modify")
 	acc.AddError("rate_limit", "429")
 	acc.SetExternalSessionID("session-2")
-	acc.SetResult(0.10, 6, "max_turns", nil)
+	acc.SetResult(0.10, 6, "max_turns")
 	acc.SetLastMessage("Second message")
 
 	// Snapshot should be unchanged
@@ -362,7 +354,8 @@ func TestSpawnAccumulator_SnapshotIndependence(t *testing.T) {
 
 func TestSpawnAccumulator_SnapshotMapIndependence(t *testing.T) {
 	acc := NewSpawnTelemetryAccumulator()
-	acc.SetResult(0.01, 1, "done", map[string]ModelUse{
+	acc.SetResult(0.01, 1, "done")
+	acc.SetModelUsage(map[string]ModelUse{
 		"model-a": {CostUSD: 0.01, InputTokens: 10, OutputTokens: 5},
 	})
 
