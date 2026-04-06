@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -100,6 +101,8 @@ func (k *K8sBackend) SyncWorkspace(ctx context.Context, podName string, dirs []S
 
 // pipeTarIntoPod streams a tar.gz payload into a pod and extracts it.
 func (k *K8sBackend) pipeTarIntoPod(ctx context.Context, podName string, payload []byte) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
 	req := k.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(podName).

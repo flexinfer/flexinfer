@@ -389,6 +389,138 @@ func TestReconcileState(t *testing.T) {
 	}
 }
 
+// --- reapIdle tests ---
+
+func TestReapIdle_SkipsActiveExecs(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store, _ := newTestStore(filepath.Join(t.TempDir(), "cache"))
+
+	fb := &fakeBackend{statuses: map[string]*fakeStatus{}}
+
+	// Set up an idle entry
+	old := time.Now().Add(-10 * time.Minute)
+	_ = store.Set("proj-a", &stateEntry{
+		Status:   "running",
+		LastUsed: old,
+	})
+
+	m := &manager{
+		cfg:     managerConfig{backendType: "docker", idleTimeout: 5 * time.Minute},
+		backend: fb,
+		store:   store,
+		logger:  logger,
+	}
+
+	// Mark active execs — reap should skip
+	m.incActiveExecs("proj-a")
+	m.reapIdle(context.Background())
+
+	if e := store.Get("proj-a"); e == nil || e.Status != "running" {
+		t.Error("entry with active execs should stay running")
+	}
+}
+
+func TestReapIdle_DockerPauseFallsBackToStop(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store, _ := newTestStore(filepath.Join(t.TempDir(), "cache"))
+
+	fb := &fakeBackend{statuses: map[string]*fakeStatus{}}
+
+	old := time.Now().Add(-10 * time.Minute)
+	_ = store.Set("proj-a", &stateEntry{
+		Status:   "running",
+		LastUsed: old,
+	})
+
+	m := &manager{
+		cfg:     managerConfig{backendType: "docker", idleTimeout: 5 * time.Minute},
+		backend: fb,
+		store:   store,
+		logger:  logger,
+	}
+
+	m.reapIdle(context.Background())
+
+	// fakeBackend.Pause returns ErrNotSupported, so it should fall back to Stop
+	e := store.Get("proj-a")
+	if e == nil || e.Status != "stopped" {
+		t.Errorf("expected stopped after pause fallback, got: %v", e)
+	}
+}
+
+func TestReapIdle_K8sKeepsWarmThenHardReaps(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store, _ := newTestStore(filepath.Join(t.TempDir(), "cache"))
+
+	fb := &fakeBackend{statuses: map[string]*fakeStatus{}}
+
+	idleTimeout := 5 * time.Minute
+
+	// Pod idle for 1.5× timeout — should be kept warm (under 2×)
+	warmIdle := time.Now().Add(-time.Duration(float64(idleTimeout) * 1.5))
+	_ = store.Set("warm-pod", &stateEntry{
+		Status:   "running",
+		LastUsed: warmIdle,
+	})
+
+	// Pod idle for 3× timeout — should be hard-reaped
+	staleIdle := time.Now().Add(-3 * idleTimeout)
+	_ = store.Set("stale-pod", &stateEntry{
+		Status:   "running",
+		LastUsed: staleIdle,
+	})
+
+	m := &manager{
+		cfg:     managerConfig{backendType: "k8s", idleTimeout: idleTimeout},
+		backend: fb,
+		store:   store,
+		logger:  logger,
+	}
+
+	m.reapIdle(context.Background())
+
+	// warm-pod: should still be running (kept warm)
+	if e := store.Get("warm-pod"); e == nil || e.Status != "running" {
+		t.Errorf("warm pod should stay running, got: %v", e)
+	}
+
+	// stale-pod: should be stopped (hard-reaped)
+	if e := store.Get("stale-pod"); e == nil || e.Status != "stopped" {
+		t.Errorf("stale pod should be stopped, got: %v", e)
+	}
+}
+
+func TestReapIdle_SkipsWarmPoolProjects(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store, _ := newTestStore(filepath.Join(t.TempDir(), "cache"))
+
+	fb := &fakeBackend{statuses: map[string]*fakeStatus{}}
+
+	old := time.Now().Add(-1 * time.Hour)
+	_ = store.Set("warm-proj", &stateEntry{
+		Status:   "running",
+		LastUsed: old,
+	})
+
+	m := &manager{
+		cfg: managerConfig{
+			backendType:  "docker",
+			idleTimeout:  5 * time.Minute,
+			warmProjects: []string{"warm-proj"},
+		},
+		backend: fb,
+		store:   store,
+		logger:  logger,
+	}
+
+	m.reapIdle(context.Background())
+
+	// warm-proj has no agent ID and is in warmProjects — should be skipped
+	if e := store.Get("warm-proj"); e == nil || e.Status != "running" {
+		t.Errorf("warm pool project should stay running, got: %v", e)
+	}
+}
+
 func TestLangNames(t *testing.T) {
 	t.Parallel()
 

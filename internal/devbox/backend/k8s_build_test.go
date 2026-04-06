@@ -57,11 +57,31 @@ func TestCleanupBuilds_DeletesOldCompletedPods(t *testing.T) {
 			},
 			Status: corev1.PodStatus{Phase: corev1.PodRunning},
 		},
-		// Associated ConfigMap for old-succeeded
+		// Associated ConfigMap for old-succeeded (has build label)
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "buildah-dockerfile-old-succeeded",
-				Namespace: "devbox",
+				Name:              "buildah-dockerfile-old-succeeded",
+				Namespace:         "devbox",
+				Labels:            map[string]string{"devbox/build": "buildah"},
+				CreationTimestamp: oldTime,
+			},
+		},
+		// Orphaned ConfigMap — pod already deleted, should still be cleaned by label
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "buildah-dockerfile-orphaned",
+				Namespace:         "devbox",
+				Labels:            map[string]string{"devbox/build": "buildah"},
+				CreationTimestamp: oldTime,
+			},
+		},
+		// Recent ConfigMap — should NOT be deleted
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "buildah-dockerfile-recent",
+				Namespace:         "devbox",
+				Labels:            map[string]string{"devbox/build": "buildah"},
+				CreationTimestamp: recentTime,
 			},
 		},
 	)
@@ -96,6 +116,22 @@ func TestCleanupBuilds_DeletesOldCompletedPods(t *testing.T) {
 	}
 	if !remaining["buildah-build-running"] {
 		t.Error("running pod should NOT have been deleted")
+	}
+
+	// Verify ConfigMap cleanup (label-based second pass)
+	cms, _ := clientset.CoreV1().ConfigMaps("devbox").List(context.Background(), metav1.ListOptions{})
+	remainingCMs := make(map[string]bool)
+	for _, cm := range cms.Items {
+		remainingCMs[cm.Name] = true
+	}
+	if remainingCMs["buildah-dockerfile-old-succeeded"] {
+		t.Error("old ConfigMap should have been deleted")
+	}
+	if remainingCMs["buildah-dockerfile-orphaned"] {
+		t.Error("orphaned ConfigMap should have been deleted by label scan")
+	}
+	if !remainingCMs["buildah-dockerfile-recent"] {
+		t.Error("recent ConfigMap should NOT have been deleted")
 	}
 }
 
