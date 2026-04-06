@@ -45,6 +45,14 @@ func (d *MobileDomain) handleMobileDashboard(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
+	// Build spawn summary for the dashboard.
+	activeSpawns := 0
+	for _, s := range fleetSnap.Spawns {
+		if s.Status == "running" || s.Status == "building" {
+			activeSpawns++
+		}
+	}
+
 	d.writeMobileJSON(w, http.StatusOK, map[string]any{
 		"daemon_running":  fleetSnap.DaemonRunning,
 		"server_count":    fleetSnap.ServerCount,
@@ -67,6 +75,11 @@ func (d *MobileDomain) handleMobileDashboard(w http.ResponseWriter, r *http.Requ
 			"active_blockers":  limitMobileSlice(filterMobileBlockers(fleetSnap.Coordination.Blockers, true), 6),
 			"top_relations":    limitMobileSlice(filterMobileRelations(fleetSnap.Coordination.Relations, ""), 6),
 			"attention_lanes":  buildMobileAttentionLanes(fleetSnap.Coordination),
+		},
+		"spawns": map[string]any{
+			"active": activeSpawns,
+			"total":  len(fleetSnap.Spawns),
+			"items":  fleetSnap.Spawns,
 		},
 		"recent_timeline": recentTimeline,
 		"last_heartbeat":  lastHeartbeat,

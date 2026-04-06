@@ -80,6 +80,16 @@ type SpawnInfo struct {
 	StartedAt string `json:"started_at"`
 	EndedAt   string `json:"ended_at,omitempty"`
 	Error     string `json:"error,omitempty"`
+
+	// Telemetry summary (populated from SpawnTelemetry when available).
+	TurnCount       int     `json:"turn_count"`
+	TotalCostUSD    float64 `json:"total_cost_usd"`
+	InputTokens     int     `json:"input_tokens"`
+	OutputTokens    int     `json:"output_tokens"`
+	ToolCallCount   int     `json:"tool_call_count"`
+	FileChangeCount int     `json:"file_change_count"`
+	StopReason      string  `json:"stop_reason,omitempty"`
+	LastMessage     string  `json:"last_message,omitempty"`
 }
 
 // SpawnLister provides active spawn states for fleet aggregation.

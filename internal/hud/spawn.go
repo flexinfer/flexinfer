@@ -618,6 +618,11 @@ func (o *SpawnOrchestrator) failSpawn(ctx context.Context, state *SpawnState, re
 		)
 	}
 
+	// Record partial spawn telemetry metrics (still valuable for debugging failures).
+	if o.metrics != nil && state.Telemetry != nil {
+		o.recordSpawnTelemetryMetrics(ctx, state)
+	}
+
 	o.logger.Error("spawn failed", "spawn_id", state.SpawnID, "reason", reason)
 	o.broadcastSpawnEvent("agent.spawn.failed", state)
 
@@ -657,6 +662,11 @@ func (o *SpawnOrchestrator) completeSpawn(ctx context.Context, state *SpawnState
 		)
 	}
 
+	// Record spawn telemetry metrics.
+	if o.metrics != nil && state.Telemetry != nil {
+		o.recordSpawnTelemetryMetrics(ctx, state)
+	}
+
 	o.logger.Info("spawn completed", "spawn_id", state.SpawnID)
 	o.broadcastSpawnEvent("agent.spawn.completed", state)
 
@@ -668,6 +678,33 @@ func (o *SpawnOrchestrator) completeSpawn(ctx context.Context, state *SpawnState
 			Summarize: &summarize,
 		})
 	}()
+}
+
+// recordSpawnTelemetryMetrics records OTel metrics from the telemetry snapshot
+// attached to a terminal spawn state. Called from completeSpawn and failSpawn.
+func (o *SpawnOrchestrator) recordSpawnTelemetryMetrics(ctx context.Context, state *SpawnState) {
+	tel := state.Telemetry
+	attrs := metric.WithAttributes(attribute.String("agent_type", state.Request.AgentType))
+
+	o.metrics.SpawnTokensTotal.Add(ctx, int64(tel.TokenUsage.InputTokens),
+		attrs, metric.WithAttributes(attribute.String("direction", "input")))
+	o.metrics.SpawnTokensTotal.Add(ctx, int64(tel.TokenUsage.OutputTokens),
+		attrs, metric.WithAttributes(attribute.String("direction", "output")))
+
+	if tel.TotalCostUSD > 0 {
+		o.metrics.SpawnCostTotal.Add(ctx, tel.TotalCostUSD, attrs)
+	}
+	o.metrics.SpawnTurnsTotal.Add(ctx, int64(tel.TurnCount), attrs)
+	o.metrics.SpawnToolCallsTotal.Add(ctx, int64(len(tel.ToolCalls)), attrs)
+
+	for _, fc := range tel.FileChanges {
+		o.metrics.SpawnFileChangesTotal.Add(ctx, 1,
+			attrs, metric.WithAttributes(attribute.String("kind", fc.Kind)))
+	}
+	for _, e := range tel.Errors {
+		o.metrics.SpawnErrorsTotal.Add(ctx, 1,
+			attrs, metric.WithAttributes(attribute.String("error_type", e.Type)))
+	}
 }
 
 // GetSpawnTelemetry returns a snapshot of the current telemetry for a spawn.
