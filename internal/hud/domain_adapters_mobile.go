@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/domain/mobile"
 	domainspawn "github.com/crb2nu/loom/internal/hud/domain/spawn"
 	domainwebhook "github.com/crb2nu/loom/internal/hud/domain/webhook"
@@ -73,6 +74,10 @@ func (sa *mobileSpawnerAdapter) StopSpawn(ctx context.Context, spawnID string) e
 
 func (sa *mobileSpawnerAdapter) Projects() []string {
 	return sa.s.Projects()
+}
+
+func (sa *mobileSpawnerAdapter) GetSpawnTelemetry(spawnID string) (*bridge.SpawnTelemetry, bool) {
+	return sa.s.GetSpawnTelemetry(spawnID)
 }
 
 // --- Spawn domain Deps adapter ---

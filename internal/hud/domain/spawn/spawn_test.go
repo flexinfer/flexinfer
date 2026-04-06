@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crb2nu/loom/internal/hud/bridge"
 	pkgspawn "github.com/crb2nu/loom/internal/spawn"
 )
 
@@ -42,6 +43,10 @@ func (m *mockSpawner) ListSpawns() []*pkgspawn.State { return m.spawns }
 func (m *mockSpawner) StopSpawn(_ context.Context, _ string) error { return nil }
 
 func (m *mockSpawner) Projects() []string { return m.projects }
+
+func (m *mockSpawner) GetSpawnTelemetry(_ string) (*bridge.SpawnTelemetry, bool) {
+	return nil, false
+}
 
 // mockDeps satisfies Deps for testing.
 type mockDeps struct {

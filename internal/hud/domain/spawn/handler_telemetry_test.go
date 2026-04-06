@@ -11,7 +11,7 @@ import (
 	pkgspawn "github.com/crb2nu/loom/internal/spawn"
 )
 
-// mockTelemetrySpawner implements SpawnerOps + telemetryProvider.
+// mockTelemetrySpawner implements SpawnerOps with telemetry support.
 type mockTelemetrySpawner struct {
 	spawns    map[string]*pkgspawn.State
 	telemetry map[string]*bridge.SpawnTelemetry
@@ -37,8 +37,7 @@ func (m *mockTelemetrySpawner) GetSpawnTelemetry(id string) (*bridge.SpawnTeleme
 	return t, ok
 }
 
-// mockTelemetryDeps satisfies Deps. Its Spawner() returns a mockTelemetrySpawner
-// which implements both SpawnerOps and telemetryProvider.
+// mockTelemetryDeps satisfies Deps. Its Spawner() returns a mockTelemetrySpawner.
 type mockTelemetryDeps struct {
 	spawner SpawnerOps
 	authed  bool
@@ -215,30 +214,6 @@ func TestHandleSpawnTelemetry_NoSpawner(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d; body: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestHandleSpawnTelemetry_NoTelemetrySupport(t *testing.T) {
-	// Use the basic mockSpawner from spawn_test.go which does NOT implement
-	// telemetryProvider. The handler should return 501.
-	spawner := &mockSpawner{
-		spawns: []*pkgspawn.State{
-			{SpawnID: "spawn-1", AgentID: "agent-1", Status: "running"},
-		},
-	}
-	deps := &mockTelemetryDeps{spawner: spawner, authed: true}
-	d := New(deps)
-
-	mux := http.NewServeMux()
-	mw := func(next http.HandlerFunc) http.HandlerFunc { return next }
-	d.RegisterRoutes(mux, mw)
-
-	req := httptest.NewRequest("GET", "/api/agent/spawn/spawn-1/telemetry", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("expected 501, got %d; body: %s", rec.Code, rec.Body.String())
 	}
 }
 

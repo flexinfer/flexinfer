@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/spawn"
 )
 
@@ -226,8 +225,7 @@ func (d *MobileDomain) handleMobileSpawnConfig(w http.ResponseWriter, r *http.Re
 
 // handleMobileSpawnTelemetry handles GET /api/mobile/v1/agent/spawn/{spawn_id}/telemetry.
 // It returns accumulated SDK telemetry (token usage, cost, tool calls, etc.)
-// for the given spawn. Uses type assertion to check if the spawner supports
-// telemetry retrieval.
+// for the given spawn.
 func (d *MobileDomain) handleMobileSpawnTelemetry(w http.ResponseWriter, r *http.Request) {
 	if !d.requireMobileScope(w, r, ScopeRead) {
 		return
@@ -245,19 +243,7 @@ func (d *MobileDomain) handleMobileSpawnTelemetry(w http.ResponseWriter, r *http
 		return
 	}
 
-	// mobileTelemetryProvider is a local interface for type assertion.
-	// It avoids modifying the SpawnerOps interface (done by a parallel slice).
-	type mobileTelemetryProvider interface {
-		GetSpawnTelemetry(spawnID string) (*bridge.SpawnTelemetry, bool)
-	}
-
-	tp, ok := spawner.(mobileTelemetryProvider)
-	if !ok {
-		d.writeMobileError(w, http.StatusNotImplemented, "not_implemented", "telemetry not available")
-		return
-	}
-
-	tel, found := tp.GetSpawnTelemetry(spawnID)
+	tel, found := spawner.GetSpawnTelemetry(spawnID)
 	if !found {
 		if _, exists := spawner.GetSpawn(spawnID); !exists {
 			d.writeMobileError(w, http.StatusNotFound, "not_found", "spawn not found")

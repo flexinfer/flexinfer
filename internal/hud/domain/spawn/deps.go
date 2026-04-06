@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/crb2nu/loom/internal/hud/bridge"
 	pkgspawn "github.com/crb2nu/loom/internal/spawn"
 )
 
@@ -26,4 +27,5 @@ type SpawnerOps interface {
 	ListSpawns() []*pkgspawn.State
 	StopSpawn(ctx context.Context, spawnID string) error
 	Projects() []string
+	GetSpawnTelemetry(spawnID string) (*bridge.SpawnTelemetry, bool)
 }
