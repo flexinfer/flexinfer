@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/spawn"
 )
 
@@ -220,5 +221,58 @@ func (d *MobileDomain) handleMobileSpawnConfig(w http.ResponseWriter, r *http.Re
 			CPUs:           2.0,
 			TimeoutMinutes: 60,
 		},
+	})
+}
+
+// handleMobileSpawnTelemetry handles GET /api/mobile/v1/agent/spawn/{spawn_id}/telemetry.
+// It returns accumulated SDK telemetry (token usage, cost, tool calls, etc.)
+// for the given spawn. Uses type assertion to check if the spawner supports
+// telemetry retrieval.
+func (d *MobileDomain) handleMobileSpawnTelemetry(w http.ResponseWriter, r *http.Request) {
+	if !d.requireMobileScope(w, r, ScopeRead) {
+		return
+	}
+
+	spawnID := r.PathValue("spawn_id")
+	if spawnID == "" {
+		d.writeMobileError(w, http.StatusBadRequest, "missing_param", "spawn_id required")
+		return
+	}
+
+	spawner := d.deps.Spawner()
+	if spawner == nil {
+		d.writeMobileError(w, http.StatusServiceUnavailable, "spawn_unavailable", "spawn orchestrator not configured")
+		return
+	}
+
+	// mobileTelemetryProvider is a local interface for type assertion.
+	// It avoids modifying the SpawnerOps interface (done by a parallel slice).
+	type mobileTelemetryProvider interface {
+		GetSpawnTelemetry(spawnID string) (*bridge.SpawnTelemetry, bool)
+	}
+
+	tp, ok := spawner.(mobileTelemetryProvider)
+	if !ok {
+		d.writeMobileError(w, http.StatusNotImplemented, "not_implemented", "telemetry not available")
+		return
+	}
+
+	tel, found := tp.GetSpawnTelemetry(spawnID)
+	if !found {
+		if _, exists := spawner.GetSpawn(spawnID); !exists {
+			d.writeMobileError(w, http.StatusNotFound, "not_found", "spawn not found")
+			return
+		}
+		// Spawn exists but no telemetry (e.g., gemini agent or still building).
+		d.writeMobileJSON(w, http.StatusOK, map[string]any{
+			"spawn_id":  spawnID,
+			"telemetry": nil,
+		})
+		return
+	}
+
+	d.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"spawn_id":  spawnID,
+		"telemetry": tel,
 	})
 }
