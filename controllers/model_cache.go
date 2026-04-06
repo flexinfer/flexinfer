@@ -108,51 +108,60 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 				jobPhase = "Pending"
 				message = "waiting for source PVC to bind"
 			} else {
-				job := &batchv1.Job{}
-				err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
-				if err != nil && !errors.IsNotFound(err) {
+				sourceReady, sourceMessage, err := r.pvcSourceArtifactReady(ctx, sourcePVC)
+				if err != nil {
 					return false, err
 				}
-				if err == nil && job.Annotations != nil && job.Annotations[AnnotationSource] != model.Spec.Source {
-					if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
-						return false, delErr
-					}
-					err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
-				}
-				if errors.IsNotFound(err) {
-					subPath := ""
-					if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
-						subPath = sp
-					}
-					newJob, err := r.jobForCacheCopy(model, pvcName, cachePVCName, subPath)
-					if err != nil {
+				if !sourceReady {
+					jobPhase = "Pending"
+					message = sourceMessage
+				} else {
+					job := &batchv1.Job{}
+					err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
+					if err != nil && !errors.IsNotFound(err) {
 						return false, err
 					}
-					if err := r.Create(ctx, newJob); err != nil {
-						if errors.IsAlreadyExists(err) {
-							jobPhase = "Running"
-							message = "cache copy job already exists"
-						} else {
+					if err == nil && job.Annotations != nil && job.Annotations[AnnotationSource] != model.Spec.Source {
+						if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
+							return false, delErr
+						}
+						err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+					}
+					if errors.IsNotFound(err) {
+						subPath := ""
+						if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
+							subPath = sp
+						}
+						newJob, err := r.jobForCacheCopy(model, pvcName, cachePVCName, subPath)
+						if err != nil {
 							return false, err
 						}
+						if err := r.Create(ctx, newJob); err != nil {
+							if errors.IsAlreadyExists(err) {
+								jobPhase = "Running"
+								message = "cache copy job already exists"
+							} else {
+								return false, err
+							}
+						} else {
+							jobPhase = "Running"
+							message = "cache copy job started"
+						}
 					} else {
-						jobPhase = "Running"
-						message = "cache copy job started"
-					}
-				} else {
-					if job.Status.Succeeded > 0 {
-						ready = true
-						jobPhase = "Succeeded"
-						message = "artifact copied to cache PVC"
-					} else if job.Status.Failed > 0 {
-						jobPhase = "Failed"
-						message = "cache copy job failed"
-					} else if job.Status.Active > 0 {
-						jobPhase = "Running"
-						message = "cache copy job running"
-					} else {
-						jobPhase = "Pending"
-						message = "cache copy job pending"
+						if job.Status.Succeeded > 0 {
+							ready = true
+							jobPhase = "Succeeded"
+							message = "artifact copied to cache PVC"
+						} else if job.Status.Failed > 0 {
+							jobPhase = "Failed"
+							message = "cache copy job failed"
+						} else if job.Status.Active > 0 {
+							jobPhase = "Running"
+							message = "cache copy job running"
+						} else {
+							jobPhase = "Pending"
+							message = "cache copy job pending"
+						}
 					}
 				}
 			}
@@ -190,48 +199,56 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 			if sourcePVC.Status.Phase != corev1.ClaimBound {
 				message = "waiting for source PVC to bind"
 			} else {
-				job := &batchv1.Job{}
-				err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
-				if err != nil && !errors.IsNotFound(err) {
+				sourceReady, sourceMessage, err := r.pvcSourceArtifactReady(ctx, sourcePVC)
+				if err != nil {
 					return false, err
 				}
-				if err == nil && job.Annotations != nil && job.Annotations[AnnotationSource] != model.Spec.Source {
-					if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
-						return false, delErr
-					}
-					err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
-				}
-				if errors.IsNotFound(err) {
-					subPath := ""
-					if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
-						subPath = sp
-					}
-					newJob, err := r.jobForLocalCacheStage(model, pvcName, subPath)
-					if err != nil {
+				if !sourceReady {
+					message = sourceMessage
+				} else {
+					job := &batchv1.Job{}
+					err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
+					if err != nil && !errors.IsNotFound(err) {
 						return false, err
 					}
-					if err := r.Create(ctx, newJob); err != nil {
-						if errors.IsAlreadyExists(err) {
-							jobPhase = "Running"
-							message = "local cache staging job already exists"
-						} else {
+					if err == nil && job.Annotations != nil && job.Annotations[AnnotationSource] != model.Spec.Source {
+						if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
+							return false, delErr
+						}
+						err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+					}
+					if errors.IsNotFound(err) {
+						subPath := ""
+						if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
+							subPath = sp
+						}
+						newJob, err := r.jobForLocalCacheStage(model, pvcName, subPath)
+						if err != nil {
 							return false, err
 						}
+						if err := r.Create(ctx, newJob); err != nil {
+							if errors.IsAlreadyExists(err) {
+								jobPhase = "Running"
+								message = "local cache staging job already exists"
+							} else {
+								return false, err
+							}
+						} else {
+							jobPhase = "Running"
+							message = "local cache staging job started"
+						}
 					} else {
-						jobPhase = "Running"
-						message = "local cache staging job started"
-					}
-				} else {
-					if job.Status.Succeeded > 0 {
-						ready = true
-						jobPhase = "Succeeded"
-						message = "artifact staged to local cache"
-					} else if job.Status.Failed > 0 {
-						jobPhase = "Failed"
-						message = "local cache staging job failed"
-					} else if job.Status.Active > 0 {
-						jobPhase = "Running"
-						message = "local cache staging job running"
+						if job.Status.Succeeded > 0 {
+							ready = true
+							jobPhase = "Succeeded"
+							message = "artifact staged to local cache"
+						} else if job.Status.Failed > 0 {
+							jobPhase = "Failed"
+							message = "local cache staging job failed"
+						} else if job.Status.Active > 0 {
+							jobPhase = "Running"
+							message = "local cache staging job running"
+						}
 					}
 				}
 			}
@@ -274,24 +291,33 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 				jobPhase = "Pending"
 				message = "waiting for PVC to bind"
 			} else {
-				subPath := ""
-				if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
-					subPath = sp
-				}
-				newJob, err := r.jobForCacheCheck(model, pvcName, subPath)
+				sourceReady, sourceMessage, err := r.pvcSourceArtifactReady(ctx, sourcePVC)
 				if err != nil {
 					return false, err
 				}
-				if err := r.Create(ctx, newJob); err != nil {
-					if errors.IsAlreadyExists(err) {
-						jobPhase = "Running"
-						message = "cache check job already exists"
-					} else {
+				if !sourceReady {
+					jobPhase = "Pending"
+					message = sourceMessage
+				} else {
+					subPath := ""
+					if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
+						subPath = sp
+					}
+					newJob, err := r.jobForCacheCheck(model, pvcName, subPath)
+					if err != nil {
 						return false, err
 					}
-				} else {
-					jobPhase = "Running"
-					message = "cache check job started"
+					if err := r.Create(ctx, newJob); err != nil {
+						if errors.IsAlreadyExists(err) {
+							jobPhase = "Running"
+							message = "cache check job already exists"
+						} else {
+							return false, err
+						}
+					} else {
+						jobPhase = "Running"
+						message = "cache check job started"
+					}
 				}
 			}
 		} else {
@@ -421,6 +447,9 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 			// set at the top of ensureCache.
 			if original.Status.Cache != nil && original.Status.Cache.Ready {
 				setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "CacheCheck", "local cache previously verified")
+				if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+					return false, err
+				}
 				return true, nil
 			}
 
@@ -621,6 +650,31 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 		return false, err
 	}
 	return model.Status.Cache.Ready, nil
+}
+
+func (r *ModelReconciler) pvcSourceArtifactReady(ctx context.Context, pvc *corev1.PersistentVolumeClaim) (bool, string, error) {
+	owner := metav1.GetControllerOf(pvc)
+	if owner == nil || owner.Kind != "ModelCache" || owner.APIVersion != aiv1alpha1.GroupVersion.String() {
+		return true, "", nil
+	}
+
+	sourceCache := &aiv1alpha1.ModelCache{}
+	if err := r.Get(ctx, types.NamespacedName{Name: owner.Name, Namespace: pvc.Namespace}, sourceCache); err != nil {
+		if errors.IsNotFound(err) {
+			return true, "", nil
+		}
+		return false, "", err
+	}
+
+	if sourceCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady {
+		return true, "", nil
+	}
+
+	message := fmt.Sprintf("waiting for source ModelCache %s to be ready", sourceCache.Name)
+	if sourceCache.Status.Phase != "" {
+		message = fmt.Sprintf("waiting for source ModelCache %s to be ready (current phase: %s)", sourceCache.Name, sourceCache.Status.Phase)
+	}
+	return false, message, nil
 }
 
 // ensureQuantization manages the quantization job lifecycle for a model.

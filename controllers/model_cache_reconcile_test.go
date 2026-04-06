@@ -8,9 +8,11 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -161,6 +163,73 @@ func TestEnsureCachePvcCheckJob(t *testing.T) {
 	}
 	if got := checkJob.Annotations[AnnotationCachePath]; got != "model-a" {
 		t.Fatalf("check job cache-path annotation = %q, want model-a", got)
+	}
+}
+
+func TestEnsureCacheSharedPVCWaitsForSourceModelCacheReady(t *testing.T) {
+	model := modelWithCache("shared-cache", "flexinfer-system", "pvc://source-models/model-a", &aiv1alpha2.CacheSpec{
+		Strategy: "SharedPVC",
+	})
+	r, cl := newModelCacheReconciler(t,
+		model,
+		sourcePVCOwnedByModelCache("source-models", "flexinfer-system", corev1.ClaimBound, "source-models"),
+		modelCacheWithPhase("source-models", "flexinfer-system", aiv1alpha1.ModelCachePhaseProvisioning),
+	)
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "vllm"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if ready {
+		t.Fatalf("ensureCache() ready = %v, want false", ready)
+	}
+
+	cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+	assertCacheStatus(t, cached, false, "Pending", "waiting for source ModelCache source-models to be ready (current phase: Provisioning)", "CacheCopy", false)
+	if got := cached.Status.Cache.JobName; got != "shared-cache-cache-copy" {
+		t.Fatalf("status.cache.jobName = %q, want %q", got, "shared-cache-cache-copy")
+	}
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: "shared-cache-cache", Namespace: model.Namespace}, pvc); err != nil {
+		t.Fatalf("expected auto-created cache PVC: %v", err)
+	}
+
+	copyJob := &batchv1.Job{}
+	err = cl.Get(context.Background(), types.NamespacedName{Name: "shared-cache-cache-copy", Namespace: model.Namespace}, copyJob)
+	if !errors.IsNotFound(err) {
+		t.Fatalf("copy job lookup error = %v, want not found", err)
+	}
+}
+
+func TestEnsureCachePvcCheckWaitsForSourceModelCacheReady(t *testing.T) {
+	model := modelWithCache("pvc-check", "flexinfer-system", "pvc://source-models/model-a", &aiv1alpha2.CacheSpec{
+		Strategy: "None",
+	})
+	r, cl := newModelCacheReconciler(t,
+		model,
+		sourcePVCOwnedByModelCache("source-models", "flexinfer-system", corev1.ClaimBound, "source-models"),
+		modelCacheWithPhase("source-models", "flexinfer-system", aiv1alpha1.ModelCachePhaseAbliterating),
+	)
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "vllm"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if ready {
+		t.Fatalf("ensureCache() ready = %v, want false", ready)
+	}
+
+	cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+	assertCacheStatus(t, cached, false, "Pending", "waiting for source ModelCache source-models to be ready (current phase: Abliterating)", "CacheCheck", false)
+	if got := cached.Status.Cache.JobName; got != "pvc-check-cache-check" {
+		t.Fatalf("status.cache.jobName = %q, want %q", got, "pvc-check-cache-check")
+	}
+
+	checkJob := &batchv1.Job{}
+	err = cl.Get(context.Background(), types.NamespacedName{Name: "pvc-check-cache-check", Namespace: model.Namespace}, checkJob)
+	if !errors.IsNotFound(err) {
+		t.Fatalf("cache check job lookup error = %v, want not found", err)
 	}
 }
 
@@ -508,6 +577,31 @@ func sourcePVC(name, namespace string, phase corev1.PersistentVolumeClaimPhase) 
 			Namespace: namespace,
 		},
 		Status: corev1.PersistentVolumeClaimStatus{
+			Phase: phase,
+		},
+	}
+}
+
+func sourcePVCOwnedByModelCache(name, namespace string, phase corev1.PersistentVolumeClaimPhase, ownerName string) *corev1.PersistentVolumeClaim {
+	pvc := sourcePVC(name, namespace, phase)
+	pvc.ObjectMeta.OwnerReferences = []metav1.OwnerReference{
+		{
+			APIVersion: aiv1alpha1.GroupVersion.String(),
+			Kind:       "ModelCache",
+			Name:       ownerName,
+			Controller: ptr.To(true),
+		},
+	}
+	return pvc
+}
+
+func modelCacheWithPhase(name, namespace string, phase aiv1alpha1.ModelCachePhase) *aiv1alpha1.ModelCache {
+	return &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Status: aiv1alpha1.ModelCacheStatus{
 			Phase: phase,
 		},
 	}
