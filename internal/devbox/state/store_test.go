@@ -212,6 +212,38 @@ func TestStore_IdleEntries_EmptyWhenNoRunning(t *testing.T) {
 	}
 }
 
+func TestStore_PruneOlderThan(t *testing.T) {
+	s, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+
+	now := time.Now()
+	old := now.Add(-10 * 24 * time.Hour)
+
+	// Stopped and old — should be pruned.
+	_ = s.Set("old-stopped", &Entry{Status: "stopped", LastUsed: old, CreatedAt: old})
+	// Stopped and recent — should NOT be pruned.
+	_ = s.Set("recent-stopped", &Entry{Status: "stopped", LastUsed: now, CreatedAt: now})
+	// Running and old — should NOT be pruned (not stopped).
+	_ = s.Set("old-running", &Entry{Status: "running", LastUsed: old, CreatedAt: old})
+
+	pruned := s.PruneOlderThan(7 * 24 * time.Hour)
+	if pruned != 1 {
+		t.Errorf("expected 1 pruned entry, got %d", pruned)
+	}
+
+	if s.Get("old-stopped") != nil {
+		t.Error("old-stopped should have been pruned")
+	}
+	if s.Get("recent-stopped") == nil {
+		t.Error("recent-stopped should NOT have been pruned")
+	}
+	if s.Get("old-running") == nil {
+		t.Error("old-running should NOT have been pruned")
+	}
+}
+
 func TestStore_Persistence_AcrossInstances(t *testing.T) {
 	dir := t.TempDir()
 

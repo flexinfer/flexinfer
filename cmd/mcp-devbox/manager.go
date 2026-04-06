@@ -465,7 +465,7 @@ func (m *manager) buildMounts(projectDir string) []backend.Mount {
 	return mounts
 }
 
-// reapLoop periodically stops idle containers.
+// reapLoop periodically stops idle containers, prunes stale state, and cleans up build pods.
 func (m *manager) reapLoop(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
@@ -476,7 +476,21 @@ func (m *manager) reapLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			m.reapIdle(ctx)
+			m.reapCompletedBuilds(ctx)
+			m.store.PruneOlderThan(7 * 24 * time.Hour)
 		}
+	}
+}
+
+// reapCompletedBuilds cleans up completed build pods and orphaned ConfigMaps.
+func (m *manager) reapCompletedBuilds(ctx context.Context) {
+	cleaned, err := m.backend.CleanupBuilds(ctx, 1*time.Hour)
+	if err != nil {
+		m.logger.Warn("build cleanup failed", "error", err)
+		return
+	}
+	if cleaned > 0 {
+		m.logger.Info("cleaned up build resources", "count", cleaned)
 	}
 }
 

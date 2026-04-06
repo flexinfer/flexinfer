@@ -30,9 +30,22 @@ type fakeStatus struct {
 // fakeBackend implements backend.Backend for testing.
 type fakeBackend struct {
 	statuses map[string]*fakeStatus
+
+	// Configurable responses for handler tests.
+	buildResult     *backend.BuildResult
+	buildErr        error
+	readFileContent []byte
+	readFileErr     error
+	writeFileErr    error
 }
 
 func (f *fakeBackend) Build(_ context.Context, _ backend.BuildOpts) (*backend.BuildResult, error) {
+	if f.buildErr != nil {
+		return nil, f.buildErr
+	}
+	if f.buildResult != nil {
+		return f.buildResult, nil
+	}
 	return &backend.BuildResult{}, nil
 }
 func (f *fakeBackend) Start(_ context.Context, opts backend.StartOpts) (*backend.StartResult, error) {
@@ -52,10 +65,19 @@ func (f *fakeBackend) Health(_ context.Context) error           { return nil }
 func (f *fakeBackend) Pause(_ context.Context, _ string) error  { return backend.ErrNotSupported }
 func (f *fakeBackend) Resume(_ context.Context, _ string) error { return backend.ErrNotSupported }
 func (f *fakeBackend) ReadFile(_ context.Context, _, _ string) ([]byte, error) {
-	return nil, nil
+	if f.readFileErr != nil {
+		return nil, f.readFileErr
+	}
+	return f.readFileContent, nil
 }
 func (f *fakeBackend) WriteFile(_ context.Context, _, _ string, _ []byte, _ string) error {
+	if f.writeFileErr != nil {
+		return f.writeFileErr
+	}
 	return nil
+}
+func (f *fakeBackend) CleanupBuilds(_ context.Context, _ time.Duration) (int, error) {
+	return 0, nil
 }
 
 func TestCheckBackendHealth_Timeout(t *testing.T) {

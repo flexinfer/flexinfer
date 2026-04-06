@@ -222,6 +222,10 @@ func (d *DockerBackend) ReadFile(ctx context.Context, id, path string) ([]byte, 
 	return stdout.Bytes(), nil
 }
 
+func (d *DockerBackend) CleanupBuilds(_ context.Context, _ time.Duration) (int, error) {
+	return 0, nil // Docker builds don't leave pods behind
+}
+
 func (d *DockerBackend) WriteFile(ctx context.Context, id, path string, content []byte, mode string) error {
 	if mode == "" {
 		mode = "0644"

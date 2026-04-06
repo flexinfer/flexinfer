@@ -320,6 +320,40 @@ func (k *K8sBackend) deleteConfigMap(ctx context.Context, name string) error {
 	return nil
 }
 
+// CleanupBuilds deletes completed (Succeeded/Failed) build pods and their
+// associated ConfigMaps older than maxAge. Returns the count of deleted resources.
+func (k *K8sBackend) CleanupBuilds(ctx context.Context, maxAge time.Duration) (int, error) {
+	pods, err := k.clientset.CoreV1().Pods(k.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "devbox/build=buildah",
+	})
+	if err != nil {
+		return 0, fmt.Errorf("list build pods: %w", err)
+	}
+
+	cutoff := time.Now().Add(-maxAge)
+	cleaned := 0
+
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			continue
+		}
+		if pod.CreationTimestamp.After(cutoff) {
+			continue
+		}
+
+		if err := k.deletePod(ctx, pod.Name); err != nil {
+			continue
+		}
+		cleaned++
+
+		// Best-effort delete of associated ConfigMap (buildah-dockerfile-<suffix>).
+		cmName := strings.Replace(pod.Name, "buildah-build-", "buildah-dockerfile-", 1)
+		_ = k.deleteConfigMap(ctx, cmName)
+	}
+	return cleaned, nil
+}
+
 // sanitizeBuildName extracts a filesystem-safe name from an image tag.
 func sanitizeBuildName(tag string) string {
 	// Use the last path component, strip the registry prefix

@@ -166,13 +166,14 @@ func TestBuildPodSpecDefaults(t *testing.T) {
 	if pod.Labels["devbox/agent-id"] != "agent-1" {
 		t.Fatalf("expected devbox/agent-id label, got: %#v", pod.Labels)
 	}
-	if got := pod.Spec.Containers[0].WorkingDir; got != "/workspace" {
+	container := pod.Spec.Containers[0]
+	if got := container.WorkingDir; got != "/workspace" {
 		t.Fatalf("expected default work dir /workspace, got: %s", got)
 	}
-	if got := pod.Spec.Containers[0].Image; got != "registry.harbor.lan/devbox:latest" {
+	if got := container.Image; got != "registry.harbor.lan/devbox:latest" {
 		t.Fatalf("unexpected image: %s", got)
 	}
-	if got := envMap(pod.Spec.Containers[0].Env)["FOO"]; got != "bar" {
+	if got := envMap(container.Env)["FOO"]; got != "bar" {
 		t.Fatalf("expected env FOO=bar, got: %q", got)
 	}
 	if pod.Spec.ImagePullSecrets[0].Name != "harbor-creds" {
@@ -180,6 +181,32 @@ func TestBuildPodSpecDefaults(t *testing.T) {
 	}
 	if len(pod.Spec.Volumes) != 1 || pod.Spec.Volumes[0].PersistentVolumeClaim == nil {
 		t.Fatalf("expected default workspace PVC volume, got: %#v", pod.Spec.Volumes)
+	}
+
+	// Verify resource requests (Burstable QoS)
+	cpuReq := container.Resources.Requests["cpu"]
+	if cpuReq.String() != "100m" {
+		t.Errorf("expected 100m CPU request, got %s", cpuReq.String())
+	}
+	memReq := container.Resources.Requests["memory"]
+	if memReq.String() != "128Mi" {
+		t.Errorf("expected 128Mi memory request, got %s", memReq.String())
+	}
+
+	// Verify liveness probe
+	if container.LivenessProbe == nil {
+		t.Fatal("expected liveness probe")
+	}
+	if container.LivenessProbe.Exec == nil || container.LivenessProbe.Exec.Command[0] != "true" {
+		t.Fatalf("expected exec true liveness probe, got: %#v", container.LivenessProbe)
+	}
+	if container.LivenessProbe.PeriodSeconds != 30 {
+		t.Errorf("expected 30s probe period, got %d", container.LivenessProbe.PeriodSeconds)
+	}
+
+	// Verify grace period
+	if *pod.Spec.TerminationGracePeriodSeconds != 10 {
+		t.Errorf("expected 10s grace period, got %d", *pod.Spec.TerminationGracePeriodSeconds)
 	}
 }
 
@@ -476,8 +503,8 @@ func TestGitCloneInitContainer(t *testing.T) {
 	if ic.Name != "git-clone" {
 		t.Fatalf("expected initContainer name 'git-clone', got %q", ic.Name)
 	}
-	if ic.Image != "alpine/git:latest" {
-		t.Fatalf("expected alpine/git image, got %q", ic.Image)
+	if ic.Image != "alpine/git:2.47" {
+		t.Fatalf("expected alpine/git:2.47 image, got %q", ic.Image)
 	}
 
 	// Should have GIT_TOKEN env from secret ref

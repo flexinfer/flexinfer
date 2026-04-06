@@ -1,10 +1,103 @@
 package backend
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
+
+func TestCleanupBuilds_DeletesOldCompletedPods(t *testing.T) {
+	oldTime := metav1.NewTime(time.Now().Add(-2 * time.Hour))
+	recentTime := metav1.NewTime(time.Now().Add(-30 * time.Minute))
+
+	clientset := k8sfake.NewSimpleClientset(
+		// Old succeeded pod — should be deleted
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "buildah-build-old-succeeded",
+				Namespace:         "devbox",
+				Labels:            map[string]string{"devbox/build": "buildah"},
+				CreationTimestamp: oldTime,
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
+		},
+		// Old failed pod — should be deleted
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "buildah-build-old-failed",
+				Namespace:         "devbox",
+				Labels:            map[string]string{"devbox/build": "buildah"},
+				CreationTimestamp: oldTime,
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodFailed},
+		},
+		// Recent succeeded pod — should NOT be deleted
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "buildah-build-recent",
+				Namespace:         "devbox",
+				Labels:            map[string]string{"devbox/build": "buildah"},
+				CreationTimestamp: recentTime,
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
+		},
+		// Old running pod — should NOT be deleted
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "buildah-build-running",
+				Namespace:         "devbox",
+				Labels:            map[string]string{"devbox/build": "buildah"},
+				CreationTimestamp: oldTime,
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		},
+		// Associated ConfigMap for old-succeeded
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "buildah-dockerfile-old-succeeded",
+				Namespace: "devbox",
+			},
+		},
+	)
+
+	k := testK8sBackend()
+	k.clientset = clientset
+
+	cleaned, err := k.CleanupBuilds(context.Background(), 1*time.Hour)
+	if err != nil {
+		t.Fatalf("CleanupBuilds error: %v", err)
+	}
+
+	// 2 pods deleted (old-succeeded + old-failed)
+	if cleaned != 2 {
+		t.Errorf("expected 2 cleaned pods, got %d", cleaned)
+	}
+
+	// Verify remaining pods
+	pods, _ := clientset.CoreV1().Pods("devbox").List(context.Background(), metav1.ListOptions{})
+	remaining := make(map[string]bool)
+	for _, p := range pods.Items {
+		remaining[p.Name] = true
+	}
+	if remaining["buildah-build-old-succeeded"] {
+		t.Error("old succeeded pod should have been deleted")
+	}
+	if remaining["buildah-build-old-failed"] {
+		t.Error("old failed pod should have been deleted")
+	}
+	if !remaining["buildah-build-recent"] {
+		t.Error("recent pod should NOT have been deleted")
+	}
+	if !remaining["buildah-build-running"] {
+		t.Error("running pod should NOT have been deleted")
+	}
+}
 
 func TestReadDepFiles_Empty(t *testing.T) {
 	dir := t.TempDir()

@@ -192,6 +192,9 @@ func (k *K8sBackend) Resume(_ context.Context, _ string) error {
 }
 
 func (k *K8sBackend) ReadFile(ctx context.Context, id, path string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	req := k.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(id).
@@ -220,6 +223,9 @@ func (k *K8sBackend) ReadFile(ctx context.Context, id, path string) ([]byte, err
 }
 
 func (k *K8sBackend) WriteFile(ctx context.Context, id, path string, content []byte, mode string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	if mode == "" {
 		mode = "0644"
 	}

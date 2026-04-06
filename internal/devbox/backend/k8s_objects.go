@@ -28,10 +28,13 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 		})
 	}
 
-	// Set only limits (not requests) so sandbox pods schedule as Burstable/BestEffort.
-	// Dev sandbox pods are short-lived; low requests prevent scheduling failures
-	// on clusters with high CPU reservation.
-	resources := corev1.ResourceRequirements{}
+	// Set requests (minimum Burstable QoS) and limits from config.
+	resources := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("100m"),
+			corev1.ResourceMemory: resource.MustParse("128Mi"),
+		},
+	}
 	if opts.MemoryMB > 0 {
 		resources.Limits = corev1.ResourceList{
 			corev1.ResourceMemory: resource.MustParse(fmt.Sprintf("%dMi", opts.MemoryMB)),
@@ -102,7 +105,7 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 		labels["devbox/agent-id"] = opts.AgentID
 	}
 
-	gracePeriod := int64(3)
+	gracePeriod := int64(10)
 
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -131,6 +134,15 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 					WorkingDir:      workDir(opts.WorkDir),
 					VolumeMounts:    volumeMounts,
 					ImagePullPolicy: imagePullPolicy(imageTag),
+					LivenessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							Exec: &corev1.ExecAction{
+								Command: []string{"true"},
+							},
+						},
+						PeriodSeconds:    30,
+						FailureThreshold: 3,
+					},
 				},
 			},
 			Volumes: volumes,
@@ -219,7 +231,7 @@ echo "git-clone: cloned %s into %s"`,
 
 	return corev1.Container{
 		Name:    "git-clone",
-		Image:   "alpine/git:latest",
+		Image:   "alpine/git:2.47",
 		Command: []string{"sh", "-c", cloneScript},
 		Env: []corev1.EnvVar{
 			{

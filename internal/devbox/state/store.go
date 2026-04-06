@@ -124,6 +124,26 @@ func (s *Store) IdleEntries(idleTimeout time.Duration) map[string]*Entry {
 	return result
 }
 
+// PruneOlderThan removes entries with Status="stopped" and LastUsed older than maxAge.
+// Returns the number of pruned entries.
+func (s *Store) PruneOlderThan(maxAge time.Duration) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cutoff := time.Now().Add(-maxAge)
+	pruned := 0
+	for key, entry := range s.data.Sandboxes {
+		if entry.Status == "stopped" && entry.LastUsed.Before(cutoff) {
+			delete(s.data.Sandboxes, key)
+			pruned++
+		}
+	}
+	if pruned > 0 {
+		_ = s.save()
+	}
+	return pruned
+}
+
 // save persists state to disk atomically via temp+rename. Must be called with mu held.
 func (s *Store) save() error {
 	data, err := json.MarshalIndent(s.data, "", "  ")

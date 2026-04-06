@@ -4,6 +4,7 @@ package backend
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrNotSupported is returned when a backend doesn't support an operation.
@@ -42,6 +43,10 @@ type Backend interface {
 
 	// WriteFile writes content to a file inside a running container.
 	WriteFile(ctx context.Context, id, path string, content []byte, mode string) error
+
+	// CleanupBuilds deletes completed build pods and associated ConfigMaps
+	// older than maxAge. Returns the number of resources cleaned up.
+	CleanupBuilds(ctx context.Context, maxAge time.Duration) (int, error)
 }
 
 // BuildOpts configures an image build.
