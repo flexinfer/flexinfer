@@ -64,7 +64,7 @@
 # Sync: loom sync <profile> --regen --hub-mode --all-projects --skip-worktrees
 
 version: 1
-updated: 2026-04-05
+updated: 2026-04-06
 skills:
   - name: flux-gitops-operator
     categories: [kubernetes, gitops, operations]
@@ -6800,8 +6800,7 @@ skills:
         | `scope` | No | project / workspace / universal |
       scripts: []
       references:
-        - name: recipe-schema.md
-          path: mcp/skills/agent-recipes/references/recipe-schema.md
+        - recipe-schema.md
       assets: []
       always_allow: []
     targets:
@@ -6876,7 +6875,7 @@ skills:
         Workflow file: `.agents/workflows/feature-dev-auto.yaml`
       scripts:
         - name: auto-quality-gate.sh
-          path: mcp/skills/auto-quality-gate/scripts/auto-quality-gate.sh
+          path: scripts/auto-quality-gate.sh
       references: []
       assets: []
       always_allow:
@@ -6918,7 +6917,7 @@ skills:
         to the platform's `extras` list in the platform profile.
       scripts:
         - name: session-retro.sh
-          path: mcp/skills/session-retro/scripts/session-retro.sh
+          path: scripts/session-retro.sh
       references: []
       assets: []
       always_allow:
@@ -7005,8 +7004,7 @@ skills:
         Workflow file: `.agents/workflows/tdd-dev.yaml`
       scripts: []
       references:
-        - name: tdd-workflow.md
-          path: mcp/skills/tdd-dev/references/tdd-workflow.md
+        - tdd-workflow.md
       assets: []
       always_allow: []
   - name: test-health-inject
@@ -7046,10 +7044,9 @@ skills:
         Output is a JSON `systemMessage` injected into session context.
       scripts:
         - name: test-health-snapshot.sh
-          path: mcp/skills/test-health-inject/scripts/test-health-snapshot.sh
+          path: scripts/test-health-snapshot.sh
       references:
-        - name: test-health-integration.md
-          path: mcp/skills/test-health-inject/references/test-health-integration.md
+        - test-health-integration.md
       assets: []
       always_allow:
         - test-health-snapshot.sh
@@ -7082,15 +7079,6 @@ skills:
           ## Gemini Notes
           - Use checkpointed phased decomposition for the TDD cycle
           - Record phase transitions (red/green/refactor) as progress markers
-      claude:
-        enabled: true
-        type: command
-      kilocode:
-        enabled: true
-        type: skill
-      gemini:
-        enabled: true
-        type: instruction
       antigravity:
         enabled: true
         type: command
@@ -7176,8 +7164,7 @@ skills:
         5. Proceed only when clean
       scripts: []
       references:
-        - name: self-review-checklist.md
-          path: mcp/skills/pr-self-review/references/self-review-checklist.md
+        - self-review-checklist.md
       assets: []
       always_allow: []
     targets:
@@ -7211,3 +7198,199 @@ skills:
       antigravity:
         enabled: true
         type: command
+
+  - name: godot-game-dev
+    categories: [game, development, godot, workflow]
+    common:
+      description: |
+        Godot 4 game development workflow using godot-mcp and godot_debug MCP servers, agent-context session tracking, and mobile-first testing patterns. Use when building, debugging, or iterating on Godot game projects.
+      instructions: |
+        # Godot Game Development
+
+        AI-assisted Godot 4 game development workflow using MCP tooling for editor control, runtime debugging, scene management, and structured session tracking.
+
+        ## When to Use
+
+        - Building or modifying Godot 4 game projects
+        - Creating or editing scenes, nodes, and resources
+        - Debugging runtime behavior (inspect nodes, evaluate expressions, capture screenshots)
+        - Running and testing Godot projects from the CLI
+        - Mobile-first game development and testing
+
+        ## Available MCP Servers
+
+        ### godot_mcp (Editor & Project Management)
+
+        Project-level operations via `@coding-solo/godot-mcp`:
+
+        | Tool | Purpose |
+        |------|---------|
+        | `launch_editor` | Open the Godot editor for a project |
+        | `run_project` | Run a project in debug mode |
+        | `stop_project` | Stop a running project |
+        | `get_debug_output` | Retrieve console output and errors |
+        | `get_godot_version` | Check installed Godot version |
+        | `list_projects` | Discover Godot projects in a directory |
+        | `get_project_info` | Get project structure and asset info |
+        | `create_scene` | Create a new scene with root node type |
+        | `add_node` | Add nodes to an existing scene |
+        | `load_sprite` | Load textures into Sprite2D nodes |
+        | `export_mesh_library` | Export 3D content as MeshLibrary |
+        | `save_scene` | Save scene with optional variants |
+        | `get_uid` | Get file UID (Godot 4.4+) |
+        | `update_project_uids` | Batch-update UIDs across a project |
+
+        ### godot_debug (Runtime Inspection)
+
+        Live runtime inspection via the loom-core Godot debug bridge (requires running Godot instance with debug plugin on port 6550):
+
+        | Tool | Purpose |
+        |------|---------|
+        | `godot_scene_tree` | Inspect the live scene tree |
+        | `godot_inspect` | Inspect a specific node's properties |
+        | `godot_call` | Call a method on a node |
+        | `godot_signal` | Emit a signal |
+        | `godot_eval` | Evaluate GDScript expressions |
+        | `godot_set` | Set node properties at runtime |
+        | `godot_screenshot` | Capture a screenshot of the running game |
+        | `godot_logs` | Read Godot log output |
+        | `godot_logs_stream` | Stream live logs |
+
+        ## Core Workflow
+
+        ### 1) Session Setup
+
+        Start an agent context session for tracking:
+
+        ```
+        agent_session_start(
+          namespace="game/<project-name>",
+          description="Working on <feature>",
+          auto_recall=true
+        )
+        ```
+
+        ### 2) Project Discovery
+
+        ```
+        godot_mcp: list_projects(directory="<workspace-path>")
+        godot_mcp: get_project_info(project_path="<project-path>")
+        godot_mcp: get_godot_version()
+        ```
+
+        ### 3) Development Loop
+
+        **Creating scenes and nodes:**
+        ```
+        godot_mcp: create_scene(
+          project_path="<path>",
+          scene_name="new_level",
+          root_type="Node2D"
+        )
+        godot_mcp: add_node(
+          project_path="<path>",
+          scene_path="scenes/new_level.tscn",
+          node_name="Player",
+          node_type="CharacterBody2D"
+        )
+        godot_mcp: save_scene(project_path="<path>", scene_path="scenes/new_level.tscn")
+        ```
+
+        **Running and debugging:**
+        ```
+        godot_mcp: run_project(project_path="<path>")
+        godot_mcp: get_debug_output()
+        godot_debug: godot_scene_tree()
+        godot_debug: godot_inspect(node_path="/root/Main/Player")
+        godot_debug: godot_eval(expression="get_tree().current_scene.name")
+        godot_debug: godot_screenshot(path="/tmp/debug_screenshot.png")
+        godot_mcp: stop_project()
+        ```
+
+        ### 4) Code Editing
+
+        GDScript files are edited directly via standard file tools (Read, Edit, Write).
+        Follow project-specific conventions from `AGENTS.md`:
+        - Explicit types required (no `var x :=`)
+        - Tabs for indentation (Godot requirement)
+        - Keep simulation code in `src/sim/` free of Node dependencies
+        - Balance data in JSON files under `data/`
+
+        ### 5) Testing
+
+        ```bash
+        make validate    # Lint + type checks
+        make test        # Headless simulation tests
+        make lint        # gdlint only
+        ```
+
+        For runtime testing, use godot_debug to inspect live state:
+        ```
+        godot_debug: godot_eval(expression="Simulation.new().get_property('value')")
+        godot_debug: godot_screenshot(path="/tmp/test_capture.png")
+        ```
+
+        ### 6) Session Close
+
+        ```
+        agent_context_add(entries=[{
+          entry_type: "decision",
+          title: "Summary of changes",
+          content: "Description of what was done and why"
+        }])
+        agent_session_end(summarize=true)
+        ```
+
+        ## Mobile Testing Patterns
+
+        Godot mobile games require specific testing approaches:
+
+        ### Portrait Mode (1080x1920)
+        - Test touch interactions via `godot_debug: godot_call()` to simulate input
+        - Capture screenshots at target resolution for visual verification
+        - Verify UI element sizes meet minimum touch target (44pt)
+
+        ### Performance Profiling
+        - Use `godot_debug: godot_eval()` to query performance counters
+        - Check memory usage: `godot_eval(expression="Performance.get_monitor(Performance.MEMORY_STATIC)")`
+        - Check FPS: `godot_eval(expression="Performance.get_monitor(Performance.TIME_FPS)")`
+        - Check draw calls: `godot_eval(expression="Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)")`
+
+        ### Device Simulation
+        - Set project window to mobile resolution before running
+        - Test with touch input profile enabled
+        - Verify text readability at mobile scale
+
+        ## Integration with Other Skills
+
+        - **feature-dev**: Use as the implementation step in the feature-dev workflow
+        - **agent-context**: Session tracking and decision persistence
+        - **codebase-exploration-memory**: Index and search GDScript codebases
+        - **browserkit-screenshots**: Capture web-based documentation for reference
+        - **quality-gate-loop**: Run `make validate` and `make test` as quality gates
+
+        ## Guardrails
+
+        - Never modify `.godot/` or `.import/` directories directly (Godot manages these)
+        - Keep simulation logic (RefCounted classes) free of Node/SceneTree dependencies
+        - All balance values belong in `data/*.json`, not hardcoded in scripts
+        - Preserve deterministic behavior: same seed must produce identical state
+        - Run `make validate` before committing GDScript changes
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction

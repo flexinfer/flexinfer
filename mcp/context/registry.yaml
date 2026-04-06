@@ -848,6 +848,76 @@ servers:
           GODOT_HOST: "127.0.0.1"
           GODOT_PORT: "6550"
           GODOT_LOG_PATH: "${env:GODOT_LOG_PATH:-~/Library/Application Support/Godot/app_userdata/Kindred Keep (Slice)}"
+
+  - name: godot_mcp
+    categories: [game, development, local-only]
+    common:
+      description: "Godot engine integration via @coding-solo/godot-mcp: launch editor, run projects, create/edit scenes, manage nodes, and capture debug output."
+      hint: |
+        Local-only; requires Godot 4.x installed. Use for AI-assisted Godot game development:
+        launching the editor, running projects, creating scenes, adding nodes, and capturing debug output.
+        Complements godot_debug (runtime inspection) with editor/project management capabilities.
+      command: npx
+      args:
+        - -y
+        - "@coding-solo/godot-mcp"
+      env:
+        GODOT_PATH: "${env:GODOT_PATH:-/Applications/Godot.app/Contents/MacOS/Godot}"
+        DEBUG: "${env:GODOT_MCP_DEBUG:-false}"
+        PATH: "${HOME}/.npm-global/bin:/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:${env:PATH}"
+      timeout: 120
+      always_allow:
+        - launch_editor
+        - run_project
+        - get_debug_output
+        - stop_project
+        - get_godot_version
+        - list_projects
+        - get_project_info
+        - create_scene
+        - add_node
+        - load_sprite
+        - export_mesh_library
+        - save_scene
+        - get_uid
+        - update_project_uids
+    targets:
+      claude:
+        command: npx
+        args:
+          - -y
+          - "@coding-solo/godot-mcp"
+        env:
+          GODOT_PATH: "${env:GODOT_PATH:-/Applications/Godot.app/Contents/MacOS/Godot}"
+          DEBUG: "${env:GODOT_MCP_DEBUG:-false}"
+          PATH: "${HOME}/.npm-global/bin:/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:${env:PATH}"
+      gemini:
+        command: npx
+        args:
+          - -y
+          - "@coding-solo/godot-mcp"
+        env:
+          GODOT_PATH: "${env:GODOT_PATH:-/Applications/Godot.app/Contents/MacOS/Godot}"
+          DEBUG: "${env:GODOT_MCP_DEBUG:-false}"
+          PATH: "${HOME}/.npm-global/bin:/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:${env:PATH}"
+      codex:
+        command: npx
+        args:
+          - -y
+          - "@coding-solo/godot-mcp"
+        env:
+          GODOT_PATH: "${env:GODOT_PATH:-/Applications/Godot.app/Contents/MacOS/Godot}"
+          DEBUG: "${env:GODOT_MCP_DEBUG:-false}"
+      vscode:
+        type: stdio
+        command: npx
+        args:
+          - -y
+          - "@coding-solo/godot-mcp"
+        env:
+          GODOT_PATH: "${env:GODOT_PATH:-/Applications/Godot.app/Contents/MacOS/Godot}"
+          DEBUG: "${env:GODOT_MCP_DEBUG:-false}"
+
   - name: prometheus
     categories: [monitoring, observability]
     common:

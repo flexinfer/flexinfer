@@ -269,6 +269,11 @@ func generateTomlConfig(p *GenerateParams) error {
 				fmt.Fprintf(os.Stderr, "WARN  [%s] upstream schema: %s - %s\n", target, verr.Field, verr.Message)
 			}
 		}
+
+		// Warn about unresolved template patterns that the target cannot resolve at runtime.
+		if n := WarnUnresolvedTemplates(string(content), target); n > 0 {
+			fmt.Fprintf(os.Stderr, "WARN  [%s] %d unresolved template(s) in generated config — %s does not resolve ${env:...} syntax\n", target, n, target)
+		}
 	}
 
 	return nil

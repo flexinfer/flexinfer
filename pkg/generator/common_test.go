@@ -420,3 +420,46 @@ func findSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+func TestWarnUnresolvedTemplates(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    int
+	}{
+		{
+			name:    "no templates",
+			content: "command = \"loom\"\nargs = [\"mcp\", \"proxy\"]\n",
+			want:    0,
+		},
+		{
+			name:    "single env template",
+			content: "GITLAB_TOKEN = \"${env:GITLAB_TOKEN}\"\n",
+			want:    1,
+		},
+		{
+			name:    "multiple templates on different lines",
+			content: "TOKEN = \"${env:GITLAB_TOKEN}\"\nKEY = \"${keychain:API_KEY}\"\nSECRET = \"${secret:DB_PASS}\"\n",
+			want:    3,
+		},
+		{
+			name:    "multiple templates on same line",
+			content: "line = \"${env:A} and ${env:B}\"\n",
+			want:    2,
+		},
+		{
+			name:    "resolved values are clean",
+			content: "GITLAB_TOKEN = \"glpat-abc123\"\ncommand = \"loom\"\n",
+			want:    0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := WarnUnresolvedTemplates(tt.content, "test")
+			if got != tt.want {
+				t.Errorf("WarnUnresolvedTemplates() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}

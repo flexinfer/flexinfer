@@ -359,6 +359,12 @@ func newSyncCmd() *cobra.Command {
 					if !cmd.Flags().Changed("resolve-secrets") {
 						resolveSecrets = p.DefaultResolveSecrets
 					}
+
+					if p.GeneratedDirectToHome && cmd.Flags().Changed("loom-mode") && !loomMode {
+						fmt.Fprintf(os.Stderr, "Warning: %s uses home-level config and does not resolve template syntax.\n", profile)
+						fmt.Fprintf(os.Stderr, "         Individual server entries may have broken ${env:...} templates.\n")
+						fmt.Fprintf(os.Stderr, "         Consider using the default --loom-mode=true (proxy) instead.\n")
+					}
 				}
 
 				if loomMode {

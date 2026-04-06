@@ -1,4 +1,7 @@
 {
+  "_loom_policy": {
+    "gitops_flux": "enforced at loom proxy layer (no native hook support)"
+  },
   "mcpServers": {
     "loom": {
       "args": [
@@ -6,7 +9,7 @@
         "--agent-hint",
         "zed"
       ],
-      "command": "/Users/cblevins/.local/bin/loom",
+      "command": "/Users/cblevins/Library/Caches/go-build/28/2843393a07a3572af05ff917702bed351c6cdbaf542d2f6bc446359734f28192-d/loom",
       "timeout": 600
     }
   }

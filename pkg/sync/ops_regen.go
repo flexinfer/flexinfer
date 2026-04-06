@@ -54,6 +54,15 @@ func (m *Manager) Regenerate(p *Profile, hubMode bool, hubURL string, loomMode b
 	primaryDestName := p.GeneratedFile
 	if p.GeneratedDirectToHome {
 		m.cleanRepoGenerated(p)
+		// Also clean stale copies across all workspace projects.
+		if m.WorkspaceRoot != "" {
+			n, err := m.CleanAllProjectsGenerated(p.Name, m.WorkspaceRoot, false, false)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: workspace-wide cleanup for %s: %v\n", p.Name, err)
+			} else if n > 0 {
+				fmt.Printf("Cleaned %d stale %s config(s) from workspace projects\n", n, p.Name)
+			}
+		}
 		destRoot = m.ResolveHomePath(p)
 		primaryDestName = primaryHomeGeneratedFile(p)
 	}

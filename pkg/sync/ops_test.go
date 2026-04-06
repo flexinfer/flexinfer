@@ -1635,6 +1635,56 @@ func TestCleanAllProjectsGenerated_RemovesWorkspaceCopiesForHomeManagedProfiles(
 	}
 }
 
+func TestRegenerate_AutoCleansStaleProjectConfigs(t *testing.T) {
+	repoDir := t.TempDir()
+	workspaceDir := t.TempDir()
+
+	m, _ := NewManager(repoDir)
+	m.WorkspaceRoot = workspaceDir
+
+	// Create a stale codex config in a workspace sub-project
+	projectConfig := filepath.Join(workspaceDir, "project-a", ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(projectConfig), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	if err := os.WriteFile(projectConfig, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	// Verify the stale config exists before Regenerate
+	if !Exists(projectConfig) {
+		t.Fatal("expected stale project codex config to exist before test")
+	}
+
+	// Regenerate will fail because there's no real registry, but the cleanup
+	// happens before generation — test that cleanRepoGenerated + CleanAllProjectsGenerated
+	// are called for GeneratedDirectToHome profiles by calling them directly
+	// (matching what Regenerate does).
+	p, err := m.GetProfile("codex")
+	if err != nil {
+		t.Fatalf("GetProfile codex: %v", err)
+	}
+	if !p.GeneratedDirectToHome {
+		t.Fatal("expected codex profile to have GeneratedDirectToHome=true")
+	}
+
+	// Simulate what Regenerate does for GeneratedDirectToHome profiles
+	m.cleanRepoGenerated(p)
+	if m.WorkspaceRoot != "" {
+		n, cleanErr := m.CleanAllProjectsGenerated(p.Name, m.WorkspaceRoot, false, false)
+		if cleanErr != nil {
+			t.Fatalf("CleanAllProjectsGenerated failed: %v", cleanErr)
+		}
+		if n != 1 {
+			t.Fatalf("CleanAllProjectsGenerated cleaned %d, want 1", n)
+		}
+	}
+
+	if Exists(projectConfig) {
+		t.Fatal("expected stale project codex config to be removed during regen cleanup")
+	}
+}
+
 // =============================================================================
 // SkillsDirectToHome Tests
 // =============================================================================

@@ -176,3 +176,19 @@ func IsValidSecretReference(value string) bool {
 	// Valid patterns: ${env:VAR}, ${keychain:VAR}, ${secret:VAR}
 	return secretPatternRegex.MatchString(value)
 }
+
+// WarnUnresolvedTemplates checks for ${env:...}, ${keychain:...}, ${secret:...}
+// patterns remaining in generated content and logs warnings to stderr.
+// Returns the number of unresolved template references found.
+func WarnUnresolvedTemplates(content string, target string) int {
+	lines := strings.Split(content, "\n")
+	count := 0
+	for lineNum, line := range lines {
+		matches := secretPatternRegex.FindAllString(line, -1)
+		for _, match := range matches {
+			count++
+			fmt.Fprintf(os.Stderr, "WARN  [%s] unresolved template at line %d: %s\n", target, lineNum+1, match)
+		}
+	}
+	return count
+}
