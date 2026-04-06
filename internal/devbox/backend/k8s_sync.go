@@ -36,6 +36,14 @@ var defaultSyncExcludes = []string{
 	"xcuserdata",
 	"dist",
 	".sandbox-policy.json",
+	// Go/lint build caches that some projects keep project-local.
+	".gocache",
+	".go",
+	".gotmp",
+	".golangci-lint-cache",
+	// Temporary/generated directories.
+	".tmp",
+	"tmp",
 }
 
 // MaxSyncBytes is the default maximum uncompressed tar size (200 MB).

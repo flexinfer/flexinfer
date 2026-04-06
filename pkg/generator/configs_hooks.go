@@ -31,10 +31,15 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 		{
 			"type": "command",
 			"command": fmt.Sprintf(
-				// Let keepalive own its PID file lifecycle so repeated SessionStart hooks
-				// (for example after compact/relaunch) do not race old/new helpers.
-				`INPUT=$(cat); %s; %s agent keepalive --agent-id "$AGENT_ID" --agent-type %s --quiet </dev/null >/dev/null %s &`,
-				bootstrap, loomCmd, hp.AgentType, log),
+				// Kill any stale keepalives for this workspace before spawning a new one.
+				// Session-scoped agent IDs mean old keepalives have different PID file names,
+				// so we glob-match by workspace hash to catch all of them.
+				`INPUT=$(cat); %s; `+
+					`for pf in "${TMPDIR:-/tmp}"/loom-keepalive-%s-"${WS_HASH}"*.pid; do `+
+					`[ -f "$pf" ] && kill "$(cat "$pf")" 2>/dev/null && rm -f "$pf"; `+
+					`done; `+
+					`%s agent keepalive --agent-id "$AGENT_ID" --agent-type %s --quiet </dev/null >/dev/null %s &`,
+				bootstrap, hp.AgentID, loomCmd, hp.AgentType, log),
 		},
 	}
 	if policy.DirtyWorktreeNudgeOnSessionStart {
@@ -61,8 +66,9 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 					{
 						"type": "command",
 						"command": fmt.Sprintf(
-							`INPUT=$(cat); %s; PID_FILE="${TMPDIR:-/tmp}/loom-keepalive-${AGENT_ID}.pid"; [ -f "$PID_FILE" ] && kill "$(cat "$PID_FILE")" 2>/dev/null; rm -f "$PID_FILE"; rm -f "$AGENT_ID_FILE"; %s agent session-end --agent-id "$AGENT_ID" --summarize --summary-async --quiet %s || true`,
-							bootstrap, loomCmd, log),
+							// Kill keepalives matching this workspace (any session scope) — not just exact agent ID.
+							`INPUT=$(cat); %s; for pf in "${TMPDIR:-/tmp}"/loom-keepalive-%s-"${WS_HASH}"*.pid; do [ -f "$pf" ] && kill "$(cat "$pf")" 2>/dev/null && rm -f "$pf"; done; rm -f "$AGENT_ID_FILE"; %s agent session-end --agent-id "$AGENT_ID" --summarize --summary-async --quiet %s || true`,
+							bootstrap, hp.AgentID, loomCmd, log),
 					},
 				},
 			},
