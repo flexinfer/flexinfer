@@ -9,6 +9,8 @@ resources:
   - abliteration-gptq.yaml           # qwen35-27b-opus-distill-gptq (radeonvii)
   - qwen35-9b-gptq.yaml             # qwen35-9b-gptq (radeonvii)
   - omnicoder-9b-gptq.yaml          # omnicoder-9b-gptq (7900xtx)
+  - gemma4-26b-a4b-gptq.yaml        # gemma4-26b-a4b-gptq (radeonvii)
+  - gemma4-31b-gptq.yaml            # gemma4-31b-gptq (radeonvii)
 
   # === OCI pull caches (Harbor → local PVC → Model CRs) ===
   - qwen35-27b-opus-distill-oci.yaml # → cblevins-7900xtx

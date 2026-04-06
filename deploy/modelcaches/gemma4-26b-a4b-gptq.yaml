@@ -1,0 +1,58 @@
+# Gemma4 26B-A4B (MoE) → Abliteration → GPTQ INT4 Pipeline
+# Mixture-of-Experts: 25.2B total / 3.8B active, 128 experts top-8, 30 layers.
+# Same Gemma4ForConditionalGeneration architecture as E4B, vision+video capable.
+#
+# Pipeline: Download BF16 (~27 GB) → Abliterate → GPTQ INT4 (~7 GB) → Ready
+# Node: cblevins-radeonvii (gfx906, 128GB RAM)
+#
+# MoE abliteration safety:
+#   - weightMatrices: ["o_proj"] ONLY — shared attention output projection.
+#     Expert FFN weights (block_sparse_moe/experts) are skipped by abliterate.py.
+#   - targetLayers: "auto" — 30 layers, all standard attention + MoE FFN (no GDN).
+#   - Double protection: CRD restricts to o_proj + code skips expert params.
+#
+# Disk: 27 GB BF16 + ~7 GB GPTQ INT4 + headroom → 60 Gi PVC
+# GPU: 1x Radeon VII (gfx906, 16GB VRAM) for abliteration + quantization
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: gemma4-26b-a4b-gptq
+  namespace: flexinfer-system
+spec:
+  source: "google/gemma-4-26B-A4B-it"
+  storageStrategy: SharedPVC
+  storageSize: "60Gi"
+  clusterStorageClassName: bulk-1r-stable
+  secretRef: "hf-token"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  download:
+    maxMemoryGB: 16
+    hfTransfer: false
+    backoffLimit: 3
+  abliteration:
+    numSamples: 256
+    targetLayers: "auto"
+    weightMatrices: '["o_proj"]'
+    useGPU: true
+    maxMemoryGB: 96
+    timeoutSeconds: 14400
+    nodeSelector:
+      kubernetes.io/hostname: cblevins-radeonvii
+    normThreshold: "100"
+    ablitateLmHead: false
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    useGPU: true
+    maxMemoryGB: 96
+    timeoutSeconds: 14400
+    nodeSelector:
+      kubernetes.io/hostname: cblevins-radeonvii
+    calibration:
+      maxSeqLen: 2048
+      maxSamples: 256

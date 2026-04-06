@@ -6,9 +6,12 @@ resources:
   # qwen35-27b-opus-distill.yaml and qwen35-9b.yaml are intentionally disabled
   # for the Gemma4 rollout. Keep the manifests on disk for rollback/reference,
   # but do not reconcile them here.
-  - gemma4-e4b-gptq.yaml            # vLLM + GPTQ INT4, ~4 GiB weights, always-on
-  - gemma4-e4b-turboquant.yaml      # FP16, scale-to-zero fallback (minReplicas=0)
-  - gemma4-e4b-multimodal.yaml      # FP16 multimodal, scale-to-zero (minReplicas=0)
+  - gemma4-26b-a4b-gptq.yaml        # vLLM GPTQ INT4, MoE 3.8B active, primary (priority 200)
+  - gemma4-31b-gptq.yaml            # vLLM GPTQ INT4, Dense 31B, on-demand (priority 150)
+  # E4B models disabled — replaced by 26B-A4B. Keep on disk for rollback.
+  # - gemma4-e4b-gptq.yaml
+  # - gemma4-e4b-turboquant.yaml
+  # - gemma4-e4b-multimodal.yaml
 
   # === cblevins-5930k (24 GB gfx1100) — subagent + code gen (shared group) ===
   - omnicoder-9b.yaml               # vLLM, GPTQ INT4, ~7.2 GiB VRAM, on-demand (priority 100)

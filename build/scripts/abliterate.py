@@ -1620,6 +1620,11 @@ else:
         layer = decoder_layers[layer_idx]
         modified_any = False
         for name, param in layer.named_parameters():
+            # Skip MoE expert parameters to preserve expert specialization.
+            # MoE routed experts have names containing "block_sparse_moe" or "experts".
+            # Abliterating expert FFN weights destroys routing specialization.
+            if any(skip_key in name for skip_key in ("block_sparse_moe", "experts")):
+                continue
             if any(wm in name for wm in weight_matrices):
                 dev = param.device
                 d = direction.to(dev)

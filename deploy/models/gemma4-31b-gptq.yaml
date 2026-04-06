@@ -1,0 +1,65 @@
+# Gemma4 31B Dense GPTQ INT4 via vLLM on AMD gfx1100.
+#
+# Dense: 30.7B params, 60 layers. GPTQ INT4 checkpoint ~16 GB weights.
+# VRAM budget: ~15-16 GB weights + ~6 GB KV cache → tight fit in 24 GB.
+# Conservative maxModelLen=4096 to stay within VRAM.
+#
+# On-demand model in 7900xtx-textgen shared group (priority 150, scale-to-zero).
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gemma4-31b-gptq
+  namespace: flexinfer-system
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-experimental
+  source: pvc://gemma4-31b-gptq/gemma4-31b-gptq/gptq-w4-g128
+  cache:
+    strategy: SharedPVC
+  gpu:
+    vendor: amd
+    count: 1
+    vramEstimateMB: 17000
+    shared: 7900xtx-textgen
+    priority: 150
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 15m
+    coldStartTimeout: 15m
+  config:
+    quantization: gptq
+    dtype: "half"
+    maxModelLen: 4096
+    gpuMemoryUtilization: "0.95"
+    maxNumSeqs: 4
+    trustRemoteCode: true
+    attentionBackend: TRITON_ATTN
+    servedModelName: gemma4-31b-gptq
+    enableToolCalling: true
+    toolCallParser: gemma4
+    reasoningParser: gemma4
+    enablePrefixCaching: true
+    disableLogStats: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 24Gi
+    limits:
+      cpu: "8"
+      memory: 32Gi
+  serviceLabels:
+    - gemma4-31b-gptq
+    - gemma4-31b
+  litellm:
+    enabled: true
+    servedModelName: gemma4-31b-gptq
+    aliases:
+      - gemma4-31b
+      - gemma4-dense
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

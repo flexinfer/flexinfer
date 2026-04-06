@@ -231,15 +231,15 @@ func defaultGPTQModelPoliciesJSON() string {
 			Architectures:       []string{"Gemma4ForCausalLM"},
 			Loader:              "gptqmodel",
 			PythonPackages: []string{
-				"git+https://github.com/huggingface/transformers.git@91b1ab1fdfa81a552644a92fbe3e8d88de40e167",
+				"transformers>=5.5.0",
 			},
 			QuantizeConfigOverride: map[string]any{
 				"offload_to_disk": false,
 			},
 			CalibrationOverrides: map[string]int{
-				"max_samples": 128,
+				"max_samples": 256,
 				"max_seq_len": 2048,
-				"max_tokens":  262144,
+				"max_tokens":  524288,
 			},
 			RuntimeOverrides: map[string]any{
 				"attn_implementation": "eager",
