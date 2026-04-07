@@ -408,6 +408,7 @@ func TestBuildAbliterationJob_ProfileEnvOverridesDefaults(t *testing.T) {
 		GPUArch:   "gfx906",
 		ProfileEnv: []corev1.EnvVar{
 			{Name: "HSA_ENABLE_SDMA", Value: "0"},
+			{Name: "ABLITERATION_ACTIVATION_CAPTURE_MODE", Value: "hidden_states"},
 			{Name: "ABLITERATION_SAFE_SHARDED_LOAD", Value: "profile-override"},
 		},
 	}
@@ -423,6 +424,9 @@ func TestBuildAbliterationJob_ProfileEnvOverridesDefaults(t *testing.T) {
 	}
 	if got := envMap["HSA_ENABLE_SDMA"]; got != "0" {
 		t.Fatalf("HSA_ENABLE_SDMA = %q, want 0", got)
+	}
+	if got := envMap["ABLITERATION_ACTIVATION_CAPTURE_MODE"]; got != "hidden_states" {
+		t.Fatalf("ABLITERATION_ACTIVATION_CAPTURE_MODE = %q, want hidden_states", got)
 	}
 	if got := envMap["ABLITERATION_SAFE_SHARDED_LOAD"]; got != "profile-override" {
 		t.Fatalf("ABLITERATION_SAFE_SHARDED_LOAD = %q, want profile-override", got)

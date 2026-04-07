@@ -68,6 +68,12 @@ spec:
     # memory closer to the live module working set instead.
     - name: ABLITERATION_DISK_OFFLOAD_SAVE_IMPL
       value: streaming
+    # hooks-based activation capture on gfx1100 can hang on the first real
+    # forward pass for large Gemma abliterations. hidden_states is slower but
+    # avoids the forward-hook/device-runtime path until the hooks failure mode
+    # is root-caused.
+    - name: ABLITERATION_ACTIVATION_CAPTURE_MODE
+      value: hidden_states
   runtime:
     image: registry.harbor.lan/flexinfer/runtime@sha256:04631a8db20fb7c2ea62a9846938b155d031d180c962477e011936765bcfeb88
   containerMemoryGB: 48
