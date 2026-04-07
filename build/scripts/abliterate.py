@@ -14,7 +14,8 @@ Environment variables:
   ABLITERATION_SAVE_MAX_SHARD_SIZE, ABLITERATION_CPU_MAX_MEMORY_GB,
   ABLITERATION_GPU_MAX_MEMORY_GB, ABLITERATION_OFFLOAD_DIR,
   ABLITERATION_MEMORY_TRIM_INTERVAL, ABLITERATION_FORWARD_USE_CACHE,
-  ABLITERATION_SAVE_IMPL, ABLITERATION_RESUME, ABLITERATION_MODEL_POLICIES (optional)
+  ABLITERATION_SAVE_IMPL, ABLITERATION_DISK_OFFLOAD_SAVE_IMPL,
+  ABLITERATION_RESUME, ABLITERATION_MODEL_POLICIES (optional)
 
 Safety features:
   - GDN layer skip (SKIP_GDN_LAYERS): Auto-detects full-attention layers from
@@ -227,13 +228,18 @@ def resolve_lm_head_module(model, policy):
     explicit_path = str((policy or {}).get("lm_head_path", "")).strip()
     if explicit_path:
         lm_head_module = resolve_attr_path(model, explicit_path)
-        if lm_head_module is None:
-            raise RuntimeError(f"model policy lm_head_path not found: {explicit_path}")
-        return lm_head_module, explicit_path
+        if lm_head_module is not None:
+            return lm_head_module, explicit_path
+        print(
+            f"WARN: model policy lm_head_path not found: {explicit_path}; falling back to automatic discovery",
+            flush=True,
+        )
 
     candidate_paths = [
         "lm_head",
+        "model.lm_head",
         "language_model.lm_head",
+        "model.language_model.lm_head",
     ]
     for path in candidate_paths:
         lm_head_module = resolve_attr_path(model, path)
@@ -892,6 +898,9 @@ prompt_max_length = max(32, env_int("ABLITERATION_PROMPT_MAX_LENGTH", 256))
 configured_save_format = env_str("ABLITERATION_SAVE_FORMAT", "auto").lower()
 configured_save_max_shard_size = env_str("ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB")
 configured_save_impl = env_str("ABLITERATION_SAVE_IMPL", "streaming").lower()
+configured_disk_offload_save_impl = env_str(
+    "ABLITERATION_DISK_OFFLOAD_SAVE_IMPL", ""
+).lower()
 activation_capture_mode = env_str(
     "ABLITERATION_ACTIVATION_CAPTURE_MODE", "hooks"
 ).lower()
@@ -1964,10 +1973,15 @@ if save_format not in {"bin", "safetensors"}:
     raise RuntimeError(f"unknown ABLITERATION_SAVE_FORMAT={save_format}")
 effective_save_impl = configured_save_impl
 if configured_save_impl == "streaming" and model_uses_disk_offload(model):
-    effective_save_impl = "materialized"
+    disk_offload_save_impl = configured_disk_offload_save_impl
+    if active_policy and active_policy.get("disk_offload_save_impl"):
+        disk_offload_save_impl = str(active_policy["disk_offload_save_impl"]).strip().lower()
+    if not disk_offload_save_impl:
+        disk_offload_save_impl = "materialized"
+    effective_save_impl = disk_offload_save_impl
     print(
-        "Forcing materialized save because streaming export can read stale tensors "
-        "from disk-offloaded modules",
+        "Overriding save implementation for disk-offloaded model "
+        f"(requested={configured_save_impl}, effective={effective_save_impl})",
         flush=True,
     )
     emit_snapshot(

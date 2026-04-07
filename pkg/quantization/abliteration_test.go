@@ -220,6 +220,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"forward use cache", "ABLITERATION_FORWARD_USE_CACHE", "false"},
 		{"save shard size", "ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB"},
 		{"save impl", "ABLITERATION_SAVE_IMPL", "streaming"},
+		{"disk offload save impl", "ABLITERATION_DISK_OFFLOAD_SAVE_IMPL", ""},
 		{"resume", "ABLITERATION_RESUME", "true"},
 		{"cpu max memory", "ABLITERATION_CPU_MAX_MEMORY_GB", "20"},
 		{"gpu max memory", "ABLITERATION_GPU_MAX_MEMORY_GB", "20"},
@@ -249,7 +250,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 	if got := envMap["ABLITERATION_MODEL_POLICIES"]; !strings.Contains(got, `"decoder_layers_path":"model.language_model.layers"`) {
 		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want gemma4 decoder_layers_path override", got)
 	}
-	if got := envMap["ABLITERATION_MODEL_POLICIES"]; !strings.Contains(got, `"lm_head_path":"language_model.lm_head"`) {
+	if got := envMap["ABLITERATION_MODEL_POLICIES"]; !strings.Contains(got, `"lm_head_path":"lm_head"`) {
 		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want gemma4 lm_head_path override", got)
 	}
 }
@@ -264,6 +265,7 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	t.Setenv("FLEXINFER_ABLITERATION_FORWARD_USE_CACHE", "true")
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_MAX_SHARD_SIZE", "2GB")
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_IMPL", "materialized")
+	t.Setenv("FLEXINFER_ABLITERATION_DISK_OFFLOAD_SAVE_IMPL", "streaming")
 	t.Setenv("FLEXINFER_ABLITERATION_RESUME", "false")
 	t.Setenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB", "28")
 	t.Setenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB", "18")
@@ -304,6 +306,9 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	}
 	if got := envMap["ABLITERATION_SAVE_IMPL"]; got != "materialized" {
 		t.Errorf("ABLITERATION_SAVE_IMPL = %q, want materialized", got)
+	}
+	if got := envMap["ABLITERATION_DISK_OFFLOAD_SAVE_IMPL"]; got != "streaming" {
+		t.Errorf("ABLITERATION_DISK_OFFLOAD_SAVE_IMPL = %q, want streaming", got)
 	}
 	if got := envMap["ABLITERATION_RESUME"]; got != "false" {
 		t.Errorf("ABLITERATION_RESUME = %q, want false", got)

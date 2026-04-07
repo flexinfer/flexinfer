@@ -3,7 +3,7 @@
 # Same Gemma4ForConditionalGeneration architecture as E4B, vision+video capable.
 #
 # Pipeline: Download BF16 (~27 GB) → Abliterate → GPTQ INT4 (~7 GB) → Ready
-# Node: cblevins-radeonvii (gfx906, 128GB RAM)
+# Node: cblevins-7900xtx (gfx1100, 64GB RAM)
 #
 # MoE abliteration safety:
 #   - weightMatrices: ["o_proj"] ONLY — shared attention output projection.
@@ -12,7 +12,8 @@
 #   - Double protection: CRD restricts to o_proj + code skips expert params.
 #
 # Disk: 27 GB BF16 + ~7 GB GPTQ INT4 + headroom → 60 Gi PVC
-# GPU: 1x Radeon VII (gfx906, 16GB VRAM) for abliteration + quantization
+# GPU: 1x RX 7900 XTX (gfx1100, 24GB VRAM) for abliteration + quantization
+# SysRAM: 64GB node, so keep save/offload in streaming mode via GPUProfile overrides.
 ---
 apiVersion: ai.flexinfer/v1alpha1
 kind: ModelCache
@@ -26,7 +27,7 @@ spec:
   clusterStorageClassName: bulk-1r-stable
   secretRef: "hf-token"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-radeonvii
+    kubernetes.io/hostname: cblevins-7900xtx
   download:
     maxMemoryGB: 16
     hfTransfer: false
@@ -37,10 +38,10 @@ spec:
     weightMatrices:
       - o_proj
     useGPU: true
-    maxMemoryGB: 96
+    maxMemoryGB: 48
     timeoutSeconds: 14400
     nodeSelector:
-      kubernetes.io/hostname: cblevins-radeonvii
+      kubernetes.io/hostname: cblevins-7900xtx
     normThreshold: "100"
     ablitateLmHead: false
   quantization:
@@ -50,10 +51,10 @@ spec:
     sym: true
     descAct: false
     useGPU: true
-    maxMemoryGB: 96
+    maxMemoryGB: 48
     timeoutSeconds: 14400
     nodeSelector:
-      kubernetes.io/hostname: cblevins-radeonvii
+      kubernetes.io/hostname: cblevins-7900xtx
     calibration:
       maxSeqLen: 2048
       maxSamples: 256

@@ -38,6 +38,7 @@ type abliterationModelPolicy struct {
 	TokenizerFixMistralRegex *bool    `json:"tokenizer_fix_mistral_regex,omitempty"`
 	SaveFormat               string   `json:"save_format,omitempty"`
 	SaveMaxShardSize         string   `json:"save_max_shard_size,omitempty"`
+	DiskOffloadSaveImpl      string   `json:"disk_offload_save_impl,omitempty"`
 	LoadAutoClass            string   `json:"load_auto_class,omitempty"`
 	DecoderLayersPath        string   `json:"decoder_layers_path,omitempty"`
 	LMHeadPath               string   `json:"lm_head_path,omitempty"`
@@ -279,6 +280,7 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 	if saveImpl == "" {
 		saveImpl = "streaming"
 	}
+	diskOffloadSaveImpl := os.Getenv("FLEXINFER_ABLITERATION_DISK_OFFLOAD_SAVE_IMPL")
 	resume := os.Getenv("FLEXINFER_ABLITERATION_RESUME")
 	if resume == "" {
 		resume = "true"
@@ -352,6 +354,7 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		{Name: "ABLITERATION_FORWARD_USE_CACHE", Value: forwardUseCache},
 		{Name: "ABLITERATION_SAVE_MAX_SHARD_SIZE", Value: saveMaxShardSize},
 		{Name: "ABLITERATION_SAVE_IMPL", Value: saveImpl},
+		{Name: "ABLITERATION_DISK_OFFLOAD_SAVE_IMPL", Value: diskOffloadSaveImpl},
 		{Name: "ABLITERATION_RESUME", Value: resume},
 		{Name: "ABLITERATION_CPU_MAX_MEMORY_GB", Value: cpuMaxMemoryGB},
 		{Name: "ABLITERATION_GPU_MAX_MEMORY_GB", Value: gpuMaxMemoryGB},
@@ -386,7 +389,7 @@ func defaultAbliterationModelPoliciesJSON() string {
 			SaveMaxShardSize:    "1GB",
 			LoadAutoClass:       "AutoModelForImageTextToText",
 			DecoderLayersPath:   "model.language_model.layers",
-			LMHeadPath:          "language_model.lm_head",
+			LMHeadPath:          "lm_head",
 		},
 	}
 	data, err := json.Marshal(policies)

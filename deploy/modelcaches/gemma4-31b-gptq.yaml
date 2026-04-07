@@ -4,6 +4,9 @@
 #
 # Pipeline: Download BF16 (~61 GB) → Abliterate → GPTQ INT4 (~16 GB) → Ready
 # Node: cblevins-radeonvii (gfx906, 128GB RAM)
+# 64GB gfx1100 nodes are not a safe target for this model today: the dense 31B
+# checkpoint already drives ~60GiB host RSS during abliteration before save-time
+# overhead, so keep it on the 128GB Radeon VII host.
 #
 # Abliteration:
 #   - weightMatrices: ["o_proj", "down_proj"] — dense model, safe to use both (no experts).

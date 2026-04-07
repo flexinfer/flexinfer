@@ -63,9 +63,16 @@ spec:
       value: gfx1100
     - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
       value: "1"
+    # 64 GiB system RAM nodes cannot tolerate materializing a full state_dict
+    # after accelerate has already spilled weights to CPU/disk. Keep save-time
+    # memory closer to the live module working set instead.
+    - name: ABLITERATION_DISK_OFFLOAD_SAVE_IMPL
+      value: streaming
   runtime:
     image: registry.harbor.lan/flexinfer/runtime@sha256:04631a8db20fb7c2ea62a9846938b155d031d180c962477e011936765bcfeb88
   containerMemoryGB: 48
+  maxGPUMemoryGB: 18
+  maxCPUMemoryGB: 44
   gpuDriverMemoryMB: 12288
   quantization:
     supported:
@@ -75,4 +82,4 @@ spec:
       - exl2
     images:
       gptq: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100-v4
-      abliteration: registry.harbor.lan/flexinfer/runtime:ablitfix
+      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:06458de5f17afd2c070a8c4691ed86a32c693f388fa9e45554d16ab466259a0e
