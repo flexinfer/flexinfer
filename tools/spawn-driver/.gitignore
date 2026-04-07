@@ -7,4 +7,6 @@ node_modules/
 
 # NOTE: dist/ is intentionally tracked (not gitignored) so the bundled
 # spawn-driver.js can be embedded into the Go binary via go:embed.
-# Regenerate via `npm run build` once a real bundling step exists.
+# Regenerate via `npm run build`. The esbuild metafile is build-only and
+# kept out of source control.
+dist/spawn-driver.meta.json
