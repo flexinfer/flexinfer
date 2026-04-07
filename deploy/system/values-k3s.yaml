@@ -32,10 +32,10 @@ controller:
     requests:
       cpu: 100m
       memory: 256Mi
-  # Pin the controller to a healthy control-plane GPU node with the image cached.
+  # Keep the controller on any healthy amd64 control-plane node. Host pinning
+  # makes rollouts fragile when a single node is down or rebooting.
   nodeSelector:
     kubernetes.io/arch: amd64
-    kubernetes.io/hostname: cblevins-5930k
     node-role.kubernetes.io/control-plane: "true"
   tolerations:
     - key: node-role.kubernetes.io/control-plane
@@ -91,10 +91,10 @@ proxy:
   timeouts:
     queue: "25m"
     coldStart: "25m"
-  # Keep the proxy on a healthy control-plane services node with the image cached.
+  # Keep the proxy on any healthy amd64 control-plane node. Host pinning makes
+  # control-plane service recovery depend on a single machine.
   nodeSelector:
     kubernetes.io/arch: amd64
-    kubernetes.io/hostname: cblevins-5930k
     node-role.kubernetes.io/control-plane: "true"
   tolerations:
     - key: node-role.kubernetes.io/control-plane
