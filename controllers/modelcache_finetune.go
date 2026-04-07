@@ -229,7 +229,9 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		}
 		// Look up GPUProfile for image and memory config overrides (finetune reuses GPTQ image).
 		if r.GPUProfiles != nil && ftGPUArch != "" {
-			if profile, ok := r.GPUProfiles.Lookup(ftGPUArch); ok {
+			if profile, ok, err := r.GPUProfiles.LookupOrFetch(ctx, modelCache.Namespace, ftGPUArch); err != nil {
+				return ctrl.Result{}, err
+			} else if ok {
 				if img, ok := backend.QuantizerImageFromProfile(profile, "gptq"); ok {
 					params.ProfileQuantizerImage = img
 				}

@@ -52,6 +52,52 @@ func (r *GPUProfileReconciler) Lookup(arch string) (*aiv1alpha2.GPUProfileSpec, 
 	return spec, ok
 }
 
+// LookupOrFetch returns a cached GPU profile when available and falls back to
+// the API server when the in-memory cache is cold after a controller restart.
+func (r *GPUProfileReconciler) LookupOrFetch(ctx context.Context, namespace, arch string) (*aiv1alpha2.GPUProfileSpec, bool, error) {
+	if arch == "" {
+		return nil, false, nil
+	}
+	if spec, ok := r.Lookup(arch); ok {
+		return spec, true, nil
+	}
+
+	var profile aiv1alpha2.GPUProfile
+	if namespace != "" {
+		if err := r.Get(ctx, client.ObjectKey{Name: arch, Namespace: namespace}, &profile); err == nil {
+			specCopy := profile.Spec.DeepCopy()
+			r.profiles.Store(arch, specCopy)
+			return specCopy, true, nil
+		} else if err != nil && !errors.IsNotFound(err) {
+			return nil, false, err
+		}
+	}
+
+	var profiles aiv1alpha2.GPUProfileList
+	listOpts := []client.ListOption{}
+	if namespace != "" {
+		listOpts = append(listOpts, client.InNamespace(namespace))
+	}
+	if err := r.List(ctx, &profiles, listOpts...); err != nil {
+		return nil, false, err
+	}
+	for i := range profiles.Items {
+		item := &profiles.Items[i]
+		if item.Spec.Architecture != arch && item.Name != arch {
+			continue
+		}
+		specCopy := item.Spec.DeepCopy()
+		cacheKey := item.Spec.Architecture
+		if cacheKey == "" {
+			cacheKey = item.Name
+		}
+		r.profiles.Store(cacheKey, specCopy)
+		return specCopy, true, nil
+	}
+
+	return nil, false, nil
+}
+
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=gpuprofiles,verbs=get;list;watch
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=gpuprofiles/status,verbs=get;update;patch
 

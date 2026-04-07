@@ -224,7 +224,9 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		// Uses key "abliteration" (NOT "gptq") since the abliteration script
 		// lives in a different image than the GPTQ quantizer.
 		if r.GPUProfiles != nil && ablGPUArch != "" {
-			if profile, ok := r.GPUProfiles.Lookup(ablGPUArch); ok {
+			if profile, ok, err := r.GPUProfiles.LookupOrFetch(ctx, modelCache.Namespace, ablGPUArch); err != nil {
+				return ctrl.Result{}, err
+			} else if ok {
 				if img, ok := backend.QuantizerImageFromProfile(profile, "abliteration"); ok {
 					params.ProfileQuantizerImage = img
 				}
