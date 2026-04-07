@@ -53,6 +53,8 @@ type mockSink struct {
 	lastMessage   string
 	externalID    string
 	turns         int
+	estimatedCost float64
+	costEstimated bool
 }
 
 func (m *mockSink) AddTokens(input, output, cacheCreate, cacheRead int) {
@@ -113,6 +115,13 @@ func (m *mockSink) IncrementTurns() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.turns++
+}
+
+func (m *mockSink) AddEstimatedCost(usd float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.estimatedCost += usd
+	m.costEstimated = true
 }
 
 // ---------- broadcast recorder ----------
