@@ -3,6 +3,8 @@ package hud
 import (
 	"encoding/json"
 	"log/slog"
+
+	"github.com/crb2nu/loom/internal/hud/bridge"
 )
 
 // CodexJSONLParser parses Codex's --json JSONL output.
@@ -126,6 +128,27 @@ func (p *CodexJSONLParser) handleTurnCompleted(line []byte) {
 		0,
 		ev.Usage.CachedInputTokens,
 	)
+
+	// Codex's SDK does not emit per-turn cost (unlike Claude's `result`
+	// event with `total_cost_usd`), so SpawnTelemetry.TotalCostUSD has been
+	// 0 for every Codex spawn. Estimate the cost in-process using a
+	// hard-coded price snapshot in the bridge package.
+	//
+	// TODO(slice 15b): Codex's `turn.completed` event does not include a
+	// model field, so we use bridge.DefaultCodexModel here. A future slice
+	// should plumb the actual model from the spawn config or
+	// `thread.started` event so multi-model accounts get accurate per-model
+	// rates. The accumulator marks the cost as estimated so the UI can
+	// label it appropriately.
+	estimatedCost := bridge.EstimateCodexCost(
+		bridge.DefaultCodexModel,
+		freshInputTokens,
+		ev.Usage.CachedInputTokens,
+		ev.Usage.OutputTokens,
+	)
+	if estimatedCost > 0 {
+		p.sink.AddEstimatedCost(estimatedCost)
+	}
 }
 
 // ---------- item.started ----------
@@ -263,6 +286,18 @@ func (p *CodexJSONLParser) handleAgentMessage(item codexItem) {
 }
 
 func (p *CodexJSONLParser) handleMCPToolCall(item codexItem) {
+	// Defensive: ensure a tool call entry exists with the server name even
+	// if item.started was not emitted. The Codex SDK is allowed to skip the
+	// started event for synchronous mcp_tool_call items, in which case
+	// handleItemStarted never ran and the entry that CompleteToolCall is
+	// about to update has no ServerName. EnsureToolCall is idempotent — when
+	// item.started did fire it is a no-op (the entry name already matches).
+	name := item.Tool
+	if name == "" {
+		name = "unknown"
+	}
+	p.sink.EnsureToolCall(item.ID, name, item.Server)
+
 	errMsg := ""
 	if item.Error != "" {
 		errMsg = item.Error
@@ -272,9 +307,10 @@ func (p *CodexJSONLParser) handleMCPToolCall(item codexItem) {
 
 	if p.broadcast != nil {
 		p.broadcast("agent.spawn.tool_complete", p.agentID, map[string]any{
-			"id":    item.ID,
-			"tool":  item.Tool,
-			"error": errMsg,
+			"id":          item.ID,
+			"tool":        item.Tool,
+			"server_name": item.Server,
+			"error":       errMsg,
 		})
 	}
 }

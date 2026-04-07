@@ -1,7 +1,10 @@
 package hud
 
 import (
+	"math"
 	"testing"
+
+	"github.com/crb2nu/loom/internal/hud/bridge"
 )
 
 // Note: mockSink and related helpers are defined in spawn_claude_parser_test.go.
@@ -56,6 +59,53 @@ func TestCodexParser_TurnCompleted(t *testing.T) {
 	// This is the contract the HUD and mobile app rely on for cost math.
 	if got := tc.Input + tc.CacheRead + tc.Output; got != 650 {
 		t.Errorf("billable total mismatch: input+cacheRead+output = %d, want 650", got)
+	}
+
+	// Codex SDK doesn't emit cost, so the parser must populate
+	// AddEstimatedCost using the bridge price table. The mock sink records
+	// both the running total and a costEstimated flag.
+	if sink.estimatedCost == 0 {
+		t.Errorf("expected non-zero estimated cost, got 0")
+	}
+	if !sink.costEstimated {
+		t.Errorf("expected costEstimated flag to be set")
+	}
+}
+
+func TestCodexParser_TurnCompleted_CostMatchesPriceTable(t *testing.T) {
+	sink := &mockSink{}
+	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+
+	// Same usage as TestCodexParser_TurnCompleted: total input 500
+	// (300 fresh + 200 cached) and 150 output. The parser must use
+	// bridge.DefaultCodexModel because turn.completed has no model field.
+	line := []byte(`{"type":"turn.completed","usage":{"input_tokens":500,"cached_input_tokens":200,"output_tokens":150}}`)
+	p.HandleLine(line)
+
+	want := bridge.EstimateCodexCost(bridge.DefaultCodexModel, 300, 200, 150)
+	if want == 0 {
+		t.Fatalf("price table sanity: bridge.EstimateCodexCost returned 0 for default model")
+	}
+	if math.Abs(sink.estimatedCost-want) > 1e-9 {
+		t.Errorf("estimated cost = %v, want %v (delta %v)", sink.estimatedCost, want, sink.estimatedCost-want)
+	}
+}
+
+func TestCodexParser_TurnCompleted_NoCostWhenAllZero(t *testing.T) {
+	sink := &mockSink{}
+	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+
+	// A turn with zero usage should not call AddEstimatedCost so the
+	// CostEstimated flag stays false (we don't want to mark a no-op turn
+	// as estimated).
+	line := []byte(`{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}`)
+	p.HandleLine(line)
+
+	if sink.estimatedCost != 0 {
+		t.Errorf("expected zero estimated cost, got %v", sink.estimatedCost)
+	}
+	if sink.costEstimated {
+		t.Errorf("expected costEstimated to remain false for zero-usage turn")
 	}
 }
 
@@ -203,6 +253,78 @@ func TestCodexParser_MCPToolCall(t *testing.T) {
 	}
 	if sink.toolCompletes[0].ErrMsg != "" {
 		t.Errorf("expected no error, got %q", sink.toolCompletes[0].ErrMsg)
+	}
+}
+
+// TestCodexParser_MCPToolCall_OnlyCompleted_PreservesServerName covers the
+// path where the Codex SDK skips item.started for a synchronous mcp_tool_call
+// and only emits item.completed. Slice 9a (claude side) made server_name a
+// first-class field on ToolCallEntry; this test guards the symmetric behavior
+// for Codex by verifying that handleMCPToolCall defensively calls
+// EnsureToolCall so the server attribution survives even when no prior
+// StartToolCall occurred.
+func TestCodexParser_MCPToolCall_OnlyCompleted_PreservesServerName(t *testing.T) {
+	sink := &mockSink{}
+	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+
+	// Only item.completed -- no prior item.started.
+	line := []byte(`{"type":"item.completed","item":{"id":"item_mcp_only_done","type":"mcp_tool_call","tool":"read_file","server":"filesystem","status":"completed"}}`)
+	p.HandleLine(line)
+
+	if len(sink.toolStarts) != 0 {
+		t.Errorf("expected 0 tool starts (no item.started fired), got %d", len(sink.toolStarts))
+	}
+	if len(sink.toolEnsures) != 1 {
+		t.Fatalf("expected 1 EnsureToolCall, got %d", len(sink.toolEnsures))
+	}
+	if sink.toolEnsures[0].ServerName != "filesystem" {
+		t.Errorf("expected server_name=filesystem, got %q", sink.toolEnsures[0].ServerName)
+	}
+	if sink.toolEnsures[0].Name != "read_file" {
+		t.Errorf("expected name=read_file, got %q", sink.toolEnsures[0].Name)
+	}
+	if sink.toolEnsures[0].ID != "item_mcp_only_done" {
+		t.Errorf("expected id=item_mcp_only_done, got %q", sink.toolEnsures[0].ID)
+	}
+	if len(sink.toolCompletes) != 1 {
+		t.Fatalf("expected 1 tool complete, got %d", len(sink.toolCompletes))
+	}
+	if sink.toolCompletes[0].ID != "item_mcp_only_done" {
+		t.Errorf("expected complete id=item_mcp_only_done, got %q", sink.toolCompletes[0].ID)
+	}
+}
+
+// TestCodexParser_MCPToolCall_StartedThenCompleted_EnsureIsIdempotent
+// guards the existing started+completed flow. EnsureToolCall must remain
+// idempotent so that when item.started already created the entry with the
+// server name, the completion path's defensive Ensure call does not
+// duplicate it or stomp on the existing data.
+func TestCodexParser_MCPToolCall_StartedThenCompleted_EnsureIsIdempotent(t *testing.T) {
+	sink := &mockSink{}
+	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+
+	started := []byte(`{"type":"item.started","item":{"id":"item_mcp_idem","type":"mcp_tool_call","tool":"read_file","server":"filesystem","status":"in_progress"}}`)
+	p.HandleLine(started)
+
+	completed := []byte(`{"type":"item.completed","item":{"id":"item_mcp_idem","type":"mcp_tool_call","tool":"read_file","server":"filesystem","status":"completed"}}`)
+	p.HandleLine(completed)
+
+	if len(sink.toolStarts) != 1 {
+		t.Fatalf("expected 1 tool start, got %d", len(sink.toolStarts))
+	}
+	if sink.toolStarts[0].ServerName != "filesystem" {
+		t.Errorf("expected start server_name=filesystem, got %q", sink.toolStarts[0].ServerName)
+	}
+	// EnsureToolCall must still fire on completion (defensive), even though
+	// it is a no-op for the accumulator in this case.
+	if len(sink.toolEnsures) != 1 {
+		t.Fatalf("expected 1 EnsureToolCall, got %d", len(sink.toolEnsures))
+	}
+	if sink.toolEnsures[0].ServerName != "filesystem" {
+		t.Errorf("expected ensure server_name=filesystem, got %q", sink.toolEnsures[0].ServerName)
+	}
+	if len(sink.toolCompletes) != 1 {
+		t.Fatalf("expected 1 tool complete, got %d", len(sink.toolCompletes))
 	}
 }
 

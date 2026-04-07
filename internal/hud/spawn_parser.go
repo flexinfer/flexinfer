@@ -14,6 +14,12 @@ type SpawnEventSink interface {
 	AddTokens(input, output, cacheCreate, cacheRead int)
 	// StartToolCall records the beginning of a tool invocation.
 	StartToolCall(id, name, serverName string)
+	// EnsureToolCall defensively guarantees that a tool call entry exists for
+	// the given id with the supplied name/serverName. Used by the Codex parser
+	// to backfill MCP server attribution when only item.completed is emitted
+	// (i.e. the SDK skipped item.started for synchronous tool calls). Safe to
+	// call alongside StartToolCall — implementations must be idempotent.
+	EnsureToolCall(id, name, serverName string)
 	// CompleteToolCall records the completion of a tool invocation.
 	// exitCode is nil for non-command tools; errMsg is empty on success.
 	CompleteToolCall(id string, durationMs int, exitCode *int, errMsg string)
@@ -29,6 +35,10 @@ type SpawnEventSink interface {
 	SetLastMessage(msg string)
 	// IncrementTurns increments the turn counter by one.
 	IncrementTurns()
+	// AddEstimatedCost adds a Loom-side estimated USD cost (used by Codex,
+	// whose SDK does not emit per-turn cost). Marks the telemetry as
+	// containing an estimated cost so the UI can label it.
+	AddEstimatedCost(usd float64)
 }
 
 // SpawnEventBroadcaster is called for each significant parsed event to enable

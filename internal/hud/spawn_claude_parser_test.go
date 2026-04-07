@@ -16,6 +16,10 @@ type toolStartCall struct {
 	ID, Name, ServerName string
 }
 
+type toolEnsureCall struct {
+	ID, Name, ServerName string
+}
+
 type toolCompleteCall struct {
 	ID       string
 	Duration int
@@ -41,6 +45,7 @@ type mockSink struct {
 	mu            sync.Mutex
 	tokens        []tokenCall
 	toolStarts    []toolStartCall
+	toolEnsures   []toolEnsureCall
 	toolCompletes []toolCompleteCall
 	fileChanges   []fileChangeCall
 	errors        []errorCall
@@ -48,6 +53,8 @@ type mockSink struct {
 	lastMessage   string
 	externalID    string
 	turns         int
+	estimatedCost float64
+	costEstimated bool
 }
 
 func (m *mockSink) AddTokens(input, output, cacheCreate, cacheRead int) {
@@ -60,6 +67,12 @@ func (m *mockSink) StartToolCall(id, name, serverName string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.toolStarts = append(m.toolStarts, toolStartCall{id, name, serverName})
+}
+
+func (m *mockSink) EnsureToolCall(id, name, serverName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.toolEnsures = append(m.toolEnsures, toolEnsureCall{id, name, serverName})
 }
 
 func (m *mockSink) CompleteToolCall(id string, durationMs int, exitCode *int, errMsg string) {
@@ -102,6 +115,13 @@ func (m *mockSink) IncrementTurns() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.turns++
+}
+
+func (m *mockSink) AddEstimatedCost(usd float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.estimatedCost += usd
+	m.costEstimated = true
 }
 
 // ---------- broadcast recorder ----------

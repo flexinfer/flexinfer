@@ -1,6 +1,7 @@
 <script lang="ts">
   import { spawnStore } from '../stores/spawn.svelte';
   import type { SpawnRequest, SpawnState } from '../stores/spawn.svelte';
+  import { router } from '../stores/router.svelte';
   import StatusDot from '../widgets/StatusDot.svelte';
   import EmptyState from './shared/EmptyState.svelte';
 
@@ -21,6 +22,7 @@
   let branch = $state('');
   let taskDescription = $state('');
   let timeoutMinutes = $state(60);
+  let multiTurn = $state(false);
 
   async function handleSpawn() {
     if (!project || !taskDescription) return;
@@ -31,9 +33,11 @@
       timeout_minutes: timeoutMinutes,
     };
     if (branch) req.branch = branch;
+    if (multiTurn) req.multi_turn = true;
     const result = await spawnStore.spawn(req);
     if (result) {
       taskDescription = '';
+      multiTurn = false;
     }
   }
 
@@ -76,8 +80,8 @@
         Agent
         <select bind:value={agentType} class="form-select">
           <option value="claude-code">Claude Code</option>
-          <option value="codex" disabled>Codex</option>
-          <option value="gemini" disabled>Gemini</option>
+          <option value="codex">Codex</option>
+          <option value="gemini">Gemini</option>
         </select>
       </label>
       <label class="form-label">
@@ -96,6 +100,11 @@
         <input bind:value={timeoutMinutes} type="number" class="form-input" min="5" max="480" />
       </label>
     </div>
+
+    <label class="form-label-inline">
+      <input type="checkbox" bind:checked={multiTurn} />
+      <span>Multi-turn (allow follow-up messages)</span>
+    </label>
 
     <label class="form-label full-width">
       Task
@@ -119,14 +128,32 @@
   {:else}
     <div class="spawns-list">
       {#each spawns as spawn (spawn.spawn_id)}
-        <div class="spawn-row" class:active={spawn.status === 'running' || spawn.status === 'creating'}>
+        <div
+          class="spawn-row"
+          class:active={spawn.status === 'running' || spawn.status === 'creating'}
+          role="button"
+          tabindex="0"
+          onclick={() => router.navigateDetail(spawn.spawn_id)}
+          onkeydown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              router.navigateDetail(spawn.spawn_id);
+            }
+          }}
+        >
           <div class="spawn-header">
             <StatusDot status={spawn.status === 'running' ? 'healthy' : spawn.status === 'creating' ? 'degraded' : spawn.status === 'failed' ? 'down' : 'idle'} />
             <span class="spawn-project">{spawn.request.project}</span>
             <span class="spawn-status" style="color: {statusColor(spawn.status)}">{spawn.status}</span>
             <span class="spawn-duration">{formatDuration(spawn.started_at, spawn.ended_at)}</span>
             {#if spawn.status === 'running' || spawn.status === 'creating'}
-              <button class="stop-button" onclick={() => handleStop(spawn.spawn_id)}>Stop</button>
+              <button
+                class="stop-button"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  handleStop(spawn.spawn_id);
+                }}
+              >Stop</button>
             {/if}
           </div>
           <div class="spawn-task">{spawn.request.task_description}</div>
@@ -218,6 +245,16 @@
     grid-column: 1 / -1;
   }
 
+  .form-label-inline {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--fg-secondary);
+    letter-spacing: var(--tracking-normal);
+  }
+
   .form-input, .form-select, .form-textarea {
     padding: 6px var(--space-2);
     background: var(--bg-primary);
@@ -280,6 +317,7 @@
     border: 1px solid var(--border);
     position: relative;
     transition: border-color var(--transition-fast);
+    cursor: pointer;
   }
 
   .spawn-row::before {
@@ -289,6 +327,15 @@
     border-radius: inherit;
     background: var(--surface-highlight);
     pointer-events: none;
+  }
+
+  .spawn-row:hover {
+    border-color: var(--border-active);
+  }
+
+  .spawn-row:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .spawn-row.active {

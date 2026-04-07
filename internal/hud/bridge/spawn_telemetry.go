@@ -10,6 +10,7 @@ type SpawnTelemetry struct {
 	ExternalSessionID string              `json:"external_session_id,omitempty"` // claude session_id or codex thread_id
 	TurnCount         int                 `json:"turn_count"`
 	TotalCostUSD      float64             `json:"total_cost_usd"`
+	CostEstimated     bool                `json:"cost_estimated,omitempty"` // true when TotalCostUSD is a Loom-side estimate (e.g., Codex)
 	TokenUsage        SpawnTokenUsage     `json:"token_usage"`
 	ModelUsage        map[string]ModelUse `json:"model_usage,omitempty"`
 	ToolCalls         []ToolCallEntry     `json:"tool_calls,omitempty"`
@@ -109,6 +110,49 @@ func (a *SpawnTelemetryAccumulator) StartToolCall(id, name, serverName string) {
 	})
 }
 
+// EnsureToolCall makes sure a tool call entry exists for the given id with
+// the supplied metadata. If a matching open entry exists (started but not
+// completed), populate any missing ServerName/Name. If no entry exists yet
+// (because item.started was never emitted), create one so a subsequent
+// CompleteToolCall has something to update.
+//
+// This exists to make MCP server_name capture symmetric across agents: the
+// Codex SDK only emits item.started for some mcp_tool_call items, so the
+// parser must defensively backfill the entry on completion. Idempotent: safe
+// to call multiple times for the same id.
+func (a *SpawnTelemetryAccumulator) EnsureToolCall(id, name, serverName string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// Walk backwards looking for an open (incomplete) entry that matches by
+	// name. If found, fill in serverName when missing.
+	for i := len(a.data.ToolCalls) - 1; i >= 0; i-- {
+		tc := &a.data.ToolCalls[i]
+		if tc.DurationMs != 0 || tc.Error != "" || tc.ExitCode != nil {
+			continue // already completed
+		}
+		if name != "" && tc.Name == name {
+			if serverName != "" && tc.ServerName == "" {
+				tc.ServerName = serverName
+			}
+			return
+		}
+	}
+
+	// No matching open entry — create one. Mirrors StartToolCall semantics.
+	if len(a.data.ToolCalls) >= maxToolCalls {
+		return
+	}
+	a.data.ToolCalls = append(a.data.ToolCalls, ToolCallEntry{
+		Name:       name,
+		ServerName: serverName,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+	})
+	// Record a synthetic start so the upcoming CompleteToolCall can compute a
+	// (near-zero) duration without leaking the toolStart map.
+	a.toolStart[id] = time.Now()
+}
+
 // CompleteToolCall updates a previously started tool call with its result.
 // If the tool call was started, the duration is computed from the start time.
 func (a *SpawnTelemetryAccumulator) CompleteToolCall(id string, durationMs int, exitCode *int, errMsg string) {
@@ -174,6 +218,17 @@ func (a *SpawnTelemetryAccumulator) SetResult(costUSD float64, turns int, stopRe
 	a.data.TotalCostUSD = costUSD
 	a.data.TurnCount = turns
 	a.data.StopReason = stopReason
+}
+
+// AddEstimatedCost adds an estimated USD amount to the running total cost
+// and marks CostEstimated=true so consumers can label it as a Loom-side
+// estimate rather than an SDK-reported figure. Used by the Codex parser
+// because the OpenAI Codex SDK does not emit per-turn cost.
+func (a *SpawnTelemetryAccumulator) AddEstimatedCost(usd float64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.data.TotalCostUSD += usd
+	a.data.CostEstimated = true
 }
 
 // SetModelUsage sets per-model cost and token breakdown (Claude-specific).
