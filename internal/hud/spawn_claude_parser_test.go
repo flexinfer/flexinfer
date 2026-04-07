@@ -1,6 +1,7 @@
 package hud
 
 import (
+	"strings"
 	"sync"
 	"testing"
 )
@@ -379,6 +380,74 @@ func TestClaudeParser_ResultError(t *testing.T) {
 	}
 	if sink.errors[0].Message != "Exceeded maximum turn limit." {
 		t.Errorf("unexpected error message: %q", sink.errors[0].Message)
+	}
+}
+
+func TestClaudeParser_ResultPermissionDenials(t *testing.T) {
+	sink := &mockSink{}
+	var broadcasts []broadcastCall
+	bc := recordingBroadcaster(&broadcasts)
+	p := NewClaudeJSONLParser(sink, "test-agent", bc, nil)
+
+	// Successful result with two permission-denied tool calls. These should
+	// surface as structured errors on SpawnTelemetry.Errors[] without
+	// overriding the stop_reason (the run itself was a success).
+	line := []byte(`{"type":"result","subtype":"success","session_id":"sess-1","duration_ms":10000,"num_turns":3,"total_cost_usd":0.08,"result":"done","permission_denials":[{"tool_name":"Bash","tool_use_id":"toolu_den1","tool_input":{"command":"rm -rf /"}},{"tool_name":"Write","tool_use_id":"toolu_den2","tool_input":{"file_path":"/etc/passwd"}}]}`)
+	p.HandleLine(line)
+
+	if sink.result == nil || sink.result.StopReason != "end_turn" {
+		t.Fatalf("expected stop_reason 'end_turn', got %+v", sink.result)
+	}
+
+	if len(sink.errors) != 2 {
+		t.Fatalf("expected 2 permission_denied errors, got %d: %+v", len(sink.errors), sink.errors)
+	}
+	for i, want := range []string{"Bash", "Write"} {
+		if sink.errors[i].ErrType != "permission_denied" {
+			t.Errorf("error %d: expected type 'permission_denied', got %q", i, sink.errors[i].ErrType)
+		}
+		if !strings.Contains(sink.errors[i].Message, want) {
+			t.Errorf("error %d: expected message to contain %q, got %q", i, want, sink.errors[i].Message)
+		}
+	}
+	// The tool_use_id should be carried in the message for correlation.
+	if !strings.Contains(sink.errors[0].Message, "toolu_den1") {
+		t.Errorf("expected message to include tool_use_id, got %q", sink.errors[0].Message)
+	}
+
+	// The result broadcast should carry a count so clients can badge without
+	// re-querying the canonical telemetry.
+	var found bool
+	for _, b := range broadcasts {
+		if b.EventType != "agent.spawn.result" {
+			continue
+		}
+		data, ok := b.Data.(map[string]any)
+		if !ok {
+			t.Fatalf("expected result broadcast payload to be map[string]any, got %T", b.Data)
+		}
+		if data["permission_denials_len"] != 2 {
+			t.Errorf("expected permission_denials_len 2, got %v", data["permission_denials_len"])
+		}
+		found = true
+	}
+	if !found {
+		t.Error("expected agent.spawn.result broadcast")
+	}
+}
+
+func TestClaudeParser_ResultNoPermissionDenials(t *testing.T) {
+	sink := &mockSink{}
+	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+
+	// Absent permission_denials field must not synthesize errors.
+	line := []byte(`{"type":"result","subtype":"success","session_id":"sess-1","duration_ms":5000,"num_turns":1,"total_cost_usd":0.01,"result":"ok"}`)
+	p.HandleLine(line)
+
+	for _, e := range sink.errors {
+		if e.ErrType == "permission_denied" {
+			t.Errorf("unexpected permission_denied error: %+v", e)
+		}
 	}
 }
 

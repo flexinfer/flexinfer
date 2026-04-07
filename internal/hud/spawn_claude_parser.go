@@ -246,6 +246,20 @@ type claudeResultEvent struct {
 	NumTurns   int     `json:"num_turns"`
 	TotalCost  float64 `json:"total_cost_usd"`
 	Result     string  `json:"result"`
+	// PermissionDenials mirrors SDKResult.permission_denials from the Claude
+	// Agent SDK. Each entry represents a tool invocation the agent requested
+	// but was blocked from executing by the permission layer. We surface
+	// these to the canonical SpawnTelemetry.Errors[] so operators can see
+	// policy-denied tool calls without scraping stderr.
+	PermissionDenials []claudePermissionDenial `json:"permission_denials,omitempty"`
+}
+
+// claudePermissionDenial mirrors SDKPermissionDenial from sdk.d.ts. We only
+// pull the fields we need to build a human-readable error message; the full
+// tool_input payload is intentionally dropped to keep telemetry compact.
+type claudePermissionDenial struct {
+	ToolName  string `json:"tool_name"`
+	ToolUseID string `json:"tool_use_id"`
 }
 
 func (p *ClaudeJSONLParser) handleResult(line []byte) {
@@ -264,12 +278,29 @@ func (p *ClaudeJSONLParser) handleResult(line []byte) {
 		p.sink.SetLastMessage(ev.Result)
 	}
 
+	// Surface permission-denied tool calls as structured errors on the
+	// canonical telemetry so the HUD can badge them without scraping logs.
+	// The Claude SDK only emits permission_denials on the terminal `result`
+	// event, so this is the single source of truth for the whole session.
+	for _, pd := range ev.PermissionDenials {
+		tool := pd.ToolName
+		if tool == "" {
+			tool = "unknown"
+		}
+		msg := fmt.Sprintf("tool %q denied by permission policy", tool)
+		if pd.ToolUseID != "" {
+			msg = fmt.Sprintf("%s (tool_use_id=%s)", msg, pd.ToolUseID)
+		}
+		p.sink.AddError("permission_denied", msg)
+	}
+
 	if p.broadcast != nil {
 		p.broadcast("agent.spawn.result", p.agentID, map[string]any{
-			"stop_reason": stopReason,
-			"cost_usd":    ev.TotalCost,
-			"turns":       ev.NumTurns,
-			"duration_ms": ev.DurationMs,
+			"stop_reason":            stopReason,
+			"cost_usd":               ev.TotalCost,
+			"turns":                  ev.NumTurns,
+			"duration_ms":            ev.DurationMs,
+			"permission_denials_len": len(ev.PermissionDenials),
 		})
 	}
 }
