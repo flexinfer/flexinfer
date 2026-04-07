@@ -34,6 +34,11 @@ func TestCodexParser_TurnCompleted(t *testing.T) {
 	sink := &mockSink{}
 	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
 
+	// OpenAI Responses API convention: input_tokens is the TOTAL (500),
+	// cached_input_tokens is a subset already included in that total (200).
+	// The canonical SpawnTokenUsage treats InputTokens and CacheReadTokens as
+	// additive, so fresh input = 500 - 200 = 300 must be reported to the sink
+	// to avoid double-counting cache hits.
 	line := []byte(`{"type":"turn.completed","usage":{"input_tokens":500,"cached_input_tokens":200,"output_tokens":150}}`)
 	p.HandleLine(line)
 
@@ -41,9 +46,56 @@ func TestCodexParser_TurnCompleted(t *testing.T) {
 		t.Fatalf("expected 1 token call, got %d", len(sink.tokens))
 	}
 	tc := sink.tokens[0]
-	if tc.Input != 500 || tc.Output != 150 || tc.CacheCreate != 0 || tc.CacheRead != 200 {
-		t.Errorf("unexpected token counts: input=%d output=%d cacheCreate=%d cacheRead=%d",
+	if tc.Input != 300 || tc.Output != 150 || tc.CacheCreate != 0 || tc.CacheRead != 200 {
+		t.Errorf("unexpected token counts: input=%d output=%d cacheCreate=%d cacheRead=%d "+
+			"(expected input=300 output=150 cacheCreate=0 cacheRead=200)",
 			tc.Input, tc.Output, tc.CacheCreate, tc.CacheRead)
+	}
+
+	// Sum must match Codex's billable total (input_tokens + output_tokens).
+	// This is the contract the HUD and mobile app rely on for cost math.
+	if got := tc.Input + tc.CacheRead + tc.Output; got != 650 {
+		t.Errorf("billable total mismatch: input+cacheRead+output = %d, want 650", got)
+	}
+}
+
+func TestCodexParser_TurnCompletedNoCacheHit(t *testing.T) {
+	sink := &mockSink{}
+	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+
+	// Cold turn: no cache hits, entire input is fresh. With cached_input_tokens
+	// == 0 the split should be a no-op (fresh == total).
+	line := []byte(`{"type":"turn.completed","usage":{"input_tokens":400,"cached_input_tokens":0,"output_tokens":75}}`)
+	p.HandleLine(line)
+
+	tc := sink.tokens[0]
+	if tc.Input != 400 || tc.CacheRead != 0 || tc.Output != 75 {
+		t.Errorf("unexpected cold-turn token counts: %+v", tc)
+	}
+}
+
+func TestCodexParser_TurnCompletedCachedExceedsInputClamp(t *testing.T) {
+	sink := &mockSink{}
+	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+
+	// Defensive edge case: cached > input should never happen per the
+	// OpenAI contract, but if it does the parser must clamp fresh input to
+	// zero rather than forwarding a negative count to the accumulator.
+	line := []byte(`{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":150,"output_tokens":25}}`)
+	p.HandleLine(line)
+
+	if len(sink.tokens) != 1 {
+		t.Fatalf("expected 1 token call, got %d", len(sink.tokens))
+	}
+	tc := sink.tokens[0]
+	if tc.Input != 0 {
+		t.Errorf("expected fresh input clamped to 0, got %d", tc.Input)
+	}
+	if tc.CacheRead != 150 {
+		t.Errorf("expected CacheRead 150, got %d", tc.CacheRead)
+	}
+	if tc.Output != 25 {
+		t.Errorf("expected Output 25, got %d", tc.Output)
 	}
 }
 

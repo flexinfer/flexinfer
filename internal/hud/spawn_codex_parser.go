@@ -98,8 +98,30 @@ func (p *CodexJSONLParser) handleTurnCompleted(line []byte) {
 		p.logger.Debug("failed to parse turn.completed", "error", err)
 		return
 	}
+
+	// Codex's `usage.input_tokens` follows the OpenAI Responses API convention:
+	// it is the TOTAL input tokens including the cached portion, and
+	// `cached_input_tokens` is a subset already included in that total (see
+	// https://platform.openai.com/docs/guides/prompt-caching).
+	//
+	// Loom's canonical SpawnTokenUsage treats InputTokens and CacheReadTokens
+	// as additive (total = input + output + cacheCreate + cacheRead), so we
+	// must subtract the cached portion before forwarding to the sink.
+	// Otherwise the HUD double-counts cached tokens and over-reports billable
+	// input usage for every Codex turn.
+	freshInputTokens := ev.Usage.InputTokens - ev.Usage.CachedInputTokens
+	if freshInputTokens < 0 {
+		// Defensive: if Codex ever emits cached > input (shouldn't happen per
+		// the OpenAI contract), prefer under-reporting fresh input to negative
+		// counts. Log for observability.
+		p.logger.Warn("codex usage: cached_input_tokens > input_tokens",
+			"input", ev.Usage.InputTokens,
+			"cached", ev.Usage.CachedInputTokens)
+		freshInputTokens = 0
+	}
+
 	p.sink.AddTokens(
-		ev.Usage.InputTokens,
+		freshInputTokens,
 		ev.Usage.OutputTokens,
 		0,
 		ev.Usage.CachedInputTokens,
