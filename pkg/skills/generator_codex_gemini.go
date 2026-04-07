@@ -40,7 +40,9 @@ func (g *Generator) generateCodexSkill(skill *Skill) error {
 	// Generate SKILL.md
 	skillMD := g.generateCodexSkillMD(skill)
 	skillMDPath := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(skillMDPath, []byte(skillMD), 0644); err != nil {
+	// Atomic write to avoid codex file watcher observing partial/empty files,
+	// which triggers spurious "missing YAML frontmatter" errors (openai/codex#11495).
+	if err := writeFileAtomic(skillMDPath, []byte(skillMD), 0o644); err != nil {
 		return fmt.Errorf("write SKILL.md: %w", err)
 	}
 
@@ -166,7 +168,8 @@ func (g *Generator) generateGeminiSkill(skill *Skill) error {
 
 	skillMD := g.generateGeminiSkillMD(skill)
 	skillMDPath := filepath.Join(skillDir, "SKILL.md")
-	if err := os.WriteFile(skillMDPath, []byte(skillMD), 0644); err != nil {
+	// Atomic write: see generator_codex_gemini.go:generateCodexSkill for rationale.
+	if err := writeFileAtomic(skillMDPath, []byte(skillMD), 0o644); err != nil {
 		return fmt.Errorf("write SKILL.md: %w", err)
 	}
 
