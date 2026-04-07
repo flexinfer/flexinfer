@@ -370,6 +370,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 		"agent_type", req.AgentType,
 		"pod", startResult.ContainerID,
 		"use_sdk_driver", req.UseSDKDriver,
+		"multi_turn", req.MultiTurn,
 	)
 	_, execSpan := o.tracer.Start(ctx, "agent.spawn.agent_exec")
 
@@ -386,13 +387,31 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 			o.failSpawn(ctx, state, fmt.Sprintf("inject spawn driver: %v", err))
 			return
 		}
+
+		// In multi-turn mode pre-create the control file so the driver's
+		// fs.watch fires immediately on the first REST-driven append. The
+		// REST handlers (slice 8c) call injectControlMessage to push
+		// `{type:"message"|"interrupt"|"shutdown"}` lines into this file.
+		var controlFilePath string
+		if req.MultiTurn {
+			if err := o.injectControlFile(injectCtx, startResult.ContainerID, spawnID); err != nil {
+				injectCancel()
+				execSpan.End()
+				heartbeatCancel()
+				o.failSpawn(ctx, state, fmt.Sprintf("inject control file: %v", err))
+				return
+			}
+			controlFilePath = controlFilePathForSpawn(spawnID)
+		}
 		injectCancel()
+
 		agentCmd = buildSDKDriverCommand(
 			req.AgentType,
 			req.TaskDescription,
 			state.AgentID,
 			spawnID,
 			"/workspace/"+req.Project,
+			controlFilePath,
 			req.MaxTurns,
 			req.MaxCostUSD,
 		)

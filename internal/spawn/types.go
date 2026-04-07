@@ -48,6 +48,15 @@ type Request struct {
 	// JSONL on stdout. Slice 7a/7b ship a hand-written stub bundle; Slice 7c
 	// will swap in a real SDK-backed bundle. Defaults to false (legacy CLI path).
 	UseSDKDriver bool `json:"use_sdk_driver,omitempty"`
+	// MultiTurn enables long-lived conversational mode for the spawn driver.
+	// When set, the orchestrator pre-creates an empty JSONL control file in
+	// the pod and passes its path to the driver via --control-file. The
+	// driver tails the file for `{type:"message"|"interrupt"|"shutdown"}`
+	// commands so the HUD/mobile REST endpoints (slice 8c) can push
+	// follow-up turns and cancellations into a running session. Requires
+	// UseSDKDriver=true; ignored on the legacy CLI path. Defaults to false
+	// for full backwards compatibility with single-shot spawns.
+	MultiTurn bool `json:"multi_turn,omitempty"`
 }
 
 // State holds the state of a spawned agent.
