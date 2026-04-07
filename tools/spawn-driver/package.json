@@ -1,0 +1,18 @@
+{
+  "name": "loom-spawn-driver",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Node.js sidecar that drives headless Claude/Codex agents via their official SDKs and emits JSONL telemetry compatible with the loom HUD parsers.",
+  "type": "commonjs",
+  "main": "dist/spawn-driver.js",
+  "bin": {
+    "loom-spawn-driver": "dist/spawn-driver.js"
+  },
+  "scripts": {
+    "start": "node dist/spawn-driver.js",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
