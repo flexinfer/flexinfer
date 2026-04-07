@@ -1,6 +1,7 @@
 <script lang="ts">
   import { spawnStore } from '../stores/spawn.svelte';
   import type { SpawnRequest, SpawnState } from '../stores/spawn.svelte';
+  import { router } from '../stores/router.svelte';
   import StatusDot from '../widgets/StatusDot.svelte';
   import EmptyState from './shared/EmptyState.svelte';
 
@@ -127,14 +128,32 @@
   {:else}
     <div class="spawns-list">
       {#each spawns as spawn (spawn.spawn_id)}
-        <div class="spawn-row" class:active={spawn.status === 'running' || spawn.status === 'creating'}>
+        <div
+          class="spawn-row"
+          class:active={spawn.status === 'running' || spawn.status === 'creating'}
+          role="button"
+          tabindex="0"
+          onclick={() => router.navigateDetail(spawn.spawn_id)}
+          onkeydown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              router.navigateDetail(spawn.spawn_id);
+            }
+          }}
+        >
           <div class="spawn-header">
             <StatusDot status={spawn.status === 'running' ? 'healthy' : spawn.status === 'creating' ? 'degraded' : spawn.status === 'failed' ? 'down' : 'idle'} />
             <span class="spawn-project">{spawn.request.project}</span>
             <span class="spawn-status" style="color: {statusColor(spawn.status)}">{spawn.status}</span>
             <span class="spawn-duration">{formatDuration(spawn.started_at, spawn.ended_at)}</span>
             {#if spawn.status === 'running' || spawn.status === 'creating'}
-              <button class="stop-button" onclick={() => handleStop(spawn.spawn_id)}>Stop</button>
+              <button
+                class="stop-button"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  handleStop(spawn.spawn_id);
+                }}
+              >Stop</button>
             {/if}
           </div>
           <div class="spawn-task">{spawn.request.task_description}</div>
@@ -298,6 +317,7 @@
     border: 1px solid var(--border);
     position: relative;
     transition: border-color var(--transition-fast);
+    cursor: pointer;
   }
 
   .spawn-row::before {
@@ -307,6 +327,15 @@
     border-radius: inherit;
     background: var(--surface-highlight);
     pointer-events: none;
+  }
+
+  .spawn-row:hover {
+    border-color: var(--border-active);
+  }
+
+  .spawn-row:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .spawn-row.active {
