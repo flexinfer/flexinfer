@@ -29,6 +29,10 @@ type SpawnEventSink interface {
 	SetLastMessage(msg string)
 	// IncrementTurns increments the turn counter by one.
 	IncrementTurns()
+	// AddEstimatedCost adds a Loom-side estimated USD cost (used by Codex,
+	// whose SDK does not emit per-turn cost). Marks the telemetry as
+	// containing an estimated cost so the UI can label it.
+	AddEstimatedCost(usd float64)
 }
 
 // SpawnEventBroadcaster is called for each significant parsed event to enable

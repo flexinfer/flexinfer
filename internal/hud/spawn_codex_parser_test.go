@@ -1,7 +1,10 @@
 package hud
 
 import (
+	"math"
 	"testing"
+
+	"github.com/crb2nu/loom/internal/hud/bridge"
 )
 
 // Note: mockSink and related helpers are defined in spawn_claude_parser_test.go.
@@ -56,6 +59,53 @@ func TestCodexParser_TurnCompleted(t *testing.T) {
 	// This is the contract the HUD and mobile app rely on for cost math.
 	if got := tc.Input + tc.CacheRead + tc.Output; got != 650 {
 		t.Errorf("billable total mismatch: input+cacheRead+output = %d, want 650", got)
+	}
+
+	// Codex SDK doesn't emit cost, so the parser must populate
+	// AddEstimatedCost using the bridge price table. The mock sink records
+	// both the running total and a costEstimated flag.
+	if sink.estimatedCost == 0 {
+		t.Errorf("expected non-zero estimated cost, got 0")
+	}
+	if !sink.costEstimated {
+		t.Errorf("expected costEstimated flag to be set")
+	}
+}
+
+func TestCodexParser_TurnCompleted_CostMatchesPriceTable(t *testing.T) {
+	sink := &mockSink{}
+	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+
+	// Same usage as TestCodexParser_TurnCompleted: total input 500
+	// (300 fresh + 200 cached) and 150 output. The parser must use
+	// bridge.DefaultCodexModel because turn.completed has no model field.
+	line := []byte(`{"type":"turn.completed","usage":{"input_tokens":500,"cached_input_tokens":200,"output_tokens":150}}`)
+	p.HandleLine(line)
+
+	want := bridge.EstimateCodexCost(bridge.DefaultCodexModel, 300, 200, 150)
+	if want == 0 {
+		t.Fatalf("price table sanity: bridge.EstimateCodexCost returned 0 for default model")
+	}
+	if math.Abs(sink.estimatedCost-want) > 1e-9 {
+		t.Errorf("estimated cost = %v, want %v (delta %v)", sink.estimatedCost, want, sink.estimatedCost-want)
+	}
+}
+
+func TestCodexParser_TurnCompleted_NoCostWhenAllZero(t *testing.T) {
+	sink := &mockSink{}
+	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+
+	// A turn with zero usage should not call AddEstimatedCost so the
+	// CostEstimated flag stays false (we don't want to mark a no-op turn
+	// as estimated).
+	line := []byte(`{"type":"turn.completed","usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0}}`)
+	p.HandleLine(line)
+
+	if sink.estimatedCost != 0 {
+		t.Errorf("expected zero estimated cost, got %v", sink.estimatedCost)
+	}
+	if sink.costEstimated {
+		t.Errorf("expected costEstimated to remain false for zero-usage turn")
 	}
 }
 

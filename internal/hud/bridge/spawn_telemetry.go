@@ -10,6 +10,7 @@ type SpawnTelemetry struct {
 	ExternalSessionID string              `json:"external_session_id,omitempty"` // claude session_id or codex thread_id
 	TurnCount         int                 `json:"turn_count"`
 	TotalCostUSD      float64             `json:"total_cost_usd"`
+	CostEstimated     bool                `json:"cost_estimated,omitempty"` // true when TotalCostUSD is a Loom-side estimate (e.g., Codex)
 	TokenUsage        SpawnTokenUsage     `json:"token_usage"`
 	ModelUsage        map[string]ModelUse `json:"model_usage,omitempty"`
 	ToolCalls         []ToolCallEntry     `json:"tool_calls,omitempty"`
@@ -174,6 +175,17 @@ func (a *SpawnTelemetryAccumulator) SetResult(costUSD float64, turns int, stopRe
 	a.data.TotalCostUSD = costUSD
 	a.data.TurnCount = turns
 	a.data.StopReason = stopReason
+}
+
+// AddEstimatedCost adds an estimated USD amount to the running total cost
+// and marks CostEstimated=true so consumers can label it as a Loom-side
+// estimate rather than an SDK-reported figure. Used by the Codex parser
+// because the OpenAI Codex SDK does not emit per-turn cost.
+func (a *SpawnTelemetryAccumulator) AddEstimatedCost(usd float64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.data.TotalCostUSD += usd
+	a.data.CostEstimated = true
 }
 
 // SetModelUsage sets per-model cost and token breakdown (Claude-specific).
