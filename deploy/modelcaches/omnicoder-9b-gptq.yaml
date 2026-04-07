@@ -19,7 +19,7 @@ spec:
   source: "Tesslate/OmniCoder-9B"
   storageStrategy: SharedPVC
   storageSize: "80Gi"
-  clusterStorageClassName: nvme-1r-gpu
+  clusterStorageClassName: nvme-cache-1r
   secretRef: "hf-token"
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx

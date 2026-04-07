@@ -5,14 +5,20 @@ resources:
   # MLC compiled model references (shared NFS PVC)
   - mlc-shared-caches.yaml
 
-  # === Abliteration + GPTQ pipelines (Download → Abliterate → Quantize → Publish) ===
-  - abliteration-gptq.yaml           # qwen35-27b-opus-distill-gptq (radeonvii)
-  - qwen35-9b-gptq.yaml             # qwen35-9b-gptq (radeonvii)
-  - omnicoder-9b-gptq.yaml          # omnicoder-9b-gptq (7900xtx)
+  # === Legacy pipelines disabled during Gemma rollout ===
+  # Keep the manifests on disk for rebuild/reference, but stop reconciling the
+  # old source caches so their detached Longhorn volumes can be pruned.
+  # - abliteration-gptq.yaml         # qwen35-27b-opus-distill-gptq (disabled)
+  # - qwen35-9b-gptq.yaml            # qwen35-9b-gptq (disabled)
+  # - omnicoder-9b-gptq.yaml         # omnicoder-9b-gptq (disabled; OCI cache in use)
+
+  # === Active Abliteration + GPTQ pipelines (Download → Abliterate → Quantize → Publish) ===
   - gemma4-26b-a4b-gptq.yaml        # gemma4-26b-a4b-gptq (radeonvii)
   - gemma4-31b-gptq.yaml            # gemma4-31b-gptq (radeonvii)
 
-  # === OCI pull caches (Harbor → local PVC → Model CRs) ===
-  - qwen35-27b-opus-distill-oci.yaml # → cblevins-7900xtx
-  - qwen35-9b-oci.yaml              # → cblevins-5930k
+  # === Legacy OCI pull caches disabled with the old Qwen rollout ===
+  # - qwen35-27b-opus-distill-oci.yaml # disabled
+  # - qwen35-9b-oci.yaml               # disabled
+
+  # === Active OCI pull caches (Harbor → local PVC → Model CRs) ===
   - omnicoder-9b-oci.yaml           # → cblevins-5930k

@@ -50,7 +50,7 @@ spec:
   source: "Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled"
   storageStrategy: SharedPVC
   storageSize: "160Gi"
-  clusterStorageClassName: nvme-1r-gpu
+  clusterStorageClassName: nvme-cache-1r
   secretRef: "hf-token"
   nodeSelector:
     kubernetes.io/hostname: cblevins-radeonvii
