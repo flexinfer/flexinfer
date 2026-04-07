@@ -30,7 +30,8 @@ func WriteManifest(dir, platform string, files []string) error {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(dir, ManifestFilename), append(data, '\n'), 0644)
+	// Atomic write so codex's skill dir watcher never observes a truncated manifest.
+	return writeFileAtomic(filepath.Join(dir, ManifestFilename), append(data, '\n'), 0o644)
 }
 
 // ReadManifest reads a manifest from the given directory, returning nil if not found.
