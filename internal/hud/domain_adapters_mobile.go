@@ -80,6 +80,10 @@ func (sa *mobileSpawnerAdapter) GetSpawnTelemetry(spawnID string) (*bridge.Spawn
 	return sa.s.GetSpawnTelemetry(spawnID)
 }
 
+func (sa *mobileSpawnerAdapter) SendControlMessage(ctx context.Context, spawnID string, cmd pkgspawn.ControlCommand) error {
+	return sa.s.SendControlMessage(ctx, spawnID, cmd)
+}
+
 // --- Spawn domain Deps adapter ---
 
 // spawnDepsAdapter wraps *App to satisfy domainspawn.Deps. A separate adapter

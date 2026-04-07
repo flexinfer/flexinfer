@@ -5,9 +5,50 @@
 package spawn
 
 import (
+	"errors"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+)
+
+// ControlCommand is the wire format the spawn-driver consumes over its JSONL
+// control file. The Go orchestrator serializes one of these per line. The
+// REST layer (admin + mobile) accepts the same shape as its request body so
+// web and mobile clients can push follow-up turns or cancellations into a
+// long-lived multi-turn spawn.
+//
+// Type discriminates payload semantics:
+//
+//   - "message"   : push a follow-up user turn (Text required)
+//   - "interrupt" : abort the in-flight generation (no payload)
+//   - "shutdown"  : graceful exit after the current turn completes
+type ControlCommand struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+// Control command type discriminators. Keep in sync with the driver-side
+// ControlCommand union in tools/spawn-driver/src/control-file.ts.
+const (
+	ControlCommandMessage   = "message"
+	ControlCommandInterrupt = "interrupt"
+	ControlCommandShutdown  = "shutdown"
+)
+
+// Control plane sentinel errors. Handlers map these to HTTP status codes so
+// the HUD web UI and mobile client can surface precise failure reasons.
+var (
+	// ErrSpawnNotFound indicates the spawn ID is unknown to the controller.
+	ErrSpawnNotFound = errors.New("spawn not found")
+	// ErrSpawnNotRunning indicates the spawn exists but is in a terminal
+	// state (completed/failed/stopped) and cannot receive control commands.
+	ErrSpawnNotRunning = errors.New("spawn is not running")
+	// ErrSpawnNotMultiTurn indicates the spawn was created without the
+	// multi_turn flag and therefore has no control file to append to.
+	ErrSpawnNotMultiTurn = errors.New("spawn is not multi-turn")
+	// ErrInvalidControlCommand indicates the command failed validation
+	// (missing type, empty message text, or unknown type).
+	ErrInvalidControlCommand = errors.New("invalid control command")
 )
 
 // Status tracks the lifecycle state of a spawned agent.

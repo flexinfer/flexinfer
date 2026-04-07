@@ -2,6 +2,7 @@ package mobile
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -290,6 +291,118 @@ func (d *MobileDomain) handleMobileSpawnStop(w http.ResponseWriter, r *http.Requ
 
 	d.logMobileAudit(r, "agent_spawn_stop", map[string]string{"spawn_id": spawnID}, "success", nil)
 	d.writeMobileJSON(w, http.StatusOK, map[string]any{"stopped": true, "spawn_id": spawnID})
+}
+
+// mobileControlMessageRequest is the JSON body accepted by the mobile
+// follow-up message endpoint. `text` is required for type=message.
+type mobileControlMessageRequest struct {
+	Text string `json:"text"`
+}
+
+// handleMobileSpawnMessage handles
+// POST /api/mobile/v1/agent/spawn/{spawn_id}/message -- forwards a follow-up
+// turn to a running multi-turn spawn. Requires the mobile:agent:spawn scope.
+func (d *MobileDomain) handleMobileSpawnMessage(w http.ResponseWriter, r *http.Request) {
+	if !d.requireMobileScope(w, r, ScopeAgentSpawn) {
+		return
+	}
+
+	spawnID := r.PathValue("spawn_id")
+	if spawnID == "" {
+		d.writeMobileError(w, http.StatusBadRequest, "missing_param", "spawn_id required")
+		return
+	}
+
+	spawner := d.deps.Spawner()
+	if spawner == nil {
+		d.writeMobileError(w, http.StatusServiceUnavailable, "spawn_unavailable", "spawn orchestrator not configured")
+		return
+	}
+
+	var body mobileControlMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		d.writeMobileError(w, http.StatusBadRequest, "invalid_body", "invalid request body")
+		return
+	}
+
+	cmd := spawn.ControlCommand{
+		Type: spawn.ControlCommandMessage,
+		Text: body.Text,
+	}
+	if err := spawner.SendControlMessage(r.Context(), spawnID, cmd); err != nil {
+		d.writeMobileControlError(w, r, "agent_spawn_message", spawnID, err)
+		return
+	}
+
+	d.logMobileAudit(r, "agent_spawn_message", map[string]string{
+		"spawn_id":     spawnID,
+		"command_type": spawn.ControlCommandMessage,
+	}, "success", nil)
+	d.writeMobileJSON(w, http.StatusAccepted, map[string]any{
+		"spawn_id": spawnID,
+		"sent":     "message",
+	})
+}
+
+// handleMobileSpawnInterrupt handles
+// POST /api/mobile/v1/agent/spawn/{spawn_id}/interrupt -- aborts the
+// in-flight turn of a running multi-turn spawn. Requires the
+// mobile:agent:spawn scope.
+func (d *MobileDomain) handleMobileSpawnInterrupt(w http.ResponseWriter, r *http.Request) {
+	if !d.requireMobileScope(w, r, ScopeAgentSpawn) {
+		return
+	}
+
+	spawnID := r.PathValue("spawn_id")
+	if spawnID == "" {
+		d.writeMobileError(w, http.StatusBadRequest, "missing_param", "spawn_id required")
+		return
+	}
+
+	spawner := d.deps.Spawner()
+	if spawner == nil {
+		d.writeMobileError(w, http.StatusServiceUnavailable, "spawn_unavailable", "spawn orchestrator not configured")
+		return
+	}
+
+	cmd := spawn.ControlCommand{Type: spawn.ControlCommandInterrupt}
+	if err := spawner.SendControlMessage(r.Context(), spawnID, cmd); err != nil {
+		d.writeMobileControlError(w, r, "agent_spawn_interrupt", spawnID, err)
+		return
+	}
+
+	d.logMobileAudit(r, "agent_spawn_interrupt", map[string]string{
+		"spawn_id":     spawnID,
+		"command_type": spawn.ControlCommandInterrupt,
+	}, "success", nil)
+	d.writeMobileJSON(w, http.StatusAccepted, map[string]any{
+		"spawn_id": spawnID,
+		"sent":     "interrupt",
+	})
+}
+
+// writeMobileControlError maps spawn control sentinel errors to mobile
+// envelope error responses with precise HTTP statuses, and emits an audit
+// log entry with the failure outcome.
+func (d *MobileDomain) writeMobileControlError(w http.ResponseWriter, r *http.Request, action, spawnID string, err error) {
+	var (
+		status int
+		code   string
+	)
+	switch {
+	case errors.Is(err, spawn.ErrSpawnNotFound):
+		status, code = http.StatusNotFound, "not_found"
+	case errors.Is(err, spawn.ErrSpawnNotRunning):
+		status, code = http.StatusConflict, "not_running"
+	case errors.Is(err, spawn.ErrSpawnNotMultiTurn):
+		status, code = http.StatusBadRequest, "not_multi_turn"
+	case errors.Is(err, spawn.ErrInvalidControlCommand):
+		status, code = http.StatusBadRequest, "invalid_command"
+	default:
+		status, code = http.StatusInternalServerError, "control_error"
+	}
+	d.logMobileAudit(r, action, map[string]string{"spawn_id": spawnID}, "failure", err)
+	d.writeMobileError(w, status, code, err.Error())
 }
 
 func (d *MobileDomain) handleMobileSpawnStream(w http.ResponseWriter, r *http.Request) {

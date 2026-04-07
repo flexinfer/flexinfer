@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -651,6 +652,73 @@ func (o *SpawnOrchestrator) StopSpawn(ctx context.Context, spawnID string) error
 		o.agentBridge.EndSession(bridge.SessionEndParams{AgentID: state.AgentID, Summarize: &summarize})
 	}()
 	return nil
+}
+
+// SendControlMessage appends a control command to a running multi-turn
+// spawn's JSONL control file. The spawn-driver's tail loop picks up the new
+// line within ~200ms (fs.watch + poll fallback) and dispatches it to the
+// active SDK Query or Codex Thread.
+//
+// Errors are returned as wrapped sentinels so REST handlers can distinguish
+// 404 (not found), 409 (not running), and 400 (not multi-turn / invalid
+// command) from 5xx backend failures:
+//
+//   - spawn.ErrSpawnNotFound         → 404
+//   - spawn.ErrSpawnNotRunning       → 409
+//   - spawn.ErrSpawnNotMultiTurn     → 400
+//   - spawn.ErrInvalidControlCommand → 400
+//
+// Any other error is a backend/exec failure and should surface as 500.
+func (o *SpawnOrchestrator) SendControlMessage(ctx context.Context, spawnID string, cmd spawn.ControlCommand) error {
+	if err := validateControlCommand(cmd); err != nil {
+		return err
+	}
+
+	state, ok := o.ctrl.Get(spawnID)
+	if !ok {
+		return fmt.Errorf("%w: %s", spawn.ErrSpawnNotFound, spawnID)
+	}
+
+	if state.Status != SpawnStatusRunning {
+		return fmt.Errorf("%w: %s is %s", spawn.ErrSpawnNotRunning, spawnID, state.Status)
+	}
+
+	if !state.Request.MultiTurn || !state.Request.UseSDKDriver {
+		return fmt.Errorf("%w: %s was not spawned with multi_turn=true", spawn.ErrSpawnNotMultiTurn, spawnID)
+	}
+
+	if state.PodName == "" {
+		return fmt.Errorf("spawn %s has no pod name; cannot inject control command", spawnID)
+	}
+
+	if err := o.injectControlMessage(ctx, state.PodName, spawnID, cmd); err != nil {
+		return fmt.Errorf("inject control command for %s: %w", spawnID, err)
+	}
+
+	o.logger.Info("injected spawn control command",
+		"spawn_id", spawnID,
+		"agent_id", state.AgentID,
+		"command_type", cmd.Type,
+	)
+	return nil
+}
+
+// validateControlCommand enforces the driver contract: Type must be one of
+// the known discriminators and "message" requires non-empty Text.
+func validateControlCommand(cmd spawn.ControlCommand) error {
+	switch cmd.Type {
+	case spawn.ControlCommandMessage:
+		if strings.TrimSpace(cmd.Text) == "" {
+			return fmt.Errorf("%w: message text is required", spawn.ErrInvalidControlCommand)
+		}
+		return nil
+	case spawn.ControlCommandInterrupt, spawn.ControlCommandShutdown:
+		return nil
+	case "":
+		return fmt.Errorf("%w: type is required", spawn.ErrInvalidControlCommand)
+	default:
+		return fmt.Errorf("%w: unknown type %q", spawn.ErrInvalidControlCommand, cmd.Type)
+	}
 }
 
 // failSpawn marks a spawn as failed, cleans up the K8s pod, and broadcasts the event.

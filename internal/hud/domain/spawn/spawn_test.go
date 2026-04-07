@@ -3,6 +3,7 @@ package spawn
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +17,18 @@ import (
 type mockSpawner struct {
 	spawns   []*pkgspawn.State
 	projects []string
+	// controlCalls records every SendControlMessage invocation for
+	// assertions. Slice 8c tests populate this to verify the REST handler
+	// forwarded the command with the expected type + text.
+	controlCalls []recordedControlCall
+	// controlErr is returned from SendControlMessage when non-nil, letting
+	// tests exercise each sentinel-error → HTTP status mapping path.
+	controlErr error
+}
+
+type recordedControlCall struct {
+	spawnID string
+	cmd     pkgspawn.ControlCommand
 }
 
 func (m *mockSpawner) Spawn(_ context.Context, req pkgspawn.Request) (string, error) {
@@ -46,6 +59,11 @@ func (m *mockSpawner) Projects() []string { return m.projects }
 
 func (m *mockSpawner) GetSpawnTelemetry(_ string) (*bridge.SpawnTelemetry, bool) {
 	return nil, false
+}
+
+func (m *mockSpawner) SendControlMessage(_ context.Context, spawnID string, cmd pkgspawn.ControlCommand) error {
+	m.controlCalls = append(m.controlCalls, recordedControlCall{spawnID: spawnID, cmd: cmd})
+	return m.controlErr
 }
 
 // mockDeps satisfies Deps for testing.
@@ -159,5 +177,119 @@ func TestSpawnDomainSpawnDetail404(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("GET /api/agent/spawn/nonexistent: expected 404, got %d", rec.Code)
+	}
+}
+
+// controlRouterFixture wires a mockSpawner into a fresh ServeMux so control
+// message / interrupt tests get clean state per case.
+func controlRouterFixture(t *testing.T, spawner *mockSpawner) *http.ServeMux {
+	t.Helper()
+	d := New(&mockDeps{spawner: spawner})
+	mux := http.NewServeMux()
+	mw := func(next http.HandlerFunc) http.HandlerFunc { return next }
+	d.RegisterRoutes(mux, mw)
+	return mux
+}
+
+// TestHandleAgentSpawnMessage_Success verifies the happy path: valid body,
+// 202 response, and the spawner sees a ControlCommandMessage with the
+// forwarded text.
+func TestHandleAgentSpawnMessage_Success(t *testing.T) {
+	spawner := &mockSpawner{}
+	mux := controlRouterFixture(t, spawner)
+
+	req := httptest.NewRequest("POST", "/api/agent/spawn/spawn-1/message",
+		strings.NewReader(`{"text":"follow up turn"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	if len(spawner.controlCalls) != 1 {
+		t.Fatalf("expected 1 SendControlMessage call, got %d", len(spawner.controlCalls))
+	}
+	got := spawner.controlCalls[0]
+	if got.spawnID != "spawn-1" {
+		t.Errorf("spawnID = %q, want spawn-1", got.spawnID)
+	}
+	if got.cmd.Type != pkgspawn.ControlCommandMessage {
+		t.Errorf("cmd.Type = %q, want %q", got.cmd.Type, pkgspawn.ControlCommandMessage)
+	}
+	if got.cmd.Text != "follow up turn" {
+		t.Errorf("cmd.Text = %q, want follow up turn", got.cmd.Text)
+	}
+}
+
+// TestHandleAgentSpawnMessage_InvalidBody confirms the handler rejects
+// non-JSON bodies with 400 before invoking the spawner.
+func TestHandleAgentSpawnMessage_InvalidBody(t *testing.T) {
+	spawner := &mockSpawner{}
+	mux := controlRouterFixture(t, spawner)
+
+	req := httptest.NewRequest("POST", "/api/agent/spawn/spawn-1/message",
+		strings.NewReader(`not json`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if len(spawner.controlCalls) != 0 {
+		t.Errorf("expected 0 SendControlMessage calls, got %d", len(spawner.controlCalls))
+	}
+}
+
+// TestHandleAgentSpawnInterrupt_Success confirms the interrupt handler
+// forwards a ControlCommandInterrupt without a payload.
+func TestHandleAgentSpawnInterrupt_Success(t *testing.T) {
+	spawner := &mockSpawner{}
+	mux := controlRouterFixture(t, spawner)
+
+	req := httptest.NewRequest("POST", "/api/agent/spawn/spawn-2/interrupt", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	if len(spawner.controlCalls) != 1 {
+		t.Fatalf("expected 1 SendControlMessage call, got %d", len(spawner.controlCalls))
+	}
+	got := spawner.controlCalls[0]
+	if got.cmd.Type != pkgspawn.ControlCommandInterrupt {
+		t.Errorf("cmd.Type = %q, want %q", got.cmd.Type, pkgspawn.ControlCommandInterrupt)
+	}
+	if got.cmd.Text != "" {
+		t.Errorf("cmd.Text = %q, want empty", got.cmd.Text)
+	}
+}
+
+// TestHandleAgentSpawnControl_ErrorMapping table-tests the sentinel →
+// HTTP status mapping so future regressions are caught early.
+func TestHandleAgentSpawnControl_ErrorMapping(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		wantCode int
+	}{
+		{"not found → 404", pkgspawn.ErrSpawnNotFound, http.StatusNotFound},
+		{"not running → 409", pkgspawn.ErrSpawnNotRunning, http.StatusConflict},
+		{"not multi-turn → 400", pkgspawn.ErrSpawnNotMultiTurn, http.StatusBadRequest},
+		{"invalid command → 400", pkgspawn.ErrInvalidControlCommand, http.StatusBadRequest},
+		{"other → 500", errors.New("boom"), http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spawner := &mockSpawner{controlErr: tc.err}
+			mux := controlRouterFixture(t, spawner)
+
+			req := httptest.NewRequest("POST", "/api/agent/spawn/spawn-err/interrupt", nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != tc.wantCode {
+				t.Errorf("%s: got %d, want %d", tc.name, rec.Code, tc.wantCode)
+			}
+		})
 	}
 }

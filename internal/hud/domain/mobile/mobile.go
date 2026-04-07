@@ -71,4 +71,6 @@ func (d *MobileDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFu
 	mux.HandleFunc("POST /api/mobile/v1/workflows/{workflow_id}/reject", mw(d.handleMobileWorkflowReject))
 	mux.HandleFunc("POST /api/mobile/v1/agent/spawn", mw(d.handleMobileSpawnAgent))
 	mux.HandleFunc("POST /api/mobile/v1/agent/spawn/{spawn_id}/stop", mw(d.handleMobileSpawnStop))
+	mux.HandleFunc("POST /api/mobile/v1/agent/spawn/{spawn_id}/message", mw(d.handleMobileSpawnMessage))
+	mux.HandleFunc("POST /api/mobile/v1/agent/spawn/{spawn_id}/interrupt", mw(d.handleMobileSpawnInterrupt))
 }

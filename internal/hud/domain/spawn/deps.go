@@ -28,4 +28,8 @@ type SpawnerOps interface {
 	StopSpawn(ctx context.Context, spawnID string) error
 	Projects() []string
 	GetSpawnTelemetry(spawnID string) (*bridge.SpawnTelemetry, bool)
+	// SendControlMessage appends a control command to a running multi-turn
+	// spawn's control file. Errors are wrapped spawn.ErrSpawn* sentinels so
+	// handlers can map them to precise HTTP statuses.
+	SendControlMessage(ctx context.Context, spawnID string, cmd pkgspawn.ControlCommand) error
 }

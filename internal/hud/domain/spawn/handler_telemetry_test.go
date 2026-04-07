@@ -37,6 +37,12 @@ func (m *mockTelemetrySpawner) GetSpawnTelemetry(id string) (*bridge.SpawnTeleme
 	return t, ok
 }
 
+// SendControlMessage is a no-op stub; telemetry tests do not exercise the
+// control plane, but the interface requires the method.
+func (m *mockTelemetrySpawner) SendControlMessage(_ context.Context, _ string, _ pkgspawn.ControlCommand) error {
+	return nil
+}
+
 // mockTelemetryDeps satisfies Deps. Its Spawner() returns a mockTelemetrySpawner.
 type mockTelemetryDeps struct {
 	spawner SpawnerOps

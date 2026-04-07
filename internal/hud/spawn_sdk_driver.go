@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/crb2nu/loom/internal/devbox/backend"
+	"github.com/crb2nu/loom/internal/spawn"
 )
 
 // spawnDriverBundle is the bundled JavaScript implementation of the
@@ -114,27 +115,21 @@ func (o *SpawnOrchestrator) injectControlFile(ctx context.Context, containerID, 
 	return nil
 }
 
-// SpawnControlCommand mirrors the wire format the spawn-driver consumes
-// (tools/spawn-driver/src/control-file.ts). The Go orchestrator constructs
-// these and serializes them as one JSON object per line into the per-spawn
-// control file. The Type field discriminates payload semantics:
-//
-//   - "message"   : push a follow-up user turn (Text required)
-//   - "interrupt" : abort the in-flight generation (no payload)
-//   - "shutdown"  : graceful exit after the current turn completes
-type SpawnControlCommand struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
-}
+// SpawnControlCommand is a type alias for spawn.ControlCommand, preserving
+// the in-package name used by existing tests and helpers while the canonical
+// type lives in internal/spawn so the REST layer can consume it without an
+// import cycle.
+type SpawnControlCommand = spawn.ControlCommand
 
 // injectControlMessage appends a single JSONL command to the spawn pod's
 // control file. The driver's tail loop picks up the new line within ~200ms
 // (fs.watch + poll fallback) and dispatches it to the active SDK Query or
 // Codex Thread.
 //
-// Slice 8c will call this from REST handlers; slice 8b ships the helper so
-// it's reachable and unit-tested ahead of the wire-up.
-func (o *SpawnOrchestrator) injectControlMessage(ctx context.Context, containerID, spawnID string, cmd SpawnControlCommand) error {
+// Slice 8c wires this up to the REST handlers via SendControlMessage; slice
+// 8b ships the helper so it's reachable and unit-tested ahead of the
+// wire-up.
+func (o *SpawnOrchestrator) injectControlMessage(ctx context.Context, containerID, spawnID string, cmd spawn.ControlCommand) error {
 	if cmd.Type == "" {
 		return fmt.Errorf("control command type is required")
 	}

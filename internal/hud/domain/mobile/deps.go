@@ -81,6 +81,11 @@ type SpawnerOps interface {
 	StopSpawn(ctx context.Context, spawnID string) error
 	Projects() []string
 	GetSpawnTelemetry(spawnID string) (*bridge.SpawnTelemetry, bool)
+	// SendControlMessage forwards a control command (follow-up message,
+	// interrupt, shutdown) to a running multi-turn spawn. Errors are
+	// wrapped spawn.ErrSpawn* sentinels so handlers can map them to
+	// precise HTTP statuses.
+	SendControlMessage(ctx context.Context, spawnID string, cmd spawn.ControlCommand) error
 }
 
 // RateLimiterOps is the interface for mobile API rate limiting.
