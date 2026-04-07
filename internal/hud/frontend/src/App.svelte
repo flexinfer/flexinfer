@@ -20,6 +20,7 @@
   import KnowledgePanel from './lib/components/KnowledgePanel.svelte';
   import SandboxPanel from './lib/components/SandboxPanel.svelte';
   import SpawnPanel from './lib/components/SpawnPanel.svelte';
+  import SpawnDetailPanel from './lib/components/SpawnDetailPanel.svelte';
   import CatalogPanel from './lib/components/CatalogPanel.svelte';
   import WeaverPanel from './lib/components/WeaverPanel.svelte';
   import DispatchPanel from './lib/components/DispatchPanel.svelte';
@@ -289,7 +290,11 @@
                 {:else if router.subView === 'sandbox'}
                   <SandboxPanel />
                 {:else if router.subView === 'spawn'}
-                  <SpawnPanel />
+                  {#if router.detail}
+                    <SpawnDetailPanel />
+                  {:else}
+                    <SpawnPanel />
+                  {/if}
                 {:else if router.subView === 'reasoning'}
                   <ReasoningPanel />
                 {:else if router.subView === 'topology'}
