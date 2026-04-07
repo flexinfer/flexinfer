@@ -222,6 +222,83 @@ func TestClaudeParser_ToolCallError(t *testing.T) {
 	}
 }
 
+func TestClaudeParser_MCPToolUseCapturesServerName(t *testing.T) {
+	sink := &mockSink{}
+	var broadcasts []broadcastCall
+	bc := recordingBroadcaster(&broadcasts)
+	p := NewClaudeJSONLParser(sink, "test-agent", bc, nil)
+
+	// The Claude SDK surfaces MCP tool invocations as a distinct
+	// "mcp_tool_use" content block with an explicit server_name field. The
+	// parser must forward that name into SpawnTelemetry.ToolCalls[].ServerName
+	// so the HUD can group calls by MCP server.
+	line := []byte(`{"type":"assistant","session_id":"sess-1","message":{"id":"msg_mcp","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"mcp_tool_use","id":"mcptool_abc","name":"tavily_search","server_name":"tavily","input":{"query":"loom"}}]}}`)
+	p.HandleLine(line)
+
+	if len(sink.toolStarts) != 1 {
+		t.Fatalf("expected 1 tool start, got %d", len(sink.toolStarts))
+	}
+	ts := sink.toolStarts[0]
+	if ts.ID != "mcptool_abc" {
+		t.Errorf("expected tool id 'mcptool_abc', got %q", ts.ID)
+	}
+	if ts.Name != "tavily_search" {
+		t.Errorf("expected tool name 'tavily_search', got %q", ts.Name)
+	}
+	if ts.ServerName != "tavily" {
+		t.Errorf("expected server name 'tavily', got %q", ts.ServerName)
+	}
+
+	// MCP tool calls are not file mutations, so no file change should be
+	// recorded.
+	if len(sink.fileChanges) != 0 {
+		t.Errorf("expected no file changes for mcp_tool_use, got %d", len(sink.fileChanges))
+	}
+
+	// The broadcast should include the server_name field so web/mobile clients
+	// can render it without re-querying the canonical telemetry.
+	var found bool
+	for _, b := range broadcasts {
+		if b.EventType != "agent.spawn.tool_start" {
+			continue
+		}
+		data, ok := b.Data.(map[string]string)
+		if !ok {
+			t.Fatalf("expected tool_start broadcast payload to be map[string]string, got %T", b.Data)
+		}
+		if data["server_name"] != "tavily" {
+			t.Errorf("expected broadcast server_name 'tavily', got %q", data["server_name"])
+		}
+		if data["id"] != "mcptool_abc" || data["name"] != "tavily_search" {
+			t.Errorf("unexpected broadcast payload: %+v", data)
+		}
+		found = true
+	}
+	if !found {
+		t.Error("expected agent.spawn.tool_start broadcast for mcp_tool_use block")
+	}
+}
+
+func TestClaudeParser_MCPToolUseLifecycle(t *testing.T) {
+	sink := &mockSink{}
+	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+
+	// mcp_tool_use followed by a tool_result should complete the tool call
+	// through the same tool_use_id path as native tool_use blocks.
+	assistant := []byte(`{"type":"assistant","session_id":"sess-1","message":{"id":"msg_mcp2","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"mcp_tool_use","id":"mcptool_xyz","name":"github_search","server_name":"github","input":{"q":"loom"}}]}}`)
+	p.HandleLine(assistant)
+
+	user := []byte(`{"type":"user","content":[{"type":"tool_result","tool_use_id":"mcptool_xyz","content":"ok","is_error":false}]}`)
+	p.HandleLine(user)
+
+	if len(sink.toolCompletes) != 1 {
+		t.Fatalf("expected 1 tool complete, got %d", len(sink.toolCompletes))
+	}
+	if sink.toolCompletes[0].ID != "mcptool_xyz" {
+		t.Errorf("expected completion for 'mcptool_xyz', got %q", sink.toolCompletes[0].ID)
+	}
+}
+
 func TestClaudeParser_FileChangeInference(t *testing.T) {
 	sink := &mockSink{}
 	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)

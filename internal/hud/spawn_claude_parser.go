@@ -88,6 +88,11 @@ type claudeContentBlock struct {
 	Text     string          `json:"text,omitempty"`
 	Thinking string          `json:"thinking,omitempty"`
 	Input    json.RawMessage `json:"input,omitempty"`
+	// ServerName is populated only for "mcp_tool_use" blocks. The Claude SDK
+	// surfaces MCP tool invocations as a distinct content block type with
+	// the upstream server name attached, so we capture it here to preserve
+	// provenance in SpawnTelemetry.ToolCalls[].ServerName.
+	ServerName string `json:"server_name,omitempty"`
 }
 
 func (p *ClaudeJSONLParser) handleAssistant(line []byte) {
@@ -123,6 +128,19 @@ func (p *ClaudeJSONLParser) handleAssistant(line []byte) {
 				p.broadcast("agent.spawn.tool_start", p.agentID, map[string]string{
 					"id":   block.ID,
 					"name": block.Name,
+				})
+			}
+		case "mcp_tool_use":
+			// MCP tool calls carry the upstream server name explicitly. Forward
+			// it through to the canonical telemetry so the HUD can group tool
+			// calls by MCP server.
+			p.toolStarts[block.ID] = time.Now()
+			p.sink.StartToolCall(block.ID, block.Name, block.ServerName)
+			if p.broadcast != nil {
+				p.broadcast("agent.spawn.tool_start", p.agentID, map[string]string{
+					"id":          block.ID,
+					"name":        block.Name,
+					"server_name": block.ServerName,
 				})
 			}
 		case "text":
