@@ -80,6 +80,7 @@
 		A1A6E901C78C7B8DDE8E268E /* ProportionBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC6B15F5BB0F1EA00B89CDB /* ProportionBar.swift */; };
 		A315F7B767AC137E668328E9 /* ListBlockedTasksIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA255073A7652651FA0D7FF /* ListBlockedTasksIntent.swift */; };
 		A685AF86282F5A0BB05803D9 /* SessionSummaryWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF931D47B733827DCCFA11 /* SessionSummaryWidget.swift */; };
+		AA25F07ED38F63E774AB37D8 /* SpawnTelemetryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ECADE37851D1276E6C36516 /* SpawnTelemetryModels.swift */; };
 		AE26BF83C8AEFE0B08F1DA96 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DF3DC44CF14DC2FB3F085E0 /* TokenStore.swift */; };
 		AFED48DE9C9328A10D542700 /* SessionTasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E77474862988D0C330061E27 /* SessionTasksView.swift */; };
 		B03747CEFD8DAB35671BF975 /* StatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B2A65F47D87C55A22DF2C6F /* StatusBadge.swift */; };
@@ -218,6 +219,7 @@
 		58F4D60206A7290881186E35 /* SessionTopFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTopFilesView.swift; sourceTree = "<group>"; };
 		5CFF203EEBD1AF6A4A2AB4D2 /* AlertsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertsViewModel.swift; sourceTree = "<group>"; };
 		5E96EE11EC79E0AB9D4A62AF /* SessionEventsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionEventsView.swift; sourceTree = "<group>"; };
+		5ECADE37851D1276E6C36516 /* SpawnTelemetryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpawnTelemetryModels.swift; sourceTree = "<group>"; };
 		6061C1B1FD3CAEC4C1ACC226 /* SessionInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionInfo.swift; sourceTree = "<group>"; };
 		6062C007A1A6883CBBFA06DA /* TasksWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksWidget.swift; sourceTree = "<group>"; };
 		62324BA9DC53973102DF1B85 /* CompactSparkline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompactSparkline.swift; sourceTree = "<group>"; };
@@ -533,6 +535,7 @@
 				0104589BD190926487D4F20D /* SessionDetail.swift */,
 				6061C1B1FD3CAEC4C1ACC226 /* SessionInfo.swift */,
 				EE16EC247A9EEC51CAF2B884 /* SpawnModels.swift */,
+				5ECADE37851D1276E6C36516 /* SpawnTelemetryModels.swift */,
 				D8E876D98B58CECC44EB5E5E /* TimelineEntry.swift */,
 				DEF7CF71931F67C441B7105D /* UnifiedAgent.swift */,
 				42BF81586CBA848909A4F4AC /* WidgetData.swift */,
@@ -861,6 +864,7 @@
 				CDBAA8EAA0B67766D37F3607 /* SessionInfo.swift in Sources */,
 				64D8DEEE394682735D328772 /* SessionsViewModel.swift in Sources */,
 				0FFA87D12B463707665992C1 /* SpawnModels.swift in Sources */,
+				AA25F07ED38F63E774AB37D8 /* SpawnTelemetryModels.swift in Sources */,
 				26051289636AC8286F10DD32 /* SpawnViewModel.swift in Sources */,
 				48B4E56980B5F596C1A51EE3 /* TimelineEntry.swift in Sources */,
 				AE26BF83C8AEFE0B08F1DA96 /* TokenStore.swift in Sources */,
