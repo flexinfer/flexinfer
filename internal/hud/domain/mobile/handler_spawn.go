@@ -4,11 +4,192 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/spawn"
 )
+
+// Pagination defaults and caps for mobile telemetry sub-endpoints.
+const (
+	mobileTelemetryDefaultLimit = 50
+	mobileTelemetryMaxLimit     = 500
+)
+
+// parseMobilePagination parses limit/offset query params with sane defaults
+// and caps. limit is clamped to (0, maxLimit] with defaultLimit as the
+// fallback. offset is clamped to >= 0.
+func parseMobilePagination(r *http.Request, defaultLimit, maxLimit int) (limit, offset int) {
+	limit = defaultLimit
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	if limit <= 0 {
+		limit = defaultLimit
+	}
+
+	offset = 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("offset")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			offset = parsed
+		}
+	}
+	return limit, offset
+}
+
+// lookupMobileTelemetryForSubResource performs the auth/spawn/telemetry
+// resolution shared by the paginated sub-endpoints. tel may be nil when the
+// spawn exists but has no telemetry yet. If ok is false, the response has
+// already been written.
+func (d *MobileDomain) lookupMobileTelemetryForSubResource(w http.ResponseWriter, r *http.Request) (tel *bridge.SpawnTelemetry, spawnID string, ok bool) {
+	if !d.requireMobileScope(w, r, ScopeRead) {
+		return nil, "", false
+	}
+
+	spawnID = r.PathValue("spawn_id")
+	if spawnID == "" {
+		d.writeMobileError(w, http.StatusBadRequest, "missing_param", "spawn_id required")
+		return nil, "", false
+	}
+
+	spawner := d.deps.Spawner()
+	if spawner == nil {
+		d.writeMobileError(w, http.StatusServiceUnavailable, "spawn_unavailable", "spawn orchestrator not configured")
+		return nil, "", false
+	}
+
+	tel, found := spawner.GetSpawnTelemetry(spawnID)
+	if !found {
+		if _, exists := spawner.GetSpawn(spawnID); !exists {
+			d.writeMobileError(w, http.StatusNotFound, "not_found", "spawn not found")
+			return nil, "", false
+		}
+		// Spawn exists but no telemetry yet — return empty page.
+		return nil, spawnID, true
+	}
+	return tel, spawnID, true
+}
+
+// HandleGetSpawnTelemetryTools handles
+// GET /api/mobile/v1/agent/spawn/{spawn_id}/telemetry/tools.
+func (d *MobileDomain) HandleGetSpawnTelemetryTools(w http.ResponseWriter, r *http.Request) {
+	tel, spawnID, ok := d.lookupMobileTelemetryForSubResource(w, r)
+	if !ok {
+		return
+	}
+
+	limit, offset := parseMobilePagination(r, mobileTelemetryDefaultLimit, mobileTelemetryMaxLimit)
+	items := []bridge.ToolCallEntry{}
+	total := 0
+	if tel != nil {
+		total = len(tel.ToolCalls)
+		items = mobileSliceToolCalls(tel.ToolCalls, offset, limit)
+	}
+
+	d.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"spawn_id": spawnID,
+		"items":    items,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+	})
+}
+
+// HandleGetSpawnTelemetryFiles handles
+// GET /api/mobile/v1/agent/spawn/{spawn_id}/telemetry/files.
+func (d *MobileDomain) HandleGetSpawnTelemetryFiles(w http.ResponseWriter, r *http.Request) {
+	tel, spawnID, ok := d.lookupMobileTelemetryForSubResource(w, r)
+	if !ok {
+		return
+	}
+
+	limit, offset := parseMobilePagination(r, mobileTelemetryDefaultLimit, mobileTelemetryMaxLimit)
+	items := []bridge.FileChangeEntry{}
+	total := 0
+	if tel != nil {
+		total = len(tel.FileChanges)
+		items = mobileSliceFileChanges(tel.FileChanges, offset, limit)
+	}
+
+	d.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"spawn_id": spawnID,
+		"items":    items,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+	})
+}
+
+// HandleGetSpawnTelemetryErrors handles
+// GET /api/mobile/v1/agent/spawn/{spawn_id}/telemetry/errors.
+func (d *MobileDomain) HandleGetSpawnTelemetryErrors(w http.ResponseWriter, r *http.Request) {
+	tel, spawnID, ok := d.lookupMobileTelemetryForSubResource(w, r)
+	if !ok {
+		return
+	}
+
+	limit, offset := parseMobilePagination(r, mobileTelemetryDefaultLimit, mobileTelemetryMaxLimit)
+	items := []bridge.AgentError{}
+	total := 0
+	if tel != nil {
+		total = len(tel.Errors)
+		items = mobileSliceAgentErrors(tel.Errors, offset, limit)
+	}
+
+	d.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"spawn_id": spawnID,
+		"items":    items,
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+	})
+}
+
+func mobileSliceToolCalls(items []bridge.ToolCallEntry, offset, limit int) []bridge.ToolCallEntry {
+	if offset >= len(items) {
+		return []bridge.ToolCallEntry{}
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	out := make([]bridge.ToolCallEntry, end-offset)
+	copy(out, items[offset:end])
+	return out
+}
+
+func mobileSliceFileChanges(items []bridge.FileChangeEntry, offset, limit int) []bridge.FileChangeEntry {
+	if offset >= len(items) {
+		return []bridge.FileChangeEntry{}
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	out := make([]bridge.FileChangeEntry, end-offset)
+	copy(out, items[offset:end])
+	return out
+}
+
+func mobileSliceAgentErrors(items []bridge.AgentError, offset, limit int) []bridge.AgentError {
+	if offset >= len(items) {
+		return []bridge.AgentError{}
+	}
+	end := offset + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	out := make([]bridge.AgentError, end-offset)
+	copy(out, items[offset:end])
+	return out
+}
 
 func (d *MobileDomain) handleMobileSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	if !d.requireMobileScope(w, r, ScopeAgentSpawn) {
