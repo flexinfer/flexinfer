@@ -381,9 +381,23 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	var execResult *backend.ExecResult
 	var execErr error
 
+	// Cancellable exec context so the budget watcher can abort the run when
+	// MaxCostUSD or MaxTurns is exceeded.
+	execCtx, execCancel := context.WithCancel(ctx)
+
+	// Budget watcher: polls the telemetry accumulator every 5s and cancels the
+	// exec context when a configured budget is exceeded. The watcher terminates
+	// when the exec returns via the done channel.
+	watcherDone := make(chan struct{})
+	if req.MaxCostUSD > 0 || req.MaxTurns > 0 {
+		go o.runBudgetWatcher(execCtx, spawnID, req, acc, execCancel, watcherDone)
+	} else {
+		close(watcherDone)
+	}
+
 	// Use streaming exec if backend supports it and we have a parser; fall back to buffered.
 	if sec, ok := o.backend.(streamExecCapable); ok && parser != nil {
-		execResult, execErr = backend.StreamExec(ctx,
+		execResult, execErr = backend.StreamExec(execCtx,
 			sec.Clientset(), sec.RestConfig(), sec.Namespace(), sec.NFSFlush(),
 			backend.StreamExecOpts{
 				ContainerID: startResult.ContainerID,
@@ -397,13 +411,18 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 		)
 	} else {
 		// Fallback: buffered exec (no real-time telemetry).
-		execResult, execErr = o.backend.Exec(ctx, backend.ExecOpts{
+		execResult, execErr = o.backend.Exec(execCtx, backend.ExecOpts{
 			ContainerID: startResult.ContainerID,
 			Command:     agentCmd,
 			WorkDir:     "/workspace/" + req.Project,
 			TimeoutSec:  req.TimeoutMinutes * 60,
 		})
 	}
+	// Stop the watcher and release the exec context.
+	if req.MaxCostUSD > 0 || req.MaxTurns > 0 {
+		close(watcherDone)
+	}
+	execCancel()
 	execSpan.End()
 	heartbeatCancel()
 
@@ -593,6 +612,9 @@ func (o *SpawnOrchestrator) failSpawn(ctx context.Context, state *SpawnState, re
 		state.Telemetry = &snap
 	}
 
+	// Persist final telemetry summary to the agent-context session.
+	o.persistTelemetrySummary(state, string(SpawnStatusFailed))
+
 	state.Status = SpawnStatusFailed
 	state.Error = reason
 	now := time.Now()
@@ -646,6 +668,9 @@ func (o *SpawnOrchestrator) completeSpawn(ctx context.Context, state *SpawnState
 		snap := acc.Snapshot()
 		state.Telemetry = &snap
 	}
+
+	// Persist final telemetry summary to the agent-context session.
+	o.persistTelemetrySummary(state, string(SpawnStatusCompleted))
 
 	state.Status = SpawnStatusCompleted
 	now := time.Now()
@@ -707,6 +732,83 @@ func (o *SpawnOrchestrator) recordSpawnTelemetryMetrics(ctx context.Context, sta
 	}
 }
 
+// persistTelemetrySummary writes a structured telemetry summary to the
+// agent-context session associated with this spawn. Called from completeSpawn
+// and failSpawn after the telemetry snapshot has been attached to state.
+//
+// Uses a short background context (not the spawn context) because failSpawn
+// may be invoked on a canceled or timed-out parent context. Errors from
+// ContextAdd are logged but do not fail the spawn transition.
+func (o *SpawnOrchestrator) persistTelemetrySummary(state *SpawnState, status string) {
+	if o.agentBridge == nil || state == nil {
+		return
+	}
+	if state.Request.Namespace == "" {
+		return
+	}
+	if state.Telemetry == nil {
+		return
+	}
+
+	tel := state.Telemetry
+	summary := map[string]any{
+		"spawn_id":       state.SpawnID,
+		"agent_id":       state.AgentID,
+		"agent_type":     state.Request.AgentType,
+		"status":         status,
+		"total_cost_usd": tel.TotalCostUSD,
+		"turn_count":     tel.TurnCount,
+		"stop_reason":    tel.StopReason,
+		"tool_count":     len(tel.ToolCalls),
+		"file_count":     len(tel.FileChanges),
+		"error_count":    len(tel.Errors),
+		"token_usage":    tel.TokenUsage,
+		"last_message":   tel.LastMessage,
+	}
+	content, err := json.Marshal(summary)
+	if err != nil {
+		o.logger.Warn("failed to marshal spawn telemetry summary",
+			"spawn_id", state.SpawnID, "error", err)
+		return
+	}
+
+	entry := map[string]any{
+		"entry_type": "decision",
+		"title":      fmt.Sprintf("Spawn %s: %s", state.SpawnID, status),
+		"content":    string(content),
+		"metadata": map[string]any{
+			"spawn_id":   state.SpawnID,
+			"agent_id":   state.AgentID,
+			"agent_type": state.Request.AgentType,
+			"namespace":  state.Request.Namespace,
+			"status":     status,
+		},
+	}
+
+	// Use a short, independent timeout — the spawn context may already be
+	// canceled on error paths. ContextAdd itself doesn't accept a context,
+	// so we run it in a goroutine with a timeout guard to avoid blocking
+	// terminal state transitions on a slow MCP bridge.
+	persistCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	go func() {
+		defer cancel()
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- o.agentBridge.ContextAdd("", []map[string]any{entry})
+		}()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				o.logger.Warn("failed to persist spawn telemetry summary",
+					"spawn_id", state.SpawnID, "error", err)
+			}
+		case <-persistCtx.Done():
+			o.logger.Warn("spawn telemetry summary persist timed out",
+				"spawn_id", state.SpawnID)
+		}
+	}()
+}
+
 // GetSpawnTelemetry returns a snapshot of the current telemetry for a spawn.
 // For running spawns, it reads from the live accumulator. For completed/failed
 // spawns, telemetry is attached to the State directly.
@@ -736,6 +838,53 @@ func (o *SpawnOrchestrator) GetSpawn(spawnID string) (*SpawnState, bool) {
 
 // Projects returns the configured project list for spawn pickers.
 func (o *SpawnOrchestrator) Projects() []string { return o.projects }
+
+// runBudgetWatcher polls the spawn telemetry accumulator at a fixed interval
+// and cancels the exec context when the configured cost or turn budget is
+// exceeded. It records a structured error on the accumulator ("max_budget" or
+// "max_turns") so the persisted telemetry captures the reason. The watcher
+// exits when its own ctx is canceled (exec returned / parent canceled) or when
+// done is closed by the caller after the exec returns.
+func (o *SpawnOrchestrator) runBudgetWatcher(
+	ctx context.Context,
+	spawnID string,
+	req SpawnRequest,
+	acc *bridge.SpawnTelemetryAccumulator,
+	cancelExec context.CancelFunc,
+	done <-chan struct{},
+) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		case <-ticker.C:
+			snap := acc.Snapshot()
+			if req.MaxCostUSD > 0 && snap.TotalCostUSD >= req.MaxCostUSD {
+				msg := fmt.Sprintf("spawn %s cost budget exceeded: $%.4f >= $%.4f",
+					spawnID, snap.TotalCostUSD, req.MaxCostUSD)
+				acc.AddError("max_budget", msg)
+				o.logger.Warn("spawn budget exceeded, canceling exec",
+					"spawn_id", spawnID, "cost_usd", snap.TotalCostUSD, "max_cost_usd", req.MaxCostUSD)
+				cancelExec()
+				return
+			}
+			if req.MaxTurns > 0 && snap.TurnCount >= req.MaxTurns {
+				msg := fmt.Sprintf("spawn %s turn budget exceeded: %d >= %d",
+					spawnID, snap.TurnCount, req.MaxTurns)
+				acc.AddError("max_turns", msg)
+				o.logger.Warn("spawn turn budget exceeded, canceling exec",
+					"spawn_id", spawnID, "turns", snap.TurnCount, "max_turns", req.MaxTurns)
+				cancelExec()
+				return
+			}
+		}
+	}
+}
 
 // runHeartbeatLoop sends periodic heartbeats for a spawned agent while it's running.
 func (o *SpawnOrchestrator) runHeartbeatLoop(ctx context.Context, state *SpawnState) {

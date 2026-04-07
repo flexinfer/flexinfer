@@ -36,6 +36,12 @@ type Request struct {
 	MemoryMB        int     `json:"memory_mb"`        // Container memory limit.
 	CPUs            float64 `json:"cpus"`             // Container CPU limit.
 	TimeoutMinutes  int     `json:"timeout_minutes"`  // Max runtime before reap.
+	// MaxCostUSD caps total spawn cost in USD. The budget watcher cancels the
+	// exec when the accumulated cost meets or exceeds this value. 0 = unlimited.
+	MaxCostUSD float64 `json:"max_cost_usd,omitempty"`
+	// MaxTurns caps total agent turns. The budget watcher cancels the exec
+	// when the accumulated turn count meets or exceeds this value. 0 = unlimited.
+	MaxTurns int `json:"max_turns,omitempty"`
 }
 
 // State holds the state of a spawned agent.
