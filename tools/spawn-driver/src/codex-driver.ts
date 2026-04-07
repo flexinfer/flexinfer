@@ -8,9 +8,22 @@
 // todo lists. transformItem() rewrites items into a hybrid shape that carries
 // both the original SDK fields AND the legacy aliases, so the Go parser keeps
 // working unchanged and any future parser update can prefer the typed fields.
+//
+// Two execution modes (mirroring claude-driver):
+//
+//   1. Single-shot (default, pre-slice-8a behavior). One `runStreamed(task)`
+//      call, drain the events generator, exit.
+//
+//   2. Multi-turn (slice 8a). The driver opens a long-lived Thread and runs
+//      a turn loop that consumes follow-up prompts from a control file. Each
+//      turn gets its own AbortController so `{type: "interrupt"}` commands
+//      can cancel mid-turn (TurnOptions.signal — sdk index.d.ts:168). The
+//      same Thread instance handles all turns, which is how the Codex SDK
+//      preserves conversation state between runStreamed() calls.
 
 import { Codex, type ThreadEvent, type ThreadItem, type ThreadOptions } from "@openai/codex-sdk";
 import type { DriverArgs } from "./cli.js";
+import { ControlFileReader } from "./control-file.js";
 import { emit, emitFatal } from "./jsonl.js";
 
 export async function runCodexDriver(args: DriverArgs): Promise<number> {
@@ -34,6 +47,13 @@ export async function runCodexDriver(args: DriverArgs): Promise<number> {
     threadOptions.workingDirectory = args.workingDir;
   }
 
+  if (args.multiTurn) {
+    return runMultiTurn(args, threadOptions);
+  }
+  return runSingleShot(args, threadOptions);
+}
+
+async function runSingleShot(args: DriverArgs, threadOptions: ThreadOptions): Promise<number> {
   let exitCode = 0;
   try {
     const codex = new Codex();
@@ -50,6 +70,132 @@ export async function runCodexDriver(args: DriverArgs): Promise<number> {
       `codex-driver runtime error: ${err instanceof Error ? err.message : String(err)}`,
     );
     return 1;
+  }
+  return exitCode;
+}
+
+async function runMultiTurn(args: DriverArgs, threadOptions: ThreadOptions): Promise<number> {
+  // Follow-up prompts arrive via the control file. We seed the queue with the
+  // initial task so the first turn always runs the prompt the orchestrator
+  // launched the driver with.
+  const inputQueue: string[] = [args.task];
+  let inputResolve: ((msg: string | null) => void) | null = null;
+  let inputClosed = false;
+
+  const pushInput = (text: string): void => {
+    if (inputClosed) return;
+    if (inputResolve) {
+      const resolve = inputResolve;
+      inputResolve = null;
+      resolve(text);
+      return;
+    }
+    inputQueue.push(text);
+  };
+
+  const closeInput = (): void => {
+    if (inputClosed) return;
+    inputClosed = true;
+    if (inputResolve) {
+      const resolve = inputResolve;
+      inputResolve = null;
+      resolve(null);
+    }
+  };
+
+  const nextInput = (): Promise<string | null> => {
+    if (inputQueue.length > 0) {
+      return Promise.resolve(inputQueue.shift() ?? null);
+    }
+    if (inputClosed) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      inputResolve = resolve;
+    });
+  };
+
+  const controlReader = args.controlFile ? new ControlFileReader(args.controlFile) : null;
+  controlReader?.start();
+
+  // Holder for the active turn's AbortController. Reset between turns. We
+  // use an object property (not a bare `let`) so the control-pump closure
+  // sees the latest value at runtime; a `let` would be narrowed to its
+  // initial `null` literal type and lose the AbortController shape.
+  const acRef: { current: AbortController | null } = { current: null };
+  let exitCode = 0;
+
+  const controlPump = (async () => {
+    if (!controlReader) return;
+    for await (const cmd of controlReader) {
+      switch (cmd.type) {
+        case "message":
+          pushInput(cmd.text);
+          break;
+        case "interrupt": {
+          const ac = acRef.current;
+          if (!ac) break;
+          try {
+            ac.abort();
+          } catch {
+            // AbortController.abort() should never throw, but the SDK may
+            // surface a synchronous error if the controller is already
+            // detached; swallow to keep the pump alive.
+          }
+          break;
+        }
+        case "shutdown":
+          closeInput();
+          return;
+      }
+    }
+  })();
+
+  try {
+    const codex = new Codex();
+    const thread = codex.startThread(threadOptions);
+
+    while (true) {
+      const text = await nextInput();
+      if (text === null) break;
+
+      const ac = new AbortController();
+      acRef.current = ac;
+      try {
+        const { events } = await thread.runStreamed(text, { signal: ac.signal });
+        for await (const event of events) {
+          forwardEvent(event);
+          if (event.type === "turn.failed" || event.type === "error") {
+            exitCode = 1;
+          }
+        }
+      } catch (err) {
+        // AbortError on interrupt is expected: surface as a soft error event
+        // (so the parser logs it via AddError) and continue the loop so the
+        // next control message can start a fresh turn.
+        if (ac.signal.aborted) {
+          emit({
+            type: "error",
+            message: `codex-driver: turn aborted by interrupt`,
+          });
+        } else {
+          emitFatal(
+            `codex-driver runtime error: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          exitCode = 1;
+          break;
+        }
+      } finally {
+        acRef.current = null;
+      }
+    }
+  } catch (err) {
+    emitFatal(
+      `codex-driver runtime error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    exitCode = 1;
+  } finally {
+    closeInput();
+    controlReader?.close();
+    await controlPump.catch(() => undefined);
   }
   return exitCode;
 }

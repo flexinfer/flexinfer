@@ -35,6 +35,8 @@ var DEFAULT_ARGS = {
   maxTurns: 0,
   maxCostUsd: 0,
   controlPort: 0,
+  controlFile: "",
+  multiTurn: false,
   dryRun: false
 };
 function parseArgs(argv) {
@@ -44,9 +46,12 @@ function parseArgs(argv) {
     if (typeof flag !== "string" || !flag.startsWith("--")) continue;
     const key = flag.slice(2);
     const next = argv[i3 + 1];
-    const isBoolean = key === "dry-run";
-    if (isBoolean) {
+    if (key === "dry-run") {
       args.dryRun = true;
+      continue;
+    }
+    if (key === "multi-turn") {
+      args.multiTurn = true;
       continue;
     }
     if (next === void 0 || next.startsWith("--")) continue;
@@ -78,9 +83,15 @@ function parseArgs(argv) {
       case "control-port":
         args.controlPort = Number.parseInt(next, 10) || 0;
         break;
+      case "control-file":
+        args.controlFile = next;
+        break;
       default:
         break;
     }
+  }
+  if (args.controlFile) {
+    args.multiTurn = true;
   }
   return args;
 }
@@ -15260,6 +15271,158 @@ function Qs({ prompt: $, options: X }) {
   return KL(J, Q, $, Y), J;
 }
 
+// src/control-file.ts
+var import_node_fs = require("node:fs");
+var import_promises4 = require("node:fs/promises");
+function parseControlLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  let obj;
+  try {
+    obj = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  if (!obj || typeof obj !== "object") return null;
+  const rec = obj;
+  switch (rec.type) {
+    case "message": {
+      const text = typeof rec.text === "string" ? rec.text : "";
+      if (!text) return null;
+      return { type: "message", text };
+    }
+    case "interrupt":
+      return { type: "interrupt" };
+    case "shutdown":
+      return { type: "shutdown" };
+    default:
+      return null;
+  }
+}
+var ControlFileReader = class {
+  path;
+  cursor = 0;
+  buffer = "";
+  watcher = null;
+  pending = [];
+  waiters = [];
+  closed = false;
+  /**
+   * Short interval to re-check the file in case `fs.watch` misses an event
+   * (e.g. on some filesystems where append-only writes don't always fire
+   * watchers). This keeps the reader responsive without hammering the FS.
+   */
+  pollIntervalMs = 200;
+  pollTimer = null;
+  constructor(path3) {
+    this.path = path3;
+  }
+  /** Begin watching the control file. Safe to call even if the file does not exist yet. */
+  start() {
+    if (this.closed) return;
+    this.drainNewContent().catch(() => void 0);
+    try {
+      this.watcher = (0, import_node_fs.watch)(this.path, { persistent: false }, () => {
+        this.drainNewContent().catch(() => void 0);
+      });
+      this.watcher.on("error", () => {
+      });
+    } catch {
+    }
+    this.pollTimer = setInterval(() => {
+      this.drainNewContent().catch(() => void 0);
+    }, this.pollIntervalMs);
+    this.pollTimer.unref?.();
+  }
+  /** Stop watching and resolve any pending waiters with null (EOF sentinel). */
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.watcher) {
+      try {
+        this.watcher.close();
+      } catch {
+      }
+      this.watcher = null;
+    }
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    for (const waiter of this.waiters.splice(0)) {
+      waiter(null);
+    }
+  }
+  /**
+   * Wait for the next control command. Resolves with null when `close()`
+   * has been called and no commands remain in the queue.
+   */
+  next() {
+    if (this.pending.length > 0) {
+      return Promise.resolve(this.pending.shift() ?? null);
+    }
+    if (this.closed) {
+      return Promise.resolve(null);
+    }
+    return new Promise((resolve) => {
+      this.waiters.push(resolve);
+    });
+  }
+  /** Expose an AsyncIterable so drivers can `for await (const cmd of reader)`. */
+  [Symbol.asyncIterator]() {
+    return {
+      next: async () => {
+        const cmd = await this.next();
+        if (cmd === null) return { value: void 0, done: true };
+        return { value: cmd, done: false };
+      }
+    };
+  }
+  /**
+   * Read any newly-appended bytes from the control file, split into lines,
+   * parse each line as a control command, and enqueue them.
+   */
+  async drainNewContent() {
+    if (this.closed) return;
+    let size;
+    try {
+      const st = await (0, import_promises4.stat)(this.path);
+      size = st.size;
+    } catch {
+      return;
+    }
+    if (size <= this.cursor) return;
+    let fh = null;
+    try {
+      fh = await (0, import_promises4.open)(this.path, "r");
+      const length = size - this.cursor;
+      const buf = Buffer.alloc(length);
+      await fh.read(buf, 0, length, this.cursor);
+      this.cursor = size;
+      this.buffer += buf.toString("utf8");
+    } catch {
+      return;
+    } finally {
+      if (fh) await fh.close().catch(() => void 0);
+    }
+    let idx;
+    while ((idx = this.buffer.indexOf("\n")) >= 0) {
+      const line = this.buffer.slice(0, idx);
+      this.buffer = this.buffer.slice(idx + 1);
+      const cmd = parseControlLine(line);
+      if (cmd) this.enqueue(cmd);
+    }
+  }
+  enqueue(cmd) {
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter(cmd);
+      return;
+    }
+    this.pending.push(cmd);
+  }
+};
+
 // src/jsonl.ts
 function emit(event) {
   try {
@@ -15299,6 +15462,12 @@ async function runClaudeDriver(args) {
   if (args.maxCostUsd > 0) {
     options.maxBudgetUsd = args.maxCostUsd;
   }
+  if (args.multiTurn) {
+    return runMultiTurn(args, options);
+  }
+  return runSingleShot(args, options);
+}
+async function runSingleShot(args, options) {
   let exitCode = 0;
   try {
     const stream = Qs({ prompt: args.task, options });
@@ -15313,6 +15482,103 @@ async function runClaudeDriver(args) {
       `claude-driver runtime error: ${err instanceof Error ? err.message : String(err)}`
     );
     return 1;
+  }
+  return exitCode;
+}
+async function runMultiTurn(args, options) {
+  const inputQueue = [args.task];
+  let inputResolve = null;
+  let inputClosed = false;
+  const pushInput = (text) => {
+    if (inputClosed) return;
+    if (inputResolve) {
+      const resolve = inputResolve;
+      inputResolve = null;
+      resolve(text);
+      return;
+    }
+    inputQueue.push(text);
+  };
+  const closeInput = () => {
+    if (inputClosed) return;
+    inputClosed = true;
+    if (inputResolve) {
+      const resolve = inputResolve;
+      inputResolve = null;
+      resolve(null);
+    }
+  };
+  const nextInput = () => {
+    if (inputQueue.length > 0) {
+      return Promise.resolve(inputQueue.shift() ?? null);
+    }
+    if (inputClosed) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      inputResolve = resolve;
+    });
+  };
+  async function* userMessageStream() {
+    while (true) {
+      const text = await nextInput();
+      if (text === null) return;
+      yield {
+        type: "user",
+        message: { role: "user", content: text },
+        parent_tool_use_id: null
+      };
+    }
+  }
+  const controlReader = args.controlFile ? new ControlFileReader(args.controlFile) : null;
+  controlReader?.start();
+  const queryRef = { current: null };
+  let exitCode = 0;
+  const controlPump = (async () => {
+    if (!controlReader) return;
+    for await (const cmd of controlReader) {
+      switch (cmd.type) {
+        case "message":
+          pushInput(cmd.text);
+          break;
+        case "interrupt": {
+          const activeQuery = queryRef.current;
+          if (!activeQuery) break;
+          try {
+            await activeQuery.interrupt();
+          } catch (err) {
+            emit({
+              type: "error",
+              message: `claude-driver: interrupt failed: ${err instanceof Error ? err.message : String(err)}`
+            });
+          }
+          break;
+        }
+        case "shutdown":
+          closeInput();
+          return;
+      }
+    }
+  })();
+  try {
+    queryRef.current = Qs({ prompt: userMessageStream(), options });
+    for await (const message of queryRef.current) {
+      forwardMessage(message);
+      if (message.type === "result") {
+        if (message.is_error) exitCode = 1;
+      }
+    }
+  } catch (err) {
+    emitFatal(
+      `claude-driver runtime error: ${err instanceof Error ? err.message : String(err)}`
+    );
+    exitCode = 1;
+  } finally {
+    closeInput();
+    controlReader?.close();
+    await controlPump.catch(() => void 0);
+    try {
+      queryRef.current?.close();
+    } catch {
+    }
   }
   return exitCode;
 }
@@ -15837,6 +16103,12 @@ async function runCodexDriver(args) {
   if (args.workingDir) {
     threadOptions.workingDirectory = args.workingDir;
   }
+  if (args.multiTurn) {
+    return runMultiTurn2(args, threadOptions);
+  }
+  return runSingleShot2(args, threadOptions);
+}
+async function runSingleShot2(args, threadOptions) {
   let exitCode = 0;
   try {
     const codex = new Codex();
@@ -15853,6 +16125,109 @@ async function runCodexDriver(args) {
       `codex-driver runtime error: ${err instanceof Error ? err.message : String(err)}`
     );
     return 1;
+  }
+  return exitCode;
+}
+async function runMultiTurn2(args, threadOptions) {
+  const inputQueue = [args.task];
+  let inputResolve = null;
+  let inputClosed = false;
+  const pushInput = (text) => {
+    if (inputClosed) return;
+    if (inputResolve) {
+      const resolve = inputResolve;
+      inputResolve = null;
+      resolve(text);
+      return;
+    }
+    inputQueue.push(text);
+  };
+  const closeInput = () => {
+    if (inputClosed) return;
+    inputClosed = true;
+    if (inputResolve) {
+      const resolve = inputResolve;
+      inputResolve = null;
+      resolve(null);
+    }
+  };
+  const nextInput = () => {
+    if (inputQueue.length > 0) {
+      return Promise.resolve(inputQueue.shift() ?? null);
+    }
+    if (inputClosed) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      inputResolve = resolve;
+    });
+  };
+  const controlReader = args.controlFile ? new ControlFileReader(args.controlFile) : null;
+  controlReader?.start();
+  const acRef = { current: null };
+  let exitCode = 0;
+  const controlPump = (async () => {
+    if (!controlReader) return;
+    for await (const cmd of controlReader) {
+      switch (cmd.type) {
+        case "message":
+          pushInput(cmd.text);
+          break;
+        case "interrupt": {
+          const ac = acRef.current;
+          if (!ac) break;
+          try {
+            ac.abort();
+          } catch {
+          }
+          break;
+        }
+        case "shutdown":
+          closeInput();
+          return;
+      }
+    }
+  })();
+  try {
+    const codex = new Codex();
+    const thread = codex.startThread(threadOptions);
+    while (true) {
+      const text = await nextInput();
+      if (text === null) break;
+      const ac = new AbortController();
+      acRef.current = ac;
+      try {
+        const { events } = await thread.runStreamed(text, { signal: ac.signal });
+        for await (const event of events) {
+          forwardEvent(event);
+          if (event.type === "turn.failed" || event.type === "error") {
+            exitCode = 1;
+          }
+        }
+      } catch (err) {
+        if (ac.signal.aborted) {
+          emit({
+            type: "error",
+            message: `codex-driver: turn aborted by interrupt`
+          });
+        } else {
+          emitFatal(
+            `codex-driver runtime error: ${err instanceof Error ? err.message : String(err)}`
+          );
+          exitCode = 1;
+          break;
+        }
+      } finally {
+        acRef.current = null;
+      }
+    }
+  } catch (err) {
+    emitFatal(
+      `codex-driver runtime error: ${err instanceof Error ? err.message : String(err)}`
+    );
+    exitCode = 1;
+  } finally {
+    closeInput();
+    controlReader?.close();
+    await controlPump.catch(() => void 0);
   }
   return exitCode;
 }
