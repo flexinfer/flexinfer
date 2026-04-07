@@ -173,6 +173,75 @@ def select_model_policy(model_dir, cfg, policies):
     return None
 
 
+def resolve_attr_path(root, path):
+    current = root
+    for segment in str(path).split("."):
+        segment = segment.strip()
+        if not segment:
+            raise RuntimeError(f"invalid empty segment in attribute path {path!r}")
+        if not hasattr(current, segment):
+            return None
+        current = getattr(current, segment)
+    return current
+
+
+def resolve_model_loader(policy):
+    load_auto_class_name = str((policy or {}).get("load_auto_class", "")).strip()
+    if not load_auto_class_name:
+        return None, "AutoModelForCausalLM"
+    import transformers
+
+    loader_cls = getattr(transformers, load_auto_class_name, None)
+    if loader_cls is None:
+        raise RuntimeError(
+            f"model policy requested unknown transformers loader {load_auto_class_name!r}"
+        )
+    return loader_cls, load_auto_class_name
+
+
+def resolve_decoder_layers(model, policy):
+    explicit_path = str((policy or {}).get("decoder_layers_path", "")).strip()
+    if explicit_path:
+        decoder_layers = resolve_attr_path(model, explicit_path)
+        if decoder_layers is None:
+            raise RuntimeError(
+                f"model policy decoder_layers_path not found: {explicit_path}"
+            )
+        return decoder_layers, explicit_path
+
+    candidate_paths = [
+        "model.layers",
+        "model.language_model.layers",
+        "language_model.model.layers",
+        "model.text_model.model.layers",
+        "transformer.h",
+    ]
+    for path in candidate_paths:
+        decoder_layers = resolve_attr_path(model, path)
+        if decoder_layers is not None:
+            return decoder_layers, path
+    raise RuntimeError("Cannot find decoder layers in model architecture")
+
+
+def resolve_lm_head_module(model, policy):
+    explicit_path = str((policy or {}).get("lm_head_path", "")).strip()
+    if explicit_path:
+        lm_head_module = resolve_attr_path(model, explicit_path)
+        if lm_head_module is None:
+            raise RuntimeError(f"model policy lm_head_path not found: {explicit_path}")
+        return lm_head_module, explicit_path
+
+    candidate_paths = [
+        "lm_head",
+        "language_model.lm_head",
+    ]
+    for path in candidate_paths:
+        lm_head_module = resolve_attr_path(model, path)
+        if lm_head_module is not None:
+            return lm_head_module, path
+    return None, ""
+
+
 def rss_mb():
     if psutil is None:
         return None
@@ -910,16 +979,12 @@ if device_map != "cpu":
         f"Using constrained max_memory: gpu={gpu_max_memory_gb}GiB cpu={cpu_max_memory_gb}GiB offload={offload_dir}"
     )
 
-# Use the auto class specified by model policy (e.g. AutoModelForImageTextToText
-# for VLMs like Gemma4 where AutoModelForCausalLM cannot load model_type=gemma4).
-load_auto_class_name = (active_policy or {}).get("load_auto_class", "")
-if load_auto_class_name == "AutoModelForImageTextToText":
-    from transformers import AutoModelForImageTextToText
-
-    print(
-        f"Using AutoModelForImageTextToText (policy: {active_policy.get('name', 'unnamed')})"
-    )
-    model = AutoModelForImageTextToText.from_pretrained(model_dir, **load_kwargs)
+# Use the auto class specified by model policy instead of hardcoding specific
+# model-family branches in the loader path.
+load_auto_class, load_auto_class_name = resolve_model_loader(active_policy)
+if load_auto_class is not None:
+    print(f"Using {load_auto_class_name} (policy: {active_policy.get('name', 'unnamed')})")
+    model = load_auto_class.from_pretrained(model_dir, **load_kwargs)
 else:
     model = AutoModelForCausalLM.from_pretrained(model_dir, **load_kwargs)
 model.eval()
@@ -1223,25 +1288,9 @@ print(f"Using {len(harmful)} harmful and {len(harmless)} harmless prompts")
 print(f"Activation capture mode: {activation_capture_mode}")
 
 # ── Identify decoder layers ───────────────────────────────────────────
-if hasattr(model, "model") and hasattr(model.model, "layers"):
-    decoder_layers = model.model.layers
-elif (
-    hasattr(model, "language_model")
-    and hasattr(model.language_model, "model")
-    and hasattr(model.language_model.model, "layers")
-):
-    # Gemma4ForConditionalGeneration: language_model is Gemma4ForCausalLM,
-    # language_model.model is Gemma4TextModel, .layers is the decoder stack.
-    decoder_layers = model.language_model.model.layers
-elif hasattr(model, "model") and hasattr(model.model, "text_model"):
-    decoder_layers = model.model.text_model.model.layers
-elif hasattr(model, "transformer") and hasattr(model.transformer, "h"):
-    decoder_layers = model.transformer.h
-else:
-    raise RuntimeError("Cannot find decoder layers in model architecture")
-
+decoder_layers, decoder_layers_path = resolve_decoder_layers(model, active_policy)
 total_layers = len(decoder_layers)
-print(f"Found {total_layers} decoder layers")
+print(f"Found {total_layers} decoder layers via {decoder_layers_path}")
 
 # ── Parse target layer indices ────────────────────────────────────────
 if target_layers == "auto":
@@ -1698,12 +1747,8 @@ else:
         "ABLITERATION_ABLITERATE_LM_HEAD", "true"
     ).lower() in ("true", "1", "yes")
 
-    # Resolve lm_head: direct attribute for CausalLM, nested for ConditionalGeneration.
-    lm_head_module = None
-    if hasattr(model, "lm_head"):
-        lm_head_module = model.lm_head
-    elif hasattr(model, "language_model") and hasattr(model.language_model, "lm_head"):
-        lm_head_module = model.language_model.lm_head
+    # Resolve lm_head via model policy first, then broad architecture fallbacks.
+    lm_head_module, lm_head_path = resolve_lm_head_module(model, active_policy)
 
     if abliterate_lm_head and lm_head_module is not None:
         mean_refusal = torch.stack([refusal_dirs[i] for i in layer_indices]).mean(0)
@@ -1715,7 +1760,7 @@ else:
             lm_head_module.weight.dtype
         )
         del mean_refusal
-        print("Abliterated lm_head")
+        print(f"Abliterated lm_head via {lm_head_path}")
     elif not abliterate_lm_head:
         print("Skipping lm_head abliteration (ABLITERATION_ABLITERATE_LM_HEAD=false)")
     elif lm_head_module is None:

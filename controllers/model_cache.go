@@ -734,6 +734,7 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 			if img, ok := backend.QuantizerImageFromProfile(profile, string(spec.Format)); ok {
 				params.ProfileQuantizerImage = img
 			}
+			params.ProfileEnv = profile.Env
 			params.MemoryConfig = quantization.GPUMemoryConfigFromProfile(profile)
 		}
 	}

@@ -48,6 +48,10 @@ spec:
       value: "0"
     - name: PYTORCH_ROCM_ARCH
       value: gfx906
+    - name: ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP
+      value: "true"
+    - name: ABLITERATION_SAFE_SHARDED_LOAD
+      value: "true"
   runtime:
     image: registry.harbor.lan/flexinfer/runtime@sha256:ba4570f515af05fe62f8b6672449b4029e1f15c2f606412e8d6d800e3e0e2dbf
   containerMemoryGB: 56
@@ -58,4 +62,4 @@ spec:
       - gguf
     images:
       gptq: registry.harbor.lan/flexinfer/runtime@sha256:ba4570f515af05fe62f8b6672449b4029e1f15c2f606412e8d6d800e3e0e2dbf
-      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:e903cf10feb058e641b55f6f9d5310d0d084891b94a1e97f4b6db301667c0438
+      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:d78da22a197f64e43106d491a1aef6217b241467e7e6050c5e6bb8e1ed8f2404

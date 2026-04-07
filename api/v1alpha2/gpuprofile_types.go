@@ -55,7 +55,8 @@ type GPUProfileSpec struct {
 	// +optional
 	Backends map[string]BackendProfile `json:"backends,omitempty"`
 
-	// Env is a list of environment variables injected into all inference pods on this architecture.
+	// Env is a list of environment variables injected into runtime pods and
+	// GPU workload jobs (quantization, abliteration, finetune) on this architecture.
 	// +optional
 	Env []corev1.EnvVar `json:"env,omitempty"`
 

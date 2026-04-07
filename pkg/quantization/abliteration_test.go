@@ -246,6 +246,12 @@ func TestAbliterationEnv_Content(t *testing.T) {
 	if got := envMap["ABLITERATION_MODEL_POLICIES"]; !strings.Contains(got, "AutoModelForImageTextToText") {
 		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want gemma4 load_auto_class", got)
 	}
+	if got := envMap["ABLITERATION_MODEL_POLICIES"]; !strings.Contains(got, `"decoder_layers_path":"model.language_model.layers"`) {
+		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want gemma4 decoder_layers_path override", got)
+	}
+	if got := envMap["ABLITERATION_MODEL_POLICIES"]; !strings.Contains(got, `"lm_head_path":"language_model.lm_head"`) {
+		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want gemma4 lm_head_path override", got)
+	}
 }
 
 func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
@@ -381,6 +387,40 @@ func TestAbliterationEnv_GFX906DisablesCachingAllocatorWarmup(t *testing.T) {
 	}
 	if got := envMap["ABLITERATION_GPU_MAX_MEMORY_GB"]; got != "14" {
 		t.Fatalf("ABLITERATION_GPU_MAX_MEMORY_GB = %q, want 14", got)
+	}
+}
+
+func TestBuildAbliterationJob_ProfileEnvOverridesDefaults(t *testing.T) {
+	spec := &aiv1alpha1.AbliterationSpec{
+		UseGPU: true,
+	}
+	params := JobParams{
+		Name:      "test-cache",
+		Namespace: "default",
+		PVCName:   "test-pvc",
+		ModelPath: "test-cache",
+		GPUVendor: "amd",
+		GPUArch:   "gfx906",
+		ProfileEnv: []corev1.EnvVar{
+			{Name: "HSA_ENABLE_SDMA", Value: "0"},
+			{Name: "ABLITERATION_SAFE_SHARDED_LOAD", Value: "profile-override"},
+		},
+	}
+
+	job, err := BuildAbliterationJob(params, spec)
+	if err != nil {
+		t.Fatalf("BuildAbliterationJob returned error: %v", err)
+	}
+
+	envMap := make(map[string]string)
+	for _, env := range job.Spec.Template.Spec.Containers[0].Env {
+		envMap[env.Name] = env.Value
+	}
+	if got := envMap["HSA_ENABLE_SDMA"]; got != "0" {
+		t.Fatalf("HSA_ENABLE_SDMA = %q, want 0", got)
+	}
+	if got := envMap["ABLITERATION_SAFE_SHARDED_LOAD"]; got != "profile-override" {
+		t.Fatalf("ABLITERATION_SAFE_SHARDED_LOAD = %q, want profile-override", got)
 	}
 }
 

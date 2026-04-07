@@ -224,6 +224,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 				if img, ok := backend.QuantizerImageFromProfile(profile, format); ok {
 					params.ProfileQuantizerImage = img
 				}
+				params.ProfileEnv = profile.Env
 				params.MemoryConfig = quantization.GPUMemoryConfigFromProfile(profile)
 			}
 		}

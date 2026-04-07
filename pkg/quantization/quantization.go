@@ -61,6 +61,11 @@ type JobParams struct {
 	// When set, it takes priority over env var and hardcoded defaults.
 	ProfileQuantizerImage string
 
+	// ProfileEnv is an optional set of GPUProfile-derived environment variables.
+	// Job builders merge these last so per-architecture quirks can override
+	// generic defaults without hardcoding them in each builder.
+	ProfileEnv []corev1.EnvVar
+
 	// MemoryConfig holds GPUProfile-derived memory sizing for container limits
 	// and GPU/CPU memory budgets. When zero-valued, builders fall back to their
 	// own defaults (DefaultGPUQuantizationMemoryGB, etc.).

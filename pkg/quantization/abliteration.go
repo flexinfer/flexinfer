@@ -39,6 +39,8 @@ type abliterationModelPolicy struct {
 	SaveFormat               string   `json:"save_format,omitempty"`
 	SaveMaxShardSize         string   `json:"save_max_shard_size,omitempty"`
 	LoadAutoClass            string   `json:"load_auto_class,omitempty"`
+	DecoderLayersPath        string   `json:"decoder_layers_path,omitempty"`
+	LMHeadPath               string   `json:"lm_head_path,omitempty"`
 }
 
 // memoryRequestForLimitGB keeps large single-node jobs schedulable by requesting
@@ -152,6 +154,8 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 		resources.Requests[gpuResource] = resource.MustParse("1")
 		resources.Limits[gpuResource] = resource.MustParse("1")
 	}
+	env = mergeEnvVars(env, ablitEnv)
+	env = mergeEnvVars(env, params.ProfileEnv)
 
 	podSpec := corev1.PodSpec{
 		RestartPolicy: corev1.RestartPolicyNever,
@@ -162,7 +166,7 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 				ImagePullPolicy: ImagePullPolicyForImage(image),
 				Command:         []string{"/bin/bash", "-c"},
 				Args:            []string{script},
-				Env:             append(env, ablitEnv...),
+				Env:             env,
 				VolumeMounts: []corev1.VolumeMount{
 					pvcMount,
 					wsMount,
@@ -381,6 +385,8 @@ func defaultAbliterationModelPoliciesJSON() string {
 			SaveFormat:          "safetensors",
 			SaveMaxShardSize:    "1GB",
 			LoadAutoClass:       "AutoModelForImageTextToText",
+			DecoderLayersPath:   "model.language_model.layers",
+			LMHeadPath:          "language_model.lm_head",
 		},
 	}
 	data, err := json.Marshal(policies)

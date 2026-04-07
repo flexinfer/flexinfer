@@ -70,6 +70,27 @@ func quantizationCPUCores() int {
 	return DefaultGPUQuantizationCPU
 }
 
+func mergeEnvVars(existing []corev1.EnvVar, additional []corev1.EnvVar) []corev1.EnvVar {
+	if len(additional) == 0 {
+		return existing
+	}
+	out := make([]corev1.EnvVar, 0, len(existing)+len(additional))
+	indexByName := make(map[string]int, len(existing))
+	for _, item := range existing {
+		indexByName[item.Name] = len(out)
+		out = append(out, item)
+	}
+	for _, item := range additional {
+		if idx, ok := indexByName[item.Name]; ok {
+			out[idx] = item
+			continue
+		}
+		indexByName[item.Name] = len(out)
+		out = append(out, item)
+	}
+	return out
+}
+
 const (
 	// DefaultAWQImage is the default image used for AWQ quantization jobs.
 	DefaultAWQImage = "ghcr.io/flexinfer/quantizer:awq"
@@ -143,7 +164,8 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 	if params.GPUVendor == "amd" {
 		env = append(env, rocmAllocatorEnv())
 	}
-	env = append(env, extraEnv...)
+	env = mergeEnvVars(env, extraEnv)
+	env = mergeEnvVars(env, params.ProfileEnv)
 
 	podSpec := corev1.PodSpec{
 		RestartPolicy: corev1.RestartPolicyNever,

@@ -233,6 +233,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 				if img, ok := backend.QuantizerImageFromProfile(profile, "gptq"); ok {
 					params.ProfileQuantizerImage = img
 				}
+				params.ProfileEnv = profile.Env
 				params.MemoryConfig = quantization.GPUMemoryConfigFromProfile(profile)
 			}
 		}

@@ -228,6 +228,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 				if img, ok := backend.QuantizerImageFromProfile(profile, "abliteration"); ok {
 					params.ProfileQuantizerImage = img
 				}
+				params.ProfileEnv = profile.Env
 				params.MemoryConfig = quantization.GPUMemoryConfigFromProfile(profile)
 			}
 		}

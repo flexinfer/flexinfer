@@ -120,6 +120,8 @@ func BuildFinetuneJob(params JobParams, spec *aiv1alpha1.FinetuneSpec) (*batchv1
 		resources.Requests[gpuResource] = resource.MustParse("1")
 		resources.Limits[gpuResource] = resource.MustParse("1")
 	}
+	env = mergeEnvVars(env, ftEnv)
+	env = mergeEnvVars(env, params.ProfileEnv)
 
 	podSpec := corev1.PodSpec{
 		RestartPolicy: corev1.RestartPolicyNever,
@@ -130,7 +132,7 @@ func BuildFinetuneJob(params JobParams, spec *aiv1alpha1.FinetuneSpec) (*batchv1
 				ImagePullPolicy: ImagePullPolicyForImage(image),
 				Command:         []string{"/bin/bash", "-c"},
 				Args:            []string{script},
-				Env:             append(env, ftEnv...),
+				Env:             env,
 				VolumeMounts:    mounts,
 				Resources:       resources,
 			},
