@@ -364,10 +364,41 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	heartbeatCtx, heartbeatCancel := context.WithCancel(ctx)
 	go o.runHeartbeatLoop(heartbeatCtx, state)
 
-	// Step 6: Execute agent CLI with real-time JSONL telemetry parsing.
-	o.logger.Info("executing agent", "spawn_id", spawnID, "agent_type", req.AgentType, "pod", startResult.ContainerID)
+	// Step 6: Execute agent CLI (or SDK driver) with real-time JSONL telemetry parsing.
+	o.logger.Info("executing agent",
+		"spawn_id", spawnID,
+		"agent_type", req.AgentType,
+		"pod", startResult.ContainerID,
+		"use_sdk_driver", req.UseSDKDriver,
+	)
 	_, execSpan := o.tracer.Start(ctx, "agent.spawn.agent_exec")
-	agentCmd := buildAgentCommand(req.AgentType, req.TaskDescription, state.AgentID)
+
+	// Choose between the legacy CLI path and the embedded loom-spawn-driver
+	// Node.js sidecar. When UseSDKDriver is set we inject the bundled driver
+	// into the pod and invoke it instead of the raw agent CLI.
+	var agentCmd string
+	if req.UseSDKDriver {
+		injectCtx, injectCancel := context.WithTimeout(ctx, 30*time.Second)
+		if err := o.injectSDKDriver(injectCtx, startResult.ContainerID); err != nil {
+			injectCancel()
+			execSpan.End()
+			heartbeatCancel()
+			o.failSpawn(ctx, state, fmt.Sprintf("inject spawn driver: %v", err))
+			return
+		}
+		injectCancel()
+		agentCmd = buildSDKDriverCommand(
+			req.AgentType,
+			req.TaskDescription,
+			state.AgentID,
+			spawnID,
+			"/workspace/"+req.Project,
+			req.MaxTurns,
+			req.MaxCostUSD,
+		)
+	} else {
+		agentCmd = buildAgentCommand(req.AgentType, req.TaskDescription, state.AgentID)
+	}
 
 	// Create telemetry accumulator and JSONL parser for real-time parsing.
 	acc := bridge.NewSpawnTelemetryAccumulator()

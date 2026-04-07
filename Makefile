@@ -302,6 +302,14 @@ mcp-devbox:
 base-images:
 	./scripts/build-base-images.sh --push
 
+# sync-spawn-driver copies the loom-spawn-driver bundle from its source-of-truth
+# location under tools/spawn-driver/dist/ into internal/hud/ where go:embed can
+# pick it up. Run after editing the driver bundle (Slice 7c+ will replace the
+# stub with an esbuild-generated bundle from TypeScript sources).
+sync-spawn-driver:
+	@cp tools/spawn-driver/dist/spawn-driver.js internal/hud/spawn_driver_bundle.js
+	@echo "Synced spawn-driver bundle to internal/hud/spawn_driver_bundle.js"
+
 install-devbox-sync:
 	@mkdir -p $(HOME)/.config/loom/logs
 	cp launchd/com.loom.devbox-sync.plist $(HOME)/Library/LaunchAgents/com.loom.devbox-sync.plist

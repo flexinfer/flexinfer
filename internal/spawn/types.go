@@ -42,6 +42,12 @@ type Request struct {
 	// MaxTurns caps total agent turns. The budget watcher cancels the exec
 	// when the accumulated turn count meets or exceeds this value. 0 = unlimited.
 	MaxTurns int `json:"max_turns,omitempty"`
+	// UseSDKDriver routes the spawn through the embedded loom-spawn-driver
+	// Node.js sidecar instead of invoking the agent CLI directly. The driver
+	// is injected into the pod via injectSDKDriver and emits parser-compatible
+	// JSONL on stdout. Slice 7a/7b ship a hand-written stub bundle; Slice 7c
+	// will swap in a real SDK-backed bundle. Defaults to false (legacy CLI path).
+	UseSDKDriver bool `json:"use_sdk_driver,omitempty"`
 }
 
 // State holds the state of a spawned agent.
