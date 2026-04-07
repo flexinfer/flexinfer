@@ -3,7 +3,7 @@
 # Same Gemma4ForConditionalGeneration architecture as E4B, vision+video capable.
 #
 # Pipeline: Download BF16 (~27 GB) → Abliterate → GPTQ INT4 (~7 GB) → Ready
-# Node: cblevins-7900xtx (gfx1100, 64GB RAM)
+# Node: cblevins-5930k (gfx1100, 64GB RAM)
 #
 # MoE abliteration safety:
 #   - weightMatrices: ["o_proj"] ONLY — shared attention output projection.
@@ -27,7 +27,7 @@ spec:
   clusterStorageClassName: bulk-1r-stable
   secretRef: "hf-token"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-5930k
   download:
     maxMemoryGB: 16
     hfTransfer: false
@@ -41,7 +41,7 @@ spec:
     maxMemoryGB: 48
     timeoutSeconds: 14400
     nodeSelector:
-      kubernetes.io/hostname: cblevins-7900xtx
+      kubernetes.io/hostname: cblevins-5930k
     normThreshold: "100"
     ablitateLmHead: false
   quantization:
@@ -54,7 +54,7 @@ spec:
     maxMemoryGB: 48
     timeoutSeconds: 14400
     nodeSelector:
-      kubernetes.io/hostname: cblevins-7900xtx
+      kubernetes.io/hostname: cblevins-5930k
     calibration:
       maxSeqLen: 2048
       maxSamples: 256

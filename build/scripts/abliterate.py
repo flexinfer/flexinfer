@@ -1648,6 +1648,21 @@ pre_validate = os.environ.get("ABLITERATION_PRE_VALIDATE", "true").lower() in (
     "1",
     "yes",
 )
+pre_validate_already_completed = checkpoint_stage_at_least(
+    prior_checkpoint, "perplexity_validated"
+)
+if pre_validate and pre_validate_already_completed:
+    print(
+        "Skipping pre-abliteration baseline perplexity check because the run "
+        "already reached perplexity_validated",
+        flush=True,
+    )
+    emit_snapshot(
+        "pre_abliteration_perplexity_skipped",
+        reason="checkpoint_resume",
+        resumed_from_stage=prior_stage or "unknown",
+    )
+    pre_validate = False
 if pre_validate:
     print("Running pre-abliteration baseline perplexity check...", flush=True)
     _pre_prompts = ["2+2=", "The capital of France is", "Hello, my name is"]

@@ -2,9 +2,12 @@ package controllers
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
@@ -88,6 +91,52 @@ func TestDownloadGCdShouldProceed(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := downloadGCdShouldProceed(&tt.status)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestDownloadJobPredatesPVC(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name string
+		job  *batchv1.Job
+		pvc  *corev1.PersistentVolumeClaim
+		want bool
+	}{
+		{
+			name: "older job is stale for recreated pvc",
+			job: &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.NewTime(now.Add(-10 * time.Minute))},
+			},
+			pvc: &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.NewTime(now)},
+			},
+			want: true,
+		},
+		{
+			name: "newer job belongs to current pvc",
+			job: &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.NewTime(now)},
+			},
+			pvc: &corev1.PersistentVolumeClaim{
+				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.NewTime(now.Add(-10 * time.Minute))},
+			},
+			want: false,
+		},
+		{
+			name: "missing pvc does not trigger reset",
+			job: &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.NewTime(now)},
+			},
+			pvc:  nil,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, downloadJobPredatesPVC(tt.job, tt.pvc))
 		})
 	}
 }

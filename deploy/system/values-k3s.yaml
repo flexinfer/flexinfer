@@ -35,7 +35,7 @@ controller:
   # Pin the controller to a healthy control-plane GPU node with the image cached.
   nodeSelector:
     kubernetes.io/arch: amd64
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-5930k
     node-role.kubernetes.io/control-plane: "true"
   tolerations:
     - key: node-role.kubernetes.io/control-plane

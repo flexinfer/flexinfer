@@ -47,6 +47,7 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 	// Determine PVC name - either existing or create new
 	var pvcName string
 	pvcNamespace := modelCache.Namespace
+	var pvc *corev1.PersistentVolumeClaim
 
 	if modelCache.Spec.ExistingClaimName != nil && *modelCache.Spec.ExistingClaimName != "" {
 		// Use existing PVC - may be in a different namespace, parse if needed
@@ -55,7 +56,7 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 	} else {
 		// Create new PVC
 		pvcName = modelCache.Name
-		pvc := &corev1.PersistentVolumeClaim{}
+		pvc = &corev1.PersistentVolumeClaim{}
 		err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: pvcNamespace}, pvc)
 		if err != nil && errors.IsNotFound(err) {
 			newPVC, err := r.pvcForModelCache(modelCache)
@@ -207,6 +208,23 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 		return ctrl.Result{Requeue: true}, nil
 	} else if err != nil {
 		return ctrl.Result{}, err
+	}
+
+	if downloadJobPredatesPVC(job, pvc) {
+		log.Info("Downloader job belongs to an older PVC instance, resetting pipeline",
+			"cache", modelCache.Name,
+			"job", jobName,
+			"jobCreatedAt", job.CreationTimestamp.Time,
+			"pvcCreatedAt", pvc.CreationTimestamp.Time)
+		if err := r.resetDownloadState(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.Status().Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "DownloadReset",
+			"Downloader job predates the current PVC; restarting download pipeline")
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	// 3. Check Job Status
@@ -1008,6 +1026,16 @@ func readOCIDownloadMetadata(ctx context.Context, c client.Client, namespace, jo
 func sourceHash(source string) string {
 	h := sha256.Sum256([]byte(source))
 	return hex.EncodeToString(h[:8]) // 16-char hex prefix
+}
+
+func downloadJobPredatesPVC(job *batchv1.Job, pvc *corev1.PersistentVolumeClaim) bool {
+	if job == nil || pvc == nil {
+		return false
+	}
+	if job.CreationTimestamp.IsZero() || pvc.CreationTimestamp.IsZero() {
+		return false
+	}
+	return job.CreationTimestamp.Time.Before(pvc.CreationTimestamp.Time)
 }
 
 // resetDownloadState deletes all pipeline jobs and clears status fields to trigger a fresh download.
