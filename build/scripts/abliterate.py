@@ -35,6 +35,7 @@ import json
 import math
 import os
 import shutil
+import subprocess
 import sys
 import time
 import ctypes
@@ -64,9 +65,8 @@ DEFAULT_MODEL_POLICIES = [
         "save_format": "safetensors",
         "save_max_shard_size": "1GB",
         # Gemma4 top-level config is Gemma4ForConditionalGeneration (VLM).
-        # AutoModelForCausalLM cannot load model_type=gemma4; we need
-        # the conditional generation class, then navigate to language_model.
-        "load_auto_class": "AutoModelForConditionalGeneration",
+        # transformers exposes the VLM auto-loader via AutoModelForImageTextToText.
+        "load_auto_class": "AutoModelForImageTextToText",
     },
 ]
 
@@ -305,6 +305,44 @@ def emit_runtime_capabilities():
         )
     )
     emit_progress("runtime_capabilities", phase="starting", **capabilities)
+
+
+def ensure_transformers_model_type_support(model_type):
+    if not model_type:
+        return
+    package_spec = (
+        os.environ.get("ABLITERATION_TRANSFORMERS_PACKAGE", "").strip()
+        or "git+https://github.com/huggingface/transformers.git"
+    )
+    try:
+        from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+
+        if model_type in CONFIG_MAPPING:
+            print(f"transformers recognizes model_type={model_type!r}")
+            return
+        print(
+            f"transformers does not recognize model_type={model_type!r}, "
+            f"installing {package_spec}..."
+        )
+        subprocess.check_call(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--no-cache-dir",
+                "--no-deps",
+                package_spec,
+            ],
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+        )
+        for module_name in list(sys.modules.keys()):
+            if module_name.startswith("transformers"):
+                del sys.modules[module_name]
+        print("Upgraded transformers and cleared module cache")
+    except Exception as exc:
+        print(f"WARN: transformers model_type check failed: {exc}")
 
 
 def release_memory(stage=None, **kwargs):
@@ -840,6 +878,8 @@ active_policy = select_model_policy(model_dir, cfg, model_policies)
 if active_policy:
     print(f"Applied abliteration model policy: {active_policy.get('name', 'unnamed')}")
 
+ensure_transformers_model_type_support(model_type)
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 print(f"Loading model with device_map={device_map}...")
@@ -870,16 +910,16 @@ if device_map != "cpu":
         f"Using constrained max_memory: gpu={gpu_max_memory_gb}GiB cpu={cpu_max_memory_gb}GiB offload={offload_dir}"
     )
 
-# Use the auto class specified by model policy (e.g. AutoModelForConditionalGeneration
+# Use the auto class specified by model policy (e.g. AutoModelForImageTextToText
 # for VLMs like Gemma4 where AutoModelForCausalLM cannot load model_type=gemma4).
 load_auto_class_name = (active_policy or {}).get("load_auto_class", "")
-if load_auto_class_name == "AutoModelForConditionalGeneration":
-    from transformers import AutoModelForConditionalGeneration
+if load_auto_class_name == "AutoModelForImageTextToText":
+    from transformers import AutoModelForImageTextToText
 
     print(
-        f"Using AutoModelForConditionalGeneration (policy: {active_policy.get('name', 'unnamed')})"
+        f"Using AutoModelForImageTextToText (policy: {active_policy.get('name', 'unnamed')})"
     )
-    model = AutoModelForConditionalGeneration.from_pretrained(model_dir, **load_kwargs)
+    model = AutoModelForImageTextToText.from_pretrained(model_dir, **load_kwargs)
 else:
     model = AutoModelForCausalLM.from_pretrained(model_dir, **load_kwargs)
 model.eval()

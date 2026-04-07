@@ -243,7 +243,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 	if got := envMap["ABLITERATION_MODEL_POLICIES"]; !strings.Contains(got, "gemma4-text") {
 		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want default gemma4-text policy JSON", got)
 	}
-	if got := envMap["ABLITERATION_MODEL_POLICIES"]; !strings.Contains(got, "AutoModelForConditionalGeneration") {
+	if got := envMap["ABLITERATION_MODEL_POLICIES"]; !strings.Contains(got, "AutoModelForImageTextToText") {
 		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want gemma4 load_auto_class", got)
 	}
 }

@@ -380,7 +380,7 @@ func defaultAbliterationModelPoliciesJSON() string {
 			MatchPathSubstrings: []string{"gemma4", "gemma-4"},
 			SaveFormat:          "safetensors",
 			SaveMaxShardSize:    "1GB",
-			LoadAutoClass:       "AutoModelForConditionalGeneration",
+			LoadAutoClass:       "AutoModelForImageTextToText",
 		},
 	}
 	data, err := json.Marshal(policies)
