@@ -12,6 +12,7 @@ export interface SpawnRequest {
   memory_mb?: number;
   cpus?: number;
   timeout_minutes?: number;
+  multi_turn?: boolean;
 }
 
 export interface SpawnState {
