@@ -100,8 +100,9 @@ spec:
                 format: int32
                 type: integer
               env:
-                description: Env is a list of environment variables injected into
-                  all inference pods on this architecture.
+                description: |-
+                  Env is a list of environment variables injected into runtime pods and
+                  GPU workload jobs (quantization, abliteration, finetune) on this architecture.
                 items:
                   description: EnvVar represents an environment variable present in
                     a Container.

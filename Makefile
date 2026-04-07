@@ -32,7 +32,9 @@ setup: ## Install all development dependencies
 
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths=./api/... paths=./controllers/... paths=./pkg/... paths=./backend/... paths=./cmd/... output:crd:artifacts:config=config/crd
+	$(CONTROLLER_GEN) rbac:roleName=manager-role webhook paths=./api/... paths=./controllers/... paths=./pkg/... paths=./backend/... paths=./cmd/...
+	@# CRDs must be generated from API packages only; broader path scans pull in Kubernetes/example types and spill bogus CRDs into config/crd/.
+	$(CONTROLLER_GEN) crd paths=./api/... output:crd:artifacts:config=config/crd
 	@# Copy CRDs to Helm chart
 	@yes | cp config/crd/ai.flexinfer_*.yaml charts/flexinfer/crds/ 2>/dev/null || true
 
