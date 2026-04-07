@@ -231,6 +231,73 @@ func TestSpawnAccumulator_ToolCallDuration(t *testing.T) {
 	}
 }
 
+// TestSpawnAccumulator_EnsureToolCall_NoPriorStart simulates the Codex
+// "only item.completed" path: the parser calls EnsureToolCall to backfill
+// MCP server attribution, then CompleteToolCall finalizes the entry. The
+// resulting telemetry must contain a single ToolCallEntry with both Name and
+// ServerName populated, exactly mirroring the slice 9a Claude behavior.
+func TestSpawnAccumulator_EnsureToolCall_NoPriorStart(t *testing.T) {
+	acc := NewSpawnTelemetryAccumulator()
+
+	acc.EnsureToolCall("id1", "read_file", "filesystem")
+	acc.CompleteToolCall("id1", 0, nil, "")
+
+	snap := acc.Snapshot()
+	if len(snap.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls length: got %d, want 1", len(snap.ToolCalls))
+	}
+	tc := snap.ToolCalls[0]
+	if tc.Name != "read_file" {
+		t.Errorf("Name: got %q, want %q", tc.Name, "read_file")
+	}
+	if tc.ServerName != "filesystem" {
+		t.Errorf("ServerName: got %q, want %q", tc.ServerName, "filesystem")
+	}
+	if tc.Error != "" {
+		t.Errorf("Error: got %q, want empty", tc.Error)
+	}
+}
+
+// TestSpawnAccumulator_EnsureToolCall_AfterStartIsNoop guards idempotency:
+// if StartToolCall already created an entry with the same name, EnsureToolCall
+// must not duplicate it. The server name should already be present from the
+// start, but Ensure must still tolerate the call gracefully.
+func TestSpawnAccumulator_EnsureToolCall_AfterStartIsNoop(t *testing.T) {
+	acc := NewSpawnTelemetryAccumulator()
+
+	acc.StartToolCall("id1", "read_file", "filesystem")
+	acc.EnsureToolCall("id1", "read_file", "filesystem")
+	acc.CompleteToolCall("id1", 0, nil, "")
+
+	snap := acc.Snapshot()
+	if len(snap.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls length: got %d, want 1 (Ensure must not duplicate)", len(snap.ToolCalls))
+	}
+	if snap.ToolCalls[0].ServerName != "filesystem" {
+		t.Errorf("ServerName: got %q, want %q", snap.ToolCalls[0].ServerName, "filesystem")
+	}
+}
+
+// TestSpawnAccumulator_EnsureToolCall_BackfillsMissingServer covers the case
+// where StartToolCall ran without a server name (e.g. Codex item.started for
+// a non-MCP path) but a later EnsureToolCall has the server. The open entry
+// should be updated in place.
+func TestSpawnAccumulator_EnsureToolCall_BackfillsMissingServer(t *testing.T) {
+	acc := NewSpawnTelemetryAccumulator()
+
+	acc.StartToolCall("id1", "read_file", "")
+	acc.EnsureToolCall("id1", "read_file", "filesystem")
+	acc.CompleteToolCall("id1", 0, nil, "")
+
+	snap := acc.Snapshot()
+	if len(snap.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls length: got %d, want 1", len(snap.ToolCalls))
+	}
+	if snap.ToolCalls[0].ServerName != "filesystem" {
+		t.Errorf("ServerName: got %q, want %q (backfill failed)", snap.ToolCalls[0].ServerName, "filesystem")
+	}
+}
+
 func TestSpawnAccumulator_ToolCallWithError(t *testing.T) {
 	acc := NewSpawnTelemetryAccumulator()
 

@@ -14,6 +14,12 @@ type SpawnEventSink interface {
 	AddTokens(input, output, cacheCreate, cacheRead int)
 	// StartToolCall records the beginning of a tool invocation.
 	StartToolCall(id, name, serverName string)
+	// EnsureToolCall defensively guarantees that a tool call entry exists for
+	// the given id with the supplied name/serverName. Used by the Codex parser
+	// to backfill MCP server attribution when only item.completed is emitted
+	// (i.e. the SDK skipped item.started for synchronous tool calls). Safe to
+	// call alongside StartToolCall — implementations must be idempotent.
+	EnsureToolCall(id, name, serverName string)
 	// CompleteToolCall records the completion of a tool invocation.
 	// exitCode is nil for non-command tools; errMsg is empty on success.
 	CompleteToolCall(id string, durationMs int, exitCode *int, errMsg string)

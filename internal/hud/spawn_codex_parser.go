@@ -263,6 +263,18 @@ func (p *CodexJSONLParser) handleAgentMessage(item codexItem) {
 }
 
 func (p *CodexJSONLParser) handleMCPToolCall(item codexItem) {
+	// Defensive: ensure a tool call entry exists with the server name even
+	// if item.started was not emitted. The Codex SDK is allowed to skip the
+	// started event for synchronous mcp_tool_call items, in which case
+	// handleItemStarted never ran and the entry that CompleteToolCall is
+	// about to update has no ServerName. EnsureToolCall is idempotent — when
+	// item.started did fire it is a no-op (the entry name already matches).
+	name := item.Tool
+	if name == "" {
+		name = "unknown"
+	}
+	p.sink.EnsureToolCall(item.ID, name, item.Server)
+
 	errMsg := ""
 	if item.Error != "" {
 		errMsg = item.Error
@@ -272,9 +284,10 @@ func (p *CodexJSONLParser) handleMCPToolCall(item codexItem) {
 
 	if p.broadcast != nil {
 		p.broadcast("agent.spawn.tool_complete", p.agentID, map[string]any{
-			"id":    item.ID,
-			"tool":  item.Tool,
-			"error": errMsg,
+			"id":          item.ID,
+			"tool":        item.Tool,
+			"server_name": item.Server,
+			"error":       errMsg,
 		})
 	}
 }
