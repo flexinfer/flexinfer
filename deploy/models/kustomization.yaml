@@ -8,8 +8,7 @@ resources:
   # but do not reconcile them here.
   - gemma4-26b-a4b-gptq.yaml        # vLLM GPTQ INT4, MoE 3.8B active, primary (priority 200)
   - gemma4-31b-gptq.yaml            # vLLM GPTQ INT4, Dense 31B, on-demand (priority 150)
-  # E4B models disabled — replaced by 26B-A4B. Keep on disk for rollback.
-  # - gemma4-e4b-gptq.yaml
+  # E4B multimodal/turboquant variants disabled during the 26B-A4B rollout.
   # - gemma4-e4b-turboquant.yaml
   # - gemma4-e4b-multimodal.yaml
 
