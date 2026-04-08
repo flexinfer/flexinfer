@@ -67,6 +67,36 @@ When working on Model Caching features:
   - Use `kubectl get modelcache` to debug the Provisioning phase.
   - The Downloader Job (`<cache-name>-downloader`) logs are the source of truth for download failures.
 
+### SharedPVC Recovery Notes
+
+When a managed `ModelCache` PVC is being deleted but the cache is still in
+`download`, `abliteration`, or `quantization`, the controller must tear down the
+active pipeline Jobs before the PVC can disappear. Otherwise `pvc-protection`
+keeps the claim alive and the cache can deadlock on a terminating volume.
+
+Quick checks:
+
+```bash
+kubectl -n flexinfer-system get modelcache <name> -o yaml
+kubectl -n flexinfer-system get pvc <name> -o yaml
+kubectl -n flexinfer-system get jobs,pods | rg "<name>"
+kubectl get volumeattachments | rg "<pvc-uid>"
+kubectl -n longhorn-system get volumes.longhorn.io <pv-name> -o yaml
+```
+
+Recovery pattern:
+
+1. If the PVC has `deletionTimestamp` set and the cache is still in an active
+   phase, delete the active Job (`-downloader`, `-abliterate`, or `-quantize`)
+   so the claim can finish deleting.
+2. Confirm Longhorn CSI and `longhorn-manager` are healthy on the selected node
+   before assuming an attach failure is a model problem.
+3. Wait for the controller to recreate a fresh PVC and restart the pipeline from
+   `Provisioning`.
+
+This is now handled automatically by the controller for managed SharedPVC
+caches, but the checks above are still the fastest way to verify live recovery.
+
 ## MLC-LLM Backend
 
 MLC-LLM provides high-performance inference for AMD GPUs via ROCm. It uses TVM for JIT compilation.
