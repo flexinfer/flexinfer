@@ -28,6 +28,9 @@ public struct MobileSpawnRequest: Codable, Sendable {
     public let memoryMB: Int?
     public let cpus: Double?
     public let timeoutMinutes: Int?
+    public let multiTurn: Bool?
+    public let maxCostUSD: Double?
+    public let maxTurns: Int?
 
     public init(
         agentType: AgentType = .claudeCode,
@@ -38,7 +41,10 @@ public struct MobileSpawnRequest: Codable, Sendable {
         namespace: String? = nil,
         memoryMB: Int? = nil,
         cpus: Double? = nil,
-        timeoutMinutes: Int? = nil
+        timeoutMinutes: Int? = nil,
+        multiTurn: Bool? = nil,
+        maxCostUSD: Double? = nil,
+        maxTurns: Int? = nil
     ) {
         self.agentType = agentType.rawValue
         self.project = project
@@ -49,6 +55,9 @@ public struct MobileSpawnRequest: Codable, Sendable {
         self.memoryMB = memoryMB
         self.cpus = cpus
         self.timeoutMinutes = timeoutMinutes
+        self.multiTurn = multiTurn
+        self.maxCostUSD = maxCostUSD
+        self.maxTurns = maxTurns
     }
 
     enum CodingKeys: String, CodingKey {
@@ -61,6 +70,9 @@ public struct MobileSpawnRequest: Codable, Sendable {
         case memoryMB = "memory_mb"
         case cpus
         case timeoutMinutes = "timeout_minutes"
+        case multiTurn = "multi_turn"
+        case maxCostUSD = "max_cost_usd"
+        case maxTurns = "max_turns"
     }
 }
 
