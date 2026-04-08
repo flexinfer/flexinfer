@@ -27,7 +27,47 @@ func (d *MobileDomain) handleMobileSessions(w http.ResponseWriter, r *http.Reque
 	if sessions == nil {
 		sessions = []bridge.SessionInfo{}
 	}
+
+	// Default filter: only surface live ("active") sessions. Clients can
+	// override with ?status=active,ended,summarized or ?status=all to inspect
+	// the full history. This prevents stale ended/summarized sessions from
+	// leaking into list views that the user expects to reflect "what's
+	// currently running". See internal/hud/domain/mobile/handler_sessions_test.go.
+	statusFilter := parseMobileSessionStatusFilter(r.URL.Query().Get("status"))
+	if statusFilter != nil {
+		filtered := sessions[:0:0]
+		for _, s := range sessions {
+			if statusFilter[strings.ToLower(strings.TrimSpace(s.Status))] {
+				filtered = append(filtered, s)
+			}
+		}
+		sessions = filtered
+	}
+
 	d.writeMobileJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
+}
+
+// parseMobileSessionStatusFilter returns a set of allowed session statuses, or
+// nil if no filtering should be applied. An empty/omitted value defaults to
+// {"active"}; "all" returns nil (no filtering). Unknown values are dropped.
+func parseMobileSessionStatusFilter(raw string) map[string]bool {
+	trimmed := strings.ToLower(strings.TrimSpace(raw))
+	if trimmed == "" {
+		return map[string]bool{"active": true}
+	}
+	if trimmed == "all" || trimmed == "*" {
+		return nil
+	}
+	allowed := map[string]bool{}
+	for _, part := range strings.Split(trimmed, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			allowed[p] = true
+		}
+	}
+	if len(allowed) == 0 {
+		return map[string]bool{"active": true}
+	}
+	return allowed
 }
 
 func (d *MobileDomain) handleMobileSessionDetail(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,6 @@
 # Workspace Snapshot
 
-- Generated: 2026-04-02T20:08:23-04:00
+- Generated: 2026-04-04T08:56:33-04:00
 - Root: `/Users/cblevins/workspace/services/loom-core`
 - Git toplevel: `/Users/cblevins/workspace/services/loom-core`
 - Platform: `macOS-26.4-arm64-arm-64bit`
@@ -8,30 +8,18 @@
 
 ## Git
 ```
-## codex/debt-064-hud-bootstrap...origin/main
+## main...origin/main
  M .loom/00-index.md
  M .loom/00-mcp-inventory.md
  M .loom/00-workspace-snapshot.md
- M .loom/50-worklog.md
- M mcp/context/skills-registry.yaml
-?? .loom/62-implementation-plan-universal-hooks-gitops-2026-03-25.md
-?? .loom/63-implementation-plan-planning-baseline-refresh-2026-03-26.md
-?? .loom/64-planning-next-gen-skills-agents-orchestration-2026-03-29.md
-?? .loom/70-research-mobile-hud-polish-2026-03-31.md
-?? .loom/71-product-spec-mobile-hud-polish-2026-03-31.md
-?? .loom/72-implementation-plan-mobile-hud-polish-2026-03-31.md
-?? .loom/tech-debt-inventory-cycle6.json
-?? .loom/tech-debt-inventory-cycle6.md
-?? .loom/tech-debt-plan-cycle4.md
-?? .loom/tech-debt-plan-cycle5.md
-?? .loom/tech-debt-plan-cycle6.md
-?? .loom/tech-debt-priority-cycle6.md
+?? .loom/73-planning-productivity-unlocks-2026-04-03.md
 ?? docs/roadmap-reconciliation-2026-03-25.md
 ?? docs/roadmap-reconciliation-2026-03-26.md
 ?? docs/roadmap-reconciliation-2026-03-27.md
 ?? docs/roadmap-reconciliation-2026-03-29.md
 ?? docs/roadmap-reconciliation-2026-03-31.md
 ?? docs/roadmap-reconciliation-2026-04-01.md
+?? mcp/skills/rapid-dev-iteration-loop/
 ```
 
 ### Remotes
@@ -46,7 +34,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 
 ### HEAD
 ```
-ed22ed7e Merge branch 'codex/debt-063-ios-test-harness' into 'main'
+f530315c fix(makefile): update HUD targets to use loomd --hud-port instead of deprecated loom hud
 ```
 
 ## Top-Level Layout
@@ -231,6 +219,12 @@ ed22ed7e Merge branch 'codex/debt-063-ios-test-harness' into 'main'
 - `.loom/59-ralph-slice-handoff-openai-responses-m1-2026-03-04.md`
 - `.loom/60-ralph-iteration-plan-openai-responses-runtime-entrypoint-2026-03-04.md`
 - `.loom/61-ralph-slice-handoff-openai-responses-runtime-entrypoint-2026-03-04.md`
+- `.loom/62-implementation-plan-universal-hooks-gitops-2026-03-25.md`
+- `.loom/63-implementation-plan-planning-baseline-refresh-2026-03-26.md`
+- `.loom/64-planning-next-gen-skills-agents-orchestration-2026-03-29.md`
+- `.loom/70-research-mobile-hud-polish-2026-03-31.md`
+- `.loom/71-product-spec-mobile-hud-polish-2026-03-31.md`
+- `.loom/72-implementation-plan-mobile-hud-polish-2026-03-31.md`
 - `.loom/arch-rules.yaml`
 - `.loom/archive/roadmap-reconciliations/README.md`
 - `.loom/archive/roadmap-reconciliations/roadmap-reconciliation-2026-02-12.md`
@@ -256,9 +250,15 @@ ed22ed7e Merge branch 'codex/debt-063-ios-test-harness' into 'main'
 - `.loom/codebase-bench/codebase-bench-20260312-004421.json`
 - `.loom/rbac-policy.yaml`
 - `.loom/research/mcp-code-execution-with-mcp.md`
+- `.loom/tech-debt-inventory-cycle6.json`
+- `.loom/tech-debt-inventory-cycle6.md`
 - `.loom/tech-debt-inventory.json`
 - `.loom/tech-debt-inventory.md`
+- `.loom/tech-debt-plan-cycle4.md`
+- `.loom/tech-debt-plan-cycle5.md`
+- `.loom/tech-debt-plan-cycle6.md`
 - `.loom/tech-debt-plan.md`
+- `.loom/tech-debt-priority-cycle6.md`
 - `.loom/tech-debt-priority.md`
 - `.loom/tech-debt-session-architecture.md`
 - `.mcp.json`
@@ -366,18 +366,6 @@ ed22ed7e Merge branch 'codex/debt-063-ios-test-harness' into 'main'
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/WorkflowActivity.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/APIClient.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/Endpoint.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/SSEClient.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/TokenStore.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Services/ConnectionHealthMonitor.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Services/LiveActivityManager.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/AgentsViewModel.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/AlertsViewModel.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/ConnectionViewModel.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/DashboardViewModel.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/OpsViewModel.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/PushNotificationsViewModel.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/SessionDetailViewModel.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/ViewModels/SessionsViewModel.swift`
 - `…`
 
 ## AGENTS.md Files
