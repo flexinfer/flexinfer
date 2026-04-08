@@ -106,6 +106,20 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 		// Note: Pending PVCs with WaitForFirstConsumer binding mode are OK —
 		// the downloader pod triggers volume binding when it schedules.
 		if pvc.DeletionTimestamp != nil {
+			if modelCacheNeedsResetWhilePVCDeleting(&modelCache.Status) {
+				log.Info("PVC is terminating, resetting pipeline state and deleting dependent jobs",
+					"cache", modelCache.Name,
+					"pvc", pvcName)
+				if err := r.resetDownloadState(ctx, modelCache); err != nil {
+					return ctrl.Result{}, err
+				}
+				if err := r.Status().Update(ctx, modelCache); err != nil {
+					return ctrl.Result{}, err
+				}
+				r.Recorder.Event(modelCache, corev1.EventTypeNormal, "PVCDeleting",
+					fmt.Sprintf("PVC %s is terminating; reset pipeline and waiting for reprovision", pvcName))
+				return ctrl.Result{RequeueAfter: requeueShort}, nil
+			}
 			log.Info("PVC is terminating, waiting for cleanup", "pvc", pvcName)
 			return ctrl.Result{RequeueAfter: requeueMedium}, nil
 		}
@@ -1104,13 +1118,35 @@ func downloadJobPredatesPVC(job *batchv1.Job, pvc *corev1.PersistentVolumeClaim)
 	return job.CreationTimestamp.Time.Before(pvc.CreationTimestamp.Time)
 }
 
+func modelCacheNeedsResetWhilePVCDeleting(status *aiv1alpha1.ModelCacheStatus) bool {
+	if status == nil {
+		return false
+	}
+	return status.Path != "" ||
+		status.CurrentPhase != "" ||
+		status.Phase != aiv1alpha1.ModelCachePhaseProvisioning ||
+		status.Abliteration != nil ||
+		status.Finetune != nil ||
+		status.Quantization != nil ||
+		status.Publish != nil ||
+		status.RetryCount != 0
+}
+
 // resetDownloadState deletes all pipeline jobs and clears status fields to trigger a fresh download.
 func (r *ModelCacheReconciler) resetDownloadState(ctx context.Context, mc *aiv1alpha1.ModelCache) error {
 	log := log.FromContext(ctx)
 	log.Info("Resetting download state for re-download", "cache", mc.Name)
 
 	propagation := metav1.DeletePropagationBackground
-	for _, suffix := range []string{"-downloader", "-abliterate", "-finetune", "-quantize", "-publish"} {
+	for _, suffix := range []string{
+		"-downloader",
+		"-abliterate",
+		"-abliterate-image-warmup",
+		"-finetune",
+		"-quantize",
+		"-quantize-image-warmup",
+		"-publish",
+	} {
 		jobName := mc.Name + suffix
 		existingJob := &batchv1.Job{}
 		if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: mc.Namespace}, existingJob); err == nil {

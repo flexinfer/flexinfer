@@ -141,6 +141,51 @@ func TestDownloadJobPredatesPVC(t *testing.T) {
 	}
 }
 
+func TestModelCacheNeedsResetWhilePVCDeleting(t *testing.T) {
+	tests := []struct {
+		name   string
+		status *aiv1alpha1.ModelCacheStatus
+		want   bool
+	}{
+		{
+			name:   "nil status does not reset",
+			status: nil,
+			want:   false,
+		},
+		{
+			name: "already reset provisioning state does not reset again",
+			status: &aiv1alpha1.ModelCacheStatus{
+				Phase: aiv1alpha1.ModelCachePhaseProvisioning,
+			},
+			want: false,
+		},
+		{
+			name: "abliterating cache resets while pvc is deleting",
+			status: &aiv1alpha1.ModelCacheStatus{
+				Phase:        aiv1alpha1.ModelCachePhaseAbliterating,
+				CurrentPhase: "abliteration",
+				Path:         "cache:gemma4-26b-a4b-gptq",
+				Abliteration: &aiv1alpha1.AbliterationStatus{Progress: ptrInt32(10)},
+			},
+			want: true,
+		},
+		{
+			name: "retry count also forces reset",
+			status: &aiv1alpha1.ModelCacheStatus{
+				Phase:      aiv1alpha1.ModelCachePhaseProvisioning,
+				RetryCount: 1,
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, modelCacheNeedsResetWhilePVCDeleting(tt.status))
+		})
+	}
+}
+
 func TestManagedPVCNeedsRecreate(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -251,6 +296,10 @@ func TestSourceHash(t *testing.T) {
 }
 
 func strPtr(v string) *string {
+	return &v
+}
+
+func ptrInt32(v int32) *int32 {
 	return &v
 }
 
