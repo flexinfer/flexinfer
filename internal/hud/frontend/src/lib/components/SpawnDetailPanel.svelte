@@ -108,6 +108,29 @@
   let canStop = $derived(
     spawn !== null && (spawn.status === 'running' || spawn.status === 'creating')
   );
+
+  let messageInput = $state('');
+  let sendingMessage = $state(false);
+
+  let isMultiTurn = $derived(
+    spawn !== null && spawn.request.multi_turn === true
+  );
+
+  async function handleSendMessage(): Promise<void> {
+    if (!spawn || !messageInput.trim() || sendingMessage) return;
+    sendingMessage = true;
+    const ok = await spawnStore.sendMessage(spawn.spawn_id, messageInput.trim());
+    if (ok) {
+      messageInput = '';
+      await loadDetail(spawn.spawn_id);
+    }
+    sendingMessage = false;
+  }
+
+  async function handleInterrupt(): Promise<void> {
+    if (!spawn) return;
+    await spawnStore.interrupt(spawn.spawn_id);
+  }
 </script>
 
 <div class="panel spawn-detail-panel">
@@ -202,6 +225,23 @@
       </div>
     {/if}
 
+    {#if isMultiTurn && spawn.status === 'running'}
+      <div class="detail-card multi-turn-card">
+        <div class="card-label">Follow-up message</div>
+        <textarea
+          class="message-input"
+          bind:value={messageInput}
+          placeholder="Type a message to the agent..."
+          rows="3"
+        ></textarea>
+        <div class="actions-row">
+          <button class="send-button" onclick={handleSendMessage} disabled={sendingMessage || !messageInput.trim()}>
+            {sendingMessage ? 'Sending...' : 'Send'}
+          </button>
+        </div>
+      </div>
+    {/if}
+
     <div class="telemetry-tabs">
       <div class="tab-strip" role="tablist" aria-label="Spawn telemetry">
         {#each tabs as tab}
@@ -232,6 +272,9 @@
 
     {#if canStop}
       <div class="actions-row">
+        {#if isMultiTurn && spawn.status === 'running'}
+          <button class="interrupt-button" onclick={handleInterrupt}>Interrupt</button>
+        {/if}
         <button class="stop-button" onclick={handleStop}>Stop spawn</button>
       </div>
     {/if}
@@ -436,6 +479,65 @@
     font-family: var(--font-mono);
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  .multi-turn-card {
+    gap: var(--space-2);
+  }
+
+  .message-input {
+    width: 100%;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2);
+    color: var(--fg-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    resize: vertical;
+    min-height: 4rem;
+    transition: border-color var(--transition-fast);
+  }
+
+  .message-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .send-button,
+  .interrupt-button {
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--text-sm);
+    background: transparent;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    transition: background var(--transition-fast), border-color var(--transition-fast);
+  }
+
+  .send-button {
+    border: 1px solid rgba(129, 240, 254, 0.3);
+    color: var(--accent);
+  }
+
+  .send-button:hover:not(:disabled) {
+    background: rgba(129, 240, 254, 0.1);
+    border-color: var(--accent);
+  }
+
+  .send-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .interrupt-button {
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: var(--color-warn, #f59e0b);
+  }
+
+  .interrupt-button:hover {
+    background: rgba(245, 158, 11, 0.1);
+    border-color: var(--color-warn, #f59e0b);
   }
 
   .actions-row {

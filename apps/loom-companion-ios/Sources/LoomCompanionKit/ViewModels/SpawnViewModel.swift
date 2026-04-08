@@ -19,6 +19,9 @@ public final class SpawnViewModel {
     @ObservationIgnored
     private var sseRegistrationId: UUID?
 
+    /// Live stream events for the detail view (e.g. tool_start, message).
+    public var liveEvents: [SSEEvent] = []
+
     /// SSE event types that trigger a spawn list refresh.
     private static let refreshEventTypes: Set<String> = [
         "agent.spawn.building",
@@ -26,6 +29,15 @@ public final class SpawnViewModel {
         "agent.spawn.completed",
         "agent.spawn.failed",
         "agent.spawn.stopped",
+    ]
+
+    /// SSE event types that should be surfaced in the live stream.
+    private static let liveStreamEventTypes: Set<String> = [
+        "agent.spawn.tool_start",
+        "agent.spawn.tool_complete",
+        "agent.spawn.message",
+        "agent.spawn.thinking",
+        "agent.spawn.partial_message"
     ]
 
     public init(apiClient: any LoomAPIClientProtocol) {
@@ -53,6 +65,11 @@ public final class SpawnViewModel {
     private func handleSSEEvent(_ event: SSEEvent) async {
         if Self.refreshEventTypes.contains(event.type) {
             await loadSpawns()
+        } else if Self.liveStreamEventTypes.contains(event.type) {
+            liveEvents.append(event)
+            if liveEvents.count > 200 {
+                liveEvents.removeFirst(liveEvents.count - 200)
+            }
         }
     }
 
@@ -128,6 +145,26 @@ public final class SpawnViewModel {
         } catch {
             // Refresh list anyway.
             await loadSpawns()
+        }
+    }
+
+    /// Send a follow-up message to a multi-turn spawn.
+    public func sendMessage(spawnId: String, message: String) async -> Bool {
+        do {
+            let _: SpawnControlAck = try await apiClient.request(.spawnSendMessage(id: spawnId, text: message))
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Interrupt a running spawn.
+    public func interruptSpawn(id: String) async -> Bool {
+        do {
+            let _: SpawnControlAck = try await apiClient.request(.spawnInterrupt(id: id))
+            return true
+        } catch {
+            return false
         }
     }
 }

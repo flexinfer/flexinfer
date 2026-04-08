@@ -27,9 +27,12 @@ struct SpawnDetailView: View {
 
     @State private var selectedTab: DetailTab = .tools
     @State private var showingStopConfirmation = false
+    @State private var showingFollowUp = false
+    @State private var followUpText = ""
+    @State private var isSending = false
 
     private enum DetailTab: String, Hashable, CaseIterable {
-        case tools, files, errors, usage
+        case tools, files, errors, usage, activity
 
         var title: String {
             switch self {
@@ -37,6 +40,7 @@ struct SpawnDetailView: View {
             case .files: return "Files"
             case .errors: return "Errors"
             case .usage: return "Usage"
+            case .activity: return "Activity"
             }
         }
 
@@ -46,6 +50,7 @@ struct SpawnDetailView: View {
             case .files: return "doc.text"
             case .errors: return "exclamationmark.triangle"
             case .usage: return "chart.bar.xaxis"
+            case .activity: return "bolt.horizontal"
             }
         }
     }
@@ -73,6 +78,14 @@ struct SpawnDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 if spawn.isActive {
+                    if spawn.request.multiTurn == true {
+                        Button(action: { showingFollowUp = true }) {
+                            Image(systemName: "paperplane")
+                        }
+                        Button("Interrupt", role: .destructive) {
+                            Task { await viewModel.interruptSpawn(id: spawn.spawnId) }
+                        }
+                    }
                     Button("Stop", role: .destructive) {
                         showingStopConfirmation = true
                     }
@@ -97,9 +110,39 @@ struct SpawnDetailView: View {
         .refreshable {
             await loadAll()
         }
-        // TODO: slice 14e -- add SpawnFollowUpSheet for multi-turn
-        // message/interrupt control (wired through spawnSendMessage /
-        // spawnInterrupt endpoints).
+        .sheet(isPresented: $showingFollowUp) {
+            NavigationStack {
+                Form {
+                    Section("Message") {
+                        TextEditor(text: $followUpText)
+                            .frame(minHeight: 100)
+                    }
+                }
+                .navigationTitle("Follow Up")
+                #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+                #endif
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showingFollowUp = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Send") {
+                            let text = followUpText
+                            Task {
+                                isSending = true
+                                _ = await viewModel.sendMessage(spawnId: spawn.spawnId, message: text)
+                                isSending = false
+                                showingFollowUp = false
+                                followUpText = ""
+                            }
+                        }
+                        .disabled(followUpText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
     }
 
     // MARK: - Header
@@ -224,7 +267,51 @@ struct SpawnDetailView: View {
         case .files: filesTab
         case .errors: errorsTab
         case .usage: usageTab
+        case .activity: activityTab
         }
+    }
+
+    // MARK: - Activity Tab
+
+    private var activityTab: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader(title: "Live Activity", subtitle: "\(viewModel.liveEvents.count) events")
+
+            if viewModel.liveEvents.isEmpty {
+                emptyRow("No live activity recorded")
+            } else {
+                VStack(spacing: 0) {
+                    let events = viewModel.liveEvents.reversed()
+                    ForEach(Array(events.enumerated()), id: \.offset) { index, event in
+                        activityRow(event)
+                        if index < events.count - 1 {
+                            Divider().background(LoomColors.border)
+                        }
+                    }
+                }
+                .background(LoomColors.bgSecondary)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+        }
+        .padding(.horizontal)
+    }
+
+    private func activityRow(_ event: SSEEvent) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(event.type)
+                    .font(.caption)
+                    .foregroundStyle(LoomColors.accent)
+                    .monospaced()
+                Spacer()
+            }
+            Text(event.data)
+                .font(.caption2)
+                .foregroundStyle(LoomColors.fgPrimary)
+                .lineLimit(4)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     // MARK: - Tools Tab

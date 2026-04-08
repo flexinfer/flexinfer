@@ -200,6 +200,42 @@ class SpawnStore {
     }
   }
 
+  async sendMessage(spawnId: string, message: string): Promise<boolean> {
+    this.error = null;
+    try {
+      const res = await fetch(`/api/agent/spawn/${encodeURIComponent(spawnId)}/message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      return true;
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : String(err);
+      return false;
+    }
+  }
+
+  async interrupt(spawnId: string): Promise<boolean> {
+    this.error = null;
+    try {
+      const res = await fetch(`/api/agent/spawn/${encodeURIComponent(spawnId)}/interrupt`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      return true;
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : String(err);
+      return false;
+    }
+  }
+
   startPolling(intervalMs = 10000): void {
     this.fetch();
     this.subscribeSSE();
