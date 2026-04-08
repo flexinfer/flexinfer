@@ -12,6 +12,10 @@
 #   - Double protection: CRD restricts to o_proj + code skips expert params.
 #
 # Disk: 27 GB BF16 + ~7 GB GPTQ INT4 + headroom → 60 Gi PVC
+# Storage tier: keep the source cache on GPU-local NVMe. The bulk/stable pool has
+# proven fragile for rebuildable Gemma source caches after dead-node events, and
+# forcing Longhorn onto a GPU/NVMe replica pool keeps download/ablit/quant closer
+# to the nodes that actually run the pipeline.
 # GPU: 1x RX 7900 XTX (gfx1100, 24GB VRAM) for abliteration + quantization
 # SysRAM: 64GB node, so keep save/offload in streaming mode via GPUProfile overrides.
 ---
@@ -24,7 +28,7 @@ spec:
   source: "google/gemma-4-26B-A4B-it"
   storageStrategy: SharedPVC
   storageSize: "60Gi"
-  clusterStorageClassName: bulk-1r-stable
+  clusterStorageClassName: nvme-1r-gpu
   secretRef: "hf-token"
   nodeSelector:
     flexinfer.ai/gpu.arch: gfx1100

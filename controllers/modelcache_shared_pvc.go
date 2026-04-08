@@ -72,6 +72,35 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			return ctrl.Result{}, err
 		}
 
+		desiredPVC, err := r.pvcForModelCache(modelCache)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if needsRecreate, reason := managedPVCNeedsRecreate(pvc, desiredPVC); needsRecreate {
+			log.Info("Managed PVC spec drift detected, recreating PVC",
+				"cache", modelCache.Name,
+				"pvc", pvcName,
+				"reason", reason)
+
+			if err := r.resetDownloadState(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			propagation := metav1.DeletePropagationBackground
+			if err := r.Delete(ctx, pvc, &client.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !errors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("deleting pvc %s for recreation: %w", pvcName, err)
+			}
+
+			r.resetDownloadStatusFields(modelCache)
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			r.Recorder.Event(modelCache, corev1.EventTypeNormal, "PVCRecreated",
+				fmt.Sprintf("Recreating managed PVC %s due to immutable spec drift: %s", pvcName, reason))
+			return ctrl.Result{RequeueAfter: requeueShort}, nil
+		}
+
 		// Gate on PVC readiness — don't create jobs against a PVC that is
 		// being deleted (Terminating) or in a terminal error state.
 		// Note: Pending PVCs with WaitForFirstConsumer binding mode are OK —
@@ -444,6 +473,43 @@ func (r *ModelCacheReconciler) pvcForModelCache(m *aiv1alpha1.ModelCache) (*core
 		return nil, err
 	}
 	return pvc, nil
+}
+
+func managedPVCNeedsRecreate(existing, desired *corev1.PersistentVolumeClaim) (bool, string) {
+	if existing == nil || desired == nil {
+		return false, ""
+	}
+
+	existingClass := ""
+	if existing.Spec.StorageClassName != nil {
+		existingClass = *existing.Spec.StorageClassName
+	}
+	desiredClass := ""
+	if desired.Spec.StorageClassName != nil {
+		desiredClass = *desired.Spec.StorageClassName
+	}
+	if existingClass != desiredClass {
+		return true, fmt.Sprintf("storageClassName %q -> %q", existingClass, desiredClass)
+	}
+
+	if accessModeSignature(existing.Spec.AccessModes) != accessModeSignature(desired.Spec.AccessModes) {
+		return true, fmt.Sprintf("accessModes %q -> %q",
+			accessModeSignature(existing.Spec.AccessModes),
+			accessModeSignature(desired.Spec.AccessModes))
+	}
+
+	return false, ""
+}
+
+func accessModeSignature(modes []corev1.PersistentVolumeAccessMode) string {
+	if len(modes) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(modes))
+	for _, mode := range modes {
+		parts = append(parts, string(mode))
+	}
+	return strings.Join(parts, ",")
 }
 
 // isMlcModel returns true if the source is an MLC-LLM compiled model

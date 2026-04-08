@@ -141,6 +141,75 @@ func TestDownloadJobPredatesPVC(t *testing.T) {
 	}
 }
 
+func TestManagedPVCNeedsRecreate(t *testing.T) {
+	tests := []struct {
+		name     string
+		existing *corev1.PersistentVolumeClaim
+		desired  *corev1.PersistentVolumeClaim
+		want     bool
+		wantWhy  string
+	}{
+		{
+			name: "storage class drift requires recreation",
+			existing: &corev1.PersistentVolumeClaim{
+				Spec: corev1.PersistentVolumeClaimSpec{
+					StorageClassName: strPtr("bulk-1r-stable"),
+					AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				},
+			},
+			desired: &corev1.PersistentVolumeClaim{
+				Spec: corev1.PersistentVolumeClaimSpec{
+					StorageClassName: strPtr("nvme-1r-gpu"),
+					AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				},
+			},
+			want:    true,
+			wantWhy: `storageClassName "bulk-1r-stable" -> "nvme-1r-gpu"`,
+		},
+		{
+			name: "access mode drift requires recreation",
+			existing: &corev1.PersistentVolumeClaim{
+				Spec: corev1.PersistentVolumeClaimSpec{
+					StorageClassName: strPtr("longhorn"),
+					AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany},
+				},
+			},
+			desired: &corev1.PersistentVolumeClaim{
+				Spec: corev1.PersistentVolumeClaimSpec{
+					StorageClassName: strPtr("longhorn"),
+					AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				},
+			},
+			want:    true,
+			wantWhy: `accessModes "ReadWriteMany" -> "ReadWriteOnce"`,
+		},
+		{
+			name: "matching immutable spec does not recreate",
+			existing: &corev1.PersistentVolumeClaim{
+				Spec: corev1.PersistentVolumeClaimSpec{
+					StorageClassName: strPtr("nvme-1r-gpu"),
+					AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				},
+			},
+			desired: &corev1.PersistentVolumeClaim{
+				Spec: corev1.PersistentVolumeClaimSpec{
+					StorageClassName: strPtr("nvme-1r-gpu"),
+					AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, why := managedPVCNeedsRecreate(tt.existing, tt.desired)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantWhy, why)
+		})
+	}
+}
+
 func TestSourceHash(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -179,6 +248,10 @@ func TestSourceHash(t *testing.T) {
 			}
 		})
 	}
+}
+
+func strPtr(v string) *string {
+	return &v
 }
 
 func TestTruncateDigest(t *testing.T) {
