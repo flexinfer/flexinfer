@@ -27,8 +27,11 @@ Safety features:
     capability rather than just refusal behavior.
   - Perplexity validation (ABLITERATION_VALIDATE_PERPLEXITY): After orthogonalization,
     runs a quick inference + loss check on calibration prompts. Aborts before save if
-    perplexity exceeds ABLITERATION_MAX_PERPLEXITY (default 50). Prevents wasting
-    ~90 min of downstream GPTQ quantization on corrupted weights.
+    perplexity exceeds ABLITERATION_MAX_PERPLEXITY (default 50). If the baseline
+    model already exceeds that ceiling, falls back to a relative regression guard
+    using ABLITERATION_MAX_PERPLEXITY_REGRESSION_PCT (default 25). Prevents wasting
+    ~90 min of downstream GPTQ quantization on corrupted weights while still
+    handling high-perplexity model families coherently.
 """
 import gc
 import importlib.util
@@ -1696,6 +1699,9 @@ if pre_validate:
     else:
         print("Pre-abliteration baseline: all prompts failed (NaN loss)", flush=True)
     del _pre_prompts, _pre_loss, _pre_tokens
+else:
+    _pre_ppl = None
+    _pre_avg = None
 
 # ── Orthogonalize weight matrices ─────────────────────────────────────
 ablation_strength = float(os.environ.get("ABLITERATION_STRENGTH", "1.0"))
@@ -1801,6 +1807,9 @@ validate_perplexity = os.environ.get(
     "ABLITERATION_VALIDATE_PERPLEXITY", "true"
 ).lower() in ("true", "1", "yes")
 max_perplexity = float(os.environ.get("ABLITERATION_MAX_PERPLEXITY", "50"))
+max_perplexity_regression_pct = float(
+    os.environ.get("ABLITERATION_MAX_PERPLEXITY_REGRESSION_PCT", "25")
+)
 
 if validate_perplexity:
     emit_progress(
@@ -1933,7 +1942,33 @@ if validate_perplexity:
             "perplexity_validated", perplexity=perplexity, avgLoss=avg_loss
         )
 
-        if perplexity > max_perplexity:
+        baseline_ppl = _pre_ppl if "_pre_ppl" in locals() else None
+        baseline_is_valid = baseline_ppl is not None and not math.isnan(baseline_ppl)
+        baseline_exceeds_absolute = baseline_is_valid and baseline_ppl > max_perplexity
+        if baseline_exceeds_absolute:
+            allowed_perplexity = baseline_ppl * (
+                1.0 + max_perplexity_regression_pct / 100.0
+            )
+            print(
+                "Baseline perplexity already exceeds the absolute threshold; "
+                "using relative regression gate "
+                f"(baseline={baseline_ppl:.2f}, max_regression_pct={max_perplexity_regression_pct:.2f}, "
+                f"allowed={allowed_perplexity:.2f})",
+                flush=True,
+            )
+            if perplexity > allowed_perplexity:
+                msg = (
+                    f"ABORTING: Post-abliteration perplexity {perplexity:.2f} exceeds "
+                    f"allowed regression window {allowed_perplexity:.2f} "
+                    f"(baseline {baseline_ppl:.2f}, max regression "
+                    f"{max_perplexity_regression_pct:.2f}%). The abliterated model is likely corrupted."
+                )
+                print(msg)
+                emit_progress(
+                    "error", phase="validating", detail=msg, perplexity=perplexity
+                )
+                raise RuntimeError(msg)
+        elif perplexity > max_perplexity:
             msg = (
                 f"ABORTING: Post-abliteration perplexity {perplexity:.2f} exceeds threshold "
                 f"{max_perplexity}. The abliterated model is likely corrupted. "
