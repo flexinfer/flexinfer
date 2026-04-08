@@ -111,3 +111,19 @@ func TestResolveImage_PrecedenceChainWithProfileAndRuntime(t *testing.T) {
 		t.Fatalf("ResolveImage() = %q, want arch-specific env override", got)
 	}
 }
+
+func TestBuildImageWarmupJob_SetsWarmupPriority(t *testing.T) {
+	job := BuildImageWarmupJob(
+		"cache-quantize-image-warmup",
+		"flexinfer-system",
+		"cache",
+		"quantization",
+		"registry.harbor.lan/flexinfer/runtime:test",
+		map[string]string{"kubernetes.io/hostname": "cblevins-radeonvii"},
+		nil,
+	)
+
+	if got := job.Spec.Template.Spec.PriorityClassName; got != PriorityClassWarmup {
+		t.Fatalf("PriorityClassName = %q, want %q", got, PriorityClassWarmup)
+	}
+}

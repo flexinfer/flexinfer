@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	"github.com/flexinfer/flexinfer/pkg/quantization"
 )
 
 func TestDownloadGCdShouldProceed(t *testing.T) {
@@ -397,4 +398,26 @@ func TestJobForDownloadCleansStaleDerivedArtifactsBeforeReuse(t *testing.T) {
 	assert.Contains(t, script, `find "$DEST_DIR" -maxdepth 1 -type d -name 'gptq-*'`)
 	assert.Contains(t, script, `Detected stale abliteration/quantization artifacts in $DEST_DIR`)
 	assert.Contains(t, script, `find "$DEST_DIR" -mindepth 1 -maxdepth 1 ! -name '.cache' -exec rm -rf {} +`)
+}
+
+func TestJobForDownloadUsesDownloadPriorityClass(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := aiv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme() error = %v", err)
+	}
+
+	r := &ModelCacheReconciler{Scheme: scheme}
+	cache := &aiv1alpha1.ModelCache{}
+	cache.Name = "gemma4-31b-gptq"
+	cache.Namespace = "flexinfer-system"
+	cache.Spec.Source = "HF://google/gemma-4-31B-it"
+
+	job, err := r.jobForDownload(cache, "gemma4-31b-gptq", "gemma4-31b-gptq")
+	if err != nil {
+		t.Fatalf("jobForDownload() error = %v", err)
+	}
+
+	if got := job.Spec.Template.Spec.PriorityClassName; got != quantization.PriorityClassDownload {
+		t.Fatalf("PriorityClassName = %q, want %q", got, quantization.PriorityClassDownload)
+	}
 }

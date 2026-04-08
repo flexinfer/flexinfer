@@ -90,7 +90,8 @@ func (b *GGUFJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 			BackoffLimit:          &backoffLimit,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyNever,
+					RestartPolicy:     corev1.RestartPolicyNever,
+					PriorityClassName: PriorityClassBulk,
 					Containers: []corev1.Container{
 						{
 							Name:    "quantizer",

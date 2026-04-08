@@ -174,6 +174,9 @@ func TestGGUFJobBuilder_BuildJob(t *testing.T) {
 
 	// Verify pod template
 	podSpec := job.Spec.Template.Spec
+	if podSpec.PriorityClassName != PriorityClassBulk {
+		t.Fatalf("PriorityClassName = %q, want %q", podSpec.PriorityClassName, PriorityClassBulk)
+	}
 	if len(podSpec.Containers) != 1 {
 		t.Fatalf("expected 1 container, got %d", len(podSpec.Containers))
 	}
@@ -537,6 +540,9 @@ func TestGPTQJobBuilder_BuildJob(t *testing.T) {
 	}
 	if env["DESC_ACT"] != "False" {
 		t.Fatalf("DESC_ACT env = %q, want False", env["DESC_ACT"])
+	}
+	if got := job.Spec.Template.Spec.PriorityClassName; got != PriorityClassBulk {
+		t.Fatalf("PriorityClassName = %q, want %q", got, PriorityClassBulk)
 	}
 }
 

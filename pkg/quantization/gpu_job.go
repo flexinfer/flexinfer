@@ -168,7 +168,8 @@ func buildGPUQuantizationJob(params JobParams, image, script string, memoryGB in
 	env = mergeEnvVars(env, params.ProfileEnv)
 
 	podSpec := corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever,
+		RestartPolicy:     corev1.RestartPolicyNever,
+		PriorityClassName: PriorityClassBulk,
 		Containers: []corev1.Container{
 			{
 				Name:            "quantizer",

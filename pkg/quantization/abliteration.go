@@ -159,7 +159,8 @@ func BuildAbliterationJob(params JobParams, ablitSpec *aiv1alpha1.AbliterationSp
 	env = mergeEnvVars(env, params.ProfileEnv)
 
 	podSpec := corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever,
+		RestartPolicy:     corev1.RestartPolicyNever,
+		PriorityClassName: PriorityClassTransform,
 		Containers: []corev1.Container{
 			{
 				Name:            "abliterator",

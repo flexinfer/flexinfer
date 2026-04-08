@@ -79,7 +79,8 @@ func BuildPublishJob(params JobParams, spec *aiv1alpha1.PublishSpec) (*batchv1.J
 	}
 
 	podSpec := corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever,
+		RestartPolicy:     corev1.RestartPolicyNever,
+		PriorityClassName: PriorityClassBulk,
 		Containers: []corev1.Container{
 			{
 				Name:            "publisher",

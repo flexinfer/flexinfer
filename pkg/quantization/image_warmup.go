@@ -81,6 +81,7 @@ func BuildImageWarmupJob(name, namespace, cacheName, phase, image string, nodeSe
 				Spec: corev1.PodSpec{
 					RestartPolicy:                corev1.RestartPolicyNever,
 					AutomountServiceAccountToken: ptr.To(false),
+					PriorityClassName:            PriorityClassWarmup,
 					NodeSelector:                 nodeSelector,
 					Tolerations:                  tolerations,
 					Containers: []corev1.Container{

@@ -49,6 +49,9 @@ func TestBuildAbliterationJob_Defaults(t *testing.T) {
 	if *job.Spec.BackoffLimit != 2 {
 		t.Errorf("BackoffLimit = %d, want 2", *job.Spec.BackoffLimit)
 	}
+	if got := job.Spec.Template.Spec.PriorityClassName; got != PriorityClassTransform {
+		t.Errorf("PriorityClassName = %q, want %q", got, PriorityClassTransform)
+	}
 
 	// Default deadline (14400s)
 	if *job.Spec.ActiveDeadlineSeconds != 14400 {

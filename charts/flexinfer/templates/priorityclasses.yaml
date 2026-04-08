@@ -1,0 +1,43 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: flexinfer-modelcache-warmup
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+value: 1000
+globalDefault: false
+description: Low-priority image warmup jobs for FlexInfer ModelCache pipelines.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: flexinfer-modelcache-bulk
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+value: 10000
+globalDefault: false
+description: Bulk FlexInfer ModelCache work such as quantization and publishing.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: flexinfer-modelcache-download
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+value: 50000
+globalDefault: false
+description: Source materialization jobs for FlexInfer ModelCache pipelines.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: flexinfer-modelcache-transform
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+value: 100000
+globalDefault: false
+description: High-priority transform jobs such as abliteration and finetuning.

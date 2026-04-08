@@ -39,6 +39,7 @@ import (
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
+	"github.com/flexinfer/flexinfer/pkg/quantization"
 )
 
 func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCache *aiv1alpha1.ModelCache) (ctrl.Result, error) {
@@ -840,9 +841,10 @@ echo "Download complete ($WEIGHT_COUNT weight files)."
 			ActiveDeadlineSeconds: activeDeadlineSeconds,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Tolerations:   tolerations,
-					NodeSelector:  m.Spec.NodeSelector,
+					RestartPolicy:     corev1.RestartPolicyOnFailure,
+					PriorityClassName: quantization.PriorityClassDownload,
+					Tolerations:       tolerations,
+					NodeSelector:      m.Spec.NodeSelector,
 					Containers: []corev1.Container{{
 						Name:    "downloader",
 						Image:   image,
@@ -1055,9 +1057,10 @@ echo "Successfully cached model from $MODEL_REF (digest: $DIGEST)"
 			BackoffLimit: &backoffLimit,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Tolerations:   tolerations,
-					NodeSelector:  m.Spec.NodeSelector,
+					RestartPolicy:     corev1.RestartPolicyOnFailure,
+					PriorityClassName: quantization.PriorityClassDownload,
+					Tolerations:       tolerations,
+					NodeSelector:      m.Spec.NodeSelector,
 					Containers: []corev1.Container{{
 						Name:                     "downloader",
 						Image:                    orasImage,

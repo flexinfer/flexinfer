@@ -124,7 +124,8 @@ func BuildFinetuneJob(params JobParams, spec *aiv1alpha1.FinetuneSpec) (*batchv1
 	env = mergeEnvVars(env, params.ProfileEnv)
 
 	podSpec := corev1.PodSpec{
-		RestartPolicy: corev1.RestartPolicyNever,
+		RestartPolicy:     corev1.RestartPolicyNever,
+		PriorityClassName: PriorityClassTransform,
 		Containers: []corev1.Container{
 			{
 				Name:            "finetuner",
