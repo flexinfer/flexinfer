@@ -1,5 +1,6 @@
 <script>
   import { timelineStore } from '../../stores/timeline.svelte.ts';
+  import { fleetStore } from '../../stores/fleet.svelte.ts';
   import { formatTime, relativeTime, agentColor } from '../../utils/format.ts';
   import StatusDot from '../../widgets/StatusDot.svelte';
   import AgentCard from '../../widgets/AgentCard.svelte';
@@ -112,6 +113,95 @@
     });
   });
 
+  // Build a lookup map from session id → Session so we can resolve subagent
+  // hierarchy without an O(n²) scan per agent.
+  let sessionById = $derived.by(() => {
+    const map = new Map();
+    for (const s of fleetStore.sessions ?? []) {
+      if (s?.id) map.set(s.id, s);
+    }
+    return map;
+  });
+
+  // Resolve the root group key for an agent. Traverses the session hierarchy
+  // via root_session_id (preferred) or parent_session_id (walked up the chain)
+  // and falls back to the agent's own session_id or agent_id so every row
+  // always has a stable group key.
+  function groupKeyFor(agent) {
+    const sid = agent?.session_id;
+    if (!sid) return `agent:${agent?.agent_id ?? 'unknown'}`;
+    const session = sessionById.get(sid);
+    if (!session) return `session:${sid}`;
+    if (session.root_session_id && session.root_session_id !== session.id) {
+      return `session:${session.root_session_id}`;
+    }
+    // Walk parent chain defensively in case root_session_id isn't populated.
+    let cursor = session;
+    const seen = new Set();
+    while (cursor?.parent_session_id && !seen.has(cursor.id)) {
+      seen.add(cursor.id);
+      const parent = sessionById.get(cursor.parent_session_id);
+      if (!parent) return `session:${cursor.parent_session_id}`;
+      cursor = parent;
+    }
+    return `session:${cursor?.id ?? sid}`;
+  }
+
+  // Group agents by root session so subagents cluster under their spawning
+  // agent. Each group has a root agent (if still present in the presence
+  // registry) plus an ordered list of children.
+  let agentGroups = $derived.by(() => {
+    const groups = new Map();
+    for (const agent of sortedAgents) {
+      const key = groupKeyFor(agent);
+      if (!groups.has(key)) {
+        groups.set(key, { key, root: null, children: [] });
+      }
+      const group = groups.get(key);
+      const isRoot =
+        key === `agent:${agent.agent_id}` ||
+        (agent.session_id && key === `session:${agent.session_id}`);
+      if (isRoot && !group.root) {
+        group.root = agent;
+      } else {
+        group.children.push(agent);
+      }
+    }
+    // If a group has children but no root in the presence list, promote the
+    // first child so the cluster still has a header.
+    const result = [];
+    for (const group of groups.values()) {
+      if (!group.root && group.children.length > 0) {
+        group.root = group.children.shift();
+      }
+      if (group.root) result.push(group);
+    }
+    // Preserve sortedAgents order by sorting groups by their root's position.
+    const rootIndex = new Map(sortedAgents.map((a, i) => [a.agent_id, i]));
+    result.sort((a, b) => {
+      const ai = rootIndex.get(a.root?.agent_id) ?? Infinity;
+      const bi = rootIndex.get(b.root?.agent_id) ?? Infinity;
+      return ai - bi;
+    });
+    return result;
+  });
+
+  // Flatten groups back to a row-ordered list with a depth marker so the
+  // table view can indent subagents under their root. The synthetic `id`
+  // field is what DataTable keys rows by.
+  let flatGroupedAgents = $derived.by(() => {
+    const rows = [];
+    for (const group of agentGroups) {
+      if (group.root) {
+        rows.push({ id: group.root.agent_id, agent: group.root, depth: 0, groupKey: group.key });
+      }
+      for (const child of group.children) {
+        rows.push({ id: child.agent_id, agent: child, depth: 1, groupKey: group.key });
+      }
+    }
+    return rows;
+  });
+
   function presenceStatus(status) {
     const map = {
       active: 'healthy',
@@ -157,14 +247,39 @@
     </div>
   {/if}
   <div class="cards-grid">
-    {#each sortedAgents as agent (agent.agent_id)}
-      <AgentCard
-        {agent}
-        heartbeatData={heartbeatDataMap.get(agent.agent_id) ?? []}
-        sharedFileAgents={agentOverlaps.get(agent.agent_id) ?? []}
-        ondispatch={onOpenDispatch}
-        onnudge={onOpenNudge}
-      />
+    {#each agentGroups as group (group.key)}
+      <div class="agent-group" class:has-children={group.children.length > 0}>
+        {#if group.root}
+          <AgentCard
+            agent={group.root}
+            heartbeatData={heartbeatDataMap.get(group.root.agent_id) ?? []}
+            sharedFileAgents={agentOverlaps.get(group.root.agent_id) ?? []}
+            ondispatch={onOpenDispatch}
+            onnudge={onOpenNudge}
+          />
+        {/if}
+        {#if group.children.length > 0}
+          <div class="subagent-list">
+            <div class="subagent-header">
+              <span class="subagent-rail"></span>
+              <span class="subagent-label">
+                {group.children.length} subagent{group.children.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            {#each group.children as child (child.agent_id)}
+              <div class="subagent-card">
+                <AgentCard
+                  agent={child}
+                  heartbeatData={heartbeatDataMap.get(child.agent_id) ?? []}
+                  sharedFileAgents={agentOverlaps.get(child.agent_id) ?? []}
+                  ondispatch={onOpenDispatch}
+                  onnudge={onOpenNudge}
+                />
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
     {:else}
       <EmptyState icon={'\u25A3'} heading="No registered agents" compact />
     {/each}
@@ -199,16 +314,22 @@
           {/each}
         </div>
       {/if}
-      {#if sortedAgents.length === 0}
+      {#if flatGroupedAgents.length === 0}
         <EmptyState icon={'\u25A3'} heading="No registered agents" compact />
       {:else}
         <DataTable
           columns={agentColumns}
-          rows={sortedAgents}
-          idKey="agent_id"
+          rows={flatGroupedAgents}
+          idKey="id"
         >
-          {#snippet row({ row: agent })}
-            <td class="text-mono">{agent.agent_id}</td>
+          {#snippet row({ row })}
+            {@const agent = row.agent}
+            <td class="text-mono" class:subagent-row={row.depth > 0}>
+              {#if row.depth > 0}
+                <span class="subagent-indent" aria-hidden="true">└─</span>
+              {/if}
+              {agent.agent_id}
+            </td>
             <td>
               <StatusDot status={presenceStatus(agent.status)} />
               <span class="status-label">{agent.status}</span>
@@ -278,6 +399,90 @@
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
     gap: 12px;
     padding: 4px 0;
+  }
+
+  .agent-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .agent-group.has-children {
+    background: color-mix(in srgb, var(--accent) 4%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
+    border-radius: var(--border-radius);
+    padding: 8px;
+  }
+
+  .subagent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-left: 14px;
+    position: relative;
+  }
+
+  .subagent-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0 4px;
+  }
+
+  .subagent-rail {
+    width: 10px;
+    height: 1px;
+    background: color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+
+  .subagent-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+  }
+
+  .subagent-card {
+    position: relative;
+    padding-left: 14px;
+  }
+
+  .subagent-card::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 16px;
+    width: 10px;
+    height: 1px;
+    background: color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+
+  .subagent-card::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+
+  .subagent-card:last-child::after {
+    bottom: auto;
+    height: 17px;
+  }
+
+  .subagent-indent {
+    display: inline-block;
+    margin-right: 6px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    opacity: 0.7;
+  }
+
+  td.subagent-row {
+    padding-left: 18px;
   }
 
   .presence-grid {

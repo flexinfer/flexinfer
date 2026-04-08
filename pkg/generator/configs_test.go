@@ -1857,7 +1857,11 @@ func TestPluginEnforcementPlatforms(t *testing.T) {
 	}
 }
 
-func TestGeminiHooksConfig_IncludesGitOpsPolicy(t *testing.T) {
+func TestGeminiHooksConfig_OmitsPreToolUse(t *testing.T) {
+	// Gemini does not understand PreToolUse / SubagentStart hook events.
+	// Including them causes Gemini CLI to reject the entire hooks block,
+	// which silently disables every Gemini lifecycle hook. The gitops_flux
+	// policy is enforced at the loom proxy layer for Gemini instead.
 	geminiProfile, _ := GetPlatformProfile("gemini")
 	config := geminiHooksConfigFromRegistry(testRegistry(), geminiProfile, "")
 
@@ -1866,27 +1870,17 @@ func TestGeminiHooksConfig_IncludesGitOpsPolicy(t *testing.T) {
 		t.Fatal("expected hooks map in gemini config")
 	}
 
-	// Gemini now has native enforcement, so PreToolUse should be present
-	// with the gitops_flux guardrail hooks (same shape as Claude).
-	preToolUse, ok := hooks["PreToolUse"].([]map[string]any)
-	if !ok || len(preToolUse) == 0 {
-		t.Fatal("expected PreToolUse hooks from shared gitops_flux policy in gemini config")
+	if _, ok := hooks["PreToolUse"]; ok {
+		t.Errorf("gemini hooks must NOT contain PreToolUse (Claude-only event), got: %#v", hooks["PreToolUse"])
 	}
-
-	foundPolicyMessage := false
-	for _, block := range preToolUse {
-		entries, _ := block["hooks"].([]map[string]any)
-		for _, entry := range entries {
-			cmd, _ := entry["command"].(string)
-			if strings.Contains(cmd, "kubectl edit") &&
-				strings.Contains(cmd, "GitOps policy:") {
-				foundPolicyMessage = true
-			}
+	if _, ok := hooks["SubagentStart"]; ok {
+		t.Errorf("gemini hooks must NOT contain SubagentStart (Claude-only event), got: %#v", hooks["SubagentStart"])
+	}
+	// Gemini-supported events should still be present.
+	for _, evt := range []string{"SessionStart", "SessionEnd", "AfterTool"} {
+		if _, ok := hooks[evt]; !ok {
+			t.Errorf("expected gemini hooks to contain %q event", evt)
 		}
-	}
-
-	if !foundPolicyMessage {
-		t.Fatalf("expected shared GitOps policy hook in gemini PreToolUse: %#v", preToolUse)
 	}
 }
 
@@ -2102,12 +2096,30 @@ func TestAppendHookPolicies_NativeEnforcementAddsPreToolUse(t *testing.T) {
 	hp := HookProfile{
 		PolicyRefs:  []string{"gitops_flux"},
 		Enforcement: "native",
+		Events:      []string{"preToolUse"},
 	}
 	appendHookPolicies(hooks, testRegistry(), hp)
 
 	preToolUse, ok := hooks["PreToolUse"].([]map[string]any)
 	if !ok || len(preToolUse) == 0 {
-		t.Fatal("native enforcement should add PreToolUse hooks")
+		t.Fatal("native enforcement with preToolUse event should add PreToolUse hooks")
+	}
+}
+
+func TestAppendHookPolicies_NativeWithoutPreToolUseEvent_NoHook(t *testing.T) {
+	// Native enforcement alone is not enough; the platform must also declare
+	// preToolUse in its events list. This guards Gemini (native enforcement
+	// but no preToolUse support) from receiving Claude-only hook events.
+	hooks := map[string]any{}
+	hp := HookProfile{
+		PolicyRefs:  []string{"gitops_flux"},
+		Enforcement: "native",
+		Events:      []string{"sessionStart", "sessionEnd", "postToolUse"},
+	}
+	appendHookPolicies(hooks, testRegistry(), hp)
+
+	if _, ok := hooks["PreToolUse"]; ok {
+		t.Error("native enforcement without preToolUse event should NOT add PreToolUse hooks")
 	}
 }
 

@@ -10,10 +10,30 @@ import (
 	"github.com/crb2nu/loom/pkg/registry"
 )
 
+// hookProfileHasEvent returns true when the platform's declared events list
+// contains the given event name. Used to gate platform-specific hook emission
+// (e.g. only emit SubagentStart for platforms that actually support it). The
+// match is case-insensitive to tolerate "subagentStart" vs "SubagentStart"
+// spellings between the YAML profile and Go event names.
+func hookProfileHasEvent(hp HookProfile, event string) bool {
+	target := strings.ToLower(event)
+	for _, e := range hp.Events {
+		if strings.ToLower(e) == target {
+			return true
+		}
+	}
+	return false
+}
+
 // buildPlatformHooks generates the shared SessionStart / session-end / heartbeat
 // hooks for any platform that supports lifecycle hooks. Platform-specific extras
 // (e.g. policy-driven PreToolUse guardrails) are appended by the caller.
 // Hook parameters are read from the platform profile's HookProfile.
+//
+// SubagentStart is only emitted for platforms whose Events list explicitly
+// declares "subagentStart" (currently Claude Code only). Other platforms like
+// Gemini do not understand this event and reject the entire hooks block when
+// it is present.
 func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary string) map[string]any {
 	log := `2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log"`
 	bootstrap := hookAgentIDBootstrap(hp.AgentID)
@@ -86,10 +106,17 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 				},
 			},
 		},
-		// Capture parent session ID for subagent session grouping.
-		// Write to a file so the subagent's SessionStart can read it
-		// (env vars don't propagate across hook subprocess boundaries).
-		"SubagentStart": []map[string]any{
+	}
+
+	// Capture parent session ID for subagent session grouping.
+	// Write to a file so the subagent's SessionStart can read it
+	// (env vars don't propagate across hook subprocess boundaries).
+	//
+	// Only emit SubagentStart for platforms that declare it in their Events
+	// list. Gemini and other platforms reject hook blocks containing unknown
+	// event names, which would silently disable ALL of their hooks.
+	if hookProfileHasEvent(hp, "subagentStart") {
+		hooks["SubagentStart"] = []map[string]any{
 			{
 				"hooks": []map[string]any{
 					{
@@ -100,21 +127,26 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 					},
 				},
 			},
-		},
+		}
 	}
 
 	return hooks
 }
 
 // appendHookPolicies dispatches shared policy refs to their hook implementations.
-// For native enforcement platforms (preToolUse support), it generates PreToolUse
-// guard hooks. For proxy/plugin enforcement, policies are enforced at the loom
-// proxy layer, so no PreToolUse hooks are needed.
+// For native enforcement platforms that explicitly support preToolUse, it
+// generates PreToolUse guard hooks. For proxy/plugin enforcement, or for native
+// platforms that lack preToolUse (e.g. Gemini), policies are enforced at the
+// loom proxy layer, so no PreToolUse hooks are needed.
 func appendHookPolicies(hooks map[string]any, reg *registry.Registry, hp HookProfile) {
 	for _, ref := range hp.PolicyRefs {
 		switch ref {
 		case "gitops_flux":
-			if hp.Enforcement == "native" {
+			// Only emit PreToolUse hooks when the platform both uses native
+			// enforcement AND declares preToolUse in its Events list. Gemini
+			// uses native enforcement but does not understand PreToolUse and
+			// will reject the entire hooks block if it appears.
+			if hp.Enforcement == "native" && hookProfileHasEvent(hp, "preToolUse") {
 				if policyHooks := gitopsFluxGuardrailHooks(reg); len(policyHooks) > 0 {
 					hooks["PreToolUse"] = appendHookBlocks(hooks["PreToolUse"], policyHooks...)
 				}
