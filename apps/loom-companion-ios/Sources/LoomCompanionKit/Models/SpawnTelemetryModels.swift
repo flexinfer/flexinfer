@@ -13,6 +13,10 @@ public struct SpawnTelemetry: Codable, Equatable, Hashable, Sendable {
     public let turnCount: Int
     /// Aggregate cost across all turns, in USD.
     public let totalCostUSD: Double
+    /// True when `totalCostUSD` is a Loom-side estimate rather than an
+    /// SDK-reported figure (e.g., Codex). UI should display a "~" prefix
+    /// or similar qualifier when this is true.
+    public let costEstimated: Bool
     /// Aggregate token usage across all turns.
     public let tokenUsage: SpawnTokenUsage
     /// Optional per-model cost/token breakdown keyed by model id.
@@ -32,6 +36,7 @@ public struct SpawnTelemetry: Codable, Equatable, Hashable, Sendable {
         externalSessionID: String? = nil,
         turnCount: Int = 0,
         totalCostUSD: Double = 0,
+        costEstimated: Bool = false,
         tokenUsage: SpawnTokenUsage = SpawnTokenUsage(),
         modelUsage: [String: SpawnModelUse]? = nil,
         toolCalls: [SpawnToolCall]? = nil,
@@ -43,6 +48,7 @@ public struct SpawnTelemetry: Codable, Equatable, Hashable, Sendable {
         self.externalSessionID = externalSessionID
         self.turnCount = turnCount
         self.totalCostUSD = totalCostUSD
+        self.costEstimated = costEstimated
         self.tokenUsage = tokenUsage
         self.modelUsage = modelUsage
         self.toolCalls = toolCalls
@@ -52,10 +58,26 @@ public struct SpawnTelemetry: Codable, Equatable, Hashable, Sendable {
         self.lastMessage = lastMessage
     }
 
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        externalSessionID = try c.decodeIfPresent(String.self, forKey: .externalSessionID)
+        turnCount = try c.decodeIfPresent(Int.self, forKey: .turnCount) ?? 0
+        totalCostUSD = try c.decodeIfPresent(Double.self, forKey: .totalCostUSD) ?? 0
+        costEstimated = try c.decodeIfPresent(Bool.self, forKey: .costEstimated) ?? false
+        tokenUsage = try c.decodeIfPresent(SpawnTokenUsage.self, forKey: .tokenUsage) ?? SpawnTokenUsage()
+        modelUsage = try c.decodeIfPresent([String: SpawnModelUse].self, forKey: .modelUsage)
+        toolCalls = try c.decodeIfPresent([SpawnToolCall].self, forKey: .toolCalls)
+        fileChanges = try c.decodeIfPresent([SpawnFileChange].self, forKey: .fileChanges)
+        errors = try c.decodeIfPresent([SpawnAgentError].self, forKey: .errors)
+        stopReason = try c.decodeIfPresent(String.self, forKey: .stopReason)
+        lastMessage = try c.decodeIfPresent(String.self, forKey: .lastMessage)
+    }
+
     enum CodingKeys: String, CodingKey {
         case externalSessionID = "external_session_id"
         case turnCount = "turn_count"
         case totalCostUSD = "total_cost_usd"
+        case costEstimated = "cost_estimated"
         case tokenUsage = "token_usage"
         case modelUsage = "model_usage"
         case toolCalls = "tool_calls"
@@ -181,5 +203,83 @@ public struct SpawnAgentError: Codable, Equatable, Hashable, Sendable, Identifia
         self.type = type
         self.message = message
         self.time = time
+    }
+}
+
+// MARK: - Telemetry Responses
+
+/// Envelope returned by
+/// `GET /api/mobile/v1/agent/spawn/{id}/telemetry`.
+/// `telemetry` may be nil when the spawn exists but has not produced
+/// telemetry yet (for example, a Gemini spawn or an agent still building).
+public struct SpawnTelemetryResponse: Codable, Sendable {
+    public let spawnId: String
+    public let telemetry: SpawnTelemetry?
+
+    public init(spawnId: String, telemetry: SpawnTelemetry?) {
+        self.spawnId = spawnId
+        self.telemetry = telemetry
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case spawnId = "spawn_id"
+        case telemetry
+    }
+}
+
+// MARK: - Telemetry Pagination
+
+/// A page of paginated telemetry items returned by the `/telemetry/tools`,
+/// `/telemetry/files`, and `/telemetry/errors` sub-endpoints. Mirrors the
+/// Go response envelope emitted by `HandleGetSpawnTelemetryTools` etc.,
+/// which uses numeric offset/limit pagination.
+public struct SpawnTelemetryPage<Item: Codable & Sendable>: Codable, Sendable {
+    public let spawnId: String
+    public let items: [Item]
+    public let total: Int
+    public let limit: Int
+    public let offset: Int
+
+    public init(spawnId: String, items: [Item], total: Int, limit: Int, offset: Int) {
+        self.spawnId = spawnId
+        self.items = items
+        self.total = total
+        self.limit = limit
+        self.offset = offset
+    }
+
+    /// The next offset to request, or nil when the current page is the last.
+    public var nextOffset: Int? {
+        let nextStart = offset + items.count
+        return nextStart < total ? nextStart : nil
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case spawnId = "spawn_id"
+        case items
+        case total
+        case limit
+        case offset
+    }
+}
+
+public typealias SpawnTelemetryToolsPage = SpawnTelemetryPage<SpawnToolCall>
+public typealias SpawnTelemetryFilesPage = SpawnTelemetryPage<SpawnFileChange>
+public typealias SpawnTelemetryErrorsPage = SpawnTelemetryPage<SpawnAgentError>
+
+/// Response envelope for the `POST /message` and `POST /interrupt`
+/// control-plane endpoints. Success is a 202 with this body.
+public struct SpawnControlAck: Codable, Sendable {
+    public let spawnId: String
+    public let sent: String
+
+    public init(spawnId: String, sent: String) {
+        self.spawnId = spawnId
+        self.sent = sent
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case spawnId = "spawn_id"
+        case sent
     }
 }

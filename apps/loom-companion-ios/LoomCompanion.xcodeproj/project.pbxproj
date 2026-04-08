@@ -72,6 +72,7 @@
 		8A367FC956B9103DF2C4ED2D /* SessionFilterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA9EC181191293F54C2F8271 /* SessionFilterView.swift */; };
 		9269ABC4B28968F3587DEA90 /* AgentsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6232CC3FEFE373389E79C98A /* AgentsViewModel.swift */; };
 		992D5F5727FA6B11475BBBDA /* LoomWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 531CFBE30C35AB55DC6366E8 /* LoomWidgetBundle.swift */; };
+		993A0C8AB45B747312BB0D30 /* SpawnDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1DE44D8AE0527436F186681 /* SpawnDetailView.swift */; };
 		9A9C76AD6340ADB9630542B4 /* AnyCodable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8128F09702F53DB3BFF5F227 /* AnyCodable.swift */; };
 		9AE17E87F2C1766CA77517CC /* LoomColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9877937C16489CD2706A783 /* LoomColors.swift */; };
 		9EDC4E6ED1B9DA715E54F544 /* AgentRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF4DE6146E89D4E2AC20F664 /* AgentRowView.swift */; };
@@ -274,6 +275,7 @@
 		CB31D459E6D1D793F46A1B31 /* ConnectionProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionProfileView.swift; sourceTree = "<group>"; };
 		CFBB16BC786E0CA1239A1927 /* HealthStatusCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthStatusCard.swift; sourceTree = "<group>"; };
 		D147DBE9994E08EA6A1AF9C1 /* AlertsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertsListView.swift; sourceTree = "<group>"; };
+		D1DE44D8AE0527436F186681 /* SpawnDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpawnDetailView.swift; sourceTree = "<group>"; };
 		D2E1FD6491A1467889D644AD /* SkeletonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkeletonView.swift; sourceTree = "<group>"; };
 		D8E876D98B58CECC44EB5E5E /* TimelineEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineEntry.swift; sourceTree = "<group>"; };
 		D9877937C16489CD2706A783 /* LoomColors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomColors.swift; sourceTree = "<group>"; };
@@ -394,6 +396,7 @@
 			isa = PBXGroup;
 			children = (
 				B1F8AFB3D108C89254C6CF32 /* SpawnAgentView.swift */,
+				D1DE44D8AE0527436F186681 /* SpawnDetailView.swift */,
 			);
 			path = Spawn;
 			sourceTree = "<group>";
@@ -807,6 +810,7 @@
 				58BE00777930FB0F87CC784E /* SessionsListView.swift in Sources */,
 				36B0A528E84F750D61844E2A /* SkeletonView.swift in Sources */,
 				77BFCECC498D9849675515DA /* SpawnAgentView.swift in Sources */,
+				993A0C8AB45B747312BB0D30 /* SpawnDetailView.swift in Sources */,
 				168C37BFF48E7AD571BFD02A /* StatusAccentBar.swift in Sources */,
 				B03747CEFD8DAB35671BF975 /* StatusBadge.swift in Sources */,
 				7B90BC5EB2D5A482C5059181 /* TaskStatusChart.swift in Sources */,

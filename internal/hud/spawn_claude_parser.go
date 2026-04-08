@@ -13,6 +13,7 @@ type ClaudeJSONLParser struct {
 	sink       SpawnEventSink
 	broadcast  SpawnEventBroadcaster
 	agentID    string
+	spawnID    string
 	logger     *slog.Logger
 	sessionSet bool
 	seenMsgIDs map[string]bool      // dedup token counts by message.id
@@ -20,8 +21,10 @@ type ClaudeJSONLParser struct {
 }
 
 // NewClaudeJSONLParser creates a parser that writes structured events to sink.
-// broadcast may be nil if real-time SSE is not needed.
-func NewClaudeJSONLParser(sink SpawnEventSink, agentID string, broadcast SpawnEventBroadcaster, logger *slog.Logger) *ClaudeJSONLParser {
+// broadcast may be nil if real-time SSE is not needed. spawnID is used to
+// stamp agent.spawn.telemetry.delta events with the owning spawn; it may be
+// empty in unit tests that do not exercise delta broadcasts.
+func NewClaudeJSONLParser(sink SpawnEventSink, agentID, spawnID string, broadcast SpawnEventBroadcaster, logger *slog.Logger) *ClaudeJSONLParser {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -29,10 +32,24 @@ func NewClaudeJSONLParser(sink SpawnEventSink, agentID string, broadcast SpawnEv
 		sink:       sink,
 		broadcast:  broadcast,
 		agentID:    agentID,
+		spawnID:    spawnID,
 		logger:     logger.With("component", "claude-parser", "agent_id", agentID),
 		seenMsgIDs: make(map[string]bool),
 		toolStarts: make(map[string]time.Time),
 	}
+}
+
+// emitTelemetryDelta snapshots the current accumulator state and broadcasts
+// an agent.spawn.telemetry.delta SSE event so web HUD and iOS clients can
+// render live cost / token / tool counts without polling the full
+// /api/agent/spawn/{id}/telemetry endpoint. No-op when the broadcaster is
+// nil (unit tests or buffered-exec fallback).
+func (p *ClaudeJSONLParser) emitTelemetryDelta() {
+	if p.broadcast == nil {
+		return
+	}
+	delta := p.sink.TelemetryDeltaSnapshot(p.spawnID, p.agentID)
+	p.broadcast(SpawnTelemetryDeltaEvent, p.agentID, delta)
 }
 
 // HandleLine processes a single JSONL line from Claude stdout.
@@ -102,6 +119,11 @@ func (p *ClaudeJSONLParser) handleAssistant(line []byte) {
 		return
 	}
 
+	// Track whether this line produced any accumulator state change so we
+	// only broadcast a telemetry delta when something actually changed.
+	// Pure "thinking" blocks, for example, do not mutate the accumulator.
+	changed := false
+
 	// Set external session ID from the first event seen.
 	if !p.sessionSet && ev.SessionID != "" {
 		p.sink.SetExternalSessionID(ev.SessionID)
@@ -115,6 +137,7 @@ func (p *ClaudeJSONLParser) handleAssistant(line []byte) {
 		p.seenMsgIDs[msgID] = true
 		u := ev.Message.Usage
 		p.sink.AddTokens(u.InputTokens, u.OutputTokens, u.CacheCreationInputTokens, u.CacheReadInputTokens)
+		changed = true
 	}
 
 	// Process content blocks.
@@ -124,6 +147,7 @@ func (p *ClaudeJSONLParser) handleAssistant(line []byte) {
 			p.toolStarts[block.ID] = time.Now()
 			p.sink.StartToolCall(block.ID, block.Name, "")
 			p.inferFileChange(block.Name, block.Input)
+			changed = true
 			if p.broadcast != nil {
 				p.broadcast("agent.spawn.tool_start", p.agentID, map[string]string{
 					"id":   block.ID,
@@ -136,6 +160,7 @@ func (p *ClaudeJSONLParser) handleAssistant(line []byte) {
 			// calls by MCP server.
 			p.toolStarts[block.ID] = time.Now()
 			p.sink.StartToolCall(block.ID, block.Name, block.ServerName)
+			changed = true
 			if p.broadcast != nil {
 				p.broadcast("agent.spawn.tool_start", p.agentID, map[string]string{
 					"id":          block.ID,
@@ -146,6 +171,7 @@ func (p *ClaudeJSONLParser) handleAssistant(line []byte) {
 		case "text":
 			if block.Text != "" {
 				p.sink.SetLastMessage(block.Text)
+				changed = true
 				if p.broadcast != nil {
 					p.broadcast("agent.spawn.message", p.agentID, map[string]string{
 						"text": block.Text,
@@ -159,6 +185,10 @@ func (p *ClaudeJSONLParser) handleAssistant(line []byte) {
 				})
 			}
 		}
+	}
+
+	if changed {
+		p.emitTelemetryDelta()
 	}
 }
 
@@ -209,6 +239,7 @@ func (p *ClaudeJSONLParser) handleUser(line []byte) {
 		return
 	}
 
+	changed := false
 	for _, tr := range ev.Content {
 		if tr.Type != "tool_result" {
 			continue
@@ -226,6 +257,7 @@ func (p *ClaudeJSONLParser) handleUser(line []byte) {
 			p.sink.AddError("tool_failure", tr.Content)
 		}
 		p.sink.CompleteToolCall(tr.ToolUseID, durationMs, nil, errMsg)
+		changed = true
 
 		if p.broadcast != nil {
 			p.broadcast("agent.spawn.tool_complete", p.agentID, map[string]any{
@@ -234,6 +266,10 @@ func (p *ClaudeJSONLParser) handleUser(line []byte) {
 				"is_error":    tr.IsError,
 			})
 		}
+	}
+
+	if changed {
+		p.emitTelemetryDelta()
 	}
 }
 
@@ -303,6 +339,12 @@ func (p *ClaudeJSONLParser) handleResult(line []byte) {
 			"permission_denials_len": len(ev.PermissionDenials),
 		})
 	}
+
+	// Terminal result always mutates the accumulator (SetResult + often
+	// SetLastMessage/AddError), so unconditionally emit one last delta so
+	// clients land on the final cost / turn / stop reason before the
+	// orchestrator emits agent.spawn.completed / .failed.
+	p.emitTelemetryDelta()
 }
 
 // mapClaudeSubtype maps Claude result subtypes to normalized stop reasons.
@@ -355,5 +397,6 @@ func (p *ClaudeJSONLParser) handleSystem(line []byte) {
 				"status":  ev.ErrorStatus,
 			})
 		}
+		p.emitTelemetryDelta()
 	}
 }

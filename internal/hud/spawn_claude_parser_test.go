@@ -4,6 +4,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/crb2nu/loom/internal/hud/bridge"
 )
 
 // ---------- mock sink ----------
@@ -41,20 +43,26 @@ type resultCall struct {
 	StopReason string
 }
 
+type deltaSnapshotCall struct {
+	SpawnID string
+	AgentID string
+}
+
 type mockSink struct {
-	mu            sync.Mutex
-	tokens        []tokenCall
-	toolStarts    []toolStartCall
-	toolEnsures   []toolEnsureCall
-	toolCompletes []toolCompleteCall
-	fileChanges   []fileChangeCall
-	errors        []errorCall
-	result        *resultCall
-	lastMessage   string
-	externalID    string
-	turns         int
-	estimatedCost float64
-	costEstimated bool
+	mu             sync.Mutex
+	tokens         []tokenCall
+	toolStarts     []toolStartCall
+	toolEnsures    []toolEnsureCall
+	toolCompletes  []toolCompleteCall
+	fileChanges    []fileChangeCall
+	errors         []errorCall
+	result         *resultCall
+	lastMessage    string
+	externalID     string
+	turns          int
+	estimatedCost  float64
+	costEstimated  bool
+	deltaSnapshots []deltaSnapshotCall
 }
 
 func (m *mockSink) AddTokens(input, output, cacheCreate, cacheRead int) {
@@ -124,6 +132,42 @@ func (m *mockSink) AddEstimatedCost(usd float64) {
 	m.costEstimated = true
 }
 
+// TelemetryDeltaSnapshot records the call and returns a deterministic
+// snapshot built from the mock's current in-memory counters. Tests use
+// the recorded calls to assert parsers emit delta events at the right
+// times, and assert on the returned struct to verify slim-payload shape.
+func (m *mockSink) TelemetryDeltaSnapshot(spawnID, agentID string) bridge.SpawnTelemetryDelta {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deltaSnapshots = append(m.deltaSnapshots, deltaSnapshotCall{
+		SpawnID: spawnID,
+		AgentID: agentID,
+	})
+	var stopReason string
+	var costUSD float64
+	if m.result != nil {
+		stopReason = m.result.StopReason
+		costUSD = m.result.CostUSD
+	}
+	// Mirror AddEstimatedCost semantics so CostEstimated propagates into
+	// the delta when only estimated cost was recorded (Codex path).
+	if m.costEstimated {
+		costUSD += m.estimatedCost
+	}
+	return bridge.SpawnTelemetryDelta{
+		SpawnID:         spawnID,
+		AgentID:         agentID,
+		TurnCount:       m.turns,
+		ToolCallCount:   len(m.toolStarts),
+		FileChangeCount: len(m.fileChanges),
+		ErrorCount:      len(m.errors),
+		TotalCostUSD:    costUSD,
+		CostEstimated:   m.costEstimated,
+		LastMessage:     m.lastMessage,
+		StopReason:      stopReason,
+	}
+}
+
 // ---------- broadcast recorder ----------
 
 type broadcastCall struct {
@@ -142,7 +186,7 @@ func recordingBroadcaster(calls *[]broadcastCall) SpawnEventBroadcaster {
 
 func TestClaudeParser_AssistantTokenUsage(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	line := []byte(`{"type":"assistant","session_id":"sess-1","message":{"id":"msg_001","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":20},"content":[{"type":"text","text":"Hello world"}]}}`)
 	p.HandleLine(line)
@@ -164,7 +208,7 @@ func TestClaudeParser_AssistantTokenUsage(t *testing.T) {
 
 func TestClaudeParser_TokenDedup(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	// Two assistant messages with the same message.id should only count tokens once.
 	line1 := []byte(`{"type":"assistant","session_id":"sess-1","message":{"id":"msg_001","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}}`)
@@ -184,7 +228,7 @@ func TestClaudeParser_TokenDedup(t *testing.T) {
 
 func TestClaudeParser_ToolCallLifecycle(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	// Assistant sends tool_use.
 	assistant := []byte(`{"type":"assistant","session_id":"sess-1","message":{"id":"msg_002","usage":{"input_tokens":50,"output_tokens":25,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"tool_use","id":"toolu_abc","name":"Bash","input":{"command":"echo hello"}}]}}`)
@@ -222,7 +266,7 @@ func TestClaudeParser_ToolCallLifecycle(t *testing.T) {
 
 func TestClaudeParser_ToolCallError(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	// Start a tool call.
 	assistant := []byte(`{"type":"assistant","session_id":"sess-1","message":{"id":"msg_003","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"tool_use","id":"toolu_err","name":"Bash","input":{"command":"false"}}]}}`)
@@ -247,7 +291,7 @@ func TestClaudeParser_MCPToolUseCapturesServerName(t *testing.T) {
 	sink := &mockSink{}
 	var broadcasts []broadcastCall
 	bc := recordingBroadcaster(&broadcasts)
-	p := NewClaudeJSONLParser(sink, "test-agent", bc, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", bc, nil)
 
 	// The Claude SDK surfaces MCP tool invocations as a distinct
 	// "mcp_tool_use" content block with an explicit server_name field. The
@@ -302,7 +346,7 @@ func TestClaudeParser_MCPToolUseCapturesServerName(t *testing.T) {
 
 func TestClaudeParser_MCPToolUseLifecycle(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	// mcp_tool_use followed by a tool_result should complete the tool call
 	// through the same tool_use_id path as native tool_use blocks.
@@ -322,7 +366,7 @@ func TestClaudeParser_MCPToolUseLifecycle(t *testing.T) {
 
 func TestClaudeParser_FileChangeInference(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	// Write tool call.
 	writeCall := []byte(`{"type":"assistant","session_id":"sess-1","message":{"id":"msg_004","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"tool_use","id":"toolu_w1","name":"Write","input":{"file_path":"/workspace/foo.go","content":"package main"}}]}}`)
@@ -354,7 +398,7 @@ func TestClaudeParser_FileChangeInference(t *testing.T) {
 
 func TestClaudeParser_Result(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	line := []byte(`{"type":"result","subtype":"success","session_id":"sess-1","duration_ms":45000,"num_turns":5,"total_cost_usd":0.42,"result":"Task completed successfully."}`)
 	p.HandleLine(line)
@@ -381,7 +425,7 @@ func TestClaudeParser_Result(t *testing.T) {
 
 func TestClaudeParser_ResultError(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	line := []byte(`{"type":"result","subtype":"error_max_turns","session_id":"sess-1","duration_ms":120000,"num_turns":50,"total_cost_usd":5.00,"result":"Exceeded maximum turn limit."}`)
 	p.HandleLine(line)
@@ -407,7 +451,7 @@ func TestClaudeParser_ResultPermissionDenials(t *testing.T) {
 	sink := &mockSink{}
 	var broadcasts []broadcastCall
 	bc := recordingBroadcaster(&broadcasts)
-	p := NewClaudeJSONLParser(sink, "test-agent", bc, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", bc, nil)
 
 	// Successful result with two permission-denied tool calls. These should
 	// surface as structured errors on SpawnTelemetry.Errors[] without
@@ -458,7 +502,7 @@ func TestClaudeParser_ResultPermissionDenials(t *testing.T) {
 
 func TestClaudeParser_ResultNoPermissionDenials(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	// Absent permission_denials field must not synthesize errors.
 	line := []byte(`{"type":"result","subtype":"success","session_id":"sess-1","duration_ms":5000,"num_turns":1,"total_cost_usd":0.01,"result":"ok"}`)
@@ -473,7 +517,7 @@ func TestClaudeParser_ResultNoPermissionDenials(t *testing.T) {
 
 func TestClaudeParser_ResultErrorMaxBudget(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	line := []byte(`{"type":"result","subtype":"error_max_budget_usd","session_id":"sess-1","duration_ms":60000,"num_turns":10,"total_cost_usd":10.00,"result":"Budget exceeded."}`)
 	p.HandleLine(line)
@@ -488,7 +532,7 @@ func TestClaudeParser_ResultErrorMaxBudget(t *testing.T) {
 
 func TestClaudeParser_ResultErrorDuringExecution(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	line := []byte(`{"type":"result","subtype":"error_during_execution","session_id":"sess-1","duration_ms":5000,"num_turns":1,"total_cost_usd":0.01,"result":"Unexpected crash."}`)
 	p.HandleLine(line)
@@ -503,7 +547,7 @@ func TestClaudeParser_ResultErrorDuringExecution(t *testing.T) {
 
 func TestClaudeParser_RateLimit(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	line := []byte(`{"type":"system","subtype":"api_retry","attempt":2,"error_status":429}`)
 	p.HandleLine(line)
@@ -521,7 +565,7 @@ func TestClaudeParser_RateLimit(t *testing.T) {
 
 func TestClaudeParser_InvalidJSON(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	// Should not panic.
 	p.HandleLine([]byte(`not json at all`))
@@ -537,7 +581,7 @@ func TestClaudeParser_InvalidJSON(t *testing.T) {
 
 func TestClaudeParser_UnknownType(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	line := []byte(`{"type":"future_event_type","data":"something"}`)
 	p.HandleLine(line)
@@ -550,7 +594,7 @@ func TestClaudeParser_UnknownType(t *testing.T) {
 
 func TestClaudeParser_SessionIDSetOnce(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	line1 := []byte(`{"type":"assistant","session_id":"first-session","message":{"id":"msg_a","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[]}}`)
 	line2 := []byte(`{"type":"assistant","session_id":"second-session","message":{"id":"msg_b","usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[]}}`)
@@ -567,7 +611,7 @@ func TestClaudeParser_Broadcast(t *testing.T) {
 	sink := &mockSink{}
 	var broadcasts []broadcastCall
 	bc := recordingBroadcaster(&broadcasts)
-	p := NewClaudeJSONLParser(sink, "test-agent", bc, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", bc, nil)
 
 	// Assistant with text and tool_use.
 	line := []byte(`{"type":"assistant","session_id":"sess-1","message":{"id":"msg_bc","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"text","text":"Working on it"},{"type":"tool_use","id":"toolu_bc1","name":"Grep","input":{}}]}}`)
@@ -597,7 +641,7 @@ func TestClaudeParser_ThinkingBroadcast(t *testing.T) {
 	sink := &mockSink{}
 	var broadcasts []broadcastCall
 	bc := recordingBroadcaster(&broadcasts)
-	p := NewClaudeJSONLParser(sink, "test-agent", bc, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", bc, nil)
 
 	line := []byte(`{"type":"assistant","session_id":"sess-1","message":{"id":"msg_th","usage":{"input_tokens":5,"output_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"thinking","thinking":"Let me think about this..."}]}}`)
 	p.HandleLine(line)
@@ -616,7 +660,7 @@ func TestClaudeParser_ThinkingBroadcast(t *testing.T) {
 
 func TestClaudeParser_NoFileChangeForReadTool(t *testing.T) {
 	sink := &mockSink{}
-	p := NewClaudeJSONLParser(sink, "test-agent", nil, nil)
+	p := NewClaudeJSONLParser(sink, "test-agent", "", nil, nil)
 
 	// Read tool should not trigger file change.
 	line := []byte(`{"type":"assistant","session_id":"sess-1","message":{"id":"msg_rd","usage":{"input_tokens":5,"output_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"tool_use","id":"toolu_rd","name":"Read","input":{"file_path":"/workspace/readme.md"}}]}}`)

@@ -36,6 +36,12 @@ public enum Endpoint: Sendable {
     case spawnConfig
     case spawnDetail(id: String)
     case spawnStop(id: String)
+    case spawnTelemetry(id: String)
+    case spawnTelemetryTools(id: String, offset: Int? = nil, limit: Int? = nil)
+    case spawnTelemetryFiles(id: String, offset: Int? = nil, limit: Int? = nil)
+    case spawnTelemetryErrors(id: String, offset: Int? = nil, limit: Int? = nil)
+    case spawnSendMessage(id: String, text: String)
+    case spawnInterrupt(id: String)
     case agents(status: MobilePresenceStatus? = nil, type: String? = nil, limit: Int? = nil)
     case pipelines
     case workflowApprove(id: String, stepId: String)
@@ -50,11 +56,13 @@ public enum Endpoint: Sendable {
              .memoryItems, .stream, .topology, .graphStats, .graphEntities,
              .graphPath, .reasoningChains, .reasoningChainDetail,
              .eventsStream, .audit, .sandbox, .spawnList, .spawnConfig, .spawnDetail, .agents,
-             .pipelines, .handoffs, .namespaces:
+             .pipelines, .handoffs, .namespaces,
+             .spawnTelemetry, .spawnTelemetryTools, .spawnTelemetryFiles, .spawnTelemetryErrors:
             return "GET"
         case .createSession, .endSession, .pushRegister, .pushUnregister,
              .sandboxStart, .sandboxStop, .spawnAgent, .spawnStop,
-             .workflowApprove, .workflowReject:
+             .workflowApprove, .workflowReject,
+             .spawnSendMessage, .spawnInterrupt:
             return "POST"
         }
     }
@@ -129,6 +137,18 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/agent/spawn/\(id)"
         case let .spawnStop(id):
             return "/api/mobile/v1/agent/spawn/\(id)/stop"
+        case let .spawnTelemetry(id):
+            return "/api/mobile/v1/agent/spawn/\(id)/telemetry"
+        case let .spawnTelemetryTools(id, _, _):
+            return "/api/mobile/v1/agent/spawn/\(id)/telemetry/tools"
+        case let .spawnTelemetryFiles(id, _, _):
+            return "/api/mobile/v1/agent/spawn/\(id)/telemetry/files"
+        case let .spawnTelemetryErrors(id, _, _):
+            return "/api/mobile/v1/agent/spawn/\(id)/telemetry/errors"
+        case let .spawnSendMessage(id, _):
+            return "/api/mobile/v1/agent/spawn/\(id)/message"
+        case let .spawnInterrupt(id):
+            return "/api/mobile/v1/agent/spawn/\(id)/interrupt"
         case .agents:
             return "/api/mobile/v1/agents"
         case .pipelines:
@@ -148,7 +168,8 @@ public enum Endpoint: Sendable {
         switch self {
         case .workflowApprove, .workflowReject, .createSession, .endSession,
              .pushRegister, .pushUnregister, .sandboxStart, .sandboxStop,
-             .spawnAgent, .spawnStop:
+             .spawnAgent, .spawnStop,
+             .spawnSendMessage, .spawnInterrupt:
             return true
         default:
             return false
@@ -283,6 +304,17 @@ public enum Endpoint: Sendable {
             if let limit {
                 components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
             }
+        case let .spawnTelemetryTools(_, offset, limit),
+             let .spawnTelemetryFiles(_, offset, limit),
+             let .spawnTelemetryErrors(_, offset, limit):
+            var items: [URLQueryItem] = []
+            if let offset {
+                items.append(URLQueryItem(name: "offset", value: String(offset)))
+            }
+            if let limit {
+                items.append(URLQueryItem(name: "limit", value: String(limit)))
+            }
+            if !items.isEmpty { components.queryItems = items }
         default:
             break
         }
@@ -337,6 +369,15 @@ public enum Endpoint: Sendable {
             request.httpBody = try JSONEncoder().encode(spawnRequest)
 
         case .spawnStop:
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [:] as [String: Any])
+
+        case let .spawnSendMessage(_, text):
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let body: [String: Any] = ["text": text]
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        case .spawnInterrupt:
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: [:] as [String: Any])
 

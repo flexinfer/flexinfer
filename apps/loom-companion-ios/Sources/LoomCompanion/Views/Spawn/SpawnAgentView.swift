@@ -103,8 +103,16 @@ struct SpawnAgentView: View {
             } else {
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     ForEach(viewModel.spawns) { spawn in
-                        SpawnRow(spawn: spawn) {
-                            Task { await viewModel.stopSpawn(id: spawn.spawnId) }
+                        NavigationLink {
+                            SpawnDetailView(
+                                spawn: spawn,
+                                viewModel: viewModel,
+                                apiClient: viewModel.apiClient
+                            )
+                        } label: {
+                            SpawnRow(spawn: spawn) {
+                                Task { await viewModel.stopSpawn(id: spawn.spawnId) }
+                            }
                         }
                     }
                 }

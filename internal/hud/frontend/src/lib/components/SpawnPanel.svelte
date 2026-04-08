@@ -1,8 +1,9 @@
 <script lang="ts">
   import { spawnStore } from '../stores/spawn.svelte';
-  import type { SpawnRequest, SpawnState } from '../stores/spawn.svelte';
+  import type { SpawnRequest, SpawnState, SpawnTelemetry } from '../stores/spawn.svelte';
   import { router } from '../stores/router.svelte';
   import StatusDot from '../widgets/StatusDot.svelte';
+  import BudgetBar from '../widgets/BudgetBar.svelte';
   import EmptyState from './shared/EmptyState.svelte';
 
   $effect(() => {
@@ -64,6 +65,27 @@
     const s = seconds % 60;
     if (m > 0) return `${m}m ${s}s`;
     return `${s}s`;
+  }
+
+  // rowTelemetry returns the best-known telemetry for a list row:
+  //   1. Live snapshot from spawnStore.telemetryBySpawnId (active spawns).
+  //   2. Embedded telemetry on SpawnState (completed/failed/stopped spawns).
+  function rowTelemetry(s: SpawnState): SpawnTelemetry | undefined {
+    const live = spawnStore.telemetryBySpawnId.get(s.spawn_id);
+    if (live) return live;
+    return s.telemetry ?? undefined;
+  }
+
+  function hasBudget(s: SpawnState): boolean {
+    return Boolean(s.request.max_cost_usd || s.request.max_turns);
+  }
+
+  function formatCostShort(usd: number): string {
+    return `$${usd.toFixed(4)}`;
+  }
+
+  function formatTurns(n: number): string {
+    return Number.isFinite(n) ? String(Math.floor(n)) : '0';
   }
 </script>
 
@@ -156,6 +178,28 @@
               >Stop</button>
             {/if}
           </div>
+          {#if hasBudget(spawn)}
+            {@const rt = rowTelemetry(spawn)}
+            <div class="spawn-budgets">
+              {#if spawn.request.max_cost_usd}
+                <BudgetBar
+                  label="Cost"
+                  current={rt?.total_cost_usd ?? 0}
+                  max={spawn.request.max_cost_usd}
+                  formatValue={formatCostShort}
+                  costEstimated={rt?.cost_estimated ?? false}
+                />
+              {/if}
+              {#if spawn.request.max_turns}
+                <BudgetBar
+                  label="Turns"
+                  current={rt?.turn_count ?? 0}
+                  max={spawn.request.max_turns}
+                  formatValue={formatTurns}
+                />
+              {/if}
+            </div>
+          {/if}
           <div class="spawn-task">{spawn.request.task_description}</div>
           <div class="spawn-meta">
             <span class="spawn-agent-id">{spawn.agent_id}</span>
@@ -348,6 +392,13 @@
     align-items: center;
     gap: var(--space-2);
     margin-bottom: var(--space-1);
+  }
+
+  .spawn-budgets {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin-bottom: var(--space-2);
   }
 
   .spawn-project {
