@@ -22,8 +22,13 @@ func geminiHooksConfig() map[string]any {
 // platform_permissions.gemini section.
 func geminiHooksConfigFromRegistry(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
 	config := map[string]any{
-		"hooks":        geminiHooks(reg, profile, loomBinary),
-		"experimental": map[string]any{"enableAgents": true},
+		"hooks":       geminiHooks(reg, profile, loomBinary),
+		"hooksConfig": map[string]any{"enabled": true},
+		"agentConfig": map[string]any{
+			"enabled":             true,
+			"allowParallelSlices": true,
+			"worktreeManagement":  true,
+		},
 	}
 
 	// Merge auto-approve and tool settings from registry.

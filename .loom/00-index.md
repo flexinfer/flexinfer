@@ -2,6 +2,16 @@
 
 ## Quick Links
 
+- **Phase 4 plan — Headless agent UX parity (2026-04-07)**: `83-plan-headless-agent-ux-parity-2026-04-07.md` ← **next batch**
+- **Phase 3 plan — Headless agent full-stack drive + canonical telemetry (2026-04-07)**: `82-plan-headless-agent-fullstack-2026-04-07.md`
+- **Headless agent telemetry + SDK research (2026-04-06)**: `79-research-headless-agent-telemetry-sdk-2026-04-06.md`
+- **Headless agent telemetry + SDK product spec (2026-04-06)**: `80-product-spec-headless-agent-telemetry-sdk-2026-04-06.md`
+- **Headless agent telemetry + SDK implementation plan (2026-04-06)**: `81-implementation-plan-headless-agent-telemetry-sdk-2026-04-06.md`
+- **Agentic engineering / dark factory patterns (2026-04-05)**: `77-research-agentic-engineering-patterns-2026-04-05.md`, `78-plan-dark-factory-patterns-2026-04-05.md`
+- **Weaver hardening research (2026-04-04)**: `74-research-weaver-hardening-2026-04-04.md`
+- **Weaver hardening product spec (2026-04-04)**: `75-product-spec-weaver-hardening-2026-04-04.md`
+- **Weaver hardening implementation plan (2026-04-04)**: `76-implementation-plan-weaver-hardening-2026-04-04.md`
+- **Productivity unlock plan (2026-04-03)**: `73-planning-productivity-unlocks-2026-04-03.md`
 - Workspace snapshot: `00-workspace-snapshot.md`
 - MCP inventory: `00-mcp-inventory.md`
 - Technical debt inventory (cycle 6): `tech-debt-inventory-cycle6.md`
@@ -32,6 +42,22 @@
 - Prior HUD/TUI slice handoff: `55-ralph-slice-handoff-hud-tui-presence-2026-02-17.md`
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
+
+## Current Planning Addendum (2026-04-06)
+
+- Active planning slice: **Headless agent driving + SDK-based telemetry mapping**
+- New planning docs:
+  - `79-research-headless-agent-telemetry-sdk-2026-04-06.md` — Research on Claude Agent SDK, Codex SDK, current gaps, canonical model extensions
+  - `80-product-spec-headless-agent-telemetry-sdk-2026-04-06.md` — Product spec with user journeys, technical design, metrics
+  - `81-implementation-plan-headless-agent-telemetry-sdk-2026-04-06.md` — 8-slice implementation plan (Phase 1: Go JSONL parsing, Phase 2: SDK driver)
+- Key insight: Both Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) and Codex SDK (`@openai/codex-sdk`) expose rich typed streaming event models. Loom currently discards all of this by treating agents as opaque CLI subprocesses.
+- Approach: Hybrid — start with Go JSONL parsing of `--output-format stream-json` (Claude) and `--json` (Codex) for immediate telemetry, then add Node.js SDK drivers for multi-turn orchestration.
+- Phase 1 (Slices 1-6): Pure Go, no new runtime deps, ~2 weeks
+- Phase 2 (Slices 7-8): Node.js SDK sidecar for multi-turn control, ~1 week
+- Execution stance:
+  - Slices 1, 2+3, 6 parallelizable via worktrees
+  - All new types are additive (`omitempty`) — no breaking changes to existing spawn API
+  - Feature-flag SSE broadcast behind `Config.SpawnTelemetryEnabled` until stable
 
 ## Current Planning Addendum (2026-04-02)
 

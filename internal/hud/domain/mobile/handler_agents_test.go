@@ -309,3 +309,118 @@ func TestHandleMobileDashboard_UsesUnifiedLiveAgentCounts(t *testing.T) {
 		t.Fatalf("expected dashboard offline_agents=1 from presence snapshot, got %v", got)
 	}
 }
+
+func TestHandleMobileAgents_CodexInclusion(t *testing.T) {
+	deps := newTestMockDeps()
+	deps.monitors = Monitors{
+		Fleet: &monitor.FleetMonitor{},
+	}
+	// Case 1: Codex as an active session-only agent.
+	deps.monitors.Fleet.Update(monitor.FleetSnapshot{
+		Sessions: []bridge.SessionInfo{
+			{ID: "sess-codex", AgentID: "codex-123", Status: "active", Namespace: "proj/codex"},
+		},
+	})
+	d := New(deps)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/mobile/v1/agents", d.handleMobileAgents)
+
+	req := newAuthRequest("GET", "/api/mobile/v1/agents")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var env Envelope
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+
+	data, ok := env.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected data map, got %T", env.Data)
+	}
+	agents := data["agents"].([]any)
+
+	found := false
+	for _, a := range agents {
+		agent := a.(map[string]any)
+		if agent["agent_id"] == "codex-123" {
+			found = true
+			if agent["agent_type"] != "codex" {
+				t.Errorf("expected agent_type=codex, got %v", agent["agent_type"])
+			}
+		}
+	}
+	if !found {
+		t.Error("codex-123 session-only agent not found in handleMobileAgents")
+	}
+
+	// Case 2: Codex in presence but with no session.
+	deps.monitors.Fleet.Update(monitor.FleetSnapshot{
+		Agents: []bridge.PresenceInfo{
+			{AgentID: "codex-456", Status: "active", AgentType: "codex"},
+		},
+	})
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req)
+
+	if err := json.NewDecoder(rec2.Body).Decode(&env); err != nil {
+		t.Fatalf("decode envelope 2: %v", err)
+	}
+	data = env.Data.(map[string]any)
+	agents = data["agents"].([]any)
+
+	found = false
+	for _, a := range agents {
+		agent := a.(map[string]any)
+		if agent["agent_id"] == "codex-456" {
+			found = true
+			if agent["agent_type"] != "codex" {
+				t.Errorf("expected agent_type=codex for presence, got %v", agent["agent_type"])
+			}
+		}
+	}
+	if !found {
+		t.Error("codex-456 presence agent not found in handleMobileAgents")
+	}
+
+	// Case 3: Proxy and Zed mapped to Codex.
+	deps.monitors.Fleet.Update(monitor.FleetSnapshot{
+		Agents: []bridge.PresenceInfo{
+			{AgentID: "proxy-local-123", Status: "active"},
+			{AgentID: "zed-editor-456", Status: "active"},
+		},
+	})
+	rec3 := httptest.NewRecorder()
+	d.handleMobileAgents(rec3, req)
+	json.NewDecoder(rec3.Body).Decode(&env)
+	data = env.Data.(map[string]any)
+	agents = data["agents"].([]any)
+
+	foundProxy, foundZed := false, false
+	for _, a := range agents {
+		agent := a.(map[string]any)
+		if agent["agent_id"] == "proxy-local-123" {
+			foundProxy = true
+			if agent["agent_type"] != "codex" {
+				t.Errorf("expected agent_type=codex for proxy, got %v", agent["agent_type"])
+			}
+		}
+		if agent["agent_id"] == "zed-editor-456" {
+			foundZed = true
+			if agent["agent_type"] != "codex" {
+				t.Errorf("expected agent_type=codex for zed, got %v", agent["agent_type"])
+			}
+		}
+	}
+	if !foundProxy {
+		t.Error("proxy-local-123 not found")
+	}
+	if !foundZed {
+		t.Error("zed-editor-456 not found")
+	}
+}

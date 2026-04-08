@@ -220,10 +220,13 @@ func agentSortTime(ua unifiedAgent) time.Time {
 }
 
 func inferAgentType(agentID string) string {
-	prefixes := []string{"claude-code", "gemini-cli", "codex"}
+	prefixes := []string{"claude-code", "gemini-cli", "codex", "zed", "proxy"}
 	lower := strings.ToLower(agentID)
 	for _, p := range prefixes {
 		if lower == p || strings.HasPrefix(lower, p+"-") {
+			if p == "zed" || p == "proxy" {
+				return "codex"
+			}
 			return p
 		}
 	}

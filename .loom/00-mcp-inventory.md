@@ -1,6 +1,6 @@
 # MCP Inventory
 
-_Last verified: 2026-03-31_
+_Last verified: 2026-04-03_
 
 ## Why
 
@@ -29,9 +29,9 @@ Snapshot from `read_mcp_resource(server="loom", uri="loom://config")`:
 | daemon running | `true` |
 | registered servers | `46` |
 | aggregated tools | `498` |
-| active proxy sessions | `3` |
-| drain ready | `true` |
-| running managed processes | `agent_context` |
+| active proxy sessions | `1` |
+| drain ready | `false` (active session) |
+| running managed processes | all 46 servers warm |
 
 Snapshot from `read_mcp_resource(server="loom", uri="loom://tools/index")`:
 
