@@ -105,15 +105,52 @@ func hudHostOverride() string {
 }
 
 // hudBaseURL builds the base URL for the HUD API.
-// Priority: LOOM_HUD_URL env > config.yaml hud.url > http://127.0.0.1:{port}.
+//
+// Priority:
+//  1. LOOM_HUD_URL env var (explicit override)
+//  2. Local HUD when the port file exists (indicates a running local HUD)
+//  3. config.yaml hud.url or URL derived from hub.url (remote fallback)
+//  4. http://127.0.0.1:{port} (last-ditch default)
+//
+// The local-first behavior was added because remote HUD endpoints (e.g.
+// hud.flexinfer.ai) are often unreachable from the laptop, causing every
+// heartbeat to wait the full 10s timeout before falling back to the daemon.
+// When a local HUD is running its port file exists; preferring it eliminates
+// that round-trip and keeps lifecycle hooks fast and reliable.
 func hudBaseURL(port string) string {
 	if u := os.Getenv("LOOM_HUD_URL"); u != "" {
 		return strings.TrimRight(u, "/")
+	}
+	if localPort := readLocalHUDPort(); localPort != "" {
+		return "http://127.0.0.1:" + localPort
 	}
 	if cfgURL, _, _ := loadHUDConfig(); cfgURL != "" {
 		return strings.TrimRight(cfgURL, "/")
 	}
 	return "http://127.0.0.1:" + port
+}
+
+// readLocalHUDPort returns the port of a locally running HUD if its port file
+// exists, or "" otherwise. The HUD writes this file after binding and removes
+// it on shutdown, so its presence is a strong signal that a local HUD is up.
+func readLocalHUDPort() string {
+	data, err := os.ReadFile(hud.PortFilePath())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// isLocalHUDURL reports whether the given base URL points at a local HUD.
+// Used to decide whether the configured Host override should be applied
+// (it should only target the remote ingress, never the loopback interface).
+func isLocalHUDURL(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return host == "127.0.0.1" || host == "::1" || host == "localhost"
 }
 
 // hudCFAccessHeaders returns CF Access headers if configured.
@@ -173,7 +210,10 @@ func hudRequest(port, method, path string, body any, headers map[string]string, 
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		if host := hudHostOverride(); host != "" {
+		// Only apply the configured Host override for non-local requests.
+		// Local HUD calls (127.0.0.1/localhost) should not be reframed as
+		// the public ingress hostname.
+		if host := hudHostOverride(); host != "" && !isLocalHUDURL(currentBaseURL) {
 			req.Host = host
 		}
 

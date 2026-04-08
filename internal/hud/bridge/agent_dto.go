@@ -23,6 +23,12 @@ type SessionInfo struct {
 	PipelineRef *PipelineRef `json:"pipeline_ref,omitempty"`
 	EntryCount  int          `json:"entry_count"`
 	TotalTokens int          `json:"total_tokens"`
+	// Session hierarchy (populated by backend agent-context server).
+	// ParentSessionID points at the directly enclosing session when the
+	// current session represents a subagent spawn. RootSessionID points
+	// at the top of the spawn chain and matches ID for root sessions.
+	ParentSessionID string `json:"parent_session_id,omitempty"`
+	RootSessionID   string `json:"root_session_id,omitempty"`
 }
 
 // --- Task DTOs ---

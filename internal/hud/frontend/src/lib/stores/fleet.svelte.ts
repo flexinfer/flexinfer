@@ -32,6 +32,11 @@ export interface Session {
   task_count: number;
   memory_items: number;
   active: boolean;
+  // Session hierarchy (subagent grouping). parent_session_id points at
+  // the directly enclosing session; root_session_id points at the top of
+  // the spawn chain (matches id for root sessions).
+  parent_session_id?: string;
+  root_session_id?: string;
 }
 
 export interface SessionsResponse {

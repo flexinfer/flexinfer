@@ -12,7 +12,7 @@ platforms:
     hooks:
       enabled: true
       file: "settings.json"
-      events: ["sessionStart", "sessionEnd", "preToolUse", "postToolUse"]
+      events: ["sessionStart", "sessionEnd", "preToolUse", "postToolUse", "subagentStart"]
       policy_refs: ["gitops_flux"]
       enforcement: "native"
       agent_id: "claude-code"

@@ -214,6 +214,57 @@ func TestAppendHookExtras_SessionStartTestHealth_NoExisting(t *testing.T) {
 	}
 }
 
+func TestBuildPlatformHooks_OmitsSubagentStartWhenNotDeclared(t *testing.T) {
+	// Gemini does not declare subagentStart; the hook generator must not
+	// emit a SubagentStart block. Including it causes Gemini CLI to reject
+	// the entire hooks block.
+	hooks := buildPlatformHooks(testRegistry(), HookProfile{
+		Enabled:          true,
+		AgentID:          "gemini-cli",
+		AgentType:        "gemini-cli",
+		Description:      "Gemini CLI session",
+		SessionEndEvent:  "SessionEnd",
+		HeartbeatEvent:   "AfterTool",
+		HeartbeatMatcher: "run_shell_command",
+		Events:           []string{"sessionStart", "sessionEnd", "postToolUse"},
+	}, "")
+
+	if _, ok := hooks["SubagentStart"]; ok {
+		t.Error("expected no SubagentStart hooks when subagentStart is not in events list")
+	}
+}
+
+func TestBuildPlatformHooks_EmitsSubagentStartWhenDeclared(t *testing.T) {
+	// Claude declares subagentStart; the hook generator must emit it.
+	hooks := buildPlatformHooks(testRegistry(), HookProfile{
+		Enabled:          true,
+		AgentID:          "claude-code",
+		AgentType:        "claude-code",
+		Description:      "Claude Code session",
+		SessionEndEvent:  "Stop",
+		HeartbeatEvent:   "PostToolUse",
+		HeartbeatMatcher: "Bash|Task",
+		Events:           []string{"sessionStart", "sessionEnd", "preToolUse", "postToolUse", "subagentStart"},
+	}, "")
+
+	if _, ok := hooks["SubagentStart"]; !ok {
+		t.Error("expected SubagentStart hooks when subagentStart is in events list")
+	}
+}
+
+func TestHookProfileHasEvent_CaseInsensitive(t *testing.T) {
+	hp := HookProfile{Events: []string{"SubagentStart", "preToolUse"}}
+	if !hookProfileHasEvent(hp, "subagentStart") {
+		t.Error("expected case-insensitive match for subagentStart")
+	}
+	if !hookProfileHasEvent(hp, "PRETOOLUSE") {
+		t.Error("expected case-insensitive match for preToolUse")
+	}
+	if hookProfileHasEvent(hp, "postToolUse") {
+		t.Error("expected no match for postToolUse")
+	}
+}
+
 func TestAppendHookExtras_UnknownExtra(t *testing.T) {
 	hooks := map[string]any{
 		"SessionStart": []map[string]any{
