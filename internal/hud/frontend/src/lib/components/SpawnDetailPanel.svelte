@@ -1,31 +1,28 @@
 <script lang="ts">
   import { router } from '../stores/router.svelte.ts';
   import { spawnStore } from '../stores/spawn.svelte.ts';
-  import type { SpawnState } from '../stores/spawn.svelte.ts';
+  import type { SpawnState, SpawnTelemetry } from '../stores/spawn.svelte.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
+  import BudgetBar from '../widgets/BudgetBar.svelte';
+  import ToolsTab from './SpawnTelemetry/ToolsTab.svelte';
+  import FilesTab from './SpawnTelemetry/FilesTab.svelte';
+  import ErrorsTab from './SpawnTelemetry/ErrorsTab.svelte';
+  import UsageTab from './SpawnTelemetry/UsageTab.svelte';
 
-  // Telemetry shape mirrors internal/hud/bridge/spawn_telemetry.go SpawnTelemetry.
-  // Only the fields used by this skeleton are listed; the rest land in slices 13c-13f.
-  interface SpawnTokenUsage {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_tokens: number;
-    cache_read_tokens: number;
-  }
+  type TabId = 'tools' | 'files' | 'errors' | 'usage';
 
-  interface SpawnTelemetry {
-    external_session_id?: string;
-    turn_count: number;
-    total_cost_usd: number;
-    token_usage: SpawnTokenUsage;
-    last_message?: string;
-    stop_reason?: string;
-  }
+  const tabs: Array<{ id: TabId; label: string }> = [
+    { id: 'tools', label: 'Tools' },
+    { id: 'files', label: 'Files' },
+    { id: 'errors', label: 'Errors' },
+    { id: 'usage', label: 'Usage' },
+  ];
 
   let loading = $state(false);
   let error = $state<string | null>(null);
   let spawn = $state<SpawnState | null>(null);
   let telemetry = $state<SpawnTelemetry | null>(null);
+  let activeTab = $state<TabId>('tools');
 
   async function loadDetail(spawnId: string): Promise<void> {
     loading = true;
@@ -93,6 +90,10 @@
     return `$${v.toFixed(4)}`;
   }
 
+  function formatTurns(n: number): string {
+    return Number.isFinite(n) ? String(Math.floor(n)) : '0';
+  }
+
   async function handleStop(): Promise<void> {
     if (!spawn) return;
     await spawnStore.stop(spawn.spawn_id);
@@ -138,14 +139,20 @@
         {/if}
       </div>
       <div class="metrics-row">
-        <div class="metric">
-          <span class="metric-label">Turns</span>
-          <span class="metric-value">{telemetry?.turn_count ?? 0}</span>
-        </div>
-        <div class="metric">
-          <span class="metric-label">Cost</span>
-          <span class="metric-value">{formatCost(telemetry?.total_cost_usd)}</span>
-        </div>
+        {#if !spawn.request.max_turns}
+          <div class="metric">
+            <span class="metric-label">Turns</span>
+            <span class="metric-value">{telemetry?.turn_count ?? 0}</span>
+          </div>
+        {/if}
+        {#if !spawn.request.max_cost_usd}
+          <div class="metric">
+            <span class="metric-label">Cost</span>
+            <span class="metric-value">
+              {telemetry?.cost_estimated ? '~' : ''}{formatCost(telemetry?.total_cost_usd)}
+            </span>
+          </div>
+        {/if}
         {#if telemetry?.stop_reason}
           <div class="metric">
             <span class="metric-label">Stop reason</span>
@@ -153,6 +160,27 @@
           </div>
         {/if}
       </div>
+      {#if spawn.request.max_cost_usd || spawn.request.max_turns}
+        <div class="budget-bars">
+          {#if spawn.request.max_cost_usd}
+            <BudgetBar
+              label="Cost"
+              current={telemetry?.total_cost_usd ?? 0}
+              max={spawn.request.max_cost_usd}
+              formatValue={formatCost}
+              costEstimated={telemetry?.cost_estimated ?? false}
+            />
+          {/if}
+          {#if spawn.request.max_turns}
+            <BudgetBar
+              label="Turns"
+              current={telemetry?.turn_count ?? 0}
+              max={spawn.request.max_turns}
+              formatValue={formatTurns}
+            />
+          {/if}
+        </div>
+      {/if}
     </div>
 
     <div class="detail-card">
@@ -174,7 +202,33 @@
       </div>
     {/if}
 
-    <!-- TODO: slice 13c telemetry tabs (tools / files / errors / usage) -->
+    <div class="telemetry-tabs">
+      <div class="tab-strip" role="tablist" aria-label="Spawn telemetry">
+        {#each tabs as tab}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            class="tab-button"
+            class:active={activeTab === tab.id}
+            onclick={() => (activeTab = tab.id)}
+          >
+            {tab.label}
+          </button>
+        {/each}
+      </div>
+      <div class="tab-body">
+        {#if activeTab === 'tools'}
+          <ToolsTab spawnId={spawn.spawn_id} />
+        {:else if activeTab === 'files'}
+          <FilesTab spawnId={spawn.spawn_id} />
+        {:else if activeTab === 'errors'}
+          <ErrorsTab spawnId={spawn.spawn_id} />
+        {:else if activeTab === 'usage'}
+          <UsageTab {telemetry} />
+        {/if}
+      </div>
+    </div>
 
     {#if canStop}
       <div class="actions-row">
@@ -272,6 +326,57 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-4);
+  }
+
+  .budget-bars {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-1);
+  }
+
+  .telemetry-tabs {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .tab-strip {
+    display: flex;
+    gap: var(--space-1);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 2px;
+  }
+
+  .tab-button {
+    padding: var(--space-1) var(--space-3);
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+    color: var(--fg-secondary);
+    font-size: var(--text-sm);
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+  }
+
+  .tab-button:hover {
+    color: var(--fg-primary);
+    background: var(--bg-secondary);
+  }
+
+  .tab-button.active {
+    color: var(--fg-primary);
+    border-color: var(--border);
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--bg-secondary);
+    margin-bottom: -1px;
+  }
+
+  .tab-body {
+    display: flex;
+    flex-direction: column;
   }
 
   .metric {

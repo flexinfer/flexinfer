@@ -11,7 +11,7 @@ import (
 
 func TestCodexParser_ThreadStarted(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	line := []byte(`{"type":"thread.started","thread_id":"thread_abc123"}`)
 	p.HandleLine(line)
@@ -23,7 +23,7 @@ func TestCodexParser_ThreadStarted(t *testing.T) {
 
 func TestCodexParser_TurnStarted(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	p.HandleLine([]byte(`{"type":"turn.started"}`))
 	p.HandleLine([]byte(`{"type":"turn.started"}`))
@@ -35,7 +35,7 @@ func TestCodexParser_TurnStarted(t *testing.T) {
 
 func TestCodexParser_TurnCompleted(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	// OpenAI Responses API convention: input_tokens is the TOTAL (500),
 	// cached_input_tokens is a subset already included in that total (200).
@@ -74,7 +74,7 @@ func TestCodexParser_TurnCompleted(t *testing.T) {
 
 func TestCodexParser_TurnCompleted_CostMatchesPriceTable(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	// Same usage as TestCodexParser_TurnCompleted: total input 500
 	// (300 fresh + 200 cached) and 150 output. The parser must use
@@ -93,7 +93,7 @@ func TestCodexParser_TurnCompleted_CostMatchesPriceTable(t *testing.T) {
 
 func TestCodexParser_TurnCompleted_NoCostWhenAllZero(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	// A turn with zero usage should not call AddEstimatedCost so the
 	// CostEstimated flag stays false (we don't want to mark a no-op turn
@@ -111,7 +111,7 @@ func TestCodexParser_TurnCompleted_NoCostWhenAllZero(t *testing.T) {
 
 func TestCodexParser_TurnCompletedNoCacheHit(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	// Cold turn: no cache hits, entire input is fresh. With cached_input_tokens
 	// == 0 the split should be a no-op (fresh == total).
@@ -126,7 +126,7 @@ func TestCodexParser_TurnCompletedNoCacheHit(t *testing.T) {
 
 func TestCodexParser_TurnCompletedCachedExceedsInputClamp(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	// Defensive edge case: cached > input should never happen per the
 	// OpenAI contract, but if it does the parser must clamp fresh input to
@@ -151,7 +151,7 @@ func TestCodexParser_TurnCompletedCachedExceedsInputClamp(t *testing.T) {
 
 func TestCodexParser_CommandExecution(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	// item.started with command_execution.
 	started := []byte(`{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"echo hello","status":"in_progress"}}`)
@@ -186,7 +186,7 @@ func TestCodexParser_CommandExecution(t *testing.T) {
 
 func TestCodexParser_CommandExecutionFailure(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	// Command with non-zero exit code and stderr.
 	completed := []byte(`{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"false","exit_code":1,"status":"completed","stderr":"command not found"}}`)
@@ -213,7 +213,7 @@ func TestCodexParser_CommandExecutionFailure(t *testing.T) {
 
 func TestCodexParser_FileChange(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	line := []byte(`{"type":"item.completed","item":{"id":"item_3","type":"file_change","changes":[{"path":"src/main.go","kind":"modify"},{"path":"src/new.go","kind":"create"}]}}`)
 	p.HandleLine(line)
@@ -231,7 +231,7 @@ func TestCodexParser_FileChange(t *testing.T) {
 
 func TestCodexParser_MCPToolCall(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	// item.started for MCP tool call.
 	started := []byte(`{"type":"item.started","item":{"id":"item_mcp","type":"mcp_tool_call","tool":"read_file","server":"filesystem","status":"in_progress"}}`)
@@ -265,7 +265,7 @@ func TestCodexParser_MCPToolCall(t *testing.T) {
 // StartToolCall occurred.
 func TestCodexParser_MCPToolCall_OnlyCompleted_PreservesServerName(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	// Only item.completed -- no prior item.started.
 	line := []byte(`{"type":"item.completed","item":{"id":"item_mcp_only_done","type":"mcp_tool_call","tool":"read_file","server":"filesystem","status":"completed"}}`)
@@ -301,7 +301,7 @@ func TestCodexParser_MCPToolCall_OnlyCompleted_PreservesServerName(t *testing.T)
 // duplicate it or stomp on the existing data.
 func TestCodexParser_MCPToolCall_StartedThenCompleted_EnsureIsIdempotent(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	started := []byte(`{"type":"item.started","item":{"id":"item_mcp_idem","type":"mcp_tool_call","tool":"read_file","server":"filesystem","status":"in_progress"}}`)
 	p.HandleLine(started)
@@ -330,7 +330,7 @@ func TestCodexParser_MCPToolCall_StartedThenCompleted_EnsureIsIdempotent(t *test
 
 func TestCodexParser_MCPToolCallError(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	completed := []byte(`{"type":"item.completed","item":{"id":"item_mcp_err","type":"mcp_tool_call","tool":"write_file","server":"filesystem","error":"permission denied"}}`)
 	p.HandleLine(completed)
@@ -350,7 +350,7 @@ func TestCodexParser_AgentMessage(t *testing.T) {
 	sink := &mockSink{}
 	var broadcasts []broadcastCall
 	bc := recordingBroadcaster(&broadcasts)
-	p := NewCodexJSONLParser(sink, "test-codex", bc, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", bc, nil)
 
 	line := []byte(`{"type":"item.completed","item":{"id":"item_msg","type":"agent_message","text":"I've completed the task."}}`)
 	p.HandleLine(line)
@@ -373,7 +373,7 @@ func TestCodexParser_AgentMessage(t *testing.T) {
 
 func TestCodexParser_AgentMessageFallbackToField(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	// Some codex versions use "message" instead of "text".
 	line := []byte(`{"type":"item.completed","item":{"id":"item_msg2","type":"agent_message","message":"Fallback message field."}}`)
@@ -386,7 +386,7 @@ func TestCodexParser_AgentMessageFallbackToField(t *testing.T) {
 
 func TestCodexParser_TurnFailed(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	p.HandleLine([]byte(`{"type":"turn.failed"}`))
 
@@ -400,7 +400,7 @@ func TestCodexParser_TurnFailed(t *testing.T) {
 
 func TestCodexParser_Error(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	line := []byte(`{"type":"error","message":"API key invalid"}`)
 	p.HandleLine(line)
@@ -415,7 +415,7 @@ func TestCodexParser_Error(t *testing.T) {
 
 func TestCodexParser_InvalidJSON(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	// Should not panic.
 	p.HandleLine([]byte(`not json`))
@@ -430,7 +430,7 @@ func TestCodexParser_InvalidJSON(t *testing.T) {
 
 func TestCodexParser_UnknownItemType(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	line := []byte(`{"type":"item.completed","item":{"id":"item_unknown","type":"future_type","data":"something"}}`)
 	p.HandleLine(line)
@@ -443,7 +443,7 @@ func TestCodexParser_UnknownItemType(t *testing.T) {
 
 func TestCodexParser_UnknownEventType(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	line := []byte(`{"type":"future.event","data":"something"}`)
 	p.HandleLine(line)
@@ -457,7 +457,7 @@ func TestCodexParser_ReasoningBroadcast(t *testing.T) {
 	sink := &mockSink{}
 	var broadcasts []broadcastCall
 	bc := recordingBroadcaster(&broadcasts)
-	p := NewCodexJSONLParser(sink, "test-codex", bc, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", bc, nil)
 
 	line := []byte(`{"type":"item.completed","item":{"id":"item_r","type":"reasoning","text":"Thinking deeply..."}}`)
 	p.HandleLine(line)
@@ -483,7 +483,7 @@ func TestCodexParser_TodoBroadcast(t *testing.T) {
 	sink := &mockSink{}
 	var broadcasts []broadcastCall
 	bc := recordingBroadcaster(&broadcasts)
-	p := NewCodexJSONLParser(sink, "test-codex", bc, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", bc, nil)
 
 	line := []byte(`{"type":"item.completed","item":{"id":"item_todo","type":"todo_list","text":"1. Fix bug\n2. Add tests"}}`)
 	p.HandleLine(line)
@@ -502,7 +502,7 @@ func TestCodexParser_TodoBroadcast(t *testing.T) {
 
 func TestCodexParser_ErrorItemType(t *testing.T) {
 	sink := &mockSink{}
-	p := NewCodexJSONLParser(sink, "test-codex", nil, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	line := []byte(`{"type":"item.completed","item":{"id":"item_err","type":"error","message":"something went wrong"}}`)
 	p.HandleLine(line)
@@ -519,7 +519,7 @@ func TestCodexParser_CommandExecutionBroadcast(t *testing.T) {
 	sink := &mockSink{}
 	var broadcasts []broadcastCall
 	bc := recordingBroadcaster(&broadcasts)
-	p := NewCodexJSONLParser(sink, "test-codex", bc, nil)
+	p := NewCodexJSONLParser(sink, "test-codex", "", bc, nil)
 
 	completed := []byte(`{"type":"item.completed","item":{"id":"item_bc","type":"command_execution","command":"make test","exit_code":0,"status":"completed"}}`)
 	p.HandleLine(completed)

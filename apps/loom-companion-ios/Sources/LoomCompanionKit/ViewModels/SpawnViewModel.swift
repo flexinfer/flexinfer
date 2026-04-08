@@ -10,8 +10,11 @@ public final class SpawnViewModel {
     public var isSpawning = false
     public var error: LoomAPIError?
 
+    /// Exposed so sibling views (e.g. SpawnDetailView) can reuse the same
+    /// client for telemetry sub-requests without requiring a separate
+    /// injection path from `OpsView`.
     @ObservationIgnored
-    private let apiClient: any LoomAPIClientProtocol
+    public let apiClient: any LoomAPIClientProtocol
 
     @ObservationIgnored
     private var sseRegistrationId: UUID?

@@ -14,12 +14,15 @@ type CodexJSONLParser struct {
 	sink      SpawnEventSink
 	broadcast SpawnEventBroadcaster
 	agentID   string
+	spawnID   string
 	logger    *slog.Logger
 }
 
 // NewCodexJSONLParser creates a parser that writes structured events to sink.
-// broadcast may be nil if real-time SSE is not needed.
-func NewCodexJSONLParser(sink SpawnEventSink, agentID string, broadcast SpawnEventBroadcaster, logger *slog.Logger) *CodexJSONLParser {
+// broadcast may be nil if real-time SSE is not needed. spawnID is used to
+// stamp agent.spawn.telemetry.delta events with the owning spawn; it may be
+// empty in unit tests that do not exercise delta broadcasts.
+func NewCodexJSONLParser(sink SpawnEventSink, agentID, spawnID string, broadcast SpawnEventBroadcaster, logger *slog.Logger) *CodexJSONLParser {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -27,8 +30,22 @@ func NewCodexJSONLParser(sink SpawnEventSink, agentID string, broadcast SpawnEve
 		sink:      sink,
 		broadcast: broadcast,
 		agentID:   agentID,
+		spawnID:   spawnID,
 		logger:    logger.With("component", "codex-parser", "agent_id", agentID),
 	}
+}
+
+// emitTelemetryDelta snapshots the current accumulator state and broadcasts
+// an agent.spawn.telemetry.delta SSE event so web HUD and iOS clients can
+// render live cost / token / tool counts without polling the full
+// /api/agent/spawn/{id}/telemetry endpoint. No-op when the broadcaster is
+// nil (unit tests or buffered-exec fallback).
+func (p *CodexJSONLParser) emitTelemetryDelta() {
+	if p.broadcast == nil {
+		return
+	}
+	delta := p.sink.TelemetryDeltaSnapshot(p.spawnID, p.agentID)
+	p.broadcast(SpawnTelemetryDeltaEvent, p.agentID, delta)
 }
 
 // HandleLine processes a single JSONL line from Codex stdout.
@@ -84,6 +101,7 @@ func (p *CodexJSONLParser) handleThreadStarted(line []byte) {
 
 func (p *CodexJSONLParser) handleTurnStarted() {
 	p.sink.IncrementTurns()
+	p.emitTelemetryDelta()
 }
 
 // ---------- turn.completed ----------
@@ -149,6 +167,10 @@ func (p *CodexJSONLParser) handleTurnCompleted(line []byte) {
 	if estimatedCost > 0 {
 		p.sink.AddEstimatedCost(estimatedCost)
 	}
+
+	// turn.completed always mutates the accumulator (AddTokens), so emit
+	// a telemetry delta so clients land on the new token / cost totals.
+	p.emitTelemetryDelta()
 }
 
 // ---------- item.started ----------
@@ -183,15 +205,21 @@ func (p *CodexJSONLParser) handleItemStarted(line []byte) {
 	}
 
 	item := ev.Item
+	changed := false
 	switch item.Type {
 	case "command_execution":
 		p.sink.StartToolCall(item.ID, "Bash", "")
+		changed = true
 	case "mcp_tool_call":
 		name := item.Tool
 		if name == "" {
 			name = "unknown"
 		}
 		p.sink.StartToolCall(item.ID, name, item.Server)
+		changed = true
+	}
+	if changed {
+		p.emitTelemetryDelta()
 	}
 }
 
@@ -228,6 +256,7 @@ func (p *CodexJSONLParser) handleItemCompleted(line []byte) {
 			msg = item.Error
 		}
 		p.sink.AddError("execution", msg)
+		p.emitTelemetryDelta()
 	case "todo_list":
 		if p.broadcast != nil {
 			p.broadcast("agent.spawn.todo", p.agentID, map[string]string{
@@ -257,6 +286,7 @@ func (p *CodexJSONLParser) handleCommandExecution(item codexItem) {
 			"exit_code": item.ExitCode,
 		})
 	}
+	p.emitTelemetryDelta()
 }
 
 func (p *CodexJSONLParser) handleFileChange(item codexItem) {
@@ -267,6 +297,9 @@ func (p *CodexJSONLParser) handleFileChange(item codexItem) {
 		p.broadcast("agent.spawn.file_change", p.agentID, map[string]any{
 			"changes": item.Changes,
 		})
+	}
+	if len(item.Changes) > 0 {
+		p.emitTelemetryDelta()
 	}
 }
 
@@ -282,6 +315,9 @@ func (p *CodexJSONLParser) handleAgentMessage(item codexItem) {
 		p.broadcast("agent.spawn.message", p.agentID, map[string]string{
 			"text": text,
 		})
+	}
+	if text != "" {
+		p.emitTelemetryDelta()
 	}
 }
 
@@ -313,12 +349,14 @@ func (p *CodexJSONLParser) handleMCPToolCall(item codexItem) {
 			"error":       errMsg,
 		})
 	}
+	p.emitTelemetryDelta()
 }
 
 // ---------- turn.failed ----------
 
 func (p *CodexJSONLParser) handleTurnFailed() {
 	p.sink.AddError("execution", "turn failed")
+	p.emitTelemetryDelta()
 }
 
 // ---------- error ----------
@@ -332,4 +370,5 @@ func (p *CodexJSONLParser) handleError(line []byte) {
 		return
 	}
 	p.sink.AddError("fatal", ev.Message)
+	p.emitTelemetryDelta()
 }

@@ -70,6 +70,61 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
         return try decodeResponse(data, statusCode: httpResponse.statusCode)
     }
 
+    // MARK: - Spawn Telemetry Convenience Methods
+    //
+    // These wrap `request(_:)` with typed response shapes for the spawn
+    // telemetry endpoints introduced in Wave 2. They keep SpawnDetailView
+    // and SpawnViewModel free of boilerplate envelope decoding while still
+    // respecting the shared `LoomAPIClientProtocol.request` contract.
+
+    /// Fetch accumulated SDK telemetry for a spawn. Returns `nil` when the
+    /// spawn exists but has not produced telemetry yet (e.g. gemini).
+    public func spawnTelemetry(id: String) async throws -> SpawnTelemetry? {
+        let response: SpawnTelemetryResponse = try await request(.spawnTelemetry(id: id))
+        return response.telemetry
+    }
+
+    /// Fetch a page of tool calls captured for a spawn.
+    public func spawnTelemetryTools(
+        id: String,
+        offset: Int? = nil,
+        limit: Int? = nil
+    ) async throws -> SpawnTelemetryToolsPage {
+        try await request(.spawnTelemetryTools(id: id, offset: offset, limit: limit))
+    }
+
+    /// Fetch a page of file changes captured for a spawn.
+    public func spawnTelemetryFiles(
+        id: String,
+        offset: Int? = nil,
+        limit: Int? = nil
+    ) async throws -> SpawnTelemetryFilesPage {
+        try await request(.spawnTelemetryFiles(id: id, offset: offset, limit: limit))
+    }
+
+    /// Fetch a page of agent errors captured for a spawn.
+    public func spawnTelemetryErrors(
+        id: String,
+        offset: Int? = nil,
+        limit: Int? = nil
+    ) async throws -> SpawnTelemetryErrorsPage {
+        try await request(.spawnTelemetryErrors(id: id, offset: offset, limit: limit))
+    }
+
+    /// Forward a follow-up user message to a running multi-turn spawn.
+    /// The HUD responds with a 202 envelope containing the ack shape.
+    @discardableResult
+    public func spawnSendMessage(id: String, text: String) async throws -> SpawnControlAck {
+        try await request(.spawnSendMessage(id: id, text: text))
+    }
+
+    /// Abort the in-flight turn of a running multi-turn spawn. The HUD
+    /// responds with a 202 envelope containing the ack shape.
+    @discardableResult
+    public func spawnInterrupt(id: String) async throws -> SpawnControlAck {
+        try await request(.spawnInterrupt(id: id))
+    }
+
     /// Decode and validate the standard mobile API envelope contract.
     ///
     /// Contract expectations:

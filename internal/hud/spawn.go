@@ -235,12 +235,12 @@ func (o *SpawnOrchestrator) Spawn(ctx context.Context, req SpawnRequest) (string
 
 // newSpawnParser creates the appropriate JSONL parser for the given agent type.
 // Returns nil for agent types that don't support structured telemetry.
-func newSpawnParser(agentType string, sink SpawnEventSink, agentID string, broadcast SpawnEventBroadcaster, logger *slog.Logger) SpawnLineParser {
+func newSpawnParser(agentType string, sink SpawnEventSink, agentID, spawnID string, broadcast SpawnEventBroadcaster, logger *slog.Logger) SpawnLineParser {
 	switch agentType {
 	case "claude-code":
-		return NewClaudeJSONLParser(sink, agentID, broadcast, logger)
+		return NewClaudeJSONLParser(sink, agentID, spawnID, broadcast, logger)
 	case "codex":
-		return NewCodexJSONLParser(sink, agentID, broadcast, logger)
+		return NewCodexJSONLParser(sink, agentID, spawnID, broadcast, logger)
 	default:
 		return nil
 	}
@@ -427,7 +427,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	broadcaster := SpawnEventBroadcaster(func(eventType string, agentID string, data any) {
 		o.broadcastTelemetryEvent(eventType, agentID, data)
 	})
-	parser := newSpawnParser(req.AgentType, acc, state.AgentID, broadcaster, o.logger)
+	parser := newSpawnParser(req.AgentType, acc, state.AgentID, spawnID, broadcaster, o.logger)
 
 	var execResult *backend.ExecResult
 	var execErr error
