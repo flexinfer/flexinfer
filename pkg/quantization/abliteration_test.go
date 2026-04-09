@@ -413,6 +413,7 @@ func TestBuildAbliterationJob_ProfileEnvOverridesDefaults(t *testing.T) {
 			{Name: "HSA_ENABLE_SDMA", Value: "0"},
 			{Name: "ABLITERATION_ACTIVATION_CAPTURE_MODE", Value: "hidden_states"},
 			{Name: "ABLITERATION_SAFE_SHARDED_LOAD", Value: "profile-override"},
+			{Name: "ABLITERATION_SAVE_POLICY", Value: "inplace"},
 		},
 	}
 
@@ -433,6 +434,9 @@ func TestBuildAbliterationJob_ProfileEnvOverridesDefaults(t *testing.T) {
 	}
 	if got := envMap["ABLITERATION_SAFE_SHARDED_LOAD"]; got != "profile-override" {
 		t.Fatalf("ABLITERATION_SAFE_SHARDED_LOAD = %q, want profile-override", got)
+	}
+	if got := envMap["ABLITERATION_SAVE_POLICY"]; got != "inplace" {
+		t.Fatalf("ABLITERATION_SAVE_POLICY = %q, want inplace", got)
 	}
 }
 

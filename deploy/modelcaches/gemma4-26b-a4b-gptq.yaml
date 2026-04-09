@@ -3,7 +3,7 @@
 # Same Gemma4ForConditionalGeneration architecture as E4B, vision+video capable.
 #
 # Pipeline: Download BF16 (~27 GB) → Abliterate → GPTQ INT4 (~7 GB) → Ready
-# Node class: any gfx1100 host with 64GB RAM
+# Node class: pin to cblevins-5930k for now.
 #
 # MoE abliteration safety:
 #   - weightMatrices: ["o_proj"] ONLY — shared attention output projection.
@@ -16,7 +16,10 @@
 # proven fragile for rebuildable Gemma source caches after dead-node events, and
 # forcing Longhorn onto a GPU/NVMe replica pool keeps download/ablit/quant closer
 # to the nodes that actually run the pipeline.
-# GPU: 1x RX 7900 XTX (gfx1100, 24GB VRAM) for abliteration + quantization
+# GPU: 1x RX 7900 XTX (gfx1100, 24GB VRAM) for abliteration + quantization.
+# Keep this pipeline off cblevins-7900xtx until its long-running Gemma4
+# abliteration stability is understood; repeated recreate loops there were
+# observed on 2026-04-07 and 2026-04-09.
 # SysRAM: 64GB node, so keep save/offload in streaming mode via GPUProfile overrides.
 ---
 apiVersion: ai.flexinfer/v1alpha1
@@ -32,7 +35,7 @@ spec:
   secretRef: "hf-token"
   nodeSelector:
     flexinfer.ai/gpu.arch: gfx1100
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-5930k
   download:
     maxMemoryGB: 16
     hfTransfer: false
@@ -47,7 +50,7 @@ spec:
     timeoutSeconds: 14400
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
-      kubernetes.io/hostname: cblevins-7900xtx
+      kubernetes.io/hostname: cblevins-5930k
     normThreshold: "100"
     ablitateLmHead: false
   quantization:
@@ -61,7 +64,7 @@ spec:
     timeoutSeconds: 14400
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
-      kubernetes.io/hostname: cblevins-7900xtx
+      kubernetes.io/hostname: cblevins-5930k
     calibration:
       maxSeqLen: 2048
       maxSamples: 256
