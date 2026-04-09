@@ -385,42 +385,91 @@ def emit_runtime_capabilities():
     emit_progress("runtime_capabilities", phase="starting", **capabilities)
 
 
+def clear_module_cache(prefix):
+    for module_name in list(sys.modules.keys()):
+        if module_name == prefix or module_name.startswith(f"{prefix}."):
+            del sys.modules[module_name]
+
+
+def transformers_supports_model_type(model_type):
+    from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+
+    return model_type in CONFIG_MAPPING
+
+
+def resolve_transformers_runtime_package():
+    return (
+        os.environ.get("ABLITERATION_TRANSFORMERS_PACKAGE", "").strip()
+        or os.environ.get("FLEXINFER_TRANSFORMERS_PACKAGE", "").strip()
+    )
+
+
+def resolve_transformers_runtime_install_policy():
+    raw = (
+        os.environ.get("ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL", "").strip()
+        or os.environ.get("FLEXINFER_TRANSFORMERS_RUNTIME_INSTALL", "").strip()
+    ).lower()
+    if not raw:
+        return "disabled"
+    if raw in {"0", "false", "no", "off", "disabled", "never"}:
+        return "disabled"
+    if raw in {"1", "true", "yes", "on", "fallback", "enabled", "allow"}:
+        return "fallback"
+    raise RuntimeError(
+        "ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL must be one of "
+        "disabled|fallback"
+    )
+
+
 def ensure_transformers_model_type_support(model_type):
     if not model_type:
         return
-    package_spec = (
-        os.environ.get("ABLITERATION_TRANSFORMERS_PACKAGE", "").strip()
-        or "git+https://github.com/huggingface/transformers.git"
-    )
-    try:
-        from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+    if transformers_supports_model_type(model_type):
+        print(f"transformers recognizes model_type={model_type!r}")
+        return
 
-        if model_type in CONFIG_MAPPING:
-            print(f"transformers recognizes model_type={model_type!r}")
-            return
-        print(
-            f"transformers does not recognize model_type={model_type!r}, "
-            f"installing {package_spec}..."
+    package_spec = resolve_transformers_runtime_package()
+    runtime_install = resolve_transformers_runtime_install_policy()
+    if runtime_install != "fallback":
+        raise RuntimeError(
+            f"transformers does not recognize model_type={model_type!r} and "
+            "runtime install is disabled; bake support into the image or set "
+            "ABLITERATION_TRANSFORMERS_PACKAGE/FLEXINFER_TRANSFORMERS_PACKAGE "
+            "plus ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL=fallback"
         )
-        subprocess.check_call(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--no-cache-dir",
-                "--no-deps",
-                package_spec,
-            ],
-            stdout=sys.stdout,
-            stderr=sys.stderr,
+    if not package_spec:
+        raise RuntimeError(
+            f"transformers does not recognize model_type={model_type!r} and "
+            "runtime install is enabled, but no package spec is configured"
         )
-        for module_name in list(sys.modules.keys()):
-            if module_name.startswith("transformers"):
-                del sys.modules[module_name]
-        print("Upgraded transformers and cleared module cache")
-    except Exception as exc:
-        print(f"WARN: transformers model_type check failed: {exc}")
+
+    print(
+        f"transformers does not recognize model_type={model_type!r}, "
+        f"installing {package_spec} (policy={runtime_install})..."
+    )
+    subprocess.check_call(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--no-cache-dir",
+            "--no-deps",
+            package_spec,
+        ],
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
+    clear_module_cache("transformers")
+    if not transformers_supports_model_type(model_type):
+        raise RuntimeError(
+            f"transformers still does not recognize model_type={model_type!r} "
+            f"after installing {package_spec}"
+        )
+    print(
+        f"transformers now recognizes model_type={model_type!r} after "
+        "runtime package install"
+    )
 
 
 def release_memory(stage=None, **kwargs):

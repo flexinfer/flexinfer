@@ -78,7 +78,9 @@ profiles:
     vllm_source_patch_script: "build/scripts/patch_vllm_env_override_torch29.py"
     transformers_install_mode: source
     transformers_repo: "https://github.com/huggingface/transformers.git"
-    transformers_ref: "main"
+    # Pin the Gemma4 support path to a known-good commit instead of resolving
+    # whatever happens to be on transformers/main at job runtime.
+    transformers_ref: "f965b10bcc979e6ad5f02a46f6d074206eccbe75"
     env:
       ROCM_PATH: /opt/rocm
       HIP_PATH: /opt/rocm
@@ -122,7 +124,7 @@ profiles:
     vllm_source_patch_script: "build/scripts/patch_vllm_env_override_torch29.py"
     transformers_install_mode: source
     transformers_repo: "https://github.com/huggingface/transformers.git"
-    transformers_ref: "main"
+    transformers_ref: "f965b10bcc979e6ad5f02a46f6d074206eccbe75"
     turboquant_install_mode: source
     turboquant_repo: "https://github.com/Alberto-Codes/turboquant-vllm.git"
     turboquant_ref: "9d19b87cef462cf0abd5643f6d052ac5a3bc99b6"
@@ -175,7 +177,7 @@ profiles:
     vllm_source_patch_script: "build/scripts/patch_vllm_env_override_torch29.py"
     transformers_install_mode: source
     transformers_repo: "https://github.com/huggingface/transformers.git"
-    transformers_ref: "main"
+    transformers_ref: "f965b10bcc979e6ad5f02a46f6d074206eccbe75"
     turboquant_install_mode: source
     turboquant_repo: "https://github.com/Alberto-Codes/turboquant-vllm.git"
     turboquant_ref: "9d19b87cef462cf0abd5643f6d052ac5a3bc99b6"

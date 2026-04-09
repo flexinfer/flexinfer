@@ -276,6 +276,8 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	t.Setenv("FLEXINFER_ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP", "true")
 	t.Setenv("FLEXINFER_ABLITERATION_SAFE_SHARDED_LOAD", "true")
 	t.Setenv("FLEXINFER_ABLITERATION_MODEL_POLICIES", `[{"name":"custom"}]`)
+	t.Setenv("FLEXINFER_ABLITERATION_TRANSFORMERS_PACKAGE", "git+https://github.com/huggingface/transformers.git@abc123")
+	t.Setenv("FLEXINFER_ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL", "fallback")
 
 	env := abliterationEnv("my-model", "gfx1100", &aiv1alpha1.AbliterationSpec{}, DefaultGPUMemoryConfig())
 	envMap := make(map[string]string)
@@ -333,6 +335,12 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	}
 	if got := envMap["ABLITERATION_MODEL_POLICIES"]; got != `[{"name":"custom"}]` {
 		t.Errorf("ABLITERATION_MODEL_POLICIES = %q, want custom JSON", got)
+	}
+	if got := envMap["ABLITERATION_TRANSFORMERS_PACKAGE"]; got != "git+https://github.com/huggingface/transformers.git@abc123" {
+		t.Errorf("ABLITERATION_TRANSFORMERS_PACKAGE = %q, want pinned package", got)
+	}
+	if got := envMap["ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL"]; got != "fallback" {
+		t.Errorf("ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL = %q, want fallback", got)
 	}
 }
 
@@ -414,6 +422,8 @@ func TestBuildAbliterationJob_ProfileEnvOverridesDefaults(t *testing.T) {
 			{Name: "ABLITERATION_ACTIVATION_CAPTURE_MODE", Value: "hidden_states"},
 			{Name: "ABLITERATION_SAFE_SHARDED_LOAD", Value: "profile-override"},
 			{Name: "ABLITERATION_SAVE_POLICY", Value: "inplace"},
+			{Name: "ABLITERATION_TRANSFORMERS_PACKAGE", Value: "git+https://github.com/huggingface/transformers.git@profile"},
+			{Name: "ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL", Value: "fallback"},
 		},
 	}
 
@@ -437,6 +447,12 @@ func TestBuildAbliterationJob_ProfileEnvOverridesDefaults(t *testing.T) {
 	}
 	if got := envMap["ABLITERATION_SAVE_POLICY"]; got != "inplace" {
 		t.Fatalf("ABLITERATION_SAVE_POLICY = %q, want inplace", got)
+	}
+	if got := envMap["ABLITERATION_TRANSFORMERS_PACKAGE"]; got != "git+https://github.com/huggingface/transformers.git@profile" {
+		t.Fatalf("ABLITERATION_TRANSFORMERS_PACKAGE = %q, want profile package", got)
+	}
+	if got := envMap["ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL"]; got != "fallback" {
+		t.Fatalf("ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL = %q, want fallback", got)
 	}
 }
 

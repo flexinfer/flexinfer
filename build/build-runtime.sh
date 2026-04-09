@@ -116,6 +116,7 @@ build_profile() {
 
     # Python/runtime package config
     local include_bitsandbytes transformers_constraint transformers_install_mode transformers_repo transformers_ref
+    local transformers_package transformers_runtime_install
     local vllm_install_mode vllm_version vllm_extra_index_url vllm_repo vllm_ref vllm_source_patch_script
     local vllm_extra_deps_profile install_qwen35_fastpath
     local turboquant_install_mode turboquant_version turboquant_repo turboquant_ref turboquant_source_patch_script
@@ -124,6 +125,28 @@ build_profile() {
     transformers_install_mode=$(pcfg "${profile}" "transformers_install_mode" "constraint")
     transformers_repo=$(pcfg "${profile}" "transformers_repo" "https://github.com/huggingface/transformers.git")
     transformers_ref=$(pcfg "${profile}" "transformers_ref" "main")
+    case "${transformers_install_mode}" in
+        source)
+            transformers_package="${transformers_repo}"
+            if [[ "${transformers_package}" != git+* ]]; then
+                transformers_package="git+${transformers_package}"
+            fi
+            transformers_package="${transformers_package}@${transformers_ref}"
+            transformers_runtime_install="fallback"
+            ;;
+        constraint)
+            transformers_package="transformers${transformers_constraint}"
+            transformers_runtime_install="fallback"
+            ;;
+        none|"")
+            transformers_package=""
+            transformers_runtime_install="disabled"
+            ;;
+        *)
+            echo "ERROR: unsupported transformers_install_mode '${transformers_install_mode}'" >&2
+            exit 1
+            ;;
+    esac
     vllm_install_mode=$(pcfg "${profile}" "vllm_install_mode" "wheel")
     vllm_version=$(pcfg "${profile}" "vllm_version" "0.17.0+rocm700")
     vllm_extra_index_url=$(pcfg "${profile}" "vllm_extra_index_url" "https://wheels.vllm.ai/rocm/0.17.0/rocm700")
@@ -163,6 +186,8 @@ build_profile() {
     echo "# Do not edit — regenerated on each build." >> "${env_file}"
     echo "GPU_VENDOR=${gpu_vendor}" >> "${env_file}"
     echo "GPU_ARCH=${gpu_arch}" >> "${env_file}"
+    echo "FLEXINFER_TRANSFORMERS_PACKAGE=${transformers_package}" >> "${env_file}"
+    echo "FLEXINFER_TRANSFORMERS_RUNTIME_INSTALL=${transformers_runtime_install}" >> "${env_file}"
     local env_keys
     env_keys=$(yq -r ".profiles[\"${profile}\"].env | keys | .[]" "${CONFIG}" 2>/dev/null || true)
     for key in ${env_keys}; do
@@ -200,6 +225,8 @@ build_profile() {
         "--build-arg" "TRANSFORMERS_INSTALL_MODE=${transformers_install_mode}"
         "--build-arg" "TRANSFORMERS_REPO=${transformers_repo}"
         "--build-arg" "TRANSFORMERS_REF=${transformers_ref}"
+        "--build-arg" "TRANSFORMERS_PACKAGE=${transformers_package}"
+        "--build-arg" "TRANSFORMERS_RUNTIME_INSTALL=${transformers_runtime_install}"
         "--build-arg" "VLLM_INSTALL_MODE=${vllm_install_mode}"
         "--build-arg" "VLLM_VERSION=${vllm_version}"
         "--build-arg" "VLLM_EXTRA_INDEX_URL=${vllm_extra_index_url}"
@@ -230,7 +257,7 @@ build_profile() {
     echo "  Base:   ${base_image}"
     echo "  Vendor: ${gpu_vendor} / ${gpu_arch}"
     echo "  Backends: vllm=${include_vllm} llamacpp=${include_llamacpp} ollama=${include_ollama} diffusers=${include_diffusers} steam=${include_steam} quantizer=${include_quantizer} turboquant=${include_turboquant}"
-    echo "  Python: transformers=${transformers_install_mode}:${transformers_ref} vllm=${vllm_install_mode}:$(if [ "${vllm_install_mode}" = "wheel" ]; then echo "${vllm_version}"; else echo "${vllm_ref}"; fi) turboquant=${turboquant_install_mode}:$(if [ "${turboquant_install_mode}" = "none" ]; then echo none; elif [ "${turboquant_install_mode}" = "source" ]; then echo "${turboquant_ref}"; else echo "${turboquant_version}"; fi)"
+    echo "  Python: transformers=${transformers_install_mode}:${transformers_ref} package=${transformers_package:-<disabled>} runtime_install=${transformers_runtime_install} vllm=${vllm_install_mode}:$(if [ "${vllm_install_mode}" = "wheel" ]; then echo "${vllm_version}"; else echo "${vllm_ref}"; fi) turboquant=${turboquant_install_mode}:$(if [ "${turboquant_install_mode}" = "none" ]; then echo none; elif [ "${turboquant_install_mode}" = "source" ]; then echo "${turboquant_ref}"; else echo "${turboquant_version}"; fi)"
     echo ""
 
     if [ "${DRY_RUN}" = "true" ]; then

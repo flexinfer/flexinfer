@@ -74,6 +74,12 @@ spec:
     # is root-caused.
     - name: ABLITERATION_ACTIVATION_CAPTURE_MODE
       value: hidden_states
+    # Keep live abliteration jobs deterministic until the next runtime image is
+    # rebuilt and rolled out. This matches the pinned Gemma4 runtime profile.
+    - name: ABLITERATION_TRANSFORMERS_PACKAGE
+      value: git+https://github.com/huggingface/transformers.git@f965b10bcc979e6ad5f02a46f6d074206eccbe75
+    - name: ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL
+      value: fallback
   runtime:
     image: registry.harbor.lan/flexinfer/runtime@sha256:04631a8db20fb7c2ea62a9846938b155d031d180c962477e011936765bcfeb88
   containerMemoryGB: 48

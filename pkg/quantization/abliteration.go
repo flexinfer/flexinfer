@@ -328,6 +328,8 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 	if modelPolicies == "" {
 		modelPolicies = defaultAbliterationModelPoliciesJSON()
 	}
+	transformersPackage := strings.TrimSpace(os.Getenv("FLEXINFER_ABLITERATION_TRANSFORMERS_PACKAGE"))
+	transformersRuntimeInstall := strings.TrimSpace(os.Getenv("FLEXINFER_ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL"))
 
 	normThreshold := "100"
 	if spec.NormThreshold != nil && *spec.NormThreshold != "" {
@@ -339,7 +341,7 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		ablitateLmHead = "false"
 	}
 
-	return []corev1.EnvVar{
+	env := []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
 		{Name: "NUM_SAMPLES", Value: fmt.Sprintf("%d", numSamples)},
 		{Name: "TARGET_LAYERS", Value: targetLayers},
@@ -369,6 +371,13 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		{Name: "HF_SAFETENSORS_MMAP", Value: "0"},
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
 	}
+	if transformersPackage != "" {
+		env = append(env, corev1.EnvVar{Name: "ABLITERATION_TRANSFORMERS_PACKAGE", Value: transformersPackage})
+	}
+	if transformersRuntimeInstall != "" {
+		env = append(env, corev1.EnvVar{Name: "ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL", Value: transformersRuntimeInstall})
+	}
+	return env
 }
 
 func defaultAbliterationModelPoliciesJSON() string {
