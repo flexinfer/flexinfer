@@ -4,7 +4,7 @@
     "loom": {
       "type": "local",
       "command": [
-        "/Users/cblevins/go/bin/loom",
+        "/Users/cblevins/workspace/services/loom-core/bin/loom",
         "proxy"
       ],
       "enabled": true,

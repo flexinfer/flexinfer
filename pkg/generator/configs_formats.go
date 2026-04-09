@@ -218,10 +218,10 @@ func generateTomlConfig(p *GenerateParams) error {
 			sb.WriteString(fmt.Sprintf("%s = %d\n", field, spec.Timeout))
 		}
 
-		// Emit always_allow for platforms that support it (e.g. Kilocode).
-		// Codex does NOT support always_allow on MCP server entries — tool
-		// approval is controlled by approval_policy (granular.mcp_elicitations).
-		if profile.Features.SupportsDescription && !profile.Features.RequiresPreamble && len(spec.AlwaysAllow) > 0 {
+		// Emit always_allow for platforms that support it (e.g. Kilocode, Codex).
+		// Codex tool approval is mostly controlled by approval_policy, but it still
+		// respects always_allow for MCP server entries in modern versions.
+		if len(spec.AlwaysAllow) > 0 {
 			allowJSON, _ := json.Marshal(spec.AlwaysAllow)
 			sb.WriteString(fmt.Sprintf("always_allow = %s\n", string(allowJSON)))
 		}
