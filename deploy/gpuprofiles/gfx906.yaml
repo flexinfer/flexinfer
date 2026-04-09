@@ -62,6 +62,13 @@ spec:
     # where this path is already checkpointed and operator-targeted.
     - name: ABLITERATION_SAVE_POLICY
       value: inplace
+    # Keep Gemma4 retries deterministic on gfx906 as well. The live 31B run is
+    # already in-flight, but any future recreate should install the same tested
+    # transformers commit instead of drifting to whatever is on main.
+    - name: ABLITERATION_TRANSFORMERS_PACKAGE
+      value: git+https://github.com/huggingface/transformers.git@f965b10bcc979e6ad5f02a46f6d074206eccbe75
+    - name: ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL
+      value: fallback
   runtime:
     image: registry.harbor.lan/flexinfer/runtime@sha256:ba4570f515af05fe62f8b6672449b4029e1f15c2f606412e8d6d800e3e0e2dbf
   containerMemoryGB: 56
