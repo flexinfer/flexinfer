@@ -9,7 +9,7 @@
         "--agent-hint",
         "zed"
       ],
-      "command": "/Users/cblevins/go/bin/loom",
+      "command": "/Users/cblevins/workspace/services/loom-core/bin/loom",
       "timeout": 600
     }
   }
