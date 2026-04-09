@@ -762,14 +762,46 @@ fi
 # A previous quantization retry may have cleaned up source weights,
 # leaving the marker but no actual model files.
 WEIGHT_COUNT=0
+EXPECTED_SHARDS=-1
+MISSING_SHARDS=0
 if [ -d "$DEST_DIR" ]; then
-    WEIGHT_COUNT=$(find "$DEST_DIR" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' -o -name '*.gguf' \) 2>/dev/null | wc -l)
+    set -- $(DEST_DIR="$DEST_DIR" python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+dest = Path(os.environ["DEST_DIR"])
+weight_files = [
+    p.name for p in dest.iterdir()
+    if p.is_file() and p.suffix in {".safetensors", ".bin", ".pt", ".gguf"}
+]
+expected = -1
+missing = 0
+for name in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
+    index_path = dest / name
+    if not index_path.exists():
+        continue
+    try:
+        index = json.loads(index_path.read_text())
+        shard_files = sorted(set(index.get("weight_map", {}).values()))
+    except Exception:
+        shard_files = []
+    if shard_files:
+        expected = len(shard_files)
+        missing = sum(0 if (dest / shard).exists() else 1 for shard in shard_files)
+        break
+print(len(weight_files), expected, missing)
+PY
+    )
+    WEIGHT_COUNT="$1"
+    EXPECTED_SHARDS="$2"
+    MISSING_SHARDS="$3"
 fi
-if [ -f "$MARKER" ] && [ "$WEIGHT_COUNT" -gt 0 ]; then
-    echo "Model already cached at $DEST_DIR ($WEIGHT_COUNT weight files)"
+if [ -f "$MARKER" ] && [ "$WEIGHT_COUNT" -gt 0 ] && [ "$MISSING_SHARDS" -eq 0 ]; then
+    echo "Model already cached at $DEST_DIR ($WEIGHT_COUNT weight files, expected=$EXPECTED_SHARDS)"
     exit 0
-elif [ -f "$MARKER" ] && [ "$WEIGHT_COUNT" -eq 0 ]; then
-    echo "WARNING: Marker exists but no weight files found — re-downloading"
+elif [ -f "$MARKER" ] && { [ "$WEIGHT_COUNT" -eq 0 ] || [ "$MISSING_SHARDS" -gt 0 ]; }; then
+    echo "WARNING: Marker exists but cache is incomplete (weight_files=$WEIGHT_COUNT expected=$EXPECTED_SHARDS missing=$MISSING_SHARDS) — re-downloading"
     rm -f "$MARKER"
 fi
 
@@ -797,13 +829,47 @@ snapshot_download(
 PY
 
 # Verify weight files were actually downloaded before marking complete.
-WEIGHT_COUNT=$(find "$DEST_DIR" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' -o -name '*.gguf' \) 2>/dev/null | wc -l)
+set -- $(DEST_DIR="$DEST_DIR" python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+dest = Path(os.environ["DEST_DIR"])
+weight_files = [
+    p.name for p in dest.iterdir()
+    if p.is_file() and p.suffix in {".safetensors", ".bin", ".pt", ".gguf"}
+]
+expected = -1
+missing = 0
+for name in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
+    index_path = dest / name
+    if not index_path.exists():
+        continue
+    try:
+        index = json.loads(index_path.read_text())
+        shard_files = sorted(set(index.get("weight_map", {}).values()))
+    except Exception:
+        shard_files = []
+    if shard_files:
+        expected = len(shard_files)
+        missing = sum(0 if (dest / shard).exists() else 1 for shard in shard_files)
+        break
+print(len(weight_files), expected, missing)
+PY
+)
+WEIGHT_COUNT="$1"
+EXPECTED_SHARDS="$2"
+MISSING_SHARDS="$3"
 if [ "$WEIGHT_COUNT" -eq 0 ]; then
     echo "ERROR: Download completed but no weight files found in $DEST_DIR"
     exit 1
 fi
+if [ "$MISSING_SHARDS" -gt 0 ]; then
+    echo "ERROR: Download incomplete for $DEST_DIR (weight_files=$WEIGHT_COUNT expected=$EXPECTED_SHARDS missing=$MISSING_SHARDS)"
+    exit 1
+fi
 touch "$MARKER"
-echo "Download complete ($WEIGHT_COUNT weight files)."
+echo "Download complete ($WEIGHT_COUNT weight files, expected=$EXPECTED_SHARDS)."
 `, modelID, modelPath)
 	}
 

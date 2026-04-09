@@ -476,8 +476,38 @@ echo "Start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 DOWNLOAD_MARKER="${MODEL_DIR}/.download_complete"
 DOWNLOAD_READY="false"
 for attempt in $(seq 1 180); do
-    WEIGHT_COUNT=$(find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) 2>/dev/null | wc -l | tr -d ' ')
-    if [ -f "${DOWNLOAD_MARKER}" ] && [ "${WEIGHT_COUNT}" -gt 0 ]; then
+    set -- $(MODEL_DIR="${MODEL_DIR}" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+model_dir = Path(os.environ["MODEL_DIR"])
+weight_files = [
+    p.name for p in model_dir.iterdir()
+    if p.is_file() and p.suffix in {".safetensors", ".bin", ".pt"}
+]
+expected = -1
+missing = 0
+for name in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
+    index_path = model_dir / name
+    if not index_path.exists():
+        continue
+    try:
+        index = json.loads(index_path.read_text())
+        shard_files = sorted(set(index.get("weight_map", {}).values()))
+    except Exception:
+        shard_files = []
+    if shard_files:
+        expected = len(shard_files)
+        missing = sum(0 if (model_dir / shard).exists() else 1 for shard in shard_files)
+        break
+print(len(weight_files), expected, missing)
+PY
+    )
+    WEIGHT_COUNT="$1"
+    EXPECTED_SHARDS="$2"
+    MISSING_SHARDS="$3"
+    if [ -f "${DOWNLOAD_MARKER}" ] && [ "${WEIGHT_COUNT}" -gt 0 ] && [ "${MISSING_SHARDS}" -eq 0 ]; then
         DOWNLOAD_READY="true"
         break
     fi
@@ -486,8 +516,8 @@ for attempt in $(seq 1 180); do
         if [ -f "${DOWNLOAD_MARKER}" ]; then
             MARKER_STATE="present"
         fi
-        emit_event "abliteration_waiting_for_download" "attempt" "${attempt}" "marker" "${MARKER_STATE}" "weight_files" "${WEIGHT_COUNT}"
-        echo "Waiting for source weights to finish downloading (attempt ${attempt}/180, marker=${MARKER_STATE}, weight_files=${WEIGHT_COUNT})"
+        emit_event "abliteration_waiting_for_download" "attempt" "${attempt}" "marker" "${MARKER_STATE}" "weight_files" "${WEIGHT_COUNT}" "expected_shards" "${EXPECTED_SHARDS}" "missing_shards" "${MISSING_SHARDS}"
+        echo "Waiting for source weights to finish downloading (attempt ${attempt}/180, marker=${MARKER_STATE}, weight_files=${WEIGHT_COUNT}, expected=${EXPECTED_SHARDS}, missing=${MISSING_SHARDS})"
     fi
     sleep 10
 done
@@ -504,8 +534,38 @@ fi
 ABLIT_STATUS="${MODEL_DIR}/.abliteration-status.json"
 if [ -f "${ABLIT_STATUS}" ]; then
     ABLIT_COMPLETE=$(python3 -c "import json; d=json.load(open('${ABLIT_STATUS}')); print('yes' if d.get('status')=='complete' else 'no')" 2>/dev/null || echo "no")
-    WEIGHT_COUNT=$(find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) 2>/dev/null | wc -l | tr -d ' ')
-    if [ "${ABLIT_COMPLETE}" = "yes" ] && [ "${WEIGHT_COUNT}" -gt 0 ]; then
+    set -- $(MODEL_DIR="${MODEL_DIR}" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+model_dir = Path(os.environ["MODEL_DIR"])
+weight_files = [
+    p.name for p in model_dir.iterdir()
+    if p.is_file() and p.suffix in {".safetensors", ".bin", ".pt"}
+]
+expected = -1
+missing = 0
+for name in ("model.safetensors.index.json", "pytorch_model.bin.index.json"):
+    index_path = model_dir / name
+    if not index_path.exists():
+        continue
+    try:
+        index = json.loads(index_path.read_text())
+        shard_files = sorted(set(index.get("weight_map", {}).values()))
+    except Exception:
+        shard_files = []
+    if shard_files:
+        expected = len(shard_files)
+        missing = sum(0 if (model_dir / shard).exists() else 1 for shard in shard_files)
+        break
+print(len(weight_files), expected, missing)
+PY
+    )
+    WEIGHT_COUNT="$1"
+    EXPECTED_SHARDS="$2"
+    MISSING_SHARDS="$3"
+    if [ "${ABLIT_COMPLETE}" = "yes" ] && [ "${WEIGHT_COUNT}" -gt 0 ] && [ "${MISSING_SHARDS}" -eq 0 ]; then
         emit_event "abliteration_cached" "model" "${MODEL_DIR}" "weight_files" "${WEIGHT_COUNT}"
         echo "Abliteration already complete (${WEIGHT_COUNT} weight files present)"
         echo "Status: $(cat ${ABLIT_STATUS})"
@@ -513,7 +573,7 @@ if [ -f "${ABLIT_STATUS}" ]; then
         cat "${ABLIT_STATUS}" > /dev/termination-log 2>/dev/null || true
         exit 0
     fi
-    echo "WARNING: Status file exists but abliteration may be incomplete (status=${ABLIT_COMPLETE}, weights=${WEIGHT_COUNT})"
+    echo "WARNING: Status file exists but abliteration may be incomplete (status=${ABLIT_COMPLETE}, weights=${WEIGHT_COUNT}, expected=${EXPECTED_SHARDS}, missing=${MISSING_SHARDS})"
 fi
 
 # Monkey-patch torch.cuda.mem_get_info for gfx906 (hipMemGetInfo not supported

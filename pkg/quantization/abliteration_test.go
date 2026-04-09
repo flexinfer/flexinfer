@@ -455,8 +455,14 @@ func TestAbliterationWrapperScript(t *testing.T) {
 	if !strings.Contains(script, ".download_complete") {
 		t.Error("wrapper script should wait for the downloader completion marker")
 	}
+	if !strings.Contains(script, "model.safetensors.index.json") {
+		t.Error("wrapper script should validate sharded-model completeness before starting")
+	}
 	if !strings.Contains(script, "Waiting for source weights to finish downloading") {
 		t.Error("wrapper script should log when abliteration is waiting for source weights")
+	}
+	if !strings.Contains(script, "missing_shards") {
+		t.Error("wrapper script should log missing shard counts while waiting")
 	}
 	if !strings.Contains(script, "ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP") {
 		t.Error("wrapper script should support disabling transformers caching allocator warmup")
