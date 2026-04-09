@@ -1865,18 +1865,15 @@ platform_permissions:
 
   codex:
     settings:
-      # Granular approval policy: disable all prompt categories including MCP tool calls.
-      # "never" string form doesn't reliably suppress MCP elicitations in Codex >=4.x.
-      approval_policy:
-        granular:
-          sandbox_approval: false
-          rules: false
-          mcp_elicitations: false
-          request_permissions: false
-          skill_approval: false
+      # Default approval policy for autonomous runs.
+      # Modern Codex CLI versions (>=4.x) respect the top-level "never" string
+      # reliably when paired with server-level approval_mode = "always".
+      approval_policy: "never"
       suppress_unstable_features_warning: true
       sandbox_mode: "workspace-write"
       web_search: "live"
+      model: "gpt-5.4"
+      model_reasoning_effort: "high"
       features:
         multi_agent: true
         unified_exec: true

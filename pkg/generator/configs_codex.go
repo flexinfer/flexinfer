@@ -103,6 +103,17 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 		fmt.Fprintf(sb, "web_search = %q\n\n", webSearchMode)
 	}
 
+	// Emit optional model overrides.
+	if pp != nil && pp.Settings != nil {
+		if v, ok := pp.Settings["model"].(string); ok && v != "" {
+			fmt.Fprintf(sb, "model = %q\n", v)
+		}
+		if v, ok := pp.Settings["model_reasoning_effort"].(string); ok && v != "" {
+			fmt.Fprintf(sb, "model_reasoning_effort = %q\n", v)
+		}
+		sb.WriteString("\n")
+	}
+
 	// Emit policy enforcement annotations from platform profile.
 	codexProfile, _ := GetPlatformProfile("codex")
 	if codexProfile != nil {
