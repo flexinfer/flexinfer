@@ -836,7 +836,14 @@ def resolve_save_target():
         elif workspace_free >= required_bytes:
             selected = "workspace"
         else:
-            selected = "inplace"
+            raise RuntimeError(
+                "Insufficient free space for safe abliteration save staging. "
+                f"required={required_bytes / (1024**3):.1f}Gi "
+                f"pvc_free={pvc_free / (1024**3):.1f}Gi "
+                f"workspace_free={workspace_free / (1024**3):.1f}Gi. "
+                "Refusing unsafe auto fallback to in-place save; free space or "
+                "set ABLITERATION_SAVE_POLICY=inplace explicitly if you want a destructive save."
+            )
     elif policy not in {"staged", "workspace", "inplace"}:
         raise RuntimeError(f"unknown ABLITERATION_SAVE_POLICY={policy}")
 
@@ -1656,16 +1663,16 @@ pre_validate_already_completed = checkpoint_stage_at_least(
 )
 if pre_validate and pre_validate_already_completed:
     print(
-        "Skipping pre-abliteration baseline perplexity check because the run "
-        "already reached perplexity_validated",
+        "Checkpoint already reached perplexity_validated; re-running the "
+        "pre-abliteration baseline perplexity check so validation keeps a "
+        "fresh baseline for regression gating",
         flush=True,
     )
     emit_snapshot(
-        "pre_abliteration_perplexity_skipped",
+        "pre_abliteration_perplexity_rerun",
         reason="checkpoint_resume",
         resumed_from_stage=prior_stage or "unknown",
     )
-    pre_validate = False
 if pre_validate:
     print("Running pre-abliteration baseline perplexity check...", flush=True)
     _pre_prompts = ["2+2=", "The capital of France is", "Hello, my name is"]
@@ -1695,6 +1702,11 @@ if pre_validate:
         )
         emit_snapshot(
             "pre_abliteration_perplexity", perplexity=_pre_ppl, avg_loss=_pre_avg
+        )
+        write_checkpoint(
+            prior_stage or "starting",
+            baselinePerplexity=_pre_ppl,
+            baselineAvgLoss=_pre_avg,
         )
     else:
         print("Pre-abliteration baseline: all prompts failed (NaN loss)", flush=True)
@@ -1943,6 +1955,13 @@ if validate_perplexity:
         )
 
         baseline_ppl = _pre_ppl if "_pre_ppl" in locals() else None
+        if baseline_ppl is None and prior_checkpoint:
+            prior_baseline = prior_checkpoint.get("baselinePerplexity")
+            if prior_baseline is not None:
+                try:
+                    baseline_ppl = float(prior_baseline)
+                except (TypeError, ValueError):
+                    baseline_ppl = None
         baseline_is_valid = baseline_ppl is not None and not math.isnan(baseline_ppl)
         baseline_exceeds_absolute = baseline_is_valid and baseline_ppl > max_perplexity
         if baseline_exceeds_absolute:
