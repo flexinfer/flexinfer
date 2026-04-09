@@ -454,6 +454,76 @@ func TestReconcileAbliterationSpecChangeResetsAllDownstreamStateAndDeletesJobs(t
 	}
 }
 
+func TestReconcileAbliterationMissingWeightsResetsDownloadPipeline(t *testing.T) {
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ablit-redownload",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:          "HF://org/model",
+			StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+			Abliteration: &aiv1alpha1.AbliterationSpec{
+				UseGPU: true,
+			},
+		},
+		Status: aiv1alpha1.ModelCacheStatus{
+			Phase:        aiv1alpha1.ModelCachePhaseAbliterating,
+			CurrentPhase: "abliteration",
+			Path:         "cache-pvc:/models/base",
+			Abliteration: &aiv1alpha1.AbliterationStatus{},
+		},
+	}
+
+	ablitJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "ablit-redownload-abliterate", Namespace: "default"},
+		Status:     batchv1.JobStatus{Failed: 1},
+	}
+	downloaderJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "ablit-redownload-downloader", Namespace: "default"},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ablit-redownload-abliterate-pod",
+			Namespace: "default",
+			Labels: map[string]string{
+				"job-name": "ablit-redownload-abliterate",
+			},
+		},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "abliterator",
+				State: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						Message: "Timed out waiting for downloaded source weights in /cache/model",
+					},
+				},
+			}},
+		},
+	}
+
+	r, cl := newQuantizationTestReconciler(t, nil, cache, ablitJob, downloaderJob, pod)
+
+	result, err := r.reconcileAbliteration(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, requeueShort, result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseProvisioning, updated.Status.Phase)
+	assert.Empty(t, updated.Status.CurrentPhase)
+	assert.Empty(t, updated.Status.Path)
+	assert.Nil(t, updated.Status.Abliteration)
+
+	for _, jobName := range []string{
+		"ablit-redownload-abliterate",
+		"ablit-redownload-downloader",
+	} {
+		job := &batchv1.Job{}
+		err := cl.Get(context.Background(), client.ObjectKey{Name: jobName, Namespace: "default"}, job)
+		assert.Error(t, err, "expected %s to be deleted", jobName)
+	}
+}
+
 func newQuantizationTestReconciler(t *testing.T, kubeClient kubernetes.Interface, objs ...client.Object) (*ModelCacheReconciler, client.Client) {
 	t.Helper()
 

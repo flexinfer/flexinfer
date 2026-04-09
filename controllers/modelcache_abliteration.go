@@ -464,6 +464,19 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		metrics.ModelCacheJobFailuresTotal.WithLabelValues(modelCache.Name, modelCache.Namespace, "abliteration_failed").Inc()
 
 		failureMsg := captureAbliterationFailureLogs(ctx, r.Client, r.KubeClient, modelCache.Namespace, ablitJob.Name)
+		if abliterationFailureNeedsRedownload(failureMsg) {
+			log.Info("Abliteration lost source weights; restarting download pipeline",
+				"cache", modelCache.Name)
+			if err := r.resetDownloadState(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "DownloadReset",
+				"Abliteration detected missing source weights; restarting download pipeline")
+			return ctrl.Result{RequeueAfter: requeueShort}, nil
+		}
 
 		// Check if we should auto-retry.
 		if shouldRetry, backoff := r.shouldRetryFailedPhase(modelCache, "abliteration"); shouldRetry {
@@ -623,6 +636,16 @@ func captureAbliterationFailureLogs(ctx context.Context, c client.Client, kubeCl
 		}
 	}
 	return ""
+}
+
+func abliterationFailureNeedsRedownload(msg string) bool {
+	msg = strings.ToLower(msg)
+	return strings.Contains(msg, "timed out waiting for downloaded source weights") ||
+		(strings.Contains(msg, "abliteration_waiting_for_download") &&
+			strings.Contains(msg, "marker") &&
+			(strings.Contains(msg, "weight_files=0") ||
+				strings.Contains(msg, `"weight_files":0`) ||
+				strings.Contains(msg, `"weight_files": 0`)))
 }
 
 // effectiveAbliterationDeadline returns the job deadline in seconds from spec or default.

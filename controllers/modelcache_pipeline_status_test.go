@@ -77,3 +77,17 @@ func TestQuantizationCompleted(t *testing.T) {
 		t.Fatal("quantization with completion time should be complete")
 	}
 }
+
+func TestAbliterationFailureNeedsRedownload(t *testing.T) {
+	if !abliterationFailureNeedsRedownload("Timed out waiting for downloaded source weights in /cache/model") {
+		t.Fatal("timeout waiting for source weights should trigger re-download")
+	}
+
+	if !abliterationFailureNeedsRedownload(`{"event":"abliteration_waiting_for_download","attempt":174,"marker":"present","weight_files":0}`) {
+		t.Fatal("wait-loop telemetry with marker present and zero weight files should trigger re-download")
+	}
+
+	if abliterationFailureNeedsRedownload("CUDA out of memory while loading shards") {
+		t.Fatal("ordinary model load failures should not trigger re-download")
+	}
+}
