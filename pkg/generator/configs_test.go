@@ -332,7 +332,7 @@ func TestEmitCodexPreamble_NotifyRemainsTopLevel(t *testing.T) {
 	}
 }
 
-func TestGenerateTomlConfig_CodexOmitsAlwaysAllow(t *testing.T) {
+func TestGenerateTomlConfig_CodexUsesServerApprovalMode(t *testing.T) {
 	tmpDir := t.TempDir()
 	profile, err := GetPlatformProfile("codex")
 	if err != nil {
@@ -358,9 +358,10 @@ func TestGenerateTomlConfig_CodexOmitsAlwaysAllow(t *testing.T) {
 		t.Fatalf("read generated config: %v", err)
 	}
 
-	// Codex DOES support always_allow on MCP server entries in modern versions.
-	if !strings.Contains(string(content), `always_allow`) {
-		t.Fatalf("expected codex config to emit always_allow, got:\n%s", string(content))
+	// Codex uses approval_mode at the MCP server stanza rather than
+	// always_allow on the tool list.
+	if !strings.Contains(string(content), `approval_mode = "always"`) {
+		t.Fatalf("expected codex config to emit approval_mode = \"always\", got:\n%s", string(content))
 	}
 
 	// Verify granular approval_policy is emitted with mcp_elicitations = false.
