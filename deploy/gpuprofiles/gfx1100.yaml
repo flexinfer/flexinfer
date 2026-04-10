@@ -68,6 +68,13 @@ spec:
     # memory closer to the live module working set instead.
     - name: ABLITERATION_DISK_OFFLOAD_SAVE_IMPL
       value: streaming
+    # Keep source weights intact until the save fully completes. Gemma4 26B
+    # can fail late in the shard-write phase, and auto-selection may still pick
+    # a PVC-local target when there appears to be enough space. Force staging to
+    # the roomy workspace volume so a failed save never corrupts the source
+    # cache and trigger a download-reset loop.
+    - name: ABLITERATION_SAVE_POLICY
+      value: workspace
     # hooks-based activation capture on gfx1100 can hang on the first real
     # forward pass for large Gemma abliterations. hidden_states is slower but
     # avoids the forward-hook/device-runtime path until the hooks failure mode
