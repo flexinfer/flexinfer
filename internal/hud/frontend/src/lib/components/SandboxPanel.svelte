@@ -20,8 +20,12 @@
   let totalBuilds = $derived(sandboxStore.totalBuilds);
   let policy = $derived(sandboxStore.policy);
   let error = $derived(sandboxStore.error);
+  let lastAction = $derived(sandboxStore.lastAction);
   let lastUpdated = $derived(sandboxStore.lastUpdated);
   let latestEvent = $derived(events[0] ?? null);
+  let offlineReason = $derived(summary?.reason ?? 'mcp-devbox is not running or not connected to the daemon.');
+  let offlineHint = $derived(summary?.hint ?? 'Start the devbox service, then return to Labs to provision or inspect sandboxes.');
+  let offlineCommand = $derived(summary?.start_command ?? 'loom start devbox');
   let startProject = $state('');
   let startSubmitting = $state(false);
 
@@ -68,14 +72,30 @@
 
 <div class="panel sandbox-panel">
   {#if !available}
-    <!-- Not available state -->
-    <div class="unavailable">
-      <div class="unavailable-icon">{'\u2B22'}</div>
-      <div class="unavailable-title">Devbox Offline</div>
-      <div class="unavailable-hint">
-        mcp-devbox is not running or not connected to the daemon.
-        <br />Start it with <code>loom start devbox</code> or check your registry config.
-      </div>
+    <div class="unavailable-shell">
+      <section class="unavailable-card">
+        <div class="unavailable-eyebrow">Labs / Sandbox</div>
+        <div class="unavailable-head">
+          <div class="unavailable-icon">{'\u2B22'}</div>
+          <div>
+            <div class="unavailable-title">Devbox is offline</div>
+            <div class="unavailable-hint">{offlineReason}</div>
+          </div>
+        </div>
+        <div class="offline-command">
+          <span class="offline-command-label">Start command</span>
+          <code>{offlineCommand}</code>
+        </div>
+        <div class="unavailable-copy">{offlineHint}</div>
+      </section>
+
+      <aside class="unavailable-sidecard">
+        <div class="section-title">Why it matters</div>
+        <div class="offline-points">
+          <div class="offline-point">Sandbox availability controls `devbox_build`, `devbox_exec`, and the HUD’s project activity feed.</div>
+          <div class="offline-point">When the backend reconnects, project inventory and recent build or exec events repopulate automatically.</div>
+        </div>
+      </aside>
     </div>
   {:else}
     <!-- Header bar with counts -->
@@ -138,6 +158,18 @@
         {startSubmitting ? 'Starting…' : 'Start Sandbox'}
       </button>
     </div>
+
+    {#if lastAction}
+      <div class="action-banner">
+        <span class="action-banner-kind">{lastAction.kind === 'start' ? 'Start' : 'Stop'}</span>
+        <span class="action-banner-copy">
+          {lastAction.project}: {lastAction.message}
+          {#if lastAction.buildId}
+            <strong>{lastAction.buildId}</strong>
+          {/if}
+        </span>
+      </div>
+    {/if}
 
     {#if error}
       <div class="error-banner">
@@ -283,6 +315,34 @@
     overflow: hidden;
   }
 
+  .unavailable-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.8fr);
+    gap: var(--space-4);
+    align-items: start;
+    padding-top: var(--space-2);
+  }
+
+  .unavailable-card,
+  .unavailable-sidecard {
+    min-width: 0;
+    padding: clamp(18px, 2vw, 28px);
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--border);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%),
+      var(--bg-secondary);
+    box-shadow: var(--shadow-xs);
+  }
+
+  .unavailable-card {
+    border-color: color-mix(in srgb, var(--warning) 20%, var(--border));
+    background:
+      radial-gradient(circle at top right, rgba(255, 184, 48, 0.1), transparent 28%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%),
+      var(--bg-secondary);
+  }
+
   .start-toolbar {
     display: flex;
     align-items: end;
@@ -350,6 +410,37 @@
     min-width: 0;
   }
 
+  .action-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    border-radius: var(--radius-lg);
+    border: 1px solid color-mix(in srgb, var(--success) 24%, var(--border));
+    background: color-mix(in srgb, var(--success) 10%, var(--bg-secondary));
+    color: var(--fg-secondary);
+  }
+
+  .action-banner-kind {
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--success);
+  }
+
+  .action-banner-copy {
+    min-width: 0;
+    line-height: 1.5;
+  }
+
+  .action-banner-copy strong {
+    margin-left: var(--space-2);
+    font-family: var(--font-mono);
+    color: var(--fg-primary);
+  }
+
   .projects-empty {
     display: flex;
     flex-direction: column;
@@ -363,43 +454,105 @@
   }
 
   /* ---- Unavailable State ---- */
-  .unavailable {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    flex: 1;
-    gap: var(--space-3);
-    padding: var(--space-12) var(--space-6);
-    text-align: center;
-  }
-
   .unavailable-icon {
     font-size: 36px;
-    color: var(--fg-muted);
-    opacity: 0.4;
+    color: var(--warning);
+    opacity: 0.9;
+    width: 56px;
+    height: 56px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: 1px solid color-mix(in srgb, var(--warning) 24%, var(--border));
+    background: rgba(255, 184, 48, 0.08);
   }
 
   .unavailable-title {
-    font-size: var(--text-lg);
-    font-weight: 600;
-    color: var(--fg-secondary);
+    font-size: clamp(22px, 2.4vw, 32px);
+    font-weight: 700;
+    color: var(--fg-primary);
   }
 
   .unavailable-hint {
-    font-size: var(--text-sm);
-    color: var(--fg-dim);
-    max-width: 320px;
+    font-size: var(--text-base);
+    color: var(--fg-secondary);
+    max-width: 48ch;
     line-height: var(--leading-loose);
   }
 
-  .unavailable-hint code {
+  .unavailable-eyebrow {
+    font-size: var(--text-xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--warning);
+    margin-bottom: var(--space-3);
+  }
+
+  .unavailable-head {
+    display: flex;
+    align-items: start;
+    gap: var(--space-3);
+  }
+
+  .offline-command {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-4);
+    padding: var(--space-3);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .offline-command-label {
+    font-size: var(--text-xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
+  }
+
+  .offline-command code {
     font-family: var(--font-mono);
     font-size: var(--text-sm);
-    padding: 2px var(--space-1);
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-sm);
     color: var(--accent);
+  }
+
+  .unavailable-copy {
+    margin-top: var(--space-3);
+    font-size: var(--text-sm);
+    color: var(--fg-secondary);
+    line-height: 1.6;
+  }
+
+  .offline-points {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding-top: var(--space-3);
+  }
+
+  .offline-point {
+    padding-left: var(--space-4);
+    position: relative;
+    color: var(--fg-secondary);
+    line-height: 1.6;
+    font-size: var(--text-sm);
+  }
+
+  .offline-point::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 8px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--warning);
+    box-shadow: 0 0 8px var(--glow-warning);
   }
 
   /* ---- Header Bar ---- */
@@ -820,6 +973,10 @@
   }
 
   @media (max-width: 1220px) {
+    .unavailable-shell {
+      grid-template-columns: 1fr;
+    }
+
     .sandbox-content {
       grid-template-columns: 220px minmax(0, 1fr);
     }

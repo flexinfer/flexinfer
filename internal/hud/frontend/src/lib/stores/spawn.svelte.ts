@@ -56,11 +56,44 @@ export interface SpawnState {
   telemetry?: SpawnTelemetry | null;
 }
 
+export interface SpawnConfigAgentType {
+  id: string;
+  name: string;
+  available: boolean;
+}
+
+export interface SpawnConfigProject {
+  name: string;
+  path: string;
+}
+
+export interface SpawnConfigDefaults {
+  agent_type: string;
+  base_branch: string;
+  memory_mb: number;
+  cpus: number;
+  timeout_minutes: number;
+}
+
+export interface SpawnConfig {
+  configured: boolean;
+  agent_types: SpawnConfigAgentType[];
+  projects: SpawnConfigProject[];
+  defaults: SpawnConfigDefaults;
+  notes?: {
+    auth_required?: boolean;
+    multi_turn_supported?: boolean;
+  };
+}
+
 class SpawnStore {
   spawns = $state<SpawnState[]>([]);
   loading = $state(false);
   spawning = $state(false);
   error = $state<string | null>(null);
+  config = $state<SpawnConfig | null>(null);
+  configLoading = $state(false);
+  configError = $state<string | null>(null);
   lastUpdated = $state<Date | null>(null);
   // telemetryBySpawnId holds live telemetry snapshots for spawns that do not
   // embed telemetry in the list response (typically active spawns). Completed
@@ -107,6 +140,20 @@ class SpawnStore {
       this.error = err instanceof Error ? err.message : String(err);
     } finally {
       this.loading = false;
+    }
+  }
+
+  async fetchConfig(): Promise<void> {
+    this.configLoading = true;
+    this.configError = null;
+    try {
+      const res = await fetch('/api/agent/spawn/config');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      this.config = await res.json();
+    } catch (err) {
+      this.configError = err instanceof Error ? err.message : String(err);
+    } finally {
+      this.configLoading = false;
     }
   }
 
@@ -237,6 +284,9 @@ class SpawnStore {
   }
 
   startPolling(intervalMs = 10000): void {
+    if (!this.config && !this.configLoading) {
+      this.fetchConfig().catch(() => { /* best-effort */ });
+    }
     this.fetch();
     this.subscribeSSE();
     if (this.pollTimer) return;
@@ -253,6 +303,7 @@ class SpawnStore {
   }
 
   private subscribeSSE(): void {
+    if (this.eventUnsubs.length > 0) return;
     const spawnEvents = [
       'agent.spawn.running',
       'agent.spawn.completed',
@@ -266,6 +317,29 @@ class SpawnStore {
         })
       );
     }
+    this.eventUnsubs.push(
+      eventStore.on('agent.spawn.telemetry.delta', (event) => {
+        const data = event.data ?? {};
+        const spawnId = typeof data.spawn_id === 'string' ? data.spawn_id : '';
+        if (!spawnId) return;
+        const tokenUsage = (data.token_usage as Record<string, unknown> | undefined) ?? {};
+        const next = new Map(this.telemetryBySpawnId);
+        next.set(spawnId, {
+          turn_count: Number(data.turn_count ?? 0),
+          total_cost_usd: Number(data.total_cost_usd ?? 0),
+          cost_estimated: Boolean(data.cost_estimated),
+          token_usage: {
+            input_tokens: Number(tokenUsage.input_tokens ?? 0),
+            output_tokens: Number(tokenUsage.output_tokens ?? 0),
+            cache_creation_tokens: Number(tokenUsage.cache_creation_tokens ?? 0),
+            cache_read_tokens: Number(tokenUsage.cache_read_tokens ?? 0),
+          },
+          stop_reason: typeof data.stop_reason === 'string' ? data.stop_reason : undefined,
+          last_message: typeof data.last_message === 'string' ? data.last_message : undefined,
+        });
+        this.telemetryBySpawnId = next;
+      })
+    );
   }
 }
 

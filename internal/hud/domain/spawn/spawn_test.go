@@ -163,6 +163,45 @@ func TestSpawnDomainNilSpawner(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("GET /api/agent/spawn/config (nil spawner): expected 200, got %d", rec.Code)
 	}
+	var config map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&config); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if got, _ := config["configured"].(bool); got {
+		t.Errorf("expected configured=false, got %v", config["configured"])
+	}
+}
+
+func TestHandleAgentSpawnConfig_IncludesProjectsAndNotes(t *testing.T) {
+	spawner := &mockSpawner{projects: []string{"loom-core", "platform/gitops"}}
+	d := New(&mockDeps{spawner: spawner})
+
+	req := httptest.NewRequest("GET", "/api/agent/spawn/config", nil)
+	rec := httptest.NewRecorder()
+	d.handleAgentSpawnConfig(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if got, _ := body["configured"].(bool); !got {
+		t.Fatalf("expected configured=true, got %v", body["configured"])
+	}
+	projects, ok := body["projects"].([]any)
+	if !ok || len(projects) != 2 {
+		t.Fatalf("expected 2 projects, got %v", body["projects"])
+	}
+	notes, ok := body["notes"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected notes map, got %T", body["notes"])
+	}
+	if got, _ := notes["multi_turn_supported"].(bool); !got {
+		t.Errorf("expected multi_turn_supported=true, got %v", notes["multi_turn_supported"])
+	}
 }
 
 func TestSpawnDomainSpawnDetail404(t *testing.T) {

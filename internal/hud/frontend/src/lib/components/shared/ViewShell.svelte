@@ -54,58 +54,57 @@
   .view-tabs {
     display: flex;
     align-items: center;
-    gap: 2px;
-    padding: var(--space-1) var(--panel-padding);
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border);
+    gap: var(--space-1);
+    padding: var(--space-2) var(--panel-padding) var(--space-1);
+    background: transparent;
     flex-shrink: 0;
     position: relative;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
-  /* Subtle bottom-edge glow */
-  .view-tabs::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 15%;
-    right: 15%;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(0, 200, 255, 0.06) 50%, transparent);
-    pointer-events: none;
+  .view-tabs::-webkit-scrollbar {
+    display: none;
   }
 
   .view-tab {
     display: flex;
     align-items: center;
     gap: var(--space-1);
-    padding: 6px var(--space-3);
-    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    border-radius: var(--radius-md);
     font-size: var(--text-sm);
     font-weight: 500;
     color: var(--fg-muted);
-    transition: background var(--transition-fast), color var(--transition-fast);
+    transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
     position: relative;
     cursor: pointer;
-    background: none;
-    border: none;
+    background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+    border: 1px solid transparent;
     letter-spacing: var(--tracking-normal);
+    white-space: nowrap;
   }
 
   .view-tab:hover {
-    background: var(--bg-tertiary);
-    color: var(--fg-secondary);
+    background: color-mix(in srgb, var(--bg-tertiary) 88%, white 12%);
+    color: var(--fg-primary);
+    border-color: color-mix(in srgb, var(--border-focus) 72%, transparent);
   }
 
   .view-tab.active {
-    background: var(--bg-tertiary);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
+      var(--bg-tertiary);
     color: var(--fg-primary);
     font-weight: 600;
+    border-color: color-mix(in srgb, var(--info) 24%, var(--border));
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.16);
   }
 
   .view-tab.active::after {
     content: '';
     position: absolute;
-    bottom: -5px;
+    bottom: 4px;
     left: var(--space-3);
     right: var(--space-3);
     height: 2px;
@@ -121,12 +120,13 @@
   .view-tab-key {
     font-size: 9px;
     font-family: var(--font-mono);
-    color: var(--fg-dim);
+    color: var(--fg-muted);
     padding: 1px 4px;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-xs);
     line-height: 1;
-    opacity: 0.5;
+    opacity: 0.8;
+    background: rgba(255, 255, 255, 0.02);
   }
 
   .view-tab.active .view-tab-key {

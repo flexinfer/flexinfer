@@ -5,6 +5,10 @@ import { eventStore } from './events.svelte.ts';
 
 export interface SandboxSummary {
   available: boolean;
+  status?: string;
+  reason?: string;
+  hint?: string;
+  start_command?: string;
   backend?: string;
   total_sandboxes: number;
   running: number;
@@ -39,6 +43,7 @@ class SandboxStore {
   available = $state(false);
   loading = $state(false);
   error = $state<string | null>(null);
+  lastAction = $state<{ kind: 'start' | 'stop'; project: string; message: string; buildId?: string } | null>(null);
   recentEvents = $state<SandboxEvent[]>([]);
   lastUpdated = $state<Date | null>(null);
   policy = $state<SandboxPolicy | null>(null);
@@ -108,13 +113,21 @@ class SandboxStore {
   }
 
   async startSandbox(project: string): Promise<void> {
+    this.error = null;
     try {
       const res = await globalThis.fetch('/api/sandbox/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project }),
       });
-      if (!res.ok) throw new Error(`Start sandbox: ${res.status}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as { error?: string }).error || `Start sandbox: ${res.status}`);
+      this.lastAction = {
+        kind: 'start',
+        project,
+        message: typeof data.message === 'string' ? data.message : `Sandbox start requested for ${project}`,
+        buildId: typeof data.build_id === 'string' ? data.build_id : undefined,
+      };
       // Refresh after starting.
       await this.fetch();
     } catch (e) {
@@ -123,13 +136,20 @@ class SandboxStore {
   }
 
   async stopSandbox(project: string): Promise<void> {
+    this.error = null;
     try {
       const res = await globalThis.fetch('/api/sandbox/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project }),
       });
-      if (!res.ok) throw new Error(`Stop sandbox: ${res.status}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as { error?: string }).error || `Stop sandbox: ${res.status}`);
+      this.lastAction = {
+        kind: 'stop',
+        project,
+        message: typeof data.message === 'string' ? data.message : `Sandbox stop requested for ${project}`,
+      };
       // Refresh after stopping.
       await this.fetch();
     } catch (e) {

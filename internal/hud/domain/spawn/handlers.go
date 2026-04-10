@@ -105,6 +105,7 @@ func (d *SpawnDomain) handleAgentSpawnConfig(w http.ResponseWriter, r *http.Requ
 
 	var projects []projectInfo
 	spawner := d.deps.Spawner()
+	configured := spawner != nil
 	if spawner != nil {
 		for _, p := range spawner.Projects() {
 			projects = append(projects, projectInfo{Name: p, Path: "services/" + p})
@@ -112,6 +113,7 @@ func (d *SpawnDomain) handleAgentSpawnConfig(w http.ResponseWriter, r *http.Requ
 	}
 
 	d.deps.WriteJSON(w, http.StatusOK, map[string]any{
+		"configured":  configured,
 		"agent_types": agents,
 		"projects":    projects,
 		"defaults": defaults{
@@ -120,6 +122,10 @@ func (d *SpawnDomain) handleAgentSpawnConfig(w http.ResponseWriter, r *http.Requ
 			MemoryMB:       4096,
 			CPUs:           2.0,
 			TimeoutMinutes: 60,
+		},
+		"notes": map[string]any{
+			"auth_required":        true,
+			"multi_turn_supported": true,
 		},
 	})
 }

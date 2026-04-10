@@ -110,8 +110,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: var(--space-3);
+    margin-bottom: var(--space-4);
     flex-shrink: 0;
+    gap: var(--space-3);
   }
 
   .panel-shell-title-row {
@@ -126,8 +127,8 @@
   }
 
   .panel-shell-title {
-    font-size: var(--text-lg);
-    font-weight: 600;
+    font-size: clamp(18px, 1.7vw, 24px);
+    font-weight: 700;
     color: var(--fg-primary);
     margin: 0;
     letter-spacing: var(--tracking-tight);
@@ -151,13 +152,25 @@
   }
 
   .panel-shell-header-extra {
-    margin-bottom: var(--space-3);
+    margin-bottom: var(--space-4);
     flex-shrink: 0;
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
+      color-mix(in srgb, var(--bg-secondary) 92%, transparent);
   }
 
   .panel-shell-toolbar {
     flex-shrink: 0;
-    margin-bottom: var(--space-3);
+    margin-bottom: var(--space-4);
+    padding: var(--space-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
+      color-mix(in srgb, var(--bg-secondary) 92%, transparent);
   }
 
   .panel-shell-content {
@@ -171,27 +184,42 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: var(--space-12) var(--space-4);
+    padding: clamp(40px, 12vh, 96px) var(--space-4);
     color: var(--fg-muted);
     text-align: center;
     gap: var(--space-3);
-    min-height: 200px;
+    min-height: 260px;
+    border: 1px dashed color-mix(in srgb, var(--border-focus) 40%, var(--border));
+    border-radius: var(--radius-xl);
+    background:
+      radial-gradient(circle at top, rgba(0, 200, 255, 0.05), transparent 45%),
+      color-mix(in srgb, var(--bg-secondary) 80%, transparent);
   }
 
   .empty-state-icon {
-    font-size: 28px;
-    opacity: 0.35;
+    font-size: 32px;
+    opacity: 0.85;
+    width: 56px;
+    height: 56px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
   }
 
   .empty-state-message {
-    font-size: var(--text-base);
-    font-weight: 500;
+    font-size: var(--text-lg);
+    font-weight: 600;
+    color: var(--fg-primary);
   }
 
   .empty-state-hint {
     font-size: var(--text-sm);
-    opacity: 0.6;
-    max-width: 320px;
+    opacity: 0.85;
+    max-width: 420px;
+    line-height: 1.6;
   }
 
   .empty-state-action {

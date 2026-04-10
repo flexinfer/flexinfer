@@ -34,11 +34,14 @@
 /* ── Card ────────────────────────────────────────────────────── */
 
 .card {
-  background: var(--bg-secondary);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 42%),
+    var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4);
   position: relative;
+  box-shadow: var(--shadow-xs);
 }
 
 /* Top-edge highlight — lit-from-above effect */
@@ -403,6 +406,10 @@ tbody tr:last-child td {
   flex-direction: column;
   flex: 1;
   overflow: hidden;
+  width: 100%;
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  min-height: 0;
 }
 
 /* Row slide-in for new items */

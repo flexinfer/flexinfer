@@ -128,6 +128,12 @@ func TestHandleSandbox_Unavailable(t *testing.T) {
 	if body["available"] != false {
 		t.Errorf("expected available=false, got %v", body["available"])
 	}
+	if body["status"] != "offline" {
+		t.Errorf("expected status=offline, got %v", body["status"])
+	}
+	if body["start_command"] != "loom start devbox" {
+		t.Errorf("expected start_command, got %v", body["start_command"])
+	}
 }
 
 func TestHandleSandboxPolicy_Cached(t *testing.T) {
@@ -192,6 +198,12 @@ func TestHandleSandboxStart_Success(t *testing.T) {
 	if resp["build_id"] != "abc123" {
 		t.Errorf("expected build_id=abc123, got %v", resp["build_id"])
 	}
+	if resp["project"] != "loom-core" {
+		t.Errorf("expected project=loom-core, got %v", resp["project"])
+	}
+	if resp["message"] != "sandbox start requested" {
+		t.Errorf("expected start message, got %v", resp["message"])
+	}
 }
 
 func TestHandleSandboxStart_NilResult(t *testing.T) {
@@ -211,6 +223,12 @@ func TestHandleSandboxStart_NilResult(t *testing.T) {
 	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck // test helper; assertion failures catch issues
 	if resp["ok"] != true {
 		t.Errorf("expected ok=true, got %v", resp["ok"])
+	}
+	if resp["project"] != "loom-core" {
+		t.Errorf("expected project=loom-core, got %v", resp["project"])
+	}
+	if resp["message"] != "sandbox start requested" {
+		t.Errorf("expected start message, got %v", resp["message"])
 	}
 }
 
@@ -275,6 +293,9 @@ func TestHandleSandboxStop_Success(t *testing.T) {
 	}
 	if resp["project"] != "loom-core" {
 		t.Errorf("expected project=loom-core, got %v", resp["project"])
+	}
+	if resp["message"] != "sandbox stop requested" {
+		t.Errorf("expected stop message, got %v", resp["message"])
 	}
 }
 

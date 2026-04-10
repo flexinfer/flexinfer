@@ -409,6 +409,9 @@
     height: 100vh;
     width: 100vw;
     overflow: hidden;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 16%),
+      transparent;
   }
 
   /* ═══ Nav Bar ═══════════════════════════════════════════════ */
@@ -417,13 +420,16 @@
     display: flex;
     align-items: center;
     height: var(--header-height);
-    background: var(--bg-secondary);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 100%),
+      color-mix(in srgb, var(--bg-secondary) 90%, black 10%);
     border-bottom: 1px solid var(--border);
-    padding: 0 var(--space-4);
+    padding: 0 max(var(--content-gutter), var(--space-4));
     flex-shrink: 0;
-    gap: var(--space-4);
+    gap: var(--space-5);
     z-index: 100;
     position: relative;
+    backdrop-filter: blur(18px);
   }
 
   /* Subtle bottom-edge glow */
@@ -447,35 +453,42 @@
   .nav-brand {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     flex-shrink: 0;
   }
 
   .nav-logo {
-    font-size: var(--text-lg);
+    font-size: 18px;
     color: var(--accent);
-    filter: drop-shadow(0 0 4px rgba(255, 107, 53, 0.3));
+    filter: drop-shadow(0 0 6px rgba(255, 107, 53, 0.28));
   }
 
   .nav-title {
-    font-size: 11px;
+    font-size: var(--text-xs);
     font-weight: 700;
-    letter-spacing: 0.12em;
-    color: var(--fg-muted);
+    letter-spacing: 0.16em;
+    color: var(--fg-secondary);
     text-transform: uppercase;
   }
 
   .nav-tabs {
     display: flex;
-    gap: 2px;
+    gap: var(--space-1);
     flex: 1;
-    justify-content: center;
+    min-width: 0;
+    justify-content: flex-start;
     align-items: center;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .nav-tabs::-webkit-scrollbar {
+    display: none;
   }
 
   .nav-divider {
     width: 1px;
-    height: 16px;
+    height: 18px;
     background: var(--border);
     margin: 0 var(--space-2);
   }
@@ -484,36 +497,44 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px var(--space-3);
+    padding: 8px 12px;
     border-radius: var(--radius-sm);
     font-size: var(--text-sm);
     font-weight: 500;
     color: var(--fg-muted);
     transition: background var(--transition-fast),
                 color var(--transition-fast),
+                border-color var(--transition-fast),
                 box-shadow var(--transition-fast);
     position: relative;
     cursor: pointer;
     background: none;
-    border: none;
+    border: 1px solid transparent;
     letter-spacing: var(--tracking-normal);
+    white-space: nowrap;
+    min-height: 36px;
   }
 
   .nav-tab:hover {
-    background: var(--bg-tertiary);
-    color: var(--fg-secondary);
+    background: color-mix(in srgb, var(--bg-tertiary) 82%, white 18%);
+    color: var(--fg-primary);
+    border-color: color-mix(in srgb, var(--border-focus) 70%, transparent);
   }
 
   .nav-tab.active {
-    background: var(--bg-tertiary);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
+      var(--bg-tertiary);
     color: var(--fg-primary);
     font-weight: 600;
+    border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
   }
 
   .nav-tab.active::after {
     content: '';
     position: absolute;
-    bottom: -1px;
+    bottom: 4px;
     left: var(--space-3);
     right: var(--space-3);
     height: 2px;
@@ -524,11 +545,11 @@
 
   .nav-tab-icon {
     font-size: var(--text-sm);
-    opacity: 0.6;
+    opacity: 0.72;
   }
 
   .nav-tab.active .nav-tab-icon {
-    opacity: 0.9;
+    opacity: 1;
   }
 
   .nav-tab-label {
@@ -549,18 +570,19 @@
     color: var(--bg-primary);
     background: var(--accent);
     border-radius: var(--radius-full);
-    box-shadow: 0 0 6px var(--glow-accent);
+    box-shadow: 0 0 8px var(--glow-accent);
   }
 
   .nav-tab-key {
     font-size: 9px;
     font-family: var(--font-mono);
-    color: var(--fg-dim);
+    color: var(--fg-muted);
     padding: 1px 4px;
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-xs);
     line-height: 1;
-    background: none;
+    background: rgba(255, 255, 255, 0.02);
+    opacity: 0.8;
   }
 
   .nav-actions {
@@ -570,16 +592,18 @@
   .nav-actions .btn {
     font-family: var(--font-mono);
     font-size: 11px;
-    color: var(--fg-muted);
-    padding: 4px 8px;
+    color: var(--fg-secondary);
+    padding: 6px 10px;
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
-    transition: color var(--transition-fast), border-color var(--transition-fast);
+    background: rgba(255, 255, 255, 0.02);
+    transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
   }
 
   .nav-actions .btn:hover {
-    color: var(--fg-secondary);
+    color: var(--fg-primary);
     border-color: var(--border-focus);
+    background: rgba(255, 255, 255, 0.04);
   }
 
   /* ═══ Panel Area ════════════════════════════════════════════ */
@@ -589,6 +613,10 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    padding: 0 var(--content-gutter) var(--content-gutter);
+    background:
+      radial-gradient(circle at top left, rgba(0, 200, 255, 0.04), transparent 26%),
+      radial-gradient(circle at top right, rgba(255, 107, 53, 0.05), transparent 22%);
   }
 
   /* ═══ Status Bar ════════════════════════════════════════════ */
@@ -598,9 +626,9 @@
     align-items: center;
     justify-content: space-between;
     height: var(--statusbar-height);
-    background: var(--bg-secondary);
+    background: color-mix(in srgb, var(--bg-secondary) 92%, black 8%);
     border-top: 1px solid var(--border);
-    padding: 0 var(--space-4);
+    padding: 0 max(var(--content-gutter), var(--space-4));
     flex-shrink: 0;
     z-index: 100;
   }
@@ -631,8 +659,8 @@
   }
 
   .status-text {
-    font-size: 11px;
-    color: var(--fg-muted);
+    font-size: var(--text-xs);
+    color: var(--fg-secondary);
     font-family: var(--font-mono);
   }
 
@@ -764,7 +792,6 @@
 
   @media (max-width: 768px) {
     .nav-tabs {
-      overflow-x: auto;
       scrollbar-width: none;
       -webkit-overflow-scrolling: touch;
       justify-content: flex-start;
@@ -809,6 +836,11 @@
     .status-text {
       font-size: var(--text-xs);
     }
+
+    .panel-area {
+      padding: 0 var(--space-2) var(--space-2);
+    }
+
     .help-grid {
       grid-template-columns: 1fr;
     }

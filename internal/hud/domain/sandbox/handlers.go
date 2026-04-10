@@ -13,7 +13,13 @@ import (
 func (d *SandboxDomain) handleSandbox(w http.ResponseWriter, _ *http.Request) {
 	snap := d.deps.SandboxSnapshot()
 	if snap == nil {
-		d.deps.WriteJSON(w, http.StatusOK, map[string]any{"available": false})
+		d.deps.WriteJSON(w, http.StatusOK, map[string]any{
+			"available":     false,
+			"status":        "offline",
+			"reason":        "mcp-devbox is not running or not connected to the daemon",
+			"hint":          "Start the devbox service, then return to Labs to provision or inspect sandboxes.",
+			"start_command": "loom start devbox",
+		})
 		return
 	}
 	snap["available"] = true
@@ -79,10 +85,20 @@ func (d *SandboxDomain) handleSandboxStart(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if parsed == nil {
-		d.deps.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+		d.deps.WriteJSON(w, http.StatusOK, map[string]any{
+			"ok":      true,
+			"project": body.Project,
+			"message": "sandbox start requested",
+		})
 		return
 	}
 	parsed["ok"] = true
+	if _, ok := parsed["project"]; !ok {
+		parsed["project"] = body.Project
+	}
+	if _, ok := parsed["message"]; !ok {
+		parsed["message"] = "sandbox start requested"
+	}
 	d.deps.WriteJSON(w, http.StatusOK, parsed)
 }
 
@@ -105,5 +121,9 @@ func (d *SandboxDomain) handleSandboxStop(w http.ResponseWriter, r *http.Request
 		d.deps.WriteError(w, http.StatusBadGateway, "failed to stop sandbox", err)
 		return
 	}
-	d.deps.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "project": body.Project})
+	d.deps.WriteJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"project": body.Project,
+		"message": "sandbox stop requested",
+	})
 }
