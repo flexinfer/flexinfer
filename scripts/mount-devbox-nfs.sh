@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# mount-devbox-nfs.sh — Mount nfs-media-v2 NFS on macOS, visible in Finder.
+# mount-devbox-nfs.sh — Mount the devbox NAS export on macOS, visible in Finder.
 # Usage: sudo ./scripts/mount-devbox-nfs.sh
 set -euo pipefail
 
-NFS_SERVER="192.168.50.217"
-NFS_PATH="/srv/nfs/nas-media-bulk"
+NFS_SERVER="192.168.50.211"
+NFS_PATH="/srv/nas/pilot3/nas-media-bulk"
 MOUNT_POINT="/Volumes/nas-media-bulk"
 PLIST="/Library/LaunchDaemons/com.loom.mount-nfs.plist"
 

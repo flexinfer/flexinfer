@@ -106,10 +106,24 @@ func (d *SpawnDomain) handleAgentSpawnConfig(w http.ResponseWriter, r *http.Requ
 	var projects []projectInfo
 	spawner := d.deps.Spawner()
 	configured := spawner != nil
+	activeSpawnCount := 0
+	reason := ""
+	hint := ""
 	if spawner != nil {
 		for _, p := range spawner.Projects() {
 			projects = append(projects, projectInfo{Name: p, Path: "services/" + p})
 		}
+		for _, s := range spawner.ListSpawns() {
+			if s == nil {
+				continue
+			}
+			if s.Status == pkgspawn.StatusPending || s.Status == pkgspawn.StatusBuilding || s.Status == pkgspawn.StatusRunning {
+				activeSpawnCount++
+			}
+		}
+	} else {
+		reason = "Spawn orchestrator not configured"
+		hint = "Enable the HUD spawn backend and verify devbox-backed pod startup before launching agents."
 	}
 
 	d.deps.WriteJSON(w, http.StatusOK, map[string]any{
@@ -124,8 +138,15 @@ func (d *SpawnDomain) handleAgentSpawnConfig(w http.ResponseWriter, r *http.Requ
 			TimeoutMinutes: 60,
 		},
 		"notes": map[string]any{
-			"auth_required":        true,
-			"multi_turn_supported": true,
+			"auth_required":           true,
+			"multi_turn_supported":    true,
+			"follow_up_supported":     true,
+			"interrupt_supported":     true,
+			"telemetry_requires_auth": true,
+			"project_count":           len(projects),
+			"active_spawn_count":      activeSpawnCount,
+			"reason":                  reason,
+			"hint":                    hint,
 		},
 	})
 }

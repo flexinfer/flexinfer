@@ -84,6 +84,13 @@ export interface SpawnConfig {
   notes?: {
     auth_required?: boolean;
     multi_turn_supported?: boolean;
+    follow_up_supported?: boolean;
+    interrupt_supported?: boolean;
+    telemetry_requires_auth?: boolean;
+    project_count?: number;
+    active_spawn_count?: number;
+    reason?: string;
+    hint?: string;
   };
 }
 

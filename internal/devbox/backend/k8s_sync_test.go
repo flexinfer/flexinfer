@@ -27,9 +27,9 @@ func TestAddDirToTar(t *testing.T) {
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
 
-	excludes := map[string]bool{
-		".git":         true,
-		"node_modules": true,
+	excludes := []string{
+		".git",
+		"node_modules",
 	}
 
 	var totalBytes int64
@@ -74,7 +74,7 @@ func TestAddDirToTar_MaxSizeExceeded(t *testing.T) {
 	tw := tar.NewWriter(gw)
 
 	var totalBytes int64
-	err := addDirToTar(tw, dir, "/workspace", map[string]bool{}, &totalBytes, 512)
+	err := addDirToTar(tw, dir, "/workspace", nil, &totalBytes, 512)
 	if err == nil {
 		t.Error("expected error for exceeding max size")
 	}
@@ -97,7 +97,7 @@ func TestAddDirToTar_MultipleSourceDirs(t *testing.T) {
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
 
-	excludes := map[string]bool{".git": true}
+	excludes := []string{".git"}
 	var totalBytes int64
 
 	dirs := []SyncDir{

@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,25 +22,36 @@ import (
 // defaultSyncExcludes are patterns excluded from tar-pipe workspace sync.
 // These match the exclude patterns from scripts/devbox-sync.sh.
 var defaultSyncExcludes = []string{
+	"._*",
 	".git",
 	"node_modules",
+	".devbox-build",
 	"vendor",
+	".direnv",
 	".build",
 	"__pycache__",
 	".cache",
 	".venv",
+	".mypy_cache",
+	".pytest_cache",
+	".ruff_cache",
 	".DS_Store",
 	".pyc",
 	"bin",
 	".loom",
+	".opencode",
 	".worktrees",
 	".swiftpm",
 	"xcuserdata",
 	"dist",
+	".next",
 	".sandbox-policy.json",
+	"coverage.out",
+	"gosec-report.json",
 	// Go/lint build caches that some projects keep project-local.
 	".gocache",
 	".go",
+	".go-build",
 	".gotmp",
 	".golangci-lint-cache",
 	// Temporary/generated directories.
@@ -66,13 +78,7 @@ func (k *K8sBackend) SyncWorkspace(ctx context.Context, podName string, dirs []S
 		maxBytes = MaxSyncBytes
 	}
 
-	excludes := make(map[string]bool, len(defaultSyncExcludes)+len(extraExcludes))
-	for _, e := range defaultSyncExcludes {
-		excludes[e] = true
-	}
-	for _, e := range extraExcludes {
-		excludes[e] = true
-	}
+	excludes := slices.Concat(defaultSyncExcludes, extraExcludes)
 
 	// Create tar.gz in memory.
 	var buf bytes.Buffer
@@ -136,7 +142,7 @@ func (k *K8sBackend) pipeTarIntoPod(ctx context.Context, podName string, payload
 
 // addDirToTar walks localDir and adds files to the tar writer with paths
 // rooted at remotePath. Skips excluded patterns and enforces a max size.
-func addDirToTar(tw *tar.Writer, localDir, remotePath string, excludes map[string]bool, totalBytes *int64, maxBytes int64) error {
+func addDirToTar(tw *tar.Writer, localDir, remotePath string, excludes []string, totalBytes *int64, maxBytes int64) error {
 	return filepath.WalkDir(localDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable entries
@@ -144,7 +150,7 @@ func addDirToTar(tw *tar.Writer, localDir, remotePath string, excludes map[strin
 
 		// Check if this entry matches an exclude pattern.
 		base := d.Name()
-		if excludes[base] {
+		if matchesExclude(base, excludes) {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -208,6 +214,21 @@ func addDirToTar(tw *tar.Writer, localDir, remotePath string, excludes map[strin
 		_, err = io.Copy(tw, f)
 		return err
 	})
+}
+
+func matchesExclude(base string, excludes []string) bool {
+	for _, pattern := range excludes {
+		if strings.ContainsAny(pattern, "*?[") {
+			if ok, err := filepath.Match(pattern, base); err == nil && ok {
+				return true
+			}
+			continue
+		}
+		if base == pattern {
+			return true
+		}
+	}
+	return false
 }
 
 // isBinaryExcluded returns true for file extensions that indicate compiled

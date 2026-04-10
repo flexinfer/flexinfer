@@ -173,7 +173,13 @@ func TestSpawnDomainNilSpawner(t *testing.T) {
 }
 
 func TestHandleAgentSpawnConfig_IncludesProjectsAndNotes(t *testing.T) {
-	spawner := &mockSpawner{projects: []string{"loom-core", "platform/gitops"}}
+	spawner := &mockSpawner{
+		projects: []string{"loom-core", "platform/gitops"},
+		spawns: []*pkgspawn.State{
+			{SpawnID: "spawn-1", AgentID: "agent-1", Status: pkgspawn.StatusRunning},
+			{SpawnID: "spawn-2", AgentID: "agent-2", Status: pkgspawn.StatusCompleted},
+		},
+	}
 	d := New(&mockDeps{spawner: spawner})
 
 	req := httptest.NewRequest("GET", "/api/agent/spawn/config", nil)
@@ -201,6 +207,48 @@ func TestHandleAgentSpawnConfig_IncludesProjectsAndNotes(t *testing.T) {
 	}
 	if got, _ := notes["multi_turn_supported"].(bool); !got {
 		t.Errorf("expected multi_turn_supported=true, got %v", notes["multi_turn_supported"])
+	}
+	if got, _ := notes["follow_up_supported"].(bool); !got {
+		t.Errorf("expected follow_up_supported=true, got %v", notes["follow_up_supported"])
+	}
+	if got, _ := notes["interrupt_supported"].(bool); !got {
+		t.Errorf("expected interrupt_supported=true, got %v", notes["interrupt_supported"])
+	}
+	if got, _ := notes["telemetry_requires_auth"].(bool); !got {
+		t.Errorf("expected telemetry_requires_auth=true, got %v", notes["telemetry_requires_auth"])
+	}
+	if got, _ := notes["project_count"].(float64); got != 2 {
+		t.Errorf("expected project_count=2, got %v", notes["project_count"])
+	}
+	if got, _ := notes["active_spawn_count"].(float64); got != 1 {
+		t.Errorf("expected active_spawn_count=1, got %v", notes["active_spawn_count"])
+	}
+}
+
+func TestHandleAgentSpawnConfig_UnconfiguredIncludesReason(t *testing.T) {
+	d := New(&mockDeps{spawner: nil})
+
+	req := httptest.NewRequest("GET", "/api/agent/spawn/config", nil)
+	rec := httptest.NewRecorder()
+	d.handleAgentSpawnConfig(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	notes, ok := body["notes"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected notes map, got %T", body["notes"])
+	}
+	if got, _ := notes["reason"].(string); got == "" {
+		t.Fatalf("expected unconfigured reason, got %v", notes["reason"])
+	}
+	if got, _ := notes["hint"].(string); got == "" {
+		t.Fatalf("expected unconfigured hint, got %v", notes["hint"])
 	}
 }
 

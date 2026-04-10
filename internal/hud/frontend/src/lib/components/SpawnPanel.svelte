@@ -150,13 +150,14 @@
         <span class="readiness-chip" class:ready={taskDescription.trim().length > 0}>Task</span>
         <span class="readiness-chip" class:ready={timeoutMinutes >= 5}>Timeout</span>
         <span class="readiness-chip" class:ready={hasAdminToken}>Token</span>
+        <span class="readiness-chip" class:ready={config?.notes?.follow_up_supported}>Follow-up</span>
         <span class="readiness-hint">
           {#if configLoading}
             Loading spawn config…
           {:else if !hasAdminToken}
             Admin token required for spawn control
           {:else if config && !config.configured}
-            Spawn orchestrator unavailable
+            {config.notes?.reason || 'Spawn orchestrator unavailable'}
           {:else if formReady}
             Ready to launch
           {:else}
@@ -167,7 +168,10 @@
 
       {#if config && !config.configured}
         <div class="integration-banner">
-          Spawn orchestration is not configured on this HUD instance yet. Launches stay disabled until the backend advertises a working spawn service.
+          {config.notes?.reason || 'Spawn orchestration is not configured on this HUD instance yet.'}
+          {#if config.notes?.hint}
+            {` ${config.notes.hint}`}
+          {/if}
         </div>
       {:else if configError}
         <div class="integration-banner integration-banner-muted">
@@ -279,9 +283,9 @@
         <div class="side-label">Backend Integration</div>
         <div class="side-copy">
           {#if config?.projects?.length}
-            {config.projects.length} project target{config.projects.length === 1 ? '' : 's'} advertised by the backend.
+            {config.notes?.project_count ?? config.projects.length} project target{(config.notes?.project_count ?? config.projects.length) === 1 ? '' : 's'} advertised by the backend.
           {:else if config && !config.configured}
-            The HUD cannot currently reach a spawn orchestrator.
+            {config.notes?.reason || 'The HUD cannot currently reach a spawn orchestrator.'}
           {:else}
             Waiting for backend capability data.
           {/if}
@@ -289,6 +293,12 @@
         <div class="tip-list">
           <div class="tip-item">Backend defaults hydrate the form when configuration loads.</div>
           <div class="tip-item">Live cost and token telemetry stream in over SSE instead of waiting for the next poll.</div>
+          {#if config?.notes?.active_spawn_count}
+            <div class="tip-item">{config.notes.active_spawn_count} active spawn{config.notes.active_spawn_count === 1 ? '' : 's'} currently tracked by the backend.</div>
+          {/if}
+          {#if config?.notes?.telemetry_requires_auth}
+            <div class="tip-item">Protected telemetry and follow-up controls stay behind the Labs admin token.</div>
+          {/if}
         </div>
       </div>
 
