@@ -58,7 +58,7 @@ spec:
       {{- end }}
       containers:
         - name: manager
-          image: "{{ $controllerImage.repository }}:{{ $controllerImage.tag | default .Chart.AppVersion }}"
+          image: {{ include "flexinfer.imageRef" (merge (dict "tag" (.Chart.AppVersion | toString)) $controllerImage) | quote }}
           imagePullPolicy: {{ include "flexinfer.imagePullPolicy" $controllerImage }}
           command:
             - /manager

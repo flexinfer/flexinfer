@@ -99,6 +99,20 @@ Create the name of the service account to use
 {{- end -}}
 
 {{/*
+Resolve an image reference for a given image config block.
+If digest is set, prefer repository@digest. Otherwise use repository:tag.
+Usage: {{ include "flexinfer.imageRef" .Values.controller.image }}
+*/}}
+{{- define "flexinfer.imageRef" -}}
+{{- $repository := required "image.repository is required" .repository -}}
+{{- if .digest -}}
+  {{- printf "%s@%s" $repository .digest -}}
+{{- else -}}
+  {{- printf "%s:%s" $repository (.tag | default "latest") -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Resolve imagePullPolicy for a given image config block.
 If pullPolicy is explicitly set, use it. Otherwise auto-detect:
   - "Always" for mutable tags (master, latest, empty)
@@ -109,11 +123,15 @@ Usage: {{ include "flexinfer.imagePullPolicy" .Values.controller.image }}
 {{- if .pullPolicy -}}
   {{- .pullPolicy -}}
 {{- else -}}
+  {{- if .digest -}}
+    IfNotPresent
+  {{- else -}}
   {{- $tag := .tag | default "" -}}
   {{- if or (eq $tag "") (eq $tag "latest") (eq $tag "master") (eq $tag "main") -}}
     Always
   {{- else -}}
     IfNotPresent
+  {{- end -}}
   {{- end -}}
 {{- end -}}
 {{- end -}}

@@ -40,6 +40,9 @@ controller:
   replicas: 1
   image:
     repository: ghcr.io/flexinfer/flexinfer-controller
+    # Optional immutable digest. When set, Helm renders repository@digest and
+    # pullPolicy defaults to IfNotPresent.
+    digest: ""
     # pullPolicy auto-detected from tag: Always for mutable (latest/master), IfNotPresent for SHA tags.
     # Override with an explicit pullPolicy to disable auto-detection.
     tag: "latest"
