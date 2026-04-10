@@ -7,6 +7,7 @@
   import BudgetBar from '../widgets/BudgetBar.svelte';
   import EmptyState from './shared/EmptyState.svelte';
   import LabsAccessBar from './shared/LabsAccessBar.svelte';
+  import ConfirmDialog from './shared/ConfirmDialog.svelte';
 
   $effect(() => {
     spawnStore.startPolling(10000);
@@ -90,6 +91,8 @@
       multiTurn = false;
     }
   }
+
+  let stopConfirmId = $state<string | null>(null);
 
   async function handleStop(spawnId: string) {
     await spawnStore.stop(spawnId);
@@ -414,7 +417,7 @@
                     disabled={!hasAdminToken}
                     onclick={(e) => {
                       e.stopPropagation();
-                      handleStop(spawn.spawn_id);
+                      stopConfirmId = spawn.spawn_id;
                     }}
                   >Stop</button>
                 {/if}
@@ -446,6 +449,7 @@
 
             <div class="spawn-task">{spawn.request.task_description}</div>
             <div class="spawn-meta">
+              <span class="spawn-agent-type">{spawn.request.agent_type}</span>
               <span class="spawn-agent-id">{spawn.agent_id}</span>
               {#if spawn.error}
                 <span class="spawn-error">{spawn.error}</span>
@@ -456,6 +460,16 @@
       </div>
     {/if}
   </section>
+
+  <ConfirmDialog
+    open={stopConfirmId !== null}
+    title="Stop spawn?"
+    message="This will terminate the running agent. The spawn cannot be resumed after stopping."
+    confirmLabel="Stop"
+    variant="danger"
+    onConfirm={() => { const id = stopConfirmId; stopConfirmId = null; if (id) handleStop(id); }}
+    onCancel={() => (stopConfirmId = null)}
+  />
 </div>
 
 <style>
@@ -1067,6 +1081,18 @@
 
   .spawn-error {
     color: var(--error);
+  }
+
+  .spawn-agent-type {
+    padding: 2px 6px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border-subtle);
+    background: rgba(255, 255, 255, 0.03);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-muted);
   }
 
   .spawn-agent-id {
