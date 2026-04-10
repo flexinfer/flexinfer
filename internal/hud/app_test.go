@@ -2016,6 +2016,9 @@ func TestHandler_MobilePolicy_AllowlistDenylistMatrix(t *testing.T) {
 		{"DELETE", "/api/memory/mem-1"},
 		{"POST", "/api/sandbox/start"},
 		{"POST", "/api/sandbox/stop"},
+		{"GET", "/api/sandbox/capabilities"},
+		{"POST", "/api/sandbox/exec"},
+		{"GET", "/api/sandbox/exec/exec-123"},
 		{"DELETE", "/api/graph/entities/ent-1"},
 		{"DELETE", "/api/graph/relations/rel-1"},
 		// Read-only HUD endpoints (still denied — mobile token is restricted to /api/mobile/v1).

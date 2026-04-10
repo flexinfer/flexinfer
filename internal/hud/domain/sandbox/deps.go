@@ -13,9 +13,13 @@ import (
 type Deps interface {
 	WriteJSON(w http.ResponseWriter, status int, v any)
 	WriteError(w http.ResponseWriter, status int, msg string, err error)
+	RequireAdminToken(w http.ResponseWriter, r *http.Request) bool
+	BroadcastAgentEvent(eventType string, payload any)
 	SandboxSnapshot() map[string]any
 	CacheGet(key string) (any, bool)
 	CacheSet(key string, value any, ttl time.Duration)
 	DoSandboxStart(project, agentID string) (map[string]any, error)
 	DoSandboxStop(project string) error
+	DoSandboxExecAsync(project, command, timeout, agentID string) (map[string]any, error)
+	DoSandboxExecPoll(execID string) (map[string]any, error)
 }

@@ -97,7 +97,7 @@ class EventStore {
       // Granular agent lifecycle events (real-time deltas, <100ms latency).
       'agent.session.start', 'agent.session.end', 'agent.session.reaped', 'agent.session.bootstrap',
       'agent.heartbeat', 'agent.task.update', 'agent.task.dispatched',
-      'agent.spawn.running', 'agent.spawn.completed', 'agent.spawn.failed', 'agent.spawn.stopped',
+      'agent.spawn.building', 'agent.spawn.running', 'agent.spawn.completed', 'agent.spawn.failed', 'agent.spawn.stopped',
       'agent.spawn.telemetry.delta',
       // Proactive notification events.
       'hud.conflict', 'hud.approval_needed', 'hud.claim.released',

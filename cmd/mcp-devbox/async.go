@@ -133,6 +133,10 @@ func (m *manager) handleExecAsync(ctx context.Context, args map[string]any) (*mc
 		cancel:    cancel,
 	}
 	m.asyncExecs.add(ae)
+	if m.events != nil {
+		m.events.Emit(ctx, "exec", projectName,
+			fmt.Sprintf("queued exec_id=%s cmd=%s", execID, command))
+	}
 
 	// Touch before exec so reaper won't kill the container
 	_ = m.store.TouchLastUsed(key)
@@ -161,9 +165,17 @@ func (m *manager) handleExecAsync(ctx context.Context, args map[string]any) (*mc
 		if err != nil {
 			ae.Status = "failed"
 			ae.Error = err.Error()
+			if m.events != nil {
+				m.events.Emit(context.Background(), "exec", projectName,
+					fmt.Sprintf("failed exec_id=%s cmd=%s error=%s", execID, command, err))
+			}
 		} else {
 			ae.Status = "completed"
 			ae.Result = result
+			if m.events != nil {
+				m.events.Emit(context.Background(), "exec", projectName,
+					fmt.Sprintf("completed exec_id=%s exit=%d duration=%dms cmd=%s", execID, result.ExitCode, result.DurationMs, command))
+			}
 		}
 	}()
 

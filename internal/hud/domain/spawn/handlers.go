@@ -159,7 +159,8 @@ func (d *SpawnDomain) handleAgentSpawnStop(w http.ResponseWriter, r *http.Reques
 // controlMessageRequest is the JSON body accepted by the admin message
 // endpoint. `text` is required for type=message and ignored otherwise.
 type controlMessageRequest struct {
-	Text string `json:"text"`
+	Text    string `json:"text"`
+	Message string `json:"message"`
 }
 
 // handleAgentSpawnMessage handles POST /api/agent/spawn/{spawn_id}/message --
@@ -187,10 +188,18 @@ func (d *SpawnDomain) handleAgentSpawnMessage(w http.ResponseWriter, r *http.Req
 		d.deps.WriteError(w, http.StatusBadRequest, "invalid request body", err)
 		return
 	}
+	text := body.Text
+	if text == "" {
+		text = body.Message
+	}
+	if text == "" {
+		d.deps.WriteError(w, http.StatusBadRequest, "text required", nil)
+		return
+	}
 
 	cmd := pkgspawn.ControlCommand{
 		Type: pkgspawn.ControlCommandMessage,
-		Text: body.Text,
+		Text: text,
 	}
 	if err := spawner.SendControlMessage(r.Context(), spawnID, cmd); err != nil {
 		writeControlError(d, w, err)

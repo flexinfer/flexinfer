@@ -16,15 +16,26 @@ type mockDeps struct {
 	startResult   map[string]any
 	startErr      error
 	stopErr       error
+	execResult    map[string]any
+	execErr       error
+	pollResult    map[string]any
+	pollErr       error
+	allowAdmin    bool
 	lastJSON      any
 	lastJSONCode  int
 	lastErrMsg    string
 	lastErrCode   int
 	cacheSetCalls int
+	broadcasts    []sandboxBroadcast
+}
+
+type sandboxBroadcast struct {
+	eventType string
+	payload   any
 }
 
 func newMockDeps() *mockDeps {
-	return &mockDeps{cacheData: make(map[string]any)}
+	return &mockDeps{cacheData: make(map[string]any), allowAdmin: true}
 }
 
 func (m *mockDeps) WriteJSON(w http.ResponseWriter, status int, v any) {
@@ -41,6 +52,18 @@ func (m *mockDeps) WriteError(w http.ResponseWriter, status int, msg string, _ e
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg}) //nolint:errcheck // test helper; assertion failures catch issues
+}
+
+func (m *mockDeps) RequireAdminToken(w http.ResponseWriter, _ *http.Request) bool {
+	if m.allowAdmin {
+		return true
+	}
+	w.WriteHeader(http.StatusUnauthorized)
+	return false
+}
+
+func (m *mockDeps) BroadcastAgentEvent(eventType string, payload any) {
+	m.broadcasts = append(m.broadcasts, sandboxBroadcast{eventType: eventType, payload: payload})
 }
 
 func (m *mockDeps) SandboxSnapshot() map[string]any {
@@ -63,6 +86,14 @@ func (m *mockDeps) DoSandboxStart(_, _ string) (map[string]any, error) {
 
 func (m *mockDeps) DoSandboxStop(_ string) error {
 	return m.stopErr
+}
+
+func (m *mockDeps) DoSandboxExecAsync(_, _, _, _ string) (map[string]any, error) {
+	return m.execResult, m.execErr
+}
+
+func (m *mockDeps) DoSandboxExecPoll(_ string) (map[string]any, error) {
+	return m.pollResult, m.pollErr
 }
 
 func TestSandboxDomainName(t *testing.T) {
@@ -91,7 +122,7 @@ func TestSandboxDomainRouteRegistration(t *testing.T) {
 
 func TestHandleSandbox_Available(t *testing.T) {
 	deps := newMockDeps()
-	deps.snapshot = map[string]any{"status": "running"}
+	deps.snapshot = map[string]any{"status": "running", "backend": "k8s", "projects": []any{"loom-core"}}
 	d := New(deps)
 
 	req := httptest.NewRequest("GET", "/api/sandbox", nil)
@@ -108,6 +139,52 @@ func TestHandleSandbox_Available(t *testing.T) {
 	}
 	if body["status"] != "running" {
 		t.Errorf("expected status=running, got %v", body["status"])
+	}
+}
+
+func TestHandleSandboxCapabilities_Available(t *testing.T) {
+	deps := newMockDeps()
+	deps.snapshot = map[string]any{"status": "running", "backend": "k8s", "projects": []any{"loom-core", "platform/gitops"}}
+	d := New(deps)
+
+	req := httptest.NewRequest("GET", "/api/sandbox/capabilities", nil)
+	rec := httptest.NewRecorder()
+	d.handleSandboxCapabilities(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var body map[string]any
+	json.NewDecoder(rec.Body).Decode(&body) //nolint:errcheck // test helper; assertion failures catch issues
+	if body["available"] != true {
+		t.Fatalf("expected available=true, got %v", body["available"])
+	}
+	if body["backend"] != "k8s" {
+		t.Fatalf("expected backend=k8s, got %v", body["backend"])
+	}
+	if body["auth_required"] != true {
+		t.Fatalf("expected auth_required=true, got %v", body["auth_required"])
+	}
+	if got, _ := body["project_count"].(float64); got != 2 {
+		t.Fatalf("expected project_count=2, got %v", body["project_count"])
+	}
+}
+
+func TestHandleSandboxCapabilities_Unavailable(t *testing.T) {
+	deps := newMockDeps()
+	d := New(deps)
+
+	req := httptest.NewRequest("GET", "/api/sandbox/capabilities", nil)
+	rec := httptest.NewRecorder()
+	d.handleSandboxCapabilities(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var body map[string]any
+	json.NewDecoder(rec.Body).Decode(&body) //nolint:errcheck // test helper; assertion failures catch issues
+	if body["available"] != false {
+		t.Fatalf("expected available=false, got %v", body["available"])
 	}
 }
 
@@ -204,6 +281,12 @@ func TestHandleSandboxStart_Success(t *testing.T) {
 	if resp["message"] != "sandbox start requested" {
 		t.Errorf("expected start message, got %v", resp["message"])
 	}
+	if len(deps.broadcasts) != 1 {
+		t.Fatalf("expected 1 sandbox event broadcast, got %d", len(deps.broadcasts))
+	}
+	if deps.broadcasts[0].eventType != "hud.sandbox.event" {
+		t.Fatalf("expected hud.sandbox.event broadcast, got %q", deps.broadcasts[0].eventType)
+	}
 }
 
 func TestHandleSandboxStart_NilResult(t *testing.T) {
@@ -229,6 +312,23 @@ func TestHandleSandboxStart_NilResult(t *testing.T) {
 	}
 	if resp["message"] != "sandbox start requested" {
 		t.Errorf("expected start message, got %v", resp["message"])
+	}
+}
+
+func TestHandleSandboxStart_RequiresAdminToken(t *testing.T) {
+	deps := newMockDeps()
+	deps.allowAdmin = false
+	d := New(deps)
+
+	req := httptest.NewRequest("POST", "/api/sandbox/start", strings.NewReader(`{"project":"loom-core"}`))
+	rec := httptest.NewRecorder()
+	d.handleSandboxStart(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	if len(deps.broadcasts) != 0 {
+		t.Fatalf("expected no broadcasts when unauthorized, got %d", len(deps.broadcasts))
 	}
 }
 
@@ -297,6 +397,29 @@ func TestHandleSandboxStop_Success(t *testing.T) {
 	if resp["message"] != "sandbox stop requested" {
 		t.Errorf("expected stop message, got %v", resp["message"])
 	}
+	if len(deps.broadcasts) != 1 {
+		t.Fatalf("expected 1 sandbox event broadcast, got %d", len(deps.broadcasts))
+	}
+	if deps.broadcasts[0].eventType != "hud.sandbox.event" {
+		t.Fatalf("expected hud.sandbox.event broadcast, got %q", deps.broadcasts[0].eventType)
+	}
+}
+
+func TestHandleSandboxStop_RequiresAdminToken(t *testing.T) {
+	deps := newMockDeps()
+	deps.allowAdmin = false
+	d := New(deps)
+
+	req := httptest.NewRequest("POST", "/api/sandbox/stop", strings.NewReader(`{"project":"loom-core"}`))
+	rec := httptest.NewRecorder()
+	d.handleSandboxStop(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	if len(deps.broadcasts) != 0 {
+		t.Fatalf("expected no broadcasts when unauthorized, got %d", len(deps.broadcasts))
+	}
 }
 
 func TestHandleSandboxStop_MissingProject(t *testing.T) {
@@ -338,5 +461,104 @@ func TestHandleSandboxStop_InvalidJSON(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleSandboxExec_Success(t *testing.T) {
+	deps := newMockDeps()
+	deps.execResult = map[string]any{
+		"exec_id": "exec-123",
+		"status":  "running",
+		"project": "loom-core",
+		"command": "make test",
+	}
+	d := New(deps)
+
+	req := httptest.NewRequest("POST", "/api/sandbox/exec", strings.NewReader(`{"project":"loom-core","command":"make test","timeout":"15m"}`))
+	rec := httptest.NewRecorder()
+	d.handleSandboxExec(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", rec.Code)
+	}
+	var body map[string]any
+	json.NewDecoder(rec.Body).Decode(&body) //nolint:errcheck // test helper; assertion failures catch issues
+	if body["exec_id"] != "exec-123" {
+		t.Fatalf("expected exec_id=exec-123, got %v", body["exec_id"])
+	}
+	if body["ok"] != true {
+		t.Fatalf("expected ok=true, got %v", body["ok"])
+	}
+	if len(deps.broadcasts) != 1 {
+		t.Fatalf("expected 1 broadcast, got %d", len(deps.broadcasts))
+	}
+}
+
+func TestHandleSandboxExec_RequiresAdminToken(t *testing.T) {
+	deps := newMockDeps()
+	deps.allowAdmin = false
+	d := New(deps)
+
+	req := httptest.NewRequest("POST", "/api/sandbox/exec", strings.NewReader(`{"project":"loom-core","command":"make test"}`))
+	rec := httptest.NewRecorder()
+	d.handleSandboxExec(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+}
+
+func TestHandleSandboxExec_Validation(t *testing.T) {
+	deps := newMockDeps()
+	d := New(deps)
+
+	req := httptest.NewRequest("POST", "/api/sandbox/exec", strings.NewReader(`{"project":"loom-core"}`))
+	rec := httptest.NewRecorder()
+	d.handleSandboxExec(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleSandboxExecPoll_Success(t *testing.T) {
+	deps := newMockDeps()
+	deps.pollResult = map[string]any{
+		"exec_id":     "exec-123",
+		"status":      "completed",
+		"project":     "loom-core",
+		"command":     "make test",
+		"exit_code":   0,
+		"stdout_tail": "ok",
+	}
+	d := New(deps)
+
+	req := httptest.NewRequest("GET", "/api/sandbox/exec/exec-123", nil)
+	req.SetPathValue("exec_id", "exec-123")
+	rec := httptest.NewRecorder()
+	d.handleSandboxExecPoll(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var body map[string]any
+	json.NewDecoder(rec.Body).Decode(&body) //nolint:errcheck // test helper; assertion failures catch issues
+	if body["status"] != "completed" {
+		t.Fatalf("expected completed status, got %v", body["status"])
+	}
+}
+
+func TestHandleSandboxExecPoll_RequiresAdminToken(t *testing.T) {
+	deps := newMockDeps()
+	deps.allowAdmin = false
+	d := New(deps)
+
+	req := httptest.NewRequest("GET", "/api/sandbox/exec/exec-123", nil)
+	req.SetPathValue("exec_id", "exec-123")
+	rec := httptest.NewRecorder()
+	d.handleSandboxExecPoll(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
 	}
 }

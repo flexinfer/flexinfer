@@ -1,8 +1,10 @@
 <script>
   import { sandboxStore } from '../stores/sandbox.svelte.ts';
+  import { labsAuthStore } from '../stores/labsAuth.svelte.ts';
   import { formatTime } from '../utils/format.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import EmptyState from './shared/EmptyState.svelte';
+  import LabsAccessBar from './shared/LabsAccessBar.svelte';
 
   $effect(() => {
     sandboxStore.startPolling(15000);
@@ -19,15 +21,38 @@
   let totalExecs = $derived(sandboxStore.totalExecs);
   let totalBuilds = $derived(sandboxStore.totalBuilds);
   let policy = $derived(sandboxStore.policy);
+  let capabilities = $derived(sandboxStore.capabilities);
+  let capabilitiesLoading = $derived(sandboxStore.capabilitiesLoading);
+  let capabilitiesError = $derived(sandboxStore.capabilitiesError);
+  let execRuns = $derived(sandboxStore.execRuns);
+  let activeExecs = $derived(sandboxStore.activeExecs);
   let error = $derived(sandboxStore.error);
   let lastAction = $derived(sandboxStore.lastAction);
   let lastUpdated = $derived(sandboxStore.lastUpdated);
   let latestEvent = $derived(events[0] ?? null);
+  let hasAdminToken = $derived(labsAuthStore.hasToken);
   let offlineReason = $derived(summary?.reason ?? 'mcp-devbox is not running or not connected to the daemon.');
   let offlineHint = $derived(summary?.hint ?? 'Start the devbox service, then return to Labs to provision or inspect sandboxes.');
   let offlineCommand = $derived(summary?.start_command ?? 'loom start devbox');
   let startProject = $state('');
   let startSubmitting = $state(false);
+  let execProject = $state('');
+  let execCommand = $state('');
+  let execTimeout = $state('10m');
+  let execSubmitting = $state(false);
+
+  $effect(() => {
+    if (!startProject && projects.length === 1) {
+      startProject = projects[0];
+    }
+    if (!execProject) {
+      if (startProject.trim()) {
+        execProject = startProject.trim();
+      } else if (projects.length === 1) {
+        execProject = projects[0];
+      }
+    }
+  });
 
   function formatUptime(seconds) {
     if (!seconds || seconds <= 0) return '---';
@@ -51,6 +76,24 @@
     return formatTime(ts);
   }
 
+  function formatExecDuration(ms) {
+    if (!ms || ms <= 0) return 'pending';
+    if (ms < 1000) return `${ms}ms`;
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+    return `${seconds}s`;
+  }
+
+  function execStatusTone(status) {
+    switch (status) {
+      case 'running': return 'info';
+      case 'completed': return 'success';
+      case 'failed': return 'error';
+      default: return 'muted';
+    }
+  }
+
   async function handleStartSandbox() {
     const project = startProject.trim();
     if (!project || startSubmitting) return;
@@ -68,9 +111,30 @@
       handleStartSandbox();
     }
   }
+
+  async function handleRunExec() {
+    const project = execProject.trim();
+    const command = execCommand.trim();
+    if (!project || !command || execSubmitting) return;
+    execSubmitting = true;
+    await sandboxStore.startExec(project, command, execTimeout.trim() || '10m');
+    if (!sandboxStore.error) {
+      execCommand = '';
+    }
+    execSubmitting = false;
+  }
+
+  function handleExecKeydown(event) {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      handleRunExec();
+    }
+  }
 </script>
 
 <div class="panel sandbox-panel">
+  <LabsAccessBar />
+
   {#if !available}
     <div class="unavailable-shell">
       <section class="unavailable-card">
@@ -138,6 +202,28 @@
       </div>
     </div>
 
+    <div class="capability-strip">
+      <span class="capability-chip" class:ready={capabilities?.available}>
+        {capabilities?.available ? 'Devbox live' : 'Devbox offline'}
+      </span>
+      <span class="capability-chip" class:ready={capabilities?.notes?.async_exec}>
+        Async exec
+      </span>
+      <span class="capability-chip" class:ready={hasAdminToken}>
+        {hasAdminToken ? 'Token loaded' : 'Token required'}
+      </span>
+      {#if capabilities?.backend}
+        <span class="capability-meta">backend {capabilities.backend}</span>
+      {/if}
+      {#if capabilitiesLoading}
+        <span class="capability-meta">checking capabilities…</span>
+      {:else if capabilitiesError}
+        <span class="capability-meta capability-error">{capabilitiesError}</span>
+      {:else if capabilities?.supported_actions?.length}
+        <span class="capability-meta">actions {capabilities.supported_actions.join(', ')}</span>
+      {/if}
+    </div>
+
     <div class="start-toolbar">
       <label class="start-form">
         <span class="start-label">Project</span>
@@ -151,7 +237,7 @@
       </label>
       <button
         class="action-btn action-start start-submit"
-        disabled={!startProject.trim() || startSubmitting}
+        disabled={!hasAdminToken || !startProject.trim() || startSubmitting}
         title="Start sandbox for project"
         onclick={handleStartSandbox}
       >
@@ -159,13 +245,66 @@
       </button>
     </div>
 
+    <div class="exec-toolbar">
+      <label class="start-form">
+        <span class="start-label">Exec Project</span>
+        <input
+          class="start-input"
+          type="text"
+          bind:value={execProject}
+          placeholder="loom-core"
+        />
+      </label>
+      <label class="start-form exec-command-form">
+        <span class="start-label">Command</span>
+        <input
+          class="start-input"
+          type="text"
+          bind:value={execCommand}
+          placeholder="make test-sandbox"
+          onkeydown={handleExecKeydown}
+        />
+      </label>
+      <label class="start-form exec-timeout-form">
+        <span class="start-label">Timeout</span>
+        <input
+          class="start-input"
+          type="text"
+          bind:value={execTimeout}
+          placeholder="10m"
+        />
+      </label>
+      <button
+        class="action-btn action-start exec-submit"
+        disabled={!hasAdminToken || !capabilities?.notes?.async_exec || !execProject.trim() || !execCommand.trim() || execSubmitting}
+        title="Run command in sandbox"
+        onclick={handleRunExec}
+      >
+        {execSubmitting ? 'Queueing…' : 'Run Command'}
+      </button>
+    </div>
+
+    <div class="exec-helper">
+      Uses `devbox_exec_async` with polling. Press <span class="text-mono">Cmd/Ctrl+Enter</span> in the command field to queue the run quickly.
+    </div>
+
     {#if lastAction}
       <div class="action-banner">
-        <span class="action-banner-kind">{lastAction.kind === 'start' ? 'Start' : 'Stop'}</span>
+        <span class="action-banner-kind">
+          {#if lastAction.kind === 'start'}
+            Start
+          {:else if lastAction.kind === 'stop'}
+            Stop
+          {:else}
+            Exec
+          {/if}
+        </span>
         <span class="action-banner-copy">
           {lastAction.project}: {lastAction.message}
           {#if lastAction.buildId}
             <strong>{lastAction.buildId}</strong>
+          {:else if lastAction.execId}
+            <strong>{lastAction.execId}</strong>
           {/if}
         </span>
       </div>
@@ -201,6 +340,7 @@
                 {/if}
                 <span class="project-actions">
                   <button class="action-btn action-stop" title="Stop sandbox"
+                    disabled={!hasAdminToken}
                     onclick={() => sandboxStore.stopSandbox(project)}>
                     {'\u25A0'}
                   </button>
@@ -232,6 +372,45 @@
       </div>
 
       <aside class="sandbox-rail">
+        <section class="rail-card">
+          <div class="section-title">Execution</div>
+          <div class="exec-run-summary">
+            <span class="exec-run-summary-value text-mono">{activeExecs.length}</span>
+            <span class="exec-run-summary-label">running now</span>
+          </div>
+          {#if execRuns.length === 0}
+            <div class="rail-empty">Queue a command above to exercise the async devbox path and inspect its output tail here.</div>
+          {:else}
+            <div class="exec-run-list">
+              {#each execRuns as run (run.exec_id)}
+                <article class="exec-run-card" class:is-running={run.status === 'running'}>
+                  <div class="exec-run-head">
+                    <span class="exec-run-status" data-tone={execStatusTone(run.status)}>{run.status}</span>
+                    <span class="exec-run-project text-mono">{run.project}</span>
+                    {#if run.exit_code !== undefined}
+                      <span class="exec-run-exit text-mono">exit {run.exit_code}</span>
+                    {/if}
+                  </div>
+                  <div class="exec-run-command text-mono">{run.command}</div>
+                  <div class="exec-run-meta text-mono">
+                    <span>{run.exec_id}</span>
+                    <span>{formatExecDuration(run.status === 'running' ? run.elapsed_ms : (run.duration_ms ?? run.elapsed_ms))}</span>
+                  </div>
+                  {#if run.stdout_tail}
+                    <pre class="exec-run-tail">{run.stdout_tail}</pre>
+                  {/if}
+                  {#if run.stderr_tail}
+                    <pre class="exec-run-tail exec-run-tail-error">{run.stderr_tail}</pre>
+                  {/if}
+                  {#if run.error}
+                    <div class="exec-run-error">{run.error}</div>
+                  {/if}
+                </article>
+              {/each}
+            </div>
+          {/if}
+        </section>
+
         <section class="rail-card">
           <div class="section-title">Sandbox Summary</div>
           <div class="summary-grid">
@@ -352,6 +531,14 @@
     margin-bottom: 14px;
   }
 
+  .exec-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 180px) minmax(0, 1fr) 120px 140px;
+    gap: 12px;
+    align-items: end;
+    padding-bottom: 8px;
+  }
+
   .start-form {
     display: flex;
     flex-direction: column;
@@ -388,6 +575,62 @@
   .start-submit:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .exec-submit:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .exec-command-form {
+    min-width: 0;
+  }
+
+  .exec-timeout-form {
+    min-width: 0;
+  }
+
+  .exec-helper {
+    margin-bottom: 14px;
+    font-size: var(--text-sm);
+    color: var(--fg-muted);
+    line-height: 1.5;
+  }
+
+  .capability-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 0 12px;
+  }
+
+  .capability-chip {
+    padding: 4px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--fg-secondary);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+  }
+
+  .capability-chip.ready {
+    border-color: color-mix(in srgb, var(--success) 28%, var(--border));
+    color: var(--success);
+    background: color-mix(in srgb, var(--success) 10%, var(--bg-secondary));
+  }
+
+  .capability-meta {
+    font-size: var(--text-xs);
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+  }
+
+  .capability-error {
+    color: var(--error);
   }
 
   .error-banner {
@@ -901,6 +1144,127 @@
     line-height: var(--leading-normal);
   }
 
+  .exec-run-summary {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding-top: var(--space-3);
+  }
+
+  .exec-run-summary-value {
+    font-size: 20px;
+    color: var(--fg-primary);
+  }
+
+  .exec-run-summary-label {
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    color: var(--fg-dim);
+  }
+
+  .exec-run-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding-top: var(--space-3);
+  }
+
+  .exec-run-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-primary);
+  }
+
+  .exec-run-card.is-running {
+    border-color: color-mix(in srgb, var(--info) 28%, var(--border));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--info) 16%, transparent);
+  }
+
+  .exec-run-head,
+  .exec-run-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .exec-run-status {
+    padding: 2px 6px;
+    border-radius: 999px;
+    font-size: var(--text-2xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    border: 1px solid var(--border);
+    color: var(--fg-secondary);
+  }
+
+  .exec-run-status[data-tone='info'] {
+    color: var(--info);
+    border-color: color-mix(in srgb, var(--info) 28%, var(--border));
+    background: color-mix(in srgb, var(--info) 10%, var(--bg-primary));
+  }
+
+  .exec-run-status[data-tone='success'] {
+    color: var(--success);
+    border-color: color-mix(in srgb, var(--success) 28%, var(--border));
+    background: color-mix(in srgb, var(--success) 10%, var(--bg-primary));
+  }
+
+  .exec-run-status[data-tone='error'] {
+    color: var(--error);
+    border-color: color-mix(in srgb, var(--error) 28%, var(--border));
+    background: color-mix(in srgb, var(--error) 10%, var(--bg-primary));
+  }
+
+  .exec-run-project,
+  .exec-run-exit {
+    font-size: var(--text-xs);
+    color: var(--fg-muted);
+  }
+
+  .exec-run-command {
+    font-size: var(--text-sm);
+    color: var(--fg-primary);
+    word-break: break-word;
+  }
+
+  .exec-run-meta {
+    justify-content: space-between;
+    font-size: var(--text-2xs);
+    color: var(--fg-dim);
+  }
+
+  .exec-run-tail {
+    margin: 0;
+    padding: 10px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--bg-secondary) 90%, black);
+    border: 1px solid var(--border-subtle);
+    color: var(--fg-secondary);
+    font-size: 11px;
+    line-height: 1.45;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .exec-run-tail-error {
+    border-color: color-mix(in srgb, var(--error) 22%, var(--border));
+    color: color-mix(in srgb, var(--error) 70%, var(--fg-primary));
+  }
+
+  .exec-run-error {
+    font-size: var(--text-xs);
+    color: var(--error);
+    line-height: 1.5;
+  }
+
   .activity-list {
     display: flex;
     flex-direction: column;
@@ -987,6 +1351,10 @@
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       overflow: visible;
     }
+
+    .exec-toolbar {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 
   @media (max-width: 600px) {
@@ -1007,6 +1375,10 @@
     }
     .activity-section {
       padding-left: var(--space-3);
+    }
+
+    .exec-toolbar {
+      grid-template-columns: 1fr;
     }
   }
 </style>

@@ -2,6 +2,7 @@
 // and subscribes to SSE events for real-time exec/build activity.
 // Follows the health.svelte.ts SSE-first pattern with fallback polling.
 import { eventStore } from './events.svelte.ts';
+import { adminFetch, labsAuthStore } from './labsAuth.svelte.ts';
 
 export interface SandboxSummary {
   available: boolean;
@@ -36,19 +37,56 @@ export interface SandboxPolicy {
   default_backend?: string;
 }
 
+export interface SandboxCapabilities {
+  available: boolean;
+  backend?: string;
+  auth_required: boolean;
+  supported_actions: string[];
+  project_count?: number;
+  projects?: string[];
+  notes?: {
+    async_exec?: boolean;
+    polling_required?: boolean;
+    streaming_output?: boolean;
+    telemetry_source?: string;
+    sandbox_event_source?: string;
+  };
+}
+
+export interface SandboxExecRun {
+  exec_id: string;
+  status: string;
+  project: string;
+  command: string;
+  started_at?: string;
+  completed_at?: string;
+  elapsed_ms?: number;
+  duration_ms?: number;
+  exit_code?: number;
+  stdout_tail?: string;
+  stderr_tail?: string;
+  error?: string;
+}
+
 const MAX_EVENTS = 20;
+const MAX_EXEC_RUNS = 8;
 
 class SandboxStore {
   summary = $state<SandboxSummary | null>(null);
   available = $state(false);
   loading = $state(false);
   error = $state<string | null>(null);
-  lastAction = $state<{ kind: 'start' | 'stop'; project: string; message: string; buildId?: string } | null>(null);
+  lastAction = $state<{ kind: 'start' | 'stop' | 'exec'; project: string; message: string; buildId?: string; execId?: string } | null>(null);
   recentEvents = $state<SandboxEvent[]>([]);
   lastUpdated = $state<Date | null>(null);
   policy = $state<SandboxPolicy | null>(null);
+  capabilities = $state<SandboxCapabilities | null>(null);
+  capabilitiesLoading = $state(false);
+  capabilitiesError = $state<string | null>(null);
+  execRuns = $state<SandboxExecRun[]>([]);
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private execPollTimer: ReturnType<typeof setInterval> | null = null;
   private eventUnsubs: Array<() => void> = [];
 
   get runningCount(): number {
@@ -75,6 +113,10 @@ class SandboxStore {
     return this.summary?.projects ?? [];
   }
 
+  get activeExecs(): SandboxExecRun[] {
+    return this.execRuns.filter((run) => run.status === 'running');
+  }
+
   async fetch(): Promise<void> {
     this.loading = true;
     this.error = null;
@@ -90,6 +132,20 @@ class SandboxStore {
       this.available = false;
     } finally {
       this.loading = false;
+    }
+  }
+
+  async fetchCapabilities(): Promise<void> {
+    this.capabilitiesLoading = true;
+    this.capabilitiesError = null;
+    try {
+      const res = await globalThis.fetch('/api/sandbox/capabilities');
+      if (!res.ok) throw new Error(`Sandbox capabilities API: ${res.status}`);
+      this.capabilities = await res.json();
+    } catch (e) {
+      this.capabilitiesError = e instanceof Error ? e.message : String(e);
+    } finally {
+      this.capabilitiesLoading = false;
     }
   }
 
@@ -112,11 +168,35 @@ class SandboxStore {
     this.recentEvents = [evt, ...this.recentEvents].slice(0, MAX_EVENTS);
   }
 
+  private normalizeExecRun(data: Record<string, unknown>): SandboxExecRun {
+    return {
+      exec_id: String(data.exec_id ?? ''),
+      status: String(data.status ?? 'unknown'),
+      project: String(data.project ?? ''),
+      command: String(data.command ?? ''),
+      started_at: typeof data.started_at === 'string' ? data.started_at : undefined,
+      completed_at: typeof data.completed_at === 'string' ? data.completed_at : undefined,
+      elapsed_ms: typeof data.elapsed_ms === 'number' ? data.elapsed_ms : Number(data.elapsed_ms ?? 0),
+      duration_ms: typeof data.duration_ms === 'number' ? data.duration_ms : Number(data.duration_ms ?? 0),
+      exit_code: typeof data.exit_code === 'number' ? data.exit_code : (data.exit_code == null ? undefined : Number(data.exit_code)),
+      stdout_tail: typeof data.stdout_tail === 'string' ? data.stdout_tail : undefined,
+      stderr_tail: typeof data.stderr_tail === 'string' ? data.stderr_tail : undefined,
+      error: typeof data.error === 'string' ? data.error : undefined,
+    };
+  }
+
+  private upsertExecRun(run: SandboxExecRun): void {
+    const next = [run, ...this.execRuns.filter((existing) => existing.exec_id !== run.exec_id)];
+    this.execRuns = next.slice(0, MAX_EXEC_RUNS);
+  }
+
   async startSandbox(project: string): Promise<void> {
     this.error = null;
     try {
-      const res = await globalThis.fetch('/api/sandbox/start', {
+      const res = await adminFetch('/api/sandbox/start', {
         method: 'POST',
+        requireToken: true,
+        action: 'Starting a sandbox',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project }),
       });
@@ -138,8 +218,10 @@ class SandboxStore {
   async stopSandbox(project: string): Promise<void> {
     this.error = null;
     try {
-      const res = await globalThis.fetch('/api/sandbox/stop', {
+      const res = await adminFetch('/api/sandbox/stop', {
         method: 'POST',
+        requireToken: true,
+        action: 'Stopping a sandbox',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project }),
       });
@@ -154,6 +236,57 @@ class SandboxStore {
       await this.fetch();
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async startExec(project: string, command: string, timeout = '10m'): Promise<void> {
+    this.error = null;
+    try {
+      const res = await adminFetch('/api/sandbox/exec', {
+        method: 'POST',
+        requireToken: true,
+        action: 'Running a sandbox command',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project, command, timeout }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as { error?: string }).error || `Sandbox exec: ${res.status}`);
+
+      const run = this.normalizeExecRun(data as Record<string, unknown>);
+      this.upsertExecRun(run);
+      this.lastAction = {
+        kind: 'exec',
+        project,
+        message: `Queued ${command}`,
+        execId: run.exec_id || undefined,
+      };
+      await this.fetch();
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async pollExec(execId: string): Promise<void> {
+    const res = await adminFetch(`/api/sandbox/exec/${encodeURIComponent(execId)}`, {
+      requireToken: true,
+      action: 'Polling a sandbox command',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error((data as { error?: string }).error || `Sandbox exec poll: ${res.status}`);
+    }
+    this.upsertExecRun(this.normalizeExecRun(data as Record<string, unknown>));
+  }
+
+  async pollActiveExecs(): Promise<void> {
+    if (!labsAuthStore.hasToken || this.activeExecs.length === 0) {
+      return;
+    }
+    const results = await Promise.allSettled(this.activeExecs.map((run) => this.pollExec(run.exec_id)));
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        this.error = result.reason instanceof Error ? result.reason.message : String(result.reason);
+      }
     }
   }
 
@@ -172,8 +305,12 @@ class SandboxStore {
   startPolling(intervalMs = 15000): void {
     this.stopPolling();
     this.fetch();
+    this.fetchCapabilities();
     this.fetchPolicy();
     this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
+    this.execPollTimer = setInterval(() => {
+      this.pollActiveExecs().catch(() => { /* best-effort */ });
+    }, 3000);
 
     // Subscribe to SSE events.
     this.eventUnsubs.push(
@@ -186,6 +323,10 @@ class SandboxStore {
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
+    }
+    if (this.execPollTimer) {
+      clearInterval(this.execPollTimer);
+      this.execPollTimer = null;
     }
     for (const unsub of this.eventUnsubs) unsub();
     this.eventUnsubs = [];

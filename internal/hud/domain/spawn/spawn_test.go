@@ -260,6 +260,43 @@ func TestHandleAgentSpawnMessage_Success(t *testing.T) {
 	}
 }
 
+func TestHandleAgentSpawnMessage_LegacyMessageField(t *testing.T) {
+	spawner := &mockSpawner{}
+	mux := controlRouterFixture(t, spawner)
+
+	req := httptest.NewRequest("POST", "/api/agent/spawn/spawn-legacy/message",
+		strings.NewReader(`{"message":"legacy follow up"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	if len(spawner.controlCalls) != 1 {
+		t.Fatalf("expected 1 SendControlMessage call, got %d", len(spawner.controlCalls))
+	}
+	if got := spawner.controlCalls[0].cmd.Text; got != "legacy follow up" {
+		t.Errorf("cmd.Text = %q, want legacy follow up", got)
+	}
+}
+
+func TestHandleAgentSpawnMessage_MissingText(t *testing.T) {
+	spawner := &mockSpawner{}
+	mux := controlRouterFixture(t, spawner)
+
+	req := httptest.NewRequest("POST", "/api/agent/spawn/spawn-empty/message",
+		strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	if len(spawner.controlCalls) != 0 {
+		t.Errorf("expected 0 SendControlMessage calls, got %d", len(spawner.controlCalls))
+	}
+}
+
 // TestHandleAgentSpawnMessage_InvalidBody confirms the handler rejects
 // non-JSON bodies with 400 before invoking the spawner.
 func TestHandleAgentSpawnMessage_InvalidBody(t *testing.T) {

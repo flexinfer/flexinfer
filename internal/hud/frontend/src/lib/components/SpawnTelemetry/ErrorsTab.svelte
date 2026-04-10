@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AgentErrorEntry, PaginatedResponse } from './types.ts';
   import { PAGE_LIMIT } from './types.ts';
+  import { adminFetch } from '../../stores/labsAuth.svelte.ts';
 
   interface Props {
     spawnId: string;
@@ -20,7 +21,10 @@
     error = null;
     try {
       const url = `/api/agent/spawn/${encodeURIComponent(spawnId)}/telemetry/errors?limit=${PAGE_LIMIT}&offset=${nextOffset}`;
-      const res = await fetch(url);
+      const res = await adminFetch(url, {
+        requireToken: true,
+        action: 'Loading spawn error telemetry',
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as PaginatedResponse<AgentErrorEntry>;
       const page = data.items ?? [];

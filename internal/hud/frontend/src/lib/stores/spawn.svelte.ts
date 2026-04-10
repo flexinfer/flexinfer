@@ -1,6 +1,7 @@
 // Spawn store — manages headless agent spawns via /api/agent/spawn endpoints
 // and subscribes to SSE events for real-time spawn lifecycle updates.
 import { eventStore } from './events.svelte.ts';
+import { adminFetch, labsAuthStore } from './labsAuth.svelte.ts';
 
 export interface SpawnRequest {
   agent_type: string;
@@ -48,7 +49,7 @@ export interface SpawnState {
   spawn_id: string;
   agent_id: string;
   pod_name: string;
-  status: 'creating' | 'running' | 'completed' | 'failed' | 'stopped';
+  status: 'creating' | 'building' | 'running' | 'completed' | 'failed' | 'stopped';
   request: SpawnRequest;
   started_at: string;
   ended_at?: string;
@@ -104,7 +105,7 @@ class SpawnStore {
   private eventUnsubs: Array<() => void> = [];
 
   get activeSpawns(): SpawnState[] {
-    return this.spawns.filter(s => s.status === 'creating' || s.status === 'running');
+    return this.spawns.filter(s => s.status === 'creating' || s.status === 'building' || s.status === 'running');
   }
 
   get completedSpawns(): SpawnState[] {
@@ -165,6 +166,13 @@ class SpawnStore {
    * telemetry on the list payload).
    */
   async fetchActiveTelemetry(): Promise<void> {
+    if (!labsAuthStore.hasToken) {
+      if (this.telemetryBySpawnId.size > 0) {
+        this.telemetryBySpawnId = new Map<string, SpawnTelemetry>();
+      }
+      return;
+    }
+
     const active = this.activeSpawns;
     if (active.length === 0) {
       // Prune stale entries for spawns that have since completed.
@@ -182,7 +190,10 @@ class SpawnStore {
 
     const results = await Promise.allSettled(
       active.map(async (s) => {
-        const res = await fetch(`/api/agent/spawn/${encodeURIComponent(s.spawn_id)}/telemetry`);
+        const res = await adminFetch(`/api/agent/spawn/${encodeURIComponent(s.spawn_id)}/telemetry`, {
+          requireToken: true,
+          action: 'Loading spawn telemetry',
+        });
         if (!res.ok) return { spawnId: s.spawn_id, telemetry: null as SpawnTelemetry | null };
         const data = await res.json();
         return { spawnId: s.spawn_id, telemetry: (data?.telemetry ?? null) as SpawnTelemetry | null };
@@ -212,8 +223,10 @@ class SpawnStore {
     this.spawning = true;
     this.error = null;
     try {
-      const res = await fetch('/api/agent/spawn', {
+      const res = await adminFetch('/api/agent/spawn', {
         method: 'POST',
+        requireToken: true,
+        action: 'Spawning an agent',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(req),
       });
@@ -235,8 +248,10 @@ class SpawnStore {
   async stop(spawnId: string): Promise<boolean> {
     this.error = null;
     try {
-      const res = await fetch(`/api/agent/spawn/${spawnId}/stop`, {
+      const res = await adminFetch(`/api/agent/spawn/${spawnId}/stop`, {
         method: 'POST',
+        requireToken: true,
+        action: 'Stopping a spawn',
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       await this.fetch();
@@ -250,10 +265,12 @@ class SpawnStore {
   async sendMessage(spawnId: string, message: string): Promise<boolean> {
     this.error = null;
     try {
-      const res = await fetch(`/api/agent/spawn/${encodeURIComponent(spawnId)}/message`, {
+      const res = await adminFetch(`/api/agent/spawn/${encodeURIComponent(spawnId)}/message`, {
         method: 'POST',
+        requireToken: true,
+        action: 'Sending a spawn follow-up',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ text: message }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -269,8 +286,10 @@ class SpawnStore {
   async interrupt(spawnId: string): Promise<boolean> {
     this.error = null;
     try {
-      const res = await fetch(`/api/agent/spawn/${encodeURIComponent(spawnId)}/interrupt`, {
+      const res = await adminFetch(`/api/agent/spawn/${encodeURIComponent(spawnId)}/interrupt`, {
         method: 'POST',
+        requireToken: true,
+        action: 'Interrupting a spawn',
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -305,6 +324,7 @@ class SpawnStore {
   private subscribeSSE(): void {
     if (this.eventUnsubs.length > 0) return;
     const spawnEvents = [
+      'agent.spawn.building',
       'agent.spawn.running',
       'agent.spawn.completed',
       'agent.spawn.failed',

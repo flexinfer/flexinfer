@@ -357,6 +357,44 @@ func (a *App) doSandboxStop(project string) error {
 	return nil
 }
 
+// doSandboxExecAsync starts a long-running sandbox command and returns its exec metadata.
+func (a *App) doSandboxExecAsync(project, command, timeout, agentID string) (map[string]any, error) {
+	args := map[string]any{
+		"project": project,
+		"command": command,
+	}
+	if timeout != "" {
+		args["timeout"] = timeout
+	}
+	if agentID != "" {
+		args["agent_id"] = agentID
+	}
+	result, err := a.client.CallTool("devbox_exec_async", args)
+	if err != nil {
+		return nil, err
+	}
+	go a.sandboxMonitor.Refresh()
+
+	parsed, err := bridge.ParseToolResultMap(result)
+	if err != nil {
+		return nil, nil
+	}
+	return parsed, nil
+}
+
+// doSandboxExecPoll reads the latest status of an async sandbox exec.
+func (a *App) doSandboxExecPoll(execID string) (map[string]any, error) {
+	result, err := a.client.CallTool("devbox_exec_poll", map[string]any{"exec_id": execID})
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := bridge.ParseToolResultMap(result)
+	if err != nil {
+		return nil, nil
+	}
+	return parsed, nil
+}
+
 // --- Session reaper ---
 
 // sessionReaper periodically checks for offline agents with active sessions

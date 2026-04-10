@@ -169,6 +169,14 @@ func (a *App) DoSandboxStop(project string) error {
 	return a.doSandboxStop(project)
 }
 
+func (a *App) DoSandboxExecAsync(project, command, timeout, agentID string) (map[string]any, error) {
+	return a.doSandboxExecAsync(project, command, timeout, agentID)
+}
+
+func (a *App) DoSandboxExecPoll(execID string) (map[string]any, error) {
+	return a.doSandboxExecPoll(execID)
+}
+
 func (a *App) WriteJSON(w http.ResponseWriter, status int, v any) {
 	a.writeJSON(w, status, v)
 }

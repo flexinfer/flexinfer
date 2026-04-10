@@ -2,12 +2,15 @@
   import { router } from '../stores/router.svelte.ts';
   import { spawnStore } from '../stores/spawn.svelte.ts';
   import type { SpawnState, SpawnTelemetry } from '../stores/spawn.svelte.ts';
+  import { adminFetch, labsAuthStore } from '../stores/labsAuth.svelte.ts';
+  import { eventStore } from '../stores/events.svelte.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import BudgetBar from '../widgets/BudgetBar.svelte';
   import ToolsTab from './SpawnTelemetry/ToolsTab.svelte';
   import FilesTab from './SpawnTelemetry/FilesTab.svelte';
   import ErrorsTab from './SpawnTelemetry/ErrorsTab.svelte';
   import UsageTab from './SpawnTelemetry/UsageTab.svelte';
+  import LabsAccessBar from './shared/LabsAccessBar.svelte';
 
   type TabId = 'tools' | 'files' | 'errors' | 'usage';
 
@@ -23,15 +26,15 @@
   let spawn = $state<SpawnState | null>(null);
   let telemetry = $state<SpawnTelemetry | null>(null);
   let activeTab = $state<TabId>('tools');
+  let eventUnsubs = $state<Array<() => void>>([]);
+  let hasAdminToken = $derived(labsAuthStore.hasToken);
+  let actionError = $derived(spawnStore.error);
 
   async function loadDetail(spawnId: string): Promise<void> {
     loading = true;
     error = null;
     try {
-      const [spawnRes, telRes] = await Promise.all([
-        fetch(`/api/agent/spawn/${encodeURIComponent(spawnId)}`),
-        fetch(`/api/agent/spawn/${encodeURIComponent(spawnId)}/telemetry`),
-      ]);
+      const spawnRes = await fetch(`/api/agent/spawn/${encodeURIComponent(spawnId)}`);
 
       if (!spawnRes.ok) {
         throw new Error(`spawn lookup failed: HTTP ${spawnRes.status}`);
@@ -39,9 +42,17 @@
       const spawnData = await spawnRes.json();
       spawn = spawnData as SpawnState;
 
-      if (telRes.ok) {
-        const telData = await telRes.json();
-        telemetry = (telData?.telemetry ?? null) as SpawnTelemetry | null;
+      if (labsAuthStore.hasToken) {
+        const telRes = await adminFetch(`/api/agent/spawn/${encodeURIComponent(spawnId)}/telemetry`, {
+          requireToken: true,
+          action: 'Loading spawn telemetry',
+        });
+        if (telRes.ok) {
+          const telData = await telRes.json();
+          telemetry = (telData?.telemetry ?? null) as SpawnTelemetry | null;
+        } else {
+          telemetry = null;
+        }
       } else {
         telemetry = null;
       }
@@ -55,19 +66,69 @@
   }
 
   $effect(() => {
+    spawnStore.startPolling(10000);
+    return () => {
+      spawnStore.stopPolling();
+    };
+  });
+
+  $effect(() => {
     const id = router.detail;
+    eventUnsubs.forEach((unsub) => unsub());
+    eventUnsubs = [];
     if (id) {
       loadDetail(id);
+      const lifecycleEvents = [
+        'agent.spawn.building',
+        'agent.spawn.running',
+        'agent.spawn.completed',
+        'agent.spawn.failed',
+        'agent.spawn.stopped',
+      ];
+      eventUnsubs = [
+        ...lifecycleEvents.map((type) => eventStore.on(type, (event) => {
+          const spawnId = typeof event.data?.spawn_id === 'string' ? event.data.spawn_id : '';
+          if (spawnId === id) {
+            loadDetail(id);
+          }
+        })),
+        eventStore.on('agent.spawn.telemetry.delta', (event) => {
+          const spawnId = typeof event.data?.spawn_id === 'string' ? event.data.spawn_id : '';
+          if (spawnId !== id) return;
+          const tokenUsage = (event.data?.token_usage as Record<string, unknown> | undefined) ?? {};
+          telemetry = {
+            external_session_id: telemetry?.external_session_id,
+            model_usage: telemetry?.model_usage,
+            turn_count: Number(event.data?.turn_count ?? telemetry?.turn_count ?? 0),
+            total_cost_usd: Number(event.data?.total_cost_usd ?? telemetry?.total_cost_usd ?? 0),
+            cost_estimated: Boolean(event.data?.cost_estimated ?? telemetry?.cost_estimated ?? false),
+            token_usage: {
+              input_tokens: Number(tokenUsage.input_tokens ?? telemetry?.token_usage?.input_tokens ?? 0),
+              output_tokens: Number(tokenUsage.output_tokens ?? telemetry?.token_usage?.output_tokens ?? 0),
+              cache_creation_tokens: Number(tokenUsage.cache_creation_tokens ?? telemetry?.token_usage?.cache_creation_tokens ?? 0),
+              cache_read_tokens: Number(tokenUsage.cache_read_tokens ?? telemetry?.token_usage?.cache_read_tokens ?? 0),
+            },
+            stop_reason: typeof event.data?.stop_reason === 'string' ? event.data.stop_reason : telemetry?.stop_reason,
+            last_message: typeof event.data?.last_message === 'string' ? event.data.last_message : telemetry?.last_message,
+          };
+        }),
+      ];
     } else {
       spawn = null;
       telemetry = null;
       error = null;
     }
+
+    return () => {
+      eventUnsubs.forEach((unsub) => unsub());
+      eventUnsubs = [];
+    };
   });
 
   function statusToDot(status: string): 'healthy' | 'idle' | 'degraded' | 'down' {
     switch (status) {
       case 'running': return 'healthy';
+      case 'building': return 'degraded';
       case 'creating': return 'degraded';
       case 'failed': return 'down';
       default: return 'idle';
@@ -77,6 +138,7 @@
   function statusColor(status: string): string {
     switch (status) {
       case 'running': return 'var(--color-success, #22c55e)';
+      case 'building': return 'var(--color-info, #60a5fa)';
       case 'creating': return 'var(--color-info, #3b82f6)';
       case 'completed': return 'var(--color-muted, #6b7280)';
       case 'failed': return 'var(--color-error, #ef4444)';
@@ -106,7 +168,7 @@
   }
 
   let canStop = $derived(
-    spawn !== null && (spawn.status === 'running' || spawn.status === 'creating')
+    spawn !== null && (spawn.status === 'running' || spawn.status === 'creating' || spawn.status === 'building')
   );
 
   let messageInput = $state('');
@@ -145,6 +207,8 @@
       </div>
     {/if}
   </div>
+
+  <LabsAccessBar compact hint="Add the Labs token here to enable protected spawn controls and telemetry tabs." />
 
   {#if loading && !spawn}
     <div class="detail-loading">Loading spawn detail...</div>
@@ -225,6 +289,13 @@
       </div>
     {/if}
 
+    {#if actionError}
+      <div class="detail-card error-card">
+        <div class="card-label">Action error</div>
+        <div class="error-text">{actionError}</div>
+      </div>
+    {/if}
+
     {#if isMultiTurn && spawn.status === 'running'}
       <div class="detail-card multi-turn-card">
         <div class="card-label">Follow-up message</div>
@@ -235,7 +306,7 @@
           rows="3"
         ></textarea>
         <div class="actions-row">
-          <button class="send-button" onclick={handleSendMessage} disabled={sendingMessage || !messageInput.trim()}>
+          <button class="send-button" onclick={handleSendMessage} disabled={!hasAdminToken || sendingMessage || !messageInput.trim()}>
             {sendingMessage ? 'Sending...' : 'Send'}
           </button>
         </div>
@@ -273,9 +344,9 @@
     {#if canStop}
       <div class="actions-row">
         {#if isMultiTurn && spawn.status === 'running'}
-          <button class="interrupt-button" onclick={handleInterrupt}>Interrupt</button>
+          <button class="interrupt-button" onclick={handleInterrupt} disabled={!hasAdminToken}>Interrupt</button>
         {/if}
-        <button class="stop-button" onclick={handleStop}>Stop spawn</button>
+        <button class="stop-button" onclick={handleStop} disabled={!hasAdminToken}>Stop spawn</button>
       </div>
     {/if}
   {:else}

@@ -1,10 +1,12 @@
 <script lang="ts">
   import { spawnStore } from '../stores/spawn.svelte';
   import type { SpawnRequest, SpawnState, SpawnTelemetry } from '../stores/spawn.svelte';
+  import { labsAuthStore } from '../stores/labsAuth.svelte.ts';
   import { router } from '../stores/router.svelte';
   import StatusDot from '../widgets/StatusDot.svelte';
   import BudgetBar from '../widgets/BudgetBar.svelte';
   import EmptyState from './shared/EmptyState.svelte';
+  import LabsAccessBar from './shared/LabsAccessBar.svelte';
 
   $effect(() => {
     spawnStore.startPolling(10000);
@@ -21,6 +23,7 @@
   let config = $derived(spawnStore.config);
   let configLoading = $derived(spawnStore.configLoading);
   let configError = $derived(spawnStore.configError);
+  let hasAdminToken = $derived(labsAuthStore.hasToken);
 
   // Form state
   let agentType = $state('claude-code');
@@ -71,6 +74,7 @@
   function statusColor(status: string): string {
     switch (status) {
       case 'running': return 'var(--color-success, #22c55e)';
+      case 'building': return 'var(--color-info, #60a5fa)';
       case 'creating': return 'var(--color-info, #3b82f6)';
       case 'completed': return 'var(--color-muted, #6b7280)';
       case 'failed': return 'var(--color-error, #ef4444)';
@@ -139,13 +143,18 @@
         </div>
       </div>
 
+      <LabsAccessBar />
+
       <div class="readiness-strip">
         <span class="readiness-chip" class:ready={project.trim().length > 0}>Project</span>
         <span class="readiness-chip" class:ready={taskDescription.trim().length > 0}>Task</span>
         <span class="readiness-chip" class:ready={timeoutMinutes >= 5}>Timeout</span>
+        <span class="readiness-chip" class:ready={hasAdminToken}>Token</span>
         <span class="readiness-hint">
           {#if configLoading}
             Loading spawn config…
+          {:else if !hasAdminToken}
+            Admin token required for spawn control
           {:else if config && !config.configured}
             Spawn orchestrator unavailable
           {:else if formReady}
@@ -232,11 +241,17 @@
       {/if}
 
       <div class="form-footer">
-        <button onclick={handleSpawn} class="spawn-button" disabled={!formReady || spawning || config?.configured === false}>
+        <button onclick={handleSpawn} class="spawn-button" disabled={!formReady || !hasAdminToken || spawning || config?.configured === false}>
           {spawning ? 'Spawning agent...' : 'Spawn Agent'}
         </button>
         <div class="form-footer-note">
-          {formReady ? 'The new run will appear immediately in Recent spawns.' : 'Fill in project and task to enable launch.'}
+          {#if !hasAdminToken}
+            Add the Labs token above to enable protected spawn actions.
+          {:else if formReady}
+            The new run will appear immediately in Recent spawns.
+          {:else}
+            Fill in project and task to enable launch.
+          {/if}
         </div>
       </div>
     </div>
@@ -245,7 +260,9 @@
       <div class="side-card">
         <div class="side-label">Ready Check</div>
         <div class="side-value">
-          {#if config && !config.configured}
+          {#if !hasAdminToken}
+            Token required
+          {:else if config && !config.configured}
             Backend offline
           {:else if formReady}
             Launch-ready
@@ -309,7 +326,7 @@
         {#each spawns as spawn (spawn.spawn_id)}
           <div
             class="spawn-row"
-            class:active={spawn.status === 'running' || spawn.status === 'creating'}
+            class:active={spawn.status === 'running' || spawn.status === 'creating' || spawn.status === 'building'}
             role="button"
             tabindex="0"
             onclick={() => router.navigateDetail(spawn.spawn_id)}
@@ -322,16 +339,17 @@
           >
             <div class="spawn-header">
               <div class="spawn-head-main">
-                <StatusDot status={spawn.status === 'running' ? 'healthy' : spawn.status === 'creating' ? 'degraded' : spawn.status === 'failed' ? 'down' : 'idle'} />
+                <StatusDot status={spawn.status === 'running' ? 'healthy' : spawn.status === 'creating' || spawn.status === 'building' ? 'degraded' : spawn.status === 'failed' ? 'down' : 'idle'} />
                 <span class="spawn-project">{spawn.request.project}</span>
                 <span class="spawn-status" style="color: {statusColor(spawn.status)}">{spawn.status}</span>
               </div>
 
               <div class="spawn-head-actions">
                 <span class="spawn-duration">{formatDuration(spawn.started_at, spawn.ended_at)}</span>
-                {#if spawn.status === 'running' || spawn.status === 'creating'}
+                {#if spawn.status === 'running' || spawn.status === 'creating' || spawn.status === 'building'}
                   <button
                     class="stop-button"
+                    disabled={!hasAdminToken}
                     onclick={(e) => {
                       e.stopPropagation();
                       handleStop(spawn.spawn_id);

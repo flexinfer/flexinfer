@@ -22,7 +22,10 @@ func (d *SandboxDomain) Name() string { return "sandbox" }
 // RegisterRoutes wires the sandbox endpoints to the ServeMux.
 func (d *SandboxDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFunc) http.HandlerFunc) {
 	mux.HandleFunc("GET /api/sandbox", mw(d.handleSandbox))
+	mux.HandleFunc("GET /api/sandbox/capabilities", mw(d.handleSandboxCapabilities))
 	mux.HandleFunc("GET /api/sandbox/policy", mw(d.handleSandboxPolicy))
 	mux.HandleFunc("POST /api/sandbox/start", mw(d.handleSandboxStart))
 	mux.HandleFunc("POST /api/sandbox/stop", mw(d.handleSandboxStop))
+	mux.HandleFunc("POST /api/sandbox/exec", mw(d.handleSandboxExec))
+	mux.HandleFunc("GET /api/sandbox/exec/{exec_id}", mw(d.handleSandboxExecPoll))
 }
