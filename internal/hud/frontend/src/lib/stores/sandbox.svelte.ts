@@ -5,13 +5,16 @@ import { eventStore } from './events.svelte.ts';
 
 export interface SandboxSummary {
   available: boolean;
+  backend?: string;
   total_sandboxes: number;
   running: number;
   paused: number;
+  stopped?: number;
   total_execs: number;
   total_builds: number;
   uptime_seconds: number;
   projects: string[];
+  agent_labels?: Record<string, string>;
 }
 
 export interface SandboxEvent {

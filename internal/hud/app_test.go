@@ -3927,6 +3927,59 @@ func TestHandleSessions_FallsBackToFleetSnapshotOnUpstreamError(t *testing.T) {
 	}
 }
 
+func TestHandleSessions_UsesQueryFiltersAndSince(t *testing.T) {
+	_, mux, handlers := newTestAppWithHandlers(t)
+
+	var seenArgs map[string]any
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		if req.Name != "agent_context__agent_session_list" {
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+		seenArgs = req.Arguments
+		return json.RawMessage(`{"content":[{"type":"text","text":"{\"sessions\":[{\"id\":\"sess-keep\",\"agent_id\":\"codex-1\",\"namespace\":\"loom-core/main\",\"status\":\"active\",\"started_at\":\"2026-04-10T01:30:00Z\"},{\"id\":\"sess-old\",\"agent_id\":\"codex-1\",\"namespace\":\"loom-core/main\",\"status\":\"active\",\"started_at\":\"2026-04-09T23:30:00Z\",\"ended_at\":\"2026-04-09T23:45:00Z\"},{\"id\":\"sess-ended\",\"agent_id\":\"codex-1\",\"namespace\":\"loom-core/main\",\"status\":\"ended\",\"started_at\":\"2026-04-10T01:35:00Z\",\"ended_at\":\"2026-04-10T01:50:00Z\"}]}"}]}`), nil
+	})
+
+	req := httptest.NewRequest("GET", "/api/sessions?agent_id=%20codex-1%20&namespace=%20loom-core/main%20&status=active&limit=2&since=2026-04-10T00:00:00Z", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if seenArgs == nil {
+		t.Fatal("expected agent_session_list call")
+	}
+	if got, _ := seenArgs["agent_id"].(string); got != "codex-1" {
+		t.Fatalf("expected trimmed agent_id, got %q", got)
+	}
+	if got, _ := seenArgs["namespace"].(string); got != "loom-core/main" {
+		t.Fatalf("expected trimmed namespace, got %q", got)
+	}
+	if got, _ := seenArgs["status"].(string); got != "active" {
+		t.Fatalf("expected active status filter, got %q", got)
+	}
+	if got, _ := seenArgs["limit"].(float64); int(got) != 2 {
+		t.Fatalf("expected limit=2, got %#v", seenArgs["limit"])
+	}
+
+	var env struct {
+		Sessions []bridge.SessionInfo `json:"sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Sessions) != 1 || env.Sessions[0].ID != "sess-keep" {
+		t.Fatalf("expected only filtered live session, got %#v", env.Sessions)
+	}
+}
+
 func TestHandler_MobileSessionCreate_DefaultsMobilePresenceMetadata(t *testing.T) {
 	app, mux, handlers := newTestAppWithHandlers(t)
 	app.config.MobileOperatorToken = "mobile-secret"

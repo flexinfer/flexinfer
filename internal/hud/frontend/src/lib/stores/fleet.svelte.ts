@@ -245,16 +245,10 @@ class FleetStore {
     this.loading = true;
     this.error = null;
     try {
-      const [statusRes, sessionsRes] = await Promise.all([
-        globalThis.fetch('/api/status'),
-        globalThis.fetch('/api/sessions'),
-      ]);
-      if (!statusRes.ok) throw new Error(`Status API: ${statusRes.status}`);
-      if (!sessionsRes.ok) throw new Error(`Sessions API: ${sessionsRes.status}`);
-      this.status = await statusRes.json();
-      const sessData: SessionsResponse = await sessionsRes.json();
-      this.sessions = sessData.sessions || [];
-      this.lastUpdated = new Date();
+      const res = await globalThis.fetch('/api/fleet');
+      if (!res.ok) throw new Error(`Fleet API: ${res.status}`);
+      const snapshot = await res.json();
+      this.applySnapshot(snapshot as Record<string, unknown>);
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
     } finally {

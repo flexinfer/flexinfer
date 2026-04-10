@@ -19,34 +19,93 @@ import (
 
 // --- API handlers: Direct bridge calls (parameterized queries) ---
 
+const (
+	hudSessionListTimeout = 3 * time.Second
+	hudSessionListLimit   = 1000
+)
+
 func (a *App) handleSessions(w http.ResponseWriter, r *http.Request) {
-	sessions, err := a.agent.Sessions()
+	req := bridge.SessionListRequest{
+		AgentID:   strings.TrimSpace(r.URL.Query().Get("agent_id")),
+		Namespace: strings.TrimSpace(r.URL.Query().Get("namespace")),
+		Status:    normalizeSessionStatusQuery(r.URL.Query().Get("status")),
+		Limit:     hudSessionListLimit,
+	}
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 {
+			req.Limit = parsed
+		}
+	}
+
+	params, err := req.Params()
+	if err != nil {
+		a.writeError(w, http.StatusBadRequest, "invalid session query", err)
+		return
+	}
+
+	sessions, err := a.agent.SessionsWithParams(params, hudSessionListTimeout)
 	if err != nil {
 		a.logger.Warn("sessions upstream error, falling back to fleet snapshot", "error", err)
 		sessions = a.fleetMonitor.Snapshot().Sessions
 	}
+	if sessions == nil {
+		sessions = []bridge.SessionInfo{}
+	}
 
-	// Optional time filter: ?since=<RFC3339> — return only sessions started
-	// after the given time or still active (ended_at is empty).
+	var since *time.Time
 	if sinceStr := r.URL.Query().Get("since"); sinceStr != "" {
-		if since, parseErr := time.Parse(time.RFC3339, sinceStr); parseErr == nil {
-			filtered := make([]bridge.SessionInfo, 0, len(sessions))
-			for _, s := range sessions {
-				// Keep active sessions (no end time).
-				if s.EndedAt == "" {
-					filtered = append(filtered, s)
-					continue
-				}
-				// Keep sessions started after the since time.
-				if started, err := time.Parse(time.RFC3339, s.StartedAt); err == nil && !started.Before(since) {
-					filtered = append(filtered, s)
-				}
-			}
-			sessions = filtered
+		if parsedSince, parseErr := time.Parse(time.RFC3339, sinceStr); parseErr == nil {
+			since = &parsedSince
 		}
 	}
 
+	sessions = filterSessionsForResponse(sessions, req, since)
 	a.writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
+}
+
+func normalizeSessionStatusQuery(raw string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(raw))
+	switch trimmed {
+	case "", "all", "*":
+		return ""
+	default:
+		return trimmed
+	}
+}
+
+func filterSessionsForResponse(sessions []bridge.SessionInfo, req bridge.SessionListRequest, since *time.Time) []bridge.SessionInfo {
+	filtered := make([]bridge.SessionInfo, 0, len(sessions))
+	wantAgentID := strings.TrimSpace(req.AgentID)
+	wantNamespace := strings.TrimSpace(req.Namespace)
+	wantStatus := strings.ToLower(strings.TrimSpace(req.Status))
+
+	for _, s := range sessions {
+		if wantAgentID != "" && strings.TrimSpace(s.AgentID) != wantAgentID {
+			continue
+		}
+		if wantNamespace != "" && strings.TrimSpace(s.Namespace) != wantNamespace {
+			continue
+		}
+		if wantStatus != "" && strings.ToLower(strings.TrimSpace(s.Status)) != wantStatus {
+			continue
+		}
+		if since != nil {
+			if s.EndedAt == "" {
+				filtered = append(filtered, s)
+				continue
+			}
+			started, err := time.Parse(time.RFC3339, s.StartedAt)
+			if err != nil || started.Before(*since) {
+				continue
+			}
+		}
+		filtered = append(filtered, s)
+		if req.Limit > 0 && len(filtered) >= req.Limit {
+			break
+		}
+	}
+
+	return filtered
 }
 
 func (a *App) handleSessionEntries(w http.ResponseWriter, r *http.Request) {

@@ -507,12 +507,24 @@ func (a *AgentBridge) getActiveSession(agentID string, timeout time.Duration) (*
 
 // Sessions returns all agent sessions.
 func (a *AgentBridge) Sessions() ([]SessionInfo, error) {
+	return a.SessionsWithParams(map[string]any{
+		"limit": defaultSessionListLimit,
+	}, 3*time.Second)
+}
+
+// SessionsWithParams returns sessions for an arbitrary session-list parameter
+// set, optionally bounded by a per-call timeout.
+func (a *AgentBridge) SessionsWithParams(params map[string]any, timeout time.Duration) ([]SessionInfo, error) {
 	var result struct {
 		Sessions []SessionInfo `json:"sessions"`
 	}
-	if err := a.callAgentTool("agent_session_list", map[string]any{
-		"limit": defaultSessionListLimit,
-	}, &result); err != nil {
+	var err error
+	if timeout > 0 {
+		err = a.callAgentToolTimeout("agent_session_list", params, &result, timeout)
+	} else {
+		err = a.callAgentTool("agent_session_list", params, &result)
+	}
+	if err != nil {
 		return nil, err
 	}
 	return result.Sessions, nil

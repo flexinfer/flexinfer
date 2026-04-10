@@ -19,7 +19,11 @@
   let totalExecs = $derived(sandboxStore.totalExecs);
   let totalBuilds = $derived(sandboxStore.totalBuilds);
   let policy = $derived(sandboxStore.policy);
+  let error = $derived(sandboxStore.error);
+  let lastUpdated = $derived(sandboxStore.lastUpdated);
   let latestEvent = $derived(events[0] ?? null);
+  let startProject = $state('');
+  let startSubmitting = $state(false);
 
   function formatUptime(seconds) {
     if (!seconds || seconds <= 0) return '---';
@@ -42,6 +46,24 @@
   function eventTime(ts) {
     return formatTime(ts);
   }
+
+  async function handleStartSandbox() {
+    const project = startProject.trim();
+    if (!project || startSubmitting) return;
+    startSubmitting = true;
+    await sandboxStore.startSandbox(project);
+    if (!sandboxStore.error) {
+      startProject = '';
+    }
+    startSubmitting = false;
+  }
+
+  function handleStartKeydown(event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleStartSandbox();
+    }
+  }
 </script>
 
 <div class="panel sandbox-panel">
@@ -60,6 +82,11 @@
     <div class="header-bar">
       <div class="header-stats">
         <span class="header-total text-mono">{total} sandbox{total !== 1 ? 'es' : ''}</span>
+        {#if summary?.backend}
+          <span class="header-stat backend-stat">
+            backend: <span class="text-mono">{summary.backend}</span>
+          </span>
+        {/if}
         <span class="header-stat running-stat">
           <span class="dot dot-running"></span>
           {running} running
@@ -83,8 +110,41 @@
             uptime: {formatUptime(summary.uptime_seconds)}
           </span>
         {/if}
+        {#if lastUpdated}
+          <span class="header-stat updated-stat">
+            updated {eventTime(lastUpdated)}
+          </span>
+        {/if}
       </div>
     </div>
+
+    <div class="start-toolbar">
+      <label class="start-form">
+        <span class="start-label">Project</span>
+        <input
+          class="start-input"
+          type="text"
+          bind:value={startProject}
+          placeholder="services/loom-core"
+          onkeydown={handleStartKeydown}
+        />
+      </label>
+      <button
+        class="action-btn action-start start-submit"
+        disabled={!startProject.trim() || startSubmitting}
+        title="Start sandbox for project"
+        onclick={handleStartSandbox}
+      >
+        {startSubmitting ? 'Starting…' : 'Start Sandbox'}
+      </button>
+    </div>
+
+    {#if error}
+      <div class="error-banner">
+        <span class="error-icon">{'\u26A0'}</span>
+        <span class="error-copy">{error}</span>
+      </div>
+    {/if}
 
     <!-- Main content: projects + activity + summary rail -->
     <div class="sandbox-content">
@@ -92,7 +152,12 @@
       <div class="projects-section">
         <div class="section-title">Projects</div>
         {#if projects.length === 0}
-          <EmptyState icon={'\u2B22'} heading="No sandbox projects" compact />
+          <div class="projects-empty">
+            <EmptyState icon={'\u2B22'} heading="No sandbox projects" compact />
+            <div class="empty-copy">
+              Start one from the project field above. The HUD will attach it here once the daemon reports the sandbox.
+            </div>
+          </div>
         {:else}
           <div class="project-list">
             {#each projects as project}
@@ -110,15 +175,6 @@
                 </span>
               </div>
             {/each}
-          </div>
-          <div class="start-section">
-            <button class="action-btn action-start" title="Start sandbox for project"
-              onclick={() => {
-                const name = prompt('Project name:');
-                if (name) sandboxStore.startSandbox(name);
-              }}>
-              + Start Sandbox
-            </button>
           </div>
         {/if}
       </div>
@@ -225,6 +281,85 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+
+  .start-toolbar {
+    display: flex;
+    align-items: end;
+    gap: 12px;
+    padding: 10px 0 14px;
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 10%, var(--border));
+    margin-bottom: 14px;
+  }
+
+  .start-form {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .start-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+  }
+
+  .start-input {
+    width: 100%;
+    min-width: 0;
+    padding: 9px 11px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-secondary) 92%, black);
+    color: var(--fg-primary);
+    font: inherit;
+  }
+
+  .start-input:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--accent) 46%, var(--border));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+
+  .start-submit:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .error-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid color-mix(in srgb, var(--error) 30%, var(--border));
+    background: color-mix(in srgb, var(--error) 10%, var(--bg-secondary));
+    color: var(--fg-secondary);
+  }
+
+  .error-icon {
+    color: var(--error);
+  }
+
+  .error-copy {
+    min-width: 0;
+  }
+
+  .projects-empty {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .empty-copy {
+    font-size: var(--text-sm);
+    color: var(--fg-muted);
+    line-height: var(--leading-relaxed);
   }
 
   /* ---- Unavailable State ---- */
@@ -430,10 +565,6 @@
     color: var(--error);
     border-color: var(--error);
     box-shadow: 0 0 6px var(--glow-error);
-  }
-
-  .start-section {
-    padding: var(--space-2) 0;
   }
 
   .action-start {
