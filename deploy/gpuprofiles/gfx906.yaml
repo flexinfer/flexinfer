@@ -56,12 +56,12 @@ spec:
     # runs on Radeon VII; hidden_states is slower but avoids that retry loop.
     - name: ABLITERATION_ACTIVATION_CAPTURE_MODE
       value: hidden_states
-    # 31B resume runs can pass validation and then fail during safe staged save
-    # because the 120Gi cache PVC cannot hold both the dense source checkpoint
-    # and a second full staged copy. Allow an explicit in-place save on gfx906
-    # where this path is already checkpointed and operator-targeted.
+    # Keep source weights intact until the save fully completes. The Radeon VII
+    # jobs have sufficient /workspace headroom for Gemma4 staging, and
+    # destructive in-place saves can force a full redownload after a late
+    # shard-write failure.
     - name: ABLITERATION_SAVE_POLICY
-      value: inplace
+      value: workspace
     # Keep Gemma4 retries deterministic on gfx906 as well. The live 31B run is
     # already in-flight, but any future recreate should install the same tested
     # transformers commit instead of drifting to whatever is on main.

@@ -222,6 +222,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"memory trim interval", "ABLITERATION_MEMORY_TRIM_INTERVAL", "1"},
 		{"forward use cache", "ABLITERATION_FORWARD_USE_CACHE", "false"},
 		{"save shard size", "ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB"},
+		{"save policy", "ABLITERATION_SAVE_POLICY", "workspace"},
 		{"save impl", "ABLITERATION_SAVE_IMPL", "streaming"},
 		{"disk offload save impl", "ABLITERATION_DISK_OFFLOAD_SAVE_IMPL", ""},
 		{"resume", "ABLITERATION_RESUME", "true"},
@@ -267,6 +268,7 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	t.Setenv("FLEXINFER_ABLITERATION_MEMORY_TRIM_INTERVAL", "3")
 	t.Setenv("FLEXINFER_ABLITERATION_FORWARD_USE_CACHE", "true")
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_MAX_SHARD_SIZE", "2GB")
+	t.Setenv("FLEXINFER_ABLITERATION_SAVE_POLICY", "workspace")
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_IMPL", "materialized")
 	t.Setenv("FLEXINFER_ABLITERATION_DISK_OFFLOAD_SAVE_IMPL", "streaming")
 	t.Setenv("FLEXINFER_ABLITERATION_RESUME", "false")
@@ -315,6 +317,9 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	if got := envMap["ABLITERATION_DISK_OFFLOAD_SAVE_IMPL"]; got != "streaming" {
 		t.Errorf("ABLITERATION_DISK_OFFLOAD_SAVE_IMPL = %q, want streaming", got)
 	}
+	if got := envMap["ABLITERATION_SAVE_POLICY"]; got != "workspace" {
+		t.Errorf("ABLITERATION_SAVE_POLICY = %q, want workspace", got)
+	}
 	if got := envMap["ABLITERATION_RESUME"]; got != "false" {
 		t.Errorf("ABLITERATION_RESUME = %q, want false", got)
 	}
@@ -351,15 +356,21 @@ func TestAbliterationEnv_CPUMode(t *testing.T) {
 
 	env := abliterationEnv("test-model", "gfx906", spec, DefaultGPUMemoryConfig())
 
+	envMap := make(map[string]string)
 	for _, e := range env {
+		envMap[e.Name] = e.Value
 		if e.Name == "DEVICE_MAP" {
 			if e.Value != "cpu" {
 				t.Errorf("DEVICE_MAP = %q, want cpu", e.Value)
 			}
-			return
 		}
 	}
-	t.Error("DEVICE_MAP env var not found")
+	if got := envMap["DEVICE_MAP"]; got == "" {
+		t.Error("DEVICE_MAP env var not found")
+	}
+	if got := envMap["ABLITERATION_SAVE_POLICY"]; got != "auto" {
+		t.Errorf("ABLITERATION_SAVE_POLICY = %q, want auto", got)
+	}
 }
 
 func TestAbliterationEnv_AblateLMHeadOptIn(t *testing.T) {
@@ -403,6 +414,9 @@ func TestAbliterationEnv_GFX906DisablesCachingAllocatorWarmup(t *testing.T) {
 	}
 	if got := envMap["ABLITERATION_GPU_MAX_MEMORY_GB"]; got != "14" {
 		t.Fatalf("ABLITERATION_GPU_MAX_MEMORY_GB = %q, want 14", got)
+	}
+	if got := envMap["ABLITERATION_SAVE_POLICY"]; got != "workspace" {
+		t.Fatalf("ABLITERATION_SAVE_POLICY = %q, want workspace", got)
 	}
 }
 

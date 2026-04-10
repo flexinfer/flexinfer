@@ -277,6 +277,16 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 	if saveMaxShardSize == "" {
 		saveMaxShardSize = "1GB"
 	}
+	savePolicy := os.Getenv("FLEXINFER_ABLITERATION_SAVE_POLICY")
+	if savePolicy == "" {
+		// Use non-destructive workspace staging for GPU abliterations unless an
+		// operator or GPUProfile explicitly requests another policy.
+		if spec.UseGPU {
+			savePolicy = "workspace"
+		} else {
+			savePolicy = "auto"
+		}
+	}
 	saveImpl := os.Getenv("FLEXINFER_ABLITERATION_SAVE_IMPL")
 	if saveImpl == "" {
 		saveImpl = "streaming"
@@ -356,6 +366,7 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		{Name: "ABLITERATION_MEMORY_TRIM_INTERVAL", Value: memoryTrimInterval},
 		{Name: "ABLITERATION_FORWARD_USE_CACHE", Value: forwardUseCache},
 		{Name: "ABLITERATION_SAVE_MAX_SHARD_SIZE", Value: saveMaxShardSize},
+		{Name: "ABLITERATION_SAVE_POLICY", Value: savePolicy},
 		{Name: "ABLITERATION_SAVE_IMPL", Value: saveImpl},
 		{Name: "ABLITERATION_DISK_OFFLOAD_SAVE_IMPL", Value: diskOffloadSaveImpl},
 		{Name: "ABLITERATION_RESUME", Value: resume},
