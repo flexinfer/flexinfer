@@ -5,6 +5,7 @@
   import StatusDot from '../widgets/StatusDot.svelte';
   import EmptyState from './shared/EmptyState.svelte';
   import LabsAccessBar from './shared/LabsAccessBar.svelte';
+  import ConfirmDialog from './shared/ConfirmDialog.svelte';
 
   $effect(() => {
     sandboxStore.startPolling(15000);
@@ -40,6 +41,8 @@
   let execCommand = $state('');
   let execTimeout = $state('10m');
   let execSubmitting = $state(false);
+  /** @type {string | null} */
+  let stopConfirmProject = $state(null);
 
   $effect(() => {
     if (!startProject && projects.length === 1) {
@@ -314,6 +317,7 @@
       <div class="error-banner">
         <span class="error-icon">{'\u26A0'}</span>
         <span class="error-copy">{error}</span>
+        <button class="error-dismiss" onclick={() => sandboxStore.clearError()}>Dismiss</button>
       </div>
     {/if}
 
@@ -341,7 +345,7 @@
                 <span class="project-actions">
                   <button class="action-btn action-stop" title="Stop sandbox"
                     disabled={!hasAdminToken}
-                    onclick={() => sandboxStore.stopSandbox(project)}>
+                    onclick={() => (stopConfirmProject = project)}>
                     {'\u25A0'}
                   </button>
                 </span>
@@ -485,6 +489,16 @@
       </aside>
     </div>
   {/if}
+
+  <ConfirmDialog
+    open={stopConfirmProject !== null}
+    title="Stop sandbox?"
+    message={`This will stop the sandbox for "${stopConfirmProject ?? ''}". Running exec jobs will be terminated.`}
+    confirmLabel="Stop"
+    variant="danger"
+    onConfirm={() => { const p = stopConfirmProject; stopConfirmProject = null; if (p) sandboxStore.stopSandbox(p); }}
+    onCancel={() => (stopConfirmProject = null)}
+  />
 </div>
 
 <style>
@@ -651,6 +665,25 @@
 
   .error-copy {
     min-width: 0;
+    flex: 1;
+  }
+
+  .error-dismiss {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    border-radius: var(--radius-xs);
+    border: 1px solid color-mix(in srgb, var(--error) 30%, var(--border));
+    background: transparent;
+    color: var(--fg-secondary);
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition: color var(--transition-fast), border-color var(--transition-fast);
+  }
+
+  .error-dismiss:hover {
+    color: var(--fg-primary);
+    border-color: var(--fg-secondary);
   }
 
   .action-banner {

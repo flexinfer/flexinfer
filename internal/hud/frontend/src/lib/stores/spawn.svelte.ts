@@ -116,7 +116,7 @@ class SpawnStore {
   }
 
   get completedSpawns(): SpawnState[] {
-    return this.spawns.filter(s => s.status !== 'creating' && s.status !== 'running');
+    return this.spawns.filter(s => s.status !== 'creating' && s.status !== 'building' && s.status !== 'running');
   }
 
   /**
@@ -130,6 +130,10 @@ class SpawnStore {
     if (live) return live;
     const s = this.spawns.find(sp => sp.spawn_id === spawnId);
     return s?.telemetry ?? undefined;
+  }
+
+  clearError(): void {
+    this.error = null;
   }
 
   async fetch(): Promise<void> {

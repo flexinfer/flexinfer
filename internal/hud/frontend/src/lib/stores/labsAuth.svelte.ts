@@ -4,6 +4,9 @@ const STORAGE_KEY = 'labs.admin_token';
 
 class LabsAuthStore {
   adminToken = $state(persistGet<string>(STORAGE_KEY, ''));
+  /** null = not checked, true = valid, false = invalid */
+  tokenValid = $state<boolean | null>(null);
+  validating = $state(false);
 
   get hasToken(): boolean {
     return this.adminToken.trim().length > 0;
@@ -14,14 +17,38 @@ class LabsAuthStore {
     const trimmed = token.trim();
     if (trimmed) {
       persistSet(STORAGE_KEY, trimmed);
+      this.validate();
     } else {
       persistRemove(STORAGE_KEY);
+      this.tokenValid = null;
     }
   }
 
   clearAdminToken(): void {
     this.adminToken = '';
+    this.tokenValid = null;
     persistRemove(STORAGE_KEY);
+  }
+
+  async validate(): Promise<boolean> {
+    const token = this.adminToken.trim();
+    if (!token) {
+      this.tokenValid = null;
+      return false;
+    }
+    this.validating = true;
+    try {
+      const res = await globalThis.fetch('/api/labs/auth-check', {
+        headers: { 'X-Admin-Token': token },
+      });
+      this.tokenValid = res.ok;
+      return res.ok;
+    } catch {
+      this.tokenValid = false;
+      return false;
+    } finally {
+      this.validating = false;
+    }
   }
 
   requiredMessage(action: string): string {

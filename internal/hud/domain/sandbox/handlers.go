@@ -236,6 +236,15 @@ func (d *SandboxDomain) handleSandboxExec(w http.ResponseWriter, r *http.Request
 	d.deps.WriteJSON(w, http.StatusAccepted, parsed)
 }
 
+// handleLabsAuthCheck validates the admin token and returns 200 if valid.
+// GET /api/labs/auth-check
+func (d *SandboxDomain) handleLabsAuthCheck(w http.ResponseWriter, r *http.Request) {
+	if !d.deps.RequireAdminToken(w, r) {
+		return
+	}
+	d.deps.WriteJSON(w, http.StatusOK, map[string]any{"valid": true})
+}
+
 // handleSandboxExecPoll returns the latest async exec status for an exec_id.
 func (d *SandboxDomain) handleSandboxExecPoll(w http.ResponseWriter, r *http.Request) {
 	if !d.deps.RequireAdminToken(w, r) {

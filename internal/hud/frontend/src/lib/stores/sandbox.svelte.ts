@@ -113,6 +113,10 @@ class SandboxStore {
     return this.summary?.projects ?? [];
   }
 
+  clearError(): void {
+    this.error = null;
+  }
+
   get activeExecs(): SandboxExecRun[] {
     return this.execRuns.filter((run) => run.status === 'running');
   }

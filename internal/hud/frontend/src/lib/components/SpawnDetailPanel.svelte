@@ -11,6 +11,7 @@
   import ErrorsTab from './SpawnTelemetry/ErrorsTab.svelte';
   import UsageTab from './SpawnTelemetry/UsageTab.svelte';
   import LabsAccessBar from './shared/LabsAccessBar.svelte';
+  import ConfirmDialog from './shared/ConfirmDialog.svelte';
 
   type TabId = 'tools' | 'files' | 'errors' | 'usage';
 
@@ -173,6 +174,8 @@
 
   let messageInput = $state('');
   let sendingMessage = $state(false);
+  let showStopConfirm = $state(false);
+  let showInterruptConfirm = $state(false);
 
   let isMultiTurn = $derived(
     spawn !== null && spawn.request.multi_turn === true
@@ -291,7 +294,10 @@
 
     {#if actionError}
       <div class="detail-card error-card">
-        <div class="card-label">Action error</div>
+        <div class="error-header">
+          <div class="card-label">Action error</div>
+          <button class="error-dismiss" onclick={() => spawnStore.clearError()}>Dismiss</button>
+        </div>
         <div class="error-text">{actionError}</div>
       </div>
     {/if}
@@ -344,11 +350,30 @@
     {#if canStop}
       <div class="actions-row">
         {#if isMultiTurn && spawn.status === 'running'}
-          <button class="interrupt-button" onclick={handleInterrupt} disabled={!hasAdminToken}>Interrupt</button>
+          <button class="interrupt-button" onclick={() => (showInterruptConfirm = true)} disabled={!hasAdminToken}>Interrupt</button>
         {/if}
-        <button class="stop-button" onclick={handleStop} disabled={!hasAdminToken}>Stop spawn</button>
+        <button class="stop-button" onclick={() => (showStopConfirm = true)} disabled={!hasAdminToken}>Stop spawn</button>
       </div>
     {/if}
+
+    <ConfirmDialog
+      open={showStopConfirm}
+      title="Stop spawn?"
+      message="This will terminate the running agent. The spawn cannot be resumed after stopping."
+      confirmLabel="Stop"
+      variant="danger"
+      onConfirm={() => { showStopConfirm = false; handleStop(); }}
+      onCancel={() => (showStopConfirm = false)}
+    />
+    <ConfirmDialog
+      open={showInterruptConfirm}
+      title="Interrupt spawn?"
+      message="This sends an interrupt signal to the agent. The agent will attempt to finish its current action and stop gracefully."
+      confirmLabel="Interrupt"
+      variant="warn"
+      onConfirm={() => { showInterruptConfirm = false; handleInterrupt(); }}
+      onCancel={() => (showInterruptConfirm = false)}
+    />
   {:else}
     <div class="detail-empty">No spawn selected.</div>
   {/if}
@@ -542,6 +567,29 @@
 
   .error-card {
     border-color: rgba(255, 61, 113, 0.3);
+  }
+
+  .error-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .error-dismiss {
+    padding: 3px 8px;
+    border-radius: var(--radius-xs);
+    border: 1px solid rgba(255, 61, 113, 0.3);
+    background: transparent;
+    color: var(--fg-secondary);
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition: color var(--transition-fast), border-color var(--transition-fast);
+  }
+
+  .error-dismiss:hover {
+    color: var(--fg-primary);
+    border-color: var(--fg-secondary);
   }
 
   .error-text {
