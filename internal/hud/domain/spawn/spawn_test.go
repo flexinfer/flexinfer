@@ -55,6 +55,16 @@ func (m *mockSpawner) ListSpawns() []*pkgspawn.State { return m.spawns }
 
 func (m *mockSpawner) StopSpawn(_ context.Context, _ string) error { return nil }
 
+func (m *mockSpawner) DeleteSpawn(_ context.Context, spawnID string) error {
+	for i, s := range m.spawns {
+		if s.SpawnID == spawnID {
+			m.spawns = append(m.spawns[:i], m.spawns[i+1:]...)
+			return nil
+		}
+	}
+	return errors.New("spawn not found")
+}
+
 func (m *mockSpawner) Projects() []string { return m.projects }
 
 func (m *mockSpawner) GetSpawnTelemetry(_ string) (*bridge.SpawnTelemetry, bool) {

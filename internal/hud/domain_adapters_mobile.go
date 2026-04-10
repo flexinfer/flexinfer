@@ -72,6 +72,10 @@ func (sa *mobileSpawnerAdapter) StopSpawn(ctx context.Context, spawnID string) e
 	return sa.s.StopSpawn(ctx, spawnID)
 }
 
+func (sa *mobileSpawnerAdapter) DeleteSpawn(ctx context.Context, spawnID string) error {
+	return sa.s.DeleteSpawn(ctx, spawnID)
+}
+
 func (sa *mobileSpawnerAdapter) Projects() []string {
 	return sa.s.Projects()
 }

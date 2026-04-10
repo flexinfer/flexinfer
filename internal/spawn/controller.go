@@ -169,6 +169,31 @@ func (c *K8sController) Get(spawnID string) (*State, bool) {
 	return s, ok
 }
 
+// Delete removes a terminal spawn from the in-memory map and persistent store.
+// Non-terminal spawns cannot be deleted (stop them first).
+func (c *K8sController) Delete(ctx context.Context, spawnID string) error {
+	c.mu.Lock()
+	state, ok := c.spawns[spawnID]
+	if !ok {
+		c.mu.Unlock()
+		return fmt.Errorf("spawn %s not found", spawnID)
+	}
+	if !IsTerminal(state.Status) {
+		c.mu.Unlock()
+		return fmt.Errorf("spawn %s is still %s — stop it first", spawnID, state.Status)
+	}
+	delete(c.spawns, spawnID)
+	c.mu.Unlock()
+
+	if c.store != nil {
+		if err := c.store.Delete(ctx, spawnID); err != nil {
+			c.logger.Warn("failed to delete spawn from store",
+				"spawn_id", spawnID, "error", err)
+		}
+	}
+	return nil
+}
+
 // List returns all spawn states.
 func (c *K8sController) List() []*State {
 	c.mu.RLock()

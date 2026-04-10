@@ -273,6 +273,26 @@ class SpawnStore {
     }
   }
 
+  async delete(spawnId: string): Promise<boolean> {
+    this.error = null;
+    try {
+      const res = await adminFetch(`/api/agent/spawn/${encodeURIComponent(spawnId)}`, {
+        method: 'DELETE',
+        requireToken: true,
+        action: 'Deleting a spawn',
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      await this.fetch();
+      return true;
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : String(err);
+      return false;
+    }
+  }
+
   async sendMessage(spawnId: string, message: string): Promise<boolean> {
     this.error = null;
     try {

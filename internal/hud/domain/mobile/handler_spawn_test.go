@@ -33,6 +33,9 @@ func (m *mobileMockSpawner) ListSpawns() []*spawn.State             { return nil
 func (m *mobileMockSpawner) StopSpawn(_ context.Context, _ string) error {
 	return nil
 }
+func (m *mobileMockSpawner) DeleteSpawn(_ context.Context, _ string) error {
+	return nil
+}
 func (m *mobileMockSpawner) Projects() []string { return nil }
 func (m *mobileMockSpawner) GetSpawnTelemetry(_ string) (*bridge.SpawnTelemetry, bool) {
 	return nil, false

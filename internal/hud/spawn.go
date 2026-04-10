@@ -944,6 +944,11 @@ func (o *SpawnOrchestrator) GetSpawnTelemetry(spawnID string) (*bridge.SpawnTele
 	return nil, false
 }
 
+// DeleteSpawn removes a terminal spawn from the controller and persistent store.
+func (o *SpawnOrchestrator) DeleteSpawn(ctx context.Context, spawnID string) error {
+	return o.ctrl.Delete(ctx, spawnID)
+}
+
 // ListSpawns returns all spawn states.
 func (o *SpawnOrchestrator) ListSpawns() []*SpawnState {
 	return o.ctrl.List()

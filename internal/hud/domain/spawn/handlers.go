@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	pkgspawn "github.com/crb2nu/loom/internal/spawn"
 )
@@ -175,6 +176,39 @@ func (d *SpawnDomain) handleAgentSpawnStop(w http.ResponseWriter, r *http.Reques
 	}
 
 	d.deps.WriteJSON(w, http.StatusOK, map[string]any{"stopped": true, "spawn_id": spawnID})
+}
+
+// handleAgentSpawnDelete handles DELETE /api/agent/spawn/{spawn_id} -- remove a terminal spawn.
+func (d *SpawnDomain) handleAgentSpawnDelete(w http.ResponseWriter, r *http.Request) {
+	if !d.deps.RequireAdminToken(w, r) {
+		return
+	}
+
+	spawnID := r.PathValue("spawn_id")
+	if spawnID == "" {
+		d.deps.WriteError(w, http.StatusBadRequest, "spawn_id required", nil)
+		return
+	}
+
+	spawner := d.deps.Spawner()
+	if spawner == nil {
+		d.deps.WriteError(w, http.StatusServiceUnavailable, "spawn orchestrator not configured", nil)
+		return
+	}
+
+	if err := spawner.DeleteSpawn(r.Context(), spawnID); err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "not found") {
+			d.deps.WriteError(w, http.StatusNotFound, msg, nil)
+		} else if strings.Contains(msg, "stop it first") {
+			d.deps.WriteError(w, http.StatusConflict, msg, nil)
+		} else {
+			d.deps.WriteError(w, http.StatusInternalServerError, msg, err)
+		}
+		return
+	}
+
+	d.deps.WriteJSON(w, http.StatusOK, map[string]any{"deleted": true, "spawn_id": spawnID})
 }
 
 // controlMessageRequest is the JSON body accepted by the admin message

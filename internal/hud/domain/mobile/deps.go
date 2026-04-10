@@ -79,6 +79,7 @@ type SpawnerOps interface {
 	GetSpawn(spawnID string) (*spawn.State, bool)
 	ListSpawns() []*spawn.State
 	StopSpawn(ctx context.Context, spawnID string) error
+	DeleteSpawn(ctx context.Context, spawnID string) error
 	Projects() []string
 	GetSpawnTelemetry(spawnID string) (*bridge.SpawnTelemetry, bool)
 	// SendControlMessage forwards a control command (follow-up message,

@@ -30,6 +30,8 @@ func (m *mockTelemetrySpawner) ListSpawns() []*pkgspawn.State { return nil }
 
 func (m *mockTelemetrySpawner) StopSpawn(_ context.Context, _ string) error { return nil }
 
+func (m *mockTelemetrySpawner) DeleteSpawn(_ context.Context, _ string) error { return nil }
+
 func (m *mockTelemetrySpawner) Projects() []string { return nil }
 
 func (m *mockTelemetrySpawner) GetSpawnTelemetry(id string) (*bridge.SpawnTelemetry, bool) {

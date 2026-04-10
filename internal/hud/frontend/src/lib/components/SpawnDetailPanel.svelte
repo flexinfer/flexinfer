@@ -176,6 +176,7 @@
   let sendingMessage = $state(false);
   let showStopConfirm = $state(false);
   let showInterruptConfirm = $state(false);
+  let showDeleteConfirm = $state(false);
 
   let isMultiTurn = $derived(
     spawn !== null && spawn.request.multi_turn === true
@@ -196,6 +197,16 @@
     if (!spawn) return;
     await spawnStore.interrupt(spawn.spawn_id);
   }
+
+  async function handleDelete(): Promise<void> {
+    if (!spawn) return;
+    const ok = await spawnStore.delete(spawn.spawn_id);
+    if (ok) router.back();
+  }
+
+  let canDelete = $derived(
+    spawn !== null && spawn.status !== 'running' && spawn.status !== 'creating' && spawn.status !== 'building'
+  );
 </script>
 
 <div class="panel spawn-detail-panel">
@@ -347,12 +358,17 @@
       </div>
     </div>
 
-    {#if canStop}
+    {#if canStop || canDelete}
       <div class="actions-row">
-        {#if isMultiTurn && spawn.status === 'running'}
-          <button class="interrupt-button" onclick={() => (showInterruptConfirm = true)} disabled={!hasAdminToken}>Interrupt</button>
+        {#if canStop}
+          {#if isMultiTurn && spawn.status === 'running'}
+            <button class="interrupt-button" onclick={() => (showInterruptConfirm = true)} disabled={!hasAdminToken}>Interrupt</button>
+          {/if}
+          <button class="stop-button" onclick={() => (showStopConfirm = true)} disabled={!hasAdminToken}>Stop spawn</button>
         {/if}
-        <button class="stop-button" onclick={() => (showStopConfirm = true)} disabled={!hasAdminToken}>Stop spawn</button>
+        {#if canDelete}
+          <button class="delete-button" onclick={() => (showDeleteConfirm = true)} disabled={!hasAdminToken}>Remove from history</button>
+        {/if}
       </div>
     {/if}
 
@@ -373,6 +389,15 @@
       variant="warn"
       onConfirm={() => { showInterruptConfirm = false; handleInterrupt(); }}
       onCancel={() => (showInterruptConfirm = false)}
+    />
+    <ConfirmDialog
+      open={showDeleteConfirm}
+      title="Remove spawn from history?"
+      message="This permanently removes the spawn record and its telemetry. This cannot be undone."
+      confirmLabel="Remove"
+      variant="danger"
+      onConfirm={() => { showDeleteConfirm = false; handleDelete(); }}
+      onCancel={() => (showDeleteConfirm = false)}
     />
   {:else}
     <div class="detail-empty">No spawn selected.</div>
@@ -680,6 +705,30 @@
   .stop-button:hover {
     background: var(--error-dim);
     border-color: var(--error);
+  }
+
+  .delete-button {
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--text-sm);
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--fg-secondary);
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    margin-left: auto;
+    transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  }
+
+  .delete-button:hover {
+    border-color: rgba(255, 61, 113, 0.3);
+    color: var(--error);
+    background: rgba(255, 61, 113, 0.06);
+  }
+
+  .delete-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 
   .detail-loading,
