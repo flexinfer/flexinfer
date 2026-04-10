@@ -360,6 +360,15 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 func (r *ModelCacheReconciler) reconcileDownstreamPhases(ctx context.Context, modelCache *aiv1alpha1.ModelCache, pvcName, modelPath string) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
+	// Publish a source mirror before any destructive downstream phase mutates
+	// the downloaded model tree.
+	if hasOCIPublishTarget(modelCache.Spec.Publish) {
+		if !stagePublishUpToDate(modelCache, publishStageSource, stagePublishDesiredRef(modelCache.Spec.Publish, publishStageSource), stagePublishDesiredVersion(modelCache, publishStageSource)) {
+			modelCache.Status.CurrentPhase = stagePublishCurrentPhase(publishStageSource)
+			return r.reconcileStagePublish(ctx, modelCache, pvcName, modelPath, publishStageSource)
+		}
+	}
+
 	// Phase 1: Abliteration (if configured) must complete before finetune/quantize.
 	// Also re-enter the phase reconciler when a spec change is pending so that
 	// detectAndApplySpecChange can reset status and trigger re-processing.
@@ -368,6 +377,14 @@ func (r *ModelCacheReconciler) reconcileDownstreamPhases(ctx context.Context, mo
 			specChangeNeedsReprocess(modelCache, annotationReabliterate, annotationAblitSpecHash, ablitSpecHash(modelCache.Spec.Abliteration)) {
 			modelCache.Status.CurrentPhase = "abliteration"
 			return r.reconcileAbliteration(ctx, modelCache, pvcName, modelPath)
+		}
+	}
+
+	// Publish an abliterated-but-unquantized artifact before finetune or quantization.
+	if modelCache.Spec.Abliteration != nil && hasOCIPublishTarget(modelCache.Spec.Publish) {
+		if !stagePublishUpToDate(modelCache, publishStageAbliterated, stagePublishDesiredRef(modelCache.Spec.Publish, publishStageAbliterated), stagePublishDesiredVersion(modelCache, publishStageAbliterated)) {
+			modelCache.Status.CurrentPhase = stagePublishCurrentPhase(publishStageAbliterated)
+			return r.reconcileStagePublish(ctx, modelCache, pvcName, modelPath, publishStageAbliterated)
 		}
 	}
 
@@ -726,6 +743,7 @@ set -ex
 MODEL_ID="%s"
 DEST_DIR="/models/%s"
 MARKER="$DEST_DIR/.download_complete"
+INTEGRITY="$DEST_DIR/.source-integrity.json"
 
 # Reset stale derived artifacts from a previous ablit/quant run before we
 # decide whether the source model can be reused. Rebuilds must start from
@@ -798,11 +816,31 @@ PY
     MISSING_SHARDS="$3"
 fi
 if [ -f "$MARKER" ] && [ "$WEIGHT_COUNT" -gt 0 ] && [ "$MISSING_SHARDS" -eq 0 ]; then
+    DEST_DIR="$DEST_DIR" INTEGRITY="$INTEGRITY" WEIGHT_COUNT="$WEIGHT_COUNT" EXPECTED_SHARDS="$EXPECTED_SHARDS" python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+dest = Path(os.environ["DEST_DIR"])
+integrity = Path(os.environ["INTEGRITY"])
+weight_files = [
+    p for p in dest.iterdir()
+    if p.is_file() and p.suffix in {".safetensors", ".bin", ".pt", ".gguf"}
+]
+payload = {
+    "weight_count": int(os.environ["WEIGHT_COUNT"]),
+    "expected_shards": int(os.environ["EXPECTED_SHARDS"]),
+    "weight_bytes": sum(p.stat().st_size for p in weight_files),
+    "generated_by": "download_skip_path",
+}
+integrity.write_text(json.dumps(payload, sort_keys=True))
+PY
     echo "Model already cached at $DEST_DIR ($WEIGHT_COUNT weight files, expected=$EXPECTED_SHARDS)"
     exit 0
 elif [ -f "$MARKER" ] && { [ "$WEIGHT_COUNT" -eq 0 ] || [ "$MISSING_SHARDS" -gt 0 ]; }; then
     echo "WARNING: Marker exists but cache is incomplete (weight_files=$WEIGHT_COUNT expected=$EXPECTED_SHARDS missing=$MISSING_SHARDS) — re-downloading"
     rm -f "$MARKER"
+    rm -f "$INTEGRITY"
 fi
 
 pip install --no-cache-dir huggingface_hub hf_transfer
@@ -868,6 +906,25 @@ if [ "$MISSING_SHARDS" -gt 0 ]; then
     echo "ERROR: Download incomplete for $DEST_DIR (weight_files=$WEIGHT_COUNT expected=$EXPECTED_SHARDS missing=$MISSING_SHARDS)"
     exit 1
 fi
+DEST_DIR="$DEST_DIR" INTEGRITY="$INTEGRITY" WEIGHT_COUNT="$WEIGHT_COUNT" EXPECTED_SHARDS="$EXPECTED_SHARDS" python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+dest = Path(os.environ["DEST_DIR"])
+integrity = Path(os.environ["INTEGRITY"])
+weight_files = [
+    p for p in dest.iterdir()
+    if p.is_file() and p.suffix in {".safetensors", ".bin", ".pt", ".gguf"}
+]
+payload = {
+    "weight_count": int(os.environ["WEIGHT_COUNT"]),
+    "expected_shards": int(os.environ["EXPECTED_SHARDS"]),
+    "weight_bytes": sum(p.stat().st_size for p in weight_files),
+    "generated_by": "download_complete",
+}
+integrity.write_text(json.dumps(payload, sort_keys=True))
+PY
 touch "$MARKER"
 echo "Download complete ($WEIGHT_COUNT weight files, expected=$EXPECTED_SHARDS)."
 `, modelID, modelPath)
@@ -1209,8 +1266,10 @@ func (r *ModelCacheReconciler) resetDownloadState(ctx context.Context, mc *aiv1a
 	propagation := metav1.DeletePropagationBackground
 	for _, suffix := range []string{
 		"-downloader",
+		"-publish-source",
 		"-abliterate",
 		"-abliterate-image-warmup",
+		"-publish-abliterated",
 		"-finetune",
 		"-quantize",
 		"-quantize-image-warmup",

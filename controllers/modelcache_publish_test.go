@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
@@ -192,6 +193,88 @@ func TestPublishJobTagPolicyEnvVars(t *testing.T) {
 	}
 	assert.Equal(t, "timestamp", envMap["OCI_TAG_POLICY"])
 	assert.Equal(t, "latest,stable", envMap["OCI_ADDITIONAL_TAGS"])
+}
+
+func TestDeriveStageOCIRef(t *testing.T) {
+	tests := []struct {
+		name   string
+		ref    string
+		stage  publishStage
+		expect string
+	}{
+		{
+			name:   "tagged ref gets source suffix",
+			ref:    "registry.harbor.lan/models/test:v1",
+			stage:  publishStageSource,
+			expect: "registry.harbor.lan/models/test:v1-source",
+		},
+		{
+			name:   "tagged ref gets abliterated suffix",
+			ref:    "registry.harbor.lan/models/test:v1",
+			stage:  publishStageAbliterated,
+			expect: "registry.harbor.lan/models/test:v1-abliterated",
+		},
+		{
+			name:   "untagged ref gets stage tag",
+			ref:    "registry.harbor.lan/models/test",
+			stage:  publishStageSource,
+			expect: "registry.harbor.lan/models/test:source",
+		},
+		{
+			name:   "oci scheme preserved",
+			ref:    "oci://registry.harbor.lan/models/test:v1",
+			stage:  publishStageSource,
+			expect: "oci://registry.harbor.lan/models/test:v1-source",
+		},
+		{
+			name:   "digest ref becomes stage tag",
+			ref:    "registry.harbor.lan/models/test@sha256:deadbeef",
+			stage:  publishStageAbliterated,
+			expect: "registry.harbor.lan/models/test:abliterated",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expect, deriveStageOCIRef(tt.ref, tt.stage))
+		})
+	}
+}
+
+func TestStagePublishUpToDate(t *testing.T) {
+	sourceRef := "registry.harbor.lan/models/test:v1-source"
+	sourceVersion := "source-hash"
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Annotations: map[string]string{
+				annotationPublishSourceRef:     sourceRef,
+				annotationPublishSourceVersion: sourceVersion,
+				annotationPublishSourceDigest:  "sha256:abc",
+			},
+		},
+	}
+
+	assert.True(t, stagePublishUpToDate(cache, publishStageSource, sourceRef, sourceVersion))
+	assert.False(t, stagePublishUpToDate(cache, publishStageSource, sourceRef, "other-version"))
+	assert.False(t, stagePublishUpToDate(cache, publishStageSource, "registry.harbor.lan/models/test:v2-source", sourceVersion))
+}
+
+func TestStagePublishDesiredVersion(t *testing.T) {
+	targetLayers := "20-49"
+	cache := &aiv1alpha1.ModelCache{
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source: "HF://google/gemma-4-31B-it",
+			Abliteration: &aiv1alpha1.AbliterationSpec{
+				TargetLayers: &targetLayers,
+			},
+		},
+	}
+
+	sourceVersion := stagePublishDesiredVersion(cache, publishStageSource)
+	ablitVersion := stagePublishDesiredVersion(cache, publishStageAbliterated)
+
+	assert.Equal(t, sourceHash(cache.Spec.Source), sourceVersion)
+	assert.Equal(t, sourceHash(cache.Spec.Source)+":"+ablitSpecHash(cache.Spec.Abliteration), ablitVersion)
 }
 
 func int64Ptr(v int64) *int64 { return &v }

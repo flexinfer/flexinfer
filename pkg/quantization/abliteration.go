@@ -24,12 +24,48 @@ const (
 	// 27B BF16 ≈ 54 GB + activation overhead.
 	DefaultAbliterationMemoryGB = 56
 
+	// Large GPU abliterations must use non-destructive workspace staging unless
+	// an operator explicitly opts back into riskier behavior.
+	DefaultAbliterationLargeModelThresholdGB = 80
+
 	// DefaultAbliterationDeadlineSeconds is the default 4-hour deadline.
 	DefaultAbliterationDeadlineSeconds = 14400
 
 	// DefaultAbliterationNumSamples is the default number of contrastive prompt pairs.
 	DefaultAbliterationNumSamples = 128
 )
+
+func largeGPUAbliterationModel(modelPath string, spec *aiv1alpha1.AbliterationSpec, maxMemoryGB int32) bool {
+	if spec == nil || !spec.UseGPU {
+		return false
+	}
+	if maxMemoryGB >= DefaultAbliterationLargeModelThresholdGB {
+		return true
+	}
+	modelPath = strings.ToLower(modelPath)
+	return strings.Contains(modelPath, "gemma4-31b") || strings.Contains(modelPath, "gemma4-26b")
+}
+
+func normalizeAbliterationSavePolicy(modelPath string, spec *aiv1alpha1.AbliterationSpec, maxMemoryGB int32, requested string) string {
+	savePolicy := strings.TrimSpace(requested)
+	if savePolicy == "" {
+		// Use non-destructive workspace staging for GPU abliterations unless an
+		// operator or GPUProfile explicitly requests another policy.
+		if spec != nil && spec.UseGPU {
+			savePolicy = "workspace"
+		} else {
+			savePolicy = "auto"
+		}
+	}
+
+	if largeGPUAbliterationModel(modelPath, spec, maxMemoryGB) &&
+		savePolicy != "workspace" &&
+		!strings.EqualFold(strings.TrimSpace(os.Getenv("FLEXINFER_ABLITERATION_ALLOW_INPLACE_LARGE_MODELS")), "true") {
+		return "workspace"
+	}
+
+	return savePolicy
+}
 
 type abliterationModelPolicy struct {
 	Name                     string   `json:"name"`
@@ -277,16 +313,7 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 	if saveMaxShardSize == "" {
 		saveMaxShardSize = "1GB"
 	}
-	savePolicy := os.Getenv("FLEXINFER_ABLITERATION_SAVE_POLICY")
-	if savePolicy == "" {
-		// Use non-destructive workspace staging for GPU abliterations unless an
-		// operator or GPUProfile explicitly requests another policy.
-		if spec.UseGPU {
-			savePolicy = "workspace"
-		} else {
-			savePolicy = "auto"
-		}
-	}
+	savePolicy := normalizeAbliterationSavePolicy(modelPath, spec, maxMemoryGB, os.Getenv("FLEXINFER_ABLITERATION_SAVE_POLICY"))
 	saveImpl := os.Getenv("FLEXINFER_ABLITERATION_SAVE_IMPL")
 	if saveImpl == "" {
 		saveImpl = "streaming"
@@ -496,6 +523,7 @@ echo "Start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # completion marker exists but shards are still missing, the cache is already
 # inconsistent and we should fail fast so the controller can restart download.
 DOWNLOAD_MARKER="${MODEL_DIR}/.download_complete"
+DOWNLOAD_INTEGRITY="${MODEL_DIR}/.source-integrity.json"
 DOWNLOAD_READY="false"
 for attempt in $(seq 1 180); do
     set -- $(MODEL_DIR="${MODEL_DIR}" python3 - <<'PY'
@@ -529,7 +557,29 @@ PY
     WEIGHT_COUNT="$1"
     EXPECTED_SHARDS="$2"
     MISSING_SHARDS="$3"
-    if [ -f "${DOWNLOAD_MARKER}" ] && [ "${WEIGHT_COUNT}" -gt 0 ] && [ "${MISSING_SHARDS}" -eq 0 ]; then
+    if [ -f "${DOWNLOAD_MARKER}" ] && [ "${WEIGHT_COUNT}" -gt 0 ] && [ "${MISSING_SHARDS}" -eq 0 ] && [ ! -f "${DOWNLOAD_INTEGRITY}" ]; then
+        MODEL_DIR="${MODEL_DIR}" DOWNLOAD_INTEGRITY="${DOWNLOAD_INTEGRITY}" WEIGHT_COUNT="${WEIGHT_COUNT}" EXPECTED_SHARDS="${EXPECTED_SHARDS}" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+model_dir = Path(os.environ["MODEL_DIR"])
+integrity_path = Path(os.environ["DOWNLOAD_INTEGRITY"])
+weight_files = [
+    p for p in model_dir.iterdir()
+    if p.is_file() and p.suffix in {".safetensors", ".bin", ".pt"}
+]
+payload = {
+    "weight_count": int(os.environ["WEIGHT_COUNT"]),
+    "expected_shards": int(os.environ["EXPECTED_SHARDS"]),
+    "weight_bytes": sum(p.stat().st_size for p in weight_files),
+    "generated_by": "abliteration_wrapper_repair",
+}
+integrity_path.write_text(json.dumps(payload, sort_keys=True))
+PY
+        echo "Rebuilt missing source integrity metadata at ${DOWNLOAD_INTEGRITY}"
+    fi
+    if [ -f "${DOWNLOAD_MARKER}" ] && [ "${WEIGHT_COUNT}" -gt 0 ] && [ "${MISSING_SHARDS}" -eq 0 ] && [ -f "${DOWNLOAD_INTEGRITY}" ]; then
         DOWNLOAD_READY="true"
         break
     fi

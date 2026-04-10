@@ -23,7 +23,7 @@ controller:
   replicas: 1
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
-    digest: "sha256:c331d7a6ecd3811b63d5d5fe8c1a11c5a89318321ce9e73b0be300423da823b5"
+    digest: "sha256:bac4eb52ba662d4b0e513b14e094d467c411b8b50a9dddd37f4556da9b611cae"
     tag: "master"
   resources:
     limits:

@@ -90,7 +90,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 
 	// Reset all downstream artifacts when finetune is reprocessed so publish
 	// cannot race against stale outputs from an earlier run.
-	suffixes := []string{"-finetune", "-downloader", "-publish"}
+	suffixes := []string{"-finetune", "-downloader", "-publish", "-publish-source", "-publish-abliterated"}
 	if modelCache.Spec.Quantization != nil {
 		suffixes = append(suffixes, "-quantize", "-quantize-image-warmup")
 	}

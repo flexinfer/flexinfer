@@ -399,6 +399,8 @@ func TestJobForDownloadCleansStaleDerivedArtifactsBeforeReuse(t *testing.T) {
 	assert.Contains(t, script, `Detected stale abliteration/quantization artifacts in $DEST_DIR`)
 	assert.Contains(t, script, `find "$DEST_DIR" -mindepth 1 -maxdepth 1 ! -name '.cache' -exec rm -rf {} +`)
 	assert.Contains(t, script, `model.safetensors.index.json`)
+	assert.Contains(t, script, `.source-integrity.json`)
+	assert.Contains(t, script, `generated_by`)
 	assert.Contains(t, script, `Download incomplete for $DEST_DIR`)
 }
 

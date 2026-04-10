@@ -80,7 +80,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 
 	currentHash := quantSpecHash(modelCache.Spec.Quantization)
 
-	suffixes := []string{"-quantize", "-quantize-image-warmup", "-downloader", "-publish"}
+	suffixes := []string{"-quantize", "-quantize-image-warmup", "-downloader", "-publish", "-publish-source", "-publish-abliterated"}
 	if modelCache.Spec.Finetune != nil {
 		suffixes = append(suffixes, "-finetune")
 	}

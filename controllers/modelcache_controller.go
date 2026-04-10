@@ -35,14 +35,20 @@ import (
 )
 
 const (
-	annotationQuantSpecHash    = "flexinfer.ai/quant-spec-hash"
-	annotationRequantize       = "flexinfer.ai/requantize"
-	annotationAblitSpecHash    = "flexinfer.ai/ablit-spec-hash"
-	annotationReabliterate     = "flexinfer.ai/reabliterate"
-	annotationFinetuneSpecHash = "flexinfer.ai/finetune-spec-hash"
-	annotationRefinetune       = "flexinfer.ai/refinetune"
-	annotationSourceHash       = "flexinfer.ai/source-hash"
-	annotationRedownload       = "flexinfer.ai/redownload"
+	annotationQuantSpecHash        = "flexinfer.ai/quant-spec-hash"
+	annotationRequantize           = "flexinfer.ai/requantize"
+	annotationAblitSpecHash        = "flexinfer.ai/ablit-spec-hash"
+	annotationReabliterate         = "flexinfer.ai/reabliterate"
+	annotationFinetuneSpecHash     = "flexinfer.ai/finetune-spec-hash"
+	annotationRefinetune           = "flexinfer.ai/refinetune"
+	annotationSourceHash           = "flexinfer.ai/source-hash"
+	annotationRedownload           = "flexinfer.ai/redownload"
+	annotationPublishSourceRef     = "flexinfer.ai/publish-source-ref"
+	annotationPublishSourceDigest  = "flexinfer.ai/publish-source-digest"
+	annotationPublishSourceVersion = "flexinfer.ai/publish-source-version"
+	annotationPublishAblitRef      = "flexinfer.ai/publish-abliterated-ref"
+	annotationPublishAblitDigest   = "flexinfer.ai/publish-abliterated-digest"
+	annotationPublishAblitVersion  = "flexinfer.ai/publish-abliterated-version"
 
 	// DefaultDownloadMemoryGB is the default memory limit for download jobs (in GiB).
 	DefaultDownloadMemoryGB = 16

@@ -63,7 +63,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 
 	currentHash := ablitSpecHash(modelCache.Spec.Abliteration)
 
-	suffixes := []string{"-abliterate", "-abliterate-image-warmup", "-downloader", "-publish"}
+	suffixes := []string{"-abliterate", "-abliterate-image-warmup", "-downloader", "-publish", "-publish-source", "-publish-abliterated"}
 	if modelCache.Spec.Finetune != nil {
 		suffixes = append(suffixes, "-finetune")
 	}
@@ -641,6 +641,7 @@ func captureAbliterationFailureLogs(ctx context.Context, c client.Client, kubeCl
 func abliterationFailureNeedsRedownload(msg string) bool {
 	msg = strings.ToLower(msg)
 	return strings.Contains(msg, "timed out waiting for downloaded source weights") ||
+		strings.Contains(msg, "download marker present but no source weight files exist") ||
 		strings.Contains(msg, "download marker present but source weights are incomplete") ||
 		(strings.Contains(msg, "abliteration_waiting_for_download") &&
 			strings.Contains(msg, "marker") &&

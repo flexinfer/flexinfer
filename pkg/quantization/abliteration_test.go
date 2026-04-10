@@ -373,6 +373,45 @@ func TestAbliterationEnv_CPUMode(t *testing.T) {
 	}
 }
 
+func TestAbliterationEnv_LargeGPUForcesWorkspaceSavePolicy(t *testing.T) {
+	t.Setenv("FLEXINFER_ABLITERATION_SAVE_POLICY", "inplace")
+
+	spec := &aiv1alpha1.AbliterationSpec{
+		UseGPU:      true,
+		MaxMemoryGB: ablitInt32Ptr(96),
+	}
+
+	env := abliterationEnv("gemma4-31b-gptq", "gfx906", spec, DefaultGPUMemoryConfig())
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if got := envMap["ABLITERATION_SAVE_POLICY"]; got != "workspace" {
+		t.Fatalf("ABLITERATION_SAVE_POLICY = %q, want workspace", got)
+	}
+}
+
+func TestAbliterationEnv_LargeGPUAllowsExplicitInplaceOptIn(t *testing.T) {
+	t.Setenv("FLEXINFER_ABLITERATION_SAVE_POLICY", "inplace")
+	t.Setenv("FLEXINFER_ABLITERATION_ALLOW_INPLACE_LARGE_MODELS", "true")
+
+	spec := &aiv1alpha1.AbliterationSpec{
+		UseGPU:      true,
+		MaxMemoryGB: ablitInt32Ptr(96),
+	}
+
+	env := abliterationEnv("gemma4-31b-gptq", "gfx906", spec, DefaultGPUMemoryConfig())
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if got := envMap["ABLITERATION_SAVE_POLICY"]; got != "inplace" {
+		t.Fatalf("ABLITERATION_SAVE_POLICY = %q, want inplace", got)
+	}
+}
+
 func TestAbliterationEnv_AblateLMHeadOptIn(t *testing.T) {
 	spec := &aiv1alpha1.AbliterationSpec{
 		WeightMatrices: []string{"o_proj", "lm_head"},
@@ -488,8 +527,14 @@ func TestAbliterationWrapperScript(t *testing.T) {
 	if !strings.Contains(script, ".download_complete") {
 		t.Error("wrapper script should wait for the downloader completion marker")
 	}
+	if !strings.Contains(script, ".source-integrity.json") {
+		t.Error("wrapper script should use source integrity metadata for source-weight readiness")
+	}
 	if !strings.Contains(script, "model.safetensors.index.json") {
 		t.Error("wrapper script should validate sharded-model completeness before starting")
+	}
+	if !strings.Contains(script, "Rebuilt missing source integrity metadata") {
+		t.Error("wrapper script should repair missing source integrity metadata for complete caches")
 	}
 	if !strings.Contains(script, "Waiting for source weights to finish downloading") {
 		t.Error("wrapper script should log when abliteration is waiting for source weights")
