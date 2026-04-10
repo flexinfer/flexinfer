@@ -481,7 +481,9 @@ echo "Start: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # Wait for the downloader stage to finish rebuilding the source weights before
 # we try to load the model. Spec-change retries can briefly recreate the
-# downloader and abliteration Jobs in the same reconcile window.
+# downloader and abliteration Jobs in the same reconcile window. If the
+# completion marker exists but shards are still missing, the cache is already
+# inconsistent and we should fail fast so the controller can restart download.
 DOWNLOAD_MARKER="${MODEL_DIR}/.download_complete"
 DOWNLOAD_READY="false"
 for attempt in $(seq 1 180); do
@@ -519,6 +521,12 @@ PY
     if [ -f "${DOWNLOAD_MARKER}" ] && [ "${WEIGHT_COUNT}" -gt 0 ] && [ "${MISSING_SHARDS}" -eq 0 ]; then
         DOWNLOAD_READY="true"
         break
+    fi
+    if [ -f "${DOWNLOAD_MARKER}" ] && [ "${MISSING_SHARDS}" -gt 0 ]; then
+        msg="Download marker present but source weights are incomplete in ${MODEL_DIR} (weight_files=${WEIGHT_COUNT} expected=${EXPECTED_SHARDS} missing=${MISSING_SHARDS})"
+        echo "${msg}"
+        emit_event "abliteration_error" "model" "${MODEL_DIR}" "detail" "${msg}"
+        exit 1
     fi
     if [ "${attempt}" -eq 1 ] || [ $((attempt % 6)) -eq 0 ]; then
         MARKER_STATE="missing"

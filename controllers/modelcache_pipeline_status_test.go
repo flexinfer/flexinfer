@@ -87,6 +87,10 @@ func TestAbliterationFailureNeedsRedownload(t *testing.T) {
 		t.Fatal("wait-loop telemetry with marker present and zero weight files should trigger re-download")
 	}
 
+	if !abliterationFailureNeedsRedownload(`Download marker present but source weights are incomplete in /cache/model (weight_files=13 expected=63 missing=50)`) {
+		t.Fatal("incomplete cache with a completion marker should trigger re-download")
+	}
+
 	if abliterationFailureNeedsRedownload("CUDA out of memory while loading shards") {
 		t.Fatal("ordinary model load failures should not trigger re-download")
 	}

@@ -480,6 +480,9 @@ func TestAbliterationWrapperScript(t *testing.T) {
 	if !strings.Contains(script, "missing_shards") {
 		t.Error("wrapper script should log missing shard counts while waiting")
 	}
+	if !strings.Contains(script, "Download marker present but source weights are incomplete") {
+		t.Error("wrapper script should fail fast when the completion marker exists but shards are missing")
+	}
 	if !strings.Contains(script, "ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP") {
 		t.Error("wrapper script should support disabling transformers caching allocator warmup")
 	}

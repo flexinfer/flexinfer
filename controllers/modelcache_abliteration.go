@@ -641,11 +641,15 @@ func captureAbliterationFailureLogs(ctx context.Context, c client.Client, kubeCl
 func abliterationFailureNeedsRedownload(msg string) bool {
 	msg = strings.ToLower(msg)
 	return strings.Contains(msg, "timed out waiting for downloaded source weights") ||
+		strings.Contains(msg, "download marker present but source weights are incomplete") ||
 		(strings.Contains(msg, "abliteration_waiting_for_download") &&
 			strings.Contains(msg, "marker") &&
 			(strings.Contains(msg, "weight_files=0") ||
 				strings.Contains(msg, `"weight_files":0`) ||
-				strings.Contains(msg, `"weight_files": 0`)))
+				strings.Contains(msg, `"weight_files": 0`) ||
+				strings.Contains(msg, "missing_shards=") ||
+				strings.Contains(msg, `"missing_shards":`) ||
+				strings.Contains(msg, `"missing_shards": `)))
 }
 
 // effectiveAbliterationDeadline returns the job deadline in seconds from spec or default.
