@@ -949,33 +949,46 @@ publish_unified_rocm_gfx1100:
       trap 'rm -f build/.runtime-env' EXIT
     - |
       echo "Building Unified Runtime image for gfx1100..."
-      buildctl --addr "${BUILDKIT_HOST}" build \
-        --frontend dockerfile.v0 \
-        --local context=. \
-        --local dockerfile=build \
-        --opt filename="Dockerfile.runtime" \
-        --opt platform=linux/amd64 \
-        --opt build-arg:BASE_IMAGE="rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0" \
-        --opt build-arg:GO_VERSION="1.26.0" \
-        --opt build-arg:LLAMACPP_VERSION="b8173" \
-        --opt build-arg:OLLAMA_VERSION="v0.17.4" \
-        --opt build-arg:OLLAMA_GO_VERSION="1.25.7" \
-        --opt build-arg:AMDGPU_TARGETS="gfx1100" \
-        --opt build-arg:GPU_VENDOR="amd" \
-        --opt build-arg:GPU_ARCH="gfx1100" \
-        --opt build-arg:INCLUDE_VLLM="true" \
-        --opt build-arg:INCLUDE_LLAMACPP="true" \
-        --opt build-arg:INCLUDE_OLLAMA="true" \
-        --opt build-arg:INCLUDE_DIFFUSERS="true" \
-        --opt build-arg:INCLUDE_BITSANDBYTES="true" \
-        --opt build-arg:INCLUDE_STEAM="true" \
-        --opt build-arg:INCLUDE_QUANTIZER="true" \
-        --opt build-arg:TRANSFORMERS_CONSTRAINT=">=5.0" \
-        --opt build-arg:LLAMACPP_BUILD_IMAGE="rocm/dev-ubuntu-24.04:6.4.4" \
-        --opt build-arg:CUDA_ARCHITECTURES="52" \
-        --import-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100" \
-        --export-cache "type=inline" \
-        --output "type=image,\"name=${REGISTRY}/runtime:rocm-gfx1100,${REGISTRY}/runtime:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"
+      attempts=3
+      delay=5
+      for i in $(seq 1 "${attempts}"); do
+        if buildctl --addr "${BUILDKIT_HOST}" build \
+          --frontend dockerfile.v0 \
+          --local context=. \
+          --local dockerfile=build \
+          --opt filename="Dockerfile.runtime" \
+          --opt platform=linux/amd64 \
+          --opt build-arg:BASE_IMAGE="rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0" \
+          --opt build-arg:GO_VERSION="1.26.0" \
+          --opt build-arg:LLAMACPP_VERSION="b8173" \
+          --opt build-arg:OLLAMA_VERSION="v0.17.4" \
+          --opt build-arg:OLLAMA_GO_VERSION="1.25.7" \
+          --opt build-arg:AMDGPU_TARGETS="gfx1100" \
+          --opt build-arg:GPU_VENDOR="amd" \
+          --opt build-arg:GPU_ARCH="gfx1100" \
+          --opt build-arg:INCLUDE_VLLM="true" \
+          --opt build-arg:INCLUDE_LLAMACPP="true" \
+          --opt build-arg:INCLUDE_OLLAMA="true" \
+          --opt build-arg:INCLUDE_DIFFUSERS="true" \
+          --opt build-arg:INCLUDE_BITSANDBYTES="true" \
+          --opt build-arg:INCLUDE_STEAM="true" \
+          --opt build-arg:INCLUDE_QUANTIZER="true" \
+          --opt build-arg:TRANSFORMERS_CONSTRAINT=">=5.0" \
+          --opt build-arg:LLAMACPP_BUILD_IMAGE="rocm/dev-ubuntu-24.04:6.4.4" \
+          --opt build-arg:CUDA_ARCHITECTURES="52" \
+          --import-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100" \
+          --export-cache "type=inline" \
+          --output "type=image,\"name=${REGISTRY}/runtime:rocm-gfx1100,${REGISTRY}/runtime:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"; then
+          break
+        fi
+        if [ "${i}" -eq "${attempts}" ]; then
+          echo "ERROR: build failed after ${attempts} attempts"
+          exit 1
+        fi
+        echo "WARN: build failed (${i}/${attempts}); retrying..."
+        sleep "${delay}"
+        delay=$((delay * 2))
+      done
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
       changes:

@@ -524,6 +524,112 @@ func TestReconcileAbliterationMissingWeightsResetsDownloadPipeline(t *testing.T)
 	}
 }
 
+func TestReconcileAbliterationStaleJobResetsDownloadPipeline(t *testing.T) {
+	created := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ablit-stale-redownload",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:          "HF://org/model",
+			StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+			Abliteration: &aiv1alpha1.AbliterationSpec{
+				UseGPU: true,
+			},
+		},
+		Status: aiv1alpha1.ModelCacheStatus{
+			Phase:            aiv1alpha1.ModelCachePhaseAbliterating,
+			CurrentPhase:     "abliteration",
+			Path:             "cache-pvc:/models/base",
+			RetryCount:       1,
+			LastFailurePhase: "abliteration",
+			Abliteration: &aiv1alpha1.AbliterationStatus{
+				FailureMessage: "Download marker present but no source weight files exist in /cache/model",
+			},
+		},
+	}
+
+	ablitJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "ablit-stale-redownload-abliterate",
+			Namespace:         "default",
+			CreationTimestamp: created,
+		},
+	}
+	downloaderJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "ablit-stale-redownload-downloader", Namespace: "default"},
+	}
+
+	r, cl := newQuantizationTestReconciler(t, nil, cache, ablitJob, downloaderJob)
+
+	result, err := r.reconcileAbliteration(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, requeueShort, result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseProvisioning, updated.Status.Phase)
+	assert.Empty(t, updated.Status.CurrentPhase)
+	assert.Empty(t, updated.Status.Path)
+	assert.Nil(t, updated.Status.Abliteration)
+
+	for _, jobName := range []string{
+		"ablit-stale-redownload-abliterate",
+		"ablit-stale-redownload-downloader",
+	} {
+		job := &batchv1.Job{}
+		err := cl.Get(context.Background(), client.ObjectKey{Name: jobName, Namespace: "default"}, job)
+		assert.Error(t, err, "expected %s to be deleted", jobName)
+	}
+}
+
+func TestReconcileAbliterationStaleJobRetriesAndPreservesFailureMessage(t *testing.T) {
+	created := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ablit-stale-retry",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:          "HF://org/model",
+			StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+			Abliteration: &aiv1alpha1.AbliterationSpec{
+				UseGPU: true,
+			},
+		},
+		Status: aiv1alpha1.ModelCacheStatus{
+			Phase:        aiv1alpha1.ModelCachePhaseAbliterating,
+			CurrentPhase: "abliteration",
+			Path:         "cache-pvc:/models/base",
+		},
+	}
+
+	ablitJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "ablit-stale-retry-abliterate",
+			Namespace:         "default",
+			CreationTimestamp: created,
+		},
+	}
+
+	r, cl := newQuantizationTestReconciler(t, nil, cache, ablitJob)
+
+	result, err := r.reconcileAbliteration(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, retryBaseBackoff, result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseAbliterating, updated.Status.Phase)
+	assert.Equal(t, "abliteration", updated.Status.CurrentPhase)
+	assert.EqualValues(t, 1, updated.Status.RetryCount)
+	require.NotNil(t, updated.Status.Abliteration)
+	assert.Contains(t, updated.Status.Abliteration.FailureMessage, "never reported pod status")
+
+	job := &batchv1.Job{}
+	err = cl.Get(context.Background(), client.ObjectKey{Name: "ablit-stale-retry-abliterate", Namespace: "default"}, job)
+	assert.Error(t, err, "expected stale abliteration job to be deleted")
+}
+
 func newQuantizationTestReconciler(t *testing.T, kubeClient kubernetes.Interface, objs ...client.Object) (*ModelCacheReconciler, client.Client) {
 	t.Helper()
 

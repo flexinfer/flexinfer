@@ -318,6 +318,11 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		return ctrl.Result{}, err
 	}
 
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(modelCache.Namespace), client.MatchingLabels{"job-name": ablitJob.Name}); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Check abliteration job status.
 	if ablitJob.Status.Succeeded > 0 {
 		// Reset retry counter on success (abliteration phase completed).
@@ -495,7 +500,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			if modelCache.Status.Abliteration == nil {
 				modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
 			}
-			modelCache.Status.Abliteration.FailureMessage = ""
+			modelCache.Status.Abliteration.FailureMessage = failureMsg
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -525,6 +530,74 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 				modelCache.Status.RetryCount, truncateString(failureMsg, 200))
 		}
 		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "AbliterationFailed", eventMsg)
+		return ctrl.Result{}, nil
+	}
+
+	if ablitJob.Status.Succeeded == 0 && ablitJob.Status.Active == 0 && ablitJob.Status.Failed == 0 && len(podList.Items) == 0 {
+		age := time.Since(ablitJob.CreationTimestamp.Time)
+		if age < 2*requeueLong {
+			log.Info("Abliteration job has not started yet, waiting for pod creation",
+				"cache", modelCache.Name,
+				"job", ablitJob.Name,
+				"age", age)
+			return ctrl.Result{RequeueAfter: requeueShort}, nil
+		}
+
+		failureMsg := staleAbliterationJobFailureMessage(modelCache, age)
+		log.Info("Abliteration job became stale with no pods or terminal status",
+			"cache", modelCache.Name,
+			"job", ablitJob.Name,
+			"age", age,
+			"retryCount", modelCache.Status.RetryCount)
+
+		if abliterationFailureNeedsRedownload(failureMsg) {
+			if err := r.deleteJob(ctx, modelCache.Namespace, ablitJobName); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.resetDownloadState(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "DownloadReset",
+				"Abliteration job went stale after source-weight loss; restarting download pipeline")
+			return ctrl.Result{RequeueAfter: requeueShort}, nil
+		}
+
+		if shouldRetry, backoff := r.shouldRetryFailedPhase(modelCache, "abliteration"); shouldRetry {
+			r.recordFailure(modelCache, "abliteration")
+			if err := r.deleteJob(ctx, modelCache.Namespace, ablitJobName); err != nil {
+				return ctrl.Result{}, err
+			}
+			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseAbliterating
+			modelCache.Status.CurrentPhase = "abliteration"
+			if modelCache.Status.Abliteration == nil {
+				modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
+			}
+			modelCache.Status.Abliteration.FailureMessage = failureMsg
+			if err := r.Status().Update(ctx, modelCache); err != nil {
+				return ctrl.Result{}, err
+			}
+			r.Recorder.Event(modelCache, corev1.EventTypeWarning, "AbliterationRetry",
+				fmt.Sprintf("Abliteration job became stale, retry %d/%d in %s: %s",
+					modelCache.Status.RetryCount, modelCache.Spec.GetMaxRetries(), backoff,
+					truncateString(failureMsg, 200)))
+			return ctrl.Result{RequeueAfter: backoff}, nil
+		}
+
+		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+		modelCache.Status.CurrentPhase = "abliteration"
+		if modelCache.Status.Abliteration == nil {
+			modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
+		}
+		modelCache.Status.Abliteration.FailureMessage = failureMsg
+		if err := r.Status().Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "AbliterationFailed",
+			fmt.Sprintf("Abliteration job became stale after %d retries: %s",
+				modelCache.Status.RetryCount, truncateString(failureMsg, 200)))
 		return ctrl.Result{}, nil
 	}
 
@@ -651,6 +724,15 @@ func abliterationFailureNeedsRedownload(msg string) bool {
 				strings.Contains(msg, "missing_shards=") ||
 				strings.Contains(msg, `"missing_shards":`) ||
 				strings.Contains(msg, `"missing_shards": `)))
+}
+
+func staleAbliterationJobFailureMessage(modelCache *aiv1alpha1.ModelCache, age time.Duration) string {
+	if modelCache != nil && modelCache.Status.Abliteration != nil {
+		if msg := strings.TrimSpace(modelCache.Status.Abliteration.FailureMessage); msg != "" {
+			return msg
+		}
+	}
+	return fmt.Sprintf("Abliteration job never reported pod status after %s", age.Truncate(time.Second))
 }
 
 // effectiveAbliterationDeadline returns the job deadline in seconds from spec or default.

@@ -125,8 +125,8 @@ func (r *ModelCacheReconciler) handleResetRetriesAnnotation(
 	return true, nil
 }
 
-// deleteFailedJob deletes a failed job by name so the controller can recreate it on retry.
-func (r *ModelCacheReconciler) deleteFailedJob(
+// deleteJob deletes a job by name so the controller can recreate it or rewind the phase.
+func (r *ModelCacheReconciler) deleteJob(
 	ctx context.Context,
 	namespace string,
 	jobName string,
@@ -146,6 +146,15 @@ func (r *ModelCacheReconciler) deleteFailedJob(
 	}
 
 	log := log.FromContext(ctx)
-	log.Info("Deleted failed job for retry", "job", jobName)
+	log.Info("Deleted job", "job", jobName)
 	return nil
+}
+
+// deleteFailedJob preserves the historical helper name for retry callers.
+func (r *ModelCacheReconciler) deleteFailedJob(
+	ctx context.Context,
+	namespace string,
+	jobName string,
+) error {
+	return r.deleteJob(ctx, namespace, jobName)
 }
