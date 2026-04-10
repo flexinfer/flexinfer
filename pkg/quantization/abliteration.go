@@ -533,6 +533,12 @@ PY
         DOWNLOAD_READY="true"
         break
     fi
+    if [ -f "${DOWNLOAD_MARKER}" ] && [ "${WEIGHT_COUNT}" -eq 0 ]; then
+        msg="Download marker present but no source weight files exist in ${MODEL_DIR}"
+        echo "${msg}"
+        emit_event "abliteration_error" "model" "${MODEL_DIR}" "detail" "${msg}"
+        exit 1
+    fi
     if [ -f "${DOWNLOAD_MARKER}" ] && [ "${MISSING_SHARDS}" -gt 0 ]; then
         msg="Download marker present but source weights are incomplete in ${MODEL_DIR} (weight_files=${WEIGHT_COUNT} expected=${EXPECTED_SHARDS} missing=${MISSING_SHARDS})"
         echo "${msg}"

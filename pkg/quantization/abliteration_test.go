@@ -482,6 +482,9 @@ func TestAbliterationWrapperScript(t *testing.T) {
 	if !strings.Contains(script, ".abliteration-checkpoint.json") {
 		t.Error("wrapper script should dump the last checkpoint on failure")
 	}
+	if !strings.Contains(script, "Download marker present but no source weight files exist") {
+		t.Error("wrapper script should fail fast when download marker exists but no weights are present")
+	}
 	if !strings.Contains(script, ".download_complete") {
 		t.Error("wrapper script should wait for the downloader completion marker")
 	}
