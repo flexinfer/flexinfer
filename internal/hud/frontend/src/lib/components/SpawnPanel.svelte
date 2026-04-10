@@ -25,6 +25,30 @@
   let configError = $derived(spawnStore.configError);
   let hasAdminToken = $derived(labsAuthStore.hasToken);
 
+  // Filter state for spawn list
+  let statusFilter = $state('all');
+  let searchQuery = $state('');
+  let filteredSpawns = $derived.by(() => {
+    let result = spawns;
+    if (statusFilter === 'active') {
+      result = result.filter((s: SpawnState) => s.status === 'creating' || s.status === 'building' || s.status === 'running');
+    } else if (statusFilter === 'completed') {
+      result = result.filter((s: SpawnState) => s.status === 'completed');
+    } else if (statusFilter === 'failed') {
+      result = result.filter((s: SpawnState) => s.status === 'failed' || s.status === 'stopped');
+    }
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      result = result.filter((s: SpawnState) =>
+        s.request.project.toLowerCase().includes(q) ||
+        s.request.task_description.toLowerCase().includes(q) ||
+        s.agent_id.toLowerCase().includes(q) ||
+        s.request.agent_type.toLowerCase().includes(q)
+      );
+    }
+    return result;
+  });
+
   // Form state
   let agentType = $state('claude-code');
   let project = $state('');
@@ -241,7 +265,10 @@
       </label>
 
       {#if error}
-        <div class="form-error">{error}</div>
+        <div class="form-error">
+          <span>{error}</span>
+          <button type="button" class="error-dismiss" onclick={() => spawnStore.clearError()}>Dismiss</button>
+        </div>
       {/if}
 
       <div class="form-footer">
@@ -320,8 +347,25 @@
         <h2 class="results-title">Recent spawns</h2>
         <p class="results-description">Runs stay here until they finish, fail, or are stopped.</p>
       </div>
-      <div class="results-count">{spawns.length} tracked</div>
+      <div class="results-count">{filteredSpawns.length === spawns.length ? `${spawns.length} tracked` : `${filteredSpawns.length} / ${spawns.length}`}</div>
     </div>
+
+    {#if spawns.length > 0}
+      <div class="filter-bar">
+        <div class="filter-chips">
+          <button type="button" class="filter-chip" class:active={statusFilter === 'all'} onclick={() => (statusFilter = 'all')}>All ({spawns.length})</button>
+          <button type="button" class="filter-chip" class:active={statusFilter === 'active'} onclick={() => (statusFilter = 'active')}>Active ({activeCount})</button>
+          <button type="button" class="filter-chip" class:active={statusFilter === 'completed'} onclick={() => (statusFilter = 'completed')}>Completed ({completedCount})</button>
+          <button type="button" class="filter-chip" class:active={statusFilter === 'failed'} onclick={() => (statusFilter = 'failed')}>Failed ({failedCount})</button>
+        </div>
+        <input
+          type="text"
+          class="filter-search"
+          placeholder="Search project, task, agent..."
+          bind:value={searchQuery}
+        />
+      </div>
+    {/if}
 
     {#if spawns.length === 0}
       <div class="spawn-empty">
@@ -331,9 +375,17 @@
           description="The first run will show live status, timing, budget usage, and a stop control here. Use the composer above to launch a scoped task."
         />
       </div>
+    {:else if filteredSpawns.length === 0}
+      <div class="spawn-empty">
+        <EmptyState
+          icon={'\u{1F50D}'}
+          heading="No matching spawns"
+          description="Try adjusting your filters or search query."
+        />
+      </div>
     {:else}
       <div class="spawns-list">
-        {#each spawns as spawn (spawn.spawn_id)}
+        {#each filteredSpawns as spawn (spawn.spawn_id)}
           <div
             class="spawn-row"
             class:active={spawn.status === 'running' || spawn.status === 'creating' || spawn.status === 'building'}
@@ -685,6 +737,10 @@
   }
 
   .form-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
     font-size: var(--text-sm);
     color: var(--error);
     padding: var(--space-3);
@@ -693,6 +749,22 @@
     background: rgba(255, 61, 113, 0.08);
     position: relative;
     z-index: 1;
+  }
+
+  .error-dismiss {
+    flex-shrink: 0;
+    padding: 2px 8px;
+    border-radius: var(--radius-xs);
+    border: 1px solid rgba(255, 61, 113, 0.3);
+    background: transparent;
+    color: var(--error);
+    font-size: var(--text-xs);
+    cursor: pointer;
+    transition: background var(--transition-fast);
+  }
+
+  .error-dismiss:hover {
+    background: rgba(255, 61, 113, 0.12);
   }
 
   .form-footer {
@@ -999,6 +1071,63 @@
 
   .spawn-agent-id {
     font-family: var(--font-mono);
+  }
+
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+
+  .filter-chips {
+    display: flex;
+    gap: var(--space-1);
+  }
+
+  .filter-chip {
+    padding: 5px 10px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg-secondary);
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+  }
+
+  .filter-chip:hover {
+    border-color: var(--border-active);
+    color: var(--fg-primary);
+  }
+
+  .filter-chip.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(255, 107, 53, 0.08);
+  }
+
+  .filter-search {
+    flex: 1;
+    min-width: 180px;
+    padding: 6px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--fg-primary);
+    font-size: var(--text-sm);
+    font-family: var(--font-mono);
+    transition: border-color var(--transition-fast);
+  }
+
+  .filter-search:focus {
+    outline: none;
+    border-color: var(--border-focus);
+  }
+
+  .filter-search::placeholder {
+    color: var(--fg-dim);
   }
 
   @media (max-width: 980px) {
