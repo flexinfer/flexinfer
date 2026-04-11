@@ -2356,6 +2356,20 @@ else:
     gc.collect()
     print(f"  Saved staged shards from {state_dict_source}")
 verify_saved_artifacts(save_dir)
+
+# Release the model to close safetensors mmaps before any cutover.
+# When accelerate loads weights via safetensors (device_map="auto"),
+# CPU-resident tensors can reference mmap'd regions of the original
+# weight files on the PVC.  If remove-first/inplace deletes those files,
+# the kernel keeps the data blocks allocated until the mmaps close.
+# Without this, cutover copies compete with phantom mmap blocks for PVC
+# space and fail with ENOSPC.
+del model
+gc.collect()
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+release_memory("model_released_for_cutover")
+
 write_checkpoint("saved_staging", percent=96.0)
 emit_snapshot("saved_staging")
 if save_policy == "staged":
