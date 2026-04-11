@@ -222,7 +222,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"memory trim interval", "ABLITERATION_MEMORY_TRIM_INTERVAL", "1"},
 		{"forward use cache", "ABLITERATION_FORWARD_USE_CACHE", "false"},
 		{"save shard size", "ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB"},
-		{"save policy", "ABLITERATION_SAVE_POLICY", "workspace"},
+		{"save policy", "ABLITERATION_SAVE_POLICY", "auto"},
 		{"save impl", "ABLITERATION_SAVE_IMPL", "streaming"},
 		{"disk offload save impl", "ABLITERATION_DISK_OFFLOAD_SAVE_IMPL", ""},
 		{"resume", "ABLITERATION_RESUME", "true"},
@@ -373,9 +373,7 @@ func TestAbliterationEnv_CPUMode(t *testing.T) {
 	}
 }
 
-func TestAbliterationEnv_LargeGPUForcesWorkspaceSavePolicy(t *testing.T) {
-	t.Setenv("FLEXINFER_ABLITERATION_SAVE_POLICY", "inplace")
-
+func TestAbliterationEnv_DefaultSavePolicyIsAuto(t *testing.T) {
 	spec := &aiv1alpha1.AbliterationSpec{
 		UseGPU:      true,
 		MaxMemoryGB: ablitInt32Ptr(96),
@@ -387,14 +385,13 @@ func TestAbliterationEnv_LargeGPUForcesWorkspaceSavePolicy(t *testing.T) {
 		envMap[e.Name] = e.Value
 	}
 
-	if got := envMap["ABLITERATION_SAVE_POLICY"]; got != "workspace" {
-		t.Fatalf("ABLITERATION_SAVE_POLICY = %q, want workspace", got)
+	if got := envMap["ABLITERATION_SAVE_POLICY"]; got != "auto" {
+		t.Fatalf("ABLITERATION_SAVE_POLICY = %q, want auto", got)
 	}
 }
 
-func TestAbliterationEnv_LargeGPUAllowsExplicitInplaceOptIn(t *testing.T) {
+func TestAbliterationEnv_ExplicitSavePolicyPassedThrough(t *testing.T) {
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_POLICY", "inplace")
-	t.Setenv("FLEXINFER_ABLITERATION_ALLOW_INPLACE_LARGE_MODELS", "true")
 
 	spec := &aiv1alpha1.AbliterationSpec{
 		UseGPU:      true,
@@ -454,8 +451,8 @@ func TestAbliterationEnv_GFX906DisablesCachingAllocatorWarmup(t *testing.T) {
 	if got := envMap["ABLITERATION_GPU_MAX_MEMORY_GB"]; got != "14" {
 		t.Fatalf("ABLITERATION_GPU_MAX_MEMORY_GB = %q, want 14", got)
 	}
-	if got := envMap["ABLITERATION_SAVE_POLICY"]; got != "workspace" {
-		t.Fatalf("ABLITERATION_SAVE_POLICY = %q, want workspace", got)
+	if got := envMap["ABLITERATION_SAVE_POLICY"]; got != "auto" {
+		t.Fatalf("ABLITERATION_SAVE_POLICY = %q, want auto", got)
 	}
 	if got := envMap["ABLITERATION_DISK_OFFLOAD_SAVE_IMPL"]; got != "streaming" {
 		t.Fatalf("ABLITERATION_DISK_OFFLOAD_SAVE_IMPL = %q, want streaming for gfx906", got)
