@@ -487,6 +487,8 @@ emit_event() {
     echo "${json}"
 }
 
+TERMLOG_WRITTEN=false
+
 cleanup_on_failure() {
   local rc=$?
   # Persist log to PVC before anything else
@@ -498,20 +500,25 @@ cleanup_on_failure() {
   fi
   if [ $rc -ne 0 ]; then
     emit_event "abliteration_error" "exit_code" "${rc}" "model" "${MODEL_DIR}"
-    # Write error context to termination-log for controller capture.
-    # Output tail comes FIRST so the controller can match failure
-    # patterns even when truncated at 1024 chars (checkpoint JSON can
-    # be large enough to push the tail past the limit).
-    {
-      echo "exit_code=${rc}"
-      echo "---output_tail---"
-      tail -20 "${LOGFILE}" 2>/dev/null || echo "(no log output captured)"
-      local checkpoint="${MODEL_DIR}/.abliteration-checkpoint.json"
-      if [ -f "${checkpoint}" ]; then
-        echo "---checkpoint---"
-        cat "${checkpoint}" 2>/dev/null || true
-      fi
-    } > /dev/termination-log 2>/dev/null || true
+    # Skip overwriting termination-log if a direct write already set it
+    # (e.g. missing-weight detection writes the exact error message so the
+    # controller can pattern-match it for DownloadReset).
+    if [ "${TERMLOG_WRITTEN}" != "true" ]; then
+      # Write error context to termination-log for controller capture.
+      # Output tail comes FIRST so the controller can match failure
+      # patterns even when truncated at 4096 chars (checkpoint JSON can
+      # be large enough to push the tail past the limit).
+      {
+        echo "exit_code=${rc}"
+        echo "---output_tail---"
+        tail -20 "${LOGFILE}" 2>/dev/null || echo "(no log output captured)"
+        local checkpoint="${MODEL_DIR}/.abliteration-checkpoint.json"
+        if [ -f "${checkpoint}" ]; then
+          echo "---checkpoint---"
+          cat "${checkpoint}" 2>/dev/null || true
+        fi
+      } > /dev/termination-log 2>/dev/null || true
+    fi
   fi
   exit $rc
 }
@@ -601,6 +608,7 @@ PY
         msg="Download marker present but no source weight files exist in ${MODEL_DIR}"
         echo "${msg}"
         echo "${msg}" > /dev/termination-log
+        TERMLOG_WRITTEN=true
         emit_event "abliteration_error" "model" "${MODEL_DIR}" "detail" "${msg}"
         exit 1
     fi
@@ -608,6 +616,7 @@ PY
         msg="Download marker present but source weights are incomplete in ${MODEL_DIR} (weight_files=${WEIGHT_COUNT} expected=${EXPECTED_SHARDS} missing=${MISSING_SHARDS})"
         echo "${msg}"
         echo "${msg}" > /dev/termination-log
+        TERMLOG_WRITTEN=true
         emit_event "abliteration_error" "model" "${MODEL_DIR}" "detail" "${msg}"
         exit 1
     fi
