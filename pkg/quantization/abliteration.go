@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -324,17 +325,30 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		saveImpl = "streaming"
 	}
 	diskOffloadSaveImpl := os.Getenv("FLEXINFER_ABLITERATION_DISK_OFFLOAD_SAVE_IMPL")
+	if diskOffloadSaveImpl == "" && gpuArch == "gfx906" {
+		// gfx906 cannot move GPU tensors to CPU for state_dict export
+		// (hipErrorInvalidValue). Streaming save pulls one module at a time
+		// via align_module_device, which is safer than full materialization.
+		diskOffloadSaveImpl = "streaming"
+	}
 	resume := os.Getenv("FLEXINFER_ABLITERATION_RESUME")
 	if resume == "" {
 		resume = "true"
 	}
-	// CPU memory priority: env var > GPUProfile > heuristic from container limit.
-	cpuMaxMemoryGB := os.Getenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB")
-	if cpuMaxMemoryGB == "" {
-		if memCfg.MaxCPUMemoryGB > 0 {
-			cpuMaxMemoryGB = fmt.Sprintf("%d", memCfg.MaxCPUMemoryGB)
-		} else {
-			cpuMaxMemoryGB = fmt.Sprintf("%d", abliterationCPUMaxMemoryGB(maxMemoryGB))
+	// CPU memory: use the greater of (env-var override, GPUProfile, heuristic).
+	// The heuristic scales with the container limit; the env var was a legacy
+	// workaround for the old hardcapped formula and must not suppress the
+	// per-model budget when the container is larger than the env assumed.
+	formulaCPU := abliterationCPUMaxMemoryGB(maxMemoryGB)
+	cpuMaxMemoryGB := fmt.Sprintf("%d", formulaCPU)
+	if envCPU := os.Getenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB"); envCPU != "" {
+		if v, err := strconv.ParseInt(envCPU, 10, 32); err == nil && int32(v) > formulaCPU {
+			cpuMaxMemoryGB = envCPU
+		}
+	}
+	if memCfg.MaxCPUMemoryGB > 0 {
+		if profileVal := fmt.Sprintf("%d", memCfg.MaxCPUMemoryGB); profileVal > cpuMaxMemoryGB {
+			cpuMaxMemoryGB = profileVal
 		}
 	}
 	// GPU memory priority: env var > GPUProfile > arch-based heuristic.

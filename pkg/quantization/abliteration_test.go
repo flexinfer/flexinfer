@@ -272,7 +272,7 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_IMPL", "materialized")
 	t.Setenv("FLEXINFER_ABLITERATION_DISK_OFFLOAD_SAVE_IMPL", "streaming")
 	t.Setenv("FLEXINFER_ABLITERATION_RESUME", "false")
-	t.Setenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB", "28")
+	t.Setenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB", "48")
 	t.Setenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB", "18")
 	t.Setenv("FLEXINFER_ABLITERATION_OFFLOAD_DIR", "/tmp/ablit-offload")
 	t.Setenv("FLEXINFER_ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP", "true")
@@ -323,8 +323,8 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	if got := envMap["ABLITERATION_RESUME"]; got != "false" {
 		t.Errorf("ABLITERATION_RESUME = %q, want false", got)
 	}
-	if got := envMap["ABLITERATION_CPU_MAX_MEMORY_GB"]; got != "28" {
-		t.Errorf("ABLITERATION_CPU_MAX_MEMORY_GB = %q, want 28", got)
+	if got := envMap["ABLITERATION_CPU_MAX_MEMORY_GB"]; got != "48" {
+		t.Errorf("ABLITERATION_CPU_MAX_MEMORY_GB = %q, want 48", got)
 	}
 	if got := envMap["ABLITERATION_GPU_MAX_MEMORY_GB"]; got != "18" {
 		t.Errorf("ABLITERATION_GPU_MAX_MEMORY_GB = %q, want 18", got)
@@ -456,6 +456,9 @@ func TestAbliterationEnv_GFX906DisablesCachingAllocatorWarmup(t *testing.T) {
 	}
 	if got := envMap["ABLITERATION_SAVE_POLICY"]; got != "workspace" {
 		t.Fatalf("ABLITERATION_SAVE_POLICY = %q, want workspace", got)
+	}
+	if got := envMap["ABLITERATION_DISK_OFFLOAD_SAVE_IMPL"]; got != "streaming" {
+		t.Fatalf("ABLITERATION_DISK_OFFLOAD_SAVE_IMPL = %q, want streaming for gfx906", got)
 	}
 }
 
