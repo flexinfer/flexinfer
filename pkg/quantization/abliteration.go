@@ -50,19 +50,11 @@ func largeGPUAbliterationModel(modelPath string, spec *aiv1alpha1.AbliterationSp
 func normalizeAbliterationSavePolicy(modelPath string, spec *aiv1alpha1.AbliterationSpec, maxMemoryGB int32, requested string) string {
 	savePolicy := strings.TrimSpace(requested)
 	if savePolicy == "" {
-		// Use non-destructive workspace staging for GPU abliterations unless an
-		// operator or GPUProfile explicitly requests another policy.
-		if spec != nil && spec.UseGPU {
-			savePolicy = "workspace"
-		} else {
-			savePolicy = "auto"
-		}
-	}
-
-	if largeGPUAbliterationModel(modelPath, spec, maxMemoryGB) &&
-		savePolicy != "workspace" &&
-		!strings.EqualFold(strings.TrimSpace(os.Getenv("FLEXINFER_ABLITERATION_ALLOW_INPLACE_LARGE_MODELS")), "true") {
-		return "workspace"
+		// Let the Python script auto-select the best save policy based on
+		// available disk space, offload dir reclaimable space, and PVC free
+		// space. The script prefers staged > workspace > inplace, and accounts
+		// for reclaimable offload dir space before selection.
+		savePolicy = "auto"
 	}
 
 	return savePolicy

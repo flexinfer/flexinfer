@@ -416,8 +416,7 @@ def resolve_transformers_runtime_install_policy():
     if raw in {"1", "true", "yes", "on", "fallback", "enabled", "allow"}:
         return "fallback"
     raise RuntimeError(
-        "ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL must be one of "
-        "disabled|fallback"
+        "ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL must be one of " "disabled|fallback"
     )
 
 
@@ -799,6 +798,18 @@ def remove_weight_artifacts(path):
     return removed
 
 
+def _evict_page_cache(path):
+    """Evict a file from Linux page cache to prevent cgroup memory pressure."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+        finally:
+            os.close(fd)
+    except (OSError, AttributeError):
+        pass
+
+
 def copy_tree_contents(src_dir, dst_dir):
     os.makedirs(dst_dir, exist_ok=True)
     for entry in os.scandir(src_dir):
@@ -810,6 +821,27 @@ def copy_tree_contents(src_dir, dst_dir):
             shutil.copytree(src, dst)
         else:
             shutil.copy2(src, dst)
+            # Evict both source and destination from page cache.
+            # Without this, copying multi-GB model shards accumulates
+            # page cache in the container cgroup → OOM kill.
+            _evict_page_cache(src)
+            _evict_page_cache(dst)
+
+
+def reclaim_offload_dir():
+    """Remove the accelerate offload directory to free workspace space.
+
+    Safe to call after materialize_state_dict_for_save() has loaded all
+    weights into CPU memory.  The offload dir typically lives on the
+    workspace emptyDir and can consume 40-60 GB for large models.
+    """
+    offload_dir = os.environ.get(
+        "ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload"
+    )
+    if os.path.isdir(offload_dir):
+        size = tree_bytes(offload_dir)
+        shutil.rmtree(offload_dir, ignore_errors=True)
+        print(f"Reclaimed offload dir {offload_dir} ({size / (1024**3):.1f} GiB)")
 
 
 def reset_dir(path):
@@ -878,25 +910,39 @@ def resolve_save_target():
         workspace_root, f"{Path(model_dir).name}.ablit-staging"
     )
 
+    # The offload dir sits on the workspace filesystem. When using the
+    # materialized save path (disk-offloaded models), state_dict is loaded
+    # into CPU memory first, then the offload dir is cleaned before the
+    # workspace staging write begins. Account for this reclaimable space.
+    offload_dir = os.environ.get(
+        "ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload"
+    )
+    offload_reclaimable = tree_bytes(offload_dir) if os.path.exists(offload_dir) else 0
+    effective_workspace_free = workspace_free + offload_reclaimable
+
     selected = policy
     if policy == "auto":
         if pvc_free >= required_bytes:
             selected = "staged"
-        elif workspace_free >= required_bytes:
+        elif effective_workspace_free >= required_bytes:
             selected = "workspace"
         else:
-            raise RuntimeError(
-                "Insufficient free space for safe abliteration save staging. "
-                f"required={required_bytes / (1024**3):.1f}Gi "
+            # Fall back to inplace rather than crashing. Inplace removes old
+            # weights before writing new ones — if the save fails the model
+            # must be re-downloaded, but that's the same recovery path as any
+            # other save failure.
+            print(
+                f"WARNING: auto save policy falling back to inplace "
+                f"(required={required_bytes / (1024**3):.1f}Gi "
                 f"pvc_free={pvc_free / (1024**3):.1f}Gi "
-                f"workspace_free={workspace_free / (1024**3):.1f}Gi. "
-                "Refusing unsafe auto fallback to in-place save; free space or "
-                "set ABLITERATION_SAVE_POLICY=inplace explicitly if you want a destructive save."
+                f"workspace_free={effective_workspace_free / (1024**3):.1f}Gi "
+                f"offload_reclaimable={offload_reclaimable / (1024**3):.1f}Gi)"
             )
+            selected = "inplace"
     elif policy not in {"staged", "workspace", "inplace"}:
         raise RuntimeError(f"unknown ABLITERATION_SAVE_POLICY={policy}")
 
-    if selected == "workspace" and workspace_free <= 0:
+    if selected == "workspace" and effective_workspace_free <= 0:
         raise RuntimeError(
             "workspace staging requested but /workspace has no free space"
         )
@@ -917,6 +963,8 @@ def resolve_save_target():
         "requiredBytes": required_bytes,
         "pvcFreeBytes": pvc_free,
         "workspaceFreeBytes": workspace_free,
+        "offloadReclaimableBytes": offload_reclaimable,
+        "effectiveWorkspaceFreeBytes": effective_workspace_free,
     }
     return selected, target_dir, details
 
@@ -1051,7 +1099,9 @@ if device_map != "cpu":
 # model-family branches in the loader path.
 load_auto_class, load_auto_class_name = resolve_model_loader(active_policy)
 if load_auto_class is not None:
-    print(f"Using {load_auto_class_name} (policy: {active_policy.get('name', 'unnamed')})")
+    print(
+        f"Using {load_auto_class_name} (policy: {active_policy.get('name', 'unnamed')})"
+    )
     model = load_auto_class.from_pretrained(model_dir, **load_kwargs)
 else:
     model = AutoModelForCausalLM.from_pretrained(model_dir, **load_kwargs)
@@ -2062,6 +2112,8 @@ print(
     "Selected save policy="
     f"{save_policy} target={save_dir} pvc_free={save_details['pvcFreeBytes'] / (1024**3):.1f}Gi "
     f"workspace_free={save_details['workspaceFreeBytes'] / (1024**3):.1f}Gi "
+    f"effective_workspace_free={save_details['effectiveWorkspaceFreeBytes'] / (1024**3):.1f}Gi "
+    f"offload_reclaimable={save_details['offloadReclaimableBytes'] / (1024**3):.1f}Gi "
     f"required={save_details['requiredBytes'] / (1024**3):.1f}Gi"
 )
 emit_progress(
@@ -2093,7 +2145,9 @@ effective_save_impl = configured_save_impl
 if configured_save_impl == "streaming" and model_uses_disk_offload(model):
     disk_offload_save_impl = configured_disk_offload_save_impl
     if active_policy and active_policy.get("disk_offload_save_impl"):
-        disk_offload_save_impl = str(active_policy["disk_offload_save_impl"]).strip().lower()
+        disk_offload_save_impl = (
+            str(active_policy["disk_offload_save_impl"]).strip().lower()
+        )
     if not disk_offload_save_impl:
         disk_offload_save_impl = "materialized"
     effective_save_impl = disk_offload_save_impl
@@ -2149,6 +2203,7 @@ if save_format == "safetensors":
         from huggingface_hub import save_torch_state_dict
 
         state_dict, state_dict_source = materialize_state_dict_for_save(model)
+        reclaim_offload_dir()
         emit_snapshot(
             "saving_state_dict_materialized",
             source=state_dict_source,
@@ -2178,6 +2233,7 @@ else:
         print(f"Removed {len(removed)} old weight artifacts for in-place save")
         emit_snapshot("saving_inplace_prepare", removed_artifacts=len(removed))
     state_dict, state_dict_source = materialize_state_dict_for_save(model)
+    reclaim_offload_dir()
     emit_snapshot(
         "saving_state_dict_materialized",
         source=state_dict_source,

@@ -56,12 +56,11 @@ spec:
     # runs on Radeon VII; hidden_states is slower but avoids that retry loop.
     - name: ABLITERATION_ACTIVATION_CAPTURE_MODE
       value: hidden_states
-    # Keep source weights intact until the save fully completes. The Radeon VII
-    # jobs have sufficient /workspace headroom for Gemma4 staging, and
-    # destructive in-place saves can force a full redownload after a late
-    # shard-write failure.
+    # Auto-select save policy based on available space. The script prefers
+    # staged (atomic rename on PVC) > workspace (cross-FS copy) > inplace,
+    # and accounts for reclaimable offload dir space before deciding.
     - name: ABLITERATION_SAVE_POLICY
-      value: workspace
+      value: auto
     # Keep Gemma4 retries deterministic on gfx906 as well. The live 31B run is
     # already in-flight, but any future recreate should install the same tested
     # transformers commit instead of drifting to whatever is on main.
@@ -81,4 +80,4 @@ spec:
       - gguf
     images:
       gptq: registry.harbor.lan/flexinfer/runtime@sha256:ba4570f515af05fe62f8b6672449b4029e1f15c2f606412e8d6d800e3e0e2dbf
-      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:617609505076df29e3cec1932774b15d329a6b2c98af3277a9085da6611d609d
+      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:85f944b778e55d8e06371ded186b9f2ebc4c50429ef6809a78382f65e25af4b2
