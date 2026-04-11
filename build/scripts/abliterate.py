@@ -484,6 +484,58 @@ def release_memory(stage=None, **kwargs):
         emit_snapshot(stage, **kwargs)
 
 
+def demmap_model(model):
+    """Replace mmap-backed parameter tensors with in-memory CPU copies.
+
+    accelerate + safetensors loads CPU-resident tensors as views into mmap'd
+    weight files on the PVC.  Cloning each parameter breaks the mmap
+    dependency so that os.remove() of the original files actually frees disk
+    blocks — critical for inplace saves where old weights must be removed
+    before new shards can be written to the same PVC.
+
+    Clones one parameter at a time and calls gc.collect() per module to keep
+    peak memory at model_size + one_param_size.
+    """
+    cloned = 0
+    for _module_name, module in model.named_modules():
+        for _name, param in module.named_parameters(recurse=False):
+            if param.device.type == "cpu" and not getattr(param, "is_meta", False):
+                param.data = param.data.clone()
+                cloned += 1
+        for _name, buf in module.named_buffers(recurse=False):
+            if buf.device.type == "cpu" and not getattr(buf, "is_meta", False):
+                buf.data = buf.data.clone()
+                cloned += 1
+        gc.collect()
+    return cloned
+
+
+def force_close_safetensors_fds():
+    """Force-close file descriptors still pointing at safetensors files.
+
+    After del model + gc.collect(), Python / safetensors Rust internals may
+    still hold mmap FDs for the original weight files.  These phantom FDs
+    prevent the kernel from releasing disk blocks for unlinked files, causing
+    ENOSPC during workspace→PVC cutover.
+
+    Only call this AFTER the model is deleted and no code will access tensor
+    data again.
+    """
+    fd_dir = "/proc/self/fd"
+    if not os.path.isdir(fd_dir):
+        return 0
+    closed = 0
+    for fd_name in list(os.listdir(fd_dir)):
+        try:
+            target = os.readlink(os.path.join(fd_dir, fd_name))
+            if ".safetensors" in target:
+                os.close(int(fd_name))
+                closed += 1
+        except (OSError, ValueError):
+            pass
+    return closed
+
+
 def model_input_device(model):
     """Pick a real execution device for sharded/offloaded models.
 
@@ -2284,9 +2336,25 @@ if save_format == "safetensors":
         detail=f"writing safetensors shards ({save_policy})",
     )
     if save_policy == "inplace":
+        # Clone CPU tensors from mmap to real memory BEFORE removing old
+        # files.  Without this, os.remove() unlinks the directory entry but
+        # the kernel keeps the data blocks allocated (mmap still holds them),
+        # so df shows no additional free space and the save hits ENOSPC.
+        demmap_n = demmap_model(model)
+        pvc_before_remove = free_bytes(model_dir)
         removed = remove_weight_artifacts(model_dir)
-        print(f"Removed {len(removed)} old weight artifacts for in-place save")
-        emit_snapshot("saving_inplace_prepare", removed_artifacts=len(removed))
+        pvc_after_remove = free_bytes(model_dir)
+        freed_gb = (pvc_after_remove - pvc_before_remove) / (1024**3)
+        print(
+            f"Removed {len(removed)} old weight artifacts for in-place save "
+            f"(demmap'd {demmap_n} tensors, freed {freed_gb:.1f}Gi)"
+        )
+        emit_snapshot(
+            "saving_inplace_prepare",
+            removed_artifacts=len(removed),
+            demmap_tensors=demmap_n,
+            freed_gb=round(freed_gb, 1),
+        )
     if effective_save_impl == "streaming":
         state_dict_source, shard_count = save_streaming_safetensors(
             model,
@@ -2335,9 +2403,21 @@ else:
         detail=f"writing pytorch bin shards ({save_policy})",
     )
     if save_policy == "inplace":
+        demmap_n = demmap_model(model)
+        pvc_before_remove = free_bytes(model_dir)
         removed = remove_weight_artifacts(model_dir)
-        print(f"Removed {len(removed)} old weight artifacts for in-place save")
-        emit_snapshot("saving_inplace_prepare", removed_artifacts=len(removed))
+        pvc_after_remove = free_bytes(model_dir)
+        freed_gb = (pvc_after_remove - pvc_before_remove) / (1024**3)
+        print(
+            f"Removed {len(removed)} old weight artifacts for in-place save "
+            f"(demmap'd {demmap_n} tensors, freed {freed_gb:.1f}Gi)"
+        )
+        emit_snapshot(
+            "saving_inplace_prepare",
+            removed_artifacts=len(removed),
+            demmap_tensors=demmap_n,
+            freed_gb=round(freed_gb, 1),
+        )
     state_dict, state_dict_source = materialize_state_dict_for_save(model)
     reclaim_offload_dir()
     emit_snapshot(
@@ -2364,11 +2444,29 @@ verify_saved_artifacts(save_dir)
 # the kernel keeps the data blocks allocated until the mmaps close.
 # Without this, cutover copies compete with phantom mmap blocks for PVC
 # space and fail with ENOSPC.
+#
+# Steps: unhook accelerate dispatch → del model → double gc → close FDs.
+try:
+    from accelerate.hooks import remove_hook_from_submodules
+
+    remove_hook_from_submodules(model)
+except Exception:
+    pass
+pvc_before_release = free_bytes(model_dir)
 del model
 gc.collect()
+gc.collect()  # second pass for weak references / weak ref callbacks
 if torch.cuda.is_available():
     torch.cuda.empty_cache()
+closed_fds = force_close_safetensors_fds()
 release_memory("model_released_for_cutover")
+pvc_after_release = free_bytes(model_dir)
+released_gb = (pvc_after_release - pvc_before_release) / (1024**3)
+print(
+    f"Model released: pvc_free {pvc_before_release / (1024**3):.1f}Gi → "
+    f"{pvc_after_release / (1024**3):.1f}Gi "
+    f"(+{released_gb:.1f}Gi, closed {closed_fds} safetensors FDs)"
+)
 
 write_checkpoint("saved_staging", percent=96.0)
 emit_snapshot("saved_staging")
