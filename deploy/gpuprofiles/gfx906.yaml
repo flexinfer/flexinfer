@@ -56,6 +56,11 @@ spec:
     # runs on Radeon VII; hidden_states is slower but avoids that retry loop.
     - name: ABLITERATION_ACTIVATION_CAPTURE_MODE
       value: hidden_states
+    # Streaming save iterates one module at a time from offload disk, avoiding
+    # the 2x memory peak of the materialized path. Safe because ablitateLmHead
+    # is false (the only known corruption case is lm_head with disk offload).
+    - name: ABLITERATION_DISK_OFFLOAD_SAVE_IMPL
+      value: streaming
     # Auto-select save policy based on available space. The script prefers
     # staged (atomic rename on PVC) > workspace (cross-FS copy) > inplace,
     # and accounts for reclaimable offload dir space before deciding.
@@ -80,4 +85,4 @@ spec:
       - gguf
     images:
       gptq: registry.harbor.lan/flexinfer/runtime@sha256:ba4570f515af05fe62f8b6672449b4029e1f15c2f606412e8d6d800e3e0e2dbf
-      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:85f944b778e55d8e06371ded186b9f2ebc4c50429ef6809a78382f65e25af4b2
+      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:d53995c14b2b090b6c0d8abbe6f3e6d95228c6588a753350739dff08ab156452

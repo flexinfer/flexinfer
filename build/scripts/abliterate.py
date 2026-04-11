@@ -884,9 +884,20 @@ def swap_staged_model(src_dir, staged_dir, backup_dir):
 
 
 def cutover_workspace_staging(src_dir, staged_dir):
-    removed = remove_weight_artifacts(src_dir)
-    print(f"Removed {len(removed)} old weight artifacts from source dir")
+    # Copy staged files first (overwrites existing with same names), then
+    # clean up any old weight artifacts not present in the staged output.
+    # This ordering ensures original weights survive if the copy fails.
+    staged_names = set(
+        entry.name for entry in os.scandir(staged_dir) if entry.is_file()
+    )
     copy_tree_contents(staged_dir, src_dir)
+    removed = []
+    for item in weight_artifact_paths(src_dir):
+        if item.name not in staged_names:
+            item.unlink(missing_ok=True)
+            removed.append(str(item))
+    if removed:
+        print(f"Removed {len(removed)} old weight artifacts not in staged output")
     shutil.rmtree(staged_dir, ignore_errors=True)
 
 
