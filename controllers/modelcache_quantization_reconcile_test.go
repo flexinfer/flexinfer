@@ -526,6 +526,7 @@ func TestReconcileAbliterationMissingWeightsResetsDownloadPipeline(t *testing.T)
 
 func TestReconcileAbliterationStaleJobResetsDownloadPipeline(t *testing.T) {
 	created := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+	failedAt := metav1.NewTime(created.Add(30 * time.Second))
 	cache := &aiv1alpha1.ModelCache{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ablit-stale-redownload",
@@ -543,6 +544,7 @@ func TestReconcileAbliterationStaleJobResetsDownloadPipeline(t *testing.T) {
 			CurrentPhase:     "abliteration",
 			Path:             "cache-pvc:/models/base",
 			RetryCount:       1,
+			LastFailureTime:  &failedAt,
 			LastFailurePhase: "abliteration",
 			Abliteration: &aiv1alpha1.AbliterationStatus{
 				FailureMessage: "Download marker present but no source weight files exist in /cache/model",
@@ -627,6 +629,109 @@ func TestReconcileAbliterationStaleJobRetriesAndPreservesFailureMessage(t *testi
 
 	job := &batchv1.Job{}
 	err = cl.Get(context.Background(), client.ObjectKey{Name: "ablit-stale-retry-abliterate", Namespace: "default"}, job)
+	assert.Error(t, err, "expected stale abliteration job to be deleted")
+}
+
+func TestReconcileAbliterationFreshJobClearsPriorFailureState(t *testing.T) {
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ablit-fresh-attempt",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:          "HF://org/model",
+			StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.vendor": "AMD",
+				"flexinfer.ai/gpu.arch":   "gfx1100",
+			},
+			Abliteration: &aiv1alpha1.AbliterationSpec{
+				UseGPU: true,
+			},
+		},
+		Status: aiv1alpha1.ModelCacheStatus{
+			Phase:            aiv1alpha1.ModelCachePhaseAbliterating,
+			CurrentPhase:     "abliteration",
+			Path:             "cache-pvc:/models/base",
+			RetryCount:       1,
+			LastFailurePhase: "abliteration",
+			LastFailureTime:  func() *metav1.Time { t := metav1.NewTime(time.Now().Add(-5 * time.Minute)); return &t }(),
+			Abliteration: &aiv1alpha1.AbliterationStatus{
+				FailureMessage: "Download marker present but no source weight files exist in /cache/model",
+				ProgressDetail: "old failure detail",
+				Progress:       int32Ptr(77),
+			},
+		},
+	}
+
+	r, cl := newQuantizationTestReconciler(t, nil, cache)
+
+	result, err := r.reconcileAbliteration(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, requeueLong, result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseAbliterating, updated.Status.Phase)
+	assert.Equal(t, "abliteration", updated.Status.CurrentPhase)
+	require.NotNil(t, updated.Status.Abliteration)
+	assert.Empty(t, updated.Status.Abliteration.FailureMessage)
+	assert.Empty(t, updated.Status.Abliteration.ProgressDetail)
+	assert.Nil(t, updated.Status.Abliteration.Progress)
+
+	job := &batchv1.Job{}
+	err = cl.Get(context.Background(), client.ObjectKey{Name: "ablit-fresh-attempt-abliterate", Namespace: "default"}, job)
+	require.NoError(t, err)
+}
+
+func TestReconcileAbliterationStaleFreshJobIgnoresOldFailureMessage(t *testing.T) {
+	created := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+	failedAt := metav1.NewTime(created.Add(-30 * time.Second))
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "ablit-stale-fresh-job",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:          "HF://org/model",
+			StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+			Abliteration: &aiv1alpha1.AbliterationSpec{
+				UseGPU: true,
+			},
+		},
+		Status: aiv1alpha1.ModelCacheStatus{
+			Phase:            aiv1alpha1.ModelCachePhaseAbliterating,
+			CurrentPhase:     "abliteration",
+			Path:             "cache-pvc:/models/base",
+			RetryCount:       1,
+			LastFailurePhase: "abliteration",
+			LastFailureTime:  &failedAt,
+			Abliteration: &aiv1alpha1.AbliterationStatus{
+				FailureMessage: "Download marker present but no source weight files exist in /cache/model",
+			},
+		},
+	}
+
+	ablitJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "ablit-stale-fresh-job-abliterate",
+			Namespace:         "default",
+			CreationTimestamp: created,
+		},
+	}
+
+	r, cl := newQuantizationTestReconciler(t, nil, cache, ablitJob)
+
+	result, err := r.reconcileAbliteration(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, retryBaseBackoff*2, result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	require.NotNil(t, updated.Status.Abliteration)
+	assert.Contains(t, updated.Status.Abliteration.FailureMessage, "never reported pod status")
+	assert.NotContains(t, updated.Status.Abliteration.FailureMessage, "missing source weight files")
+
+	job := &batchv1.Job{}
+	err = cl.Get(context.Background(), client.ObjectKey{Name: "ablit-stale-fresh-job-abliterate", Namespace: "default"}, job)
 	assert.Error(t, err, "expected stale abliteration job to be deleted")
 }
 

@@ -306,6 +306,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseAbliterating
 		modelCache.Status.CurrentPhase = "abliteration"
+		prepareAbliterationAttemptStatus(modelCache)
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -543,7 +544,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			return ctrl.Result{RequeueAfter: requeueShort}, nil
 		}
 
-		failureMsg := staleAbliterationJobFailureMessage(modelCache, age)
+		failureMsg := staleAbliterationJobFailureMessage(modelCache, ablitJob, age)
 		log.Info("Abliteration job became stale with no pods or terminal status",
 			"cache", modelCache.Name,
 			"job", ablitJob.Name,
@@ -726,9 +727,22 @@ func abliterationFailureNeedsRedownload(msg string) bool {
 				strings.Contains(msg, `"missing_shards": `)))
 }
 
-func staleAbliterationJobFailureMessage(modelCache *aiv1alpha1.ModelCache, age time.Duration) string {
+func prepareAbliterationAttemptStatus(modelCache *aiv1alpha1.ModelCache) {
+	if modelCache == nil {
+		return
+	}
+	modelCache.Status.Abliteration = &aiv1alpha1.AbliterationStatus{}
+}
+
+func staleAbliterationJobFailureMessage(modelCache *aiv1alpha1.ModelCache, ablitJob *batchv1.Job, age time.Duration) string {
 	if modelCache != nil && modelCache.Status.Abliteration != nil {
 		if msg := strings.TrimSpace(modelCache.Status.Abliteration.FailureMessage); msg != "" {
+			if modelCache.Status.LastFailurePhase != "abliteration" || modelCache.Status.LastFailureTime == nil {
+				return fmt.Sprintf("Abliteration job never reported pod status after %s", age.Truncate(time.Second))
+			}
+			if ablitJob != nil && modelCache.Status.LastFailureTime.Time.Before(ablitJob.CreationTimestamp.Time) {
+				return fmt.Sprintf("Abliteration job never reported pod status after %s", age.Truncate(time.Second))
+			}
 			return msg
 		}
 	}
