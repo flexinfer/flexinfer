@@ -52,7 +52,7 @@ spec:
     weightMatrices:
       - o_proj
     useGPU: true
-    maxMemoryGB: 48
+    maxMemoryGB: 56
     timeoutSeconds: 14400
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
