@@ -150,7 +150,7 @@ func TestSpawnAccumulator_ConcurrentSafety(t *testing.T) {
 		}(i)
 		go func(n int) {
 			defer wg.Done()
-			acc.AddFileChange("file.go", "modify")
+			acc.AddFileChange("file.go", "modify", 0, 0)
 		}(i)
 		go func(n int) {
 			defer wg.Done()
@@ -338,7 +338,7 @@ func TestSpawnAccumulator_FileChangesCap(t *testing.T) {
 
 	// Add more than maxFileChanges
 	for i := 0; i < maxFileChanges+50; i++ {
-		acc.AddFileChange("file.go", "modify")
+		acc.AddFileChange("file.go", "modify", 0, 0)
 	}
 
 	snap := acc.Snapshot()
@@ -354,7 +354,7 @@ func TestSpawnAccumulator_SnapshotIndependence(t *testing.T) {
 
 	acc.AddTokens(100, 50, 10, 5)
 	acc.StartToolCall("t1", "Bash", "")
-	acc.AddFileChange("main.go", "create")
+	acc.AddFileChange("main.go", "create", 0, 0)
 	acc.AddError("execution", "test error")
 	acc.SetExternalSessionID("session-1")
 	acc.SetResult(0.05, 3, "end_turn")
@@ -369,7 +369,7 @@ func TestSpawnAccumulator_SnapshotIndependence(t *testing.T) {
 	// Modify the original accumulator after snapshot
 	acc.AddTokens(200, 100, 20, 10)
 	acc.StartToolCall("t2", "Read", "")
-	acc.AddFileChange("util.go", "modify")
+	acc.AddFileChange("util.go", "modify", 0, 0)
 	acc.AddError("rate_limit", "429")
 	acc.SetExternalSessionID("session-2")
 	acc.SetResult(0.10, 6, "max_turns")

@@ -30,7 +30,8 @@ type toolCompleteCall struct {
 }
 
 type fileChangeCall struct {
-	Path, Kind string
+	Path, Kind               string
+	LinesAdded, LinesRemoved int
 }
 
 type errorCall struct {
@@ -89,10 +90,10 @@ func (m *mockSink) CompleteToolCall(id string, durationMs int, exitCode *int, er
 	m.toolCompletes = append(m.toolCompletes, toolCompleteCall{id, durationMs, exitCode, errMsg})
 }
 
-func (m *mockSink) AddFileChange(path, kind string) {
+func (m *mockSink) AddFileChange(path, kind string, linesAdded, linesRemoved int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.fileChanges = append(m.fileChanges, fileChangeCall{path, kind})
+	m.fileChanges = append(m.fileChanges, fileChangeCall{path, kind, linesAdded, linesRemoved})
 }
 
 func (m *mockSink) AddError(errType, message string) {
@@ -384,13 +385,17 @@ func TestClaudeParser_FileChangeInference(t *testing.T) {
 		t.Fatalf("expected 3 file changes, got %d", len(sink.fileChanges))
 	}
 
+	// Write: content = "package main" → 1 line added, 0 removed
+	// Edit: old_string = "foo", new_string = "bar" → 1 line each
+	// NotebookEdit: no content fields → 0, 0
 	expected := []fileChangeCall{
-		{"/workspace/foo.go", "modify"},
-		{"/workspace/bar.go", "modify"},
-		{"/workspace/notebook.ipynb", "modify"},
+		{"/workspace/foo.go", "modify", 1, 0},
+		{"/workspace/bar.go", "modify", 1, 1},
+		{"/workspace/notebook.ipynb", "modify", 0, 0},
 	}
 	for i, fc := range sink.fileChanges {
-		if fc.Path != expected[i].Path || fc.Kind != expected[i].Kind {
+		if fc.Path != expected[i].Path || fc.Kind != expected[i].Kind ||
+			fc.LinesAdded != expected[i].LinesAdded || fc.LinesRemoved != expected[i].LinesRemoved {
 			t.Errorf("file change %d: expected %+v, got %+v", i, expected[i], fc)
 		}
 	}

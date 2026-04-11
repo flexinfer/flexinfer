@@ -291,7 +291,7 @@ func (p *CodexJSONLParser) handleCommandExecution(item codexItem) {
 
 func (p *CodexJSONLParser) handleFileChange(item codexItem) {
 	for _, ch := range item.Changes {
-		p.sink.AddFileChange(ch.Path, ch.Kind)
+		p.sink.AddFileChange(ch.Path, ch.Kind, 0, 0)
 	}
 	if p.broadcast != nil {
 		p.broadcast("agent.spawn.file_change", p.agentID, map[string]any{

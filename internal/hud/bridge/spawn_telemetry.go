@@ -47,8 +47,10 @@ type ToolCallEntry struct {
 
 // FileChangeEntry records a file modification by the agent.
 type FileChangeEntry struct {
-	Path string `json:"path"`
-	Kind string `json:"kind"` // create, modify, delete
+	Path         string `json:"path"`
+	Kind         string `json:"kind"` // create, modify, delete
+	LinesAdded   int    `json:"lines_added,omitempty"`
+	LinesRemoved int    `json:"lines_removed,omitempty"`
 }
 
 // AgentError records an error encountered during agent execution.
@@ -178,7 +180,7 @@ func (a *SpawnTelemetryAccumulator) CompleteToolCall(id string, durationMs int, 
 }
 
 // AddFileChange records a file modification, capped at maxFileChanges.
-func (a *SpawnTelemetryAccumulator) AddFileChange(path, kind string) {
+func (a *SpawnTelemetryAccumulator) AddFileChange(path, kind string, linesAdded, linesRemoved int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -186,8 +188,10 @@ func (a *SpawnTelemetryAccumulator) AddFileChange(path, kind string) {
 		return
 	}
 	a.data.FileChanges = append(a.data.FileChanges, FileChangeEntry{
-		Path: path,
-		Kind: kind,
+		Path:         path,
+		Kind:         kind,
+		LinesAdded:   linesAdded,
+		LinesRemoved: linesRemoved,
 	})
 }
 

@@ -198,25 +198,33 @@ func (p *ClaudeJSONLParser) inferFileChange(toolName string, rawInput json.RawMe
 		return
 	}
 
-	var kind string
 	switch toolName {
-	case "Write":
-		kind = "modify" // could be create, but we can't distinguish without FS access
-	case "Edit":
-		kind = "modify"
-	case "NotebookEdit":
-		kind = "modify"
+	case "Write", "Edit", "NotebookEdit":
+		// ok
 	default:
 		return
 	}
 
 	var input struct {
-		FilePath string `json:"file_path"`
+		FilePath  string `json:"file_path"`
+		Content   string `json:"content"`
+		OldString string `json:"old_string"`
+		NewString string `json:"new_string"`
 	}
 	if err := json.Unmarshal(rawInput, &input); err != nil || input.FilePath == "" {
 		return
 	}
-	p.sink.AddFileChange(input.FilePath, kind)
+
+	var linesAdded, linesRemoved int
+	switch toolName {
+	case "Write":
+		linesAdded = countLines(input.Content)
+	case "Edit":
+		linesRemoved = countLines(input.OldString)
+		linesAdded = countLines(input.NewString)
+	}
+
+	p.sink.AddFileChange(input.FilePath, "modify", linesAdded, linesRemoved)
 }
 
 // ---------- user events ----------

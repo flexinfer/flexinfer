@@ -36,7 +36,8 @@ type SpawnEventSink interface {
 	// exitCode is nil for non-command tools; errMsg is empty on success.
 	CompleteToolCall(id string, durationMs int, exitCode *int, errMsg string)
 	// AddFileChange records a file modification discovered via tool calls.
-	AddFileChange(path, kind string)
+	// linesAdded/linesRemoved are best-effort estimates; pass 0 when unknown.
+	AddFileChange(path, kind string, linesAdded, linesRemoved int)
 	// AddError records an error encountered during the spawn.
 	AddError(errType, message string)
 	// SetExternalSessionID stores the agent platform's own session/thread ID.
@@ -76,3 +77,18 @@ type SpawnEventBroadcaster func(eventType string, agentID string, data any)
 // SpawnTelemetryDeltaEvent is the canonical SSE event type name used by
 // parsers when broadcasting a bridge.SpawnTelemetryDelta payload.
 const SpawnTelemetryDeltaEvent = "agent.spawn.telemetry.delta"
+
+// countLines returns the number of lines in s (counting newlines + 1 for
+// non-empty strings). Returns 0 for empty strings.
+func countLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	n := 1
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			n++
+		}
+	}
+	return n
+}
