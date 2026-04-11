@@ -2,6 +2,7 @@
   import { router } from '../stores/router.svelte.ts';
   import { spawnStore } from '../stores/spawn.svelte.ts';
   import type { SpawnState, SpawnTelemetry } from '../stores/spawn.svelte.ts';
+  import { fleetStore } from '../stores/fleet.svelte.ts';
   import { adminFetch, labsAuthStore } from '../stores/labsAuth.svelte.ts';
   import { eventStore } from '../stores/events.svelte.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
@@ -209,6 +210,17 @@
   let canDelete = $derived(
     spawn !== null && spawn.status !== 'running' && spawn.status !== 'creating' && spawn.status !== 'building'
   );
+
+  // Cross-reference: find the fleet session linked to this spawn's agent_id.
+  let linkedSession = $derived(
+    spawn ? fleetStore.sessionForAgent(spawn.agent_id) : undefined
+  );
+
+  function navigateToSession(): void {
+    if (linkedSession) {
+      router.navigate('agents', 'fleet', linkedSession.id);
+    }
+  }
 </script>
 
 <div class="panel spawn-detail-panel">
@@ -239,6 +251,11 @@
           <span class="external-session-id" title="External session id">
             session: {telemetry.external_session_id}
           </span>
+        {/if}
+        {#if linkedSession}
+          <button class="session-link-chip" onclick={navigateToSession} title="View linked agent session">
+            {linkedSession.active ? '\u25CF' : '\u25CB'} Session
+          </button>
         {/if}
       </div>
       <div class="metrics-row">
@@ -488,6 +505,27 @@
     color: var(--fg-dim);
     font-family: var(--font-mono);
     margin-left: var(--space-2);
+  }
+
+  .session-link-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    margin-left: var(--space-2);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    color: var(--accent);
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), background var(--transition-fast);
+  }
+
+  .session-link-chip:hover {
+    border-color: var(--accent);
+    background: rgba(129, 240, 254, 0.08);
   }
 
   .metrics-row {

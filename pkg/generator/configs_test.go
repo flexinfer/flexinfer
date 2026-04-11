@@ -552,8 +552,8 @@ func TestFilterClaudePermissionRules(t *testing.T) {
 		},
 		{
 			name:        "all known tool names",
-			rules:       []string{"ExitPlanMode", "KillShell", "LS", "LSP", "MultiEdit", "NotebookEdit", "NotebookRead", "Skill", "Task", "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate", "TodoWrite", "ToolSearch", "WebFetch", "WebSearch"},
-			wantKept:    []string{"ExitPlanMode", "KillShell", "LS", "LSP", "MultiEdit", "NotebookEdit", "NotebookRead", "Skill", "Task", "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate", "TodoWrite", "ToolSearch", "WebFetch", "WebSearch"},
+			rules:       []string{"AskUserQuestion", "EnterPlanMode", "EnterWorktree", "ExitPlanMode", "KillShell", "LS", "LSP", "MultiEdit", "NotebookEdit", "NotebookRead", "Skill", "Task", "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate", "TodoWrite", "ToolSearch", "WebFetch", "WebSearch"},
+			wantKept:    []string{"AskUserQuestion", "EnterPlanMode", "EnterWorktree", "ExitPlanMode", "KillShell", "LS", "LSP", "MultiEdit", "NotebookEdit", "NotebookRead", "Skill", "Task", "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate", "TodoWrite", "ToolSearch", "WebFetch", "WebSearch"},
 			wantDropped: nil,
 		},
 	}

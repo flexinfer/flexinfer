@@ -129,6 +129,11 @@ class SpawnStore {
     return this.spawns.filter(s => s.status !== 'creating' && s.status !== 'building' && s.status !== 'running');
   }
 
+  /** Find a spawn by its agent_id (for cross-referencing with fleet sessions). */
+  spawnForAgent(agentId: string): SpawnState | undefined {
+    return this.spawns.find(s => s.agent_id === agentId);
+  }
+
   /**
    * telemetryFor returns the best-known telemetry for a spawn:
    *   1. Live snapshot from telemetryBySpawnId (populated by fetchActiveTelemetry).

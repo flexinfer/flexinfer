@@ -56,6 +56,8 @@
   let branch = $state('');
   let taskDescription = $state('');
   let timeoutMinutes = $state(60);
+  let maxCostUsd = $state<number | undefined>(undefined);
+  let maxTurns = $state<number | undefined>(undefined);
   let multiTurn = $state(false);
   let formReady = $derived(Boolean(project.trim()) && Boolean(taskDescription.trim()));
   let defaultsApplied = $state(false);
@@ -85,6 +87,8 @@
     };
     if (branch) req.branch = branch;
     if (multiTurn) req.multi_turn = true;
+    if (maxCostUsd !== undefined && maxCostUsd > 0) req.max_cost_usd = maxCostUsd;
+    if (maxTurns !== undefined && maxTurns > 0) req.max_turns = maxTurns;
     const result = await spawnStore.spawn(req);
     if (result) {
       taskDescription = '';
@@ -248,6 +252,18 @@
           <span class="label-top">Timeout</span>
           <input bind:value={timeoutMinutes} type="number" class="form-input" min="5" max="480" />
           <span class="form-helper">Minutes before the run is cancelled automatically.</span>
+        </label>
+
+        <label class="form-label">
+          <span class="label-top">Max Cost (USD)</span>
+          <input bind:value={maxCostUsd} type="number" class="form-input" min="0" step="0.01" placeholder="No limit" />
+          <span class="form-helper">Optional budget cap. The agent stops when this cost is reached.</span>
+        </label>
+
+        <label class="form-label">
+          <span class="label-top">Max Turns</span>
+          <input bind:value={maxTurns} type="number" class="form-input" min="1" step="1" placeholder="No limit" />
+          <span class="form-helper">Optional turn limit. One turn equals one model round-trip.</span>
         </label>
       </div>
 
@@ -448,6 +464,22 @@
             {/if}
 
             <div class="spawn-task">{spawn.request.task_description}</div>
+            {#if !hasBudget(spawn)}
+              {@const rt = rowTelemetry(spawn)}
+              {#if rt && (rt.total_cost_usd > 0 || rt.turn_count > 0)}
+                <div class="spawn-inline-stats">
+                  {#if rt.total_cost_usd > 0}
+                    <span class="inline-stat">{rt.cost_estimated ? '~' : ''}{formatCostShort(rt.total_cost_usd)}</span>
+                  {/if}
+                  {#if rt.turn_count > 0}
+                    <span class="inline-stat">{formatTurns(rt.turn_count)} turns</span>
+                  {/if}
+                  {#if rt.token_usage?.output_tokens > 0}
+                    <span class="inline-stat">{Math.round(rt.token_usage.output_tokens / 1000)}k out</span>
+                  {/if}
+                </div>
+              {/if}
+            {/if}
             <div class="spawn-meta">
               <span class="spawn-agent-type">{spawn.request.agent_type}</span>
               <span class="spawn-agent-id">{spawn.agent_id}</span>
@@ -635,7 +667,7 @@
 
   .form-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
     gap: var(--space-3);
     position: relative;
     z-index: 1;
@@ -1068,6 +1100,25 @@
     letter-spacing: var(--tracking-normal);
   }
 
+  .spawn-inline-stats {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+
+  .inline-stat {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 7px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border-subtle);
+    background: rgba(255, 255, 255, 0.02);
+    font-size: var(--text-2xs);
+    font-family: var(--font-mono);
+    color: var(--fg-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
   .spawn-meta {
     display: flex;
     gap: var(--space-2);
@@ -1167,6 +1218,12 @@
 
     .form-summary {
       width: 100%;
+    }
+  }
+
+  @media (max-width: 980px) {
+    .form-grid {
+      grid-template-columns: 1fr 1fr;
     }
   }
 

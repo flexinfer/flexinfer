@@ -281,7 +281,7 @@ func claudePermissionRuleRegexp() *regexp.Regexp {
 		// Default to a conservative RE2-compatible regex. Claude's upstream schema
 		// uses lookaheads that Go's regexp doesn't support, so we cannot compile it
 		// verbatim.
-		pattern := `^((Bash|Edit|ExitPlanMode|Glob|Grep|KillShell|LS|LSP|MultiEdit|NotebookEdit|NotebookRead|Read|Skill|Task|TaskCreate|TaskGet|TaskList|TaskOutput|TaskStop|TaskUpdate|TodoWrite|ToolSearch|WebFetch|WebSearch|Write)(\([^)]*\))?|mcp__.*)$`
+		pattern := `^((AskUserQuestion|Bash|Edit|EnterPlanMode|EnterWorktree|ExitPlanMode|Glob|Grep|KillShell|LS|LSP|MultiEdit|NotebookEdit|NotebookRead|Read|Skill|Task|TaskCreate|TaskGet|TaskList|TaskOutput|TaskStop|TaskUpdate|TodoWrite|ToolSearch|WebFetch|WebSearch|Write)(\([^)]*\))?|mcp__.*)$`
 
 		if schemaBytes, ok := validator.GetEmbeddedSchema("claude_settings.json"); ok && len(schemaBytes) > 0 {
 			var raw map[string]any

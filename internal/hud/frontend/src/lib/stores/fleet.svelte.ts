@@ -147,6 +147,11 @@ class FleetStore {
     return agents.size;
   }
 
+  /** Find a session by agent_id (for cross-referencing with spawns). */
+  sessionForAgent(agentId: string): Session | undefined {
+    return this.sessions.find(s => s.agent_id === agentId);
+  }
+
   /** Group active sessions by namespace project, enriched with agent presence and linked tasks. */
   get namespaceGroups(): NamespaceGroup[] {
     // Build agent lookup by session_id for O(1) enrichment

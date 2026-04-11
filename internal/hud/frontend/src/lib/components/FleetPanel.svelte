@@ -1,5 +1,6 @@
 <script>
   import { fleetStore } from '../stores/fleet.svelte.ts';
+  import { spawnStore } from '../stores/spawn.svelte.ts';
   import { taskStore } from '../stores/tasks.svelte.ts';
   import { workflowStore } from '../stores/workflows.svelte.ts';
   import { memoryStore } from '../stores/memory.svelte.ts';
@@ -24,6 +25,7 @@
     memoryStore.startPolling(10000);
     graphStore.startPolling(15000);
     streamStore.startPolling(3000);
+    spawnStore.startPolling(15000);
 
     return () => {
       fleetStore.stopPolling();
@@ -32,6 +34,7 @@
       memoryStore.stopPolling();
       graphStore.stopPolling();
       streamStore.stopPolling();
+      spawnStore.stopPolling();
     };
   });
 
@@ -247,6 +250,20 @@
     if (session.active) return 'healthy';
     return 'degraded';
   }
+
+  // Cross-reference: build spawn lookup by agent_id for fleet rows.
+  let spawnByAgentId = $derived.by(() => {
+    const map = new Map();
+    for (const s of spawnStore.spawns) {
+      map.set(s.agent_id, s);
+    }
+    return map;
+  });
+
+  function navigateToSpawn(e, spawnId) {
+    e.stopPropagation();
+    router.navigate('sandbox', 'spawn', spawnId);
+  }
 </script>
 
 <div class="panel fleet-panel">
@@ -275,8 +292,16 @@
           onRowClick={(row) => navigateToSession(row.id)}
         >
           {#snippet row({ row: session })}
+            {@const linkedSpawn = spawnByAgentId.get(session.agent_id)}
             <td class="text-mono agent-cell" title={sanitizeText(session.agent ?? session.id?.slice(0, 8) ?? '---')}>
               {sanitizeText(session.agent ?? session.id?.slice(0, 8) ?? '---')}
+              {#if linkedSpawn}
+                <button
+                  class="spawn-link-icon"
+                  title="Spawned agent — click to view spawn detail"
+                  onclick={(e) => navigateToSpawn(e, linkedSpawn.spawn_id)}
+                >{'\u2B22'}</button>
+              {/if}
               {#if expiringClaims.has(session.agent_id)}
                 <span class="expiring-icon" title={`Expiring: ${expiringClaims.get(session.agent_id).join(', ')}`}>{'\u23F0'}</span>
               {/if}
@@ -475,6 +500,15 @@
             <div class="stat-chip">
               <a href={detailAgent.pr_url} target="_blank" rel="noopener" class="stat-chip-value pr-link">PR</a>
               <span class="stat-chip-label">pull request</span>
+            </div>
+          {/if}
+          {#if detailSession && spawnByAgentId.has(detailSession.agent_id)}
+            {@const detailSpawn = spawnByAgentId.get(detailSession.agent_id)}
+            <div class="stat-chip spawn-chip">
+              <button class="stat-chip-value spawn-chip-link" onclick={(e) => navigateToSpawn(e, detailSpawn.spawn_id)}>
+                {'\u2B22'} Spawn
+              </button>
+              <span class="stat-chip-label">{detailSpawn.status}</span>
             </div>
           {/if}
         </div>
@@ -781,6 +815,40 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .spawn-link-icon {
+    display: inline-flex;
+    align-items: center;
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 10px;
+    margin-left: 4px;
+    padding: 0 2px;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity var(--transition-fast);
+  }
+
+  .spawn-link-icon:hover {
+    opacity: 1;
+  }
+
+  .spawn-chip-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--accent);
+    cursor: pointer;
+    transition: opacity var(--transition-fast);
+  }
+
+  .spawn-chip-link:hover {
+    opacity: 0.8;
   }
 
   .expiring-icon {

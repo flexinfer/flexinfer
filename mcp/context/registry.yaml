@@ -1862,6 +1862,17 @@ platform_permissions:
       - "WebSearch"
       - "Skill"
       - "ToolSearch"
+      # -- Planning & task management --
+      - "EnterPlanMode"
+      - "ExitPlanMode"
+      - "AskUserQuestion"
+      - "TaskCreate"
+      - "TaskGet"
+      - "TaskList"
+      - "TaskUpdate"
+      - "TaskOutput"
+      - "TaskStop"
+      - "KillShell"
 
   codex:
     settings:

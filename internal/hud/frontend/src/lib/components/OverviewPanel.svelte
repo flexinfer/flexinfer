@@ -114,6 +114,13 @@
   }
   $effect(() => {
     fetchOTelStatus();
+    // Start core stores so the dashboard renders useful data even when
+    // Overview is the first (or only) panel the user visits.
+    fleetStore.startPolling(10000);
+    healthStore.startPolling(15000);
+    taskStore.startPolling(15000);
+    memoryStore.startPolling(30000);
+    streamStore.startPolling(15000);
     costStore.startPolling(30000);
     rbacStore.startPolling(30000);
     coordinationStore.startPolling(30000);
@@ -122,6 +129,11 @@
     const t = setInterval(fetchOTelStatus, 30000);
     return () => {
       clearInterval(t);
+      fleetStore.stopPolling();
+      healthStore.stopPolling();
+      taskStore.stopPolling();
+      memoryStore.stopPolling();
+      streamStore.stopPolling();
       costStore.stopPolling();
       rbacStore.stopPolling();
       coordinationStore.stopPolling();
@@ -506,6 +518,9 @@
       <div class="strip-summary">
         <span class="strip-summary-label">Today</span>
         <span class="strip-summary-value">{kpis.sessions_today} sessions · {kpis.tasks_completed_today} tasks</span>
+        {#if fleetStore.lastUpdated}
+          <span class="strip-refreshed">{agoText(fleetStore.lastUpdated.getTime())}</span>
+        {/if}
       </div>
     </div>
 
@@ -779,6 +794,13 @@
     font-family: var(--font-mono);
     color: var(--fg-secondary);
     white-space: nowrap;
+  }
+
+  .strip-refreshed {
+    font-size: 9px;
+    font-family: var(--font-mono);
+    color: var(--fg-muted);
+    opacity: 0.6;
   }
 
   .instrument-skeleton {
