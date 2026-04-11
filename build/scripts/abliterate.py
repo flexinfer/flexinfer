@@ -884,20 +884,45 @@ def swap_staged_model(src_dir, staged_dir, backup_dir):
 
 
 def cutover_workspace_staging(src_dir, staged_dir):
-    # Copy staged files first (overwrites existing with same names), then
-    # clean up any old weight artifacts not present in the staged output.
-    # This ordering ensures original weights survive if the copy fails.
     staged_names = set(
         entry.name for entry in os.scandir(staged_dir) if entry.is_file()
     )
-    copy_tree_contents(staged_dir, src_dir)
-    removed = []
-    for item in weight_artifact_paths(src_dir):
-        if item.name not in staged_names:
-            item.unlink(missing_ok=True)
-            removed.append(str(item))
-    if removed:
-        print(f"Removed {len(removed)} old weight artifacts not in staged output")
+    staged_bytes = tree_bytes(staged_dir)
+    pvc_free = free_bytes(src_dir)
+    old_weight_bytes = artifact_size_bytes(weight_artifact_paths(src_dir))
+
+    # Choose strategy based on available PVC space.
+    # - copy-first: safest (old weights survive if copy fails) but needs
+    #   enough free space for the full staged output alongside old weights.
+    # - remove-first: works when PVC is tight but loses old weights if copy
+    #   fails.  The staged copy on the workspace emptyDir still exists until
+    #   the pod terminates, so an immediate retry can succeed.
+    buffer = 2 * 1024**3  # 2 GiB headroom
+    if pvc_free >= staged_bytes + buffer:
+        strategy = "copy-first"
+    else:
+        strategy = "remove-first"
+    print(
+        f"Cutover strategy={strategy} pvc_free={pvc_free / (1024**3):.1f}Gi "
+        f"staged={staged_bytes / (1024**3):.1f}Gi "
+        f"old_weights={old_weight_bytes / (1024**3):.1f}Gi"
+    )
+
+    if strategy == "copy-first":
+        copy_tree_contents(staged_dir, src_dir)
+        removed = []
+        for item in weight_artifact_paths(src_dir):
+            if item.name not in staged_names:
+                item.unlink(missing_ok=True)
+                removed.append(str(item))
+        if removed:
+            print(f"Removed {len(removed)} old weight artifacts not in staged output")
+    else:
+        # Remove old weights first to make room, then copy staged output.
+        removed = remove_weight_artifacts(src_dir)
+        print(f"Removed {len(removed)} old weight artifacts to free space")
+        copy_tree_contents(staged_dir, src_dir)
+
     shutil.rmtree(staged_dir, ignore_errors=True)
 
 
@@ -2266,7 +2291,11 @@ emit_snapshot("saved_staging")
 if save_policy == "staged":
     swap_staged_model(model_dir, save_dir, backup_dir)
 elif save_policy == "workspace":
+    emit_snapshot("cutover_start")
     cutover_workspace_staging(model_dir, save_dir)
+    # Verify the final weights on PVC after cutover.
+    verify_saved_artifacts(model_dir)
+    emit_snapshot("cutover_complete")
 print(f"Save completed in {time.time() - save_start:.1f}s")
 
 # ── Write metadata ────────────────────────────────────────────────────

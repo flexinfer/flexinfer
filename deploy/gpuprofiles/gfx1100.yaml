@@ -99,4 +99,4 @@ spec:
       - exl2
     images:
       gptq: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100-v4
-      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:af71677e21922a296d69c2dea2fa1b29e42a4c20cec6c502edf03822c8306380
+      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:f5aa6efafbe64cf1dd34eec04121c6d31010572926bbdac2a6c6f9ae91679fe7
