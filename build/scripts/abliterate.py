@@ -959,6 +959,15 @@ def cutover_workspace_staging(src_dir, staged_dir):
         flush=True,
     )
 
+    # Clean transient directories from PVC — no longer needed after model
+    # loading and can consume several GiB of space needed for the copy.
+    for cleanup_name in (".cache", ".abliteration-cache"):
+        cleanup_path = os.path.join(src_dir, cleanup_name)
+        if os.path.isdir(cleanup_path):
+            cb = tree_bytes(cleanup_path)
+            shutil.rmtree(cleanup_path, ignore_errors=True)
+            print(f"Cleaned {cleanup_name} ({cb / (1024**3):.1f}Gi)")
+
     if strategy == "copy-first":
         copy_tree_contents(staged_dir, src_dir, verbose=True)
         removed = []
@@ -972,6 +981,11 @@ def cutover_workspace_staging(src_dir, staged_dir):
         # Remove old weights first to make room, then copy staged output.
         removed = remove_weight_artifacts(src_dir)
         print(f"Removed {len(removed)} old weight artifacts to free space")
+        pvc_after = free_bytes(src_dir)
+        print(
+            f"PVC free after cleanup: {pvc_after / (1024**3):.1f}Gi"
+            f" (need {staged_bytes / (1024**3):.1f}Gi)"
+        )
         copy_tree_contents(staged_dir, src_dir, verbose=True)
 
     shutil.rmtree(staged_dir, ignore_errors=True)
