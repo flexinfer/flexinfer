@@ -28,7 +28,7 @@ import (
 const (
 	claudeCodeVersion = "1.0.33"
 	codexVersion      = "0.1.2025062000"
-	geminiVersion     = "0.3.7"
+	geminiVersion     = "0.37.1"
 )
 
 // SpawnStatus is a type alias for spawn.Status, preserving the existing HUD API.
@@ -241,6 +241,8 @@ func newSpawnParser(agentType string, sink SpawnEventSink, agentID, spawnID stri
 		return NewClaudeJSONLParser(sink, agentID, spawnID, broadcast, logger)
 	case "codex":
 		return NewCodexJSONLParser(sink, agentID, spawnID, broadcast, logger)
+	case "gemini":
+		return NewGeminiJSONLParser(sink, agentID, spawnID, broadcast, logger)
 	default:
 		return nil
 	}
@@ -615,7 +617,7 @@ func buildAgentCommand(agentType, task, agentID string) string {
 			agentID, task,
 		)
 	case "gemini":
-		return fmt.Sprintf(`gemini -p %q --yolo`, task)
+		return fmt.Sprintf(`gemini -p %q --yolo --output-format stream-json`, task)
 	default:
 		return fmt.Sprintf(`echo "Unsupported agent type: %s"`, agentType)
 	}
