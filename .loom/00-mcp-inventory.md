@@ -1,6 +1,6 @@
 # MCP Inventory
 
-_Last verified: 2026-04-03_
+_Last verified: 2026-04-10_
 
 ## Why
 
@@ -27,30 +27,28 @@ Snapshot from `read_mcp_resource(server="loom", uri="loom://config")`:
 |---|---|
 | active profile | `full` |
 | daemon running | `true` |
-| registered servers | `46` |
-| aggregated tools | `498` |
+| registered servers | `47` |
+| aggregated tools | `502` |
 | active proxy sessions | `1` |
 | drain ready | `false` (active session) |
-| running managed processes | all 46 servers warm |
+| running managed processes | `gitlab`, `devbox`, `agent_context`, `codebase_memory` |
 
 Snapshot from `read_mcp_resource(server="loom", uri="loom://tools/index")`:
 
 | Field | Value |
 |---|---|
 | server | `all` |
-| totalTools | `498` |
-| totalPages | `5` |
+| totalTools | `502` |
+| totalPages | `6` |
 | pageSize | `100` |
 
 Relevant planning tools confirmed available in this session:
 - `agent_context`
 - `codebase_memory`
+- `devbox`
 - `git`
 - `git_worktree`
-- `quality`
-- `browserkit`
-- `tavily`
-- `context7`
+- `gitlab`
 
 Inventory caveat:
 - `running: false` on `loom://servers` means the server is not currently warm, not that it is unavailable for use.
@@ -70,8 +68,8 @@ Current session status from `codebase_memory__codebase_stats(repo_id="loom-core"
 
 Planning implication:
 - Go/backend discovery is index-ready.
-- HUD frontend (`internal/hud/frontend`) and iOS companion app (`apps/loom-companion-ios`) still require direct file reads because JS/TS/Svelte/Swift are not indexed in `codebase_memory`.
-- For UI-heavy planning or implementation, pair semantic Go lookup with direct source inspection and optional browser/screenshot tooling.
+- HUD frontend (`internal/hud/frontend`) still requires direct file reads because Svelte/TS code is not indexed in `codebase_memory`.
+- The current HUD Labs review should treat backend handlers and monitors as semantically searchable, but frontend contract verification still needs manual source inspection.
 
 ## Constraints
 
@@ -80,12 +78,12 @@ Planning implication:
 - Frontend/mobile code search is still mostly lexical/manual in this session because `codebase_memory` is Go-only.
 - Any planning claims about mobile/HUD API shape should prefer current source files and golden contracts over older `.loom/` summaries.
 
-## Planning Implications For Mobile + HUD Polish
+## Planning Implications For HUD Labs Review
 
 - The runtime has enough tooling to support source-backed planning without additional bootstrap work.
 - Backend/domain planning can rely on `codebase_memory` plus Go tests and contract fixtures.
-- Mobile and HUD polish work should expect more manual file inspection and tighter doc sourcing because those surfaces are not indexed semantically yet.
-- If this planning track turns into implementation, consider either expanding codebase indexing coverage or keeping slices intentionally small around well-known files.
+- HUD Labs work should expect more manual file inspection on the Svelte side and should avoid assuming frontend event coverage matches backend emissions.
+- If this planning track turns into implementation, keep slices narrow around auth plumbing, spawn state contracts, and devbox activity propagation.
 
 ## 2026-03-16 Addendum: Bulk Mutation Inventory
 
@@ -119,9 +117,9 @@ Sources:
 
 ## Sources
 
-- Tool call: `list_mcp_resources` (2026-03-31)
-- Tool call: `list_mcp_resource_templates` (2026-03-31)
-- Tool call: `read_mcp_resource(server="loom", uri="loom://config")` (2026-03-31)
-- Tool call: `read_mcp_resource(server="loom", uri="loom://servers")` (2026-03-31)
-- Tool call: `read_mcp_resource(server="loom", uri="loom://tools/index")` (2026-03-31)
-- Tool call: `codebase_memory__codebase_stats(repo_id="loom-core")` (2026-03-31)
+- Tool call: `list_mcp_resources` (2026-04-10)
+- Tool call: `list_mcp_resource_templates` (2026-04-10)
+- Tool call: `read_mcp_resource(server="loom", uri="loom://config")` (2026-04-10)
+- Tool call: `read_mcp_resource(server="loom", uri="loom://servers")` (2026-04-10)
+- Tool call: `read_mcp_resource(server="loom", uri="loom://tools/index")` (2026-04-10)
+- Tool call: `codebase_memory__codebase_stats(repo_id="loom-core")` (2026-04-10)

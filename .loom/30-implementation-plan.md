@@ -258,6 +258,81 @@ Execution intent:
 
 ## OpenAI Responses Integration Addendum (2026-03-04)
 
+## HUD Labs Integration Addendum (2026-04-10)
+
+### Goal
+
+Make the HUD Labs area operationally trustworthy by fixing spawn auth/state drift, protecting sandbox mutations, and surfacing enough devbox and spawn runtime detail for operators to act from the UI.
+
+### Phase 1: Contract Repair
+
+1. Add a shared HUD-side auth mechanism for admin-protected Labs routes.
+   - Cover spawn create, stop, follow-up message, interrupt, telemetry summary, and paginated telemetry tabs.
+   - Avoid one-off header wiring in each component; centralize request decoration.
+2. Normalize spawn status handling.
+   - Add `building` to the frontend spawn state model.
+   - Subscribe to `agent.spawn.building` alongside the existing running/completed/failed/stopped events.
+3. Align sandbox mutation protection with the rest of the control plane.
+   - Decide whether sandbox start/stop should require the same admin token or a narrower operator scope.
+   - Add tests for protected and unprotected behavior explicitly.
+
+Exit criteria:
+- Spawn launch and telemetry work when `HUD_ADMIN_TOKEN` is configured.
+- A just-launched spawn can be observed in `building` state from the HUD.
+- Sandbox mutations are no longer less protected than spawn mutations.
+
+### Phase 2: Real-Time Wiring
+
+1. Make `SpawnDetailPanel` consume live state instead of one-shot fetches.
+   - Reuse `spawnStore.telemetryBySpawnId` and lifecycle events.
+   - Refresh or merge in terminal state after `agent.spawn.completed`, `agent.spawn.failed`, and `agent.spawn.stopped`.
+2. Emit first-class sandbox activity from the control path.
+   - Broadcast `hud.sandbox.event` or a replacement event directly from sandbox start/stop/build operations.
+   - Stop relying on `agent_context` title parsing as the only path for recent sandbox activity.
+3. Tighten polling behavior.
+   - Use SSE-first fallback patterns consistently so Labs does not poll aggressively when the event stream is healthy.
+
+Exit criteria:
+- Open spawn detail stays current during a live run.
+- Sandbox recent activity reflects HUD-triggered start/stop actions without waiting for unrelated context writes.
+- Labs polling drops to fallback-only where SSE already provides the state.
+
+### Phase 3: Feature Completion
+
+1. Expose one actionable devbox workflow beyond start/stop.
+   - Preferred first slice: async exec (`devbox_exec_async` + `devbox_exec_poll`) with status and output tail.
+2. Expose richer spawn runtime detail already emitted by parsers.
+   - Render message/tool/thinking/result events in the detail view or a dedicated run log.
+3. Add failure-recovery UX.
+   - Show auth failures, backend-unavailable states, and build/exec failure reasons inline with next actions.
+
+Exit criteria:
+- Labs can start a sandbox and run at least one bounded command workflow end to end.
+- Spawn detail shows enough real-time information that operators do not have to leave the HUD to understand what the run is doing.
+
+### Validation Checklist
+
+- [ ] `go test ./internal/hud/domain/spawn ./internal/hud/domain/sandbox -count=1`
+- [ ] Add/refresh frontend tests for Labs auth and state transitions
+- [ ] `pnpm build` in `internal/hud/frontend`
+- [ ] Manual smoke test: spawn launch, stop, message, interrupt, telemetry tabs
+- [ ] Manual smoke test: sandbox start, stop, activity feed, SSE reconnect behavior
+
+### Source Backing
+
+- `internal/hud/domain/spawn/handlers.go:11`
+- `internal/hud/domain/spawn/handler_telemetry.go:17`
+- `internal/hud/frontend/src/lib/stores/spawn.svelte.ts:47`
+- `internal/hud/frontend/src/lib/stores/spawn.svelte.ts:127`
+- `internal/hud/frontend/src/lib/components/SpawnDetailPanel.svelte:27`
+- `internal/hud/frontend/src/lib/stores/events.svelte.ts:91`
+- `internal/hud/spawn.go:279`
+- `internal/hud/domain/sandbox/handlers.go:29`
+- `internal/hud/domain/sandbox/handlers.go:66`
+- `internal/hud/app_routes_operations.go:330`
+- `internal/hud/domain/fleet/handler_context.go:13`
+- `cmd/mcp-devbox/tools.go:180`
+
 Parallel planning track (tool/context orchestration in loom-core):
 - Research: `.loom/15-research-openai-responses-tool-context-2026-03-04.md`
 - Product spec: `.loom/21-product-spec-openai-responses-orchestration-2026-03-04.md`

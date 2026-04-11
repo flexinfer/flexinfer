@@ -1,6 +1,6 @@
 # Workspace Snapshot
 
-- Generated: 2026-04-04T08:56:33-04:00
+- Generated: 2026-04-10T09:10:47-04:00
 - Root: `/Users/cblevins/workspace/services/loom-core`
 - Git toplevel: `/Users/cblevins/workspace/services/loom-core`
 - Platform: `macOS-26.4-arm64-arm-64bit`
@@ -9,17 +9,25 @@
 ## Git
 ```
 ## main...origin/main
- M .loom/00-index.md
- M .loom/00-mcp-inventory.md
- M .loom/00-workspace-snapshot.md
-?? .loom/73-planning-productivity-unlocks-2026-04-03.md
-?? docs/roadmap-reconciliation-2026-03-25.md
-?? docs/roadmap-reconciliation-2026-03-26.md
-?? docs/roadmap-reconciliation-2026-03-27.md
-?? docs/roadmap-reconciliation-2026-03-29.md
-?? docs/roadmap-reconciliation-2026-03-31.md
-?? docs/roadmap-reconciliation-2026-04-01.md
-?? mcp/skills/rapid-dev-iteration-loop/
+ M .opencode/opencode.json
+ M .zed/mcp.json
+ M internal/devbox/backend/k8s_sync.go
+ M internal/devbox/backend/k8s_sync_test.go
+ M internal/hud/domain/spawn/handlers.go
+ M internal/hud/domain/spawn/spawn_test.go
+ D internal/hud/frontend/dist/assets/GraphPanel-OLdbkl8k.js
+ D internal/hud/frontend/dist/assets/LifecyclePanel-DYDAm4tb.js
+ D internal/hud/frontend/dist/assets/TopologyPanel-DEsRCt4T.js
+ D internal/hud/frontend/dist/assets/index-yOW9utem.js
+ M internal/hud/frontend/dist/index.html
+ M internal/hud/frontend/src/lib/stores/spawn.svelte.ts
+ M mcp/context/skills-registry.yaml
+ M scripts/devbox-sync.sh
+ M scripts/mount-devbox-nfs.sh
+?? internal/hud/frontend/dist/assets/GraphPanel-BB2hOzna.js
+?? internal/hud/frontend/dist/assets/LifecyclePanel-xOVJpVKL.js
+?? internal/hud/frontend/dist/assets/TopologyPanel-D716fReL.js
+?? internal/hud/frontend/dist/assets/index-D0pd-idb.js
 ```
 
 ### Remotes
@@ -34,7 +42,7 @@ origin	https://gitlab.flexinfer.ai/services/loom-core.git (push)
 
 ### HEAD
 ```
-f530315c fix(makefile): update HUD targets to use loomd --hud-port instead of deprecated loom hud
+cc20a5f6 fix(hud): improve labs sandbox and spawn ux
 ```
 
 ## Top-Level Layout
@@ -167,9 +175,11 @@ f530315c fix(makefile): update HUD targets to use loomd --hud-port instead of de
 
 ## Tracked / Indexed Files (sample)
 - `.agents/workflows/auto-edit.yaml`
+- `.agents/workflows/feature-dev-auto.yaml`
 - `.agents/workflows/feature-dev.yaml`
 - `.agents/workflows/long-context-analysis.yaml`
 - `.agents/workflows/recursive-context.yaml`
+- `.agents/workflows/tdd-dev.yaml`
 - `.changelog-ai.yaml`
 - `.dockerignore`
 - `.editorconfig`
@@ -225,6 +235,17 @@ f530315c fix(makefile): update HUD targets to use loomd --hud-port instead of de
 - `.loom/70-research-mobile-hud-polish-2026-03-31.md`
 - `.loom/71-product-spec-mobile-hud-polish-2026-03-31.md`
 - `.loom/72-implementation-plan-mobile-hud-polish-2026-03-31.md`
+- `.loom/73-planning-productivity-unlocks-2026-04-03.md`
+- `.loom/74-research-weaver-hardening-2026-04-04.md`
+- `.loom/75-product-spec-weaver-hardening-2026-04-04.md`
+- `.loom/76-implementation-plan-weaver-hardening-2026-04-04.md`
+- `.loom/77-research-agentic-engineering-patterns-2026-04-05.md`
+- `.loom/78-plan-dark-factory-patterns-2026-04-05.md`
+- `.loom/79-research-headless-agent-telemetry-sdk-2026-04-06.md`
+- `.loom/80-product-spec-headless-agent-telemetry-sdk-2026-04-06.md`
+- `.loom/81-implementation-plan-headless-agent-telemetry-sdk-2026-04-06.md`
+- `.loom/82-plan-headless-agent-fullstack-2026-04-07.md`
+- `.loom/83-plan-headless-agent-ux-parity-2026-04-07.md`
 - `.loom/arch-rules.yaml`
 - `.loom/archive/roadmap-reconciliations/README.md`
 - `.loom/archive/roadmap-reconciliations/roadmap-reconciliation-2026-02-12.md`
@@ -344,6 +365,7 @@ f530315c fix(makefile): update HUD targets to use loomd --hud-port instead of de
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Shared/ErrorBanner.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Shared/StatusBadge.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanion/Views/Spawn/SpawnAgentView.swift`
+- `apps/loom-companion-ios/Sources/LoomCompanion/Views/Spawn/SpawnDetailView.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/APIEnvelope.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/APIError.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/AlertItem.swift`
@@ -352,20 +374,6 @@ f530315c fix(makefile): update HUD targets to use loomd --hud-port instead of de
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/ConnectionProfile.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/ConnectionRemediation.swift`
 - `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/DashboardData.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/HealthSummary.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/OpsModels.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/PipelineActivity.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/PushRegistration.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/SessionActivity.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/SessionDetail.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/SessionInfo.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/SpawnModels.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/TimelineEntry.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/UnifiedAgent.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/WidgetData.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Models/WorkflowActivity.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/APIClient.swift`
-- `apps/loom-companion-ios/Sources/LoomCompanionKit/Networking/Endpoint.swift`
 - `…`
 
 ## AGENTS.md Files
@@ -373,6 +381,7 @@ f530315c fix(makefile): update HUD targets to use loomd --hud-port instead of de
 - `.go/pkg/mod/github.com/clipperhouse/uax29/v2@v2.5.0/AGENTS.md`
 - `.tmp/go-mod/github.com/clipperhouse/displaywidth@v0.9.0/AGENTS.md`
 - `.tmp/go-mod/github.com/clipperhouse/uax29/v2@v2.5.0/AGENTS.md`
+- `.worktrees/devbox-tool-pin/AGENTS.md`
 - `.worktrees/issue-23-rebase/AGENTS.md`
 - `AGENTS.md`
 
@@ -492,6 +501,131 @@ for performance.
 
 Always work incrementally. Do the smallest piece of work, test its correctness, and
 get my feedback.
+```
+
+#### `.worktrees/devbox-tool-pin/AGENTS.md`
+```
+Agent Working Notes (loom-core)
+
+Scope
+
+- This file applies to the `services/loom-core` repository.
+
+Repository Purpose
+
+Go backend for the loom ecosystem:
+
+- MCP server implementations (git, gitlab, github, k8s, prometheus, etc.)
+- `loom` CLI for config generation and sync
+- `loomd` daemon for MCP server lifecycle management
+
+Workspace Structure
+
+This repo is part of the `services/` GitLab group:
+
+```text
+gitlab.flexinfer.ai/
+├── platform/gitops    ← K8s manifests, Flux, CI infrastructure
+└── services/
+    ├── loom           ← VSCode extension (TypeScript)
+    └── loom-core      ← YOU ARE HERE (Go backend)
+```
+
+Deployment (GitOps)
+
+MCP servers deploy to Kubernetes via Flux. Manifests live in this repo:
+
+- `k8s/base/` - All server deployment manifests (47 servers)
+- `k8s/base/kustomization.yaml` - Shared kustomize patches (JSON logging, OTel export for all `component=mcp-server` deployments)
+- `platform/gitops/clusters/k3s/flux-system/kustomization-loom-hub-servers.yaml` - Image tags, node affinity
+
+The base kustomization injects `MCP_LOG_FORMAT=json` and `OTEL_EXPORTER_OTLP_ENDPOINT` (Langfuse in-cluster) into all MCP server pods. Keep cross-cutting env vars in `k8s/base/kustomization.yaml` patches to avoid drift across repos.
+
+To deploy: `make deploy` (builds, pushes, updates image tag in gitops, reconciles Flux)
+
+To update images only: `make deploy-update-images` (updates single Flux Kustomization CRD)
+
+To add a new server: create `k8s/base/servers/<name>/` with deployment.yaml, configmap.yaml, service.yaml,
+then add to `k8s/base/kustomization.yaml` and `k8s/base/servers/gateway/registry-configmap.yaml`.
+
+Local Usage
+
+The CLI and daemon typically run on developer machines:
+
+```bash
+# Build all binaries
+make build
+
+# Generate MCP configs for all targets
+./bin/loom generate configs --target all --hub-mode
+
+# Sync configs to home directory
+for profile in vscode antigravity codex claude gemini kilocode; do
+  ./bin/loom sync "$profile" --regen --hub-mode --all-projects --skip-worktrees
+done
+./bin/loom sync skills all
+
+# Start daemon (manages MCP server processes)
+./bin/loomd
+
+# Check daemon health (includes per-server status)
+curl http://localhost:9876/health
+
+# Check SSH tunnel status
+./bin/loom tunnel status
+```
+
+## Development Workflow
+
+### Iterating on loom-core
+
+After making code changes, use one of these targets to rebuild, install, and reload:
+
+```bash
+# Safe reload — skips daemon restart if active proxy connections exist
+make dev-upgrade
+
+# Force reload — always restarts daemon; all proxy clients auto-reconnect
+make dev-reload
+```
+
+Both targets execute the same pipeline:
+1. Build `loom` + `loomd` binaries
+2. Atomic install to `~/.local/bin` (no window where binaries are missing)
+3. Regenerate + sync platform configs (hub mode + all projects, skipping `.worktrees/`)
+4. Restart daemon (`dev-upgrade` skips if busy; `dev-reload` always restarts)
+5. Restart HUD if running on port 3333
+6. Smoke test (proxy initialize round-trip)
+
+### How proxy reconnection works
+
+Each platform client (Claude Code, Codex, Zed, Gemini, etc.) spawns its own `loom proxy` process. The proxy connects to `loomd` via Unix socket. When the daemon restarts:
+
+1. The proxy detects a broken pipe or EOF on the next tool call
+2. It clears its daemon connection and calls `ensureDaemon()` on the next message
+3. `ensureDaemon()` re-dials the socket (with autostart fallback)
+4. The client sees no interruption — the tool call succeeds after a brief reconnect
+
+No manual action is needed from any connected agent or IDE.
+
+### First-time setup
+
+```bash
+make bootstrap-local    # Build + install + sync + environment check
+```
+
+### Individual platform config sync
+
+```bash
+loom sync claude --regen --hub-mode --all-projects --skip-worktrees
+loom sync codex --regen --hub-mode --all-projects --skip-worktrees
+loom sync gemini --regen --hub-mode --all-projects --skip-worktrees
+loom sync vscode --regen --hub-mode --all-projects --skip-worktrees
+loom sync antigravity --regen --hub-mode --all-projects --skip-worktrees
+loom sync kilocode --regen --hub-mode --all-projects --skip-worktrees
+loom sync skills all
+```
+…
 ```
 
 #### `.worktrees/issue-23-rebase/AGENTS.md`
