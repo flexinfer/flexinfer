@@ -696,13 +696,18 @@ def save_streaming_safetensors(model, save_dir, max_shard_size, discard_keys=Non
         nonlocal current_tensors, current_filename
         if not current_tensors:
             return
+        shard_path = os.path.join(save_dir, current_filename)
         save_file(
             current_tensors,
-            os.path.join(save_dir, current_filename),
+            shard_path,
             metadata={"format": "pt"},
         )
         current_tensors.clear()
         gc.collect()
+        # Flush and evict shard from page cache immediately.
+        # Without this, multi-GB shards accumulate as dirty pages in
+        # the container cgroup — especially on inplace saves to PVC.
+        _evict_page_cache(shard_path, sync_first=True)
         emit_snapshot("saving_stream_shard_written", filename=current_filename)
 
     for key, tensor, tensor_source in iter_module_state_tensors(model, discard_keys):
@@ -798,11 +803,20 @@ def remove_weight_artifacts(path):
     return removed
 
 
-def _evict_page_cache(path):
-    """Evict a file from Linux page cache to prevent cgroup memory pressure."""
+def _evict_page_cache(path, sync_first=False):
+    """Evict a file from Linux page cache to prevent cgroup memory pressure.
+
+    When sync_first=True, flushes dirty pages to disk before evicting.
+    Required for destination files after a write — FADV_DONTNEED cannot
+    free dirty (unwritten) pages, so without fsync the pages accumulate
+    in the container cgroup and eventually trigger an OOM kill.
+    """
     try:
-        fd = os.open(path, os.O_RDONLY)
+        mode = os.O_RDWR if sync_first else os.O_RDONLY
+        fd = os.open(path, mode)
         try:
+            if sync_first:
+                os.fsync(fd)
             os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
         finally:
             os.close(fd)
@@ -810,9 +824,26 @@ def _evict_page_cache(path):
         pass
 
 
-def copy_tree_contents(src_dir, dst_dir):
+def _cgroup_memory_bytes():
+    """Read current cgroup memory usage (cgroups v2 / v1)."""
+    for path in (
+        "/sys/fs/cgroup/memory.current",
+        "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+    ):
+        try:
+            return int(Path(path).read_text().strip())
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def copy_tree_contents(src_dir, dst_dir, verbose=False):
     os.makedirs(dst_dir, exist_ok=True)
-    for entry in os.scandir(src_dir):
+    entries = list(os.scandir(src_dir))
+    total = len(entries)
+    copied_bytes = 0
+    t0 = time.time()
+    for i, entry in enumerate(entries, 1):
         src = entry.path
         dst = os.path.join(dst_dir, entry.name)
         if entry.is_dir():
@@ -820,12 +851,25 @@ def copy_tree_contents(src_dir, dst_dir):
                 shutil.rmtree(dst)
             shutil.copytree(src, dst)
         else:
+            sz = entry.stat().st_size
             shutil.copy2(src, dst)
+            copied_bytes += sz
             # Evict both source and destination from page cache.
-            # Without this, copying multi-GB model shards accumulates
-            # page cache in the container cgroup → OOM kill.
+            # Destination MUST be synced first — dirty pages cannot be
+            # evicted by FADV_DONTNEED and accumulate in the cgroup.
             _evict_page_cache(src)
-            _evict_page_cache(dst)
+            _evict_page_cache(dst, sync_first=True)
+            if verbose and (i % 5 == 0 or i == total):
+                elapsed = time.time() - t0
+                cg = _cgroup_memory_bytes()
+                cg_str = f" cgroup={cg / (1024**3):.1f}Gi" if cg else ""
+                print(
+                    f"  copy {i}/{total} "
+                    f"{copied_bytes / (1024**3):.1f}Gi "
+                    f"elapsed={elapsed:.0f}s "
+                    f"rss={rss_mb()}MB{cg_str}",
+                    flush=True,
+                )
 
 
 def reclaim_offload_dir():
@@ -908,8 +952,15 @@ def cutover_workspace_staging(src_dir, staged_dir):
         f"old_weights={old_weight_bytes / (1024**3):.1f}Gi"
     )
 
+    cg = _cgroup_memory_bytes()
+    print(
+        f"Cutover memory: rss={rss_mb()}MB"
+        + (f" cgroup={cg / (1024**3):.1f}Gi" if cg else ""),
+        flush=True,
+    )
+
     if strategy == "copy-first":
-        copy_tree_contents(staged_dir, src_dir)
+        copy_tree_contents(staged_dir, src_dir, verbose=True)
         removed = []
         for item in weight_artifact_paths(src_dir):
             if item.name not in staged_names:
@@ -921,7 +972,7 @@ def cutover_workspace_staging(src_dir, staged_dir):
         # Remove old weights first to make room, then copy staged output.
         removed = remove_weight_artifacts(src_dir)
         print(f"Removed {len(removed)} old weight artifacts to free space")
-        copy_tree_contents(staged_dir, src_dir)
+        copy_tree_contents(staged_dir, src_dir, verbose=True)
 
     shutil.rmtree(staged_dir, ignore_errors=True)
 
@@ -2292,9 +2343,27 @@ if save_policy == "staged":
     swap_staged_model(model_dir, save_dir, backup_dir)
 elif save_policy == "workspace":
     emit_snapshot("cutover_start")
-    cutover_workspace_staging(model_dir, save_dir)
-    # Verify the final weights on PVC after cutover.
-    verify_saved_artifacts(model_dir)
+    try:
+        cutover_workspace_staging(model_dir, save_dir)
+        # Verify the final weights on PVC after cutover.
+        verify_saved_artifacts(model_dir)
+    except Exception as exc:
+        # Write crash details to PVC so they survive pod deletion.
+        crash_path = os.path.join(model_dir, ".abliteration-crash.log")
+        import traceback
+
+        try:
+            with open(crash_path, "w") as f:
+                f.write(f"cutover crash at {time.strftime('%Y-%m-%dT%H:%M:%S')}\n")
+                f.write(f"rss_mb={rss_mb()}\n")
+                cg = _cgroup_memory_bytes()
+                if cg:
+                    f.write(f"cgroup_bytes={cg}\n")
+                f.write(f"pvc_free={free_bytes(model_dir) / (1024**3):.1f}Gi\n")
+                traceback.print_exc(file=f)
+        except Exception:
+            pass
+        raise
     emit_snapshot("cutover_complete")
 print(f"Save completed in {time.time() - save_start:.1f}s")
 
