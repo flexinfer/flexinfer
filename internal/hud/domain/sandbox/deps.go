@@ -22,4 +22,5 @@ type Deps interface {
 	DoSandboxStop(project string) error
 	DoSandboxExecAsync(project, command, timeout, agentID string) (map[string]any, error)
 	DoSandboxExecPoll(execID string) (map[string]any, error)
+	DoSandboxStatus(project string) ([]map[string]any, error)
 }

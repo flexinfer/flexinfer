@@ -395,6 +395,31 @@ func (a *App) doSandboxExecPoll(execID string) (map[string]any, error) {
 	return parsed, nil
 }
 
+// doSandboxStatus calls devbox_status, optionally filtered to a project.
+// Returns the "sandboxes" array from the tool result.
+func (a *App) doSandboxStatus(project string) ([]map[string]any, error) {
+	args := map[string]any{}
+	if project != "" {
+		args["project"] = project
+	}
+	result, err := a.client.CallTool("devbox_status", args)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := bridge.ParseToolResultMap(result)
+	if err != nil {
+		return nil, nil
+	}
+	sandboxes, _ := parsed["sandboxes"].([]any)
+	out := make([]map[string]any, 0, len(sandboxes))
+	for _, s := range sandboxes {
+		if sm, ok := s.(map[string]any); ok {
+			out = append(out, sm)
+		}
+	}
+	return out, nil
+}
+
 // --- Session reaper ---
 
 // sessionReaper periodically checks for offline agents with active sessions

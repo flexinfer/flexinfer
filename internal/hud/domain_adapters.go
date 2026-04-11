@@ -177,6 +177,10 @@ func (a *App) DoSandboxExecPoll(execID string) (map[string]any, error) {
 	return a.doSandboxExecPoll(execID)
 }
 
+func (a *App) DoSandboxStatus(project string) ([]map[string]any, error) {
+	return a.doSandboxStatus(project)
+}
+
 func (a *App) WriteJSON(w http.ResponseWriter, status int, v any) {
 	a.writeJSON(w, status, v)
 }

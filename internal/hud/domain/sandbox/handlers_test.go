@@ -96,6 +96,10 @@ func (m *mockDeps) DoSandboxExecPoll(_ string) (map[string]any, error) {
 	return m.pollResult, m.pollErr
 }
 
+func (m *mockDeps) DoSandboxStatus(_ string) ([]map[string]any, error) {
+	return nil, nil
+}
+
 func TestSandboxDomainName(t *testing.T) {
 	d := New(newMockDeps())
 	if d.Name() != "sandbox" {

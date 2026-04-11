@@ -68,6 +68,18 @@ export interface SandboxExecRun {
   error?: string;
 }
 
+export interface SandboxProjectEntry {
+  project: string;
+  status: string;
+  image?: string;
+  backend?: string;
+  agent_id?: string;
+  running?: boolean;
+  uptime?: string;
+  last_used?: string;
+  error?: string;
+}
+
 const MAX_EVENTS = 20;
 const MAX_EXEC_RUNS = 8;
 
@@ -84,6 +96,8 @@ class SandboxStore {
   capabilitiesLoading = $state(false);
   capabilitiesError = $state<string | null>(null);
   execRuns = $state<SandboxExecRun[]>([]);
+  projectStatus = $state(new Map<string, SandboxProjectEntry[]>());
+  projectStatusLoading = $state(new Set<string>());
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private execPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -304,6 +318,49 @@ class SandboxStore {
     } catch {
       // Policy is optional — silently ignore errors.
     }
+  }
+
+  async fetchProjectStatus(project: string): Promise<void> {
+    if (!labsAuthStore.hasToken) return;
+    const next = new Set(this.projectStatusLoading);
+    next.add(project);
+    this.projectStatusLoading = next;
+    try {
+      const res = await adminFetch(`/api/sandbox/project/${encodeURIComponent(project)}`, {
+        requireToken: true,
+        action: 'Loading sandbox project status',
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const entries: SandboxProjectEntry[] = Array.isArray(data.sandboxes)
+        ? data.sandboxes.map((s: Record<string, unknown>) => ({
+            project: String(s.project ?? project),
+            status: String(s.status ?? 'unknown'),
+            image: typeof s.image === 'string' ? s.image : undefined,
+            backend: typeof s.backend === 'string' ? s.backend : undefined,
+            agent_id: typeof s.agent_id === 'string' ? s.agent_id : undefined,
+            running: typeof s.running === 'boolean' ? s.running : undefined,
+            uptime: typeof s.uptime === 'string' ? s.uptime : undefined,
+            last_used: typeof s.last_used === 'string' ? s.last_used : undefined,
+            error: typeof s.error === 'string' ? s.error : undefined,
+          }))
+        : [];
+      const nextMap = new Map(this.projectStatus);
+      nextMap.set(project, entries);
+      this.projectStatus = nextMap;
+    } catch {
+      // best-effort
+    } finally {
+      const done = new Set(this.projectStatusLoading);
+      done.delete(project);
+      this.projectStatusLoading = done;
+    }
+  }
+
+  async fetchAllProjectStatuses(): Promise<void> {
+    const projects = this.projects;
+    if (projects.length === 0) return;
+    await Promise.allSettled(projects.map(p => this.fetchProjectStatus(p)));
   }
 
   startPolling(intervalMs = 15000): void {

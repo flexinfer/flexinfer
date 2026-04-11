@@ -236,6 +236,31 @@ func (d *SandboxDomain) handleSandboxExec(w http.ResponseWriter, r *http.Request
 	d.deps.WriteJSON(w, http.StatusAccepted, parsed)
 }
 
+// handleSandboxProjectStatus returns per-project sandbox status from devbox_status.
+// GET /api/sandbox/project/{project}
+func (d *SandboxDomain) handleSandboxProjectStatus(w http.ResponseWriter, r *http.Request) {
+	if !d.deps.RequireAdminToken(w, r) {
+		return
+	}
+	project := r.PathValue("project")
+	if project == "" {
+		d.deps.WriteError(w, http.StatusBadRequest, "project is required", nil)
+		return
+	}
+
+	sandboxes, err := d.deps.DoSandboxStatus(project)
+	if err != nil {
+		d.deps.WriteError(w, http.StatusBadGateway, "failed to query sandbox status", err)
+		return
+	}
+
+	d.deps.WriteJSON(w, http.StatusOK, map[string]any{
+		"project":   project,
+		"sandboxes": sandboxes,
+		"count":     len(sandboxes),
+	})
+}
+
 // handleLabsAuthCheck validates the admin token and returns 200 if valid.
 // GET /api/labs/auth-check
 func (d *SandboxDomain) handleLabsAuthCheck(w http.ResponseWriter, r *http.Request) {

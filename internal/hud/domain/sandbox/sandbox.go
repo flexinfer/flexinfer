@@ -28,5 +28,6 @@ func (d *SandboxDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerF
 	mux.HandleFunc("POST /api/sandbox/stop", mw(d.handleSandboxStop))
 	mux.HandleFunc("POST /api/sandbox/exec", mw(d.handleSandboxExec))
 	mux.HandleFunc("GET /api/sandbox/exec/{exec_id}", mw(d.handleSandboxExecPoll))
+	mux.HandleFunc("GET /api/sandbox/project/{project}", mw(d.handleSandboxProjectStatus))
 	mux.HandleFunc("GET /api/labs/auth-check", mw(d.handleLabsAuthCheck))
 }

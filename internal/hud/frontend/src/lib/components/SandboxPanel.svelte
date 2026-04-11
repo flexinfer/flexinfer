@@ -32,6 +32,15 @@
   let lastUpdated = $derived(sandboxStore.lastUpdated);
   let latestEvent = $derived(events[0] ?? null);
   let hasAdminToken = $derived(labsAuthStore.hasToken);
+  let projectStatus = $derived(sandboxStore.projectStatus);
+  let projectStatusLoading = $derived(sandboxStore.projectStatusLoading);
+
+  // Fetch per-project status when projects change and we have a token.
+  $effect(() => {
+    if (hasAdminToken && projects.length > 0) {
+      sandboxStore.fetchAllProjectStatuses();
+    }
+  });
   let offlineReason = $derived(summary?.reason ?? 'mcp-devbox is not running or not connected to the daemon.');
   let offlineHint = $derived(summary?.hint ?? 'Start the devbox service, then return to Labs to provision or inspect sandboxes.');
   let offlineCommand = $derived(summary?.start_command ?? 'loom start devbox');
@@ -336,19 +345,41 @@
         {:else}
           <div class="project-list">
             {#each projects as project}
-              <div class="project-row">
-                <StatusDot status="healthy" />
-                <span class="project-name text-mono">{project}</span>
-                {#if summary?.agent_labels?.[project]}
-                  <span class="agent-badge text-mono">{summary.agent_labels[project]}</span>
+              {@const entries = projectStatus.get(project) ?? []}
+              {@const isLoading = projectStatusLoading.has(project)}
+              <div class="project-card">
+                <div class="project-row">
+                  <StatusDot status={entries.some(e => e.running) ? "healthy" : entries.length > 0 ? "warning" : "unknown"} />
+                  <span class="project-name text-mono">{project}</span>
+                  {#if summary?.agent_labels?.[project]}
+                    <span class="agent-badge text-mono">{summary.agent_labels[project]}</span>
+                  {/if}
+                  <span class="project-actions">
+                    <button class="action-btn action-stop" title="Stop sandbox"
+                      disabled={!hasAdminToken}
+                      onclick={() => (stopConfirmProject = project)}>
+                      {'\u25A0'}
+                    </button>
+                  </span>
+                </div>
+                {#if isLoading && entries.length === 0}
+                  <div class="project-detail-row text-mono">loading…</div>
+                {:else if entries.length > 0}
+                  {#each entries as entry}
+                    <div class="project-detail-row">
+                      <span class="project-detail-status" class:is-running={entry.running}>{entry.status}</span>
+                      {#if entry.backend}
+                        <span class="project-detail-meta">{entry.backend}</span>
+                      {/if}
+                      {#if entry.uptime}
+                        <span class="project-detail-meta">{entry.uptime}</span>
+                      {/if}
+                      {#if entry.agent_id}
+                        <span class="agent-badge text-mono">{entry.agent_id}</span>
+                      {/if}
+                    </div>
+                  {/each}
                 {/if}
-                <span class="project-actions">
-                  <button class="action-btn action-stop" title="Stop sandbox"
-                    disabled={!hasAdminToken}
-                    onclick={() => (stopConfirmProject = project)}>
-                    {'\u25A0'}
-                  </button>
-                </span>
               </div>
             {/each}
           </div>
@@ -933,7 +964,6 @@
     gap: var(--space-2);
     padding: var(--space-2) var(--space-1);
     font-size: var(--text-sm);
-    border-bottom: 1px solid var(--border-subtle);
     transition: background var(--transition-fast);
   }
 
@@ -968,6 +998,38 @@
     flex-shrink: 0;
     opacity: 0;
     transition: opacity var(--transition-fast);
+  }
+
+  .project-card {
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: var(--space-1);
+  }
+
+  .project-card:last-child {
+    border-bottom: none;
+  }
+
+  .project-detail-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 2px var(--space-1) 2px calc(var(--space-2) + 12px);
+    font-size: var(--text-xs);
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+  }
+
+  .project-detail-status {
+    font-weight: 600;
+    color: var(--fg-secondary);
+  }
+
+  .project-detail-status.is-running {
+    color: var(--success);
+  }
+
+  .project-detail-meta {
+    color: var(--fg-dim);
   }
 
   .project-row:hover .project-actions {
