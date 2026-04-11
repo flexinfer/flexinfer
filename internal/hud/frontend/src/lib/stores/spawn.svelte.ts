@@ -3,6 +3,12 @@
 import { eventStore } from './events.svelte.ts';
 import { adminFetch, labsAuthStore } from './labsAuth.svelte.ts';
 
+export interface SpawnActivityEvent {
+  type: string;
+  timestamp: string;
+  data: Record<string, unknown>;
+}
+
 export interface SpawnRequest {
   agent_type: string;
   project: string;
@@ -107,7 +113,11 @@ class SpawnStore {
   // embed telemetry in the list response (typically active spawns). Completed
   // spawns generally carry telemetry directly on SpawnState.telemetry.
   telemetryBySpawnId = $state(new Map<string, SpawnTelemetry>());
+  // activityBySpawnId accumulates real-time SSE activity events per spawn
+  // (messages, tool calls, thinking, file changes, results). Capped at 500 per spawn.
+  activityBySpawnId = $state(new Map<string, SpawnActivityEvent[]>());
 
+  private static readonly MAX_ACTIVITY_EVENTS = 500;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private eventUnsubs: Array<() => void> = [];
 
@@ -391,6 +401,40 @@ class SpawnStore {
         this.telemetryBySpawnId = next;
       })
     );
+
+    // Subscribe to spawn activity events for live feed.
+    const activityEvents = [
+      'agent.spawn.message', 'agent.spawn.thinking', 'agent.spawn.reasoning',
+      'agent.spawn.todo', 'agent.spawn.tool_start', 'agent.spawn.tool_complete',
+      'agent.spawn.file_change', 'agent.spawn.result', 'agent.spawn.rate_limit',
+    ];
+    for (const eventType of activityEvents) {
+      this.eventUnsubs.push(
+        eventStore.on(eventType, (event) => {
+          const data = event.data ?? {};
+          const spawnId = typeof data.spawn_id === 'string' ? data.spawn_id
+            : typeof data.agent_id === 'string' ? data.agent_id : '';
+          if (!spawnId) return;
+          // Resolve spawn by agent_id if spawn_id not directly in payload.
+          const resolvedId = this.spawns.find(s => s.spawn_id === spawnId)?.spawn_id
+            ?? this.spawns.find(s => s.agent_id === spawnId)?.spawn_id
+            ?? spawnId;
+          const next = new Map(this.activityBySpawnId);
+          const list = [...(next.get(resolvedId) ?? [])];
+          list.push({
+            type: eventType.replace('agent.spawn.', ''),
+            timestamp: event.timestamp || new Date().toISOString(),
+            data,
+          });
+          // Cap at max events.
+          if (list.length > SpawnStore.MAX_ACTIVITY_EVENTS) {
+            list.splice(0, list.length - SpawnStore.MAX_ACTIVITY_EVENTS);
+          }
+          next.set(resolvedId, list);
+          this.activityBySpawnId = next;
+        })
+      );
+    }
   }
 }
 

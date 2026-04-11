@@ -99,6 +99,10 @@ class EventStore {
       'agent.heartbeat', 'agent.task.update', 'agent.task.dispatched',
       'agent.spawn.building', 'agent.spawn.running', 'agent.spawn.completed', 'agent.spawn.failed', 'agent.spawn.stopped',
       'agent.spawn.telemetry.delta',
+      // Spawn activity events (for live activity feed).
+      'agent.spawn.message', 'agent.spawn.thinking', 'agent.spawn.reasoning', 'agent.spawn.todo',
+      'agent.spawn.tool_start', 'agent.spawn.tool_complete', 'agent.spawn.file_change',
+      'agent.spawn.result', 'agent.spawn.rate_limit',
       // Proactive notification events.
       'hud.conflict', 'hud.approval_needed', 'hud.claim.released',
       // Granular memory mutation events.

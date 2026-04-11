@@ -6,6 +6,7 @@
   import { eventStore } from '../stores/events.svelte.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import BudgetBar from '../widgets/BudgetBar.svelte';
+  import ActivityTab from './SpawnTelemetry/ActivityTab.svelte';
   import ToolsTab from './SpawnTelemetry/ToolsTab.svelte';
   import FilesTab from './SpawnTelemetry/FilesTab.svelte';
   import ErrorsTab from './SpawnTelemetry/ErrorsTab.svelte';
@@ -13,9 +14,10 @@
   import LabsAccessBar from './shared/LabsAccessBar.svelte';
   import ConfirmDialog from './shared/ConfirmDialog.svelte';
 
-  type TabId = 'tools' | 'files' | 'errors' | 'usage';
+  type TabId = 'activity' | 'tools' | 'files' | 'errors' | 'usage';
 
   const tabs: Array<{ id: TabId; label: string }> = [
+    { id: 'activity', label: 'Activity' },
     { id: 'tools', label: 'Tools' },
     { id: 'files', label: 'Files' },
     { id: 'errors', label: 'Errors' },
@@ -26,7 +28,7 @@
   let error = $state<string | null>(null);
   let spawn = $state<SpawnState | null>(null);
   let telemetry = $state<SpawnTelemetry | null>(null);
-  let activeTab = $state<TabId>('tools');
+  let activeTab = $state<TabId>('activity');
   let eventUnsubs = $state<Array<() => void>>([]);
   let hasAdminToken = $derived(labsAuthStore.hasToken);
   let actionError = $derived(spawnStore.error);
@@ -346,7 +348,9 @@
         {/each}
       </div>
       <div class="tab-body">
-        {#if activeTab === 'tools'}
+        {#if activeTab === 'activity'}
+          <ActivityTab spawnId={spawn.spawn_id} />
+        {:else if activeTab === 'tools'}
           <ToolsTab spawnId={spawn.spawn_id} />
         {:else if activeTab === 'files'}
           <FilesTab spawnId={spawn.spawn_id} />
