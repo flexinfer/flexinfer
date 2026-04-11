@@ -2286,6 +2286,11 @@ if save_format == "safetensors":
             shard_count=shard_count,
         )
         print(f"  Saved staged shards from {state_dict_source} in {shard_count} shards")
+        # The offload dir on emptyDir is no longer needed — all weights are
+        # serialized to save_dir.  Reclaim before workspace→PVC cutover to
+        # avoid filling the node's root FS and triggering kubelet disk-pressure
+        # eviction.
+        reclaim_offload_dir()
     else:
         from huggingface_hub import save_torch_state_dict
 

@@ -697,11 +697,11 @@ func captureAbliterationFailureLogs(ctx context.Context, c client.Client, kubeCl
 				continue
 			}
 			if msg := strings.TrimSpace(terminated.Message); msg != "" {
-				return truncateString(msg, 1024)
+				return truncateString(msg, 4096)
 			}
 			if kubeClient != nil {
 				if logMsg := readPodLogTail(ctx, kubeClient, namespace, pod.Name, "abliterator", 50); logMsg != "" {
-					return truncateString(logMsg, 1024)
+					return truncateString(logMsg, 4096)
 				}
 			}
 			if terminated.Reason != "" {
