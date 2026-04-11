@@ -72,3 +72,62 @@ func TestFetchToolsBounded_RespectsLimit(t *testing.T) {
 		t.Fatalf("max concurrency exceeded limit: got=%d limit=%d", got, limit)
 	}
 }
+
+func TestFetchToolsBounded_ReturnsOnContextCancel(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sources := []toolSource{
+		{name: "slow-a", kind: toolSourceLocal},
+		{name: "slow-b", kind: toolSourceLocal},
+	}
+
+	started := make(chan struct{}, len(sources))
+	release := make(chan struct{})
+
+	fetch := func(ctx context.Context, src toolSource) ([]mcp.Tool, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		<-release
+		return nil, ctx.Err()
+	}
+
+	done := make(chan []toolFetchResult, 1)
+	go func() {
+		done <- fetchToolsBounded(ctx, sources, 1, fetch)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected first fetch to start")
+	}
+
+	cancel()
+
+	var results []toolFetchResult
+	select {
+	case results = <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("fetchToolsBounded did not return after context cancellation")
+	}
+
+	close(release)
+
+	if len(results) != len(sources) {
+		t.Fatalf("got %d results, want %d", len(results), len(sources))
+	}
+	for i, result := range results {
+		if result.name != sources[i].name {
+			t.Fatalf("result[%d].name = %q, want %q", i, result.name, sources[i].name)
+		}
+		if result.err == nil {
+			t.Fatalf("result[%d].err = nil, want context cancellation", i)
+		}
+		if result.err != context.Canceled {
+			t.Fatalf("result[%d].err = %v, want %v", i, result.err, context.Canceled)
+		}
+	}
+}
