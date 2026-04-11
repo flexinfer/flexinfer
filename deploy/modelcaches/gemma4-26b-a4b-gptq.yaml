@@ -1,6 +1,7 @@
-# Gemma4 26B-A4B (MoE) → Abliteration → GPTQ INT4 Pipeline
+# Gemma4 26B-A4B (MoE + GDN hybrid) → Abliteration → GPTQ INT4 Pipeline
 # Mixture-of-Experts: 25.2B total / 3.8B active, 128 experts top-8, 30 layers.
 # Same Gemma4ForConditionalGeneration architecture as E4B, vision+video capable.
+# Hybrid arch: 25 GDN layers + 5 full-attention layers [5,11,17,23,29].
 #
 # Pipeline: Download BF16 (~27 GB) → Abliterate → GPTQ INT4 (~7 GB) → Ready
 # Node class: pin to the live RDNA3 host.
@@ -8,8 +9,13 @@
 # MoE abliteration safety:
 #   - weightMatrices: ["o_proj"] ONLY — shared attention output projection.
 #     Expert FFN weights (block_sparse_moe/experts) are skipped by abliterate.py.
-#   - targetLayers: "auto" — 30 layers, all standard attention + MoE FFN (no GDN).
+#   - targetLayers: "auto" — 30 layers, GDN layers auto-skipped (5 full-attn remain).
 #   - Double protection: CRD restricts to o_proj + code skips expert params.
+#
+# MoE quantization safety:
+#   - dynamicExclusion: "auto" — detects MoE architecture via num_local_experts in
+#     config.json and excludes .*experts.* from GPTQ (fused 3D expert tensors crash
+#     GPTQModel's 2D matrix quantization). Hybrid GDN layers also auto-excluded.
 #
 # Disk: the upstream BF16 cache expands to roughly 30 Gi on Longhorn/Xet-backed
 # downloads, and streaming in-place save needs another full set of shards plus

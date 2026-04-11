@@ -231,7 +231,7 @@ func defaultGPTQModelPoliciesJSON() string {
 			Architectures:       []string{"Gemma4ForCausalLM"},
 			Loader:              "gptqmodel",
 			PythonPackages: []string{
-				"transformers>=5.5.0",
+				"git+https://github.com/huggingface/transformers.git@f965b10b",
 			},
 			QuantizeConfigOverride: map[string]any{
 				"offload_to_disk": false,

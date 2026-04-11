@@ -1,6 +1,7 @@
-# Gemma4 31B (Dense) → Abliteration → GPTQ INT4 Pipeline
-# Dense model: 30.7B params, 60 layers, all standard attention (no MoE, no GDN).
+# Gemma4 31B (Dense, GDN hybrid) → Abliteration → GPTQ INT4 Pipeline
+# Dense model: 30.7B params, 60 layers, GDN hybrid architecture (no MoE).
 # Same Gemma4ForConditionalGeneration architecture, vision+video capable.
+# Hybrid arch: 50 GDN layers + 10 full-attention layers [5,11,17,23,29,35,41,47,53,59].
 #
 # Pipeline: Download BF16 (~61 GB) → Abliterate → GPTQ INT4 (~16 GB) → Ready
 # Node: cblevins-radeonvii (gfx906, 128GB RAM)
@@ -10,7 +11,7 @@
 #
 # Abliteration:
 #   - weightMatrices: ["o_proj", "down_proj"] — dense model, safe to use both (no experts).
-#   - targetLayers: "auto" — 60 layers, all standard attention.
+#   - targetLayers: "auto" — 60 layers, GDN layers auto-skipped (10 full-attn remain).
 #
 # Disk: 61 GB BF16 + ~16 GB GPTQ INT4 + headroom → 120 Gi PVC
 # Storage tier: use GPU/NVMe 1R cache storage. The stable bulk pool no longer has

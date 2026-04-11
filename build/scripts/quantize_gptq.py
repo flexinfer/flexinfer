@@ -780,19 +780,36 @@ if _model_type_to_check:
                 f"transformers does not recognize model_type={_model_type_to_check!r}, "
                 "upgrading transformers..."
             )
-            subprocess.check_call(
-                [
-                    sys.executable,
-                    "-m",
-                    "pip",
-                    "install",
-                    "--no-cache-dir",
-                    "--no-deps",
-                    "transformers>=5.5",
-                ],
-                stdout=sys.stdout,
-                stderr=sys.stderr,
-            )
+            # PyPI may not have a release with Gemma4 support yet; use the
+            # known-good dev commit that both abliteration and quantization
+            # have validated.  Fall back to >=5.5 only if the git install
+            # fails (e.g. network issue in an air-gapped environment).
+            _transformers_specs = [
+                "git+https://github.com/huggingface/transformers.git@f965b10b",
+                "transformers>=5.5",
+            ]
+            _installed = False
+            for _tspec in _transformers_specs:
+                try:
+                    subprocess.check_call(
+                        [
+                            sys.executable,
+                            "-m",
+                            "pip",
+                            "install",
+                            "--no-cache-dir",
+                            "--no-deps",
+                            _tspec,
+                        ],
+                        stdout=sys.stdout,
+                        stderr=sys.stderr,
+                    )
+                    _installed = True
+                    break
+                except subprocess.CalledProcessError:
+                    print(f"WARN: failed to install {_tspec}, trying next fallback")
+            if not _installed:
+                print("ERROR: could not install transformers with Gemma4 support")
             # Purge cached transformers modules so the next import gets the new version
             for _k in list(sys.modules.keys()):
                 if _k.startswith("transformers"):
@@ -848,26 +865,63 @@ elif dynamic_exclusion == "gdn":
     }
     print(f"GDN exclusion (mode=gdn): keeping linear_attn modules at full precision")
     print(f"Dynamic exclusion patterns: {list(dynamic_config.keys())}")
+elif dynamic_exclusion == "moe":
+    # MoE-only exclusion: keep routed expert FFN weights at full precision
+    # while quantizing shared attention and non-expert modules.  MoE expert
+    # weights are often fused 3D tensors (num_experts, hidden, intermediate)
+    # that crash GPTQ's 2D matrix quantization.
+    dynamic_config = {
+        "-:.*experts.*": {},
+        "-:.*block_sparse_moe.*": {},
+    }
+    print(f"MoE exclusion (mode=moe): keeping expert modules at full precision")
+    print(f"Dynamic exclusion patterns: {list(dynamic_config.keys())}")
 else:
     # "auto" mode — auto-detect hybrid architectures and exclude attention/expert/
     # vision/MTP modules (matches official Qwen GPTQ-Int4 approach).
+    # Also detects MoE models and excludes routed expert weights (fused 3D tensors).
     with open(cfg_path) as f:
         cfg_recheck = json.load(f)
     dynamic_config = None
+    exclusion_reasons = []
+
+    # Detect hybrid layer types (GDN + full_attention mixed architectures)
+    has_hybrid_layers = False
     if "layer_types" in cfg_recheck:
         layer_types = cfg_recheck["layer_types"]
         unique_types = set(layer_types)
         if len(unique_types) > 1:
-            print(
-                f"Hybrid architecture detected: {dict((t, layer_types.count(t)) for t in unique_types)}"
+            has_hybrid_layers = True
+            exclusion_reasons.append(
+                f"hybrid layers: {dict((t, layer_types.count(t)) for t in unique_types)}"
             )
-            dynamic_config = {
-                "-:.*attn.*": {},
-                "-:.*shared_expert.*": {},
-                "-:.*visual.*": {},
-                "-:.*mtp.*": {},
-            }
-            print(f"Dynamic exclusion: {list(dynamic_config.keys())}")
+
+    # Detect MoE architecture (fused 3D expert tensors crash GPTQ)
+    has_moe = False
+    for moe_key in ("num_local_experts", "num_experts"):
+        val = cfg_recheck.get(moe_key, 0)
+        if not val:
+            val = cfg_recheck.get("text_config", {}).get(moe_key, 0)
+        if isinstance(val, int) and val > 1:
+            has_moe = True
+            exclusion_reasons.append(f"MoE: {moe_key}={val}")
+            break
+
+    if has_hybrid_layers or has_moe:
+        print(f"Architecture detection: {'; '.join(exclusion_reasons)}")
+        dynamic_config = {
+            "-:.*attn.*": {},
+            "-:.*shared_expert.*": {},
+            "-:.*visual.*": {},
+            "-:.*mtp.*": {},
+        }
+        if has_moe:
+            # MoE routed expert weights are fused 3D tensors
+            # (num_experts, hidden, intermediate) that crash GPTQ's 2D
+            # matrix quantization.  Exclude them from quantization.
+            dynamic_config["-:.*experts.*"] = {}
+            dynamic_config["-:.*block_sparse_moe.*"] = {}
+        print(f"Dynamic exclusion: {list(dynamic_config.keys())}")
 
 # ── Memory management ──────────────────────────────────────────────────
 import torch

@@ -226,7 +226,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"save impl", "ABLITERATION_SAVE_IMPL", "streaming"},
 		{"disk offload save impl", "ABLITERATION_DISK_OFFLOAD_SAVE_IMPL", ""},
 		{"resume", "ABLITERATION_RESUME", "true"},
-		{"cpu max memory", "ABLITERATION_CPU_MAX_MEMORY_GB", "20"},
+		{"cpu max memory", "ABLITERATION_CPU_MAX_MEMORY_GB", "36"},
 		{"gpu max memory", "ABLITERATION_GPU_MAX_MEMORY_GB", "20"},
 		{"offload dir", "ABLITERATION_OFFLOAD_DIR", "/workspace/abliteration-offload"},
 		{"skip caching allocator warmup", "ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP", "false"},
@@ -678,11 +678,17 @@ func TestMemoryRequestForLimitGB(t *testing.T) {
 }
 
 func TestAbliterationMemoryBudgets(t *testing.T) {
-	if got := abliterationCPUMaxMemoryGB(56); got != 20 {
-		t.Errorf("abliterationCPUMaxMemoryGB(56) = %d, want 20", got)
+	// 56 - 20 = 36, cap = 56*4/5 = 44 → 36
+	if got := abliterationCPUMaxMemoryGB(56); got != 36 {
+		t.Errorf("abliterationCPUMaxMemoryGB(56) = %d, want 36", got)
 	}
-	if got := abliterationCPUMaxMemoryGB(60); got != 24 {
-		t.Errorf("abliterationCPUMaxMemoryGB(60) = %d, want 24", got)
+	// 60 - 20 = 40, cap = 60*4/5 = 48 → 40
+	if got := abliterationCPUMaxMemoryGB(60); got != 40 {
+		t.Errorf("abliterationCPUMaxMemoryGB(60) = %d, want 40", got)
+	}
+	// 96 - 20 = 76, cap = 96*4/5 = 76 → 76
+	if got := abliterationCPUMaxMemoryGB(96); got != 76 {
+		t.Errorf("abliterationCPUMaxMemoryGB(96) = %d, want 76", got)
 	}
 	if got := abliterationGPUMaxMemoryGB(true, "gfx1100"); got != 20 {
 		t.Errorf("abliterationGPUMaxMemoryGB(true, gfx1100) = %d, want 20", got)

@@ -98,19 +98,24 @@ func memoryRequestForLimitGB(limitGB int32) int32 {
 
 // abliterationCPUMaxMemoryGB computes the CPU memory budget for accelerate's max_memory dict.
 // With device_map=auto, layers that don't fit in GPU+CPU spill to disk offload (mmap from
-// NFS-backed PVC), which is 10x slower. For Qwen3.5-27B BF16 (~54GB), gpu=12 + cpu=32 = 44GB
-// causes ~10GB disk offload stall. Override via FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB=56.
+// NFS-backed PVC), which is 10x slower. For large models (e.g. Gemma4-31B BF16 ~61GB),
+// the budget must scale with the container limit to avoid excessive disk offload.
+// Override via FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB.
 // TODO: derive from node allocatable memory instead of hardcoding a cap.
 func abliterationCPUMaxMemoryGB(limitGB int32) int32 {
 	if limitGB <= 0 {
 		return 12
 	}
-	cpuGB := limitGB - 36
+	// Reserve ~20GB for GPU driver overhead, OS, and the Python process itself.
+	// The rest is available for model weight placement on CPU.
+	cpuGB := limitGB - 20
 	if cpuGB < 12 {
 		cpuGB = 12
 	}
-	if cpuGB > 32 {
-		cpuGB = 32
+	// Cap at 80% of container limit to leave headroom for activation tensors.
+	maxCPU := (limitGB * 4) / 5
+	if cpuGB > maxCPU {
+		cpuGB = maxCPU
 	}
 	return cpuGB
 }
