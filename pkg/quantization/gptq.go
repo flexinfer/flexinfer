@@ -900,10 +900,8 @@ else:
 SAFETENSORS_VALIDATE_PY
 fi
 
-# Patch MoE detection to handle Gemma4-style enable_moe_block and fix exclusion patterns.
-# Old code only checks num_local_experts/num_experts at root level and uses blanket .*attn.* exclusion.
-# New code: dual-scope search (root + text_config), enable_moe_block fallback,
-#   and correct MoE exclusions (experts/router/visual/mtp, NOT attn).
+# Patch auto-mode dynamic exclusion to add MoE detection (Gemma4 enable_moe_block)
+# and fix exclusion patterns (experts/router instead of blanket .*attn.*).
 if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "enable_moe_block" "${GPTQ_SCRIPT}" 2>/dev/null; then
     python3 - <<'MOE_FIX_PY'
 from pathlib import Path
@@ -911,37 +909,49 @@ from pathlib import Path
 p = Path("/opt/flexinfer/scripts/quantize_gptq.py")
 src = p.read_text()
 
-old_block = '''    # Detect MoE architecture (fused 3D expert tensors crash GPTQ)
+# Match the auto-mode block in the image's quantize_gptq.py.
+# The image has only hybrid layer detection, no MoE detection.
+old_block = '''    # "auto" mode — auto-detect hybrid architectures and exclude attention/expert/
+    # vision/MTP modules (matches official Qwen GPTQ-Int4 approach).
+    with open(cfg_path) as f:
+        cfg_recheck = json.load(f)
+    dynamic_config = None
+    if "layer_types" in cfg_recheck:
+        layer_types = cfg_recheck["layer_types"]
+        unique_types = set(layer_types)
+        if len(unique_types) > 1:
+            print(
+                f"Hybrid architecture detected: {dict((t, layer_types.count(t)) for t in unique_types)}"
+            )
+            dynamic_config = {
+                "-:.*attn.*": {},
+                "-:.*shared_expert.*": {},
+                "-:.*visual.*": {},
+                "-:.*mtp.*": {},
+            }
+            print(f"Dynamic exclusion: {list(dynamic_config.keys())}")'''
+
+new_block = '''    # "auto" mode — auto-detect hybrid/MoE architectures and exclude modules
+    # that crash GPTQ's 2D matrix quantizer (fused 3D expert tensors, etc.).
+    with open(cfg_path) as f:
+        cfg_recheck = json.load(f)
+    dynamic_config = None
+    exclusion_reasons = []
+    has_hybrid_layers = False
     has_moe = False
-    for moe_key in ("num_local_experts", "num_experts"):
-        val = cfg_recheck.get(moe_key, 0)
-        if not val:
-            val = cfg_recheck.get("text_config", {}).get(moe_key, 0)
-        if isinstance(val, int) and val > 1:
-            has_moe = True
-            exclusion_reasons.append(f"MoE: {moe_key}={val}")
-            break
 
-    if has_hybrid_layers or has_moe:
-        print(f"Architecture detection: {'; '.join(exclusion_reasons)}")
-        dynamic_config = {
-            "-:.*attn.*": {},
-            "-:.*shared_expert.*": {},
-            "-:.*visual.*": {},
-            "-:.*mtp.*": {},
-        }
-        if has_moe:
-            # MoE routed expert weights are fused 3D tensors
-            # (num_experts, hidden, intermediate) that crash GPTQ's 2D
-            # matrix quantization.  Exclude them from quantization.
-            dynamic_config["-:.*experts.*"] = {}
-            dynamic_config["-:.*block_sparse_moe.*"] = {}
-        print(f"Dynamic exclusion: {list(dynamic_config.keys())}")'''
+    if "layer_types" in cfg_recheck:
+        layer_types = cfg_recheck["layer_types"]
+        unique_types = set(layer_types)
+        if len(unique_types) > 1:
+            has_hybrid_layers = True
+            exclusion_reasons.append(
+                f"hybrid layers: {dict((t, layer_types.count(t)) for t in unique_types)}"
+            )
 
-new_block = '''    # Detect MoE architecture (fused 3D expert tensors crash GPTQ).
+    # Detect MoE architecture (fused 3D expert tensors crash GPTQ).
     # Check multiple indicators: num_local_experts (Mixtral/Qwen),
     # num_experts (Gemma4), enable_moe_block (Gemma4), top_k_experts.
-    has_moe = False
     search_scopes = [cfg_recheck, cfg_recheck.get("text_config", {})]
     for moe_key in ("num_local_experts", "num_experts"):
         for scope in search_scopes:
