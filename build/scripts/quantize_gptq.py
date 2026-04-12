@@ -932,13 +932,15 @@ else:
             dynamic_config["-:.*visual.*"] = {}
             dynamic_config["-:.*mtp.*"] = {}
         if has_moe:
-            # MoE routed expert weights are fused 3D tensors
-            # (num_experts, hidden, intermediate) that crash GPTQ's 2D
-            # matrix quantization.  Exclude expert/router modules but keep
-            # shared attention and shared MLP quantizable.
+            # MoE: exclude experts (fused 3D tensors), router, and shared
+            # MLP.  GPTQModel < 6.1 lacks a native Gemma4-MoE model
+            # definition, so MoE lifecycle hooks are absent and the shared
+            # MLP calibration path produces empty scale tensors → crash.
+            # Only self_attn modules are quantized.
             dynamic_config["-:.*experts.*"] = {}
             dynamic_config["-:.*block_sparse_moe.*"] = {}
             dynamic_config["-:.*router.*"] = {}
+            dynamic_config["-:.*mlp.*"] = {}
             dynamic_config["-:.*shared_expert.*"] = {}
             dynamic_config["-:.*visual.*"] = {}
             dynamic_config["-:.*mtp.*"] = {}

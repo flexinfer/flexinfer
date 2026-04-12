@@ -981,6 +981,7 @@ new_block = '''    # "auto" mode — auto-detect hybrid/MoE architectures and ex
             dynamic_config["-:.*experts.*"] = {}
             dynamic_config["-:.*block_sparse_moe.*"] = {}
             dynamic_config["-:.*router.*"] = {}
+            dynamic_config["-:.*mlp.*"] = {}
             dynamic_config["-:.*shared_expert.*"] = {}
             dynamic_config["-:.*visual.*"] = {}
             dynamic_config["-:.*mtp.*"] = {}
