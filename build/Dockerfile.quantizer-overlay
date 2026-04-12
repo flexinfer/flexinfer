@@ -1,0 +1,4 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+COPY build/scripts/quantize_gptq.py /opt/flexinfer/scripts/quantize_gptq.py

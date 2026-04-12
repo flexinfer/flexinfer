@@ -900,6 +900,91 @@ else:
 SAFETENSORS_VALIDATE_PY
 fi
 
+# Patch MoE detection to handle Gemma4-style enable_moe_block and fix exclusion patterns.
+# Old code only checks num_local_experts/num_experts at root level and uses blanket .*attn.* exclusion.
+# New code: dual-scope search (root + text_config), enable_moe_block fallback,
+#   and correct MoE exclusions (experts/router/visual/mtp, NOT attn).
+if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "enable_moe_block" "${GPTQ_SCRIPT}" 2>/dev/null; then
+    python3 - <<'MOE_FIX_PY'
+from pathlib import Path
+
+p = Path("/opt/flexinfer/scripts/quantize_gptq.py")
+src = p.read_text()
+
+old_block = '''    # Detect MoE architecture (fused 3D expert tensors crash GPTQ)
+    has_moe = False
+    for moe_key in ("num_local_experts", "num_experts"):
+        val = cfg_recheck.get(moe_key, 0)
+        if not val:
+            val = cfg_recheck.get("text_config", {}).get(moe_key, 0)
+        if isinstance(val, int) and val > 1:
+            has_moe = True
+            exclusion_reasons.append(f"MoE: {moe_key}={val}")
+            break
+
+    if has_hybrid_layers or has_moe:
+        print(f"Architecture detection: {'; '.join(exclusion_reasons)}")
+        dynamic_config = {
+            "-:.*attn.*": {},
+            "-:.*shared_expert.*": {},
+            "-:.*visual.*": {},
+            "-:.*mtp.*": {},
+        }
+        if has_moe:
+            # MoE routed expert weights are fused 3D tensors
+            # (num_experts, hidden, intermediate) that crash GPTQ's 2D
+            # matrix quantization.  Exclude them from quantization.
+            dynamic_config["-:.*experts.*"] = {}
+            dynamic_config["-:.*block_sparse_moe.*"] = {}
+        print(f"Dynamic exclusion: {list(dynamic_config.keys())}")'''
+
+new_block = '''    # Detect MoE architecture (fused 3D expert tensors crash GPTQ).
+    # Check multiple indicators: num_local_experts (Mixtral/Qwen),
+    # num_experts (Gemma4), enable_moe_block (Gemma4), top_k_experts.
+    has_moe = False
+    search_scopes = [cfg_recheck, cfg_recheck.get("text_config", {})]
+    for moe_key in ("num_local_experts", "num_experts"):
+        for scope in search_scopes:
+            val = scope.get(moe_key, 0)
+            if isinstance(val, int) and val > 1:
+                has_moe = True
+                exclusion_reasons.append(f"MoE: {moe_key}={val}")
+                break
+        if has_moe:
+            break
+    if not has_moe:
+        for scope in search_scopes:
+            if scope.get("enable_moe_block") is True:
+                has_moe = True
+                n_exp = scope.get("num_experts", scope.get("top_k_experts", "?"))
+                exclusion_reasons.append(f"MoE: enable_moe_block=True (experts={n_exp})")
+                break
+
+    if has_hybrid_layers or has_moe:
+        print(f"Architecture detection: {'; '.join(exclusion_reasons)}")
+        dynamic_config = {}
+        if has_hybrid_layers and not has_moe:
+            dynamic_config["-:.*shared_expert.*"] = {}
+            dynamic_config["-:.*visual.*"] = {}
+            dynamic_config["-:.*mtp.*"] = {}
+        if has_moe:
+            dynamic_config["-:.*experts.*"] = {}
+            dynamic_config["-:.*block_sparse_moe.*"] = {}
+            dynamic_config["-:.*router.*"] = {}
+            dynamic_config["-:.*shared_expert.*"] = {}
+            dynamic_config["-:.*visual.*"] = {}
+            dynamic_config["-:.*mtp.*"] = {}
+        print(f"Dynamic exclusion: {list(dynamic_config.keys())}")'''
+
+if old_block in src:
+    src = src.replace(old_block, new_block)
+    p.write_text(src)
+    print("Patched MoE detection: enable_moe_block + fixed exclusion patterns")
+else:
+    print("MoE detection already patched or block not found")
+MOE_FIX_PY
+fi
+
 # Auto-detect gfx900 (Radeon VII).
 if command -v rocminfo &>/dev/null; then
     GPU_GFX=$(rocminfo 2>/dev/null | grep -oP 'gfx\d+' | head -1 || true)

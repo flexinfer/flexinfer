@@ -896,31 +896,52 @@ else:
                 f"hybrid layers: {dict((t, layer_types.count(t)) for t in unique_types)}"
             )
 
-    # Detect MoE architecture (fused 3D expert tensors crash GPTQ)
+    # Detect MoE architecture (fused 3D expert tensors crash GPTQ).
+    # Check multiple indicators: num_local_experts (Mixtral/Qwen),
+    # num_experts (Gemma4), enable_moe_block (Gemma4), top_k_experts.
     has_moe = False
+    # Search both root and text_config (covers pre- and post-extraction).
+    search_scopes = [cfg_recheck, cfg_recheck.get("text_config", {})]
     for moe_key in ("num_local_experts", "num_experts"):
-        val = cfg_recheck.get(moe_key, 0)
-        if not val:
-            val = cfg_recheck.get("text_config", {}).get(moe_key, 0)
-        if isinstance(val, int) and val > 1:
-            has_moe = True
-            exclusion_reasons.append(f"MoE: {moe_key}={val}")
+        for scope in search_scopes:
+            val = scope.get(moe_key, 0)
+            if isinstance(val, int) and val > 1:
+                has_moe = True
+                exclusion_reasons.append(f"MoE: {moe_key}={val}")
+                break
+        if has_moe:
             break
+    if not has_moe:
+        # Gemma4 uses enable_moe_block=True as the primary MoE flag.
+        for scope in search_scopes:
+            if scope.get("enable_moe_block") is True:
+                has_moe = True
+                n_exp = scope.get("num_experts", scope.get("top_k_experts", "?"))
+                exclusion_reasons.append(
+                    f"MoE: enable_moe_block=True (experts={n_exp})"
+                )
+                break
 
     if has_hybrid_layers or has_moe:
         print(f"Architecture detection: {'; '.join(exclusion_reasons)}")
-        dynamic_config = {
-            "-:.*attn.*": {},
-            "-:.*shared_expert.*": {},
-            "-:.*visual.*": {},
-            "-:.*mtp.*": {},
-        }
+        dynamic_config = {}
+        if has_hybrid_layers and not has_moe:
+            # Pure hybrid (GDN + full-attention) — exclude non-standard attn
+            # modules that may confuse GPTQ's layer walker.
+            dynamic_config["-:.*shared_expert.*"] = {}
+            dynamic_config["-:.*visual.*"] = {}
+            dynamic_config["-:.*mtp.*"] = {}
         if has_moe:
             # MoE routed expert weights are fused 3D tensors
             # (num_experts, hidden, intermediate) that crash GPTQ's 2D
-            # matrix quantization.  Exclude them from quantization.
+            # matrix quantization.  Exclude expert/router modules but keep
+            # shared attention and shared MLP quantizable.
             dynamic_config["-:.*experts.*"] = {}
             dynamic_config["-:.*block_sparse_moe.*"] = {}
+            dynamic_config["-:.*router.*"] = {}
+            dynamic_config["-:.*shared_expert.*"] = {}
+            dynamic_config["-:.*visual.*"] = {}
+            dynamic_config["-:.*mtp.*"] = {}
         print(f"Dynamic exclusion: {list(dynamic_config.keys())}")
 
 # ── Memory management ──────────────────────────────────────────────────
