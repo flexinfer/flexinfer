@@ -56,6 +56,7 @@
 		6AE2B81B2649BD1EAC446ACC /* AlertPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C261814FE4487CE9DFEF06B6 /* AlertPolicy.swift */; };
 		6C411FC10E264DAC0556C8EA /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 531717108CA193976CD1D2E3 /* APIError.swift */; };
 		6F5327200BDA5F943F30A463 /* APIEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 525058B8CC6610D4C955F604 /* APIEnvelope.swift */; };
+		70192F47F5D0D9F804B745B0 /* OpsWorkSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF4469676EFC905572927ED6 /* OpsWorkSection.swift */; };
 		7267744E90CBAD0850F10A69 /* SessionTopFilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58F4D60206A7290881186E35 /* SessionTopFilesView.swift */; };
 		74510299F5362A73CF34E2BA /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 258C0342CB3518FF6D16003A /* LoginView.swift */; };
 		761BFE6B0B2350CEB2C400E2 /* ConnectionDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B54489129D12CD2FE8EB2E8 /* ConnectionDiagnosticsView.swift */; };
@@ -82,6 +83,7 @@
 		A315F7B767AC137E668328E9 /* ListBlockedTasksIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA255073A7652651FA0D7FF /* ListBlockedTasksIntent.swift */; };
 		A685AF86282F5A0BB05803D9 /* SessionSummaryWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF931D47B733827DCCFA11 /* SessionSummaryWidget.swift */; };
 		AA25F07ED38F63E774AB37D8 /* SpawnTelemetryModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ECADE37851D1276E6C36516 /* SpawnTelemetryModels.swift */; };
+		AD721C548EB80A4B07F4264D /* OpsPipelinesSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17A2132D530D3FDF174A39E6 /* OpsPipelinesSection.swift */; };
 		AE26BF83C8AEFE0B08F1DA96 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DF3DC44CF14DC2FB3F085E0 /* TokenStore.swift */; };
 		AFED48DE9C9328A10D542700 /* SessionTasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E77474862988D0C330061E27 /* SessionTasksView.swift */; };
 		B03747CEFD8DAB35671BF975 /* StatusBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B2A65F47D87C55A22DF2C6F /* StatusBadge.swift */; };
@@ -113,6 +115,7 @@
 		E0D0A8B42F44F4323B1313B6 /* ConnectionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52AE107FC4C72CDDC7C2546E /* ConnectionViewModel.swift */; };
 		E6194D5C397C9AA9C5C1A08F /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C6C5A521E38D6D36836C8F0 /* SwiftUI.framework */; };
 		E943F11E27034571454731BE /* FleetSummaryCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CF7388A60BCC73E46496965 /* FleetSummaryCard.swift */; };
+		E9DD7BD5630A1354ADCA7C85 /* OpsContextSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE765D2A48410A9872E4AE9B /* OpsContextSection.swift */; };
 		ECA31FBD29E65D5EA29F81DA /* SessionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 688362B0681E39784FE702D9 /* SessionDetailView.swift */; };
 		ED94BBDAF986BE721D877F4A /* PulsingDot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17BE1C3F697C16FED620CF84 /* PulsingDot.swift */; };
 		EF6C45BC301083177F0FDFBE /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8128EBBB2219D0A2C14482ED /* DashboardView.swift */; };
@@ -123,6 +126,7 @@
 		FA64F07EF16BF9A5CBA8759C /* DeviceInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7D43F146F42E91DCCAA523D /* DeviceInfo.swift */; };
 		FC1B91C2A4A2028B900412BC /* PipelineActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5AC39AB40980D11D457D933 /* PipelineActivity.swift */; };
 		FEEC34A014B3BE76C909FA4C /* ConnectionHealthMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30696986D90C9AC7E69B8AA2 /* ConnectionHealthMonitor.swift */; };
+		FFEAD61EE5B28D7ADEB7C8E2 /* OpsRuntimeSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BCC13E0C8BCA4FEBD821204 /* OpsRuntimeSection.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -182,6 +186,7 @@
 		12B1DCFD032943745B95EAED /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		13953CDE3FE9EFAF412B840C /* StatusAccentBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusAccentBar.swift; sourceTree = "<group>"; };
 		154FBD88AB4A47A607ED2A12 /* LoomSpacing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomSpacing.swift; sourceTree = "<group>"; };
+		17A2132D530D3FDF174A39E6 /* OpsPipelinesSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsPipelinesSection.swift; sourceTree = "<group>"; };
 		17BE1C3F697C16FED620CF84 /* PulsingDot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulsingDot.swift; sourceTree = "<group>"; };
 		1C5E25ADF1909F821B3221D7 /* OpsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsView.swift; sourceTree = "<group>"; };
 		1CF7388A60BCC73E46496965 /* FleetSummaryCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetSummaryCard.swift; sourceTree = "<group>"; };
@@ -251,6 +256,7 @@
 		96C49B61AED887490A116605 /* SessionTimelineChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTimelineChart.swift; sourceTree = "<group>"; };
 		96CC59A029891F1F80DF8153 /* OpsTaskDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsTaskDetailView.swift; sourceTree = "<group>"; };
 		9ACB13956A25A11A5A18DDD3 /* SessionsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsViewModel.swift; sourceTree = "<group>"; };
+		9BCC13E0C8BCA4FEBD821204 /* OpsRuntimeSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsRuntimeSection.swift; sourceTree = "<group>"; };
 		9C8910526CF468521F9E5CEC /* HealthGaugeChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthGaugeChart.swift; sourceTree = "<group>"; };
 		9D65752DA1D831C10454937C /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		A4BD6A1A6CD4E744094A320A /* LiveActivityManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityManager.swift; sourceTree = "<group>"; };
@@ -290,7 +296,9 @@
 		F8EBAD7BBD75B088B1545875 /* AgentsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentsListView.swift; sourceTree = "<group>"; };
 		F96726B96A5D4BFB2C9237E0 /* PushNotificationsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationsViewModel.swift; sourceTree = "<group>"; };
 		FDD156A2ECD6274582CED085 /* FleetCompositionChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetCompositionChart.swift; sourceTree = "<group>"; };
+		FE765D2A48410A9872E4AE9B /* OpsContextSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsContextSection.swift; sourceTree = "<group>"; };
 		FF1F234E71EBAD74BAF8F8FB /* ConnectionRemediation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionRemediation.swift; sourceTree = "<group>"; };
+		FF4469676EFC905572927ED6 /* OpsWorkSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsWorkSection.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -468,10 +476,14 @@
 			isa = PBXGroup;
 			children = (
 				256BBFB22303B582CC796CDF /* HandoffInboxView.swift */,
+				FE765D2A48410A9872E4AE9B /* OpsContextSection.swift */,
+				17A2132D530D3FDF174A39E6 /* OpsPipelinesSection.swift */,
 				3F846B3688A0A1CDB3EC131E /* OpsReasoningChainDetailView.swift */,
+				9BCC13E0C8BCA4FEBD821204 /* OpsRuntimeSection.swift */,
 				96CC59A029891F1F80DF8153 /* OpsTaskDetailView.swift */,
 				1C5E25ADF1909F821B3221D7 /* OpsView.swift */,
 				44757CFC5897EBCD1433E632 /* OpsWorkflowDetailView.swift */,
+				FF4469676EFC905572927ED6 /* OpsWorkSection.swift */,
 			);
 			path = Ops;
 			sourceTree = "<group>";
@@ -791,9 +803,13 @@
 				1490954741F6B337DF5EB86F /* LoomSpacing.swift in Sources */,
 				1589E3A1F23ABB2C9FBB94AD /* LoomTypography.swift in Sources */,
 				4262D4924257E64913693FD6 /* MemoryTierChart.swift in Sources */,
+				E9DD7BD5630A1354ADCA7C85 /* OpsContextSection.swift in Sources */,
+				AD721C548EB80A4B07F4264D /* OpsPipelinesSection.swift in Sources */,
 				37103BC35EB89CB97461D603 /* OpsReasoningChainDetailView.swift in Sources */,
+				FFEAD61EE5B28D7ADEB7C8E2 /* OpsRuntimeSection.swift in Sources */,
 				C3EEEF58B127DFEE2A6A5D62 /* OpsTaskDetailView.swift in Sources */,
 				BA4BFDAF7460757C230C1995 /* OpsView.swift in Sources */,
+				70192F47F5D0D9F804B745B0 /* OpsWorkSection.swift in Sources */,
 				38D3200D5A8C6BDE3A933FA0 /* OpsWorkflowDetailView.swift in Sources */,
 				A1A6E901C78C7B8DDE8E268E /* ProportionBar.swift in Sources */,
 				ED94BBDAF986BE721D877F4A /* PulsingDot.swift in Sources */,

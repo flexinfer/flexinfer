@@ -125,25 +125,35 @@ public final class OpsViewModel {
         }
     }
 
+    /// Tracks which sections have been loaded at least once for lazy-loading.
+    @ObservationIgnored
+    public var loadedSections: Set<OpsSection> = []
+
+    /// Sections that can be independently loaded.
+    public enum OpsSection: String, CaseIterable {
+        case work
+        case pipelines
+        case runtime
+        case context
+    }
+
+    /// Load everything (legacy entry point, used by pull-to-refresh).
     public func load() async {
         isLoading = true
         defer { isLoading = false }
         error = nil
         warningMessage = nil
 
-        var attemptedSections = 0
-        var failedSections: [String] = []
-        var firstError: LoomAPIError?
+        await loadWorkSection()
+        await loadPipelinesSection()
+        await loadRuntimeSection()
+        await loadContextSection()
 
-        func markFailure(_ section: String, _ loadError: Error) {
-            let typedError = self.toLoomError(loadError)
-            if firstError == nil {
-                firstError = typedError
-            }
-            failedSections.append(section)
-        }
+        loadedSections = Set(OpsSection.allCases)
+    }
 
-        attemptedSections += 1
+    /// Load only data needed by the Work section: tasks and legacy workflows.
+    public func loadWorkSection() async {
         do {
             let response: MobileTasksResponse = try await apiClient.request(.tasks(limit: 50))
             tasks = response.tasks
@@ -152,15 +162,12 @@ public final class OpsViewModel {
             if tasks.isEmpty {
                 taskCounts = MobileTaskCounts(pending: 0, inProgress: 0, blocked: 0, completed: 0)
             }
-            markFailure("tasks", error)
         }
 
-        attemptedSections += 1
         do {
             let response: MobileWorkflowsResponse = try await apiClient.request(.workflows(limit: 50))
             workflows = response.workflows
             pendingApprovals = response.pendingApprovals
-            // Defensive normalization: suppress deprecated flag when nothing to show
             if response.deprecated && response.workflows.isEmpty && response.pendingApprovals == 0 {
                 workflowsDeprecated = false
                 workflowsDeprecationMessage = nil
@@ -173,10 +180,19 @@ public final class OpsViewModel {
             pendingApprovals = 0
             workflowsDeprecated = false
             workflowsDeprecationMessage = nil
-            markFailure("workflows", error)
         }
 
-        attemptedSections += 1
+        loadedSections.insert(.work)
+    }
+
+    /// Load only data needed by the Pipelines section.
+    public func loadPipelinesSection() async {
+        await loadPipelines()
+        loadedSections.insert(.pipelines)
+    }
+
+    /// Load only data needed by the Runtime section: presence, sandbox, topology, control plane.
+    public func loadRuntimeSection() async {
         do {
             let response: MobilePresenceResponse = try await apiClient.request(.presence(limit: 50))
             presenceAgents = response.agents
@@ -188,19 +204,41 @@ public final class OpsViewModel {
             presenceClaims = []
             presenceWorktrees = []
             presenceSummary = MobilePresenceSummary(activeAgents: 0, idleAgents: 0, offlineAgents: 0, totalAgents: 0, claimCount: 0, worktreeCount: 0)
-            markFailure("presence", error)
         }
 
-        attemptedSections += 1
+        do {
+            let response: MobileTopologyResponse = try await apiClient.request(.topology)
+            topology = response
+        } catch {
+            topology = nil
+        }
+
+        do {
+            let response: MobileControlPlaneResponse = try await apiClient.request(.controlPlane)
+            controlPlane = response
+        } catch {
+            controlPlane = nil
+        }
+
+        do {
+            let response: MobileSandboxSummary = try await apiClient.request(.sandbox)
+            sandboxSummary = response
+        } catch {
+            sandboxSummary = nil
+        }
+
+        loadedSections.insert(.runtime)
+    }
+
+    /// Load only data needed by the Context section: memory, stream, graph, reasoning.
+    public func loadContextSection() async {
         do {
             let response: MobileMemoryStatsResponse = try await apiClient.request(.memoryStats)
             memoryStats = response.stats
         } catch {
             memoryStats = nil
-            markFailure("memory_stats", error)
         }
 
-        attemptedSections += 1
         do {
             let response: MobileMemoryItemsResponse = try await apiClient.request(.memoryItems(tier: .working, limit: 50))
             memoryItems = response.items
@@ -208,111 +246,59 @@ public final class OpsViewModel {
         } catch {
             memoryItems = []
             memoryTier = .working
-            markFailure("memory_items", error)
         }
 
-        attemptedSections += 1
         do {
             let response: MobileStreamResponse = try await apiClient.request(.stream(limit: 50))
             streamEntries = response.entries
         } catch {
             streamEntries = []
-            markFailure("stream", error)
         }
 
-        attemptedSections += 1
-        do {
-            let response: MobileTopologyResponse = try await apiClient.request(.topology)
-            topology = response
-        } catch {
-            topology = nil
-            markFailure("topology", error)
-        }
-
-        attemptedSections += 1
         do {
             let response: MobileGraphStatsResponse = try await apiClient.request(.graphStats)
             graphStats = response.stats
         } catch {
             graphStats = nil
-            markFailure("graph_stats", error)
         }
 
-        attemptedSections += 1
         do {
             let response: MobileGraphEntitiesResponse = try await apiClient.request(.graphEntities(limit: 50))
             graphEntities = response.entities
         } catch {
             graphEntities = []
-            markFailure("graph_entities", error)
         }
 
         graphPath = nil
         if graphEntities.count >= 2 {
-            attemptedSections += 1
             do {
                 let source = graphEntities[0].id
                 let target = graphEntities[1].id
                 let response: MobileGraphPathResponse = try await apiClient.request(.graphPath(sourceId: source, targetId: target, maxDepth: 5))
                 graphPath = response.path
             } catch {
-                markFailure("graph_path", error)
+                // Non-critical
             }
         }
 
-        attemptedSections += 1
         do {
             let response: MobileReasoningChainsResponse = try await apiClient.request(.reasoningChains(limit: 50))
             reasoningChains = response.chains
         } catch {
             reasoningChains = []
-            markFailure("reasoning_chains", error)
         }
 
-        attemptedSections += 1
-        do {
-            let response: MobileControlPlaneResponse = try await apiClient.request(.controlPlane)
-            controlPlane = response
-        } catch {
-            controlPlane = nil
-            markFailure("control_plane", error)
-        }
+        loadedSections.insert(.context)
+    }
 
-        attemptedSections += 1
-        do {
-            let response: MobileSandboxSummary = try await apiClient.request(.sandbox)
-            sandboxSummary = response
-        } catch {
-            sandboxSummary = nil
-            markFailure("sandbox", error)
-        }
-
-        attemptedSections += 1
-        do {
-            let response: MobilePipelinesResponse = try await apiClient.request(.pipelines)
-            pipelines = response.pipelines
-            recentPipelines = response.recentPipelines
-            pipelineSummary = response.summary
-            pipelinesAvailable = response.available || !response.pipelines.isEmpty || !response.recentPipelines.isEmpty
-        } catch {
-            if pipelines.isEmpty {
-                pipelinesAvailable = false
-            }
-            markFailure("pipelines", error)
-        }
-
-        if failedSections.count == attemptedSections, let firstError {
-            error = firstError
-            warningMessage = nil
-            return
-        }
-        // Only surface warnings for core section failures; optional/advanced
-        // sections (reasoning, graph, control plane, sandbox, topology) failing
-        // is expected when the server doesn't expose those endpoints yet.
-        let coreSections: Set<String> = ["tasks", "presence", "stream"]
-        let coreFailures = failedSections.filter { coreSections.contains($0) }
-        if !coreFailures.isEmpty {
-            warningMessage = "Some sections are unavailable: \(coreFailures.joined(separator: ", "))"
+    /// Load a section lazily (skip if already loaded).
+    public func loadSectionIfNeeded(_ section: OpsSection) async {
+        guard !loadedSections.contains(section) else { return }
+        switch section {
+        case .work: await loadWorkSection()
+        case .pipelines: await loadPipelinesSection()
+        case .runtime: await loadRuntimeSection()
+        case .context: await loadContextSection()
         }
     }
 
