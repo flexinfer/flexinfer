@@ -9,6 +9,7 @@ spec:
   source: ollama://nomic-embed-text
   gpu:
     vendor: nvidia
+    shared: gtx980ti-models
     priority: 100
     vramEstimateMB: 1000
   serverless:

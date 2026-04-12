@@ -1,0 +1,67 @@
+# Gemma4 E4B (4B) IQ4_XS GGUF via llama.cpp on GTX 980 Ti (Maxwell, sm_52).
+#
+# Model: HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive
+# Quant: IQ4_XS (4.3 BPW, 4.8 GB)
+# VRAM: 6 GB total — weights 4.8 GB + KV cache ~1 GB.
+# Context: 4096 tokens with q4_0 KV cache to fit in 6 GB.
+#
+# Shares the GTX 980 Ti with nomic-embed-text (embeddings, priority 100).
+# Higher priority (200) — embeddings yields to text generation.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gemma4-e4b-gguf
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  source: HF://HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive
+  cache:
+    size: 8Gi
+    strategy: SharedPVC
+  gpu:
+    vendor: nvidia
+    shared: gtx980ti-models
+    priority: 200
+    count: 1
+    vramEstimateMB: 5500
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 10m
+    coldStartTimeout: 5m
+  config:
+    ggufFile: Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    contextSize: 4096
+    nGPULayers: 999
+    batchSize: 512
+    ubatchSize: 256
+    parallel: 1
+    threads: 4
+    flashAttention: true
+    cacheTypeK: q4_0
+    cacheTypeV: q4_0
+    jinja: true
+    metrics: true
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-gtx980ti
+  resources:
+    requests:
+      cpu: "2"
+      memory: 4Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+  serviceLabels:
+    - gemma4-e4b
+    - textgen
+  litellm:
+    enabled: true
+    servedModelName: gemma4-e4b-gguf
+    aliases:
+      - gemma4-e4b
+      - gemma4-4b
+  tolerations:
+    - key: "dedicated"
+      operator: "Equal"
+      value: "gpu"
+      effect: "NoSchedule"
