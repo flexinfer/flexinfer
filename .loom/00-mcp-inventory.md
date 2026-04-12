@@ -115,3 +115,49 @@ Top groups:
 - [C16] `loom tools call codebase_memory__codebase_index_poll --args '{"job_id":"1869e8aca6a0ab14"}' --json` -> `status: done, chunks_total: 1877`
 - [C17] `loom tools call codebase_memory__codebase_stats --args '{"repo_id":"flexinfer"}' --json` -> `total_chunks: 1877`
 - [C18] `loom tools call codebase_memory__codebase_get_definition --args '{"repo_id":"flexinfer","symbol":"ModelReconciler","limit":5}' --json` -> `found: true`
+
+## Update (2026-04-09): Research / Planning Reset
+
+### Runtime Detection
+
+- `functions.list_mcp_resources({})` still returns no resources.
+- `functions.list_mcp_resource_templates({})` still returns no templates.
+- Direct loom MCP calls used in this chat returned `Transport closed` for:
+  - `agent_context__agent_recall`
+  - `codebase_memory__codebase_stats`
+  - `context7__resolve_library_id`
+  - `tavily__search`
+- CLI fallback remains the reliable path for inventory in this session.
+
+### CLI Inventory Snapshot
+
+- `loom tools list --json` reports:
+  - `totalTools=502`
+  - `totalPages=1`
+- Top tool groups in this session:
+  - `jobsearch=67`
+  - `agent_context=62`
+  - `gitlab=33`
+  - `flexinfer=20`
+  - `mentatlab=18`
+  - `codebase_memory=17`
+
+### Planning Implication
+
+- For this Gemma4 stabilization round, the dependable tool mix is:
+  - local shell + repo search for code truth,
+  - `kubectl` / `flux` for live-cluster truth,
+  - web/official docs for external validation,
+  - `loom` CLI fallback for tool inventory only.
+- Do not gate the planning loop on direct MCP bridge recovery; treat bridge instability as an environment constraint, not the task.
+
+### Sources
+
+- [C19] `functions.list_mcp_resources({})` -> `resources: []`
+- [C20] `functions.list_mcp_resource_templates({})` -> `resourceTemplates: []`
+- [C21] `functions.mcp__loom__agent_context__agent_recall(...)` -> `Transport closed`
+- [C22] `functions.mcp__loom__codebase_memory__codebase_stats(...)` -> `Transport closed`
+- [C23] `functions.mcp__loom__context7__resolve_library_id(...)` -> `Transport closed`
+- [C24] `functions.mcp__loom__tavily__search(...)` -> `Transport closed`
+- [C25] `loom tools list --json | sed -n '1,220p'`
+- [C26] `loom tools list --json | jq -r '.tools[].name' | awk -F'__' '{print $1}' | sort | uniq -c | sort -nr | sed -n '1,20p'`

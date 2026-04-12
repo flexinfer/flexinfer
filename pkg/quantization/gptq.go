@@ -902,7 +902,7 @@ fi
 
 # Gemma4 full-attention layers don't have v_proj (K and V are fused into k_proj).
 # GPTQModel's Llama-based module_tree expects v_proj in every layer and crashes:
-#   ValueError: layer module item `self_attn.v_proj` not found in model
+#   ValueError: layer module item 'self_attn.v_proj' not found in model
 # Patch create_named_modules() to skip missing modules instead of raising.
 python3 - <<'SKIP_MISSING_PY'
 import gptqmodel.looper.module_looper as _ml
@@ -910,12 +910,9 @@ import inspect
 
 src = inspect.getsource(_ml.ModuleLooper.create_named_modules)
 if 'not found in model' in src and 'continue  # skip missing' not in src:
-    import textwrap
-    # Monkey-patch: replace raise ValueError with continue
     orig_fn = _ml.ModuleLooper.create_named_modules
     def _patched_create_named_modules(self, layer, layer_modules, **kwargs):
-        """Wrapper that tolerates missing modules (e.g. Gemma4 full-attn layers w/o v_proj)."""
-        from gptqmodel.looper.named_module import NamedModule
+        """Wrapper that tolerates missing modules (e.g. Gemma4 full-attn w/o v_proj)."""
         named_modules = {}
         for name_config in layer_modules:
             if isinstance(name_config, str):
@@ -932,15 +929,13 @@ if 'not found in model' in src and 'continue  # skip missing' not in src:
                     found = False
                     break
             if not found:
-                print(f"WARN: skipping missing module `{n}` in layer (Gemma4 heterogeneous attention)")
+                print(f"WARN: skipping missing module '{n}' in layer (heterogeneous attention)")
                 continue
-            # Delegate the actual NamedModule construction to the original
-            # by calling it with a single-item list and merging results.
             try:
                 sub = orig_fn(self, layer, [name_config], **kwargs)
                 named_modules.update(sub)
             except (ValueError, AttributeError) as e:
-                print(f"WARN: skipping module `{n}`: {e}")
+                print(f"WARN: skipping module '{n}': {e}")
                 continue
         return named_modules
     _ml.ModuleLooper.create_named_modules = _patched_create_named_modules

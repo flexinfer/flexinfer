@@ -98,3 +98,228 @@
 - [C3] `loom tools list --json --limit 500 --page 1 | jq '{server,page,pageSize,totalTools,totalPages,serverCount,cachedAt}'`
 - [C4] `loom tools call codebase_memory__codebase_index_poll --args '{"job_id":"1869e8aca6a0ab14"}' --json`
 - [C5] `loom tools call codebase_memory__codebase_stats --args '{"repo_id":"flexinfer"}' --json`
+
+## Status Update (2026-04-07): Next Round After Gemma4 Runtime/Storage Incidents
+
+## Objective
+
+Turn the current Gemma4 stabilization work into a deliberate improvement round that:
+- keeps the active jobs moving,
+- prevents `gfx1100` abliteration from taking down GPU hosts,
+- reduces stale storage/attachment residue after node failure,
+- and makes future incidents faster to diagnose from controller status alone.
+
+## Proposed Workstreams
+
+1. Runtime Stability on `gfx1100`
+- Make `ABLITERATION_ACTIVATION_CAPTURE_MODE` explicitly profile-driven by architecture.
+- Validate `hidden_states` as the default `gfx1100` abliteration mode for Gemma4.
+- If `hidden_states` still hangs, mark `gfx1100` abliteration unsupported/experimental for Gemma4 and constrain the job class to `gfx906` until the ROCm/amdgpu failure is root-caused.
+- Add regression coverage that GPUProfile env overrides reach abliteration jobs and survive controller reconciliation.
+
+2. Job Placement and Node Risk Controls
+- Stop relying on generic `flexinfer.ai/gpu.arch=gfx1100` selection for long-running destructive jobs.
+- Add a scheduling concept for "stable abliteration-capable nodes" distinct from generic serving-capable nodes.
+- Avoid placing long-running `ModelCache` jobs on nodes that also act as fragile control-plane/etcd members.
+- Consider moving `cblevins-7900xtx` out of critical control-plane duty if it will continue to host experimental ROCm jobs.
+
+3. Storage-Class and Cache Policy Cleanup
+- Split cache storage policy into explicit classes:
+  - rebuildable source caches,
+  - finished quantized artifacts,
+  - hot serving/runtime caches.
+- Move rebuildable source caches off GPU-node NVMe when worker NVMe is sufficient.
+- Review active Gemma manifests and align them with the intended storage policy instead of the current mixed `bulk-1r-stable` / `nvme-1r-gpu` split.
+- Add a periodic orphaned PVC/Longhorn volume review and cleanup path for retired source caches.
+
+4. Attachment and Recovery Hardening
+- Improve controller behavior when a job-owning node dies:
+  - surface attachment residue explicitly in status,
+  - avoid silent recreation loops,
+  - and prefer safe backoff with actionable conditions.
+- Investigate whether Longhorn/CSI cleanup can be made safer or partially automated after dead-node `VolumeAttachment` stickiness.
+- Preserve checkpoints and log tails as first-class recovery artifacts so retrying a job is cheap and deterministic.
+
+5. Progress Reporting and Monitoring
+- Expand `ModelCache` progress/status reporting with:
+  - current checkpoint stage,
+  - checkpoint timestamp,
+  - last log activity time,
+  - and explicit "waiting on baseline perplexity" vs "stalled in activation capture".
+- Add alerts or health probes for:
+  - active `ModelCache` pods on `NotReady` nodes,
+  - long-running jobs with no checkpoint movement,
+  - and repeated stale attachment situations.
+- Improve operator-facing reporting so a low/stale percent does not look identical to a real runtime hang.
+
+## Priority Order
+
+1. Prove or disprove `hidden_states` on `gfx1100` with `gemma4-26b-a4b-gptq`.
+2. Land durable placement controls so `26B` does not drift back onto `cblevins-7900xtx`.
+3. Normalize storage policy for rebuildable source caches and remove more dead cache residue.
+4. Improve progress/status surfaces and incident alerts.
+5. Revisit deeper cluster-role changes for `cblevins-7900xtx`.
+
+## Validation Plan
+
+- Runtime:
+  - `26B` must progress beyond `harmful activations 0/128` under `hidden_states`.
+  - `31B` should continue checkpoint-based progress on `gfx906` without regression.
+- Placement:
+  - recreated `26B` jobs must target `cblevins-5930k` only while `7900xtx` remains risky.
+- Storage:
+  - no stale `VolumeAttachment` should remain after a forced job move.
+  - retired caches should not return via Flux reconciliation.
+- Observability:
+  - operators should be able to tell from status whether a job is:
+    - actively computing,
+    - waiting on slow but expected work,
+    - or wedged/hung.
+
+## Deliverables
+
+- Durable manifest/controller changes for runtime mode and placement.
+- Updated GPUProfile policy for `gfx1100`.
+- Storage policy cleanup follow-up for active and retired caches.
+- Improved `ModelCache` progress/status surface.
+- Short operator runbook for dead-node attachment recovery and Gemma4 abliteration triage.
+
+## Sources
+
+- [S6] `.loom/10-research.md`
+- [S7] `deploy/gpuprofiles/gfx1100.yaml`
+- [S8] `deploy/modelcaches/gemma4-26b-a4b-gptq.yaml`
+- [S9] `deploy/modelcaches/gemma4-31b-gptq.yaml`
+- [S10] `pkg/quantization/abliteration.go`
+- [C11] `kubectl -n flexinfer-system logs gemma4-26b-a4b-gptq-abliterate-zwvpv --tail=160`
+- [C12] `kubectl -n flexinfer-system exec gemma4-26b-a4b-gptq-abliterate-zwvpv -- sh -lc 'ps -o pid,ppid,stat,%cpu,%mem,etime,cmd -C python3'`
+- [C13] `kubectl -n flexinfer-system logs gemma4-31b-gptq-abliterate-sxxwv --tail=160`
+- [C14] `kubectl get nodes -o wide | rg 'cblevins-7900xtx|cblevins-5930k|cblevins-radeonvii'`
+- [C15] `ssh cblevins-5930k 'kubectl get nodes -o wide | grep -E "cblevins-(5930k|7900xtx|radeonvii)"'`
+
+## Update (2026-04-09): Permanent Gemma4 Recovery Plan
+
+## Objective
+
+Convert the current Gemma4 firefight into a bounded delivery program that fixes the root classes of failure instead of just recovering the latest stuck job.
+
+## Root-Cause Buckets
+
+1. **Cache integrity**
+- A `.download_complete` marker was treated as sufficient when only a partial shard set existed.
+- Consequence: downstream phases loaded corrupt/incomplete source caches and failed late.
+
+2. **Phase recovery**
+- Missing-source failures were retried as abliteration failures instead of being demoted back to download.
+- Consequence: controller churn and misleading “in progress” status.
+
+3. **Runtime packaging**
+- Gemma4 support still depends on runtime package mutation (`pip install git+https://github.com/huggingface/transformers.git`) rather than a known-good prebuilt image.
+- Consequence: long startup paths, version drift, and opaque breakage.
+
+4. **Operator visibility**
+- We still surface too little information about shard completeness, checkpoint stage, and real forward progress.
+- Consequence: repeated false positives where “pod restarted” or “phase=abliterating” looked like progress.
+
+## Delivery Slices
+
+### Slice 1: Cache Integrity Gate
+
+- Keep the new shard-completeness checks in place for downloader reuse and abliteration startup.
+- Refactor that logic into one shared helper used by:
+  - downloader cache-hit check,
+  - downloader post-download verification,
+  - abliteration download wait loop,
+  - and later quantization preflight.
+- Add controller-status fields or events for:
+  - `weight_files`
+  - `expected_shards`
+  - `missing_shards`
+
+Acceptance:
+- A partial sharded checkpoint never advances to abliteration.
+- Reuse only happens when every shard referenced by the index exists.
+
+### Slice 2: Recovery Semantics
+
+- Keep missing-source detection routed to `Provisioning/download`, not `AbliterationRetry`.
+- Extend the same integrity downgrade path to other downstream phases where source artifacts are required.
+- Add a clear controller event taxonomy:
+  - `DownloadReset` for integrity recovery
+  - `AbliterationRetry` only for genuine compute/runtime failures
+
+Acceptance:
+- Integrity violations produce one reset and one fresh downloader job, not repeated abliteration recreate loops.
+
+### Slice 3: Runtime Image Determinism
+
+- Build a Gemma4-capable runtime image that already includes a supported Transformers version.
+- Remove or sharply restrict per-job package mutation in `build/scripts/abliterate.py`.
+- Replace unpinned `git+https://github.com/huggingface/transformers.git` hot-path installs with:
+  - a pinned image version, and
+  - an emergency override only when explicitly enabled.
+
+Acceptance:
+- Gemma4 abliteration jobs start without network package installation.
+- Runtime image metadata documents the bundled Transformers version.
+
+### Slice 4: Status and Monitoring
+
+- Surface live checkpoint stage and timestamp into `ModelCache` status.
+- Promote shard-integrity counts and last log activity into status or metrics.
+- Add alerts/dashboards for:
+  - active ModelCache jobs with stale checkpoint timestamps,
+  - repeated `DownloadReset`,
+  - downloader complete but downstream still blocked,
+  - and phase durations beyond expected ranges.
+
+Acceptance:
+- Operators can distinguish “healthy slow,” “integrity reset,” and “wedged” from status alone.
+
+### Slice 5: Validation Matrix
+
+- Define a single test matrix and stop ad hoc validation:
+  - `31B` on `gfx906`: download -> abliteration -> save path
+  - `26B-A4B` on `gfx1100`: download -> abliteration -> quantization handoff
+  - one forced-partial-cache scenario to prove integrity recovery
+- Record exact success checkpoints for each:
+  - all shards present
+  - model loaded
+  - harmful activations advancing
+  - harmless activations advancing
+  - quantizer output directory created
+
+Acceptance:
+- A candidate fix is not “done” until it passes one full path and one corruption-recovery path.
+
+## Priority Order
+
+1. Finish Slice 1 and Slice 2 end-to-end for `26B`.
+2. Land Slice 3 so Gemma4 no longer depends on runtime Git installs.
+3. Implement Slice 4 to reduce future diagnosis time.
+4. Freeze the validation matrix in repo docs or runbooks.
+
+## What Stops Now
+
+- No more treating pod recreation as progress.
+- No more accepting `.download_complete` without full shard validation.
+- No more runtime Gemma4 support through implicit Git HEAD installs as the default path.
+- No more mixing operator recovery and architecture changes in the same untracked loop.
+
+## Acceptance Criteria
+
+- `26B` and `31B` both have a reproducible recovery path from partial-cache corruption.
+- Gemma4 runtime image support is explicit and prebuilt.
+- Progress/status surfaces explain why a job is blocked or advancing.
+- The next session can follow this plan without rediscovering the failure taxonomy.
+
+## Sources
+
+- `.loom/10-research.md`
+- `controllers/modelcache_shared_pvc.go:761-872`
+- `controllers/modelcache_abliteration.go:461-478`
+- `pkg/quantization/abliteration.go:473-575`
+- `build/scripts/abliterate.py:388-405`
+- `build/Dockerfile.runtime:341-345`
+- https://huggingface.co/docs/transformers/main/big_models
+- https://huggingface.co/google/gemma-4-E4B

@@ -68,6 +68,52 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
   - `platform/gitops/k3s/ai/flexinfer/values.yaml` — proxy timeouts 25m
   - Cluster test: `kubectl exec curl-30b-local -- curl -s proxy:80/v1/chat/completions` → HTTP 200, 108 tok/s
 
+## 2026-04-07
+
+### Gemma4 GPTQ monitoring, cache cleanup, and next-round planning refresh
+
+- What changed:
+  - Refreshed `.loom/00-workspace-snapshot.md` with `plan-loom-core` scripts.
+  - Re-validated that MCP resource/template discovery is still empty in this session and fell back to repo-local evidence for planning.
+  - Confirmed `gemma4-31b-gptq` is not actually stalled at low displayed progress; it is resuming from `perplexity_validated` and spending time in baseline perplexity validation.
+  - Confirmed `gemma4-26b-a4b-gptq` was genuinely wedged on `gfx1100`:
+    - full model load completed,
+    - progress stopped at `harmful activations 0/128`,
+    - Python process was in Linux `D` state.
+  - Observed `cblevins-7900xtx` transition `NotReady`, lose SSH reachability, and destabilize cluster API/etcd leadership during reboot/failover.
+  - Applied live mitigation:
+    - patched `gfx1100` `GPUProfile` to set `ABLITERATION_ACTIVATION_CAPTURE_MODE=hidden_states`,
+    - patched `gemma4-26b-a4b-gptq` selectors to `cblevins-5930k`,
+    - deleted stale 26B jobs/pods and repeated stale `VolumeAttachment` cleanup.
+  - Updated local repo manifests/tests to reflect the safer `gfx1100` activation-capture override.
+  - Updated `.loom/10-research.md` and `.loom/30-implementation-plan.md` with the next improvement round focused on runtime stability, placement, storage, recovery, and observability.
+
+- Why:
+  - Convert the current live incident into a durable improvement plan while jobs remain in flight, instead of treating each failure as an isolated retry problem.
+
+- Current live state when writing:
+  - `gemma4-31b-gptq` still running on `cblevins-radeonvii`.
+  - `gemma4-26b-a4b-gptq` rerouted to `cblevins-5930k`, with the warmup pod still pulling the runtime image.
+  - `cblevins-7900xtx` still `NotReady`.
+
+- What’s next:
+  - Validate that the rerouted `26B` run on `5930k` actually starts with `hidden_states` and progresses past `harmful activations 0/128`.
+  - If successful, commit/push the `gfx1100` profile change and follow with placement hardening.
+  - If unsuccessful, stop scheduling Gemma4 abliteration onto `gfx1100` and treat `gfx906` as the only safe architecture until the ROCm/amdgpu failure is root-caused.
+
+- Sources:
+  - `python /Users/cblevins/.codex/skills/plan-loom-core/scripts/workspace_snapshot.py --root .`
+  - `functions.list_mcp_resources({})`
+  - `functions.list_mcp_resource_templates({})`
+  - `kubectl -n flexinfer-system logs gemma4-26b-a4b-gptq-abliterate-zwvpv --tail=160`
+  - `kubectl -n flexinfer-system exec gemma4-26b-a4b-gptq-abliterate-zwvpv -- sh -lc 'ps -o pid,ppid,stat,%cpu,%mem,etime,cmd -C python3'`
+  - `kubectl -n flexinfer-system logs gemma4-31b-gptq-abliterate-sxxwv --tail=160`
+  - `kubectl get nodes -o wide | rg 'cblevins-7900xtx|cblevins-5930k|cblevins-radeonvii'`
+  - `ssh -o BatchMode=yes -o ConnectTimeout=5 cblevins-7900xtx 'hostname && uptime && systemctl is-active k3s && uname -a'`
+  - `ssh cblevins-5930k 'kubectl get nodes -o wide | grep -E "cblevins-(5930k|7900xtx|radeonvii)"'`
+  - `deploy/gpuprofiles/gfx1100.yaml`
+  - `pkg/quantization/abliteration_test.go`
+
 ### Reconciliation + Backlog Tracking Refresh
 
 - What changed:
@@ -84,3 +130,40 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
   - `git merge --no-ff --no-commit origin/codex/issue-9-prometheus-deps-batch1`
   - `go test ./...`
   - `golangci-lint run -c .golangci.v2.yml`
+
+## 2026-04-09
+
+### Gemma4 research / plan reset
+
+- What changed:
+  - Refreshed `.loom/00-workspace-snapshot.md`.
+  - Re-checked MCP/runtime inventory:
+    - MCP resource/template discovery is still empty,
+    - direct loom MCP bridge calls still return `Transport closed`,
+    - `loom` CLI fallback works and reports `502` tools.
+  - Converted the Gemma4 incident work into a source-backed failure taxonomy.
+  - Confirmed the two durable bug classes from live cluster evidence:
+    1. missing-source retry loops after downstream phases removed weights,
+    2. partial sharded-cache reuse caused by marker-only validation.
+  - Landed and deployed two code fixes during the incident:
+    - `af22ecc0`: reset to download when abliteration has lost source weights
+    - `fdadc03d`: require complete shard sets before cache reuse / abliteration start
+  - Updated `.loom/10-research.md` and `.loom/30-implementation-plan.md` with a phased permanent-fix program centered on integrity gates, recovery semantics, runtime image determinism, and status/monitoring.
+
+- Why:
+  - The current problem is no longer “why did the last job fail”; it is “how do we prevent Gemma4 pipelines from re-entering the same integrity and runtime traps next week”.
+
+- What’s next:
+  - Finish the `26B` full-redownload validation after `fdadc03d`.
+  - Convert duplicated shard-integrity shell logic into one shared helper.
+  - Build a Gemma4-capable runtime image so abliteration does not install Transformers from Git during job startup.
+
+- Sources:
+  - `python "$CODEX_HOME/skills/plan-loom-core/scripts/workspace_snapshot.py" --root .`
+  - `loom tools list --json | sed -n '1,220p'`
+  - `loom tools list --json | jq -r '.tools[].name' | awk -F'__' '{print $1}' | sort | uniq -c | sort -nr | sed -n '1,20p'`
+  - `kubectl describe modelcache gemma4-26b-a4b-gptq -n flexinfer-system`
+  - `kubectl logs -n flexinfer-system gemma4-26b-a4b-gptq-abliterate-hh4wn --tail=80`
+  - `kubectl logs -n flexinfer-system gemma4-26b-a4b-gptq-downloader-85mm9 --tail=80`
+  - `kubectl logs -n flexinfer-system gemma4-31b-gptq-abliterate-28pj6 --tail=120`
+  - `git rev-parse HEAD`
