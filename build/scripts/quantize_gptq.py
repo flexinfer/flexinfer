@@ -896,7 +896,7 @@ else:
                 f"hybrid layers: {dict((t, layer_types.count(t)) for t in unique_types)}"
             )
 
-    # Detect MoE architecture (fused 3D expert tensors crash GPTQ).
+    # Detect MoE architecture.
     # Check multiple indicators: num_local_experts (Mixtral/Qwen),
     # num_experts (Gemma4), enable_moe_block (Gemma4), top_k_experts.
     has_moe = False
@@ -922,6 +922,23 @@ else:
                 )
                 break
 
+    # Check GPTQModel version for native MoE support.
+    # v6.0.3+ has native Gemma4 MoE model definitions with proper lifecycle
+    # hooks for fused 3D expert tensors — no need to exclude experts.
+    gptqmodel_has_native_moe = False
+    if has_moe:
+        try:
+            from packaging import version as packaging_version
+
+            gptq_ver = importlib_metadata.version("gptqmodel")
+            if packaging_version.parse(gptq_ver) >= packaging_version.parse("6.0.3"):
+                gptqmodel_has_native_moe = True
+                print(
+                    f"GPTQModel {gptq_ver} has native MoE support — experts will be quantized natively"
+                )
+        except Exception as e:
+            print(f"WARN: could not check GPTQModel version for MoE support: {e}")
+
     if has_hybrid_layers or has_moe:
         print(f"Architecture detection: {'; '.join(exclusion_reasons)}")
         dynamic_config = {}
@@ -931,12 +948,10 @@ else:
             dynamic_config["-:.*shared_expert.*"] = {}
             dynamic_config["-:.*visual.*"] = {}
             dynamic_config["-:.*mtp.*"] = {}
-        if has_moe:
-            # MoE: exclude experts (fused 3D tensors), router, and shared
-            # MLP.  GPTQModel < 6.1 lacks a native Gemma4-MoE model
-            # definition, so MoE lifecycle hooks are absent and the shared
-            # MLP calibration path produces empty scale tensors → crash.
-            # Only self_attn modules are quantized.
+        if has_moe and not gptqmodel_has_native_moe:
+            # Legacy path: GPTQModel < 6.0.3 lacks native Gemma4-MoE model
+            # definitions, so fused 3D expert tensors crash GPTQ's 2D matrix
+            # quantization. Exclude experts and only quantize self_attn.
             dynamic_config["-:.*experts.*"] = {}
             dynamic_config["-:.*block_sparse_moe.*"] = {}
             dynamic_config["-:.*router.*"] = {}
@@ -944,7 +959,15 @@ else:
             dynamic_config["-:.*shared_expert.*"] = {}
             dynamic_config["-:.*visual.*"] = {}
             dynamic_config["-:.*mtp.*"] = {}
-        print(f"Dynamic exclusion: {list(dynamic_config.keys())}")
+        elif has_moe and gptqmodel_has_native_moe:
+            # GPTQModel >= 6.0.3: native MoE quantization handles experts.
+            # No exclusions needed — quantize everything for full INT4 output.
+            dynamic_config = None
+            print("MoE experts will be quantized natively (GPTQModel >= 6.0.3)")
+        if dynamic_config is not None:
+            print(f"Dynamic exclusion: {list(dynamic_config.keys())}")
+        else:
+            print("Dynamic exclusion disabled — all modules will be quantized")
 
 # ── Memory management ──────────────────────────────────────────────────
 import torch

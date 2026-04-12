@@ -8,6 +8,8 @@ spec:
   source: HF://stablediffusionapi/gonzalomoxlfluxpony-v30unitydmd
   cache:
     strategy: Local
+    flashLoader:
+      enabled: false
   gpu:
     vendor: amd
     count: 1

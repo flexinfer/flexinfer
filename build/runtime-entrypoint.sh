@@ -190,7 +190,7 @@ normalize_gemma4_quantize_config() {
         esac
 
         python3 - "$cfg_path" <<'NORMALIZE_GEMMA4_QCFG_PY' || echo "[entrypoint] WARNING: Gemma4 quantize_config normalization failed for $cfg_path"
-import json, sys
+import json, os, sys
 
 path = sys.argv[1]
 with open(path) as f:
@@ -208,14 +208,37 @@ if qcfg.get("modules_in_block_to_quantize"):
 if qcfg.get("quant_method") != "gptq":
     sys.exit(0)
 
-# Inject short-form module names for attention layers.
-# These pass vLLM's substring match for all layers uniformly.
-qcfg["modules_in_block_to_quantize"] = [
-    "self_attn.q_proj",
-    "self_attn.k_proj",
-    "self_attn.v_proj",
-    "self_attn.o_proj",
-]
+# Try to read modules_in_block_to_quantize from the checkpoint's
+# quantize_config.json (written by GPTQModel during quantization).
+# This makes the entrypoint adaptive: old checkpoints (attention-only)
+# get the attention fallback, new checkpoints (full MoE) propagate
+# their expert modules correctly.
+checkpoint_modules = None
+qcfg_path = os.path.join(os.path.dirname(path), "quantize_config.json")
+if os.path.isfile(qcfg_path):
+    try:
+        with open(qcfg_path) as qf:
+            ckpt_qcfg = json.load(qf)
+        mods = ckpt_qcfg.get("modules_in_block_to_quantize")
+        if mods and isinstance(mods, list) and len(mods) > 0:
+            checkpoint_modules = mods
+            print(f"[entrypoint] Read modules_in_block_to_quantize from {qcfg_path}: {mods}")
+    except Exception as e:
+        print(f"[entrypoint] WARNING: failed to read {qcfg_path}: {e}")
+
+if checkpoint_modules:
+    qcfg["modules_in_block_to_quantize"] = checkpoint_modules
+else:
+    # Fallback: inject short-form module names for attention layers.
+    # These pass vLLM's substring match for all layers uniformly.
+    qcfg["modules_in_block_to_quantize"] = [
+        "self_attn.q_proj",
+        "self_attn.k_proj",
+        "self_attn.v_proj",
+        "self_attn.o_proj",
+    ]
+    print(f"[entrypoint] Using fallback attention-only modules_in_block_to_quantize")
+
 cfg["quantization_config"] = qcfg
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2, ensure_ascii=False)
