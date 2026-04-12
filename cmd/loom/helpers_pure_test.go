@@ -123,8 +123,10 @@ func TestInferGitNamespace(t *testing.T) {
 	if got == "" {
 		t.Skip("not in a git repo")
 	}
-	if !strings.Contains(got, "/") && got != "loom-core" {
-		// Either "repo/branch" or just "repo" if detached HEAD
-		t.Logf("inferGitNamespace() = %q", got)
+	// Should be "parent/repo/branch" (workspace-relative), e.g. "services/loom-core/main"
+	parts := strings.Split(got, "/")
+	if len(parts) < 2 {
+		t.Errorf("inferGitNamespace() = %q, want at least parent/repo", got)
 	}
+	t.Logf("inferGitNamespace() = %q", got)
 }

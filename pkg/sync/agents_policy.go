@@ -22,7 +22,7 @@ type agentSafetySettings struct {
 func defaultAgentSafetySettings() agentSafetySettings {
 	return agentSafetySettings{
 		DirtyWorktreeMode:    "continue_scoped_commits",
-		DirtyWorktreeMessage: "Dirty worktree detected. Treat pre-existing changes as baseline context, continue work, and stage/commit only files for the active task. Escalate only if new unexpected changes appear in files you are editing.",
+		DirtyWorktreeMessage: "Dirty worktree detected. Treat pre-existing changes as baseline context, continue work, and stage/commit only files for the active task. Before creating another multi-file worktree, inspect existing linked trees with git -C <repo> worktree list or workspace-clean --report --worktrees. For multi-file work, create repo-local linked trees under <repo>/.worktrees/<branch>; do not create sibling repos under services/, libs/, labs/, or the workspace root. Escalate only if new unexpected changes appear in files you are editing.",
 	}
 }
 
@@ -55,6 +55,7 @@ func renderAgentsSafetyBlock(settings agentSafetySettings) string {
 	sb.WriteString("## Loom Agent Safety Policy (Generated)\n\n")
 	sb.WriteString("- Pre-existing uncommitted/untracked files are baseline context, not an automatic blocker.\n")
 	sb.WriteString("- Continue on the current branch/worktree by default.\n")
+	sb.WriteString("- Before creating another multi-file worktree, inspect existing linked trees with `git worktree list` or `workspace-clean --report --worktrees`.\n")
 	sb.WriteString("- Stage and commit only files intentionally changed for the active task.\n")
 	sb.WriteString("- Escalate only when new unexpected changes appear in files you are editing, or when a branch/worktree switch is explicitly requested.\n")
 	sb.WriteString(fmt.Sprintf("- Dirty-worktree mode: `%s`.\n\n", settings.DirtyWorktreeMode))

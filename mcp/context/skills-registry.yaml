@@ -916,7 +916,7 @@ skills:
         ### Validate + Generate Skills
         ```bash
         loom generate skills --registry mcp/context/skills-registry.yaml --validate
-        loom generate skills --target all --registry mcp/context/skills-registry.yaml --workspace . --codex-home ./.codex
+        loom generate skills --target all --registry mcp/context/skills-registry.yaml --workspace . --codex-home ~/.codex
         ```
 
         ### Audit Skill Sources
@@ -933,6 +933,7 @@ skills:
         done
         loom sync skills all
         ```
+        `--skip-worktrees` is required here so generated configs do not fan out into legacy or active linked worktree copies.
 
         ### Sync Single Platform
         ```bash
@@ -960,7 +961,7 @@ skills:
 
         1. **Validate registries** (`registry.yaml` and `skills-registry.yaml`)
         2. **Audit skill-source hygiene** (scripts executable, no cache artifacts, paths resolve)
-        3. **Generate skills + configs**
+        3. **Generate skills + configs** from the canonical repo root, not from a linked worktree copy
         4. **Sync profiles and repo-local project trees**
         5. **Verify drift-free status**
         6. **Smoke critical workflows** (agent context, codebase memory, gitlab CI polling)
@@ -990,7 +991,7 @@ skills:
         ### Skills Not Updated In One Platform
         Regenerate + resync skills:
         ```bash
-        loom generate skills --target all --registry mcp/context/skills-registry.yaml --workspace . --codex-home ./.codex
+        loom generate skills --target all --registry mcp/context/skills-registry.yaml --workspace . --codex-home ~/.codex
         loom sync skills all
         ```
         If repo-local platform trees are also used, rerun:
@@ -4326,16 +4327,20 @@ skills:
 
         - Treat a dirty worktree as baseline context unless the current files conflict directly with your change.
         - Stage and commit only the files for the active feature slice.
+        - Before allocating another multi-file worktree, inspect existing linked trees with `git worktree list` or `workspace-clean --report --worktrees --repo <repo>`.
+        - Keep the canonical repo at its normal workspace path (`services/<repo>`, `libs/<repo>`, `labs/<repo>`, etc.) and create new linked trees only under `<repo>/.worktrees/<branch>`.
+        - Do not create sibling feature repos under `services/`, `libs/`, `labs/`, or the workspace root; treat any existing copies there as legacy cleanup candidates.
         - Prefer non-interactive git commands and keep the branch/worktree naming aligned with the feature scope.
         - Do not stop at code changes; carry the loop through validation, push, and CI verification unless the user explicitly pauses it.
 
         ## Workflow Steps
 
         1. **Initialize session** — `agent_session_start(namespace="<repo>/feat/<name>", description="...")`; recall prior context with `agent_recall`
-        2. **Allocate worktree** — `agent_worktree_allocate(branch_name="feat/<name>", base_branch="main", purpose="...")`
-        3. **Implement** — write code in the worktree (approval gate)
-        4. **Sandbox test** — run tests via devbox
-        5. **Pre-commit checks** — lint, fmt, hooks
+        2. **Preflight worktree review** — inspect `git worktree list` or `workspace-clean --report --worktrees --repo <repo>`; reuse or clean an existing candidate before creating another linked tree
+        3. **Allocate worktree** — `agent_worktree_allocate(branch_name="feat/<name>", base_branch="main", purpose="...")`
+        4. **Implement** — write code in the worktree (approval gate)
+        5. **Sandbox test** — run tests via devbox
+        6. **Pre-commit checks** — lint, fmt, hooks
         5.5. **Self-Review** — before landing, review your diff against the `pr-self-review` checklist (diff size, debug artifacts, secrets, scope, tests, commit format). Fix any issues first.
         6. **Landing Procedure**
            a. Stage only files for the active task (never `.env`, credentials, or unrelated changes)
@@ -4442,15 +4447,18 @@ skills:
         - add or identify a failing characterization/regression test when feasible
         - confirm root cause before implementing the fix; avoid “speculative patch” loops
         - keep the fix scoped to the defect unless adjacent cleanup is required for correctness
+        - inspect `git worktree list` or `workspace-clean --report --worktrees --repo <repo>` before allocating another multi-file worktree
+        - create new linked trees only under `<repo>/.worktrees/<branch>`; do not create sibling fix repos under workspace buckets or the workspace root
 
         ## Workflow Steps
 
         1. **Initialize session** — `agent_session_start(namespace="<repo>/fix/<name>", description="...")`; recall prior context and similar bugs with `agent_recall`
-        2. **Allocate worktree** — `agent_worktree_allocate(branch_name="fix/<name>", base_branch="main", purpose="...")`
-        3. **Investigate** — identify root cause; capture symptom, expected behavior, and repro conditions (approval gate)
-        4. **Implement fix** — write the fix with a regression test (approval gate)
-        5. **Sandbox test** — run tests via devbox
-        6. **Pre-commit checks** — lint, fmt, hooks
+        2. **Preflight worktree review** — inspect `git worktree list` or `workspace-clean --report --worktrees --repo <repo>`; reuse or clean an existing candidate before creating another linked tree
+        3. **Allocate worktree** — `agent_worktree_allocate(branch_name="fix/<name>", base_branch="main", purpose="...")`
+        4. **Investigate** — identify root cause; capture symptom, expected behavior, and repro conditions (approval gate)
+        5. **Implement fix** — write the fix with a regression test (approval gate)
+        6. **Sandbox test** — run tests via devbox
+        7. **Pre-commit checks** — lint, fmt, hooks
         6.5. **Self-Review** — before landing, review your diff against the `pr-self-review` checklist. Fix any issues first.
         7. **Landing Procedure**
            a. Stage only files for the active fix (never `.env`, credentials, or unrelated changes)
@@ -4766,8 +4774,11 @@ skills:
            - task-specific docs (`ROADMAP.md`, `.loom/*.md`, `docs/**`) when present
         2. **Check repo state**
            - `git status`
+           - `git worktree list`
+           - `workspace-clean --report --worktrees --repo <repo>` when the repo already has many linked trees or noncanonical siblings
            - active branch / worktree
            - note pre-existing changes as baseline context, not an automatic blocker
+           - if linked trees already exist outside `<repo>/.worktrees/`, treat them as cleanup pressure and do not add another noncanonical copy
         3. **Start or resume context**
            - `agent_session_start`
            - `agent_recall(query="<repo> <task>")`
@@ -4866,7 +4877,9 @@ skills:
            - look for idle agents holding claims, blocked tasks without owners, and orphaned worktrees
         5. **Repo hygiene**
            - scan key repos for dirty trees and pending branches
+           - run `workspace-clean --report --worktrees` or scope with `--repo <repo>` for targeted review
            - confirm the active branch matches the current task
+           - treat linked trees outside repo-local `.worktrees/` as cleanup candidates
 
         Close the sweep: `agent_session_end(summarize=true)`
 
@@ -5282,6 +5295,7 @@ skills:
         3. **Implement directly**
            - keep the diff narrow
            - avoid unrelated cleanup unless correctness requires it
+           - if the change expands into multi-file work, inspect existing linked trees with `git worktree list` or `workspace-clean --report --worktrees --repo <repo>` before moving to `feature-dev`
         4. **Verify proportionally**
            - run the smallest meaningful local checks first
            - escalate to `quality-gate-loop` if the change grows or fails unexpectedly
@@ -5310,7 +5324,7 @@ skills:
         ## Escalation
 
         Switch to another skill if the task expands:
-        - `feature-dev` for larger implementation slices
+        - `feature-dev` for larger implementation slices that should move into `<repo>/.worktrees/<branch>`
         - `bugfix` for investigation-heavy defects
         - `refactor` for structural cleanup
         - `ci-failure-recovery` when the branch is blocked by pipeline failures

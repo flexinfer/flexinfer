@@ -126,6 +126,9 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 	sb.WriteString("# Git safety policy: treat pre-existing dirty worktrees as baseline context.\n")
 	if policy.DirtyWorktreeMode == "continue_scoped_commits" {
 		sb.WriteString("# Continue on current branch/worktree; stage+commit only files changed for the active task.\n")
+		sb.WriteString("# Before creating another multi-file worktree, inspect existing linked trees with git worktree list or workspace-clean --report --worktrees.\n")
+		sb.WriteString("# For multi-file work, create repo-local linked trees under <repo>/.worktrees/<branch>.\n")
+		sb.WriteString("# Do not create sibling repos under services/, libs/, labs/, or the workspace root.\n")
 		sb.WriteString("# Escalate only when new unexpected changes appear in files you are editing.\n\n")
 	} else {
 		fmt.Fprintf(sb, "# Dirty-worktree mode: %s\n\n", policy.DirtyWorktreeMode)

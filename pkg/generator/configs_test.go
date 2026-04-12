@@ -22,7 +22,7 @@ func testRegistry() *registry.Registry {
 				Settings: map[string]any{
 					"dirty_worktree_mode":                   "continue_scoped_commits",
 					"dirty_worktree_nudge_on_session_start": true,
-					"dirty_worktree_nudge_message":          "Dirty worktree detected. Continue on current branch with scoped commits.",
+					"dirty_worktree_nudge_message":          "Dirty worktree detected. Continue on current branch with scoped commits, inspect existing linked trees first, and use repo-local worktrees.",
 					"guardrails": map[string]any{
 						"gitops_flux": map[string]any{
 							"blocked_commands": []any{"kubectl edit", "kubectl set env"},
@@ -266,6 +266,9 @@ func TestEmitCodexPreamble(t *testing.T) {
 		`writable_roots = ["/tmp/workspace"]`,
 		`web_search = "live"`,
 		`Git safety policy: treat pre-existing dirty worktrees as baseline context.`,
+		`Before creating another multi-file worktree, inspect existing linked trees with git worktree list or workspace-clean --report --worktrees.`,
+		`For multi-file work, create repo-local linked trees under <repo>/.worktrees/<branch>.`,
+		`Do not create sibling repos under services/, libs/, labs/, or the workspace root.`,
 		"notify =",
 		`"--"]`,
 	} {
@@ -1259,7 +1262,7 @@ func TestBuildPlatformHooks_HeartbeatBootstrapIncludesNamespaceInference(t *test
 		if strings.Contains(cmd, "agent heartbeat") &&
 			strings.Contains(cmd, "--ensure-session") &&
 			strings.Contains(cmd, "--infer-namespace") &&
-			strings.Contains(cmd, `--description "Claude Code session"`) {
+			strings.Contains(cmd, `--description "Claude Code`) {
 			found = true
 			break
 		}

@@ -550,7 +550,7 @@ servers:
     categories: [devops, scm]
     common:
       description: Manage git worktrees for parallel agent work (list/add/remove/prune)
-      hint: Use to create isolated worktrees per agent; paths must stay inside the repo
+      hint: Use to create isolated worktrees per agent; inspect existing worktrees first and keep new paths under <repo>/.worktrees
       command: "${repo}/services/loom-core/bin/mcp-git-worktree"
       args: []
       timeout: 60
@@ -1827,7 +1827,7 @@ platform_permissions:
       # Show a non-blocking nudge at session start when repo has local changes.
       dirty_worktree_nudge_on_session_start: true
       # Canonical guidance text propagated to AGENTS.md + SessionStart hooks.
-      dirty_worktree_nudge_message: "Dirty worktree detected. Treat pre-existing changes as baseline context, continue work, and stage/commit only files for the active task. Escalate only if new unexpected changes appear in files you are editing."
+      dirty_worktree_nudge_message: "Dirty worktree detected. Treat pre-existing changes as baseline context, continue work, and stage/commit only files for the active task. Before creating another multi-file worktree, inspect existing linked trees with git -C <repo> worktree list or workspace-clean --report --worktrees. For multi-file work, create repo-local linked trees under <repo>/.worktrees/<branch>; do not create sibling repos under services/, libs/, labs/, or the workspace root. Escalate only if new unexpected changes appear in files you are editing."
       # Shared guardrails consumed by generator hooks now and proxy enforcement later.
       guardrails:
         gitops_flux:

@@ -376,27 +376,37 @@ Example:
 }
 
 // inferGitNamespace derives a namespace from the current git repository and branch.
-// Returns "repo-name/branch" or empty string if git context is unavailable.
+// Returns "parent/repo-name/branch" (workspace-relative) or empty string if git
+// context is unavailable. For worktrees under <repo>/.worktrees/, resolves to the
+// parent repo path so namespaces stay consistent across main and worktree checkouts.
 func inferGitNamespace() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Get repo root directory name.
 	toplevel, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return ""
 	}
-	repoName := filepath.Base(strings.TrimSpace(string(toplevel)))
+	repoRoot := strings.TrimSpace(string(toplevel))
+
+	// For worktrees, resolve to the main repo root above .worktrees/.
+	if idx := strings.Index(repoRoot, "/.worktrees/"); idx >= 0 {
+		repoRoot = repoRoot[:idx]
+	}
+
+	// Use parent/basename for workspace-relative namespacing
+	// (e.g. "services/loom-core" instead of just "loom-core").
+	project := filepath.Base(filepath.Dir(repoRoot)) + "/" + filepath.Base(repoRoot)
 
 	// Get current branch.
 	branch, err := exec.CommandContext(ctx, "git", "branch", "--show-current").Output()
 	if err != nil {
-		return repoName
+		return project
 	}
 	branchName := strings.TrimSpace(string(branch))
 	if branchName == "" {
-		return repoName
+		return project
 	}
 
-	return repoName + "/" + branchName
+	return project + "/" + branchName
 }

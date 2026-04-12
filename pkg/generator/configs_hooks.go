@@ -25,6 +25,20 @@ func hookProfileHasEvent(hp HookProfile, event string) bool {
 	return false
 }
 
+// hookNamespaceVars returns a shell snippet that computes NS_PROJECT (workspace-
+// relative 2-level project path) and NS_BRANCH from the WS_ROOT variable set by
+// hookAgentIDBootstrap. For worktrees under <repo>/.worktrees/, NS_PROJECT
+// resolves to the parent repo path so namespace stays consistent.
+func hookNamespaceVars() string {
+	return `if echo "$WS_ROOT" | grep -q '/.worktrees/'; then ` +
+		`_MAIN="${WS_ROOT%%/.worktrees/*}"; ` +
+		`NS_PROJECT="$(basename "$(dirname "$_MAIN")")/$(basename "$_MAIN")"; ` +
+		`else ` +
+		`NS_PROJECT="$(basename "$(dirname "$WS_ROOT")")/$(basename "$WS_ROOT")"; ` +
+		`fi; ` +
+		`NS_BRANCH="$(git branch --show-current 2>/dev/null || echo main)"`
+}
+
 // buildPlatformHooks generates the shared SessionStart / session-end / heartbeat
 // hooks for any platform that supports lifecycle hooks. Platform-specific extras
 // (e.g. policy-driven PreToolUse guardrails) are appended by the caller.
@@ -38,15 +52,17 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 	log := `2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log"`
 	bootstrap := hookAgentIDBootstrap(hp.AgentID)
 	staleCleanup := hookStaleCleanup()
+	nsVars := hookNamespaceVars()
 	loomCmd := shellQuote(normalizeLoomBinary(loomBinary))
 	policy := agentSafetyPolicyFromRegistry(reg)
+	descPrefix := strings.TrimSuffix(hp.Description, " session")
 
 	sessionStartHooks := []map[string]any{
 		{
 			"type": "command",
 			"command": fmt.Sprintf(
-				`INPUT=$(cat); %s; %s; PARENT_FLAG=""; PARENT_FILE="${AGENT_CACHE_DIR}/parent-session-${AGENT_ID}"; if [ -s "$PARENT_FILE" ]; then PARENT_FLAG="--parent-session-id $(cat "$PARENT_FILE")"; rm -f "$PARENT_FILE"; elif [ -n "${LOOM_PARENT_SESSION_ID:-}" ]; then PARENT_FLAG="--parent-session-id $LOOM_PARENT_SESSION_ID"; fi; %s agent session-start --namespace "$(basename $(git rev-parse --show-toplevel 2>/dev/null || echo ${PWD##*/}))/$(git branch --show-current 2>/dev/null || echo main)" --agent-id "$AGENT_ID" --agent-type %s --description %q --auto-recall --auto-recall-strategy fast $PARENT_FLAG --quiet %s || true`,
-				bootstrap, staleCleanup, loomCmd, hp.AgentType, hp.Description, log),
+				`INPUT=$(cat); %s; %s; %s; PARENT_FLAG=""; PARENT_FILE="${AGENT_CACHE_DIR}/parent-session-${AGENT_ID}"; if [ -s "$PARENT_FILE" ]; then PARENT_FLAG="--parent-session-id $(cat "$PARENT_FILE")"; rm -f "$PARENT_FILE"; elif [ -n "${LOOM_PARENT_SESSION_ID:-}" ]; then PARENT_FLAG="--parent-session-id $LOOM_PARENT_SESSION_ID"; fi; %s agent session-start --namespace "$NS_PROJECT/$NS_BRANCH" --agent-id "$AGENT_ID" --agent-type %s --description "%s · $NS_PROJECT" --auto-recall --auto-recall-strategy fast $PARENT_FLAG --quiet %s || true`,
+				bootstrap, staleCleanup, nsVars, loomCmd, hp.AgentType, descPrefix, log),
 		},
 		{
 			"type": "command",
@@ -104,8 +120,8 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 					{
 						"type": "command",
 						"command": fmt.Sprintf(
-							`INPUT=$(cat); %s; %s agent heartbeat --agent-id "$AGENT_ID" --status active --ensure-session --infer-namespace --agent-type %s --description %q --quiet %s || true`,
-							bootstrap, loomCmd, hp.AgentType, hp.Description, log),
+							`INPUT=$(cat); %s; %s; %s agent heartbeat --agent-id "$AGENT_ID" --status active --ensure-session --infer-namespace --agent-type %s --description "%s · $NS_PROJECT" --quiet %s || true`,
+							bootstrap, nsVars, loomCmd, hp.AgentType, descPrefix, log),
 					},
 				},
 			},
@@ -329,7 +345,7 @@ func defaultAgentSafetyPolicy() agentSafetyPolicy {
 	return agentSafetyPolicy{
 		DirtyWorktreeMode:                "continue_scoped_commits",
 		DirtyWorktreeNudgeOnSessionStart: true,
-		DirtyWorktreeNudgeMessage:        "Dirty worktree detected. Treat pre-existing changes as baseline context, continue work, and stage/commit only files for the active task. Escalate only if new unexpected changes appear in files you are editing.",
+		DirtyWorktreeNudgeMessage:        "Dirty worktree detected. Treat pre-existing changes as baseline context, continue work, and stage/commit only files for the active task. Before creating another multi-file worktree, inspect existing linked trees with git -C <repo> worktree list or workspace-clean --report --worktrees. For multi-file work, create repo-local linked trees under <repo>/.worktrees/<branch>; do not create sibling repos under services/, libs/, labs/, or the workspace root. Escalate only if new unexpected changes appear in files you are editing.",
 	}
 }
 
@@ -369,7 +385,7 @@ func dirtyWorktreeSessionStartNudgeCommand(policy agentSafetyPolicy) string {
 // suggesting worktree allocation when the agent is on main or master. This is a
 // non-blocking suggestion — quick single-file fixes on main are still fine.
 func mainBranchWorktreeNudgeCommand() string {
-	payload := `{"systemMessage":"You are on main. For feature work or multi-file changes, consider using agent_worktree_allocate() to create an isolated branch and worktree before making changes."}`
+	payload := `{"systemMessage":"You are on main. Before starting feature work or another multi-file change, inspect existing linked trees with git worktree list or workspace-clean --report --worktrees. If you need a new one, use agent_worktree_allocate() to create a repo-local worktree under <repo>/.worktrees/<branch>."}`
 	return fmt.Sprintf(`if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then BRANCH="$(git branch --show-current 2>/dev/null)"; if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then printf '%%s\n' %q; fi; fi; exit 0`, payload)
 }
 
