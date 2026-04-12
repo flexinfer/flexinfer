@@ -11,14 +11,12 @@ spec:
   gpu:
     vendor: amd
     count: 1
-    # Share the 7900xtx GPU with text models. Priority 250 > gemma4's 200
-    # so imagegen can preempt on demand; gemma4 reclaims as primary when idle.
-    shared: 7900xtx-textgen
-    priority: 250
+    shared: 5930k-imagegen
+    priority: 200
     vramEstimateMB: 12000
   serverless:
     enabled: true
-    minReplicas: 0
+    minReplicas: 1
     idleTimeout: 10m
     coldStartTimeout: 30m
   config:
@@ -43,7 +41,7 @@ spec:
     compilationCache: "true"
     hipVisibleDevices: "0"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-5930k
   resources:
     requests:
       cpu: "2"
