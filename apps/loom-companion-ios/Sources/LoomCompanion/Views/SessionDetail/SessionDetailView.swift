@@ -7,6 +7,7 @@ struct SessionDetailView: View {
     @State private var showingEndConfirmation = false
     @State private var showingEndError = false
     @State private var liveActivityStarted = false
+    @Environment(\.navigationCoordinator) private var navigationCoordinator
 
     // DisclosureGroup expansion state: first two default expanded
     @State private var entriesExpanded = true
@@ -31,6 +32,31 @@ struct SessionDetailView: View {
                 if let session = viewModel.session {
                     SessionMetadataView(session: session)
                         .cardAppear(index: 0)
+
+                    // Cross-tab link to the agent that owns this session
+                    if !session.agentId.isEmpty {
+                        Button {
+                            HapticManager.selection()
+                            navigationCoordinator?.navigateToAgent(id: session.agentId)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "person.crop.circle")
+                                    .font(.system(size: 12))
+                                Text("View Agent: \(session.agentId)")
+                                    .font(LoomTypography.caption)
+                                    .lineLimit(1)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                                    .foregroundStyle(LoomColors.textTertiary)
+                            }
+                            .foregroundStyle(LoomColors.info)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(LoomColors.infoDim, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                    }
 
                     // Context entry breakdown (collapsible with summary)
                     if !viewModel.entryBreakdown.isEmpty {

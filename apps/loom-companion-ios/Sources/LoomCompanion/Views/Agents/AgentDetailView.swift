@@ -6,6 +6,7 @@ struct AgentDetailView: View {
     let agent: UnifiedAgent
     @State private var viewModel: SessionDetailViewModel
     @State private var pipelines: [MobilePipeline] = []
+    @Environment(\.navigationCoordinator) private var navigationCoordinator
     private let apiClient: any LoomAPIClientProtocol
 
     init(agent: UnifiedAgent, apiClient: any LoomAPIClientProtocol) {
@@ -126,6 +127,25 @@ struct AgentDetailView: View {
                             .clipShape(Capsule())
                     }
                 }
+            }
+
+            if agent.hasSession, let sessionId = agent.sessionId {
+                Button {
+                    HapticManager.selection()
+                    navigationCoordinator?.navigateToSession(id: sessionId)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "rectangle.stack.person.crop")
+                            .font(.system(size: 12))
+                        Text("View Session")
+                            .font(LoomTypography.caption)
+                    }
+                    .foregroundStyle(LoomColors.info)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(LoomColors.infoDim, in: Capsule())
+                }
+                .buttonStyle(.plain)
             }
         }
     }

@@ -81,14 +81,21 @@ struct DashboardView: View {
                         .cardAppear(index: 2)
                     }
 
+                    NextActionCard(
+                        lanes: dashboard.coordination.attentionLanes,
+                        health: dashboard.health,
+                        onNavigate: onNavigate
+                    )
+                    .cardAppear(index: 3)
+
                     if let counts = viewModel.taskCounts,
                        counts.pending + counts.inProgress + counts.blocked > 0 {
                         ActiveWorkCard(counts: counts)
-                            .cardAppear(index: 3)
+                            .cardAppear(index: 4)
                     }
 
                     TimelineListView(entries: dashboard.recentTimeline)
-                        .cardAppear(index: 4)
+                        .cardAppear(index: 5)
 
                     if let agoText = updatedAgo {
                         HStack {

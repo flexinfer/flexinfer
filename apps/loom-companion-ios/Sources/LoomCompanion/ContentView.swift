@@ -13,6 +13,8 @@ struct ContentView: View {
     @State private var pendingWorkflowDeepLinkID: String?
     @State private var pendingEndSessionPrefillID: String?
     @State private var selectedPeopleSection: PeopleSection = .agents
+    @State private var navigationCoordinator = NavigationCoordinator()
+    @State private var pendingAgentDeepLinkID: String?
 
     enum AppTab {
         case dashboard
@@ -37,6 +39,7 @@ struct ContentView: View {
                 LoginView(viewModel: connectionVM)
             }
         }
+        .environment(\.navigationCoordinator, navigationCoordinator)
         .task {
             if connectionVM.isAuthenticated {
                 setupSSE()
@@ -61,6 +64,20 @@ struct ContentView: View {
             guard let link else { return }
             handleDeepLink(link)
             pendingDeepLink = nil
+        }
+        .onChange(of: navigationCoordinator.pendingSessionID) { _, sessionId in
+            guard let sessionId else { return }
+            pendingSessionDeepLinkID = sessionId
+            selectedPeopleSection = .sessions
+            selectedTab = .people
+            navigationCoordinator.clearPendingSession()
+        }
+        .onChange(of: navigationCoordinator.pendingAgentID) { _, agentId in
+            guard let agentId else { return }
+            pendingAgentDeepLinkID = agentId
+            selectedPeopleSection = .agents
+            selectedTab = .people
+            navigationCoordinator.clearPendingAgent()
         }
     }
 
