@@ -33,7 +33,7 @@ spec:
     dtype: "half"
     cpuOffloadGb: "30"
     enforceEager: true
-    maxModelLen: 8192
+    maxModelLen: 16384
     gpuMemoryUtilization: "0.95"
     maxNumSeqs: 4
     trustRemoteCode: true
