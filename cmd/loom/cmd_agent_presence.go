@@ -175,10 +175,11 @@ don't have native session-start hooks.`,
 // agent presence alive even when no tool use is occurring.
 func newAgentKeepaliveCmd() *cobra.Command {
 	var (
-		agentID   string
-		agentType string
-		interval  time.Duration
-		quiet     bool
+		agentID     string
+		agentType   string
+		interval    time.Duration
+		maxLifetime time.Duration
+		quiet       bool
 	)
 
 	cmd := &cobra.Command{
@@ -230,8 +231,15 @@ running, exits silently. On SIGINT/SIGTERM, sends a final deregister and exits.`
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 
+			// Self-termination deadline prevents orphaned keepalives from
+			// running forever when the session-end hook fails to fire.
+			var deadline <-chan time.Time
+			if maxLifetime > 0 {
+				deadline = time.After(maxLifetime)
+			}
+
 			if !quiet {
-				fmt.Fprintf(os.Stderr, "keepalive started for %s (interval=%s, pid=%d)\n", agentID, interval, os.Getpid())
+				fmt.Fprintf(os.Stderr, "keepalive started for %s (interval=%s, max-lifetime=%s, pid=%d)\n", agentID, interval, maxLifetime, os.Getpid())
 			}
 
 			for {
@@ -245,6 +253,13 @@ running, exits silently. On SIGINT/SIGTERM, sends a final deregister and exits.`
 					if err != nil && !quiet {
 						fmt.Fprintf(os.Stderr, "keepalive: heartbeat: %v\n", err)
 					}
+				case <-deadline:
+					if !quiet {
+						fmt.Fprintf(os.Stderr, "keepalive max-lifetime reached for %s, self-terminating\n", agentID)
+					}
+					deregBody := map[string]string{"agent_id": agentID}
+					_, _ = hudPostFast(port, "/api/agent/deregister", deregBody, 3*time.Second)
+					return nil
 				case <-sigCh:
 					if !quiet {
 						fmt.Fprintf(os.Stderr, "keepalive shutting down for %s\n", agentID)
@@ -261,6 +276,7 @@ running, exits silently. On SIGINT/SIGTERM, sends a final deregister and exits.`
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier (required)")
 	cmd.Flags().StringVar(&agentType, "agent-type", "", "Agent type for bootstrap")
 	cmd.Flags().DurationVar(&interval, "interval", 20*time.Second, "Heartbeat interval")
+	cmd.Flags().DurationVar(&maxLifetime, "max-lifetime", 12*time.Hour, "Auto-terminate after this duration (0 to disable)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output")
 
 	return cmd

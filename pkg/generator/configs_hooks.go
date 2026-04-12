@@ -52,14 +52,17 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 			"type": "command",
 			"command": fmt.Sprintf(
 				// Kill any stale keepalives for this workspace before spawning a new one.
-				// Session-scoped agent IDs mean old keepalives have different PID file names,
-				// so we glob-match by workspace hash to catch all of them.
+				// Two-layer cleanup:
+				// 1. PID file glob — catches keepalives with intact PID files.
+				// 2. pkill by agent-id pattern — catches orphans whose PID files
+				//    were lost or started from a different binary path.
 				`INPUT=$(cat); %s; `+
 					`for pf in "${TMPDIR:-/tmp}"/loom-keepalive-%s-"${WS_HASH}"*.pid; do `+
 					`[ -f "$pf" ] && kill "$(cat "$pf")" 2>/dev/null && rm -f "$pf"; `+
 					`done; `+
+					`pkill -f "loom agent keepalive --agent-id %s-${WS_HASH}" 2>/dev/null || true; `+
 					`%s agent keepalive --agent-id "$AGENT_ID" --agent-type %s --quiet </dev/null >/dev/null %s &`,
-				bootstrap, hp.AgentID, loomCmd, hp.AgentType, log),
+				bootstrap, hp.AgentID, hp.AgentID, loomCmd, hp.AgentType, log),
 		},
 	}
 	if policy.DirtyWorktreeNudgeOnSessionStart {
@@ -87,8 +90,9 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 						"type": "command",
 						"command": fmt.Sprintf(
 							// Kill keepalives matching this workspace (any session scope) — not just exact agent ID.
-							`INPUT=$(cat); %s; for pf in "${TMPDIR:-/tmp}"/loom-keepalive-%s-"${WS_HASH}"*.pid; do [ -f "$pf" ] && kill "$(cat "$pf")" 2>/dev/null && rm -f "$pf"; done; rm -f "$AGENT_ID_FILE"; %s agent session-end --agent-id "$AGENT_ID" --summarize --summary-async --quiet %s || true`,
-							bootstrap, hp.AgentID, loomCmd, log),
+							// Two-layer cleanup: PID file glob + pkill for orphans from different binary paths.
+							`INPUT=$(cat); %s; for pf in "${TMPDIR:-/tmp}"/loom-keepalive-%s-"${WS_HASH}"*.pid; do [ -f "$pf" ] && kill "$(cat "$pf")" 2>/dev/null && rm -f "$pf"; done; pkill -f "loom agent keepalive --agent-id %s-${WS_HASH}" 2>/dev/null || true; rm -f "$AGENT_ID_FILE"; %s agent session-end --agent-id "$AGENT_ID" --summarize --summary-async --quiet %s || true`,
+							bootstrap, hp.AgentID, hp.AgentID, loomCmd, log),
 					},
 				},
 			},

@@ -1164,6 +1164,48 @@ func TestBuildPlatformHooks_KeepaliveIsDetached(t *testing.T) {
 	}
 }
 
+func TestBuildPlatformHooks_PkillOrphanCleanup(t *testing.T) {
+	hooks := buildPlatformHooks(testRegistry(), HookProfile{
+		Enabled:          true,
+		AgentID:          "claude-code",
+		AgentType:        "claude-code",
+		Description:      "test",
+		SessionEndEvent:  "Stop",
+		HeartbeatEvent:   "PostToolUse",
+		HeartbeatMatcher: "Bash|Task",
+	}, "")
+
+	// Check SessionStart keepalive hook includes pkill for orphans.
+	sessionStart := hooks["SessionStart"].([]map[string]any)
+	sessionHooks := sessionStart[0]["hooks"].([]map[string]any)
+	foundPkillInStart := false
+	for _, h := range sessionHooks {
+		cmd, _ := h["command"].(string)
+		if strings.Contains(cmd, "keepalive") && strings.Contains(cmd, `pkill -f "loom agent keepalive --agent-id claude-code-${WS_HASH}"`) {
+			foundPkillInStart = true
+			break
+		}
+	}
+	if !foundPkillInStart {
+		t.Error("expected pkill orphan cleanup in SessionStart keepalive hook")
+	}
+
+	// Check Stop hook includes pkill for orphans.
+	stop := hooks["Stop"].([]map[string]any)
+	stopHooks := stop[0]["hooks"].([]map[string]any)
+	foundPkillInStop := false
+	for _, h := range stopHooks {
+		cmd, _ := h["command"].(string)
+		if strings.Contains(cmd, `pkill -f "loom agent keepalive --agent-id claude-code-${WS_HASH}"`) {
+			foundPkillInStop = true
+			break
+		}
+	}
+	if !foundPkillInStop {
+		t.Error("expected pkill orphan cleanup in Stop hook")
+	}
+}
+
 func TestBuildPlatformHooks_StaleCleanupInSessionStart(t *testing.T) {
 	hooks := buildPlatformHooks(testRegistry(), HookProfile{
 		Enabled:          true,
