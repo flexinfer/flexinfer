@@ -2,6 +2,7 @@
 // and subscribes to SSE events for real-time spawn lifecycle updates.
 import { eventStore } from './events.svelte.ts';
 import { adminFetch, labsAuthStore } from './labsAuth.svelte.ts';
+import { fleetStore, type Session } from './fleet.svelte.ts';
 
 export interface SpawnActivityEvent {
   type: string;
@@ -132,6 +133,17 @@ class SpawnStore {
   /** Find a spawn by its agent_id (for cross-referencing with fleet sessions). */
   spawnForAgent(agentId: string): SpawnState | undefined {
     return this.spawns.find(s => s.agent_id === agentId);
+  }
+
+  /**
+   * sessionForSpawn looks up the fleet session linked to a given spawn.
+   * Finds the spawn by spawnId, extracts its agent_id, then queries
+   * fleetStore.sessions for a session with the same agent_id.
+   */
+  sessionForSpawn(spawnId: string): Session | undefined {
+    const spawn = this.spawns.find(s => s.spawn_id === spawnId);
+    if (!spawn) return undefined;
+    return fleetStore.sessionForAgent(spawn.agent_id);
   }
 
   /**

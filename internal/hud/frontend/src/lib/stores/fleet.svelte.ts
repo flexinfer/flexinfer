@@ -2,6 +2,7 @@
 // v2: SSE-first with 30s fallback poll. Applies hud.fleet snapshots directly.
 import { eventStore } from './events.svelte.ts';
 import { arraysEqualById } from '../utils/diff.ts';
+import { spawnStore, type SpawnState } from './spawn.svelte.ts';
 
 export interface Process {
   pid: number;
@@ -150,6 +151,17 @@ class FleetStore {
   /** Find a session by agent_id (for cross-referencing with spawns). */
   sessionForAgent(agentId: string): Session | undefined {
     return this.sessions.find(s => s.agent_id === agentId);
+  }
+
+  /**
+   * spawnForSession looks up the spawn linked to a given session.
+   * Finds the session by sessionId, extracts its agent_id, then queries
+   * spawnStore.spawns for a spawn with the same agent_id.
+   */
+  spawnForSession(sessionId: string): SpawnState | undefined {
+    const session = this.sessions.find(s => s.id === sessionId);
+    if (!session) return undefined;
+    return spawnStore.spawnForAgent(session.agent_id);
   }
 
   /** Group active sessions by namespace project, enriched with agent presence and linked tasks. */

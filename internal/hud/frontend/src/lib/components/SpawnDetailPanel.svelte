@@ -5,6 +5,7 @@
   import { fleetStore } from '../stores/fleet.svelte.ts';
   import { adminFetch, labsAuthStore } from '../stores/labsAuth.svelte.ts';
   import { eventStore } from '../stores/events.svelte.ts';
+  import { relativeTime } from '../utils/format.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import BudgetBar from '../widgets/BudgetBar.svelte';
   import ActivityTab from './SpawnTelemetry/ActivityTab.svelte';
@@ -216,6 +217,20 @@
     spawn ? fleetStore.sessionForAgent(spawn.agent_id) : undefined
   );
 
+  /** Compute a human-readable duration string from a session's started_at. */
+  let sessionDuration = $derived.by(() => {
+    if (!linkedSession?.started_at) return '';
+    const start = new Date(linkedSession.started_at).getTime();
+    const end = linkedSession.ended_at ? new Date(linkedSession.ended_at).getTime() : Date.now();
+    const diffMs = Math.max(0, end - start);
+    const secs = Math.floor(diffMs / 1000);
+    if (secs < 60) return `${secs}s`;
+    const mins = Math.floor(secs / 60);
+    if (mins < 60) return `${mins}m ${secs % 60}s`;
+    const hrs = Math.floor(mins / 60);
+    return `${hrs}h ${mins % 60}m`;
+  });
+
   function navigateToSession(): void {
     if (linkedSession) {
       router.navigate('agents', 'fleet', linkedSession.id);
@@ -302,6 +317,33 @@
         </div>
       {/if}
     </div>
+
+    {#if linkedSession}
+      <div class="detail-card session-context-card">
+        <div class="card-label">Session Context</div>
+        <div class="session-context-row">
+          <div class="session-ctx-item">
+            <span class="session-ctx-label">Namespace</span>
+            <span class="session-ctx-value">{linkedSession.namespace || '---'}</span>
+          </div>
+          <div class="session-ctx-item">
+            <span class="session-ctx-label">Entries</span>
+            <span class="session-ctx-value">{linkedSession.entry_count ?? 0}</span>
+          </div>
+          <div class="session-ctx-item">
+            <span class="session-ctx-label">Duration</span>
+            <span class="session-ctx-value">{sessionDuration}</span>
+          </div>
+          <div class="session-ctx-item">
+            <span class="session-ctx-label">Started</span>
+            <span class="session-ctx-value">{relativeTime(linkedSession.started_at)}</span>
+          </div>
+        </div>
+        <button class="session-navigate-button" onclick={navigateToSession}>
+          View session detail
+        </button>
+      </div>
+    {/if}
 
     <div class="detail-card">
       <div class="card-label">Task</div>
@@ -771,6 +813,54 @@
   .delete-button:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+
+  .session-context-card {
+    gap: var(--space-3);
+    border-color: rgba(129, 240, 254, 0.15);
+  }
+
+  .session-context-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+
+  .session-ctx-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .session-ctx-label {
+    font-size: var(--text-xs);
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide, 0.05em);
+  }
+
+  .session-ctx-value {
+    font-size: var(--text-sm);
+    color: var(--fg-primary);
+    font-family: var(--font-mono);
+  }
+
+  .session-navigate-button {
+    align-self: flex-start;
+    padding: 4px var(--space-3);
+    background: transparent;
+    border: 1px solid rgba(129, 240, 254, 0.25);
+    border-radius: var(--radius-xs);
+    color: var(--accent);
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), background var(--transition-fast);
+  }
+
+  .session-navigate-button:hover {
+    border-color: var(--accent);
+    background: rgba(129, 240, 254, 0.08);
   }
 
   .detail-loading,
