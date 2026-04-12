@@ -169,9 +169,62 @@ NORMALIZE_GEMMA4_PY
     done
 }
 
+# ── Normalize Gemma4 GPTQ quantize_config.json ────────────────────
+# Gemma4 MoE models have heterogeneous attention: full-attention layers
+# (attention_k_eq_v=true) lack v_proj. When modules_in_block_to_quantize
+# is absent, vLLM scans safetensors metadata and builds full layer-specific
+# prefixes — v_proj missing from layer 5 causes a shard mismatch error.
+# Fix: inject short-form module names so substring matching works for all layers.
+normalize_gemma4_quantize_config() {
+    local models_dir="/models"
+    [ -d "$models_dir" ] || return 0
+
+    find "$models_dir" -maxdepth 5 -name quantize_config.json -type f 2>/dev/null | while read -r qcfg; do
+        # Only process if a sibling config.json is Gemma4
+        local dir model_type
+        dir="$(dirname "$qcfg")"
+        [ -f "$dir/config.json" ] || continue
+        model_type=$(python3 -c "import json; print(json.load(open('$dir/config.json')).get('model_type',''))" 2>/dev/null) || continue
+
+        case "$model_type" in
+            gemma4_text|gemma4) ;;
+            *) continue ;;
+        esac
+
+        python3 - "$qcfg" <<'NORMALIZE_GEMMA4_QCFG_PY' || echo "[entrypoint] WARNING: Gemma4 quantize_config normalization failed for $qcfg"
+import json, sys
+
+path = sys.argv[1]
+with open(path) as f:
+    cfg = json.load(f)
+
+# If modules_in_block_to_quantize is already set, leave it alone
+if cfg.get("modules_in_block_to_quantize"):
+    sys.exit(0)
+
+# Check if this is a GPTQ config
+if cfg.get("quant_method") != "gptq":
+    sys.exit(0)
+
+# Inject short-form module names for attention layers.
+# These pass vLLM's substring match for all layers uniformly.
+cfg["modules_in_block_to_quantize"] = [
+    "self_attn.q_proj",
+    "self_attn.k_proj",
+    "self_attn.v_proj",
+    "self_attn.o_proj",
+]
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2, ensure_ascii=False)
+print(f"[entrypoint] Injected modules_in_block_to_quantize into {path}")
+NORMALIZE_GEMMA4_QCFG_PY
+    done
+}
+
 if command -v python3 >/dev/null 2>&1; then
     normalize_qwen35_configs
     normalize_gemma4_configs
+    normalize_gemma4_quantize_config
 fi
 
 if [ "${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC:-}" = "turboquant" ]; then
