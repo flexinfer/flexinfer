@@ -381,6 +381,16 @@ RUN if [ "${INCLUDE_VLLM}" = "true" ] && [ "${VLLM_INSTALL_MODE}" = "wheel" ] &&
       echo "vLLM Qwen3.5 patches applied at build time"; \
     fi
 
+# ── Apply vLLM Gemma4 MoE GPTQ patch at build time ──────────────────
+# GPTQConfig.get_quant_method always applies MoeWNA16 to FusedMoE layers,
+# even when experts are excluded from GPTQ (attention-only quantization).
+# This patch checks modules_in_block_to_quantize and skips MoE quantization
+# when no MoE-related modules are in the list.
+RUN if [ "${INCLUDE_VLLM}" = "true" ] && [ -f /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py ]; then \
+      python3 /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py && \
+      echo "vLLM Gemma4 MoE GPTQ patch applied at build time"; \
+    fi
+
 # ── Verify ROCm PyTorch was not replaced by CUDA ────────────────────
 RUN if [ "${GPU_VENDOR}" = "amd" ] && command -v python3 >/dev/null 2>&1; then \
       python3 -c "import torch; assert torch.version.hip is not None, 'CUDA torch detected!'; print('OK: PyTorch', torch.__version__, 'HIP', torch.version.hip)"; \

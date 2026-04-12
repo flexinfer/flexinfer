@@ -228,6 +228,14 @@ if command -v python3 >/dev/null 2>&1; then
     normalize_qwen35_configs
     normalize_gemma4_configs
     normalize_gemma4_quantize_config
+
+    # Apply vLLM Gemma4 MoE GPTQ patch at runtime if not already applied
+    # at build time. This patches GPTQConfig.get_quant_method to skip MoE
+    # quantization when experts are excluded from GPTQ.
+    if [ -f /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py ]; then
+        python3 /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py || \
+            echo "[entrypoint] WARNING: Gemma4 MoE GPTQ patch failed (may already be applied at build time)"
+    fi
 fi
 
 if [ "${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC:-}" = "turboquant" ]; then

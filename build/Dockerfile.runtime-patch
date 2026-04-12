@@ -1,0 +1,15 @@
+# Thin overlay: patches an existing runtime image with Gemma4 MoE GPTQ fix
+# + updated entrypoint. Takes <2 min to build vs 30+ min for a full rebuild.
+#
+# Usage:
+#   docker build --context 7900xtx -f build/Dockerfile.runtime-patch \
+#     --build-arg BASE_IMAGE=registry.harbor.lan/flexinfer/runtime@sha256:... .
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+COPY build/scripts/vllm_gemma4_moe_gptq_patch.py /opt/flexinfer/scripts/
+COPY build/runtime-entrypoint.sh /usr/local/bin/runtime-entrypoint.sh
+RUN chmod +x /usr/local/bin/runtime-entrypoint.sh
+
+# Apply the GPTQ patch at build time
+RUN python3 /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py
