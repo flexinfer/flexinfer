@@ -425,6 +425,7 @@ type ServerHealth struct {
 	Hub        HealthEntry       `json:"hub"`
 	Monitor    *HealthEntry      `json:"monitor,omitempty"`
 	Target     string            `json:"target"`
+	Transport  string            `json:"transport,omitempty"` // ws, stdio, sse, ssh, or unavailable
 	Divergence *HealthDivergence `json:"divergence,omitempty"`
 }
 
@@ -441,6 +442,7 @@ type ServerInfo struct {
 	Description string   `json:"description,omitempty"`
 	Running     bool     `json:"running"`
 	ToolCount   int      `json:"tool_count,omitempty"`
+	Transport   string   `json:"transport,omitempty"`
 }
 
 // ServersResult holds the response from loom/servers.

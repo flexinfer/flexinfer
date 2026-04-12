@@ -68,9 +68,9 @@ func (d *Daemon) poolPressure(p *pool.Pool, hub bool) *poolPressure {
 		return nil
 	}
 	stats := p.Stats()
-	maxIdle, maxOpen, _ := d.fileCfg.Resources.GetPoolConfig()
+	maxIdle, maxOpen, _, _ := d.fileCfg.Resources.GetPoolConfig()
 	if hub {
-		maxIdle, maxOpen, _ = d.fileCfg.Resources.GetHubPoolConfig()
+		maxIdle, maxOpen, _, _ = d.fileCfg.Resources.GetHubPoolConfig()
 	}
 	pressure := 0.0
 	if maxOpen > 0 {
@@ -86,6 +86,40 @@ func (d *Daemon) poolPressure(p *pool.Pool, hub bool) *poolPressure {
 	}
 }
 
+// serverTransport derives the transport type (stdio, ws, sse, ssh) from registry config.
+func (d *Daemon) serverTransport(name string) string {
+	if d.registry == nil {
+		return ""
+	}
+	for _, s := range d.registry.Servers {
+		if s.Name != name {
+			continue
+		}
+		if s.URL != "" {
+			if len(s.URL) >= 5 && (s.URL[:5] == "ws://" || s.URL[:6] == "wss://") {
+				return "ws"
+			}
+			return "sse"
+		}
+		spec := s.Common
+		if spec == nil {
+			if t, ok := s.Targets[d.cfg.Target]; ok {
+				spec = t
+			}
+		}
+		if spec != nil {
+			if spec.SSH != nil {
+				return "ssh"
+			}
+			if spec.Command != "" {
+				return "stdio"
+			}
+		}
+		return ""
+	}
+	return ""
+}
+
 type serversResult struct {
 	Servers []serverInfo `json:"servers"`
 }
@@ -95,6 +129,7 @@ type serverInfo struct {
 	Categories  []string `json:"categories,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Running     bool     `json:"running"`
+	Transport   string   `json:"transport,omitempty"`
 }
 
 func (d *Daemon) handleServers(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
@@ -115,6 +150,7 @@ func (d *Daemon) handleServers(ctx context.Context, msg *mcp.Message) (*mcp.Mess
 			Categories:  s.Categories,
 			Description: desc,
 			Running:     runningSet[s.Name],
+			Transport:   d.serverTransport(s.Name),
 		})
 	}
 
@@ -136,6 +172,7 @@ type serverHealth struct {
 	Hub        *healthStatus     `json:"hub,omitempty"`
 	Monitor    *healthStatus     `json:"monitor,omitempty"`
 	Target     string            `json:"target"`
+	Transport  string            `json:"transport,omitempty"`
 	Divergence *HealthDivergence `json:"divergence,omitempty"`
 }
 
@@ -166,7 +203,7 @@ func (d *Daemon) handleHealth(ctx context.Context, msg *mcp.Message) (*mcp.Messa
 			routerAvailable = decision.Target != router.TargetUnavailable
 		}
 
-		sh := serverHealth{Target: target}
+		sh := serverHealth{Target: target, Transport: d.serverTransport(name)}
 		if h.Local != nil {
 			sh.Local = &healthStatus{
 				Healthy:      h.Local.Healthy,

@@ -34,6 +34,7 @@ func (a *App) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	for _, s := range servers {
 		sh := bridge.ServerHealth{
 			Target:     s.Target,
+			Transport:  s.Transport,
 			Divergence: s.Divergence,
 		}
 		// Map the consolidated entry back to the local/hub shape.
@@ -85,6 +86,7 @@ func (a *App) handleServers(w http.ResponseWriter, _ *http.Request) {
 			Description: s.Description,
 			Running:     s.Running,
 			ToolCount:   s.ToolCount,
+			Transport:   s.Transport,
 		}
 	}
 	a.writeJSON(w, http.StatusOK, &bridge.ServersResult{Servers: infos})

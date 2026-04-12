@@ -14,6 +14,7 @@ export interface ServerHealth {
   local: HealthEndpoint;
   hub: HealthEndpoint;
   target: string;
+  transport: string;
 }
 
 export interface HealthResponse {
@@ -59,6 +60,7 @@ export interface MergedServer {
   status: ServerStatus;
   latency: number;
   target: string;
+  transport: string;
   error_message: string;
   tool_count: number;
   consec_fails: number;
@@ -150,6 +152,7 @@ class HealthStore {
           status,
           latency,
           target: health?.target ?? '',
+          transport: health?.transport ?? '',
           error_message: health?.local?.errorMessage ?? '',
           tool_count: srv.tool_count ?? 0,
           consec_fails: health?.local?.consecFails ?? 0,
@@ -235,6 +238,7 @@ class HealthStore {
         status,
         latency,
         target: (entry.target as string) ?? '',
+        transport: (entry.transport as string) ?? '',
         error_message: (entry.error_message as string) ?? '',
         tool_count: (entry.tool_count as number) ?? 0,
         consec_fails: (entry.consec_fails as number) ?? 0,

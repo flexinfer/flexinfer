@@ -266,8 +266,11 @@ type ResourceConfig struct {
 	// PoolMaxIdle is the maximum idle connections per server for the local pool (default: 2)
 	PoolMaxIdle int `yaml:"pool_max_idle,omitempty"`
 
-	// PoolMaxOpen is the maximum open connections per server for the local pool (default: 10)
+	// PoolMaxOpen is the maximum open connections per server for the local pool (default: 25)
 	PoolMaxOpen int `yaml:"pool_max_open,omitempty"`
+
+	// PoolWaitTimeout is the duration to wait when pool is exhausted before returning error (default: 5s, 0 = immediate error)
+	PoolWaitTimeout string `yaml:"pool_wait_timeout,omitempty"`
 
 	// PoolIdleTimeoutMinutes is the idle timeout for local pool connections (default: 5)
 	PoolIdleTimeoutMinutes int `yaml:"pool_idle_timeout_minutes,omitempty"`
@@ -434,12 +437,12 @@ type RoutingConfig struct {
 }
 
 // GetPoolConfig returns a pool.Config for the local connection pool.
-func (c *ResourceConfig) GetPoolConfig() (maxIdle, maxOpen int, idleTimeout time.Duration) {
+func (c *ResourceConfig) GetPoolConfig() (maxIdle, maxOpen int, idleTimeout, waitTimeout time.Duration) {
 	maxIdle = 2
 	if c.PoolMaxIdle > 0 {
 		maxIdle = c.PoolMaxIdle
 	}
-	maxOpen = 10
+	maxOpen = 25
 	if c.PoolMaxOpen > 0 {
 		maxOpen = c.PoolMaxOpen
 	}
@@ -447,16 +450,22 @@ func (c *ResourceConfig) GetPoolConfig() (maxIdle, maxOpen int, idleTimeout time
 	if c.PoolIdleTimeoutMinutes > 0 {
 		idleTimeout = time.Duration(c.PoolIdleTimeoutMinutes) * time.Minute
 	}
+	waitTimeout = 5 * time.Second
+	if c.PoolWaitTimeout != "" {
+		if d, err := time.ParseDuration(c.PoolWaitTimeout); err == nil {
+			waitTimeout = d
+		}
+	}
 	return
 }
 
 // GetHubPoolConfig returns a pool.Config for the hub connection pool.
-func (c *ResourceConfig) GetHubPoolConfig() (maxIdle, maxOpen int, idleTimeout time.Duration) {
+func (c *ResourceConfig) GetHubPoolConfig() (maxIdle, maxOpen int, idleTimeout, waitTimeout time.Duration) {
 	maxIdle = 2
 	if c.HubPoolMaxIdle > 0 {
 		maxIdle = c.HubPoolMaxIdle
 	}
-	maxOpen = 10
+	maxOpen = 25
 	if c.HubPoolMaxOpen > 0 {
 		maxOpen = c.HubPoolMaxOpen
 	}
@@ -464,6 +473,7 @@ func (c *ResourceConfig) GetHubPoolConfig() (maxIdle, maxOpen int, idleTimeout t
 	if c.HubPoolIdleTimeoutMinutes > 0 {
 		idleTimeout = time.Duration(c.HubPoolIdleTimeoutMinutes) * time.Minute
 	}
+	waitTimeout = 5 * time.Second
 	return
 }
 

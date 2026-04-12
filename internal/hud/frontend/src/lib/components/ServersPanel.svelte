@@ -191,7 +191,7 @@
     { key: 'consec_fails', label: 'Fails', sortable: true, width: '50px' },
     { key: 'latency', label: 'Latency', sortable: true, width: '80px' },
     { key: 'tool_count', label: 'Tools', sortable: true, width: '60px' },
-    { key: 'target', label: 'Target', width: '130px' },
+    { key: 'transport', label: 'Transport', width: '80px' },
     { key: 'sparkline', label: 'Sparkline', width: '102px' },
   ];
 
@@ -314,8 +314,8 @@
           <td class="text-mono" class:fail-warn={server.consec_fails > 0}>{server.consec_fails > 0 ? server.consec_fails : ''}</td>
           <td class="text-mono">{#key server.latency}<span class="data-updated">{formatLatency(server.latency)}</span>{/key}</td>
           <td class="text-mono">{server.tool_count ?? 0}</td>
-          <td class="text-mono text-muted target-cell" title={sanitizeText(server.target ?? '---')}>
-            {sanitizeText(server.target ?? '---')}
+          <td class="text-mono text-muted transport-cell" title={sanitizeText(server.transport || '---')}>
+            {sanitizeText(server.transport || '---')}
           </td>
           <td class="sparkline-cell">
             {#if server.latencyHistory?.length}
@@ -572,7 +572,7 @@
 <DetailDrawer
   open={!!selectedServer}
   title={sanitizeText(selectedServer?.name ?? '')}
-  subtitle={sanitizeText(selectedServer?.target ?? '')}
+  subtitle={sanitizeText(selectedServer?.transport ?? '')}
   onClose={() => { selectedServer = null; }}
 >
   {#snippet header()}
@@ -761,8 +761,8 @@
     white-space: nowrap;
   }
 
-  .target-cell {
-    max-width: 200px;
+  .transport-cell {
+    max-width: 80px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

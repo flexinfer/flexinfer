@@ -8,16 +8,19 @@ import (
 
 func TestResourceConfig_GetPoolConfig_Defaults(t *testing.T) {
 	cfg := ResourceConfig{}
-	maxIdle, maxOpen, idleTimeout := cfg.GetPoolConfig()
+	maxIdle, maxOpen, idleTimeout, waitTimeout := cfg.GetPoolConfig()
 
 	if maxIdle != 2 {
 		t.Errorf("maxIdle = %d, want 2", maxIdle)
 	}
-	if maxOpen != 10 {
-		t.Errorf("maxOpen = %d, want 10", maxOpen)
+	if maxOpen != 25 {
+		t.Errorf("maxOpen = %d, want 25", maxOpen)
 	}
 	if idleTimeout != 5*time.Minute {
 		t.Errorf("idleTimeout = %v, want 5m", idleTimeout)
+	}
+	if waitTimeout != 5*time.Second {
+		t.Errorf("waitTimeout = %v, want 5s", waitTimeout)
 	}
 }
 
@@ -26,8 +29,9 @@ func TestResourceConfig_GetPoolConfig_Custom(t *testing.T) {
 		PoolMaxIdle:            4,
 		PoolMaxOpen:            20,
 		PoolIdleTimeoutMinutes: 10,
+		PoolWaitTimeout:        "10s",
 	}
-	maxIdle, maxOpen, idleTimeout := cfg.GetPoolConfig()
+	maxIdle, maxOpen, idleTimeout, waitTimeout := cfg.GetPoolConfig()
 
 	if maxIdle != 4 {
 		t.Errorf("maxIdle = %d, want 4", maxIdle)
@@ -38,20 +42,26 @@ func TestResourceConfig_GetPoolConfig_Custom(t *testing.T) {
 	if idleTimeout != 10*time.Minute {
 		t.Errorf("idleTimeout = %v, want 10m", idleTimeout)
 	}
+	if waitTimeout != 10*time.Second {
+		t.Errorf("waitTimeout = %v, want 10s", waitTimeout)
+	}
 }
 
 func TestResourceConfig_GetHubPoolConfig_Defaults(t *testing.T) {
 	cfg := ResourceConfig{}
-	maxIdle, maxOpen, idleTimeout := cfg.GetHubPoolConfig()
+	maxIdle, maxOpen, idleTimeout, waitTimeout := cfg.GetHubPoolConfig()
 
 	if maxIdle != 2 {
 		t.Errorf("maxIdle = %d, want 2", maxIdle)
 	}
-	if maxOpen != 10 {
-		t.Errorf("maxOpen = %d, want 10", maxOpen)
+	if maxOpen != 25 {
+		t.Errorf("maxOpen = %d, want 25", maxOpen)
 	}
 	if idleTimeout != 5*time.Minute {
 		t.Errorf("idleTimeout = %v, want 5m", idleTimeout)
+	}
+	if waitTimeout != 5*time.Second {
+		t.Errorf("waitTimeout = %v, want 5s", waitTimeout)
 	}
 }
 
@@ -61,7 +71,7 @@ func TestResourceConfig_GetHubPoolConfig_Custom(t *testing.T) {
 		HubPoolMaxOpen:            15,
 		HubPoolIdleTimeoutMinutes: 8,
 	}
-	maxIdle, maxOpen, idleTimeout := cfg.GetHubPoolConfig()
+	maxIdle, maxOpen, idleTimeout, waitTimeout := cfg.GetHubPoolConfig()
 
 	if maxIdle != 3 {
 		t.Errorf("maxIdle = %d, want 3", maxIdle)
@@ -71,6 +81,9 @@ func TestResourceConfig_GetHubPoolConfig_Custom(t *testing.T) {
 	}
 	if idleTimeout != 8*time.Minute {
 		t.Errorf("idleTimeout = %v, want 8m", idleTimeout)
+	}
+	if waitTimeout != 5*time.Second {
+		t.Errorf("waitTimeout = %v, want 5s", waitTimeout)
 	}
 }
 

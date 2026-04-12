@@ -86,7 +86,8 @@ type ServerHealthEntry struct {
 	ConsecFails  int     `json:"consec_fails"`
 	AvgLatencyMs float64 `json:"avg_latency_ms"`
 	ErrorMessage string  `json:"error_message,omitempty"`
-	Target       string  `json:"target"` // "local", "hub", or "unavailable"
+	Target       string  `json:"target"`    // "local", "hub", or "unavailable"
+	Transport    string  `json:"transport"` // "ws", "stdio", "sse", "ssh", or ""
 
 	// Sparkline history (last DefaultRingSize readings, oldest first)
 	LatencyHistory []float64 `json:"latency_history"`
@@ -269,11 +270,15 @@ func (m *HealthMonitor) Refresh() error {
 			entry.Categories = info.Categories
 			entry.Description = info.Description
 			entry.Running = info.Running
+			if entry.Transport == "" {
+				entry.Transport = info.Transport
+			}
 		}
 
 		// Merge health info if available. Prefer the active target endpoint.
 		if health, ok := healthMap[name]; ok {
 			entry.Target = health.Target
+			entry.Transport = health.Transport
 			var active bridge.HealthEntry
 			switch health.Target {
 			case "local":

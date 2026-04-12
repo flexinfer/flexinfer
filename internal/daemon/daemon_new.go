@@ -137,11 +137,12 @@ func New(cfg Config) (*Daemon, error) {
 	})
 
 	// Create connection pool for local servers
-	poolMaxIdle, poolMaxOpen, poolIdleTimeout := fileCfg.Resources.GetPoolConfig()
+	poolMaxIdle, poolMaxOpen, poolIdleTimeout, poolWaitTimeout := fileCfg.Resources.GetPoolConfig()
 	connPool := pool.New(pool.Config{
 		MaxIdle:     poolMaxIdle,
 		MaxOpen:     poolMaxOpen,
 		IdleTimeout: poolIdleTimeout,
+		WaitTimeout: poolWaitTimeout,
 		DialFunc: func(ctx context.Context, serverName string) (mcp.Transport, error) {
 			tracer := runtimeTracer
 			if d != nil {
@@ -194,11 +195,12 @@ func New(cfg Config) (*Daemon, error) {
 			CFAccessClientSecret: fileCfg.Hub.CFAccessClientSecret,
 			ConnectTimeout:       10 * time.Second,
 		})
-		hubMaxIdle, hubMaxOpen, hubIdleTimeout := fileCfg.Resources.GetHubPoolConfig()
+		hubMaxIdle, hubMaxOpen, hubIdleTimeout, hubWaitTimeout := fileCfg.Resources.GetHubPoolConfig()
 		hubPool = pool.New(pool.Config{
 			MaxIdle:     hubMaxIdle,
 			MaxOpen:     hubMaxOpen,
 			IdleTimeout: hubIdleTimeout,
+			WaitTimeout: hubWaitTimeout,
 			DialFunc:    hubClient.Dial,
 		})
 		logger.Info("hub fallback enabled", "url", cfg.HubURL)
