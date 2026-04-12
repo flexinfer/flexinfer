@@ -98,11 +98,13 @@ spec:
                 secretKeyRef:
                   name: loom-secrets
                   key: WEAVER_ROUTER_MODEL
+                  optional: true
             - name: WEAVER_SUBAGENT_MODEL
               valueFrom:
                 secretKeyRef:
                   name: loom-secrets
                   key: WEAVER_SUBAGENT_MODEL
+                  optional: true
             - name: HUD_PIPELINE_PROJECTS
               value: >-
                 labs/game,labs/git-tunes,labs/metelevator,
