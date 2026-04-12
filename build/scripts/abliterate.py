@@ -490,8 +490,9 @@ def demmap_model(model):
     accelerate + safetensors loads CPU-resident tensors as views into mmap'd
     weight files on the PVC.  Cloning each parameter breaks the mmap
     dependency so that os.remove() of the original files actually frees disk
-    blocks — critical for inplace saves where old weights must be removed
-    before new shards can be written to the same PVC.
+    blocks.  Required for BOTH inplace saves (old weights removed before new
+    shards written) AND workspace cutover (remove-first unlinks PVC weights
+    to make room for the staged copy).
 
     Clones one parameter at a time and calls gc.collect() per module to keep
     peak memory at model_size + one_param_size.
@@ -2445,7 +2446,22 @@ verify_saved_artifacts(save_dir)
 # Without this, cutover copies compete with phantom mmap blocks for PVC
 # space and fail with ENOSPC.
 #
-# Steps: unhook accelerate dispatch → del model → double gc → close FDs.
+# Steps: demmap → clear weights_map → unhook → del model → gc → close FDs.
+#
+# demmap_model() must run for ALL save policies (not just inplace) because
+# workspace cutover's remove-first strategy also unlinks PVC weight files
+# and needs the mmap→disk-block dependency broken first.
+demmap_n = demmap_model(model)
+print(f"demmap'd {demmap_n} tensors before model release")
+
+# Clear accelerate's weights_map references that hold SafetensorsFileLoader
+# handles (and their underlying mmaps) independently of param.data.
+for _mod_name, _module in model.named_modules():
+    hook = getattr(_module, "_hf_hook", None)
+    if hook is not None:
+        if hasattr(hook, "weights_map"):
+            hook.weights_map = None
+
 try:
     from accelerate.hooks import remove_hook_from_submodules
 
@@ -2465,7 +2481,7 @@ released_gb = (pvc_after_release - pvc_before_release) / (1024**3)
 print(
     f"Model released: pvc_free {pvc_before_release / (1024**3):.1f}Gi → "
     f"{pvc_after_release / (1024**3):.1f}Gi "
-    f"(+{released_gb:.1f}Gi, closed {closed_fds} safetensors FDs)"
+    f"(+{released_gb:.1f}Gi, demmap'd {demmap_n}, closed {closed_fds} FDs)"
 )
 
 write_checkpoint("saved_staging", percent=96.0)
