@@ -173,8 +173,8 @@
     },
     {
       label: 'Tasks Done',
-      value: kpis.tasks_completed_today,
-      max: Math.max(kpis.tasks_completed_today, pendingTasks + activeTasks, 8),
+      value: completedTaskCount,
+      max: Math.max(completedTaskCount, pendingTasks + activeTasks, 8),
       color: 'var(--success)',
       route: 'tasks',
     },
@@ -197,16 +197,40 @@
   ]);
 
   /* ── Hero / command summary ── */
-  let heroSummary = $derived.by(() => {
-    const conflict = kpis.conflict_details?.[0];
+  // Derive completed-task count from the task store so Overview does not depend
+  // solely on the /api/kpis endpoint for that figure. Fall back to KPI value
+  // when the task store has not loaded yet.
+  let completedTaskCount = $derived.by(() => {
+    const storeCount = taskStore.tasks.filter(t => t.status === 'completed').length;
+    return storeCount > 0 ? storeCount : kpis.tasks_completed_today;
+  });
 
-    if (kpis.file_conflicts > 0) {
+  // Combined "last refreshed" timestamp: pick the most recent update across
+  // the primary stores so the user knows how fresh the dashboard data is.
+  let lastRefreshed = $derived.by(() => {
+    const candidates = [
+      fleetStore.lastUpdated,
+      healthStore.lastUpdated,
+      taskStore.lastUpdated,
+    ].filter(Boolean);
+    if (candidates.length === 0) return null;
+    return new Date(Math.max(...candidates.map(d => d.getTime())));
+  });
+
+  let heroSummary = $derived.by(() => {
+    // Prefer store-derived conflict data over KPI endpoint.
+    const storeConflicts = coordinationSummary.conflict_files ?? 0;
+    const kpiConflicts = kpis.file_conflicts ?? 0;
+    const conflictCount = storeConflicts > 0 ? storeConflicts : kpiConflicts;
+
+    if (conflictCount > 0) {
+      const conflict = kpis.conflict_details?.[0];
       return {
         eyebrow: 'Coordination pressure',
         headline: 'File conflicts need attention',
         detail: conflict
           ? `${conflict.path} is shared by ${conflict.agents.join(', ')}`
-          : `${kpis.file_conflicts} file conflict${kpis.file_conflicts === 1 ? '' : 's'} detected`,
+          : `${conflictCount} file conflict${conflictCount === 1 ? '' : 's'} detected`,
         tone: 'alert',
         action: { label: 'Resolve conflicts', route: 'dispatch' },
       };
@@ -517,9 +541,9 @@
       <!-- Today summary chip -->
       <div class="strip-summary">
         <span class="strip-summary-label">Today</span>
-        <span class="strip-summary-value">{kpis.sessions_today} sessions · {kpis.tasks_completed_today} tasks</span>
-        {#if fleetStore.lastUpdated}
-          <span class="strip-refreshed">{agoText(fleetStore.lastUpdated.getTime())}</span>
+        <span class="strip-summary-value">{kpis.sessions_today} sessions · {completedTaskCount} tasks</span>
+        {#if lastRefreshed}
+          <span class="strip-refreshed">Last refreshed: {agoText(lastRefreshed.getTime())}</span>
         {/if}
       </div>
     </div>
@@ -797,10 +821,11 @@
   }
 
   .strip-refreshed {
-    font-size: 9px;
+    font-size: var(--text-2xs, 10px);
     font-family: var(--font-mono);
     color: var(--fg-muted);
-    opacity: 0.6;
+    opacity: 0.7;
+    letter-spacing: var(--tracking-normal);
   }
 
   .instrument-skeleton {

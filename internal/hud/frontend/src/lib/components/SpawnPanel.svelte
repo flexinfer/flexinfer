@@ -72,6 +72,12 @@
     if (!project && config.projects.length === 1) {
       project = config.projects[0].name;
     }
+    if (maxCostUsd === undefined && config.defaults.max_cost_usd) {
+      maxCostUsd = config.defaults.max_cost_usd;
+    }
+    if (maxTurns === undefined && config.defaults.max_turns) {
+      maxTurns = config.defaults.max_turns;
+    }
     defaultsApplied = true;
   });
 

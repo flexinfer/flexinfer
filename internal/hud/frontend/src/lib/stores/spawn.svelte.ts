@@ -81,6 +81,8 @@ export interface SpawnConfigDefaults {
   memory_mb: number;
   cpus: number;
   timeout_minutes: number;
+  max_cost_usd?: number;
+  max_turns?: number;
 }
 
 export interface SpawnConfig {
