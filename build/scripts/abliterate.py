@@ -655,6 +655,7 @@ def iter_module_state_tensors(model, discard_keys=None):
         return f"{prefix}.{name}" if prefix else name
 
     for module_name, module in model.named_modules():
+        _module_done = False
         try:
             with align_module_device(module, "cpu"):
                 for name, param in module.named_parameters(recurse=False):
@@ -679,10 +680,19 @@ def iter_module_state_tensors(model, discard_keys=None):
                         continue
                     seen.add(key)
                     yield key, buf.detach().to("cpu").contiguous(), source
+                _module_done = True
         except MemoryError:
             raise MemoryError(
                 f"Offloaded module {module_name or '<root>'} must fit in CPU memory to save"
             ) from None
+        except RuntimeError as e:
+            if _module_done and "HIP error" in str(e):
+                # align_module_device.__exit__ failed to restore module to GPU
+                # (gfx906 VMM limitation). All tensors for this module were
+                # already detached and yielded to the consumer on CPU.
+                pass
+            else:
+                raise
         gc.collect()
 
     if meta_keys:
