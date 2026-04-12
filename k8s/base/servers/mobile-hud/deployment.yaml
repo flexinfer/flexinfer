@@ -85,6 +85,24 @@ spec:
               value: gitlab-creds
             - name: SPAWN_PROJECTS
               value: "loom-core,flexdeck,flexinfer,homelab-homepage,storyboard-generator,jobsearch-app"
+            # Embedded weaver (LLM-orchestrated multi-tool queries)
+            - name: WEAVER_ENABLED
+              value: "true"
+            - name: FLEXINFER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: loom-secrets
+                  key: FLEXINFER_URL
+            - name: WEAVER_ROUTER_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: loom-secrets
+                  key: WEAVER_ROUTER_MODEL
+            - name: WEAVER_SUBAGENT_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: loom-secrets
+                  key: WEAVER_SUBAGENT_MODEL
             - name: HUD_PIPELINE_PROJECTS
               value: >-
                 labs/game,labs/git-tunes,labs/metelevator,

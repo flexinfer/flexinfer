@@ -1832,9 +1832,19 @@ platform_permissions:
       guardrails:
         gitops_flux:
           blocked_commands:
+            - "kubectl apply"
+            - "kubectl delete"
+            - "kubectl patch"
             - "kubectl edit"
-            - "kubectl set env"
-          message: "GitOps policy: kubectl edit/set env bypasses git history. Edit manifests and use flux reconcile."
+            - "kubectl set"
+            - "kubectl replace"
+            - "kubectl create"
+            - "kubectl scale"
+            - "kubectl rollout restart"
+            - "kubectl rollout undo"
+          message: >-
+            GitOps policy: Direct kubectl mutations bypass git history and Flux reconciliation.
+            Edit manifests in platform/gitops/, commit, push, then run flux reconcile.
 
   claude:
     additional_directories:
