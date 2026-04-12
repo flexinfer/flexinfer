@@ -903,46 +903,37 @@ fi
 # Gemma4 full-attention layers don't have v_proj (K and V are fused into k_proj).
 # GPTQModel's Llama-based module_tree expects v_proj in every layer and crashes:
 #   ValueError: layer module item 'self_attn.v_proj' not found in model
-# Patch create_named_modules() to skip missing modules instead of raising.
-python3 - <<'SKIP_MISSING_PY'
-import gptqmodel.looper.module_looper as _ml
-import inspect
+# Patch module_looper.py ON DISK so the fix persists into the quantization process.
+ML_PY=$(python3 -c "import importlib.util,os; s=importlib.util.find_spec('gptqmodel'); print(os.path.join(os.path.dirname(s.origin),'looper','module_looper.py'))" 2>/dev/null || true)
+if [ -n "${ML_PY}" ] && grep -q "not found in model, please check" "${ML_PY}" 2>/dev/null && ! grep -q "continue  # skip missing" "${ML_PY}" 2>/dev/null; then
+    python3 - <<'SKIP_MISSING_PY'
+from pathlib import Path
+import importlib.util, os
 
-src = inspect.getsource(_ml.ModuleLooper.create_named_modules)
-if 'not found in model' in src and 'continue  # skip missing' not in src:
-    orig_fn = _ml.ModuleLooper.create_named_modules
-    def _patched_create_named_modules(self, layer, layer_modules, **kwargs):
-        """Wrapper that tolerates missing modules (e.g. Gemma4 full-attn w/o v_proj)."""
-        named_modules = {}
-        for name_config in layer_modules:
-            if isinstance(name_config, str):
-                n = name_config.split(":")[0]
-            else:
-                n = name_config
-            parts = n.split(".")
-            mod = layer
-            found = True
-            for part in parts:
-                if hasattr(mod, part):
-                    mod = getattr(mod, part)
-                else:
-                    found = False
-                    break
-            if not found:
-                print(f"WARN: skipping missing module '{n}' in layer (heterogeneous attention)")
-                continue
-            try:
-                sub = orig_fn(self, layer, [name_config], **kwargs)
-                named_modules.update(sub)
-            except (ValueError, AttributeError) as e:
-                print(f"WARN: skipping module '{n}': {e}")
-                continue
-        return named_modules
-    _ml.ModuleLooper.create_named_modules = _patched_create_named_modules
+spec = importlib.util.find_spec('gptqmodel')
+ml_path = Path(os.path.dirname(spec.origin)) / 'looper' / 'module_looper.py'
+src = ml_path.read_text()
+# Find the raise ValueError line for missing modules and replace with continue
+old_marker = 'raise ValueError(f"layer module item'
+if old_marker in src and 'continue  # skip missing' not in src:
+    lines = src.split('\n')
+    for i, line in enumerate(lines):
+        if old_marker in line:
+            indent = '                '
+            lines[i] = indent + "print(f\"WARN: skipping missing module '{n}' in layer (heterogeneous attention)\")\n" + indent + "continue  # skip missing"
+            break
+    ml_path.write_text('\n'.join(lines))
     print("Patched create_named_modules to skip missing modules (Gemma4 heterogeneous attention)")
 else:
-    print("create_named_modules already patched or signature changed")
+    print("create_named_modules already patched or marker not found")
 SKIP_MISSING_PY
+else
+    if [ -n "${ML_PY}" ] && grep -q "continue  # skip missing" "${ML_PY}" 2>/dev/null; then
+        echo "create_named_modules already patched"
+    else
+        echo "WARN: module_looper.py not found or unexpected structure"
+    fi
+fi
 
 # Patch auto-mode dynamic exclusion to add MoE detection (Gemma4 enable_moe_block)
 # and fix exclusion patterns (experts/router instead of blanket .*attn.*).
