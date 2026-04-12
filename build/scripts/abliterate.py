@@ -2327,6 +2327,11 @@ write_checkpoint(
     requestedSaveImpl=configured_save_impl,
     saveImpl=effective_save_impl,
 )
+# Deferred inplace cleanup state — initialised here so the post-save check at
+# module level always has the variables defined regardless of save format or policy.
+inplace_deferred_cleanup = False
+inplace_old_weight_paths: list = []
+
 if save_format == "safetensors":
     print(f"Using {save_format} save path for model_type={model_type or 'unknown'}")
 
@@ -2337,25 +2342,44 @@ if save_format == "safetensors":
         detail=f"writing safetensors shards ({save_policy})",
     )
     if save_policy == "inplace":
-        # Clone CPU tensors from mmap to real memory BEFORE removing old
-        # files.  Without this, os.remove() unlinks the directory entry but
-        # the kernel keeps the data blocks allocated (mmap still holds them),
-        # so df shows no additional free space and the save hits ENOSPC.
+        # Try to break mmap dependencies so removing old files frees blocks.
+        # For non-disk-offloaded models, demmap_model() clones CPU tensors and
+        # remove_weight_artifacts() immediately reclaims space.
+        # For disk-offloaded models (params on meta device), demmap returns 0
+        # and removal would free 0 bytes (mmap held by hook.weights_map which
+        # the streaming save still needs).  In that case, skip removal and save
+        # new shards alongside old files.  Deferred cleanup runs after model
+        # release where weights_map is cleared and mmaps are actually freed.
         demmap_n = demmap_model(model)
-        pvc_before_remove = free_bytes(model_dir)
-        removed = remove_weight_artifacts(model_dir)
-        pvc_after_remove = free_bytes(model_dir)
-        freed_gb = (pvc_after_remove - pvc_before_remove) / (1024**3)
-        print(
-            f"Removed {len(removed)} old weight artifacts for in-place save "
-            f"(demmap'd {demmap_n} tensors, freed {freed_gb:.1f}Gi)"
-        )
-        emit_snapshot(
-            "saving_inplace_prepare",
-            removed_artifacts=len(removed),
-            demmap_tensors=demmap_n,
-            freed_gb=round(freed_gb, 1),
-        )
+        if demmap_n > 0:
+            pvc_before_remove = free_bytes(model_dir)
+            removed = remove_weight_artifacts(model_dir)
+            pvc_after_remove = free_bytes(model_dir)
+            freed_gb = (pvc_after_remove - pvc_before_remove) / (1024**3)
+            print(
+                f"Removed {len(removed)} old weight artifacts for in-place save "
+                f"(demmap'd {demmap_n} tensors, freed {freed_gb:.1f}Gi)"
+            )
+            emit_snapshot(
+                "saving_inplace_prepare",
+                removed_artifacts=len(removed),
+                demmap_tensors=demmap_n,
+                freed_gb=round(freed_gb, 1),
+            )
+        else:
+            # Record old weight filenames so deferred cleanup removes only these.
+            inplace_old_weight_paths = list(weight_artifact_paths(model_dir))
+            print(
+                f"demmap'd 0 tensors (disk-offloaded model) — "
+                f"saving alongside {len(inplace_old_weight_paths)} old files, "
+                f"deferred cleanup after model release"
+            )
+            inplace_deferred_cleanup = True
+            emit_snapshot(
+                "saving_inplace_deferred",
+                demmap_tensors=0,
+                old_weight_count=len(inplace_old_weight_paths),
+            )
     if effective_save_impl == "streaming":
         state_dict_source, shard_count = save_streaming_safetensors(
             model,
@@ -2405,20 +2429,34 @@ else:
     )
     if save_policy == "inplace":
         demmap_n = demmap_model(model)
-        pvc_before_remove = free_bytes(model_dir)
-        removed = remove_weight_artifacts(model_dir)
-        pvc_after_remove = free_bytes(model_dir)
-        freed_gb = (pvc_after_remove - pvc_before_remove) / (1024**3)
-        print(
-            f"Removed {len(removed)} old weight artifacts for in-place save "
-            f"(demmap'd {demmap_n} tensors, freed {freed_gb:.1f}Gi)"
-        )
-        emit_snapshot(
-            "saving_inplace_prepare",
-            removed_artifacts=len(removed),
-            demmap_tensors=demmap_n,
-            freed_gb=round(freed_gb, 1),
-        )
+        if demmap_n > 0:
+            pvc_before_remove = free_bytes(model_dir)
+            removed = remove_weight_artifacts(model_dir)
+            pvc_after_remove = free_bytes(model_dir)
+            freed_gb = (pvc_after_remove - pvc_before_remove) / (1024**3)
+            print(
+                f"Removed {len(removed)} old weight artifacts for in-place save "
+                f"(demmap'd {demmap_n} tensors, freed {freed_gb:.1f}Gi)"
+            )
+            emit_snapshot(
+                "saving_inplace_prepare",
+                removed_artifacts=len(removed),
+                demmap_tensors=demmap_n,
+                freed_gb=round(freed_gb, 1),
+            )
+        else:
+            inplace_old_weight_paths = list(weight_artifact_paths(model_dir))
+            print(
+                f"demmap'd 0 tensors (disk-offloaded model) — "
+                f"saving alongside {len(inplace_old_weight_paths)} old files, "
+                f"deferred cleanup after model release"
+            )
+            inplace_deferred_cleanup = True
+            emit_snapshot(
+                "saving_inplace_deferred",
+                demmap_tensors=0,
+                old_weight_count=len(inplace_old_weight_paths),
+            )
     state_dict, state_dict_source = materialize_state_dict_for_save(model)
     reclaim_offload_dir()
     emit_snapshot(
@@ -2486,6 +2524,31 @@ print(
 
 write_checkpoint("saved_staging", percent=96.0)
 emit_snapshot("saved_staging")
+
+# Deferred inplace cleanup: remove old weight files now that model is released
+# and mmap references are gone.  New shards were saved alongside old files.
+# Only remove the specific files recorded before the save — not the new shards.
+if save_policy == "inplace" and inplace_deferred_cleanup:
+    pvc_before_deferred = free_bytes(model_dir)
+    removed_count = 0
+    for old_path in inplace_old_weight_paths:
+        try:
+            old_path.unlink(missing_ok=True)
+            removed_count += 1
+        except Exception:
+            pass
+    pvc_after_deferred = free_bytes(model_dir)
+    deferred_freed_gb = (pvc_after_deferred - pvc_before_deferred) / (1024**3)
+    print(
+        f"Deferred inplace cleanup: removed {removed_count} old weight artifacts "
+        f"(freed {deferred_freed_gb:.1f}Gi)"
+    )
+    emit_snapshot(
+        "inplace_deferred_cleanup",
+        removed_artifacts=removed_count,
+        freed_gb=round(deferred_freed_gb, 1),
+    )
+
 if save_policy == "staged":
     swap_staged_model(model_dir, save_dir, backup_dir)
 elif save_policy == "workspace":

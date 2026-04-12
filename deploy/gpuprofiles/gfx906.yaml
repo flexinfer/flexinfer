@@ -85,4 +85,4 @@ spec:
       - gguf
     images:
       gptq: registry.harbor.lan/flexinfer/runtime@sha256:ba4570f515af05fe62f8b6672449b4029e1f15c2f606412e8d6d800e3e0e2dbf
-      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:c93d6b23d6c956686b25b7948d2ada87fe9cf948f9f10a5d5181749036bf6ee1
+      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:81c85b0ca69bf6baf2057447c3306c3a4436f27959f1fe7d0c0420c02f1bff93
