@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Patch vLLM GPTQConfig to handle unquantized MoE experts.
+"""Patch vLLM for Gemma4 GPTQ MoE support.
 
-Problem: GPTQConfig.get_quant_method() always returns MoeWNA16 quantization
-for FusedMoE layers, even when the experts are not GPTQ-quantized (e.g.,
-Gemma4 26B-A4B where only attention layers are quantized). This causes
-FusedMoE to create quantized parameters (w2_qweight, etc.) but the
-checkpoint has unquantized weights (w2_weight), leading to KeyError
-during weight loading.
-
-Fix: Check modules_in_block_to_quantize before applying MoE quantization.
-If the list is set and contains no MoE-related modules, return None
-(unquantized) for FusedMoE layers.
+Two patches:
+1. GPTQConfig.get_quant_method: Check modules_in_block_to_quantize before
+   applying MoE quantization. When experts are not quantized, return None
+   (unquantized) for FusedMoE layers.
+2. MoeWNA16: Relax activation assertion from silu-only to silu+gelu.
+   Gemma4 uses GELU in its MoE experts. The Triton fused_moe_kernel is
+   activation-agnostic (applied post-kernel via apply_moe_activation),
+   but the assertion blocks loading.
 
 Usage:
     python3 vllm_gemma4_moe_gptq_patch.py [vllm_root]
@@ -130,14 +128,103 @@ def patch_gptq_config(vllm_root: pathlib.Path) -> bool:
     return True
 
 
+def patch_moe_wna16_activation(vllm_root: pathlib.Path) -> bool:
+    """Patch MoeWNA16 to accept GELU activation in addition to SiLU.
+
+    Gemma4 uses GELU in its MoE expert FFN. The Triton fused_moe_kernel_gptq_awq
+    is activation-agnostic — activation is applied post-kernel via
+    apply_moe_activation() which already supports GELU. Only the assertion
+    in MoeWNA16Method blocks us.
+    """
+    moe_wna16_py = (
+        vllm_root / "model_executor" / "layers" / "quantization" / "moe_wna16.py"
+    )
+    if not moe_wna16_py.exists():
+        print(f"[gemma4-moe-patch] SKIP: {moe_wna16_py} not found")
+        return False
+
+    src = moe_wna16_py.read_text()
+
+    # Check if already patched
+    if "GEMMA4_MOE_ACTIVATION_PATCH" in src:
+        print("[gemma4-moe-patch] MoeWNA16 activation already patched, skipping")
+        return True
+
+    # Find the silu-only assertion. Two known patterns:
+    # 1. String-based: assert layer.activation == "silu", "Only SiLU ..."
+    # 2. Enum-based:   assert layer.activation == MoEActivation.SILU, "Only SiLU ..."
+    # Handle both with a regex that captures the full assertion.
+    patterns = [
+        # Enum pattern (vLLM with MoEActivation import)
+        (
+            re.compile(
+                r"([ \t]+)assert layer\.activation\s*==\s*MoEActivation\.SILU\s*,\s*\(?"
+                r"[^\n]*(?:\n[^\n]*\))?"
+            ),
+            "enum",
+        ),
+        # String pattern
+        (
+            re.compile(r'([ \t]+)assert layer\.activation\s*==\s*"silu"[^\n]*'),
+            "string",
+        ),
+    ]
+
+    for pattern, style in patterns:
+        match = pattern.search(src)
+        if match:
+            indent = match.group(1)
+            if style == "enum":
+                replacement = (
+                    f"{indent}# GEMMA4_MOE_ACTIVATION_PATCH: Gemma4 MoE uses GELU.\n"
+                    f"{indent}# Triton fused_moe_kernel is activation-agnostic;\n"
+                    f"{indent}# apply_moe_activation() handles both silu and gelu.\n"
+                    f"{indent}assert layer.activation in (MoEActivation.SILU, MoEActivation.GELU), (\n"
+                    f'{indent}    f"MoeWNA16 requires silu or gelu activation, got {{layer.activation}}."\n'
+                    f"{indent})"
+                )
+            else:
+                replacement = (
+                    f"{indent}# GEMMA4_MOE_ACTIVATION_PATCH: Gemma4 MoE uses GELU.\n"
+                    f"{indent}# Triton fused_moe_kernel is activation-agnostic;\n"
+                    f"{indent}# apply_moe_activation() handles both silu and gelu.\n"
+                    f'{indent}assert layer.activation in ("silu", "gelu"), \\\n'
+                    f'{indent}    f"MoeWNA16 requires silu or gelu activation, got {{layer.activation}}"'
+                )
+
+            src = src[: match.start()] + replacement + src[match.end() :]
+            moe_wna16_py.write_text(src)
+            print(
+                f"[gemma4-moe-patch] Patched MoeWNA16 activation assertion ({style}) "
+                f"in {moe_wna16_py}"
+            )
+            return True
+
+    # Check if the file already supports gelu (maybe newer vLLM)
+    if "gelu" in src.lower() and "layer.activation" in src:
+        print("[gemma4-moe-patch] MoeWNA16 already supports gelu, skipping")
+        return True
+
+    print(
+        "[gemma4-moe-patch] WARNING: Could not find MoeWNA16 activation assertion to patch"
+    )
+    return False
+
+
 def main():
     vllm_root = find_vllm_root()
     print(f"[gemma4-moe-patch] vLLM root: {vllm_root}")
 
-    ok = patch_gptq_config(vllm_root)
-    if not ok:
-        print("[gemma4-moe-patch] FAILED — patch could not be applied")
+    ok1 = patch_gptq_config(vllm_root)
+    ok2 = patch_moe_wna16_activation(vllm_root)
+
+    if not ok1:
+        print("[gemma4-moe-patch] FAILED — GPTQConfig patch could not be applied")
         sys.exit(1)
+    if not ok2:
+        print(
+            "[gemma4-moe-patch] WARNING — MoeWNA16 activation patch failed (non-fatal)"
+        )
 
     print("[gemma4-moe-patch] All patches applied successfully")
 

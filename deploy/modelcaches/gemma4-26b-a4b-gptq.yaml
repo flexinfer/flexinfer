@@ -67,10 +67,12 @@ spec:
     descAct: false
     useGPU: true
     maxMemoryGB: 48
-    timeoutSeconds: 14400
+    # Full MoE GPTQ: 128 experts × 3 modules × 30 layers → 12-24h estimated.
+    timeoutSeconds: 86400
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
       kubernetes.io/hostname: cblevins-7900xtx
     calibration:
       maxSeqLen: 2048
-      maxSamples: 256
+      # Increase samples for better MoE expert coverage (128 experts × top-8).
+      maxSamples: 512

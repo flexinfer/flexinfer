@@ -180,6 +180,233 @@ def env_int(name, default):
     return int(raw)
 
 
+def refuse_moe_expert_tensors(save_dir):
+    """Re-fuse per-expert 2D GPTQ tensors back into fused 3D tensors for vLLM.
+
+    GPTQModel saves defused per-expert 2D keys after Defuser unfuses:
+      model.layers.0.experts.0.gate_proj.qweight [88, 2816]
+      model.layers.0.experts.0.up_proj.qweight   [88, 2816]
+      model.layers.0.experts.0.down_proj.qweight [352, 704]
+
+    vLLM's MoeWNA16 expects fused 3D tensors:
+      model.layers.0.experts.gate_up_proj.qweight [128, 176, 2816]
+      model.layers.0.experts.down_proj.qweight    [128, 352, 704]
+
+    Re-fuse: gate+up → cat(dim=0) per expert → stack(dim=0) → gate_up_proj
+             down per expert → stack(dim=0) → down_proj
+    """
+    import re
+    import torch
+
+    try:
+        from safetensors.torch import load_file, save_file
+    except ImportError:
+        print("WARN: safetensors not available, skipping MoE re-fuse")
+        return False
+
+    # Check if we have per-expert keys in any shard
+    index_path = os.path.join(save_dir, "model.safetensors.index.json")
+    single_path = os.path.join(save_dir, "model.safetensors")
+
+    if os.path.exists(index_path):
+        with open(index_path) as f:
+            index = json.load(f)
+        weight_map = index.get("weight_map", {})
+    elif os.path.exists(single_path):
+        # Single-file model: synthesize a weight_map from the file
+        tensors = load_file(single_path)
+        weight_map = {k: "model.safetensors" for k in tensors.keys()}
+    else:
+        print("INFO: No safetensors index or single file found, skipping MoE re-fuse")
+        return False
+
+    # Detect per-expert keys: pattern like "model.layers.N.experts.M.gate_proj.qweight"
+    expert_pattern = re.compile(
+        r"^(model\.layers\.(\d+)\.(?:block_sparse_moe\.)?experts)\.(\d+)\."
+        r"(gate_proj|up_proj|down_proj)\.(qweight|qzeros|scales|g_idx)$"
+    )
+
+    # Collect per-expert tensors grouped by (prefix, layer, tensor_type, proj_type)
+    expert_keys = {}
+    for key in weight_map:
+        m = expert_pattern.match(key)
+        if m:
+            prefix, layer_idx, expert_idx, proj_type, tensor_type = (
+                m.group(1),
+                int(m.group(2)),
+                int(m.group(3)),
+                m.group(4),
+                m.group(5),
+            )
+            group_key = (prefix, layer_idx, tensor_type)
+            if group_key not in expert_keys:
+                expert_keys[group_key] = {}
+            sub_key = (expert_idx, proj_type)
+            expert_keys[group_key][sub_key] = key
+
+    if not expert_keys:
+        print("INFO: No per-expert GPTQ tensors found, skipping MoE re-fuse")
+        return False
+
+    # Determine number of experts per layer
+    expert_counts = {}
+    for (prefix, layer_idx, _), subs in expert_keys.items():
+        max_expert = max(idx for (idx, _) in subs.keys())
+        expert_counts[(prefix, layer_idx)] = max_expert + 1
+
+    n_layers = len(set(li for (_, li) in expert_counts.keys()))
+    n_experts = next(iter(expert_counts.values()))
+    n_tensor_types = len(set(tt for (_, _, tt) in expert_keys.keys()))
+    print(
+        f"MoE re-fuse: {n_layers} layers × {n_experts} experts × "
+        f"{n_tensor_types} tensor types"
+    )
+
+    # Load all shards
+    shard_files = sorted(set(weight_map.values()))
+    shard_data = {}
+    for shard_name in shard_files:
+        shard_path = os.path.join(save_dir, shard_name)
+        shard_data[shard_name] = load_file(shard_path)
+
+    # Build flat key→tensor mapping
+    all_tensors = {}
+    for shard_name, tensors in shard_data.items():
+        for k, v in tensors.items():
+            all_tensors[k] = v
+
+    # Re-fuse per-expert tensors
+    fused_tensors = {}
+    keys_to_remove = set()
+
+    for (prefix, layer_idx, tensor_type), subs in sorted(expert_keys.items()):
+        n_exp = expert_counts[(prefix, layer_idx)]
+
+        # Collect gate, up, down per expert
+        gate_list = []
+        up_list = []
+        down_list = []
+
+        for expert_idx in range(n_exp):
+            gate_key = subs.get((expert_idx, "gate_proj"))
+            up_key = subs.get((expert_idx, "up_proj"))
+            down_key = subs.get((expert_idx, "down_proj"))
+
+            if gate_key and gate_key in all_tensors:
+                gate_list.append(all_tensors[gate_key])
+                keys_to_remove.add(gate_key)
+            if up_key and up_key in all_tensors:
+                up_list.append(all_tensors[up_key])
+                keys_to_remove.add(up_key)
+            if down_key and down_key in all_tensors:
+                down_list.append(all_tensors[down_key])
+                keys_to_remove.add(down_key)
+
+        # Fuse gate+up: cat(dim=0) per expert, then stack across experts
+        if gate_list and up_list and len(gate_list) == len(up_list) == n_exp:
+            # gate [rows, cols] + up [rows, cols] → [2*rows, cols] per expert
+            gate_up_per_expert = [
+                torch.cat([g, u], dim=0) for g, u in zip(gate_list, up_list)
+            ]
+            # Stack: [n_experts, 2*rows, cols]
+            fused_gate_up = torch.stack(gate_up_per_expert, dim=0)
+            fused_key = f"{prefix}.gate_up_proj.{tensor_type}"
+            fused_tensors[fused_key] = fused_gate_up
+            if layer_idx == 0:
+                print(
+                    f"  gate_up_proj.{tensor_type}: "
+                    f"[{n_exp}×({gate_list[0].shape} + {up_list[0].shape})] → "
+                    f"{list(fused_gate_up.shape)}"
+                )
+
+        # Fuse down: just stack across experts
+        if down_list and len(down_list) == n_exp:
+            fused_down = torch.stack(down_list, dim=0)
+            fused_key = f"{prefix}.down_proj.{tensor_type}"
+            fused_tensors[fused_key] = fused_down
+            if layer_idx == 0:
+                print(
+                    f"  down_proj.{tensor_type}: "
+                    f"[{n_exp}×{list(down_list[0].shape)}] → "
+                    f"{list(fused_down.shape)}"
+                )
+
+    if not fused_tensors:
+        print("WARN: No tensors were re-fused (unexpected)")
+        return False
+
+    # Rebuild shard data: remove per-expert keys, add fused keys
+    # Put all fused MoE tensors into the first shard for simplicity,
+    # or spread across existing shards by layer assignment.
+    new_weight_map = {}
+    new_shard_data = {}
+
+    # First pass: rebuild non-expert tensors into their original shards
+    for shard_name in shard_files:
+        new_shard_data[shard_name] = {}
+        for k, v in shard_data[shard_name].items():
+            if k not in keys_to_remove:
+                new_shard_data[shard_name][k] = v
+                new_weight_map[k] = shard_name
+
+    # Assign fused tensors to shards based on layer index (match layer's shard)
+    for fused_key, fused_tensor in sorted(fused_tensors.items()):
+        # Find which shard has other tensors from this layer
+        layer_match = re.search(r"model\.layers\.(\d+)\.", fused_key)
+        target_shard = shard_files[0]  # default to first shard
+        if layer_match:
+            layer_prefix = f"model.layers.{layer_match.group(1)}."
+            for k, shard_name in weight_map.items():
+                if k.startswith(layer_prefix) and k not in keys_to_remove:
+                    target_shard = shard_name
+                    break
+        new_shard_data[target_shard][fused_key] = fused_tensor
+        new_weight_map[fused_key] = target_shard
+
+    # Write updated shards
+    total_fused = len(fused_tensors)
+    total_removed = len(keys_to_remove)
+    for shard_name, tensors in new_shard_data.items():
+        if not tensors:
+            # Empty shard after removing expert keys — delete it
+            shard_path = os.path.join(save_dir, shard_name)
+            if os.path.exists(shard_path):
+                os.remove(shard_path)
+            continue
+        shard_path = os.path.join(save_dir, shard_name)
+        save_file(tensors, shard_path)
+
+    # Update index
+    if os.path.exists(index_path):
+        with open(index_path) as f:
+            index = json.load(f)
+        index["weight_map"] = new_weight_map
+        with open(index_path, "w") as f:
+            json.dump(index, f, indent=2)
+
+    # Update quantize_config.json to reflect MoE expert quantization
+    qcfg_path = os.path.join(save_dir, "quantize_config.json")
+    if os.path.exists(qcfg_path):
+        with open(qcfg_path) as f:
+            qcfg = json.load(f)
+        # Add MoE expert entries to modules_in_block_to_quantize if present
+        mibq = qcfg.get("modules_in_block_to_quantize")
+        if isinstance(mibq, list):
+            moe_entries = ["experts.gate_up_proj", "experts.down_proj"]
+            for entry in moe_entries:
+                if entry not in mibq:
+                    mibq.append(entry)
+            qcfg["modules_in_block_to_quantize"] = mibq
+        with open(qcfg_path, "w") as f:
+            json.dump(qcfg, f, indent=2)
+
+    print(
+        f"MoE re-fuse complete: {total_removed} per-expert keys → "
+        f"{total_fused} fused 3D tensors"
+    )
+    return True
+
+
 def load_policy_state(model_dir):
     path = os.path.join(model_dir, POLICY_STATE_FILE)
     if not os.path.exists(path):
@@ -960,13 +1187,18 @@ else:
             dynamic_config["-:.*visual.*"] = {}
             dynamic_config["-:.*mtp.*"] = {}
         elif has_moe and gptqmodel_has_native_moe:
-            # GPTQModel >= 6.0.3: native MoE quantization handles experts.
-            # Use dynamic={} (empty dict) to enable dynamic mode that scans ALL
-            # linear modules including MoE experts. Setting None would skip the
-            # dynamic param entirely, falling back to the model definition's
-            # inside_layer_modules which only lists attention modules.
-            dynamic_config = {}
-            print("MoE experts will be quantized natively (GPTQModel >= 6.0.3)")
+            # GPTQModel >= 6.0.3: native MoE with Defuser + module_tree patching.
+            # Use dynamic=None (not passed to QuantizeConfig) so the model
+            # definition's module_tree governs quantization scope. The wrapper
+            # script patches module_tree to include MoE expert entries AFTER
+            # Defuser unfuses the fused 3D expert tensors into nn.Linear.
+            # dynamic={} would override module_tree with dynamic scanning,
+            # which misses the expert-specific lifecycle hooks needed for
+            # proper gate_up/down fusing at save time.
+            dynamic_config = None
+            print(
+                "MoE experts will be quantized via patched module_tree (GPTQModel >= 6.0.3)"
+            )
         if dynamic_config is not None:
             print(
                 f"Dynamic config: {list(dynamic_config.keys()) if dynamic_config else '(empty — quantize all)'}"
@@ -1578,8 +1810,17 @@ for shard_name in shard_files:
         f"Verified {shard_name}: {fsize} bytes, {len([k for k in hdr if k != '__metadata__'])} tensors OK"
     )
 
+# ── MoE re-fuse: convert per-expert 2D → fused 3D for vLLM MoeWNA16 ──
 emit_progress(
-    "progress", phase="saving", percent=97.0, detail="promoting output directory"
+    "progress", phase="saving", percent=96.0, detail="re-fusing MoE expert tensors"
+)
+if refuse_moe_expert_tensors(save_tmp):
+    emit_progress(
+        "progress", phase="saving", percent=97.0, detail="MoE re-fuse complete"
+    )
+
+emit_progress(
+    "progress", phase="saving", percent=97.5, detail="promoting output directory"
 )
 if os.path.exists(out_dir):
     shutil.rmtree(out_dir)
