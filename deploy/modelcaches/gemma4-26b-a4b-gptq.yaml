@@ -68,7 +68,8 @@ spec:
     useGPU: true
     maxMemoryGB: 48
     # Full MoE GPTQ: 128 experts × 3 modules × 30 layers → 12-24h estimated.
-    timeoutSeconds: 86400
+    # CRD max is 43200 (12h). DefaultActiveDeadlineSeconds in controller is 86400.
+    timeoutSeconds: 43200
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
       kubernetes.io/hostname: cblevins-7900xtx
