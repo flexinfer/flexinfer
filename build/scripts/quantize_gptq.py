@@ -961,13 +961,18 @@ else:
             dynamic_config["-:.*mtp.*"] = {}
         elif has_moe and gptqmodel_has_native_moe:
             # GPTQModel >= 6.0.3: native MoE quantization handles experts.
-            # No exclusions needed — quantize everything for full INT4 output.
-            dynamic_config = None
+            # Use dynamic={} (empty dict) to enable dynamic mode that scans ALL
+            # linear modules including MoE experts. Setting None would skip the
+            # dynamic param entirely, falling back to the model definition's
+            # inside_layer_modules which only lists attention modules.
+            dynamic_config = {}
             print("MoE experts will be quantized natively (GPTQModel >= 6.0.3)")
         if dynamic_config is not None:
-            print(f"Dynamic exclusion: {list(dynamic_config.keys())}")
+            print(
+                f"Dynamic config: {list(dynamic_config.keys()) if dynamic_config else '(empty — quantize all)'}"
+            )
         else:
-            print("Dynamic exclusion disabled — all modules will be quantized")
+            print("Dynamic exclusion disabled — using model definition defaults")
 
 # ── Memory management ──────────────────────────────────────────────────
 import torch
