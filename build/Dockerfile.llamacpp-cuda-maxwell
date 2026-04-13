@@ -32,6 +32,8 @@ RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/lib
     -DGGML_CUDA=ON \
     -DCMAKE_CUDA_ARCHITECTURES="50;52" \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_FLAGS="-march=x86-64" \
+    -DCMAKE_CXX_FLAGS="-march=x86-64" \
     && cmake --build build --config Release -j$(nproc) && \
     rm /etc/ld.so.conf.d/cuda-stubs.conf && ldconfig
 
