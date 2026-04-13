@@ -155,11 +155,23 @@ def patch_moe_wna16_activation(vllm_root: pathlib.Path) -> bool:
     # 2. Enum-based:   assert layer.activation == MoEActivation.SILU, "Only SiLU ..."
     # Handle both with a regex that captures the full assertion.
     patterns = [
-        # Enum pattern (vLLM with MoEActivation import)
+        # Enum pattern with multi-line error message in parens:
+        #   assert layer.activation == MoEActivation.SILU, (
+        #       f"Only SiLU activation is supported, not {layer.activation}."
+        #   )
+        # Uses [\s\S]*? to match across newlines inside the parens.
         (
             re.compile(
-                r"([ \t]+)assert layer\.activation\s*==\s*MoEActivation\.SILU\s*,\s*\(?"
-                r"[^\n]*(?:\n[^\n]*\))?"
+                r"([ \t]+)assert layer\.activation\s*==\s*MoEActivation\.SILU\s*,"
+                r"\s*\([\s\S]*?\)"
+            ),
+            "enum",
+        ),
+        # Enum pattern single-line (no parens around error message)
+        (
+            re.compile(
+                r"([ \t]+)assert layer\.activation\s*==\s*MoEActivation\.SILU\s*,"
+                r"[^\n]*"
             ),
             "enum",
         ),

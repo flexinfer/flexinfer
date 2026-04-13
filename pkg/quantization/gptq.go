@@ -835,79 +835,9 @@ else:
 GEMMA4_COMPAT_PY
 fi
 
-# Gemma4 MoE expert quantization: patch the model definition's module_tree
-# to include defused MoE experts AFTER GPTQModel.load() (which runs Defuser).
-# GPTQModel v6.0.3's gemma4.py module_tree only lists attention + dense MLP.
-# Defuser auto-converts fused 3D expert nn.Parameter into individual nn.Linear,
-# but module_tree doesn't list them → experts are silently skipped → 44.8GB output.
-# This patch adds MoE entries to module_tree so GPTQ quantizes all experts → ~7-13GB.
-if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "_has_defused_experts" "${GPTQ_SCRIPT}" 2>/dev/null; then
-    python3 - <<'MOE_TREE_PATCH_PY'
-from pathlib import Path
-
-p = Path("/opt/flexinfer/scripts/quantize_gptq.py")
-src = p.read_text()
-
-# Insert the MoE module_tree patch after model load, before calibration.
-# Target: emit_progress("progress", phase="quantizing", percent=5.0, detail="model loaded")
-marker = 'emit_progress("progress", phase="quantizing", percent=5.0, detail="model loaded")'
-if marker not in src:
-    print("WARN: model-loaded progress marker not found; skipping MoE module_tree patch")
-else:
-    moe_patch = '''
-# ── MoE expert module_tree patch ─────────────────────────────────────
-# After GPTQModel.load(), Defuser has already unfused Gemma4's fused 3D expert
-# nn.Parameter tensors into individual nn.Linear per expert. But the model
-# definition's module_tree only lists attention + dense MLP — the experts are
-# invisible to GPTQ's layer walker. Patch module_tree to include them.
-_has_defused_experts = False
-for _name, _mod in model.named_modules():
-    if '.experts.0.gate_proj' in _name:
-        _has_defused_experts = True
-        break
-
-if _has_defused_experts:
-    try:
-        from gptqmodel.models.moe_lifecycle import GateUpDownMoELifecycleHooks
-        _cls = type(model)
-
-        # Find the self_attn dict entry in module_tree and add MoE experts.
-        # module_tree is a list; the last entries are dicts describing layer contents.
-        _patched_tree = False
-        for _entry in getattr(_cls, 'module_tree', []):
-            if isinstance(_entry, dict) and 'self_attn' in _entry:
-                if 'experts:moe:?' not in _entry:
-                    _entry["experts:moe:?"] = {
-                        "#": ("gate_proj:0", "up_proj:0", "down_proj:1"),
-                    }
-                    _patched_tree = True
-                break
-
-        if _patched_tree:
-            _cls.dynamic_expert_index = "num_experts"
-            _cls.moe_lifecycle_hooks = GateUpDownMoELifecycleHooks()
-            # Count actual experts for logging
-            _n_experts = 0
-            for _name2, _ in model.named_modules():
-                if _name2.endswith('.experts.0.gate_proj'):
-                    _n_experts += 1
-            print(f"Patched {_cls.__name__} module_tree with MoE experts "
-                  f"({_n_experts} layers with defused experts)")
-            print(f"  module_tree entries: {[k for e in _cls.module_tree if isinstance(e, dict) for k in e.keys()]}")
-        else:
-            print("INFO: MoE experts already in module_tree or self_attn entry not found")
-    except ImportError as e:
-        print(f"WARN: Could not import MoE lifecycle hooks: {e}")
-        print("  MoE experts will NOT be quantized (falling back to attention-only)")
-else:
-    print("INFO: No defused MoE experts detected (non-MoE model or Defuser did not run)")
-
-'''
-    src = src.replace(marker, marker + "\n" + moe_patch)
-    p.write_text(src)
-    print("Injected MoE module_tree patch after model load in quantize_gptq.py")
-MOE_TREE_PATCH_PY
-fi
+# MoE module_tree patch is now baked into quantize_gptq.py (after emit_progress
+# "model loaded"). No longer needs runtime injection — the _has_defused_experts
+# block detects defused experts and patches module_tree before model.quantize().
 
 # Inject safetensors integrity validation into quantize_gptq.py after save.
 # GPTQModel can silently truncate large unquantized tensors (e.g. PLE embedding

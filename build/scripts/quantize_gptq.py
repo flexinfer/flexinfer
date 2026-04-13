@@ -1610,6 +1610,62 @@ else:
 
 emit_progress("progress", phase="quantizing", percent=5.0, detail="model loaded")
 
+# ── MoE expert module_tree patch ─────────────────────────────────────
+# After model loading, Defuser has already unfused Gemma4's fused 3D expert
+# nn.Parameter tensors into individual nn.Linear per expert. But the model
+# definition's module_tree only lists attention + dense MLP — the experts are
+# invisible to GPTQ's layer walker. Patch module_tree to include them.
+_has_defused_experts = False
+for _name, _mod in model.named_modules():
+    if ".experts.0.gate_proj" in _name:
+        _has_defused_experts = True
+        break
+
+if _has_defused_experts:
+    try:
+        from gptqmodel.models.moe_lifecycle import GateUpDownMoELifecycleHooks
+
+        _cls = type(model)
+
+        # Find the self_attn dict entry in module_tree and add MoE experts.
+        _patched_tree = False
+        for _entry in getattr(_cls, "module_tree", []):
+            if isinstance(_entry, dict) and "self_attn" in _entry:
+                if "experts:moe:?" not in _entry:
+                    _entry["experts:moe:?"] = {
+                        "#": ("gate_proj:0", "up_proj:0", "down_proj:1"),
+                    }
+                    _patched_tree = True
+                break
+
+        if _patched_tree:
+            _cls.dynamic_expert_index = "num_experts"
+            _cls.moe_lifecycle_hooks = GateUpDownMoELifecycleHooks()
+            _n_experts = sum(
+                1
+                for n, _ in model.named_modules()
+                if n.endswith(".experts.0.gate_proj")
+            )
+            print(
+                f"Patched {_cls.__name__} module_tree with MoE experts "
+                f"({_n_experts} layers with defused experts)"
+            )
+            print(
+                f"  module_tree entries: "
+                f"{[k for e in _cls.module_tree if isinstance(e, dict) for k in e.keys()]}"
+            )
+        else:
+            print(
+                "INFO: MoE experts already in module_tree or self_attn entry not found"
+            )
+    except ImportError as e:
+        print(f"WARN: Could not import MoE lifecycle hooks: {e}")
+        print("  MoE experts will NOT be quantized (falling back to attention-only)")
+else:
+    print(
+        "INFO: No defused MoE experts detected (non-MoE model or Defuser did not run)"
+    )
+
 # ── Calibration dataset ────────────────────────────────────────────────
 examples = load_cached_examples(model_dir)
 if examples is None:
