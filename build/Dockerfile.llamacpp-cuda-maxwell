@@ -48,8 +48,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy built binary
+# Copy built binary and shared libraries (libmtmd, libllama, libggml, etc.)
+# Use a shell glob to copy only .so files, avoiding large .o build artifacts.
 COPY --from=builder /opt/src/llama.cpp/build/bin/llama-server /opt/src/llama.cpp/build/bin/llama-server
+RUN --mount=from=builder,source=/opt/src/llama.cpp/build,target=/build-src \
+    find /build-src -name '*.so*' -exec sh -c 'mkdir -p /usr/local/lib && cp "$1" /usr/local/lib/' _ {} \; && \
+    ldconfig
 
 # Create model directory
 RUN mkdir -p /models
