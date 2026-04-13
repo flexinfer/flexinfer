@@ -1194,7 +1194,7 @@ docker-push-custom-server: docker-build-custom-server
 # =============================================================================
 
 # Full deploy: build, push, update gitops, reconcile
-deploy: docker-push deploy-update-images deploy-reconcile
+deploy: docker-push deploy-update-images deploy-commit deploy-reconcile
 	@echo ""
 	@echo "✓ Deployment complete!"
 	@echo "  Image tag: $(IMAGE_TAG)"
