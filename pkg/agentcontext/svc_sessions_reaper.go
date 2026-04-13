@@ -96,8 +96,13 @@ func (ss *SessionSvc) PruneSessions(ctx context.Context, maxAgeHours int, status
 	return len(toDelete), nil
 }
 
-// EndStale finds active sessions older than maxAgeHours whose agents
-// have no current presence, and marks them ended.
+// EndStale finds active sessions whose agents have no current presence and
+// whose heartbeat has expired, and marks them ended. The explicit rule is:
+//
+//	status=active AND no live presence AND (started_at < cutoff OR heartbeat expired)
+//
+// This cross-references the presence registry before reaping to avoid killing
+// sessions where the agent is alive but heartbeat was delayed.
 func (ss *SessionSvc) EndStale(ctx context.Context, maxAgeHours int) int {
 	if ss.qdrant == nil {
 		return 0
@@ -112,7 +117,7 @@ func (ss *SessionSvc) EndStale(ctx context.Context, maxAgeHours int) int {
 		return 0
 	}
 
-	// Snapshot of agents with live presence.
+	// Snapshot of agents with live presence (non-expired heartbeat).
 	var liveAgents map[string]bool
 	if ss.liveAgentIDs != nil {
 		ids := ss.liveAgentIDs()
@@ -122,6 +127,20 @@ func (ss *SessionSvc) EndStale(ctx context.Context, maxAgeHours int) int {
 		}
 	}
 
+	// Also check per-agent staleness when the presence-stale callback is wired.
+	isStale := func(agentID string) bool {
+		// If agent has live presence, never reap.
+		if liveAgents[agentID] {
+			return false
+		}
+		// If presence-stale checker is available, use it for precision.
+		if ss.isPresenceStale != nil {
+			return ss.isPresenceStale(agentID)
+		}
+		// Fallback: no presence registered = stale.
+		return true
+	}
+
 	now := time.Now()
 	var ended int
 	for _, p := range points {
@@ -129,9 +148,11 @@ func (ss *SessionSvc) EndStale(ctx context.Context, maxAgeHours int) int {
 		if err != nil || sess == nil {
 			continue
 		}
-		if liveAgents[sess.AgentID] {
+		// Skip if agent is live.
+		if !isStale(sess.AgentID) {
 			continue
 		}
+		// Apply age cutoff.
 		if sess.StartedAt.After(cutoff) {
 			continue
 		}

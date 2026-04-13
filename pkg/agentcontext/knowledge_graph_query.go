@@ -103,6 +103,10 @@ func (g *KnowledgeGraph) traverseFromEntity(q GraphQuery) (*GraphQueryResult, er
 	if maxDepth <= 0 {
 		maxDepth = 2
 	}
+	// Hard cap to prevent unbounded exploration on cyclic graphs.
+	if maxDepth > 10 {
+		maxDepth = 10
+	}
 
 	visited := make(map[string]bool)
 	visited[q.EntityID] = true
@@ -172,8 +176,14 @@ func (g *KnowledgeGraph) traverseFromEntity(q GraphQuery) (*GraphQueryResult, er
 
 		// Apply limit
 		if q.Limit > 0 && len(result.Entities) >= q.Limit {
+			result.Truncated = true
 			break
 		}
+	}
+
+	// If we ran out of depth but still had nodes to explore, mark as truncated.
+	if len(currentLevel) > 0 {
+		result.Truncated = true
 	}
 
 	return result, nil
@@ -252,6 +262,10 @@ func (g *KnowledgeGraph) FindPath(sourceID, targetID string, maxDepth int, relTy
 
 	if maxDepth <= 0 {
 		maxDepth = 5
+	}
+	// Hard cap to prevent unbounded exploration.
+	if maxDepth > 10 {
+		maxDepth = 10
 	}
 
 	// BFS to find shortest path

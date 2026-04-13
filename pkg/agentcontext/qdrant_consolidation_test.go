@@ -54,14 +54,14 @@ func TestConsolidatedCollectionCount(t *testing.T) {
 	uniqueConsts := make(map[string]bool)
 	for _, c := range []string{
 		CollContext, CollSessions, CollTasks, CollAnnotations,
-		CollHandoffs, CollTemplates, CollGraphEntities, CollGraphRelations,
+		CollHandoffs, CollGraphEntities, CollGraphRelations,
 		CollWorkflows, CollWorkflowDefs, CollMemory, CollPresence,
 		CollFileClaims, CollWorktree,
 	} {
 		uniqueConsts[c] = true
 	}
-	// CollAnnotations == CollContext, so map deduplicates to 13.
-	if len(uniqueConsts) != 13 {
-		t.Errorf("unique collection constants = %d, want 13", len(uniqueConsts))
+	// CollAnnotations == CollContext, so map deduplicates to 12.
+	if len(uniqueConsts) != 12 {
+		t.Errorf("unique collection constants = %d, want 12", len(uniqueConsts))
 	}
 }

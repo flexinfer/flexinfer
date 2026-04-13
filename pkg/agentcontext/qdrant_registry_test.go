@@ -11,15 +11,15 @@ func TestNewQdrantRegistry(t *testing.T) {
 	t.Parallel()
 	hc := httpclient.NewDefault()
 	cfg := Config{
-		QdrantURL:                "http://localhost:6333",
-		QdrantAPIKey:             "test-key",
-		QdrantDistance:           "Cosine",
-		ContextCollection:        "ctx_v1",
-		SessionsCollection:       "sess_v1",
-		TasksCollection:          "tasks_v1",
-		AnnotationsCollection:    "ann_v1",
-		HandoffsCollection:       "hand_v1",
-		TemplatesCollection:      "tmpl_v1",
+		QdrantURL:             "http://localhost:6333",
+		QdrantAPIKey:          "test-key",
+		QdrantDistance:        "Cosine",
+		ContextCollection:     "ctx_v1",
+		SessionsCollection:    "sess_v1",
+		TasksCollection:       "tasks_v1",
+		AnnotationsCollection: "ann_v1",
+		HandoffsCollection:    "hand_v1",
+
 		GraphEntitiesCollection:  "ge_v1",
 		GraphRelationsCollection: "gr_v1",
 		WorkflowsCollection:      "wf_v1",
@@ -32,11 +32,11 @@ func TestNewQdrantRegistry(t *testing.T) {
 
 	reg := NewQdrantRegistry(hc, cfg)
 
-	// 13 unique map entries: annotations merged into context (same key),
-	// templates kept as deprecated.
+	// 12 unique map entries: annotations merged into context (same key),
+	// templates removed.
 	names := reg.Names()
-	if len(names) != 13 {
-		t.Fatalf("Names() returned %d entries, want 13", len(names))
+	if len(names) != 12 {
+		t.Fatalf("Names() returned %d entries, want 12", len(names))
 	}
 }
 
@@ -44,15 +44,15 @@ func TestQdrantRegistry_GetAllCollections(t *testing.T) {
 	t.Parallel()
 	hc := httpclient.NewDefault()
 	cfg := Config{
-		QdrantURL:                "http://localhost:6333",
-		QdrantAPIKey:             "",
-		QdrantDistance:           "Cosine",
-		ContextCollection:        "ctx",
-		SessionsCollection:       "sess",
-		TasksCollection:          "tasks",
-		AnnotationsCollection:    "ann",
-		HandoffsCollection:       "hand",
-		TemplatesCollection:      "tmpl",
+		QdrantURL:             "http://localhost:6333",
+		QdrantAPIKey:          "",
+		QdrantDistance:        "Cosine",
+		ContextCollection:     "ctx",
+		SessionsCollection:    "sess",
+		TasksCollection:       "tasks",
+		AnnotationsCollection: "ann",
+		HandoffsCollection:    "hand",
+
 		GraphEntitiesCollection:  "ge",
 		GraphRelationsCollection: "gr",
 		WorkflowsCollection:      "wf",
@@ -74,7 +74,6 @@ func TestQdrantRegistry_GetAllCollections(t *testing.T) {
 		{CollTasks, true},
 		{CollAnnotations, true},
 		{CollHandoffs, true},
-		{CollTemplates, true},
 		{CollGraphEntities, true},
 		{CollGraphRelations, true},
 		{CollWorkflows, true},
@@ -123,14 +122,14 @@ func TestQdrantRegistry_NamesStable(t *testing.T) {
 	t.Parallel()
 	hc := httpclient.NewDefault()
 	cfg := Config{
-		QdrantURL:                "http://localhost:6333",
-		QdrantDistance:           "Cosine",
-		ContextCollection:        "c",
-		SessionsCollection:       "s",
-		TasksCollection:          "t",
-		AnnotationsCollection:    "a",
-		HandoffsCollection:       "h",
-		TemplatesCollection:      "tm",
+		QdrantURL:             "http://localhost:6333",
+		QdrantDistance:        "Cosine",
+		ContextCollection:     "c",
+		SessionsCollection:    "s",
+		TasksCollection:       "t",
+		AnnotationsCollection: "a",
+		HandoffsCollection:    "h",
+
 		GraphEntitiesCollection:  "ge",
 		GraphRelationsCollection: "gr",
 		WorkflowsCollection:      "wf",
@@ -145,11 +144,11 @@ func TestQdrantRegistry_NamesStable(t *testing.T) {
 	names := reg.Names()
 	sort.Strings(names)
 
-	// CollAnnotations == CollContext after SIMP-12, so 13 unique keys.
+	// CollAnnotations == CollContext after SIMP-12, so 12 unique keys.
 	expected := []string{
 		CollContext, CollFileClaims, CollGraphEntities,
 		CollGraphRelations, CollHandoffs, CollMemory, CollPresence,
-		CollSessions, CollTasks, CollTemplates, CollWorktree,
+		CollSessions, CollTasks, CollWorktree,
 		CollWorkflowDefs, CollWorkflows,
 	}
 	sort.Strings(expected)

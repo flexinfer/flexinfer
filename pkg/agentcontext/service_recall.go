@@ -500,7 +500,12 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 	agentID := v.String("agent_id", "")
 	sessionID := v.String("session_id", "")
 	namespace := v.String("namespace", "")
-	tokenBudget := v.Int("token_budget", s.cfg.DefaultTokenBudget)
+	agentType := v.String("agent_type", "")
+	defaultBudget := s.cfg.DefaultTokenBudget
+	if agentType != "" {
+		defaultBudget = s.cfg.TokenBudgetForPlatform(agentType)
+	}
+	tokenBudget := v.Int("token_budget", defaultBudget)
 	includeSummaries := v.Bool("include_summaries", true)
 	includeDecisions := v.Bool("include_decisions", true)
 	fileContext := v.String("file_context", "")
@@ -524,17 +529,24 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 	includeMemory := scope == "memory" || scope == "all"
 	includeGraph := scope == "graph" || scope == "all"
 
+	recallStart := time.Now()
 	resp := map[string]any{
 		"ok":           true,
 		"token_budget": tokenBudget,
 		"scope":        scope,
 	}
 
+	// Recall quality signals (M2: observability).
+	var backendsQueried []string
+	var backendsFailed []string
+	var warnings []string
 	totalTokens := 0
 	totalCount := 0
+	totalCandidates := 0
 
 	// --- Context backend ---
 	if includeContext {
+		backendsQueried = append(backendsQueried, "context")
 		opts := EnhancedRecallOptions{
 			RecallOptions: RecallOptions{
 				Query:            query,
@@ -556,15 +568,17 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 
 		entries, _, err := s.enhancedRecallContext(ctx, opts)
 		if err != nil {
-			return mcp.ErrorResult(fmt.Errorf("recall context: %w", err)), nil
+			backendsFailed = append(backendsFailed, "context")
+			warnings = append(warnings, fmt.Sprintf("context backend failed: %v", err))
+		} else {
+			totalCandidates += len(entries)
+			for _, e := range entries {
+				totalTokens += e.TokenCount
+			}
+			totalCount += len(entries)
+			resp["entries"] = entries
+			resp["context_count"] = len(entries)
 		}
-
-		for _, e := range entries {
-			totalTokens += e.TokenCount
-		}
-		totalCount += len(entries)
-		resp["entries"] = entries
-		resp["context_count"] = len(entries)
 	}
 
 	// --- Memory backend ---
@@ -572,6 +586,7 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 	// avoid emitting a second memory-only section.
 	mergeMemoryIntoEntries := includeContext && includeMemoryEntries
 	if includeMemory && !mergeMemoryIntoEntries {
+		backendsQueried = append(backendsQueried, "memory")
 		memBudget := tokenBudget - totalTokens
 		if memBudget < 256 {
 			memBudget = 256
@@ -594,11 +609,15 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 		}
 
 		result, err := s.memoryHierarchy.Recall(req)
-		if err == nil && len(result.Items) > 0 {
+		if err != nil {
+			backendsFailed = append(backendsFailed, "memory")
+			warnings = append(warnings, fmt.Sprintf("memory backend failed: %v", err))
+		} else if len(result.Items) > 0 {
 			items := make([]map[string]any, len(result.Items))
 			for i, item := range result.Items {
 				items[i] = memoryItemToMap(&item)
 			}
+			totalCandidates += len(result.Items)
 			totalTokens += result.TotalTokens
 			totalCount += len(items)
 			resp["memory_items"] = items
@@ -610,12 +629,14 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 	// When scope is "graph" or "all", query the knowledge graph for matching entities.
 	// Uses FindEntities with the query text as a name pattern for text-based matching.
 	if includeGraph && s.knowledgeGraph != nil {
+		backendsQueried = append(backendsQueried, "graph")
 		entities := s.knowledgeGraph.FindEntities("", namespace, query, 20)
 		if len(entities) > 0 {
 			graphEntities := make([]map[string]any, len(entities))
 			for i, e := range entities {
 				graphEntities[i] = entityToMap(e)
 			}
+			totalCandidates += len(entities)
 			totalCount += len(graphEntities)
 			resp["graph_entities"] = graphEntities
 			resp["graph_count"] = len(graphEntities)
@@ -624,6 +645,22 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 
 	resp["count"] = totalCount
 	resp["total_tokens"] = totalTokens
+
+	// Recall quality metadata (M2: observability).
+	recallMeta := map[string]any{
+		"backends_queried":   backendsQueried,
+		"backends_failed":    backendsFailed,
+		"total_candidates":   totalCandidates,
+		"returned":           totalCount,
+		"token_budget_used":  totalTokens,
+		"token_budget_total": tokenBudget,
+		"latency_ms":         time.Since(recallStart).Milliseconds(),
+	}
+	resp["recall_meta"] = recallMeta
+
+	if len(warnings) > 0 {
+		resp["_warnings"] = warnings
+	}
 
 	s.metrics.RecallRequests.Add(1)
 	if totalCount > 0 {

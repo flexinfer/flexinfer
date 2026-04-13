@@ -211,8 +211,13 @@ func (mh *MemoryHierarchy) MergeItems(ids []string, newTitle string) (*MemoryIte
 	return merged, nil
 }
 
-// RunCompression runs automatic compression based on policies
+// RunCompression runs automatic compression based on policies.
+// Sets the compacting flag so concurrent recall queries can avoid
+// reading partially compressed items.
 func (mh *MemoryHierarchy) RunCompression(tier MemoryTier) (*CompressionJob, error) {
+	mh.compacting.Add(1)
+	defer mh.compacting.Add(-1)
+
 	mh.mu.Lock()
 
 	job := &CompressionJob{

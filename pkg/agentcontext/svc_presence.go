@@ -370,6 +370,19 @@ func (p *PresenceSvc) LiveAgentIDs() []string {
 	return ids
 }
 
+// IsAgentStale returns true when the agent has no presence registered or
+// its last heartbeat has expired beyond HeartbeatTTL.
+func (p *PresenceSvc) IsAgentStale(agentID string) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	pr, ok := p.reg[agentID]
+	if !ok {
+		return true // no presence = stale
+	}
+	return time.Now().After(pr.LastHeartbeat.Add(time.Duration(pr.HeartbeatTTL) * time.Second))
+}
+
 // Get returns the presence entry for an agent, or nil.
 func (p *PresenceSvc) Get(agentID string) *AgentPresence {
 	p.mu.RLock()

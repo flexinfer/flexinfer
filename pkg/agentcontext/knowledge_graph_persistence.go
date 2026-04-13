@@ -182,43 +182,38 @@ func (pg *persistedGraph) LoadGraphFromQdrant(ctx context.Context) error {
 	return nil
 }
 
-// AddEntityWithPersistence adds an entity and persists it to Qdrant
+// AddEntityWithPersistence persists an entity to Qdrant first, then adds
+// it to the in-memory graph. Persist-first ensures in-memory state never
+// diverges from Qdrant.
 func (pg *persistedGraph) AddEntityWithPersistence(ctx context.Context, entity *Entity, vector []float64) error {
-	// Add to in-memory graph first
-	if err := pg.AddEntity(entity); err != nil {
+	// Persist to Qdrant first.
+	if err := pg.PersistEntity(ctx, entity, vector); err != nil {
 		return err
 	}
 
-	// Persist to Qdrant
-	if err := pg.PersistEntity(ctx, entity, vector); err != nil {
-		// Rollback in-memory change on persistence failure
-		pg.mu.Lock()
-		pg.removeEntityFromIndexes(entity)
-		delete(pg.entities, entity.ID)
-		pg.mu.Unlock()
+	// Add to in-memory graph.
+	if err := pg.AddEntity(entity); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-// AddRelationWithPersistence adds a relation and persists it to Qdrant
+// AddRelationWithPersistence persists a relation to Qdrant first, then adds
+// it to the in-memory graph. Persist-first ensures in-memory state never
+// diverges from Qdrant.
 func (pg *persistedGraph) AddRelationWithPersistence(ctx context.Context, rel *Relation) error {
-	// Add to in-memory graph first
+	// Persist to Qdrant first.
+	if err := pg.PersistRelation(ctx, rel); err != nil {
+		return err
+	}
+
+	// Add to in-memory graph.
 	if err := pg.AddRelation(rel); err != nil {
 		return err
 	}
 
-	// Persist to Qdrant
-	if err := pg.PersistRelation(ctx, rel); err != nil {
-		// Rollback in-memory change
-		pg.mu.Lock()
-		pg.deleteRelationUnsafe(rel.ID)
-		pg.mu.Unlock()
-		return err
-	}
-
-	// Also persist reverse relation if bidirectional
+	// Also persist reverse relation if bidirectional.
 	if rel.Bidirectional {
 		reverseID := rel.ID + "-rev"
 		pg.mu.RLock()
@@ -226,7 +221,7 @@ func (pg *persistedGraph) AddRelationWithPersistence(ctx context.Context, rel *R
 		pg.mu.RUnlock()
 		if reverseRel != nil {
 			if err := pg.PersistRelation(ctx, reverseRel); err != nil {
-				// Non-fatal, log and continue
+				// Non-fatal, log and continue.
 				fmt.Printf("warning: failed to persist reverse relation: %v\n", err)
 			}
 		}
@@ -243,9 +238,10 @@ func (pg *persistedGraph) UpdateEntityWithPersistence(ctx context.Context, entit
 	return pg.PersistEntity(ctx, entity, vector)
 }
 
-// DeleteEntityWithPersistence deletes an entity and removes from Qdrant
+// DeleteEntityWithPersistence removes an entity from Qdrant first, then
+// removes from in-memory graph (reverse order for deletes ensures consistency).
 func (pg *persistedGraph) DeleteEntityWithPersistence(ctx context.Context, id string) error {
-	// Get relations to delete from Qdrant
+	// Collect relation IDs before deletion.
 	pg.mu.RLock()
 	outgoing := make([]string, 0, len(pg.outgoingRelations[id]))
 	for relID := range pg.outgoingRelations[id] {
@@ -257,23 +253,23 @@ func (pg *persistedGraph) DeleteEntityWithPersistence(ctx context.Context, id st
 	}
 	pg.mu.RUnlock()
 
-	// Delete from in-memory graph
-	if err := pg.DeleteEntity(id); err != nil {
-		return err
-	}
-
-	// Delete from Qdrant
+	// Delete from Qdrant first.
 	if err := pg.DeletePersistedEntity(ctx, id); err != nil {
 		return err
 	}
 
-	// Delete relations from Qdrant
+	// Delete relations from Qdrant.
 	allRelIDs := append(outgoing, incoming...)
 	if len(allRelIDs) > 0 && pg.cfg != nil && pg.cfg.RelationsQdrant != nil {
 		if err := pg.cfg.RelationsQdrant.Delete(ctx, allRelIDs); err != nil {
-			// Non-fatal
+			// Non-fatal.
 			fmt.Printf("warning: failed to delete relations: %v\n", err)
 		}
+	}
+
+	// Delete from in-memory graph.
+	if err := pg.DeleteEntity(id); err != nil {
+		return err
 	}
 
 	return nil

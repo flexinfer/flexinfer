@@ -114,15 +114,42 @@ func (mi *MemoryImporter) importMemories(memories []UniversalMemory, opts Import
 				result.MemoriesSkipped++
 				continue
 			case "merge":
-				// Merge metadata
-				if existing.Metadata == nil {
-					existing.Metadata = make(map[string]any)
-				}
-				for k, v := range mem.Metadata {
-					existing.Metadata[k] = v
-				}
-				if err := mi.hierarchy.UpdateItem(existing); err != nil {
-					result.Errors = append(result.Errors, fmt.Sprintf("memory merge %s: %v", id, err))
+				// Same content → merge metadata + bump access count.
+				// Different content → keep higher-tier version.
+				existingHash := simpleContentHash(existing.Content)
+				importHash := simpleContentHash(mem.Content)
+				if existingHash == importHash {
+					if existing.Metadata == nil {
+						existing.Metadata = make(map[string]any)
+					}
+					for k, v := range mem.Metadata {
+						existing.Metadata[k] = v
+					}
+					existing.AccessCount++
+					if err := mi.hierarchy.UpdateItem(existing); err != nil {
+						result.Errors = append(result.Errors, fmt.Sprintf("memory merge %s: %v", id, err))
+					}
+				} else {
+					importTier := MemoryTier(mem.Tier)
+					if tierRank(existing.Tier) >= tierRank(importTier) {
+						// Existing is higher or equal tier — keep it, merge metadata only.
+						if existing.Metadata == nil {
+							existing.Metadata = make(map[string]any)
+						}
+						for k, v := range mem.Metadata {
+							existing.Metadata[k] = v
+						}
+						if err := mi.hierarchy.UpdateItem(existing); err != nil {
+							result.Errors = append(result.Errors, fmt.Sprintf("memory merge %s: %v", id, err))
+						}
+					} else {
+						// Imported version is higher tier — overwrite.
+						if err := mi.hierarchy.DeleteItem(id); err != nil {
+							result.Errors = append(result.Errors, fmt.Sprintf("memory merge-overwrite %s: %v", id, err))
+						}
+						// Fall through to create new item below.
+						goto createItem
+					}
 				}
 				result.MemoriesImported++
 				continue
@@ -132,6 +159,7 @@ func (mi *MemoryImporter) importMemories(memories []UniversalMemory, opts Import
 				}
 			}
 		}
+	createItem:
 
 		// Create new item
 		tier := MemoryTier(mem.Tier)
@@ -362,6 +390,31 @@ func (mi *MemoryImporter) importWorkflows(workflows []UniversalWorkflow, opts Im
 
 		mi.workflows.RegisterDefinition(&def)
 		result.WorkflowsImported++
+	}
+}
+
+// simpleContentHash returns a fast hash for content comparison during import.
+func simpleContentHash(s string) uint64 {
+	// FNV-1a 64-bit
+	var h uint64 = 14695981039346656037
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
+		h *= 1099511628211
+	}
+	return h
+}
+
+// tierRank returns a numeric rank for tier comparison (higher = more persistent).
+func tierRank(t MemoryTier) int {
+	switch t {
+	case MemoryTierWorking:
+		return 0
+	case MemoryTierShortTerm:
+		return 1
+	case MemoryTierLongTerm:
+		return 2
+	default:
+		return -1
 	}
 }
 

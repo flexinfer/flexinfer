@@ -177,6 +177,7 @@ type GraphQueryResult struct {
 	Entities  []Entity    `json:"entities"`
 	Relations []Relation  `json:"relations"`
 	Paths     []GraphPath `json:"paths,omitempty"`
+	Truncated bool        `json:"truncated,omitempty"` // True when depth/limit was reached
 }
 
 // GraphPath represents a path through the graph

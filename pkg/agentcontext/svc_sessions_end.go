@@ -66,10 +66,11 @@ func (ss *SessionSvc) End(ctx context.Context, args map[string]any) (*mcp.CallTo
 		}
 	}
 
-	// Auto-cleanup coordination resources
+	// Auto-cleanup coordination resources with error collection.
 	if cleanup {
 		agentID := session.AgentID
 		cleanedUp := map[string]any{}
+		var cleanupErrors []string
 
 		if ss.releaseClaimsForAgent != nil {
 			released := ss.releaseClaimsForAgent(agentID)
@@ -82,6 +83,7 @@ func (ss *SessionSvc) End(ctx context.Context, args map[string]any) (*mcp.CallTo
 
 			if hadPresence && ss.deletePresenceFromQdrant != nil {
 				if err := ss.deletePresenceFromQdrant(ctx, agentID); err != nil {
+					cleanupErrors = append(cleanupErrors, fmt.Sprintf("delete presence from Qdrant: %v", err))
 					ss.logger.Warn("failed to delete presence from Qdrant", "agent_id", agentID, "error", err)
 				}
 			}
@@ -97,6 +99,9 @@ func (ss *SessionSvc) End(ctx context.Context, args map[string]any) (*mcp.CallTo
 			cleanedUp["tasks_marked_stale"] = staleTasks
 		}
 
+		if len(cleanupErrors) > 0 {
+			cleanedUp["cleanup_errors"] = cleanupErrors
+		}
 		result["cleanup"] = cleanedUp
 	}
 

@@ -2,6 +2,7 @@ package agentcontext
 
 import (
 	"sync"
+	"sync/atomic"
 )
 
 // MemoryHierarchy manages tiered memory with automatic compression and retention
@@ -30,4 +31,13 @@ type MemoryHierarchy struct {
 	// Deduplication
 	dedupeSimilarityThreshold float64
 	embedFunc                 func(text string) ([]float64, error)
+
+	// compacting is set to 1 while RunCompression is actively modifying items.
+	// Recall queries should skip items whose Status is being modified.
+	compacting atomic.Int32
+}
+
+// IsCompacting returns true when a compression job is actively running.
+func (mh *MemoryHierarchy) IsCompacting() bool {
+	return mh.compacting.Load() != 0
 }

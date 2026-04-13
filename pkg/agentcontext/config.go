@@ -1,6 +1,7 @@
 package agentcontext
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 
@@ -51,7 +52,6 @@ type Config struct {
 	TasksCollection       string
 	AnnotationsCollection string
 	HandoffsCollection    string
-	TemplatesCollection   string
 
 	// Persistence collections (Phase 1)
 	GraphEntitiesCollection  string
@@ -92,6 +92,10 @@ type Config struct {
 	TaskReconcilerInterval           int // seconds, default 300
 	TaskReconcilerCompletedRetention int // hours, default 168 (7 days)
 	TaskReconcilerStaleTimeout       int // hours, default 4
+
+	// Platform-aware token budgets (M1: seamless integration)
+	// JSON map: {"claude-code": 8000, "codex": 4000, "gemini": 6000}
+	PlatformBudgets map[string]int
 
 	// Session reaper
 	SessionReaperEnabled      bool // default: true
@@ -168,7 +172,6 @@ func LoadConfigFromEnv() (Config, error) {
 		TasksCollection:       env.StringChain([]string{"AGENT_CONTEXT_TASKS_COLLECTION"}, "agent_tasks_v1"),
 		AnnotationsCollection: env.StringChain([]string{"AGENT_CONTEXT_ANNOTATIONS_COLLECTION"}, "agent_annotations_v1"),
 		HandoffsCollection:    env.StringChain([]string{"AGENT_CONTEXT_HANDOFFS_COLLECTION"}, "agent_handoffs_v1"),
-		TemplatesCollection:   env.StringChain([]string{"AGENT_CONTEXT_TEMPLATES_COLLECTION"}, "agent_templates_v1"),
 
 		// Persistence collections
 		GraphEntitiesCollection:  env.StringChain([]string{"AGENT_CONTEXT_GRAPH_ENTITIES_COLLECTION"}, "agent_graph_entities_v1"),
@@ -221,6 +224,14 @@ func LoadConfigFromEnv() (Config, error) {
 		WorktreeDetectUntracked:         env.Bool("AGENT_CONTEXT_WORKTREE_DETECT_UNTRACKED", true),
 	}
 
+	// Parse platform budgets from env JSON.
+	if raw := os.Getenv("AGENT_CONTEXT_PLATFORM_BUDGETS"); raw != "" {
+		budgets := make(map[string]int)
+		if err := json.Unmarshal([]byte(raw), &budgets); err == nil {
+			cfg.PlatformBudgets = budgets
+		}
+	}
+
 	// Validate visibility
 	switch cfg.DefaultVisibility {
 	case VisibilityPrivate, VisibilityShared, VisibilityPublic:
@@ -244,4 +255,16 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// TokenBudgetForPlatform returns the token budget for the given agent type
+// (e.g. "claude-code", "codex", "gemini"). Falls back to DefaultTokenBudget
+// when the platform is unrecognized or no overrides are configured.
+func (c Config) TokenBudgetForPlatform(agentType string) int {
+	if agentType != "" && len(c.PlatformBudgets) > 0 {
+		if budget, ok := c.PlatformBudgets[agentType]; ok && budget > 0 {
+			return budget
+		}
+	}
+	return c.DefaultTokenBudget
 }

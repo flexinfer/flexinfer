@@ -71,8 +71,9 @@ type WorkflowStep struct {
 	DependsOn []string `json:"depends_on,omitempty"` // Step IDs this depends on
 
 	// Approval gate settings
-	RequiresApproval bool   `json:"requires_approval,omitempty"`
-	ApprovalMessage  string `json:"approval_message,omitempty"`
+	RequiresApproval       bool   `json:"requires_approval,omitempty"`
+	ApprovalMessage        string `json:"approval_message,omitempty"`
+	ApprovalTimeoutSeconds int    `json:"approval_timeout_seconds,omitempty"` // Default: 3600 (1 hour)
 
 	// Conditional execution
 	Condition string `json:"condition,omitempty"` // JSONPath or simple expression

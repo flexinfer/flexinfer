@@ -212,6 +212,7 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	svc.sess.markTasksStale = svc.markSessionTasksStale
 	svc.sess.enrichResult = svc.enrichSessionStartResult
 	svc.sess.liveAgentIDs = svc.presence.LiveAgentIDs
+	svc.sess.isPresenceStale = svc.presence.IsAgentStale
 
 	// Initialize context sub-service
 	svc.ctxSvc = NewContextSvc(svc.qdrant, svc.embed, &svc.vectorSize, cfg, svc.logger, svc.metrics)

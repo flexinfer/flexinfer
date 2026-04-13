@@ -107,20 +107,17 @@ func (pmh *persistedMemoryHierarchy) LoadMemoryFromQdrant(ctx context.Context) e
 	return nil
 }
 
-// AddItemWithPersistence adds an item and persists it to Qdrant
+// AddItemWithPersistence persists an item to Qdrant first, then adds it to
+// the in-memory hierarchy. Persist-first ensures in-memory state never
+// diverges from Qdrant.
 func (pmh *persistedMemoryHierarchy) AddItemWithPersistence(ctx context.Context, item *MemoryItem, vector []float64) error {
-	// Add to in-memory hierarchy first
-	if err := pmh.AddItem(item); err != nil {
+	// Persist to Qdrant first.
+	if err := pmh.PersistItem(ctx, item, vector); err != nil {
 		return err
 	}
 
-	// Persist to Qdrant
-	if err := pmh.PersistItem(ctx, item, vector); err != nil {
-		// Rollback in-memory change on persistence failure
-		pmh.mu.Lock()
-		pmh.removeFromTier(item)
-		pmh.removeFromIndexes(item)
-		pmh.mu.Unlock()
+	// Add to in-memory hierarchy.
+	if err := pmh.AddItem(item); err != nil {
 		return err
 	}
 
@@ -135,46 +132,51 @@ func (pmh *persistedMemoryHierarchy) UpdateItemWithPersistence(ctx context.Conte
 	return pmh.PersistItem(ctx, item, vector)
 }
 
-// DeleteItemWithPersistence deletes an item and removes from Qdrant
+// DeleteItemWithPersistence removes from Qdrant first, then deletes in-memory.
+// Qdrant-first for deletes ensures in-memory state never diverges.
 func (pmh *persistedMemoryHierarchy) DeleteItemWithPersistence(ctx context.Context, id string) error {
-	if err := pmh.DeleteItem(id); err != nil {
+	if err := pmh.DeletePersistedItem(ctx, id); err != nil {
 		return err
 	}
-	return pmh.DeletePersistedItem(ctx, id)
+	return pmh.DeleteItem(id)
 }
 
-// PromoteItemWithPersistence promotes an item and persists the change
+// PromoteItemWithPersistence persists the promoted state to Qdrant first,
+// then promotes in-memory. If Qdrant fails, the item stays in its original
+// tier and gets a _promotion_failed metadata tag.
 func (pmh *persistedMemoryHierarchy) PromoteItemWithPersistence(ctx context.Context, id string) error {
-	if err := pmh.PromoteItem(id); err != nil {
+	// Snapshot the promoted state without modifying in-memory.
+	snapshot, err := pmh.snapshotPromoted(id)
+	if err != nil {
 		return err
 	}
 
-	// Get the item to persist
-	pmh.mu.RLock()
-	item := pmh.findItem(id)
-	pmh.mu.RUnlock()
-
-	if item != nil {
-		return pmh.PersistItem(ctx, item, nil)
+	// Persist promoted snapshot to Qdrant first.
+	if err := pmh.PersistItem(ctx, snapshot, nil); err != nil {
+		pmh.tagPromotionFailed(id)
+		return fmt.Errorf("persist promoted item: %w", err)
 	}
-	return nil
+
+	// Now apply in-memory promotion (should succeed since item exists).
+	return pmh.PromoteItem(id)
 }
 
-// DemoteItemWithPersistence demotes an item and persists the change
+// DemoteItemWithPersistence persists the demoted state to Qdrant first,
+// then demotes in-memory. If Qdrant fails, the item stays in its original tier.
 func (pmh *persistedMemoryHierarchy) DemoteItemWithPersistence(ctx context.Context, id string) error {
-	if err := pmh.DemoteItem(id); err != nil {
+	// Snapshot the demoted state without modifying in-memory.
+	snapshot, err := pmh.snapshotDemoted(id)
+	if err != nil {
 		return err
 	}
 
-	// Get the item to persist
-	pmh.mu.RLock()
-	item := pmh.findItem(id)
-	pmh.mu.RUnlock()
-
-	if item != nil {
-		return pmh.PersistItem(ctx, item, nil)
+	// Persist demoted snapshot to Qdrant first.
+	if err := pmh.PersistItem(ctx, snapshot, nil); err != nil {
+		return fmt.Errorf("persist demoted item: %w", err)
 	}
-	return nil
+
+	// Now apply in-memory demotion.
+	return pmh.DemoteItem(id)
 }
 
 // CompressItemWithPersistence compresses an item and persists the change
@@ -220,6 +222,72 @@ func (pmh *persistedMemoryHierarchy) MergeItemsWithPersistence(ctx context.Conte
 	}
 
 	return merged, nil
+}
+
+// snapshotPromoted creates a copy of the item with its promoted tier and expiry
+// without modifying the original in-memory item.
+func (pmh *persistedMemoryHierarchy) snapshotPromoted(id string) (*MemoryItem, error) {
+	pmh.mu.RLock()
+	defer pmh.mu.RUnlock()
+
+	item := pmh.findItem(id)
+	if item == nil {
+		return nil, fmt.Errorf("memory item not found: %s", id)
+	}
+
+	var newTier MemoryTier
+	switch item.Tier {
+	case MemoryTierWorking:
+		newTier = MemoryTierShortTerm
+	case MemoryTierShortTerm:
+		newTier = MemoryTierLongTerm
+	case MemoryTierLongTerm:
+		return nil, fmt.Errorf("item is already in long-term memory")
+	}
+
+	snapshot := *item
+	snapshot.Tier = newTier
+	return &snapshot, nil
+}
+
+// snapshotDemoted creates a copy of the item with its demoted tier
+// without modifying the original in-memory item.
+func (pmh *persistedMemoryHierarchy) snapshotDemoted(id string) (*MemoryItem, error) {
+	pmh.mu.RLock()
+	defer pmh.mu.RUnlock()
+
+	item := pmh.findItem(id)
+	if item == nil {
+		return nil, fmt.Errorf("memory item not found: %s", id)
+	}
+
+	var newTier MemoryTier
+	switch item.Tier {
+	case MemoryTierWorking:
+		return nil, fmt.Errorf("cannot demote from working memory")
+	case MemoryTierShortTerm:
+		newTier = MemoryTierWorking
+	case MemoryTierLongTerm:
+		newTier = MemoryTierShortTerm
+	}
+
+	snapshot := *item
+	snapshot.Tier = newTier
+	return &snapshot, nil
+}
+
+// tagPromotionFailed adds _promotion_failed metadata to an item.
+func (pmh *persistedMemoryHierarchy) tagPromotionFailed(id string) {
+	pmh.mu.Lock()
+	defer pmh.mu.Unlock()
+	item := pmh.findItem(id)
+	if item == nil {
+		return
+	}
+	if item.Metadata == nil {
+		item.Metadata = make(map[string]any)
+	}
+	item.Metadata["_promotion_failed"] = true
 }
 
 // SearchMemorySemantic performs semantic search for memory items

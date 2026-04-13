@@ -339,11 +339,16 @@ func (e *WorkflowEngine) executeGateStep(wf *Workflow, step *WorkflowStep) (map[
 	return map[string]any{"passed": result}, nil
 }
 
-// executeParallelStep executes multiple steps in parallel
+// executeParallelStep executes multiple steps in parallel with cancellation
+// propagation: when any step fails, remaining in-flight steps are cancelled.
 func (e *WorkflowEngine) executeParallelStep(ctx context.Context, wf *Workflow, step *WorkflowStep) (map[string]any, error) {
 	if len(step.ParallelSteps) == 0 {
 		return map[string]any{}, nil
 	}
+
+	// Derived context with cancel so failure in any step cancels the rest.
+	parallelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	var wg sync.WaitGroup
 	results := make(map[string]any)
@@ -360,7 +365,7 @@ func (e *WorkflowEngine) executeParallelStep(ctx context.Context, wf *Workflow, 
 
 			switch ps.StepType {
 			case StepTypeTool:
-				result, err = e.executeToolStep(ctx, wf, ps)
+				result, err = e.executeToolStep(parallelCtx, wf, ps)
 			default:
 				err = fmt.Errorf("unsupported parallel step type: %s", ps.StepType)
 			}
@@ -368,6 +373,7 @@ func (e *WorkflowEngine) executeParallelStep(ctx context.Context, wf *Workflow, 
 			mu.Lock()
 			if err != nil && firstErr == nil {
 				firstErr = err
+				cancel() // Cancel remaining in-flight steps.
 			}
 			if result != nil {
 				results[ps.ID] = result
@@ -551,7 +557,7 @@ func injectItemInValue(v any, item any) any {
 	}
 }
 
-// requestApproval marks a step as waiting for approval
+// requestApproval marks a step as waiting for approval and starts a timeout timer.
 func (e *WorkflowEngine) requestApproval(wf *Workflow, stepID string) {
 	e.mu.Lock()
 	step := wf.StepStates[stepID]
@@ -562,6 +568,12 @@ func (e *WorkflowEngine) requestApproval(wf *Workflow, stepID string) {
 		RequestedAt: now,
 	}
 	wf.Status = WorkflowStatusWaiting
+
+	// Determine timeout (default 1 hour).
+	timeoutSec := step.ApprovalTimeoutSeconds
+	if timeoutSec <= 0 {
+		timeoutSec = 3600
+	}
 	e.mu.Unlock()
 
 	e.emitEvent(WorkflowEvent{
@@ -570,8 +582,55 @@ func (e *WorkflowEngine) requestApproval(wf *Workflow, stepID string) {
 		StepID:     stepID,
 		EventType:  "approval_requested",
 		Timestamp:  now,
-		Details:    map[string]any{"message": step.ApprovalMessage},
+		Details:    map[string]any{"message": step.ApprovalMessage, "timeout_seconds": timeoutSec},
 	})
+
+	// Start timeout goroutine.
+	go func() {
+		timer := time.NewTimer(time.Duration(timeoutSec) * time.Second)
+		defer timer.Stop()
+
+		<-timer.C
+
+		e.mu.Lock()
+		// Only timeout if still waiting for approval.
+		if step.ApprovalInfo == nil || step.ApprovalInfo.Status != ApprovalStatusPending {
+			e.mu.Unlock()
+			return
+		}
+		timedOutAt := time.Now().UTC()
+		step.Status = StepStatusFailed
+		step.CompletedAt = &timedOutAt
+		step.Error = fmt.Sprintf("approval timed out after %ds", timeoutSec)
+		wf.Status = WorkflowStatusFailed
+		wf.FailedStepID = stepID
+		wf.Error = fmt.Sprintf("step %s: approval timed out", step.Name)
+		wf.FailedSteps++
+		e.mu.Unlock()
+
+		e.emitEvent(WorkflowEvent{
+			ID:         uuid.New().String()[:8],
+			WorkflowID: wf.ID,
+			StepID:     stepID,
+			EventType:  "step_timed_out",
+			Timestamp:  timedOutAt,
+			Details:    map[string]any{"reason": "approval timed out", "timeout_seconds": timeoutSec},
+		})
+
+		// Handle rollback if configured.
+		if wf.Definition.RollbackOnFailure {
+			e.rollbackWorkflow(context.Background(), wf)
+		}
+
+		// Signal completion for subflow waiters.
+		if wf.done != nil {
+			select {
+			case <-wf.done:
+			default:
+				close(wf.done)
+			}
+		}
+	}()
 }
 
 // completeWorkflow marks the workflow as complete

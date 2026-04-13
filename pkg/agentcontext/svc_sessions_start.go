@@ -62,29 +62,52 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 	}
 
 	// Idempotent start: if an active session already exists for this agent in the
-	// same namespace, return it instead of rolling sessions.
+	// same namespace, check whether it's live or stale (crash recovery).
+	var recoveredFrom string
 	if existing := ss.activeSessionForAgentNamespace(ctx, agentID, namespace); existing != nil {
-		project := canonicalProject(existing.Project, existing.Namespace, existing.PipelineRef)
-		result := map[string]any{
-			"ok":              true,
-			"session_id":      existing.ID,
-			"agent_id":        existing.AgentID,
-			"namespace":       existing.Namespace,
-			"project":         project,
-			"started_at":      existing.StartedAt.Format(time.RFC3339),
-			"already_existed": true,
+		if ss.isAgentHeartbeatStale(agentID) {
+			// Crash recovery: auto-end the orphaned session, then create a new one.
+			recoveredFrom = existing.ID
+			ss.logger.Info("crash recovery: ending stale session",
+				"session_id", recoveredFrom, "agent_id", agentID)
+			now := time.Now()
+			existing.Status = string(SessionStatusEnded)
+			existing.EndedAt = &now
+			ss.mu.Lock()
+			ss.sessions[recoveredFrom] = existing
+			ss.mu.Unlock()
+			if err := ss.Persist(ctx, existing); err != nil {
+				ss.logger.Warn("failed to persist crash-recovered session end",
+					"session_id", recoveredFrom, "error", err)
+			}
+			ss.metrics.SessionsActive.Add(-1)
+			// Fall through to create a new session.
+		} else {
+			// Live session — return it (idempotency).
+			project := canonicalProject(existing.Project, existing.Namespace, existing.PipelineRef)
+			result := map[string]any{
+				"ok":              true,
+				"session_id":      existing.ID,
+				"agent_id":        existing.AgentID,
+				"namespace":       existing.Namespace,
+				"project":         project,
+				"started_at":      existing.StartedAt.Format(time.RFC3339),
+				"already_existed": true,
+			}
+			if existing.PipelineRef != nil {
+				result["pipeline_ref"] = pipelineRefToPayload(existing.PipelineRef)
+			}
+			if ss.enrichResult != nil {
+				ss.enrichResult(ctx, result, existing.AgentID, existing.Namespace)
+			}
+			return mcp.JSONResult(result)
 		}
-		if existing.PipelineRef != nil {
-			result["pipeline_ref"] = pipelineRefToPayload(existing.PipelineRef)
-		}
-		if ss.enrichResult != nil {
-			ss.enrichResult(ctx, result, existing.AgentID, existing.Namespace)
-		}
-		return mcp.JSONResult(result)
 	}
 
-	// End any prior active sessions for this agent.
-	ss.EndActiveForAgent(ctx, agentID)
+	// End any prior active sessions for this agent (non-crash path).
+	if recoveredFrom == "" {
+		ss.EndActiveForAgent(ctx, agentID)
+	}
 
 	// Create new session
 	sessionID := GenerateID(agentID, "", time.Now().String(), time.Now())
@@ -126,6 +149,9 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 		"project":    project,
 		"started_at": session.StartedAt.Format(time.RFC3339),
 	}
+	if recoveredFrom != "" {
+		result["recovered_from"] = recoveredFrom
+	}
 	if pipelineRef != nil {
 		result["pipeline_ref"] = pipelineRefToPayload(pipelineRef)
 	}
@@ -141,6 +167,18 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 		ss.enrichResult(ctx, result, agentID, namespace)
 	}
 	return mcp.JSONResult(result)
+}
+
+// isAgentHeartbeatStale checks whether the given agent's presence heartbeat
+// has expired. Returns true (stale) when: (a) no presence is registered, or
+// (b) the last heartbeat is older than HeartbeatTTL. This is used by crash
+// recovery to decide whether an existing active session is orphaned.
+func (ss *SessionSvc) isAgentHeartbeatStale(agentID string) bool {
+	if ss.isPresenceStale == nil {
+		// No presence registry wired — be conservative, treat as live.
+		return false
+	}
+	return ss.isPresenceStale(agentID)
 }
 
 func (ss *SessionSvc) activeSessionForAgentNamespace(ctx context.Context, agentID, namespace string) *Session {

@@ -38,6 +38,10 @@ type SessionSvc struct {
 	// Reaper callback — returns IDs of agents with live presence.
 	liveAgentIDs func() []string
 
+	// isPresenceStale returns true when the given agent has no live presence
+	// or its heartbeat has expired. Used by crash recovery in session start.
+	isPresenceStale func(agentID string) bool
+
 	// countContextEntries returns entry count + total tokens from the context
 	// collection for a given session ID. Used to recompute stats at list time
 	// when persisted values are stale (e.g. after HUD restart).
