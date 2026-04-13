@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # Build stage
 ARG RUNTIME_REGISTRY=registry.harbor.lan
-FROM golang:1.25.8-alpine AS builder
+FROM golang:1.25.9-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
 ENV GOWORK=off \
