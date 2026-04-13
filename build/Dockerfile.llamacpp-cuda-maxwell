@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Clone llama.cpp at pinned release
-ARG LLAMACPP_VERSION=b8173
+ARG LLAMACPP_VERSION=b8778
 WORKDIR /opt/src
 RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
 

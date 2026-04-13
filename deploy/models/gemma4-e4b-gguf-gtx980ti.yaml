@@ -16,7 +16,7 @@ spec:
   backend: llamacpp
   source: HF://HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive
   cache:
-    size: 8Gi
+    size: 10Gi
     strategy: SharedPVC
   gpu:
     vendor: nvidia
