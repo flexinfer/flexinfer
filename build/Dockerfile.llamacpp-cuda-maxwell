@@ -46,6 +46,7 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     tini \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy built binary and shared libraries (libmtmd, libllama, libggml, etc.)
