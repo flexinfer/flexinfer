@@ -23,9 +23,10 @@ WORKDIR /opt/src
 RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
 
 # Build llama.cpp with CUDA support for Maxwell (sm_50, sm_52)
-# Target CPU: Ivy Bridge (i7-3770K) — has AVX + F16C but NOT AVX2 or FMA.
-# GGML_NATIVE=OFF disables -march=native but still defaults AVX2/FMA to ON.
-# Must explicitly disable them to avoid SIGILL on Ivy Bridge.
+# Target CPU: Ivy Bridge (i7-3770K) — has AVX, SSE4.2, F16C only.
+# Missing: AVX2 (Haswell+), FMA (Haswell+), BMI2 (Haswell+).
+# GGML_NATIVE=OFF disables -march=native but ggml defaults AVX2/FMA/BMI2 to ON.
+# Must explicitly disable all Haswell+ ISA extensions to avoid SIGILL.
 # llama.cpp b8173+ uses CUDA Driver API (VMM: cuMemCreate, cuMemMap).
 # In Docker builds without a GPU, we link against CUDA driver stubs.
 WORKDIR /opt/src/llama.cpp
@@ -36,6 +37,7 @@ RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/lib
     -DGGML_NATIVE=OFF \
     -DGGML_AVX2=OFF \
     -DGGML_FMA=OFF \
+    -DGGML_BMI2=OFF \
     -DCMAKE_CUDA_ARCHITECTURES="50;52" \
     -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -j$(nproc) && \
