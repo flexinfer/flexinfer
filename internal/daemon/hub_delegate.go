@@ -20,10 +20,11 @@ func DefaultHubDelegateServers() []string {
 }
 
 // hubDelegateEligible reports whether the named server should be delegated
-// to the hub. Delegation requires all three conditions:
+// to the hub. Delegation requires all of:
 //  1. The server name is in the configured delegate list.
 //  2. The hub connection infrastructure is available (hubPool and hubClient).
 //  3. Hub auth has not been disabled due to authentication failures.
+//  4. The server is NOT in WarmOnStart (warmed servers run locally by intent).
 //
 // The check is lightweight: no network calls, only field reads.
 func (d *Daemon) hubDelegateEligible(serverName string) bool {
@@ -32,6 +33,13 @@ func (d *Daemon) hubDelegateEligible(serverName string) bool {
 	}
 	if d.hubAuthDisabled {
 		return false
+	}
+
+	// Warmed servers run as local subprocesses by intent; skip delegation.
+	for _, w := range d.cfg.WarmOnStart {
+		if w == serverName {
+			return false
+		}
 	}
 
 	servers := d.fileCfg.HubDelegate.Servers
