@@ -14,12 +14,12 @@ spec:
     vendor: amd
     count: 1
     shared: 5930k-imagegen
-    priority: 200
+    priority: 100
     vramEstimateMB: 12000
   serverless:
     enabled: true
-    minReplicas: 1
-    idleTimeout: 10m
+    minReplicas: 0
+    idleTimeout: 5m
     coldStartTimeout: 30m
   config:
     # Gonzalomo FluxPony is an SDXL model despite the FLUX-like name.

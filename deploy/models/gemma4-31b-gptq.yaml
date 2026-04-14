@@ -4,7 +4,8 @@
 # VRAM budget: ~15-16 GB weights + ~6 GB KV cache → tight fit in 24 GB.
 # Conservative maxModelLen=4096 to stay within VRAM.
 #
-# On-demand model in 7900xtx-textgen shared group (priority 150, scale-to-zero).
+# On-demand model on 5930k (priority 200, scale-to-zero).
+# Moved from 7900xtx to free VRAM for 26B-A4B MoE.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -20,8 +21,8 @@ spec:
     vendor: amd
     count: 1
     vramEstimateMB: 17000
-    shared: 7900xtx-textgen
-    priority: 150
+    shared: 5930k-imagegen
+    priority: 200
   serverless:
     enabled: true
     minReplicas: 0
@@ -42,7 +43,7 @@ spec:
     enablePrefixCaching: true
     disableLogStats: false
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-5930k
   resources:
     requests:
       cpu: "4"

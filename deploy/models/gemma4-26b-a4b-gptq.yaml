@@ -13,13 +13,13 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:7f784ce5bee18e44dfb51372e7eb7b491db36901d7b2cfd1dc04588d72409056
+  image: registry.harbor.lan/flexinfer/runtime@sha256:fffb20497b4b10eca21ce44d76cdee93d0033850cd8b36ba199df52f0f604105
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128
   cache:
     strategy: SharedPVC
   gpu:
     vendor: amd
-    count: 1
+    count: 2
     vramEstimateMB: 16000
     shared: 7900xtx-textgen
     priority: 200
@@ -44,6 +44,7 @@ spec:
     enablePrefixCaching: true
     maxNumBatchedTokens: 8192
     disableLogStats: false
+    hipVisibleDevices: "0"
     warmPolicy: primary
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx

@@ -13,7 +13,7 @@ import (
 
 // GPTQScriptVersion must match FLEXINFER_SCRIPT_VERSION in quantize_gptq.py.
 // Bump both when controller-side heredoc patches change to catch stale images.
-const GPTQScriptVersion = "v7"
+const GPTQScriptVersion = "v8"
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Patch vLLM for Gemma4 GPTQ MoE support.
 
-Two patches:
+Three patches:
 1. GPTQConfig.get_quant_method: Check modules_in_block_to_quantize before
    applying MoE quantization. When experts are not quantized, return None
    (unquantized) for FusedMoE layers.
@@ -9,6 +9,13 @@ Two patches:
    Gemma4 uses GELU in its MoE experts. The Triton fused_moe_kernel is
    activation-agnostic (applied post-kernel via apply_moe_activation),
    but the assertion blocks loading.
+3. Gemma4Model.load_weights: Fix GPTQ MoE expert weight name routing.
+   The _weight_iterator explodes 3D fused GPTQ tensors into per-expert
+   names like 'experts.0.down_proj.qweight'. The expert_params_mapping
+   produces 'experts.w2_weight.qweight' but the actual GPTQ parameter
+   is 'experts.w2_qweight'. Also fixes the weight_name passed to the
+   MoeWNA16 weight_loader so it correctly dispatches qweight vs scales
+   vs qzeros conversions.
 
 Usage:
     python3 vllm_gemma4_moe_gptq_patch.py [vllm_root]
@@ -223,12 +230,186 @@ def patch_moe_wna16_activation(vllm_root: pathlib.Path) -> bool:
     return False
 
 
+def patch_gemma4_moe_gptq_weight_names(vllm_root: pathlib.Path) -> bool:
+    """Patch Gemma4Model.load_weights for GPTQ MoE expert weight name routing.
+
+    Problem: _weight_iterator explodes 3D fused GPTQ MoE tensors into
+    per-expert 2D weights with names like:
+        layers.0.moe.experts.0.down_proj.qweight
+
+    The expert_params_mapping maps "experts.{id}.{proj}" → "experts.w2_weight",
+    producing "experts.w2_weight.qweight" — but the actual MoeWNA16 parameter
+    name is "experts.w2_qweight" (standard FusedMoE uses a prefix convention
+    with trailing dot that avoids this, but Gemma4 doesn't).
+
+    Fix 1: When moe_name lookup fails, try "_weight.X" → "_X" transformation.
+    Fix 2: Pass original weight name (with GPTQ suffix) to weight_loader so
+            moe_wna16_weight_loader correctly dispatches qweight vs scales vs
+            qzeros conversions (instead of always passing ".weight").
+    """
+    gemma4_py = vllm_root / "model_executor" / "models" / "gemma4.py"
+    if not gemma4_py.exists():
+        print(f"[gemma4-moe-patch] SKIP: {gemma4_py} not found")
+        return False
+
+    src = gemma4_py.read_text()
+
+    if "GEMMA4_MOE_GPTQ_WEIGHT_NAMES_PATCH" in src:
+        print("[gemma4-moe-patch] GPTQ weight names already patched, skipping")
+        return True
+
+    patched = False
+
+    # --- Fix 1: GPTQ suffix fallback in moe_name lookup ---
+    # Original:
+    #     moe_name = name.replace(weight_name, param_name)
+    #     if moe_name not in params_dict:
+    #         continue
+    # Patched: try "_weight.qweight" → "_qweight" transformation.
+    old_moe_lookup = (
+        "                    moe_name = name.replace(weight_name, param_name)\n"
+        "                    if moe_name not in params_dict:\n"
+        "                        continue"
+    )
+    new_moe_lookup = (
+        "                    moe_name = name.replace(weight_name, param_name)\n"
+        "                    if moe_name not in params_dict:\n"
+        "                        # GEMMA4_MOE_GPTQ_WEIGHT_NAMES_PATCH fix 1:\n"
+        '                        # GPTQ suffix: "w2_weight.qweight" -> "w2_qweight"\n'
+        '                        if "_weight." in moe_name:\n'
+        '                            moe_name = moe_name.replace("_weight.", "_", 1)\n'
+        "                        if moe_name not in params_dict:\n"
+        "                            continue"
+    )
+
+    if old_moe_lookup in src:
+        src = src.replace(old_moe_lookup, new_moe_lookup, 1)
+        patched = True
+        print("[gemma4-moe-patch] Applied GPTQ moe_name fallback patch")
+    else:
+        # Try regex for whitespace variations
+        pattern = re.compile(
+            r"(\s+)moe_name = name\.replace\(weight_name, param_name\)\n"
+            r"\s+if moe_name not in params_dict:\n"
+            r"\s+continue"
+        )
+        match = pattern.search(src)
+        if match:
+            indent = match.group(1)
+            replacement = (
+                f"{indent}moe_name = name.replace(weight_name, param_name)\n"
+                f"{indent}if moe_name not in params_dict:\n"
+                f"{indent}    # GEMMA4_MOE_GPTQ_WEIGHT_NAMES_PATCH fix 1:\n"
+                f'{indent}    # GPTQ suffix: "w2_weight.qweight" -> "w2_qweight"\n'
+                f'{indent}    if "_weight." in moe_name:\n'
+                f'{indent}        moe_name = moe_name.replace("_weight.", "_", 1)\n'
+                f"{indent}if moe_name not in params_dict:\n"
+                f"{indent}    continue"
+            )
+            src = src[: match.start()] + replacement + src[match.end() :]
+            patched = True
+            print("[gemma4-moe-patch] Applied GPTQ moe_name fallback patch (regex)")
+        else:
+            print(
+                "[gemma4-moe-patch] WARNING: Could not find moe_name lookup block "
+                "in Gemma4Model.load_weights"
+            )
+
+    # --- Fix 2: Pass correct weight_name to weight_loader for GPTQ ---
+    # Original:
+    #     weight_loader(
+    #         param,
+    #         loaded_weight,
+    #         weight_name + ".weight",
+    #         shard_id=shard_id,
+    #         expert_id=expert_id,
+    #     )
+    # Patched: for GPTQ weights (.qweight/.scales/.qzeros), pass original name
+    # so moe_wna16_weight_loader dispatches the right conversion path.
+    old_wloader_call = (
+        "                    weight_loader(\n"
+        "                        param,\n"
+        "                        loaded_weight,\n"
+        '                        weight_name + ".weight",\n'
+        "                        shard_id=shard_id,\n"
+        "                        expert_id=expert_id,\n"
+        "                    )"
+    )
+    new_wloader_call = (
+        "                    # GEMMA4_MOE_GPTQ_WEIGHT_NAMES_PATCH fix 2:\n"
+        "                    # GPTQ: pass original name with suffix so\n"
+        "                    # moe_wna16_weight_loader applies correct conversion\n"
+        "                    # (qweight→.T.view(uint8), scales→.T, qzeros→convert+.T).\n"
+        "                    # FP16: append .weight for the base weight_loader.\n"
+        "                    _gptq_sfx = any(\n"
+        "                        name.endswith(s)\n"
+        '                        for s in (".qweight", ".scales", ".qzeros")\n'
+        "                    )\n"
+        "                    weight_loader(\n"
+        "                        param,\n"
+        "                        loaded_weight,\n"
+        '                        name if _gptq_sfx else weight_name + ".weight",\n'
+        "                        shard_id=shard_id,\n"
+        "                        expert_id=expert_id,\n"
+        "                    )"
+    )
+
+    if old_wloader_call in src:
+        src = src.replace(old_wloader_call, new_wloader_call, 1)
+        patched = True
+        print("[gemma4-moe-patch] Applied GPTQ weight_loader dispatch patch")
+    else:
+        # Try regex match
+        pattern = re.compile(
+            r"(\s+)weight_loader\(\n"
+            r"\s+param,\n"
+            r"\s+loaded_weight,\n"
+            r'\s+weight_name \+ "\.weight",\n'
+            r"\s+shard_id=shard_id,\n"
+            r"\s+expert_id=expert_id,\n"
+            r"\s+\)"
+        )
+        match = pattern.search(src)
+        if match:
+            indent = match.group(1)
+            replacement = (
+                f"{indent}# GEMMA4_MOE_GPTQ_WEIGHT_NAMES_PATCH fix 2:\n"
+                f"{indent}_gptq_sfx = any(\n"
+                f"{indent}    name.endswith(s)\n"
+                f'{indent}    for s in (".qweight", ".scales", ".qzeros")\n'
+                f"{indent})\n"
+                f"{indent}weight_loader(\n"
+                f"{indent}    param,\n"
+                f"{indent}    loaded_weight,\n"
+                f'{indent}    name if _gptq_sfx else weight_name + ".weight",\n'
+                f"{indent}    shard_id=shard_id,\n"
+                f"{indent}    expert_id=expert_id,\n"
+                f"{indent})"
+            )
+            src = src[: match.start()] + replacement + src[match.end() :]
+            patched = True
+            print(
+                "[gemma4-moe-patch] Applied GPTQ weight_loader dispatch patch (regex)"
+            )
+        else:
+            print(
+                "[gemma4-moe-patch] WARNING: Could not find weight_loader call "
+                "in Gemma4Model.load_weights expert loop"
+            )
+
+    if patched:
+        gemma4_py.write_text(src)
+        print(f"[gemma4-moe-patch] Wrote patched {gemma4_py}")
+    return patched
+
+
 def main():
     vllm_root = find_vllm_root()
     print(f"[gemma4-moe-patch] vLLM root: {vllm_root}")
 
     ok1 = patch_gptq_config(vllm_root)
     ok2 = patch_moe_wna16_activation(vllm_root)
+    ok3 = patch_gemma4_moe_gptq_weight_names(vllm_root)
 
     if not ok1:
         print("[gemma4-moe-patch] FAILED — GPTQConfig patch could not be applied")
@@ -237,6 +418,11 @@ def main():
         print(
             "[gemma4-moe-patch] WARNING — MoeWNA16 activation patch failed (non-fatal)"
         )
+    if not ok3:
+        print(
+            "[gemma4-moe-patch] FAILED — GPTQ weight names patch could not be applied"
+        )
+        sys.exit(1)
 
     print("[gemma4-moe-patch] All patches applied successfully")
 

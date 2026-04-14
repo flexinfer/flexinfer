@@ -9,7 +9,7 @@ All configuration is read from environment variables set by the controller:
 
 # Bumped when controller-side patches change. The wrapper script checks this
 # against GPTQScriptVersion in gptq.go and aborts on mismatch.
-FLEXINFER_SCRIPT_VERSION = "v7"
+FLEXINFER_SCRIPT_VERSION = "v8"
 import copy
 import gc
 import json
@@ -428,6 +428,24 @@ def refuse_moe_expert_tensors(save_dir):
     for (prefix, layer_idx, tensor_type), subs in sorted(expert_keys.items()):
         n_exp = expert_counts[(prefix, layer_idx)]
 
+        # Skip g_idx — vLLM's MoeWNA16 weight loader explicitly ignores
+        # g_idx for MoE layers, and the fused 2D shape ([E, indices])
+        # can't be exploded by vLLM's _weight_iterator (expects 3D).
+        # Just remove per-expert g_idx keys from the output.
+        if tensor_type == "g_idx":
+            for key in subs.values():
+                keys_to_remove.add(key)
+            continue
+
+        # Remap prefix to vLLM's FusedMoE module name. The original
+        # HF prefix is "model.layers.{i}.(block_sparse_moe.)?experts"
+        # but vLLM's Gemma4 model maps MoE to "model.layers.{i}.moe".
+        fused_prefix = re.sub(
+            r"(model\.layers\.\d+)\.(block_sparse_moe\.)?experts$",
+            r"\1.moe",
+            prefix,
+        )
+
         # Collect gate, up, down per expert
         gate_list = []
         up_list = []
@@ -456,7 +474,7 @@ def refuse_moe_expert_tensors(save_dir):
             ]
             # Stack: [n_experts, 2*rows, cols]
             fused_gate_up = torch.stack(gate_up_per_expert, dim=0)
-            fused_key = f"{prefix}.gate_up_proj.{tensor_type}"
+            fused_key = f"{fused_prefix}.gate_up_proj.{tensor_type}"
             fused_tensors[fused_key] = fused_gate_up
             if layer_idx == 0:
                 print(
@@ -468,7 +486,7 @@ def refuse_moe_expert_tensors(save_dir):
         # Fuse down: just stack across experts
         if down_list and len(down_list) == n_exp:
             fused_down = torch.stack(down_list, dim=0)
-            fused_key = f"{prefix}.down_proj.{tensor_type}"
+            fused_key = f"{fused_prefix}.down_proj.{tensor_type}"
             fused_tensors[fused_key] = fused_down
             if layer_idx == 0:
                 print(
@@ -535,11 +553,30 @@ def refuse_moe_expert_tensors(save_dir):
     if os.path.exists(qcfg_path):
         with open(qcfg_path) as f:
             qcfg = json.load(f)
-        # Add MoE expert entries to modules_in_block_to_quantize if present
+        # Ensure modules_in_block_to_quantize lists ALL quantized modules.
+        # GPTQModel >= 6.0.3 no longer writes this field, so create it
+        # from scratch when absent. vLLM's get_linear_quant_method uses
+        # this list to decide which layers get GPTQ applied; missing
+        # entries cause KeyError on quantized weight keys (e.g. g_idx).
         mibq = qcfg.get("modules_in_block_to_quantize")
+        if mibq is None:
+            mibq = []
         if isinstance(mibq, list):
-            moe_entries = ["experts.gate_up_proj", "experts.down_proj"]
-            for entry in moe_entries:
+            required_entries = [
+                # Attention projections
+                "self_attn.q_proj",
+                "self_attn.k_proj",
+                "self_attn.v_proj",
+                "self_attn.o_proj",
+                # MoE experts (fused)
+                "moe.gate_up_proj",
+                "moe.down_proj",
+                # Shared expert MLP (dense feed-forward)
+                "mlp.gate_proj",
+                "mlp.up_proj",
+                "mlp.down_proj",
+            ]
+            for entry in required_entries:
                 if entry not in mibq:
                     mibq.append(entry)
             qcfg["modules_in_block_to_quantize"] = mibq

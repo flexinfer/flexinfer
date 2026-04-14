@@ -315,9 +315,18 @@ if [ ! -e "$SRC" ]; then
   exit 1
 fi
 
+# Copy files individually with sync between each to flush dirty pages
+# and avoid OOMKill when copying multi-GB safetensor shards (page
+# cache is charged to the container cgroup).
 if [ -d "$SRC" ]; then
   mkdir -p "$DST"
-  cp -a "$SRC/." "$DST/"
+  for f in "$SRC"/*; do
+    [ -e "$f" ] || continue
+    base="$(basename "$f")"
+    cp -a "$f" "$DST/$base"
+    sync
+    echo "Copied: $base"
+  done
 else
   mkdir -p "$(dirname "$DST")"
   cp -a "$SRC" "$DST"
@@ -354,7 +363,7 @@ echo "Copy complete."
 				corev1.ResourceMemory: resource.MustParse("256Mi"),
 			},
 			Limits: corev1.ResourceList{
-				corev1.ResourceMemory: resource.MustParse("2Gi"),
+				corev1.ResourceMemory: resource.MustParse("16Gi"),
 			},
 		},
 		VolumeMounts: []corev1.VolumeMount{
