@@ -13,7 +13,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:e1e3dad1eb583a1831813ee796d272e680f0888b4a034b0bec709c7886123c7f
+  image: registry.harbor.lan/flexinfer/runtime@sha256:eb70d423f67e12c19b96faca41d728fff001bdb6d29045fcf0a46d10d3e2c7f5
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128
   cache:
     strategy: SharedPVC

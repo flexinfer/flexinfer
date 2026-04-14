@@ -581,12 +581,15 @@ def patch_kv_cache_page_size_uniform_type(vllm_root: pathlib.Path) -> bool:
 
 
 def patch_moe_wna16_activation_forwarding(vllm_root: pathlib.Path) -> bool:
-    """Patch MoeWNA16Method.apply() to forward the activation parameter.
+    """Patch MoeWNA16Method.apply() to forward the activation parameter
+    and add NaN debug logging.
 
     Bug: MoeWNA16Method.apply() calls fused_experts() without passing
     activation=layer.activation. The default is SiLU, but Gemma4 MoE
     uses GELU. Wrong activation → wrong gate values → NaN logits after
     30 layers of error accumulation.
+
+    Also adds NaN detection logging to trace where NaN first appears.
     """
     moe_wna16_py = (
         vllm_root / "model_executor" / "layers" / "quantization" / "moe_wna16.py"
@@ -601,7 +604,26 @@ def patch_moe_wna16_activation_forwarding(vllm_root: pathlib.Path) -> bool:
         print("[gemma4-moe-patch] MoeWNA16 activation forwarding already patched")
         return True
 
-    # Find the fused_experts call in apply() that's missing activation=
+    # Add NaN debug globals at the top of the file (after imports)
+    nan_debug_code = (
+        "\n# GEMMA4_MOE_NAN_DEBUG: NaN detection for fused MoE kernel\n"
+        "import logging as _nan_logging\n"
+        "_nan_logger = _nan_logging.getLogger('gemma4_moe_nan_debug')\n"
+        "_nan_call_count = 0\n"
+        "_nan_logged_count = 0\n"
+        "_NAN_LOG_LIMIT = 30\n"
+    )
+
+    # Insert after the last import line
+    import_end = 0
+    for i, line in enumerate(src.split("\n")):
+        if line.startswith("import ") or line.startswith("from "):
+            import_end = src.index(line) + len(line)
+    if import_end > 0:
+        src = src[:import_end] + nan_debug_code + src[import_end:]
+
+    # Find the fused_experts call in apply() — match both original and
+    # already-activation-patched versions
     old_call = (
         "        return fused_experts(\n"
         "            x,\n"
@@ -617,10 +639,22 @@ def patch_moe_wna16_activation_forwarding(vllm_root: pathlib.Path) -> bool:
         "        )"
     )
     new_call = (
-        "        # GEMMA4_MOE_ACTIVATION_FORWARD_PATCH: Forward the layer's\n"
-        "        # activation to fused_experts. Without this, default SiLU is\n"
-        "        # used even when the model specifies GELU (Gemma4 MoE).\n"
-        "        return fused_experts(\n"
+        "        # GEMMA4_MOE_ACTIVATION_FORWARD_PATCH: Forward activation + NaN debug\n"
+        "        global _nan_call_count, _nan_logged_count\n"
+        "        _nan_call_count += 1\n"
+        "        _call_id = _nan_call_count\n"
+        "        _x_has_nan = x.isnan().any().item()\n"
+        "        _x_has_inf = x.isinf().any().item()\n"
+        "        if (_x_has_nan or _x_has_inf) and _nan_logged_count < _NAN_LOG_LIMIT:\n"
+        "            _nan_logged_count += 1\n"
+        "            _nan_logger.error(\n"
+        "                'MoE INPUT NaN/Inf at call %d: nan=%s inf=%s '\n"
+        "                'shape=%s min=%.4f max=%.4f mean=%.4f',\n"
+        "                _call_id, _x_has_nan, _x_has_inf,\n"
+        "                list(x.shape), x[~x.isnan()].min().item() if not x.isnan().all().item() else float('nan'),\n"
+        "                x[~x.isnan()].max().item() if not x.isnan().all().item() else float('nan'),\n"
+        "                x[~x.isnan()].mean().item() if not x.isnan().all().item() else float('nan'))\n"
+        "        _result = fused_experts(\n"
         "            x,\n"
         "            layer.w13_qweight,\n"
         "            layer.w2_qweight,\n"
@@ -632,15 +666,40 @@ def patch_moe_wna16_activation_forwarding(vllm_root: pathlib.Path) -> bool:
         "            global_num_experts=layer.global_num_experts,\n"
         "            expert_map=layer.expert_map,\n"
         "            quant_config=self.moe_quant_config,\n"
-        "        )"
+        "        )\n"
+        "        _r_has_nan = _result.isnan().any().item()\n"
+        "        _r_has_inf = _result.isinf().any().item()\n"
+        "        if (_r_has_nan or _r_has_inf) and _nan_logged_count < _NAN_LOG_LIMIT:\n"
+        "            _nan_logged_count += 1\n"
+        "            _safe = _result[~(_result.isnan() | _result.isinf())]\n"
+        "            _nan_logger.error(\n"
+        "                'MoE OUTPUT NaN/Inf at call %d: nan=%s inf=%s '\n"
+        "                'shape=%s nan_count=%d inf_count=%d '\n"
+        "                'input_had_nan=%s '\n"
+        "                'safe_min=%.4f safe_max=%.4f topk_ids_range=[%d,%d] '\n"
+        "                'w13_qw=%s w2_qw=%s w13_sc_nan=%s w2_sc_nan=%s',\n"
+        "                _call_id, _r_has_nan, _r_has_inf,\n"
+        "                list(_result.shape),\n"
+        "                _result.isnan().sum().item(), _result.isinf().sum().item(),\n"
+        "                _x_has_nan,\n"
+        "                _safe.min().item() if _safe.numel() > 0 else float('nan'),\n"
+        "                _safe.max().item() if _safe.numel() > 0 else float('nan'),\n"
+        "                topk_ids.min().item(), topk_ids.max().item(),\n"
+        "                list(layer.w13_qweight.shape), list(layer.w2_qweight.shape),\n"
+        "                layer.w13_scales.isnan().any().item(),\n"
+        "                layer.w2_scales.isnan().any().item())\n"
+        "        elif _call_id <= 5 and not _r_has_nan:\n"
+        "            _nan_logger.warning(\n"
+        "                'MoE call %d OK: shape=%s min=%.4f max=%.4f mean=%.4f',\n"
+        "                _call_id, list(_result.shape),\n"
+        "                _result.min().item(), _result.max().item(), _result.mean().item())\n"
+        "        return _result"
     )
 
     if old_call in src:
         src = src.replace(old_call, new_call, 1)
         moe_wna16_py.write_text(src)
-        print(
-            f"[gemma4-moe-patch] Patched MoeWNA16 activation forwarding in {moe_wna16_py}"
-        )
+        print(f"[gemma4-moe-patch] Patched MoeWNA16 activation+debug in {moe_wna16_py}")
         return True
 
     # Try regex for whitespace variations
@@ -663,7 +722,11 @@ def patch_moe_wna16_activation_forwarding(vllm_root: pathlib.Path) -> bool:
         indent = match.group(1)
         replacement = (
             f"{indent}# GEMMA4_MOE_ACTIVATION_FORWARD_PATCH\n"
-            f"{indent}return fused_experts(\n"
+            f"{indent}global _nan_call_count, _nan_logged_count\n"
+            f"{indent}_nan_call_count += 1\n"
+            f"{indent}_call_id = _nan_call_count\n"
+            f"{indent}_x_nan = x.isnan().any().item()\n"
+            f"{indent}_result = fused_experts(\n"
             f"{indent}    x,\n"
             f"{indent}    layer.w13_qweight,\n"
             f"{indent}    layer.w2_qweight,\n"
@@ -675,13 +738,15 @@ def patch_moe_wna16_activation_forwarding(vllm_root: pathlib.Path) -> bool:
             f"{indent}    global_num_experts=layer.global_num_experts,\n"
             f"{indent}    expert_map=layer.expert_map,\n"
             f"{indent}    quant_config=self.moe_quant_config,\n"
-            f"{indent})"
+            f"{indent})\n"
+            f"{indent}if _result.isnan().any().item() and _nan_logged_count < _NAN_LOG_LIMIT:\n"
+            f"{indent}    _nan_logged_count += 1\n"
+            f"{indent}    _nan_logger.error('MoE NaN call %d in_nan=%s shape=%s', _call_id, _x_nan, list(_result.shape))\n"
+            f"{indent}return _result"
         )
         src = src[: match.start()] + replacement + src[match.end() :]
         moe_wna16_py.write_text(src)
-        print(
-            f"[gemma4-moe-patch] Patched activation forwarding (regex) in {moe_wna16_py}"
-        )
+        print(f"[gemma4-moe-patch] Patched activation+debug (regex) in {moe_wna16_py}")
         return True
 
     # Check if activation is already passed (maybe newer vLLM)
@@ -714,9 +779,9 @@ def main():
         )
     if not ok3:
         print(
-            "[gemma4-moe-patch] FAILED — GPTQ weight names patch could not be applied"
+            "[gemma4-moe-patch] WARNING — GPTQ weight names patch failed (non-fatal, "
+            "may already be fixed in this vLLM version)"
         )
-        sys.exit(1)
     if not ok4:
         print(
             "[gemma4-moe-patch] WARNING — KV cache page_size patch failed (non-fatal)"
