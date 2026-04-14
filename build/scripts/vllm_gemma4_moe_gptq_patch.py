@@ -761,20 +761,18 @@ def patch_moe_wna16_activation_forwarding(vllm_root: pathlib.Path) -> bool:
 
 
 def patch_gemma4_mlp_fp16_clamp(vllm_root: pathlib.Path) -> bool:
-    """Clamp pre_feedforward_layernorm output to prevent FP16 MLP overflow.
+    """Upcast dense MLP computation to float32 to prevent FP16 overflow.
 
     Root cause: Gemma4's pre_feedforward_layernorm weights reach abs_max=234,
     amplifying MLP inputs. The gate_proj/up_proj matmul accumulates 2816 terms
     in FP16 (max 65504). Layer 25 MLP output: 58208 (barely under limit).
-    Layer 26: Inf → NaN cascade through layers 27-29.
+    Layer 26: Inf → NaN cascade. Previous nan_to_num(Inf→65000) "fix" caused
+    RMSNorm to crush all other hidden state dimensions, destroying information.
 
-    vLLM GPTQ only supports dtype=float16, and ROCm's rocm_unquantized_gemm
-    requires matching dtypes (can't pass float32 input with float16 weights).
-
-    Fix: clamp the norm output to ±200 before MLP. This only affects the top
-    ~15% of extreme norm weight amplification (234 → 200) while keeping the
-    MLP accumulation safely within FP16 range (~46K, well under 65504).
-    The clamp only affects the dense MLP path; MoE uses a separate norm.
+    Fix: compute the dense MLP in float32 using F.linear directly. Float32
+    max is 3.4e38, so no overflow. Uses standard PyTorch ops (no ROCm custom
+    kernels). The dense MLP weights are unquantized FP16, cast to float32
+    for computation, result cast back to model dtype.
     """
     gemma4_py = vllm_root / "model_executor" / "models" / "gemma4.py"
     if not gemma4_py.exists():
@@ -784,29 +782,37 @@ def patch_gemma4_mlp_fp16_clamp(vllm_root: pathlib.Path) -> bool:
     src = gemma4_py.read_text()
 
     if "GEMMA4_MLP_FP16_CLAMP" in src:
-        print("[gemma4-moe-patch] MLP fp16 clamp already patched")
+        print("[gemma4-moe-patch] MLP fp16 upcast already patched")
         return True
+
+    # Float32 MLP replacement: bypasses vLLM's rocm_unquantized_gemm and
+    # computes gate_up_proj → GeluAndMul → down_proj in float32.
+    f32_mlp_code = (
+        "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
+        "        # GEMMA4_MLP_FP16_CLAMP: Compute dense MLP in float32 to prevent\n"
+        "        # FP16 overflow at layers with large layernorm weights (abs_max=234).\n"
+        "        # Layer 26 MLP output exceeds FP16 max (65504) → Inf → NaN cascade.\n"
+        "        # Float32 computation eliminates the overflow entirely.\n"
+        "        import torch as _t\n"
+        "        import torch.nn.functional as _F\n"
+        "        _mlp_orig_dtype = hidden_states.dtype\n"
+        "        _mlp_x = hidden_states.float()\n"
+        "        _mlp_gate_up = _F.linear(_mlp_x, self.mlp.gate_up_proj.weight.float())\n"
+        "        _mlp_g, _mlp_u = _mlp_gate_up.chunk(2, dim=-1)\n"
+        "        _mlp_x = _F.gelu(_mlp_g, approximate='tanh') * _mlp_u\n"
+        "        hidden_states = _F.linear(_mlp_x, self.mlp.down_proj.weight.float())\n"
+        "        hidden_states = hidden_states.to(_mlp_orig_dtype)"
+    )
 
     old_mlp = (
         "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
         "        hidden_states = self.mlp(hidden_states)"
     )
-    new_mlp = (
-        "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
-        "        # GEMMA4_MLP_FP16_CLAMP: pre_feedforward_layernorm weights reach\n"
-        "        # abs_max=234, causing FP16 matmul overflow at layer 26. Layer 25\n"
-        "        # MLP output is ~58K (barely under 65504). The overflow is marginal.\n"
-        "        # nan_to_num replaces Inf→65000, preserving the signal direction.\n"
-        "        # post_feedforward_layernorm then normalizes the magnitude.\n"
-        "        import torch as _t\n"
-        "        hidden_states = self.mlp(hidden_states)\n"
-        "        hidden_states = _t.nan_to_num(hidden_states, nan=0.0, posinf=65000.0, neginf=-65000.0)"
-    )
 
     if old_mlp in src:
-        src = src.replace(old_mlp, new_mlp, 1)
+        src = src.replace(old_mlp, f32_mlp_code, 1)
         gemma4_py.write_text(src)
-        print(f"[gemma4-moe-patch] Applied MLP fp16 clamp to {gemma4_py}")
+        print(f"[gemma4-moe-patch] Applied MLP float32 upcast to {gemma4_py}")
         return True
 
     # Regex fallback for whitespace variations
@@ -819,14 +825,20 @@ def patch_gemma4_mlp_fp16_clamp(vllm_root: pathlib.Path) -> bool:
         indent = match.group(1)
         replacement = (
             f"{indent}hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
-            f"{indent}# GEMMA4_MLP_FP16_CLAMP: prevent FP16 matmul overflow\n"
+            f"{indent}# GEMMA4_MLP_FP16_CLAMP: Float32 MLP to prevent FP16 overflow\n"
             f"{indent}import torch as _t\n"
-            f"{indent}hidden_states = self.mlp(hidden_states)\n"
-            f"{indent}hidden_states = _t.nan_to_num(hidden_states, nan=0.0, posinf=65000.0, neginf=-65000.0)"
+            f"{indent}import torch.nn.functional as _F\n"
+            f"{indent}_mlp_orig_dtype = hidden_states.dtype\n"
+            f"{indent}_mlp_x = hidden_states.float()\n"
+            f"{indent}_mlp_gate_up = _F.linear(_mlp_x, self.mlp.gate_up_proj.weight.float())\n"
+            f"{indent}_mlp_g, _mlp_u = _mlp_gate_up.chunk(2, dim=-1)\n"
+            f"{indent}_mlp_x = _F.gelu(_mlp_g, approximate='tanh') * _mlp_u\n"
+            f"{indent}hidden_states = _F.linear(_mlp_x, self.mlp.down_proj.weight.float())\n"
+            f"{indent}hidden_states = hidden_states.to(_mlp_orig_dtype)"
         )
         src = src[: match.start()] + replacement + src[match.end() :]
         gemma4_py.write_text(src)
-        print(f"[gemma4-moe-patch] Applied MLP fp16 clamp (regex) to {gemma4_py}")
+        print(f"[gemma4-moe-patch] Applied MLP float32 upcast (regex) to {gemma4_py}")
         return True
 
     print("[gemma4-moe-patch] WARNING: Could not find MLP call pattern")
@@ -882,16 +894,12 @@ def patch_gemma4_decoder_layer_debug(vllm_root: pathlib.Path) -> bool:
         src = src.replace(old_attn_residual, new_attn_residual, 1)
         patched = True
 
-    # Patch: after MLP (with clamp+nan_to_num already applied), log
-    # Match the clamped version from patch_gemma4_mlp_fp16_clamp
-    old_mlp_clamped = (
-        "        hidden_states = self.mlp(hidden_states)\n"
-        "        hidden_states = _t.nan_to_num(hidden_states, nan=0.0, posinf=65000.0, neginf=-65000.0)"
-    )
-    new_mlp_clamped = (
-        "        hidden_states = self.mlp(hidden_states)\n"
-        "        hidden_states = _t.nan_to_num(hidden_states, nan=0.0, posinf=65000.0, neginf=-65000.0)\n"
-        "        # GEMMA4_DECODER_LAYER_DEBUG_PATCH: log MLP output\n"
+    # Patch: after MLP (float32 upcast version from patch_gemma4_mlp_fp16_clamp)
+    # Match the f32 upcast output: "hidden_states = hidden_states.to(_mlp_orig_dtype)"
+    old_mlp_f32 = "        hidden_states = hidden_states.to(_mlp_orig_dtype)"
+    new_mlp_f32 = (
+        "        hidden_states = hidden_states.to(_mlp_orig_dtype)\n"
+        "        # GEMMA4_DECODER_LAYER_DEBUG_PATCH: log MLP output (f32 upcast)\n"
         "        _mn = hidden_states.isnan().any().item()\n"
         "        _mi = hidden_states.isinf().any().item()\n"
         "        _mm = hidden_states.abs().max().item() if not _mn else -1\n"
@@ -900,11 +908,11 @@ def patch_gemma4_decoder_layer_debug(vllm_root: pathlib.Path) -> bool:
         "        elif self.layer_idx % 5 == 0:\n"
         "            _dbg.warning('L%d mlp_out: abs_max=%.2f', self.layer_idx, _mm)"
     )
-    # Try clamped version first, then original (in case clamp patch didn't apply)
-    if old_mlp_clamped in src:
-        src = src.replace(old_mlp_clamped, new_mlp_clamped, 1)
+    if old_mlp_f32 in src:
+        src = src.replace(old_mlp_f32, new_mlp_f32, 1)
         patched = True
     else:
+        # Fallback: try matching original unpatched MLP
         old_mlp_orig = (
             "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
             "        hidden_states = self.mlp(hidden_states)"
