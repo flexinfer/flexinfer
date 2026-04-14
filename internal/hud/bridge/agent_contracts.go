@@ -582,6 +582,7 @@ func (r HeartbeatRequest) ToRequest() (HeartbeatRequest, error) {
 func (r HeartbeatRequest) HeartbeatParams() PresenceHeartbeatParams {
 	return PresenceHeartbeatParams{
 		Status:      r.Status,
+		AgentType:   r.AgentType,
 		ActiveFiles: r.ActiveFiles,
 		CurrentTask: r.CurrentTask,
 		Branch:      r.Branch,

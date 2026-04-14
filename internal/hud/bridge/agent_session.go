@@ -181,7 +181,10 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 			if p.Description != "" {
 				presenceArgs["description"] = p.Description
 			}
-			go func() { _ = a.callAgentTool("agent_presence_register", presenceArgs, nil) }()
+			// Register presence synchronously with a short timeout.
+			// Fire-and-forget caused silent failures when the daemon transport was flaky,
+			// leaving agents invisible in the presence registry.
+			_ = a.callAgentToolTimeout("agent_presence_register", presenceArgs, nil, 2*time.Second)
 
 			result := &SessionStartResult{
 				SessionID:      existing.ID,
@@ -231,7 +234,9 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 		SessionID: sessionResult.SessionID,
 	}
 
-	// Fire-and-forget: register presence (non-critical, error already ignored).
+	// Register presence synchronously with a short timeout.
+	// Fire-and-forget caused silent failures when the daemon transport was flaky,
+	// leaving agents invisible in the presence registry.
 	presenceArgs := map[string]any{
 		"agent_id":   p.AgentID,
 		"session_id": sessionResult.SessionID,
@@ -242,7 +247,7 @@ func (a *AgentBridge) StartSession(p SessionStartParams) (*SessionStartResult, e
 	if p.Description != "" {
 		presenceArgs["description"] = p.Description
 	}
-	go func() { _ = a.callAgentTool("agent_presence_register", presenceArgs, nil) }()
+	_ = a.callAgentToolTimeout("agent_presence_register", presenceArgs, nil, 2*time.Second)
 
 	a.attachSessionStartBriefing(result, p)
 
@@ -402,6 +407,7 @@ func (a *AgentBridge) EndSession(p SessionEndParams) (bool, error) {
 // PresenceHeartbeat updates the heartbeat timestamp for an agent.
 type PresenceHeartbeatParams struct {
 	Status         string
+	AgentType      string // Forwarded to MCP for auto-registration on heartbeat
 	ActiveFiles    []string
 	CurrentTask    string
 	Branch         string
@@ -414,6 +420,9 @@ func (a *AgentBridge) PresenceHeartbeat(agentID string, p PresenceHeartbeatParam
 	}
 	if p.Status != "" {
 		args["status"] = p.Status
+	}
+	if p.AgentType != "" {
+		args["agent_type"] = p.AgentType
 	}
 	if len(p.ActiveFiles) > 0 {
 		args["active_files"] = p.ActiveFiles

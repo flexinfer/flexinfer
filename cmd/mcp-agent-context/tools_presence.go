@@ -50,13 +50,21 @@ func registerPresenceTools(server *mcp.Server, svc *agentcontext.Service, tracer
 
 	server.AddTool(mcp.Tool{
 		Name:        "agent_presence_heartbeat",
-		Description: "Send a heartbeat to keep presence alive. Returns file conflicts if active_files overlap with other agents. Recommended every 30-60 seconds. Response includes file conflicts if detected.",
+		Description: "Send a heartbeat to keep presence alive. Auto-registers agent if not yet registered (resilient to missed initial registration). Returns file conflicts if active_files overlap with other agents.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
 				"agent_id": map[string]any{
 					"type":        "string",
 					"description": "Agent identifier.",
+				},
+				"agent_type": map[string]any{
+					"type":        "string",
+					"description": "Agent type (e.g., 'claude-code', 'codex'). Used for auto-registration if agent is not yet registered.",
+				},
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Current session ID. Used for auto-registration if agent is not yet registered.",
 				},
 				"active_files": map[string]any{
 					"type":        "array",

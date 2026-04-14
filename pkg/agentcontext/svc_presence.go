@@ -99,6 +99,9 @@ func (p *PresenceSvc) Register(ctx context.Context, args map[string]any) (*mcp.C
 }
 
 // Heartbeat keeps an agent alive and updates state.
+// If the agent is not registered, it auto-registers with a minimal presence
+// entry so heartbeats never fail just because the initial registration was
+// missed (e.g. due to a flaky daemon transport).
 func (p *PresenceSvc) Heartbeat(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	agentID := v.Required("agent_id")
@@ -106,16 +109,43 @@ func (p *PresenceSvc) Heartbeat(ctx context.Context, args map[string]any) (*mcp.
 	currentTask := v.String("current_task", "")
 	branch := v.String("branch", "")
 	statusRaw := v.String("status", "")
+	agentType := v.String("agent_type", "")
+	sessionID := v.String("session_id", "")
 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
+	autoRegistered := false
 	p.mu.Lock()
 	presence, ok := p.reg[agentID]
 	if !ok {
-		p.mu.Unlock()
-		return mcp.ErrorResult(fmt.Errorf("agent %s not registered; call agent_presence_register first", agentID)), nil
+		// Auto-register: create a minimal presence entry so heartbeats
+		// succeed even when the initial registration was lost.
+		now := time.Now()
+		status := PresenceStatusActive
+		if statusRaw != "" {
+			switch PresenceStatus(statusRaw) {
+			case PresenceStatusActive, PresenceStatusIdle:
+				status = PresenceStatus(statusRaw)
+			}
+		}
+		presence = &AgentPresence{
+			ID:            GenerateID(agentID, "presence", "", now),
+			AgentID:       agentID,
+			SessionID:     sessionID,
+			Status:        status,
+			AgentType:     agentType,
+			LastHeartbeat: now,
+			HeartbeatTTL:  p.cfg.PresenceHeartbeatTTL,
+			RegisteredAt:  now,
+		}
+		if presence.HeartbeatTTL < 30 {
+			presence.HeartbeatTTL = 30
+		}
+		p.reg[agentID] = presence
+		autoRegistered = true
+		p.logger.Info("auto-registered agent on heartbeat", "agent_id", agentID, "agent_type", agentType)
 	}
 
 	presence.LastHeartbeat = time.Now()
@@ -127,7 +157,13 @@ func (p *PresenceSvc) Heartbeat(ctx context.Context, args map[string]any) (*mcp.
 	if prURL := v.String("pr_url", ""); prURL != "" {
 		presence.PRUrl = prURL
 	}
-	if statusRaw != "" {
+	if agentType != "" && presence.AgentType == "" {
+		presence.AgentType = agentType
+	}
+	if sessionID != "" && presence.SessionID == "" {
+		presence.SessionID = sessionID
+	}
+	if statusRaw != "" && !autoRegistered {
 		switch PresenceStatus(statusRaw) {
 		case PresenceStatusActive, PresenceStatusIdle:
 			presence.Status = PresenceStatus(statusRaw)
@@ -147,6 +183,9 @@ func (p *PresenceSvc) Heartbeat(ctx context.Context, args map[string]any) (*mcp.
 		"ok":             true,
 		"agent_id":       agentID,
 		"last_heartbeat": presence.LastHeartbeat.Format(time.RFC3339),
+	}
+	if autoRegistered {
+		result["auto_registered"] = true
 	}
 
 	if err := p.persist(ctx, presence); err != nil {

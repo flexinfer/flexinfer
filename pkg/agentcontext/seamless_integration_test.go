@@ -3,6 +3,8 @@ package agentcontext
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -603,5 +605,143 @@ func TestTierRank(t *testing.T) {
 	}
 	if shortTerm >= longTerm {
 		t.Errorf("expected short-term (%d) < long-term (%d)", shortTerm, longTerm)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Presence Reliability: auto-register on heartbeat
+// ---------------------------------------------------------------------------
+
+func newTestPresenceSvc(t *testing.T) *PresenceSvc {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	return NewPresenceSvc(nil, Config{PresenceHeartbeatTTL: 120}, logger, nil)
+}
+
+func TestPresenceHeartbeat_AutoRegistersUnknownAgent(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestPresenceSvc(t)
+
+	// Heartbeat for an unregistered agent should auto-register instead of failing.
+	result, err := svc.Heartbeat(context.Background(), map[string]any{
+		"agent_id":   "auto-reg-test",
+		"agent_type": "claude-code",
+		"status":     "active",
+	})
+	if err != nil {
+		t.Fatalf("Heartbeat returned unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.IsError {
+		t.Errorf("expected success, got error: %s", result.Content[0].Text)
+	}
+
+	// Verify the agent is now registered.
+	presence := svc.Get("auto-reg-test")
+	if presence == nil {
+		t.Fatal("expected agent to be auto-registered after heartbeat")
+	}
+	if presence.AgentType != "claude-code" {
+		t.Errorf("expected agent_type 'claude-code', got %q", presence.AgentType)
+	}
+	if presence.Status != PresenceStatusActive {
+		t.Errorf("expected status 'active', got %q", presence.Status)
+	}
+}
+
+func TestPresenceHeartbeat_AutoRegisteredFlag(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestPresenceSvc(t)
+
+	// Heartbeat for an unregistered agent should include auto_registered=true.
+	result, err := svc.Heartbeat(context.Background(), map[string]any{
+		"agent_id": "flag-test",
+		"status":   "active",
+	})
+	if err != nil {
+		t.Fatalf("Heartbeat returned unexpected error: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatal("expected success result")
+	}
+
+	// Check auto_registered flag in result text (may be YAML or JSON formatted).
+	resultText := result.Content[0].Text
+	if !strings.Contains(resultText, "auto_registered") {
+		t.Errorf("expected auto_registered in result, got: %s", resultText)
+	}
+	if !strings.Contains(resultText, "true") {
+		t.Errorf("expected auto_registered=true in result, got: %s", resultText)
+	}
+}
+
+func TestPresenceHeartbeat_PreRegisteredAgent_NoAutoRegister(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestPresenceSvc(t)
+
+	// Register the agent first.
+	_, err := svc.Register(context.Background(), map[string]any{
+		"agent_id":   "pre-reg-test",
+		"agent_type": "codex",
+	})
+	if err != nil {
+		t.Fatalf("Register returned unexpected error: %v", err)
+	}
+
+	// Heartbeat for a registered agent should succeed without auto-register.
+	result, err := svc.Heartbeat(context.Background(), map[string]any{
+		"agent_id": "pre-reg-test",
+		"status":   "active",
+	})
+	if err != nil {
+		t.Fatalf("Heartbeat returned unexpected error: %v", err)
+	}
+	if result == nil || result.IsError {
+		t.Fatal("expected success result")
+	}
+
+	// Should NOT contain auto_registered flag.
+	resultText := result.Content[0].Text
+	if strings.Contains(resultText, "auto_registered") {
+		t.Errorf("expected no auto_registered flag for pre-registered agent, got: %s", resultText)
+	}
+}
+
+func TestPresenceHeartbeat_AutoRegisterUpdatesTypeOnExisting(t *testing.T) {
+	t.Parallel()
+
+	svc := newTestPresenceSvc(t)
+
+	// Register without agent_type.
+	_, _ = svc.Register(context.Background(), map[string]any{
+		"agent_id": "type-update-test",
+	})
+
+	presence := svc.Get("type-update-test")
+	if presence == nil {
+		t.Fatal("expected agent to be registered")
+	}
+	if presence.AgentType != "" {
+		t.Errorf("expected empty agent_type initially, got %q", presence.AgentType)
+	}
+
+	// Heartbeat with agent_type should backfill the type on existing presence.
+	_, err := svc.Heartbeat(context.Background(), map[string]any{
+		"agent_id":   "type-update-test",
+		"agent_type": "gemini",
+		"status":     "active",
+	})
+	if err != nil {
+		t.Fatalf("Heartbeat returned error: %v", err)
+	}
+
+	presence = svc.Get("type-update-test")
+	if presence.AgentType != "gemini" {
+		t.Errorf("expected agent_type 'gemini' after backfill, got %q", presence.AgentType)
 	}
 }
