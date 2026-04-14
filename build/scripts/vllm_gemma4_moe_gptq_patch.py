@@ -760,6 +760,145 @@ def patch_moe_wna16_activation_forwarding(vllm_root: pathlib.Path) -> bool:
     return False
 
 
+def patch_gemma4_decoder_layer_debug(vllm_root: pathlib.Path) -> bool:
+    """Add NaN debug logging to Gemma4DecoderLayer.forward.
+
+    Instruments each stage: attention output, MLP output, MoE output,
+    combined output, and final layer output. Logs min/max/nan at each
+    stage to trace exactly where NaN first appears.
+    """
+    gemma4_py = vllm_root / "model_executor" / "models" / "gemma4.py"
+    if not gemma4_py.exists():
+        print(f"[gemma4-moe-patch] SKIP: {gemma4_py} not found")
+        return False
+
+    src = gemma4_py.read_text()
+
+    if "GEMMA4_DECODER_LAYER_DEBUG_PATCH" in src:
+        print("[gemma4-moe-patch] Decoder layer debug already patched")
+        return True
+
+    # Add debug globals after imports
+    debug_code = (
+        "\n# GEMMA4_DECODER_LAYER_DEBUG_PATCH\n"
+        "import logging as _dl_logging\n"
+        "_dl_logger = _dl_logging.getLogger('gemma4_layer_debug')\n"
+        "_dl_call_count = 0\n"
+        "_dl_nan_found = False\n"
+        "_DL_LOG_LIMIT = 60\n"
+        "_dl_logged = 0\n"
+        "\n"
+        "def _dl_stats(t, name):\n"
+        "    has_nan = t.isnan().any().item()\n"
+        "    has_inf = t.isinf().any().item()\n"
+        "    if has_nan or has_inf:\n"
+        "        safe = t[~(t.isnan() | t.isinf())]\n"
+        "        return (f'{name}: NaN={has_nan} Inf={has_inf} '\n"
+        "                f'nan_count={t.isnan().sum().item()} '\n"
+        "                f'safe_range=[{safe.min().item():.4f},{safe.max().item():.4f}]' if safe.numel() > 0 else f'{name}: ALL_NAN')\n"
+        "    return f'{name}: [{t.min().item():.4f},{t.max().item():.4f}] abs_max={t.abs().max().item():.4f}'\n"
+        "\n"
+    )
+
+    # Insert after imports
+    import_end = 0
+    for line in src.split("\n"):
+        if line.startswith("import ") or line.startswith("from "):
+            idx = src.index(line)
+            if idx + len(line) > import_end:
+                import_end = idx + len(line)
+    if import_end > 0:
+        src = src[:import_end] + debug_code + src[import_end:]
+
+    # Now patch the forward method body. We need to add logging after
+    # each key computation in Gemma4DecoderLayer.forward.
+    # Target: the post_attention_layernorm + residual section
+
+    old_attn_residual = (
+        "        hidden_states = self.post_attention_layernorm(hidden_states)\n"
+        "        hidden_states = hidden_states + residual\n"
+        "        residual = hidden_states"
+    )
+    new_attn_residual = (
+        "        hidden_states = self.post_attention_layernorm(hidden_states)\n"
+        "        hidden_states = hidden_states + residual\n"
+        "        residual = hidden_states\n"
+        "        # GEMMA4_DECODER_LAYER_DEBUG_PATCH: log after attention+residual\n"
+        "        global _dl_call_count, _dl_nan_found, _dl_logged\n"
+        "        _dl_call_count += 1\n"
+        "        _dl_cid = _dl_call_count\n"
+        "        _dl_layer = self.layer_idx\n"
+        "        _dl_hs_nan = hidden_states.isnan().any().item()\n"
+        "        if _dl_hs_nan and not _dl_nan_found:\n"
+        "            _dl_nan_found = True\n"
+        "            _dl_logger.error('FIRST NaN at layer %d (call %d) AFTER ATTENTION+RESIDUAL: %s',\n"
+        "                _dl_layer, _dl_cid, _dl_stats(hidden_states, 'attn_res'))"
+    )
+
+    if old_attn_residual in src:
+        src = src.replace(old_attn_residual, new_attn_residual, 1)
+    else:
+        print("[gemma4-moe-patch] WARNING: Could not find attention+residual pattern")
+
+    # After MLP
+    old_mlp = (
+        "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
+        "        hidden_states = self.mlp(hidden_states)"
+    )
+    new_mlp = (
+        "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
+        "        hidden_states = self.mlp(hidden_states)\n"
+        "        # GEMMA4_DECODER_LAYER_DEBUG_PATCH: log after MLP\n"
+        "        _dl_mlp_nan = hidden_states.isnan().any().item()\n"
+        "        if (_dl_mlp_nan or (_dl_logged < _DL_LOG_LIMIT and _dl_layer < 2)) and _dl_logged < _DL_LOG_LIMIT:\n"
+        "            _dl_logged += 1\n"
+        "            _dl_logger.warning('Layer %d MLP out: %s', _dl_layer, _dl_stats(hidden_states, 'mlp'))\n"
+        "        if _dl_mlp_nan and not _dl_nan_found:\n"
+        "            _dl_nan_found = True\n"
+        "            _dl_logger.error('FIRST NaN at layer %d (call %d) AFTER MLP', _dl_layer, _dl_cid)"
+    )
+    if old_mlp in src:
+        src = src.replace(old_mlp, new_mlp, 1)
+
+    # After combined MLP+MoE and final residual
+    old_final = (
+        "        hidden_states = self.post_feedforward_layernorm(hidden_states)\n"
+        "        hidden_states = hidden_states + residual"
+    )
+    new_final = (
+        "        hidden_states = self.post_feedforward_layernorm(hidden_states)\n"
+        "        hidden_states = hidden_states + residual\n"
+        "        # GEMMA4_DECODER_LAYER_DEBUG_PATCH: log after FF+residual\n"
+        "        _dl_ff_nan = hidden_states.isnan().any().item()\n"
+        "        if _dl_ff_nan and _dl_logged < _DL_LOG_LIMIT:\n"
+        "            _dl_logged += 1\n"
+        "            _dl_logger.error('Layer %d AFTER FF+RESIDUAL: %s', _dl_layer, _dl_stats(hidden_states, 'ff_res'))\n"
+        "        elif _dl_logged < _DL_LOG_LIMIT and _dl_layer < 2:\n"
+        "            _dl_logged += 1\n"
+        "            _dl_logger.warning('Layer %d ff+residual: %s', _dl_layer, _dl_stats(hidden_states, 'ff_res'))"
+    )
+    if old_final in src:
+        src = src.replace(old_final, new_final, 1)
+
+    # After layer_scalar
+    old_scalar = "        hidden_states = hidden_states * self.layer_scalar"
+    new_scalar = (
+        "        hidden_states = hidden_states * self.layer_scalar\n"
+        "        # GEMMA4_DECODER_LAYER_DEBUG_PATCH: log layer output\n"
+        "        _dl_out_nan = hidden_states.isnan().any().item()\n"
+        "        if (_dl_out_nan or _dl_layer < 2) and _dl_logged < _DL_LOG_LIMIT:\n"
+        "            _dl_logged += 1\n"
+        "            _dl_logger.warning('Layer %d OUTPUT (scalar=%.4f): %s',\n"
+        "                _dl_layer, self.layer_scalar.item(), _dl_stats(hidden_states, 'out'))"
+    )
+    if old_scalar in src:
+        src = src.replace(old_scalar, new_scalar, 1)
+
+    gemma4_py.write_text(src)
+    print(f"[gemma4-moe-patch] Applied decoder layer debug to {gemma4_py}")
+    return True
+
+
 def main():
     vllm_root = find_vllm_root()
     print(f"[gemma4-moe-patch] vLLM root: {vllm_root}")
@@ -769,6 +908,7 @@ def main():
     ok3 = patch_gemma4_moe_gptq_weight_names(vllm_root)
     ok4 = patch_kv_cache_page_size_uniform_type(vllm_root)
     ok5 = patch_moe_wna16_activation_forwarding(vllm_root)
+    ok6 = patch_gemma4_decoder_layer_debug(vllm_root)
 
     if not ok1:
         print("[gemma4-moe-patch] FAILED — GPTQConfig patch could not be applied")
@@ -789,6 +929,10 @@ def main():
     if not ok5:
         print("[gemma4-moe-patch] FAILED — MoeWNA16 activation forwarding patch failed")
         sys.exit(1)
+    if not ok6:
+        print(
+            "[gemma4-moe-patch] WARNING — Decoder layer debug patch failed (non-fatal)"
+        )
 
     print("[gemma4-moe-patch] All patches applied successfully")
 
