@@ -47,12 +47,13 @@ const (
 type StepType string
 
 const (
-	StepTypeTool      StepType = "tool"       // Execute an MCP tool
-	StepTypeApproval  StepType = "approval"   // Wait for human approval
-	StepTypeGate      StepType = "gate"       // Conditional gate
-	StepTypeParallel  StepType = "parallel"   // Execute steps in parallel
-	StepTypeSubflow   StepType = "subflow"    // Execute a nested workflow
-	StepTypeMapReduce StepType = "map_reduce" // Fan-out map + optional reduce
+	StepTypeTool       StepType = "tool"        // Execute an MCP tool
+	StepTypeApproval   StepType = "approval"    // Wait for human approval
+	StepTypeAutoVerify StepType = "auto_verify" // Run automated verification and fail on red
+	StepTypeGate       StepType = "gate"        // Conditional gate
+	StepTypeParallel   StepType = "parallel"    // Execute steps in parallel
+	StepTypeSubflow    StepType = "subflow"     // Execute a nested workflow
+	StepTypeMapReduce  StepType = "map_reduce"  // Fan-out map + optional reduce
 )
 
 // WorkflowStep represents a single step in a workflow

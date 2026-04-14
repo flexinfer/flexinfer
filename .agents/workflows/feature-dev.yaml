@@ -84,17 +84,17 @@ steps:
       agent_id: "${input.agent_id}"
     depends_on: [apply-changes]
 
-  - id: test
-    name: "Run Tests"
-    step_type: approval
-    approval_message: "Sandbox tests complete. All tests passing?"
+  - id: auto-verify
+    name: "Automated Verification"
+    step_type: auto_verify
+    tool_args:
+      project: "${input.project}"
+      agent_id: "${input.agent_id}"
+      checks: ["fmt", "lint", "test", "diff"]
+      fail_fast: true
+    max_retries: 2
+    retry_delay_ms: 1000
     depends_on: [sandbox-test]
-
-  - id: precommit
-    name: "Pre-commit Checks"
-    step_type: approval
-    approval_message: "Tests pass. Lint, fmt, and pre-commit hooks clean?"
-    depends_on: [test]
 
   - id: commit
     name: "Commit Changes"
@@ -104,10 +104,10 @@ steps:
     tool_args:
       session_id: "${init.session_id}"
       entries:
-        - entry_type: "milestone"
+        - entry_type: "note"
           title: "Changes committed"
           content: "Committed scoped changes with conventional format"
-    depends_on: [precommit]
+    depends_on: [auto-verify]
 
   - id: push
     name: "Push & Check CI"
@@ -117,7 +117,7 @@ steps:
     tool_args:
       session_id: "${init.session_id}"
       entries:
-        - entry_type: "milestone"
+        - entry_type: "note"
           title: "Pushed and CI verified"
           content: "Pushed branch to remote and verified CI pipeline"
     depends_on: [commit]

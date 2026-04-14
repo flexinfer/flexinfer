@@ -173,6 +173,45 @@ func TestQualityGate_CustomChecks(t *testing.T) {
 	}
 }
 
+func TestQualityGate_DiffCheckAndStringChecks(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+	fb := &qgFakeBackend{
+		fakeBackend: fakeBackend{statuses: map[string]*fakeStatus{}},
+		commandResults: map[string]*backend.ExecResult{
+			"git diff --exit-code": {ExitCode: 1, StdoutTail: "generated files drifted"},
+		},
+	}
+	mgr := newQGTestManager(t, fb, "go")
+
+	result, err := mgr.handleQualityGate(context.Background(), map[string]any{
+		"project": "test-project",
+		"checks":  []string{"diff"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var qr qualityGateResult
+	if len(result.Content) > 0 {
+		if err := json.Unmarshal([]byte(result.Content[0].Text), &qr); err != nil {
+			t.Fatalf("unmarshal result: %v", err)
+		}
+	}
+
+	if qr.Passed {
+		t.Fatal("expected diff check to fail")
+	}
+	if len(qr.Checks) != 1 {
+		t.Fatalf("expected 1 check, got %d", len(qr.Checks))
+	}
+	if qr.Checks[0].Name != "diff" {
+		t.Fatalf("check name = %q, want diff", qr.Checks[0].Name)
+	}
+	if qr.Checks[0].OutputTail != "generated files drifted" {
+		t.Fatalf("output tail = %q, want diff failure output", qr.Checks[0].OutputTail)
+	}
+}
+
 func TestTruncateOutput(t *testing.T) {
 	t.Parallel()
 

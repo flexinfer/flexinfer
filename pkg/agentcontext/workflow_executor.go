@@ -4,6 +4,7 @@ package agentcontext
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -193,6 +194,8 @@ func (e *WorkflowEngine) executeStep(ctx context.Context, wf *Workflow, stepID s
 	switch step.StepType {
 	case StepTypeTool:
 		result, err = e.executeToolStep(ctx, wf, step)
+	case StepTypeAutoVerify:
+		result, err = e.executeAutoVerifyStep(ctx, wf, step)
 	case StepTypeGate:
 		result, err = e.executeGateStep(wf, step)
 	case StepTypeParallel:
@@ -325,6 +328,51 @@ func (e *WorkflowEngine) executeToolStep(ctx context.Context, wf *Workflow, step
 	}
 
 	return e.toolExecutor(ctx, step.ServerName, step.ToolName, args)
+}
+
+// executeAutoVerifyStep runs the standard automated verification gate and turns
+// a red result into a retryable workflow error.
+func (e *WorkflowEngine) executeAutoVerifyStep(ctx context.Context, wf *Workflow, step *WorkflowStep) (map[string]any, error) {
+	serverName := step.ServerName
+	if serverName == "" {
+		serverName = "devbox"
+	}
+	toolName := step.ToolName
+	if toolName == "" {
+		toolName = "devbox_quality_gate"
+	}
+
+	autoStep := *step
+	autoStep.ServerName = serverName
+	autoStep.ToolName = toolName
+
+	args := autoStep.ToolArgs
+	if args == nil {
+		args = make(map[string]any)
+	}
+	if _, ok := args["fail_fast"]; !ok {
+		args["fail_fast"] = true
+	}
+	if _, ok := args["checks"]; !ok {
+		args["checks"] = []any{"fmt", "lint", "test", "diff"}
+	}
+	autoStep.ToolArgs = args
+
+	result, err := e.executeToolStep(ctx, wf, &autoStep)
+	if err != nil {
+		return nil, err
+	}
+
+	passed, ok := result["passed"].(bool)
+	if !ok {
+		return nil, fmt.Errorf("auto_verify result missing passed boolean")
+	}
+	if !passed {
+		return result, fmt.Errorf("auto_verify failed: %s", summarizeQualityGateFailure(result))
+	}
+
+	result["auto_verified"] = true
+	return result, nil
 }
 
 // executeGateStep evaluates a conditional gate. Returns {"passed": true/false}.
@@ -515,6 +563,38 @@ func (e *WorkflowEngine) executeMapReduceStep(ctx context.Context, wf *Workflow,
 	}
 
 	return map[string]any{"map_results": mapResults, "count": len(mapResults)}, nil
+}
+
+func summarizeQualityGateFailure(result map[string]any) string {
+	checks, ok := result["checks"].([]any)
+	if !ok || len(checks) == 0 {
+		return "verification gate returned passed=false"
+	}
+
+	failures := make([]string, 0, len(checks))
+	for _, raw := range checks {
+		check, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		passed, _ := check["passed"].(bool)
+		if passed {
+			continue
+		}
+
+		name, _ := check["name"].(string)
+		output, _ := check["output_tail"].(string)
+		if output != "" {
+			failures = append(failures, fmt.Sprintf("%s (%s)", name, output))
+			continue
+		}
+		failures = append(failures, name)
+	}
+
+	if len(failures) == 0 {
+		return "verification gate reported no failing checks"
+	}
+	return fmt.Sprintf("failing checks: %s", strings.Join(failures, ", "))
 }
 
 // injectItemVariable clones args, resolves step/input variables, and replaces
