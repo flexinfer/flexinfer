@@ -188,8 +188,9 @@ These address capabilities the market now expects from production MCP infrastruc
   - ✅ 2026-02-26 slice: completed `pkg/mcpotel` adoption across the remaining MCP binaries (`cmd/mcp-*/main.go` handlers traced).
   - ✅ 2026-02-26 slice: added `pkg/mcplog` `MCP_LOG_FORMAT` (`text`/`json`) plus automatic `trace_id`/`span_id` enrichment for context-aware logs.
   - ✅ 2026-03-27 slice: daemon runtime now initializes/shuts down its tracer from env/config and `loom/otel-status` reports runtime state instead of config-only intent.
+  - ✅ 2026-04-14 slice: daemon audit entries now capture stage timing breakdowns for proxied tool calls, `loom/audit-traces` / `GET /api/traces` expose recent trace summaries, and the HUD `Traces` panel surfaces recent calls with status filters and latency inspection.
   - Next: instrument tool call latency, server spawn/restart, and proxy connection lifecycle in `loomd`.
-  - Next: extend daemon/runtime export and HUD surfaces from status visibility into fuller OTel-compatible metrics parity.
+  - Next: extend the trace surface from audit-backed summaries into fuller OTel-compatible export and HUD percentile/waterfall views.
   - *Rationale: Industry standard. Positions Loom alongside (not against) Langfuse, Datadog, Splunk.*
 
 - [ ] **OpenAI Responses orchestration (experimental track)** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/63), [Plan](.loom/36-implementation-plan-openai-responses-orchestration-2026-03-04.md))

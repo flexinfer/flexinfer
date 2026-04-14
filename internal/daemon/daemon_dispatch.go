@@ -46,7 +46,7 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 		case "initialize", "notifications/initialized",
 			"loom/call", "tools/call", // pipeline handles its own nil-router errors
 			"loom/rbac-config", "loom/rbac-simulate",
-			"loom/otel-status",
+			"loom/otel-status", "loom/audit-traces",
 			"loom/session/open", "loom/session/heartbeat", "loom/session/status", "loom/session/close",
 			"loom/weaver/query", "loom/weaver/gather", "loom/weaver/status", "loom/weaver/history", "loom/weaver/metrics":
 			// These methods are safe without full daemon initialization.
@@ -96,6 +96,8 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 		resp, err = d.handleRBACSimulate(ctx, msg)
 	case "loom/otel-status":
 		resp, err = d.handleOTelStatus(ctx, msg)
+	case "loom/audit-traces":
+		resp, err = d.handleAuditTraces(ctx, msg)
 	case "loom/session/open":
 		resp, err = d.handleSessionOpen(ctx, msg)
 	case "loom/session/heartbeat":

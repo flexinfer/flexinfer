@@ -172,6 +172,126 @@ func (a *App) handleOTel(w http.ResponseWriter, _ *http.Request) {
 	a.writeJSON(w, http.StatusOK, result)
 }
 
+type traceAPIEntry struct {
+	Timestamp     string `json:"timestamp"`
+	AgentID       string `json:"agent_id,omitempty"`
+	AgentType     string `json:"agent_type,omitempty"`
+	Server        string `json:"server"`
+	Tool          string `json:"tool"`
+	Status        string `json:"status"`
+	Error         string `json:"error,omitempty"`
+	Target        string `json:"target,omitempty"`
+	Cached        bool   `json:"cached,omitempty"`
+	PipelineStage string `json:"pipeline_stage,omitempty"`
+	DurationMs    int64  `json:"duration_ms"`
+	RouteMs       int64  `json:"route_ms,omitempty"`
+	BuildMs       int64  `json:"build_ms,omitempty"`
+	ExecuteMs     int64  `json:"execute_ms,omitempty"`
+	SendMs        int64  `json:"send_ms,omitempty"`
+	RecvMs        int64  `json:"recv_ms,omitempty"`
+}
+
+func (a *App) handleTraces(w http.ResponseWriter, r *http.Request) {
+	limit := 200
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	raw, err := a.client.Call("loom/audit-traces", map[string]any{"limit": limit})
+	if err != nil {
+		a.logger.Debug("audit-traces call failed", "error", err)
+		a.writeJSON(w, http.StatusOK, map[string]any{
+			"enabled": false,
+			"limit":   limit,
+			"count":   0,
+			"summary": map[string]any{},
+			"traces":  []traceAPIEntry{},
+		})
+		return
+	}
+
+	var result struct {
+		Enabled bool            `json:"enabled"`
+		Path    string          `json:"path,omitempty"`
+		Count   int             `json:"count"`
+		Limit   int             `json:"limit"`
+		Summary json.RawMessage `json:"summary"`
+		Traces  []struct {
+			Timestamp     time.Time `json:"timestamp"`
+			AgentID       string    `json:"agent_id,omitempty"`
+			AgentType     string    `json:"agent_type,omitempty"`
+			Server        string    `json:"server"`
+			Tool          string    `json:"tool"`
+			Status        string    `json:"status"`
+			Error         string    `json:"error,omitempty"`
+			Target        string    `json:"target,omitempty"`
+			Cached        bool      `json:"cached,omitempty"`
+			PipelineStage string    `json:"pipeline_stage,omitempty"`
+			DurationMs    int64     `json:"duration_ms"`
+			RouteMs       int64     `json:"route_ms,omitempty"`
+			BuildMs       int64     `json:"build_ms,omitempty"`
+			ExecuteMs     int64     `json:"execute_ms,omitempty"`
+			SendMs        int64     `json:"send_ms,omitempty"`
+			RecvMs        int64     `json:"recv_ms,omitempty"`
+		} `json:"traces"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		a.logger.Debug("audit-traces unmarshal failed", "error", err)
+		a.writeJSON(w, http.StatusOK, map[string]any{
+			"enabled": false,
+			"limit":   limit,
+			"count":   0,
+			"summary": map[string]any{},
+			"traces":  []traceAPIEntry{},
+		})
+		return
+	}
+
+	entries := make([]traceAPIEntry, 0, len(result.Traces))
+	for _, trace := range result.Traces {
+		entries = append(entries, traceAPIEntry{
+			Timestamp:     trace.Timestamp.Format(time.RFC3339Nano),
+			AgentID:       trace.AgentID,
+			AgentType:     trace.AgentType,
+			Server:        trace.Server,
+			Tool:          trace.Tool,
+			Status:        trace.Status,
+			Error:         trace.Error,
+			Target:        trace.Target,
+			Cached:        trace.Cached,
+			PipelineStage: trace.PipelineStage,
+			DurationMs:    trace.DurationMs,
+			RouteMs:       trace.RouteMs,
+			BuildMs:       trace.BuildMs,
+			ExecuteMs:     trace.ExecuteMs,
+			SendMs:        trace.SendMs,
+			RecvMs:        trace.RecvMs,
+		})
+	}
+	if entries == nil {
+		entries = []traceAPIEntry{}
+	}
+
+	var summary map[string]any
+	if len(result.Summary) > 0 {
+		_ = json.Unmarshal(result.Summary, &summary)
+	}
+	if summary == nil {
+		summary = map[string]any{}
+	}
+
+	a.writeJSON(w, http.StatusOK, map[string]any{
+		"enabled": result.Enabled,
+		"path":    result.Path,
+		"count":   result.Count,
+		"limit":   result.Limit,
+		"summary": summary,
+		"traces":  entries,
+	})
+}
+
 func (a *App) handleTunnels(w http.ResponseWriter, _ *http.Request) {
 	raw, err := a.client.Call("loom/tunnels", nil)
 	if err != nil {

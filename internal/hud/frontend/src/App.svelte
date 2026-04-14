@@ -25,6 +25,7 @@
   import WeaverPanel from './lib/components/WeaverPanel.svelte';
   import DispatchPanel from './lib/components/DispatchPanel.svelte';
   import TimelinePanel from './lib/components/TimelinePanel.svelte';
+  import TracesPanel from './lib/components/TracesPanel.svelte';
   import EmptyState from './lib/components/shared/EmptyState.svelte';
   import CommandPalette from './lib/components/CommandPalette.svelte';
   import ConnectionBanner from './lib/components/ConnectionBanner.svelte';
@@ -285,6 +286,8 @@
                   <TimelinePanel />
                 {:else if router.subView === 'stream'}
                   <StreamPanel />
+                {:else if router.subView === 'traces'}
+                  <TracesPanel />
                 {:else if router.subView === 'presence'}
                   <PresencePanel />
                 {:else if router.subView === 'sandbox'}

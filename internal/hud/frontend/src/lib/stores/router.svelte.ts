@@ -79,6 +79,7 @@ export const views: ViewDef[] = [
     subViews: [
       { id: 'timeline', label: 'Timeline', key: 'a' },
       { id: 'stream',   label: 'Stream',   key: 'b' },
+      { id: 'traces',   label: 'Traces',   key: 'c' },
     ],
   },
   {
@@ -120,6 +121,7 @@ legacyRedirects['graph'] = { view: 'knowledge', subView: 'graph' };
 legacyRedirects['reasoning'] = { view: 'knowledge', subView: 'reasoning' };
 legacyRedirects['timeline'] = { view: 'activity', subView: 'timeline' };
 legacyRedirects['stream'] = { view: 'activity', subView: 'stream' };
+legacyRedirects['traces'] = { view: 'activity', subView: 'traces' };
 
 const DEFAULT_VIEW = 'agents';
 const DEFAULT_SUB = 'fleet';

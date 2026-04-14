@@ -36,6 +36,11 @@ type AuditEntry struct {
 	Server           string    `json:"server"`
 	Tool             string    `json:"tool"`
 	DurationMs       int64     `json:"duration_ms"`
+	RouteMs          int64     `json:"route_ms,omitempty"`
+	BuildMs          int64     `json:"build_ms,omitempty"`
+	ExecuteMs        int64     `json:"execute_ms,omitempty"`
+	SendMs           int64     `json:"send_ms,omitempty"`
+	RecvMs           int64     `json:"recv_ms,omitempty"`
 	Status           string    `json:"status"` // "success", "error", "denied"
 	Error            string    `json:"error,omitempty"`
 	Target           string    `json:"target,omitempty"` // "local" or "hub"

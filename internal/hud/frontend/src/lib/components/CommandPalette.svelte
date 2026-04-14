@@ -10,6 +10,7 @@
     { id: 'servers', label: 'Server Constellation', category: 'Panels', icon: '\u26C5' },
     { id: 'tasks', label: 'Task Command Board', category: 'Panels', icon: '\u2611' },
     { id: 'stream', label: 'Context Stream', category: 'Panels', icon: '\u21C9' },
+    { id: 'traces', label: 'Tool Call Traces', category: 'Panels', icon: '\u25A6' },
     { id: 'workflows', label: 'Workflow DAG Monitor', category: 'Panels', icon: '\u2699' },
     { id: 'feed', label: 'Knowledge Feed', category: 'Panels', icon: '\u29BE' },
     { id: 'memory', label: 'Memory Inspector', category: 'Panels', icon: '\u29BF' },
