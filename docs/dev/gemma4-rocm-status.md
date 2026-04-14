@@ -86,6 +86,63 @@ Interpretation:
 | Speculative decoding | Not started | No Gemma4 speculator path wired yet |
 | FP8-centric KV path | Not applicable on current lane | Current managed profiles use float16 KV |
 
+## Gemma4 GPTQ Pipeline Models
+
+### 26B-A4B MoE (GPTQ INT4)
+
+| Field | Value |
+|-------|-------|
+| ModelCache | `gemma4-26b-a4b-gptq` |
+| Model CR | `gemma4-26b-a4b-gptq` |
+| Source | `google/gemma-4-26B-A4B-it` |
+| Node | `cblevins-7900xtx` (gfx1100) |
+| Pipeline | Download BF16 (~27 GB) → Abliterate → GPTQ INT4 (~7-13 GB) |
+| PVC | 96 Gi (nvme-1r-gpu) |
+| Shared Group | `7900xtx-textgen` (priority 200, always-on) |
+| Aliases | `gemma4-26b`, `gemma4-26b-a4b`, `gemma4-moe` |
+
+**MoE Architecture**: 25.2B total / 3.8B active, 128 experts top-8, 30 layers (25 GDN + 5 full-attention). Full MoE GPTQ quantization produces compact INT4 output that fits 24 GB VRAM with room for 32K context.
+
+**Abliteration safety**: Only `o_proj` (shared attention output). Expert FFN weights auto-skipped. `ablitateLmHead: false` (save corruption bug).
+
+**Quantization config**: `sym=true`, `descAct=false`, `maxSamples=512` (MoE expert coverage), `timeoutSeconds=43200` (12h for 640 expert modules).
+
+### 31B Dense (GPTQ INT4)
+
+| Field | Value |
+|-------|-------|
+| ModelCache | `gemma4-31b-gptq` |
+| Source | `google/gemma-4-31B-it` |
+| Node | `cblevins-radeonvii` (gfx906, 128 GB RAM) |
+| Pipeline | Download BF16 (~61 GB) → Abliterate → GPTQ INT4 (~16 GB) |
+| PVC | 120 Gi (nvme-1r-gpu) |
+| Status | In progress (abliteration complete, quantization pending) |
+
+**Dense Architecture**: 30.7B params, 60 layers (50 GDN + 10 full-attention). Requires 128 GB RAM node for abliteration + save overhead.
+
+**Abliteration**: Both `o_proj` and `down_proj` (safe for dense models, no MoE experts). `maxMemoryGB=96`.
+
+**Quantization config**: `maxMemoryGB=96`, `maxSamples=256` (no MoE), `timeoutSeconds=28800` (8h).
+
+### GPTQ Performance on ROCm
+
+| Model | Decode tok/s | Prompt tok/s | VRAM | Context |
+|-------|-------------|-------------|------|---------|
+| 26B-A4B MoE INT4 | ~72 | ~1800 | ~13 GB | 32K |
+| 31B Dense INT4 | TBD | TBD | ~16 GB | 4K-8K |
+
+ExLlama v2 kernels (HIP-compiled) with `sym=true` achieve 7x faster decode than AWQ on gfx1100.
+
+## Deployment Reliability (2026-04-13)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| GPUProfile watch | Working | Controller watches GPUProfile CRs; image changes trigger reconciliation |
+| Image drift detection | Working | Stale running jobs auto-deleted on GPUProfile image update |
+| Script version marker | Working | `FLEXINFER_SCRIPT_VERSION=v7` checked at job startup |
+| Deploy automation | Working | `make deploy-quantizer QUANTIZER_ARCH=gfx1100` |
+| Spec hash with image | Working | `quantSpecHashWithImage()` includes resolved image in hash |
+
 ## Next tuning queue
 
 1. Raise `gemma4-e4b-long` `maxNumBatchedTokens` conservatively and remeasure.
@@ -94,3 +151,5 @@ Interpretation:
    JSON artifacts per run.
 4. Inspect TurboQuant prefill behavior around paged decompress fallback rather
    than continuing blind manifest tuning.
+5. Benchmark 26B-A4B MoE GPTQ INT4 against E4B GGUF for latency/throughput comparison.
+6. Benchmark 31B Dense GPTQ INT4 on radeonvii once quantization completes.

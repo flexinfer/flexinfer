@@ -31,6 +31,8 @@ sections:
         path: user/caching.md
       - title: Quantization Pipelines
         path: user/quantization.md
+      - title: Abliteration Pipeline
+        path: user/abliteration.md
       - title: Operations
         path: user/operations.md
 

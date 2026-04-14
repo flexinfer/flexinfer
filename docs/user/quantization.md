@@ -260,11 +260,179 @@ The controller selects the quantizer image based on the target GPU architecture:
 
 Override with env vars: `FLEXINFER_QUANTIZER_GPTQ_ROCM_GFX906_IMAGE`, `FLEXINFER_QUANTIZER_GPTQ_ROCM_IMAGE`, or `FLEXINFER_QUANTIZER_GPTQ_IMAGE`.
 
+## Full Pipeline: Download → Abliterate → Quantize → Ready
+
+For models that need refusal-direction removal before quantization (e.g. Gemma4, Qwen3.5), the `ModelCache` pipeline executes ordered phases with strict guards:
+
+```
+Pending → Download → Abliterate → Quantize → Publishing → Ready
+```
+
+Each phase blocks until its predecessor reaches `Ready`. Configure the full pipeline in a single `ModelCache`:
+
+```yaml
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: gemma4-26b-a4b-gptq
+  namespace: flexinfer-system
+spec:
+  source: "google/gemma-4-26B-A4B-it"
+  storageStrategy: SharedPVC
+  storageSize: "96Gi"
+  secretRef: "hf-token"
+  nodeSelector:
+    flexinfer.ai/gpu.arch: gfx1100
+
+  abliteration:
+    numSamples: 256
+    targetLayers: "auto"          # auto-skips GDN layers
+    weightMatrices: ["o_proj"]    # MoE safety: only shared attention output
+    useGPU: true
+    maxMemoryGB: 56
+    normThreshold: "100"
+    ablitateLmHead: false         # CRITICAL: must be false (save corruption bug)
+
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    useGPU: true
+    maxMemoryGB: 48
+    calibration:
+      maxSeqLen: 2048
+      maxSamples: 512             # 2x default for MoE expert coverage
+```
+
+See [Abliteration Pipeline](abliteration.md) for full abliteration documentation.
+
+## Gemma4 MoE Quantization
+
+Gemma4 26B-A4B is a Mixture-of-Experts model with 128 experts per MLP layer. It requires special quantization handling.
+
+### Architecture
+
+- **Total parameters**: 25.2B (BF16: ~50 GB)
+- **Active parameters**: 3.8B per token (top-8 experts selected)
+- **Experts**: 128 per layer × 5 MLP-only layers = 640 expert modules
+- **Hybrid layers**: 25 GDN (linear attention) + 5 full attention [5,11,17,23,29]
+
+### GPTQ INT4 Result
+
+Full MoE GPTQ quantization (GPTQModel >= 6.0.3) produces **7-13 GB** output that fits in 24 GB VRAM without CPU offload. This enables:
+
+- 32K context window with 95% GPU memory utilization
+- 16 concurrent sequences (MoE load-balances across experts)
+- ~72 tok/s decode on gfx1100 via ExLlama kernels
+
+### MoE-Specific Configuration
+
+```yaml
+quantization:
+  format: GPTQ
+  bits: 4
+  groupSize: 128
+  sym: true                     # required for ExLlama v2 kernels
+  useGPU: true
+  maxMemoryGB: 48
+  timeoutSeconds: 43200         # 12h for 640 expert modules
+  calibration:
+    maxSeqLen: 2048
+    maxSamples: 512             # 128 experts × top-8 needs high sample count
+```
+
+**Why 512 calibration samples?** Default 256 samples / 640 experts ≈ 0.4 samples per expert. Many experts may never be sampled, leading to uninformed quantization. 512 samples ensures better expert coverage.
+
+**Disk offload**: The controller's Gemma4 model policy automatically enables `offload_to_disk=true` for Hessian computation. Without this, 640 expert Hessians (~100 MB each) would exceed 24 GB VRAM.
+
+### MoE Abliteration Safety
+
+Expert FFN weights (`block_sparse_moe/experts`) must NOT be abliterated — modifying expert routing weights corrupts the gating mechanism. Configure:
+
+```yaml
+abliteration:
+  weightMatrices: ["o_proj"]    # ONLY shared attention output projection
+  targetLayers: "auto"          # auto-skips GDN layers (25 of 30)
+```
+
+Double protection: the CRD restricts to `o_proj` AND `abliterate.py` auto-skips expert parameters.
+
+### Gemma4 31B Dense GPTQ
+
+The dense 31B variant (30.7B params, 60 layers) needs more resources:
+
+```yaml
+quantization:
+  maxMemoryGB: 96               # 61 GB BF16 + quantization overhead
+  timeoutSeconds: 28800         # 8 hours (2x layers vs 26B-A4B)
+  calibration:
+    maxSamples: 256             # no MoE, default is fine
+
+abliteration:
+  weightMatrices: ["o_proj", "down_proj"]  # safe for dense models
+  maxMemoryGB: 96               # 61 GB BF16 weights
+```
+
+The 31B model requires a 128 GB RAM node (e.g. Radeon VII host). 64 GB nodes are too tight for abliteration + save overhead.
+
+### Gemma4 Model Comparison
+
+| Model | Type | BF16 Size | INT4 Size | VRAM Fit | Calibration | Est. Time |
+|-------|------|-----------|-----------|----------|-------------|-----------|
+| 26B-A4B | MoE | 50 GB | 7-13 GB | 24 GB | 512 samples | 12-24h |
+| 31B | Dense | 61 GB | ~16 GB | 24 GB (tight) | 256 samples | 4-8h |
+
+## Deployment Reliability
+
+### GPUProfile Watch
+
+The controller watches `GPUProfile` resources. When an administrator updates a quantizer image digest in a GPUProfile, the controller automatically:
+
+1. Detects the hash change (resolved image is part of the spec hash)
+2. Deletes running quantization jobs with the stale image
+3. Recreates jobs with the new image
+
+No manual intervention needed — updating the GPUProfile YAML triggers reconciliation.
+
+### Image Drift Detection
+
+If a quantization job is actively running and the GPUProfile image changes:
+
+- Controller compares the running container image against the currently resolved image
+- On mismatch, the stale job is deleted with a `QuantizerImageDrift` warning event
+- A new job is created with the correct image on the next reconcile
+
+### Script Version Marker
+
+The quantizer image contains `quantize_gptq.py` with a version constant (`FLEXINFER_SCRIPT_VERSION`). The controller's wrapper script checks this at job startup:
+
+```
+Image has v6, controller expects v7 → FATAL: Script version mismatch. Rebuild quantizer image.
+```
+
+This prevents silent failures from stale images where runtime patches no longer match.
+
+### Deploy Automation
+
+Use the deploy script to automate the full quantizer build+deploy cycle:
+
+```bash
+# Build quantizer, push to registry, update GPUProfile, apply to cluster
+make deploy-quantizer QUANTIZER_ARCH=gfx1100
+
+# Above + rebuild controller + rollout restart
+make deploy-quantizer-full QUANTIZER_ARCH=gfx1100
+
+# With job restart
+./scripts/deploy-quantizer.sh gfx1100 --restart-job gemma4-26b-a4b-gptq-quantize
+```
+
 ## Backend Compatibility
 
 - `GGUF`: `llamacpp`, `ollama`
 - `AWQ`: `vllm`
-- `GPTQ`: `vllm`
+- `GPTQ`: `vllm` (including AMD ROCm via ExLlama kernels)
 - `EXL2`: `exllamav2`
 - `FP8`: `vllm`
 
@@ -303,3 +471,19 @@ If format/backend are incompatible, scheduling or startup will fail.
 - Verify baseline/candidate eval prompts and dataset are identical.
 - Verify acceptance units (0..1 vs 0..100) are correctly passed.
 - For ROCm gfx1100 targets, prefer `GGUF` baselines first, then compare alternative formats.
+
+**Gemma4 MoE quantization OOM:**
+- 640 expert Hessians exceed 24 GB VRAM. Verify the Gemma4 model policy is applying `offload_to_disk=true`. Check `QUANTIZE_MODEL_POLICIES` env var in the job.
+- Reduce `maxSamples` from 512 to 256 if the job still OOMs.
+
+**Gemma4 quantization takes 12+ hours:**
+- Normal for full MoE GPTQ: 640 experts × Hessian + quantize per expert. Set `timeoutSeconds: 43200` (12h) in the spec. The controller's `DefaultActiveDeadlineSeconds` is 86400 (24h).
+
+**Script version mismatch at job startup:**
+- The quantizer image has a stale `quantize_gptq.py`. Rebuild the image: `make deploy-quantizer QUANTIZER_ARCH=gfx1100`. The version check (`FLEXINFER_SCRIPT_VERSION`) prevents silent patch failures.
+
+**GPUProfile image update didn't trigger re-quantization:**
+- Verify the controller has the GPUProfile watch (requires controller image from commit `e6c08a55` or later). Check for `QuantizerImageDrift` events: `kubectl get events -n flexinfer-system --field-selector reason=QuantizerImageDrift`.
+
+**Re-quantization after abliteration fix:**
+- Must clean all pipeline markers. Delete jobs (`-abliterate`, `-quantize`), remove marker files (`.abliteration-status.json`, `.flexinfer-gptq-*`, `gptq-w4-g128/`), and reset the spec-hash annotation. The controller will restart from the appropriate phase.

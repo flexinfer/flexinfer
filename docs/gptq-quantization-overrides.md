@@ -2,7 +2,9 @@
 
 This document catalogs all runtime overrides, monkey-patches, and non-obvious
 configuration in the flexinfer GPTQ quantization pipeline. These exist because
-GPTQModel + ROCm + Qwen3.5 hybrid architecture require extensive workarounds.
+GPTQModel + ROCm + Qwen3.5/Gemma4 hybrid architectures require extensive workarounds.
+
+**Updated:** 2026-04-13 — Added Gemma4 MoE overrides, GPUProfile watch, script versioning.
 
 ## Quick Reference
 
@@ -110,10 +112,51 @@ Full list: `build/scripts/vllm_qwen35_patches.py`
 | `targetLayers` | *string | "auto" | Layer selection (e.g. "27,31,35") |
 | `dynamicExclusion` | *string | "auto" | GPTQ exclusion pattern |
 
+## Gemma4 MoE Model Policy
+
+The `gemma4-text` model policy in `gptq.go:defaultGPTQModelPoliciesJSON()` handles MoE expert quantization:
+
+| Field | Value | Why |
+|-------|-------|-----|
+| `offload_to_disk` | true | 640 expert Hessians (~64 GB) exceed 24 GB VRAM |
+| `offload_to_disk_path` | `/tmp/gptqmodel_offload` | Container overlay (~20 GB capacity) |
+| `max_samples` | 512 | 128 experts × top-8 routing needs high coverage |
+| `max_seq_len` | 2048 | Standard prompt length |
+| `attn_implementation` | eager | No flash attention for Gemma4 architecture |
+
+**MoE quantization flow**: Load expert 0 → compute Hessian → quantize → persist to disk → unload → load expert 1 → repeat for all 640 experts. Memory per iteration: ~250 MB (fits in 24 GB).
+
+**Timing**: Full MoE GPTQ on gfx1100 takes 12-24 hours. Set `timeoutSeconds: 43200` in ModelCache spec.
+
+## Deployment Reliability Overrides
+
+### GPUProfile Watch (`controllers/modelcache_controller.go`)
+
+| Feature | Implementation | Source |
+|---------|---------------|--------|
+| GPUProfile watch | `Watches(&aiv1alpha2.GPUProfile{}, handler.EnqueueRequestsFromMapFunc(r.requestsForGPUProfile))` | `SetupWithManager()` |
+| Arch matching | `gpu.ArchFromLabels(effectiveNodeSelector) == profile.Spec.Architecture` | `requestsForGPUProfile()` |
+| Spec hash with image | `quantSpecHashWithImage(spec, resolvedImage)` includes resolved quantizer image | `modelcache_quantization.go` |
+| Image drift detection | Compare running job image against `resolveCurrentQuantizerImage()` | `reconcileQuantization()` |
+
+### Script Version Check (`pkg/quantization/gptq.go`)
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `GPTQScriptVersion` | `"v7"` | Go-side version in `gptq.go` |
+| `FLEXINFER_SCRIPT_VERSION` | `"v7"` | Python-side version in `quantize_gptq.py` |
+
+The wrapper script reads the Python constant at job startup and compares against the Go constant (injected as shell variable). Mismatch → `exit 1` with `FATAL: Script version mismatch` in `/dev/termination-log`.
+
+**When to bump**: Any change to heredoc patches in `gptqWrapperScript()` or `quantize_gptq.py` logic requires bumping both constants and rebuilding the quantizer image.
+
 ## Known Constraints
 
 - **gfx906**: VMM unsupported → no `torch.cuda.mem_get_info`, no GPU allocations > VRAM
 - **gfx1100**: torchao crashes on torch dev builds → removed at script start
 - **NFS PVC**: Save is slow (~30 min for 27GB), mmap unreliable
 - **Qwen3.5 GDN**: 48 linear-attention + 16 full-attention layers; abliterate only full-attention
+- **Gemma4 GDN**: 25 GDN + 5 full-attention layers (30 total); abliterate only full-attention
+- **Gemma4 MoE**: 640 expert modules; Hessians require disk offload on 24 GB VRAM
 - **GPTQModel on ROCm**: Pure Python (no native extensions), needs `--no-build-isolation --no-deps`
+- **ablitateLmHead must be false**: Streaming safetensors save corrupts lm_head with disk offloading (2026-04-01 root cause)

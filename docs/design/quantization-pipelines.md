@@ -1,8 +1,9 @@
 # Quantization Pipelines Design
 
-**Status:** Complete (GGUF/AWQ/GPTQ/EXL2/FP8, auto-selection, and quality validation gate policy implemented; tracking issues #7 and #10 closed)
+**Status:** Complete (GGUF/AWQ/GPTQ/EXL2/FP8, auto-selection, quality validation gate, abliteration pipeline, Gemma4 MoE support, GPUProfile watch, and deployment automation implemented)
 **Author:** FlexInfer Team
 **Created:** 2026-01-31
+**Updated:** 2026-04-13
 
 ## Tracking
 
@@ -21,6 +22,40 @@ Quantization pipelines enable automatic conversion of full-precision models to q
 4. **Automatic Format Selection**: Choose optimal quantization based on GPU capabilities
 
 ## Architecture
+
+### Full Pipeline
+
+```
+┌────────────┐     ┌─────────────┐     ┌──────────────┐     ┌──────────────┐     ┌─────────────┐
+│  Download   │────▶│  Abliterate  │────▶│   Finetune   │────▶│   Quantize   │────▶│    Ready     │
+│  (BF16/FP16)│     │  (optional)  │     │  (optional)  │     │  (GPTQ/AWQ)  │     │  (INT4/INT8) │
+└────────────┘     └─────────────┘     └──────────────┘     └──────────────┘     └─────────────┘
+      │                   │                   │                    │                      │
+      ▼                   ▼                   ▼                    ▼                      ▼
+  PVC marker:        PVC marker:         PVC marker:          PVC marker:           Model Pod
+ .download_complete  .abliteration-     .finetune-           gptq-w4-g128/         (uses cache)
+                     status.json        status.json          quantize_config.json
+```
+
+Each phase is guarded: quantization blocks until download (and optionally abliteration/finetune) reaches `Ready`.
+
+### Deployment Reliability
+
+```
+┌──────────────┐     ┌────────────────┐     ┌────────────────┐
+│  GPUProfile   │────▶│   Controller   │────▶│  Quantize Job  │
+│  (image ref)  │     │  (watches GP)  │     │  (version check)│
+└──────────────┘     └────────────────┘     └────────────────┘
+       │                     │                       │
+  Image digest          Spec hash =              Script version =
+  updated by admin    SHA(spec + image)         FLEXINFER_SCRIPT_VERSION
+                           │
+                    Hash mismatch →
+                    delete stale job,
+                    recreate with new image
+```
+
+### Legacy Architecture (simple path)
 
 ```
 ┌─────────────────┐     ┌────────────────────┐     ┌─────────────────┐
@@ -109,12 +144,14 @@ Best for: NVIDIA GPUs, high-throughput serving
 
 ### GPTQ
 
-Best for: NVIDIA GPUs, wide compatibility
+Best for: AMD ROCm (ExLlama kernels, 7x faster than AWQ) and NVIDIA GPUs
 
-| Bits | Size (7B) | Quality |
-|------|-----------|---------|
-| 4 | ~4GB | Good |
-| 8 | ~7GB | Great |
+| Bits | Size (7B) | Size (26B MoE) | Quality | ROCm Performance |
+|------|-----------|----------------|---------|------------------|
+| 4 | ~4GB | ~7-13 GB | Good | 72 tok/s (gfx1100) |
+| 8 | ~7GB | ~20 GB | Great | ~40 tok/s (gfx1100) |
+
+GPTQ with `sym=true` routes through ExLlama v2 kernels (HIP-compiled on ROCm), achieving ~72 tok/s decode vs ~9.3 tok/s for AWQ on gfx1100.
 
 ### EXL2 (ExLlamaV2)
 
@@ -331,17 +368,53 @@ Recommended GPU: RTX 3060 12GB or better
    - Warn if quantized size > 80% available VRAM
    - Error if quantization format unsupported by backend
 
-## Open Questions
+## Gemma4 MoE Support
 
-1. **Incremental Updates**: Re-quantize when base model updates?
+Gemma4 26B-A4B (128 experts, 25.2B total / 3.8B active) requires:
 
-2. **Multi-GPU Quantization**: Support quantizing models larger than single GPU memory?
+1. **Disk offload for Hessians**: 640 expert modules × ~100 MB Hessian each exceeds GPU VRAM. Model policy sets `offload_to_disk=true` automatically.
+2. **High calibration samples**: 512 samples (2x default) for adequate expert coverage.
+3. **MoE-safe abliteration**: Only `o_proj` weight matrix (shared attention output). Expert FFN weights are auto-skipped.
+4. **GDN layer skip**: 25 of 30 layers are GDN (linear attention) — auto-skipped during abliteration.
 
-3. **iMatrix Calibration**: Support custom calibration datasets for better quality?
+### Model Policy Framework
+
+Built-in model policies in `pkg/quantization/gptq.go` provide architecture-specific overrides:
+
+| Policy | Match | Key Overrides |
+|--------|-------|---------------|
+| `gemma4-text` | `gemma4_text` model_type | `offload_to_disk=true`, 512 samples, `attn_implementation=eager` |
+| `qwen3.5-text` | `qwen3_5_text` model_type | Manual sharded loader, text_config extraction, 16 samples |
+
+Operator override: set `FLEXINFER_GPTQ_MODEL_POLICIES` env var with custom JSON to replace defaults.
+
+## Deployment Reliability Features
+
+### GPUProfile Watch (2026-04-13)
+
+`ModelCacheReconciler` watches `GPUProfile` resources. Updates to quantizer image digests in GPUProfiles trigger automatic reconciliation of matching ModelCaches. The spec hash includes the resolved image, so GPUProfile changes are detected as spec drift.
+
+### Image Drift Detection (2026-04-13)
+
+Active quantization jobs are checked against the currently resolved image. If the GPUProfile image changes while a job is running, the stale job is deleted and recreated with the new image.
+
+### Script Version Marker (2026-04-13)
+
+`quantize_gptq.py` contains `FLEXINFER_SCRIPT_VERSION` (e.g., `"v7"`). The wrapper script checks this against the controller's `GPTQScriptVersion` constant at startup. Mismatch → immediate fatal exit with clear message.
+
+### Deploy Automation (2026-04-13)
+
+`scripts/deploy-quantizer.sh` automates: Docker build → push → digest extraction → GPUProfile YAML update → kubectl apply. Optional `--controller` flag rebuilds the controller. Optional `--restart-job NAME` deletes a named job for re-creation.
+
+## Resolved Questions
+
+1. **Re-quantize on base model updates**: Yes — spec hash change detection handles this. Update `spec.source` to trigger re-download + re-quantize.
+2. **Multi-GPU quantization**: Not needed for current models. CPU offload + disk offload handles models up to 60B+ on single GPU.
+3. **Custom calibration datasets**: Supported via `calibration.dataset` field (any HuggingFace dataset).
+4. **MoE expert quantization**: Solved with GPTQModel >= 6.0.3 native Gemma4 support + disk offload.
 
 ## References
 
-- [llama.cpp Quantization](https://github.com/ggerganov/llama.cpp/blob/master/examples/quantize/README.md)
-- [AutoAWQ](https://github.com/casper-hansen/AutoAWQ)
-- [GPTQ-for-LLaMA](https://github.com/qwopqwop200/GPTQ-for-LLaMa)
+- [GPTQModel](https://github.com/ModelCloud/GPTQModel) (replacement for archived AutoGPTQ/AutoAWQ)
+- [llama.cpp Quantization](https://github.com/ggml-org/llama.cpp)
 - [ExLlamaV2](https://github.com/turboderp/exllamav2)
