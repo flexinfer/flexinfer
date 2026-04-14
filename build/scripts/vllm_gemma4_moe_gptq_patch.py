@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Patch vLLM for Gemma4 GPTQ MoE support.
 
-Three patches:
+Four patches:
 1. GPTQConfig.get_quant_method: Check modules_in_block_to_quantize before
    applying MoE quantization. When experts are not quantized, return None
    (unquantized) for FusedMoE layers.
@@ -16,6 +16,10 @@ Three patches:
    is 'experts.w2_qweight'. Also fixes the weight_name passed to the
    MoeWNA16 weight_loader so it correctly dispatches qweight vs scales
    vs qzeros conversions.
+4. KV cache page_size_padded assertion: Gemma4 has heterogeneous head
+   dimensions (256 for sliding window, 512 for full attention) which
+   causes the V1 KV cache page_size_padded assertion to fire after
+   unification. Replace assertion with max() to ensure safe allocation.
 
 Usage:
     python3 vllm_gemma4_moe_gptq_patch.py [vllm_root]
@@ -403,6 +407,89 @@ def patch_gemma4_moe_gptq_weight_names(vllm_root: pathlib.Path) -> bool:
     return patched
 
 
+def patch_kv_cache_page_size_assertion(vllm_root: pathlib.Path) -> bool:
+    """Patch KV cache page_size_bytes to use max() instead of assert.
+
+    Gemma4 has heterogeneous head dimensions (head_dim=256 for sliding window
+    layers, global_head_dim=512 for full attention layers). After the V1 KV
+    cache unification logic pads page sizes across groups, some layers end up
+    with page_size_padded < real_page_size, triggering an AssertionError.
+
+    Fix: replace the assertion with max(page_size_padded, real_page_size) so
+    that memory allocation is never undercounted. This is safe — it may
+    slightly over-allocate KV cache for some layers but prevents OOM.
+    """
+    kv_iface = vllm_root / "v1" / "kv_cache_interface.py"
+    if not kv_iface.exists():
+        print(f"[gemma4-moe-patch] SKIP: {kv_iface} not found")
+        return False
+
+    src = kv_iface.read_text()
+
+    if "GEMMA4_KV_PAGE_SIZE_PATCH" in src:
+        print("[gemma4-moe-patch] KV cache page_size already patched, skipping")
+        return True
+
+    # Target: the page_size_bytes property in AttentionSpec
+    # Original:
+    #     if self.page_size_padded is not None:
+    #         assert self.page_size_padded >= real_page_size
+    #         return self.page_size_padded
+    #     return real_page_size
+    old_block = (
+        "        if self.page_size_padded is not None:\n"
+        "            assert self.page_size_padded >= real_page_size\n"
+        "            return self.page_size_padded\n"
+        "        return real_page_size"
+    )
+    new_block = (
+        "        if self.page_size_padded is not None:\n"
+        "            # GEMMA4_KV_PAGE_SIZE_PATCH: Gemma4 heterogeneous head dims\n"
+        "            # (256 sliding / 512 full attention) can cause padded < real\n"
+        "            # after unification. Use max() for safe allocation.\n"
+        "            return max(self.page_size_padded, real_page_size)\n"
+        "        return real_page_size"
+    )
+
+    if old_block in src:
+        src = src.replace(old_block, new_block, 1)
+        kv_iface.write_text(src)
+        print(f"[gemma4-moe-patch] Patched KV cache page_size assertion in {kv_iface}")
+        return True
+
+    # Try regex for whitespace variations
+    pattern = re.compile(
+        r"(\s+)if self\.page_size_padded is not None:\n"
+        r"\s+assert self\.page_size_padded >= real_page_size\n"
+        r"\s+return self\.page_size_padded\n"
+        r"\s+return real_page_size"
+    )
+    match = pattern.search(src)
+    if match:
+        indent = match.group(1)
+        replacement = (
+            f"{indent}if self.page_size_padded is not None:\n"
+            f"{indent}    # GEMMA4_KV_PAGE_SIZE_PATCH: Gemma4 heterogeneous head dims\n"
+            f"{indent}    # (256 sliding / 512 full) can cause padded < real after\n"
+            f"{indent}    # unification. Use max() for safe allocation.\n"
+            f"{indent}    return max(self.page_size_padded, real_page_size)\n"
+            f"{indent}return real_page_size"
+        )
+        src = src[: match.start()] + replacement + src[match.end() :]
+        kv_iface.write_text(src)
+        print(
+            f"[gemma4-moe-patch] Patched KV cache page_size assertion (regex) "
+            f"in {kv_iface}"
+        )
+        return True
+
+    print(
+        "[gemma4-moe-patch] WARNING: Could not find page_size_padded assertion "
+        "in kv_cache_interface.py"
+    )
+    return False
+
+
 def main():
     vllm_root = find_vllm_root()
     print(f"[gemma4-moe-patch] vLLM root: {vllm_root}")
@@ -410,6 +497,7 @@ def main():
     ok1 = patch_gptq_config(vllm_root)
     ok2 = patch_moe_wna16_activation(vllm_root)
     ok3 = patch_gemma4_moe_gptq_weight_names(vllm_root)
+    ok4 = patch_kv_cache_page_size_assertion(vllm_root)
 
     if not ok1:
         print("[gemma4-moe-patch] FAILED — GPTQConfig patch could not be applied")
@@ -423,6 +511,10 @@ def main():
             "[gemma4-moe-patch] FAILED — GPTQ weight names patch could not be applied"
         )
         sys.exit(1)
+    if not ok4:
+        print(
+            "[gemma4-moe-patch] WARNING — KV cache page_size patch failed (non-fatal)"
+        )
 
     print("[gemma4-moe-patch] All patches applied successfully")
 
