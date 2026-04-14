@@ -7,6 +7,15 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
+# Remove TurboQuant if present — incompatible with Gemma4's heterogeneous
+# attention heads (TQ4FullAttentionSpec page sizes not divisible with
+# FullAttentionSpec page sizes, breaks unify_kv_cache_spec_page_size).
+RUN pip uninstall -y turboquant-vllm 2>/dev/null || true
+RUN if [ -f /etc/flexinfer/runtime.env ]; then \
+      sed -i '/^TQ4_/d' /etc/flexinfer/runtime.env && \
+      sed -i '/^FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC/d' /etc/flexinfer/runtime.env; \
+    fi
+
 COPY build/scripts/vllm_gemma4_moe_gptq_patch.py /opt/flexinfer/scripts/
 COPY build/runtime-entrypoint.sh /usr/local/bin/runtime-entrypoint.sh
 RUN chmod +x /usr/local/bin/runtime-entrypoint.sh

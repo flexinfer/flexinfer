@@ -13,7 +13,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:7fb9b021a34bba3ba86ee4cd1ce7d172c5fccf9bad519dbd865c5af8fb1e98c2
+  image: registry.harbor.lan/flexinfer/runtime@sha256:dfccd1991df77ab377a5251eb8372d040dafba98dd3f58f98189f2c2620eaaf7
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128
   cache:
     strategy: SharedPVC
@@ -31,8 +31,10 @@ spec:
   config:
     quantization: gptq
     dtype: "half"
-    # Full MoE GPTQ INT4 (~7-13GB) fits in 24GB → more KV cache room.
-    maxModelLen: 32768
+    # Full MoE GPTQ INT4 weights: 16.2 GiB. With KV cache page-size
+    # unification (heterogeneous heads → doubled block_size), 16K context
+    # needs ~3.75 GiB KV cache, comfortably within 5.3 GiB available.
+    maxModelLen: 16384
     gpuMemoryUtilization: "0.95"
     maxNumSeqs: 16
     trustRemoteCode: true
