@@ -152,6 +152,12 @@ Optional modes:
 HUD calls `devbox_summary` via `/api/sandbox`.
 If `mcp-devbox` is unavailable, HUD shows `available=false`.
 
+### Traces panel
+
+HUD now includes a `Traces` activity view backed by `GET /api/traces`.
+It summarizes recent tool calls from the daemon audit log with status, server, tool name, total duration, and stage timing breakdowns (`route`, `build`, `execute`, `send`, `recv`).
+Use it to separate slow routing/pool acquisition from slow MCP execution when debugging latency or transport regressions.
+
 ## Devbox Sandbox Workflows
 
 `mcp-devbox` provides project-aware, persistent sandbox execution.

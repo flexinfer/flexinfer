@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **HUD traces panel and daemon trace feed** (`internal/daemon`, `internal/hud`): Loom now records stage timing breakdowns (`route_ms`, `build_ms`, `execute_ms`, `send_ms`, `recv_ms`) on audit entries, exposes recent trace summaries through the daemon `loom/audit-traces` RPC and HUD `GET /api/traces`, and adds a `Traces` activity panel for recent tool calls, status filters, and latency inspection.
 - **Registry-driven proxy policy engine** (`pkg/policy`): Proxy enforcement now reads blocked commands and denial messages from `registry.yaml` guardrails instead of hard-coded Go constants, enabling new policies via YAML without recompilation.
 - **Platform policy refs** (`pkg/generator`): All 8+ platforms in `platform_profiles.yaml` now declare `policy_refs` and an `enforcement` mode (native, proxy, or plugin). Claude and Gemini use native hook enforcement; Codex, Kilocode, Antigravity, VS Code, and Zed annotate proxy-level enforcement.
 - **Policy health tracking** (`pkg/sync`, `pkg/generator/doctor.go`): `loom doctor` reports per-platform policy status and enforcement mode. `loom sync status` tracks guardrails hash staleness.
