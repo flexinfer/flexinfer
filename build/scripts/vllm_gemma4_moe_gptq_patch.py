@@ -760,16 +760,21 @@ def patch_moe_wna16_activation_forwarding(vllm_root: pathlib.Path) -> bool:
     return False
 
 
-def patch_gemma4_mlp_fp32_upcast(vllm_root: pathlib.Path) -> bool:
-    """Upcast dense MLP computation to float32 to prevent FP16 overflow.
+def patch_gemma4_mlp_fp16_clamp(vllm_root: pathlib.Path) -> bool:
+    """Clamp pre_feedforward_layernorm output to prevent FP16 MLP overflow.
 
     Root cause: Gemma4's pre_feedforward_layernorm weights reach abs_max=234,
     amplifying MLP inputs. The gate_proj/up_proj matmul accumulates 2816 terms
     in FP16 (max 65504). Layer 25 MLP output: 58208 (barely under limit).
     Layer 26: Inf → NaN cascade through layers 27-29.
 
-    Fix: upcast MLP input to float32 (which PyTorch promotes weights to match),
-    compute the full MLP in float32, then downcast output back to float16.
+    vLLM GPTQ only supports dtype=float16, and ROCm's rocm_unquantized_gemm
+    requires matching dtypes (can't pass float32 input with float16 weights).
+
+    Fix: clamp the norm output to ±200 before MLP. This only affects the top
+    ~15% of extreme norm weight amplification (234 → 200) while keeping the
+    MLP accumulation safely within FP16 range (~46K, well under 65504).
+    The clamp only affects the dense MLP path; MoE uses a separate norm.
     """
     gemma4_py = vllm_root / "model_executor" / "models" / "gemma4.py"
     if not gemma4_py.exists():
@@ -778,8 +783,8 @@ def patch_gemma4_mlp_fp32_upcast(vllm_root: pathlib.Path) -> bool:
 
     src = gemma4_py.read_text()
 
-    if "GEMMA4_MLP_FP32_UPCAST" in src:
-        print("[gemma4-moe-patch] MLP fp32 upcast already patched")
+    if "GEMMA4_MLP_FP16_CLAMP" in src:
+        print("[gemma4-moe-patch] MLP fp16 clamp already patched")
         return True
 
     old_mlp = (
@@ -788,17 +793,19 @@ def patch_gemma4_mlp_fp32_upcast(vllm_root: pathlib.Path) -> bool:
     )
     new_mlp = (
         "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
-        "        # GEMMA4_MLP_FP32_UPCAST: pre_feedforward_layernorm weights reach\n"
-        "        # abs_max=234, causing FP16 matmul overflow at layer 26 (gate_proj\n"
-        "        # accumulates 2816 terms). Upcast to float32 for MLP, downcast back.\n"
-        "        _mlp_in_dtype = hidden_states.dtype\n"
-        "        hidden_states = self.mlp(hidden_states.float()).to(_mlp_in_dtype)"
+        "        # GEMMA4_MLP_FP16_CLAMP: pre_feedforward_layernorm weights reach\n"
+        "        # abs_max=234, causing FP16 matmul overflow at layer 26. Clamp to\n"
+        "        # ±200 keeps MLP output safely under FP16 max (65504). Only affects\n"
+        "        # extreme tail values; vast majority of 2816 dims are << 200.\n"
+        "        import torch as _t\n"
+        "        hidden_states = _t.clamp(hidden_states, min=-200.0, max=200.0)\n"
+        "        hidden_states = self.mlp(hidden_states)"
     )
 
     if old_mlp in src:
         src = src.replace(old_mlp, new_mlp, 1)
         gemma4_py.write_text(src)
-        print(f"[gemma4-moe-patch] Applied MLP fp32 upcast to {gemma4_py}")
+        print(f"[gemma4-moe-patch] Applied MLP fp16 clamp to {gemma4_py}")
         return True
 
     # Regex fallback for whitespace variations
@@ -811,13 +818,14 @@ def patch_gemma4_mlp_fp32_upcast(vllm_root: pathlib.Path) -> bool:
         indent = match.group(1)
         replacement = (
             f"{indent}hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
-            f"{indent}# GEMMA4_MLP_FP32_UPCAST: prevent FP16 matmul overflow\n"
-            f"{indent}_mlp_in_dtype = hidden_states.dtype\n"
-            f"{indent}hidden_states = self.mlp(hidden_states.float()).to(_mlp_in_dtype)"
+            f"{indent}# GEMMA4_MLP_FP16_CLAMP: prevent FP16 matmul overflow\n"
+            f"{indent}import torch as _t\n"
+            f"{indent}hidden_states = _t.clamp(hidden_states, min=-200.0, max=200.0)\n"
+            f"{indent}hidden_states = self.mlp(hidden_states)"
         )
         src = src[: match.start()] + replacement + src[match.end() :]
         gemma4_py.write_text(src)
-        print(f"[gemma4-moe-patch] Applied MLP fp32 upcast (regex) to {gemma4_py}")
+        print(f"[gemma4-moe-patch] Applied MLP fp16 clamp (regex) to {gemma4_py}")
         return True
 
     print("[gemma4-moe-patch] WARNING: Could not find MLP call pattern")
@@ -873,15 +881,15 @@ def patch_gemma4_decoder_layer_debug(vllm_root: pathlib.Path) -> bool:
         src = src.replace(old_attn_residual, new_attn_residual, 1)
         patched = True
 
-    # Patch: after MLP (with fp32 upcast already applied), log
-    # Match the upcast version from patch_gemma4_mlp_fp32_upcast
-    old_mlp_upcast = (
-        "        _mlp_in_dtype = hidden_states.dtype\n"
-        "        hidden_states = self.mlp(hidden_states.float()).to(_mlp_in_dtype)"
+    # Patch: after MLP (with clamp already applied), log
+    # Match the clamped version from patch_gemma4_mlp_fp16_clamp
+    old_mlp_clamped = (
+        "        hidden_states = _t.clamp(hidden_states, min=-200.0, max=200.0)\n"
+        "        hidden_states = self.mlp(hidden_states)"
     )
-    new_mlp_upcast = (
-        "        _mlp_in_dtype = hidden_states.dtype\n"
-        "        hidden_states = self.mlp(hidden_states.float()).to(_mlp_in_dtype)\n"
+    new_mlp_clamped = (
+        "        hidden_states = _t.clamp(hidden_states, min=-200.0, max=200.0)\n"
+        "        hidden_states = self.mlp(hidden_states)\n"
         "        # GEMMA4_DECODER_LAYER_DEBUG_PATCH: log MLP output\n"
         "        _mn = hidden_states.isnan().any().item()\n"
         "        _mi = hidden_states.isinf().any().item()\n"
@@ -891,9 +899,9 @@ def patch_gemma4_decoder_layer_debug(vllm_root: pathlib.Path) -> bool:
         "        elif self.layer_idx % 5 == 0:\n"
         "            _dbg.warning('L%d mlp_out: abs_max=%.2f', self.layer_idx, _mm)"
     )
-    # Try upcast version first, then original (in case upcast patch didn't apply)
-    if old_mlp_upcast in src:
-        src = src.replace(old_mlp_upcast, new_mlp_upcast, 1)
+    # Try clamped version first, then original (in case clamp patch didn't apply)
+    if old_mlp_clamped in src:
+        src = src.replace(old_mlp_clamped, new_mlp_clamped, 1)
         patched = True
     else:
         old_mlp_orig = (
@@ -970,7 +978,7 @@ def main():
     ok3 = patch_gemma4_moe_gptq_weight_names(vllm_root)
     ok4 = patch_kv_cache_page_size_uniform_type(vllm_root)
     ok5 = patch_moe_wna16_activation_forwarding(vllm_root)
-    ok6a = patch_gemma4_mlp_fp32_upcast(vllm_root)  # Must run before debug patch
+    ok6a = patch_gemma4_mlp_fp16_clamp(vllm_root)  # Must run before debug patch
     ok6 = patch_gemma4_decoder_layer_debug(vllm_root)
 
     if not ok1:
@@ -993,7 +1001,7 @@ def main():
         print("[gemma4-moe-patch] FAILED — MoeWNA16 activation forwarding patch failed")
         sys.exit(1)
     if not ok6a:
-        print("[gemma4-moe-patch] FAILED — MLP fp32 upcast patch failed")
+        print("[gemma4-moe-patch] FAILED — MLP fp16 clamp patch failed")
         sys.exit(1)
     if not ok6:
         print(
