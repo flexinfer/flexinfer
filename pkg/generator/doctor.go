@@ -287,11 +287,17 @@ func checkCodexHealth(health *PlatformHealth, configDir string) {
 		health.Hooks = "ok"
 	} else if notifyHealthy {
 		health.Hooks = "stale"
-		health.Details = append(health.Details, "config.toml uses unthrottled loom notify hook (regenerate with: loom sync codex --regen)")
+		health.Details = append(health.Details, "config.toml uses keepalive-wrap but is missing notify storm throttling (regenerate with: loom sync codex --regen)")
 	} else if strings.Contains(content, "[mcp_servers") {
 		if hasNotify {
 			health.Hooks = "stale"
-			health.Details = append(health.Details, "config.toml has notify configured but is not using the Loom-managed hook")
+			if strings.Contains(content, "keepalive-wrap") {
+				health.Details = append(health.Details, "config.toml has keepalive-wrap configured but is not using the Loom-managed background hook")
+			} else if strings.Contains(content, "heartbeat") {
+				health.Details = append(health.Details, "config.toml still uses legacy heartbeat-only notify hook (regenerate with: loom sync codex --regen)")
+			} else {
+				health.Details = append(health.Details, "config.toml has notify configured but is not using the Loom-managed hook")
+			}
 		} else {
 			health.Hooks = "missing"
 			health.Details = append(health.Details, "config.toml exists but has no loom notify hook")
@@ -326,10 +332,10 @@ func codexNotifyHookState(data []byte) (hasNotify bool, healthy bool, rateLimite
 		return false, false, false
 	}
 
-	return true, containsCodexNotifyCommand(notify), containsCodexNotifyThrottle(notify)
+	return true, containsCodexKeepaliveWrapCommand(notify), containsCodexNotifyThrottle(notify)
 }
 
-func containsCodexNotifyCommand(value any) bool {
+func containsCodexKeepaliveWrapCommand(value any) bool {
 	switch v := value.(type) {
 	case []any:
 		var parts []string
@@ -339,20 +345,22 @@ func containsCodexNotifyCommand(value any) bool {
 			}
 		}
 		if len(parts) > 0 {
-			return codexNotifyCommandLooksHealthy(strings.Join(parts, " "))
+			return codexKeepaliveWrapCommandLooksHealthy(strings.Join(parts, " "))
 		}
 	case []string:
 		if len(v) > 0 {
-			return codexNotifyCommandLooksHealthy(strings.Join(v, " "))
+			return codexKeepaliveWrapCommandLooksHealthy(strings.Join(v, " "))
 		}
 	case string:
-		return codexNotifyCommandLooksHealthy(v)
+		return codexKeepaliveWrapCommandLooksHealthy(v)
 	}
 	return false
 }
 
-func codexNotifyCommandLooksHealthy(command string) bool {
-	return strings.Contains(command, "loom") && strings.Contains(command, "agent")
+func codexKeepaliveWrapCommandLooksHealthy(command string) bool {
+	return strings.Contains(command, "loom") &&
+		strings.Contains(command, "keepalive-wrap") &&
+		strings.Contains(command, "agent")
 }
 
 func containsCodexNotifyThrottle(value any) bool {
@@ -378,7 +386,7 @@ func containsCodexNotifyThrottle(value any) bool {
 }
 
 func codexNotifyCommandRateLimited(command string) bool {
-	return strings.Contains(command, "notify-heartbeat-codex-") &&
+	return strings.Contains(command, "keepalive-wrap-codex-") &&
 		strings.Contains(command, "date +%s") &&
 		strings.Contains(command, " -lt 15 ")
 }

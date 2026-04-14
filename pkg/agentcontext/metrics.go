@@ -2,6 +2,8 @@ package agentcontext
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,6 +23,11 @@ type Metrics struct {
 	searchLatencies    []int64
 	searchLatencyMu    sync.Mutex
 	maxSearchLatencies int
+
+	// Recall latency by backend (in microseconds)
+	recallLatencies    map[string][]int64
+	recallLatencyMu    sync.Mutex
+	maxRecallLatencies int
 
 	// Embedding costs
 	EmbeddingRequests atomic.Int64
@@ -77,6 +84,8 @@ func NewMetrics() *Metrics {
 	return &Metrics{
 		maxSearchLatencies: 1000, // Keep last 1000 latencies
 		searchLatencies:    make([]int64, 0, 1000),
+		maxRecallLatencies: 1000,
+		recallLatencies:    make(map[string][]int64),
 		StartTime:          time.Now(),
 	}
 }
@@ -86,11 +95,37 @@ func (m *Metrics) RecordSearchLatency(latencyMicros int64) {
 	m.searchLatencyMu.Lock()
 	defer m.searchLatencyMu.Unlock()
 
-	if len(m.searchLatencies) >= m.maxSearchLatencies {
+	if m.maxSearchLatencies > 0 && len(m.searchLatencies) >= m.maxSearchLatencies {
 		// Remove oldest entry
 		m.searchLatencies = m.searchLatencies[1:]
 	}
 	m.searchLatencies = append(m.searchLatencies, latencyMicros)
+}
+
+// RecordRecallLatency records a recall latency for the given backend in microseconds.
+func (m *Metrics) RecordRecallLatency(backend string, latency time.Duration) {
+	if backend == "" {
+		backend = "unknown"
+	}
+
+	latencyMicros := latency.Microseconds()
+	if latencyMicros < 0 {
+		latencyMicros = 0
+	}
+
+	m.recallLatencyMu.Lock()
+	defer m.recallLatencyMu.Unlock()
+
+	if m.recallLatencies == nil {
+		m.recallLatencies = make(map[string][]int64)
+	}
+
+	samples := m.recallLatencies[backend]
+	if m.maxRecallLatencies > 0 && len(samples) >= m.maxRecallLatencies {
+		samples = samples[1:]
+	}
+	samples = append(samples, latencyMicros)
+	m.recallLatencies[backend] = samples
 }
 
 // GetSearchLatencyStats returns latency statistics
@@ -129,6 +164,47 @@ func (m *Metrics) GetSearchLatencyStats() LatencyStats {
 	}
 }
 
+// GetRecallLatencyStats returns recall latency statistics grouped by backend.
+func (m *Metrics) GetRecallLatencyStats() map[string]LatencyStats {
+	m.recallLatencyMu.Lock()
+	defer m.recallLatencyMu.Unlock()
+
+	if len(m.recallLatencies) == 0 {
+		return map[string]LatencyStats{}
+	}
+
+	stats := make(map[string]LatencyStats, len(m.recallLatencies))
+	for backend, samples := range m.recallLatencies {
+		stats[backend] = summarizeLatencySamples(samples)
+	}
+	return stats
+}
+
+func summarizeLatencySamples(samples []int64) LatencyStats {
+	if len(samples) == 0 {
+		return LatencyStats{}
+	}
+
+	sorted := make([]int64, len(samples))
+	copy(sorted, samples)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+
+	var sum int64
+	for _, v := range sorted {
+		sum += v
+	}
+
+	return LatencyStats{
+		Count: len(sorted),
+		Min:   sorted[0],
+		Max:   sorted[len(sorted)-1],
+		Avg:   sum / int64(len(sorted)),
+		P50:   sorted[len(sorted)*50/100],
+		P90:   sorted[len(sorted)*90/100],
+		P99:   sorted[len(sorted)*99/100],
+	}
+}
+
 // LatencyStats contains latency histogram statistics
 type LatencyStats struct {
 	Count int   `json:"count"`
@@ -149,6 +225,9 @@ type MetricsSnapshot struct {
 
 	// Search
 	SearchLatency LatencyStats `json:"search_latency"`
+
+	// Recall latency by backend
+	RecallLatencyByBackend map[string]LatencyStats `json:"recall_latency_by_backend"`
 
 	// Embedding
 	EmbeddingRequests int64 `json:"embedding_requests"`
@@ -237,6 +316,7 @@ func (m *Metrics) Snapshot() MetricsSnapshot {
 			Tokens: m.LongTermMemoryTokens.Load(),
 		},
 		SearchLatency:            m.GetSearchLatencyStats(),
+		RecallLatencyByBackend:   m.GetRecallLatencyStats(),
 		EmbeddingRequests:        m.EmbeddingRequests.Load(),
 		EmbeddingTokens:          m.EmbeddingTokens.Load(),
 		EmbeddingErrors:          m.EmbeddingErrors.Load(),
@@ -283,6 +363,10 @@ func (m *Metrics) Reset() {
 	m.searchLatencyMu.Lock()
 	m.searchLatencies = make([]int64, 0, m.maxSearchLatencies)
 	m.searchLatencyMu.Unlock()
+
+	m.recallLatencyMu.Lock()
+	m.recallLatencies = make(map[string][]int64)
+	m.recallLatencyMu.Unlock()
 
 	m.EmbeddingRequests.Store(0)
 	m.EmbeddingTokens.Store(0)
@@ -346,6 +430,10 @@ agent_context_search_latency_us{quantile="0.5"} ` + formatInt64(snap.SearchLaten
 agent_context_search_latency_us{quantile="0.9"} ` + formatInt64(snap.SearchLatency.P90) + `
 agent_context_search_latency_us{quantile="0.99"} ` + formatInt64(snap.SearchLatency.P99) + `
 agent_context_search_latency_us_count ` + formatInt64(int64(snap.SearchLatency.Count)) + `
+
+# HELP agent_context_recall_duration_seconds Recall duration by backend in seconds
+# TYPE agent_context_recall_duration_seconds summary
+` + formatRecallLatencyMetrics(snap.RecallLatencyByBackend) + `
 
 # HELP agent_context_embedding_requests_total Total embedding requests
 # TYPE agent_context_embedding_requests_total counter
@@ -421,6 +509,47 @@ func formatInt64(v int64) string {
 
 func formatFloat64(v float64) string {
 	return fmt.Sprintf("%.6f", v)
+}
+
+func formatRecallLatencyMetrics(stats map[string]LatencyStats) string {
+	if len(stats) == 0 {
+		return ""
+	}
+
+	backends := make([]string, 0, len(stats))
+	for backend := range stats {
+		backends = append(backends, backend)
+	}
+	sort.Strings(backends)
+
+	var b strings.Builder
+	for _, backend := range backends {
+		s := stats[backend]
+		if s.Count == 0 {
+			continue
+		}
+		b.WriteString(`agent_context_recall_duration_seconds{backend="`)
+		b.WriteString(backend)
+		b.WriteString(`",quantile="0.5"} `)
+		b.WriteString(formatFloat64(float64(s.P50) / 1e6))
+		b.WriteString("\n")
+		b.WriteString(`agent_context_recall_duration_seconds{backend="`)
+		b.WriteString(backend)
+		b.WriteString(`",quantile="0.9"} `)
+		b.WriteString(formatFloat64(float64(s.P90) / 1e6))
+		b.WriteString("\n")
+		b.WriteString(`agent_context_recall_duration_seconds{backend="`)
+		b.WriteString(backend)
+		b.WriteString(`",quantile="0.99"} `)
+		b.WriteString(formatFloat64(float64(s.P99) / 1e6))
+		b.WriteString("\n")
+		b.WriteString(`agent_context_recall_duration_seconds_count{backend="`)
+		b.WriteString(backend)
+		b.WriteString(`"} `)
+		b.WriteString(formatInt64(int64(s.Count)))
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // Global metrics instance

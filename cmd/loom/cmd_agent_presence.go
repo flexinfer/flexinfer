@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -22,6 +25,19 @@ type heartbeatResponse struct {
 	OK         bool              `json:"ok"`
 	Directives map[string]any    `json:"directives,omitempty"`
 	Nudges     []json.RawMessage `json:"nudges,omitempty"`
+}
+
+type keepaliveLoopDeps struct {
+	sendHeartbeat func() error
+	deregister    func()
+	runChild      func(context.Context) error
+}
+
+type keepaliveLoopOptions struct {
+	agentID     string
+	interval    time.Duration
+	maxLifetime time.Duration
+	quiet       bool
 }
 
 func heartbeatWithFallback(cmd *cobra.Command, port string, req bridge.HeartbeatRequest) (*heartbeatResponse, error) {
@@ -62,6 +78,7 @@ func heartbeatWithFallback(cmd *cobra.Command, port string, req bridge.Heartbeat
 func newAgentHeartbeatCmd() *cobra.Command {
 	var (
 		agentID        string
+		sessionID      string
 		status         string
 		ensureSession  bool
 		inferNamespace bool
@@ -93,11 +110,13 @@ don't have native session-start hooks.`,
 			}
 
 			req := bridge.HeartbeatRequest{
-				AgentID:     agentID,
-				Status:      status,
-				AgentType:   agentType,
-				Description: description,
-				Namespace:   namespace,
+				AgentID:       agentID,
+				SessionID:     sessionID,
+				Status:        status,
+				AgentType:     agentType,
+				Description:   description,
+				Namespace:     namespace,
+				EnsureSession: ensureSession,
 			}
 			resp, err := heartbeatWithFallback(cmd, port, req)
 			if err != nil && ensureSession {
@@ -158,6 +177,7 @@ don't have native session-start hooks.`,
 	}
 
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier")
+	cmd.Flags().StringVar(&sessionID, "session-id", "", "Session identifier")
 	cmd.Flags().StringVar(&status, "status", "", "Agent status (active, idle)")
 	cmd.Flags().BoolVar(&ensureSession, "ensure-session", false, "Auto-start session if heartbeat fails due to missing presence/session")
 	cmd.Flags().BoolVar(&inferNamespace, "infer-namespace", false, "Derive namespace from git repo/branch context")
@@ -175,111 +195,206 @@ don't have native session-start hooks.`,
 // agent presence alive even when no tool use is occurring.
 func newAgentKeepaliveCmd() *cobra.Command {
 	var (
-		agentID     string
-		agentType   string
-		interval    time.Duration
-		maxLifetime time.Duration
-		quiet       bool
+		agentID        string
+		sessionID      string
+		status         string
+		ensureSession  bool
+		inferNamespace bool
+		namespace      string
+		agentType      string
+		description    string
+		interval       time.Duration
+		maxLifetime    time.Duration
+		quiet          bool
 	)
 
 	cmd := &cobra.Command{
-		Use:   "keepalive",
-		Short: "Background heartbeat daemon for agent presence",
+		Use:     "keepalive [command ...]",
+		Aliases: []string{"keepalive-wrap"},
+		Short:   "Background heartbeat daemon for agent presence",
 		Long: `Run a ticker loop that sends periodic heartbeats to keep agent presence
-alive. Designed to be spawned as a background process by session-start hooks
-and killed by session-end hooks via the PID file.
+alive. If a child command is provided, wrap it and keep heartbeats flowing
+until the child exits.
 
 Uses PID file deduplication: if a keepalive for the same agent-id is already
 running, exits silently. On SIGINT/SIGTERM, sends a final deregister and exits.`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if agentID == "" {
 				return fmt.Errorf("--agent-id is required")
 			}
 
-			pidFile := keepalivePIDPath(agentID)
-
-			// Dedup: if PID file exists and process is alive, exit silently.
-			if existing, err := os.ReadFile(pidFile); err == nil {
-				if pid, err := strconv.Atoi(strings.TrimSpace(string(existing))); err == nil {
-					if proc, err := os.FindProcess(pid); err == nil {
-						// Signal 0 checks if process is alive without sending a real signal.
-						if proc.Signal(syscall.Signal(0)) == nil {
-							if !quiet {
-								fmt.Fprintf(os.Stderr, "keepalive already running (pid %d)\n", pid)
-							}
-							return nil
-						}
-					}
-				}
+			if inferNamespace && namespace == "" {
+				namespace = inferGitNamespace()
 			}
-
-			// Write PID file.
-			if err := os.MkdirAll(filepath.Dir(pidFile), 0755); err != nil {
-				return fmt.Errorf("create pid dir: %w", err)
-			}
-			if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
-				return fmt.Errorf("write pid file: %w", err)
-			}
-			defer os.Remove(pidFile)
 
 			port := resolvePort(cmd)
-
-			// Set up signal handling for clean shutdown.
-			sigCh := make(chan os.Signal, 1)
-			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-
-			// Self-termination deadline prevents orphaned keepalives from
-			// running forever when the session-end hook fails to fire.
-			var deadline <-chan time.Time
-			if maxLifetime > 0 {
-				deadline = time.After(maxLifetime)
+			req := bridge.HeartbeatRequest{
+				AgentID:       agentID,
+				SessionID:     sessionID,
+				Status:        status,
+				AgentType:     agentType,
+				Description:   description,
+				Namespace:     namespace,
+				EnsureSession: ensureSession,
 			}
 
-			if !quiet {
-				fmt.Fprintf(os.Stderr, "keepalive started for %s (interval=%s, max-lifetime=%s, pid=%d)\n", agentID, interval, maxLifetime, os.Getpid())
-			}
+			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+			defer stop()
 
-			for {
-				select {
-				case <-ticker.C:
-					_, err := heartbeatWithFallback(cmd, port, bridge.HeartbeatRequest{
-						AgentID:   agentID,
-						AgentType: agentType,
-						Status:    "active",
-					})
-					if err != nil && !quiet {
-						fmt.Fprintf(os.Stderr, "keepalive: heartbeat: %v\n", err)
-					}
-				case <-deadline:
-					if !quiet {
-						fmt.Fprintf(os.Stderr, "keepalive max-lifetime reached for %s, self-terminating\n", agentID)
-					}
-					deregBody := map[string]string{"agent_id": agentID}
-					_, _ = hudPostFast(port, "/api/agent/deregister", deregBody, 3*time.Second)
-					return nil
-				case <-sigCh:
-					if !quiet {
-						fmt.Fprintf(os.Stderr, "keepalive shutting down for %s\n", agentID)
-					}
-					// Best-effort deregister.
-					deregBody := map[string]string{"agent_id": agentID}
-					_, _ = hudPostFast(port, "/api/agent/deregister", deregBody, 3*time.Second)
-					return nil
+			sendHeartbeat := func() error {
+				_, err := heartbeatWithFallback(cmd, port, req)
+				return err
+			}
+			deregister := func() {
+				deregBody := map[string]string{"agent_id": agentID}
+				_, _ = hudPostFast(port, "/api/agent/deregister", deregBody, 3*time.Second)
+			}
+			var runChild func(context.Context) error
+			if len(args) > 0 {
+				runChild = func(childCtx context.Context) error {
+					child := exec.CommandContext(childCtx, args[0], args[1:]...) //nolint:gosec // user-supplied CLI wrapper
+					child.Stdin = os.Stdin
+					child.Stdout = os.Stdout
+					child.Stderr = os.Stderr
+					return child.Run()
 				}
 			}
+
+			if err := runKeepaliveLoop(ctx, keepaliveLoopOptions{
+				agentID:     agentID,
+				interval:    interval,
+				maxLifetime: maxLifetime,
+				quiet:       quiet,
+			}, keepaliveLoopDeps{
+				sendHeartbeat: sendHeartbeat,
+				deregister:    deregister,
+				runChild:      runChild,
+			}); err != nil {
+				return err
+			}
+			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier (required)")
+	cmd.Flags().StringVar(&sessionID, "session-id", "", "Session identifier")
+	cmd.Flags().StringVar(&status, "status", "active", "Agent status (active, idle)")
+	cmd.Flags().BoolVar(&ensureSession, "ensure-session", false, "Auto-start session if heartbeat fails due to missing presence/session")
+	cmd.Flags().BoolVar(&inferNamespace, "infer-namespace", false, "Derive namespace from git repo/branch context")
+	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace used with --ensure-session")
 	cmd.Flags().StringVar(&agentType, "agent-type", "", "Agent type for bootstrap")
+	cmd.Flags().StringVar(&description, "description", "", "Session description used with --ensure-session")
 	cmd.Flags().DurationVar(&interval, "interval", 20*time.Second, "Heartbeat interval")
 	cmd.Flags().DurationVar(&maxLifetime, "max-lifetime", 12*time.Hour, "Auto-terminate after this duration (0 to disable)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output")
 
 	return cmd
+}
+
+func runKeepaliveLoop(ctx context.Context, opts keepaliveLoopOptions, deps keepaliveLoopDeps) error {
+	if opts.agentID == "" {
+		return fmt.Errorf("--agent-id is required")
+	}
+	if deps.sendHeartbeat == nil {
+		return fmt.Errorf("sendHeartbeat dependency is required")
+	}
+	if opts.interval <= 0 {
+		return fmt.Errorf("interval must be greater than zero")
+	}
+
+	pidFile := keepalivePIDPath(opts.agentID)
+
+	// Dedup: if PID file exists and process is alive, exit silently.
+	if existing, err := os.ReadFile(pidFile); err == nil {
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(existing))); err == nil {
+			if proc, err := os.FindProcess(pid); err == nil {
+				// Signal 0 checks if process is alive without sending a real signal.
+				if proc.Signal(syscall.Signal(0)) == nil {
+					if !opts.quiet {
+						fmt.Fprintf(os.Stderr, "keepalive already running (pid %d)\n", pid)
+					}
+					return nil
+				}
+			}
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(pidFile), 0755); err != nil {
+		return fmt.Errorf("create pid dir: %w", err)
+	}
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+		return fmt.Errorf("write pid file: %w", err)
+	}
+	defer os.Remove(pidFile)
+
+	ticker := time.NewTicker(opts.interval)
+	defer ticker.Stop()
+
+	var deadline <-chan time.Time
+	if opts.maxLifetime > 0 {
+		deadline = time.After(opts.maxLifetime)
+	}
+
+	if !opts.quiet {
+		fmt.Fprintf(os.Stderr, "keepalive started for %s (interval=%s, max-lifetime=%s, pid=%d)\n", opts.agentID, opts.interval, opts.maxLifetime, os.Getpid())
+	}
+
+	if err := deps.sendHeartbeat(); err != nil && !opts.quiet {
+		fmt.Fprintf(os.Stderr, "keepalive: heartbeat: %v\n", err)
+	}
+
+	var childDone <-chan error
+	if deps.runChild != nil {
+		errCh := make(chan error, 1)
+		childDone = errCh
+		go func() {
+			errCh <- deps.runChild(ctx)
+		}()
+	}
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := deps.sendHeartbeat(); err != nil && !opts.quiet {
+				fmt.Fprintf(os.Stderr, "keepalive: heartbeat: %v\n", err)
+			}
+		case err := <-childDone:
+			if deps.deregister != nil {
+				deps.deregister()
+			}
+			if err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) {
+				return err
+			}
+			return nil
+		case <-deadline:
+			if !opts.quiet {
+				fmt.Fprintf(os.Stderr, "keepalive max-lifetime reached for %s, self-terminating\n", opts.agentID)
+			}
+			if deps.deregister != nil {
+				deps.deregister()
+			}
+			return nil
+		case <-ctx.Done():
+			if !opts.quiet {
+				fmt.Fprintf(os.Stderr, "keepalive shutting down for %s\n", opts.agentID)
+			}
+			if deps.deregister != nil {
+				deps.deregister()
+			}
+			if deps.runChild == nil {
+				return nil
+			}
+			select {
+			case err := <-childDone:
+				if err != nil && !errors.Is(err, context.Canceled) {
+					return err
+				}
+			case <-time.After(2 * time.Second):
+			}
+			return nil
+		}
+	}
 }
 
 // keepalivePIDPath returns the PID file path for a keepalive daemon.

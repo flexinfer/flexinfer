@@ -233,7 +233,7 @@ features = { apply_patch_freeform = true, include_apply_patch_tool = true, unifi
 sandbox_mode = "workspace-write"
 sandbox_workspace_write = { network_access = true, writable_roots = ["/tmp"] }
 
-notify = ["loom", "agent", "heartbeat", "--agent-id", "codex", "--status", "active", "--ensure-session", "--infer-namespace", "--agent-type", "codex", "--description", "Codex notify session", "--quiet"]
+notify = ["sh", "-c", "WS_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || printf '%s' \"$PWD\")\"; WS_HASH=\"$(printf '%s' \"$WS_ROOT\" | cksum | cut -d' ' -f1)\"; CACHE_DIR=\"${HOME}/.cache/loom\"; AGENT_ID_FILE=\"${CACHE_DIR}/agent-id-codex-${WS_HASH}\"; KEEPALIVE_STAMP_FILE=\"${CACHE_DIR}/keepalive-wrap-codex-${WS_HASH}.stamp\"; mkdir -p \"$CACHE_DIR\"; if [ -s \"$AGENT_ID_FILE\" ]; then AGENT_ID=\"$(cat \"$AGENT_ID_FILE\")\"; else AGENT_ID=\"codex-${WS_HASH}\"; printf '%s' \"$AGENT_ID\" > \"$AGENT_ID_FILE\"; fi; NOW=\"$(date +%s)\"; LAST=\"$(cat \"$KEEPALIVE_STAMP_FILE\" 2>/dev/null || true)\"; case \"$LAST\" in ''|*[!0-9]*) ;; *) if [ $((NOW - LAST)) -lt 15 ]; then exit 0; fi ;; esac; printf '%s' \"$NOW\" > \"$KEEPALIVE_STAMP_FILE\"; HOOK_SESSION_ID=\"$(printf '%s' \"${INPUT:-}\" | jq -r '.session_id // empty' 2>/dev/null || true)\"; nohup loom agent keepalive-wrap --agent-id \"$AGENT_ID\" --session-id \"$HOOK_SESSION_ID\" --status active --ensure-session --infer-namespace --agent-type codex --description \"Codex keepalive wrapper session\" --quiet </dev/null >/dev/null 2>>\"${TMPDIR:-/tmp}/loom-agent-hooks.log\" &", "--"]
 
 [mcp_servers.loom]
 command = "loom"
@@ -280,12 +280,14 @@ func TestEmitCodexPreamble(t *testing.T) {
 	for _, want := range []string{
 		`CACHE_DIR=\"${HOME}/.cache/loom\"`,
 		`${CACHE_DIR}/agent-id-codex-${WS_HASH}`,
-		`${CACHE_DIR}/notify-heartbeat-codex-${WS_HASH}.stamp`,
+		`${CACHE_DIR}/keepalive-wrap-codex-${WS_HASH}.stamp`,
 		`codex-${WS_HASH}`,
 		`date +%s`,
 		` -lt 15 `,
+		`keepalive-wrap`,
+		`nohup`,
 		`--agent-id \"`,
-		`--description \"Codex notify session\"`,
+		`--description \"Codex keepalive wrapper session\"`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("expected Codex notify flow to contain %q", want)
@@ -312,7 +314,7 @@ func TestEmitCodexPreamble_UsesExplicitLoomBinary(t *testing.T) {
 	emitCodexPreamble(&sb, testRegistry(), "/tmp/workspace", "/opt/loom/bin/loom")
 	content := sb.String()
 
-	if !strings.Contains(content, `exec '/opt/loom/bin/loom' agent heartbeat`) {
+	if !strings.Contains(content, `nohup '/opt/loom/bin/loom' agent keepalive-wrap`) {
 		t.Fatalf("expected explicit loom binary in codex notify hook, got: %s", content)
 	}
 }
@@ -330,7 +332,7 @@ func TestEmitCodexPreamble_NotifyRemainsTopLevel(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected top-level notify key, got: %#v", parsed)
 	}
-	if !containsCodexNotifyCommand(notify) {
+	if !containsCodexKeepaliveWrapCommand(notify) {
 		t.Fatalf("expected top-level notify key to contain loom hook, got: %#v", notify)
 	}
 }
@@ -1310,8 +1312,9 @@ func TestCodexPreamble_ContainsWorkspaceHash(t *testing.T) {
 		`CACHE_DIR=\"${HOME}/.cache/loom\"`,
 		"AGENT_ID_FILE",
 		"${CACHE_DIR}/agent-id-codex-${WS_HASH}",
-		"${CACHE_DIR}/notify-heartbeat-codex-${WS_HASH}.stamp",
+		"${CACHE_DIR}/keepalive-wrap-codex-${WS_HASH}.stamp",
 		"codex-${WS_HASH}",
+		"keepalive-wrap",
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("Codex preamble missing %q\ngot: %s", want, content)

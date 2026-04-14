@@ -215,8 +215,8 @@ func TestDoctorCheckGeminiPolicyDrift(t *testing.T) {
 func TestDoctorCheckCodexHealthy(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Write config.toml with the current throttled Loom notify hook.
-	content := `notify = ["sh", "-c", "HEARTBEAT_STAMP_FILE=\"${HOME}/.cache/loom/notify-heartbeat-codex-${WS_HASH}.stamp\"; NOW=\"$(date +%s)\"; LAST=\"$(cat \"$HEARTBEAT_STAMP_FILE\" 2>/dev/null || true)\"; case \"$LAST\" in ''|*[!0-9]*) ;; *) if [ $((NOW - LAST)) -lt 15 ]; then exit 0; fi ;; esac; exec loom agent heartbeat --agent-id codex --quiet", "--"]
+	// Write config.toml with the current throttled keepalive-wrap notify hook.
+	content := `notify = ["sh", "-c", "KEEPALIVE_STAMP_FILE=\"${HOME}/.cache/loom/keepalive-wrap-codex-${WS_HASH}.stamp\"; NOW=\"$(date +%s)\"; LAST=\"$(cat \"$KEEPALIVE_STAMP_FILE\" 2>/dev/null || true)\"; case \"$LAST\" in ''|*[!0-9]*) ;; *) if [ $((NOW - LAST)) -lt 15 ]; then exit 0; fi ;; esac; printf '%s' \"$NOW\" > \"$KEEPALIVE_STAMP_FILE\"; HOOK_SESSION_ID=\"$(printf '%s' \"${INPUT:-}\" | jq -r '.session_id // empty' 2>/dev/null || true)\"; nohup loom agent keepalive-wrap --agent-id codex --session-id \"$HOOK_SESSION_ID\" --status active --ensure-session --infer-namespace --agent-type codex --description \"Codex keepalive wrapper session\" --quiet </dev/null >/dev/null 2>>\"${TMPDIR:-/tmp}/loom-agent-hooks.log\" &", "--"]
 
 [mcp_servers.loom]
 command = "loom"

@@ -136,10 +136,10 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 
 	// Codex notify runs on every turn, so use a workspace-scoped persistent
 	// AGENT_ID_FILE to avoid per-hook process-ID churn that fragments identity.
-	// The workspace hash from cksum matches the scheme used by hookAgentIDBootstrap
-	// for Claude/Gemini, avoiding cross-workspace agent ID collisions.
+	// The wrapper is launched in the background and keeps sending heartbeats
+	// until the child process exits or max-lifetime elapses.
 	// Emit notify before any [agents.*] tables so TOML keeps it at top level.
-	sb.WriteString("# Agent lifecycle: heartbeat on turn completion (rate-limited to avoid notify storms)\n")
+	sb.WriteString("# Agent lifecycle: background keepalive wrapper on turn completion (rate-limited to avoid notify storms)\n")
 	fmt.Fprintf(sb, `notify = ["sh", "-c", %q, "--"]`, codexNotifyCommand(loomCmd))
 	sb.WriteString("\n\n")
 
@@ -148,7 +148,7 @@ func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoo
 }
 
 func codexNotifyCommand(loomCmd string) string {
-	return fmt.Sprintf(`WS_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || printf '%%s' "$PWD")"; WS_HASH="$(printf '%%s' "$WS_ROOT" | cksum | cut -d' ' -f1)"; CACHE_DIR="${HOME}/.cache/loom"; AGENT_ID_FILE="${CACHE_DIR}/agent-id-codex-${WS_HASH}"; HEARTBEAT_STAMP_FILE="${CACHE_DIR}/notify-heartbeat-codex-${WS_HASH}.stamp"; mkdir -p "$CACHE_DIR"; if [ -s "$AGENT_ID_FILE" ]; then AGENT_ID="$(cat "$AGENT_ID_FILE")"; else AGENT_ID="codex-${WS_HASH}"; printf '%%s' "$AGENT_ID" > "$AGENT_ID_FILE"; fi; NOW="$(date +%%s)"; LAST="$(cat "$HEARTBEAT_STAMP_FILE" 2>/dev/null || true)"; case "$LAST" in ''|*[!0-9]*) ;; *) if [ $((NOW - LAST)) -lt 15 ]; then exit 0; fi ;; esac; printf '%%s' "$NOW" > "$HEARTBEAT_STAMP_FILE"; exec %s agent heartbeat --agent-id "$AGENT_ID" --status active --ensure-session --infer-namespace --agent-type codex --description "Codex notify session" --quiet 2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log" || true`, loomCmd)
+	return fmt.Sprintf(`WS_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || printf '%%s' "$PWD")"; WS_HASH="$(printf '%%s' "$WS_ROOT" | cksum | cut -d' ' -f1)"; CACHE_DIR="${HOME}/.cache/loom"; AGENT_ID_FILE="${CACHE_DIR}/agent-id-codex-${WS_HASH}"; KEEPALIVE_STAMP_FILE="${CACHE_DIR}/keepalive-wrap-codex-${WS_HASH}.stamp"; mkdir -p "$CACHE_DIR"; if [ -s "$AGENT_ID_FILE" ]; then AGENT_ID="$(cat "$AGENT_ID_FILE")"; else AGENT_ID="codex-${WS_HASH}"; printf '%%s' "$AGENT_ID" > "$AGENT_ID_FILE"; fi; NOW="$(date +%%s)"; LAST="$(cat "$KEEPALIVE_STAMP_FILE" 2>/dev/null || true)"; case "$LAST" in ''|*[!0-9]*) ;; *) if [ $((NOW - LAST)) -lt 15 ]; then exit 0; fi ;; esac; printf '%%s' "$NOW" > "$KEEPALIVE_STAMP_FILE"; HOOK_SESSION_ID="$(printf '%%s' "${INPUT:-}" | jq -r '.session_id // empty' 2>/dev/null || true)"; nohup %s agent keepalive-wrap --agent-id "$AGENT_ID" --session-id "$HOOK_SESSION_ID" --status active --ensure-session --infer-namespace --agent-type codex --description "Codex keepalive wrapper session" --quiet </dev/null >/dev/null 2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log" &`, loomCmd)
 }
 
 // emitCodexAgents writes the [agents] TOML section for Codex multi-agent support.
