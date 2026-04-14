@@ -108,7 +108,7 @@ func (p *callPipeline) authorize() *mcp.Message {
 		return nil
 	}
 	span.SetStatus(codes.Error, decision.Reason)
-	p.daemon.emitAudit(p.params, p.serverName, p.toolName, "", p.auditStart, "denied", decision.Reason, false, nil, p.stage, 0, 0)
+	p.daemon.emitAudit(p.params, p.serverName, p.toolName, "", p.auditStart, "denied", decision.Reason, false, nil, p.stage, 0, 0, p.auditTimings())
 	return p.rbacDeniedError(decision)
 }
 
@@ -147,6 +147,7 @@ func (p *callPipeline) enforceRequestPolicy() *mcp.Message {
 		&decision,
 		p.stage,
 		0, 0,
+		p.auditTimings(),
 	)
 	return p.policyDeniedError(decision)
 }
@@ -179,7 +180,7 @@ func (p *callPipeline) tryCachedResponse() *mcp.Message {
 			p.daemon.otelMetrics.RecordCacheOp(p.ctx, p.serverName, p.toolName, "hit")
 		}
 		p.daemon.logger.Debug("response cache hit", "server", p.serverName, "tool", p.toolName)
-		p.daemon.emitAudit(p.params, p.serverName, p.toolName, "local", p.auditStart, "success", "", true, nil, p.stage, 0, 0)
+		p.daemon.emitAudit(p.params, p.serverName, p.toolName, "local", p.auditStart, "success", "", true, nil, p.stage, 0, 0, p.auditTimings())
 		resp, _ := mcp.NewResponse(p.msg.ID, json.RawMessage(cached))
 		return resp
 	}
@@ -199,6 +200,8 @@ func (p *callPipeline) tryCachedResponse() *mcp.Message {
 func (p *callPipeline) routeAndConnect() *mcp.Message {
 	p.stage = stageRoute
 	span := p.startStageSpan("daemon.pipeline.route")
+	start := time.Now()
+	defer func() { p.routeDurationMs = time.Since(start).Milliseconds() }()
 	defer span.End()
 
 	if p.daemon.router == nil {
@@ -297,6 +300,8 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 func (p *callPipeline) buildForwardRequest() (*mcp.Message, *mcp.Message) {
 	p.stage = stageBuild
 	span := p.startStageSpan("daemon.pipeline.build")
+	start := time.Now()
+	defer func() { p.buildDurationMs = time.Since(start).Milliseconds() }()
 	defer span.End()
 
 	var forwardParams json.RawMessage
@@ -338,6 +343,8 @@ func (p *callPipeline) buildForwardRequest() (*mcp.Message, *mcp.Message) {
 func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	p.stage = stageExecute
 	span := p.startStageSpan("daemon.pipeline.execute")
+	start := time.Now()
+	defer func() { p.executeDurationMs = time.Since(start).Milliseconds() }()
 	defer span.End()
 
 	span.SetAttributes(
@@ -345,7 +352,6 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 		attribute.String("mcp.tool", p.toolName),
 	)
 
-	start := time.Now()
 	callTimeout := resolveToolCallTimeout(p.params)
 
 	// Per-server timeout override from config (routing.timeouts).
@@ -361,7 +367,9 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	defer p.daemon.metrics.RecordRequestEnd(p.serverName)
 
 	sendCtx, sendCancel := context.WithTimeout(p.ctx, callTimeout)
+	sendStart := time.Now()
 	sendErr := p.conn.Transport.Send(sendCtx, req)
+	p.sendDurationMs = time.Since(sendStart).Milliseconds()
 	sendCancel()
 	if sendErr != nil {
 		err := daemonRPCPhaseError(p.method, "send", callTimeout, sendErr)
@@ -384,7 +392,9 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	}
 
 	recvCtx, recvCancel := context.WithTimeout(p.ctx, callTimeout)
+	recvStart := time.Now()
 	resp, recvErr := p.conn.Transport.Recv(recvCtx)
+	p.recvDurationMs = time.Since(recvStart).Milliseconds()
 	recvCancel()
 	if recvErr != nil {
 		err := daemonRPCPhaseError(p.method, "recv", callTimeout, recvErr)

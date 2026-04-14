@@ -129,7 +129,7 @@ func (d *Daemon) handleCallWithOptions(ctx context.Context, msg *mcp.Message, sk
 }
 
 // emitAudit writes a structured audit entry, cost record, and OTel metrics if enabled.
-func (d *Daemon) emitAudit(params callParams, server, tool, target string, start time.Time, status, errMsg string, cached bool, policy *GatewayPolicyDecision, pipelineStage string, reqBytes, resBytes int64) {
+func (d *Daemon) emitAudit(params callParams, server, tool, target string, start time.Time, status, errMsg string, cached bool, policy *GatewayPolicyDecision, pipelineStage string, reqBytes, resBytes int64, timings auditTimings) {
 	durationMs := time.Since(start).Milliseconds()
 
 	policyRuleID := ""
@@ -147,6 +147,11 @@ func (d *Daemon) emitAudit(params callParams, server, tool, target string, start
 			Server:           server,
 			Tool:             tool,
 			DurationMs:       durationMs,
+			RouteMs:          timings.RouteMs,
+			BuildMs:          timings.BuildMs,
+			ExecuteMs:        timings.ExecuteMs,
+			SendMs:           timings.SendMs,
+			RecvMs:           timings.RecvMs,
 			Status:           status,
 			Error:            errMsg,
 			Target:           target,

@@ -55,6 +55,12 @@ type callPipeline struct {
 	reqBytes int64 // request payload size in bytes (populated in execute stage)
 	resBytes int64 // response payload size in bytes (populated in execute stage)
 
+	routeDurationMs   int64
+	buildDurationMs   int64
+	executeDurationMs int64
+	sendDurationMs    int64
+	recvDurationMs    int64
+
 	routingPreference       RoutingPreference
 	preferHubRetryEligible  bool
 	localRetryUsed          bool
@@ -66,6 +72,24 @@ func newCallPipeline(d *Daemon, ctx context.Context, msg *mcp.Message) *callPipe
 		daemon: d,
 		ctx:    ctx,
 		msg:    msg,
+	}
+}
+
+type auditTimings struct {
+	RouteMs   int64 `json:"route_ms,omitempty"`
+	BuildMs   int64 `json:"build_ms,omitempty"`
+	ExecuteMs int64 `json:"execute_ms,omitempty"`
+	SendMs    int64 `json:"send_ms,omitempty"`
+	RecvMs    int64 `json:"recv_ms,omitempty"`
+}
+
+func (p *callPipeline) auditTimings() auditTimings {
+	return auditTimings{
+		RouteMs:   p.routeDurationMs,
+		BuildMs:   p.buildDurationMs,
+		ExecuteMs: p.executeDurationMs,
+		SendMs:    p.sendDurationMs,
+		RecvMs:    p.recvDurationMs,
 	}
 }
 

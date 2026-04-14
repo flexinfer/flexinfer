@@ -49,6 +49,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/cost", a.withCORS(a.handleCost))
 	mux.HandleFunc("GET /api/rbac", a.withCORS(a.handleRBAC))
 	mux.HandleFunc("GET /api/otel", a.withCORS(a.handleOTel))
+	mux.HandleFunc("GET /api/traces", a.withCORS(a.handleTraces))
 	mux.HandleFunc("GET /api/events", a.withCORS(a.handleSSE))
 
 	// API routes — catalog (enable/disable servers).
