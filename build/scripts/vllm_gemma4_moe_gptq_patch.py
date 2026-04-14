@@ -580,6 +580,121 @@ def patch_kv_cache_page_size_uniform_type(vllm_root: pathlib.Path) -> bool:
     return patched_any
 
 
+def patch_moe_wna16_activation_forwarding(vllm_root: pathlib.Path) -> bool:
+    """Patch MoeWNA16Method.apply() to forward the activation parameter.
+
+    Bug: MoeWNA16Method.apply() calls fused_experts() without passing
+    activation=layer.activation. The default is SiLU, but Gemma4 MoE
+    uses GELU. Wrong activation → wrong gate values → NaN logits after
+    30 layers of error accumulation.
+    """
+    moe_wna16_py = (
+        vllm_root / "model_executor" / "layers" / "quantization" / "moe_wna16.py"
+    )
+    if not moe_wna16_py.exists():
+        print(f"[gemma4-moe-patch] SKIP: {moe_wna16_py} not found")
+        return False
+
+    src = moe_wna16_py.read_text()
+
+    if "GEMMA4_MOE_ACTIVATION_FORWARD_PATCH" in src:
+        print("[gemma4-moe-patch] MoeWNA16 activation forwarding already patched")
+        return True
+
+    # Find the fused_experts call in apply() that's missing activation=
+    old_call = (
+        "        return fused_experts(\n"
+        "            x,\n"
+        "            layer.w13_qweight,\n"
+        "            layer.w2_qweight,\n"
+        "            topk_weights=topk_weights,\n"
+        "            topk_ids=topk_ids,\n"
+        "            inplace=not self.moe.disable_inplace,\n"
+        "            apply_router_weight_on_input=layer.apply_router_weight_on_input,\n"
+        "            global_num_experts=layer.global_num_experts,\n"
+        "            expert_map=layer.expert_map,\n"
+        "            quant_config=self.moe_quant_config,\n"
+        "        )"
+    )
+    new_call = (
+        "        # GEMMA4_MOE_ACTIVATION_FORWARD_PATCH: Forward the layer's\n"
+        "        # activation to fused_experts. Without this, default SiLU is\n"
+        "        # used even when the model specifies GELU (Gemma4 MoE).\n"
+        "        return fused_experts(\n"
+        "            x,\n"
+        "            layer.w13_qweight,\n"
+        "            layer.w2_qweight,\n"
+        "            topk_weights=topk_weights,\n"
+        "            topk_ids=topk_ids,\n"
+        "            inplace=not self.moe.disable_inplace,\n"
+        "            activation=layer.activation,\n"
+        "            apply_router_weight_on_input=layer.apply_router_weight_on_input,\n"
+        "            global_num_experts=layer.global_num_experts,\n"
+        "            expert_map=layer.expert_map,\n"
+        "            quant_config=self.moe_quant_config,\n"
+        "        )"
+    )
+
+    if old_call in src:
+        src = src.replace(old_call, new_call, 1)
+        moe_wna16_py.write_text(src)
+        print(
+            f"[gemma4-moe-patch] Patched MoeWNA16 activation forwarding in {moe_wna16_py}"
+        )
+        return True
+
+    # Try regex for whitespace variations
+    pattern = re.compile(
+        r"(\s+)return fused_experts\(\n"
+        r"\s+x,\n"
+        r"\s+layer\.w13_qweight,\n"
+        r"\s+layer\.w2_qweight,\n"
+        r"\s+topk_weights=topk_weights,\n"
+        r"\s+topk_ids=topk_ids,\n"
+        r"\s+inplace=not self\.moe\.disable_inplace,\n"
+        r"\s+apply_router_weight_on_input=layer\.apply_router_weight_on_input,\n"
+        r"\s+global_num_experts=layer\.global_num_experts,\n"
+        r"\s+expert_map=layer\.expert_map,\n"
+        r"\s+quant_config=self\.moe_quant_config,\n"
+        r"\s+\)"
+    )
+    match = pattern.search(src)
+    if match:
+        indent = match.group(1)
+        replacement = (
+            f"{indent}# GEMMA4_MOE_ACTIVATION_FORWARD_PATCH\n"
+            f"{indent}return fused_experts(\n"
+            f"{indent}    x,\n"
+            f"{indent}    layer.w13_qweight,\n"
+            f"{indent}    layer.w2_qweight,\n"
+            f"{indent}    topk_weights=topk_weights,\n"
+            f"{indent}    topk_ids=topk_ids,\n"
+            f"{indent}    inplace=not self.moe.disable_inplace,\n"
+            f"{indent}    activation=layer.activation,\n"
+            f"{indent}    apply_router_weight_on_input=layer.apply_router_weight_on_input,\n"
+            f"{indent}    global_num_experts=layer.global_num_experts,\n"
+            f"{indent}    expert_map=layer.expert_map,\n"
+            f"{indent}    quant_config=self.moe_quant_config,\n"
+            f"{indent})"
+        )
+        src = src[: match.start()] + replacement + src[match.end() :]
+        moe_wna16_py.write_text(src)
+        print(
+            f"[gemma4-moe-patch] Patched activation forwarding (regex) in {moe_wna16_py}"
+        )
+        return True
+
+    # Check if activation is already passed (maybe newer vLLM)
+    if "activation=layer.activation" in src and "fused_experts" in src:
+        print("[gemma4-moe-patch] MoeWNA16 already forwards activation")
+        return True
+
+    print(
+        f"[gemma4-moe-patch] WARNING: Could not find fused_experts call in MoeWNA16Method.apply"
+    )
+    return False
+
+
 def main():
     vllm_root = find_vllm_root()
     print(f"[gemma4-moe-patch] vLLM root: {vllm_root}")
@@ -588,6 +703,7 @@ def main():
     ok2 = patch_moe_wna16_activation(vllm_root)
     ok3 = patch_gemma4_moe_gptq_weight_names(vllm_root)
     ok4 = patch_kv_cache_page_size_uniform_type(vllm_root)
+    ok5 = patch_moe_wna16_activation_forwarding(vllm_root)
 
     if not ok1:
         print("[gemma4-moe-patch] FAILED — GPTQConfig patch could not be applied")
@@ -605,6 +721,9 @@ def main():
         print(
             "[gemma4-moe-patch] WARNING — KV cache page_size patch failed (non-fatal)"
         )
+    if not ok5:
+        print("[gemma4-moe-patch] FAILED — MoeWNA16 activation forwarding patch failed")
+        sys.exit(1)
 
     print("[gemma4-moe-patch] All patches applied successfully")
 
