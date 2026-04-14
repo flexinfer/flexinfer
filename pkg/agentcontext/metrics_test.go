@@ -3,6 +3,7 @@ package agentcontext
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,6 +27,8 @@ func TestMetrics_Snapshot(t *testing.T) {
 	m.RecallRequests.Add(20)
 	m.RecallHits.Add(15)
 	m.RecallMisses.Add(5)
+	m.RecordRecallLatency("context", 100*time.Millisecond)
+	m.RecordRecallLatency("graph", 250*time.Millisecond)
 	m.GraphEntitiesAdded.Add(42)
 	m.GraphRelationsAdded.Add(17)
 	m.GraphQueriesExecuted.Add(8)
@@ -45,6 +48,10 @@ func TestMetrics_Snapshot(t *testing.T) {
 	assert.Equal(t, int64(15), snap.RecallHits)
 	assert.Equal(t, int64(5), snap.RecallMisses)
 	assert.InDelta(t, 0.75, snap.RecallHitRate, 0.001)
+	require.Contains(t, snap.RecallLatencyByBackend, "context")
+	assert.Equal(t, 1, snap.RecallLatencyByBackend["context"].Count)
+	require.Contains(t, snap.RecallLatencyByBackend, "graph")
+	assert.Equal(t, 1, snap.RecallLatencyByBackend["graph"].Count)
 	assert.Equal(t, int64(42), snap.GraphEntities)
 	assert.Equal(t, int64(17), snap.GraphRelations)
 	assert.Equal(t, int64(8), snap.GraphQueries)
@@ -99,12 +106,35 @@ func TestMetrics_RecordSearchLatency_Overflow(t *testing.T) {
 	assert.Equal(t, int64(1000), stats.Max)
 }
 
+func TestMetrics_RecordRecallLatency(t *testing.T) {
+	m := NewMetrics()
+
+	m.RecordRecallLatency("context", 100*time.Millisecond)
+	m.RecordRecallLatency("context", 200*time.Millisecond)
+	m.RecordRecallLatency("graph", 50*time.Millisecond)
+
+	stats := m.GetRecallLatencyStats()
+	require.Contains(t, stats, "context")
+	require.Contains(t, stats, "graph")
+	assert.Equal(t, 2, stats["context"].Count)
+	assert.Equal(t, int64(100000), stats["context"].Min)
+	assert.Equal(t, int64(200000), stats["context"].Max)
+	assert.Equal(t, 1, stats["graph"].Count)
+	assert.Equal(t, int64(50000), stats["graph"].Min)
+
+	output := m.PrometheusFormat()
+	assert.Contains(t, output, "# HELP agent_context_recall_duration_seconds Recall duration by backend in seconds")
+	assert.Contains(t, output, `agent_context_recall_duration_seconds{backend="context",quantile="0.5"}`)
+	assert.Contains(t, output, `agent_context_recall_duration_seconds_count{backend="graph"} 1`)
+}
+
 func TestMetrics_PrometheusFormat(t *testing.T) {
 	m := NewMetrics()
 
 	m.SessionsActive.Add(2)
 	m.EmbeddingRequests.Add(5)
 	m.CompressionTokensSaved.Add(500)
+	m.RecordRecallLatency("context", 125*time.Millisecond)
 
 	output := m.PrometheusFormat()
 
@@ -115,6 +145,7 @@ func TestMetrics_PrometheusFormat(t *testing.T) {
 	assert.Contains(t, output, "agent_context_sessions_active 2")
 	assert.Contains(t, output, "agent_context_embedding_requests_total 5")
 	assert.Contains(t, output, "agent_context_compression_tokens_saved 500")
+	assert.Contains(t, output, "agent_context_recall_duration_seconds")
 
 	// Verify format validity: each non-empty line should either be a comment or a metric
 	for _, line := range strings.Split(output, "\n") {
@@ -134,6 +165,7 @@ func TestMetrics_Reset(t *testing.T) {
 	m.SessionsActive.Add(5)
 	m.EmbeddingRequests.Add(10)
 	m.RecordSearchLatency(100)
+	m.RecordRecallLatency("context", 100*time.Millisecond)
 
 	m.Reset()
 
@@ -141,6 +173,8 @@ func TestMetrics_Reset(t *testing.T) {
 	assert.Equal(t, int64(0), m.EmbeddingRequests.Load())
 	stats := m.GetSearchLatencyStats()
 	assert.Equal(t, 0, stats.Count)
+	recallStats := m.GetRecallLatencyStats()
+	assert.Empty(t, recallStats)
 }
 
 func TestMetrics_SnapshotHitRateZeroDivision(t *testing.T) {

@@ -537,9 +537,9 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 	}
 
 	// Recall quality signals (M2: observability).
-	var backendsQueried []string
-	var backendsFailed []string
-	var warnings []string
+	backendsQueried := make([]string, 0, 3)
+	backendsFailed := make([]string, 0, 3)
+	warnings := make([]string, 0, 3)
 	totalTokens := 0
 	totalCount := 0
 	totalCandidates := 0
@@ -547,6 +547,7 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 	// --- Context backend ---
 	if includeContext {
 		backendsQueried = append(backendsQueried, "context")
+		contextStart := time.Now()
 		opts := EnhancedRecallOptions{
 			RecallOptions: RecallOptions{
 				Query:            query,
@@ -567,6 +568,7 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 		}
 
 		entries, _, err := s.enhancedRecallContext(ctx, opts)
+		s.recordRecallLatency("context", contextStart)
 		if err != nil {
 			backendsFailed = append(backendsFailed, "context")
 			warnings = append(warnings, fmt.Sprintf("context backend failed: %v", err))
@@ -587,60 +589,74 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 	mergeMemoryIntoEntries := includeContext && includeMemoryEntries
 	if includeMemory && !mergeMemoryIntoEntries {
 		backendsQueried = append(backendsQueried, "memory")
+		memoryStart := time.Now()
 		memBudget := tokenBudget - totalTokens
 		if memBudget < 256 {
 			memBudget = 256
 		}
 
-		req := MemoryRecallRequest{
-			Query:       query,
-			Namespace:   namespace,
-			SessionID:   sessionID,
-			AgentID:     agentID,
-			TokenBudget: memBudget,
-			Limit:       50,
-			Categories:  memoryCategories,
-			Tags:        memoryTags,
-		}
-		for _, t := range memoryTiers {
-			if t != "" {
-				req.Tiers = append(req.Tiers, MemoryTier(t))
-			}
-		}
-
-		result, err := s.memoryHierarchy.Recall(req)
-		if err != nil {
+		if s.memoryHierarchy == nil {
 			backendsFailed = append(backendsFailed, "memory")
-			warnings = append(warnings, fmt.Sprintf("memory backend failed: %v", err))
-		} else if len(result.Items) > 0 {
-			items := make([]map[string]any, len(result.Items))
-			for i, item := range result.Items {
-				items[i] = memoryItemToMap(&item)
+			warnings = append(warnings, "memory backend unavailable: memory hierarchy is nil")
+		} else {
+			req := MemoryRecallRequest{
+				Query:       query,
+				Namespace:   namespace,
+				SessionID:   sessionID,
+				AgentID:     agentID,
+				TokenBudget: memBudget,
+				Limit:       50,
+				Categories:  memoryCategories,
+				Tags:        memoryTags,
 			}
-			totalCandidates += len(result.Items)
-			totalTokens += result.TotalTokens
-			totalCount += len(items)
-			resp["memory_items"] = items
-			resp["memory_count"] = len(items)
+			for _, t := range memoryTiers {
+				if t != "" {
+					req.Tiers = append(req.Tiers, MemoryTier(t))
+				}
+			}
+
+			result, err := s.memoryHierarchy.Recall(req)
+			if err != nil {
+				backendsFailed = append(backendsFailed, "memory")
+				warnings = append(warnings, fmt.Sprintf("memory backend failed: %v", err))
+			} else if len(result.Items) > 0 {
+				items := make([]map[string]any, len(result.Items))
+				for i, item := range result.Items {
+					items[i] = memoryItemToMap(&item)
+				}
+				totalCandidates += len(result.Items)
+				totalTokens += result.TotalTokens
+				totalCount += len(items)
+				resp["memory_items"] = items
+				resp["memory_count"] = len(items)
+			}
 		}
+		s.recordRecallLatency("memory", memoryStart)
 	}
 
 	// --- Graph backend ---
 	// When scope is "graph" or "all", query the knowledge graph for matching entities.
 	// Uses FindEntities with the query text as a name pattern for text-based matching.
-	if includeGraph && s.knowledgeGraph != nil {
+	if includeGraph {
 		backendsQueried = append(backendsQueried, "graph")
-		entities := s.knowledgeGraph.FindEntities("", namespace, query, 20)
-		if len(entities) > 0 {
-			graphEntities := make([]map[string]any, len(entities))
-			for i, e := range entities {
-				graphEntities[i] = entityToMap(e)
+		graphStart := time.Now()
+		if s.knowledgeGraph == nil {
+			backendsFailed = append(backendsFailed, "graph")
+			warnings = append(warnings, "graph backend unavailable: knowledge graph is nil")
+		} else {
+			entities := s.knowledgeGraph.FindEntities("", namespace, query, 20)
+			if len(entities) > 0 {
+				graphEntities := make([]map[string]any, len(entities))
+				for i, e := range entities {
+					graphEntities[i] = entityToMap(e)
+				}
+				totalCandidates += len(entities)
+				totalCount += len(graphEntities)
+				resp["graph_entities"] = graphEntities
+				resp["graph_count"] = len(graphEntities)
 			}
-			totalCandidates += len(entities)
-			totalCount += len(graphEntities)
-			resp["graph_entities"] = graphEntities
-			resp["graph_count"] = len(graphEntities)
 		}
+		s.recordRecallLatency("graph", graphStart)
 	}
 
 	resp["count"] = totalCount
@@ -673,6 +689,13 @@ func (s *Service) HandleUnifiedRecall(ctx context.Context, args map[string]any) 
 	}
 
 	return mcp.JSONResult(resp)
+}
+
+func (s *Service) recordRecallLatency(backend string, startedAt time.Time) {
+	if s == nil || s.metrics == nil {
+		return
+	}
+	s.metrics.RecordRecallLatency(backend, time.Since(startedAt))
 }
 
 // HandleDeprecatedContextRecall wraps HandleUnifiedRecall with a deprecation notice.

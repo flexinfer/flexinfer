@@ -3,6 +3,8 @@ package agentcontext
 import (
 	"context"
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -502,5 +504,202 @@ func TestHandleDeprecatedEnhancedRecall_DefaultRouteToUnified(t *testing.T) {
 
 	if got := payload["scope"]; got != "all" {
 		t.Fatalf("scope = %v, want all", got)
+	}
+}
+
+func TestHandleUnifiedRecall_RecallMetaFields(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	kg := NewKnowledgeGraph()
+	_ = kg.AddEntity(&Entity{
+		ID:          "ent-meta-1",
+		Type:        EntityTypeFunction,
+		Name:        "AllScopeTarget",
+		Description: "Entity for recall meta test",
+		Namespace:   "test",
+	})
+
+	svc := &Service{
+		cfg: Config{
+			DefaultTokenBudget:   4000,
+			DefaultRecencyWeight: 0.2,
+		},
+		metrics:         NewMetrics(),
+		memoryHierarchy: NewMemoryHierarchy(),
+		knowledgeGraph:  kg,
+	}
+
+	result, err := svc.HandleUnifiedRecall(context.Background(), map[string]any{
+		"query":             "AllScopeTarget",
+		"scope":             "all",
+		"token_budget":      0,
+		"include_tasks":     false,
+		"include_decisions": false,
+		"include_summaries": false,
+	})
+	if err != nil {
+		t.Fatalf("HandleUnifiedRecall error: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &payload); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+
+	meta := requireRecallMeta(t, payload)
+	assertStringSlice(t, meta["backends_queried"], []string{"context", "memory", "graph"})
+	assertStringSlice(t, meta["backends_failed"], nil)
+	assertIntField(t, meta, "total_candidates", 1)
+	assertIntField(t, meta, "returned", 1)
+	assertIntField(t, meta, "token_budget_used", 0)
+	assertNumberField(t, meta, "latency_ms")
+
+	if got := int(payload["count"].(float64)); got != 1 {
+		t.Fatalf("count = %d, want 1", got)
+	}
+	if got := int(payload["graph_count"].(float64)); got != 1 {
+		t.Fatalf("graph_count = %d, want 1", got)
+	}
+
+	snap := svc.metrics.Snapshot()
+	for _, backend := range []string{"context", "memory", "graph"} {
+		stats, ok := snap.RecallLatencyByBackend[backend]
+		if !ok {
+			t.Fatalf("missing recall latency stats for backend %q", backend)
+		}
+		if stats.Count != 1 {
+			t.Fatalf("recall latency count for %q = %d, want 1", backend, stats.Count)
+		}
+	}
+}
+
+func TestHandleUnifiedRecall_DegradedMemoryBackendWarns(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+
+	kg := NewKnowledgeGraph()
+	_ = kg.AddEntity(&Entity{
+		ID:          "ent-warning-1",
+		Type:        EntityTypeFunction,
+		Name:        "WarningTarget",
+		Description: "Entity for warning path test",
+		Namespace:   "test",
+	})
+
+	svc := &Service{
+		cfg: Config{
+			DefaultTokenBudget:   4000,
+			DefaultRecencyWeight: 0.2,
+		},
+		metrics:         NewMetrics(),
+		memoryHierarchy: nil,
+		knowledgeGraph:  kg,
+	}
+
+	result, err := svc.HandleUnifiedRecall(context.Background(), map[string]any{
+		"query":             "WarningTarget",
+		"scope":             "all",
+		"token_budget":      0,
+		"include_tasks":     false,
+		"include_decisions": false,
+		"include_summaries": false,
+	})
+	if err != nil {
+		t.Fatalf("HandleUnifiedRecall error: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(result.Content[0].Text), &payload); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+
+	meta := requireRecallMeta(t, payload)
+	assertStringSlice(t, meta["backends_queried"], []string{"context", "memory", "graph"})
+	assertStringSlice(t, meta["backends_failed"], []string{"memory"})
+	assertIntField(t, meta, "total_candidates", 1)
+	assertIntField(t, meta, "returned", 1)
+
+	warnings := assertStringSlice(t, payload["_warnings"], []string{
+		"memory backend unavailable: memory hierarchy is nil",
+	})
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "memory backend unavailable") {
+		t.Fatalf("warnings = %v, want memory backend warning", warnings)
+	}
+
+	if got := int(payload["count"].(float64)); got != 1 {
+		t.Fatalf("count = %d, want 1", got)
+	}
+	if got := int(payload["graph_count"].(float64)); got != 1 {
+		t.Fatalf("graph_count = %d, want 1", got)
+	}
+
+	snap := svc.metrics.Snapshot()
+	for _, backend := range []string{"context", "memory", "graph"} {
+		stats, ok := snap.RecallLatencyByBackend[backend]
+		if !ok {
+			t.Fatalf("missing recall latency stats for backend %q", backend)
+		}
+		if stats.Count != 1 {
+			t.Fatalf("recall latency count for %q = %d, want 1", backend, stats.Count)
+		}
+	}
+}
+
+func requireRecallMeta(t *testing.T, payload map[string]any) map[string]any {
+	t.Helper()
+
+	meta, ok := payload["recall_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("recall_meta missing or wrong type: %T", payload["recall_meta"])
+	}
+	return meta
+}
+
+func assertStringSlice(t *testing.T, value any, want []string) []string {
+	t.Helper()
+
+	if want == nil {
+		want = []string{}
+	}
+
+	var got []string
+	switch typed := value.(type) {
+	case []any:
+		got = make([]string, len(typed))
+		for i, raw := range typed {
+			str, ok := raw.(string)
+			if !ok {
+				t.Fatalf("slice item %d has type %T, want string", i, raw)
+			}
+			got[i] = str
+		}
+	case nil:
+		got = []string{}
+	default:
+		t.Fatalf("value has type %T, want []any or nil", value)
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("slice = %v, want %v", got, want)
+	}
+	return got
+}
+
+func assertIntField(t *testing.T, payload map[string]any, key string, want int) {
+	t.Helper()
+
+	got, ok := payload[key].(float64)
+	if !ok {
+		t.Fatalf("%s has type %T, want numeric", key, payload[key])
+	}
+	if int(got) != want {
+		t.Fatalf("%s = %v, want %d", key, payload[key], want)
+	}
+}
+
+func assertNumberField(t *testing.T, payload map[string]any, key string) {
+	t.Helper()
+
+	if _, ok := payload[key].(float64); !ok {
+		t.Fatalf("%s has type %T, want numeric", key, payload[key])
 	}
 }

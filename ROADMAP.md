@@ -177,6 +177,11 @@ These address capabilities the market now expects from production MCP infrastruc
   - Keep v1 constrained to monitoring + session lifecycle controls unless explicitly re-baselined.
   - 2026-03-31 IA pass: mobile navigation now biases toward `People` and `Work`, and advanced session/connection mutations are visually staged behind the primary monitoring workflow.
 
+- [x] **Codex keepalive + recall observability hardening** ✅ Shipped
+  - ✅ 2026-04-14 slice: added a wrapper-capable `loom agent keepalive-wrap` path and moved generated Codex notify hooks to bootstrap the background keepalive helper for idle-session visibility.
+  - ✅ 2026-04-14 slice: unified recall now records backend-scoped latency summaries and explicitly surfaces degraded-backend warnings/tests alongside `recall_meta`.
+  - Follow-on: Codex config still relies on `notify` to launch the helper because native TOML cannot yet describe a true long-lived process wrapper for the CLI itself.
+
 - [ ] **OTel trace export from daemon** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/12))
   - ✅ 2026-02-26 slice: added `pkg/mcpotel` tracing wrappers to `mcp-alertmanager`, `mcp-grafana`, and `mcp-loki` (tool spans + error status propagation).
   - ✅ 2026-02-26 slice: expanded `pkg/mcpotel` tracing to `mcp-github`, `mcp-github-actions`, `mcp-jira`, and `mcp-slack`.

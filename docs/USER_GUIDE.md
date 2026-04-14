@@ -206,6 +206,14 @@ For hook-only clients that do not emit explicit session-start events (for exampl
 loom agent heartbeat --agent-id codex --status active --ensure-session --agent-type codex --quiet
 ```
 
+The generated Codex config now bootstraps a background keepalive wrapper from `notify` instead of relying on turn-completion heartbeats alone. For manual launches or custom wrappers, use:
+
+```bash
+loom agent keepalive-wrap --agent-id codex --session-id <session-id> --status active --ensure-session --agent-type codex -- codex
+```
+
+That wrapper keeps heartbeats flowing while the child process is running or idle, then deregisters when the wrapped command exits. The managed Codex TOML still cannot express a true top-level process wrapper, so Loom uses `notify` to start the background keepalive helper when needed.
+
 When `loom agent session-start` runs with `--auto-recall`, the JSON response now includes a bounded `startup_briefing` field (and `recalled_context` as a compatibility alias) so hooks and wrappers can inject compressed recall instead of a full raw context dump.
 Startup recall now queries `scope=all` by default and includes memory tiers automatically: `working` + `short_term` for the `fast` strategy, and `working` + `short_term` + `long_term` for `balanced` and `deep`.
 
@@ -236,6 +244,7 @@ HUD agent context telemetry:
 - Samples are labeled by low-cardinality dimensions: `agent_type`, `session_status`, and `reason`.
 - Sampling currently happens on `session_start`, `context_add`, and `heartbeat`; heartbeat samples are throttled to avoid noisy series.
 - Each successful sample also emits an `agent.context.telemetry` event into the HUD timeline stream for per-agent debugging.
+- Unified `agent_recall` responses now include `recall_meta` and `_warnings` fields, and Prometheus output includes backend-scoped `agent_context_recall_duration_seconds` summary series for `context`, `memory`, and `graph`.
 - Generated Claude Code and Codex loom-proxy configs now default to the reduced `llm-core` tool profile with `--max-tools 140`; operators can still opt back into the full surface by overriding `--tool-profile` or `--max-tools`.
 
 Hook reliability diagnostics:
