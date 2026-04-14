@@ -794,13 +794,11 @@ def patch_gemma4_mlp_fp16_clamp(vllm_root: pathlib.Path) -> bool:
     new_mlp = (
         "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
         "        # GEMMA4_MLP_FP16_CLAMP: pre_feedforward_layernorm weights reach\n"
-        "        # abs_max=234, causing FP16 matmul overflow. ROCm hipBLAS uses\n"
-        "        # FP16 accumulation by default, so even moderate input magnitudes\n"
-        "        # can overflow when summed over 2816 dims. Clamp input to ±50\n"
-        "        # (norm weights mean=7.3, so this preserves most signal energy)\n"
-        "        # and nan_to_num on output catches any remaining overflow.\n"
+        "        # abs_max=234, causing FP16 matmul overflow at layer 26. Layer 25\n"
+        "        # MLP output is ~58K (barely under 65504). The overflow is marginal.\n"
+        "        # nan_to_num replaces Inf→65000, preserving the signal direction.\n"
+        "        # post_feedforward_layernorm then normalizes the magnitude.\n"
         "        import torch as _t\n"
-        "        hidden_states = _t.clamp(hidden_states, min=-50.0, max=50.0)\n"
         "        hidden_states = self.mlp(hidden_states)\n"
         "        hidden_states = _t.nan_to_num(hidden_states, nan=0.0, posinf=65000.0, neginf=-65000.0)"
     )
@@ -823,7 +821,6 @@ def patch_gemma4_mlp_fp16_clamp(vllm_root: pathlib.Path) -> bool:
             f"{indent}hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
             f"{indent}# GEMMA4_MLP_FP16_CLAMP: prevent FP16 matmul overflow\n"
             f"{indent}import torch as _t\n"
-            f"{indent}hidden_states = _t.clamp(hidden_states, min=-50.0, max=50.0)\n"
             f"{indent}hidden_states = self.mlp(hidden_states)\n"
             f"{indent}hidden_states = _t.nan_to_num(hidden_states, nan=0.0, posinf=65000.0, neginf=-65000.0)"
         )
