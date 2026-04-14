@@ -11,6 +11,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+// GPTQScriptVersion must match FLEXINFER_SCRIPT_VERSION in quantize_gptq.py.
+// Bump both when controller-side heredoc patches change to catch stale images.
+const GPTQScriptVersion = "v7"
+
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}
 
@@ -261,6 +265,35 @@ func defaultGPTQModelPoliciesJSON() string {
 // status files, and delegates to the Python script.
 func (b *GPTQJobBuilder) gptqWrapperScript() string {
 	return `set -euo pipefail
+
+# --- Script version check ---
+# Catch stale quantizer images that are missing controller-side patches.
+EXPECTED_VERSION="` + GPTQScriptVersion + `"
+ACTUAL_VERSION=$(python3 -c "
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location('q', '/workspace/quantize_gptq.py')
+if spec is None:
+    spec = importlib.util.spec_from_file_location('q', '/app/quantize_gptq.py')
+if spec is None:
+    for p in sys.path:
+        import os
+        f = os.path.join(p, 'quantize_gptq.py')
+        if os.path.isfile(f):
+            spec = importlib.util.spec_from_file_location('q', f)
+            break
+if spec is None:
+    print('UNKNOWN')
+else:
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    print(getattr(m, 'FLEXINFER_SCRIPT_VERSION', 'UNKNOWN'))
+" 2>/dev/null || echo "UNKNOWN")
+if [ "${ACTUAL_VERSION}" != "${EXPECTED_VERSION}" ]; then
+    echo "FATAL: Script version mismatch. Image has ${ACTUAL_VERSION}, controller expects ${EXPECTED_VERSION}. Rebuild quantizer image."
+    echo "FATAL: Script version mismatch (image=${ACTUAL_VERSION} controller=${EXPECTED_VERSION})" > /dev/termination-log
+    exit 1
+fi
+
 TYPE="W${BITS}_G${GROUP_SIZE}"
 START_TS=$(date +%s)
 LOGFILE=/tmp/quantize-output.log

@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
 func TestEffectiveQuantizationDeadline(t *testing.T) {
@@ -36,7 +37,7 @@ func TestEffectiveQuantizationDeadline(t *testing.T) {
 		{
 			name: "nil spec uses default",
 			spec: nil,
-			want: 21600,
+			want: 86400,
 		},
 		{
 			name: "timeout below minimum uses default",
@@ -44,7 +45,7 @@ func TestEffectiveQuantizationDeadline(t *testing.T) {
 				Format:         aiv1alpha1.QuantizationFormatGPTQ,
 				TimeoutSeconds: int64Ptr(120),
 			},
-			want: 21600,
+			want: 86400,
 		},
 		{
 			name: "valid timeout overrides default",
@@ -131,7 +132,8 @@ func TestReconcileQuantizationCreatesJobAndSeedsHash(t *testing.T) {
 	assert.Equal(t, aiv1alpha1.ModelCachePhaseQuantizing, updated.Status.Phase)
 	assert.Equal(t, "quantization", updated.Status.CurrentPhase)
 	require.NotNil(t, updated.Annotations)
-	assert.Equal(t, quantSpecHash(updated.Spec.Quantization), updated.Annotations[annotationQuantSpecHash])
+	// Hash now includes resolved image (empty when no GPUProfiles set)
+	assert.Equal(t, quantSpecHashWithImage(updated.Spec.Quantization, ""), updated.Annotations[annotationQuantSpecHash])
 
 	job := &batchv1.Job{}
 	err = cl.Get(context.Background(), client.ObjectKey{Name: "quant-create-quantize", Namespace: "default"}, job)
@@ -363,7 +365,8 @@ func TestReconcileQuantizationSpecChangeResetsStateAndDeletesJobs(t *testing.T) 
 	assert.Nil(t, updated.Status.Abliteration)
 	assert.Nil(t, updated.Status.Publish)
 	require.NotNil(t, updated.Annotations)
-	assert.Equal(t, quantSpecHash(updated.Spec.Quantization), updated.Annotations[annotationQuantSpecHash])
+	// Hash now includes resolved image (empty when no GPUProfiles set)
+	assert.Equal(t, quantSpecHashWithImage(updated.Spec.Quantization, ""), updated.Annotations[annotationQuantSpecHash])
 
 	for _, jobName := range []string{
 		"quant-reset-quantize",
@@ -733,6 +736,203 @@ func TestReconcileAbliterationStaleFreshJobIgnoresOldFailureMessage(t *testing.T
 	job := &batchv1.Job{}
 	err = cl.Get(context.Background(), client.ObjectKey{Name: "ablit-stale-fresh-job-abliterate", Namespace: "default"}, job)
 	assert.Error(t, err, "expected stale abliteration job to be deleted")
+}
+
+func TestRequestsForGPUProfile_MatchesByArch(t *testing.T) {
+	matchingCache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "matching-cache",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:          "HF://org/model",
+			StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.vendor": "AMD",
+				"flexinfer.ai/gpu.arch":   "gfx1100",
+			},
+			Quantization: &aiv1alpha1.QuantizationSpec{
+				Format: aiv1alpha1.QuantizationFormatGPTQ,
+				UseGPU: true,
+			},
+		},
+	}
+
+	nonMatchingCache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "non-matching-cache",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:          "HF://org/model2",
+			StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.vendor": "AMD",
+				"flexinfer.ai/gpu.arch":   "gfx906",
+			},
+			Quantization: &aiv1alpha1.QuantizationSpec{
+				Format: aiv1alpha1.QuantizationFormatGPTQ,
+				UseGPU: true,
+			},
+		},
+	}
+
+	noQuantCache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "no-quant-cache",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:          "HF://org/model3",
+			StorageStrategy: aiv1alpha1.StorageStrategySharedPVC,
+			NodeSelector: map[string]string{
+				"flexinfer.ai/gpu.arch": "gfx1100",
+			},
+		},
+	}
+
+	profile := &aiv1alpha2.GPUProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gfx1100",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.GPUProfileSpec{
+			Architecture: "gfx1100",
+			Vendor:       "amd",
+			VRAMMB:       24576,
+		},
+	}
+
+	s := runtime.NewScheme()
+	require.NoError(t, aiv1alpha1.AddToScheme(s))
+	require.NoError(t, aiv1alpha2.AddToScheme(s))
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(matchingCache, nonMatchingCache, noQuantCache, profile).
+		Build()
+
+	r := &ModelCacheReconciler{Client: cl, Scheme: s}
+	requests := r.requestsForGPUProfile(context.Background(), profile)
+
+	require.Len(t, requests, 1)
+	assert.Equal(t, "matching-cache", requests[0].Name)
+	assert.Equal(t, "flexinfer-system", requests[0].Namespace)
+}
+
+func TestQuantSpecHashWithImage_ChangesOnImageChange(t *testing.T) {
+	spec := &aiv1alpha1.QuantizationSpec{
+		Format:    aiv1alpha1.QuantizationFormatGPTQ,
+		Bits:      int32Ptr(4),
+		GroupSize: int32Ptr(128),
+		UseGPU:    true,
+	}
+
+	hash1 := quantSpecHashWithImage(spec, "registry.example.com/quantizer:v1")
+	hash2 := quantSpecHashWithImage(spec, "registry.example.com/quantizer:v2")
+	hashNoImage := quantSpecHashWithImage(spec, "")
+
+	assert.NotEqual(t, hash1, hash2, "different images should produce different hashes")
+	assert.NotEqual(t, hash1, hashNoImage, "image vs no-image should differ")
+	assert.NotEmpty(t, hash1)
+	assert.NotEmpty(t, hash2)
+
+	// Same inputs should produce stable hash
+	hash1Again := quantSpecHashWithImage(spec, "registry.example.com/quantizer:v1")
+	assert.Equal(t, hash1, hash1Again)
+}
+
+func TestReconcileQuantization_ImageDrift_DeletesJob(t *testing.T) {
+	started := metav1.NewTime(time.Now().Add(-5 * time.Minute))
+
+	cache := newQuantizationCache("quant-drift")
+	// Pre-seed the hash so detectAndApplySpecChange doesn't trigger
+	cache.Annotations = map[string]string{
+		annotationQuantSpecHash: "will-be-overwritten",
+	}
+
+	staleJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "quant-drift-quantize",
+			Namespace: "default",
+		},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "quantizer",
+						Image: "registry.example.com/quantizer:OLD",
+					}},
+					RestartPolicy: corev1.RestartPolicyNever,
+				},
+			},
+		},
+		Status: batchv1.JobStatus{
+			Active:    1,
+			StartTime: &started,
+		},
+	}
+
+	// Create a GPUProfile that resolves to a DIFFERENT image
+	profile := &aiv1alpha2.GPUProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gfx1100",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.GPUProfileSpec{
+			Architecture: "gfx1100",
+			Vendor:       "amd",
+			VRAMMB:       24576,
+			Quantization: &aiv1alpha2.QuantizationProfile{
+				Images: map[string]string{
+					"gptq": "registry.example.com/quantizer:NEW",
+				},
+			},
+		},
+	}
+
+	s := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme,
+		batchv1.AddToScheme,
+		aiv1alpha1.AddToScheme,
+		aiv1alpha2.AddToScheme,
+	} {
+		require.NoError(t, add(s))
+	}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&aiv1alpha1.ModelCache{}).
+		WithObjects(cache, staleJob, profile).
+		Build()
+
+	gpuProfileReconciler := &GPUProfileReconciler{
+		Client: cl,
+		Scheme: s,
+	}
+
+	r := &ModelCacheReconciler{
+		Client:      cl,
+		Scheme:      s,
+		Recorder:    record.NewFakeRecorder(20),
+		GPUProfiles: gpuProfileReconciler,
+	}
+
+	// Seed the hash to match so detectAndApplySpecChange is a no-op.
+	// We need to compute the hash WITH the new image so it matches.
+	newHash := quantSpecHashWithImage(cache.Spec.Quantization, "registry.example.com/quantizer:NEW")
+	cache.Annotations[annotationQuantSpecHash] = newHash
+	require.NoError(t, cl.Update(context.Background(), cache))
+
+	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, requeueShort, result.RequeueAfter)
+
+	// Job should be deleted
+	job := &batchv1.Job{}
+	err = cl.Get(context.Background(), client.ObjectKey{Name: "quant-drift-quantize", Namespace: "default"}, job)
+	assert.Error(t, err, "expected stale job to be deleted due to image drift")
 }
 
 func newQuantizationTestReconciler(t *testing.T, kubeClient kubernetes.Interface, objs ...client.Object) (*ModelCacheReconciler, client.Client) {

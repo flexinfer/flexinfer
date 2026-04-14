@@ -30,6 +30,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -78,7 +79,10 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		}
 	}
 
-	currentHash := quantSpecHash(modelCache.Spec.Quantization)
+	// Include the resolved quantizer image in the hash so GPUProfile image
+	// changes trigger re-quantization via detectAndApplySpecChange.
+	resolvedImg := r.resolveCurrentQuantizerImage(ctx, modelCache)
+	currentHash := quantSpecHashWithImage(modelCache.Spec.Quantization, resolvedImg)
 
 	suffixes := []string{"-quantize", "-quantize-image-warmup", "-downloader", "-publish", "-publish-source", "-publish-abliterated"}
 	if modelCache.Spec.Finetune != nil {
@@ -433,6 +437,25 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 	}
 
 	if quantJob.Status.Active > 0 {
+		// Image drift detection: if the GPUProfile image was updated while
+		// a quantization job is running, delete the stale job so the
+		// controller recreates it with the correct image on the next reconcile.
+		if resolvedImg := r.resolveCurrentQuantizerImage(ctx, modelCache); resolvedImg != "" {
+			runningImg := quantJob.Spec.Template.Spec.Containers[0].Image
+			if resolvedImg != runningImg {
+				log.Info("Quantizer image drift detected, deleting stale job",
+					"cache", modelCache.Name,
+					"running", runningImg,
+					"resolved", resolvedImg)
+				r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizerImageDrift",
+					fmt.Sprintf("Running image %s != resolved %s, recreating job", runningImg, resolvedImg))
+				if err := r.Delete(ctx, quantJob, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !errors.IsNotFound(err) {
+					return ctrl.Result{}, fmt.Errorf("deleting drifted quantization job: %w", err)
+				}
+				return ctrl.Result{RequeueAfter: requeueShort}, nil
+			}
+		}
+
 		elapsed := time.Duration(0)
 		if quantJob.Status.StartTime != nil {
 			elapsed = time.Since(quantJob.Status.StartTime.Time).Truncate(time.Second)
@@ -846,4 +869,56 @@ func quantSpecHash(spec *aiv1alpha1.QuantizationSpec) string {
 	}
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:8]) // 16-char hex prefix is sufficient
+}
+
+// quantSpecHashWithImage returns a hash that includes both the QuantizationSpec
+// and the resolved quantizer image. When the GPUProfile image changes, this hash
+// changes, triggering detectAndApplySpecChange to delete the old job.
+func quantSpecHashWithImage(spec *aiv1alpha1.QuantizationSpec, resolvedImage string) string {
+	if spec == nil {
+		return ""
+	}
+	b, err := json.Marshal(spec)
+	if err != nil {
+		return ""
+	}
+	combined := append(b, []byte("|"+resolvedImage)...)
+	h := sha256.Sum256(combined)
+	return hex.EncodeToString(h[:8])
+}
+
+// resolveCurrentQuantizerImage repeats the GPUProfile → image resolution chain
+// to determine what image a newly created quantization job would use. Returns
+// empty string if resolution fails or GPUProfiles is not configured.
+func (r *ModelCacheReconciler) resolveCurrentQuantizerImage(ctx context.Context, mc *aiv1alpha1.ModelCache) string {
+	if mc.Spec.Quantization == nil || r.GPUProfiles == nil {
+		return ""
+	}
+
+	effectiveNodeSelector := mc.Spec.NodeSelector
+	if mc.Spec.Quantization.NodeSelector != nil {
+		effectiveNodeSelector = mc.Spec.Quantization.NodeSelector
+	}
+
+	gpuArch := gpu.ArchFromLabels(effectiveNodeSelector)
+	if gpuArch == "" {
+		return ""
+	}
+
+	profile, ok, err := r.GPUProfiles.LookupOrFetch(ctx, mc.Namespace, gpuArch)
+	if err != nil || !ok || profile == nil {
+		return ""
+	}
+
+	format := string(mc.Spec.Quantization.Format)
+	if img, found := backend.QuantizerImageFromProfile(profile, format); found {
+		return img
+	}
+
+	return quantization.ResolveImage(
+		quantization.ImageFormat(strings.ToLower(format)),
+		"",
+		gpu.VendorFromLabels(effectiveNodeSelector),
+		gpuArch,
+	)
 }

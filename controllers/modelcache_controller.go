@@ -29,8 +29,12 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/gpu"
 	"github.com/flexinfer/flexinfer/pkg/observability"
 )
 
@@ -136,5 +140,50 @@ func (r *ModelCacheReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
 		Owns(&appsv1.DaemonSet{}).
+		Watches(&aiv1alpha2.GPUProfile{}, handler.EnqueueRequestsFromMapFunc(r.requestsForGPUProfile)).
 		Complete(r)
+}
+
+// requestsForGPUProfile maps a GPUProfile change to all ModelCaches whose
+// effective nodeSelector targets the same GPU architecture. This ensures that
+// when a GPUProfile image is updated, affected ModelCaches are reconciled and
+// any running quantization jobs with stale images are detected.
+func (r *ModelCacheReconciler) requestsForGPUProfile(ctx context.Context, obj client.Object) []reconcile.Request {
+	profile, ok := obj.(*aiv1alpha2.GPUProfile)
+	if !ok {
+		return nil
+	}
+
+	arch := profile.Spec.Architecture
+	if arch == "" {
+		arch = profile.Name
+	}
+	if arch == "" {
+		return nil
+	}
+
+	var caches aiv1alpha1.ModelCacheList
+	if err := r.List(ctx, &caches, client.InNamespace(profile.Namespace)); err != nil {
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for i := range caches.Items {
+		mc := &caches.Items[i]
+		if mc.Spec.Quantization == nil {
+			continue
+		}
+
+		effectiveNodeSelector := mc.Spec.NodeSelector
+		if mc.Spec.Quantization.NodeSelector != nil {
+			effectiveNodeSelector = mc.Spec.Quantization.NodeSelector
+		}
+
+		if gpu.ArchFromLabels(effectiveNodeSelector) == arch {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: client.ObjectKeyFromObject(mc),
+			})
+		}
+	}
+	return requests
 }

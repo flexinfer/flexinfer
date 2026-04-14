@@ -218,6 +218,22 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 	})
 
+	t.Run("wrapper script has version check", func(t *testing.T) {
+		script := builder.gptqWrapperScript()
+		if !strings.Contains(script, "EXPECTED_VERSION=") {
+			t.Error("wrapper missing script version check")
+		}
+		if !strings.Contains(script, GPTQScriptVersion) {
+			t.Errorf("wrapper does not contain current GPTQScriptVersion %q", GPTQScriptVersion)
+		}
+		if !strings.Contains(script, "FLEXINFER_SCRIPT_VERSION") {
+			t.Error("wrapper missing FLEXINFER_SCRIPT_VERSION reference")
+		}
+		if !strings.Contains(script, "Script version mismatch") {
+			t.Error("wrapper missing version mismatch error message")
+		}
+	})
+
 	t.Run("wrapper script has ROCm detection", func(t *testing.T) {
 		script := builder.gptqWrapperScript()
 		if !strings.Contains(script, "HSA_OVERRIDE_GFX_VERSION=9.0.6") {

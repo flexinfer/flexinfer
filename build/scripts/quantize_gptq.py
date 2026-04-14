@@ -6,11 +6,16 @@ All configuration is read from environment variables set by the controller:
   SYM, DESC_ACT, GPU_MEMORY_FRACTION, DYNAMIC_EXCLUSION, DATASET,
   FLEXINFER_TELEMETRY (optional, "true" enables JSON progress lines)
 """
+
+# Bumped when controller-side patches change. The wrapper script checks this
+# against GPTQScriptVersion in gptq.go and aborts on mismatch.
+FLEXINFER_SCRIPT_VERSION = "v7"
 import copy
 import gc
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -180,6 +185,148 @@ def env_int(name, default):
     return int(raw)
 
 
+def defuse_fused_experts(model):
+    """Defuse fused 3D expert parameters into per-expert nn.Linear modules.
+
+    Handles architectures like Gemma4 (inheriting MixtralExperts) where MoE
+    experts are stored as fused 3D nn.Parameter tensors:
+
+      gate_up_proj: [num_experts, 2 * intermediate_size, hidden_size]
+      down_proj:    [num_experts, hidden_size, intermediate_size]
+
+    The original forward (Gemma4TextExperts / MixtralExperts) uses
+    F.linear(x, gate_up_proj[i]).chunk(2, dim=-1) for each expert.
+
+    This function:
+      1. Splits gate_up_proj into per-expert gate_proj and up_proj nn.Linear
+      2. Creates per-expert down_proj nn.Linear
+      3. Registers per-expert modules as numbered children ("0", "1", ...)
+      4. Replaces forward with a sequential per-expert version that calls
+         through nn.Linear (required for GPTQ activation capture via hooks)
+      5. Removes original fused parameters to reclaim memory
+
+    Returns the number of expert modules defused (one per decoder layer).
+    """
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+
+    defused_count = 0
+
+    for mod_name, module in list(model.named_modules()):
+        gate_up = getattr(module, "gate_up_proj", None)
+        down = getattr(module, "down_proj", None)
+
+        if gate_up is None or down is None:
+            continue
+        if not isinstance(gate_up, (nn.Parameter, torch.Tensor)):
+            continue
+        if gate_up.dim() != 3 or down.dim() != 3:
+            continue
+
+        num_experts = gate_up.shape[0]
+        fused_2x_inter = gate_up.shape[1]
+        hidden_size = gate_up.shape[2]
+        intermediate_size = fused_2x_inter // 2
+
+        if down.shape != (num_experts, hidden_size, intermediate_size):
+            print(
+                f"  WARN: {mod_name}.down_proj shape {list(down.shape)} != "
+                f"expected [{num_experts}, {hidden_size}, {intermediate_size}], skipping"
+            )
+            continue
+
+        act_fn = getattr(module, "act_fn", F.gelu)
+
+        if defused_count == 0:
+            print(
+                f"Defusing fused experts: num_experts={num_experts}, "
+                f"hidden={hidden_size}, intermediate={intermediate_size}"
+            )
+            print(
+                f"  gate_up_proj: {list(gate_up.shape)}, down_proj: {list(down.shape)}"
+            )
+            print(f"  activation: {act_fn}")
+
+        with torch.no_grad():
+            gate_weights, up_weights = gate_up.data.chunk(2, dim=1)
+
+        for i in range(num_experts):
+            expert = nn.Module()
+
+            gp = nn.Linear(hidden_size, intermediate_size, bias=False)
+            gp.weight = nn.Parameter(gate_weights[i].contiguous())
+            expert.gate_proj = gp
+
+            up_l = nn.Linear(hidden_size, intermediate_size, bias=False)
+            up_l.weight = nn.Parameter(up_weights[i].contiguous())
+            expert.up_proj = up_l
+
+            dp = nn.Linear(intermediate_size, hidden_size, bias=False)
+            dp.weight = nn.Parameter(down.data[i].contiguous())
+            expert.down_proj = dp
+
+            module.register_module(str(i), expert)
+
+        # Replace forward to route through per-expert nn.Linear modules.
+        # Matches the original MixtralExperts / Gemma4TextExperts forward
+        # signature: forward(hidden_states, top_k_index, top_k_weights).
+        _n_exp = num_experts
+        _act = act_fn
+
+        def _make_forward(mod, n_exp, activation):
+            def forward(hidden_states, top_k_index, top_k_weights):
+                final_hidden_states = torch.zeros_like(hidden_states)
+                with torch.no_grad():
+                    expert_mask = F.one_hot(top_k_index, num_classes=n_exp)
+                    expert_mask = expert_mask.permute(2, 1, 0)
+                    expert_hit = torch.greater(
+                        expert_mask.sum(dim=(-1, -2)), 0
+                    ).nonzero()
+
+                for eidx in expert_hit:
+                    eidx_val = eidx[0]
+                    if eidx_val >= n_exp:
+                        continue
+                    top_k_pos, token_idx = torch.where(expert_mask[eidx_val])
+                    current_state = hidden_states[token_idx]
+
+                    expert_mod = getattr(mod, str(eidx_val.item()))
+                    gate_out = expert_mod.gate_proj(current_state)
+                    up_out = expert_mod.up_proj(current_state)
+                    current_hidden = activation(gate_out) * up_out
+                    current_hidden = expert_mod.down_proj(current_hidden)
+                    current_hidden = (
+                        current_hidden * top_k_weights[token_idx, top_k_pos, None]
+                    )
+                    final_hidden_states.index_add_(
+                        0,
+                        token_idx,
+                        current_hidden.to(final_hidden_states.dtype),
+                    )
+
+                return final_hidden_states
+
+            return forward
+
+        module.forward = _make_forward(module, _n_exp, _act)
+
+        # Remove original fused parameters to reclaim memory.
+        if "gate_up_proj" in module._parameters:
+            del module._parameters["gate_up_proj"]
+        if "down_proj" in module._parameters:
+            del module._parameters["down_proj"]
+
+        defused_count += 1
+        if defused_count % 5 == 0:
+            gc.collect()
+
+    if defused_count > 0:
+        gc.collect()
+
+    return defused_count
+
+
 def refuse_moe_expert_tensors(save_dir):
     """Re-fuse per-expert 2D GPTQ tensors back into fused 3D tensors for vLLM.
 
@@ -195,7 +342,6 @@ def refuse_moe_expert_tensors(save_dir):
     Re-fuse: gate+up → cat(dim=0) per expert → stack(dim=0) → gate_up_proj
              down per expert → stack(dim=0) → down_proj
     """
-    import re
     import torch
 
     try:
@@ -1610,24 +1756,87 @@ else:
 
 emit_progress("progress", phase="quantizing", percent=5.0, detail="model loaded")
 
-# ── MoE expert module_tree patch ─────────────────────────────────────
-# After model loading, Defuser has already unfused Gemma4's fused 3D expert
-# nn.Parameter tensors into individual nn.Linear per expert. But the model
-# definition's module_tree only lists attention + dense MLP — the experts are
-# invisible to GPTQ's layer walker. Patch module_tree to include them.
+# ── MoE expert defusion + module_tree patch ──────────────────────────
+# Gemma4 (and similar architectures) store MoE experts as fused 3D
+# nn.Parameter tensors. GPTQ requires per-expert nn.Linear modules.
+#
+# Strategy:
+#   1. Check if experts are already defused (by Defuser during GPTQModel.load)
+#   2. Try defuser.convert_model() with correct import path
+#   3. Fall back to custom defuse_fused_experts() for unregistered models
+#   4. After defusion, patch module_tree with expert entries + lifecycle hooks
+
 _has_defused_experts = False
+
+# 1. Check if Defuser already defused during GPTQModel.load()
 for _name, _mod in model.named_modules():
-    if ".experts.0.gate_proj" in _name:
+    if re.search(r"\.experts\.\d+\.gate_proj$", _name):
         _has_defused_experts = True
+        print(f"Experts already defused (found {_name})")
         break
 
+if not _has_defused_experts:
+    # Check for fused 3D expert parameters
+    _fused_expert_info = []
+    for _name, _param in model.named_parameters():
+        if "expert" in _name.lower() and _param.dim() == 3:
+            _fused_expert_info.append((_name, list(_param.shape)))
+    if _fused_expert_info:
+        print(
+            f"Found {len(_fused_expert_info)} fused 3D expert parameters "
+            f"(need defusion for GPTQ)"
+        )
+        for _fi_name, _fi_shape in _fused_expert_info[:4]:
+            print(f"  {_fi_name}: {_fi_shape}")
+
+        # 2. Try defuser package first (correct import: `import defuser`)
+        _defuser_ok = False
+        try:
+            import defuser as _defuser_pkg
+
+            _inner = model.model if hasattr(model, "model") else model
+            _defuser_pkg.convert_model(_inner, cleanup_original=True)
+            for _name, _mod in model.named_modules():
+                if re.search(r"\.experts\.\d+\.gate_proj$", _name):
+                    _has_defused_experts = True
+                    _defuser_ok = True
+                    break
+            if _defuser_ok:
+                print("Defuser: converted fused experts to per-expert nn.Linear")
+        except Exception as _e:
+            print(f"Defuser did not defuse experts: {_e}")
+
+        # 3. Fall back to custom defusion
+        if not _defuser_ok:
+            print("Using custom defusion for fused 3D expert parameters...")
+            _inner = model.model if hasattr(model, "model") else model
+            _n_defused = defuse_fused_experts(_inner)
+            if _n_defused > 0:
+                _has_defused_experts = True
+                print(f"Custom defusion complete: {_n_defused} layers defused")
+                # Verify
+                _sample_paths = [
+                    n
+                    for n, _ in model.named_modules()
+                    if re.search(r"\.experts\.\d+\.gate_proj$", n)
+                ]
+                print(
+                    f"  Verification: {len(_sample_paths)} expert gate_proj "
+                    f"modules found"
+                )
+                if _sample_paths:
+                    print(f"  Example: {_sample_paths[0]}")
+            else:
+                print("WARN: Custom defusion found no modules to defuse")
+    else:
+        print("INFO: No fused 3D expert parameters found (non-MoE model)")
+
+# 4. Patch module_tree + lifecycle hooks
 if _has_defused_experts:
     try:
         from gptqmodel.models.moe_lifecycle import GateUpDownMoELifecycleHooks
 
         _cls = type(model)
-
-        # Find the self_attn dict entry in module_tree and add MoE experts.
         _patched_tree = False
         for _entry in getattr(_cls, "module_tree", []):
             if isinstance(_entry, dict) and "self_attn" in _entry:
@@ -1641,14 +1850,14 @@ if _has_defused_experts:
         if _patched_tree:
             _cls.dynamic_expert_index = "num_experts"
             _cls.moe_lifecycle_hooks = GateUpDownMoELifecycleHooks()
-            _n_experts = sum(
+            _n_expert_layers = sum(
                 1
                 for n, _ in model.named_modules()
-                if n.endswith(".experts.0.gate_proj")
+                if re.search(r"\.experts\.0\.gate_proj$", n)
             )
             print(
                 f"Patched {_cls.__name__} module_tree with MoE experts "
-                f"({_n_experts} layers with defused experts)"
+                f"({_n_expert_layers} layers with defused experts)"
             )
             print(
                 f"  module_tree entries: "
@@ -1656,15 +1865,14 @@ if _has_defused_experts:
             )
         else:
             print(
-                "INFO: MoE experts already in module_tree or self_attn entry not found"
+                "INFO: MoE experts already in module_tree or "
+                "self_attn entry not found"
             )
     except ImportError as e:
         print(f"WARN: Could not import MoE lifecycle hooks: {e}")
-        print("  MoE experts will NOT be quantized (falling back to attention-only)")
+        print("  MoE experts will NOT be quantized")
 else:
-    print(
-        "INFO: No defused MoE experts detected (non-MoE model or Defuser did not run)"
-    )
+    print("INFO: No MoE experts to defuse")
 
 # ── Calibration dataset ────────────────────────────────────────────────
 examples = load_cached_examples(model_dir)

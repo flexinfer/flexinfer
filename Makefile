@@ -388,6 +388,19 @@ push-diffusers-cuda: ## Push Diffusers CUDA Maxwell image to Harbor
 verify-images: ## Verify all backend images exist in Harbor registry
 	@./scripts/verify-images.sh
 
+##@ Quantizer Deploy
+
+QUANTIZER_ARCH ?= gfx1100
+QUANTIZER_FORMAT ?= gptq
+
+.PHONY: deploy-quantizer
+deploy-quantizer: ## Build+push quantizer image, update+apply GPUProfile (QUANTIZER_ARCH=gfx1100 QUANTIZER_FORMAT=gptq)
+	./scripts/deploy-quantizer.sh $(QUANTIZER_ARCH) --format $(QUANTIZER_FORMAT)
+
+.PHONY: deploy-quantizer-full
+deploy-quantizer-full: ## Above + rebuild controller + rollout restart
+	./scripts/deploy-quantizer.sh $(QUANTIZER_ARCH) --format $(QUANTIZER_FORMAT) --controller
+
 ##@ Benchmarks
 
 .PHONY: bench-swap
