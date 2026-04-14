@@ -44,6 +44,10 @@ spec:
     enablePrefixCaching: true
     maxNumBatchedTokens: 8192
     disableLogStats: false
+    # Gemma4 has heterogeneous head dims (256 sliding / 512 full attention)
+    # which triggers V1 KV cache page_size_padded assertion. Disabling the
+    # hybrid manager unifies all specs to FullAttentionSpec, bypassing it.
+    disableHybridKVCacheManager: true
     hipVisibleDevices: "0"
     warmPolicy: primary
   nodeSelector:
