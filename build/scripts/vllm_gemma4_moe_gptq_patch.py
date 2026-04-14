@@ -765,14 +765,14 @@ def patch_gemma4_mlp_fp16_clamp(vllm_root: pathlib.Path) -> bool:
 
     Root cause: Gemma4's pre_feedforward_layernorm weights reach abs_max=234,
     amplifying MLP inputs. The gate_proj/up_proj matmul accumulates 2816 terms
-    in FP16 (max 65504). Layer 25 MLP output: 58208 (barely under limit).
-    Layer 26: Inf → NaN cascade. Previous nan_to_num(Inf→65000) "fix" caused
-    RMSNorm to crush all other hidden state dimensions, destroying information.
+    in FP16 (max 65504). Layer 26 MLP output reaches abs_max=181K in float32,
+    which overflows fp16 → Inf → NaN cascade.
 
-    Fix: compute the dense MLP in float32 using F.linear directly. Float32
-    max is 3.4e38, so no overflow. Uses standard PyTorch ops (no ROCm custom
-    kernels). The dense MLP weights are unquantized FP16, cast to float32
-    for computation, result cast back to model dtype.
+    Fix: compute the dense MLP in float32, keep float32 through
+    post_feedforward_layernorm_1 (RMSNorm normalizes to safe range), then
+    cast to fp16. Two patches:
+    (A) Replace self.mlp(x) with manual float32 F.linear computation.
+    (B) Change post_feedforward_layernorm_1 to cast output to fp16.
     """
     gemma4_py = vllm_root / "model_executor" / "models" / "gemma4.py"
     if not gemma4_py.exists():
@@ -785,14 +785,16 @@ def patch_gemma4_mlp_fp16_clamp(vllm_root: pathlib.Path) -> bool:
         print("[gemma4-moe-patch] MLP fp16 upcast already patched")
         return True
 
-    # Float32 MLP replacement: bypasses vLLM's rocm_unquantized_gemm and
-    # computes gate_up_proj → GeluAndMul → down_proj in float32.
+    # Part A: Replace MLP call with float32 computation.
+    # Output stays in float32 — DO NOT cast to fp16 here.
+    # The post_feedforward_layernorm_1 (RMSNorm) normalizes abs_max from
+    # 181K → ~534, which is safe for fp16.
     f32_mlp_code = (
         "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
         "        # GEMMA4_MLP_FP16_CLAMP: Compute dense MLP in float32 to prevent\n"
-        "        # FP16 overflow at layers with large layernorm weights (abs_max=234).\n"
-        "        # Layer 26 MLP output exceeds FP16 max (65504) → Inf → NaN cascade.\n"
-        "        # Float32 computation eliminates the overflow entirely.\n"
+        "        # FP16 overflow (Layer 26 MLP output abs_max=181K in f32).\n"
+        "        # Output stays f32; post_feedforward_layernorm_1 normalizes to\n"
+        "        # safe range before fp16 cast.\n"
         "        import torch as _t\n"
         "        import torch.nn.functional as _F\n"
         "        _mlp_orig_dtype = hidden_states.dtype\n"
@@ -800,8 +802,7 @@ def patch_gemma4_mlp_fp16_clamp(vllm_root: pathlib.Path) -> bool:
         "        _mlp_gate_up = _F.linear(_mlp_x, self.mlp.gate_up_proj.weight.float())\n"
         "        _mlp_g, _mlp_u = _mlp_gate_up.chunk(2, dim=-1)\n"
         "        _mlp_x = _F.gelu(_mlp_g, approximate='tanh') * _mlp_u\n"
-        "        hidden_states = _F.linear(_mlp_x, self.mlp.down_proj.weight.float())\n"
-        "        hidden_states = hidden_states.to(_mlp_orig_dtype)"
+        "        hidden_states = _F.linear(_mlp_x, self.mlp.down_proj.weight.float())"
     )
 
     old_mlp = (
@@ -809,40 +810,62 @@ def patch_gemma4_mlp_fp16_clamp(vllm_root: pathlib.Path) -> bool:
         "        hidden_states = self.mlp(hidden_states)"
     )
 
+    applied_a = False
     if old_mlp in src:
         src = src.replace(old_mlp, f32_mlp_code, 1)
-        gemma4_py.write_text(src)
-        print(f"[gemma4-moe-patch] Applied MLP float32 upcast to {gemma4_py}")
-        return True
-
-    # Regex fallback for whitespace variations
-    pattern = re.compile(
-        r"([ \t]+)hidden_states = self\.pre_feedforward_layernorm\(hidden_states\)\n"
-        r"([ \t]+)hidden_states = self\.mlp\(hidden_states\)"
-    )
-    match = pattern.search(src)
-    if match:
-        indent = match.group(1)
-        replacement = (
-            f"{indent}hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
-            f"{indent}# GEMMA4_MLP_FP16_CLAMP: Float32 MLP to prevent FP16 overflow\n"
-            f"{indent}import torch as _t\n"
-            f"{indent}import torch.nn.functional as _F\n"
-            f"{indent}_mlp_orig_dtype = hidden_states.dtype\n"
-            f"{indent}_mlp_x = hidden_states.float()\n"
-            f"{indent}_mlp_gate_up = _F.linear(_mlp_x, self.mlp.gate_up_proj.weight.float())\n"
-            f"{indent}_mlp_g, _mlp_u = _mlp_gate_up.chunk(2, dim=-1)\n"
-            f"{indent}_mlp_x = _F.gelu(_mlp_g, approximate='tanh') * _mlp_u\n"
-            f"{indent}hidden_states = _F.linear(_mlp_x, self.mlp.down_proj.weight.float())\n"
-            f"{indent}hidden_states = hidden_states.to(_mlp_orig_dtype)"
+        applied_a = True
+    else:
+        # Regex fallback for whitespace variations
+        pattern = re.compile(
+            r"([ \t]+)hidden_states = self\.pre_feedforward_layernorm\(hidden_states\)\n"
+            r"([ \t]+)hidden_states = self\.mlp\(hidden_states\)"
         )
-        src = src[: match.start()] + replacement + src[match.end() :]
-        gemma4_py.write_text(src)
-        print(f"[gemma4-moe-patch] Applied MLP float32 upcast (regex) to {gemma4_py}")
-        return True
+        match = pattern.search(src)
+        if match:
+            indent = match.group(1)
+            replacement = (
+                f"{indent}hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
+                f"{indent}# GEMMA4_MLP_FP16_CLAMP: Float32 MLP (no fp16 cast yet)\n"
+                f"{indent}import torch as _t\n"
+                f"{indent}import torch.nn.functional as _F\n"
+                f"{indent}_mlp_orig_dtype = hidden_states.dtype\n"
+                f"{indent}_mlp_x = hidden_states.float()\n"
+                f"{indent}_mlp_gate_up = _F.linear(_mlp_x, self.mlp.gate_up_proj.weight.float())\n"
+                f"{indent}_mlp_g, _mlp_u = _mlp_gate_up.chunk(2, dim=-1)\n"
+                f"{indent}_mlp_x = _F.gelu(_mlp_g, approximate='tanh') * _mlp_u\n"
+                f"{indent}hidden_states = _F.linear(_mlp_x, self.mlp.down_proj.weight.float())"
+            )
+            src = src[: match.start()] + replacement + src[match.end() :]
+            applied_a = True
 
-    print("[gemma4-moe-patch] WARNING: Could not find MLP call pattern")
-    return False
+    if not applied_a:
+        print("[gemma4-moe-patch] WARNING: Could not find MLP call pattern")
+        return False
+
+    # Part B: Cast post_feedforward_layernorm_1 output to fp16.
+    # At this point hidden_states is float32 from the MLP. The RMSNorm
+    # (post_feedforward_layernorm_1) normalizes values to safe range,
+    # then .to(_mlp_orig_dtype) casts to fp16.
+    old_norm1 = (
+        "            hidden_states_1 = self.post_feedforward_layernorm_1(hidden_states)"
+    )
+    new_norm1 = (
+        "            # GEMMA4_MLP_FP16_CLAMP: Cast to fp16 after RMSNorm (f32 MLP output normalized)\n"
+        "            hidden_states_1 = self.post_feedforward_layernorm_1(hidden_states).to(_mlp_orig_dtype)"
+    )
+
+    if old_norm1 in src:
+        src = src.replace(old_norm1, new_norm1, 1)
+        print(
+            f"[gemma4-moe-patch] Applied MLP float32 upcast + deferred norm cast to {gemma4_py}"
+        )
+    else:
+        print(
+            "[gemma4-moe-patch] WARNING: Could not find post_feedforward_layernorm_1 pattern"
+        )
+
+    gemma4_py.write_text(src)
+    return True
 
 
 def patch_gemma4_decoder_layer_debug(vllm_root: pathlib.Path) -> bool:
@@ -894,19 +917,20 @@ def patch_gemma4_decoder_layer_debug(vllm_root: pathlib.Path) -> bool:
         src = src.replace(old_attn_residual, new_attn_residual, 1)
         patched = True
 
-    # Patch: after MLP (float32 upcast version from patch_gemma4_mlp_fp16_clamp)
-    # Match the f32 upcast output: "hidden_states = hidden_states.to(_mlp_orig_dtype)"
-    old_mlp_f32 = "        hidden_states = hidden_states.to(_mlp_orig_dtype)"
+    # Patch: after MLP f32 output (deferred cast version).
+    # MLP output stays float32, debug logs before post_feedforward_layernorm_1.
+    # Match the f32 down_proj output line.
+    old_mlp_f32 = (
+        "        hidden_states = _F.linear(_mlp_x, self.mlp.down_proj.weight.float())"
+    )
     new_mlp_f32 = (
-        "        hidden_states = hidden_states.to(_mlp_orig_dtype)\n"
-        "        # GEMMA4_DECODER_LAYER_DEBUG_PATCH: log MLP output (f32 upcast)\n"
+        "        hidden_states = _F.linear(_mlp_x, self.mlp.down_proj.weight.float())\n"
+        "        # GEMMA4_DECODER_LAYER_DEBUG_PATCH: log MLP output (f32, pre-norm)\n"
         "        _mn = hidden_states.isnan().any().item()\n"
         "        _mi = hidden_states.isinf().any().item()\n"
         "        _mm = hidden_states.abs().max().item() if not _mn else -1\n"
-        "        if _mn or _mi:\n"
-        "            _dbg.error('L%d MLP OUT: NaN=%s Inf=%s abs_max=%.1f', self.layer_idx, _mn, _mi, _mm)\n"
-        "        elif self.layer_idx % 5 == 0:\n"
-        "            _dbg.warning('L%d mlp_out: abs_max=%.2f', self.layer_idx, _mm)"
+        "        if _mn or _mi or self.layer_idx % 5 == 0:\n"
+        "            _dbg.warning('L%d MLP f32: NaN=%s Inf=%s abs_max=%.1f', self.layer_idx, _mn, _mi, _mm)"
     )
     if old_mlp_f32 in src:
         src = src.replace(old_mlp_f32, new_mlp_f32, 1)
