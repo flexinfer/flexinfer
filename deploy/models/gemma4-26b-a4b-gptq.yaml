@@ -46,6 +46,10 @@ spec:
     enablePrefixCaching: true
     maxNumBatchedTokens: 8192
     disableLogStats: false
+    # Disable torch.compile + CUDAGraph: gptq_gemm kernel is "buggy" per
+    # vLLM warning, and GELU tanh approximation falls back to 'none' under
+    # torch.compile on ROCm. Eager mode eliminates both issues.
+    enforceEager: true
     # Gemma4 has heterogeneous head dims (256 sliding / 512 full attention)
     # which triggers V1 KV cache page_size_padded assertion. Disabling the
     # hybrid manager unifies all specs to FullAttentionSpec, bypassing it.
