@@ -794,12 +794,15 @@ def patch_gemma4_mlp_fp16_clamp(vllm_root: pathlib.Path) -> bool:
     new_mlp = (
         "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
         "        # GEMMA4_MLP_FP16_CLAMP: pre_feedforward_layernorm weights reach\n"
-        "        # abs_max=234, causing FP16 matmul overflow at layer 26. Clamp to\n"
-        "        # ±200 keeps MLP output safely under FP16 max (65504). Only affects\n"
-        "        # extreme tail values; vast majority of 2816 dims are << 200.\n"
+        "        # abs_max=234, causing FP16 matmul overflow. ROCm hipBLAS uses\n"
+        "        # FP16 accumulation by default, so even moderate input magnitudes\n"
+        "        # can overflow when summed over 2816 dims. Clamp input to ±50\n"
+        "        # (norm weights mean=7.3, so this preserves most signal energy)\n"
+        "        # and nan_to_num on output catches any remaining overflow.\n"
         "        import torch as _t\n"
-        "        hidden_states = _t.clamp(hidden_states, min=-200.0, max=200.0)\n"
-        "        hidden_states = self.mlp(hidden_states)"
+        "        hidden_states = _t.clamp(hidden_states, min=-50.0, max=50.0)\n"
+        "        hidden_states = self.mlp(hidden_states)\n"
+        "        hidden_states = _t.nan_to_num(hidden_states, nan=0.0, posinf=65000.0, neginf=-65000.0)"
     )
 
     if old_mlp in src:
@@ -820,8 +823,9 @@ def patch_gemma4_mlp_fp16_clamp(vllm_root: pathlib.Path) -> bool:
             f"{indent}hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
             f"{indent}# GEMMA4_MLP_FP16_CLAMP: prevent FP16 matmul overflow\n"
             f"{indent}import torch as _t\n"
-            f"{indent}hidden_states = _t.clamp(hidden_states, min=-200.0, max=200.0)\n"
-            f"{indent}hidden_states = self.mlp(hidden_states)"
+            f"{indent}hidden_states = _t.clamp(hidden_states, min=-50.0, max=50.0)\n"
+            f"{indent}hidden_states = self.mlp(hidden_states)\n"
+            f"{indent}hidden_states = _t.nan_to_num(hidden_states, nan=0.0, posinf=65000.0, neginf=-65000.0)"
         )
         src = src[: match.start()] + replacement + src[match.end() :]
         gemma4_py.write_text(src)
@@ -881,15 +885,15 @@ def patch_gemma4_decoder_layer_debug(vllm_root: pathlib.Path) -> bool:
         src = src.replace(old_attn_residual, new_attn_residual, 1)
         patched = True
 
-    # Patch: after MLP (with clamp already applied), log
+    # Patch: after MLP (with clamp+nan_to_num already applied), log
     # Match the clamped version from patch_gemma4_mlp_fp16_clamp
     old_mlp_clamped = (
-        "        hidden_states = _t.clamp(hidden_states, min=-200.0, max=200.0)\n"
-        "        hidden_states = self.mlp(hidden_states)"
+        "        hidden_states = self.mlp(hidden_states)\n"
+        "        hidden_states = _t.nan_to_num(hidden_states, nan=0.0, posinf=65000.0, neginf=-65000.0)"
     )
     new_mlp_clamped = (
-        "        hidden_states = _t.clamp(hidden_states, min=-200.0, max=200.0)\n"
         "        hidden_states = self.mlp(hidden_states)\n"
+        "        hidden_states = _t.nan_to_num(hidden_states, nan=0.0, posinf=65000.0, neginf=-65000.0)\n"
         "        # GEMMA4_DECODER_LAYER_DEBUG_PATCH: log MLP output\n"
         "        _mn = hidden_states.isnan().any().item()\n"
         "        _mi = hidden_states.isinf().any().item()\n"
