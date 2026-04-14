@@ -16,10 +16,13 @@ Four patches:
    is 'experts.w2_qweight'. Also fixes the weight_name passed to the
    MoeWNA16 weight_loader so it correctly dispatches qweight vs scales
    vs qzeros conversions.
-4. KV cache page_size_padded assertion: Gemma4 has heterogeneous head
-   dimensions (256 for sliding window, 512 for full attention) which
-   causes the V1 KV cache page_size_padded assertion to fire after
-   unification. Replace assertion with max() to ensure safe allocation.
+4. KV cache routing for heterogeneous head dims: Gemma4 has head_dim=256
+   (sliding window) and global_head_dim=512 (full attention). After
+   disableHybridKVCacheManager unifies types, UniformTypeKVCacheSpecs
+   accepts the mixed page sizes but then mis-shapes tensors. Fix: (A)
+   safety-net the page_size_padded assertion with max(), (B) add a
+   page-size guard in get_kv_cache_groups routing to fall through to
+   unify_kv_cache_spec_page_size which adjusts block sizes correctly.
 
 Usage:
     python3 vllm_gemma4_moe_gptq_patch.py [vllm_root]
@@ -408,122 +411,150 @@ def patch_gemma4_moe_gptq_weight_names(vllm_root: pathlib.Path) -> bool:
 
 
 def patch_kv_cache_page_size_uniform_type(vllm_root: pathlib.Path) -> bool:
-    """Patch KV cache UniformTypeKVCacheSpecs to reject heterogeneous page sizes.
+    """Patch KV cache routing for Gemma4 heterogeneous head dimensions.
 
     Gemma4 has heterogeneous head dimensions (head_dim=256 for sliding window,
     global_head_dim=512 for full attention). When disableHybridKVCacheManager
-    converts all specs to FullAttentionSpec, UniformTypeKVCacheSpecs.is_uniform_type
-    returns True (all same type), but the different head dims cause different page
+    converts all specs to FullAttentionSpec, UniformTypeKVCacheSpecs.from_specs
+    succeeds (all same type), but the different head dims cause different page
     sizes. The uniform-type path then mis-shapes KV cache tensors.
 
-    Fix: Add a page-size consistency check to is_uniform_type. When page sizes
-    differ, return False, which routes through unify_kv_cache_spec_page_size +
-    _get_kv_cache_groups_uniform_page_size — a path that correctly adjusts
-    block sizes to equalize page sizes across groups.
-
-    Also patch the page_size_padded assertion to use max() as a safety net.
+    Two sub-patches:
+      A) kv_cache_interface.py: Replace page_size_padded assertion with max()
+         as a safety net for heterogeneous head dims after unification.
+      B) kv_cache_utils.py: Patch get_kv_cache_groups routing to check page-size
+         uniformity before committing to the uniform-type path. When page sizes
+         differ, fall through to unify_kv_cache_spec_page_size which adjusts
+         block sizes to equalize page sizes across groups.
     """
+    patched_any = False
+
+    # --- Sub-patch A: page_size_padded assertion → max() ---
     kv_iface = vllm_root / "v1" / "kv_cache_interface.py"
     if not kv_iface.exists():
         print(f"[gemma4-moe-patch] SKIP: {kv_iface} not found")
-        return False
-
-    src = kv_iface.read_text()
-
-    if "GEMMA4_KV_PAGE_SIZE_PATCH" in src:
-        print("[gemma4-moe-patch] KV cache page_size already patched, skipping")
-        return True
-
-    patched = False
-
-    # --- Sub-patch A: page_size_padded assertion → max() ---
-    old_assert = (
-        "        if self.page_size_padded is not None:\n"
-        "            assert self.page_size_padded >= real_page_size\n"
-        "            return self.page_size_padded\n"
-        "        return real_page_size"
-    )
-    new_assert = (
-        "        if self.page_size_padded is not None:\n"
-        "            # GEMMA4_KV_PAGE_SIZE_PATCH sub-A: safety net for\n"
-        "            # heterogeneous head dims after page-size unification.\n"
-        "            return max(self.page_size_padded, real_page_size)\n"
-        "        return real_page_size"
-    )
-    if old_assert in src:
-        src = src.replace(old_assert, new_assert, 1)
-        patched = True
-        print("[gemma4-moe-patch] Applied page_size_padded max() safety patch")
-
-    # --- Sub-patch B: is_uniform_type page-size check ---
-    # Add a check after the block_size uniformity check.
-    # Original:
-    #     block_sizes = set(spec.block_size for spec in kv_cache_specs.values())
-    #     if len(block_sizes) > 1:
-    #         # Different block sizes, not uniform.
-    #         return False
-    #     one_spec = next(iter(kv_cache_specs.values()))
-    # Patched: also check page sizes match.
-    old_uniform_check = (
-        "        block_sizes = set(spec.block_size for spec in kv_cache_specs.values())\n"
-        "        if len(block_sizes) > 1:\n"
-        "            # Different block sizes, not uniform.\n"
-        "            return False\n"
-        "        one_spec = next(iter(kv_cache_specs.values()))"
-    )
-    new_uniform_check = (
-        "        block_sizes = set(spec.block_size for spec in kv_cache_specs.values())\n"
-        "        if len(block_sizes) > 1:\n"
-        "            # Different block sizes, not uniform.\n"
-        "            return False\n"
-        "        # GEMMA4_KV_PAGE_SIZE_PATCH sub-B: Reject heterogeneous page\n"
-        "        # sizes. Gemma4 has head_dim=256 (sliding) vs 512 (full), which\n"
-        "        # creates different page sizes within the same type. Route to\n"
-        "        # unify_kv_cache_spec_page_size path instead.\n"
-        "        page_sizes = set(\n"
-        "            getattr(spec, 'real_page_size_bytes', spec.page_size_bytes)\n"
-        "            for spec in kv_cache_specs.values()\n"
-        "        )\n"
-        "        if len(page_sizes) > 1:\n"
-        "            return False\n"
-        "        one_spec = next(iter(kv_cache_specs.values()))"
-    )
-    if old_uniform_check in src:
-        src = src.replace(old_uniform_check, new_uniform_check, 1)
-        patched = True
-        print("[gemma4-moe-patch] Applied is_uniform_type page-size check")
-
-    if patched:
-        kv_iface.write_text(src)
-        print(f"[gemma4-moe-patch] Wrote patched {kv_iface}")
     else:
-        # Try to find the assertion with regex
-        assert_pattern = re.compile(
-            r"(\s+)if self\.page_size_padded is not None:\n"
-            r"\s+assert self\.page_size_padded >= real_page_size\n"
-            r"\s+return self\.page_size_padded\n"
-            r"\s+return real_page_size"
-        )
-        match = assert_pattern.search(src)
-        if match:
-            indent = match.group(1)
-            replacement = (
-                f"{indent}if self.page_size_padded is not None:\n"
-                f"{indent}    # GEMMA4_KV_PAGE_SIZE_PATCH: safety net\n"
-                f"{indent}    return max(self.page_size_padded, real_page_size)\n"
-                f"{indent}return real_page_size"
+        src = kv_iface.read_text()
+        if "GEMMA4_KV_PAGE_SIZE_PATCH" in src:
+            print("[gemma4-moe-patch] KV cache interface already patched, skipping")
+            patched_any = True
+        else:
+            old_assert = (
+                "        if self.page_size_padded is not None:\n"
+                "            assert self.page_size_padded >= real_page_size\n"
+                "            return self.page_size_padded\n"
+                "        return real_page_size"
             )
-            src = src[: match.start()] + replacement + src[match.end() :]
-            kv_iface.write_text(src)
-            patched = True
-            print(f"[gemma4-moe-patch] Applied page_size patches (regex) in {kv_iface}")
+            new_assert = (
+                "        if self.page_size_padded is not None:\n"
+                "            # GEMMA4_KV_PAGE_SIZE_PATCH sub-A: safety net for\n"
+                "            # heterogeneous head dims after page-size unification.\n"
+                "            return max(self.page_size_padded, real_page_size)\n"
+                "        return real_page_size"
+            )
+            if old_assert in src:
+                src = src.replace(old_assert, new_assert, 1)
+                kv_iface.write_text(src)
+                patched_any = True
+                print(
+                    f"[gemma4-moe-patch] Applied page_size_padded max() safety in {kv_iface}"
+                )
+            else:
+                # Try regex fallback
+                assert_pattern = re.compile(
+                    r"(\s+)if self\.page_size_padded is not None:\n"
+                    r"\s+assert self\.page_size_padded >= real_page_size\n"
+                    r"\s+return self\.page_size_padded\n"
+                    r"\s+return real_page_size"
+                )
+                match = assert_pattern.search(src)
+                if match:
+                    indent = match.group(1)
+                    replacement = (
+                        f"{indent}if self.page_size_padded is not None:\n"
+                        f"{indent}    # GEMMA4_KV_PAGE_SIZE_PATCH sub-A: safety net\n"
+                        f"{indent}    return max(self.page_size_padded, real_page_size)\n"
+                        f"{indent}return real_page_size"
+                    )
+                    src = src[: match.start()] + replacement + src[match.end() :]
+                    kv_iface.write_text(src)
+                    patched_any = True
+                    print(
+                        f"[gemma4-moe-patch] Applied page_size max() (regex) in {kv_iface}"
+                    )
+                else:
+                    print(
+                        f"[gemma4-moe-patch] WARNING: page_size_padded assertion not found in {kv_iface}"
+                    )
 
-    if not patched:
-        print(
-            "[gemma4-moe-patch] WARNING: Could not find page_size targets "
-            "in kv_cache_interface.py"
-        )
-    return patched
+    # --- Sub-patch B: get_kv_cache_groups routing ---
+    # Patch the routing in get_kv_cache_groups to add a page-size guard before
+    # committing to the uniform-type path. When page sizes differ within the
+    # same type, fall through to unify_kv_cache_spec_page_size.
+    kv_utils = vllm_root / "v1" / "core" / "kv_cache_utils.py"
+    if not kv_utils.exists():
+        print(f"[gemma4-moe-patch] SKIP: {kv_utils} not found")
+    else:
+        src = kv_utils.read_text()
+        if "GEMMA4_KV_PAGE_SIZE_PATCH" in src:
+            print("[gemma4-moe-patch] KV cache routing already patched, skipping")
+            patched_any = True
+        else:
+            old_routing = (
+                "    elif uniform_spec := UniformTypeKVCacheSpecs.from_specs(kv_cache_spec):\n"
+                "        # All layers need the same number of token slots (e.g., all layers are\n"
+                "        # full attention, or all layers are sliding window attention with the\n"
+                "        # same window size). Put all layers into one group.\n"
+                "        return _get_kv_cache_groups_uniform_type(uniform_spec)"
+            )
+            new_routing = (
+                "    elif uniform_spec := UniformTypeKVCacheSpecs.from_specs(kv_cache_spec):\n"
+                "        # GEMMA4_KV_PAGE_SIZE_PATCH sub-B: Verify page-size uniformity\n"
+                "        # before using uniform-type path. Gemma4 has head_dim=256\n"
+                "        # (sliding) vs 512 (full), producing different page sizes within\n"
+                "        # the same type. When page sizes differ, fall through to\n"
+                "        # unify_kv_cache_spec_page_size which adjusts block sizes.\n"
+                "        page_sizes = set(spec.page_size_bytes for spec in kv_cache_spec.values())\n"
+                "        if len(page_sizes) <= 1:\n"
+                "            return _get_kv_cache_groups_uniform_type(uniform_spec)"
+            )
+            if old_routing in src:
+                src = src.replace(old_routing, new_routing, 1)
+                kv_utils.write_text(src)
+                patched_any = True
+                print(
+                    f"[gemma4-moe-patch] Applied get_kv_cache_groups routing patch in {kv_utils}"
+                )
+            else:
+                # Try regex fallback
+                routing_pattern = re.compile(
+                    r"(    elif uniform_spec := UniformTypeKVCacheSpecs\.from_specs\(kv_cache_spec\):\n)"
+                    r"(\s+#[^\n]*\n)+"
+                    r"(\s+return _get_kv_cache_groups_uniform_type\(uniform_spec\))"
+                )
+                match = routing_pattern.search(src)
+                if match:
+                    replacement = (
+                        "    elif uniform_spec := UniformTypeKVCacheSpecs.from_specs(kv_cache_spec):\n"
+                        "        # GEMMA4_KV_PAGE_SIZE_PATCH sub-B: page-size guard\n"
+                        "        page_sizes = set(spec.page_size_bytes for spec in kv_cache_spec.values())\n"
+                        "        if len(page_sizes) <= 1:\n"
+                        "            return _get_kv_cache_groups_uniform_type(uniform_spec)"
+                    )
+                    src = src[: match.start()] + replacement + src[match.end() :]
+                    kv_utils.write_text(src)
+                    patched_any = True
+                    print(
+                        f"[gemma4-moe-patch] Applied routing patch (regex) in {kv_utils}"
+                    )
+                else:
+                    print(
+                        f"[gemma4-moe-patch] WARNING: get_kv_cache_groups routing not found in {kv_utils}"
+                    )
+
+    if not patched_any:
+        print("[gemma4-moe-patch] WARNING: No KV cache patches could be applied")
+    return patched_any
 
 
 def main():
