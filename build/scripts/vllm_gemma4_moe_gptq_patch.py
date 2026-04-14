@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Patch vLLM for Gemma4 GPTQ MoE support.
 
-Four patches:
+Seven patches:
 1. GPTQConfig.get_quant_method: Check modules_in_block_to_quantize before
    applying MoE quantization. When experts are not quantized, return None
    (unquantized) for FusedMoE layers.
@@ -760,12 +760,79 @@ def patch_moe_wna16_activation_forwarding(vllm_root: pathlib.Path) -> bool:
     return False
 
 
+def patch_gemma4_mlp_fp32_upcast(vllm_root: pathlib.Path) -> bool:
+    """Upcast dense MLP computation to float32 to prevent FP16 overflow.
+
+    Root cause: Gemma4's pre_feedforward_layernorm weights reach abs_max=234,
+    amplifying MLP inputs. The gate_proj/up_proj matmul accumulates 2816 terms
+    in FP16 (max 65504). Layer 25 MLP output: 58208 (barely under limit).
+    Layer 26: Inf → NaN cascade through layers 27-29.
+
+    Fix: upcast MLP input to float32 (which PyTorch promotes weights to match),
+    compute the full MLP in float32, then downcast output back to float16.
+    """
+    gemma4_py = vllm_root / "model_executor" / "models" / "gemma4.py"
+    if not gemma4_py.exists():
+        print(f"[gemma4-moe-patch] SKIP: {gemma4_py} not found")
+        return False
+
+    src = gemma4_py.read_text()
+
+    if "GEMMA4_MLP_FP32_UPCAST" in src:
+        print("[gemma4-moe-patch] MLP fp32 upcast already patched")
+        return True
+
+    old_mlp = (
+        "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
+        "        hidden_states = self.mlp(hidden_states)"
+    )
+    new_mlp = (
+        "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
+        "        # GEMMA4_MLP_FP32_UPCAST: pre_feedforward_layernorm weights reach\n"
+        "        # abs_max=234, causing FP16 matmul overflow at layer 26 (gate_proj\n"
+        "        # accumulates 2816 terms). Upcast to float32 for MLP, downcast back.\n"
+        "        _mlp_in_dtype = hidden_states.dtype\n"
+        "        hidden_states = self.mlp(hidden_states.float()).to(_mlp_in_dtype)"
+    )
+
+    if old_mlp in src:
+        src = src.replace(old_mlp, new_mlp, 1)
+        gemma4_py.write_text(src)
+        print(f"[gemma4-moe-patch] Applied MLP fp32 upcast to {gemma4_py}")
+        return True
+
+    # Regex fallback for whitespace variations
+    pattern = re.compile(
+        r"([ \t]+)hidden_states = self\.pre_feedforward_layernorm\(hidden_states\)\n"
+        r"([ \t]+)hidden_states = self\.mlp\(hidden_states\)"
+    )
+    match = pattern.search(src)
+    if match:
+        indent = match.group(1)
+        replacement = (
+            f"{indent}hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
+            f"{indent}# GEMMA4_MLP_FP32_UPCAST: prevent FP16 matmul overflow\n"
+            f"{indent}_mlp_in_dtype = hidden_states.dtype\n"
+            f"{indent}hidden_states = self.mlp(hidden_states.float()).to(_mlp_in_dtype)"
+        )
+        src = src[: match.start()] + replacement + src[match.end() :]
+        gemma4_py.write_text(src)
+        print(f"[gemma4-moe-patch] Applied MLP fp32 upcast (regex) to {gemma4_py}")
+        return True
+
+    print("[gemma4-moe-patch] WARNING: Could not find MLP call pattern")
+    return False
+
+
 def patch_gemma4_decoder_layer_debug(vllm_root: pathlib.Path) -> bool:
     """Add NaN debug logging to Gemma4DecoderLayer.forward.
 
     Instruments each stage: attention output, MLP output, MoE output,
     combined output, and final layer output. Logs min/max/nan at each
     stage to trace exactly where NaN first appears.
+
+    NOTE: This runs AFTER patch_gemma4_mlp_fp32_upcast, so the MLP
+    line has already been modified. Patterns match the upcast version.
     """
     gemma4_py = vllm_root / "model_executor" / "models" / "gemma4.py"
     if not gemma4_py.exists():
@@ -806,14 +873,15 @@ def patch_gemma4_decoder_layer_debug(vllm_root: pathlib.Path) -> bool:
         src = src.replace(old_attn_residual, new_attn_residual, 1)
         patched = True
 
-    # Patch: after MLP, log
-    old_mlp = (
-        "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
-        "        hidden_states = self.mlp(hidden_states)"
+    # Patch: after MLP (with fp32 upcast already applied), log
+    # Match the upcast version from patch_gemma4_mlp_fp32_upcast
+    old_mlp_upcast = (
+        "        _mlp_in_dtype = hidden_states.dtype\n"
+        "        hidden_states = self.mlp(hidden_states.float()).to(_mlp_in_dtype)"
     )
-    new_mlp = (
-        "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
-        "        hidden_states = self.mlp(hidden_states)\n"
+    new_mlp_upcast = (
+        "        _mlp_in_dtype = hidden_states.dtype\n"
+        "        hidden_states = self.mlp(hidden_states.float()).to(_mlp_in_dtype)\n"
         "        # GEMMA4_DECODER_LAYER_DEBUG_PATCH: log MLP output\n"
         "        _mn = hidden_states.isnan().any().item()\n"
         "        _mi = hidden_states.isinf().any().item()\n"
@@ -823,9 +891,30 @@ def patch_gemma4_decoder_layer_debug(vllm_root: pathlib.Path) -> bool:
         "        elif self.layer_idx % 5 == 0:\n"
         "            _dbg.warning('L%d mlp_out: abs_max=%.2f', self.layer_idx, _mm)"
     )
-    if old_mlp in src:
-        src = src.replace(old_mlp, new_mlp, 1)
+    # Try upcast version first, then original (in case upcast patch didn't apply)
+    if old_mlp_upcast in src:
+        src = src.replace(old_mlp_upcast, new_mlp_upcast, 1)
         patched = True
+    else:
+        old_mlp_orig = (
+            "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
+            "        hidden_states = self.mlp(hidden_states)"
+        )
+        new_mlp_orig = (
+            "        hidden_states = self.pre_feedforward_layernorm(hidden_states)\n"
+            "        hidden_states = self.mlp(hidden_states)\n"
+            "        # GEMMA4_DECODER_LAYER_DEBUG_PATCH: log MLP output\n"
+            "        _mn = hidden_states.isnan().any().item()\n"
+            "        _mi = hidden_states.isinf().any().item()\n"
+            "        _mm = hidden_states.abs().max().item() if not _mn else -1\n"
+            "        if _mn or _mi:\n"
+            "            _dbg.error('L%d MLP OUT: NaN=%s Inf=%s abs_max=%.1f', self.layer_idx, _mn, _mi, _mm)\n"
+            "        elif self.layer_idx % 5 == 0:\n"
+            "            _dbg.warning('L%d mlp_out: abs_max=%.2f', self.layer_idx, _mm)"
+        )
+        if old_mlp_orig in src:
+            src = src.replace(old_mlp_orig, new_mlp_orig, 1)
+            patched = True
 
     # Patch: after FF+residual, log
     old_final = (
@@ -881,6 +970,7 @@ def main():
     ok3 = patch_gemma4_moe_gptq_weight_names(vllm_root)
     ok4 = patch_kv_cache_page_size_uniform_type(vllm_root)
     ok5 = patch_moe_wna16_activation_forwarding(vllm_root)
+    ok6a = patch_gemma4_mlp_fp32_upcast(vllm_root)  # Must run before debug patch
     ok6 = patch_gemma4_decoder_layer_debug(vllm_root)
 
     if not ok1:
@@ -901,6 +991,9 @@ def main():
         )
     if not ok5:
         print("[gemma4-moe-patch] FAILED — MoeWNA16 activation forwarding patch failed")
+        sys.exit(1)
+    if not ok6a:
+        print("[gemma4-moe-patch] FAILED — MLP fp32 upcast patch failed")
         sys.exit(1)
     if not ok6:
         print(

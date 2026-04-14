@@ -13,7 +13,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:eac1889387793a9acf552e8a3bed846cf28a65ecb3a2ece3a08ed133f88b00d8
+  image: registry.harbor.lan/flexinfer/runtime@sha256:6d2ded179a975790500a7a0e52cd5dda19519cfdfd36a55b2c9689cccdc727d9
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128
   cache:
     strategy: SharedPVC
@@ -30,12 +30,7 @@ spec:
     coldStartTimeout: 15m
   config:
     quantization: gptq
-    # BFloat16: Gemma4's pre_feedforward_layernorm weights reach abs_max=234,
-    # amplifying MLP inputs beyond FP16 max (65504). Layer 25 MLP output
-    # hits 58208 (near limit), layer 26 overflows to Inf → NaN cascade.
-    # BF16 has FP32-equivalent exponent range (3.4e38), preventing overflow.
-    # ROCm gptq_gemm kernel handles BF16 input/output natively.
-    dtype: "bfloat16"
+    dtype: "half"
     # Full MoE GPTQ INT4 weights: 16.2 GiB. With KV cache page-size
     # unification (heterogeneous heads → doubled block_size), 16K context
     # needs ~3.75 GiB KV cache, comfortably within 5.3 GiB available.
