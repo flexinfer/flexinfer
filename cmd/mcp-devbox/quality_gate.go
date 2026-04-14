@@ -37,21 +37,25 @@ var languageCommands = map[string]map[string]string{
 		"fmt":  "gofmt -l .",
 		"lint": "go vet ./...",
 		"test": "go test ./...",
+		"diff": "git diff --exit-code",
 	},
 	"python": {
 		"fmt":  "black --check .",
 		"lint": "ruff check .",
 		"test": "pytest",
+		"diff": "git diff --exit-code",
 	},
 	"node": {
 		"fmt":  `npx prettier --check "src/**"`,
 		"lint": "npx eslint src/",
 		"test": "npm test",
+		"diff": "git diff --exit-code",
 	},
 	"rust": {
 		"fmt":  "cargo fmt --check",
 		"lint": "cargo clippy -- -D warnings",
 		"test": "cargo test",
+		"diff": "git diff --exit-code",
 	},
 }
 
@@ -60,6 +64,7 @@ var fallbackCommands = map[string]string{
 	"fmt":  "make fmt",
 	"lint": "make lint",
 	"test": "make test",
+	"diff": "git diff --exit-code",
 }
 
 func (m *manager) handleQualityGate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
@@ -74,13 +79,16 @@ func (m *manager) handleQualityGate(ctx context.Context, args map[string]any) (*
 	// Parse checks parameter
 	checks := []string{"fmt", "lint", "test"}
 	if checksRaw, ok := args["checks"]; ok {
-		if checksArr, ok := checksRaw.([]any); ok {
+		switch checksArr := checksRaw.(type) {
+		case []any:
 			checks = make([]string, 0, len(checksArr))
 			for _, c := range checksArr {
 				if s, ok := c.(string); ok {
 					checks = append(checks, s)
 				}
 			}
+		case []string:
+			checks = append([]string(nil), checksArr...)
 		}
 	}
 

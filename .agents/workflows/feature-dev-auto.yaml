@@ -59,13 +59,14 @@ steps:
 
   - id: quality-gate
     name: "Automated Quality Gate"
-    step_type: tool
-    tool_name: devbox_quality_gate
-    server_name: devbox
+    step_type: auto_verify
     tool_args:
       project: "${input.project}"
       agent_id: "${input.agent_id}"
+      checks: ["fmt", "lint", "test", "diff"]
       fail_fast: true
+    max_retries: 2
+    retry_delay_ms: 1000
     depends_on: [implement]
 
   - id: commit
@@ -76,7 +77,7 @@ steps:
     tool_args:
       session_id: "${init.session_id}"
       entries:
-        - entry_type: "milestone"
+        - entry_type: "note"
           title: "Quality gate passed — changes committed"
           content: "All automated checks passed. Committed with conventional format."
     depends_on: [quality-gate]
@@ -89,7 +90,7 @@ steps:
     tool_args:
       session_id: "${init.session_id}"
       entries:
-        - entry_type: "milestone"
+        - entry_type: "note"
           title: "Pushed and CI verified"
           content: "Pushed branch to remote and verified CI pipeline"
     depends_on: [commit]
