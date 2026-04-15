@@ -67,6 +67,7 @@ MCP is now the de facto standard for AI-tool integration (8M+ downloads, 5,800+ 
   - Added direct `Session` and agent-filtered `Traces` drilldowns from live-agent surfaces so operators can move from "who is active" to "what just happened" without context loss.
   - 2026-04-15: Fleet gained root-session grouping, inline child/root lineage indicators, and drawer breadcrumbs/child-session drilldowns so spawned-session hierarchies are visible instead of flattened away.
   - 2026-04-15: Fleet polling is now caller-aware, so Overview, Fleet, Presence, Lifecycle, and Overlay no longer fight over interval selection or tear down each other's active Fleet feed on unmount.
+  - 2026-04-15: Fleet session-detail fetch failures now stay local to the drawer with inline retry affordances, so operators can recover missing context without losing the broader Fleet surface.
 
 - ✅ **Daemon reliability hardening**
   - Added `CloseOnExec` on lock FD to prevent child process lock leaks.
@@ -242,6 +243,7 @@ These position Loom Core in ways competitors cannot easily replicate.
   - ✅ 2026-04-14: desktop Fleet, Presence, Overview, and status-bar counts now share a merged live-agent model across presence, sessions, and spawned agents; Fleet/Presence rows also deep-link directly into session detail and agent-filtered traces.
   - ✅ 2026-04-15: Overview attention lanes and Lifecycle pressure cards now drill directly into Fleet session detail or agent-filtered traces for the lead attention agent instead of dropping operators into a generic tab first.
   - ✅ 2026-04-15: Fleet now surfaces session hierarchy directly with a root-session grouping toggle, inline root/child indicators, and drawer breadcrumbs plus child-session navigation for subagent trees.
+  - ✅ 2026-04-15: Fleet session-detail errors are now drawer-scoped with inline retry, so context-entry failures no longer get overwritten by the main Fleet polling error path.
   - Add dispatch panel in HUD for assigning tasks to agents and tracking parallel progress.
   - Surface file claim conflicts in HUD when agents touch overlapping files.
   - Add merge orchestration assistance after parallel agents complete work.
