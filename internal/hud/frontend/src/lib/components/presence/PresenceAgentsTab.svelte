@@ -1,6 +1,7 @@
 <script>
   import { timelineStore } from '../../stores/timeline.svelte.ts';
   import { fleetStore } from '../../stores/fleet.svelte.ts';
+  import { router } from '../../stores/router.svelte.ts';
   import { formatTime, relativeTime, agentColor } from '../../utils/format.ts';
   import StatusDot from '../../widgets/StatusDot.svelte';
   import AgentCard from '../../widgets/AgentCard.svelte';
@@ -218,7 +219,7 @@
     { key: 'current_task', label: 'Current Task' },
     { key: 'branch', label: 'Branch / PR', width: '120px' },
     { key: 'last_heartbeat', label: 'Heartbeat', width: '90px' },
-    { key: 'actions', label: 'Actions', width: '120px' },
+    { key: 'actions', label: 'Actions', width: '200px' },
   ];
 </script>
 
@@ -328,7 +329,14 @@
               {#if row.depth > 0}
                 <span class="subagent-indent" aria-hidden="true">└─</span>
               {/if}
-              {agent.agent_id}
+              <div>{agent.agent_id}</div>
+              <div class="agent-evidence">
+                <span class="agent-evidence-chip" class:evidence-on={agent.has_presence}>presence</span>
+                <span class="agent-evidence-chip" class:evidence-on={agent.has_session}>session</span>
+                {#if agent.has_spawn}
+                  <span class="agent-evidence-chip evidence-on">spawn</span>
+                {/if}
+              </div>
             </td>
             <td>
               <StatusDot status={presenceStatus(agent.status)} />
@@ -350,6 +358,14 @@
             </td>
             <td class="text-mono text-muted" title={formatTime(agent.last_heartbeat)}>{reactiveRelativeTime(agent.last_heartbeat)}</td>
             <td class="actions-cell">
+              {#if agent.session_id}
+                <button class="btn btn-xs btn-ghost" onclick={() => router.navigate('agents', 'fleet', agent.session_id)} title="Open session detail">
+                  Session
+                </button>
+              {/if}
+              <button class="btn btn-xs btn-ghost" onclick={() => router.navigate('activity', 'traces', agent.agent_id)} title="Open trace view for agent">
+                Traces
+              </button>
               {#if agent.status === 'active'}
                 <button class="btn btn-xs btn-nudge" onclick={() => onOpenNudge(agent.agent_id)} title="Send nudge to agent">
                   Nudge
@@ -483,6 +499,30 @@
 
   td.subagent-row {
     padding-left: 18px;
+  }
+
+  .agent-evidence {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+  }
+
+  .agent-evidence-chip {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 5px;
+    font-size: 9px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-family: var(--font-mono);
+  }
+
+  .agent-evidence-chip.evidence-on {
+    border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    color: var(--fg-secondary);
   }
 
   .presence-grid {

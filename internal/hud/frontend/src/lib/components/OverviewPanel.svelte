@@ -45,7 +45,8 @@
   });
 
   let sessionCount = $derived(fleetStore.activeSessions.length);
-  let agentCount = $derived(fleetStore.agents.filter(a => a.status === 'active').length);
+  let agentSummary = $derived(fleetStore.unifiedSummary);
+  let agentCount = $derived(agentSummary.live_agents);
   let namespaceCount = $derived(fleetStore.namespaceGroups.length);
 
   let healthyCount = $derived(healthStore.healthyCount);
@@ -371,9 +372,9 @@
     {
       route: 'fleet',
       label: 'Coordination',
-      value: `${sessionCount}`,
-      unit: `session${sessionCount === 1 ? '' : 's'}`,
-      detail: `${agentCount} active · ${namespaceCount} namespace${namespaceCount === 1 ? '' : 's'}`,
+      value: `${agentCount}`,
+      unit: `live agent${agentCount === 1 ? '' : 's'}`,
+      detail: `${sessionCount} active session${sessionCount === 1 ? '' : 's'} · ${namespaceCount} namespace${namespaceCount === 1 ? '' : 's'}`,
       foot: activeBlockers.length > 0
         ? `${activeBlockers[0].task_title} blocked`
         : topRelations.length > 0

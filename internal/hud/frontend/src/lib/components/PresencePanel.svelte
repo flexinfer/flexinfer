@@ -1,5 +1,5 @@
 <script>
-  import { presenceStore } from '../stores/presence.svelte.ts';
+  import { fleetStore } from '../stores/fleet.svelte.ts';
   import { presenceActionsStore } from '../stores/presenceActions.svelte.ts';
   import PresenceAgentsTab from './presence/PresenceAgentsTab.svelte';
   import PresenceClaimsTab from './presence/PresenceClaimsTab.svelte';
@@ -11,16 +11,26 @@
   import CreateHandoffModal from './presence/CreateHandoffModal.svelte';
 
   $effect(() => {
-    presenceStore.startPolling(5000);
+    fleetStore.startPolling(5000);
     return () => {
-      presenceStore.stopPolling();
+      fleetStore.stopPolling();
     };
   });
 
-  let agents = $derived(presenceStore.agents ?? []);
-  let claims = $derived(presenceStore.claims ?? []);
-  let worktrees = $derived(presenceStore.worktrees ?? []);
-  let fileConflicts = $derived(presenceStore.fileConflicts);
+  let agents = $derived(fleetStore.unifiedAgents ?? []);
+  let agentSummary = $derived(fleetStore.unifiedSummary);
+  let claims = $derived(fleetStore.fileClaims ?? []);
+  let worktrees = $derived(fleetStore.worktrees ?? []);
+  let fileConflicts = $derived.by(() => {
+    const fileCounts = {};
+    for (const claim of claims) {
+      if (!fileCounts[claim.file_path]) fileCounts[claim.file_path] = [];
+      fileCounts[claim.file_path].push(claim.agent_id);
+    }
+    return Object.entries(fileCounts)
+      .filter(([, owners]) => owners.length > 1)
+      .map(([path, owners]) => ({ path, agents: [...new Set(owners)] }));
+  });
   let showOfflineAgents = $state(false);
   let visibleAgents = $derived(
     showOfflineAgents ? agents : agents.filter((agent) => agent.status !== 'offline')
@@ -49,9 +59,9 @@
     <button class="tab-btn" class:active={activeTab === 'agents'} onclick={() => setActiveTab('agents')}>
       Agents
       <span class="status-chips">
-        <span class="status-chip chip-active" title="Active">{presenceStore.activeCount}</span>
-        <span class="status-chip chip-idle" title="Idle">{presenceStore.idleCount}</span>
-        <span class="status-chip chip-offline" title="Offline">{presenceStore.offlineCount}</span>
+        <span class="status-chip chip-active" title="Active">{agentSummary.active_agents}</span>
+        <span class="status-chip chip-idle" title="Idle">{agentSummary.idle_agents}</span>
+        <span class="status-chip chip-offline" title="Offline">{agentSummary.offline_agents}</span>
       </span>
     </button>
     <button class="tab-btn" class:active={activeTab === 'claims'} onclick={() => setActiveTab('claims')}>
@@ -81,7 +91,7 @@
           title="Show active and idle agents"
         >
           Live
-          <span class="filter-chip-count">{presenceStore.activeCount + presenceStore.idleCount}</span>
+          <span class="filter-chip-count">{agentSummary.live_agents}</span>
         </button>
         <button
           class="filter-chip"
@@ -106,12 +116,12 @@
         agents={visibleAgents}
         {claims}
         {worktrees}
-        activeCount={presenceStore.activeCount}
-        idleCount={presenceStore.idleCount}
-        offlineCount={presenceStore.offlineCount}
-        claimedFilesCount={presenceStore.claimedFiles.length}
+        activeCount={agentSummary.active_agents}
+        idleCount={agentSummary.idle_agents}
+        offlineCount={agentSummary.offline_agents}
+        claimedFilesCount={new Set(claims.map((claim) => claim.file_path)).size}
         showOfflineAgents={showOfflineAgents}
-        hiddenOfflineCount={showOfflineAgents ? 0 : presenceStore.offlineCount}
+        hiddenOfflineCount={showOfflineAgents ? 0 : agentSummary.offline_agents}
         {agentView}
         onOpenDispatch={(agentId) => presenceActionsStore.onOpenDispatch(agentId)}
         onOpenNudge={(agentId) => presenceActionsStore.onOpenNudge(agentId)}

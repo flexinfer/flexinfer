@@ -1,4 +1,5 @@
 <script>
+  import { router } from '../stores/router.svelte.ts';
   import { traceStore } from '../stores/traces.svelte.ts';
   import EmptyState from './shared/EmptyState.svelte';
   import Badge from '../widgets/Badge.svelte';
@@ -11,12 +12,16 @@
 
   let query = $state('');
   let statusFilter = $state('all');
+  let agentFilter = $derived((router.detail ?? '').trim());
 
   let entries = $derived(traceStore.entries ?? []);
   let summary = $derived(traceStore.summary ?? {});
 
   let filtered = $derived.by(() => {
     let rows = entries;
+    if (agentFilter) {
+      rows = rows.filter((entry) => (entry.agent_id ?? '') === agentFilter);
+    }
     if (statusFilter !== 'all') {
       rows = rows.filter((entry) => {
         if (statusFilter === 'cached') return !!entry.cached;
@@ -91,6 +96,11 @@
   </div>
 
   <div class="traces-toolbar">
+    {#if agentFilter}
+      <button class="filter-chip active" onclick={() => router.navigate('activity', 'traces')}>
+        Agent: {agentFilter} ×
+      </button>
+    {/if}
     <input
       type="text"
       class="panel-search-input"

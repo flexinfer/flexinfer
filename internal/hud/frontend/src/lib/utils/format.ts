@@ -157,6 +157,20 @@ export function agentLabel(agentType: string | null | undefined): string {
   return agentType;
 }
 
+/** Infer agent type from a declared type or agent ID prefix. */
+export function inferAgentType(agentId: string | null | undefined, declaredType?: string | null): string {
+  const raw = (declaredType ?? '').trim();
+  if (raw && raw.toLowerCase() !== 'unknown') return raw;
+  if (!agentId) return 'unknown';
+  const lower = agentId.toLowerCase();
+  if (lower.startsWith('claude')) return 'claude';
+  if (lower.startsWith('codex')) return 'codex';
+  if (lower.startsWith('gemini')) return 'gemini';
+  if (lower.startsWith('copilot')) return 'copilot';
+  if (lower.startsWith('kilocode')) return 'kilocode';
+  return agentId.split('-')[0] || 'unknown';
+}
+
 // ---- Event / entry icons ----
 
 /** Map an event type string to a unicode icon character. */

@@ -8,12 +8,11 @@
   import { streamStore } from '../stores/stream.svelte.ts';
   import { healthStore } from '../stores/health.svelte.ts';
   import { router } from '../stores/router.svelte.ts';
-  import { formatTime, relativeTime, formatNumber, entryVariant, sanitizeText } from '../utils/format.ts';
+  import { formatTime, relativeTime, formatNumber, entryVariant, sanitizeText, inferAgentType } from '../utils/format.ts';
   import { VIRTUAL_SCROLL_THRESHOLD } from '../utils/tokens.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import Badge from '../widgets/Badge.svelte';
   import Gauge from '../widgets/Gauge.svelte';
-  import SparkLine from '../widgets/SparkLine.svelte';
   import DataTable from './shared/DataTable.svelte';
   import DetailDrawer from './shared/DetailDrawer.svelte';
   import EmptyState from './shared/EmptyState.svelte';
@@ -61,6 +60,7 @@
   );
   let detailAgent = $derived(detailSession ? agentLookup.get(detailSession.agent_id) : null);
 
+  let fleetAgents = $derived(fleetStore.liveAgents ?? []);
   let sessions = $derived(fleetStore.sessions ?? []);
   let tasks = $derived(taskStore.tasks ?? []);
   let workflows = $derived(workflowStore.workflows ?? []);
@@ -77,23 +77,11 @@
   // Agent lookup for enriching session rows with presence metadata.
   let agentLookup = $derived.by(() => {
     const map = new Map();
-    for (const a of fleetStore.agents) {
+    for (const a of fleetAgents) {
       map.set(a.agent_id, a);
     }
     return map;
   });
-
-  // Parse agent type from agent_id prefix (e.g. "claude-code-552019522-69105" → "claude").
-  function inferAgentType(agentId) {
-    if (!agentId) return '';
-    const id = agentId.toLowerCase();
-    if (id.startsWith('claude')) return 'claude';
-    if (id.startsWith('codex')) return 'codex';
-    if (id.startsWith('gemini')) return 'gemini';
-    if (id.startsWith('copilot')) return 'copilot';
-    if (id.startsWith('kilocode')) return 'kilocode';
-    return agentId.split('-')[0] || '';
-  }
 
   // Task priority distribution for stat card.
   let taskPriorityDist = $derived.by(() => {
@@ -133,20 +121,6 @@
     return () => clearInterval(timer);
   });
 
-  // Token sparkline buffers per session.
-  let tokenBuffers = new Map();
-  let tokenHistories = $state(new Map());
-
-  $effect(() => {
-    for (const s of sessions) {
-      const buf = tokenBuffers.get(s.id) ?? [];
-      buf.push(s.tokens_used ?? 0);
-      if (buf.length > 20) buf.shift();
-      tokenBuffers.set(s.id, buf);
-    }
-    tokenHistories = new Map(tokenBuffers);
-  });
-
   // Expiring claims: claims expiring within 5 minutes.
   let expiringClaims = $derived.by(() => {
     const map = new Map();
@@ -182,51 +156,14 @@
     fleetSortDir = dir;
   }
 
-  let sortedSessions = $derived.by(() => {
-    const rows = [...sessions];
-    rows.sort((a, b) => {
-      let cmp = 0;
-      switch (fleetSortKey) {
-        case 'agent':
-          cmp = sanitizeText(a.agent ?? '').localeCompare(sanitizeText(b.agent ?? ''));
-          break;
-        case 'status': {
-          const order = { healthy: 0, degraded: 1, down: 2 };
-          cmp = (order[sessionStatus(a)] ?? 9) - (order[sessionStatus(b)] ?? 9);
-          break;
-        }
-        case 'namespace':
-          cmp = sanitizeText(a.namespace ?? '').localeCompare(sanitizeText(b.namespace ?? ''));
-          break;
-        case 'task_count':
-          cmp = (a.task_count ?? 0) - (b.task_count ?? 0);
-          break;
-        case 'tokens_used':
-          cmp = (a.tokens_used ?? 0) - (b.tokens_used ?? 0);
-          break;
-        case 'memory_items':
-          cmp = (a.memory_items ?? 0) - (b.memory_items ?? 0);
-          break;
-        case 'agent_type':
-          cmp = inferAgentType(a.agent_id).localeCompare(inferAgentType(b.agent_id));
-          break;
-        default:
-          break;
-      }
-      return fleetSortDir === 'desc' ? -cmp : cmp;
-    });
-    return rows;
-  });
-
   const fleetColumns = [
     { key: 'agent', label: 'Agent', sortable: true, width: '130px' },
     { key: 'status', label: 'Status', sortable: true, width: '70px' },
-    { key: 'agent_type', label: 'Type', sortable: true, width: '70px' },
-    { key: 'namespace', label: 'Namespace', sortable: true, width: '160px' },
-    { key: 'description', label: 'Description', sortable: false, width: '180px' },
-    { key: 'task_count', label: 'Tasks', sortable: true, width: '60px' },
-    { key: 'tokens_used', label: 'Tokens', sortable: true, width: '100px' },
-    { key: 'memory_items', label: 'Memory', sortable: true, width: '70px' },
+    { key: 'evidence', label: 'Evidence', sortable: true, width: '110px' },
+    { key: 'namespace', label: 'Namespace', sortable: true, width: '180px' },
+    { key: 'activity', label: 'Activity', sortable: false, width: '220px' },
+    { key: 'heartbeat', label: 'Heartbeat', sortable: true, width: '90px' },
+    { key: 'actions', label: 'Actions', sortable: false, width: '190px' },
   ];
 
   // Activity feed columns (no sort — chronological)
@@ -238,17 +175,29 @@
   ];
 
   function navigateToSession(sessionId) {
-    router.navigate('fleet', sessionId);
+    router.navigate('agents', 'fleet', sessionId);
+  }
+
+  function navigateToTrace(agentId) {
+    router.navigate('activity', 'traces', agentId);
+  }
+
+  function openAgentDetail(agent) {
+    if (agent.session_id) {
+      navigateToSession(agent.session_id);
+      return;
+    }
+    navigateToTrace(agent.agent_id);
   }
 
   function backToFleet() {
     router.back();
   }
 
-  function sessionStatus(session) {
-    if (session.ended_at) return 'down';
-    if (session.active) return 'healthy';
-    return 'degraded';
+  function unifiedAgentStatus(agent) {
+    if (agent.status === 'active') return 'healthy';
+    if (agent.status === 'idle') return 'degraded';
+    return 'down';
   }
 
   // Cross-reference: build spawn lookup by agent_id for fleet rows.
@@ -264,6 +213,37 @@
     e.stopPropagation();
     router.navigate('sandbox', 'spawn', spawnId);
   }
+
+  let sortedFleetAgents = $derived.by(() => {
+    const rows = [...fleetAgents];
+    rows.sort((a, b) => {
+      let cmp = 0;
+      switch (fleetSortKey) {
+        case 'agent':
+          cmp = sanitizeText(a.agent_id ?? '').localeCompare(sanitizeText(b.agent_id ?? ''));
+          break;
+        case 'status': {
+          const order = { active: 0, idle: 1, offline: 2 };
+          cmp = (order[a.status] ?? 9) - (order[b.status] ?? 9);
+          break;
+        }
+        case 'evidence':
+          cmp = Number(b.has_session) - Number(a.has_session);
+          if (cmp === 0) cmp = Number(b.has_presence) - Number(a.has_presence);
+          break;
+        case 'namespace':
+          cmp = sanitizeText(a.namespace ?? '').localeCompare(sanitizeText(b.namespace ?? ''));
+          break;
+        case 'heartbeat':
+          cmp = new Date(a.last_heartbeat || a.session_started_at || 0).getTime() - new Date(b.last_heartbeat || b.session_started_at || 0).getTime();
+          break;
+        default:
+          break;
+      }
+      return fleetSortDir === 'desc' ? -cmp : cmp;
+    });
+    return rows;
+  });
 </script>
 
 <div class="panel fleet-panel">
@@ -272,15 +252,15 @@
     <!-- LEFT TOP: Agent Fleet Table -->
     <div class="card fleet-table-card">
       <div class="card-header">
-        <span class="card-title">Agent Fleet</span>
-        <span class="count-badge">{sessions.length}</span>
+        <span class="card-title">Live Agents</span>
+        <span class="count-badge">{fleetAgents.length}</span>
       </div>
-      {#if sessions.length === 0 && fleetStore.lastUpdated}
+      {#if fleetAgents.length === 0 && fleetStore.lastUpdated}
         <EmptyState icon={'\u25C8'} heading="No active agents" compact />
       {:else}
         <DataTable
           columns={fleetColumns}
-          rows={sortedSessions}
+          rows={sortedFleetAgents}
           sortKey={fleetSortKey}
           sortDir={fleetSortDir}
           rowLabel="agent"
@@ -289,12 +269,12 @@
           skeletonRows={4}
           maxRows={VIRTUAL_SCROLL_THRESHOLD}
           onSort={handleFleetSort}
-          onRowClick={(row) => navigateToSession(row.id)}
+          onRowClick={(row) => openAgentDetail(row)}
         >
-          {#snippet row({ row: session })}
-            {@const linkedSpawn = spawnByAgentId.get(session.agent_id)}
-            <td class="text-mono agent-cell" title={sanitizeText(session.agent ?? session.id?.slice(0, 8) ?? '---')}>
-              {sanitizeText(session.agent ?? session.id?.slice(0, 8) ?? '---')}
+          {#snippet row({ row: agent })}
+            {@const linkedSpawn = spawnByAgentId.get(agent.agent_id)}
+            <td class="text-mono agent-cell" title={sanitizeText(agent.agent_id ?? '---')}>
+              {sanitizeText(agent.agent_id ?? '---')}
               {#if linkedSpawn}
                 <button
                   class="spawn-link-icon"
@@ -302,30 +282,43 @@
                   onclick={(e) => navigateToSpawn(e, linkedSpawn.spawn_id)}
                 >{'\u2B22'}</button>
               {/if}
-              {#if expiringClaims.has(session.agent_id)}
-                <span class="expiring-icon" title={`Expiring: ${expiringClaims.get(session.agent_id).join(', ')}`}>{'\u23F0'}</span>
+              {#if expiringClaims.has(agent.agent_id)}
+                <span class="expiring-icon" title={`Expiring: ${expiringClaims.get(agent.agent_id).join(', ')}`}>{'\u23F0'}</span>
               {/if}
+              <div class="agent-meta-row">
+                <span>{inferAgentType(agent.agent_id, agent.agent_type)}</span>
+                <span>{agent.source}</span>
+              </div>
             </td>
             <td>
-              <StatusDot status={sessionStatus(session)} />
+              <StatusDot status={unifiedAgentStatus(agent)} />
             </td>
-            <td class="text-mono text-muted text-xs">{inferAgentType(session.agent_id)}</td>
-            <td class="text-mono text-muted namespace-cell" title={sanitizeText(session.namespace ?? '---')}>
-              {sanitizeText(session.namespace ?? '---')}
-            </td>
-            <td class="text-muted text-xs description-cell" title={sanitizeText(session.description ?? '')}>
-              {sanitizeText(session.description ?? '')}
-            </td>
-            <td class="text-mono">{session.task_count ?? 0}</td>
-            <td class="text-mono token-cell">
-              {#key session.tokens_used}<span class="data-updated token-value">{formatNumber(session.tokens_used ?? 0)}</span>{/key}
-              {#if tokenHistories.get(session.id)?.length >= 2}
-                <span class="token-spark">
-                  <SparkLine data={tokenHistories.get(session.id)} width={40} height={16} color="var(--accent)" />
-                </span>
+            <td class="evidence-cell">
+              <span class="evidence-pill" class:evidence-pill-active={agent.has_presence}>presence</span>
+              <span class="evidence-pill" class:evidence-pill-active={agent.has_session}>session</span>
+              {#if agent.has_spawn}
+                <span class="evidence-pill evidence-pill-active">spawn</span>
               {/if}
             </td>
-            <td class="text-mono">{session.memory_items ?? 0}</td>
+            <td class="text-mono text-muted namespace-cell" title={sanitizeText(agent.namespace ?? agent.project ?? '---')}>
+              {sanitizeText(agent.namespace ?? agent.project ?? '---')}
+            </td>
+            <td class="text-muted text-xs description-cell" title={sanitizeText(agent.current_task || agent.description || '')}>
+              {sanitizeText(agent.current_task || agent.description || '---')}
+            </td>
+            <td class="text-mono text-muted" title={formatTime(agent.last_heartbeat || agent.session_started_at)}>
+              {relativeTime(agent.last_heartbeat || agent.session_started_at)}
+            </td>
+            <td class="actions-cell">
+              {#if agent.session_id}
+                <button class="btn btn-xs btn-ghost" onclick={(e) => { e.stopPropagation(); navigateToSession(agent.session_id); }}>
+                  Session
+                </button>
+              {/if}
+              <button class="btn btn-xs btn-ghost" onclick={(e) => { e.stopPropagation(); navigateToTrace(agent.agent_id); }}>
+                Traces
+              </button>
+            </td>
           {/snippet}
         </DataTable>
       {/if}
@@ -336,6 +329,9 @@
       <div class="stat-card" style="--accent-color: var(--info)">
         {#key sessions.length}<div class="metric-value data-updated">{sessions.length}</div>{/key}
         <div class="metric-label">Sessions</div>
+        {#if fleetAgents.length > sessions.length}
+          <div class="metric-sub">{fleetAgents.length - sessions.length} live without session</div>
+        {/if}
       </div>
       <div class="stat-card" style="--accent-color: var(--warning)">
         {#key tasks.length}<div class="metric-value data-updated">{tasks.length}</div>{/key}
@@ -500,6 +496,14 @@
             <div class="stat-chip">
               <a href={detailAgent.pr_url} target="_blank" rel="noopener" class="stat-chip-value pr-link">PR</a>
               <span class="stat-chip-label">pull request</span>
+            </div>
+          {/if}
+          {#if detailAgent?.agent_id}
+            <div class="stat-chip spawn-chip">
+              <button class="stat-chip-value spawn-chip-link" onclick={() => navigateToTrace(detailAgent.agent_id)}>
+                {'\u25A6'} Traces
+              </button>
+              <span class="stat-chip-label">agent trace view</span>
             </div>
           {/if}
           {#if detailSession && spawnByAgentId.has(detailSession.agent_id)}
@@ -792,29 +796,50 @@
     word-break: break-word;
   }
 
-  .token-cell {
-    display: grid;
-    grid-template-columns: auto 40px;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-  }
-
-  .token-value {
-    min-width: 3ch;
-    text-align: right;
-  }
-
-  .token-spark {
-    width: 40px;
-    flex: 0 0 40px;
-  }
-
   .agent-cell,
   .namespace-cell {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .agent-meta-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+    font-size: 10px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .evidence-cell {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  .evidence-pill {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 6px;
+    font-size: 9px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-family: var(--font-mono);
+  }
+
+  .evidence-pill.evidence-pill-active {
+    border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    color: var(--fg-secondary);
+  }
+
+  .actions-cell {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
   }
 
   .spawn-link-icon {

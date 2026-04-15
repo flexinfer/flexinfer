@@ -1,4 +1,3 @@
-import type { AgentPresence } from './presence.svelte.ts';
 import { toastStore } from './toasts.svelte.ts';
 
 interface NudgePolicyLike {
@@ -68,7 +67,7 @@ class PresenceDiagnosticsStore {
     return data;
   }
 
-  syncAgents(agents: AgentPresence[]): void {
+  syncAgents(agents: Array<{ agent_id: string; status: string }>): void {
     const current = this.diagnosticsAgentId;
     if (current && agents.some((a) => a.agent_id === current)) return;
 

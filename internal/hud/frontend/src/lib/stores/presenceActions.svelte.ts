@@ -1,4 +1,4 @@
-import { presenceStore } from './presence.svelte.ts';
+import { fleetStore } from './fleet.svelte.ts';
 import { toastStore } from './toasts.svelte.ts';
 import {
   acceptHandoff,
@@ -195,7 +195,7 @@ class PresenceActionsStore {
     try {
       await releaseClaim(agentId, filePath);
       toastStore.success('Claim released');
-      await presenceStore.fetch();
+      await fleetStore.fetch();
     } catch {
       toastStore.error('Failed to release claim');
     }
