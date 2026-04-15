@@ -13,6 +13,7 @@
   import { coordinationStore } from '../stores/coordination.svelte.ts';
   import { mergeQueueStore } from '../stores/mergeQueue.svelte.ts';
   import { shuttleStore } from '../stores/shuttle.svelte.ts';
+  import { navigateToAgentSessionOrTraces } from '../utils/drilldown.ts';
 
   let initialLoad = $state(true);
   let kpis = $state({
@@ -161,6 +162,14 @@
 
   function navigate(panel) {
     router.navigate(panel);
+  }
+
+  function navigateToAttentionLane(lane) {
+    if (lane.kind === 'agent' && lane.agent) {
+      navigateToAgentSessionOrTraces(router, lane.agent, (agentId) => fleetStore.sessionForAgent(agentId));
+      return;
+    }
+    router.navigate(lane.route);
   }
 
   /* ── Instrument readouts (signal strip) ── */
@@ -318,13 +327,18 @@
     }
 
     if (coordinationSummary.agents_needing_attention > 0) {
+      const leadAgent = topAttentionAgents[0];
       lanes.push({
         route: 'fleet',
         label: 'Attention',
-        action: 'Inspect',
+        action: leadAgent?.session_id ? 'Session' : 'Traces',
         value: `${coordinationSummary.agents_needing_attention} agent${coordinationSummary.agents_needing_attention === 1 ? '' : 's'}`,
-        detail: topAttentionAgents.length > 0 ? topAttentionAgents[0].agent_id : 'Needs review',
+        detail: leadAgent
+          ? `${leadAgent.agent_id} · ${leadAgent.attention_reasons?.[0] || 'needs review'}`
+          : 'Needs review',
         severity: 'info',
+        kind: 'agent',
+        agent: leadAgent,
       });
     }
 
@@ -567,7 +581,7 @@
         <div class="lane-list">
           <div class="lane-list-label">Attention lanes</div>
           {#each attentionLanes as lane (lane.route + lane.label)}
-            <button class="lane-item lane-{lane.severity}" onclick={() => navigate(lane.route)}>
+            <button class="lane-item lane-{lane.severity}" onclick={() => navigateToAttentionLane(lane)}>
               <div class="lane-head">
                 <span class="lane-dot" style="background: var(--{lane.severity});"></span>
                 <span class="lane-name">{lane.label}</span>
