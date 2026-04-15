@@ -185,6 +185,7 @@ class FleetStore {
   fileClaims = $state<FileClaimInfo[]>([]);
   loading = $state(false);
   error = $state<string | null>(null);
+  drawerError = $state<string | null>(null);
   lastUpdated = $state<Date | null>(null);
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -478,6 +479,7 @@ class FleetStore {
   }
 
   async fetchSessionEntries(sessionId: string, limit = 50): Promise<Record<string, unknown>[] | null> {
+    this.drawerError = null;
     try {
       const params = new URLSearchParams({ limit: String(limit) });
       const res = await globalThis.fetch(`/api/sessions/${sessionId}/entries?${params.toString()}`);
@@ -485,9 +487,13 @@ class FleetStore {
       const data = await res.json();
       return data.entries ?? [];
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e);
+      this.drawerError = e instanceof Error ? e.message : String(e);
       return null;
     }
+  }
+
+  clearDrawerError(): void {
+    this.drawerError = null;
   }
 
   private ensureEventSubscriptions(): void {

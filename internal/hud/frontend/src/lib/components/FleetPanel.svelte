@@ -43,17 +43,30 @@
   let detailSessionId = $derived(router.detail);
   let sessionEntries = $state([]);
   let loadingEntries = $state(false);
+  let drawerError = $derived(fleetStore.drawerError);
+
+  async function loadSessionEntries(sessionId, limit = 100) {
+    loadingEntries = true;
+    try {
+      const data = await fleetStore.fetchSessionEntries(sessionId, limit);
+      sessionEntries = data ?? [];
+    } finally {
+      loadingEntries = false;
+    }
+  }
+
+  function retrySessionEntries() {
+    if (!detailSessionId) return;
+    void loadSessionEntries(detailSessionId, 100);
+  }
 
   // Fetch session entries when detail changes
   $effect(() => {
     if (detailSessionId) {
-      loadingEntries = true;
-      fleetStore.fetchSessionEntries(detailSessionId, 100).then(data => {
-        sessionEntries = data ?? [];
-        loadingEntries = false;
-      });
+      void loadSessionEntries(detailSessionId, 100);
     } else {
       sessionEntries = [];
+      fleetStore.clearDrawerError();
     }
   });
 
@@ -728,6 +741,17 @@
     {/if}
 
     <div class="entries-timeline">
+      {#if drawerError}
+        <div class="drawer-error-card" role="alert">
+          <div class="drawer-error-title">Could not load session entries</div>
+          <div class="drawer-error-body text-sm text-muted">{sanitizeText(drawerError)}</div>
+          <div class="drawer-error-actions">
+            <button class="btn btn-xs btn-ghost" onclick={retrySessionEntries}>
+              Retry
+            </button>
+          </div>
+        </div>
+      {/if}
       {#each sessionEntries as entry (entry.id ?? entry.timestamp)}
         {@const entryContent = sanitizeText(entry.content ?? '')}
         <div class="timeline-entry">
@@ -752,7 +776,7 @@
           </div>
         </div>
       {:else}
-        {#if !loadingEntries}
+        {#if !loadingEntries && !drawerError}
           <EmptyState icon={'\u25CB'} heading="No context entries for this session" compact />
         {/if}
       {/each}
@@ -1328,6 +1352,31 @@
     background: linear-gradient(90deg, var(--info), var(--accent));
     border-radius: 1px;
     animation: loadingSlide 1.2s ease-in-out infinite;
+  }
+
+  .drawer-error-card {
+    margin-bottom: var(--space-3);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    border: 1px solid color-mix(in srgb, var(--error) 30%, var(--border));
+    background: color-mix(in srgb, var(--error) 7%, var(--bg-primary));
+  }
+
+  .drawer-error-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--fg-primary);
+    margin-bottom: 4px;
+  }
+
+  .drawer-error-body {
+    line-height: 1.5;
+  }
+
+  .drawer-error-actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
   }
 
   @keyframes loadingSlide {
