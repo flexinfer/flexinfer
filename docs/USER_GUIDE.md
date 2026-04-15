@@ -171,6 +171,7 @@ Desktop HUD agent surfaces now use one merged live-agent model:
 - `Session` and `Traces` buttons are available directly from agent rows, which makes it easier to understand why an agent is visible even when session state and heartbeat state disagree.
 - Fleet session detail now includes a session-path breadcrumb and child-session list so you can traverse parent/root/current relationships without leaving the drawer.
 - Fleet session detail errors stay inside the drawer now: failed context-entry loads show an inline error state with a retry action instead of collapsing back into the top-level Fleet polling error.
+- Fleet session detail and Spawn detail now include recent trace previews inline, so you can inspect the last few routed tool calls before deciding whether to open the full `Traces` panel.
 - Overview and Lifecycle pressure cards are actionable now: attention agents jump into session detail or filtered traces, while namespace and relation hotspots jump into Dispatch.
 
 ## Devbox Sandbox Workflows

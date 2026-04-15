@@ -3,10 +3,13 @@
   import { spawnStore } from '../stores/spawn.svelte.ts';
   import type { SpawnState, SpawnTelemetry } from '../stores/spawn.svelte.ts';
   import { fleetStore } from '../stores/fleet.svelte.ts';
+  import { traceStore } from '../stores/traces.svelte.ts';
   import { adminFetch, labsAuthStore } from '../stores/labsAuth.svelte.ts';
   import { eventStore } from '../stores/events.svelte.ts';
   import { relativeTime } from '../utils/format.ts';
+  import { formatTraceDuration, traceBreakdown, traceStatusVariant } from '../utils/traces.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
+  import Badge from '../widgets/Badge.svelte';
   import BudgetBar from '../widgets/BudgetBar.svelte';
   import ActivityTab from './SpawnTelemetry/ActivityTab.svelte';
   import ToolsTab from './SpawnTelemetry/ToolsTab.svelte';
@@ -25,6 +28,7 @@
     { id: 'errors', label: 'Errors' },
     { id: 'usage', label: 'Usage' },
   ];
+  const tracePollingOwner = Symbol('SpawnDetailPanelTraces');
 
   let loading = $state(false);
   let error = $state<string | null>(null);
@@ -72,8 +76,10 @@
 
   $effect(() => {
     spawnStore.startPolling(10000);
+    traceStore.startPolling(15000, tracePollingOwner);
     return () => {
       spawnStore.stopPolling();
+      traceStore.stopPolling(tracePollingOwner);
     };
   });
 
@@ -216,6 +222,13 @@
   let linkedSession = $derived(
     spawn ? fleetStore.sessionForAgent(spawn.agent_id) : undefined
   );
+  let spawnTraceEntries = $derived.by(() => {
+    const agentId = (spawn?.agent_id ?? '').trim();
+    if (!agentId) return [];
+    return (traceStore.entries ?? []).filter((entry) => (entry.agent_id ?? '') === agentId).slice(0, 5);
+  });
+  let traceError = $derived(traceStore.error);
+  let traceLoading = $derived(traceStore.loading);
 
   /** Compute a human-readable duration string from a session's started_at. */
   let sessionDuration = $derived.by(() => {
@@ -235,6 +248,14 @@
     if (linkedSession) {
       router.navigate('agents', 'fleet', linkedSession.id);
     }
+  }
+
+  function navigateToTraces(): void {
+    if (spawn?.agent_id) {
+      router.navigate('activity', 'traces', spawn.agent_id);
+      return;
+    }
+    router.navigate('activity', 'traces');
   }
 </script>
 
@@ -270,6 +291,11 @@
         {#if linkedSession}
           <button class="session-link-chip" onclick={navigateToSession} title="View linked agent session">
             {linkedSession.active ? '\u25CF' : '\u25CB'} Session
+          </button>
+        {/if}
+        {#if spawn?.agent_id}
+          <button class="session-link-chip" onclick={navigateToTraces} title="View recent traces for this agent">
+            {'\u25A6'} Traces
           </button>
         {/if}
       </div>
@@ -342,6 +368,55 @@
         <button class="session-navigate-button" onclick={navigateToSession}>
           View session detail
         </button>
+      </div>
+    {/if}
+
+    {#if spawn?.agent_id}
+      <div class="detail-card trace-context-card">
+        <div class="trace-card-header">
+          <div class="card-label">Recent Traces</div>
+          <button class="session-navigate-button trace-open-button" onclick={navigateToTraces}>
+            Open full traces
+          </button>
+        </div>
+        {#if traceLoading && spawnTraceEntries.length === 0}
+          <div class="trace-preview-empty">Loading recent traces...</div>
+        {:else if traceError}
+          <div class="trace-preview-empty trace-preview-error">{traceError}</div>
+        {:else if !traceStore.enabled}
+          <div class="trace-preview-empty">Trace stream unavailable.</div>
+        {:else if spawnTraceEntries.length === 0}
+          <div class="trace-preview-empty">No recent traces for this agent yet.</div>
+        {:else}
+          <div class="trace-preview-list">
+            {#each spawnTraceEntries as trace, index (`${trace.timestamp}-${trace.server}-${trace.tool}-${index}`)}
+              <div class="trace-preview-row">
+                <div class="trace-preview-top">
+                  <div class="trace-preview-id">
+                    <span class="trace-preview-time">{new Date(trace.timestamp).toLocaleTimeString()}</span>
+                    <span class="trace-preview-server">{trace.server}</span>
+                    <span class="trace-preview-tool">{trace.tool}</span>
+                  </div>
+                  <div class="trace-preview-badges">
+                    <span class="trace-preview-duration">{formatTraceDuration(trace.duration_ms)}</span>
+                    <Badge text={trace.status} variant={traceStatusVariant(trace.status)} />
+                  </div>
+                </div>
+                <div class="trace-preview-meta">
+                  {#if trace.pipeline_stage}
+                    <span class="trace-preview-chip">{trace.pipeline_stage}</span>
+                  {/if}
+                  {#if traceBreakdown(trace)}
+                    <span class="trace-preview-chip trace-preview-breakdown">{traceBreakdown(trace)}</span>
+                  {/if}
+                </div>
+                {#if trace.error}
+                  <div class="trace-preview-error">{trace.error}</div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
     {/if}
 
@@ -568,6 +643,14 @@
   .session-link-chip:hover {
     border-color: var(--accent);
     background: rgba(129, 240, 254, 0.08);
+  }
+
+  .trace-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    flex-wrap: wrap;
   }
 
   .metrics-row {
@@ -820,6 +903,10 @@
     border-color: rgba(129, 240, 254, 0.15);
   }
 
+  .trace-context-card {
+    gap: var(--space-3);
+  }
+
   .session-context-row {
     display: flex;
     flex-wrap: wrap;
@@ -861,6 +948,85 @@
   .session-navigate-button:hover {
     border-color: var(--accent);
     background: rgba(129, 240, 254, 0.08);
+  }
+
+  .trace-open-button {
+    padding-inline: var(--space-2);
+  }
+
+  .trace-preview-list {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .trace-preview-row {
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-subtle);
+    background: color-mix(in srgb, var(--bg-primary) 65%, transparent);
+  }
+
+  .trace-preview-top,
+  .trace-preview-id,
+  .trace-preview-badges,
+  .trace-preview-meta {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .trace-preview-top {
+    justify-content: space-between;
+  }
+
+  .trace-preview-time,
+  .trace-preview-server,
+  .trace-preview-duration,
+  .trace-preview-chip {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .trace-preview-server {
+    color: var(--fg-secondary);
+  }
+
+  .trace-preview-tool {
+    font-size: var(--text-sm);
+    color: var(--fg-primary);
+    font-weight: 600;
+  }
+
+  .trace-preview-meta {
+    margin-top: 8px;
+  }
+
+  .trace-preview-chip {
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
+    color: var(--fg-secondary);
+  }
+
+  .trace-preview-breakdown {
+    white-space: normal;
+  }
+
+  .trace-preview-empty {
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px dashed var(--border-subtle);
+    color: var(--fg-dim);
+    font-size: var(--text-sm);
+    background: color-mix(in srgb, var(--bg-primary) 68%, transparent);
+  }
+
+  .trace-preview-error {
+    color: var(--error);
+    font-size: var(--text-sm);
+    line-height: 1.4;
   }
 
   .detail-loading,

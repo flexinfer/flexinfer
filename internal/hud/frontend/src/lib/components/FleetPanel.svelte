@@ -7,8 +7,10 @@
   import { graphStore } from '../stores/graph.svelte.ts';
   import { streamStore } from '../stores/stream.svelte.ts';
   import { healthStore } from '../stores/health.svelte.ts';
+  import { traceStore } from '../stores/traces.svelte.ts';
   import { router } from '../stores/router.svelte.ts';
   import { formatTime, relativeTime, formatNumber, entryVariant, sanitizeText, inferAgentType } from '../utils/format.ts';
+  import { formatTraceDuration, traceBreakdown, traceStatusVariant } from '../utils/traces.ts';
   import { VIRTUAL_SCROLL_THRESHOLD } from '../utils/tokens.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import Badge from '../widgets/Badge.svelte';
@@ -18,9 +20,11 @@
   import EmptyState from './shared/EmptyState.svelte';
 
   const fleetPollingOwner = Symbol('FleetPanel');
+  const tracePollingOwner = Symbol('FleetPanelTraces');
 
   $effect(() => {
     fleetStore.startPolling(5000, fleetPollingOwner);
+    traceStore.startPolling(15000, tracePollingOwner);
     taskStore.startPolling(5000);
     workflowStore.startPolling(10000);
     memoryStore.startPolling(10000);
@@ -30,6 +34,7 @@
 
     return () => {
       fleetStore.stopPolling(fleetPollingOwner);
+      traceStore.stopPolling(tracePollingOwner);
       taskStore.stopPolling();
       workflowStore.stopPolling();
       memoryStore.stopPolling();
@@ -73,6 +78,11 @@
   let detailSession = $derived(
     detailSessionId ? (fleetStore.sessions ?? []).find(s => s.id === detailSessionId) : null
   );
+  let detailTraceEntries = $derived.by(() => {
+    const agentId = (detailSession?.agent_id ?? '').trim();
+    if (!agentId) return [];
+    return (traceStore.entries ?? []).filter((entry) => (entry.agent_id ?? '') === agentId).slice(0, 5);
+  });
   let detailAgent = $derived(detailSession ? agentLookup.get(detailSession.agent_id) : null);
   let detailLineage = $derived(detailSession ? fleetStore.sessionLineage(detailSession.id) : []);
   let detailChildren = $derived(detailSession ? fleetStore.childSessions(detailSession.id) : []);
@@ -86,6 +96,8 @@
   let memStats = $derived(memoryStore.stats ?? {});
   let graphStats = $derived(graphStore.stats ?? {});
   let entries = $derived(streamStore.entries ?? []);
+  let traceError = $derived(traceStore.error);
+  let traceLoading = $derived(traceStore.loading);
 
   let totalTokens = $derived(
     sessions.reduce((sum, s) => sum + (s.tokens_used ?? 0), 0)
@@ -728,6 +740,57 @@
             </div>
           </div>
         {/if}
+        {#if detailSession?.agent_id}
+          <div class="hierarchy-section">
+            <div class="section-header">
+              <span class="section-title">Recent Traces</span>
+              <div class="section-header-tools">
+                <span class="text-mono text-xs text-muted">{detailTraceEntries.length} shown</span>
+                <button class="session-link-chip" onclick={() => navigateToTrace(detailSession.agent_id)}>
+                  Open full traces
+                </button>
+              </div>
+            </div>
+            {#if traceLoading && detailTraceEntries.length === 0}
+              <div class="trace-preview-empty text-sm text-muted">Loading recent traces...</div>
+            {:else if traceError}
+              <div class="trace-preview-empty trace-preview-error text-sm">{sanitizeText(traceError)}</div>
+            {:else if !traceStore.enabled}
+              <div class="trace-preview-empty text-sm text-muted">Trace stream unavailable.</div>
+            {:else if detailTraceEntries.length === 0}
+              <div class="trace-preview-empty text-sm text-muted">No recent traces for this agent yet.</div>
+            {:else}
+              <div class="trace-preview-list">
+                {#each detailTraceEntries as trace, index (`${trace.timestamp}-${trace.server}-${trace.tool}-${index}`)}
+                  <div class="trace-preview-row">
+                    <div class="trace-preview-top">
+                      <div class="trace-preview-id">
+                        <span class="text-mono text-xs text-muted">{formatTime(trace.timestamp)}</span>
+                        <span class="trace-preview-server">{sanitizeText(trace.server)}</span>
+                        <span class="trace-preview-tool">{sanitizeText(trace.tool)}</span>
+                      </div>
+                      <div class="trace-preview-badges">
+                        <span class="trace-preview-duration">{formatTraceDuration(trace.duration_ms)}</span>
+                        <Badge text={sanitizeText(trace.status)} variant={traceStatusVariant(trace.status)} />
+                      </div>
+                    </div>
+                    <div class="trace-preview-meta">
+                      {#if trace.pipeline_stage}
+                        <span class="trace-preview-chip">{sanitizeText(trace.pipeline_stage)}</span>
+                      {/if}
+                      {#if traceBreakdown(trace)}
+                        <span class="trace-preview-chip trace-preview-breakdown">{traceBreakdown(trace)}</span>
+                      {/if}
+                    </div>
+                    {#if trace.error}
+                      <div class="trace-preview-error text-sm">{sanitizeText(trace.error)}</div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
       {/if}
     {/snippet}
 
@@ -1014,6 +1077,13 @@
     margin-bottom: var(--space-2);
   }
 
+  .section-header-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+
   .section-title {
     font-size: var(--text-xs);
     color: var(--fg-muted);
@@ -1100,6 +1170,77 @@
   /* Timeline */
   .entries-timeline {
     padding: var(--space-2) 0;
+  }
+
+  .trace-preview-list {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .trace-preview-row {
+    padding: 10px 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
+  }
+
+  .trace-preview-top,
+  .trace-preview-id,
+  .trace-preview-badges,
+  .trace-preview-meta {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .trace-preview-top {
+    justify-content: space-between;
+  }
+
+  .trace-preview-server {
+    color: var(--fg-secondary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .trace-preview-tool {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--fg-primary);
+  }
+
+  .trace-preview-duration,
+  .trace-preview-chip {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .trace-preview-meta {
+    margin-top: 8px;
+  }
+
+  .trace-preview-chip {
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
+    color: var(--fg-secondary);
+  }
+
+  .trace-preview-breakdown {
+    white-space: normal;
+  }
+
+  .trace-preview-empty {
+    padding: 10px 12px;
+    border: 1px dashed var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--bg-secondary) 72%, transparent);
+  }
+
+  .trace-preview-error {
+    color: var(--error);
   }
 
   .timeline-entry {

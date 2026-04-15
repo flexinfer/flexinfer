@@ -1,13 +1,16 @@
 <script>
   import { router } from '../stores/router.svelte.ts';
   import { traceStore } from '../stores/traces.svelte.ts';
+  import { formatTraceDuration, traceBreakdown, traceStatusVariant } from '../utils/traces.ts';
   import EmptyState from './shared/EmptyState.svelte';
   import Badge from '../widgets/Badge.svelte';
   import { formatTime } from '../utils/format.ts';
 
+  const tracePollingOwner = Symbol('TracesPanel');
+
   $effect(() => {
-    traceStore.startPolling(15000);
-    return () => traceStore.stopPolling();
+    traceStore.startPolling(15000, tracePollingOwner);
+    return () => traceStore.stopPolling(tracePollingOwner);
   });
 
   let query = $state('');
@@ -46,27 +49,6 @@
     { value: 'success', label: 'Success' },
   ];
 
-  function statusVariant(status) {
-    if (status === 'error') return 'error';
-    if (status === 'denied') return 'warning';
-    return 'success';
-  }
-
-  function formatDuration(ms) {
-    if (!ms) return '0ms';
-    if (ms < 1) return '<1ms';
-    return `${Math.round(ms)}ms`;
-  }
-
-  function breakdown(entry) {
-    const parts = [];
-    if (entry.route_ms) parts.push(`route ${formatDuration(entry.route_ms)}`);
-    if (entry.build_ms) parts.push(`build ${formatDuration(entry.build_ms)}`);
-    if (entry.execute_ms) parts.push(`exec ${formatDuration(entry.execute_ms)}`);
-    if (entry.send_ms) parts.push(`send ${formatDuration(entry.send_ms)}`);
-    if (entry.recv_ms) parts.push(`recv ${formatDuration(entry.recv_ms)}`);
-    return parts.join(' · ');
-  }
 </script>
 
 <div class="panel traces-panel">
@@ -78,11 +60,11 @@
     <div class="summary-strip">
       <div class="summary-card">
         <span class="summary-label">P50</span>
-        <strong>{formatDuration(summary.p50_ms ?? 0)}</strong>
+        <strong>{formatTraceDuration(summary.p50_ms ?? 0)}</strong>
       </div>
       <div class="summary-card">
         <span class="summary-label">P95</span>
-        <strong>{formatDuration(summary.p95_ms ?? 0)}</strong>
+        <strong>{formatTraceDuration(summary.p95_ms ?? 0)}</strong>
       </div>
       <div class="summary-card">
         <span class="summary-label">Errors</span>
@@ -90,7 +72,7 @@
       </div>
       <div class="summary-card">
         <span class="summary-label">Slowest</span>
-        <strong>{formatDuration(summary.slowest_ms ?? 0)}</strong>
+        <strong>{formatTraceDuration(summary.slowest_ms ?? 0)}</strong>
       </div>
     </div>
   </div>
@@ -136,8 +118,8 @@
               <span class="trace-tool">{entry.tool}</span>
             </div>
             <div class="trace-badges">
-              <span class="trace-duration">{formatDuration(entry.duration_ms)}</span>
-              <Badge text={entry.status} variant={statusVariant(entry.status)} />
+              <span class="trace-duration">{formatTraceDuration(entry.duration_ms)}</span>
+              <Badge text={entry.status} variant={traceStatusVariant(entry.status)} />
               {#if entry.cached}
                 <Badge text="cached" variant="info" />
               {/if}
@@ -153,8 +135,8 @@
             {#if entry.pipeline_stage}
               <span class="meta-chip">{entry.pipeline_stage}</span>
             {/if}
-            {#if breakdown(entry)}
-              <span class="meta-chip breakdown">{breakdown(entry)}</span>
+            {#if traceBreakdown(entry)}
+              <span class="meta-chip breakdown">{traceBreakdown(entry)}</span>
             {/if}
           </div>
           {#if entry.error}
