@@ -7,6 +7,23 @@
 
 **Goal:** Polish the HUD experience across spawn, session, and fleet surfaces so they feel like one coherent operator console rather than three loosely coupled panels.
 
+## Status Update (2026-04-14)
+
+This draft predates the `feat/hud-traces` and `feat/hud-agent-unification` slices that have since landed on `main`.
+
+Already shipped from this plan's gap list:
+- P0 gap #1 is substantially resolved: desktop Fleet/Presence/Overview/footer now share one merged live-agent model, and live-agent rows deep-link into `Session` detail and agent-filtered `Traces`.
+- P0 gap #3 and P2 gap #12 are resolved: Overview now participates in the same live-agent/store model instead of showing obviously stale or zeroed counters.
+- The operator drilldown story improved beyond the original draft: the new `Traces` panel gives a direct path from an agent row to recent tool-call timing and status data.
+
+Still relevant from this plan:
+- P0 gap #2 session hierarchy visibility
+- P1 gap #5 Fleet drawer-specific error handling
+- P1 gap #6 navigable attention rails
+- P2 spawn convenience/persistence follow-ons that remain unshipped
+
+Treat the remaining sections below as historical planning context plus a backlog for the unresolved items.
+
 ---
 
 ## 1. Current State Summary

@@ -1,6 +1,6 @@
 # Project Roadmap
 
-> Last Updated: March 31, 2026
+> Last Updated: April 14, 2026
 
 ## Current Status
 
@@ -59,6 +59,12 @@ MCP is now the de facto standard for AI-tool integration (8M+ downloads, 5,800+ 
   - Added worktree lifecycle reconciler with TTL, disk scan, and orphan removal.
   - Added workflow engine with tool executor via daemon loopback.
   - Added FlexInfer embeddings provider with morph_fast_apply awareness.
+  - 2026-04-14: added Codex keepalive bootstrap via `loom agent keepalive-wrap`, surfaced degraded-backend recall metadata/warnings, and introduced workflow `auto_verify` gates backed by `devbox_quality_gate`.
+
+- ✅ **HUD traces + live-agent coherence (2026-04-14)**
+  - Added daemon audit-backed trace summaries plus HUD `Traces` panel drilldowns for recent tool-call latency and status inspection.
+  - Unified desktop Fleet, Presence, Overview, and footer/status-bar agent counts around one merged live-agent model spanning sessions, presence heartbeats, and spawned agents.
+  - Added direct `Session` and agent-filtered `Traces` drilldowns from live-agent surfaces so operators can move from "who is active" to "what just happened" without context loss.
 
 - ✅ **Daemon reliability hardening**
   - Added `CloseOnExec` on lock FD to prevent child process lock leaks.
