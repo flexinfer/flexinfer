@@ -109,6 +109,12 @@ export interface NamespaceGroup {
   taskCount: number;
 }
 
+export interface SessionTreeNode {
+  session: Session;
+  depth: number;
+  children: SessionTreeNode[];
+}
+
 function extractProject(namespace: string | undefined): string {
   if (!namespace) return '(ungrouped)';
   const seg = namespace.split('/')[0];
@@ -120,6 +126,46 @@ function isPinnedMobileSession(session: { agentType?: string; description?: stri
   if (agentType === 'mobile') return true;
   const description = (session.description ?? '').trim().toLowerCase();
   return description.startsWith('mobile session');
+}
+
+function sortSessionsByStartedAt(sessions: Session[]): Session[] {
+  return [...sessions].sort((left, right) => {
+    const leftStarted = new Date(left.started_at ?? 0).getTime();
+    const rightStarted = new Date(right.started_at ?? 0).getTime();
+    if (leftStarted !== rightStarted) return leftStarted - rightStarted;
+    return left.id.localeCompare(right.id);
+  });
+}
+
+function fallbackParentSessionId(session: Session): string | undefined {
+  if (session.parent_session_id) return session.parent_session_id;
+  if (session.root_session_id && session.root_session_id !== session.id) {
+    return session.root_session_id;
+  }
+  return undefined;
+}
+
+function buildSessionIndex(sessions: Session[]): {
+  sessionById: Map<string, Session>;
+  childSessionsById: Map<string, Session[]>;
+} {
+  const orderedSessions = sortSessionsByStartedAt(sessions);
+  const sessionById = new Map<string, Session>();
+  const childSessionsById = new Map<string, Session[]>();
+
+  for (const session of orderedSessions) {
+    if (session?.id) sessionById.set(session.id, session);
+  }
+
+  for (const session of orderedSessions) {
+    const parentId = fallbackParentSessionId(session);
+    if (!parentId || parentId === session.id) continue;
+    const siblings = childSessionsById.get(parentId) ?? [];
+    siblings.push(session);
+    childSessionsById.set(parentId, siblings);
+  }
+
+  return { sessionById, childSessionsById };
 }
 
 class FleetStore {
@@ -171,9 +217,104 @@ class FleetStore {
     return this.unifiedSummary.live_agents;
   }
 
+  get sessionById(): Map<string, Session> {
+    return buildSessionIndex(this.sessions).sessionById;
+  }
+
+  get sessionTree(): SessionTreeNode[] {
+    const { sessionById, childSessionsById } = buildSessionIndex(this.sessions);
+    const nodeById = new Map<string, SessionTreeNode>();
+    for (const session of sortSessionsByStartedAt(this.sessions)) {
+      nodeById.set(session.id, {
+        session,
+        depth: 0,
+        children: [],
+      });
+    }
+
+    const rootNodes: SessionTreeNode[] = [];
+    for (const session of sortSessionsByStartedAt(this.sessions)) {
+      const node = nodeById.get(session.id);
+      if (!node) continue;
+      const parentId = fallbackParentSessionId(session);
+      const parentNode = parentId ? nodeById.get(parentId) : undefined;
+      if (parentNode && parentNode.session.id !== node.session.id) {
+        parentNode.children.push(node);
+        continue;
+      }
+      rootNodes.push(node);
+    }
+
+    const assignDepth = (node: SessionTreeNode, depth: number, seen = new Set<string>()) => {
+      if (seen.has(node.session.id)) return;
+      seen.add(node.session.id);
+      node.depth = depth;
+      const children = childSessionsById.get(node.session.id) ?? [];
+      node.children = children
+        .map((session) => nodeById.get(session.id))
+        .filter((child): child is SessionTreeNode => !!child);
+      for (const child of node.children) assignDepth(child, depth + 1, new Set(seen));
+    };
+
+    for (const rootNode of rootNodes) assignDepth(rootNode, 0);
+    return rootNodes;
+  }
+
   /** Find a session by agent_id (for cross-referencing with spawns). */
   sessionForAgent(agentId: string): Session | undefined {
     return this.sessions.find(s => s.agent_id === agentId);
+  }
+
+  parentSession(sessionId: string): Session | undefined {
+    const { sessionById } = buildSessionIndex(this.sessions);
+    const session = sessionById.get(sessionId);
+    if (!session) return undefined;
+    const parentId = fallbackParentSessionId(session);
+    if (!parentId || parentId === session.id) return undefined;
+    return sessionById.get(parentId);
+  }
+
+  childSessions(sessionId: string): Session[] {
+    const { childSessionsById } = buildSessionIndex(this.sessions);
+    return childSessionsById.get(sessionId) ?? [];
+  }
+
+  rootSession(sessionId: string): Session | undefined {
+    const { sessionById } = buildSessionIndex(this.sessions);
+    let cursor = sessionById.get(sessionId);
+    if (!cursor) return undefined;
+    const seen = new Set<string>();
+    while (cursor && !seen.has(cursor.id)) {
+      seen.add(cursor.id);
+      if (cursor.root_session_id && cursor.root_session_id !== cursor.id) {
+        const root = sessionById.get(cursor.root_session_id);
+        if (root) return root;
+      }
+      if (!cursor.parent_session_id || cursor.parent_session_id === cursor.id) {
+        return cursor;
+      }
+      const parent = sessionById.get(cursor.parent_session_id);
+      if (!parent) return cursor;
+      cursor = parent;
+    }
+    return cursor;
+  }
+
+  sessionLineage(sessionId: string): Session[] {
+    const { sessionById } = buildSessionIndex(this.sessions);
+    const lineage: Session[] = [];
+    let cursor = sessionById.get(sessionId);
+    const seen = new Set<string>();
+    while (cursor && !seen.has(cursor.id)) {
+      seen.add(cursor.id);
+      lineage.unshift(cursor);
+      const parentId = fallbackParentSessionId(cursor);
+      if (!parentId || parentId === cursor.id) break;
+      const parent = sessionById.get(parentId);
+      if (!parent) break;
+      cursor = parent;
+    }
+    return lineage;
   }
 
   /**

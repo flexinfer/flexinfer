@@ -59,6 +59,10 @@
     detailSessionId ? (fleetStore.sessions ?? []).find(s => s.id === detailSessionId) : null
   );
   let detailAgent = $derived(detailSession ? agentLookup.get(detailSession.agent_id) : null);
+  let detailLineage = $derived(detailSession ? fleetStore.sessionLineage(detailSession.id) : []);
+  let detailChildren = $derived(detailSession ? fleetStore.childSessions(detailSession.id) : []);
+  let detailParentSession = $derived(detailSession ? fleetStore.parentSession(detailSession.id) : null);
+  let detailRootSession = $derived(detailSession ? fleetStore.rootSession(detailSession.id) : null);
 
   let fleetAgents = $derived(fleetStore.liveAgents ?? []);
   let sessions = $derived(fleetStore.sessions ?? []);
@@ -150,6 +154,7 @@
   // Sort state for fleet DataTable
   let fleetSortKey = $state('agent');
   let fleetSortDir = $state('asc');
+  let groupByRootSession = $state(true);
 
   function handleFleetSort(key, dir) {
     fleetSortKey = key;
@@ -200,6 +205,46 @@
     return 'down';
   }
 
+  function sessionLabel(session) {
+    if (!session) return 'unknown';
+    return sanitizeText(session.agent || session.agent_id || session.id.slice(0, 8));
+  }
+
+  function sessionMetaLabel(session) {
+    if (!session) return '---';
+    const state = session.active ? 'active' : sanitizeText(session.status || 'ended');
+    return `${state} · ${relativeTime(session.started_at)}`;
+  }
+
+  function compareFleetAgents(left, right) {
+    let cmp = 0;
+    switch (fleetSortKey) {
+      case 'agent':
+        cmp = sanitizeText(left.agent_id ?? '').localeCompare(sanitizeText(right.agent_id ?? ''));
+        break;
+      case 'status': {
+        const order = { active: 0, idle: 1, offline: 2 };
+        cmp = (order[left.status] ?? 9) - (order[right.status] ?? 9);
+        break;
+      }
+      case 'evidence':
+        cmp = Number(right.has_session) - Number(left.has_session);
+        if (cmp === 0) cmp = Number(right.has_presence) - Number(left.has_presence);
+        break;
+      case 'namespace':
+        cmp = sanitizeText(left.namespace ?? '').localeCompare(sanitizeText(right.namespace ?? ''));
+        break;
+      case 'heartbeat':
+        cmp =
+          new Date(left.last_heartbeat || left.session_started_at || 0).getTime() -
+          new Date(right.last_heartbeat || right.session_started_at || 0).getTime();
+        break;
+      default:
+        break;
+    }
+    return fleetSortDir === 'desc' ? -cmp : cmp;
+  }
+
   // Cross-reference: build spawn lookup by agent_id for fleet rows.
   let spawnByAgentId = $derived.by(() => {
     const map = new Map();
@@ -214,35 +259,98 @@
     router.navigate('sandbox', 'spawn', spawnId);
   }
 
-  let sortedFleetAgents = $derived.by(() => {
-    const rows = [...fleetAgents];
-    rows.sort((a, b) => {
-      let cmp = 0;
-      switch (fleetSortKey) {
-        case 'agent':
-          cmp = sanitizeText(a.agent_id ?? '').localeCompare(sanitizeText(b.agent_id ?? ''));
-          break;
-        case 'status': {
-          const order = { active: 0, idle: 1, offline: 2 };
-          cmp = (order[a.status] ?? 9) - (order[b.status] ?? 9);
-          break;
-        }
-        case 'evidence':
-          cmp = Number(b.has_session) - Number(a.has_session);
-          if (cmp === 0) cmp = Number(b.has_presence) - Number(a.has_presence);
-          break;
-        case 'namespace':
-          cmp = sanitizeText(a.namespace ?? '').localeCompare(sanitizeText(b.namespace ?? ''));
-          break;
-        case 'heartbeat':
-          cmp = new Date(a.last_heartbeat || a.session_started_at || 0).getTime() - new Date(b.last_heartbeat || b.session_started_at || 0).getTime();
-          break;
-        default:
-          break;
-      }
-      return fleetSortDir === 'desc' ? -cmp : cmp;
+  function buildFleetRow(agent, depth = 0) {
+    const session = agent.session_id ? fleetStore.sessionById.get(agent.session_id) : null;
+    const parentSession = session ? fleetStore.parentSession(session.id) : null;
+    const rootSession = session ? fleetStore.rootSession(session.id) : null;
+    const childSessions = session ? fleetStore.childSessions(session.id) : [];
+    const lineage = session ? fleetStore.sessionLineage(session.id) : [];
+    const liveChildCount = childSessions.filter((child) => agentLookup.has(child.agent_id)).length;
+    return {
+      id: agent.agent_id,
+      agent,
+      depth,
+      session,
+      parentSession,
+      rootSession,
+      childSessions,
+      lineage,
+      liveChildCount,
+      totalChildCount: childSessions.length,
+    };
+  }
+
+  function leadAgentForNode(node, agentBySessionId) {
+    const direct = agentBySessionId.get(node.session.id);
+    if (direct) return direct;
+    for (const child of node.children ?? []) {
+      const nested = leadAgentForNode(child, agentBySessionId);
+      if (nested) return nested;
+    }
+    return null;
+  }
+
+  function flattenSessionNode(node, agentBySessionId, depth = 0) {
+    const rows = [];
+    const directAgent = agentBySessionId.get(node.session.id);
+    if (directAgent) rows.push(buildFleetRow(directAgent, depth));
+    const sortedChildren = [...(node.children ?? [])].sort((left, right) => {
+      const leftLead = leadAgentForNode(left, agentBySessionId);
+      const rightLead = leadAgentForNode(right, agentBySessionId);
+      if (leftLead && rightLead) return compareFleetAgents(leftLead, rightLead);
+      if (leftLead) return -1;
+      if (rightLead) return 1;
+      return new Date(left.session.started_at ?? 0).getTime() - new Date(right.session.started_at ?? 0).getTime();
     });
+    for (const child of sortedChildren) {
+      rows.push(...flattenSessionNode(child, agentBySessionId, depth + 1));
+    }
     return rows;
+  }
+
+  let fleetRows = $derived.by(() => {
+    const flatRows = [...fleetAgents].sort(compareFleetAgents).map((agent) => buildFleetRow(agent, 0));
+    if (!groupByRootSession) return flatRows;
+
+    const agentBySessionId = new Map();
+    for (const agent of fleetAgents) {
+      if (agent.session_id && fleetStore.sessionById.has(agent.session_id)) {
+        agentBySessionId.set(agent.session_id, agent);
+      }
+    }
+
+    const groupedRows = [];
+    const seenAgents = new Set();
+    const sortedRoots = [...fleetStore.sessionTree].sort((left, right) => {
+      const leftLead = leadAgentForNode(left, agentBySessionId);
+      const rightLead = leadAgentForNode(right, agentBySessionId);
+      if (leftLead && rightLead) return compareFleetAgents(leftLead, rightLead);
+      if (leftLead) return -1;
+      if (rightLead) return 1;
+      return new Date(left.session.started_at ?? 0).getTime() - new Date(right.session.started_at ?? 0).getTime();
+    });
+
+    for (const root of sortedRoots) {
+      const rows = flattenSessionNode(root, agentBySessionId);
+      if (rows.length === 0) continue;
+      groupedRows.push(...rows);
+      for (const row of rows) seenAgents.add(row.agent.agent_id);
+    }
+
+    for (const row of flatRows) {
+      if (!seenAgents.has(row.agent.agent_id)) groupedRows.push(row);
+    }
+
+    return groupedRows;
+  });
+
+  let rootGroupCount = $derived.by(() => {
+    const groupKeys = new Set();
+    for (const row of fleetRows) {
+      const groupKey = row.rootSession?.id || row.session?.id || row.id;
+      groupKeys.add(groupKey);
+    }
+    return groupKeys.size;
   });
 </script>
 
@@ -253,14 +361,26 @@
     <div class="card fleet-table-card">
       <div class="card-header">
         <span class="card-title">Live Agents</span>
-        <span class="count-badge">{fleetAgents.length}</span>
+        <div class="card-header-tools">
+          <button
+            class="header-toggle"
+            class:header-toggle-active={groupByRootSession}
+            onclick={() => {
+              groupByRootSession = !groupByRootSession;
+            }}
+            title={groupByRootSession ? 'Show hierarchy grouped by root session' : 'Show a flat agent list'}
+          >
+            {groupByRootSession ? 'Grouped by root' : 'Flat list'}
+          </button>
+          <span class="count-badge">{fleetAgents.length}</span>
+        </div>
       </div>
       {#if fleetAgents.length === 0 && fleetStore.lastUpdated}
         <EmptyState icon={'\u25C8'} heading="No active agents" compact />
       {:else}
         <DataTable
           columns={fleetColumns}
-          rows={sortedFleetAgents}
+          rows={fleetRows}
           sortKey={fleetSortKey}
           sortDir={fleetSortDir}
           rowLabel="agent"
@@ -271,9 +391,13 @@
           onSort={handleFleetSort}
           onRowClick={(row) => openAgentDetail(row)}
         >
-          {#snippet row({ row: agent })}
+          {#snippet row({ row })}
+            {@const agent = row.agent}
             {@const linkedSpawn = spawnByAgentId.get(agent.agent_id)}
-            <td class="text-mono agent-cell" title={sanitizeText(agent.agent_id ?? '---')}>
+            <td class="text-mono agent-cell" class:subagent-row={row.depth > 0} title={sanitizeText(agent.agent_id ?? '---')}>
+              {#if groupByRootSession && row.depth > 0}
+                <span class="subagent-indent" aria-hidden="true">└─</span>
+              {/if}
               {sanitizeText(agent.agent_id ?? '---')}
               {#if linkedSpawn}
                 <button
@@ -289,6 +413,21 @@
                 <span>{inferAgentType(agent.agent_id, agent.agent_type)}</span>
                 <span>{agent.source}</span>
               </div>
+              {#if row.session}
+                <div class="agent-hierarchy-row">
+                  {#if row.parentSession}
+                    <span class="hierarchy-pill hierarchy-pill-child">child of {sessionLabel(row.parentSession)}</span>
+                  {:else if row.rootSession?.id === row.session.id}
+                    <span class="hierarchy-pill hierarchy-pill-root">root session</span>
+                  {/if}
+                  {#if row.rootSession && row.rootSession.id !== row.session.id}
+                    <span class="hierarchy-pill">root {sessionLabel(row.rootSession)}</span>
+                  {/if}
+                  {#if row.totalChildCount > 0}
+                    <span class="hierarchy-pill">{row.liveChildCount}/{row.totalChildCount} child{row.totalChildCount === 1 ? '' : 'ren'}</span>
+                  {/if}
+                </div>
+              {/if}
             </td>
             <td>
               <StatusDot status={unifiedAgentStatus(agent)} />
@@ -331,7 +470,9 @@
         <div class="metric-label">Sessions</div>
         {#if fleetAgents.length > sessions.length}
           <div class="metric-sub">{fleetAgents.length - sessions.length} live without session</div>
-        {/if}
+        {:else if groupByRootSession}
+          <div class="metric-sub">{rootGroupCount} root group{rootGroupCount === 1 ? '' : 's'}</div>
+          {/if}
       </div>
       <div class="stat-card" style="--accent-color: var(--warning)">
         {#key tasks.length}<div class="metric-value data-updated">{tasks.length}</div>{/key}
@@ -519,6 +660,59 @@
         {#if detailSession.description}
           <div class="detail-description text-sm text-secondary">{sanitizeText(detailSession.description)}</div>
         {/if}
+        {#if detailLineage.length > 0}
+          <div class="hierarchy-section">
+            <div class="section-header">
+              <span class="section-title">Session Path</span>
+              <span class="text-mono text-xs text-muted">{detailLineage.length} level{detailLineage.length === 1 ? '' : 's'}</span>
+            </div>
+            <div class="session-breadcrumbs">
+              {#each detailLineage as lineageSession, index (lineageSession.id)}
+                <button
+                  class="session-crumb"
+                  class:session-crumb-current={detailSession && lineageSession.id === detailSession.id}
+                  onclick={() => navigateToSession(lineageSession.id)}
+                  title={lineageSession.namespace || lineageSession.id}
+                >
+                  {sessionLabel(lineageSession)}
+                </button>
+                {#if index < detailLineage.length - 1}
+                  <span class="session-crumb-sep">›</span>
+                {/if}
+              {/each}
+            </div>
+          </div>
+        {/if}
+        {#if detailParentSession || detailRootSession}
+          <div class="hierarchy-section hierarchy-section-inline">
+            {#if detailRootSession}
+              <button class="session-link-chip" onclick={() => navigateToSession(detailRootSession.id)}>
+                Root · {sessionLabel(detailRootSession)}
+              </button>
+            {/if}
+            {#if detailParentSession}
+              <button class="session-link-chip" onclick={() => navigateToSession(detailParentSession.id)}>
+                Parent · {sessionLabel(detailParentSession)}
+              </button>
+            {/if}
+          </div>
+        {/if}
+        {#if detailChildren.length > 0}
+          <div class="hierarchy-section">
+            <div class="section-header">
+              <span class="section-title">Child Sessions</span>
+              <span class="text-mono text-xs text-muted">{detailChildren.length}</span>
+            </div>
+            <div class="child-session-list">
+              {#each detailChildren as childSession (childSession.id)}
+                <button class="child-session-chip" onclick={() => navigateToSession(childSession.id)}>
+                  <span class="child-session-name">{sessionLabel(childSession)}</span>
+                  <span class="child-session-meta">{sessionMetaLabel(childSession)}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
       {/if}
     {/snippet}
 
@@ -593,6 +787,33 @@
     padding: 2px 8px;
     border-radius: var(--radius-full);
     border: 1px solid var(--border-subtle);
+  }
+
+  .card-header-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .header-toggle {
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    color: var(--fg-muted);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+  }
+
+  .header-toggle:hover,
+  .header-toggle-active {
+    color: var(--fg-primary);
+    border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-tertiary));
   }
 
   /* Stats grid */
@@ -747,6 +968,109 @@
     line-height: 1.5;
   }
 
+  .hierarchy-section {
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .hierarchy-section-inline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+  }
+
+  .section-title {
+    font-size: var(--text-xs);
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-family: var(--font-mono);
+  }
+
+  .session-breadcrumbs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .session-crumb,
+  .session-link-chip,
+  .child-session-chip {
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-primary);
+    color: var(--fg-secondary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+  }
+
+  .session-crumb {
+    padding: 6px 8px;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .session-crumb:hover,
+  .session-link-chip:hover,
+  .child-session-chip:hover,
+  .session-crumb-current {
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border-subtle));
+    color: var(--fg-primary);
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-primary));
+  }
+
+  .session-crumb-current {
+    cursor: default;
+  }
+
+  .session-crumb-sep {
+    color: var(--fg-dim);
+    font-size: 12px;
+  }
+
+  .session-link-chip {
+    padding: 6px 10px;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+  }
+
+  .child-session-list {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .child-session-chip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: 8px 10px;
+    text-align: left;
+  }
+
+  .child-session-name {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--fg-primary);
+  }
+
+  .child-session-meta {
+    font-size: 10px;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
   /* Timeline */
   .entries-timeline {
     padding: var(--space-2) 0;
@@ -800,6 +1124,15 @@
   .namespace-cell {
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .agent-cell {
+    position: relative;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  .namespace-cell {
     white-space: nowrap;
   }
 
@@ -811,6 +1144,45 @@
     color: var(--fg-muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
+  }
+
+  .agent-hierarchy-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+  }
+
+  .hierarchy-pill {
+    border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
+    border-radius: 999px;
+    padding: 1px 6px;
+    font-size: 9px;
+    font-family: var(--font-mono);
+    color: var(--fg-dim);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+    white-space: nowrap;
+  }
+
+  .hierarchy-pill-root {
+    color: var(--fg-secondary);
+  }
+
+  .hierarchy-pill-child {
+    border-color: color-mix(in srgb, var(--info) 24%, var(--border));
+    background: color-mix(in srgb, var(--info) 8%, transparent);
+  }
+
+  .subagent-row {
+    padding-left: 18px;
+  }
+
+  .subagent-indent {
+    position: absolute;
+    left: 0;
+    top: 2px;
+    color: var(--fg-dim);
+    font-size: 11px;
   }
 
   .evidence-cell {
