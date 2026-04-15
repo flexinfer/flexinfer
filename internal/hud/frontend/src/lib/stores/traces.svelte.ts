@@ -27,6 +27,9 @@ export interface TraceSummary {
   slowest_ms?: number;
 }
 
+type PollingOwner = string | symbol;
+const DEFAULT_POLLING_OWNER = 'default';
+
 class TraceStore {
   entries = $state<TraceEntry[]>([]);
   summary = $state<TraceSummary>({});
@@ -37,6 +40,7 @@ class TraceStore {
   lastUpdated = $state<Date | null>(null);
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private pollingOwners = new Map<PollingOwner, number>();
 
   async fetch(limit = 200): Promise<void> {
     this.loading = true;
@@ -57,17 +61,25 @@ class TraceStore {
     }
   }
 
-  startPolling(intervalMs = 15000): void {
-    this.stopPolling();
-    this.fetch();
-    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+  startPolling(intervalMs = 15000, owner: PollingOwner = DEFAULT_POLLING_OWNER): void {
+    this.pollingOwners.set(owner, intervalMs);
+    this.refreshPolling();
   }
 
-  stopPolling(): void {
+  stopPolling(owner: PollingOwner = DEFAULT_POLLING_OWNER): void {
+    this.pollingOwners.delete(owner);
+    this.refreshPolling();
+  }
+
+  private refreshPolling(): void {
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    if (this.pollingOwners.size === 0) return;
+    const intervalMs = Math.min(...this.pollingOwners.values());
+    this.fetch();
+    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
   }
 }
 

@@ -18,6 +18,7 @@ Already shipped from this plan's gap list:
 - P1 gap #5 is now resolved: Fleet drawer context-entry failures are scoped to the drawer itself and keep an inline retry path instead of borrowing the shared Fleet polling error state.
 - P1 gap #7 is now resolved: Fleet polling ownership is caller-aware, so panel mount order no longer decides the active interval or shuts down sibling polling.
 - The operator drilldown story improved beyond the original draft: the new `Traces` panel gives a direct path from an agent row to recent tool-call timing and status data.
+- The operator drilldown story improved again after the original draft: Fleet session detail and Spawn detail now show recent trace previews inline instead of forcing a full tab switch before any trace evidence is visible.
 
 Still relevant from this plan:
 - P1 gap #6 navigable attention rails
