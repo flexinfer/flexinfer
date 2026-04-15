@@ -65,6 +65,7 @@ MCP is now the de facto standard for AI-tool integration (8M+ downloads, 5,800+ 
   - Added daemon audit-backed trace summaries plus HUD `Traces` panel drilldowns for recent tool-call latency and status inspection.
   - Unified desktop Fleet, Presence, Overview, and footer/status-bar agent counts around one merged live-agent model spanning sessions, presence heartbeats, and spawned agents.
   - Added direct `Session` and agent-filtered `Traces` drilldowns from live-agent surfaces so operators can move from "who is active" to "what just happened" without context loss.
+  - 2026-04-15: Fleet gained root-session grouping, inline child/root lineage indicators, and drawer breadcrumbs/child-session drilldowns so spawned-session hierarchies are visible instead of flattened away.
 
 - ✅ **Daemon reliability hardening**
   - Added `CloseOnExec` on lock FD to prevent child process lock leaks.
@@ -239,6 +240,7 @@ These position Loom Core in ways competitors cannot easily replicate.
 - [ ] **Fleet orchestration UX** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/13))
   - ✅ 2026-04-14: desktop Fleet, Presence, Overview, and status-bar counts now share a merged live-agent model across presence, sessions, and spawned agents; Fleet/Presence rows also deep-link directly into session detail and agent-filtered traces.
   - ✅ 2026-04-15: Overview attention lanes and Lifecycle pressure cards now drill directly into Fleet session detail or agent-filtered traces for the lead attention agent instead of dropping operators into a generic tab first.
+  - ✅ 2026-04-15: Fleet now surfaces session hierarchy directly with a root-session grouping toggle, inline root/child indicators, and drawer breadcrumbs plus child-session navigation for subagent trees.
   - Add dispatch panel in HUD for assigning tasks to agents and tracking parallel progress.
   - Surface file claim conflicts in HUD when agents touch overlapping files.
   - Add merge orchestration assistance after parallel agents complete work.

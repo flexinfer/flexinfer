@@ -165,9 +165,11 @@ Overview attention lanes and Lifecycle side-rail cards now use the same drilldow
 Desktop HUD agent surfaces now use one merged live-agent model:
 
 - `Fleet` focuses on live operational rows and merges presence heartbeats, active sessions, and spawned-agent metadata into a single table.
+- `Fleet` can group rows by root session so spawned subagents stay attached to the workflow that created them instead of appearing as unrelated flat entries.
 - `Presence` shows the same agent population, but keeps the broader coordination tabs for claims, worktrees, handoffs, and diagnostics.
 - Rows expose explicit evidence chips (`presence`, `session`, `spawn`) so you can see whether an agent is backed by a live session, only a heartbeat, or only a spawn record.
 - `Session` and `Traces` buttons are available directly from agent rows, which makes it easier to understand why an agent is visible even when session state and heartbeat state disagree.
+- Fleet session detail now includes a session-path breadcrumb and child-session list so you can traverse parent/root/current relationships without leaving the drawer.
 - Overview and Lifecycle pressure cards are actionable now: attention agents jump into session detail or filtered traces, while namespace and relation hotspots jump into Dispatch.
 
 ## Devbox Sandbox Workflows
