@@ -1,6 +1,6 @@
 # Loom Core Implementation Status
 
-> Last Updated: March 27, 2026
+> Last Updated: April 14, 2026
 > Canonical status source for shipped vs in-progress work.
 
 ## Current State
@@ -44,6 +44,10 @@ Shipped and actively used:
 - Agent session contract convergence: shared request normalization for session-start, session-end, and heartbeat across bridge, HUD fleet handlers, and CLI fallback commands.
 - Daemon runtime OTel wiring: tracer startup/shutdown now follows env/config and `loom/otel-status` reports runtime state.
 - Home-authoritative CLI approvals: sync strips project-level approval drift and Codex loom-proxy configs now emit default auto-allow for Loom-managed tools.
+- Codex keepalive bootstrap and recall degradation visibility: generated Codex hooks now launch `loom agent keepalive-wrap`, and `agent_recall` surfaces backend latency/warning metadata via `recall_meta`.
+- Workflow `auto_verify` step type backed by `devbox_quality_gate`, including structured failure state and retry-aware workflow execution.
+- HUD traces explorer: audit-backed `loom/audit-traces` and `/api/traces` now expose recent tool-call timing/stage summaries through the desktop `Traces` panel.
+- Desktop live-agent unification: Fleet, Presence, Overview, and status-bar counts now use one merged agent model across sessions, presence, and spawned agents, with direct `Session` and filtered `Traces` drilldowns.
 
 ## In Progress Now
 
@@ -51,14 +55,14 @@ These are active priorities and should be treated as implementation gaps until c
 
 1. Targeted follow-on coverage expansion after crossing 40.7%, focused on daemon lifecycle and devbox integration paths ([Issue #2](https://gitlab.flexinfer.ai/services/loom-core/-/issues/2)).
 2. Devbox backend seam cleanup and integration-test leverage in `internal/devbox/backend` ([Issue #23](https://gitlab.flexinfer.ai/services/loom-core/-/issues/23)).
-3. Daemon/runtime telemetry expansion beyond status reporting: tool routing, server spawn/restart, proxy connection lifecycle, and fuller OTel-compatible metrics parity ([Issue #12](https://gitlab.flexinfer.ai/services/loom-core/-/issues/12)).
-4. OpenAI Responses orchestration M2 controls and end-to-end policy/audit coverage ([Issue #63](https://gitlab.flexinfer.ai/services/loom-core/-/issues/63)).
-5. Onboarding/docs consistency and canonical entrypoint maintenance ([Issue #6](https://gitlab.flexinfer.ai/services/loom-core/-/issues/6)).
-6. Mobile v1 scope discipline enforcement ([Issue #37](https://gitlab.flexinfer.ai/services/loom-core/-/issues/37)): enforce milestone exit scope gates and route desktop-parity asks to post-v1 backlog.
+3. Daemon/runtime telemetry expansion beyond the new audit-backed trace explorer: fuller OTel export parity, percentile views, and deeper proxy/server lifecycle instrumentation ([Issue #12](https://gitlab.flexinfer.ai/services/loom-core/-/issues/12)).
+4. Fleet orchestration follow-on after live-agent unification: merge assistance, stronger conflict surfacing, and deeper cross-agent coordination flows ([Issue #13](https://gitlab.flexinfer.ai/services/loom-core/-/issues/13)).
+5. OpenAI Responses orchestration M2 controls and end-to-end policy/audit coverage ([Issue #63](https://gitlab.flexinfer.ai/services/loom-core/-/issues/63)).
+6. Onboarding/docs consistency and canonical entrypoint maintenance ([Issue #6](https://gitlab.flexinfer.ai/services/loom-core/-/issues/6)).
+7. Mobile v1 scope discipline enforcement ([Issue #37](https://gitlab.flexinfer.ai/services/loom-core/-/issues/37)): enforce milestone exit scope gates and route desktop-parity asks to post-v1 backlog.
 
 ## Next After Current Focus
 
-- Fleet orchestration UX for multi-agent coordination ([Issue #13](https://gitlab.flexinfer.ai/services/loom-core/-/issues/13)).
 - MCP server catalog/discovery workflows ([Issue #14](https://gitlab.flexinfer.ai/services/loom-core/-/issues/14)).
 - Additional proxy-layer security hardening (input/output policy controls) ([#25](https://gitlab.flexinfer.ai/services/loom-core/-/issues/25), [#26](https://gitlab.flexinfer.ai/services/loom-core/-/issues/26), [#27](https://gitlab.flexinfer.ai/services/loom-core/-/issues/27), [#29](https://gitlab.flexinfer.ai/services/loom-core/-/issues/29)).
 
