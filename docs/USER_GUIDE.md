@@ -157,6 +157,16 @@ If `mcp-devbox` is unavailable, HUD shows `available=false`.
 HUD now includes a `Traces` activity view backed by `GET /api/traces`.
 It summarizes recent tool calls from the daemon audit log with status, server, tool name, total duration, and stage timing breakdowns (`route`, `build`, `execute`, `send`, `recv`).
 Use it to separate slow routing/pool acquisition from slow MCP execution when debugging latency or transport regressions.
+When opened from Fleet or Presence, the view is pre-filtered to the selected agent so you can jump from a live operator row straight to that agent's recent tool-call trail.
+
+### Fleet and Presence views
+
+Desktop HUD agent surfaces now use one merged live-agent model:
+
+- `Fleet` focuses on live operational rows and merges presence heartbeats, active sessions, and spawned-agent metadata into a single table.
+- `Presence` shows the same agent population, but keeps the broader coordination tabs for claims, worktrees, handoffs, and diagnostics.
+- Rows expose explicit evidence chips (`presence`, `session`, `spawn`) so you can see whether an agent is backed by a live session, only a heartbeat, or only a spawn record.
+- `Session` and `Traces` buttons are available directly from agent rows, which makes it easier to understand why an agent is visible even when session state and heartbeat state disagree.
 
 ## Devbox Sandbox Workflows
 

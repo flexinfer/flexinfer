@@ -3,6 +3,12 @@
 import { eventStore } from './events.svelte.ts';
 import { arraysEqualById } from '../utils/diff.ts';
 import { spawnStore, type SpawnState } from './spawn.svelte.ts';
+import {
+  buildUnifiedAgents,
+  summarizeUnifiedAgents,
+  type UnifiedAgent,
+  type UnifiedAgentSummary,
+} from '../utils/agents.ts';
 
 export interface Process {
   pid: number;
@@ -139,13 +145,30 @@ class FleetStore {
     return this.sessions.filter((s) => s.status === 'active');
   }
 
+  get unifiedAgents(): UnifiedAgent[] {
+    return buildUnifiedAgents({
+      sessions: this.sessions,
+      agents: this.agents,
+      tasks: this.tasks,
+      fileClaims: this.fileClaims,
+      spawns: spawnStore.spawns,
+    });
+  }
+
+  get unifiedSummary(): UnifiedAgentSummary {
+    return summarizeUnifiedAgents(this.unifiedAgents);
+  }
+
+  get liveAgents(): UnifiedAgent[] {
+    return this.unifiedAgents.filter((agent) => agent.status === 'active' || agent.status === 'idle');
+  }
+
   get totalTokens(): number {
     return this.sessions.reduce((sum, s) => sum + (s.total_tokens || 0), 0);
   }
 
   get agentCount(): number {
-    const agents = new Set(this.sessions.map((s) => s.agent_id));
-    return agents.size;
+    return this.unifiedSummary.live_agents;
   }
 
   /** Find a session by agent_id (for cross-referencing with spawns). */

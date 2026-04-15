@@ -1,8 +1,9 @@
 <script>
+  import { router } from '../stores/router.svelte.ts';
   import StatusDot from './StatusDot.svelte';
   import SparkLine from './SparkLine.svelte';
 
-  /** @type {{ agent: import('../stores/presence.svelte.ts').AgentPresence, heartbeatData?: number[], sharedFileAgents?: string[], ondispatch?: (agentId: string) => void, onnudge?: (agentId: string) => void }} */
+  /** @type {{ agent: import('../utils/agents.ts').UnifiedAgent, heartbeatData?: number[], sharedFileAgents?: string[], ondispatch?: (agentId: string) => void, onnudge?: (agentId: string) => void }} */
   let { agent, heartbeatData = [], sharedFileAgents = [], ondispatch, onnudge } = $props();
 
   const AGENT_COLORS = {
@@ -72,6 +73,15 @@
     <span class="heartbeat-time">{relativeTime(agent.last_heartbeat)}{#if agent.registered_at} · reg {relativeTime(agent.registered_at)}{/if}</span>
   </div>
 
+  <div class="evidence-row">
+    <span class="evidence-chip" class:evidence-active={agent.has_presence}>presence</span>
+    <span class="evidence-chip" class:evidence-active={agent.has_session}>session</span>
+    {#if agent.has_spawn}
+      <span class="evidence-chip evidence-active">spawn</span>
+    {/if}
+    <span class="evidence-source">{agent.source}</span>
+  </div>
+
   <!-- Sparkline: heartbeat frequency -->
   {#if heartbeatData.length >= 2}
     <div class="sparkline-row">
@@ -103,6 +113,12 @@
         {/if}
       </div>
     {/if}
+    {#if agent.namespace}
+      <div class="detail-row">
+        <span class="detail-icon">{'\u25A6'}</span>
+        <span class="detail-text text-mono truncate" title={agent.namespace}>{agent.namespace}</span>
+      </div>
+    {/if}
     {#if sharedFileAgents.length > 0}
       <div class="detail-row">
         <span class="detail-icon">{'\u2637'}</span>
@@ -130,12 +146,16 @@
   </div>
 
   <!-- Actions -->
-  {#if agent.status === 'active' && (ondispatch || onnudge)}
+  {#if agent.session_id || agent.agent_id || (agent.status === 'active' && (ondispatch || onnudge))}
     <div class="card-actions">
-      {#if onnudge}
+      {#if agent.session_id}
+        <button class="btn btn-xs btn-ghost" onclick={() => router.navigate('agents', 'fleet', agent.session_id)}>Session</button>
+      {/if}
+      <button class="btn btn-xs btn-ghost" onclick={() => router.navigate('activity', 'traces', agent.agent_id)}>Traces</button>
+      {#if onnudge && agent.status === 'active'}
         <button class="btn btn-xs btn-nudge" onclick={() => onnudge(agent.agent_id)}>Nudge</button>
       {/if}
-      {#if ondispatch}
+      {#if ondispatch && agent.status === 'active'}
         <button class="btn btn-xs btn-dispatch" onclick={() => ondispatch(agent.agent_id)}>Dispatch</button>
       {/if}
     </div>
@@ -166,6 +186,30 @@
   .card-subheader { display: flex; align-items: center; justify-content: space-between; }
   .agent-type { font-size: 11px; color: var(--fg-secondary); }
   .heartbeat-time { font-size: 10px; font-family: var(--font-mono); color: var(--fg-muted); }
+  .evidence-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .evidence-chip {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 7px;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+  }
+  .evidence-active {
+    border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+    color: var(--fg-secondary);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+  .evidence-source {
+    margin-left: auto;
+    font-size: 9px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
 
   .sparkline-row { display: flex; align-items: center; gap: 8px; }
   .sparkline-label { font-size: 10px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.3px; width: 48px; flex-shrink: 0; }
@@ -182,8 +226,10 @@
   .overlap-dot { width: 8px; height: 8px; border-radius: 50%; }
   .overlap-more { font-size: 9px; color: var(--fg-muted); font-family: var(--font-mono); }
 
-  .card-actions { display: flex; justify-content: flex-end; padding-top: 4px; border-top: 1px solid var(--border); }
+  .card-actions { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; padding-top: 4px; border-top: 1px solid var(--border); }
   .btn-xs { padding: 2px 8px; font-size: 11px; }
+  .btn-ghost { background: transparent; color: var(--fg-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--fg-primary); }
   .btn-nudge { background: rgba(231, 179, 18, 0.1); color: var(--warning); border: 1px solid rgba(231, 179, 18, 0.25); border-radius: var(--radius-sm); cursor: pointer; }
   .btn-nudge:hover { background: rgba(231, 179, 18, 0.2); }
   .btn-dispatch { background: rgba(129, 240, 254, 0.1); color: var(--accent); border: 1px solid rgba(129, 240, 254, 0.25); border-radius: var(--radius-sm); cursor: pointer; }

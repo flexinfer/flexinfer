@@ -165,6 +165,8 @@
   let daemonOnline = $derived(fleetStore.status.running);
   let serverCount = $derived(fleetStore.status.servers);
   let activeSessionCount = $derived(fleetStore.activeSessions.length);
+  let liveAgentCount = $derived(fleetStore.liveAgents.length);
+  let liveAgentSummary = $derived(fleetStore.unifiedSummary);
   let healthySrv = $derived(healthStore.healthyCount);
   let availableSrv = $derived(healthStore.availableCount);
   let degradedSrv = $derived(healthStore.degradedCount);
@@ -172,7 +174,7 @@
 
   // Badge counts for nav tabs
   let badgeCounts = $derived({
-    agents: fleetStore.activeSessions.length,
+    agents: fleetStore.liveAgents.length,
     infra: healthStore.degradedCount + healthStore.downCount,
     tasks: taskStore.pendingCount + taskStore.inProgressCount,
   });
@@ -336,7 +338,14 @@
         <span class="status-text" style="color: var(--warning);">({degradedSrv} degraded)</span>
       {/if}
       <span class="status-divider"></span>
-      <span class="status-text">{activeSessionCount} active session{activeSessionCount !== 1 ? 's' : ''}</span>
+      <span class="status-text">{liveAgentCount} live agent{liveAgentCount !== 1 ? 's' : ''}</span>
+      <span class="status-divider"></span>
+      <span class="status-text">
+        {activeSessionCount} active session{activeSessionCount !== 1 ? 's' : ''}
+        {#if liveAgentSummary.with_sessions < liveAgentCount}
+          <span style="color: var(--warning);"> · {liveAgentCount - liveAgentSummary.with_sessions} without session</span>
+        {/if}
+      </span>
     </div>
     <div class="status-bar-right">
       <span class="status-text text-muted">{availableSrv}/{serverCount} healthy</span>

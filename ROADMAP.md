@@ -231,6 +231,7 @@ These address capabilities the market now expects from production MCP infrastruc
 These position Loom Core in ways competitors cannot easily replicate.
 
 - [ ] **Fleet orchestration UX** ([Issue](https://gitlab.flexinfer.ai/services/loom-core/-/issues/13))
+  - ✅ 2026-04-14: desktop Fleet, Presence, Overview, and status-bar counts now share a merged live-agent model across presence, sessions, and spawned agents; Fleet/Presence rows also deep-link directly into session detail and agent-filtered traces.
   - Add dispatch panel in HUD for assigning tasks to agents and tracking parallel progress.
   - Surface file claim conflicts in HUD when agents touch overlapping files.
   - Add merge orchestration assistance after parallel agents complete work.
