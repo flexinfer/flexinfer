@@ -66,6 +66,7 @@ MCP is now the de facto standard for AI-tool integration (8M+ downloads, 5,800+ 
   - Unified desktop Fleet, Presence, Overview, and footer/status-bar agent counts around one merged live-agent model spanning sessions, presence heartbeats, and spawned agents.
   - Added direct `Session` and agent-filtered `Traces` drilldowns from live-agent surfaces so operators can move from "who is active" to "what just happened" without context loss.
   - 2026-04-15: Fleet gained root-session grouping, inline child/root lineage indicators, and drawer breadcrumbs/child-session drilldowns so spawned-session hierarchies are visible instead of flattened away.
+  - 2026-04-15: Fleet polling is now caller-aware, so Overview, Fleet, Presence, Lifecycle, and Overlay no longer fight over interval selection or tear down each other's active Fleet feed on unmount.
 
 - ✅ **Daemon reliability hardening**
   - Added `CloseOnExec` on lock FD to prevent child process lock leaks.

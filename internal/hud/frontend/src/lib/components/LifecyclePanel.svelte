@@ -8,13 +8,15 @@
   import SwimLaneTimeline from '../widgets/SwimLaneTimeline.svelte';
   import EmptyState from './shared/EmptyState.svelte';
 
+  const fleetPollingOwner = Symbol('LifecyclePanel');
+
   $effect(() => {
     timelineStore.startPolling(30000);
-    fleetStore.startPolling(30000);
+    fleetStore.startPolling(30000, fleetPollingOwner);
     coordinationStore.startPolling(30000);
     return () => {
       timelineStore.stopPolling();
-      fleetStore.stopPolling();
+      fleetStore.stopPolling(fleetPollingOwner);
       coordinationStore.stopPolling();
     };
   });

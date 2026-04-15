@@ -15,6 +15,7 @@ Already shipped from this plan's gap list:
 - P0 gap #1 is substantially resolved: desktop Fleet/Presence/Overview/footer now share one merged live-agent model, and live-agent rows deep-link into `Session` detail and agent-filtered `Traces`.
 - P0 gap #2 is now resolved: Fleet exposes root/parent/child session hierarchy in the table and detail drawer instead of flattening spawned subagents into unrelated rows.
 - P0 gap #3 and P2 gap #12 are resolved: Overview now participates in the same live-agent/store model instead of showing obviously stale or zeroed counters.
+- P1 gap #7 is now resolved: Fleet polling ownership is caller-aware, so panel mount order no longer decides the active interval or shuts down sibling polling.
 - The operator drilldown story improved beyond the original draft: the new `Traces` panel gives a direct path from an agent row to recent tool-call timing and status data.
 
 Still relevant from this plan:
