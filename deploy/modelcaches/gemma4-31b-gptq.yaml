@@ -14,8 +14,9 @@
 #   - targetLayers: "auto" — 60 layers, GDN layers auto-skipped (10 full-attn remain).
 #
 # Disk: 61 GB BF16 + ~16 GB GPTQ INT4 + headroom → 120 Gi PVC
-# Storage tier: use GPU/NVMe 1R cache storage. The stable bulk pool no longer has
-# enough schedulable headroom for a new 120Gi Tier-C cache volume.
+# Storage tier: use the NAS-backed RWX pool for the source cache. The GPU/NVMe
+# 1R pool no longer has enough schedulable headroom for a clean 31B rebuild,
+# and the bulk Longhorn pool is currently failing replica prechecks.
 # GPU: 1x Radeon VII (gfx906, 16GB VRAM) for abliteration + quantization
 # Quantization timeout: 8 hours (larger model, ~2x layers vs 26B-A4B)
 ---
@@ -28,7 +29,7 @@ spec:
   source: "google/gemma-4-31B-it"
   storageStrategy: SharedPVC
   storageSize: "120Gi"
-  clusterStorageClassName: nvme-1r-gpu
+  clusterStorageClassName: nas-bulk-rwx
   secretRef: "hf-token"
   nodeSelector:
     kubernetes.io/hostname: cblevins-radeonvii

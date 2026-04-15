@@ -148,11 +148,12 @@ if [[ "${REBUILD_CONTROLLER}" == "true" ]]; then
     echo ""
     echo "=== Bonus: Rebuild + deploy controller ==="
     CONTROLLER_IMAGE="${REGISTRY}/flexinfer/flexinfer-controller:master"
+    CONTROLLER_DOCKERFILE="${REPO_ROOT}/build/Dockerfile.manager"
 
     echo "  Building controller..."
     docker --context "${DOCKER_CONTEXT}" build \
         --no-cache \
-        -f "${REPO_ROOT}/Dockerfile" \
+        -f "${CONTROLLER_DOCKERFILE}" \
         -t "${CONTROLLER_IMAGE}" \
         "${REPO_ROOT}"
 

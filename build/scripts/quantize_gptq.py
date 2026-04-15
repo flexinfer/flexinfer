@@ -9,7 +9,7 @@ All configuration is read from environment variables set by the controller:
 
 # Bumped when controller-side patches change. The wrapper script checks this
 # against GPTQScriptVersion in gptq.go and aborts on mismatch.
-FLEXINFER_SCRIPT_VERSION = "v8"
+FLEXINFER_SCRIPT_VERSION = "v9"
 import copy
 import gc
 import json
@@ -49,6 +49,34 @@ DEFAULT_MODEL_POLICIES = [
             "attn_implementation": "eager",
             "disable_qwen35_fla": True,
             "fix_mistral_regex": True,
+        },
+    },
+    {
+        "name": "gemma4-text",
+        "match_model_types": ["gemma4_text"],
+        "match_path_substrings": ["gemma4", "gemma-4"],
+        "extract_text_config": True,
+        "copy_root_keys": ["bos_token_id", "eos_token_id", "pad_token_id"],
+        "remap_model_type": "gemma4_text",
+        "architectures": ["Gemma4ForCausalLM"],
+        "loader": "gptqmodel",
+        "python_packages": [
+            "git+https://github.com/huggingface/transformers.git@f965b10b",
+        ],
+        "quantize_config_overrides": {
+            "offload_to_disk": True,
+        },
+        "calibration_overrides": {
+            "max_samples": 512,
+            "max_seq_len": 2048,
+            "max_tokens": 524288,
+        },
+        "runtime_overrides": {
+            "attn_implementation": "eager",
+        },
+        "artifact_overrides": {
+            "preserve_native_output": True,
+            "refuse_moe_expert_tensors": True,
         },
     },
 ]
@@ -708,6 +736,11 @@ def runtime_overrides_for_policy(policy):
     return dict(overrides) if isinstance(overrides, dict) else {}
 
 
+def artifact_overrides_for_policy(policy):
+    overrides = (policy or {}).get("artifact_overrides", {})
+    return dict(overrides) if isinstance(overrides, dict) else {}
+
+
 def load_tokenizer_with_runtime_overrides(model_dir, runtime_overrides):
     kwargs = {"trust_remote_code": True}
     if runtime_overrides.get("fix_mistral_regex"):
@@ -754,6 +787,28 @@ def apply_runtime_overrides(policy, config=None):
         patch_triton_nogil_compat()
 
     return overrides
+
+
+def copy_artifact_tree(src_dir, dst_dir):
+    if os.path.exists(dst_dir):
+        shutil.rmtree(dst_dir)
+    shutil.copytree(src_dir, dst_dir, copy_function=shutil.copy2)
+    print(f"Copied artifact tree: {src_dir} -> {dst_dir}")
+
+
+def write_artifact_manifest(artifact_dir, role, primary_dir, hf_native_dir):
+    if not os.path.isdir(artifact_dir):
+        return
+    manifest = {
+        "role": role,
+        "primary_dir": primary_dir,
+        "hf_native_dir": hf_native_dir,
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    path = os.path.join(artifact_dir, "flexinfer-artifacts.json")
+    with open(path, "w") as f:
+        json.dump(manifest, f, indent=2, sort_keys=True)
+    print(f"Wrote artifact manifest: {path}")
 
 
 def ensure_qwen35_text_config(path):
@@ -2111,13 +2166,45 @@ for shard_name in shard_files:
         f"Verified {shard_name}: {fsize} bytes, {len([k for k in hdr if k != '__metadata__'])} tensors OK"
     )
 
-# ── MoE re-fuse: convert per-expert 2D → fused 3D for vLLM MoeWNA16 ──
-emit_progress(
-    "progress", phase="saving", percent=96.0, detail="re-fusing MoE expert tensors"
+artifact_overrides = artifact_overrides_for_policy(policy)
+preserve_native_output = env_bool(
+    "GPTQ_PRESERVE_NATIVE_OUTPUT",
+    bool(artifact_overrides.get("preserve_native_output", False)),
 )
-if refuse_moe_expert_tensors(save_tmp):
+refuse_moe_expert_tensors_enabled = env_bool(
+    "GPTQ_REFUSE_MOE_EXPERT_TENSORS",
+    bool(artifact_overrides.get("refuse_moe_expert_tensors", True)),
+)
+hf_native_dir = f"{out_dir}-hf-native" if preserve_native_output else ""
+
+if preserve_native_output:
     emit_progress(
-        "progress", phase="saving", percent=97.0, detail="MoE re-fuse complete"
+        "progress",
+        phase="saving",
+        percent=95.5,
+        detail="preserving HF-native artifact",
+    )
+    copy_artifact_tree(save_tmp, hf_native_dir)
+
+# ── MoE re-fuse: convert per-expert 2D → fused 3D for vLLM MoeWNA16 ──
+if refuse_moe_expert_tensors_enabled:
+    emit_progress(
+        "progress",
+        phase="saving",
+        percent=96.0,
+        detail="re-fusing MoE expert tensors",
+    )
+    if refuse_moe_expert_tensors(save_tmp):
+        emit_progress(
+            "progress", phase="saving", percent=97.0, detail="MoE re-fuse complete"
+        )
+else:
+    print("Skipping MoE re-fuse; leaving GPTQ output in HF-native layout")
+    emit_progress(
+        "progress",
+        phase="saving",
+        percent=97.0,
+        detail="keeping HF-native MoE artifact layout",
     )
 
 emit_progress(
@@ -2126,6 +2213,19 @@ emit_progress(
 if os.path.exists(out_dir):
     shutil.rmtree(out_dir)
 os.rename(save_tmp, out_dir)
+write_artifact_manifest(
+    out_dir,
+    role="primary",
+    primary_dir=out_dir,
+    hf_native_dir=hf_native_dir,
+)
+if preserve_native_output:
+    write_artifact_manifest(
+        hf_native_dir,
+        role="hf-native",
+        primary_dir=out_dir,
+        hf_native_dir=hf_native_dir,
+    )
 
 checkpoint_callback.state["stage"] = "complete"
 checkpoint_callback.state["completed_at"] = time.strftime(

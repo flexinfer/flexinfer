@@ -98,5 +98,5 @@ spec:
       - gguf
       - exl2
     images:
-      gptq: registry.harbor.lan/flexinfer/quantizer@sha256:2512d240b4c4ba5e9e8ec94631b6ece256701c15f75028155b2b306d2b4ee38b
+      gptq: registry.harbor.lan/flexinfer/quantizer@sha256:69faab2d7638a88b47cd6fe76dec6e1bf18c13310dbd4826e43a8e2d12f09685
       abliteration: registry.harbor.lan/flexinfer/runtime@sha256:eb977b01cd8751bcc111cbaed5f8b5171f3968eccc783bfcfc25f36cef7f0365

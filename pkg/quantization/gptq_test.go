@@ -161,6 +161,27 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 			if got := runtimeOverrides["fix_mistral_regex"]; got != true {
 				t.Fatalf("default fix_mistral_regex override = %v, want true", got)
 			}
+
+			var gemmaPolicy map[string]any
+			for _, policy := range policies {
+				if policy["name"] == "gemma4-text" {
+					gemmaPolicy = policy
+					break
+				}
+			}
+			if gemmaPolicy == nil {
+				t.Fatalf("expected gemma4-text default policy in %v", policies)
+			}
+			artifactOverrides, ok := gemmaPolicy["artifact_overrides"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected artifact_overrides in gemma4-text policy JSON")
+			}
+			if got := artifactOverrides["preserve_native_output"]; got != true {
+				t.Fatalf("gemma4 preserve_native_output = %v, want true", got)
+			}
+			if got := artifactOverrides["refuse_moe_expert_tensors"]; got != true {
+				t.Fatalf("gemma4 refuse_moe_expert_tensors = %v, want true", got)
+			}
 		}
 	})
 

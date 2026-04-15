@@ -13,7 +13,7 @@ import (
 
 // GPTQScriptVersion must match FLEXINFER_SCRIPT_VERSION in quantize_gptq.py.
 // Bump both when controller-side heredoc patches change to catch stale images.
-const GPTQScriptVersion = "v8"
+const GPTQScriptVersion = "v9"
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}
@@ -31,6 +31,7 @@ type gptqModelPolicy struct {
 	QuantizeConfigOverride map[string]any `json:"quantize_config_overrides,omitempty"`
 	CalibrationOverrides   map[string]int `json:"calibration_overrides,omitempty"`
 	RuntimeOverrides       map[string]any `json:"runtime_overrides,omitempty"`
+	ArtifactOverrides      map[string]any `json:"artifact_overrides,omitempty"`
 }
 
 // Format returns the GPTQ quantization format.
@@ -250,6 +251,12 @@ func defaultGPTQModelPoliciesJSON() string {
 			},
 			RuntimeOverrides: map[string]any{
 				"attn_implementation": "eager",
+			},
+			ArtifactOverrides: map[string]any{
+				// Preserve an HF-native checkpoint alongside the fused vLLM artifact
+				// so Gemma4 outputs can be validated without re-running quantization.
+				"preserve_native_output":    true,
+				"refuse_moe_expert_tensors": true,
 			},
 		},
 	}
