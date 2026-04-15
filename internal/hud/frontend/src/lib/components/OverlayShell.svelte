@@ -11,6 +11,8 @@
   import { eventStore } from '../stores/events.svelte.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
 
+  const fleetPollingOwner = Symbol('OverlayShell');
+
   // Make html/body transparent so native NSVisualEffectView vibrancy shows through.
   function transparentBody(_node) {
     document.documentElement.style.background = 'transparent';
@@ -27,7 +29,7 @@
 
   onMount(() => {
     eventStore.connect();
-    fleetStore.startPolling();
+    fleetStore.startPolling(30000, fleetPollingOwner);
     healthStore.startPolling();
     taskStore.startPolling();
     workflowStore.startPolling();
@@ -53,7 +55,7 @@
     for (const unsub of activityUnsubs) unsub();
     activityUnsubs = [];
     eventStore.disconnect();
-    fleetStore.stopPolling();
+    fleetStore.stopPolling(fleetPollingOwner);
     healthStore.stopPolling();
     taskStore.stopPolling();
     workflowStore.stopPolling();

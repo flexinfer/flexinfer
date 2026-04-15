@@ -15,6 +15,8 @@
   import { shuttleStore } from '../stores/shuttle.svelte.ts';
   import { navigateToAgentSessionOrTraces } from '../utils/drilldown.ts';
 
+  const fleetPollingOwner = Symbol('OverviewPanel');
+
   let initialLoad = $state(true);
   let kpis = $state({
     sessions_today: 0,
@@ -118,7 +120,7 @@
     fetchOTelStatus();
     // Start core stores so the dashboard renders useful data even when
     // Overview is the first (or only) panel the user visits.
-    fleetStore.startPolling(10000);
+    fleetStore.startPolling(10000, fleetPollingOwner);
     healthStore.startPolling(15000);
     taskStore.startPolling(15000);
     memoryStore.startPolling(30000);
@@ -131,7 +133,7 @@
     const t = setInterval(fetchOTelStatus, 30000);
     return () => {
       clearInterval(t);
-      fleetStore.stopPolling();
+      fleetStore.stopPolling(fleetPollingOwner);
       healthStore.stopPolling();
       taskStore.stopPolling();
       memoryStore.stopPolling();

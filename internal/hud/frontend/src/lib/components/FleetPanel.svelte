@@ -17,8 +17,10 @@
   import DetailDrawer from './shared/DetailDrawer.svelte';
   import EmptyState from './shared/EmptyState.svelte';
 
+  const fleetPollingOwner = Symbol('FleetPanel');
+
   $effect(() => {
-    fleetStore.startPolling(5000);
+    fleetStore.startPolling(5000, fleetPollingOwner);
     taskStore.startPolling(5000);
     workflowStore.startPolling(10000);
     memoryStore.startPolling(10000);
@@ -27,7 +29,7 @@
     spawnStore.startPolling(15000);
 
     return () => {
-      fleetStore.stopPolling();
+      fleetStore.stopPolling(fleetPollingOwner);
       taskStore.stopPolling();
       workflowStore.stopPolling();
       memoryStore.stopPolling();

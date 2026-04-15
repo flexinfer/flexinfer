@@ -115,6 +115,9 @@ export interface SessionTreeNode {
   children: SessionTreeNode[];
 }
 
+type PollingOwner = string | symbol;
+const DEFAULT_POLLING_OWNER = 'default';
+
 function extractProject(namespace: string | undefined): string {
   if (!namespace) return '(ungrouped)';
   const seg = namespace.split('/')[0];
@@ -186,6 +189,7 @@ class FleetStore {
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private eventUnsubs: Array<() => void> = [];
+  private pollingOwners = new Map<PollingOwner, number>();
 
   get activeSessions(): Session[] {
     return this.sessions.filter((s) => s.status === 'active');
@@ -486,13 +490,8 @@ class FleetStore {
     }
   }
 
-  startPolling(intervalMs = 30000): void {
-    this.stopPolling();
-    this.fetch();
-    // 30s fallback poll (SSE is the primary data source).
-    this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
-
-    // Subscribe to SSE events: apply data directly from hud.fleet snapshots.
+  private ensureEventSubscriptions(): void {
+    if (this.eventUnsubs.length > 0) return;
     this.eventUnsubs.push(
       eventStore.on('hud.fleet', (e) => this.applySnapshot(e.data)),
       // Legacy daemon events still trigger a full refresh as fallback.
@@ -547,7 +546,35 @@ class FleetStore {
     );
   }
 
-  stopPolling(): void {
+  private refreshPollTimer(): void {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+
+    if (this.pollingOwners.size === 0) return;
+
+    const intervalMs = Math.min(...this.pollingOwners.values());
+    this.pollTimer = setInterval(() => {
+      if (!eventStore.connected) this.fetch();
+    }, intervalMs);
+  }
+
+  startPolling(intervalMs = 30000, owner: PollingOwner = DEFAULT_POLLING_OWNER): void {
+    const wasIdle = this.pollingOwners.size === 0;
+    this.pollingOwners.set(owner, intervalMs);
+    this.ensureEventSubscriptions();
+    this.refreshPollTimer();
+    if (wasIdle) this.fetch();
+  }
+
+  stopPolling(owner: PollingOwner = DEFAULT_POLLING_OWNER): void {
+    this.pollingOwners.delete(owner);
+    if (this.pollingOwners.size > 0) {
+      this.refreshPollTimer();
+      return;
+    }
+
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;

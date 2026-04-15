@@ -10,10 +10,12 @@
   import NudgeAgentModal from './presence/NudgeAgentModal.svelte';
   import CreateHandoffModal from './presence/CreateHandoffModal.svelte';
 
+  const fleetPollingOwner = Symbol('PresencePanel');
+
   $effect(() => {
-    fleetStore.startPolling(5000);
+    fleetStore.startPolling(5000, fleetPollingOwner);
     return () => {
-      fleetStore.stopPolling();
+      fleetStore.stopPolling(fleetPollingOwner);
     };
   });
 
