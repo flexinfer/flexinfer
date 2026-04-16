@@ -2,18 +2,13 @@ package hud
 
 import (
 	"net/http"
-	"sort"
 	"strings"
 
 	"github.com/crb2nu/loom/pkg/registry"
 )
 
 type catalogAPIEntry struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Categories  []string `json:"categories,omitempty"`
-	Enabled     bool     `json:"enabled"`
-	Running     bool     `json:"running"`
+	registry.CatalogEntry
 }
 
 func (a *App) handleCatalogList(w http.ResponseWriter, r *http.Request) {
@@ -29,6 +24,7 @@ func (a *App) handleCatalogList(w http.ResponseWriter, r *http.Request) {
 
 	cs, _ := registry.LoadCatalogState()
 	categoryFilter := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("category")))
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
 
 	// Build the running set from health monitor if available.
 	runningSet := make(map[string]bool)
@@ -38,34 +34,15 @@ func (a *App) handleCatalogList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	entries := make([]catalogAPIEntry, 0, len(reg.Servers))
-	for _, srv := range reg.Servers {
-		if srv == nil {
-			continue
-		}
-		if categoryFilter != "" && !serverHasCategoryCI(srv, categoryFilter) {
-			continue
-		}
-
-		desc := ""
-		if srv.Common != nil {
-			desc = strings.TrimSpace(srv.Common.Description)
-		}
-
-		entries = append(entries, catalogAPIEntry{
-			Name:        srv.Name,
-			Description: desc,
-			Categories:  srv.Categories,
-			Enabled:     cs == nil || !cs.IsDisabled(srv.Name),
-			Running:     runningSet[srv.Name],
-		})
+	entries := registry.BuildCatalogEntries(reg, cs, "", categoryFilter, query, runningSet)
+	apiEntries := make([]catalogAPIEntry, len(entries))
+	for i, entry := range entries {
+		apiEntries[i] = catalogAPIEntry{CatalogEntry: entry}
 	}
 
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
-
 	a.writeJSON(w, http.StatusOK, map[string]any{
-		"servers":       entries,
-		"count":         len(entries),
+		"servers":       apiEntries,
+		"count":         len(apiEntries),
 		"registry_path": regPath,
 	})
 }
@@ -146,13 +123,4 @@ func (a *App) loadRegistry() (*registry.Registry, string) {
 		return nil, path
 	}
 	return reg, path
-}
-
-func serverHasCategoryCI(srv *registry.Server, needle string) bool {
-	for _, c := range srv.Categories {
-		if strings.EqualFold(strings.TrimSpace(c), needle) {
-			return true
-		}
-	}
-	return false
 }
