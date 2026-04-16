@@ -440,14 +440,14 @@ dev-sync-repo: loom
 # - regen+sync configs + skills in loom mode
 # - restart daemon only when idle
 # - use a direct embedded-HUD restart path when launchd is installed but not active
-# - reap stale loom proxy clients when a restart happens
+# - leave loom proxy clients running so they reconnect across daemon restarts
 dev-upgrade:
 	@chmod +x scripts/dev/upgrade_local.sh
 	@scripts/dev/upgrade_local.sh
 
 # Force rebuild + restart: always restarts daemon regardless of active connections.
-# Reaps existing loom proxy clients so stale app-held proxies do not outlive the reload.
-# Proxy connections (Claude, Codex, Zed, etc.) auto-reconnect on the next tool call.
+# Leaves existing loom proxy clients running; they reconnect on the next tool call.
+# Set REAP_PROXY_CLIENTS=always only when intentionally resetting client-held proxy processes.
 # If launchd is not actively managing the daemon, restart directly with --hud-port so
 # the embedded HUD/mobile API comes back in the same process.
 dev-reload:
