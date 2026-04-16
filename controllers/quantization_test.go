@@ -472,14 +472,14 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 			cache.Spec.Quantization.GGUFType = "Q5_K_M"
 			Expect(k8sClient.Update(ctx, cache)).To(Succeed())
 
-			By("Verifying the controller resets phase to Provisioning")
+			By("Verifying the controller clears prior quantization status and starts re-quantizing")
 			Eventually(func() aiv1alpha1.ModelCachePhase {
 				c := &aiv1alpha1.ModelCache{}
 				if err := k8sClient.Get(ctx, cacheKey, c); err != nil {
 					return ""
 				}
 				return c.Status.Phase
-			}, time.Minute, time.Second).Should(Equal(aiv1alpha1.ModelCachePhaseProvisioning))
+			}, time.Minute, time.Second).Should(Equal(aiv1alpha1.ModelCachePhaseQuantizing))
 
 			By("Verifying quantization status is cleared")
 			Expect(k8sClient.Get(ctx, cacheKey, cache)).To(Succeed())
@@ -550,7 +550,7 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 			cache.Annotations[annotationRequantize] = "true"
 			Expect(k8sClient.Update(ctx, cache)).To(Succeed())
 
-			By("Verifying the controller resets status and eventually clears the trigger annotation")
+			By("Verifying the controller clears prior status, starts re-quantizing, and clears the trigger annotation")
 			Eventually(func() string {
 				c := &aiv1alpha1.ModelCache{}
 				if err := k8sClient.Get(ctx, cacheKey, c); err != nil {
@@ -561,7 +561,7 @@ var _ = Describe("ModelCache Quantization Lifecycle", func() {
 					trigger = c.Annotations[annotationRequantize]
 				}
 				return fmt.Sprintf("%s|%s|%t", c.Status.Phase, trigger, c.Status.Quantization == nil)
-			}, time.Minute, time.Second).Should(Equal("Provisioning||true"))
+			}, time.Minute, time.Second).Should(Equal("Quantizing||true"))
 		})
 	})
 })

@@ -8,6 +8,9 @@ resources:
   # but do not reconcile them here.
   - gemma4-26b-a4b-gptq.yaml        # vLLM GPTQ INT4, MoE 3.8B active, primary (priority 200)
   - gemma4-31b-gptq.yaml            # vLLM GPTQ INT4, Dense 31B, on-demand (priority 150)
+  # Experimental 32K/TurboQuant canary on the 7900xtx lane. Scale-to-zero keeps
+  # it from interfering with the always-on primary 26B profile until explicitly tested.
+  - gemma4-26b-a4b-gptq-long.yaml   # vLLM GPTQ INT4, 32K TurboQuant canary (priority 50)
   # E4B multimodal/turboquant variants disabled during the 26B-A4B rollout.
   # - gemma4-e4b-turboquant.yaml
   # - gemma4-e4b-multimodal.yaml

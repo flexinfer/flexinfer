@@ -1,0 +1,79 @@
+# Gemma4 26B-A4B GPTQ long-context canary via vLLM on AMD gfx1100.
+#
+# Experimental 32K / TurboQuant lane for the same clean 26B-A4B GPTQ source
+# artifact used by the primary model. This is a separate scale-to-zero canary
+# on cblevins-7900xtx so the RWO source/cache PVC stays on the node that already
+# owns the working 26B artifact. It must be scaled/tested deliberately and should
+# not replace the always-on 8K primary until the long-context probe passes.
+#
+# Runtime requirements:
+# - vLLM CUSTOM attention path
+# - kvCacheCodec=turboquant
+# - prefix caching disabled
+# - single-GPU, text-only profile
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gemma4-26b-a4b-gptq-long
+  namespace: flexinfer-system
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime@sha256:05f5b789ff9a8bc6411dc685a42dbc437e12b04e3b7c92afc5fa9a974c04e009
+  source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
+  cache:
+    strategy: SharedPVC
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 7900xtx-textgen
+    priority: 50
+    vramEstimateMB: 18000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 15m
+  config:
+    quantization: gptq
+    dtype: "half"
+    maxModelLen: 32768
+    gpuMemoryUtilization: "0.80"
+    maxNumSeqs: 1
+    trustRemoteCode: true
+    attentionBackend: CUSTOM
+    kvCacheCodec: turboquant
+    servedModelName: gemma4-26b-a4b-gptq-long
+    enableToolCalling: true
+    toolCallParser: gemma4
+    reasoningParser: gemma4
+    enablePrefixCaching: false
+    maxNumBatchedTokens: 160
+    # Keep the hybrid KV cache manager enabled for Gemma4 sliding/full attention;
+    # the TurboQuant patch pads allocator-visible page sizes instead.
+    disableHybridKVCacheManager: false
+    limitMmPerPrompt: "image=0,audio=0,video=0"
+    disableLogStats: false
+    warmPolicy: ondemand
+    hipVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 24Gi
+  serviceLabels:
+    - gemma4-26b-a4b-gptq-long
+    - long-context
+  litellm:
+    enabled: true
+    servedModelName: gemma4-26b-a4b-gptq-long
+    aliases:
+      - gemma4-26b-long
+      - gemma4-long
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
