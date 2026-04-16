@@ -399,8 +399,12 @@ func (r *ModelCacheReconciler) reconcileDownstreamPhases(ctx context.Context, mo
 
 	// Phase 3: Quantization (if configured) must complete before publish.
 	if modelCache.Spec.Quantization != nil {
+		quantHash := quantSpecHashWithImage(
+			modelCache.Spec.Quantization,
+			r.resolveCurrentQuantizerImage(ctx, modelCache),
+		)
 		if !quantizationCompleted(modelCache.Status.Quantization) ||
-			specChangeNeedsReprocess(modelCache, annotationRequantize, annotationQuantSpecHash, quantSpecHash(modelCache.Spec.Quantization)) {
+			specChangeNeedsReprocess(modelCache, annotationRequantize, annotationQuantSpecHash, quantHash) {
 			modelCache.Status.CurrentPhase = "quantization"
 			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
 		}

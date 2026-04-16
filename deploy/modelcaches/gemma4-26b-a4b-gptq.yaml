@@ -3,7 +3,7 @@
 # Same Gemma4ForConditionalGeneration architecture as E4B, vision+video capable.
 # Hybrid arch: 25 GDN layers + 5 full-attention layers [5,11,17,23,29].
 #
-# Pipeline: Download BF16 (~27 GB) → Abliterate → GPTQ INT4 (~7-13 GB) → Ready
+# Pipeline: Download BF16 (~27 GB) → Abliterate → GPTQ INT4 hybrid → Ready
 # Node class: pin to the live RDNA3 host.
 #
 # MoE abliteration safety:
@@ -13,9 +13,12 @@
 #   - Double protection: CRD restricts to o_proj + code skips expert params.
 #
 # MoE quantization:
-#   - dynamicExclusion: "auto" — detects MoE architecture. GPTQModel >= 6.0.3 has
-#     native Gemma4 MoE support and quantizes experts natively (full INT4 output,
-#     ~7-13 GB instead of ~46 GB). Older versions fall back to excluding experts.
+#   - dynamicExclusion: "auto" — detects MoE architecture. For Gemma4 26B-A4B,
+#     the quantizer emits a versioned hybrid directory. MoE experts are GPTQ
+#     INT4, while dense attention/MLP GPTQ families are kept only if direct
+#     dequantization validates against post-abliteration source weights. Failed
+#     dense families fall back to source precision, avoiding the corrupt
+#     repeated-token dense GPTQ failure observed on vLLM/ROCm.
 #
 # Disk: the upstream BF16 cache expands to roughly 30 Gi on Longhorn/Xet-backed
 # downloads, and streaming in-place save needs another full set of shards plus

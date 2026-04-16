@@ -1,8 +1,9 @@
 # Gemma4 26B-A4B GPTQ INT4 via vLLM on AMD gfx1100.
 #
-# MoE: 25.2B total / 3.8B active params. Full GPTQ INT4 quantization including
-# MoE experts (GPTQModel >= 6.0.3 native support). ~7-13 GB weights, fits in
-# 24 GB VRAM without CPU offload.
+# MoE: 25.2B total / 3.8B active params. The working gfx1100 artifact is a
+# hybrid export: MoE experts stay GPTQ INT4, while dense attention/MLP weights
+# stay at post-abliteration FP16/BF16. Full dense-attention GPTQ produced bad
+# dequantized tensors and repeated-token output on vLLM/ROCm.
 #
 # Primary model in 7900xtx-textgen shared group (priority 200, always-on).
 # Replaces gemma4-e4b-gptq as primary text model.
@@ -13,13 +14,13 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:b54ba78d05e059dcdcb759c08792f1b099d7b97e912a553d7535952a58b6fc45
-  source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128
+  image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
+  source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
   cache:
     strategy: SharedPVC
   gpu:
     vendor: amd
-    count: 2
+    count: 1
     vramEstimateMB: 16000
     shared: 7900xtx-textgen
     priority: 200
@@ -31,12 +32,11 @@ spec:
   config:
     quantization: gptq
     dtype: "half"
-    # Full MoE GPTQ INT4 weights: 16.2 GiB. With KV cache page-size
-    # unification (heterogeneous heads → doubled block_size), 16K context
-    # needs ~3.75 GiB KV cache, comfortably within 5.3 GiB available.
-    maxModelLen: 16384
+    # Hybrid dense-FP16/MoE-GPTQ loads at ~17.7 GiB. Keep context to 8k on the
+    # single 7900XTX so KV cache fits with ROCm/vLLM overhead.
+    maxModelLen: 8192
     gpuMemoryUtilization: "0.95"
-    maxNumSeqs: 16
+    maxNumSeqs: 1
     trustRemoteCode: true
     attentionBackend: TRITON_ATTN
     servedModelName: gemma4-26b-a4b-gptq
@@ -44,7 +44,7 @@ spec:
     toolCallParser: gemma4
     reasoningParser: gemma4
     enablePrefixCaching: true
-    maxNumBatchedTokens: 8192
+    maxNumBatchedTokens: 512
     disableLogStats: false
     # Disable torch.compile + CUDAGraph: gptq_gemm kernel is "buggy" per
     # vLLM warning, and GELU tanh approximation falls back to 'none' under

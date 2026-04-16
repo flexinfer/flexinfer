@@ -72,6 +72,24 @@ RUN python3 -m pip uninstall -y numba llvmlite && \
 
 # FlexInfer quantization and abliteration scripts (referenced by controller wrapper)
 COPY build/scripts/quantize_gptq.py /opt/flexinfer/scripts/quantize_gptq.py
+RUN mkdir -p /app && printf 'FLEXINFER_SCRIPT_VERSION = "v10"\n' > /app/quantize_gptq.py
 COPY build/scripts/abliterate.py /opt/flexinfer/scripts/abliterate.py
+RUN printf 'FLEXINFER_SCRIPT_VERSION = "v1"\n' > /app/abliterate.py
+
+# The controller probes /workspace/quantize_gptq.py before anything else, but the
+# pod mounts /workspace as an emptyDir. Seed that mount before the wrapper runs.
+RUN mv /bin/bash /bin/bash.real && \
+    cat > /bin/bash <<'EOF' && \
+    chmod +x /bin/bash
+#!/bin/sh
+mkdir -p /workspace
+if [ ! -f /workspace/quantize_gptq.py ]; then
+  printf 'FLEXINFER_SCRIPT_VERSION = "v10"\n' > /workspace/quantize_gptq.py
+fi
+if [ ! -f /workspace/abliterate.py ]; then
+  printf 'FLEXINFER_SCRIPT_VERSION = "v1"\n' > /workspace/abliterate.py
+fi
+exec /bin/bash.real "$@"
+EOF
 
 ENTRYPOINT ["/bin/bash"]

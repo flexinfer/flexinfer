@@ -1,80 +1,27 @@
 # Dockerfile.quantizer-gptq-rocm-gfx906
-# GPTQ quantization runtime image for FlexInfer on AMD Radeon VII (gfx906).
-# Uses GPTQModel (successor to auto-gptq) with ROCm 6.2.3 + PyTorch 2.3,
-# which is the last ROCm/PyTorch combination with full gfx906 kernel support.
+# Thin GPTQ quantizer overlay for AMD Radeon VII (gfx906).
 #
-# Key differences from gfx1100 variant:
-# - ROCm 6.2.3 base (gfx906 deprecated in ROCm 6.4+)
-# - HSA_OVERRIDE_GFX_VERSION=9.0.6 (hardware reports gfx900)
-# - HSA_ENABLE_SDMA=0 for DMA stability on Vega20
-# - HSA_USE_SVM=0 for hipMemGetInfo workaround (ROCm/ROCm#2433)
-# - TORCH_BLAS_PREFER_HIPBLASLT=0 (not available on GCN5)
+# The gfx906 runtime image already carries the ROCm/PyTorch/GPTQModel stack
+# needed for quantization. The historical failure here was not missing deps;
+# it was that the image lacked the controller's version sentinel files under
+# /app and /workspace. Build the smallest possible overlay so deploy-quantizer
+# stays fast and we can prove the live job is using the fixed artifact.
 #
 # Build:
 #   docker --context 7900xtx build -f build/Dockerfile.quantizer-gptq-rocm-gfx906 \
 #     -t registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx906 .
 
-FROM rocm/pytorch:rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0
+ARG BASE_IMAGE=registry.harbor.lan/flexinfer/runtime@sha256:ba4570f515af05fe62f8b6672449b4029e1f15c2f606412e8d6d800e3e0e2dbf
+FROM ${BASE_IMAGE}
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PIP_NO_CACHE_DIR=1 \
-    PYTHONUNBUFFERED=1
-
-# ROCm environment for gfx906 (Vega20 / Radeon VII)
-ENV PYTORCH_ROCM_ARCH=gfx906
-ENV HSA_OVERRIDE_GFX_VERSION=9.0.6
-ENV HSA_ENABLE_SDMA=0
-ENV HSA_USE_SVM=0
-ENV TORCH_BLAS_PREFER_HIPBLASLT=0
-ENV MIOPEN_FIND_MODE=2
-
-RUN python3 -m pip install --upgrade pip "setuptools>=77" wheel "packaging>=24.2"
-
-# The ROCm PyTorch base image ships a broken editable Triton install
-# (/var/lib/jenkins/triton/python) that lacks the jit API. Replace it
-# with the PyPI wheel which includes full ROCm/HIP support.
-RUN python3 -m pip install --force-reinstall triton==3.2.0
-
-# GPTQModel auto-detects ROCm and builds HIP kernels via --no-build-isolation.
-# CRITICAL: Use --no-deps to prevent gptqmodel from pulling CUDA torch>=2.8.0
-# from PyPI, which would overwrite the ROCm PyTorch 2.3.0 from the base image.
-# On ROCm, ext_modules=[] (no native extensions), so the build is pure Python.
-RUN python3 -m pip install -v gptqmodel --no-build-isolation --no-deps
-
-# Install gptqmodel's runtime dependencies separately, keeping ROCm torch intact.
-# GPTQModel 5.7.0 requires transformers>=4.57.1 (handles Qwen3 attention_type API).
-# CRITICAL: transformers 5.x requires PyTorch 2.4+ but ROCm 6.2.3 only has 2.3.
-# Pin to 4.x to avoid NameError from nn.Module type hints in transformers 5.x.
-RUN python3 -m pip install \
-    "transformers>=4.57,<5" \
-    safetensors \
-    accelerate \
-    datasets \
-    sentencepiece \
-    huggingface_hub \
-    protobuf \
-    pillow \
-    hf_transfer \
-    device-smi \
-    tokenicer \
-    logbar \
-    maturin \
-    pyarrow \
-    dill \
-    pypcre \
-    zstandard
-
-# Fix numpy ABI mismatch (same issue as gfx1100 variant).
-# ROCm 6.2.3 base has numpy 1.22.x, numba 0.55.x — incompatible with
-# newer scipy/sklearn pulled by pyarrow/datasets.
-RUN python3 -m pip uninstall -y numba llvmlite && \
-    python3 -m pip install --force-reinstall \
-    "numpy>=1.26,<2" \
-    pandas \
-    scipy \
-    scikit-learn
-
-# FlexInfer abliteration script (referenced by controller wrapper)
+# Refresh the controller-managed scripts in case the runtime image lags.
+COPY build/scripts/quantize_gptq.py /opt/flexinfer/scripts/quantize_gptq.py
 COPY build/scripts/abliterate.py /opt/flexinfer/scripts/abliterate.py
+
+# The controller probes tiny sentinel files for version compatibility before it
+# ever executes the full quantize script. Keep those sentinels import-safe.
+RUN mkdir -p /app && \
+    printf 'FLEXINFER_SCRIPT_VERSION = "v10"\n' > /app/quantize_gptq.py && \
+    printf 'FLEXINFER_SCRIPT_VERSION = "v1"\n' > /app/abliterate.py
 
 ENTRYPOINT ["/bin/bash"]

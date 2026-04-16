@@ -40,6 +40,14 @@ func TestQuantizedOutputPath(t *testing.T) {
 			want:     "/models/qwen3/gptq-w8-g64",
 		},
 		{
+			name: "Gemma4 26B GPTQ uses versioned hybrid path",
+			spec: &aiv1alpha1.QuantizationSpec{
+				Format: aiv1alpha1.QuantizationFormatGPTQ,
+			},
+			basePath: "/models/gemma4-26b-a4b-gptq",
+			want:     "/models/gemma4-26b-a4b-gptq/gptq-w4-g128-hybrid-v10",
+		},
+		{
 			name: "AWQ default bits/group",
 			spec: &aiv1alpha1.QuantizationSpec{
 				Format: aiv1alpha1.QuantizationFormatAWQ,

@@ -9,7 +9,7 @@ All configuration is read from environment variables set by the controller:
 
 # Bumped when controller-side patches change. The wrapper script checks this
 # against GPTQScriptVersion in gptq.go and aborts on mismatch.
-FLEXINFER_SCRIPT_VERSION = "v9"
+FLEXINFER_SCRIPT_VERSION = "v10"
 import copy
 import gc
 import json
@@ -211,6 +211,364 @@ def env_int(name, default):
     if not raw:
         return default
     return int(raw)
+
+
+def _indexed_safetensors(save_dir):
+    """Return (index_path, weight_map, shard_files) for sharded/single safetensors."""
+    try:
+        from safetensors import safe_open
+    except ImportError:
+        return None, {}, []
+
+    index_path = os.path.join(save_dir, "model.safetensors.index.json")
+    single_path = os.path.join(save_dir, "model.safetensors")
+    if os.path.exists(index_path):
+        with open(index_path) as f:
+            index = json.load(f)
+        weight_map = index.get("weight_map", {})
+        return index_path, weight_map, sorted(set(weight_map.values()))
+    if os.path.exists(single_path):
+        with safe_open(single_path, framework="pt") as f:
+            weight_map = {key: "model.safetensors" for key in f.keys()}
+        return None, weight_map, ["model.safetensors"]
+    return None, {}, []
+
+
+def _source_tensor_map(model_dir):
+    """Return source checkpoint weight_map after wrapper key remapping."""
+    index_path, weight_map, _ = _indexed_safetensors(model_dir)
+    if weight_map:
+        return weight_map
+    return {}
+
+
+def _update_quantized_module_lists(save_dir, modules):
+    """Constrain vLLM quantization metadata to the modules that remain GPTQ."""
+    for rel_path in ("quantize_config.json", "config.json"):
+        path = os.path.join(save_dir, rel_path)
+        if not os.path.exists(path):
+            continue
+        with open(path) as f:
+            data = json.load(f)
+
+        if rel_path == "quantize_config.json":
+            data["modules_in_block_to_quantize"] = list(modules)
+        else:
+            qcfg = data.get("quantization_config")
+            if isinstance(qcfg, dict):
+                qcfg["modules_in_block_to_quantize"] = list(modules)
+
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+
+
+def _dense_gptq_zero_point_add():
+    raw = os.environ.get("GEMMA4_DENSE_GPTQ_ZERO_POINT_ADD", "1").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"WARN: invalid GEMMA4_DENSE_GPTQ_ZERO_POINT_ADD={raw!r}; using 1")
+        return 1
+
+
+def _dense_gptq_cosine_threshold():
+    raw = os.environ.get("GEMMA4_DENSE_GPTQ_COSINE_THRESHOLD", "0.98").strip()
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"WARN: invalid GEMMA4_DENSE_GPTQ_COSINE_THRESHOLD={raw!r}; using 0.98")
+        return 0.98
+
+
+def _load_safetensor(base_dir, weight_map, key):
+    from safetensors import safe_open
+
+    with safe_open(os.path.join(base_dir, weight_map[key]), framework="pt") as f:
+        return f.get_tensor(key)
+
+
+def _dequantize_gptq_linear(save_dir, weight_map, prefix, zero_point_add):
+    """Dequantize a GPTQ linear layer to HF .weight layout [out, in]."""
+    import torch
+
+    qweight = _load_safetensor(save_dir, weight_map, f"{prefix}.qweight").to(torch.int32)
+    scales = _load_safetensor(save_dir, weight_map, f"{prefix}.scales").to(torch.float32)
+    qzeros = None
+    if f"{prefix}.qzeros" in weight_map:
+        qzeros = _load_safetensor(save_dir, weight_map, f"{prefix}.qzeros").to(torch.int32)
+    if f"{prefix}.g_idx" in weight_map:
+        group_idx = _load_safetensor(save_dir, weight_map, f"{prefix}.g_idx").to(torch.long)
+    else:
+        group_size = env_int("GROUP_SIZE", 128)
+        input_size = qweight.shape[0] * 8
+        group_idx = torch.arange(input_size, dtype=torch.long) // group_size
+
+    pack_factor = 8
+    input_size = qweight.shape[0] * pack_factor
+    output_size = qweight.shape[1]
+    unpacked = torch.empty((input_size, output_size), dtype=torch.float32)
+    for i in range(pack_factor):
+        unpacked[i::pack_factor, :] = ((qweight >> (4 * i)) & 0xF).to(torch.float32)
+
+    if qzeros is not None and qzeros.numel() > 0:
+        zero_points = torch.empty((qzeros.shape[0], output_size), dtype=torch.float32)
+        for i in range(pack_factor):
+            zero_points[:, i::pack_factor] = (
+                ((qzeros >> (4 * i)) & 0xF).to(torch.float32) + zero_point_add
+            )
+        unpacked = unpacked - zero_points[group_idx]
+    else:
+        unpacked = unpacked - 8.0
+
+    return (unpacked * scales[group_idx]).transpose(0, 1).contiguous()
+
+
+def _cosine_similarity(a, b):
+    import torch
+
+    a = a.to(torch.float32).flatten()
+    b = b.to(torch.float32).flatten()
+    return torch.nn.functional.cosine_similarity(a, b, dim=0).item()
+
+
+def _validate_dense_gptq_family(save_dir, source_dir, target_weight_map, source_weight_map, family, prefixes):
+    """Validate all layers for one dense module family against source weights."""
+    threshold = _dense_gptq_cosine_threshold()
+    zero_point_add = _dense_gptq_zero_point_add()
+    failures = []
+    scores = []
+    for prefix in prefixes:
+        qkeys = [f"{prefix}.{suffix}" for suffix in ("qweight", "scales", "qzeros")]
+        if any(key not in target_weight_map for key in qkeys):
+            failures.append((prefix, "missing_gptq_keys"))
+            continue
+        source_key = f"{prefix}.weight"
+        if source_key not in source_weight_map:
+            failures.append((prefix, "missing_source_weight"))
+            continue
+        try:
+            dense = _dequantize_gptq_linear(
+                save_dir, target_weight_map, prefix, zero_point_add
+            )
+            source = _load_safetensor(source_dir, source_weight_map, source_key)
+            score = _cosine_similarity(dense, source)
+            scores.append(score)
+            if score < threshold:
+                failures.append((prefix, f"cosine={score:.6f}"))
+        except Exception as exc:
+            failures.append((prefix, f"error={exc}"))
+
+    if failures:
+        preview = ", ".join(f"{prefix}:{why}" for prefix, why in failures[:8])
+        extra = len(failures) - min(len(failures), 8)
+        suffix = f" ... (+{extra} more)" if extra > 0 else ""
+        if scores:
+            print(
+                f"Gemma4 dense GPTQ family {family} rejected: "
+                f"min_cosine={min(scores):.6f} threshold={threshold:.3f}; "
+                f"{preview}{suffix}"
+            )
+        else:
+            print(f"Gemma4 dense GPTQ family {family} rejected: {preview}{suffix}")
+        return False
+
+    print(
+        f"Gemma4 dense GPTQ family {family} accepted: "
+        f"layers={len(prefixes)} min_cosine={min(scores):.6f} "
+        f"avg_cosine={sum(scores) / len(scores):.6f}"
+    )
+    return True
+
+
+def should_apply_gemma4_moe_hybrid(cfg):
+    """Decide whether to emit Gemma4 MoE hybrid GPTQ output.
+
+    Dense attention GPTQ tensors from Gemma4 26B-A4B were empirically bad on
+    GPTQModel 6.0.3/vLLM ROCm: direct dequant had near-zero cosine vs source
+    and generation collapsed to a repeated token. Keeping dense attention/MLP
+    at the post-abliteration source precision while quantizing MoE experts
+    yields a vLLM-loadable artifact that serves coherently on gfx1100.
+    """
+    mode = os.environ.get("GEMMA4_MOE_HYBRID_GPTQ", "auto").strip().lower()
+    if mode in {"0", "false", "no", "off", "disabled", "none"}:
+        return False
+    if mode in {"1", "true", "yes", "on", "enabled", "force"}:
+        return True
+
+    search_scopes = [cfg, cfg.get("text_config", {})]
+    model_types = {scope.get("model_type", "") for scope in search_scopes}
+    if "gemma4_text" not in model_types:
+        return False
+    for scope in search_scopes:
+        if scope.get("enable_moe_block") is True:
+            return True
+        for key in ("num_experts", "num_local_experts"):
+            val = scope.get(key, 0)
+            if isinstance(val, int) and val > 1:
+                return True
+    return False
+
+
+def emit_gemma4_moe_hybrid_gptq(save_dir, model_dir):
+    """Restore bad dense Gemma4 tensors from source and keep validated GPTQ.
+
+    vLLM scans every .safetensors file, not just the index, so it is not enough
+    to edit weight_map. This function validates dense attention/MLP GPTQ
+    families against post-abliteration source weights. A family is kept GPTQ
+    only when every layer passes; otherwise its qweight/scales/qzeros/g_idx keys
+    are physically removed from every shard and source .weight tensors are
+    restored. This keeps vLLM metadata globally consistent per module family.
+    """
+    import torch
+
+    try:
+        from safetensors import safe_open
+        from safetensors.torch import load_file, save_file
+    except ImportError:
+        print("WARN: safetensors not available, skipping Gemma4 hybrid GPTQ export")
+        return False
+
+    target_index_path, target_weight_map, target_shards = _indexed_safetensors(save_dir)
+    source_weight_map = _source_tensor_map(model_dir)
+    if not target_weight_map or not source_weight_map:
+        print("WARN: missing safetensors index/map, skipping Gemma4 hybrid GPTQ export")
+        return False
+
+    dense_quant_re = re.compile(
+        r"^model\.layers\.(\d+)\."
+        r"(self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))"
+        r"\.(qweight|qzeros|scales|g_idx)$"
+    )
+    dense_weight_re = re.compile(
+        r"^model\.layers\.(\d+)\."
+        r"(self_attn\.(?:q_proj|k_proj|v_proj|o_proj)|mlp\.(?:gate_proj|up_proj|down_proj))"
+        r"\.weight$"
+    )
+
+    source_dense_by_family = {}
+    for key in source_weight_map:
+        match = dense_weight_re.match(key)
+        if match:
+            source_dense_by_family.setdefault(match.group(2), []).append(key)
+    if not source_dense_by_family:
+        print("WARN: no dense Gemma4 source weights found for hybrid GPTQ export")
+        return False
+
+    quant_prefixes_by_family = {}
+    for key in target_weight_map:
+        match = dense_quant_re.match(key)
+        if match and match.group(3) == "qweight":
+            prefix = key.rsplit(".", 1)[0]
+            quant_prefixes_by_family.setdefault(match.group(2), []).append(prefix)
+
+    keep_gptq_families = set()
+    fallback_families = set(source_dense_by_family)
+    for family, source_keys in sorted(source_dense_by_family.items()):
+        prefixes = sorted(k.rsplit(".weight", 1)[0] for k in source_keys)
+        if family not in quant_prefixes_by_family:
+            print(f"Gemma4 dense GPTQ family {family} has no qweight keys; restoring source")
+            continue
+        if len(quant_prefixes_by_family[family]) != len(prefixes):
+            print(
+                f"Gemma4 dense GPTQ family {family} incomplete: "
+                f"qweights={len(quant_prefixes_by_family[family])} source_weights={len(prefixes)}; restoring source"
+            )
+            continue
+        if _validate_dense_gptq_family(
+            save_dir, model_dir, target_weight_map, source_weight_map, family, prefixes
+        ):
+            keep_gptq_families.add(family)
+            fallback_families.discard(family)
+
+    target_by_layer = {}
+    keys_to_drop = set()
+    for key, shard_name in target_weight_map.items():
+        quant_match = dense_quant_re.match(key)
+        if quant_match:
+            family = quant_match.group(2)
+            if family in keep_gptq_families:
+                target_by_layer.setdefault(quant_match.group(1), shard_name)
+                continue
+            keys_to_drop.add(key)
+            target_by_layer.setdefault(quant_match.group(1), shard_name)
+            continue
+        weight_match = dense_weight_re.match(key)
+        if weight_match and weight_match.group(2) in keep_gptq_families:
+            # GPTQ family accepted; remove any stray dense source weights for
+            # that family to avoid ambiguous vLLM load behavior.
+            keys_to_drop.add(key)
+            target_by_layer.setdefault(weight_match.group(1), shard_name)
+            continue
+        layer_match = re.match(r"^model\.layers\.(\d+)\.", key)
+        if layer_match:
+            target_by_layer.setdefault(layer_match.group(1), shard_name)
+
+    new_weight_map = {
+        key: shard_name for key, shard_name in target_weight_map.items()
+        if key not in keys_to_drop
+    }
+
+    # Rewrite every target shard so removed quant keys are gone from file bytes,
+    # not merely from the index.
+    for shard_name in target_shards:
+        shard_path = os.path.join(save_dir, shard_name)
+        tensors = load_file(shard_path)
+        kept = {k: v for k, v in tensors.items() if k not in keys_to_drop}
+        if len(kept) != len(tensors):
+            save_file(kept, shard_path)
+
+    restore_by_target_shard = {}
+    restore_keys = []
+    for family in sorted(fallback_families):
+        restore_keys.extend(sorted(source_dense_by_family[family]))
+    for key in restore_keys:
+        match = dense_weight_re.match(key)
+        layer = match.group(1)
+        target_shard = target_by_layer.get(layer, target_shards[0])
+        restore_by_target_shard.setdefault(target_shard, []).append(key)
+        new_weight_map[key] = target_shard
+
+    # Add source dense weights to their target shards. Source weights are the
+    # post-abliteration tensors because model_dir is the pipeline input to GPTQ.
+    from contextlib import ExitStack
+
+    source_open = {}
+    with ExitStack() as stack:
+        for target_shard, keys in sorted(restore_by_target_shard.items()):
+            target_path = os.path.join(save_dir, target_shard)
+            tensors = load_file(target_path)
+            updated = dict(tensors)
+            for key in keys:
+                source_shard = source_weight_map[key]
+                if source_shard not in source_open:
+                    source_open[source_shard] = stack.enter_context(
+                        safe_open(os.path.join(model_dir, source_shard), framework="pt")
+                    )
+                updated[key] = source_open[source_shard].get_tensor(key).to(torch.float16)
+            save_file(updated, target_path)
+
+    if target_index_path:
+        with open(target_index_path) as f:
+            index = json.load(f)
+        index["weight_map"] = new_weight_map
+        metadata = index.setdefault("metadata", {})
+        metadata["total_size"] = sum(
+            os.path.getsize(os.path.join(save_dir, shard))
+            for shard in sorted(set(new_weight_map.values()))
+        )
+        with open(target_index_path, "w") as f:
+            json.dump(index, f, indent=2)
+
+    quantized_modules = ["moe.gate_up_proj", "moe.down_proj"]
+    quantized_modules.extend(sorted(keep_gptq_families))
+    _update_quantized_module_lists(save_dir, quantized_modules)
+    print(
+        "Gemma4 MoE hybrid GPTQ export complete: "
+        f"kept_gptq={sorted(keep_gptq_families)} "
+        f"fallback={sorted(fallback_families)} "
+        f"dropped_keys={len(keys_to_drop)} restored_weights={len(restore_keys)}"
+    )
+    return True
 
 
 def defuse_fused_experts(model):
@@ -2206,6 +2564,21 @@ else:
         percent=97.0,
         detail="keeping HF-native MoE artifact layout",
     )
+
+if should_apply_gemma4_moe_hybrid(cfg):
+    emit_progress(
+        "progress",
+        phase="saving",
+        percent=97.2,
+        detail="emitting Gemma4 MoE hybrid GPTQ artifact",
+    )
+    if emit_gemma4_moe_hybrid_gptq(save_tmp, model_dir):
+        emit_progress(
+            "progress",
+            phase="saving",
+            percent=97.4,
+            detail="Gemma4 MoE hybrid GPTQ artifact complete",
+        )
 
 emit_progress(
     "progress", phase="saving", percent=97.5, detail="promoting output directory"

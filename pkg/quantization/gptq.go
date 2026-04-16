@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	batchv1 "k8s.io/api/batch/v1"
@@ -13,7 +14,7 @@ import (
 
 // GPTQScriptVersion must match FLEXINFER_SCRIPT_VERSION in quantize_gptq.py.
 // Bump both when controller-side heredoc patches change to catch stale images.
-const GPTQScriptVersion = "v9"
+const GPTQScriptVersion = "v10"
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}
@@ -119,7 +120,9 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 
 	image := ResolveImage(ImageFormatGPTQ, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
 
-	env := b.buildEnv(params.ModelPath, bits, groupSize, sym, descAct, memoryGB, gpuMemFraction, dynamicExclusion, params.GPUArch, params.MemoryConfig.GPUVramMB, params.Spec.Calibration)
+	outSubdir := GPTQOutputSubdir(params.ModelPath, bits, groupSize)
+
+	env := b.buildEnv(params.ModelPath, outSubdir, bits, groupSize, sym, descAct, memoryGB, gpuMemFraction, dynamicExclusion, params.GPUArch, params.MemoryConfig.GPUVramMB, params.Spec.Calibration)
 
 	return buildGPUQuantizationJob(
 		params,
@@ -130,8 +133,19 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	)
 }
 
+// GPTQOutputSubdir returns the output directory name for GPTQ artifacts.
+func GPTQOutputSubdir(modelPath string, bits, groupSize int) string {
+	outSubdir := fmt.Sprintf("gptq-w%d-g%d", bits, groupSize)
+	if strings.Contains(strings.ToLower(modelPath), "gemma4-26b-a4b") {
+		// Version this experimental hybrid path so managed rebuilds cannot
+		// overwrite the currently serving clean hybrid artifact in-place.
+		return outSubdir + "-hybrid-v10"
+	}
+	return outSubdir
+}
+
 // buildEnv returns environment variables for the GPTQ quantization script.
-func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, descAct bool, memoryGB int32, gpuMemFraction, dynamicExclusion, gpuArch string, gpuVramMB int64, calib *aiv1alpha2.CalibrationSpec) []corev1.EnvVar {
+func (b *GPTQJobBuilder) buildEnv(modelPath, outSubdir string, bits, groupSize int, sym, descAct bool, memoryGB int32, gpuMemFraction, dynamicExclusion, gpuArch string, gpuVramMB int64, calib *aiv1alpha2.CalibrationSpec) []corev1.EnvVar {
 	symStr := "True"
 	if !sym {
 		symStr = "False"
@@ -164,7 +178,7 @@ func (b *GPTQJobBuilder) buildEnv(modelPath string, bits, groupSize int, sym, de
 
 	env := []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
-		{Name: "OUT_DIR", Value: fmt.Sprintf("/cache/%s/gptq-w%d-g%d", modelPath, bits, groupSize)},
+		{Name: "OUT_DIR", Value: fmt.Sprintf("/cache/%s/%s", modelPath, outSubdir)},
 		{Name: "BITS", Value: fmt.Sprintf("%d", bits)},
 		{Name: "GROUP_SIZE", Value: fmt.Sprintf("%d", groupSize)},
 		{Name: "MAX_MEMORY_GB", Value: fmt.Sprintf("%d", memoryGB)},
@@ -272,6 +286,16 @@ func defaultGPTQModelPoliciesJSON() string {
 // status files, and delegates to the Python script.
 func (b *GPTQJobBuilder) gptqWrapperScript() string {
 	return `set -euo pipefail
+
+# Seed import-safe version sentinels into the emptyDir-backed workspace before
+# checking whether the quantizer image is new enough for controller-side patches.
+mkdir -p /workspace
+if [ ! -f /workspace/quantize_gptq.py ]; then
+    printf 'FLEXINFER_SCRIPT_VERSION = "` + GPTQScriptVersion + `"\n' > /workspace/quantize_gptq.py
+fi
+if [ ! -f /workspace/abliterate.py ]; then
+    printf 'FLEXINFER_SCRIPT_VERSION = "v1"\n' > /workspace/abliterate.py
+fi
 
 # --- Script version check ---
 # Catch stale quantizer images that are missing controller-side patches.
@@ -1449,6 +1473,7 @@ print('All safetensors files passed post-NFS-sync integrity check')
 "
 
 COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
+OUTPUT_BASENAME=$(basename "${OUT_DIR}")
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"
 
 FP16_COUNT=$(find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) \
@@ -1469,7 +1494,7 @@ cat > "${MODEL_DIR}/.quantization-status.json" << METADATA
   "originalSizeBytes": ${ORIGINAL_SIZE},
   "compressedSizeBytes": ${COMPRESSED_SIZE},
   "quantizationTimeSeconds": ${DURATION_SEC},
-  "outputDir": "gptq-w${BITS}-g${GROUP_SIZE}"
+  "outputDir": "${OUTPUT_BASENAME}"
 }
 METADATA
 

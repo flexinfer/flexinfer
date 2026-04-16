@@ -103,7 +103,7 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 	}
 
 	t.Run("default values", func(t *testing.T) {
-		env := builder.buildEnv("qwen3-14b", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
+		env := builder.buildEnv("qwen3-14b", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
 		if v := findEnv(env, "MODEL_DIR"); v != "/cache/qwen3-14b" {
 			t.Errorf("MODEL_DIR = %q, want /cache/qwen3-14b", v)
 		}
@@ -186,7 +186,7 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 	})
 
 	t.Run("sym false descAct true", func(t *testing.T) {
-		env := builder.buildEnv("model", 4, 128, false, true, 48, "0.80", "auto", "", 0, nil)
+		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, false, true, 48, "0.80", "auto", "", 0, nil)
 		if v := findEnv(env, "SYM"); v != "False" {
 			t.Errorf("SYM = %q, want False", v)
 		}
@@ -196,14 +196,14 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 	})
 
 	t.Run("dynamic exclusion none", func(t *testing.T) {
-		env := builder.buildEnv("model", 4, 128, true, false, 48, "0.80", "none", "", 0, nil)
+		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "none", "", 0, nil)
 		if v := findEnv(env, "DYNAMIC_EXCLUSION"); v != "none" {
 			t.Errorf("DYNAMIC_EXCLUSION = %q, want none", v)
 		}
 	})
 
 	t.Run("custom GPU memory fraction", func(t *testing.T) {
-		env := builder.buildEnv("model", 4, 128, true, false, 48, "0.95", "auto", "", 0, nil)
+		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.95", "auto", "", 0, nil)
 		if v := findEnv(env, "GPU_MEMORY_FRACTION"); v != "0.95" {
 			t.Errorf("GPU_MEMORY_FRACTION = %q, want 0.95", v)
 		}
@@ -211,14 +211,14 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 
 	t.Run("operator model policy override", func(t *testing.T) {
 		t.Setenv("FLEXINFER_GPTQ_MODEL_POLICIES", `[{"name":"custom"}]`)
-		env := builder.buildEnv("model", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
+		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
 		if v := findEnv(env, "QUANTIZE_MODEL_POLICIES"); v != `[{"name":"custom"}]` {
 			t.Errorf("QUANTIZE_MODEL_POLICIES = %q, want custom JSON", v)
 		}
 	})
 
 	t.Run("resume defaults enabled", func(t *testing.T) {
-		env := builder.buildEnv("model", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
+		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
 		if v := findEnv(env, "GPTQ_RESUME"); v != "true" {
 			t.Errorf("GPTQ_RESUME = %q, want true", v)
 		}
@@ -230,7 +230,7 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 	t.Run("resume env overrides", func(t *testing.T) {
 		t.Setenv("FLEXINFER_GPTQ_RESUME", "false")
 		t.Setenv("FLEXINFER_GPTQ_CALIBRATION_CACHE", "false")
-		env := builder.buildEnv("model", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
+		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
 		if v := findEnv(env, "GPTQ_RESUME"); v != "false" {
 			t.Errorf("GPTQ_RESUME = %q, want false", v)
 		}
@@ -241,6 +241,12 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 
 	t.Run("wrapper script has version check", func(t *testing.T) {
 		script := builder.gptqWrapperScript()
+		if !strings.Contains(script, "mkdir -p /workspace") {
+			t.Error("wrapper missing workspace sentinel bootstrap")
+		}
+		if !strings.Contains(script, "/workspace/quantize_gptq.py") {
+			t.Error("wrapper missing quantize sentinel bootstrap")
+		}
 		if !strings.Contains(script, "EXPECTED_VERSION=") {
 			t.Error("wrapper missing script version check")
 		}
@@ -398,4 +404,36 @@ func TestGPTQJobBuilder_BuildJob_AMDImage(t *testing.T) {
 	if !found {
 		t.Error("missing PYTORCH_ALLOC_CONF env var for AMD")
 	}
+}
+
+func TestGPTQJobBuilder_BuildJob_Gemma4MoEHybridOutput(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	params := JobParams{
+		Name:      "gemma4-26b-a4b-gptq",
+		Namespace: "default",
+		PVCName:   "test-pvc",
+		ModelPath: "gemma4-26b-a4b-gptq",
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format: aiv1alpha2.QuantizationFormatGPTQ,
+			UseGPU: true,
+		},
+		GPUVendor: "amd",
+		GPUArch:   "gfx1100",
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob error: %v", err)
+	}
+
+	for _, env := range job.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == "OUT_DIR" {
+			want := "/cache/gemma4-26b-a4b-gptq/gptq-w4-g128-hybrid-v10"
+			if env.Value != want {
+				t.Fatalf("OUT_DIR = %q, want %q", env.Value, want)
+			}
+			return
+		}
+	}
+	t.Fatal("missing OUT_DIR env var")
 }

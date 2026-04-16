@@ -332,7 +332,7 @@ func TestReconcileQuantizationFailedCapturesFailureMessage(t *testing.T) {
 	assert.True(t, updated.Status.Quantization.StartedAt.Equal(&started))
 }
 
-func TestReconcileQuantizationSpecChangeResetsStateAndDeletesJobs(t *testing.T) {
+func TestReconcileQuantizationSpecChangeResetsQuantizationOnlyAndDeletesJobs(t *testing.T) {
 	cache := newQuantizationCache("quant-reset")
 	cache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 	cache.Status.Path = "/models/base/gptq-w4-g128"
@@ -351,6 +351,7 @@ func TestReconcileQuantizationSpecChangeResetsStateAndDeletesJobs(t *testing.T) 
 		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "quant-reset-quantize", Namespace: "default"}},
 		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "quant-reset-quantize-image-warmup", Namespace: "default"}},
 		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "quant-reset-downloader", Namespace: "default"}},
+		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "quant-reset-abliterate", Namespace: "default"}},
 		&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "quant-reset-publish", Namespace: "default"}},
 	)
 
@@ -359,10 +360,12 @@ func TestReconcileQuantizationSpecChangeResetsStateAndDeletesJobs(t *testing.T) 
 	assert.Equal(t, requeueShort, result.RequeueAfter)
 
 	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
-	assert.Equal(t, aiv1alpha1.ModelCachePhaseProvisioning, updated.Status.Phase)
-	assert.Empty(t, updated.Status.Path)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseQuantizing, updated.Status.Phase)
+	assert.Equal(t, "quantization", updated.Status.CurrentPhase)
+	assert.Equal(t, "/models/base/gptq-w4-g128", updated.Status.Path)
 	assert.Nil(t, updated.Status.Quantization)
-	assert.Nil(t, updated.Status.Abliteration)
+	require.NotNil(t, updated.Status.Abliteration)
+	assert.Equal(t, "1.0", updated.Status.Abliteration.RefusalDirNorm)
 	assert.Nil(t, updated.Status.Publish)
 	require.NotNil(t, updated.Annotations)
 	// Hash now includes resolved image (empty when no GPUProfiles set)
@@ -371,12 +374,19 @@ func TestReconcileQuantizationSpecChangeResetsStateAndDeletesJobs(t *testing.T) 
 	for _, jobName := range []string{
 		"quant-reset-quantize",
 		"quant-reset-quantize-image-warmup",
-		"quant-reset-downloader",
 		"quant-reset-publish",
 	} {
 		job := &batchv1.Job{}
 		err := cl.Get(context.Background(), client.ObjectKey{Name: jobName, Namespace: "default"}, job)
 		assert.Error(t, err, "expected %s to be deleted", jobName)
+	}
+	for _, jobName := range []string{
+		"quant-reset-downloader",
+		"quant-reset-abliterate",
+	} {
+		job := &batchv1.Job{}
+		err := cl.Get(context.Background(), client.ObjectKey{Name: jobName, Namespace: "default"}, job)
+		assert.NoError(t, err, "expected %s to be preserved", jobName)
 	}
 }
 

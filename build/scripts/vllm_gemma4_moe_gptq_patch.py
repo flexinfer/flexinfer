@@ -142,6 +142,336 @@ def patch_gptq_config(vllm_root: pathlib.Path) -> bool:
     return True
 
 
+def patch_gptq_rocm_reference_fallback(vllm_root: pathlib.Path) -> bool:
+    """Patch GPTQLinearMethod.apply() to use a torch reference path on ROCm.
+
+    vLLM's 4-bit gptq_gemm kernel is known-buggy, and on gfx1100 we see the
+    model load cleanly but collapse semantically at generation time. For
+    ROCm+GPTQ-4bit, replace the GEMM call with a correctness-first reference
+    implementation:
+
+      1. unpack uint4b8 rows from packed int32 qweight
+      2. unpack GPTQ qzeros (stored as zp-1) back to zero points
+      3. dequantize weights per group with scales
+      4. matmul in torch
+
+    This is slower than the fused kernel, but it preserves the GPTQ artifact
+    format and gives us a viable serving path on target hardware.
+    """
+    gptq_py = vllm_root / "model_executor" / "layers" / "quantization" / "gptq.py"
+    if not gptq_py.exists():
+        print(f"[gemma4-moe-patch] SKIP: {gptq_py} not found")
+        return False
+
+    src = gptq_py.read_text()
+
+    if "GEMMA4_GPTQ_ROCM_REFERENCE_PATCH" in src:
+        print("[gemma4-moe-patch] GPTQ ROCm reference fallback already patched")
+        return True
+
+    old_apply = (
+        "    def apply(\n"
+        "        self,\n"
+        "        layer: torch.nn.Module,\n"
+        "        x: torch.Tensor,\n"
+        "        bias: torch.Tensor | None = None,\n"
+        "    ) -> torch.Tensor:\n"
+        "        out_shape = x.shape[:-1] + (layer.qweight.shape[-1],)\n"
+        "        reshaped_x = x.reshape(-1, x.shape[-1])\n"
+        "\n"
+        "        # GPTQ v1 and v2 format checkpoints deals with zero points differently,\n"
+        "        # and require different gemm kernels.\n"
+        "        output = ops.gptq_gemm(\n"
+        "            reshaped_x,\n"
+        "            layer.qweight,\n"
+        "            layer.qzeros,\n"
+        "            layer.scales,\n"
+        "            layer.g_idx,\n"
+        "            layer.exllama_state == ExllamaState.READY,\n"
+        "            self.use_v2_format,\n"
+        "            self.quant_config.weight_bits,\n"
+        "        )\n"
+        "        if bias is not None:\n"
+        "            output.add_(bias)\n"
+        "        return output.reshape(out_shape)\n"
+    )
+    new_apply = (
+        "    def apply(\n"
+        "        self,\n"
+        "        layer: torch.nn.Module,\n"
+        "        x: torch.Tensor,\n"
+        "        bias: torch.Tensor | None = None,\n"
+        "    ) -> torch.Tensor:\n"
+        "        out_shape = x.shape[:-1] + (layer.qweight.shape[-1],)\n"
+        "        reshaped_x = x.reshape(-1, x.shape[-1])\n"
+        "\n"
+        "        if torch.version.hip is not None and self.quant_config.weight_bits == 4:\n"
+        "            # GEMMA4_GPTQ_ROCM_REFERENCE_PATCH: correctness-first GPTQ\n"
+        "            # fallback for ROCm. Unpack uint4b8 qweight/qzeros and do a\n"
+        "            # plain torch matmul instead of the buggy gptq_gemm kernel.\n"
+        "            pack_factor = int(self.quant_config.pack_factor)\n"
+        "            qweight_i32 = layer.qweight.to(torch.int32)\n"
+        "            input_size = layer.input_size_per_partition\n"
+        "            output_size = layer.qweight.shape[-1]\n"
+        "\n"
+        "            unpacked_qweight = torch.empty(\n"
+        "                (input_size, output_size),\n"
+        "                dtype=torch.int16,\n"
+        "                device=qweight_i32.device,\n"
+        "            )\n"
+        "            for i in range(pack_factor):\n"
+        "                unpacked_qweight[i::pack_factor, :] = ((qweight_i32 >> (4 * i)) & 0xF).to(torch.int16)\n"
+        "\n"
+        "            if layer.qzeros.numel() > 0:\n"
+        "                qzeros_i32 = layer.qzeros.to(torch.int32)\n"
+        "                zero_points = torch.empty(\n"
+        "                    (qzeros_i32.shape[0], output_size),\n"
+        "                    dtype=torch.int16,\n"
+        "                    device=qzeros_i32.device,\n"
+        "                )\n"
+        "                for i in range(pack_factor):\n"
+        "                    # GPTQ stores zero points as (zp - 1) in packed uint4.\n"
+        "                    zero_points[:, i::pack_factor] = (((qzeros_i32 >> (4 * i)) & 0xF).to(torch.int16) + 1)\n"
+        "            else:\n"
+        "                zero_points = None\n"
+        "\n"
+        "            if layer.g_idx.numel() > 0:\n"
+        "                group_idx = layer.g_idx.to(torch.long)\n"
+        "            else:\n"
+        "                group_size = self.quant_config.group_size\n"
+        "                if group_size == -1:\n"
+        "                    group_size = input_size\n"
+        "                group_idx = torch.arange(\n"
+        "                    input_size, device=qweight_i32.device, dtype=torch.long\n"
+        "                ) // group_size\n"
+        "\n"
+        "            signed_qweight = unpacked_qweight.to(torch.float16)\n"
+        "            if zero_points is not None:\n"
+        "                signed_qweight = signed_qweight - zero_points[group_idx].to(torch.float16)\n"
+        "            else:\n"
+        "                signed_qweight = signed_qweight - 8.0\n"
+        "\n"
+        "            dequant_weight = signed_qweight * layer.scales[group_idx].to(torch.float16)\n"
+        "            output = reshaped_x.to(torch.float16) @ dequant_weight\n"
+        "            if bias is not None:\n"
+        "                output.add_(bias.to(output.dtype))\n"
+        "            return output.reshape(out_shape)\n"
+        "\n"
+        "        # GPTQ v1 and v2 format checkpoints deals with zero points differently,\n"
+        "        # and require different gemm kernels.\n"
+        "        output = ops.gptq_gemm(\n"
+        "            reshaped_x,\n"
+        "            layer.qweight,\n"
+        "            layer.qzeros,\n"
+        "            layer.scales,\n"
+        "            layer.g_idx,\n"
+        "            layer.exllama_state == ExllamaState.READY,\n"
+        "            self.use_v2_format,\n"
+        "            self.quant_config.weight_bits,\n"
+        "        )\n"
+        "        if bias is not None:\n"
+        "            output.add_(bias)\n"
+        "        return output.reshape(out_shape)\n"
+    )
+
+    if old_apply not in src:
+        print(
+            "[gemma4-moe-patch] WARNING: Could not find GPTQLinearMethod.apply for ROCm fallback patch"
+        )
+        return False
+
+    src = src.replace(old_apply, new_apply, 1)
+    gptq_py.write_text(src)
+    print(f"[gemma4-moe-patch] Patched GPTQ ROCm reference fallback in {gptq_py}")
+    return True
+
+
+def patch_moe_wna16_rocm_reference_fallback(vllm_root: pathlib.Path) -> bool:
+    """Patch MoeWNA16Method.apply() to use a torch reference path on ROCm.
+
+    After fixing plain GPTQLinearMethod.apply(), Gemma4 26B-A4B still collapses
+    semantically on gfx1100. The remaining likely fault line is the int4 MoE
+    execution path, which still routes through fused_experts. For ROCm + GELU +
+    int4, replace the fused MoE kernel call with a correctness-first reference
+    implementation that dequantizes the selected experts on demand and runs the
+    gate/up/down matmuls directly in torch.
+    """
+    moe_py = (
+        vllm_root / "model_executor" / "layers" / "quantization" / "moe_wna16.py"
+    )
+    if not moe_py.exists():
+        print(f"[gemma4-moe-patch] SKIP: {moe_py} not found")
+        return False
+
+    src = moe_py.read_text()
+
+    if "GEMMA4_MOE_ROCM_REFERENCE_PATCH" in src:
+        print("[gemma4-moe-patch] MoeWNA16 ROCm reference fallback already patched")
+        return True
+
+    old_block = (
+        "        _result = fused_experts(\n"
+        "            x,\n"
+        "            layer.w13_qweight,\n"
+        "            layer.w2_qweight,\n"
+        "            topk_weights=topk_weights,\n"
+        "            topk_ids=topk_ids,\n"
+        "            inplace=not self.moe.disable_inplace,\n"
+        "            activation=layer.activation,\n"
+        "            apply_router_weight_on_input=layer.apply_router_weight_on_input,\n"
+        "            global_num_experts=layer.global_num_experts,\n"
+        "            expert_map=layer.expert_map,\n"
+        "            quant_config=self.moe_quant_config,\n"
+        "        )\n"
+    )
+
+    new_block = (
+        "        if (\n"
+        "            torch.version.hip is not None\n"
+        "            and self.quant_config.weight_bits == 4\n"
+        "            and layer.activation == MoEActivation.GELU\n"
+        "        ):\n"
+        "            # GEMMA4_MOE_ROCM_REFERENCE_PATCH: correctness-first\n"
+        "            # fallback for ROCm int4+GELU MoE. Dequantize the routed\n"
+        "            # experts on demand and run the gate/up/down matmuls in\n"
+        "            # torch instead of fused_experts.\n"
+        "            from vllm.model_executor.layers.fused_moe.activation import (\n"
+        "                apply_moe_activation,\n"
+        "            )\n"
+        "\n"
+        "            def _unpack_u4_last_dim(packed: torch.Tensor) -> torch.Tensor:\n"
+        "                packed_i16 = packed.to(torch.int16)\n"
+        "                out = torch.empty(\n"
+        "                    packed_i16.shape[:-1] + (packed_i16.shape[-1] * 2,),\n"
+        "                    dtype=torch.int16,\n"
+        "                    device=packed.device,\n"
+        "                )\n"
+        "                out[..., 0::2] = packed_i16 & 0xF\n"
+        "                out[..., 1::2] = (packed_i16 >> 4) & 0xF\n"
+        "                return out\n"
+        "\n"
+        "            def _unpack_u4_first_dim(packed: torch.Tensor) -> torch.Tensor:\n"
+        "                packed_i16 = packed.to(torch.int16)\n"
+        "                out = torch.empty(\n"
+        "                    (packed_i16.shape[0] * 2,) + packed_i16.shape[1:],\n"
+        "                    dtype=torch.int16,\n"
+        "                    device=packed.device,\n"
+        "                )\n"
+        "                out[0::2] = packed_i16 & 0xF\n"
+        "                out[1::2] = (packed_i16 >> 4) & 0xF\n"
+        "                return out\n"
+        "\n"
+        "            _cache = getattr(layer, '_gemma4_rocm_ref_cache', None)\n"
+        "            if _cache is None:\n"
+        "                _cache = {}\n"
+        "                layer._gemma4_rocm_ref_cache = _cache\n"
+        "                layer._gemma4_rocm_ref_cache_order = []\n"
+        "            _cache_order = layer._gemma4_rocm_ref_cache_order\n"
+        "\n"
+        "            def _cache_put(key, value):\n"
+        "                if key in _cache:\n"
+        "                    return _cache[key]\n"
+        "                _cache[key] = value\n"
+        "                _cache_order.append(key)\n"
+        "                while len(_cache_order) > 16:\n"
+        "                    _evict = _cache_order.pop(0)\n"
+        "                    _cache.pop(_evict, None)\n"
+        "                return value\n"
+        "\n"
+        "            def _get_w13(expert_id: int) -> torch.Tensor:\n"
+        "                key = ('w13', int(expert_id))\n"
+        "                if key in _cache:\n"
+        "                    return _cache[key]\n"
+        "                _q = _unpack_u4_last_dim(layer.w13_qweight[expert_id])\n"
+        "                _g = torch.arange(\n"
+        "                    _q.shape[1], device=_q.device, dtype=torch.long\n"
+        "                ) // layer.group_size\n"
+        "                _w = _q.to(torch.float16)\n"
+        "                if getattr(layer, 'w13_qzeros', None) is not None and layer.w13_qzeros.numel() > 0:\n"
+        "                    _zp = _unpack_u4_first_dim(layer.w13_qzeros[expert_id])\n"
+        "                    _w = _w - _zp[:, _g].to(torch.float16)\n"
+        "                else:\n"
+        "                    _w = _w - 8.0\n"
+        "                _w = _w * layer.w13_scales[expert_id][:, _g].to(torch.float16)\n"
+        "                return _cache_put(key, _w.transpose(0, 1).contiguous())\n"
+        "\n"
+        "            def _get_w2(expert_id: int) -> torch.Tensor:\n"
+        "                key = ('w2', int(expert_id))\n"
+        "                if key in _cache:\n"
+        "                    return _cache[key]\n"
+        "                _q = _unpack_u4_last_dim(layer.w2_qweight[expert_id])\n"
+        "                _g = torch.arange(\n"
+        "                    _q.shape[1], device=_q.device, dtype=torch.long\n"
+        "                ) // layer.group_size\n"
+        "                _w = _q.to(torch.float16)\n"
+        "                if getattr(layer, 'w2_qzeros', None) is not None and layer.w2_qzeros.numel() > 0:\n"
+        "                    _zp = _unpack_u4_first_dim(layer.w2_qzeros[expert_id])\n"
+        "                    _w = _w - _zp[:, _g].to(torch.float16)\n"
+        "                else:\n"
+        "                    _w = _w - 8.0\n"
+        "                _w = _w * layer.w2_scales[expert_id][:, _g].to(torch.float16)\n"
+        "                return _cache_put(key, _w.transpose(0, 1).contiguous())\n"
+        "\n"
+        "            _result = torch.zeros(\n"
+        "                (x.shape[0], layer.w2_qweight.shape[1]),\n"
+        "                dtype=x.dtype,\n"
+        "                device=x.device,\n"
+        "            )\n"
+        "            for _tok in range(x.shape[0]):\n"
+        "                _tok_x = x[_tok : _tok + 1].to(torch.float16)\n"
+        "                _tok_out = torch.zeros_like(_result[_tok : _tok + 1])\n"
+        "                for _slot in range(topk_ids.shape[1]):\n"
+        "                    _expert_id = int(topk_ids[_tok, _slot].item())\n"
+        "                    if _expert_id < 0:\n"
+        "                        continue\n"
+        "                    _router_w = topk_weights[_tok, _slot].to(torch.float16)\n"
+        "                    _expert_in = (\n"
+        "                        _tok_x * _router_w\n"
+        "                        if layer.apply_router_weight_on_input\n"
+        "                        else _tok_x\n"
+        "                    )\n"
+        "                    _w13 = _get_w13(_expert_id)\n"
+        "                    _gate_up = _expert_in @ _w13\n"
+        "                    _hidden = torch.empty(\n"
+        "                        (_expert_in.shape[0], _w13.shape[1] // 2),\n"
+        "                        dtype=torch.float16,\n"
+        "                        device=x.device,\n"
+        "                    )\n"
+        "                    apply_moe_activation(layer.activation, _hidden, _gate_up)\n"
+        "                    _w2 = _get_w2(_expert_id)\n"
+        "                    _expert_out = _hidden @ _w2\n"
+        "                    if not layer.apply_router_weight_on_input:\n"
+        "                        _expert_out.mul_(_router_w)\n"
+        "                    _tok_out.add_(_expert_out.to(_tok_out.dtype))\n"
+        "                _result[_tok : _tok + 1] = _tok_out\n"
+        "        else:\n"
+        "            _result = fused_experts(\n"
+        "                x,\n"
+        "                layer.w13_qweight,\n"
+        "                layer.w2_qweight,\n"
+        "                topk_weights=topk_weights,\n"
+        "                topk_ids=topk_ids,\n"
+        "                inplace=not self.moe.disable_inplace,\n"
+        "                activation=layer.activation,\n"
+        "                apply_router_weight_on_input=layer.apply_router_weight_on_input,\n"
+        "                global_num_experts=layer.global_num_experts,\n"
+        "                expert_map=layer.expert_map,\n"
+        "                quant_config=self.moe_quant_config,\n"
+        "            )\n"
+    )
+
+    if old_block not in src:
+        print(
+            '[gemma4-moe-patch] WARNING: Could not find MoeWNA16.apply fused_experts block'
+        )
+        return False
+
+    src = src.replace(old_block, new_block, 1)
+    moe_py.write_text(src)
+    print(f"[gemma4-moe-patch] Patched MoeWNA16 ROCm reference fallback in {moe_py}")
+    return True
+
+
 def patch_moe_wna16_activation(vllm_root: pathlib.Path) -> bool:
     """Patch MoeWNA16 to accept GELU activation in addition to SiLU.
 
@@ -1007,6 +1337,8 @@ def main():
     print(f"[gemma4-moe-patch] vLLM root: {vllm_root}")
 
     ok1 = patch_gptq_config(vllm_root)
+    ok1b = patch_gptq_rocm_reference_fallback(vllm_root)
+    ok1c = patch_moe_wna16_rocm_reference_fallback(vllm_root)
     ok2 = patch_moe_wna16_activation(vllm_root)
     ok3 = patch_gemma4_moe_gptq_weight_names(vllm_root)
     ok4 = patch_kv_cache_page_size_uniform_type(vllm_root)
@@ -1016,6 +1348,12 @@ def main():
 
     if not ok1:
         print("[gemma4-moe-patch] FAILED — GPTQConfig patch could not be applied")
+        sys.exit(1)
+    if not ok1b:
+        print("[gemma4-moe-patch] FAILED — GPTQ ROCm reference fallback patch failed")
+        sys.exit(1)
+    if not ok1c:
+        print("[gemma4-moe-patch] FAILED — MoeWNA16 ROCm reference fallback patch failed")
         sys.exit(1)
     if not ok2:
         print(

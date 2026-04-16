@@ -84,13 +84,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 	resolvedImg := r.resolveCurrentQuantizerImage(ctx, modelCache)
 	currentHash := quantSpecHashWithImage(modelCache.Spec.Quantization, resolvedImg)
 
-	suffixes := []string{"-quantize", "-quantize-image-warmup", "-downloader", "-publish", "-publish-source", "-publish-abliterated"}
-	if modelCache.Spec.Finetune != nil {
-		suffixes = append(suffixes, "-finetune")
-	}
-	if modelCache.Spec.Abliteration != nil {
-		suffixes = append(suffixes, "-abliterate", "-abliterate-image-warmup")
-	}
+	suffixes := []string{"-quantize", "-quantize-image-warmup", "-publish"}
 
 	changed, err := r.detectAndApplySpecChange(ctx, modelCache, specChangeParams{
 		CurrentHash:          currentHash,
@@ -103,8 +97,10 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		return ctrl.Result{}, err
 	}
 	if changed {
-		// Reset the pipeline so the cache rebuilds from a clean download.
-		r.resetDownloadStatusFields(modelCache)
+		// Reset only quantization-derived status. Re-running a quantizer image
+		// update must not delete the source directory or existing gptq-* outputs
+		// because live Model pods can still be serving a previous artifact.
+		r.resetQuantizationStatusFields(modelCache)
 		if err := r.Status().Update(ctx, modelCache); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -555,6 +551,16 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 	return ctrl.Result{RequeueAfter: requeueLong}, nil
 }
 
+func (r *ModelCacheReconciler) resetQuantizationStatusFields(mc *aiv1alpha1.ModelCache) {
+	mc.Status.Phase = aiv1alpha1.ModelCachePhaseQuantizing
+	mc.Status.CurrentPhase = "quantization"
+	mc.Status.Quantization = nil
+	mc.Status.Publish = nil
+	mc.Status.RetryCount = 0
+	mc.Status.LastFailureTime = nil
+	mc.Status.LastFailurePhase = ""
+}
+
 type quantizationJobMetadata struct {
 	Type                    string `json:"type,omitempty"`
 	OriginalSizeBytes       int64  `json:"originalSizeBytes,omitempty"`
@@ -832,7 +838,7 @@ func quantizedOutputPath(spec *aiv1alpha1.QuantizationSpec, basePath string) str
 		if spec.GroupSize != nil {
 			groupSize = *spec.GroupSize
 		}
-		subdir = fmt.Sprintf("gptq-w%d-g%d", bits, groupSize)
+		subdir = quantization.GPTQOutputSubdir(basePath, int(bits), int(groupSize))
 	case aiv1alpha1.QuantizationFormatAWQ:
 		bits := int32(quantization.DefaultAWQBits)
 		if spec.Bits != nil {
