@@ -37,6 +37,10 @@ variables:
   GOPROXY: "https://proxy.golang.org|http://athens.ci.svc.cluster.local:3000|direct"
   GOLANGCI_LINT_TIMEOUT: "20m"
   BUILDKIT_HOST: "tcp://buildkitd-central.ci-build.svc.cluster.local:1234"
+  # The shared runner exports DOCKER_HOST=localhost for Docker-in-Docker jobs.
+  # FlexInfer uses remote BuildKit instead; clearing this prevents non-Docker
+  # Go lint/test jobs from blocking in the runner pre-build Docker wait hook.
+  DOCKER_HOST: ""
   # Set to "1" to additionally push OCI images to the GitLab Container Registry.
   PUBLISH_GITLAB_IMAGES: "0"
   # Default: avoid building + pushing duplicate ":latest" tags during publish
