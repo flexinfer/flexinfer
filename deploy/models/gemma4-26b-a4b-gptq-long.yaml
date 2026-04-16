@@ -2,8 +2,8 @@
 #
 # Experimental 32K / TurboQuant lane for the same clean 26B-A4B GPTQ source
 # artifact used by the primary model. This is a separate scale-to-zero canary
-# on cblevins-7900xtx so the RWO source/cache PVC stays on the node that already
-# owns the working 26B artifact. It must be scaled/tested deliberately and should
+# on cblevins-7900xtx so the RWO source PVC stays on the node that already owns
+# the working 26B artifact. It must be scaled/tested deliberately and should
 # not replace the always-on 8K primary until the long-context probe passes.
 #
 # Runtime requirements:
@@ -21,8 +21,10 @@ spec:
   image: registry.harbor.lan/flexinfer/runtime@sha256:05f5b789ff9a8bc6411dc685a42dbc437e12b04e3b7c92afc5fa9a974c04e009
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
   cache:
-    strategy: SharedPVC
-    storageClass: nvme-1r-gpu
+    # The source artifact already lives on the 7900 XTX node in the primary
+    # model PVC. Direct-mount it instead of allocating a duplicate 50Gi cache
+    # volume; Longhorn currently cannot schedule that extra NVMe replica.
+    strategy: None
   gpu:
     vendor: amd
     count: 1
