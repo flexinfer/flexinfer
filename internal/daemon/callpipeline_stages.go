@@ -220,12 +220,14 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 
 	p.routingPreference = RoutingHealthBased
 	p.preferHubRetryEligible = false
+	p.hubDelegateActive = false
 
 	// Hub delegation: when the server is in the delegate list and the hub is
 	// healthy, override the routing decision to TargetHub so the daemon
 	// relays the call to the in-cluster service instead of spawning a local
 	// subprocess. This is the key "thin daemon" optimisation.
 	if p.daemon.hubDelegateEligible(p.serverName) {
+		p.hubDelegateActive = true
 		decision.Target = router.TargetHub
 		p.daemon.logger.Debug("hub delegation active", "server", p.serverName)
 		span.AddEvent("daemon.pipeline.route.hub_delegate", trace.WithAttributes(
@@ -273,8 +275,8 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 
 	p.daemon.logger.Debug("routing decision", "server", p.serverName, "target", decision.Target, "reason", decision.Reason)
 
-	if err := p.connectTarget(decision.Target, decision.Reason); err != nil {
-		if p.preferHubRetryEligible && !p.localRetryUsed && decision.Target == router.TargetHub && p.daemon.pool != nil {
+	if err := p.connectTargetWithTransportRetry(decision.Target, decision.Reason); err != nil {
+		if !p.hubDelegateActive && p.preferHubRetryEligible && !p.localRetryUsed && decision.Target == router.TargetHub && p.daemon.pool != nil {
 			p.localRetryUsed = true
 			until := p.daemon.setPreferHubBackoff(p.serverName, preferHubBackoffDuration)
 			p.daemon.logger.Warn("prefer-hub override connect failed; retrying local",
@@ -283,7 +285,7 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 				"backoff_until", until)
 
 			hubErr := err
-			if localErr := p.connectTarget(router.TargetLocal, "prefer-hub fallback after hub connect failure"); localErr == nil {
+			if localErr := p.connectTargetWithTransportRetry(router.TargetLocal, "prefer-hub fallback after hub connect failure"); localErr == nil {
 				return nil
 			} else {
 				err = fmt.Errorf("hub connect failed: %v; local retry failed: %w", hubErr, localErr)
@@ -373,6 +375,13 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	sendCancel()
 	if sendErr != nil {
 		err := daemonRPCPhaseError(p.method, "send", callTimeout, sendErr)
+		if resp, retried := p.retryHubAfterHubFailure("send", err, req); retried {
+			span.AddEvent("daemon.pipeline.execute.retry", trace.WithAttributes(
+				attribute.String("retry.type", "hub_after_hub_failure"),
+				attribute.String("retry.phase", "send"),
+			))
+			return resp
+		}
 		if resp, retried := p.retryLocalAfterLocalSendFailure(err, req, start); retried {
 			span.AddEvent("daemon.pipeline.execute.retry", trace.WithAttributes(
 				attribute.String("retry.type", "local_after_local_send_failure"),
@@ -398,6 +407,13 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	recvCancel()
 	if recvErr != nil {
 		err := daemonRPCPhaseError(p.method, "recv", callTimeout, recvErr)
+		if retryResp, retried := p.retryHubAfterHubFailure("recv", err, req); retried {
+			span.AddEvent("daemon.pipeline.execute.retry", trace.WithAttributes(
+				attribute.String("retry.type", "hub_after_hub_failure"),
+				attribute.String("retry.phase", "recv"),
+			))
+			return retryResp
+		}
 		if retryResp, retried := p.retryLocalAfterHubFailure("recv", err, req, start); retried {
 			span.AddEvent("daemon.pipeline.execute.retry", trace.WithAttributes(
 				attribute.String("retry.type", "local_after_hub_failure"),
@@ -416,6 +432,13 @@ func (p *callPipeline) execute(req *mcp.Message) *mcp.Message {
 	// is recycled and the caller gets a clear error instead of wrong data.
 	if resp.ID != nil && req.ID != nil && fmt.Sprint(resp.ID) != fmt.Sprint(req.ID) {
 		err := fmt.Errorf("response ID mismatch: sent %v, got %v (possible transport corruption)", req.ID, resp.ID)
+		if retryResp, retried := p.retryHubAfterHubFailure("recv", err, req); retried {
+			span.AddEvent("daemon.pipeline.execute.retry", trace.WithAttributes(
+				attribute.String("retry.type", "hub_after_hub_failure"),
+				attribute.String("retry.phase", "recv"),
+			))
+			return retryResp
+		}
 		if retryResp, retried := p.retryLocalAfterHubFailure("recv", err, req, start); retried {
 			span.AddEvent("daemon.pipeline.execute.retry", trace.WithAttributes(
 				attribute.String("retry.type", "local_after_hub_failure"),

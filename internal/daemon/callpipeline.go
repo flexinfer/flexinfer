@@ -63,8 +63,10 @@ type callPipeline struct {
 
 	routingPreference       RoutingPreference
 	preferHubRetryEligible  bool
+	hubDelegateActive       bool
 	localRetryUsed          bool
 	localTransportRetryUsed bool
+	hubTransportRetryUsed   bool
 }
 
 func newCallPipeline(d *Daemon, ctx context.Context, msg *mcp.Message) *callPipeline {

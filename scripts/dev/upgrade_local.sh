@@ -12,6 +12,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 RESTART_DAEMON="${RESTART_DAEMON:-auto}" # auto|always|never
+REAP_PROXY_CLIENTS="${REAP_PROXY_CLIENTS:-never}" # never|always
 HUD_URL_SCRIPT="$ROOT/scripts/dev/detect_hud_url.sh"
 LAUNCHD_DAEMON_PLIST="$HOME/Library/LaunchAgents/com.loom.daemon.plist"
 
@@ -49,6 +50,11 @@ list_proxy_pids() {
 }
 
 reap_proxy_processes() {
+  if [[ "$REAP_PROXY_CLIENTS" != "always" ]]; then
+    echo "Skipping loom proxy client cleanup (set REAP_PROXY_CLIENTS=always to force)"
+    return 0
+  fi
+
   local pids=()
   local pid
   local remaining=()
