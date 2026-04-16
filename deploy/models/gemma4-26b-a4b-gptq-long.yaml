@@ -2,8 +2,9 @@
 #
 # Experimental 32K / TurboQuant lane for the same clean 26B-A4B GPTQ source
 # artifact used by the primary model. This is a separate scale-to-zero canary
-# on cblevins-5930k so it does not perturb the always-on primary lane on
-# cblevins-7900xtx.
+# on cblevins-7900xtx so the RWO source/cache PVC stays on the node that already
+# owns the working 26B artifact. It must be scaled/tested deliberately and should
+# not replace the always-on 8K primary until the long-context probe passes.
 #
 # Runtime requirements:
 # - vLLM CUSTOM attention path
@@ -17,12 +18,14 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-textgen-turboquant
+  image: registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-turboquant-experimental
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
+  cache:
+    strategy: SharedPVC
   gpu:
     vendor: amd
     count: 1
-    shared: 5930k-textgen-canary
+    shared: 7900xtx-textgen
     priority: 50
     vramEstimateMB: 18000
   serverless:
@@ -45,11 +48,15 @@ spec:
     reasoningParser: gemma4
     enablePrefixCaching: false
     maxNumBatchedTokens: 160
+    # Keep the hybrid KV cache manager enabled for Gemma4 sliding/full attention;
+    # the TurboQuant patch pads allocator-visible page sizes instead.
+    disableHybridKVCacheManager: false
+    limitMmPerPrompt: "image=0,audio=0,video=0"
     disableLogStats: false
     warmPolicy: ondemand
     hipVisibleDevices: "0"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
       cpu: "4"
@@ -59,7 +66,6 @@ spec:
       memory: 24Gi
   serviceLabels:
     - gemma4-26b-a4b-gptq-long
-    - gemma4-26b-a4b
     - long-context
   litellm:
     enabled: true
