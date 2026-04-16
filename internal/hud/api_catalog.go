@@ -22,7 +22,7 @@ func (a *App) handleCatalogList(w http.ResponseWriter, r *http.Request) {
 		a.writeJSON(w, http.StatusOK, map[string]any{
 			"servers":       []catalogAPIEntry{},
 			"count":         0,
-			"registry_path": "",
+			"registry_path": regPath,
 		})
 		return
 	}
@@ -128,6 +128,15 @@ func (a *App) handleCatalogDisable(w http.ResponseWriter, r *http.Request) {
 
 // loadRegistry resolves and loads the MCP server registry.
 func (a *App) loadRegistry() (*registry.Registry, string) {
+	if path := strings.TrimSpace(a.config.RegistryPath); path != "" {
+		reg, err := registry.LoadWithDefaults(path)
+		if err != nil {
+			a.logger.Warn("failed to load configured HUD registry", "path", path, "error", err)
+			return nil, path
+		}
+		return reg, path
+	}
+
 	path, found := registry.FindRegistry()
 	if !found {
 		return nil, ""

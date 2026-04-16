@@ -101,6 +101,7 @@ func New(cfg Config) (*Daemon, error) {
 			registryPath = path
 		}
 	}
+	cfg.RegistryPath = registryPath
 
 	if registryPath != "" {
 		var err error

@@ -20,6 +20,7 @@ func (d *Daemon) startEmbeddedHUD(ctx context.Context, mux *http.ServeMux) error
 	// Environment variables are checked as fallbacks for K8s deployment
 	// where secrets are injected as env vars.
 	hudCfg := hud.Config{
+		RegistryPath:         firstNonEmpty(d.cfg.RegistryPath, os.Getenv("LOOM_REGISTRY_PATH"), os.Getenv("LOOM_REGISTRY")),
 		MobileOperatorToken:  firstNonEmpty(cfg.MobileOperatorToken, os.Getenv("HUD_MOBILE_OPERATOR_TOKEN")),
 		MobileOperatorScopes: firstNonEmpty(cfg.MobileOperatorScopes, os.Getenv("HUD_MOBILE_OPERATOR_SCOPES")),
 		SpawnEnabled:         cfg.SpawnEnabled || os.Getenv("SPAWN_ENABLED") == "true",
