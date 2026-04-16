@@ -34,6 +34,11 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
     var sandboxResponse: MobileSandboxSummary?
     var sandboxStartResponse: MobileSandboxStartResponse?
     var sandboxStopResponse: MobileSandboxStopResponse?
+    var spawnTelemetryResponse: SpawnTelemetryResponse?
+    var spawnTelemetryToolsResponse: SpawnTelemetryToolsPage?
+    var spawnTelemetryFilesResponse: SpawnTelemetryFilesPage?
+    var spawnTelemetryErrorsResponse: SpawnTelemetryErrorsPage?
+    var spawnControlAckResponse: SpawnControlAck?
 
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         if let specificError = endpointFailures[endpoint.path] {
@@ -98,6 +103,16 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
             if let r = sandboxStartResponse as? T { return r }
         case .sandboxStop:
             if let r = sandboxStopResponse as? T { return r }
+        case .spawnTelemetry:
+            if let r = spawnTelemetryResponse as? T { return r }
+        case .spawnTelemetryTools:
+            if let r = spawnTelemetryToolsResponse as? T { return r }
+        case .spawnTelemetryFiles:
+            if let r = spawnTelemetryFilesResponse as? T { return r }
+        case .spawnTelemetryErrors:
+            if let r = spawnTelemetryErrorsResponse as? T { return r }
+        case .spawnSendMessage, .spawnInterrupt:
+            if let r = spawnControlAckResponse as? T { return r }
         case .spawnAgent, .spawnList, .spawnConfig, .spawnDetail, .spawnStop,
              .agents, .workflowApprove, .workflowReject, .handoffs, .namespaces:
             break

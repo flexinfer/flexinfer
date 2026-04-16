@@ -147,10 +147,16 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
         }
 
         if !envelope.ok {
-            let errorCode = APIErrorCode(rawValue: envelope.error?.code ?? "") ?? .unknown
+            guard let envelopeError = envelope.error else {
+                if (200 ..< 300).contains(statusCode) {
+                    throw LoomAPIError.decodingError(underlying: "Invalid API response contract (HTTP \(statusCode)): missing error payload")
+                }
+                throw mapHTTPError(status: statusCode, data: data)
+            }
+            let errorCode = APIErrorCode(rawValue: envelopeError.code) ?? .unknown
             throw LoomAPIError.apiError(
                 code: errorCode,
-                message: envelope.error?.message ?? "Unknown error",
+                message: envelopeError.message,
                 requestId: envelope.meta.requestId
             )
         }
