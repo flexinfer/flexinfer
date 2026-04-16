@@ -292,30 +292,33 @@ struct ContentView: View {
 
     @ViewBuilder
     private var peopleTab: some View {
-        VStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("People")
-                    .font(.largeTitle.bold())
-                    .foregroundStyle(LoomColors.textPrimary)
+        VStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .center, spacing: 12) {
+                    Text("People")
+                        .font(.title.bold())
+                        .foregroundStyle(LoomColors.textPrimary)
+
+                    Spacer(minLength: 8)
+
+                    Picker("People Section", selection: $selectedPeopleSection) {
+                        Text("Agents").tag(PeopleSection.agents)
+                        Text("Sessions").tag(PeopleSection.sessions)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 190)
+                }
 
                 Text(selectedPeopleSection == .agents
-                     ? "See who is active right now and open the sessions behind each agent."
-                     : "Review live sessions, open details, and decide which ones need attention.")
-                    .font(.subheadline)
-                    .foregroundStyle(LoomColors.textSecondary)
-
-                Text("Create and end sessions from Work when you need to change state.")
+                     ? "Active agents and their sessions."
+                     : "Live sessions that need attention.")
                     .font(.caption)
-                    .foregroundStyle(LoomColors.textTertiary)
-
-                Picker("People Section", selection: $selectedPeopleSection) {
-                    Text("Agents").tag(PeopleSection.agents)
-                    Text("Sessions").tag(PeopleSection.sessions)
-                }
-                .pickerStyle(.segmented)
+                    .foregroundStyle(LoomColors.textSecondary)
+                    .lineLimit(1)
             }
             .padding(.horizontal)
-            .padding(.top, 8)
+            .padding(.top, 2)
+            .padding(.bottom, 2)
 
             Group {
                 switch selectedPeopleSection {

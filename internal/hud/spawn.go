@@ -1072,37 +1072,14 @@ func agentSecretEnvVars(agentType string) []backend.SecretEnvVar {
 }
 
 // agentSecretMounts returns K8s secret volume mounts for subscription auth
-// token files. These are mounted at the CLI's expected home-dir config paths
-// so agents authenticate using existing subscription accounts.
+// token files. File-backed CLIs that refresh OAuth state should use API-key env
+// auth in disposable pods instead of mounting a user's refresh-token file.
 func agentSecretMounts(agentType string) []backend.SecretMount {
 	const secretName = "agent-auth-tokens"
 	switch agentType {
-	case "codex":
-		// Codex CLI reads ~/.codex/auth.json for OAuth subscription tokens.
-		return []backend.SecretMount{
-			{
-				SecretName: secretName,
-				MountPath:  "/root/.codex",
-				Items: []backend.SecretMountItem{
-					{Key: "codex-auth-json", Path: "auth.json"},
-				},
-			},
-		}
-	case "gemini":
-		// Gemini CLI reads ~/.gemini/oauth_creds.json and google_accounts.json.
-		return []backend.SecretMount{
-			{
-				SecretName: secretName,
-				MountPath:  "/root/.gemini",
-				Items: []backend.SecretMountItem{
-					{Key: "gemini-oauth-creds-json", Path: "oauth_creds.json"},
-					{Key: "gemini-google-accounts-json", Path: "google_accounts.json"},
-				},
-			},
-		}
 	case "claude-code":
 		// Claude Code subscription OAuth token (synced from macOS Keychain).
-		// Mounted as /root/.claude/oauth.json; apiKeyHelper in settings.json
+		// Mounted as /root/.claude.auth/oauth.json; apiKeyHelper in settings.json
 		// extracts the accessToken at runtime, falling back to ANTHROPIC_API_KEY.
 		return []backend.SecretMount{
 			{
