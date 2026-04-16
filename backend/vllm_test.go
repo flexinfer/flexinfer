@@ -78,7 +78,12 @@ func TestVLLMBackendEnv_NoInjectionWithDefaults(t *testing.T) {
 	}
 
 	// No vLLM-specific env vars should be injected when config is empty
-	for _, key := range []string{"VLLM_USE_V1", "VLLM_USE_TRITON_FLASH_ATTN", "VLLM_ROCM_USE_AITER"} {
+	for _, key := range []string{
+		"VLLM_USE_V1",
+		"VLLM_USE_TRITON_FLASH_ATTN",
+		"VLLM_ROCM_USE_AITER",
+		"VLLM_ROCM_CUSTOM_PAGED_ATTN",
+	} {
 		if _, ok := envMap[key]; ok {
 			t.Errorf("expected %s to be absent with empty defaults, got %q", key, envMap[key])
 		}
@@ -303,6 +308,78 @@ func TestVLLMBackendEnv_FullOptIn(t *testing.T) {
 	}
 	if v := envMap["VLLM_ROCM_USE_AITER"]; v != "1" {
 		t.Errorf("expected VLLM_ROCM_USE_AITER=1, got %q", v)
+	}
+}
+
+func TestVLLMBackendEnv_RocmOverrides(t *testing.T) {
+	b := &VLLMBackend{}
+
+	tests := []struct {
+		name    string
+		config  map[string]any
+		wantEnv map[string]string
+	}{
+		{
+			name: "rocmUseAiter false forces the env off",
+			config: map[string]any{
+				"rocmUseAiter": false,
+			},
+			wantEnv: map[string]string{
+				"VLLM_ROCM_USE_AITER": "0",
+			},
+		},
+		{
+			name: "disableAiter true forces the env off",
+			config: map[string]any{
+				"disableAiter": true,
+			},
+			wantEnv: map[string]string{
+				"VLLM_ROCM_USE_AITER": "0",
+			},
+		},
+		{
+			name: "rocmCustomPagedAttn false forces custom paged attention off",
+			config: map[string]any{
+				"rocmCustomPagedAttn": false,
+			},
+			wantEnv: map[string]string{
+				"VLLM_ROCM_CUSTOM_PAGED_ATTN": "0",
+			},
+		},
+		{
+			name: "string encoded overrides are accepted",
+			config: map[string]any{
+				"rocmUseAiter":        "true",
+				"rocmCustomPagedAttn": "true",
+				"enableAiter":         false,
+			},
+			wantEnv: map[string]string{
+				"VLLM_ROCM_USE_AITER":         "1",
+				"VLLM_ROCM_CUSTOM_PAGED_ATTN": "1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := &ModelSpec{
+				GPUVendor: GPUVendorAMD,
+				GPUArch:   "gfx1100",
+				Config:    tt.config,
+			}
+
+			env := b.Env(spec)
+			envMap := make(map[string]string)
+			for _, e := range env {
+				envMap[e.Name] = e.Value
+			}
+
+			for key, want := range tt.wantEnv {
+				if got := envMap[key]; got != want {
+					t.Fatalf("expected %s=%s, got %q", key, want, got)
+				}
+			}
+		})
 	}
 }
 

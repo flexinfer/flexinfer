@@ -2,6 +2,7 @@ package backend
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -209,18 +210,33 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		// vLLM 0.17.0+ is V1-only. VLLM_USE_V1 env var removed.
 		// Only inject flash attention and AITER controls when explicitly configured.
 		enableFA := spec.ConfigBool("enableFlashAttention", false)
-		enableAiter := spec.ConfigBool("enableAiter", false)
 
 		var vllmEnv []corev1.EnvVar
 		if enableFA {
 			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: "1"})
 		}
 
-		// AITER: only applicable to gfx110x (RDNA3) and gfx942 (MI300X/CDNA3)
-		supportsAiter := strings.HasPrefix(spec.GPUArch, "gfx110") ||
-			strings.HasPrefix(spec.GPUArch, "gfx942")
-		if enableAiter && supportsAiter {
-			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
+		// ROCm kernel overrides are presence-aware so manifests can force
+		// stability fallbacks instead of relying on vLLM's moving defaults.
+		if value, ok := rocmBoolOverride(spec, "rocmUseAiter"); ok {
+			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: value})
+		} else if value, ok := rocmBoolOverride(spec, "disableAiter"); ok {
+			if value == "1" {
+				vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "0"})
+			} else {
+				vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
+			}
+		} else {
+			// AITER: only applicable to gfx110x (RDNA3) and gfx942 (MI300X/CDNA3)
+			supportsAiter := strings.HasPrefix(spec.GPUArch, "gfx110") ||
+				strings.HasPrefix(spec.GPUArch, "gfx942")
+			if spec.ConfigBool("enableAiter", false) && supportsAiter {
+				vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
+			}
+		}
+
+		if value, ok := rocmBoolOverride(spec, "rocmCustomPagedAttn"); ok {
+			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_CUSTOM_PAGED_ATTN", Value: value})
 		}
 
 		env = append(env, vllmEnv...)
@@ -335,5 +351,34 @@ func (b *VLLMBackend) CompilationCacheEnvVars(cacheMountPath string) []corev1.En
 		{Name: "TORCHINDUCTOR_CACHE_DIR", Value: cacheMountPath + "/inductor"},
 		{Name: "TRITON_CACHE_DIR", Value: cacheMountPath + "/triton"},
 		{Name: "TORCH_HOME", Value: cacheMountPath + "/torch"},
+	}
+}
+
+func rocmBoolOverride(spec *ModelSpec, key string) (string, bool) {
+	if spec == nil || spec.Config == nil {
+		return "", false
+	}
+	raw, ok := spec.Config[key]
+	if !ok {
+		return "", false
+	}
+
+	switch value := raw.(type) {
+	case bool:
+		if value {
+			return "1", true
+		}
+		return "0", true
+	case string:
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return "", false
+		}
+		if parsed {
+			return "1", true
+		}
+		return "0", true
+	default:
+		return "", false
 	}
 }

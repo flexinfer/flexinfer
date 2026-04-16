@@ -55,6 +55,11 @@ spec:
     # Match the working primary profile: disable torch.compile + CUDAGraph on
     # ROCm/GPTQ, where vLLM warns that GPTQ GEMM and compiled GELU are unstable.
     enforceEager: true
+    # Force source-backed ROCm fallback kernels for the 32K canary. vLLM keeps
+    # AITER opt-in, but the package still initializes AITER modules; pinning
+    # these env-backed switches also disables ROCm custom paged attention.
+    disableAiter: true
+    rocmCustomPagedAttn: false
     # Gemma4's mixed sliding/full attention KV specs trip vLLM's hybrid manager
     # on this runtime. The primary uses this workaround successfully; the 32K
     # fp16 KV estimate remains small enough for the single 7900 XTX.
