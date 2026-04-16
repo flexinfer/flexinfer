@@ -7,7 +7,7 @@
 		changelog changelog-html changelog-json \
 		docker-build docker-build-loom-core docker-build-custom-server \
 		docker-push docker-push-loom-core docker-push-custom-server \
-		deploy deploy-status \
+		deploy deploy-check deploy-status \
 	browserkit-check browserkit-setup \
 	hud hud-dev hud-build hud-install hud-install-service hud-reload hud-frontend hud-dist-check hud-clean \
 		mobile-iphone-preflight mobile-gateway-sync-token mobile-gateway-preflight mobile-ios-project-sync mobile-hud mobile-app-open mobile-app-run-sim mobile-app-run-device mobile-dev mobile-gateway-dev \
@@ -117,6 +117,7 @@ help:
 	@echo ""
 	@echo "Deploy:"
 	@echo "  make deploy         - Build, push, and deploy to k8s"
+	@echo "  make deploy-check   - Run deploy validation gates"
 	@echo "  make deploy-status  - Show deployment status"
 	@echo ""
 	@echo "HUD (Agent Command Center):"
@@ -1193,12 +1194,20 @@ docker-push-custom-server: docker-build-custom-server
 # DEPLOY TARGETS
 # =============================================================================
 
-# Full deploy: build, push, update gitops, reconcile
-deploy: docker-push deploy-update-images deploy-commit deploy-reconcile
+# Full deploy: validate, build, push, update gitops, reconcile
+deploy: deploy-check docker-push deploy-update-images deploy-commit deploy-reconcile
 	@echo ""
 	@echo "✓ Deployment complete!"
 	@echo "  Image tag: $(IMAGE_TAG)"
 	@echo "  Registry:  $(REGISTRY)"
+
+# Validate the deploy mutation prerequisites before changing GitOps state.
+deploy-check: loom
+	@echo "Running deploy validation gates..."
+	@./bin/loom validate configs
+	@./bin/loom validate schemas
+	@./bin/loom validate rbac --source repo
+	@echo "✓ Deploy validation gates passed"
 
 # Update image tags in Flux Kustomization CRD (single file in gitops)
 deploy-update-images:
@@ -1208,8 +1217,7 @@ deploy-update-images:
 		echo "Set GITOPS_DIR to override"; \
 		exit 1; \
 	fi
-	@sed -i '' 's|newTag: "[a-zA-Z0-9._-]*"  # custom-server|newTag: "$(IMAGE_TAG)"  # custom-server|' "$(FLUX_KUST)"
-	@sed -i '' 's|newTag: "[a-zA-Z0-9._-]*"  # loom-core|newTag: "$(IMAGE_TAG)"  # loom-core|' "$(FLUX_KUST)"
+	@python3 scripts/deploy/flux_deploy.py update-images --file "$(FLUX_KUST)" --tag "$(IMAGE_TAG)"
 	@echo "✓ Image tags updated to $(IMAGE_TAG)"
 	@echo ""
 	@echo "Changed files:"
@@ -1243,24 +1251,4 @@ deploy-commit:
 
 # Show deployment status
 deploy-status:
-	@echo "=== Deployment Status ==="
-	@echo ""
-	@echo "Local:"
-	@echo "  Version:   $(VERSION)"
-	@echo "  Image tag: $(IMAGE_TAG)"
-	@echo "  Registry:  $(REGISTRY)"
-	@echo ""
-	@echo "GitOps ($(FLUX_KUST)):"
-	@if [ -f "$(FLUX_KUST)" ]; then \
-		echo "  Current image tags:"; \
-		grep 'newTag:' "$(FLUX_KUST)" | sed 's/^[ ]*/  /'; \
-	else \
-		echo "  Flux Kustomization not found"; \
-	fi
-	@echo ""
-	@echo "Kubernetes:"
-	@if command -v kubectl >/dev/null 2>&1; then \
-		kubectl get pods -n loom-hub -o wide 2>/dev/null | head -15 || echo "  Unable to connect to cluster"; \
-	else \
-		echo "  kubectl not found"; \
-	fi
+	@python3 scripts/deploy/flux_deploy.py status --file "$(FLUX_KUST)" --tag "$(IMAGE_TAG)" --registry "$(REGISTRY)" --namespace loom-hub --flux-namespace flux-system
