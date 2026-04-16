@@ -25,27 +25,12 @@ const (
 	// 27B BF16 ≈ 54 GB + activation overhead.
 	DefaultAbliterationMemoryGB = 56
 
-	// Large GPU abliterations must use non-destructive workspace staging unless
-	// an operator explicitly opts back into riskier behavior.
-	DefaultAbliterationLargeModelThresholdGB = 80
-
 	// DefaultAbliterationDeadlineSeconds is the default 4-hour deadline.
 	DefaultAbliterationDeadlineSeconds = 14400
 
 	// DefaultAbliterationNumSamples is the default number of contrastive prompt pairs.
 	DefaultAbliterationNumSamples = 128
 )
-
-func largeGPUAbliterationModel(modelPath string, spec *aiv1alpha1.AbliterationSpec, maxMemoryGB int32) bool {
-	if spec == nil || !spec.UseGPU {
-		return false
-	}
-	if maxMemoryGB >= DefaultAbliterationLargeModelThresholdGB {
-		return true
-	}
-	modelPath = strings.ToLower(modelPath)
-	return strings.Contains(modelPath, "gemma4-31b") || strings.Contains(modelPath, "gemma4-26b")
-}
 
 func normalizeAbliterationSavePolicy(modelPath string, spec *aiv1alpha1.AbliterationSpec, maxMemoryGB int32, requested string) string {
 	savePolicy := strings.TrimSpace(requested)
