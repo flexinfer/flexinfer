@@ -178,6 +178,14 @@ Desktop HUD agent surfaces now use one merged live-agent model:
 
 `mcp-devbox` provides project-aware, persistent sandbox execution.
 
+### Weaver panel
+
+The `Infrastructure > Weaver` HUD view now reads from dedicated Weaver status, history, and metrics endpoints.
+
+- Domain rows can render either legacy string-only domain payloads or richer domain objects with descriptions and tool counts.
+- Recent queries are ordered newest-first.
+- Metrics cards are backed by lifetime Weaver counters when the `mcp-weaver` server is available, instead of staying at placeholder zeroes.
+
 Key tools:
 
 - `devbox_detect`: detect runtimes/dependencies for a project.

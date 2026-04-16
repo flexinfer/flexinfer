@@ -68,6 +68,7 @@ func run(ctx context.Context) error {
 
 	// Create the weaver router.
 	router := weaver.NewRouter(cfg, flexClient, executor, lister, logger)
+	router.SetMetrics(weaver.NewMetrics(nil))
 
 	tracer := mcpotel.Tracer(tp, "mcp-weaver")
 	router.SetTracer(tracer)
@@ -95,6 +96,8 @@ Tools:
 - weaver__ci_status: CI/CD pipeline status and merge requests
 - weaver__system_health: Comprehensive system health report
 - loom/weaver/status: Show weaver configuration and available domains
+- loom/weaver/history: Show recent orchestrated queries for HUD history
+- loom/weaver/metrics: Show lifetime weaver metrics for HUD summaries
 
 Environment:
 - FLEXINFER_URL: FlexInfer proxy endpoint (required)
@@ -184,6 +187,24 @@ func registerWeaverTools(server *mcp.Server, router *weaver.Router, logger *slog
 			Properties: map[string]any{},
 		},
 	}, handleStatus(router))
+
+	server.AddTool(mcp.Tool{
+		Name:        "loom/weaver/history",
+		Description: "Show recent orchestrated query history for HUD display.",
+		InputSchema: mcp.InputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+	}, handleHistory(router))
+
+	server.AddTool(mcp.Tool{
+		Name:        "loom/weaver/metrics",
+		Description: "Show lifetime weaver metrics for HUD summaries.",
+		InputSchema: mcp.InputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+	}, handleMetrics(router))
 }
 
 // handleQuery returns a tool handler for weaver__query.
@@ -256,6 +277,35 @@ func handleCompound(router *weaver.Router, ct weaver.CompoundTool, logger *slog.
 func handleStatus(router *weaver.Router) mcp.ToolHandler {
 	return func(_ context.Context, _ map[string]any) (*mcp.CallToolResult, error) {
 		return mcp.JSONResult(router.Status())
+	}
+}
+
+func handleHistory(router *weaver.Router) mcp.ToolHandler {
+	return func(_ context.Context, _ map[string]any) (*mcp.CallToolResult, error) {
+		history := router.History()
+		// Present newest entries first for HUD consumption.
+		for left, right := 0, len(history)-1; left < right; left, right = left+1, right-1 {
+			history[left], history[right] = history[right], history[left]
+		}
+		return mcp.JSONResult(map[string]any{
+			"entries": history,
+		})
+	}
+}
+
+func handleMetrics(router *weaver.Router) mcp.ToolHandler {
+	return func(_ context.Context, _ map[string]any) (*mcp.CallToolResult, error) {
+		metrics := router.MetricsSummary()
+		if metrics == nil {
+			metrics = map[string]any{
+				"total_queries":  0,
+				"avg_latency_ms": 0,
+				"error_rate":     0,
+				"total_tokens":   0,
+				"error_count":    0,
+			}
+		}
+		return mcp.JSONResult(metrics)
 	}
 }
 

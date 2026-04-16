@@ -53,8 +53,29 @@
   let enabled = $derived(status?.enabled ?? false);
   let routerModel = $derived(status?.router_model ?? domains?.router_model ?? '-');
   let subagentModel = $derived(status?.subagent_model ?? domains?.subagent_model ?? '-');
-  let domainList = $derived(domains?.domains ?? status?.domains ?? []);
-  let entries = $derived(history?.entries ?? []);
+  let domainList = $derived.by(() =>
+    (domains?.domains ?? status?.domains ?? []).map((domain) => {
+      if (typeof domain === 'string') {
+        return {
+          name: domain,
+          description: '',
+          tools: [],
+        };
+      }
+      return {
+        name: domain?.name ?? '-',
+        description: domain?.description ?? '',
+        tools: Array.isArray(domain?.tools) ? domain.tools : [],
+      };
+    })
+  );
+  let entries = $derived.by(() =>
+    [...(history?.entries ?? [])].sort((left, right) => {
+      const leftTs = new Date(left?.timestamp ?? 0).getTime();
+      const rightTs = new Date(right?.timestamp ?? 0).getTime();
+      return rightTs - leftTs;
+    })
+  );
   let totalQueries = $derived(metrics?.total_queries ?? 0);
   let avgLatency = $derived(metrics?.avg_latency_ms ?? 0);
   let errorRate = $derived(metrics?.error_rate ?? 0);
