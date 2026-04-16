@@ -56,7 +56,7 @@ spec:
     # Keep the hybrid KV cache manager enabled for Gemma4 sliding/full attention;
     # the TurboQuant patch pads allocator-visible page sizes instead.
     disableHybridKVCacheManager: false
-    limitMmPerPrompt: "image=0,audio=0,video=0"
+    limitMmPerPrompt: '{"image":0,"audio":0,"video":0}'
     disableLogStats: false
     warmPolicy: ondemand
     hipVisibleDevices: "0"
