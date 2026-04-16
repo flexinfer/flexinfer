@@ -48,6 +48,11 @@ public struct SessionEventsResponse: Decodable, Sendable {
         case events
     }
 
+    public init(sessionId: String, events: [TimelineEntry]) {
+        self.sessionId = sessionId
+        self.events = events
+    }
+
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.sessionId = (try? container.decodeIfPresent(String.self, forKey: .sessionId)) ?? ""

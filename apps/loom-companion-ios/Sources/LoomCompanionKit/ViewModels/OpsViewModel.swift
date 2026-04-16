@@ -161,7 +161,9 @@ public final class OpsViewModel {
         } catch {
             if tasks.isEmpty {
                 taskCounts = MobileTaskCounts(pending: 0, inProgress: 0, blocked: 0, completed: 0)
+                self.error = error as? LoomAPIError ?? .networkError(underlying: error.localizedDescription)
             }
+            warningMessage = "Some Ops data could not be refreshed: tasks"
         }
 
         do {
