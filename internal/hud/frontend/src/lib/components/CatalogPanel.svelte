@@ -63,9 +63,7 @@
   }
 
   function clearFilters() {
-    catalogStore.search('');
-    catalogStore.filterByCategory('all');
-    catalogStore.filterByStatus('all');
+    catalogStore.resetFilters();
   }
 
   function handleSort(key) {
@@ -90,6 +88,10 @@
       return srv.running ? 'Disabling will stop this running server' : 'Disabling will prevent this server from starting';
     }
     return 'Enabling will allow this server to accept connections';
+  }
+
+  function hintSummary(values) {
+    return (values ?? []).join(' · ') || 'None';
   }
 </script>
 
@@ -167,6 +169,7 @@
             </th>
             <th>Description</th>
             <th>Categories</th>
+            <th>Tools</th>
             <th class="sortable" onclick={() => handleSort('running')}>
               Runtime {sortKey === 'running' ? (sortDir === 'asc' ? '\u25B2' : '\u25BC') : ''}
             </th>
@@ -194,6 +197,9 @@
                   <span class="cat-badge">{cat}</span>
                 {/each}
               </td>
+              <td class="cell-tools">
+                <span class="tool-count">{srv.tool_count ?? 0}</span>
+              </td>
               <td>
                 {#if srv.running}
                   <span class="runtime-tag runtime-running">running</span>
@@ -215,7 +221,7 @@
             </tr>
             {#if expandedServer === srv.name}
               <tr class="detail-row">
-                <td colspan="6">
+                <td colspan="7">
                   <div class="detail-content">
                     <div class="detail-section">
                       <span class="detail-label">Description</span>
@@ -224,6 +230,22 @@
                     <div class="detail-section">
                       <span class="detail-label">Categories</span>
                       <span class="detail-value">{(srv.categories ?? []).join(', ') || 'None'}</span>
+                    </div>
+                    <div class="detail-section">
+                      <span class="detail-label">Tools</span>
+                      <span class="detail-value">{srv.tool_count ?? 0} static tool{(srv.tool_count ?? 0) === 1 ? '' : 's'}</span>
+                    </div>
+                    <div class="detail-section">
+                      <span class="detail-label">Command</span>
+                      <span class="detail-value detail-mono">{srv.command || 'No resolved command'}</span>
+                    </div>
+                    <div class="detail-section">
+                      <span class="detail-label">Env hints</span>
+                      <span class="detail-value detail-mono">{hintSummary(srv.env_hints)}</span>
+                    </div>
+                    <div class="detail-section">
+                      <span class="detail-label">Config hints</span>
+                      <span class="detail-value detail-mono">{hintSummary(srv.config_hints)}</span>
                     </div>
                     <div class="detail-section">
                       <span class="detail-label">State</span>
@@ -255,11 +277,27 @@
             {/if}
           </div>
           <div class="server-card-desc">{srv.description || 'No description'}</div>
+          <div class="server-card-meta">
+            <span class="tool-count">{srv.tool_count ?? 0} tool{(srv.tool_count ?? 0) === 1 ? '' : 's'}</span>
+            {#if srv.command}
+              <span class="command-snippet">{srv.command}</span>
+            {/if}
+          </div>
           {#if (srv.categories ?? []).length > 0}
             <div class="server-card-cats">
               {#each srv.categories ?? [] as cat}
                 <span class="cat-badge">{cat}</span>
               {/each}
+            </div>
+          {/if}
+          {#if (srv.env_hints ?? []).length > 0 || (srv.config_hints ?? []).length > 0}
+            <div class="server-card-hints">
+              {#if (srv.env_hints ?? []).length > 0}
+                <span class="hint-line">env: {hintSummary(srv.env_hints)}</span>
+              {/if}
+              {#if (srv.config_hints ?? []).length > 0}
+                <span class="hint-line">config: {hintSummary(srv.config_hints)}</span>
+              {/if}
             </div>
           {/if}
           <div class="server-card-foot">
@@ -485,6 +523,25 @@
     flex-wrap: wrap;
   }
 
+  .cell-tools {
+    white-space: nowrap;
+  }
+
+  .tool-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.5rem;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    color: var(--fg-primary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    font-weight: 600;
+  }
+
   .state-label {
     margin-left: 6px;
     font-size: var(--text-xs);
@@ -551,6 +608,10 @@
     font-size: var(--text-sm);
     color: var(--fg-secondary);
     line-height: var(--leading-normal);
+  }
+
+  .detail-mono {
+    font-family: var(--font-mono);
   }
 
   .detail-consequence {
@@ -663,10 +724,40 @@
     overflow: hidden;
   }
 
+  .server-card-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+
+  .command-snippet {
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    color: var(--fg-secondary);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
+  }
+
   .server-card-cats {
     display: flex;
     gap: 4px;
     flex-wrap: wrap;
+  }
+
+  .server-card-hints {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .hint-line {
+    font-size: var(--text-xs);
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+    line-height: var(--leading-tight);
   }
 
   .server-card-foot {

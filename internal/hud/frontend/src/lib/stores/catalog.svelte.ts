@@ -5,8 +5,12 @@ export interface CatalogServer {
   name: string;
   description: string;
   categories: string[];
+  command: string;
   enabled: boolean;
   running: boolean;
+  tool_count: number;
+  env_hints: string[];
+  config_hints: string[];
 }
 
 export interface CatalogResponse {
@@ -57,7 +61,10 @@ class CatalogStore {
       result = result.filter((s) =>
         s.name.toLowerCase().includes(q) ||
         s.description?.toLowerCase().includes(q) ||
-        s.categories?.some((c) => c.toLowerCase().includes(q))
+        s.command?.toLowerCase().includes(q) ||
+        s.categories?.some((c) => c.toLowerCase().includes(q)) ||
+        s.env_hints?.some((c) => c.toLowerCase().includes(q)) ||
+        s.config_hints?.some((c) => c.toLowerCase().includes(q))
       );
     }
     return result;
@@ -79,6 +86,9 @@ class CatalogStore {
       if (this.categoryFilter !== 'all') {
         params.set('category', this.categoryFilter);
       }
+      if (this.searchQuery.trim()) {
+        params.set('query', this.searchQuery.trim());
+      }
       const url = params.toString() ? `/api/catalog?${params}` : '/api/catalog';
       const res = await globalThis.fetch(url);
       if (!res.ok) throw new Error(`Catalog API: ${res.status}`);
@@ -87,7 +97,8 @@ class CatalogStore {
       const incoming = data.servers ?? [];
 
       const keyFn = (s: CatalogServer) => s.name;
-      const hashFn = (s: CatalogServer) => `${s.enabled}|${s.running}`;
+      const hashFn = (s: CatalogServer) =>
+        `${s.enabled}|${s.running}|${s.command}|${s.tool_count}|${s.description}|${(s.categories ?? []).join(',')}|${(s.env_hints ?? []).join(',')}|${(s.config_hints ?? []).join(',')}`;
       if (!arraysEqualByKey(this.servers, incoming, keyFn, hashFn)) {
         this.servers = incoming;
       }
@@ -115,6 +126,7 @@ class CatalogStore {
 
   search(query: string): void {
     this.searchQuery = query;
+    void this.fetch();
   }
 
   filterByCategory(category: string): void {
@@ -124,6 +136,13 @@ class CatalogStore {
 
   filterByStatus(status: 'all' | 'enabled' | 'disabled' | 'running'): void {
     this.statusFilter = status;
+  }
+
+  resetFilters(): void {
+    this.searchQuery = '';
+    this.categoryFilter = 'all';
+    this.statusFilter = 'all';
+    void this.fetch();
   }
 
   startPolling(intervalMs = 30000): void {

@@ -38,7 +38,7 @@ func TestBuildCatalogEntries_SortsAndResolvesSpec(t *testing.T) {
 		},
 	}
 
-	got := buildCatalogEntries(reg, nil, "codex", "")
+	got := buildCatalogEntries(reg, nil, "codex", "", "")
 	if len(got) != 2 {
 		t.Fatalf("len(entries) = %d, want 2", len(got))
 	}
@@ -71,7 +71,7 @@ func TestBuildCatalogEntries_EnabledStatus(t *testing.T) {
 	cs := &registry.CatalogState{}
 	cs.Disable("b")
 
-	got := buildCatalogEntries(reg, cs, "codex", "")
+	got := buildCatalogEntries(reg, cs, "codex", "", "")
 	if len(got) != 3 {
 		t.Fatalf("len(entries) = %d, want 3", len(got))
 	}
@@ -95,11 +95,61 @@ func TestBuildCatalogEntries_CategoryFilter(t *testing.T) {
 		},
 	}
 
-	got := buildCatalogEntries(reg, nil, "codex", "DEV")
+	got := buildCatalogEntries(reg, nil, "codex", "DEV", "")
 	if len(got) != 1 {
 		t.Fatalf("len(entries) = %d, want 1", len(got))
 	}
 	if got[0].Name != "b" {
 		t.Fatalf("entry name = %q, want b", got[0].Name)
+	}
+}
+
+func TestBuildCatalogEntries_EnrichedFieldsAndSearch(t *testing.T) {
+	reg := &registry.Registry{
+		Servers: []*registry.Server{
+			{
+				Name: "searchable",
+				Common: &registry.TargetSpec{
+					Description: "search target",
+					Command:     "mcp-search",
+					Env: map[string]string{
+						"SEARCH_TOKEN": "value",
+						"SEARCH_URL":   "https://example.test",
+					},
+					Hint:        "network",
+					Timeout:     45,
+					AlwaysAllow: []string{"*"},
+					SSH: &registry.SSHSpec{
+						User: "loom",
+						Host: "example.test",
+					},
+					Tools: []registry.ToolSchema{
+						{Name: "one"},
+						{Name: "two"},
+					},
+				},
+			},
+			{Name: "other"},
+		},
+	}
+
+	got := buildCatalogEntries(reg, nil, "codex", "", "network")
+	if len(got) != 1 {
+		t.Fatalf("len(entries) = %d, want 1", len(got))
+	}
+	if got[0].Name != "searchable" {
+		t.Fatalf("entry name = %q, want searchable", got[0].Name)
+	}
+	if got[0].ToolCount != 2 {
+		t.Fatalf("tool count = %d, want 2", got[0].ToolCount)
+	}
+	if got[0].Command != "mcp-search" {
+		t.Fatalf("command = %q, want mcp-search", got[0].Command)
+	}
+	if len(got[0].EnvHints) != 2 {
+		t.Fatalf("env hints = %v, want 2 keys", got[0].EnvHints)
+	}
+	if len(got[0].ConfigHints) == 0 {
+		t.Fatal("expected config hints to be populated")
 	}
 }
