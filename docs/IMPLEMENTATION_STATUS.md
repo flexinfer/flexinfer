@@ -49,6 +49,7 @@ Shipped and actively used:
 - HUD traces explorer: audit-backed `loom/audit-traces` and `/api/traces` now expose recent tool-call timing/stage summaries through the desktop `Traces` panel.
 - Desktop live-agent unification: Fleet, Presence, Overview, and status-bar counts now use one merged agent model across sessions, presence, and spawned agents, with direct `Session` and filtered `Traces` drilldowns.
 - HUD session trace endpoint: `GET /api/sessions/{id}/trace` composes session metadata, lifecycle events, context entries, and daemon audit traces, returning partial data plus source-scoped errors when agent-context is unavailable or reports `transport closed`.
+- Mobile session trace parity: `GET /api/mobile/v1/sessions/{session_id}/trace` returns the same resilient session metadata, context entries, lifecycle events, and daemon audit traces in the mobile response envelope.
 
 ## In Progress Now
 

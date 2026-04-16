@@ -234,6 +234,63 @@ func (a *App) OnSessionEnd(sessionID, agentID string) {
 	}
 }
 
+func (a *App) SessionTrace(sessionID, agentID string, limit int) mobile.SessionTraceResponse {
+	trace := a.buildSessionTrace(sessionID, agentID, limit)
+	events := make([]mobile.TimelineEntry, 0, len(trace.Events))
+	for _, event := range trace.Events {
+		events = append(events, mobile.TimelineEntry{
+			Timestamp: event.Timestamp,
+			EventType: event.EventType,
+			AgentID:   event.AgentID,
+			AgentType: event.AgentType,
+			Data:      event.Data,
+		})
+	}
+
+	traces := make([]mobile.SessionTraceEntry, 0, len(trace.Traces))
+	for _, entry := range trace.Traces {
+		traces = append(traces, mobile.SessionTraceEntry{
+			Timestamp:     entry.Timestamp,
+			AgentID:       entry.AgentID,
+			AgentType:     entry.AgentType,
+			Server:        entry.Server,
+			Tool:          entry.Tool,
+			Status:        entry.Status,
+			Error:         entry.Error,
+			Target:        entry.Target,
+			Cached:        entry.Cached,
+			PipelineStage: entry.PipelineStage,
+			DurationMs:    entry.DurationMs,
+			RouteMs:       entry.RouteMs,
+			BuildMs:       entry.BuildMs,
+			ExecuteMs:     entry.ExecuteMs,
+			SendMs:        entry.SendMs,
+			RecvMs:        entry.RecvMs,
+		})
+	}
+
+	errors := make([]mobile.SessionTraceError, 0, len(trace.Errors))
+	for _, partial := range trace.Errors {
+		errors = append(errors, mobile.SessionTraceError{
+			Source:  partial.Source,
+			Message: partial.Message,
+		})
+	}
+
+	return mobile.SessionTraceResponse{
+		Session:      trace.Session,
+		AgentID:      trace.AgentID,
+		SessionID:    trace.SessionID,
+		Entries:      trace.Entries,
+		Events:       events,
+		Traces:       traces,
+		TraceEnabled: trace.TraceEnabled,
+		TracePath:    trace.TracePath,
+		Errors:       errors,
+		RetrievedAt:  trace.RetrievedAt,
+	}
+}
+
 // planSessionEndSummary decides whether the coordinator should own
 // summarization (instead of the agent-context MCP server) for a session-end
 // call. When the coordinator is enabled and the caller has not explicitly

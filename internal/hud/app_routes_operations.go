@@ -174,6 +174,14 @@ func (a *App) handleSessionTrace(w http.ResponseWriter, r *http.Request) {
 	limit := parseSessionTraceLimit(r.URL.Query().Get("limit"))
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
 
+	a.writeJSON(w, http.StatusOK, a.buildSessionTrace(sessionID, agentID, limit))
+}
+
+func (a *App) buildSessionTrace(sessionID, agentID string, limit int) sessionTraceResponse {
+	sessionID = strings.TrimSpace(sessionID)
+	agentID = strings.TrimSpace(agentID)
+	limit = parseSessionTraceLimit(strconv.Itoa(limit))
+
 	resp := sessionTraceResponse{
 		SessionID:   sessionID,
 		AgentID:     agentID,
@@ -204,7 +212,7 @@ func (a *App) handleSessionTrace(w http.ResponseWriter, r *http.Request) {
 		resp.Traces = filterSessionTraceAuditEntries(traces.Traces, resp.Session, resp.AgentID, limit)
 	}
 
-	a.writeJSON(w, http.StatusOK, resp)
+	return resp
 }
 
 func parseSessionTraceLimit(raw string) int {

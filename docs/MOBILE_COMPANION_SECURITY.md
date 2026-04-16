@@ -2,7 +2,7 @@
 
 This document defines the security model for Loom Companion iPhone/iPad access.
 
-Status: **v1 additive contract freeze** (updated 2026-02-25). Auth, scope checks, and audit logging are implemented in `internal/hud/api_mobile.go`, including read-only parity-wave endpoints gated by `mobile:read`.
+Status: **v1 additive contract freeze** (updated 2026-04-16). Auth, scope checks, audit logging, and read-only parity-wave endpoints are implemented under `internal/hud/domain/mobile/`.
 
 ## Tracking
 
@@ -129,6 +129,7 @@ Policy conventions:
 | `GET /api/mobile/v1/sessions` | Session list | allow | allow | `mobile:read` |
 | `GET /api/mobile/v1/sessions/{session_id}` | Session detail | allow | allow | `mobile:read` |
 | `GET /api/mobile/v1/sessions/{session_id}/events` | Session event history | allow | allow | `mobile:read` |
+| `GET /api/mobile/v1/sessions/{session_id}/trace` | Unified session trace with partial-source errors | allow | allow | `mobile:read` |
 | `GET /api/mobile/v1/tasks` | Task list + status counts | allow | allow | `mobile:read` |
 | `GET /api/mobile/v1/workflows` | Workflow summaries | allow | allow | `mobile:read` |
 | `GET /api/mobile/v1/workflows/{workflow_id}` | Workflow detail | allow | allow | `mobile:read` |
@@ -299,12 +300,12 @@ Security regression tests should include:
 
 | Control | Implementation | Reference |
 |---|---|---|
-| Bearer token authentication | Constant-time comparison via `crypto/subtle` | `api_mobile.go:90-100`, `api_mobile.go:109-133` |
-| Per-endpoint scope checks | 3 scopes enforced: `mobile:read`, `mobile:session:create`, `mobile:session:end` | `api_mobile.go:16-20`, `api_mobile.go:135-149` |
-| Structured audit logging | `logMobileAudit` records action, endpoint, remote_addr, targets, outcome | `api_mobile.go:152-167` |
-| Mobile-token-outside-mobile-API guard | Mobile tokens rejected for non-`/api/mobile/v1/` paths | `api_mobile.go:102-107` |
-| Consistent error envelope | All errors use `mobileEnvelope` with `ok: false` and structured error codes | `api_mobile.go:60-73` |
-| Request traceability | Every response includes `request_id` and `timestamp` in `meta` | `api_mobile.go:22-33` |
+| Bearer token authentication | Constant-time comparison via `crypto/subtle` | `internal/hud/domain/mobile/auth.go` |
+| Per-endpoint scope checks | Read, session mutation, push, and agent-spawn scopes are enforced per route | `internal/hud/domain/mobile/types.go`, `internal/hud/domain/mobile/auth.go` |
+| Structured audit logging | `logMobileAudit` records action, endpoint, remote_addr, targets, outcome | `internal/hud/domain/mobile/auth.go` |
+| Mobile-token-outside-mobile-API guard | Mobile tokens rejected for non-`/api/mobile/v1/` paths | `internal/hud/routes.go` |
+| Consistent error envelope | All errors use the mobile `Envelope` with `ok: false` and structured error codes | `internal/hud/domain/mobile/auth.go`, `internal/hud/domain/mobile/types.go` |
+| Request traceability | Every response includes `request_id` and `timestamp` in `meta` | `internal/hud/domain/mobile/auth.go` |
 
 ### Controls deferred to M1 (now resolved)
 
@@ -347,7 +348,7 @@ The v1 mobile API surface now implements comprehensive security controls: authen
 ## Sources
 
 - `docs/MOBILE_COMPANION_AUTH_BOOTSTRAP.md` — consolidated auth bootstrap decision, flow descriptions, and LAN/gateway comparison
-- `internal/hud/api_mobile.go` — all mobile v1 handlers, auth, audit, revoke
+- `internal/hud/domain/mobile/` — mobile v1 handlers, auth, audit, route registration, and response envelope
 - `internal/hud/mobile_ratelimit.go` — rate limiter implementation
 - `internal/hud/mobile_revoke.go` — token revocation list
 - `internal/hud/app.go` — TLS, bind address, rate limiter + revocation init

@@ -36,6 +36,7 @@ type Deps interface {
 	HandleSSE(w http.ResponseWriter, r *http.Request)
 	ComputeTopology(snap monitor.FleetSnapshot) TopologyGraph
 	OnSessionEnd(sessionID, agentID string)
+	SessionTrace(sessionID, agentID string, limit int) SessionTraceResponse
 	MemoryStatsPayload(stats *bridge.MemoryStatsResult) map[string]any
 	FleetIncrementKPI(field string, delta int)
 	FleetRefresh()

@@ -28,6 +28,7 @@ type mockDeps struct {
 	rbac        bridge.RBACConfigResult
 	otel        bridge.OTelStatusResult
 	memStats    func(*bridge.MemoryStatsResult) map[string]any
+	trace       func(sessionID, agentID string, limit int) SessionTraceResponse
 	rateLimiter RateLimiterOps
 }
 
@@ -70,6 +71,12 @@ func (m *mockDeps) ComputeTopology(snap monitor.FleetSnapshot) TopologyGraph {
 	return TopologyGraph{}
 }
 func (m *mockDeps) OnSessionEnd(string, string) {}
+func (m *mockDeps) SessionTrace(sessionID, agentID string, limit int) SessionTraceResponse {
+	if m.trace != nil {
+		return m.trace(sessionID, agentID, limit)
+	}
+	return SessionTraceResponse{SessionID: sessionID, AgentID: agentID}
+}
 func (m *mockDeps) MemoryStatsPayload(stats *bridge.MemoryStatsResult) map[string]any {
 	if m.memStats != nil {
 		return m.memStats(stats)

@@ -57,6 +57,48 @@ type TimelineEntry struct {
 	Data      json.RawMessage `json:"data,omitempty"`
 }
 
+// SessionTraceError identifies a partial source failure in a session trace.
+type SessionTraceError struct {
+	Source  string `json:"source"`
+	Message string `json:"message"`
+}
+
+// SessionTraceEntry is a daemon audit trace entry associated with a session.
+type SessionTraceEntry struct {
+	Timestamp     string `json:"timestamp"`
+	AgentID       string `json:"agent_id,omitempty"`
+	AgentType     string `json:"agent_type,omitempty"`
+	Server        string `json:"server"`
+	Tool          string `json:"tool"`
+	Status        string `json:"status"`
+	Error         string `json:"error,omitempty"`
+	Target        string `json:"target,omitempty"`
+	Cached        bool   `json:"cached,omitempty"`
+	PipelineStage string `json:"pipeline_stage,omitempty"`
+	DurationMs    int64  `json:"duration_ms"`
+	RouteMs       int64  `json:"route_ms,omitempty"`
+	BuildMs       int64  `json:"build_ms,omitempty"`
+	ExecuteMs     int64  `json:"execute_ms,omitempty"`
+	SendMs        int64  `json:"send_ms,omitempty"`
+	RecvMs        int64  `json:"recv_ms,omitempty"`
+}
+
+// SessionTraceResponse is the mobile-friendly session trace payload. It keeps
+// partial source errors in-band so companion clients can still render useful
+// session context when one upstream source is temporarily unavailable.
+type SessionTraceResponse struct {
+	Session      *bridge.SessionInfo `json:"session,omitempty"`
+	AgentID      string              `json:"agent_id,omitempty"`
+	SessionID    string              `json:"session_id"`
+	Entries      []map[string]any    `json:"entries"`
+	Events       []TimelineEntry     `json:"events"`
+	Traces       []SessionTraceEntry `json:"traces"`
+	TraceEnabled bool                `json:"trace_enabled"`
+	TracePath    string              `json:"trace_path,omitempty"`
+	Errors       []SessionTraceError `json:"errors,omitempty"`
+	RetrievedAt  string              `json:"retrieved_at"`
+}
+
 // --- Topology types ---
 
 // TopologyNode represents an agent in the topology graph.

@@ -2,7 +2,7 @@
 
 This document defines the API contract for the Loom Companion iPhone/iPad app.
 
-Status: **v1 additive contract freeze** (updated 2026-02-25). Initial M0/M1 endpoints plus read-only parity wave endpoints are implemented in `internal/hud/api_mobile.go`.
+Status: **v1 additive contract freeze** (updated 2026-04-16). Initial M0/M1 endpoints plus read-only parity wave endpoints are implemented under `internal/hud/domain/mobile/`.
 
 ## Tracking
 
@@ -74,6 +74,7 @@ This section freezes the v1 endpoint allowlist for the `mobile_operator` role. W
 | `/api/mobile/v1/sessions` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/sessions/{session_id}` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/sessions/{session_id}/events` | `GET` | allow | `mobile:read` |
+| `/api/mobile/v1/sessions/{session_id}/trace` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/tasks` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/workflows` | `GET` | allow | `mobile:read` |
 | `/api/mobile/v1/workflows/{workflow_id}` | `GET` | allow | `mobile:read` |
@@ -176,7 +177,7 @@ Connectivity probe. Scope: `mobile:read`.
 }
 ```
 
-Source: `internal/hud/api_mobile.go:171-176`
+Source: `internal/hud/domain/mobile/handler_dashboard.go`
 
 ---
 
@@ -241,7 +242,7 @@ Mobile dashboard aggregate for quick app open. Scope: `mobile:read`.
 | `agent_type` | string | Agent type (omitted if N/A) |
 | `data` | object | Event-specific payload |
 
-Source: `internal/hud/api_mobile.go:178-212`, `internal/hud/monitor/fleet.go:18-63`, `internal/hud/monitor/health.go:98-105`, `internal/hud/eventlog.go:10-16`
+Source: `internal/hud/domain/mobile/handler_dashboard.go`, `internal/hud/monitor/fleet.go`, `internal/hud/monitor/health.go`, `internal/hud/eventlog.go`
 
 ---
 
@@ -282,7 +283,7 @@ List all sessions. Scope: `mobile:read`.
 | `entry_count` | int | Number of context entries |
 | `total_tokens` | int | Estimated token usage |
 
-Source: `internal/hud/api_mobile.go:214-225`, `internal/hud/bridge/agent.go:30-41`
+Source: `internal/hud/domain/mobile/handler_sessions.go`, `internal/hud/bridge/agent.go`
 
 ---
 
@@ -313,7 +314,7 @@ Returns a single `SessionInfo` (same schema as above) under `data.session`.
 - `400 bad_request` — missing `session_id`
 - `404 not_found` — session not found
 
-Source: `internal/hud/api_mobile.go:227-252`
+Source: `internal/hud/domain/mobile/handler_sessions.go`
 
 ---
 
@@ -352,7 +353,53 @@ Session-scoped event feed. Scope: `mobile:read`.
 **Error cases:**
 - `400 bad_request` — missing `session_id`
 
-Source: `internal/hud/api_mobile.go:254-288`
+Source: `internal/hud/domain/mobile/handler_sessions.go`
+
+---
+
+### GET `/api/mobile/v1/sessions/{session_id}/trace`
+
+Unified session trace. Scope: `mobile:read`.
+
+This endpoint mirrors the desktop HUD session trace drawer for companion clients. It composes cached session metadata, session-scoped lifecycle events, context entries, and daemon audit/tool traces. If one source fails, for example because agent-context returns `transport closed`, the response still returns `200` with the remaining sources and a source-scoped item in `data.errors`.
+
+**Query parameters:**
+
+| Param | Type | Default | Max | Description |
+|---|---|---|---|---|
+| `limit` | int | 100 | 500 | Maximum entries/events/traces per source |
+| `agent_id` | string | - | - | Optional fallback filter when session metadata is unavailable |
+
+**Response `data`:**
+
+```json
+{
+  "session_id": "sess_abc123",
+  "agent_id": "claude-code",
+  "session": {"id": "sess_abc123", "agent_id": "claude-code", "status": "active"},
+  "entries": [],
+  "events": [],
+  "traces": [
+    {
+      "timestamp": "2026-04-16T12:00:00Z",
+      "agent_id": "claude-code",
+      "server": "agent_context",
+      "tool": "agent_context_search",
+      "status": "error",
+      "error": "transport closed",
+      "duration_ms": 12
+    }
+  ],
+  "trace_enabled": true,
+  "trace_path": "/tmp/loom-audit.jsonl",
+  "errors": [
+    {"source": "context_entries", "message": "transport closed"}
+  ],
+  "retrieved_at": "2026-04-16T12:00:01Z"
+}
+```
+
+Source: `internal/hud/domain/mobile/handler_sessions.go`, `internal/hud/app_routes_operations.go`
 
 ---
 
@@ -382,7 +429,7 @@ Create/start a new session. Scope: `mobile:session:create`.
 
 **Audit:** Logs `session_create` with `agent_id` and `namespace` targets.
 
-Source: `internal/hud/api_mobile.go:297-321`
+Source: `internal/hud/domain/mobile/handler_sessions.go`
 
 ---
 
@@ -409,7 +456,7 @@ End an active session. Scope: `mobile:session:end`.
 
 **Audit:** Logs `session_end` with `session_id` and `summarize` targets.
 
-Source: `internal/hud/api_mobile.go:323-365`
+Source: `internal/hud/domain/mobile/handler_sessions.go`
 
 ---
 
@@ -429,7 +476,7 @@ Event allowlist in v1:
 - `agent.session.reaped`
 - `agent.heartbeat`
 
-Source: `internal/hud/api_mobile.go:290-295`
+Source: `internal/hud/domain/mobile/handler_ops.go`
 
 ---
 
@@ -479,7 +526,7 @@ Mobile clients use this to synchronize notification behavior with the server-def
 
 **Action constraints:** All actions are read-only navigation operations. No mutation actions are permitted from alert quick-actions to maintain v1 scope discipline.
 
-Source: `internal/hud/api_mobile.go` (handleMobileAlertsPolicy, mobileAlertPolicyMatrix)
+Source: `internal/hud/domain/mobile/handler_ops.go`, `internal/hud/domain/mobile/helpers.go`
 
 ---
 
@@ -518,7 +565,7 @@ Register a device push token for APNs or FCM notifications. Scope: `mobile:push`
 
 **Behavior:** Re-registering the same token updates the `last_used` timestamp and device ID association. Tokens are stored in-memory for v1; persistent storage is planned for M5.
 
-Source: `internal/hud/api_mobile.go` (handleMobilePushRegister)
+Source: `internal/hud/domain/mobile/handler_push.go`
 
 ---
 
@@ -550,7 +597,7 @@ The `removed` field is `true` if the token existed and was removed, `false` if t
 - `403 forbidden` — missing `mobile:push` scope
 - `404 not_found` — push notifications not enabled (feature flag off)
 
-Source: `internal/hud/api_mobile.go` (handleMobilePushUnregister)
+Source: `internal/hud/domain/mobile/handler_push.go`
 
 ---
 
@@ -610,7 +657,7 @@ Revoke a mobile operator token at runtime. Protected by admin token (`X-Admin-To
 
 **Audit:** Logs `token_revoke` action.
 
-Source: `internal/hud/api_mobile.go` (handleMobileAdminRevoke)
+Source: `internal/hud/domain/mobile/handler_push.go`
 
 ---
 
@@ -678,8 +725,8 @@ All mutation endpoints must record:
 ## Sources
 
 - `docs/MOBILE_COMPANION_AUTH_BOOTSTRAP.md` — consolidated auth bootstrap decision, flow descriptions, and LAN/gateway comparison
-- `internal/hud/api_mobile.go` — all mobile v1 handlers, envelope types, auth helpers
-- `internal/hud/app.go:539-547` — route registration
+- `internal/hud/domain/mobile/` — mobile v1 handlers, envelope types, auth helpers, and route registration
+- `internal/hud/routes.go` — top-level HUD route registration and mobile domain mounting
 - `internal/hud/bridge/agent.go:30-41` — `SessionInfo` struct
 - `internal/hud/monitor/fleet.go:18-63` — `FleetSnapshot` struct
 - `internal/hud/monitor/health.go:98-105` — `HealthSummary` struct

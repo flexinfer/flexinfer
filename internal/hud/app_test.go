@@ -1954,6 +1954,7 @@ func TestHandler_MobilePolicy_AllowlistDenylistMatrix(t *testing.T) {
 		{"GET", "/api/mobile/v1/sessions", ""},
 		{"GET", "/api/mobile/v1/sessions/test-sess", ""},
 		{"GET", "/api/mobile/v1/sessions/test-sess/events", ""},
+		{"GET", "/api/mobile/v1/sessions/test-sess/trace", ""},
 		{"GET", "/api/mobile/v1/tasks", ""},
 		{"GET", "/api/mobile/v1/workflows", ""},
 		{"GET", "/api/mobile/v1/workflows/test-workflow", ""},
@@ -3333,6 +3334,7 @@ func TestMobileContract_AllScopesRequired(t *testing.T) {
 		{"GET", "/api/mobile/v1/sessions", "", "mobile:read", false},
 		{"GET", "/api/mobile/v1/sessions/test-sess", "", "mobile:read", false},
 		{"GET", "/api/mobile/v1/sessions/test-sess/events", "", "mobile:read", false},
+		{"GET", "/api/mobile/v1/sessions/test-sess/trace", "", "mobile:read", false},
 		{"GET", "/api/mobile/v1/tasks", "", "mobile:read", false},
 		{"GET", "/api/mobile/v1/workflows", "", "mobile:read", false},
 		{"GET", "/api/mobile/v1/workflows/test-workflow", "", "mobile:read", false},
@@ -3361,7 +3363,7 @@ func TestMobileContract_AllScopesRequired(t *testing.T) {
 	allScopes := []string{"mobile:read", "mobile:session:create", "mobile:session:end", "mobile:push"}
 
 	// Verify endpoint count matches registered mobile routes (excluding admin/revoke which uses X-Admin-Token).
-	const expectedScopeGatedEndpoints = 26
+	const expectedScopeGatedEndpoints = 27
 	if len(contracts) != expectedScopeGatedEndpoints {
 		t.Fatalf("contract test covers %d endpoints, expected %d — update when adding mobile routes",
 			len(contracts), expectedScopeGatedEndpoints)
@@ -4072,6 +4074,107 @@ func TestHandleSessionTrace_ReturnsPartialDataWhenContextEntriesFail(t *testing.
 	}
 	if len(payload.Traces) != 1 || payload.Traces[0].Error != "transport closed" {
 		t.Fatalf("expected filtered audit trace, got %#v", payload.Traces)
+	}
+}
+
+func TestHandleMobileSessionTrace_ReturnsPartialDataEnvelope(t *testing.T) {
+	app, mux, handlers := newTestAppWithHandlers(t)
+	app.config.MobileOperatorToken = "mobile-secret"
+	app.config.MobileOperatorScopes = "mobile:read"
+	sessionStart := time.Now().UTC().Add(-2 * time.Minute).Truncate(time.Second)
+
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return json.RawMessage(fmt.Sprintf(`{"content":[{"type":"text","text":%q}]}`,
+				fmt.Sprintf(`{"sessions":[{"id":"sess-mobile-trace","agent_id":"gemini-1","namespace":"loom-core/mobile","status":"active","started_at":%q}]}`, sessionStart.Format(time.RFC3339)),
+			)), nil
+		case "agent_context__agent_context_search":
+			return json.RawMessage(`{"isError":true,"content":[{"type":"text","text":"transport closed"}]}`), nil
+		case "agent_context__agent_presence_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"agents\":[]}"}]}`), nil
+		case "agent_context__agent_task_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"tasks\":[]}"}]}`), nil
+		case "agent_context__agent_memory_stats":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"total_items\":0,\"total_tokens\":0}"}]}`), nil
+		case "agent_context__agent_graph_stats":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"total_entities\":0,\"total_relations\":0}"}]}`), nil
+		case "agent_context__agent_workflow_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"workflows\":[]}"}]}`), nil
+		case "agent_context__agent_file_claim_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"claims\":[]}"}]}`), nil
+		case "agent_context__agent_worktree_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"worktrees\":[]}"}]}`), nil
+		case "agent_context__agent_handoff_list":
+			return json.RawMessage(`{"content":[{"type":"text","text":"{\"handoffs\":[]}"}]}`), nil
+		default:
+			return json.RawMessage(`{"content":[{"type":"text","text":"{}"}]}`), nil
+		}
+	})
+	handlers.handle("loom/audit-traces", func(_ json.RawMessage) (any, error) {
+		return json.RawMessage(fmt.Sprintf(`{
+			"enabled": true,
+			"path": "/tmp/audit.jsonl",
+			"count": 1,
+			"limit": 100,
+			"summary": {},
+			"traces": [{
+				"timestamp": %q,
+				"agent_id": "gemini-1",
+				"server": "agent_context",
+				"tool": "agent_context_search",
+				"status": "error",
+				"error": "transport closed",
+				"duration_ms": 12
+			}]
+		}`, sessionStart.Add(30*time.Second).Format(time.RFC3339))), nil
+	})
+
+	if err := app.fleetMonitor.RefreshForce(); err != nil {
+		t.Fatalf("refresh fleet: %v", err)
+	}
+	app.eventLog.Append(TimelineEntry{
+		Timestamp: sessionStart.Add(10 * time.Second),
+		EventType: "agent.session.start",
+		AgentID:   "gemini-1",
+		Data:      json.RawMessage(`{"session_id":"sess-mobile-trace","agent_id":"gemini-1"}`),
+	})
+
+	req := httptest.NewRequest("GET", "/api/mobile/v1/sessions/sess-mobile-trace/trace", nil)
+	req.Header.Set("Authorization", "Bearer mobile-secret")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var env struct {
+		OK   bool                        `json:"ok"`
+		Data mobile.SessionTraceResponse `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !env.OK {
+		t.Fatal("expected ok=true")
+	}
+	if env.Data.Session == nil || env.Data.Session.AgentID != "gemini-1" {
+		t.Fatalf("expected session metadata, got %#v", env.Data.Session)
+	}
+	if len(env.Data.Errors) != 1 || env.Data.Errors[0].Source != "context_entries" {
+		t.Fatalf("expected context_entries partial error, got %#v", env.Data.Errors)
+	}
+	if len(env.Data.Events) != 1 {
+		t.Fatalf("expected lifecycle event fallback, got %#v", env.Data.Events)
+	}
+	if len(env.Data.Traces) != 1 || env.Data.Traces[0].Error != "transport closed" {
+		t.Fatalf("expected filtered audit trace, got %#v", env.Data.Traces)
 	}
 }
 
