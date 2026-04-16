@@ -31,11 +31,12 @@ var frontendFS embed.FS
 
 // Config holds the configuration for the HUD server.
 type Config struct {
-	SocketPath  string // Path to the loom daemon Unix socket.
-	Dev         bool   // Development mode: enables CORS, skips embed.
-	Port        int    // Port to listen on. 0 means pick a random available port.
-	MetricsAddr string // Daemon metrics/events HTTP address (e.g., "localhost:9090").
-	Overlay     bool   // Enable macOS native overlay (NSPanel + Cmd+Shift+L hotkey).
+	SocketPath   string // Path to the loom daemon Unix socket.
+	RegistryPath string // Path to the MCP registry backing catalog-style HUD views.
+	Dev          bool   // Development mode: enables CORS, skips embed.
+	Port         int    // Port to listen on. 0 means pick a random available port.
+	MetricsAddr  string // Daemon metrics/events HTTP address (e.g., "localhost:9090").
+	Overlay      bool   // Enable macOS native overlay (NSPanel + Cmd+Shift+L hotkey).
 
 	// Overlay appearance (only used when Overlay is true).
 	OverlayEdge         string  // Screen edge: "right" or "left" (default "right").
