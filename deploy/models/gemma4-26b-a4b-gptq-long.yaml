@@ -9,6 +9,7 @@
 # Runtime requirements:
 # - standard vLLM ROCm attention path
 # - prefix caching disabled
+# - eager execution, matching the working 8K primary profile
 # - single-GPU, text-only profile
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -51,8 +52,13 @@ spec:
     reasoningParser: gemma4
     enablePrefixCaching: false
     maxNumBatchedTokens: 160
-    # Keep the hybrid KV cache manager enabled for Gemma4 sliding/full attention.
-    disableHybridKVCacheManager: false
+    # Match the working primary profile: disable torch.compile + CUDAGraph on
+    # ROCm/GPTQ, where vLLM warns that GPTQ GEMM and compiled GELU are unstable.
+    enforceEager: true
+    # Gemma4's mixed sliding/full attention KV specs trip vLLM's hybrid manager
+    # on this runtime. The primary uses this workaround successfully; the 32K
+    # fp16 KV estimate remains small enough for the single 7900 XTX.
+    disableHybridKVCacheManager: true
     limitMmPerPrompt: '{"image":0,"audio":0,"video":0}'
     disableLogStats: false
     warmPolicy: ondemand
