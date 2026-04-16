@@ -66,6 +66,8 @@ make bootstrap-local
 
 This rebuilds, installs atomically to `~/.local/bin`, regenerates/syncs configs in loom-mode, restarts daemon only when idle (or always for `dev-reload`), then restarts HUD when configured/running on port `3333`.
 
+For Flux-backed releases, run `make deploy-check` before `make deploy`. The deploy status target now checks Flux readiness and tracked deployment convergence when `kubectl` is available, and degrades with a clear note when cluster tooling is missing.
+
 ## Adding or Updating an MCP Server
 
 1. Implement changes in `cmd/mcp-<name>/`.

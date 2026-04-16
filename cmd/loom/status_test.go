@@ -100,11 +100,29 @@ func TestCollectPlatformStatus_HUDPresenceAndSessions(t *testing.T) {
 func TestPlatformStatus_JSONOutput(t *testing.T) {
 	t.Parallel()
 	ps := platformStatus{
-		Daemon:    daemonStatus{Running: true, Servers: 5},
+		Daemon:    daemonStatus{Running: true, Servers: 5, DrainReady: true},
 		Agents:    agentStatus{Active: 2, Idle: 1, Total: 3},
 		Pipelines: pipelineStatus{Available: true, Running: 1, Pending: 2, Passed: 3, Failed: 4, LastActivity: "5m ago"},
 		HUD:       hudStatus{Reachable: true},
-		Healthy:   true,
+		Health: &daemonHealthSnapshot{
+			Servers: map[string]daemonHealthServer{
+				"alpha": {
+					Healthy:          false,
+					Ready:            false,
+					ConsecutiveFails: 3,
+					AvgLatencyMs:     42.5,
+					LastError:        "connection refused",
+					RestartCount:     2,
+				},
+			},
+			DegradedServers: []string{"alpha"},
+		},
+		Observability: &daemonObservabilityStatus{
+			OTLPEndpoint: "",
+			LogFormat:    "text",
+			Warnings:     []string{"otlp endpoint not configured", "json logging disabled"},
+		},
+		Healthy: true,
 	}
 
 	data, err := json.Marshal(ps)
@@ -123,6 +141,9 @@ func TestPlatformStatus_JSONOutput(t *testing.T) {
 	}
 	if daemon["servers"].(float64) != 5 {
 		t.Errorf("daemon.servers = %v, want 5", daemon["servers"])
+	}
+	if daemon["drain_ready"] != true {
+		t.Errorf("daemon.drain_ready = %v, want true", daemon["drain_ready"])
 	}
 
 	agents := parsed["agents"].(map[string]any)
@@ -149,11 +170,32 @@ func TestPlatformStatus_JSONOutput(t *testing.T) {
 	if parsed["healthy"] != true {
 		t.Error("expected healthy = true")
 	}
+
+	health := parsed["health"].(map[string]any)
+	if got := health["degraded_servers"].([]any); len(got) != 1 || got[0] != "alpha" {
+		t.Fatalf("health.degraded_servers = %#v, want [alpha]", got)
+	}
+	servers := health["servers"].(map[string]any)
+	alpha := servers["alpha"].(map[string]any)
+	if alpha["restart_count"].(float64) != 2 {
+		t.Fatalf("alpha.restart_count = %v, want 2", alpha["restart_count"])
+	}
+	if alpha["avg_latency_ms"].(float64) != 42.5 {
+		t.Fatalf("alpha.avg_latency_ms = %v, want 42.5", alpha["avg_latency_ms"])
+	}
+
+	obs := parsed["observability"].(map[string]any)
+	if obs["log_format"] != "text" {
+		t.Fatalf("observability.log_format = %v, want text", obs["log_format"])
+	}
+	if got := obs["warnings"].([]any); len(got) != 2 {
+		t.Fatalf("observability.warnings = %#v, want 2 warnings", got)
+	}
 }
 
 func TestPrintPlatformStatus_IncludesPipelineSummary(t *testing.T) {
 	ps := platformStatus{
-		Daemon:    daemonStatus{Running: true, Servers: 5},
+		Daemon:    daemonStatus{Running: true, Servers: 5, DrainReady: true},
 		Agents:    agentStatus{Active: 2, Idle: 1, Offline: 0, Total: 3},
 		Sessions:  sessionCount{Active: 1, Total: 4},
 		Pipelines: pipelineStatus{Available: true, Running: 1, Pending: 2, Passed: 3, Failed: 4, LastActivity: "5m ago"},
@@ -170,6 +212,52 @@ func TestPrintPlatformStatus_IncludesPipelineSummary(t *testing.T) {
 	}
 	if !strings.Contains(got, "Pipelines: last activity 5m ago") {
 		t.Fatalf("expected last-activity line in output, got: %s", got)
+	}
+	if !strings.Contains(got, "Readiness: drain ready") {
+		t.Fatalf("expected readiness line in output, got: %s", got)
+	}
+}
+
+func TestPrintPlatformStatus_HighlightsHealthAndObservabilityWarnings(t *testing.T) {
+	ps := platformStatus{
+		Daemon: daemonStatus{Running: true, Servers: 2, DrainReady: false, Draining: true},
+		Health: &daemonHealthSnapshot{
+			Servers: map[string]daemonHealthServer{
+				"alpha": {
+					Healthy:          false,
+					ConsecutiveFails: 4,
+					AvgLatencyMs:     88.1,
+					LastError:        "timeout",
+					RestartCount:     1,
+				},
+				"beta": {
+					Healthy:          true,
+					ConsecutiveFails: 0,
+					AvgLatencyMs:     12.4,
+				},
+			},
+			DegradedServers: []string{"alpha"},
+		},
+		Observability: &daemonObservabilityStatus{
+			Warnings: []string{"otlp endpoint not configured", "json logging disabled"},
+		},
+	}
+
+	got := captureStdout(t, func() {
+		printPlatformStatus(ps, "/tmp/loom.sock")
+	})
+
+	if !strings.Contains(got, "Readiness: draining") {
+		t.Fatalf("expected draining readiness line, got: %s", got)
+	}
+	if !strings.Contains(got, "Health:   degraded servers: alpha") {
+		t.Fatalf("expected degraded server list, got: %s", got)
+	}
+	if !strings.Contains(got, "Health:   alpha(restarts=1, latency=88ms, error=timeout)") {
+		t.Fatalf("expected degraded detail line, got: %s", got)
+	}
+	if !strings.Contains(got, "OTel:     warning: otlp endpoint not configured; json logging disabled") {
+		t.Fatalf("expected OTel warning line, got: %s", got)
 	}
 }
 

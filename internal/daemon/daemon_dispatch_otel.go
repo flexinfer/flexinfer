@@ -11,6 +11,27 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
 
+type observabilityStatus struct {
+	OTLPEndpoint           string          `json:"otlp_endpoint"`
+	OTLPConfigured         bool            `json:"otlp_configured"`
+	LogFormat              string          `json:"log_format"`
+	JSONLogsEnabled        bool            `json:"json_logs_enabled"`
+	TracedServers          int             `json:"traced_servers"`
+	TotalServers           int             `json:"total_servers"`
+	TraceCoverage          string          `json:"trace_coverage"`
+	RuntimeOTLPConfigured  bool            `json:"runtime_otlp_configured"`
+	RuntimeOTLPEnabled     bool            `json:"runtime_otlp_enabled"`
+	RuntimeOTLPEndpoint    string          `json:"runtime_otlp_endpoint"`
+	RuntimeOTLPProtocol    string          `json:"runtime_otlp_protocol"`
+	RuntimeOTLPServiceName string          `json:"runtime_otlp_service_name"`
+	RuntimeOTLPSampleRate  float64         `json:"runtime_otlp_sample_rate"`
+	RuntimeOTLPError       string          `json:"runtime_otlp_error,omitempty"`
+	RuntimeMeterEnabled    bool            `json:"runtime_meter_enabled"`
+	RuntimeTraceSurfaces   map[string]bool `json:"runtime_trace_surfaces"`
+	RuntimeTraceCoverage   string          `json:"runtime_trace_coverage"`
+	Warnings               []string        `json:"warnings,omitempty"`
+}
+
 // handleRBACConfig returns RBAC configuration and recent denied calls.
 func (d *Daemon) handleRBACConfig(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	if d.rbac == nil {
@@ -111,6 +132,10 @@ func (d *Daemon) handleRBACSimulate(ctx context.Context, msg *mcp.Message) (*mcp
 
 // handleOTelStatus returns observability configuration status.
 func (d *Daemon) handleOTelStatus(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
+	return mcp.NewResponse(msg.ID, d.currentObservabilityStatus())
+}
+
+func (d *Daemon) currentObservabilityStatus() observabilityStatus {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	// Fall back to file config if env var is not set.
 	if endpoint == "" && d.fileCfg.OTel.Endpoint != "" {
@@ -133,26 +158,36 @@ func (d *Daemon) handleOTelStatus(ctx context.Context, msg *mcp.Message) (*mcp.M
 	}
 	runtimeTraceCoverage := formatCoverage(runtimeTraceCount, len(runtimeSurfaces))
 
-	result := map[string]any{
-		"otlp_endpoint":             endpoint,
-		"otlp_configured":           endpoint != "",
-		"log_format":                logFormat,
-		"json_logs_enabled":         logFormat == "json",
-		"traced_servers":            tracedServers,
-		"total_servers":             totalServers,
-		"trace_coverage":            coverage,
-		"runtime_otlp_configured":   d.otelRuntimeState.Configured,
-		"runtime_otlp_enabled":      d.otelRuntimeState.Enabled,
-		"runtime_otlp_endpoint":     d.otelRuntimeState.Endpoint,
-		"runtime_otlp_protocol":     d.otelRuntimeState.Protocol,
-		"runtime_otlp_service_name": d.otelRuntimeState.ServiceName,
-		"runtime_otlp_sample_rate":  d.otelRuntimeState.SampleRate,
-		"runtime_otlp_error":        d.otelRuntimeState.InitError,
-		"runtime_meter_enabled":     d.otelMetrics != nil,
-		"runtime_trace_surfaces":    runtimeSurfaces,
-		"runtime_trace_coverage":    runtimeTraceCoverage,
+	result := observabilityStatus{
+		OTLPEndpoint:           endpoint,
+		OTLPConfigured:         endpoint != "",
+		LogFormat:              logFormat,
+		JSONLogsEnabled:        logFormat == "json",
+		TracedServers:          tracedServers,
+		TotalServers:           totalServers,
+		TraceCoverage:          coverage,
+		RuntimeOTLPConfigured:  d.otelRuntimeState.Configured,
+		RuntimeOTLPEnabled:     d.otelRuntimeState.Enabled,
+		RuntimeOTLPEndpoint:    d.otelRuntimeState.Endpoint,
+		RuntimeOTLPProtocol:    d.otelRuntimeState.Protocol,
+		RuntimeOTLPServiceName: d.otelRuntimeState.ServiceName,
+		RuntimeOTLPSampleRate:  d.otelRuntimeState.SampleRate,
+		RuntimeOTLPError:       d.otelRuntimeState.InitError,
+		RuntimeMeterEnabled:    d.otelMetrics != nil,
+		RuntimeTraceSurfaces:   runtimeSurfaces,
+		RuntimeTraceCoverage:   runtimeTraceCoverage,
 	}
-	return mcp.NewResponse(msg.ID, result)
+
+	if !result.OTLPConfigured {
+		result.Warnings = append(result.Warnings, "otlp endpoint not configured")
+	}
+	if !result.JSONLogsEnabled {
+		result.Warnings = append(result.Warnings, "json logging disabled")
+	}
+	if result.RuntimeOTLPError != "" {
+		result.Warnings = append(result.Warnings, "otel runtime init error: "+result.RuntimeOTLPError)
+	}
+	return result
 }
 
 func runtimeTraceSurfaces() map[string]bool {

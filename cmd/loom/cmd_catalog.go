@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,13 +12,7 @@ import (
 	"github.com/crb2nu/loom/pkg/sync"
 )
 
-type catalogEntry struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Categories  []string `json:"categories,omitempty"`
-	Command     string   `json:"command,omitempty"`
-	Enabled     bool     `json:"enabled"`
-}
+type catalogEntry = registry.CatalogEntry
 
 func newCatalogCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -29,6 +22,7 @@ func newCatalogCmd() *cobra.Command {
 
 	cmd.AddCommand(
 		newCatalogListCmd(),
+		newCatalogSearchCmd(),
 		newCatalogEnableCmd(),
 		newCatalogDisableCmd(),
 		newCatalogStatusCmd(),
@@ -45,61 +39,7 @@ func newCatalogListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List available MCP servers from registry",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			workspaceRoot := findWorkspaceRootForChecks()
-			regRes := resolveRegistryForDiagnostics(workspaceRoot)
-			if !regRes.Found {
-				return fmt.Errorf("registry.yaml not found (checked: %s)", strings.Join(regRes.Precedence, " -> "))
-			}
-
-			reg, err := registry.LoadWithDefaults(regRes.Path)
-			if err != nil {
-				return fmt.Errorf("load registry %q: %w", regRes.Path, err)
-			}
-
-			cs, err := registry.LoadCatalogState()
-			if err != nil {
-				return fmt.Errorf("load catalog state: %w", err)
-			}
-
-			entries := buildCatalogEntries(reg, cs, targetProfile, categoryFilter)
-			if outputJSON {
-				payload := map[string]any{
-					"registry_path": regRes.Path,
-					"profile":       targetProfile,
-					"category":      categoryFilter,
-					"count":         len(entries),
-					"servers":       entries,
-				}
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				return enc.Encode(payload)
-			}
-
-			fmt.Printf("Registry: %s\n", regRes.Path)
-			fmt.Printf("Profile: %s\n", targetProfile)
-			if categoryFilter != "" {
-				fmt.Printf("Category filter: %s\n", categoryFilter)
-			}
-			fmt.Printf("Servers: %d\n\n", len(entries))
-
-			for _, entry := range entries {
-				status := "+"
-				if !entry.Enabled {
-					status = "-"
-				}
-				fmt.Printf("%s %s", status, entry.Name)
-				if entry.Command != "" {
-					fmt.Printf(" (%s)", entry.Command)
-				}
-				fmt.Println()
-				if entry.Description != "" {
-					fmt.Printf("  %s\n", entry.Description)
-				}
-				if len(entry.Categories) > 0 {
-					fmt.Printf("  categories: %s\n", strings.Join(entry.Categories, ", "))
-				}
-			}
-			return nil
+			return runCatalogBrowse(targetProfile, categoryFilter, "", outputJSON, "Registry", "Servers")
 		},
 	}
 
@@ -109,48 +49,101 @@ func newCatalogListCmd() *cobra.Command {
 	return cmd
 }
 
-func buildCatalogEntries(reg *registry.Registry, cs *registry.CatalogState, targetProfile, categoryFilter string) []catalogEntry {
-	if reg == nil {
-		return nil
+func newCatalogSearchCmd() *cobra.Command {
+	var targetProfile string
+	var categoryFilter string
+	var outputJSON bool
+
+	cmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Search available MCP servers from registry",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCatalogBrowse(targetProfile, categoryFilter, args[0], outputJSON, "Search", "Matches")
+		},
 	}
 
-	needle := strings.TrimSpace(strings.ToLower(categoryFilter))
-	entries := make([]catalogEntry, 0, len(reg.Servers))
-	for _, srv := range reg.Servers {
-		if srv == nil {
-			continue
-		}
-		if needle != "" && !serverHasCategory(srv, needle) {
-			continue
-		}
-
-		entry := catalogEntry{
-			Name:       srv.Name,
-			Categories: sortedCopy(srv.Categories),
-			Enabled:    cs == nil || !cs.IsDisabled(srv.Name),
-		}
-
-		if spec, err := reg.GetServerSpec(srv.Name, targetProfile); err == nil && spec != nil {
-			entry.Description = strings.TrimSpace(spec.Description)
-			entry.Command = strings.TrimSpace(spec.Command)
-		}
-		if entry.Description == "" && srv.Common != nil {
-			entry.Description = strings.TrimSpace(srv.Common.Description)
-		}
-		entries = append(entries, entry)
-	}
-
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
-	return entries
+	cmd.Flags().StringVar(&targetProfile, "target", "codex", "Target profile for resolved commands/env")
+	cmd.Flags().StringVar(&categoryFilter, "category", "", "Only include servers with this category")
+	cmd.Flags().BoolVar(&outputJSON, "json", false, "Output in JSON format")
+	return cmd
 }
 
-func serverHasCategory(srv *registry.Server, categoryLower string) bool {
-	for _, c := range srv.Categories {
-		if strings.EqualFold(strings.TrimSpace(c), categoryLower) {
-			return true
+func runCatalogBrowse(targetProfile, categoryFilter, query string, outputJSON bool, heading, countLabel string) error {
+	workspaceRoot := findWorkspaceRootForChecks()
+	regRes := resolveRegistryForDiagnostics(workspaceRoot)
+	if !regRes.Found {
+		return fmt.Errorf("registry.yaml not found (checked: %s)", strings.Join(regRes.Precedence, " -> "))
+	}
+
+	reg, err := registry.LoadWithDefaults(regRes.Path)
+	if err != nil {
+		return fmt.Errorf("load registry %q: %w", regRes.Path, err)
+	}
+
+	cs, err := registry.LoadCatalogState()
+	if err != nil {
+		return fmt.Errorf("load catalog state: %w", err)
+	}
+
+	entries := buildCatalogEntries(reg, cs, targetProfile, categoryFilter, query)
+	if outputJSON {
+		payload := map[string]any{
+			"registry_path": regRes.Path,
+			"profile":       targetProfile,
+			"category":      categoryFilter,
+			"count":         len(entries),
+			"servers":       entries,
+		}
+		if query != "" {
+			payload["query"] = query
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(payload)
+	}
+
+	fmt.Printf("%s: %s\n", heading, regRes.Path)
+	fmt.Printf("Profile: %s\n", targetProfile)
+	if query != "" {
+		fmt.Printf("Query: %s\n", query)
+	}
+	if categoryFilter != "" {
+		fmt.Printf("Category filter: %s\n", categoryFilter)
+	}
+	fmt.Printf("%s: %d\n\n", countLabel, len(entries))
+
+	for _, entry := range entries {
+		status := "+"
+		if !entry.Enabled {
+			status = "-"
+		}
+		fmt.Printf("%s %s", status, entry.Name)
+		if entry.Command != "" {
+			fmt.Printf(" (%s)", entry.Command)
+		}
+		fmt.Println()
+		if entry.Description != "" {
+			fmt.Printf("  %s\n", entry.Description)
+		}
+		if entry.ToolCount > 0 {
+			fmt.Printf("  tools: %d\n", entry.ToolCount)
+		}
+		if len(entry.EnvHints) > 0 {
+			fmt.Printf("  env: %s\n", strings.Join(entry.EnvHints, ", "))
+		}
+		if len(entry.ConfigHints) > 0 {
+			fmt.Printf("  config: %s\n", strings.Join(entry.ConfigHints, " · "))
+		}
+		if len(entry.Categories) > 0 {
+			fmt.Printf("  categories: %s\n", strings.Join(entry.Categories, ", "))
 		}
 	}
-	return false
+	return nil
+}
+
+func buildCatalogEntries(reg *registry.Registry, cs *registry.CatalogState, targetProfile, categoryFilter, query string) []catalogEntry {
+	return registry.BuildCatalogEntries(reg, cs, targetProfile, categoryFilter, query, nil)
 }
 
 func newCatalogEnableCmd() *cobra.Command {
@@ -321,13 +314,4 @@ func runPostCatalogSync() error {
 		fmt.Fprintf(os.Stderr, "Warning: sync failed: %v\n", err)
 	}
 	return nil
-}
-
-func sortedCopy(in []string) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := append([]string(nil), in...)
-	sort.Strings(out)
-	return out
 }
