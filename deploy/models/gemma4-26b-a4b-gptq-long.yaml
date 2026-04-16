@@ -18,7 +18,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-turboquant-experimental
+  image: registry.harbor.lan/flexinfer/runtime@sha256:05f5b789ff9a8bc6411dc685a42dbc437e12b04e3b7c92afc5fa9a974c04e009
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
   cache:
     strategy: SharedPVC
