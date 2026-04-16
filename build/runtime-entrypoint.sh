@@ -265,7 +265,7 @@ if [ "${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC:-}" = "turboquant" ]; then
     echo "[entrypoint] TurboQuant requested via FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC=turboquant"
     case "${FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS:-planned}" in
         plugin)
-            echo "[entrypoint] TurboQuant plugin is bundled in this image; vLLM CUSTOM attention can activate it per-model"
+            echo "[entrypoint] TurboQuant status=plugin; plugin mode is bundled in this image and vLLM CUSTOM attention can activate it per-model"
             ;;
         planned)
             echo "[entrypoint] No vLLM KV-cache TurboQuant integration is bundled in this image yet; using the standard cache path"

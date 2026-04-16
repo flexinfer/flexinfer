@@ -19,6 +19,11 @@ Update this document whenever a tuning change lands or a new blocker is found.
 | `gemma4-e4b-fast` | `gemma4-e4b-turboquant` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | Lower-latency textgen |
 | `gemma4-e4b-long` | `gemma4-e4b-turboquant-canary` | `cblevins-5930k` | `CUSTOM` + `kvCacheCodec=turboquant` | Long-context profile |
 
+The standard runtime overlay still strips TurboQuant for the default serving
+images. The long-context canary must use the explicit TurboQuant plugin image
+path (`runtime:rocm-gfx1100-gemma4-turboquant-experimental`) so the plugin is
+bundled and patched at build time.
+
 ## Current profile knobs
 
 | Model ID | `maxModelLen` | `maxNumBatchedTokens` | `gpuMemoryUtilization` | Serverless |
