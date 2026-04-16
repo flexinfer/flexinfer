@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -82,13 +83,65 @@ func (p *callPipeline) retryLocalAfterLocalSendFailure(err error, req *mcp.Messa
 	}
 
 	p.releaseConnection()
-	if connectErr := p.connectTarget(router.TargetLocal, "local transport send retry"); connectErr != nil {
+	if connectErr := p.connectTargetWithTransportRetry(router.TargetLocal, "local transport send retry"); connectErr != nil {
 		combined := fmt.Errorf("local send failed: %v; local retry failed: %w", err, connectErr)
 		p.daemon.metrics.RecordRequest(p.serverName, p.method, "error", p.targetStr, time.Since(start))
 		return p.internalErrorWithAudit(p.targetStr, combined), true
 	}
 
 	return p.execute(req), true
+}
+
+func (p *callPipeline) connectTargetWithTransportRetry(target router.Target, reason string) error {
+	err := p.connectTarget(target, reason)
+	if err == nil {
+		return nil
+	}
+	if target != router.TargetLocal || p.daemon == nil || !shouldRetryLocalDialAfterClosedTransport(err) {
+		return err
+	}
+
+	p.daemon.logger.Warn("local reconnect returned closed transport; retrying dial once",
+		"server", p.serverName, "error", err)
+	p.resetLocalServer("connect_retry_after_closed_transport")
+	p.releaseConnection()
+
+	retryErr := p.connectTarget(target, reason+" after closed transport")
+	if retryErr == nil {
+		return nil
+	}
+	return fmt.Errorf("%w; retry after closed transport failed: %v", err, retryErr)
+}
+
+func shouldRetryLocalDialAfterClosedTransport(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "transport closed") ||
+		strings.Contains(lower, "broken pipe") ||
+		strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "use of closed network connection") ||
+		strings.Contains(lower, "unexpected eof")
+}
+
+func (p *callPipeline) resetLocalServer(reason string) {
+	if p.daemon == nil {
+		return
+	}
+	if p.daemon.pool != nil {
+		p.daemon.pool.ClearServer(p.serverName)
+	}
+	if p.daemon.procMgr != nil {
+		_ = p.daemon.procMgr.Stop(p.serverName)
+	}
+	p.daemon.runningServers.Delete(p.serverName)
+	if p.daemon.eventBus != nil {
+		p.daemon.eventBus.Publish(EventProcessStop, map[string]any{
+			"server": p.serverName,
+			"reason": reason,
+		})
+	}
 }
 
 func (p *callPipeline) connectTarget(target router.Target, reason string) error {
@@ -233,6 +286,48 @@ func (p *callPipeline) shouldRetryLocalAfterHubFailure() bool {
 		p.daemon.pool != nil
 }
 
+func (p *callPipeline) retryHubAfterHubFailure(stage string, err error, req *mcp.Message) (*mcp.Message, bool) {
+	if p.hubTransportRetryUsed || p.target != router.TargetHub || p.daemon == nil || p.daemon.hubPool == nil {
+		return nil, false
+	}
+	if !shouldResetDaemonTransport(err) {
+		return nil, false
+	}
+
+	p.hubTransportRetryUsed = true
+	if p.conn != nil {
+		p.conn.Healthy = false
+	}
+	p.daemon.router.RecordFailure(p.serverName, p.target, err)
+	p.daemon.metrics.RecordServerFailure(p.serverName, p.targetStr, stage)
+	p.daemon.hubPool.ClearServer(p.serverName)
+	if p.daemon.hubClient != nil {
+		p.daemon.hubClient.CloseConnection(p.serverName)
+	}
+
+	p.daemon.logger.Warn("hub transport failed; reconnecting and retrying once",
+		"server", p.serverName,
+		"stage", stage,
+		"error", err)
+	p.recordTransportSpanEvent("daemon.proxy.hub_retry_after_transport_failure",
+		attribute.String("server.name", p.serverName),
+		attribute.String("failure.stage", stage),
+		attribute.String("failure.error", err.Error()),
+		attribute.String("target", router.TargetHub.String()),
+	)
+
+	p.releaseConnection()
+	if connectErr := p.connectTarget(router.TargetHub, "hub transport retry after "+stage); connectErr != nil {
+		p.daemon.logger.Warn("hub transport retry connect failed",
+			"server", p.serverName,
+			"stage", stage,
+			"error", connectErr)
+		return nil, false
+	}
+
+	return p.execute(req), true
+}
+
 func (p *callPipeline) retryLocalAfterHubFailure(stage string, err error, req *mcp.Message, start time.Time) (*mcp.Message, bool) {
 	if !p.shouldRetryLocalAfterHubFailure() {
 		return nil, false
@@ -268,7 +363,7 @@ func (p *callPipeline) retryLocalAfterHubFailure(stage string, err error, req *m
 
 	p.releaseConnection()
 
-	if connectErr := p.connectTarget(router.TargetLocal, "prefer-hub fallback after hub transport failure"); connectErr != nil {
+	if connectErr := p.connectTargetWithTransportRetry(router.TargetLocal, "prefer-hub fallback after hub transport failure"); connectErr != nil {
 		combined := fmt.Errorf("hub %s failed: %v; local retry failed: %w", stage, err, connectErr)
 		p.daemon.metrics.RecordRequest(p.serverName, p.method, "error", p.targetStr, time.Since(start))
 		return p.internalErrorWithAudit(p.targetStr, combined), true

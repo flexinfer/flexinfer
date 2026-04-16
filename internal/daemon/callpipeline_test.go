@@ -711,6 +711,150 @@ func TestCallPipelineRouteAndConnect_PreferHubConnectFailureRetriesLocal(t *test
 	}
 }
 
+func TestCallPipelineHubDelegateTransportFailureRetriesFreshHub(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.router = router.New(router.Config{
+		HubEnabled: true,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{
+					Name:       "agent_context",
+					Categories: []string{"local-only"},
+				},
+			},
+		},
+	})
+	d.fileCfg.HubDelegate.Servers = []string{"agent_context"}
+	d.hubClient = mcp.NewWebSocketClient(mcp.WebSocketConfig{})
+
+	hubDials := 0
+	localDials := 0
+	d.hubPool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			hubDials++
+			if hubDials == 1 {
+				return &fakeTransport{sendErr: errors.New("transport closed")}, nil
+			}
+			return &fakeTransport{
+				recvMsg: &mcp.Message{
+					JSONRPC: mcp.JSONRPCVersion,
+					ID:      "delegated-call",
+					Result:  json.RawMessage(`{"ok":true}`),
+				},
+			}, nil
+		},
+	})
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			localDials++
+			return &fakeTransport{
+				recvMsg: &mcp.Message{
+					JSONRPC: mcp.JSONRPCVersion,
+					ID:      "delegated-call",
+					Result:  json.RawMessage(`{"ok":true}`),
+				},
+			}, nil
+		},
+	})
+	defer func() {
+		_ = d.hubPool.Close()
+		_ = d.pool.Close()
+	}()
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "delegated-call"},
+		serverName: "agent_context",
+		toolName:   "agent_session_list",
+		method:     "tools/call",
+		params:     callParams{Method: "tools/call"},
+		auditStart: time.Now(),
+	}
+
+	if resp := p.routeAndConnect(); resp != nil {
+		t.Fatalf("unexpected route error: %+v", resp.Error)
+	}
+	if p.target != router.TargetHub {
+		t.Fatalf("initial target = %v, want %v", p.target, router.TargetHub)
+	}
+	if !p.preferHubRetryEligible {
+		t.Fatal("expected delegated hub call to be eligible for local retry")
+	}
+
+	req, buildErr := p.buildForwardRequest()
+	if buildErr != nil {
+		p.releaseConnection()
+		t.Fatalf("unexpected build error: %+v", buildErr.Error)
+	}
+	resp := p.execute(req)
+	p.releaseConnection()
+
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected hub retry success, got response: %+v", resp)
+	}
+	if p.target != router.TargetHub {
+		t.Fatalf("target after retry = %v, want %v", p.target, router.TargetHub)
+	}
+	if !p.hubTransportRetryUsed {
+		t.Fatal("expected hub retry to be marked used")
+	}
+	if p.localRetryUsed {
+		t.Fatal("did not expect local fallback when hub reconnect succeeds")
+	}
+	if hubDials != 2 {
+		t.Fatalf("hub dials = %d, want 2", hubDials)
+	}
+	if localDials != 0 {
+		t.Fatalf("local dials = %d, want 0", localDials)
+	}
+}
+
+func TestConnectTargetWithTransportRetryRetriesClosedLocalDial(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+
+	dials := 0
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			dials++
+			if dials == 1 {
+				return nil, errors.New("initialize transport: send init (2024-11-05): transport closed")
+			}
+			return &fakeTransport{}, nil
+		},
+	})
+	defer func() { _ = d.pool.Close() }()
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "local-connect-retry"},
+		serverName: "agent_context",
+		toolName:   "agent_session_list",
+		method:     "tools/call",
+	}
+	if err := p.connectTargetWithTransportRetry(router.TargetLocal, "test local retry"); err != nil {
+		t.Fatalf("connectTargetWithTransportRetry error: %v", err)
+	}
+	defer p.releaseConnection()
+
+	if dials != 2 {
+		t.Fatalf("dials = %d, want 2", dials)
+	}
+	if p.target != router.TargetLocal {
+		t.Fatalf("target = %v, want %v", p.target, router.TargetLocal)
+	}
+}
+
 func TestCallPipelineRouteAndConnect_LocalDialFailureEmitsAuditAndCost(t *testing.T) {
 	d := newCallPipelineTestDaemon()
 	auditPath := enableAuditAndCostForTest(t, d)
