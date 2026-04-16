@@ -171,6 +171,7 @@ Desktop HUD agent surfaces now use one merged live-agent model:
 - `Session` and `Traces` buttons are available directly from agent rows, which makes it easier to understand why an agent is visible even when session state and heartbeat state disagree.
 - Fleet session detail now includes a session-path breadcrumb and child-session list so you can traverse parent/root/current relationships without leaving the drawer.
 - Fleet session detail reads `GET /api/sessions/{id}/trace`, which composes session metadata, lifecycle events, context entries, and daemon audit traces. If context entries fail, for example because agent-context returns `transport closed`, the drawer still shows the available lifecycle/audit evidence and labels the partial source error inline.
+- Mobile clients can read the same resilient payload from `GET /api/mobile/v1/sessions/{session_id}/trace`, wrapped in the standard mobile envelope for bearer-token access.
 - Fleet session detail and Spawn detail now include recent trace previews inline, so you can inspect the last few routed tool calls before deciding whether to open the full `Traces` panel.
 - Overview and Lifecycle pressure cards are actionable now: attention agents jump into session detail or filtered traces, while namespace and relation hotspots jump into Dispatch.
 
@@ -390,7 +391,7 @@ The mobile operator token requires these scopes (configured via `HUD_MOBILE_OPER
 
 | Scope | Grants |
 |-------|--------|
-| `mobile:read` | Dashboard, sessions, session detail, session events, audit, alerts policy |
+| `mobile:read` | Dashboard, sessions, session detail, session events, session trace, audit, alerts policy |
 | `mobile:session:create` | Create new agent sessions |
 | `mobile:session:end` | End active agent sessions |
 | `mobile:push` | Register/unregister push notification tokens |

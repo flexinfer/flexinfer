@@ -223,6 +223,31 @@ func (d *MobileDomain) handleMobileSessionEvents(w http.ResponseWriter, r *http.
 	})
 }
 
+func (d *MobileDomain) handleMobileSessionTrace(w http.ResponseWriter, r *http.Request) {
+	if !d.requireMobileScope(w, r, ScopeRead) {
+		return
+	}
+
+	sessionID := strings.TrimSpace(r.PathValue("session_id"))
+	if sessionID == "" {
+		d.writeMobileError(w, http.StatusBadRequest, "bad_request", "session_id is required")
+		return
+	}
+
+	limit := 100
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	trace := d.deps.SessionTrace(sessionID, strings.TrimSpace(r.URL.Query().Get("agent_id")), limit)
+	d.writeMobileJSON(w, http.StatusOK, trace)
+}
+
 func (d *MobileDomain) handleMobileSessionCreate(w http.ResponseWriter, r *http.Request) {
 	if !d.requireMobileScope(w, r, ScopeSessionCreate) {
 		return
