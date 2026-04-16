@@ -41,9 +41,15 @@ func TestRouter_Status(t *testing.T) {
 	if status["router_model"] != "test-router" {
 		t.Errorf("unexpected router_model: %v", status["router_model"])
 	}
-	domains := status["domains"].([]string)
+	domains, ok := status["domains"].([]SubAgent)
+	if !ok {
+		t.Fatalf("expected domains to be []SubAgent, got %T", status["domains"])
+	}
 	if len(domains) != 6 {
 		t.Errorf("expected 6 default domains, got %d", len(domains))
+	}
+	if domains[0].Name == "" {
+		t.Error("expected populated domain metadata")
 	}
 }
 

@@ -60,7 +60,10 @@ func TestHandleStatus_WeaverEnabled(t *testing.T) {
 				"enabled": true,
 				"router_model": "gemma-4",
 				"subagent_model": "gemma-4",
-				"domains": ["codebase", "cluster-ops"],
+				"domains": [
+					{"name": "codebase", "description": "Repository state", "tools": ["git__git_status"]},
+					{"name": "cluster-ops", "description": "Cluster health", "tools": ["k8s_apps_k3s__k8s_getPods"]}
+				],
 				"max_iterations": 8,
 				"max_concurrent": 4
 			}`),
@@ -149,7 +152,11 @@ func TestHandleDomains_Success(t *testing.T) {
 				"enabled": true,
 				"router_model": "gemma-4",
 				"subagent_model": "qwen3-8b",
-				"domains": ["codebase", "ci-pipeline", "cluster-ops"]
+				"domains": [
+					{"name": "codebase", "description": "Repository state", "tools": ["git__git_status"]},
+					{"name": "ci-pipeline", "description": "Pipeline status", "tools": ["gitlab__list_pipelines"]},
+					{"name": "cluster-ops", "description": "Cluster health", "tools": ["k8s_apps_k3s__k8s_getPods"]}
+				]
 			}`),
 		},
 	}

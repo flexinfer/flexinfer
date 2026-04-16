@@ -195,7 +195,7 @@ func (r *Router) Gather(ctx context.Context, domains []string, query string, ide
 
 // Status returns the current weaver status.
 func (r *Router) Status() map[string]any {
-	domains := r.registry.Names()
+	domains := r.registry.List()
 	return map[string]any{
 		"enabled":        r.cfg.Enabled,
 		"router_model":   r.cfg.RouterModel,
