@@ -62,6 +62,36 @@ Interpretation:
 - Cold-start noise and prefix-cache artifacts must be excluded from measurements
   or the fast profile numbers will be misleading.
 
+## Long-context readiness probe
+
+Use `scripts/probe-gemma4-long-context.sh` when you need a repeatable readiness
+check instead of a simple pod-health check. The probe runs three cases:
+
+- short sanity: `2 + 2`
+- medium context: repeated-token prompt with a retained verification code
+- long context: default ~30k-token prompt with the same retained verification code
+
+It writes both JSON and Markdown artifacts, records prompt/completion tokens and
+elapsed time, and exits nonzero if the model returns obvious garbage, repetition,
+or the wrong answer.
+
+Common runs:
+
+```bash
+kubectl -n ai port-forward svc/litellm 18000:8000
+ENDPOINT=http://127.0.0.1:18000 ./scripts/probe-gemma4-long-context.sh
+```
+
+Direct service URL with cluster metadata/log hints:
+
+```bash
+ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
+  AUTH_TOKEN=sk-litellm-master-key \
+  MODEL=gemma4-26b-a4b-gptq \
+  POD_SELECTOR='app=gemma4-26b-a4b' \
+  ./scripts/probe-gemma4-long-context.sh
+```
+
 ## Features working
 
 | Feature | Status | Notes |
