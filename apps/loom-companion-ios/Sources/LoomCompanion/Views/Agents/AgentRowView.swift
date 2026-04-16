@@ -74,6 +74,10 @@ struct AgentRowView: View {
 
                 // Line 3: compact pill row
                 HStack(spacing: LoomSpacing.xs) {
+                    telemetryPill
+                    if agent.hasPresenceEvidence {
+                        evidencePill("presence")
+                    }
                     if agent.hasSession {
                         sessionPill
                     }
@@ -87,7 +91,7 @@ struct AgentRowView: View {
                         pipelinePill(status: status)
                     }
                     Spacer()
-                    elapsedLabel
+                    telemetryAgeLabel
                 }
             }
         }
@@ -125,6 +129,26 @@ struct AgentRowView: View {
         .background(LoomColors.accent.opacity(0.1))
         .foregroundStyle(LoomColors.accent)
         .clipShape(Capsule())
+    }
+
+    private var telemetryPill: some View {
+        Text(agent.telemetryStatus.isEmpty ? agent.source : agent.telemetryStatus)
+            .font(.caption2)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(telemetryColor.opacity(0.1))
+            .foregroundStyle(telemetryColor)
+            .clipShape(Capsule())
+    }
+
+    private func evidencePill(_ label: String) -> some View {
+        Text(label)
+            .font(.caption2)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(LoomColors.bgTertiary)
+            .foregroundStyle(LoomColors.textSecondary)
+            .clipShape(Capsule())
     }
 
     private var spawnPill: some View {
@@ -210,6 +234,33 @@ struct AgentRowView: View {
         }
     }
 
+    private var telemetryAgeLabel: some View {
+        Group {
+            if agent.hasPresenceEvidence && agent.heartbeatAgeSeconds > 0 {
+                Text("hb \(Self.compactDuration(agent.heartbeatAgeSeconds))")
+                    .font(LoomTypography.monoCaption)
+                    .foregroundStyle(LoomColors.textTertiary)
+            } else if agent.hasSession && agent.sessionAgeSeconds > 0 {
+                Text("session \(Self.compactDuration(agent.sessionAgeSeconds))")
+                    .font(LoomTypography.monoCaption)
+                    .foregroundStyle(LoomColors.textTertiary)
+            } else {
+                elapsedLabel
+            }
+        }
+    }
+
+    private var telemetryColor: Color {
+        switch agent.telemetryStatus {
+        case "live": return LoomColors.statusActive
+        case "idle": return LoomColors.statusIdle
+        case "stale": return LoomColors.statusDegraded
+        case "session_only": return LoomColors.accent
+        case "offline": return LoomColors.textTertiary
+        default: return LoomColors.textSecondary
+        }
+    }
+
     // MARK: - Helpers
 
     private func formatTokens(_ tokens: Int) -> String {
@@ -239,5 +290,11 @@ struct AgentRowView: View {
         if diff < 60 { return "\(diff)s ago" }
         if diff < 3600 { return "\(diff / 60)m\(diff % 60)s ago" }
         return "\(diff / 3600)h ago"
+    }
+
+    static func compactDuration(_ seconds: Int) -> String {
+        if seconds < 60 { return "\(seconds)s" }
+        if seconds < 3600 { return "\(seconds / 60)m" }
+        return "\(seconds / 3600)h"
     }
 }

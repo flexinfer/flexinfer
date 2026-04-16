@@ -341,6 +341,11 @@ type unifiedAgent struct {
 	ClaimCount       int      `json:"claim_count"`
 	PipelineCount    int      `json:"pipeline_count"`
 	PipelineStatus   string   `json:"pipeline_status,omitempty"`
+	HeartbeatAgeSec  int      `json:"heartbeat_age_seconds,omitempty"`
+	SessionAgeSec    int      `json:"session_age_seconds,omitempty"`
+	TelemetryStatus  string   `json:"telemetry_status,omitempty"`
+	HasPresence      bool     `json:"has_presence"`
+	HasSession       bool     `json:"has_session"`
 }
 
 type unifiedAgentsSummary struct {

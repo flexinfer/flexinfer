@@ -228,6 +228,7 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 		if agentType == "" || agentType == "unknown" {
 			agentType = inferAgentType(pa.AgentID)
 		}
+		hasPresence := pa.HasPresence || pa.Source == "" || strings.HasPrefix(pa.Source, "presence")
 		ua := &unifiedAgent{
 			AgentID:         pa.AgentID,
 			AgentType:       agentType,
@@ -238,6 +239,11 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 			Branch:          pa.Branch,
 			LastHeartbeat:   pa.LastHeartbeat,
 			ActiveFileCount: len(pa.ActiveFiles),
+			HeartbeatAgeSec: pa.HeartbeatAgeSeconds,
+			SessionAgeSec:   pa.SessionAgeSeconds,
+			TelemetryStatus: pa.TelemetryStatus,
+			HasPresence:     hasPresence,
+			HasSession:      pa.HasSession,
 		}
 		if sess, ok := liveSessionsByID[pa.SessionID]; ok {
 			ua.SessionID = sess.ID
@@ -247,6 +253,7 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 			ua.SessionStarted = sess.StartedAt
 			ua.EntryCount = sess.EntryCount
 			ua.TotalTokens = sess.TotalTokens
+			ua.HasSession = true
 			if ua.Description == "" {
 				ua.Description = sess.Description
 			}
@@ -258,9 +265,16 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 			ua.SessionStarted = sess.StartedAt
 			ua.EntryCount = sess.EntryCount
 			ua.TotalTokens = sess.TotalTokens
+			ua.HasSession = true
 			if ua.Description == "" {
 				ua.Description = sess.Description
 			}
+		}
+		if ua.HasSession && ua.Source == "presence" {
+			ua.Source = "presence+session"
+		}
+		if ua.TelemetryStatus == "" {
+			ua.TelemetryStatus = mobileAgentTelemetryStatus(*ua)
 		}
 		applyMobileAgentHint(ua, taskHints[pa.AgentID])
 		applyMobileAgentHint(ua, worktreeHints[pa.AgentID])
@@ -281,6 +295,10 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 			ua.SessionStarted = sess.StartedAt
 			ua.EntryCount = sess.EntryCount
 			ua.TotalTokens = sess.TotalTokens
+			ua.HasSession = true
+			if ua.TelemetryStatus == "" {
+				ua.TelemetryStatus = mobileAgentTelemetryStatus(*ua)
+			}
 			if ua.Description == "" {
 				ua.Description = sess.Description
 			}
@@ -290,18 +308,21 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 				status = "active"
 			}
 			ua := &unifiedAgent{
-				AgentID:        sess.AgentID,
-				AgentType:      inferAgentType(sess.AgentID),
-				Status:         status,
-				Source:         "session_only",
-				Description:    sess.Description,
-				SessionID:      sess.ID,
-				Namespace:      sess.Namespace,
-				Project:        projectmeta.Canonical(sess.Project, sess.Namespace),
-				SessionStatus:  sess.Status,
-				SessionStarted: sess.StartedAt,
-				EntryCount:     sess.EntryCount,
-				TotalTokens:    sess.TotalTokens,
+				AgentID:         sess.AgentID,
+				AgentType:       inferAgentType(sess.AgentID),
+				Status:          status,
+				Source:          "session_only",
+				Description:     sess.Description,
+				SessionID:       sess.ID,
+				Namespace:       sess.Namespace,
+				Project:         projectmeta.Canonical(sess.Project, sess.Namespace),
+				SessionStatus:   sess.Status,
+				SessionStarted:  sess.StartedAt,
+				EntryCount:      sess.EntryCount,
+				TotalTokens:     sess.TotalTokens,
+				TelemetryStatus: "session_only",
+				HasPresence:     false,
+				HasSession:      true,
 			}
 			agentMap[sess.AgentID] = ua
 		}
@@ -320,15 +341,16 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 			}
 		} else {
 			ua := &unifiedAgent{
-				AgentID:     sp.AgentID,
-				AgentType:   sp.AgentType,
-				Status:      "active",
-				Source:      "spawn",
-				Description: sp.Task,
-				Branch:      sp.Branch,
-				SpawnID:     sp.SpawnID,
-				SpawnStatus: sp.Status,
-				Project:     sp.Project,
+				AgentID:         sp.AgentID,
+				AgentType:       sp.AgentType,
+				Status:          "active",
+				Source:          "spawn",
+				Description:     sp.Task,
+				Branch:          sp.Branch,
+				SpawnID:         sp.SpawnID,
+				SpawnStatus:     sp.Status,
+				Project:         sp.Project,
+				TelemetryStatus: "spawn",
 			}
 			agentMap[sp.AgentID] = ua
 		}
@@ -347,6 +369,9 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 		if counts, ok := taskCountsByAgent[ua.AgentID]; ok {
 			ua.TaskCount = counts.Pending + counts.InProgress + counts.Blocked + counts.Completed
 			ua.BlockedTasks = counts.Blocked
+		}
+		if ua.TelemetryStatus == "" {
+			ua.TelemetryStatus = mobileAgentTelemetryStatus(*ua)
 		}
 		applyMobileAgentHint(ua, taskHints[ua.AgentID])
 		applyMobileAgentHint(ua, worktreeHints[ua.AgentID])
@@ -586,6 +611,25 @@ func mobileSessionIsLive(status string) bool {
 
 func mobileSessionStartedAt(raw string) time.Time {
 	return parseMobileTime(raw)
+}
+
+func mobileAgentTelemetryStatus(agent unifiedAgent) string {
+	switch {
+	case agent.SpawnID != "":
+		return "spawn"
+	case agent.HasSession && !agent.HasPresence:
+		return "session_only"
+	case agent.Status == "offline":
+		return "offline"
+	case agent.HeartbeatAgeSec > 300:
+		return "stale"
+	case agent.Status == "idle":
+		return "idle"
+	case agent.Status == "active":
+		return "live"
+	default:
+		return "unknown"
+	}
 }
 
 // handleMobileSessionActivity returns a unified view of session tasks, pipeline, and recent context.
