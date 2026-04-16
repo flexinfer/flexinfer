@@ -22,6 +22,7 @@ spec:
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
   cache:
     strategy: SharedPVC
+    storageClass: nvme-1r-gpu
   gpu:
     vendor: amd
     count: 1
