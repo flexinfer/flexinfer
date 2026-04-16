@@ -21,7 +21,7 @@ COPY build/scripts/abliterate.py /opt/flexinfer/scripts/abliterate.py
 # The controller probes tiny sentinel files for version compatibility before it
 # ever executes the full quantize script. Keep those sentinels import-safe.
 RUN mkdir -p /app && \
-    printf 'FLEXINFER_SCRIPT_VERSION = "v10"\n' > /app/quantize_gptq.py && \
+    printf 'FLEXINFER_SCRIPT_VERSION = "v11"\n' > /app/quantize_gptq.py && \
     printf 'FLEXINFER_SCRIPT_VERSION = "v1"\n' > /app/abliterate.py
 
 ENTRYPOINT ["/bin/bash"]

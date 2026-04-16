@@ -13,6 +13,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -132,8 +133,7 @@ func TestReconcileQuantizationCreatesJobAndSeedsHash(t *testing.T) {
 	assert.Equal(t, aiv1alpha1.ModelCachePhaseQuantizing, updated.Status.Phase)
 	assert.Equal(t, "quantization", updated.Status.CurrentPhase)
 	require.NotNil(t, updated.Annotations)
-	// Hash now includes resolved image (empty when no GPUProfiles set)
-	assert.Equal(t, quantSpecHashWithImage(updated.Spec.Quantization, ""), updated.Annotations[annotationQuantSpecHash])
+	assert.Equal(t, quantSpecHash(updated.Spec.Quantization), updated.Annotations[annotationQuantSpecHash])
 
 	job := &batchv1.Job{}
 	err = cl.Get(context.Background(), client.ObjectKey{Name: "quant-create-quantize", Namespace: "default"}, job)
@@ -368,8 +368,7 @@ func TestReconcileQuantizationSpecChangeResetsQuantizationOnlyAndDeletesJobs(t *
 	assert.Equal(t, "1.0", updated.Status.Abliteration.RefusalDirNorm)
 	assert.Nil(t, updated.Status.Publish)
 	require.NotNil(t, updated.Annotations)
-	// Hash now includes resolved image (empty when no GPUProfiles set)
-	assert.Equal(t, quantSpecHashWithImage(updated.Spec.Quantization, ""), updated.Annotations[annotationQuantSpecHash])
+	assert.Equal(t, quantSpecHash(updated.Spec.Quantization), updated.Annotations[annotationQuantSpecHash])
 
 	for _, jobName := range []string{
 		"quant-reset-quantize",
@@ -852,6 +851,53 @@ func TestQuantSpecHashWithImage_ChangesOnImageChange(t *testing.T) {
 	assert.Equal(t, hash1, hash1Again)
 }
 
+func TestReconcileQuantization_ImageChangeDoesNotInvalidateReadyCache(t *testing.T) {
+	cache := newQuantizationCache("quant-ready-image-change")
+	cache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+	cache.Status.CurrentPhase = "ready"
+	cache.Status.Quantization = &aiv1alpha1.QuantizationStatus{
+		Type:                "W4_G128",
+		QuantizationTime:    "5m0s",
+		CompressedSizeBytes: 1234,
+	}
+	cache.Annotations = map[string]string{
+		annotationQuantSpecHash: quantSpecHash(cache.Spec.Quantization),
+	}
+	cache.Spec.NodeSelector["flexinfer.ai/gpu.arch"] = "gfx1100"
+
+	profile := &aiv1alpha2.GPUProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gfx1100",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.GPUProfileSpec{
+			Architecture: "gfx1100",
+			Quantization: &aiv1alpha2.QuantizationProfile{
+				Images: map[string]string{
+					"gptq": "registry.example.com/quantizer:NEW",
+				},
+			},
+		},
+	}
+
+	r, cl := newQuantizationTestReconciler(t, nil, cache, profile)
+	r.GPUProfiles = &GPUProfileReconciler{Client: cl, Scheme: r.Scheme}
+
+	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, time.Duration(0), result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseReady, updated.Status.Phase)
+	require.NotNil(t, updated.Status.Quantization)
+	assert.Equal(t, "5m0s", updated.Status.Quantization.QuantizationTime)
+	assert.Equal(t, quantSpecHash(updated.Spec.Quantization), updated.Annotations[annotationQuantSpecHash])
+
+	job := &batchv1.Job{}
+	err = cl.Get(context.Background(), client.ObjectKey{Name: "quant-ready-image-change-quantize", Namespace: "default"}, job)
+	assert.True(t, apierrors.IsNotFound(err), "image-only changes must not create a new quantization job")
+}
+
 func TestReconcileQuantization_ImageDrift_DeletesJob(t *testing.T) {
 	started := metav1.NewTime(time.Now().Add(-5 * time.Minute))
 
@@ -929,10 +975,8 @@ func TestReconcileQuantization_ImageDrift_DeletesJob(t *testing.T) {
 		GPUProfiles: gpuProfileReconciler,
 	}
 
-	// Seed the hash to match so detectAndApplySpecChange is a no-op.
-	// We need to compute the hash WITH the new image so it matches.
-	newHash := quantSpecHashWithImage(cache.Spec.Quantization, "registry.example.com/quantizer:NEW")
-	cache.Annotations[annotationQuantSpecHash] = newHash
+	// Seed the spec hash to match so only active-job image drift runs.
+	cache.Annotations[annotationQuantSpecHash] = quantSpecHash(cache.Spec.Quantization)
 	require.NoError(t, cl.Update(context.Background(), cache))
 
 	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
@@ -953,6 +997,7 @@ func newQuantizationTestReconciler(t *testing.T, kubeClient kubernetes.Interface
 		corev1.AddToScheme,
 		batchv1.AddToScheme,
 		aiv1alpha1.AddToScheme,
+		aiv1alpha2.AddToScheme,
 	} {
 		require.NoError(t, add(s))
 	}

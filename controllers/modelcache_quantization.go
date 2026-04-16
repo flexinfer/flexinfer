@@ -79,10 +79,10 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		}
 	}
 
-	// Include the resolved quantizer image in the hash so GPUProfile image
-	// changes trigger re-quantization via detectAndApplySpecChange.
-	resolvedImg := r.resolveCurrentQuantizerImage(ctx, modelCache)
-	currentHash := quantSpecHashWithImage(modelCache.Spec.Quantization, resolvedImg)
+	// Hash only the desired quantization spec. Quantizer image changes must not
+	// invalidate already-ready artifacts and take serving deployments down; active
+	// job image drift is handled separately below.
+	currentHash := quantSpecHash(modelCache.Spec.Quantization)
 
 	suffixes := []string{"-quantize", "-quantize-image-warmup", "-publish"}
 
@@ -878,8 +878,8 @@ func quantSpecHash(spec *aiv1alpha1.QuantizationSpec) string {
 }
 
 // quantSpecHashWithImage returns a hash that includes both the QuantizationSpec
-// and the resolved quantizer image. When the GPUProfile image changes, this hash
-// changes, triggering detectAndApplySpecChange to delete the old job.
+// and the resolved quantizer image. It is intentionally not used for completed
+// cache invalidation because image-only changes would tear down serving models.
 func quantSpecHashWithImage(spec *aiv1alpha1.QuantizationSpec, resolvedImage string) string {
 	if spec == nil {
 		return ""

@@ -15,10 +15,9 @@
 # MoE quantization:
 #   - dynamicExclusion: "auto" — detects MoE architecture. For Gemma4 26B-A4B,
 #     the quantizer emits a versioned hybrid directory. MoE experts are GPTQ
-#     INT4, while dense attention/MLP GPTQ families are kept only if direct
-#     dequantization validates against post-abliteration source weights. Failed
-#     dense families fall back to source precision, avoiding the corrupt
-#     repeated-token dense GPTQ failure observed on vLLM/ROCm.
+#     INT4, while dense attention/MLP weights default to source precision for
+#     vLLM/ROCm. Dense GPTQ can pass offline dequantization checks but still
+#     trips vLLM's ROCm GPTQ dense kernel path, so it remains opt-in only.
 #
 # Disk: the upstream BF16 cache expands to roughly 30 Gi on Longhorn/Xet-backed
 # downloads, and streaming in-place save needs another full set of shards plus

@@ -14,7 +14,7 @@ import (
 
 // GPTQScriptVersion must match FLEXINFER_SCRIPT_VERSION in quantize_gptq.py.
 // Bump both when controller-side heredoc patches change to catch stale images.
-const GPTQScriptVersion = "v10"
+const GPTQScriptVersion = "v11"
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}
@@ -139,7 +139,7 @@ func GPTQOutputSubdir(modelPath string, bits, groupSize int) string {
 	if strings.Contains(strings.ToLower(modelPath), "gemma4-26b-a4b") {
 		// Version this experimental hybrid path so managed rebuilds cannot
 		// overwrite the currently serving clean hybrid artifact in-place.
-		return outSubdir + "-hybrid-v10"
+		return outSubdir + "-hybrid-v11"
 	}
 	return outSubdir
 }

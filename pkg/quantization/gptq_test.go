@@ -428,7 +428,7 @@ func TestGPTQJobBuilder_BuildJob_Gemma4MoEHybridOutput(t *testing.T) {
 
 	for _, env := range job.Spec.Template.Spec.Containers[0].Env {
 		if env.Name == "OUT_DIR" {
-			want := "/cache/gemma4-26b-a4b-gptq/gptq-w4-g128-hybrid-v10"
+			want := "/cache/gemma4-26b-a4b-gptq/gptq-w4-g128-hybrid-v11"
 			if env.Value != want {
 				t.Fatalf("OUT_DIR = %q, want %q", env.Value, want)
 			}

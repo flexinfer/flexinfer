@@ -9,7 +9,7 @@ All configuration is read from environment variables set by the controller:
 
 # Bumped when controller-side patches change. The wrapper script checks this
 # against GPTQScriptVersion in gptq.go and aborts on mismatch.
-FLEXINFER_SCRIPT_VERSION = "v10"
+FLEXINFER_SCRIPT_VERSION = "v11"
 import copy
 import gc
 import json
@@ -280,6 +280,16 @@ def _dense_gptq_cosine_threshold():
         return 0.98
 
 
+def _dense_gptq_policy():
+    raw = os.environ.get("GEMMA4_DENSE_GPTQ_POLICY", "fallback").strip().lower()
+    if raw in {"fallback", "fp16", "source", "safe"}:
+        return "fallback"
+    if raw in {"validate", "validated", "allow", "gptq"}:
+        return "validate"
+    print(f"WARN: invalid GEMMA4_DENSE_GPTQ_POLICY={raw!r}; using fallback")
+    return "fallback"
+
+
 def _load_safetensor(base_dir, weight_map, key):
     from safetensors import safe_open
 
@@ -461,10 +471,17 @@ def emit_gemma4_moe_hybrid_gptq(save_dir, model_dir):
             prefix = key.rsplit(".", 1)[0]
             quant_prefixes_by_family.setdefault(match.group(2), []).append(prefix)
 
+    dense_gptq_policy = _dense_gptq_policy()
     keep_gptq_families = set()
     fallback_families = set(source_dense_by_family)
     for family, source_keys in sorted(source_dense_by_family.items()):
         prefixes = sorted(k.rsplit(".weight", 1)[0] for k in source_keys)
+        if dense_gptq_policy == "fallback":
+            print(
+                f"Gemma4 dense GPTQ family {family} forced to source precision "
+                "(GEMMA4_DENSE_GPTQ_POLICY=fallback)"
+            )
+            continue
         if family not in quant_prefixes_by_family:
             print(f"Gemma4 dense GPTQ family {family} has no qweight keys; restoring source")
             continue
