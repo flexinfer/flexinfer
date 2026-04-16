@@ -15,6 +15,7 @@ type CodexJSONLParser struct {
 	broadcast SpawnEventBroadcaster
 	agentID   string
 	spawnID   string
+	model     string
 	logger    *slog.Logger
 }
 
@@ -31,6 +32,7 @@ func NewCodexJSONLParser(sink SpawnEventSink, agentID, spawnID string, broadcast
 		broadcast: broadcast,
 		agentID:   agentID,
 		spawnID:   spawnID,
+		model:     bridge.DefaultCodexModel,
 		logger:    logger.With("component", "codex-parser", "agent_id", agentID),
 	}
 }
@@ -87,6 +89,10 @@ func (p *CodexJSONLParser) HandleLine(line []byte) {
 func (p *CodexJSONLParser) handleThreadStarted(line []byte) {
 	var ev struct {
 		ThreadID string `json:"thread_id"`
+		Model    string `json:"model"`
+		Thread   struct {
+			Model string `json:"model"`
+		} `json:"thread"`
 	}
 	if err := json.Unmarshal(line, &ev); err != nil {
 		p.logger.Debug("failed to parse thread.started", "error", err)
@@ -94,6 +100,9 @@ func (p *CodexJSONLParser) handleThreadStarted(line []byte) {
 	}
 	if ev.ThreadID != "" {
 		p.sink.SetExternalSessionID(ev.ThreadID)
+	}
+	if model := firstNonEmpty(ev.Model, ev.Thread.Model); model != "" {
+		p.model = model
 	}
 }
 
@@ -149,17 +158,11 @@ func (p *CodexJSONLParser) handleTurnCompleted(line []byte) {
 
 	// Codex's SDK does not emit per-turn cost (unlike Claude's `result`
 	// event with `total_cost_usd`), so SpawnTelemetry.TotalCostUSD has been
-	// 0 for every Codex spawn. Estimate the cost in-process using a
-	// hard-coded price snapshot in the bridge package.
-	//
-	// TODO(slice 15b): Codex's `turn.completed` event does not include a
-	// model field, so we use bridge.DefaultCodexModel here. A future slice
-	// should plumb the actual model from the spawn config or
-	// `thread.started` event so multi-model accounts get accurate per-model
-	// rates. The accumulator marks the cost as estimated so the UI can
-	// label it appropriately.
+	// 0 for every Codex spawn. Estimate the cost in-process using the model
+	// metadata from thread.started when available, and fall back to the
+	// canonical Codex model when the SDK omits it.
 	estimatedCost := bridge.EstimateCodexCost(
-		bridge.DefaultCodexModel,
+		p.model,
 		freshInputTokens,
 		ev.Usage.CachedInputTokens,
 		ev.Usage.OutputTokens,
