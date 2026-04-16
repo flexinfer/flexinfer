@@ -784,8 +784,11 @@ func TestCallPipelineHubDelegateTransportFailureRetriesFreshHub(t *testing.T) {
 	if p.target != router.TargetHub {
 		t.Fatalf("initial target = %v, want %v", p.target, router.TargetHub)
 	}
-	if !p.preferHubRetryEligible {
-		t.Fatal("expected delegated hub call to be eligible for local retry")
+	if !p.hubDelegateActive {
+		t.Fatal("expected delegated hub call to mark hubDelegateActive")
+	}
+	if p.preferHubRetryEligible {
+		t.Fatal("delegated hub call must not be eligible for local retry")
 	}
 
 	req, buildErr := p.buildForwardRequest()
@@ -813,6 +816,101 @@ func TestCallPipelineHubDelegateTransportFailureRetriesFreshHub(t *testing.T) {
 	}
 	if localDials != 0 {
 		t.Fatalf("local dials = %d, want 0", localDials)
+	}
+}
+
+func TestCallPipelineHubDelegateTransportFailureDoesNotFallBackLocal(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.router = router.New(router.Config{
+		HubEnabled: true,
+		Registry: &kitregistry.Registry{
+			Servers: []*kitregistry.Server{
+				{
+					Name:       "agent_context",
+					Categories: []string{"local-only"},
+				},
+			},
+		},
+	})
+	d.fileCfg.HubDelegate.Servers = []string{"agent_context"}
+	d.hubClient = mcp.NewWebSocketClient(mcp.WebSocketConfig{})
+
+	hubDials := 0
+	localDials := 0
+	d.hubPool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			hubDials++
+			return &fakeTransport{sendErr: errors.New("transport closed")}, nil
+		},
+	})
+	d.pool = pool.New(pool.Config{
+		MaxIdle:     1,
+		MaxOpen:     1,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			localDials++
+			return &fakeTransport{
+				recvMsg: &mcp.Message{
+					JSONRPC: mcp.JSONRPCVersion,
+					ID:      "delegated-call",
+					Result:  json.RawMessage(`{"wrong_path":true}`),
+				},
+			}, nil
+		},
+	})
+	defer func() {
+		_ = d.hubPool.Close()
+		_ = d.pool.Close()
+	}()
+
+	p := &callPipeline{
+		daemon:     d,
+		ctx:        context.Background(),
+		msg:        &mcp.Message{ID: "delegated-call"},
+		serverName: "agent_context",
+		toolName:   "agent_session_list",
+		method:     "tools/call",
+		params:     callParams{Method: "tools/call"},
+		auditStart: time.Now(),
+	}
+
+	if resp := p.routeAndConnect(); resp != nil {
+		t.Fatalf("unexpected route error: %+v", resp.Error)
+	}
+	req, buildErr := p.buildForwardRequest()
+	if buildErr != nil {
+		p.releaseConnection()
+		t.Fatalf("unexpected build error: %+v", buildErr.Error)
+	}
+	resp := p.execute(req)
+	p.releaseConnection()
+
+	if resp == nil || resp.Error == nil {
+		t.Fatalf("expected hub transport error, got response: %+v", resp)
+	}
+	if !strings.Contains(resp.Error.Message, "transport closed") {
+		t.Fatalf("unexpected error message: %q", resp.Error.Message)
+	}
+	if p.target != router.TargetHub {
+		t.Fatalf("target after failure = %v, want %v", p.target, router.TargetHub)
+	}
+	if !p.hubTransportRetryUsed {
+		t.Fatal("expected hub retry to be marked used")
+	}
+	if p.localRetryUsed {
+		t.Fatal("did not expect local fallback for delegated hub call")
+	}
+	if hubDials != 2 {
+		t.Fatalf("hub dials = %d, want 2", hubDials)
+	}
+	if localDials != 0 {
+		t.Fatalf("local dials = %d, want 0", localDials)
+	}
+	if active, _ := d.preferHubBackoffActive("agent_context"); active {
+		t.Fatal("did not expect prefer-hub backoff for delegated hub call")
 	}
 }
 

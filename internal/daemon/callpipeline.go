@@ -63,6 +63,7 @@ type callPipeline struct {
 
 	routingPreference       RoutingPreference
 	preferHubRetryEligible  bool
+	hubDelegateActive       bool
 	localRetryUsed          bool
 	localTransportRetryUsed bool
 	hubTransportRetryUsed   bool

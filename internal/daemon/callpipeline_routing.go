@@ -280,6 +280,7 @@ func (p *callPipeline) discardIfStale(conn *pool.Conn, pl *pool.Pool) *pool.Conn
 
 func (p *callPipeline) shouldRetryLocalAfterHubFailure() bool {
 	return p.preferHubRetryEligible &&
+		!p.hubDelegateActive &&
 		!p.localRetryUsed &&
 		p.target == router.TargetHub &&
 		p.daemon != nil &&

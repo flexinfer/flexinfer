@@ -220,30 +220,19 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 
 	p.routingPreference = RoutingHealthBased
 	p.preferHubRetryEligible = false
+	p.hubDelegateActive = false
 
 	// Hub delegation: when the server is in the delegate list and the hub is
 	// healthy, override the routing decision to TargetHub so the daemon
 	// relays the call to the in-cluster service instead of spawning a local
 	// subprocess. This is the key "thin daemon" optimisation.
 	if p.daemon.hubDelegateEligible(p.serverName) {
-		if active, until := p.daemon.preferHubBackoffActive(p.serverName); active {
-			p.daemon.logger.Debug("hub delegation suppressed by backoff",
-				"server", p.serverName,
-				"backoff_until", until)
-			span.AddEvent("daemon.pipeline.route.hub_delegate_backoff", trace.WithAttributes(
-				attribute.String("mcp.server", p.serverName),
-				attribute.String("backoff_until", until.Format(time.RFC3339Nano)),
-			))
-		} else {
-			if decision.Target == router.TargetLocal && p.daemon.pool != nil {
-				p.preferHubRetryEligible = true
-			}
-			decision.Target = router.TargetHub
-			p.daemon.logger.Debug("hub delegation active", "server", p.serverName)
-			span.AddEvent("daemon.pipeline.route.hub_delegate", trace.WithAttributes(
-				attribute.String("mcp.server", p.serverName),
-			))
-		}
+		p.hubDelegateActive = true
+		decision.Target = router.TargetHub
+		p.daemon.logger.Debug("hub delegation active", "server", p.serverName)
+		span.AddEvent("daemon.pipeline.route.hub_delegate", trace.WithAttributes(
+			attribute.String("mcp.server", p.serverName),
+		))
 	}
 
 	if pref, ok := p.daemon.routingPreferences[p.serverName]; ok && pref != RoutingHealthBased {
@@ -287,7 +276,7 @@ func (p *callPipeline) routeAndConnect() *mcp.Message {
 	p.daemon.logger.Debug("routing decision", "server", p.serverName, "target", decision.Target, "reason", decision.Reason)
 
 	if err := p.connectTargetWithTransportRetry(decision.Target, decision.Reason); err != nil {
-		if p.preferHubRetryEligible && !p.localRetryUsed && decision.Target == router.TargetHub && p.daemon.pool != nil {
+		if !p.hubDelegateActive && p.preferHubRetryEligible && !p.localRetryUsed && decision.Target == router.TargetHub && p.daemon.pool != nil {
 			p.localRetryUsed = true
 			until := p.daemon.setPreferHubBackoff(p.serverName, preferHubBackoffDuration)
 			p.daemon.logger.Warn("prefer-hub override connect failed; retrying local",
