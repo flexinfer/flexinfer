@@ -104,3 +104,30 @@ func TestBuildAgentCommand_ClaudeStreamJSON(t *testing.T) {
 		t.Errorf("expected exactly 1 occurrence of stream-json, got %d in: %q", count, cmd)
 	}
 }
+
+func TestAgentSecretMounts_NoRefreshTokenMountsForKeyBackedCLIs(t *testing.T) {
+	for _, agentType := range []string{"codex", "gemini"} {
+		t.Run(agentType, func(t *testing.T) {
+			if mounts := agentSecretMounts(agentType); len(mounts) != 0 {
+				t.Fatalf("expected no refresh-token mounts for %s, got %#v", agentType, mounts)
+			}
+		})
+	}
+}
+
+func TestAgentSecretMounts_ClaudeUsesStagingDir(t *testing.T) {
+	mounts := agentSecretMounts("claude-code")
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(mounts))
+	}
+	mount := mounts[0]
+	if mount.MountPath != "/root/.claude.auth" {
+		t.Fatalf("MountPath = %q, want %q", mount.MountPath, "/root/.claude.auth")
+	}
+	if mount.MountPath == "/root/.claude" || strings.HasPrefix(mount.MountPath, "/root/.claude/") {
+		t.Fatalf("mount shadows writable Claude project config: %q", mount.MountPath)
+	}
+	if len(mount.Items) == 0 || mount.Items[0].Key != "claude-oauth-json" {
+		t.Fatalf("unexpected secret items: %#v", mount.Items)
+	}
+}

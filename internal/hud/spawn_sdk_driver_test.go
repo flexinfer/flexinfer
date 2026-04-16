@@ -104,6 +104,12 @@ func TestBuildSDKDriverCommand_MultiTurn(t *testing.T) {
 	if !strings.Contains(cmd, wantFlag) {
 		t.Errorf("expected command to contain %q, got: %s", wantFlag, cmd)
 	}
+	if !strings.Contains(cmd, "node "+spawnDriverPodPath) {
+		t.Errorf("expected command to invoke spawn driver, got: %s", cmd)
+	}
+	if strings.Contains(cmd, "/root/.codex.auth") {
+		t.Errorf("expected codex SDK command to avoid refresh-token mounts, got: %s", cmd)
+	}
 	// Budget flags should be omitted when zero (matches single-shot behavior).
 	if strings.Contains(cmd, "--max-turns") {
 		t.Errorf("expected no --max-turns when maxTurns=0, got: %s", cmd)
