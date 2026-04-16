@@ -1338,11 +1338,13 @@ def main():
 
     ok1 = patch_gptq_config(vllm_root)
     ok1b = patch_gptq_rocm_reference_fallback(vllm_root)
-    ok1c = patch_moe_wna16_rocm_reference_fallback(vllm_root)
     ok2 = patch_moe_wna16_activation(vllm_root)
     ok3 = patch_gemma4_moe_gptq_weight_names(vllm_root)
     ok4 = patch_kv_cache_page_size_uniform_type(vllm_root)
     ok5 = patch_moe_wna16_activation_forwarding(vllm_root)
+    # The ROCm reference fallback wraps the activation-forwarding result block.
+    # Run it after activation forwarding so newer vLLM source layouts match.
+    ok1c = patch_moe_wna16_rocm_reference_fallback(vllm_root)
     ok6a = patch_gemma4_mlp_fp16_clamp(vllm_root)  # Must run before debug patch
     ok6 = patch_gemma4_decoder_layer_debug(vllm_root)
 
