@@ -22,6 +22,8 @@ import (
 const (
 	hudSessionListTimeout = 3 * time.Second
 	hudSessionListLimit   = 1000
+	hudSessionTraceLimit  = 100
+	hudSessionTraceMax    = 500
 )
 
 func (a *App) handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +145,209 @@ func (a *App) handleSessionEntries(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	a.writeJSON(w, http.StatusOK, map[string]any{"entries": flat})
+}
+
+type sessionTraceError struct {
+	Source  string `json:"source"`
+	Message string `json:"message"`
+}
+
+type sessionTraceResponse struct {
+	Session      *bridge.SessionInfo `json:"session,omitempty"`
+	AgentID      string              `json:"agent_id,omitempty"`
+	SessionID    string              `json:"session_id"`
+	Entries      []map[string]any    `json:"entries"`
+	Events       []TimelineEntry     `json:"events"`
+	Traces       []traceAPIEntry     `json:"traces"`
+	TraceEnabled bool                `json:"trace_enabled"`
+	TracePath    string              `json:"trace_path,omitempty"`
+	Errors       []sessionTraceError `json:"errors,omitempty"`
+	RetrievedAt  string              `json:"retrieved_at"`
+}
+
+func (a *App) handleSessionTrace(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(r.PathValue("id"))
+	if sessionID == "" {
+		a.writeError(w, http.StatusBadRequest, "missing session id", nil)
+		return
+	}
+	limit := parseSessionTraceLimit(r.URL.Query().Get("limit"))
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+
+	resp := sessionTraceResponse{
+		SessionID:   sessionID,
+		AgentID:     agentID,
+		Entries:     []map[string]any{},
+		Events:      []TimelineEntry{},
+		Traces:      []traceAPIEntry{},
+		RetrievedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if session := a.findSessionForTrace(sessionID); session != nil {
+		resp.Session = session
+		resp.AgentID = session.AgentID
+	}
+
+	if entries, err := a.agent.SessionEntries(sessionID, limit); err != nil {
+		resp.Errors = append(resp.Errors, sessionTraceError{Source: "context_entries", Message: err.Error()})
+	} else {
+		resp.Entries = flattenSessionEntries(entries)
+	}
+
+	resp.Events = a.sessionTraceEvents(sessionID, resp.Session, resp.AgentID, limit)
+
+	if traces, err := a.fetchAuditTraces(limit); err != nil {
+		resp.Errors = append(resp.Errors, sessionTraceError{Source: "audit_traces", Message: err.Error()})
+	} else {
+		resp.TraceEnabled = traces.Enabled
+		resp.TracePath = traces.Path
+		resp.Traces = filterSessionTraceAuditEntries(traces.Traces, resp.Session, resp.AgentID, limit)
+	}
+
+	a.writeJSON(w, http.StatusOK, resp)
+}
+
+func parseSessionTraceLimit(raw string) int {
+	limit := hudSessionTraceLimit
+	if parsed, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && parsed > 0 {
+		limit = parsed
+	}
+	if limit > hudSessionTraceMax {
+		return hudSessionTraceMax
+	}
+	return limit
+}
+
+func (a *App) findSessionForTrace(sessionID string) *bridge.SessionInfo {
+	snap := a.fleetMonitor.Snapshot()
+	for i := range snap.Sessions {
+		if strings.TrimSpace(snap.Sessions[i].ID) == sessionID {
+			session := snap.Sessions[i]
+			return &session
+		}
+	}
+	return nil
+}
+
+func flattenSessionEntries(entries []bridge.ContextEntryInfo) []map[string]any {
+	flat := make([]map[string]any, 0, len(entries))
+	for _, e := range entries {
+		flat = append(flat, map[string]any{
+			"id":          e.Entry.ID,
+			"entry_type":  e.Entry.EntryType,
+			"agent_id":    e.Entry.AgentID,
+			"namespace":   e.Entry.Namespace,
+			"title":       e.Entry.Title,
+			"content":     e.Entry.Content,
+			"timestamp":   e.Entry.Timestamp,
+			"score":       e.Score,
+			"file_path":   e.Entry.FilePath,
+			"line_start":  e.Entry.LineStart,
+			"line_end":    e.Entry.LineEnd,
+			"token_count": e.Entry.TokenCount,
+		})
+	}
+	return flat
+}
+
+func (a *App) sessionTraceEvents(sessionID string, session *bridge.SessionInfo, agentID string, limit int) []TimelineEntry {
+	if a.eventLog == nil {
+		return []TimelineEntry{}
+	}
+	events := make([]TimelineEntry, 0, limit)
+	for _, evt := range a.eventLog.All(1000) {
+		if eventMatchesSessionTrace(evt, sessionID, session, agentID) {
+			events = append(events, evt)
+			if limit > 0 && len(events) >= limit {
+				break
+			}
+		}
+	}
+	if events == nil {
+		return []TimelineEntry{}
+	}
+	return events
+}
+
+func eventMatchesSessionTrace(evt TimelineEntry, sessionID string, session *bridge.SessionInfo, agentID string) bool {
+	if sessionID != "" && eventDataString(evt.Data, "session_id") == sessionID {
+		return true
+	}
+	if agentID == "" || evt.AgentID != agentID {
+		return false
+	}
+	if session == nil {
+		return true
+	}
+	return timeWithinSessionTraceBounds(evt.Timestamp, session)
+}
+
+func filterSessionTraceAuditEntries(traces []traceAPIEntry, session *bridge.SessionInfo, agentID string, limit int) []traceAPIEntry {
+	capacity := len(traces)
+	if limit > 0 && limit < capacity {
+		capacity = limit
+	}
+	filtered := make([]traceAPIEntry, 0, capacity)
+	for _, trace := range traces {
+		if agentID != "" && trace.AgentID != agentID {
+			continue
+		}
+		if session != nil {
+			ts := parseSessionTraceTime(trace.Timestamp)
+			if !ts.IsZero() && !timeWithinSessionTraceBounds(ts, session) {
+				continue
+			}
+		}
+		filtered = append(filtered, trace)
+		if limit > 0 && len(filtered) >= limit {
+			break
+		}
+	}
+	if filtered == nil {
+		return []traceAPIEntry{}
+	}
+	return filtered
+}
+
+func timeWithinSessionTraceBounds(ts time.Time, session *bridge.SessionInfo) bool {
+	if session == nil || ts.IsZero() {
+		return true
+	}
+	if start := parseSessionTraceTime(session.StartedAt); !start.IsZero() && ts.Before(start.Add(-2*time.Second)) {
+		return false
+	}
+	if end := parseSessionTraceTime(session.EndedAt); !end.IsZero() && ts.After(end.Add(2*time.Second)) {
+		return false
+	}
+	return true
+}
+
+func eventDataString(data json.RawMessage, key string) string {
+	if len(data) == 0 {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return ""
+	}
+	if raw, ok := payload[key].(string); ok {
+		return strings.TrimSpace(raw)
+	}
+	return ""
+}
+
+func parseSessionTraceTime(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return t
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t
+	}
+	return time.Time{}
 }
 
 func (a *App) handleTasks(w http.ResponseWriter, r *http.Request) {

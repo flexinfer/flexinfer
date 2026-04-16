@@ -170,7 +170,7 @@ Desktop HUD agent surfaces now use one merged live-agent model:
 - Rows expose explicit evidence chips (`presence`, `session`, `spawn`) so you can see whether an agent is backed by a live session, only a heartbeat, or only a spawn record.
 - `Session` and `Traces` buttons are available directly from agent rows, which makes it easier to understand why an agent is visible even when session state and heartbeat state disagree.
 - Fleet session detail now includes a session-path breadcrumb and child-session list so you can traverse parent/root/current relationships without leaving the drawer.
-- Fleet session detail errors stay inside the drawer now: failed context-entry loads show an inline error state with a retry action instead of collapsing back into the top-level Fleet polling error.
+- Fleet session detail reads `GET /api/sessions/{id}/trace`, which composes session metadata, lifecycle events, context entries, and daemon audit traces. If context entries fail, for example because agent-context returns `transport closed`, the drawer still shows the available lifecycle/audit evidence and labels the partial source error inline.
 - Fleet session detail and Spawn detail now include recent trace previews inline, so you can inspect the last few routed tool calls before deciding whether to open the full `Traces` panel.
 - Overview and Lifecycle pressure cards are actionable now: attention agents jump into session detail or filtered traces, while namespace and relation hotspots jump into Dispatch.
 

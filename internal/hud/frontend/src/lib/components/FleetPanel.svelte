@@ -47,14 +47,22 @@
   // Drill-down: session detail view
   let detailSessionId = $derived(router.detail);
   let sessionEntries = $state([]);
+  let sessionEvents = $state([]);
+  let sessionTraceEntries = $state([]);
+  let sessionTraceErrors = $state([]);
+  let sessionTraceMeta = $state(null);
   let loadingEntries = $state(false);
   let drawerError = $derived(fleetStore.drawerError);
 
-  async function loadSessionEntries(sessionId, limit = 100) {
+  async function loadSessionTrace(sessionId, limit = 100) {
     loadingEntries = true;
     try {
-      const data = await fleetStore.fetchSessionEntries(sessionId, limit);
-      sessionEntries = data ?? [];
+      const data = await fleetStore.fetchSessionTrace(sessionId, limit);
+      sessionEntries = data?.entries ?? [];
+      sessionEvents = data?.events ?? [];
+      sessionTraceEntries = data?.traces ?? [];
+      sessionTraceErrors = data?.errors ?? [];
+      sessionTraceMeta = data;
     } finally {
       loadingEntries = false;
     }
@@ -62,15 +70,19 @@
 
   function retrySessionEntries() {
     if (!detailSessionId) return;
-    void loadSessionEntries(detailSessionId, 100);
+    void loadSessionTrace(detailSessionId, 100);
   }
 
   // Fetch session entries when detail changes
   $effect(() => {
     if (detailSessionId) {
-      void loadSessionEntries(detailSessionId, 100);
+      void loadSessionTrace(detailSessionId, 100);
     } else {
       sessionEntries = [];
+      sessionEvents = [];
+      sessionTraceEntries = [];
+      sessionTraceErrors = [];
+      sessionTraceMeta = null;
       fleetStore.clearDrawerError();
     }
   });
@@ -79,6 +91,7 @@
     detailSessionId ? (fleetStore.sessions ?? []).find(s => s.id === detailSessionId) : null
   );
   let detailTraceEntries = $derived.by(() => {
+    if (sessionTraceEntries.length > 0) return sessionTraceEntries.slice(0, 5);
     const agentId = (detailSession?.agent_id ?? '').trim();
     if (!agentId) return [];
     return (traceStore.entries ?? []).filter((entry) => (entry.agent_id ?? '') === agentId).slice(0, 5);
@@ -687,6 +700,14 @@
         {#if detailSession.description}
           <div class="detail-description text-sm text-secondary">{sanitizeText(detailSession.description)}</div>
         {/if}
+        {#if sessionTraceErrors.length > 0}
+          <div class="trace-health-banner">
+            <span class="trace-health-label">Partial trace</span>
+            <span class="trace-health-copy">
+              {sessionTraceErrors.map((err) => `${sanitizeText(err.source)}: ${sanitizeText(err.message)}`).join(' · ')}
+            </span>
+          </div>
+        {/if}
         {#if detailLineage.length > 0}
           <div class="hierarchy-section">
             <div class="section-header">
@@ -755,7 +776,9 @@
               <div class="trace-preview-empty text-sm text-muted">Loading recent traces...</div>
             {:else if traceError}
               <div class="trace-preview-empty trace-preview-error text-sm">{sanitizeText(traceError)}</div>
-            {:else if !traceStore.enabled}
+            {:else if sessionTraceMeta && !sessionTraceMeta.trace_enabled && detailTraceEntries.length === 0}
+              <div class="trace-preview-empty text-sm text-muted">Daemon audit trace stream unavailable.</div>
+            {:else if !sessionTraceMeta && !traceStore.enabled}
               <div class="trace-preview-empty text-sm text-muted">Trace stream unavailable.</div>
             {:else if detailTraceEntries.length === 0}
               <div class="trace-preview-empty text-sm text-muted">No recent traces for this agent yet.</div>
@@ -793,6 +816,35 @@
         {/if}
       {/if}
     {/snippet}
+
+    <div class="section-header" style="margin-top: 4px">
+      <span class="section-title">Session Events</span>
+      <span class="text-mono text-xs text-muted">{sessionEvents.length} events</span>
+    </div>
+
+    <div class="session-event-list">
+      {#each sessionEvents.slice(0, 12) as event, index (`${event.timestamp}-${event.event_type}-${index}`)}
+        <div class="session-event-row">
+          <div class="timeline-dot event-dot"></div>
+          <div class="session-event-content">
+            <div class="timeline-meta">
+              <span class="text-mono text-xs text-muted">{formatTime(event.timestamp)}</span>
+              <Badge text={sanitizeText(event.event_type ?? 'event')} variant="info" />
+            </div>
+            {#if event.agent_id}
+              <div class="timeline-title">{sanitizeText(event.agent_id)}</div>
+            {/if}
+            {#if event.data}
+              <div class="timeline-body text-sm text-muted">{sanitizeText(JSON.stringify(event.data)).slice(0, 180)}</div>
+            {/if}
+          </div>
+        </div>
+      {:else}
+        {#if !loadingEntries}
+          <EmptyState icon={'\u25CB'} heading="No lifecycle events for this session" compact />
+        {/if}
+      {/each}
+    </div>
 
     <div class="section-header" style="margin-top: 4px">
       <span class="section-title">Context Entries</span>
@@ -1167,9 +1219,61 @@
     letter-spacing: 0.06em;
   }
 
+  .trace-health-banner {
+    display: flex;
+    gap: var(--space-2);
+    align-items: baseline;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border));
+    background: color-mix(in srgb, var(--warning) 7%, var(--bg-primary));
+  }
+
+  .trace-health-label {
+    color: var(--warning);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    white-space: nowrap;
+  }
+
+  .trace-health-copy {
+    color: var(--fg-secondary);
+    font-size: var(--text-sm);
+    line-height: 1.4;
+  }
+
   /* Timeline */
   .entries-timeline {
     padding: var(--space-2) 0;
+  }
+
+  .session-event-list {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-2) 0;
+  }
+
+  .session-event-row {
+    display: flex;
+    gap: var(--space-3);
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .session-event-row:last-child {
+    border-bottom: none;
+  }
+
+  .session-event-content {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .event-dot {
+    color: var(--info);
+    background: var(--info);
   }
 
   .trace-preview-list {

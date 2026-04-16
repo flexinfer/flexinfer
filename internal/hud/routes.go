@@ -38,6 +38,7 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	// API routes — direct bridge calls (parameterized queries).
 	mux.HandleFunc("GET /api/sessions", a.withCORS(a.handleSessions))
 	mux.HandleFunc("GET /api/sessions/{id}/entries", a.withCORS(a.handleSessionEntries))
+	mux.HandleFunc("GET /api/sessions/{id}/trace", a.withCORS(a.handleSessionTrace))
 	mux.HandleFunc("GET /api/tasks", a.withCORS(a.handleTasks))
 	mux.HandleFunc("POST /api/tasks", a.withCORS(a.handleCreateTask))
 	mux.HandleFunc("PATCH /api/tasks/{id}", a.withCORS(a.handleUpdateTask))
