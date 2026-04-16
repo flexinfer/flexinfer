@@ -53,6 +53,14 @@
     return `${Math.floor(diff / 3600)}h ago`;
   }
 
+  function compactDuration(seconds) {
+    const value = Number(seconds ?? 0);
+    if (!Number.isFinite(value) || value <= 0) return '';
+    if (value < 60) return `${Math.floor(value)}s`;
+    if (value < 3600) return `${Math.floor(value / 60)}m`;
+    return `${Math.floor(value / 3600)}h`;
+  }
+
   let color = $derived(agentColor(agent.agent_type));
 </script>
 
@@ -70,7 +78,10 @@
   </div>
   <div class="card-subheader">
     <span class="agent-type">{agent.agent_type || 'unknown'}{#if agent.active_files?.length} · {agent.active_files.length} files{/if}</span>
-    <span class="heartbeat-time">{relativeTime(agent.last_heartbeat)}{#if agent.registered_at} · reg {relativeTime(agent.registered_at)}{/if}</span>
+    <span class="heartbeat-time">
+      {agent.has_presence ? relativeTime(agent.last_heartbeat) : 'session trace'}
+      {#if agent.has_presence && agent.registered_at} · reg {relativeTime(agent.registered_at)}{/if}
+    </span>
   </div>
 
   <div class="evidence-row">
@@ -79,7 +90,15 @@
     {#if agent.has_spawn}
       <span class="evidence-chip evidence-active">spawn</span>
     {/if}
-    <span class="evidence-source">{agent.source}</span>
+    <span class="telemetry-chip" class:telemetry-stale={agent.telemetry_status === 'stale'}>{agent.telemetry_status || agent.source}</span>
+  </div>
+  <div class="telemetry-row">
+    {#if agent.has_presence}
+      <span>heartbeat {compactDuration(agent.heartbeat_age_seconds) || relativeTime(agent.last_heartbeat)}</span>
+    {/if}
+    {#if agent.has_session}
+      <span>session {compactDuration(agent.session_age_seconds) || relativeTime(agent.session_started_at)}</span>
+    {/if}
   </div>
 
   <!-- Sparkline: heartbeat frequency -->
@@ -202,13 +221,29 @@
     color: var(--fg-secondary);
     background: color-mix(in srgb, var(--accent) 8%, transparent);
   }
-  .evidence-source {
+  .telemetry-chip {
     margin-left: auto;
     font-size: 9px;
-    color: var(--fg-muted);
+    color: var(--fg-secondary);
     font-family: var(--font-mono);
     text-transform: uppercase;
     letter-spacing: 0.08em;
+    border: 1px solid color-mix(in srgb, var(--agent-color) 28%, var(--border));
+    background: color-mix(in srgb, var(--agent-color) 8%, transparent);
+    border-radius: 999px;
+    padding: 1px 7px;
+  }
+  .telemetry-stale {
+    border-color: color-mix(in srgb, var(--warning) 36%, var(--border));
+    background: color-mix(in srgb, var(--warning) 10%, transparent);
+    color: var(--warning);
+  }
+  .telemetry-row {
+    display: flex;
+    gap: 10px;
+    font-size: 10px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
   }
 
   .sparkline-row { display: flex; align-items: center; gap: 8px; }

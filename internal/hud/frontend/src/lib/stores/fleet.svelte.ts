@@ -63,6 +63,14 @@ export interface PresenceInfo {
   worktree_id?: string;
   last_heartbeat: string;
   registered_at: string;
+  source?: string;
+  has_presence?: boolean;
+  has_session?: boolean;
+  session_status?: string;
+  session_started_at?: string;
+  heartbeat_age_seconds?: number;
+  session_age_seconds?: number;
+  telemetry_status?: string;
 }
 
 export interface TaskInfo {

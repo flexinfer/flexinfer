@@ -27,6 +27,14 @@ interface PresenceLike {
   worktree_id?: string;
   last_heartbeat?: string;
   registered_at?: string;
+  source?: string;
+  has_presence?: boolean;
+  has_session?: boolean;
+  session_status?: string;
+  session_started_at?: string;
+  heartbeat_age_seconds?: number;
+  session_age_seconds?: number;
+  telemetry_status?: string;
 }
 
 interface TaskLike {
@@ -76,6 +84,9 @@ export interface UnifiedAgent {
   spawn_id?: string;
   spawn_status?: string;
   project?: string;
+  heartbeat_age_seconds: number;
+  session_age_seconds: number;
+  telemetry_status: string;
   has_presence: boolean;
   has_session: boolean;
   has_spawn: boolean;
@@ -174,12 +185,16 @@ export function buildUnifiedAgents(input: {
     const session =
       (agent.session_id ? liveSessionsByID.get(agent.session_id) : undefined) ??
       liveSessionsByAgent.get(agent.agent_id);
+    const hasSession = agent.has_session ?? !!session;
+    const hasPresence = agent.has_presence ?? agent.source !== 'session';
+    const source =
+      agent.source === 'session' ? 'session' : hasSession ? 'presence+session' : 'presence';
 
     byAgent.set(agent.agent_id, {
       agent_id: agent.agent_id,
       agent_type: inferAgentType(agent.agent_id, agent.agent_type),
       status: normalizeUnifiedStatus(agent.status),
-      source: session ? 'presence+session' : 'presence',
+      source,
       description: agent.description ?? session?.description ?? '',
       current_task: agent.current_task ?? '',
       branch: agent.branch ?? '',
@@ -191,15 +206,18 @@ export function buildUnifiedAgents(input: {
       worktree_id: agent.worktree_id,
       session_id: session?.id ?? agent.session_id,
       namespace: session?.namespace,
-      session_status: session?.status,
-      session_started_at: session?.started_at,
+      session_status: agent.session_status ?? session?.status,
+      session_started_at: agent.session_started_at ?? session?.started_at,
       entry_count: session?.entry_count ?? 0,
       total_tokens: session?.total_tokens ?? session?.tokens_used ?? 0,
       task_count: taskCounts.get(agent.agent_id)?.total ?? session?.task_count ?? 0,
       blocked_tasks: taskCounts.get(agent.agent_id)?.blocked ?? 0,
       claim_count: claimCounts.get(agent.agent_id) ?? 0,
-      has_presence: true,
-      has_session: !!session,
+      heartbeat_age_seconds: agent.heartbeat_age_seconds ?? 0,
+      session_age_seconds: agent.session_age_seconds ?? 0,
+      telemetry_status: agent.telemetry_status ?? (source === 'session' ? 'session_only' : 'unknown'),
+      has_presence: hasPresence,
+      has_session: hasSession,
       has_spawn: false,
     });
   }
@@ -217,6 +235,7 @@ export function buildUnifiedAgents(input: {
       if (!existing.description) existing.description = session.description ?? '';
       existing.has_session = true;
       if (existing.source === 'presence') existing.source = 'presence+session';
+      if (!existing.session_started_at) existing.session_started_at = session.started_at;
       continue;
     }
 
@@ -241,6 +260,9 @@ export function buildUnifiedAgents(input: {
       task_count: taskCounts.get(session.agent_id)?.total ?? session.task_count ?? 0,
       blocked_tasks: taskCounts.get(session.agent_id)?.blocked ?? 0,
       claim_count: claimCounts.get(session.agent_id) ?? 0,
+      heartbeat_age_seconds: 0,
+      session_age_seconds: 0,
+      telemetry_status: 'session_only',
       has_presence: false,
       has_session: true,
       has_spawn: false,
@@ -280,6 +302,9 @@ export function buildUnifiedAgents(input: {
       task_count: taskCounts.get(spawn.agent_id)?.total ?? 0,
       blocked_tasks: taskCounts.get(spawn.agent_id)?.blocked ?? 0,
       claim_count: claimCounts.get(spawn.agent_id) ?? 0,
+      heartbeat_age_seconds: 0,
+      session_age_seconds: 0,
+      telemetry_status: 'spawn',
       spawn_id: spawn.spawn_id,
       spawn_status: spawn.status ?? '',
       project: spawn.request?.project ?? '',

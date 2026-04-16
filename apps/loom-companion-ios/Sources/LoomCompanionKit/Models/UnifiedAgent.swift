@@ -27,9 +27,14 @@ public struct UnifiedAgent: Decodable, Identifiable, Sendable {
     public let claimCount: Int
     public let pipelineCount: Int
     public let pipelineStatus: String?
+    public let heartbeatAgeSeconds: Int
+    public let sessionAgeSeconds: Int
+    public let telemetryStatus: String
+    public let hasPresenceEvidence: Bool
+    public let hasSessionEvidence: Bool
 
     public var id: String { agentId }
-    public var hasSession: Bool { sessionId != nil && !(sessionId?.isEmpty ?? true) }
+    public var hasSession: Bool { hasSessionEvidence || (sessionId != nil && !(sessionId?.isEmpty ?? true)) }
     public var isSpawned: Bool { spawnId != nil && !(spawnId?.isEmpty ?? true) }
 
     enum CodingKeys: String, CodingKey {
@@ -58,6 +63,11 @@ public struct UnifiedAgent: Decodable, Identifiable, Sendable {
         case claimCount = "claim_count"
         case pipelineCount = "pipeline_count"
         case pipelineStatus = "pipeline_status"
+        case heartbeatAgeSeconds = "heartbeat_age_seconds"
+        case sessionAgeSeconds = "session_age_seconds"
+        case telemetryStatus = "telemetry_status"
+        case hasPresenceEvidence = "has_presence"
+        case hasSessionEvidence = "has_session"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -87,6 +97,11 @@ public struct UnifiedAgent: Decodable, Identifiable, Sendable {
         self.claimCount = try container.decodeIfPresent(Int.self, forKey: .claimCount) ?? 0
         self.pipelineCount = try container.decodeIfPresent(Int.self, forKey: .pipelineCount) ?? 0
         self.pipelineStatus = try container.decodeIfPresent(String.self, forKey: .pipelineStatus)
+        self.heartbeatAgeSeconds = try container.decodeIfPresent(Int.self, forKey: .heartbeatAgeSeconds) ?? 0
+        self.sessionAgeSeconds = try container.decodeIfPresent(Int.self, forKey: .sessionAgeSeconds) ?? 0
+        self.telemetryStatus = try container.decodeIfPresent(String.self, forKey: .telemetryStatus) ?? ""
+        self.hasPresenceEvidence = try container.decodeIfPresent(Bool.self, forKey: .hasPresenceEvidence) ?? (self.source != "session" && self.source != "session_only")
+        self.hasSessionEvidence = try container.decodeIfPresent(Bool.self, forKey: .hasSessionEvidence) ?? (self.sessionId != nil && !(self.sessionId?.isEmpty ?? true))
     }
 }
 

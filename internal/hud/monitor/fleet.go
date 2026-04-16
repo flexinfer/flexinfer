@@ -6,6 +6,7 @@ package monitor
 import (
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
@@ -348,15 +349,16 @@ func (m *FleetMonitor) refresh(force bool) error {
 		m.Logger.Warn("fleet: failed to fetch presence", "error", err)
 	} else {
 		snap.Agents = agents
-		for _, a := range agents {
-			switch a.Status {
-			case "active":
-				snap.ActiveAgents++
-			case "idle":
-				snap.IdleAgents++
-			case "offline":
-				snap.OfflineAgents++
-			}
+	}
+	snap.Agents = enrichFleetAgentsWithSessions(snap.Agents, snap.Sessions, snap.UpdatedAt)
+	for _, a := range snap.Agents {
+		switch a.Status {
+		case "active":
+			snap.ActiveAgents++
+		case "idle":
+			snap.IdleAgents++
+		case "offline":
+			snap.OfflineAgents++
 		}
 	}
 
@@ -492,4 +494,144 @@ func fleetSnapshotLooksEmpty(s FleetSnapshot) bool {
 		s.ActiveSessions == 0 &&
 		s.TotalSessions == 0 &&
 		s.TotalTasks == 0
+}
+
+func enrichFleetAgentsWithSessions(agents []bridge.PresenceInfo, sessions []bridge.SessionInfo, now time.Time) []bridge.PresenceInfo {
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	liveByID := make(map[string]bridge.SessionInfo)
+	liveByAgent := make(map[string]bridge.SessionInfo)
+	for _, session := range sessions {
+		if !strings.EqualFold(strings.TrimSpace(session.Status), "active") || strings.TrimSpace(session.AgentID) == "" {
+			continue
+		}
+		liveByID[session.ID] = session
+		if current, ok := liveByAgent[session.AgentID]; !ok || parseFleetTime(session.StartedAt).After(parseFleetTime(current.StartedAt)) {
+			liveByAgent[session.AgentID] = session
+		}
+	}
+
+	result := make([]bridge.PresenceInfo, 0, len(agents)+len(liveByAgent))
+	seen := make(map[string]bool, len(agents))
+	for _, agent := range agents {
+		if strings.TrimSpace(agent.AgentID) == "" {
+			continue
+		}
+		agent.HasPresence = true
+		agent.Source = "presence"
+		if agent.AgentType == "" || strings.EqualFold(agent.AgentType, "unknown") {
+			agent.AgentType = inferFleetAgentType(agent.AgentID)
+		}
+		if session, ok := liveByID[agent.SessionID]; ok {
+			applyFleetSessionTelemetry(&agent, session, now)
+		} else if session, ok := liveByAgent[agent.AgentID]; ok {
+			applyFleetSessionTelemetry(&agent, session, now)
+		}
+		agent.HeartbeatAgeSeconds = ageSeconds(agent.LastHeartbeat, now)
+		agent.TelemetryStatus = fleetTelemetryStatus(agent)
+		result = append(result, agent)
+		seen[agent.AgentID] = true
+	}
+
+	for _, session := range liveByAgent {
+		if seen[session.AgentID] {
+			continue
+		}
+		agent := bridge.PresenceInfo{
+			AgentID:       session.AgentID,
+			SessionID:     session.ID,
+			Status:        "active",
+			AgentType:     inferFleetAgentType(session.AgentID),
+			Description:   session.Description,
+			LastHeartbeat: session.StartedAt,
+			RegisteredAt:  session.StartedAt,
+			Source:        "session",
+			HasSession:    true,
+			SessionStatus: session.Status,
+		}
+		applyFleetSessionTelemetry(&agent, session, now)
+		agent.TelemetryStatus = fleetTelemetryStatus(agent)
+		result = append(result, agent)
+	}
+
+	return result
+}
+
+func applyFleetSessionTelemetry(agent *bridge.PresenceInfo, session bridge.SessionInfo, now time.Time) {
+	if agent == nil {
+		return
+	}
+	agent.SessionID = session.ID
+	agent.HasSession = true
+	if agent.Source == "presence" {
+		agent.Source = "presence+session"
+	}
+	agent.SessionStatus = session.Status
+	agent.SessionStartedAt = session.StartedAt
+	agent.SessionAgeSeconds = ageSeconds(session.StartedAt, now)
+	if agent.Description == "" {
+		agent.Description = session.Description
+	}
+}
+
+func fleetTelemetryStatus(agent bridge.PresenceInfo) string {
+	status := strings.ToLower(strings.TrimSpace(agent.Status))
+	switch {
+	case agent.HasSession && !agent.HasPresence:
+		return "session_only"
+	case status == "offline":
+		return "offline"
+	case agent.HeartbeatAgeSeconds > 300:
+		return "stale"
+	case status == "idle":
+		return "idle"
+	case status == "active":
+		return "live"
+	default:
+		return "unknown"
+	}
+}
+
+func ageSeconds(raw string, now time.Time) int {
+	t := parseFleetTime(raw)
+	if t.IsZero() || now.Before(t) {
+		return 0
+	}
+	return int(now.Sub(t).Seconds())
+}
+
+func parseFleetTime(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return t
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t
+	}
+	return time.Time{}
+}
+
+func inferFleetAgentType(agentID string) string {
+	lower := strings.ToLower(strings.TrimSpace(agentID))
+	switch {
+	case strings.HasPrefix(lower, "claude-code"), strings.HasPrefix(lower, "claude"):
+		return "claude-code"
+	case strings.HasPrefix(lower, "gemini-cli"), strings.HasPrefix(lower, "gemini"):
+		return "gemini-cli"
+	case strings.HasPrefix(lower, "codex"), strings.HasPrefix(lower, "zed"), strings.HasPrefix(lower, "proxy"):
+		return "codex"
+	default:
+		if i := strings.Index(lower, "-"); i > 0 {
+			return lower[:i]
+		}
+		if lower != "" {
+			return lower
+		}
+		return "unknown"
+	}
 }

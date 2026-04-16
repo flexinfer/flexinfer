@@ -165,6 +165,70 @@ func TestFleetSnapshot_DefaultValues(t *testing.T) {
 	}
 }
 
+func TestEnrichFleetAgentsWithSessionsSynthesizesSessionOnlyAgents(t *testing.T) {
+	now := time.Date(2026, 4, 16, 9, 30, 0, 0, time.UTC)
+	agents := []bridge.PresenceInfo{
+		{
+			AgentID:       "claude-code-live",
+			Status:        "active",
+			AgentType:     "unknown",
+			LastHeartbeat: now.Add(-45 * time.Second).Format(time.RFC3339Nano),
+		},
+	}
+	sessions := []bridge.SessionInfo{
+		{
+			ID:          "sess-live",
+			AgentID:     "claude-code-live",
+			Namespace:   "services/loom-core/feat/demo",
+			StartedAt:   now.Add(-10 * time.Minute).Format(time.RFC3339Nano),
+			Status:      "active",
+			Description: "Claude session",
+		},
+		{
+			ID:          "sess-codex",
+			AgentID:     "codex-missing-presence",
+			Namespace:   "services/loom-core/feat/demo",
+			StartedAt:   now.Add(-5 * time.Minute).Format(time.RFC3339Nano),
+			Status:      "active",
+			Description: "Codex session",
+		},
+	}
+
+	enriched := enrichFleetAgentsWithSessions(agents, sessions, now)
+	byAgent := make(map[string]bridge.PresenceInfo)
+	for _, agent := range enriched {
+		byAgent[agent.AgentID] = agent
+	}
+
+	claude := byAgent["claude-code-live"]
+	if claude.Source != "presence+session" || !claude.HasPresence || !claude.HasSession {
+		t.Fatalf("expected claude presence+session evidence, got %#v", claude)
+	}
+	if claude.AgentType != "claude-code" {
+		t.Fatalf("expected inferred claude-code type, got %q", claude.AgentType)
+	}
+	if claude.HeartbeatAgeSeconds != 45 {
+		t.Fatalf("expected heartbeat age 45s, got %d", claude.HeartbeatAgeSeconds)
+	}
+	if claude.SessionAgeSeconds != 600 {
+		t.Fatalf("expected session age 600s, got %d", claude.SessionAgeSeconds)
+	}
+	if claude.TelemetryStatus != "live" {
+		t.Fatalf("expected live telemetry, got %q", claude.TelemetryStatus)
+	}
+
+	codex := byAgent["codex-missing-presence"]
+	if codex.Source != "session" || codex.HasPresence || !codex.HasSession {
+		t.Fatalf("expected codex session-only evidence, got %#v", codex)
+	}
+	if codex.Status != "active" || codex.AgentType != "codex" {
+		t.Fatalf("expected active codex synthetic presence, got status=%q type=%q", codex.Status, codex.AgentType)
+	}
+	if codex.TelemetryStatus != "session_only" {
+		t.Fatalf("expected session_only telemetry, got %q", codex.TelemetryStatus)
+	}
+}
+
 func TestFleetMonitor_RefreshForceBypassesDebounce(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 	client, agent := newBridges(t, sockPath)
