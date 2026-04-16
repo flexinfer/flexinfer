@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
@@ -14,18 +15,20 @@ import (
 )
 
 type statusResult struct {
-	Running             bool          `json:"running"`
-	Servers             int           `json:"servers"`
-	ActiveConns         int           `json:"activeConns"`
-	IdleConns           int           `json:"idleConns"`
-	LocalPool           *poolPressure `json:"localPool,omitempty"`
-	HubPool             *poolPressure `json:"hubPool,omitempty"`
-	Processes           []string      `json:"processes"`
-	ActiveRPCs          int64         `json:"activeRPCs"`
-	DrainReady          bool          `json:"drainReady"`
-	Draining            bool          `json:"draining"`
-	DaemonEpoch         int64         `json:"daemonEpoch"`
-	ActiveProxySessions int           `json:"activeProxySessions"`
+	Running             bool                 `json:"running"`
+	Servers             int                  `json:"servers"`
+	ActiveConns         int                  `json:"activeConns"`
+	IdleConns           int                  `json:"idleConns"`
+	LocalPool           *poolPressure        `json:"localPool,omitempty"`
+	HubPool             *poolPressure        `json:"hubPool,omitempty"`
+	Processes           []string             `json:"processes"`
+	ActiveRPCs          int64                `json:"activeRPCs"`
+	DrainReady          bool                 `json:"drainReady"`
+	Draining            bool                 `json:"draining"`
+	DaemonEpoch         int64                `json:"daemonEpoch"`
+	ActiveProxySessions int                  `json:"activeProxySessions"`
+	Health              *statusHealthSummary `json:"health,omitempty"`
+	Observability       observabilityStatus  `json:"observability"`
 }
 
 type poolPressure struct {
@@ -35,6 +38,27 @@ type poolPressure struct {
 	MaxOpen     int     `json:"maxOpen"`
 	PressurePct float64 `json:"pressurePct"`
 	AtCapacity  bool    `json:"atCapacity"`
+}
+
+type statusHealthSummary struct {
+	Servers         map[string]*statusHealthServer `json:"servers,omitempty"`
+	DegradedServers []string                       `json:"degraded_servers,omitempty"`
+}
+
+type statusHealthServer struct {
+	Healthy           bool      `json:"healthy"`
+	Ready             bool      `json:"ready"`
+	ConsecutiveFails  int       `json:"consecutive_fails"`
+	TotalChecks       int       `json:"total_checks"`
+	TotalFailures     int       `json:"total_failures"`
+	AvgLatencyMs      float64   `json:"avg_latency_ms"`
+	LastError         string    `json:"last_error,omitempty"`
+	RestartCount      int       `json:"restart_count"`
+	LastCheck         time.Time `json:"last_check"`
+	LastHealthy       time.Time `json:"last_healthy,omitempty"`
+	LastRestart       time.Time `json:"last_restart,omitempty"`
+	AutoRestartFailed bool      `json:"auto_restart_failed,omitempty"`
+	LastDeepProbe     time.Time `json:"last_deep_probe,omitempty"`
 }
 
 func (d *Daemon) handleStatus(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
@@ -59,8 +83,53 @@ func (d *Daemon) handleStatus(ctx context.Context, msg *mcp.Message) (*mcp.Messa
 		Draining:            d.draining.Load(),
 		DaemonEpoch:         d.daemonEpoch,
 		ActiveProxySessions: activeSessions,
+		Health:              d.statusHealthSnapshot(),
+		Observability:       d.currentObservabilityStatus(),
 	}
 	return mcp.NewResponse(msg.ID, result)
+}
+
+func (d *Daemon) statusHealthSnapshot() *statusHealthSummary {
+	if d.healthMonitor == nil {
+		return nil
+	}
+
+	statuses := d.healthMonitor.GetAllStatuses()
+	if len(statuses) == 0 {
+		return nil
+	}
+
+	degraded := make([]string, 0, len(statuses))
+	servers := make(map[string]*statusHealthServer, len(statuses))
+	for name, status := range statuses {
+		if status == nil {
+			continue
+		}
+		servers[name] = &statusHealthServer{
+			Healthy:           status.Healthy,
+			Ready:             status.Healthy && status.ConsecutiveFails == 0 && !status.AutoRestartFailed,
+			ConsecutiveFails:  status.ConsecutiveFails,
+			TotalChecks:       status.TotalChecks,
+			TotalFailures:     status.TotalFailures,
+			AvgLatencyMs:      status.AvgLatencyMs,
+			LastError:         status.LastError,
+			RestartCount:      status.RestartCount,
+			LastCheck:         status.LastCheck,
+			LastHealthy:       status.LastHealthy,
+			LastRestart:       status.LastRestart,
+			AutoRestartFailed: status.AutoRestartFailed,
+			LastDeepProbe:     status.LastDeepProbe,
+		}
+		if !status.Healthy || status.ConsecutiveFails > 0 || status.LastError != "" || status.AutoRestartFailed {
+			degraded = append(degraded, name)
+		}
+	}
+	sort.Strings(degraded)
+
+	return &statusHealthSummary{
+		Servers:         servers,
+		DegradedServers: degraded,
+	}
 }
 
 func (d *Daemon) poolPressure(p *pool.Pool, hub bool) *poolPressure {

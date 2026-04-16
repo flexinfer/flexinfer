@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
@@ -12,12 +13,14 @@ import (
 
 // platformStatus aggregates daemon, agent, and HUD status into one struct.
 type platformStatus struct {
-	Daemon    daemonStatus   `json:"daemon"`
-	Agents    agentStatus    `json:"agents"`
-	Sessions  sessionCount   `json:"sessions"`
-	Pipelines pipelineStatus `json:"pipelines"`
-	HUD       hudStatus      `json:"hud"`
-	Healthy   bool           `json:"healthy"`
+	Daemon        daemonStatus               `json:"daemon"`
+	Agents        agentStatus                `json:"agents"`
+	Sessions      sessionCount               `json:"sessions"`
+	Pipelines     pipelineStatus             `json:"pipelines"`
+	HUD           hudStatus                  `json:"hud"`
+	Health        *daemonHealthSnapshot      `json:"health,omitempty"`
+	Observability *daemonObservabilityStatus `json:"observability,omitempty"`
+	Healthy       bool                       `json:"healthy"`
 }
 
 type daemonStatus struct {
@@ -28,6 +31,8 @@ type daemonStatus struct {
 	ActiveRPCs          int64    `json:"active_rpcs"`
 	ActiveProxySessions int      `json:"active_proxy_sessions"`
 	DaemonEpoch         int64    `json:"daemon_epoch"`
+	DrainReady          bool     `json:"drain_ready"`
+	Draining            bool     `json:"draining"`
 	Processes           []string `json:"processes,omitempty"`
 }
 
@@ -54,6 +59,48 @@ type pipelineStatus struct {
 
 type hudStatus struct {
 	Reachable bool `json:"reachable"`
+}
+
+type daemonHealthSnapshot struct {
+	Servers         map[string]daemonHealthServer `json:"servers,omitempty"`
+	DegradedServers []string                      `json:"degraded_servers,omitempty"`
+}
+
+type daemonHealthServer struct {
+	Healthy           bool    `json:"healthy"`
+	Ready             bool    `json:"ready"`
+	ConsecutiveFails  int     `json:"consecutive_fails"`
+	TotalChecks       int     `json:"total_checks"`
+	TotalFailures     int     `json:"total_failures"`
+	AvgLatencyMs      float64 `json:"avg_latency_ms"`
+	LastError         string  `json:"last_error,omitempty"`
+	RestartCount      int     `json:"restart_count"`
+	LastCheck         string  `json:"last_check,omitempty"`
+	LastHealthy       string  `json:"last_healthy,omitempty"`
+	LastRestart       string  `json:"last_restart,omitempty"`
+	AutoRestartFailed bool    `json:"auto_restart_failed,omitempty"`
+	LastDeepProbe     string  `json:"last_deep_probe,omitempty"`
+}
+
+type daemonObservabilityStatus struct {
+	OTLPEndpoint           string          `json:"otlp_endpoint"`
+	OTLPConfigured         bool            `json:"otlp_configured"`
+	LogFormat              string          `json:"log_format"`
+	JSONLogsEnabled        bool            `json:"json_logs_enabled"`
+	TracedServers          int             `json:"traced_servers"`
+	TotalServers           int             `json:"total_servers"`
+	TraceCoverage          string          `json:"trace_coverage"`
+	RuntimeOTLPConfigured  bool            `json:"runtime_otlp_configured"`
+	RuntimeOTLPEnabled     bool            `json:"runtime_otlp_enabled"`
+	RuntimeOTLPEndpoint    string          `json:"runtime_otlp_endpoint"`
+	RuntimeOTLPProtocol    string          `json:"runtime_otlp_protocol"`
+	RuntimeOTLPServiceName string          `json:"runtime_otlp_service_name"`
+	RuntimeOTLPSampleRate  float64         `json:"runtime_otlp_sample_rate"`
+	RuntimeOTLPError       string          `json:"runtime_otlp_error,omitempty"`
+	RuntimeMeterEnabled    bool            `json:"runtime_meter_enabled"`
+	RuntimeTraceSurfaces   map[string]bool `json:"runtime_trace_surfaces"`
+	RuntimeTraceCoverage   string          `json:"runtime_trace_coverage"`
+	Warnings               []string        `json:"warnings,omitempty"`
 }
 
 func showStatus(socketPath, hudPort string, jsonOutput bool) error {
@@ -90,8 +137,14 @@ func collectPlatformStatus(socketPath, hudPort string) platformStatus {
 		Processes           []string `json:"processes"`
 		ActiveRPCs          int64    `json:"activeRPCs"`
 		DrainReady          bool     `json:"drainReady"`
+		Draining            bool     `json:"draining"`
 		DaemonEpoch         int64    `json:"daemonEpoch"`
 		ActiveProxySessions int      `json:"activeProxySessions"`
+		Health              *struct {
+			Servers         map[string]daemonHealthServer `json:"servers"`
+			DegradedServers []string                      `json:"degraded_servers"`
+		} `json:"health"`
+		Observability *daemonObservabilityStatus `json:"observability"`
 	}
 	if err := json.Unmarshal(result, &raw); err != nil {
 		return ps
@@ -105,7 +158,18 @@ func collectPlatformStatus(socketPath, hudPort string) platformStatus {
 		ActiveRPCs:          raw.ActiveRPCs,
 		ActiveProxySessions: raw.ActiveProxySessions,
 		DaemonEpoch:         raw.DaemonEpoch,
+		DrainReady:          raw.DrainReady,
+		Draining:            raw.Draining,
 		Processes:           raw.Processes,
+	}
+	if raw.Health != nil && (len(raw.Health.Servers) > 0 || len(raw.Health.DegradedServers) > 0) {
+		ps.Health = &daemonHealthSnapshot{
+			Servers:         raw.Health.Servers,
+			DegradedServers: append([]string(nil), raw.Health.DegradedServers...),
+		}
+	}
+	if raw.Observability != nil {
+		ps.Observability = raw.Observability
 	}
 	ps.Healthy = true
 
@@ -270,6 +334,23 @@ func printPlatformStatus(ps platformStatus, socketPath string) {
 		ps.Agents.Active, ps.Agents.Idle, ps.Agents.Offline)
 	fmt.Printf("Sessions: %d active, %d total\n",
 		ps.Sessions.Active, ps.Sessions.Total)
+	if ps.Daemon.Draining {
+		fmt.Println("Readiness: draining")
+	} else if ps.Daemon.DrainReady {
+		fmt.Println("Readiness: drain ready")
+	} else {
+		fmt.Println("Readiness: waiting on active work")
+	}
+	if ps.Health != nil {
+		if len(ps.Health.DegradedServers) > 0 {
+			fmt.Printf("Health:   degraded servers: %s\n", strings.Join(ps.Health.DegradedServers, ", "))
+		} else {
+			fmt.Println("Health:   all monitored servers healthy")
+		}
+		if degradedHealthDetails := degradedHealthServers(ps.Health.Servers); len(degradedHealthDetails) > 0 {
+			fmt.Printf("Health:   %s\n", strings.Join(degradedHealthDetails, "; "))
+		}
+	}
 	if ps.Pipelines.Available {
 		fmt.Printf("Pipelines: %d running, %d pending, %d passed, %d failed\n",
 			ps.Pipelines.Running, ps.Pipelines.Pending, ps.Pipelines.Passed, ps.Pipelines.Failed)
@@ -280,11 +361,50 @@ func printPlatformStatus(ps platformStatus, socketPath string) {
 		fmt.Println("Pipelines: unavailable")
 	}
 
+	if ps.Observability != nil {
+		if len(ps.Observability.Warnings) > 0 {
+			fmt.Printf("OTel:     warning: %s\n", strings.Join(ps.Observability.Warnings, "; "))
+		} else if ps.Observability.OTLPConfigured || ps.Observability.JSONLogsEnabled {
+			otelSummary := ps.Observability.OTLPEndpoint
+			if otelSummary == "" {
+				otelSummary = "otlp disabled"
+			}
+			logState := "text"
+			if ps.Observability.JSONLogsEnabled {
+				logState = "json"
+			}
+			fmt.Printf("OTel:     %s, logs=%s\n", otelSummary, logState)
+		}
+	}
+
 	hudLabel := "unavailable"
 	if ps.HUD.Reachable {
 		hudLabel = "running"
 	}
 	fmt.Printf("HUD:      %s\n", hudLabel)
+}
+
+func degradedHealthServers(servers map[string]daemonHealthServer) []string {
+	if len(servers) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(servers))
+	for name, status := range servers {
+		if status.Healthy && status.ConsecutiveFails == 0 && status.LastError == "" && !status.AutoRestartFailed {
+			continue
+		}
+		names = append(names, fmt.Sprintf("%s(restarts=%d, latency=%.0fms, error=%s)",
+			name, status.RestartCount, status.AvgLatencyMs, compactHealthError(status.LastError)))
+	}
+	sort.Strings(names)
+	return names
+}
+
+func compactHealthError(err string) string {
+	if err == "" {
+		return "none"
+	}
+	return err
 }
 
 func showTunnelStatus(socketPath string, jsonOutput bool) error {
