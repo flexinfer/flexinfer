@@ -50,6 +50,24 @@ export interface SessionsResponse {
   sessions: Session[];
 }
 
+export interface SessionTraceError {
+  source: string;
+  message: string;
+}
+
+export interface SessionTraceResponse {
+  session?: Session;
+  session_id: string;
+  agent_id?: string;
+  entries: Record<string, unknown>[];
+  events: Record<string, unknown>[];
+  traces: Record<string, unknown>[];
+  trace_enabled: boolean;
+  trace_path?: string;
+  errors?: SessionTraceError[];
+  retrieved_at: string;
+}
+
 export interface PresenceInfo {
   agent_id: string;
   session_id?: string;
@@ -494,6 +512,19 @@ class FleetStore {
       if (!res.ok) throw new Error(`Session entries: ${res.status}`);
       const data = await res.json();
       return data.entries ?? [];
+    } catch (e) {
+      this.drawerError = e instanceof Error ? e.message : String(e);
+      return null;
+    }
+  }
+
+  async fetchSessionTrace(sessionId: string, limit = 100): Promise<SessionTraceResponse | null> {
+    this.drawerError = null;
+    try {
+      const params = new URLSearchParams({ limit: String(limit) });
+      const res = await globalThis.fetch(`/api/sessions/${sessionId}/trace?${params.toString()}`);
+      if (!res.ok) throw new Error(`Session trace: ${res.status}`);
+      return await res.json();
     } catch (e) {
       this.drawerError = e instanceof Error ? e.message : String(e);
       return null;

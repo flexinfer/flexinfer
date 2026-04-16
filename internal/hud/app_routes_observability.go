@@ -191,6 +191,15 @@ type traceAPIEntry struct {
 	RecvMs        int64  `json:"recv_ms,omitempty"`
 }
 
+type auditTraceData struct {
+	Enabled bool            `json:"enabled"`
+	Path    string          `json:"path,omitempty"`
+	Count   int             `json:"count"`
+	Limit   int             `json:"limit"`
+	Summary map[string]any  `json:"summary"`
+	Traces  []traceAPIEntry `json:"traces"`
+}
+
 func (a *App) handleTraces(w http.ResponseWriter, r *http.Request) {
 	limit := 200
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
@@ -199,7 +208,7 @@ func (a *App) handleTraces(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	raw, err := a.client.Call("loom/audit-traces", map[string]any{"limit": limit})
+	traces, err := a.fetchAuditTraces(limit)
 	if err != nil {
 		a.logger.Debug("audit-traces call failed", "error", err)
 		a.writeJSON(w, http.StatusOK, map[string]any{
@@ -210,6 +219,15 @@ func (a *App) handleTraces(w http.ResponseWriter, r *http.Request) {
 			"traces":  []traceAPIEntry{},
 		})
 		return
+	}
+
+	a.writeJSON(w, http.StatusOK, traces)
+}
+
+func (a *App) fetchAuditTraces(limit int) (auditTraceData, error) {
+	raw, err := a.client.Call("loom/audit-traces", map[string]any{"limit": limit})
+	if err != nil {
+		return auditTraceData{}, err
 	}
 
 	var result struct {
@@ -238,15 +256,7 @@ func (a *App) handleTraces(w http.ResponseWriter, r *http.Request) {
 		} `json:"traces"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		a.logger.Debug("audit-traces unmarshal failed", "error", err)
-		a.writeJSON(w, http.StatusOK, map[string]any{
-			"enabled": false,
-			"limit":   limit,
-			"count":   0,
-			"summary": map[string]any{},
-			"traces":  []traceAPIEntry{},
-		})
-		return
+		return auditTraceData{}, err
 	}
 
 	entries := make([]traceAPIEntry, 0, len(result.Traces))
@@ -282,14 +292,14 @@ func (a *App) handleTraces(w http.ResponseWriter, r *http.Request) {
 		summary = map[string]any{}
 	}
 
-	a.writeJSON(w, http.StatusOK, map[string]any{
-		"enabled": result.Enabled,
-		"path":    result.Path,
-		"count":   result.Count,
-		"limit":   result.Limit,
-		"summary": summary,
-		"traces":  entries,
-	})
+	return auditTraceData{
+		Enabled: result.Enabled,
+		Path:    result.Path,
+		Count:   result.Count,
+		Limit:   result.Limit,
+		Summary: summary,
+		Traces:  entries,
+	}, nil
 }
 
 func (a *App) handleTunnels(w http.ResponseWriter, _ *http.Request) {
