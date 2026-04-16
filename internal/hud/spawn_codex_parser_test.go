@@ -21,6 +21,40 @@ func TestCodexParser_ThreadStarted(t *testing.T) {
 	}
 }
 
+func TestCodexParser_ThreadStarted_ModelMetadata(t *testing.T) {
+	sink := &mockSink{}
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
+
+	line := []byte(`{"type":"thread.started","thread_id":"thread_abc123","model":"gpt-5-mini"}`)
+	p.HandleLine(line)
+	p.HandleLine([]byte(`{"type":"turn.completed","usage":{"input_tokens":500,"cached_input_tokens":200,"output_tokens":150}}`))
+
+	want := bridge.EstimateCodexCost("gpt-5-mini", 300, 200, 150)
+	if want == 0 {
+		t.Fatalf("price table sanity: bridge.EstimateCodexCost returned 0 for gpt-5-mini")
+	}
+	if math.Abs(sink.estimatedCost-want) > 1e-9 {
+		t.Errorf("estimated cost = %v, want %v (delta %v)", sink.estimatedCost, want, sink.estimatedCost-want)
+	}
+}
+
+func TestCodexParser_ThreadStarted_NestedModelMetadata(t *testing.T) {
+	sink := &mockSink{}
+	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
+
+	line := []byte(`{"type":"thread.started","thread_id":"thread_abc123","thread":{"model":"gpt-5-mini"}}`)
+	p.HandleLine(line)
+	p.HandleLine([]byte(`{"type":"turn.completed","usage":{"input_tokens":500,"cached_input_tokens":200,"output_tokens":150}}`))
+
+	want := bridge.EstimateCodexCost("gpt-5-mini", 300, 200, 150)
+	if want == 0 {
+		t.Fatalf("price table sanity: bridge.EstimateCodexCost returned 0 for gpt-5-mini")
+	}
+	if math.Abs(sink.estimatedCost-want) > 1e-9 {
+		t.Errorf("estimated cost = %v, want %v (delta %v)", sink.estimatedCost, want, sink.estimatedCost-want)
+	}
+}
+
 func TestCodexParser_TurnStarted(t *testing.T) {
 	sink := &mockSink{}
 	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
@@ -72,13 +106,13 @@ func TestCodexParser_TurnCompleted(t *testing.T) {
 	}
 }
 
-func TestCodexParser_TurnCompleted_CostMatchesPriceTable(t *testing.T) {
+func TestCodexParser_TurnCompleted_FallsBackToDefaultModel(t *testing.T) {
 	sink := &mockSink{}
 	p := NewCodexJSONLParser(sink, "test-codex", "", nil, nil)
 
 	// Same usage as TestCodexParser_TurnCompleted: total input 500
-	// (300 fresh + 200 cached) and 150 output. The parser must use
-	// bridge.DefaultCodexModel because turn.completed has no model field.
+	// (300 fresh + 200 cached) and 150 output. Without model metadata the
+	// parser must fall back to bridge.DefaultCodexModel deterministically.
 	line := []byte(`{"type":"turn.completed","usage":{"input_tokens":500,"cached_input_tokens":200,"output_tokens":150}}`)
 	p.HandleLine(line)
 
