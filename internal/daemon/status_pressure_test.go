@@ -96,6 +96,107 @@ func TestHandleStatus_IncludesPoolPressureSnapshots(t *testing.T) {
 	}
 }
 
+func TestHandleStatus_IncludesHealthAndObservability(t *testing.T) {
+	t.Setenv("MCP_LOG_FORMAT", "text")
+
+	d := newCallPipelineTestDaemon()
+	d.procMgr = process.NewManager(nil, "codex")
+	d.registry = &kitregistry.Registry{Servers: []*kitregistry.Server{{Name: "alpha"}, {Name: "beta"}}}
+	d.pool = newPressureTestPool(t, 2, 1, 1)
+	d.hubPool = newPressureTestPool(t, 2, 0, 0)
+	d.healthMonitor = &HealthMonitor{
+		statuses: map[string]*ServerHealthStatus{
+			"alpha": {
+				Name:             "alpha",
+				Healthy:          false,
+				ConsecutiveFails: 3,
+				TotalChecks:      8,
+				TotalFailures:    3,
+				AvgLatencyMs:     88.4,
+				LastError:        "timeout",
+				RestartCount:     2,
+			},
+			"beta": {
+				Name:             "beta",
+				Healthy:          true,
+				ConsecutiveFails: 0,
+				TotalChecks:      8,
+				TotalFailures:    0,
+				AvgLatencyMs:     11.2,
+			},
+		},
+	}
+	d.fileCfg.OTel.Endpoint = "http://localhost:4317"
+	d.otelRuntimeState.Configured = true
+	d.otelRuntimeState.Enabled = true
+	d.otelRuntimeState.InitError = "collector unavailable"
+	defer func() {
+		_ = d.pool.Close()
+		_ = d.hubPool.Close()
+	}()
+
+	msg := &mcp.Message{JSONRPC: mcp.JSONRPCVersion, ID: "status-health", Method: "loom/status"}
+	resp, err := d.handleStatus(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("handleStatus: %v", err)
+	}
+
+	var status struct {
+		DrainReady bool `json:"drainReady"`
+		Health     struct {
+			DegradedServers []string `json:"degraded_servers"`
+			Servers         map[string]struct {
+				Healthy      bool    `json:"healthy"`
+				Ready        bool    `json:"ready"`
+				RestartCount int     `json:"restart_count"`
+				AvgLatencyMs float64 `json:"avg_latency_ms"`
+				LastError    string  `json:"last_error"`
+			} `json:"servers"`
+		} `json:"health"`
+		Observability struct {
+			OTLPEndpoint string   `json:"otlp_endpoint"`
+			LogFormat    string   `json:"log_format"`
+			Warnings     []string `json:"warnings"`
+		} `json:"observability"`
+	}
+	if err := json.Unmarshal(resp.Result, &status); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+
+	if !status.DrainReady {
+		t.Fatal("expected drainReady=true when no active RPCs")
+	}
+	if len(status.Health.DegradedServers) != 1 || status.Health.DegradedServers[0] != "alpha" {
+		t.Fatalf("degraded servers = %#v, want [alpha]", status.Health.DegradedServers)
+	}
+	alpha := status.Health.Servers["alpha"]
+	if alpha.RestartCount != 2 {
+		t.Fatalf("alpha.restart_count = %d, want 2", alpha.RestartCount)
+	}
+	if alpha.Ready {
+		t.Fatal("alpha.ready = true, want false")
+	}
+	if alpha.AvgLatencyMs < 88 || alpha.AvgLatencyMs > 89 {
+		t.Fatalf("alpha.avg_latency_ms = %f, want ~88.4", alpha.AvgLatencyMs)
+	}
+	if alpha.LastError != "timeout" {
+		t.Fatalf("alpha.last_error = %q, want timeout", alpha.LastError)
+	}
+	beta := status.Health.Servers["beta"]
+	if !beta.Ready {
+		t.Fatal("beta.ready = false, want true")
+	}
+	if status.Observability.OTLPEndpoint != "http://localhost:4317" {
+		t.Fatalf("otlp_endpoint = %q, want configured endpoint", status.Observability.OTLPEndpoint)
+	}
+	if status.Observability.LogFormat != "text" {
+		t.Fatalf("log_format = %q, want text", status.Observability.LogFormat)
+	}
+	if len(status.Observability.Warnings) == 0 {
+		t.Fatal("expected observability warnings")
+	}
+}
+
 func newPressureTestPool(t *testing.T, maxOpen, active, idle int) *pool.Pool {
 	t.Helper()
 
