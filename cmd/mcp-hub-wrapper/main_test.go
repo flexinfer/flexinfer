@@ -24,6 +24,14 @@ func TestRun_ArgumentValidation(t *testing.T) {
 }
 
 func TestRun_ServerFirstFlagParsing(t *testing.T) {
+	releaseHub := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-releaseHub:
+		default:
+			close(releaseHub)
+		}
+	})
 	upgrader := websocket.Upgrader{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -48,6 +56,7 @@ func TestRun_ServerFirstFlagParsing(t *testing.T) {
 		}
 		raw, _ := json.Marshal(resp)
 		_ = conn.WriteMessage(websocket.TextMessage, raw)
+		<-releaseHub
 	}))
 	defer srv.Close()
 
@@ -65,6 +74,7 @@ func TestRun_ServerFirstFlagParsing(t *testing.T) {
 	}
 
 	_ = stdin.Close()
+	close(releaseHub)
 	select {
 	case code := <-done:
 		if code != 0 {
@@ -81,6 +91,14 @@ func TestRun_HeaderInjectionAndNotificationRelay(t *testing.T) {
 	t.Setenv("CF_ACCESS_CLIENT_SECRET", "cf-secret")
 
 	var authHeader, cfID, cfSecret string
+	releaseHub := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-releaseHub:
+		default:
+			close(releaseHub)
+		}
+	})
 	upgrader := websocket.Upgrader{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader = r.Header.Get("Authorization")
@@ -117,6 +135,7 @@ func TestRun_HeaderInjectionAndNotificationRelay(t *testing.T) {
 		}
 		respRaw, _ := json.Marshal(resp)
 		_ = conn.WriteMessage(websocket.TextMessage, respRaw)
+		<-releaseHub
 	}))
 	defer srv.Close()
 
@@ -144,6 +163,7 @@ func TestRun_HeaderInjectionAndNotificationRelay(t *testing.T) {
 	}
 
 	_ = stdin.Close()
+	close(releaseHub)
 	select {
 	case code := <-done:
 		if code != 0 {
