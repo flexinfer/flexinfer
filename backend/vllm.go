@@ -219,10 +219,14 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		// ROCm kernel overrides are presence-aware so manifests can force
 		// stability fallbacks instead of relying on vLLM's moving defaults.
 		if value, ok := rocmBoolOverride(spec, "rocmUseAiter"); ok {
-			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: value})
+			if value == "0" {
+				vllmEnv = append(vllmEnv, rocmAiterDisabledEnvVars()...)
+			} else {
+				vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
+			}
 		} else if value, ok := rocmBoolOverride(spec, "disableAiter"); ok {
 			if value == "1" {
-				vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "0"})
+				vllmEnv = append(vllmEnv, rocmAiterDisabledEnvVars()...)
 			} else {
 				vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
 			}
@@ -236,7 +240,7 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		}
 
 		if value, ok := rocmBoolOverride(spec, "rocmCustomPagedAttn"); ok {
-			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_CUSTOM_PAGED_ATTN", Value: value})
+			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER_PAGED_ATTN", Value: value})
 		}
 
 		env = append(env, vllmEnv...)
@@ -381,4 +385,28 @@ func rocmBoolOverride(spec *ModelSpec, key string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func rocmAiterDisabledEnvVars() []corev1.EnvVar {
+	names := []string{
+		"VLLM_ROCM_USE_AITER",
+		"VLLM_ROCM_USE_AITER_PAGED_ATTN",
+		"VLLM_ROCM_USE_AITER_LINEAR",
+		"VLLM_ROCM_USE_AITER_MOE",
+		"VLLM_ROCM_USE_AITER_RMSNORM",
+		"VLLM_ROCM_USE_AITER_MLA",
+		"VLLM_ROCM_USE_AITER_MHA",
+		"VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
+		"VLLM_ROCM_USE_AITER_TRITON_ROPE",
+		"VLLM_ROCM_USE_AITER_FP8BMM",
+		"VLLM_ROCM_USE_AITER_FP4BMM",
+		"VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
+		"VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
+		"VLLM_ROCM_USE_AITER_TRITON_GEMM",
+	}
+	env := make([]corev1.EnvVar, 0, len(names))
+	for _, name := range names {
+		env = append(env, corev1.EnvVar{Name: name, Value: "0"})
+	}
+	return env
 }

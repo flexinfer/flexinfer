@@ -325,7 +325,11 @@ func TestVLLMBackendEnv_RocmOverrides(t *testing.T) {
 				"rocmUseAiter": false,
 			},
 			wantEnv: map[string]string{
-				"VLLM_ROCM_USE_AITER": "0",
+				"VLLM_ROCM_USE_AITER":            "0",
+				"VLLM_ROCM_USE_AITER_LINEAR":     "0",
+				"VLLM_ROCM_USE_AITER_MOE":        "0",
+				"VLLM_ROCM_USE_AITER_RMSNORM":    "0",
+				"VLLM_ROCM_USE_AITER_PAGED_ATTN": "0",
 			},
 		},
 		{
@@ -334,16 +338,20 @@ func TestVLLMBackendEnv_RocmOverrides(t *testing.T) {
 				"disableAiter": true,
 			},
 			wantEnv: map[string]string{
-				"VLLM_ROCM_USE_AITER": "0",
+				"VLLM_ROCM_USE_AITER":            "0",
+				"VLLM_ROCM_USE_AITER_LINEAR":     "0",
+				"VLLM_ROCM_USE_AITER_MOE":        "0",
+				"VLLM_ROCM_USE_AITER_RMSNORM":    "0",
+				"VLLM_ROCM_USE_AITER_PAGED_ATTN": "0",
 			},
 		},
 		{
-			name: "rocmCustomPagedAttn false forces custom paged attention off",
+			name: "rocmCustomPagedAttn false forces AITER paged attention off",
 			config: map[string]any{
 				"rocmCustomPagedAttn": false,
 			},
 			wantEnv: map[string]string{
-				"VLLM_ROCM_CUSTOM_PAGED_ATTN": "0",
+				"VLLM_ROCM_USE_AITER_PAGED_ATTN": "0",
 			},
 		},
 		{
@@ -354,8 +362,8 @@ func TestVLLMBackendEnv_RocmOverrides(t *testing.T) {
 				"enableAiter":         false,
 			},
 			wantEnv: map[string]string{
-				"VLLM_ROCM_USE_AITER":         "1",
-				"VLLM_ROCM_CUSTOM_PAGED_ATTN": "1",
+				"VLLM_ROCM_USE_AITER":            "1",
+				"VLLM_ROCM_USE_AITER_PAGED_ATTN": "1",
 			},
 		},
 	}
