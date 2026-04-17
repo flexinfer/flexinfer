@@ -69,7 +69,6 @@ spec:
     servedModelName: gemma4-31b-gptq
     aliases:
       - gemma4-31b
-      - gemma4-dense
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"

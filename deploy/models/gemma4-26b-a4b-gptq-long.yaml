@@ -79,13 +79,11 @@ spec:
       memory: 24Gi
   serviceLabels:
     - gemma4-26b-a4b-gptq-long
-    - long-context
   litellm:
     enabled: true
     servedModelName: gemma4-26b-a4b-gptq-long
     aliases:
       - gemma4-26b-long
-      - gemma4-long
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"
