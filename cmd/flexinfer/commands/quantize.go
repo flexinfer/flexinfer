@@ -18,6 +18,8 @@ package commands
 
 import (
 	"fmt"
+	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -44,7 +46,30 @@ var (
 	quantValCandP  float64
 	quantValBaseA  float64
 	quantValCandA  float64
+
+	quantValArtifactPath          string
+	quantValArtifactLayout        string
+	quantValArtifactFamily        string
+	quantValArtifactJSON          bool
+	quantValArtifactRunGeneration bool
+	quantValArtifactScript        string
 )
+
+var quantizeArtifactLayoutAllowed = map[string]struct{}{
+	"auto":               {},
+	"hf-native":          {},
+	"vllm-gptq":          {},
+	"compressed-tensors": {},
+}
+
+var quantizeArtifactFamilyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+
+var quantizeRunLocalCommandFn = func(cmd *cobra.Command, program string, args []string) error {
+	localCmd := exec.CommandContext(ctx(), program, args...)
+	localCmd.Stdout = cmd.OutOrStdout()
+	localCmd.Stderr = cmd.ErrOrStderr()
+	return localCmd.Run()
+}
 
 var quantizeCmd = &cobra.Command{
 	Use:   "quantize <cache-name>",
@@ -96,6 +121,28 @@ var quantizeValidateCmd = &cobra.Command{
 	RunE:  runQuantizeValidate,
 }
 
+var quantizeValidateArtifactCmd = &cobra.Command{
+	Use:   "validate-artifact",
+	Short: "Validate a quantized artifact layout using a local validator script",
+	Long: `Validate quantized artifact layout and metadata using an external validator script.
+
+The command is model-family aware but intentionally generic so additional families
+can be added without CLI changes.
+
+Examples:
+  # Auto-detect layout/family
+  flexinfer quantize validate-artifact --artifact-path ./models/gemma4-26b-a4b
+
+  # Explicit layout/family with JSON output
+  flexinfer quantize validate-artifact \
+    --artifact-path ./models/gemma4-31b \
+    --layout vllm-gptq \
+    --family gemma4-31b \
+    --json`,
+	Args: cobra.NoArgs,
+	RunE: runQuantizeValidateArtifact,
+}
+
 func init() {
 	quantizeCmd.Flags().StringVar(&quantFormat, "format", "GGUF", "Quantization format (GGUF, AWQ, GPTQ, EXL2, FP8, COMPRESSED_TENSORS)")
 	quantizeCmd.Flags().StringVar(&quantType, "type", "Q4_K_M", "Quantization type (for GGUF: Q2_K, Q3_K_S, Q4_K_M, Q5_K_M, Q6_K, Q8_0)")
@@ -109,10 +156,17 @@ func init() {
 	quantizeValidateCmd.Flags().Float64Var(&quantValCandP, "candidate-perplexity", 0, "Candidate perplexity from quantized artifact")
 	quantizeValidateCmd.Flags().Float64Var(&quantValBaseA, "baseline-acceptance", 0, "Baseline acceptance rate (0-1 or 0-100)")
 	quantizeValidateCmd.Flags().Float64Var(&quantValCandA, "candidate-acceptance", 0, "Candidate acceptance rate (0-1 or 0-100)")
+	quantizeValidateArtifactCmd.Flags().StringVar(&quantValArtifactPath, "artifact-path", "", "Path to quantized model artifact (required)")
+	quantizeValidateArtifactCmd.Flags().StringVar(&quantValArtifactLayout, "layout", "auto", "Artifact layout (auto|hf-native|vllm-gptq|compressed-tensors)")
+	quantizeValidateArtifactCmd.Flags().StringVar(&quantValArtifactFamily, "family", "auto", "Model family (auto, gemma4-26b-a4b, gemma4-31b, or future family id)")
+	quantizeValidateArtifactCmd.Flags().BoolVar(&quantValArtifactJSON, "json", false, "Emit machine-readable JSON output from validator")
+	quantizeValidateArtifactCmd.Flags().BoolVar(&quantValArtifactRunGeneration, "run-generation", false, "Run generation sanity checks during validation")
+	quantizeValidateArtifactCmd.Flags().StringVar(&quantValArtifactScript, "script", "build/scripts/validate_quantized_artifact.py", "Validator script path")
 	quantizeCmd.AddCommand(quantizeFormatsCmd)
 	quantizeCmd.AddCommand(quantizeStatusCmd)
 	quantizeCmd.AddCommand(quantizeRecommendCmd)
 	quantizeCmd.AddCommand(quantizeValidateCmd)
+	quantizeCmd.AddCommand(quantizeValidateArtifactCmd)
 }
 
 func runQuantizeFormats(cmd *cobra.Command, _ []string) error {
@@ -473,6 +527,53 @@ func runQuantizeValidate(cmd *cobra.Command, _ []string) error {
 		_, _ = fmt.Fprintf(out, "Failure:      %s\n", check)
 	}
 	return fmt.Errorf("quantization quality gate failed")
+}
+
+func runQuantizeValidateArtifact(cmd *cobra.Command, _ []string) error {
+	artifactPath := strings.TrimSpace(quantValArtifactPath)
+	if artifactPath == "" {
+		return fmt.Errorf("--artifact-path is required")
+	}
+
+	layout := strings.ToLower(strings.TrimSpace(quantValArtifactLayout))
+	if layout == "" {
+		layout = "auto"
+	}
+	if _, ok := quantizeArtifactLayoutAllowed[layout]; !ok {
+		return fmt.Errorf("invalid --layout %q (allowed: auto, hf-native, vllm-gptq, compressed-tensors)", layout)
+	}
+
+	family := strings.ToLower(strings.TrimSpace(quantValArtifactFamily))
+	if family == "" {
+		family = "auto"
+	}
+	if family != "auto" && !quantizeArtifactFamilyPattern.MatchString(family) {
+		return fmt.Errorf("invalid --family %q (use lowercase letters, numbers, '.', '_' or '-')", family)
+	}
+
+	scriptPath := strings.TrimSpace(quantValArtifactScript)
+	if scriptPath == "" {
+		return fmt.Errorf("--script is required")
+	}
+
+	validatorArgs := []string{
+		scriptPath,
+		"--artifact-path", artifactPath,
+		"--layout", layout,
+		"--family", family,
+	}
+	if quantValArtifactJSON {
+		validatorArgs = append(validatorArgs, "--json")
+	}
+	if quantValArtifactRunGeneration {
+		validatorArgs = append(validatorArgs, "--run-generation")
+	}
+
+	if err := quantizeRunLocalCommandFn(cmd, "python3", validatorArgs); err != nil {
+		return fmt.Errorf("artifact validation command failed: %w", err)
+	}
+
+	return nil
 }
 
 func quantizationSpecSummary(spec *aiv1alpha2.QuantizationSpec) string {
