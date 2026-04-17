@@ -17,6 +17,7 @@ func buildTargetMap(reg *registry.Registry, target string, profile *PlatformProf
 	if loomMode {
 		cmd := normalizeLoomBinary(loomBinary)
 		args := []any{"proxy"}
+		env := map[string]string(nil)
 		// Apply proxy args from profile (agent-hint, tool-profile, max-tools).
 		if profile != nil {
 			lp := profile.LoomProxy
@@ -29,12 +30,19 @@ func buildTargetMap(reg *registry.Registry, target string, profile *PlatformProf
 			if lp.MaxTools > 0 {
 				args = append(args, "--max-tools", fmt.Sprintf("%d", lp.MaxTools))
 			}
+			if len(lp.Env) > 0 {
+				env = make(map[string]string, len(lp.Env))
+				for k, v := range lp.Env {
+					env[k] = v
+				}
+			}
 		}
 		return map[string]*registry.TargetSpec{
 			"loom": {
 				Description: "Loom MCP proxy - unified access to all servers",
 				Command:     cmd,
 				Args:        args,
+				Env:         env,
 				Hint:        "network",
 				Timeout:     600,
 				AlwaysAllow: []string{"*"},

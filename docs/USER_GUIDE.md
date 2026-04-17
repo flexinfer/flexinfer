@@ -81,6 +81,9 @@ Common targets: `codex`, `vscode`, `kilocode`, `claude`, `claude_desktop`, `gemi
 
 `sync --regen` resolves registries from the nearest workspace tree first (including ancestor `platform/gitops/mcp/context/registry.yaml`), then falls back to home defaults.
 
+Claude Desktop uses the `claude_desktop` target and writes `~/Library/Application Support/Claude/claude_desktop_config.json`.
+Its generated `loom` MCP entry includes `--agent-hint claude-desktop`, the shared `llm-core` tool profile, and `LOOM_PROXY_IDLE_EXIT_SECONDS=0` so Claude Desktop can keep the MCP proxy process open without seeing a stale idle-exit disconnect.
+
 Antigravity sync includes a generated `settings.json` hooks stub alongside `mcp.json` so profile sync behavior stays consistent with other platforms.
 
 ## Daemon Operations

@@ -132,19 +132,6 @@ func runProxy(socketPath string) error {
 	}()
 	defer signal.Stop(sigCh)
 
-	// Idle timeout for orphan prevention. Resets on every inbound message.
-	// Uses proxyIdleExitTimeout() which supports LOOM_PROXY_IDLE_EXIT_SECONDS
-	// env var, file config, and a 30s minimum bound.
-	idleTimeout := proxyIdleExitTimeout()
-	var idleTimer *time.Timer
-	if idleTimeout > 0 {
-		idleTimer = time.AfterFunc(idleTimeout, func() {
-			fmt.Fprintf(os.Stderr, "loom proxy: idle timeout (%s), shutting down\n", idleTimeout)
-			cancel()
-		})
-		defer idleTimer.Stop()
-	}
-
 	// Load file config once for proxy-side settings.
 	if fileCfg, err := daemon.LoadConfigFile(); err == nil {
 		proxyConfigGlobal = fileCfg.Proxy
@@ -156,6 +143,19 @@ func runProxy(socketPath string) error {
 		if fileCfg.Proxy.IdleHeartbeatIntervalMs > 0 {
 			sessionKeepaliveIdle = time.Duration(fileCfg.Proxy.IdleHeartbeatIntervalMs) * time.Millisecond
 		}
+	}
+
+	// Idle timeout for orphan prevention. Resets on every inbound message.
+	// Uses proxyIdleExitTimeout() which supports LOOM_PROXY_IDLE_EXIT_SECONDS
+	// env var, file config, and a 30s minimum bound.
+	idleTimeout := proxyIdleExitTimeout()
+	var idleTimer *time.Timer
+	if idleTimeout > 0 {
+		idleTimer = time.AfterFunc(idleTimeout, func() {
+			fmt.Fprintf(os.Stderr, "loom proxy: idle timeout (%s), shutting down\n", idleTimeout)
+			cancel()
+		})
+		defer idleTimer.Stop()
 	}
 
 	// Initialize registry-driven policy engine for guardrail enforcement.

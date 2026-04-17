@@ -1485,7 +1485,7 @@ func TestBuildTargetMap_LoomModeAntigravityAddsToolFilterArgs(t *testing.T) {
 func TestBuildTargetMap_LoomModeLLMClientsAddToolFilterArgs(t *testing.T) {
 	reg := &registry.Registry{}
 
-	for _, targetName := range []string{"claude", "codex"} {
+	for _, targetName := range []string{"claude", "claude_desktop", "codex"} {
 		t.Run(targetName, func(t *testing.T) {
 			profile, _ := GetPlatformProfile(targetName)
 			targets, err := buildTargetMap(reg, targetName, profile, false, "", true, "", "", "", false)
@@ -1513,6 +1513,27 @@ func TestBuildTargetMap_LoomModeLLMClientsAddToolFilterArgs(t *testing.T) {
 				t.Fatalf("loom-mode %s args = %v, want %v", targetName, gotArgs, want)
 			}
 		})
+	}
+}
+
+func TestBuildTargetMap_LoomModeAppliesProxyEnv(t *testing.T) {
+	reg := &registry.Registry{}
+	profile, err := GetPlatformProfile("claude_desktop")
+	if err != nil {
+		t.Fatalf("GetPlatformProfile: %v", err)
+	}
+
+	targets, err := buildTargetMap(reg, "claude_desktop", profile, false, "", true, "", "", "", false)
+	if err != nil {
+		t.Fatalf("buildTargetMap: %v", err)
+	}
+
+	spec := targets["loom"]
+	if spec == nil {
+		t.Fatal("expected loom target spec in loom-mode")
+	}
+	if got := spec.Env["LOOM_PROXY_IDLE_EXIT_SECONDS"]; got != "0" {
+		t.Fatalf("LOOM_PROXY_IDLE_EXIT_SECONDS = %q, want 0", got)
 	}
 }
 

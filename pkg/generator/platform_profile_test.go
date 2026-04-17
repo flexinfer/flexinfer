@@ -92,6 +92,28 @@ func TestGetPlatformProfile_Codex(t *testing.T) {
 	}
 }
 
+func TestGetPlatformProfile_ClaudeDesktopProxy(t *testing.T) {
+	t.Parallel()
+
+	p, err := GetPlatformProfile("claude_desktop")
+	if err != nil {
+		t.Fatalf("GetPlatformProfile: %v", err)
+	}
+
+	if p.LoomProxy.AgentHint != "claude-desktop" {
+		t.Errorf("loom_proxy.agent_hint = %q, want claude-desktop", p.LoomProxy.AgentHint)
+	}
+	if p.LoomProxy.ToolProfile != "llm-core" {
+		t.Errorf("loom_proxy.tool_profile = %q, want llm-core", p.LoomProxy.ToolProfile)
+	}
+	if p.LoomProxy.MaxTools != 140 {
+		t.Errorf("loom_proxy.max_tools = %d, want 140", p.LoomProxy.MaxTools)
+	}
+	if got := p.LoomProxy.Env["LOOM_PROXY_IDLE_EXIT_SECONDS"]; got != "0" {
+		t.Errorf("loom_proxy.env[LOOM_PROXY_IDLE_EXIT_SECONDS] = %q, want 0", got)
+	}
+}
+
 func TestGetPlatformProfile_OpenCode(t *testing.T) {
 	t.Parallel()
 

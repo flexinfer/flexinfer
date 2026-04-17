@@ -211,6 +211,19 @@ func TestProxyIdleExitTimeout_EnvOverridesConfig(t *testing.T) {
 	}
 }
 
+func TestProxyIdleExitTimeout_EnvZeroDisables(t *testing.T) {
+	os.Setenv(loomProxyIdleExitSecondsEnv, "0")
+	defer os.Unsetenv(loomProxyIdleExitSecondsEnv)
+	saved := proxyConfigGlobal
+	defer func() { proxyConfigGlobal = saved }()
+
+	proxyConfigGlobal = daemon.ProxyConfig{IdleExitSeconds: 600}
+	got := proxyIdleExitTimeout()
+	if got != 0 {
+		t.Errorf("proxyIdleExitTimeout() = %v, want disabled", got)
+	}
+}
+
 func TestProxyIdleExitTimeout_MinBound(t *testing.T) {
 	os.Setenv(loomProxyIdleExitSecondsEnv, "5")
 	defer os.Unsetenv(loomProxyIdleExitSecondsEnv)
