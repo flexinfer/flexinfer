@@ -810,3 +810,47 @@ func (s *Service) getEntriesForSymbol(ctx context.Context, agentID, symbol strin
 	}
 	return entries, nil
 }
+
+// =========================================================================
+// Reranker helper (Slice A1 / F1)
+// ApplyReranker is intentionally exported and NOT yet called from the
+// recall code paths — it is wired separately in a later slice (see
+// .loom/88 §2.A1). Keeping the integration point here avoids merge
+// conflicts with slices A2 (tools) and A3 (graph query) that edit
+// adjacent files.
+// =========================================================================
+
+// ApplyReranker runs the configured Reranker against the supplied entries
+// and returns the (possibly reordered) slice. A nil or off reranker
+// returns entries unchanged. Errors from the reranker are logged and
+// swallowed — recall MUST degrade softly.
+func (s *Service) ApplyReranker(ctx context.Context, reranker Reranker, query string, entries []ContextEntry) ([]ContextEntry, error) {
+	if reranker == nil {
+		return entries, nil
+	}
+	if len(entries) == 0 || strings.TrimSpace(query) == "" {
+		return entries, nil
+	}
+
+	reordered, err := reranker.Rerank(ctx, query, entries)
+	if err != nil {
+		// Defensive: backends SHOULD return nil error + annotated entries
+		// on soft failures. Log + fall back to the original slice.
+		if s.logger != nil {
+			s.logger.Warn("reranker returned error; falling back",
+				"backend", reranker.Backend(), "error", err)
+		}
+		return entries, nil
+	}
+	if len(reordered) != len(entries) {
+		if s.logger != nil {
+			s.logger.Warn("reranker returned mismatched entry count; falling back",
+				"backend", reranker.Backend(),
+				"in", len(entries),
+				"out", len(reordered),
+			)
+		}
+		return entries, nil
+	}
+	return reordered, nil
+}

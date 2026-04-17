@@ -77,6 +77,16 @@ type Metrics struct {
 
 	// Timestamps
 	StartTime time.Time
+
+	// Rerank (Slice A1 / F1) — appended to keep diff surgical.
+	RerankRequests atomic.Int64
+	RerankTimeouts atomic.Int64
+	RerankErrors   atomic.Int64
+
+	// Rerank latency by backend (in microseconds).
+	rerankLatencies    map[string][]int64
+	rerankLatencyMu    sync.Mutex
+	maxRerankLatencies int
 }
 
 // NewMetrics creates a new metrics instance
@@ -86,6 +96,8 @@ func NewMetrics() *Metrics {
 		searchLatencies:    make([]int64, 0, 1000),
 		maxRecallLatencies: 1000,
 		recallLatencies:    make(map[string][]int64),
+		maxRerankLatencies: 1000,
+		rerankLatencies:    make(map[string][]int64),
 		StartTime:          time.Now(),
 	}
 }
@@ -500,7 +512,7 @@ agent_context_sessions_active ` + formatInt64(snap.SessionsActive) + `
 # HELP agent_context_uptime_seconds Service uptime in seconds
 # TYPE agent_context_uptime_seconds counter
 agent_context_uptime_seconds ` + formatInt64(snap.UptimeSeconds) + `
-`
+` + m.PrometheusFormatRerank()
 }
 
 func formatInt64(v int64) string {
@@ -558,4 +570,120 @@ var globalMetrics = NewMetrics()
 // GetMetrics returns the global metrics instance
 func GetMetrics() *Metrics {
 	return globalMetrics
+}
+
+// =========================================================================
+// Rerank metrics (Slice A1 / F1)
+// Appended so the recall reranker can record request/timeout/error counts
+// and per-backend latency without reshuffling existing blocks.
+// =========================================================================
+
+// RecordRerankLatency records a rerank latency for the given backend in
+// microseconds. Backend defaults to "unknown" when empty.
+func (m *Metrics) RecordRerankLatency(backend string, latencyMicros int64) {
+	if backend == "" {
+		backend = "unknown"
+	}
+	if latencyMicros < 0 {
+		latencyMicros = 0
+	}
+
+	m.rerankLatencyMu.Lock()
+	defer m.rerankLatencyMu.Unlock()
+
+	if m.rerankLatencies == nil {
+		m.rerankLatencies = make(map[string][]int64)
+	}
+	if m.maxRerankLatencies == 0 {
+		m.maxRerankLatencies = 1000
+	}
+
+	samples := m.rerankLatencies[backend]
+	if m.maxRerankLatencies > 0 && len(samples) >= m.maxRerankLatencies {
+		samples = samples[1:]
+	}
+	samples = append(samples, latencyMicros)
+	m.rerankLatencies[backend] = samples
+}
+
+// GetRerankLatencyStats returns rerank latency stats grouped by backend.
+func (m *Metrics) GetRerankLatencyStats() map[string]LatencyStats {
+	m.rerankLatencyMu.Lock()
+	defer m.rerankLatencyMu.Unlock()
+
+	if len(m.rerankLatencies) == 0 {
+		return map[string]LatencyStats{}
+	}
+
+	stats := make(map[string]LatencyStats, len(m.rerankLatencies))
+	for backend, samples := range m.rerankLatencies {
+		stats[backend] = summarizeLatencySamples(samples)
+	}
+	return stats
+}
+
+// PrometheusFormatRerank returns the rerank-specific Prometheus lines. The
+// top-level PrometheusFormat concatenates this block at the end so existing
+// metrics remain byte-stable.
+func (m *Metrics) PrometheusFormatRerank() string {
+	var b strings.Builder
+	b.WriteString("\n# HELP loom_agentcontext_rerank_requests_total Total rerank requests\n")
+	b.WriteString("# TYPE loom_agentcontext_rerank_requests_total counter\n")
+	b.WriteString("loom_agentcontext_rerank_requests_total ")
+	b.WriteString(formatInt64(m.RerankRequests.Load()))
+	b.WriteString("\n")
+
+	b.WriteString("\n# HELP loom_agentcontext_rerank_timeouts_total Total rerank timeouts\n")
+	b.WriteString("# TYPE loom_agentcontext_rerank_timeouts_total counter\n")
+	b.WriteString("loom_agentcontext_rerank_timeouts_total ")
+	b.WriteString(formatInt64(m.RerankTimeouts.Load()))
+	b.WriteString("\n")
+
+	b.WriteString("\n# HELP loom_agentcontext_rerank_errors_total Total rerank errors (non-timeout)\n")
+	b.WriteString("# TYPE loom_agentcontext_rerank_errors_total counter\n")
+	b.WriteString("loom_agentcontext_rerank_errors_total ")
+	b.WriteString(formatInt64(m.RerankErrors.Load()))
+	b.WriteString("\n")
+
+	// Latency summary by backend.
+	stats := m.GetRerankLatencyStats()
+	if len(stats) > 0 {
+		b.WriteString("\n# HELP loom_agentcontext_rerank_duration_seconds Rerank duration by backend in seconds\n")
+		b.WriteString("# TYPE loom_agentcontext_rerank_duration_seconds summary\n")
+
+		backends := make([]string, 0, len(stats))
+		for backend := range stats {
+			backends = append(backends, backend)
+		}
+		sort.Strings(backends)
+
+		for _, backend := range backends {
+			s := stats[backend]
+			if s.Count == 0 {
+				continue
+			}
+			b.WriteString(`loom_agentcontext_rerank_duration_seconds{backend="`)
+			b.WriteString(backend)
+			b.WriteString(`",quantile="0.5"} `)
+			b.WriteString(formatFloat64(float64(s.P50) / 1e6))
+			b.WriteString("\n")
+			b.WriteString(`loom_agentcontext_rerank_duration_seconds{backend="`)
+			b.WriteString(backend)
+			b.WriteString(`",quantile="0.9"} `)
+			b.WriteString(formatFloat64(float64(s.P90) / 1e6))
+			b.WriteString("\n")
+			b.WriteString(`loom_agentcontext_rerank_duration_seconds{backend="`)
+			b.WriteString(backend)
+			b.WriteString(`",quantile="0.99"} `)
+			b.WriteString(formatFloat64(float64(s.P99) / 1e6))
+			b.WriteString("\n")
+			b.WriteString(`loom_agentcontext_rerank_duration_seconds_count{backend="`)
+			b.WriteString(backend)
+			b.WriteString(`"} `)
+			b.WriteString(formatInt64(int64(s.Count)))
+			b.WriteString("\n")
+		}
+	}
+
+	return b.String()
 }
