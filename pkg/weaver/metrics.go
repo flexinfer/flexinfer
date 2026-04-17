@@ -98,3 +98,82 @@ func (m *Metrics) Summary() map[string]any {
 		"error_count":    errors,
 	}
 }
+
+// F10 auto-compose metrics (append-only).
+
+// AutoComposeMetrics holds counters specific to the auto-compose feature.
+// It is a separate struct so it can be registered independently from the
+// main Metrics struct without modifying that constructor.
+type AutoComposeMetrics struct {
+	// Total auto-compose attempts labeled by outcome: success|refused|empty.
+	Total *prometheus.CounterVec
+	// Cumulative count of domains dispatched via auto-compose.
+	DomainsUsed prometheus.Counter
+
+	// Atomic lifetime counters for direct reads.
+	successCount atomic.Int64
+	refusedCount atomic.Int64
+	emptyCount   atomic.Int64
+	domainsUsed  atomic.Int64
+}
+
+// NewAutoComposeMetrics creates and (optionally) registers auto-compose metrics.
+func NewAutoComposeMetrics(reg prometheus.Registerer) *AutoComposeMetrics {
+	m := &AutoComposeMetrics{
+		Total: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "loom_weaver_auto_compose_total",
+			Help: "Total weaver auto-compose attempts by outcome.",
+		}, []string{"outcome"}),
+		DomainsUsed: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "loom_weaver_auto_compose_domains_used_total",
+			Help: "Cumulative domains dispatched via auto-compose.",
+		}),
+	}
+	if reg != nil {
+		reg.MustRegister(m.Total, m.DomainsUsed)
+	}
+	return m
+}
+
+// RecordOutcome bumps the auto-compose outcome counter.
+// outcome is one of: "success", "refused", "empty".
+func (m *AutoComposeMetrics) RecordOutcome(outcome string) {
+	if m == nil {
+		return
+	}
+	if m.Total != nil {
+		m.Total.WithLabelValues(outcome).Inc()
+	}
+	switch outcome {
+	case "success":
+		m.successCount.Add(1)
+	case "refused":
+		m.refusedCount.Add(1)
+	case "empty":
+		m.emptyCount.Add(1)
+	}
+}
+
+// RecordDomainsUsed bumps the domains-used counter by n.
+func (m *AutoComposeMetrics) RecordDomainsUsed(n int) {
+	if m == nil || n <= 0 {
+		return
+	}
+	if m.DomainsUsed != nil {
+		m.DomainsUsed.Add(float64(n))
+	}
+	m.domainsUsed.Add(int64(n))
+}
+
+// Summary returns lifetime auto-compose counts.
+func (m *AutoComposeMetrics) Summary() map[string]any {
+	if m == nil {
+		return nil
+	}
+	return map[string]any{
+		"success":      m.successCount.Load(),
+		"refused":      m.refusedCount.Load(),
+		"empty":        m.emptyCount.Load(),
+		"domains_used": m.domainsUsed.Load(),
+	}
+}

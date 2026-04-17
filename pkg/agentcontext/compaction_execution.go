@@ -17,6 +17,27 @@ func (cs *CompactionScheduler) runCompaction(ctx context.Context) (*CompactionSt
 		TierStats: make(map[string]TierCompactionStats),
 	}
 
+	// F2: If LLM mode is selected and a summarizer is configured, try the
+	// LLM path first. On error we fall through to the existing extractive
+	// logic and emit a fallback metric.
+	if cs.config.Mode == "llm" {
+		if summarizer := cs.getSummarizer(); summarizer != nil {
+			if ok := cs.runLLMCompaction(ctx, summarizer, &stats); ok {
+				stats.Duration = time.Since(startTime)
+				cs.mu.Lock()
+				cs.lastRun = startTime
+				cs.runCount++
+				cs.lastRunStats = stats
+				cs.mu.Unlock()
+				return &stats, nil
+			}
+			// Fall through to extractive path on LLM failure.
+			if cs.metrics != nil {
+				cs.metrics.CompactionFallbacks.Add(1)
+			}
+		}
+	}
+
 	// Get initial state
 	hierStats := cs.hierarchy.Stats()
 	stats.TokensBefore = int64(hierStats.TotalTokens)
@@ -405,4 +426,110 @@ func (cs *CompactionScheduler) CompactSession(ctx context.Context, sessionID str
 	}
 
 	return &stats, nil
+}
+
+// =========================================================================
+// F2: LLM-backed compaction path (appended)
+// =========================================================================
+
+// runLLMCompaction collects recent working-tier items, asks the summarizer to
+// synthesize a condensed summary, pins the raw entry IDs via PinnedStore, and
+// replaces the originals with a single summary item. Returns true on success,
+// false on error (caller falls back to extractive path).
+func (cs *CompactionScheduler) runLLMCompaction(
+	ctx context.Context,
+	summarizer CompactionSummarizer,
+	stats *CompactionStats,
+) bool {
+	if cs.hierarchy == nil {
+		return false
+	}
+
+	// Gather a batch from working memory -- most recent tier with the
+	// highest churn. Keeps the LLM call scoped and bounded.
+	recallReq := MemoryRecallRequest{
+		Tiers: []MemoryTier{MemoryTierWorking},
+		Limit: cs.config.MaxItemsPerRun,
+	}
+	result, err := cs.hierarchy.Recall(recallReq)
+	if err != nil || len(result.Items) == 0 {
+		return false
+	}
+
+	// Map MemoryItems into the ContextEntry shape the summarizer expects.
+	entries := make([]ContextEntry, 0, len(result.Items))
+	entryIDs := make([]string, 0, len(result.Items))
+	tokensBefore := 0
+	for _, item := range result.Items {
+		entries = append(entries, ContextEntry{
+			ID:        item.ID,
+			EntryType: item.SourceType,
+			Title:     item.Title,
+			Content:   item.Content,
+			Timestamp: item.CreatedAt,
+		})
+		entryIDs = append(entryIDs, item.ID)
+		tokensBefore += item.OriginalTokens
+	}
+	stats.TokensBefore = int64(tokensBefore)
+
+	summary, err := summarizer.Summarize(ctx, entries)
+	if err != nil || summary == "" {
+		cs.logger.Warn("llm compaction: summarize failed, falling back",
+			"error", err, "batch_size", len(entries))
+		return false
+	}
+
+	// Pin raw entry IDs for the configured retention window so callers can
+	// still retrieve originals before they're fully reclaimed.
+	pinnedUntil := time.Now().Add(cs.config.PinRawFor)
+	if store := cs.getPinnedStore(); store != nil {
+		if perr := store.Pin(ctx, entryIDs, pinnedUntil); perr != nil {
+			cs.logger.Warn("llm compaction: pin failed",
+				"error", perr, "ids", len(entryIDs))
+		}
+	}
+
+	// Replace originals with a single summary item.
+	summaryItem := &MemoryItem{
+		ID:             "llm-summary-" + time.Now().UTC().Format("20060102T150405.000000000"),
+		Tier:           MemoryTierShortTerm,
+		Status:         MemoryItemStatusCompressed,
+		Title:          "LLM compaction summary",
+		Content:        summary,
+		Summary:        summary,
+		Category:       "summary",
+		CreatedAt:      time.Now(),
+		LastAccessedAt: time.Now(),
+		OriginalTokens: tokensBefore,
+		Metadata: map[string]any{
+			"compaction_strategy": "llm",
+			"pinned_entry_ids":    entryIDs,
+			"pinned_until":        pinnedUntil.Format(time.RFC3339),
+		},
+	}
+	if addErr := cs.hierarchy.AddItem(summaryItem); addErr != nil {
+		cs.logger.Warn("llm compaction: add summary item failed", "error", addErr)
+		return false
+	}
+
+	// Remove originals (best-effort; log but don't abort on delete errors).
+	for _, id := range entryIDs {
+		if delErr := cs.deleteItem(ctx, id); delErr != nil {
+			cs.logger.Warn("llm compaction: delete original failed",
+				"error", delErr, "id", id)
+			stats.Errors++
+		}
+	}
+
+	stats.ItemsProcessed = len(entryIDs)
+	stats.ItemsCompressed = len(entryIDs)
+	stats.TokensAfter = int64(estimateTokenCount(summary))
+	stats.TokensSaved = stats.TokensBefore - stats.TokensAfter
+
+	if cs.metrics != nil {
+		cs.metrics.CompressionJobs.Add(1)
+		cs.metrics.CompressionTokensSaved.Add(stats.TokensSaved)
+	}
+	return true
 }

@@ -35,6 +35,19 @@ type CompactionConfig struct {
 
 	// Max items to process per compaction run
 	MaxItemsPerRun int `json:"max_items_per_run"`
+
+	// --- F2: LLM-backed auto-compaction (appended) ---
+
+	// Mode selects the compaction strategy. "extractive" (default) preserves
+	// the existing behavior. "llm" routes batches through a summarizer.
+	Mode string `json:"mode,omitempty"`
+
+	// PinRawFor controls how long raw entry blobs are kept pinned after an
+	// LLM synthesis step so callers can recover originals if needed.
+	PinRawFor time.Duration `json:"pin_raw_for,omitempty"`
+
+	// MaxSynthesisTokens caps the token budget for LLM-synthesized output.
+	MaxSynthesisTokens int `json:"max_synthesis_tokens,omitempty"`
 }
 
 // DefaultCompactionConfig returns sensible defaults
@@ -49,6 +62,9 @@ func DefaultCompactionConfig() CompactionConfig {
 		MinAgeBeforeCompaction:   1 * time.Hour,
 		SummarizationDepth:       3,
 		MaxItemsPerRun:           100,
+		Mode:                     "extractive",
+		PinRawFor:                1 * time.Hour,
+		MaxSynthesisTokens:       2048,
 	}
 }
 
@@ -74,6 +90,10 @@ type CompactionScheduler struct {
 
 	// Stats from last run
 	lastRunStats CompactionStats
+
+	// F2 (appended): LLM synthesis backend + raw-blob pin store.
+	summarizer CompactionSummarizer
+	pinned     PinnedStore
 }
 
 // CompactionStats contains statistics from a compaction run
@@ -325,4 +345,38 @@ func (cs *CompactionScheduler) Status() SchedulerStatus {
 	}
 
 	return status
+}
+
+// =========================================================================
+// F2: LLM-backed compaction wiring (appended)
+// =========================================================================
+
+// summarizer is the LLM synthesis backend used when CompactionConfig.Mode ==
+// "llm". Set via SetSummarizer; nil leaves the scheduler in extractive mode.
+func (cs *CompactionScheduler) SetSummarizer(s CompactionSummarizer) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.summarizer = s
+}
+
+// SetPinnedStore wires a raw-blob pin store used when LLM synthesis replaces
+// a batch of entries with a single summary.
+func (cs *CompactionScheduler) SetPinnedStore(p PinnedStore) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	cs.pinned = p
+}
+
+// getSummarizer returns the configured summarizer (nil if unset).
+func (cs *CompactionScheduler) getSummarizer() CompactionSummarizer {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.summarizer
+}
+
+// getPinnedStore returns the configured PinnedStore (nil if unset).
+func (cs *CompactionScheduler) getPinnedStore() PinnedStore {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.pinned
 }
