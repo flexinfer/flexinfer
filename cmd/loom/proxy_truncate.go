@@ -75,16 +75,27 @@ func proxyToolPageSize() int {
 }
 
 func proxyIdleExitTimeout() time.Duration {
-	seconds := resolveProxyLimit(
-		loomProxyIdleExitSecondsEnv,
-		proxyConfigGlobal.IdleExitSeconds,
-		defaultProxyIdleExitSeconds,
-		30,
-	)
+	seconds := resolveProxyIdleExitSeconds()
 	if seconds <= 0 {
 		return 0
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+func resolveProxyIdleExitSeconds() int {
+	if v := strings.TrimSpace(os.Getenv(loomProxyIdleExitSecondsEnv)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil {
+			if n <= 0 {
+				return 0
+			}
+			if n < 30 {
+				return 30
+			}
+			return n
+		}
+	}
+	return resolveProxyLimit("", proxyConfigGlobal.IdleExitSeconds, defaultProxyIdleExitSeconds, 30)
 }
 
 // resolveProxyLimit resolves a proxy limit with precedence: env var > config file > hardcoded default.

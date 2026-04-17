@@ -43,9 +43,10 @@ type HookProfile struct {
 
 // LoomProxyProfile configures the loom proxy command arguments for a platform.
 type LoomProxyProfile struct {
-	AgentHint   string `yaml:"agent_hint,omitempty"`
-	ToolProfile string `yaml:"tool_profile,omitempty"`
-	MaxTools    int    `yaml:"max_tools,omitempty"`
+	AgentHint   string            `yaml:"agent_hint,omitempty"`
+	ToolProfile string            `yaml:"tool_profile,omitempty"`
+	MaxTools    int               `yaml:"max_tools,omitempty"`
+	Env         map[string]string `yaml:"env,omitempty"`
 }
 
 // CapabilityProfile captures what a platform supports.

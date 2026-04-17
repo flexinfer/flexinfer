@@ -50,6 +50,12 @@ platforms:
       enabled: false
       policy_refs: ["gitops_flux"]
       enforcement: "proxy"
+    loom_proxy:
+      agent_hint: "claude-desktop"
+      tool_profile: "llm-core"
+      max_tools: 140
+      env:
+        LOOM_PROXY_IDLE_EXIT_SECONDS: "0"
     capabilities:
       mcp_servers: true
       permissions: false
