@@ -1,0 +1,533 @@
+#!/usr/bin/env python3
+"""Offline validator for quantized model artifacts."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Sequence
+
+try:
+    from safetensors import safe_open as _safe_open
+except Exception:  # noqa: BLE001 - optional dependency.
+    _safe_open = None
+
+
+LAYOUT_CHOICES = ("hf-native", "vllm-gptq", "compressed-tensors", "auto")
+FAMILY_CHOICES = ("gemma4-26b-a4b", "gemma4-31b", "auto")
+
+
+@dataclass(frozen=True)
+class FamilyProfile:
+    name: str
+    aliases: tuple[str, ...]
+    known_vllm_flat_modules: frozenset[str]
+
+
+FAMILY_PROFILES: dict[str, FamilyProfile] = {
+    "gemma4-26b-a4b": FamilyProfile(
+        name="gemma4-26b-a4b",
+        aliases=("gemma-4-26b-a4b", "gemma4-26b-a4b", "26b-a4b"),
+        known_vllm_flat_modules=frozenset(
+            (
+                "moe.gate_up_proj",
+                "moe.down_proj",
+                "self_attn.q_proj",
+                "self_attn.k_proj",
+                "self_attn.v_proj",
+                "self_attn.o_proj",
+                "mlp.gate_proj",
+                "mlp.up_proj",
+                "mlp.down_proj",
+            )
+        ),
+    ),
+    "gemma4-31b": FamilyProfile(
+        name="gemma4-31b",
+        aliases=("gemma-4-31b", "gemma4-31b", "31b"),
+        known_vllm_flat_modules=frozenset(
+            (
+                "moe.gate_up_proj",
+                "moe.down_proj",
+                "self_attn.q_proj",
+                "self_attn.k_proj",
+                "self_attn.v_proj",
+                "self_attn.o_proj",
+                "mlp.gate_proj",
+                "mlp.up_proj",
+                "mlp.down_proj",
+            )
+        ),
+    ),
+}
+
+
+def detect_repeated_token_runs(
+    tokens: Sequence[str] | str, min_run: int = 3
+) -> dict[str, Any]:
+    if isinstance(tokens, str):
+        sequence = tokens.split()
+    else:
+        sequence = [str(token) for token in tokens]
+    if not sequence:
+        return {"has_repetition": False, "max_run": 0, "token": None, "runs": []}
+
+    runs: list[dict[str, Any]] = []
+    current_token = sequence[0]
+    current_start = 0
+    current_length = 1
+
+    for index in range(1, len(sequence)):
+        if sequence[index] == current_token:
+            current_length += 1
+            continue
+        if current_length >= min_run:
+            runs.append(
+                {
+                    "token": current_token,
+                    "start": current_start,
+                    "end": index - 1,
+                    "length": current_length,
+                }
+            )
+        current_token = sequence[index]
+        current_start = index
+        current_length = 1
+
+    if current_length >= min_run:
+        runs.append(
+            {
+                "token": current_token,
+                "start": current_start,
+                "end": len(sequence) - 1,
+                "length": current_length,
+            }
+        )
+
+    max_run = max((run["length"] for run in runs), default=0)
+    top_token = None
+    for run in runs:
+        if run["length"] == max_run:
+            top_token = run["token"]
+            break
+    return {
+        "has_repetition": bool(runs),
+        "max_run": max_run,
+        "token": top_token,
+        "runs": runs,
+    }
+
+
+def _read_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        data = json.loads(path.read_text())
+    except FileNotFoundError:
+        return None, f"missing file: {path.name}"
+    except Exception as exc:  # noqa: BLE001 - JSON parse errors surface directly.
+        return None, f"failed to parse {path.name}: {exc}"
+    if not isinstance(data, dict):
+        return None, f"invalid {path.name}: expected JSON object"
+    return data, None
+
+
+def _load_weight_map(
+    artifact_path: Path, warnings: list[str], errors: list[str], checks: dict[str, Any]
+) -> tuple[dict[str, str], list[str], str | None]:
+    index_path = artifact_path / "model.safetensors.index.json"
+    single_safetensors = artifact_path / "model.safetensors"
+
+    weight_map: dict[str, str] = {}
+    tensor_keys: list[str] = []
+    mode: str | None = None
+
+    if index_path.exists():
+        mode = "index"
+        index, error = _read_json(index_path)
+        if error:
+            errors.append(error)
+            return weight_map, tensor_keys, mode
+        raw_weight_map = index.get("weight_map")
+        if not isinstance(raw_weight_map, dict) or not raw_weight_map:
+            errors.append("model.safetensors.index.json missing non-empty weight_map")
+            return weight_map, tensor_keys, mode
+        bad_entries = [
+            key
+            for key, value in raw_weight_map.items()
+            if not isinstance(key, str) or not isinstance(value, str)
+        ]
+        if bad_entries:
+            errors.append("model.safetensors.index.json weight_map contains non-string entries")
+            return weight_map, tensor_keys, mode
+        weight_map = dict(raw_weight_map)
+        tensor_keys = sorted(weight_map)
+        shard_files = sorted(set(weight_map.values()))
+        missing_shards = [name for name in shard_files if not (artifact_path / name).exists()]
+        if missing_shards:
+            errors.append(
+                "missing shard files from weight_map: " + ", ".join(missing_shards[:12])
+            )
+        checks["shard_files"] = shard_files
+        checks["shard_file_count"] = len(shard_files)
+        checks["tensor_key_count"] = len(tensor_keys)
+        return weight_map, tensor_keys, mode
+
+    if single_safetensors.exists():
+        mode = "single"
+        checks["shard_files"] = ["model.safetensors"]
+        checks["shard_file_count"] = 1
+        if _safe_open is None:
+            warnings.append(
+                "safetensors not installed; skipping tensor-key inspection for model.safetensors"
+            )
+            return weight_map, tensor_keys, mode
+        try:
+            with _safe_open(str(single_safetensors), framework="pt") as handle:
+                tensor_keys = sorted(handle.keys())
+            checks["tensor_key_count"] = len(tensor_keys)
+            checks["single_file_tensor_key_source"] = "safetensors"
+        except Exception as exc:  # noqa: BLE001 - keep metadata-only validation alive.
+            warnings.append(f"unable to inspect model.safetensors keys: {exc}")
+        return weight_map, tensor_keys, mode
+
+    errors.append(
+        "missing model.safetensors.index.json and model.safetensors; cannot validate shards"
+    )
+    return weight_map, tensor_keys, mode
+
+
+def _infer_layout(
+    artifact_path: Path,
+    tensor_keys: Sequence[str],
+    quantize_config: dict[str, Any] | None,
+    config_qcfg: dict[str, Any] | None,
+) -> tuple[str | None, str]:
+    metadata_candidates = [quantize_config or {}, config_qcfg or {}]
+    format_values: set[str] = set()
+    method_values: set[str] = set()
+    for candidate in metadata_candidates:
+        if not isinstance(candidate, dict):
+            continue
+        format_value = candidate.get("format")
+        if isinstance(format_value, str):
+            format_values.add(format_value.lower())
+        method_value = candidate.get("quant_method")
+        if isinstance(method_value, str):
+            method_values.add(method_value.lower())
+
+    has_compressed_metadata = (
+        "compressed-tensors" in format_values
+        or "compressed-tensors" in method_values
+        or (artifact_path / "compression_config.json").exists()
+    )
+    if has_compressed_metadata:
+        return "compressed-tensors", "compressed-tensors metadata marker"
+
+    has_qweight = any(key.endswith(".qweight") for key in tensor_keys)
+    has_qzeros = any(key.endswith(".qzeros") for key in tensor_keys)
+    has_fused_moe = any(
+        ".moe.gate_up_proj." in key or ".moe.down_proj." in key for key in tensor_keys
+    )
+    has_dense_weights = any(key.endswith(".weight") for key in tensor_keys)
+
+    if has_qweight and (has_fused_moe or has_qzeros):
+        return "vllm-gptq", "qweight + fused-MoE/qzeros tensor patterns"
+    if has_qweight:
+        return "hf-native", "qweight tensors without fused-MoE markers"
+    if has_dense_weights:
+        return "hf-native", "dense .weight tensors"
+    return None, "insufficient tensor keys to infer layout"
+
+
+def _collect_family_hints(
+    config: dict[str, Any] | None,
+    quantize_config: dict[str, Any] | None,
+    config_qcfg: dict[str, Any] | None,
+) -> list[str]:
+    hints: list[str] = []
+    if isinstance(config, dict):
+        for field in ("_name_or_path", "model_type", "architectures", "torch_dtype"):
+            value = config.get(field)
+            if isinstance(value, str):
+                hints.append(value.lower())
+            elif isinstance(value, list):
+                hints.extend(str(item).lower() for item in value)
+    for candidate in (quantize_config, config_qcfg):
+        if not isinstance(candidate, dict):
+            continue
+        for field in ("model_name_or_path", "base_model_name_or_path", "model_type"):
+            value = candidate.get(field)
+            if isinstance(value, str):
+                hints.append(value.lower())
+    return hints
+
+
+def _detect_family(
+    config: dict[str, Any] | None,
+    quantize_config: dict[str, Any] | None,
+    config_qcfg: dict[str, Any] | None,
+) -> tuple[str | None, str]:
+    hints = _collect_family_hints(config, quantize_config, config_qcfg)
+    if not hints:
+        return None, "no family hints found in config metadata"
+
+    hint_blob = " ".join(hints)
+    scores: list[tuple[int, str]] = []
+    for profile in FAMILY_PROFILES.values():
+        score = sum(1 for alias in profile.aliases if alias in hint_blob)
+        if score > 0:
+            scores.append((score, profile.name))
+    if not scores:
+        return None, "no profile markers matched metadata hints"
+
+    scores.sort(reverse=True)
+    top_score = scores[0][0]
+    winners = sorted(name for score, name in scores if score == top_score)
+    if len(winners) != 1:
+        return None, f"ambiguous profile markers: {', '.join(winners)}"
+    return winners[0], f"profile markers matched metadata ({winners[0]})"
+
+
+def _validate_modules_shape(
+    modules: Any, resolved_layout: str, family: str | None
+) -> tuple[bool, str, str | None]:
+    if not isinstance(modules, list) or not modules:
+        return False, "invalid", "modules_in_block_to_quantize must be a non-empty list"
+
+    if all(isinstance(item, list) and all(isinstance(name, str) for name in item) for item in modules):
+        return True, "nested", None
+
+    if all(isinstance(item, str) for item in modules):
+        known_flat: set[str] = set()
+        if family and family in FAMILY_PROFILES:
+            known_flat.update(FAMILY_PROFILES[family].known_vllm_flat_modules)
+        else:
+            for profile in FAMILY_PROFILES.values():
+                known_flat.update(profile.known_vllm_flat_modules)
+        unknown = sorted(name for name in modules if name not in known_flat)
+        if resolved_layout != "vllm-gptq":
+            return False, "flat", "flat module list is only accepted for layout=vllm-gptq"
+        if unknown:
+            return (
+                False,
+                "flat",
+                "flat module list contains unknown modules: " + ", ".join(unknown[:12]),
+            )
+        return True, "flat", None
+
+    return False, "invalid", "modules_in_block_to_quantize must be nested lists or flat strings"
+
+
+def _run_generation_probe(artifact_path: Path) -> tuple[dict[str, Any], str | None]:
+    try:
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+    except Exception as exc:  # noqa: BLE001 - expose import details for diagnostics.
+        return {"ok": False}, f"--run-generation unavailable: dependency import failed: {exc}"
+
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(
+            str(artifact_path), local_files_only=True, trust_remote_code=True
+        )
+        model = AutoModelForCausalLM.from_pretrained(
+            str(artifact_path), local_files_only=True, trust_remote_code=True
+        )
+        encoded = tokenizer(
+            "List two short words:", return_tensors="pt", add_special_tokens=True
+        )
+        with torch.no_grad():
+            generated = model.generate(
+                **encoded,
+                max_new_tokens=16,
+                do_sample=False,
+            )
+        decoded = tokenizer.decode(generated[0], skip_special_tokens=True)
+        repetition = detect_repeated_token_runs(decoded.split())
+        probe = {
+            "ok": True,
+            "output_preview": decoded[:200],
+            "repetition": repetition,
+        }
+        return probe, None
+    except Exception as exc:  # noqa: BLE001 - generation probe is optional.
+        return {"ok": False}, f"--run-generation failed: {exc}"
+
+
+def validate_artifact(
+    artifact_path: Path,
+    requested_layout: str = "auto",
+    requested_family: str = "auto",
+    run_generation: bool = False,
+) -> dict[str, Any]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    checks: dict[str, Any] = {"artifact_path": str(artifact_path)}
+    result = {
+        "ok": False,
+        "layout": requested_layout,
+        "family": requested_family,
+        "errors": errors,
+        "warnings": warnings,
+        "checks": checks,
+    }
+
+    if not artifact_path.exists():
+        errors.append(f"artifact path does not exist: {artifact_path}")
+        return result
+    if not artifact_path.is_dir():
+        errors.append(f"artifact path is not a directory: {artifact_path}")
+        return result
+
+    config_path = artifact_path / "config.json"
+    config: dict[str, Any] | None = None
+    config_qcfg: dict[str, Any] | None = None
+    quantize_config: dict[str, Any] | None = None
+
+    if config_path.exists():
+        config, error = _read_json(config_path)
+        if error:
+            errors.append(error)
+        elif isinstance(config, dict):
+            raw_qcfg = config.get("quantization_config")
+            if raw_qcfg is None:
+                config_qcfg = None
+            elif isinstance(raw_qcfg, dict):
+                config_qcfg = raw_qcfg
+            else:
+                errors.append("config.json quantization_config must be an object")
+    else:
+        errors.append("missing file: config.json")
+
+    quantize_path = artifact_path / "quantize_config.json"
+    if quantize_path.exists():
+        quantize_config, error = _read_json(quantize_path)
+        if error:
+            errors.append(error)
+
+    checks["has_quantize_config_json"] = quantize_config is not None
+    checks["has_config_quantization_config"] = config_qcfg is not None
+    if quantize_config is None and config_qcfg is None:
+        errors.append("missing quantization metadata: quantize_config.json or config.quantization_config")
+
+    weight_map, tensor_keys, shard_mode = _load_weight_map(artifact_path, warnings, errors, checks)
+    checks["shard_mode"] = shard_mode or "missing"
+    checks["weight_map_entries"] = len(weight_map)
+    if not checks.get("tensor_key_count"):
+        checks["tensor_key_count"] = len(tensor_keys)
+
+    detected_layout, layout_reason = _infer_layout(
+        artifact_path, tensor_keys, quantize_config, config_qcfg
+    )
+    checks["layout_detection_reason"] = layout_reason
+    checks["detected_layout"] = detected_layout
+
+    if requested_layout == "auto":
+        resolved_layout = detected_layout or "auto"
+        if detected_layout is None:
+            warnings.append("unable to infer layout automatically; using layout=auto")
+    else:
+        resolved_layout = requested_layout
+        if detected_layout and detected_layout != requested_layout:
+            errors.append(
+                f"requested layout={requested_layout} but metadata suggests {detected_layout}"
+            )
+    result["layout"] = resolved_layout
+
+    detected_family, family_reason = _detect_family(config, quantize_config, config_qcfg)
+    checks["family_detection_reason"] = family_reason
+    checks["detected_family"] = detected_family
+    if requested_family == "auto":
+        resolved_family = detected_family or "auto"
+        if detected_family is None:
+            warnings.append("unable to infer family automatically from metadata")
+    else:
+        resolved_family = requested_family
+        if detected_family and detected_family != requested_family:
+            warnings.append(
+                f"requested family={requested_family} but metadata suggests {detected_family}"
+            )
+    result["family"] = resolved_family
+
+    modules = None
+    if isinstance(quantize_config, dict):
+        modules = quantize_config.get("modules_in_block_to_quantize")
+    if modules is None and isinstance(config_qcfg, dict):
+        modules = config_qcfg.get("modules_in_block_to_quantize")
+
+    if modules is None:
+        errors.append("missing modules_in_block_to_quantize in quantization metadata")
+    else:
+        is_valid_modules, shape, module_error = _validate_modules_shape(
+            modules, resolved_layout, resolved_family if resolved_family != "auto" else None
+        )
+        checks["modules_in_block_to_quantize_shape"] = shape
+        if shape == "flat":
+            warnings.append(
+                "modules_in_block_to_quantize uses flat string list (accepted for vLLM-serving format)"
+            )
+        if not is_valid_modules and module_error:
+            errors.append(module_error)
+
+    if run_generation:
+        generation_probe, generation_error = _run_generation_probe(artifact_path)
+        checks["generation_probe"] = generation_probe
+        if generation_error:
+            errors.append(generation_error)
+        elif generation_probe.get("ok"):
+            repetition = generation_probe.get("repetition", {})
+            if repetition.get("has_repetition") and repetition.get("max_run", 0) >= 12:
+                warnings.append(
+                    "generation probe produced long repeated-token run (max_run >= 12)"
+                )
+
+    result["ok"] = len(errors) == 0
+    return result
+
+
+def _print_text_result(result: dict[str, Any]) -> None:
+    status = "PASS" if result["ok"] else "FAIL"
+    print(f"{status}: layout={result['layout']} family={result['family']}")
+    if result["warnings"]:
+        print("warnings:")
+        for warning in result["warnings"]:
+            print(f"  - {warning}")
+    if result["errors"]:
+        print("errors:")
+        for error in result["errors"]:
+            print(f"  - {error}")
+    print("checks:")
+    for key in sorted(result["checks"]):
+        print(f"  - {key}: {result['checks'][key]}")
+
+
+def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Validate quantized model artifact metadata and shard completeness."
+    )
+    parser.add_argument("--artifact-path", required=True, type=Path)
+    parser.add_argument("--layout", choices=LAYOUT_CHOICES, default="auto")
+    parser.add_argument("--family", choices=FAMILY_CHOICES, default="auto")
+    parser.add_argument("--json", action="store_true", dest="as_json")
+    parser.add_argument("--run-generation", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(list(argv) if argv is not None else sys.argv[1:])
+    result = validate_artifact(
+        artifact_path=args.artifact_path,
+        requested_layout=args.layout,
+        requested_family=args.family,
+        run_generation=args.run_generation,
+    )
+    if args.as_json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        _print_text_result(result)
+    return 0 if result["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
