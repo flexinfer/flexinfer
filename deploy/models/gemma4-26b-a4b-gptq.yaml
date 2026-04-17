@@ -83,7 +83,6 @@ spec:
     aliases:
       - gemma4-26b
       - gemma4-26b-a4b
-      - gemma4-moe
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"
