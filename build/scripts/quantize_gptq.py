@@ -9,7 +9,7 @@ All configuration is read from environment variables set by the controller:
 
 # Bumped when controller-side patches change. The wrapper script checks this
 # against GPTQScriptVersion in gptq.go and aborts on mismatch.
-FLEXINFER_SCRIPT_VERSION = "v11"
+FLEXINFER_SCRIPT_VERSION = "v12"
 import copy
 import gc
 import json
@@ -263,30 +263,39 @@ def _update_quantized_module_lists(save_dir, modules):
 
 
 def _dense_gptq_zero_point_add():
-    raw = os.environ.get("GEMMA4_DENSE_GPTQ_ZERO_POINT_ADD", "1").strip()
+    raw = os.environ.get(
+        "DENSE_GPTQ_ZERO_POINT_ADD",
+        os.environ.get("GEMMA4_DENSE_GPTQ_ZERO_POINT_ADD", "1"),
+    ).strip()
     try:
         return int(raw)
     except ValueError:
-        print(f"WARN: invalid GEMMA4_DENSE_GPTQ_ZERO_POINT_ADD={raw!r}; using 1")
+        print(f"WARN: invalid dense GPTQ zero-point add={raw!r}; using 1")
         return 1
 
 
 def _dense_gptq_cosine_threshold():
-    raw = os.environ.get("GEMMA4_DENSE_GPTQ_COSINE_THRESHOLD", "0.98").strip()
+    raw = os.environ.get(
+        "DENSE_GPTQ_COSINE_THRESHOLD",
+        os.environ.get("GEMMA4_DENSE_GPTQ_COSINE_THRESHOLD", "0.98"),
+    ).strip()
     try:
         return float(raw)
     except ValueError:
-        print(f"WARN: invalid GEMMA4_DENSE_GPTQ_COSINE_THRESHOLD={raw!r}; using 0.98")
+        print(f"WARN: invalid dense GPTQ cosine threshold={raw!r}; using 0.98")
         return 0.98
 
 
 def _dense_gptq_policy():
-    raw = os.environ.get("GEMMA4_DENSE_GPTQ_POLICY", "fallback").strip().lower()
+    raw = os.environ.get(
+        "DENSE_GPTQ_POLICY",
+        os.environ.get("GEMMA4_DENSE_GPTQ_POLICY", "fallback"),
+    ).strip().lower()
     if raw in {"fallback", "fp16", "source", "safe"}:
         return "fallback"
     if raw in {"validate", "validated", "allow", "gptq"}:
         return "validate"
-    print(f"WARN: invalid GEMMA4_DENSE_GPTQ_POLICY={raw!r}; using fallback")
+    print(f"WARN: invalid dense GPTQ policy={raw!r}; using fallback")
     return "fallback"
 
 
@@ -479,7 +488,7 @@ def emit_gemma4_moe_hybrid_gptq(save_dir, model_dir):
         if dense_gptq_policy == "fallback":
             print(
                 f"Gemma4 dense GPTQ family {family} forced to source precision "
-                "(GEMMA4_DENSE_GPTQ_POLICY=fallback)"
+                "(DENSE_GPTQ_POLICY=fallback)"
             )
             continue
         if family not in quant_prefixes_by_family:

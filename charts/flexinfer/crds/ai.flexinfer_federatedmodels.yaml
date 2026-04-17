@@ -476,6 +476,24 @@ spec:
                             minimum: 1
                             type: integer
                         type: object
+                      denseModuleCosineThreshold:
+                        description: |-
+                          DenseModuleCosineThreshold is the minimum cosine similarity required when
+                          DenseModulePolicy is "validate". It is formatted as a string to avoid
+                          floating-point serialization drift in CRD specs. Defaults to "0.98".
+                          Only used for GPTQ format.
+                        type: string
+                      denseModulePolicy:
+                        description: |-
+                          DenseModulePolicy controls how GPTQ dense linear module families are
+                          handled after quantization when a family-specific validator is available.
+                          Defaults to "fallback", which restores dense modules to source precision.
+                          "validate" keeps dense GPTQ modules only after the validator accepts every
+                          layer in the family. Only used for GPTQ format.
+                        enum:
+                        - fallback
+                        - validate
+                        type: string
                       descAct:
                         description: |-
                           DescAct enables activation reordering (desc_act) for GPTQ (default false).

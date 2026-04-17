@@ -195,7 +195,7 @@ spec:
 |---------|--------|-------|
 | GPUProfile watch | Working | Controller watches GPUProfile CRs; image changes trigger reconciliation |
 | Image drift detection | Working | Stale running jobs auto-deleted on GPUProfile image update |
-| Script version marker | Working | `FLEXINFER_SCRIPT_VERSION=v7` checked at job startup |
+| Script version marker | Working | `FLEXINFER_SCRIPT_VERSION=v12` checked at job startup |
 | Deploy automation | Working | `make deploy-quantizer QUANTIZER_ARCH=gfx1100` |
 | Spec hash with image | Working | `quantSpecHashWithImage()` includes resolved image in hash |
 

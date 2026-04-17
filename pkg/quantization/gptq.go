@@ -14,7 +14,7 @@ import (
 
 // GPTQScriptVersion must match FLEXINFER_SCRIPT_VERSION in quantize_gptq.py.
 // Bump both when controller-side heredoc patches change to catch stale images.
-const GPTQScriptVersion = "v11"
+const GPTQScriptVersion = "v12"
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}
@@ -65,6 +65,20 @@ func (b *GPTQJobBuilder) Validate(spec *aiv1alpha2.QuantizationSpec) error {
 	}
 	if groupSize <= 0 {
 		return fmt.Errorf("GPTQ: %w (got %d)", ErrInvalidGroupSize, groupSize)
+	}
+
+	if spec.DenseModulePolicy != nil {
+		switch *spec.DenseModulePolicy {
+		case "fallback", "validate":
+		default:
+			return fmt.Errorf("GPTQ denseModulePolicy must be fallback or validate, got %q", *spec.DenseModulePolicy)
+		}
+	}
+	if spec.DenseModuleCosineThreshold != nil {
+		threshold, err := strconv.ParseFloat(*spec.DenseModuleCosineThreshold, 64)
+		if err != nil || threshold <= 0 || threshold > 1 {
+			return fmt.Errorf("GPTQ denseModuleCosineThreshold must be > 0 and <= 1, got %q", *spec.DenseModuleCosineThreshold)
+		}
 	}
 
 	return nil
@@ -123,6 +137,7 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	outSubdir := GPTQOutputSubdir(params.ModelPath, bits, groupSize)
 
 	env := b.buildEnv(params.ModelPath, outSubdir, bits, groupSize, sym, descAct, memoryGB, gpuMemFraction, dynamicExclusion, params.GPUArch, params.MemoryConfig.GPUVramMB, params.Spec.Calibration)
+	env = append(env, b.buildDenseModuleValidationEnv(params.Spec)...)
 
 	return buildGPUQuantizationJob(
 		params,
@@ -139,9 +154,26 @@ func GPTQOutputSubdir(modelPath string, bits, groupSize int) string {
 	if strings.Contains(strings.ToLower(modelPath), "gemma4-26b-a4b") {
 		// Version this experimental hybrid path so managed rebuilds cannot
 		// overwrite the currently serving clean hybrid artifact in-place.
-		return outSubdir + "-hybrid-v11"
+		return outSubdir + "-hybrid-v12"
 	}
 	return outSubdir
+}
+
+func (b *GPTQJobBuilder) buildDenseModuleValidationEnv(spec *aiv1alpha2.QuantizationSpec) []corev1.EnvVar {
+	var env []corev1.EnvVar
+	if spec.DenseModulePolicy != nil && *spec.DenseModulePolicy != "" {
+		env = append(env,
+			corev1.EnvVar{Name: "DENSE_GPTQ_POLICY", Value: *spec.DenseModulePolicy},
+			corev1.EnvVar{Name: "GEMMA4_DENSE_GPTQ_POLICY", Value: *spec.DenseModulePolicy},
+		)
+	}
+	if spec.DenseModuleCosineThreshold != nil && *spec.DenseModuleCosineThreshold != "" {
+		env = append(env,
+			corev1.EnvVar{Name: "DENSE_GPTQ_COSINE_THRESHOLD", Value: *spec.DenseModuleCosineThreshold},
+			corev1.EnvVar{Name: "GEMMA4_DENSE_GPTQ_COSINE_THRESHOLD", Value: *spec.DenseModuleCosineThreshold},
+		)
+	}
+	return env
 }
 
 // buildEnv returns environment variables for the GPTQ quantization script.

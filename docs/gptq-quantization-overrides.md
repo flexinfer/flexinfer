@@ -23,6 +23,7 @@ GPTQModel + ROCm + Qwen3.5/Gemma4 hybrid architectures require extensive workaro
 | Triton cache lock patch | `gptq.go:662-698` | FLA + GPTQModel race |
 | torchao skip (gfx906) | `gptq.go:640-651` | SIGILL on Broadwell |
 | Hessian repair config | `gptq.go:142-149` | Singular Hessian matrices |
+| Dense-module validation | `denseModulePolicy`, `validate_quantized_artifact.py` | Canary fuller GPTQ without blind promotion |
 | pypcre stdlib shim (gfx906) | `gptq.go:646-651` | SIGILL on Broadwell |
 
 ## Dependency Bootstrap Flow
@@ -111,6 +112,8 @@ Full list: `build/scripts/vllm_qwen35_patches.py`
 | `ablitateLmHead` | *bool | true | Abliterate output projection |
 | `targetLayers` | *string | "auto" | Layer selection (e.g. "27,31,35") |
 | `dynamicExclusion` | *string | "auto" | GPTQ exclusion pattern |
+| `denseModulePolicy` | *string | unset / "fallback" | Optional dense GPTQ family validation policy |
+| `denseModuleCosineThreshold` | *string | "0.98" | Optional dense GPTQ dequant/source cosine gate |
 
 ## Gemma4 MoE Model Policy
 
@@ -128,6 +131,46 @@ The `gemma4-text` model policy in `gptq.go:defaultGPTQModelPoliciesJSON()` handl
 
 **Timing**: Full MoE GPTQ on gfx1100 takes 12-24 hours. Set `timeoutSeconds: 43200` in ModelCache spec.
 
+### Dense GPTQ candidate controls
+
+Dense attention and dense MLP GPTQ are controlled through generic ModelCache
+fields so other families can reuse the same promotion pattern when validators
+are added:
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `denseModulePolicy` | omitted / `fallback` | Restore dense modules to source precision unless explicitly validating a candidate |
+| `denseModulePolicy: validate` | opt-in | Keep a dense GPTQ module family only when every layer passes source/dequant cosine checks |
+| `denseModuleCosineThreshold` | `"0.98"` | Minimum cosine similarity for validated dense families |
+
+The quantizer also accepts the generic env vars `DENSE_GPTQ_POLICY` and
+`DENSE_GPTQ_COSINE_THRESHOLD`; the legacy `GEMMA4_*` env names still work.
+
+Before runtime canary promotion, validate artifact coverage explicitly:
+
+```bash
+python3 build/scripts/validate_quantized_artifact.py \
+  --artifact-path /models/gemma4-26b-a4b-gptq/gptq-w4-g128-hybrid-v12 \
+  --layout vllm-gptq \
+  --family gemma4-26b-a4b \
+  --require-quantized-module moe.gate_up_proj \
+  --require-quantized-module moe.down_proj \
+  --require-quantized-module self_attn.q_proj
+```
+
+For the conservative fallback artifact, forbid dense GPTQ families instead:
+
+```bash
+python3 build/scripts/validate_quantized_artifact.py \
+  --artifact-path /models/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean \
+  --layout vllm-gptq \
+  --family gemma4-26b-a4b \
+  --require-quantized-module moe.gate_up_proj \
+  --require-quantized-module moe.down_proj \
+  --forbid-quantized-module self_attn.q_proj \
+  --forbid-quantized-module mlp.down_proj
+```
+
 ## Deployment Reliability Overrides
 
 ### GPUProfile Watch (`controllers/modelcache_controller.go`)
@@ -143,8 +186,8 @@ The `gemma4-text` model policy in `gptq.go:defaultGPTQModelPoliciesJSON()` handl
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
-| `GPTQScriptVersion` | `"v7"` | Go-side version in `gptq.go` |
-| `FLEXINFER_SCRIPT_VERSION` | `"v7"` | Python-side version in `quantize_gptq.py` |
+| `GPTQScriptVersion` | `"v12"` | Go-side version in `gptq.go` |
+| `FLEXINFER_SCRIPT_VERSION` | `"v12"` | Python-side version in `quantize_gptq.py` |
 
 The wrapper script reads the Python constant at job startup and compares against the Go constant (injected as shell variable). Mismatch → `exit 1` with `FATAL: Script version mismatch` in `/dev/termination-log`.
 

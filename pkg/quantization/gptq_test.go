@@ -69,6 +69,24 @@ func TestGPTQJobBuilder_Validate_EdgeCases(t *testing.T) {
 			},
 			wantErr: "groupSize must be > 0",
 		},
+		{
+			name: "invalid dense module policy",
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format:            aiv1alpha2.QuantizationFormatGPTQ,
+				UseGPU:            true,
+				DenseModulePolicy: stringPtrGPTQ("always"),
+			},
+			wantErr: "denseModulePolicy",
+		},
+		{
+			name: "invalid dense module cosine threshold",
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format:                     aiv1alpha2.QuantizationFormatGPTQ,
+				UseGPU:                     true,
+				DenseModuleCosineThreshold: stringPtrGPTQ("1.25"),
+			},
+			wantErr: "denseModuleCosineThreshold",
+		},
 	}
 
 	for _, tt := range tests {
@@ -406,6 +424,44 @@ func TestGPTQJobBuilder_BuildJob_AMDImage(t *testing.T) {
 	}
 }
 
+func TestGPTQJobBuilder_BuildJob_DenseModuleValidationEnv(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	params := JobParams{
+		Name:      "gemma4-26b-a4b-gptq-candidate",
+		Namespace: "default",
+		PVCName:   "test-pvc",
+		ModelPath: "gemma4-26b-a4b-gptq-candidate",
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:                     aiv1alpha2.QuantizationFormatGPTQ,
+			UseGPU:                     true,
+			DenseModulePolicy:          stringPtrGPTQ("validate"),
+			DenseModuleCosineThreshold: stringPtrGPTQ("0.995"),
+		},
+		GPUVendor: "amd",
+		GPUArch:   "gfx1100",
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob error: %v", err)
+	}
+
+	env := map[string]string{}
+	for _, item := range job.Spec.Template.Spec.Containers[0].Env {
+		env[item.Name] = item.Value
+	}
+	for _, name := range []string{"DENSE_GPTQ_POLICY", "GEMMA4_DENSE_GPTQ_POLICY"} {
+		if env[name] != "validate" {
+			t.Fatalf("%s = %q, want validate", name, env[name])
+		}
+	}
+	for _, name := range []string{"DENSE_GPTQ_COSINE_THRESHOLD", "GEMMA4_DENSE_GPTQ_COSINE_THRESHOLD"} {
+		if env[name] != "0.995" {
+			t.Fatalf("%s = %q, want 0.995", name, env[name])
+		}
+	}
+}
+
 func TestGPTQJobBuilder_BuildJob_Gemma4MoEHybridOutput(t *testing.T) {
 	builder := &GPTQJobBuilder{}
 	params := JobParams{
@@ -428,7 +484,7 @@ func TestGPTQJobBuilder_BuildJob_Gemma4MoEHybridOutput(t *testing.T) {
 
 	for _, env := range job.Spec.Template.Spec.Containers[0].Env {
 		if env.Name == "OUT_DIR" {
-			want := "/cache/gemma4-26b-a4b-gptq/gptq-w4-g128-hybrid-v11"
+			want := "/cache/gemma4-26b-a4b-gptq/gptq-w4-g128-hybrid-v12"
 			if env.Value != want {
 				t.Fatalf("OUT_DIR = %q, want %q", env.Value, want)
 			}
@@ -437,3 +493,5 @@ func TestGPTQJobBuilder_BuildJob_Gemma4MoEHybridOutput(t *testing.T) {
 	}
 	t.Fatal("missing OUT_DIR env var")
 }
+
+func stringPtrGPTQ(v string) *string { return &v }

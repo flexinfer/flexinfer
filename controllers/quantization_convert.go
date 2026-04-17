@@ -31,18 +31,20 @@ func convertQuantizationSpecV1toV2(in *aiv1alpha1.QuantizationSpec) *aiv1alpha2.
 		return nil
 	}
 	out := &aiv1alpha2.QuantizationSpec{
-		Format:            aiv1alpha2.QuantizationFormat(in.Format),
-		GGUFType:          in.GGUFType,
-		Bits:              in.Bits,
-		GroupSize:         in.GroupSize,
-		UseGPU:            in.UseGPU,
-		MaxMemoryGB:       in.MaxMemoryGB,
-		TimeoutSeconds:    in.TimeoutSeconds,
-		Sym:               in.Sym,
-		DescAct:           in.DescAct,
-		GPUMemoryFraction: in.GPUMemoryFraction,
-		DynamicExclusion:  in.DynamicExclusion,
-		NodeSelector:      in.NodeSelector,
+		Format:                     aiv1alpha2.QuantizationFormat(in.Format),
+		GGUFType:                   in.GGUFType,
+		Bits:                       in.Bits,
+		GroupSize:                  in.GroupSize,
+		UseGPU:                     in.UseGPU,
+		MaxMemoryGB:                in.MaxMemoryGB,
+		TimeoutSeconds:             in.TimeoutSeconds,
+		Sym:                        in.Sym,
+		DescAct:                    in.DescAct,
+		GPUMemoryFraction:          in.GPUMemoryFraction,
+		DynamicExclusion:           in.DynamicExclusion,
+		DenseModulePolicy:          in.DenseModulePolicy,
+		DenseModuleCosineThreshold: in.DenseModuleCosineThreshold,
+		NodeSelector:               in.NodeSelector,
 	}
 	if in.Calibration != nil {
 		out.Calibration = &aiv1alpha2.CalibrationSpec{
