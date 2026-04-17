@@ -1,6 +1,8 @@
 # Loom Core User Guide
 
 This guide is for day-to-day usage on a developer machine: setup, config sync, daemon operations, HUD visibility, and sandbox execution.
+The main shared HUD is the Kubernetes deployment `loom-hub/mobile-hud`, exposed at `https://hud.flexinfer.ai`.
+Run `loom hud` locally only for development, smoke tests, or isolated debugging.
 
 For architecture details, see `docs/ARCHITECTURE.md`.
 
@@ -51,14 +53,15 @@ make dev-reload
 # Health check
 curl http://localhost:9876/health
 
-# Launch HUD
+# Launch local development HUD
 ./bin/loom hud --port 3333
 
-# HUD launchd/service health (macOS)
+# Local HUD launchd/service health (macOS)
 ./bin/loom hud status
 ```
 
-`make dev-upgrade` now also attempts to restart HUD when launchd service is installed or a HUD process is already bound to port `3333`.
+`make dev-upgrade` now also attempts to restart a local development HUD when launchd service is installed or a HUD process is already bound to port `3333`.
+It does not deploy the main shared HUD; use the Kubernetes rollout checks in the HUD section for that path.
 
 ## Config Generation and Sync
 
@@ -123,13 +126,23 @@ Default log files:
 
 ## HUD (Agent Command Center)
 
-Launch HUD:
+The main shared HUD runs in Kubernetes:
+
+```bash
+kubectl -n loom-hub rollout status deployment/mobile-hud
+kubectl -n loom-hub get pods -l app=mobile-hud
+kubectl -n loom-hub get ingress mobile-hud
+```
+
+Operator URL: `https://hud.flexinfer.ai`
+
+Use this Kubernetes deployment for normal fleet/session triage. The local command below is for HUD development, smoke testing, or offline debugging only:
 
 ```bash
 ./bin/loom hud --port 3333
 ```
 
-Install/manage HUD launchd service (auto-start on login):
+Install/manage the local HUD launchd service (auto-start on login):
 
 ```bash
 ./bin/loom hud install
@@ -138,8 +151,8 @@ Install/manage HUD launchd service (auto-start on login):
 ./bin/loom hud stop
 ```
 
-`loom hud install` creates `~/.config/loom/hud.env` (if missing) for launchd-loaded HUD secrets such as FlexInfer, webhook, admin, and mobile operator tokens.
-The default launchd HUD profile enables Redis cache (`CACHE_BACKEND=redis`, `REDIS_URL=redis://localhost:6379`).
+`loom hud install` creates `~/.config/loom/hud.env` (if missing) for launchd-loaded local HUD secrets such as FlexInfer, webhook, admin, and mobile operator tokens.
+The default local launchd HUD profile enables Redis cache (`CACHE_BACKEND=redis`, `REDIS_URL=redis://localhost:6379`).
 
 Optional modes:
 
@@ -285,6 +298,12 @@ loom agent hook-status --agent-id codex --window 5m
 curl "http://127.0.0.1:3333/api/timeline?agent_id=codex&event_type=agent.heartbeat&limit=50"
 ```
 
+For the main HUD, prefer the Kubernetes route and an operator token when querying HTTP endpoints directly:
+
+```bash
+curl "https://hud.flexinfer.ai/api/timeline?agent_id=codex&event_type=agent.heartbeat&limit=50"
+```
+
 Nudge queue status and policy:
 
 ```bash
@@ -344,25 +363,33 @@ For a full physical-device workflow, see `docs/MOBILE_COMPANION_IPHONE_TESTING.m
 
 | Mode | Transport | When to Use |
 |------|-----------|-------------|
-| **LAN** | HTTP to local IP | Device is on the same network as the Loom HUD server |
-| **Gateway** | HTTPS through `mcp.flexinfer.ai` | Remote access via unified MCP+mobile gateway |
+| **Gateway** | HTTPS through `mcp.flexinfer.ai` | Default path for the shared Kubernetes HUD |
+| **LAN** | HTTP to local IP | Development only, when testing a local HUD server on the same network as the device |
 
 ### Pairing
 
-1. Start the HUD server with mobile auth enabled:
+1. For normal use, rotate and publish the Kubernetes mobile token:
    ```bash
-   export HUD_MOBILE_OPERATOR_TOKEN="$(openssl rand -hex 32)"
-   export HUD_MOBILE_OPERATOR_SCOPES="mobile:read,mobile:session:create,mobile:session:end,mobile:push"
-   loom hud --bind 0.0.0.0 --port 3333 \
-     --mobile-operator-token "$HUD_MOBILE_OPERATOR_TOKEN" \
-     --mobile-operator-scopes "$HUD_MOBILE_OPERATOR_SCOPES"
+   make mobile-gateway-dev
    ```
-   Or use `make mobile-hud` after exporting the token/scopes.
+   This patches `loom-hub/loom-secrets`, restarts `deployment/mobile-hud`, and verifies `https://mcp.flexinfer.ai/api/mobile/v1/ping`.
 2. Open Loom Companion on your device.
-3. Select **LAN** or **Gateway** mode.
-4. Enter the server URL (e.g., `http://192.168.1.50:3333` for LAN).
-5. Enter the mobile operator bearer token (same value used by `HUD_MOBILE_OPERATOR_TOKEN` on the server).
+3. Select **Gateway** mode.
+4. Enter the gateway URL `https://mcp.flexinfer.ai`.
+5. Enter the mobile operator bearer token.
 6. Tap **Connect**. The app probes `/api/mobile/v1/ping` to verify the connection.
+
+For local development only, start a local HUD server with mobile auth enabled:
+
+```bash
+export HUD_MOBILE_OPERATOR_TOKEN="$(openssl rand -hex 32)"
+export HUD_MOBILE_OPERATOR_SCOPES="mobile:read,mobile:session:create,mobile:session:end,mobile:push"
+loom hud --bind 0.0.0.0 --port 3333 \
+  --mobile-operator-token "$HUD_MOBILE_OPERATOR_TOKEN" \
+  --mobile-operator-scopes "$HUD_MOBILE_OPERATOR_SCOPES"
+```
+
+Use `make mobile-hud` after exporting the token/scopes when you explicitly need the local LAN path.
 
 Gateway bootstrap shortcut:
 
@@ -370,7 +397,7 @@ Gateway bootstrap shortcut:
 make mobile-gateway-dev
 ```
 
-This rotates the mobile token, patches `loom-hub/loom-secrets`, restarts `deployment/mobile-hud`, and verifies `https://mcp.flexinfer.ai/api/mobile/v1/ping`.
+This is the preferred shared-system path because it updates the Kubernetes deployment instead of a local HUD process.
 
 ### iOS Local Network Permission (LAN Mode)
 
@@ -401,7 +428,8 @@ The mobile operator token requires these scopes (configured via `HUD_MOBILE_OPER
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
 | "Cannot reach server" in LAN mode | Local Network permission denied | Settings > Privacy & Security > Local Network |
-| "Cannot reach server" in LAN mode | Wrong IP or port | Verify server URL matches your `loom hud --bind ... --port ...` settings |
+| "Cannot reach server" in Gateway mode | Kubernetes HUD unavailable or ingress route broken | Check `kubectl -n loom-hub rollout status deployment/mobile-hud` and verify `https://mcp.flexinfer.ai/api/mobile/v1/ping` |
+| "Cannot reach server" in LAN mode | Wrong IP or port | Verify server URL matches your local `loom hud --bind ... --port ...` settings |
 | "[unauthorized]" error | Token mismatch | Verify `HUD_MOBILE_OPERATOR_TOKEN` matches |
 | "[forbidden]" error | Missing scope | Add required scope to `HUD_MOBILE_OPERATOR_SCOPES` |
 | Dashboard not updating | SSE disconnected | Check Connection tab; polling fallback is active |
@@ -415,4 +443,4 @@ The mobile operator token requires these scopes (configured via `HUD_MOBILE_OPER
 - Stale tool list: `loom reload`
 - Client cannot find servers: `loom sync all --regen --loom-mode`
 - GUI apps miss shell env vars: run `loom check` and move secrets into `loom secrets`
-- Hook calls fail with both HUD and daemon errors: verify either `loom hud` is reachable (`LOOM_HUD_PORT`) or daemon socket exists (`LOOM_SOCKET` / `~/.config/loom/loom.sock`)
+- Hook calls fail with both HUD and daemon errors: for the main system, verify `loom-hub/mobile-hud` rollout and ingress first; for local development, verify either `loom hud` is reachable (`LOOM_HUD_PORT`) or daemon socket exists (`LOOM_SOCKET` / `~/.config/loom/loom.sock`)

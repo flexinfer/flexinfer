@@ -1,6 +1,7 @@
 <script>
   import { fleetStore } from '../stores/fleet.svelte.ts';
   import { presenceActionsStore } from '../stores/presenceActions.svelte.ts';
+  import { summarizeUnifiedAgents } from '../utils/agents.ts';
   import PresenceAgentsTab from './presence/PresenceAgentsTab.svelte';
   import PresenceClaimsTab from './presence/PresenceClaimsTab.svelte';
   import PresenceWorktreesTab from './presence/PresenceWorktreesTab.svelte';
@@ -19,8 +20,36 @@
     };
   });
 
-  let agents = $derived(fleetStore.unifiedAgents ?? []);
-  let agentSummary = $derived(fleetStore.unifiedSummary);
+  function isCodexKeepaliveWrapper(agent) {
+    return (
+      agent?.agent_type === 'codex' &&
+      /^codex-\d+$/.test(agent?.agent_id ?? '') &&
+      (agent?.description ?? '').toLowerCase().includes('keepalive wrapper session') &&
+      !!agent?.namespace
+    );
+  }
+
+  function isLegacyCodexBootstrap(agent) {
+    return (
+      agent?.agent_type === 'codex' &&
+      /^codex-.+-\d+-[0-9a-f]{8}$/.test(agent?.agent_id ?? '') &&
+      (agent?.description ?? '').toLowerCase().includes('heartbeat bootstrap session') &&
+      !!agent?.namespace
+    );
+  }
+
+  function suppressLegacyCodexBootstrapAgents(inputAgents) {
+    const stableWrapperNamespaces = new Set(
+      inputAgents.filter(isCodexKeepaliveWrapper).map((agent) => agent.namespace)
+    );
+    if (stableWrapperNamespaces.size === 0) return inputAgents;
+    return inputAgents.filter(
+      (agent) => !(isLegacyCodexBootstrap(agent) && stableWrapperNamespaces.has(agent.namespace))
+    );
+  }
+
+  let agents = $derived(suppressLegacyCodexBootstrapAgents(fleetStore.unifiedAgents ?? []));
+  let agentSummary = $derived(summarizeUnifiedAgents(agents));
   let claims = $derived(fleetStore.fileClaims ?? []);
   let worktrees = $derived(fleetStore.worktrees ?? []);
   let fileConflicts = $derived.by(() => {
