@@ -216,17 +216,21 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: "1"})
 		}
 
+		aiterDisabled := false
+
 		// ROCm kernel overrides are presence-aware so manifests can force
 		// stability fallbacks instead of relying on vLLM's moving defaults.
 		if value, ok := rocmBoolOverride(spec, "rocmUseAiter"); ok {
 			if value == "0" {
 				vllmEnv = append(vllmEnv, rocmAiterDisabledEnvVars()...)
+				aiterDisabled = true
 			} else {
 				vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
 			}
 		} else if value, ok := rocmBoolOverride(spec, "disableAiter"); ok {
 			if value == "1" {
 				vllmEnv = append(vllmEnv, rocmAiterDisabledEnvVars()...)
+				aiterDisabled = true
 			} else {
 				vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
 			}
@@ -239,7 +243,7 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			}
 		}
 
-		if value, ok := rocmBoolOverride(spec, "rocmCustomPagedAttn"); ok {
+		if value, ok := rocmBoolOverride(spec, "rocmCustomPagedAttn"); ok && !aiterDisabled {
 			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER_PAGED_ATTN", Value: value})
 		}
 
