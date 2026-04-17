@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/crb2nu/loom/pkg/env"
 )
@@ -267,4 +268,58 @@ func (c Config) TokenBudgetForPlatform(agentType string) int {
 		}
 	}
 	return c.DefaultTokenBudget
+}
+
+// =========================================================================
+// Reranker config (Slice A1 / F1 — recall reranker wiring)
+// Parsed separately via LoadRerankerConfigFromEnv so unrelated callers do
+// not have to carry the new struct.
+// =========================================================================
+
+// RerankerConfig configures the recall Reranker backend.
+type RerankerConfig struct {
+	// Kind selects the backend: "off" (default), "flexinfer", or "bge".
+	// Parsed from WEAVER_RERANKER.
+	Kind RerankerKind
+
+	// Model overrides the backend model name. For "flexinfer"/"bge" this
+	// is forwarded as the "model" field on the /v1/rerank request.
+	Model string
+
+	// BaseURL is the flexinfer proxy base (no trailing slash). Reused for
+	// both the flexinfer and bge backends because bge runs behind the
+	// same proxy.
+	BaseURL string
+
+	// APIKey is the optional bearer token for the flexinfer proxy.
+	APIKey string
+
+	// Timeout caps the rerank HTTP call. Zero uses a conservative default
+	// (see backend constructors).
+	Timeout time.Duration
+}
+
+// LoadRerankerConfigFromEnv parses reranker configuration from the
+// environment. Defaults to RerankerKindOff so enabling reranking is an
+// explicit opt-in.
+//
+// Env vars:
+//   - WEAVER_RERANKER          : "off" | "flexinfer" | "bge" (default "off")
+//   - WEAVER_RERANKER_MODEL    : override model name
+//   - WEAVER_RERANKER_TIMEOUT  : Go duration, e.g. "5s"
+//   - WEAVER_RERANKER_BASE_URL : flexinfer proxy base URL. Falls back to
+//     FLEXINFER_URL, then http://localhost:8080.
+//   - WEAVER_RERANKER_API_KEY  : bearer token. Falls back to FLEXINFER_API_KEY.
+func LoadRerankerConfigFromEnv() RerankerConfig {
+	kind := strings.ToLower(strings.TrimSpace(env.StringChain([]string{"WEAVER_RERANKER"}, "off")))
+	return RerankerConfig{
+		Kind:  RerankerKind(kind),
+		Model: strings.TrimSpace(env.StringChain([]string{"WEAVER_RERANKER_MODEL"}, "")),
+		BaseURL: strings.TrimRight(env.StringChain(
+			[]string{"WEAVER_RERANKER_BASE_URL", "FLEXINFER_URL"},
+			"http://localhost:8080",
+		), "/"),
+		APIKey:  env.StringChain([]string{"WEAVER_RERANKER_API_KEY", "FLEXINFER_API_KEY"}, ""),
+		Timeout: env.Duration("WEAVER_RERANKER_TIMEOUT", 5*time.Second),
+	}
 }
