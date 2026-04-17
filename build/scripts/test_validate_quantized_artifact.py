@@ -84,9 +84,75 @@ class ValidateQuantizedArtifactTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["layout"], "vllm-gptq")
         self.assertEqual(result["family"], "gemma4-26b-a4b")
+        self.assertEqual(
+            result["checks"]["quantized_module_counts"], {"moe.gate_up_proj": 1}
+        )
         self.assertTrue(
             any("flat string list" in warning for warning in result["warnings"]),
             result["warnings"],
+        )
+
+    def test_required_and_forbidden_quantized_modules(self) -> None:
+        self._seed_base_config(
+            quantization_config={
+                "modules_in_block_to_quantize": [
+                    "moe.gate_up_proj",
+                    "moe.down_proj",
+                    "self_attn.q_proj",
+                ]
+            }
+        )
+        self._write_json(
+            "model.safetensors.index.json",
+            {
+                "weight_map": {
+                    "model.layers.0.moe.gate_up_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.1.moe.gate_up_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.moe.down_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.self_attn.q_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.self_attn.q_proj.scales": "model-00001-of-00001.safetensors",
+                    "model.layers.0.self_attn.q_proj.qzeros": "model-00001-of-00001.safetensors",
+                }
+            },
+        )
+        self._touch("model-00001-of-00001.safetensors")
+
+        result = validator.validate_artifact(
+            self.artifact,
+            requested_layout="vllm-gptq",
+            required_quantized_modules=["moe.gate_up_proj", "self_attn.q_proj"],
+            min_quantized_modules=3,
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            result["checks"]["quantized_module_counts"],
+            {
+                "moe.down_proj": 1,
+                "moe.gate_up_proj": 2,
+                "self_attn.q_proj": 1,
+            },
+        )
+
+        forbidden = validator.validate_artifact(
+            self.artifact,
+            requested_layout="vllm-gptq",
+            forbidden_quantized_modules=["self_attn.q_proj"],
+        )
+        self.assertFalse(forbidden["ok"])
+        self.assertTrue(
+            any("forbidden quantized module" in error for error in forbidden["errors"]),
+            forbidden["errors"],
+        )
+
+        missing = validator.validate_artifact(
+            self.artifact,
+            requested_layout="vllm-gptq",
+            required_quantized_modules=["mlp.down_proj"],
+        )
+        self.assertFalse(missing["ok"])
+        self.assertTrue(
+            any("required quantized module" in error for error in missing["errors"]),
+            missing["errors"],
         )
 
     def test_flat_modules_rejected_for_hf_layout(self) -> None:

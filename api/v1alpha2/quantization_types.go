@@ -139,6 +139,22 @@ type QuantizationSpec struct {
 	// +optional
 	DynamicExclusion *string `json:"dynamicExclusion,omitempty"`
 
+	// DenseModulePolicy controls how GPTQ dense linear module families are
+	// handled after quantization when a family-specific validator is available.
+	// Defaults to "fallback", which restores dense modules to source precision.
+	// "validate" keeps dense GPTQ modules only after the validator accepts every
+	// layer in the family. Only used for GPTQ format.
+	// +kubebuilder:validation:Enum=fallback;validate
+	// +optional
+	DenseModulePolicy *string `json:"denseModulePolicy,omitempty"`
+
+	// DenseModuleCosineThreshold is the minimum cosine similarity required when
+	// DenseModulePolicy is "validate". It is formatted as a string to avoid
+	// floating-point serialization drift in CRD specs. Defaults to "0.98".
+	// Only used for GPTQ format.
+	// +optional
+	DenseModuleCosineThreshold *string `json:"denseModuleCosineThreshold,omitempty"`
+
 	// NodeSelector overrides spec.nodeSelector for quantization jobs.
 	// Useful when quantization needs a different node (e.g., more RAM).
 	// +optional

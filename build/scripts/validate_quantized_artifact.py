@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -321,6 +322,39 @@ def _validate_modules_shape(
     return False, "invalid", "modules_in_block_to_quantize must be nested lists or flat strings"
 
 
+def _flatten_declared_modules(modules: Any) -> list[str]:
+    if not isinstance(modules, list):
+        return []
+    if all(isinstance(item, str) for item in modules):
+        return sorted(set(modules))
+    flattened: set[str] = set()
+    for item in modules:
+        if isinstance(item, list):
+            flattened.update(name for name in item if isinstance(name, str))
+    return sorted(flattened)
+
+
+def _quantized_module_from_key(key: str) -> str | None:
+    if not key.endswith(".qweight"):
+        return None
+    parts = key.rsplit(".qweight", 1)[0].split(".")
+    for index in range(len(parts) - 2):
+        if parts[index] == "layers" and parts[index + 1].isdigit():
+            module_parts = parts[index + 2 :]
+            if module_parts:
+                return ".".join(module_parts)
+    return None
+
+
+def _collect_quantized_module_counts(tensor_keys: Sequence[str]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for key in tensor_keys:
+        module = _quantized_module_from_key(key)
+        if module:
+            counts[module] += 1
+    return dict(sorted(counts.items()))
+
+
 def _run_generation_probe(artifact_path: Path) -> tuple[dict[str, Any], str | None]:
     try:
         import torch
@@ -361,6 +395,9 @@ def validate_artifact(
     requested_layout: str = "auto",
     requested_family: str = "auto",
     run_generation: bool = False,
+    required_quantized_modules: Sequence[str] | None = None,
+    forbidden_quantized_modules: Sequence[str] | None = None,
+    min_quantized_modules: int | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -471,6 +508,36 @@ def validate_artifact(
         if not is_valid_modules and module_error:
             errors.append(module_error)
 
+    declared_modules = _flatten_declared_modules(modules)
+    quantized_module_counts = _collect_quantized_module_counts(tensor_keys)
+    quantized_modules = sorted(quantized_module_counts)
+    checks["declared_quantized_modules"] = declared_modules
+    checks["quantized_modules"] = quantized_modules
+    checks["quantized_module_counts"] = quantized_module_counts
+
+    if declared_modules and quantized_modules:
+        missing_declared = sorted(set(declared_modules) - set(quantized_modules))
+        checks["declared_modules_without_qweight"] = missing_declared
+        if missing_declared:
+            warnings.append(
+                "declared quantized modules have no qweight tensors: "
+                + ", ".join(missing_declared[:12])
+            )
+
+    required = sorted(set(required_quantized_modules or ()))
+    forbidden = sorted(set(forbidden_quantized_modules or ()))
+    for module in required:
+        if module not in quantized_module_counts:
+            errors.append(f"required quantized module missing qweight tensors: {module}")
+    for module in forbidden:
+        if module in quantized_module_counts:
+            errors.append(f"forbidden quantized module has qweight tensors: {module}")
+    if min_quantized_modules is not None and len(quantized_module_counts) < min_quantized_modules:
+        errors.append(
+            f"only {len(quantized_module_counts)} quantized module families found; "
+            f"want at least {min_quantized_modules}"
+        )
+
     if run_generation:
         generation_probe, generation_error = _run_generation_probe(artifact_path)
         checks["generation_probe"] = generation_probe
@@ -516,10 +583,34 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("--run-generation", action="store_true")
+    parser.add_argument(
+        "--require-quantized-module",
+        action="append",
+        default=[],
+        help="Require at least one .qweight tensor for this module family; may be repeated.",
+    )
+    parser.add_argument(
+        "--forbid-quantized-module",
+        action="append",
+        default=[],
+        help="Fail if this module family has any .qweight tensors; may be repeated.",
+    )
+    parser.add_argument(
+        "--min-quantized-modules",
+        type=int,
+        default=None,
+        help="Require at least this many quantized module families.",
+    )
     args = parser.parse_args(argv)
     args.family = args.family.strip().lower()
     if not FAMILY_ID_RE.match(args.family):
         parser.error("--family must be auto or a lowercase family id using letters, digits, '.', '_' or '-'")
+    for field_name in ("require_quantized_module", "forbid_quantized_module"):
+        values = getattr(args, field_name)
+        cleaned = [value.strip() for value in values if value.strip()]
+        setattr(args, field_name, cleaned)
+    if args.min_quantized_modules is not None and args.min_quantized_modules < 0:
+        parser.error("--min-quantized-modules must be >= 0")
     return args
 
 
@@ -530,6 +621,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         requested_layout=args.layout,
         requested_family=args.family,
         run_generation=args.run_generation,
+        required_quantized_modules=args.require_quantized_module,
+        forbidden_quantized_modules=args.forbid_quantized_module,
+        min_quantized_modules=args.min_quantized_modules,
     )
     if args.as_json:
         print(json.dumps(result, indent=2, sort_keys=True))

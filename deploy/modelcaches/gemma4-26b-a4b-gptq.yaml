@@ -18,6 +18,10 @@
 #     INT4, while dense attention/MLP weights default to source precision for
 #     vLLM/ROCm. Dense GPTQ can pass offline dequantization checks but still
 #     trips vLLM's ROCm GPTQ dense kernel path, so it remains opt-in only.
+#   - denseModulePolicy: "validate" is the next canary-only path. It keeps a
+#     dense GPTQ module family only if offline dequantization cosine checks pass
+#     for every layer, and still requires runtime generation validation before
+#     alias promotion.
 #
 # Disk: the upstream BF16 cache expands to roughly 30 Gi on Longhorn/Xet-backed
 # downloads, and streaming in-place save needs another full set of shards plus
@@ -67,6 +71,10 @@ spec:
     groupSize: 128
     sym: true
     descAct: false
+    # Omit for the conservative fallback path. Set to "validate" only in a
+    # canary rebuild when testing fuller dense GPTQ coverage.
+    # denseModulePolicy: validate
+    # denseModuleCosineThreshold: "0.98"
     useGPU: true
     maxMemoryGB: 48
     # Full MoE GPTQ: 128 experts × 3 modules × 30 layers → 12-24h estimated.

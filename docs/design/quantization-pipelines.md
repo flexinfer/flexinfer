@@ -400,7 +400,7 @@ Active quantization jobs are checked against the currently resolved image. If th
 
 ### Script Version Marker (2026-04-13)
 
-`quantize_gptq.py` contains `FLEXINFER_SCRIPT_VERSION` (e.g., `"v7"`). The wrapper script checks this against the controller's `GPTQScriptVersion` constant at startup. Mismatch → immediate fatal exit with clear message.
+`quantize_gptq.py` contains `FLEXINFER_SCRIPT_VERSION` (e.g., `"v12"`). The wrapper script checks this against the controller's `GPTQScriptVersion` constant at startup. Mismatch → immediate fatal exit with clear message.
 
 ### Deploy Automation (2026-04-13)
 

@@ -1561,6 +1561,16 @@ func (in *QuantizationSpec) DeepCopyInto(out *QuantizationSpec) {
 		*out = new(string)
 		**out = **in
 	}
+	if in.DenseModulePolicy != nil {
+		in, out := &in.DenseModulePolicy, &out.DenseModulePolicy
+		*out = new(string)
+		**out = **in
+	}
+	if in.DenseModuleCosineThreshold != nil {
+		in, out := &in.DenseModuleCosineThreshold, &out.DenseModuleCosineThreshold
+		*out = new(string)
+		**out = **in
+	}
 	if in.NodeSelector != nil {
 		in, out := &in.NodeSelector, &out.NodeSelector
 		*out = make(map[string]string, len(*in))
