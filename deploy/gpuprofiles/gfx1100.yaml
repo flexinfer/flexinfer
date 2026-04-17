@@ -63,38 +63,6 @@ spec:
       value: gfx1100
     - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
       value: "1"
-    # Source-backed ROCm fallback pins for vLLM on RDNA3. These avoid AITER
-    # paths that have produced pre-load GPU hangs in Gemma4 long-context GPTQ
-    # canaries; keep model-specific knobs in config too so a rebuilt controller
-    # can narrow this later.
-    - name: VLLM_ROCM_USE_AITER
-      value: "0"
-    - name: VLLM_ROCM_USE_AITER_PAGED_ATTN
-      value: "0"
-    - name: VLLM_ROCM_USE_AITER_LINEAR
-      value: "0"
-    - name: VLLM_ROCM_USE_AITER_MOE
-      value: "0"
-    - name: VLLM_ROCM_USE_AITER_RMSNORM
-      value: "0"
-    - name: VLLM_ROCM_USE_AITER_MLA
-      value: "0"
-    - name: VLLM_ROCM_USE_AITER_MHA
-      value: "0"
-    - name: VLLM_ROCM_USE_AITER_FP4_ASM_GEMM
-      value: "0"
-    - name: VLLM_ROCM_USE_AITER_TRITON_ROPE
-      value: "0"
-    - name: VLLM_ROCM_USE_AITER_FP8BMM
-      value: "0"
-    - name: VLLM_ROCM_USE_AITER_FP4BMM
-      value: "0"
-    - name: VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION
-      value: "0"
-    - name: VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS
-      value: "0"
-    - name: VLLM_ROCM_USE_AITER_TRITON_GEMM
-      value: "0"
     # 64 GiB system RAM nodes cannot tolerate materializing a full state_dict
     # after accelerate has already spilled weights to CPU/disk. Keep save-time
     # memory closer to the live module working set instead.

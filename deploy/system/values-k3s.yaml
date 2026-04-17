@@ -23,7 +23,10 @@ controller:
   replicas: 1
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
-    digest: "sha256:193a03677fad971a6aa71ca07d6995af86b9679291ba9f1dcf8870d4961b3722"
+    # Use the mutable master tag for homelab continuous deployment; publish
+    # refreshes this tag on every merged master pipeline, and imagePullPolicy
+    # resolves to Always when digest is empty.
+    digest: ""
     tag: "master"
   resources:
     limits:
