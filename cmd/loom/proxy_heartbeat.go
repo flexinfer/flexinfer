@@ -129,11 +129,31 @@ func inferGitTopLevel() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "-C", wd, "rev-parse", "--show-toplevel")
+	cmd.Env = withoutAmbientGitEnv(os.Environ())
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func withoutAmbientGitEnv(env []string) []string {
+	filtered := env[:0]
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		switch key {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX":
+			continue
+		}
+		filtered = append(filtered, kv)
+	}
+	return filtered
 }
 
 func posixCKSumString(input string) uint32 {

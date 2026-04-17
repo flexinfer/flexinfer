@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -579,12 +580,40 @@ func LoadConfigFileWithWarnings() (FileConfig, []string, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return DefaultFileConfig(), nil, nil
+			cfg := DefaultFileConfig()
+			warnings := applyFileConfigEnvOverrides(&cfg, nil)
+			return cfg, warnings, nil
 		}
 		return FileConfig{}, nil, err
 	}
 
-	return parseAndValidateConfig(data)
+	cfg, warnings, err := parseAndValidateConfig(data)
+	if err != nil {
+		return cfg, warnings, err
+	}
+	warnings = applyFileConfigEnvOverrides(&cfg, warnings)
+	return cfg, warnings, nil
+}
+
+func applyFileConfigEnvOverrides(cfg *FileConfig, warnings []string) []string {
+	if cfg == nil {
+		return warnings
+	}
+
+	if value := strings.TrimSpace(os.Getenv("LOOM_AUDIT_ENABLED")); value != "" {
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			warnings = append(warnings,
+				fmt.Sprintf("config: invalid LOOM_AUDIT_ENABLED %q (expected boolean)", value))
+		} else {
+			cfg.Audit.Enabled = enabled
+		}
+	}
+	if value := strings.TrimSpace(os.Getenv("LOOM_AUDIT_LOG_PATH")); value != "" {
+		cfg.Audit.LogPath = value
+	}
+
+	return warnings
 }
 
 // parseAndValidateConfig decodes YAML data into FileConfig and returns

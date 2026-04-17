@@ -824,6 +824,44 @@ func TestLoadConfigFile_Default(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFile_AuditEnvOverridesDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("LOOM_AUDIT_ENABLED", "true")
+	t.Setenv("LOOM_AUDIT_LOG_PATH", filepath.Join(tmpDir, "audit.jsonl"))
+
+	cfg, err := LoadConfigFile()
+	if err != nil {
+		t.Fatalf("LoadConfigFile failed: %v", err)
+	}
+
+	if !cfg.Audit.Enabled {
+		t.Fatal("Audit.Enabled = false, want true from LOOM_AUDIT_ENABLED")
+	}
+	if cfg.Audit.LogPath != filepath.Join(tmpDir, "audit.jsonl") {
+		t.Errorf("Audit.LogPath = %q, want env override", cfg.Audit.LogPath)
+	}
+}
+
+func TestLoadConfigFile_InvalidAuditEnvWarning(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOOM_AUDIT_ENABLED", "not-bool")
+
+	cfg, warnings, err := LoadConfigFileWithWarnings()
+	if err != nil {
+		t.Fatalf("LoadConfigFileWithWarnings failed: %v", err)
+	}
+	if cfg.Audit.Enabled {
+		t.Fatal("Audit.Enabled = true, want default false for invalid env")
+	}
+	if len(warnings) == 0 {
+		t.Fatal("expected invalid LOOM_AUDIT_ENABLED warning")
+	}
+	if !strings.Contains(warnings[0], "LOOM_AUDIT_ENABLED") {
+		t.Fatalf("warning = %q, want LOOM_AUDIT_ENABLED", warnings[0])
+	}
+}
+
 func TestSaveAndLoadConfigFile(t *testing.T) {
 	// Create a temp directory and set a temp home
 	tmpDir := t.TempDir()

@@ -125,7 +125,10 @@ Treat that deployment as the system of record for operator checks and fleet/sess
 kubectl -n loom-hub rollout status deployment/mobile-hud
 kubectl -n loom-hub get pods -l app=mobile-hud
 kubectl -n loom-hub get ingress mobile-hud
+kubectl -n loom-hub exec deploy/mobile-hud -- wget -qO- 'http://127.0.0.1:3333/api/traces?limit=20'
 ```
+
+The k8s HUD deployment must keep daemon audit logging enabled (`LOOM_AUDIT_ENABLED=true`) so Fleet session detail and the Traces panel can read `/api/traces` and session-scoped daemon trace rows.
 
 Run HUD locally only for frontend/API development, smoke testing, or offline debugging:
 

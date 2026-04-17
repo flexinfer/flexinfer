@@ -42,6 +42,10 @@ spec:
           env:
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: "http://langfuse-web.ai.svc.cluster.local:3000/api/public/otel"
+            - name: LOOM_AUDIT_ENABLED
+              value: "true"
+            - name: LOOM_AUDIT_LOG_PATH
+              value: /home/mcp/.config/loom/audit.jsonl
             - name: QDRANT_API_KEY
               valueFrom:
                 secretKeyRef:

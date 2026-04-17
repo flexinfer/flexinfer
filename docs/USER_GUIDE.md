@@ -170,6 +170,7 @@ If `mcp-devbox` is unavailable, HUD shows `available=false`.
 HUD now includes a `Traces` activity view backed by `GET /api/traces`.
 It summarizes recent tool calls from the daemon audit log with status, server, tool name, total duration, and stage timing breakdowns (`route`, `build`, `execute`, `send`, `recv`).
 Use it to separate slow routing/pool acquisition from slow MCP execution when debugging latency or transport regressions.
+The shared Kubernetes HUD deployment enables the backing daemon audit log with `LOOM_AUDIT_ENABLED=true`, writing recent trace data to `/home/mcp/.config/loom/audit.jsonl` inside the `loom-hub/mobile-hud` pod.
 When opened from Fleet or Presence, the view is pre-filtered to the selected agent so you can jump from a live operator row straight to that agent's recent tool-call trail.
 Overview attention lanes and Lifecycle side-rail cards now use the same drilldown path: if the highlighted agent has a live session, the HUD opens Fleet session detail first; otherwise it falls back to the agent-filtered `Traces` view.
 
