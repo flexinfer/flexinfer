@@ -386,4 +386,33 @@ func registerContextTools(server *mcp.Server, svc *agentcontext.Service, tracer 
 	}, traced(tracer, "agent_context_recall_enhanced", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleDeprecatedEnhancedRecall(ctx, args)
 	}))
+
+	// =========================================================================
+	// Delta Recall (F3): resumable polling via opaque cursor.
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_context_recall_since",
+		Description: "Return context entries for a session strictly newer than an opaque cursor, ordered oldest-first. Pass the returned next_cursor back on the next call to tail the feed without duplicates. Empty cursor = start from the beginning.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Session whose entries to tail.",
+				},
+				"cursor": map[string]any{
+					"type":        "string",
+					"description": "Opaque cursor from a previous call. Empty = start from the beginning.",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum entries to return (default 50).",
+				},
+			},
+			Required: []string{"session_id"},
+		},
+	}, traced(tracer, "agent_context_recall_since", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleRecallSince(ctx, args)
+	}))
 }
