@@ -87,6 +87,10 @@ type Metrics struct {
 	rerankLatencies    map[string][]int64
 	rerankLatencyMu    sync.Mutex
 	maxRerankLatencies int
+
+	// Compaction fallbacks (Slice B / F2) — counts LLM-mode failures that
+	// degraded to the extractive path.
+	CompactionFallbacks atomic.Int64
 }
 
 // NewMetrics creates a new metrics instance
@@ -684,6 +688,13 @@ func (m *Metrics) PrometheusFormatRerank() string {
 			b.WriteString("\n")
 		}
 	}
+
+	// F2: compaction fallback counter (appended for minimal diff).
+	b.WriteString("\n# HELP loom_agentcontext_compaction_fallback_total Total LLM compaction failures that degraded to extractive\n")
+	b.WriteString("# TYPE loom_agentcontext_compaction_fallback_total counter\n")
+	b.WriteString("loom_agentcontext_compaction_fallback_total ")
+	b.WriteString(formatInt64(m.CompactionFallbacks.Load()))
+	b.WriteString("\n")
 
 	return b.String()
 }

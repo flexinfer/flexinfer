@@ -154,6 +154,25 @@ func (r *Router) Query(ctx context.Context, req QueryRequest) (QueryResult, erro
 	}
 
 	if len(domains) == 0 {
+		// F10: auto-compose fallback for unmatched compound queries.
+		if result, ok, err := r.TryAutoCompose(ctx, req.Query); ok {
+			if err != nil {
+				r.recordQuery(start, "error")
+				r.recordHistory(QueryHistoryEntry{
+					Timestamp: start, QueryID: queryID, Query: req.Query,
+					Status: "error", LatencyMs: time.Since(start).Milliseconds(),
+				})
+				return QueryResult{}, err
+			}
+			result.LatencyMs = time.Since(start).Milliseconds()
+			r.recordQuery(start, "ok")
+			r.recordHistory(QueryHistoryEntry{
+				Timestamp: start, QueryID: queryID, Query: req.Query,
+				Domains: result.DomainsUsed, Status: "ok",
+				LatencyMs: result.LatencyMs, TotalTokens: result.TotalTokens,
+			})
+			return result, nil
+		}
 		r.recordQuery(start, "no_match")
 		r.recordHistory(QueryHistoryEntry{
 			Timestamp: start, QueryID: queryID, Query: req.Query,
@@ -503,4 +522,65 @@ func (r *Router) recordQuery(start time.Time, status string) {
 	}
 	r.metrics.QueriesTotal.WithLabelValues(status).Inc()
 	r.metrics.QueryDuration.WithLabelValues(status).Observe(time.Since(start).Seconds())
+}
+
+// F10 auto-compose wiring (append-only).
+
+// autoComposeMetrics is an optional sink for auto-compose outcome counters.
+// Kept as a router-level field via accessor to remain append-only.
+var routerAutoComposeMetrics = make(map[*Router]*AutoComposeMetrics)
+var routerAutoComposeMu sync.Mutex
+
+// SetAutoComposeMetrics attaches an AutoComposeMetrics sink to the router.
+// Safe to call once at startup; subsequent calls replace the sink.
+func (r *Router) SetAutoComposeMetrics(m *AutoComposeMetrics) {
+	routerAutoComposeMu.Lock()
+	defer routerAutoComposeMu.Unlock()
+	routerAutoComposeMetrics[r] = m
+}
+
+func (r *Router) autoComposeMetrics() *AutoComposeMetrics {
+	routerAutoComposeMu.Lock()
+	defer routerAutoComposeMu.Unlock()
+	return routerAutoComposeMetrics[r]
+}
+
+// TryAutoCompose runs the auto-compose fallback if enabled.
+// Returns (result, true, nil) when auto-compose ran and produced a result
+// (possibly empty if no domains scored). Returns (_, false, nil) when
+// auto-compose is disabled. A dispatch error yields (_, true, err).
+func (r *Router) TryAutoCompose(ctx context.Context, query string) (QueryResult, bool, error) {
+	if !AutoComposeEnabled() {
+		return QueryResult{}, false, nil
+	}
+
+	picked := selectDomains(r.registry.List(), query, AutoComposeMaxDomains())
+	if len(picked) == 0 {
+		if m := r.autoComposeMetrics(); m != nil {
+			m.RecordOutcome("empty")
+		}
+		return QueryResult{}, true, nil
+	}
+
+	// Refused bookkeeping: count any domains skipped because of Write=true.
+	refused := 0
+	for _, d := range r.registry.List() {
+		if d.Write {
+			refused++
+		}
+	}
+	if m := r.autoComposeMetrics(); m != nil && refused > 0 {
+		m.RecordOutcome("refused")
+	}
+
+	result, err := r.dispatch(ctx, picked, QueryRequest{Query: query, Domains: picked}, r.logger.With("auto_compose", true))
+	if err != nil {
+		return QueryResult{}, true, err
+	}
+
+	if m := r.autoComposeMetrics(); m != nil {
+		m.RecordOutcome("success")
+		m.RecordDomainsUsed(len(picked))
+	}
+	return result, true, nil
 }
