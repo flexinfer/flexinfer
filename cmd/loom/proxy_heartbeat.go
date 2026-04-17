@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -78,6 +79,11 @@ func resolveProxyIdentity(agentHint string) (agentID, agentType string) {
 			typePart = "proxy"
 		}
 
+		if stableID, ok := stableWorkspaceProxyAgentID(typePart); ok {
+			proxyAgentID = stableID
+			return
+		}
+
 		host, err := os.Hostname()
 		if err != nil {
 			host = "host"
@@ -97,6 +103,59 @@ func resolveProxyIdentity(agentHint string) (agentID, agentType string) {
 	})
 
 	return proxyAgentID, agentType
+}
+
+func stableWorkspaceProxyAgentID(agentType string) (string, bool) {
+	// Generated Codex notify hooks use codex-<cksum(workspace root)> for the
+	// keepalive wrapper. Match that here so proxy heartbeats and hook
+	// heartbeats update the same HUD agent instead of creating a process-scoped
+	// duplicate like codex-host-pid-namespace.
+	if agentType != "codex" {
+		return "", false
+	}
+
+	root := inferGitTopLevel()
+	if root == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", false
+		}
+		root = wd
+	}
+	return fmt.Sprintf("%s-%d", agentType, posixCKSumString(root)), true
+}
+
+func inferGitTopLevel() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func posixCKSumString(input string) uint32 {
+	var crc uint32
+	update := func(b byte) {
+		crc ^= uint32(b) << 24
+		for i := 0; i < 8; i++ {
+			if crc&0x80000000 != 0 {
+				crc = (crc << 1) ^ 0x04C11DB7
+			} else {
+				crc <<= 1
+			}
+		}
+	}
+
+	for i := 0; i < len(input); i++ {
+		update(input[i])
+	}
+	for n := len(input); n > 0; n >>= 8 {
+		update(byte(n & 0xff))
+	}
+	return ^crc
 }
 
 func sanitizeIDPart(input string) string {

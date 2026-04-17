@@ -128,7 +128,22 @@
   // via root_session_id (preferred) or parent_session_id (walked up the chain)
   // and falls back to the agent's own session_id or agent_id so every row
   // always has a stable group key.
+  function codexInfrastructureGroupKey(agent) {
+    const type = `${agent?.agent_type ?? ''} ${agent?.agent_id ?? ''}`.toLowerCase();
+    if (!type.includes('codex')) return '';
+    const description = (agent?.description ?? '').toLowerCase();
+    const isInfrastructureSession =
+      description.includes('keepalive wrapper session') ||
+      description.includes('heartbeat bootstrap session');
+    if (!isInfrastructureSession) return '';
+    const namespace = agent?.namespace ?? '';
+    return namespace ? `codex-infra:${namespace}` : '';
+  }
+
   function groupKeyFor(agent) {
+    const infraKey = codexInfrastructureGroupKey(agent);
+    if (infraKey) return infraKey;
+
     const sid = agent?.session_id;
     if (!sid) return `agent:${agent?.agent_id ?? 'unknown'}`;
     const session = sessionById.get(sid);

@@ -188,6 +188,48 @@ func TestResolveProxyIdentity_GeneratesStableProcessScopedID(t *testing.T) {
 	}
 }
 
+func TestResolveProxyIdentity_CodexMatchesKeepaliveWorkspaceID(t *testing.T) {
+	t.Setenv("LOOM_PROXY_AGENT_ID", "")
+	t.Chdir(t.TempDir())
+	proxyIdentityOnce = sync.Once{}
+	proxyAgentID = ""
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	id, typ := resolveProxyIdentity("codex")
+
+	if typ != "codex" {
+		t.Fatalf("agentType = %q, want codex", typ)
+	}
+	want := fmt.Sprintf("codex-%d", posixCKSumString(wd))
+	if id != want {
+		t.Fatalf("agentID = %q, want %q", id, want)
+	}
+	pidFragment := fmt.Sprintf("-%d", os.Getpid())
+	if strings.Contains(id, pidFragment) {
+		t.Fatalf("expected codex identity %q not to include pid fragment %q", id, pidFragment)
+	}
+}
+
+func TestPosixCKSumStringMatchesSystemCKSumExamples(t *testing.T) {
+	tests := []struct {
+		input string
+		want  uint32
+	}{
+		{input: "", want: 4294967295},
+		{input: "abc", want: 1219131554},
+		{input: "/Users/cblevins/workspace/services/loom-core", want: 552019522},
+	}
+
+	for _, tt := range tests {
+		if got := posixCKSumString(tt.input); got != tt.want {
+			t.Fatalf("posixCKSumString(%q) = %d, want %d", tt.input, got, tt.want)
+		}
+	}
+}
+
 // TestProxyHeartbeat_ReadsCanonicalPortFile verifies that proxyHeartbeat reads
 // the port from hud.PortFilePath() (the canonical ~/.config/loom/hud.port)
 // instead of the old hardcoded /tmp/loom-hud.port path.
