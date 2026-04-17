@@ -74,11 +74,12 @@ type JobParams struct {
 
 // FormatBackendCompatibility maps quantization formats to compatible backends.
 var FormatBackendCompatibility = map[aiv1alpha2.QuantizationFormat][]string{
-	aiv1alpha2.QuantizationFormatGGUF: {"llamacpp", "ollama"},
-	aiv1alpha2.QuantizationFormatAWQ:  {"vllm"},
-	aiv1alpha2.QuantizationFormatGPTQ: {"vllm"},
-	aiv1alpha2.QuantizationFormatEXL2: {"exllamav2"},
-	aiv1alpha2.QuantizationFormatFP8:  {"vllm"},
+	aiv1alpha2.QuantizationFormatGGUF:              {"llamacpp", "ollama"},
+	aiv1alpha2.QuantizationFormatAWQ:               {"vllm"},
+	aiv1alpha2.QuantizationFormatGPTQ:              {"vllm"},
+	aiv1alpha2.QuantizationFormatEXL2:              {"exllamav2"},
+	aiv1alpha2.QuantizationFormatFP8:               {"vllm"},
+	aiv1alpha2.QuantizationFormatCompressedTensors: {"vllm"},
 }
 
 // ValidGGUFTypes lists the supported GGUF quantization levels.
@@ -112,6 +113,8 @@ func GetBuilder(format aiv1alpha2.QuantizationFormat) (JobBuilder, error) {
 		return &EXL2JobBuilder{}, nil
 	case aiv1alpha2.QuantizationFormatFP8:
 		return &FP8JobBuilder{}, nil
+	case aiv1alpha2.QuantizationFormatCompressedTensors:
+		return &CompressedTensorsJobBuilder{}, nil
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedFormat, format)
 	}

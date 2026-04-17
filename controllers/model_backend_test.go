@@ -329,6 +329,13 @@ func TestQuantizedOutputDir(t *testing.T) {
 			want: "gptq-w3-g256",
 		},
 		{
+			name: "COMPRESSED_TENSORS defaults",
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format: aiv1alpha2.QuantizationFormatCompressedTensors,
+			},
+			want: "compressed-tensors-w4-g128",
+		},
+		{
 			name: "nil spec returns empty",
 			spec: nil,
 			want: "",

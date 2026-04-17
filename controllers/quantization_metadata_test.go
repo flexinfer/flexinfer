@@ -162,6 +162,13 @@ func TestQuantizationTypeFromSpec(t *testing.T) {
 	if got := quantizationTypeFromSpec(fp8); got != "FP8_B8" {
 		t.Fatalf("FP8 type = %q, want %q", got, "FP8_B8")
 	}
+
+	ct := &aiv1alpha1.QuantizationSpec{
+		Format: aiv1alpha1.QuantizationFormatCompressedTensors,
+	}
+	if got := quantizationTypeFromSpec(ct); got != "W4A16_G128" {
+		t.Fatalf("COMPRESSED_TENSORS type = %q, want %q", got, "W4A16_G128")
+	}
 }
 
 func TestQuantizedPathFromMetadata(t *testing.T) {

@@ -14,6 +14,7 @@ func TestQualityPolicyFor_AllFormats(t *testing.T) {
 		aiv1alpha2.QuantizationFormatGPTQ,
 		aiv1alpha2.QuantizationFormatEXL2,
 		aiv1alpha2.QuantizationFormatFP8,
+		aiv1alpha2.QuantizationFormatCompressedTensors,
 	}
 	for _, format := range formats {
 		policy, err := QualityPolicyFor(format)

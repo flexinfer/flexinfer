@@ -88,6 +88,14 @@ func TestQuantizedOutputPath(t *testing.T) {
 			basePath: "/models/qwen3",
 			want:     "/models/qwen3",
 		},
+		{
+			name: "COMPRESSED_TENSORS default bits/group",
+			spec: &aiv1alpha1.QuantizationSpec{
+				Format: aiv1alpha1.QuantizationFormatCompressedTensors,
+			},
+			basePath: "/models/qwen3",
+			want:     "/models/qwen3/compressed-tensors-w4-g128",
+		},
 	}
 
 	for _, tt := range tests {

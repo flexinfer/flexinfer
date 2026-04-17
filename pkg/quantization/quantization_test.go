@@ -80,6 +80,15 @@ func TestGetBuilder(t *testing.T) {
 		t.Errorf("builder.Format() = %v, want FP8", builder.Format())
 	}
 
+	// COMPRESSED_TENSORS should return a builder
+	builder, err = GetBuilder(aiv1alpha2.QuantizationFormatCompressedTensors)
+	if err != nil {
+		t.Fatalf("GetBuilder(COMPRESSED_TENSORS) returned error: %v", err)
+	}
+	if builder.Format() != aiv1alpha2.QuantizationFormatCompressedTensors {
+		t.Errorf("builder.Format() = %v, want COMPRESSED_TENSORS", builder.Format())
+	}
+
 	// Unknown format should remain unsupported.
 	_, err = GetBuilder(aiv1alpha2.QuantizationFormat("INVALID"))
 	if err == nil {

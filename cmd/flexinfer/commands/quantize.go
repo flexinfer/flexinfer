@@ -97,14 +97,14 @@ var quantizeValidateCmd = &cobra.Command{
 }
 
 func init() {
-	quantizeCmd.Flags().StringVar(&quantFormat, "format", "GGUF", "Quantization format (GGUF, AWQ, GPTQ, EXL2, FP8)")
+	quantizeCmd.Flags().StringVar(&quantFormat, "format", "GGUF", "Quantization format (GGUF, AWQ, GPTQ, EXL2, FP8, COMPRESSED_TENSORS)")
 	quantizeCmd.Flags().StringVar(&quantType, "type", "Q4_K_M", "Quantization type (for GGUF: Q2_K, Q3_K_S, Q4_K_M, Q5_K_M, Q6_K, Q8_0)")
-	quantizeCmd.Flags().Int32Var(&quantBits, "bits", 4, "Quantization bits for AWQ/GPTQ/EXL2/FP8 formats")
-	quantizeCmd.Flags().Int32Var(&quantGroupSize, "group-size", 128, "Quantization group size for AWQ/GPTQ formats")
-	quantizeCmd.Flags().BoolVar(&quantUseGPU, "use-gpu", true, "Use GPU for quantization (required for AWQ/GPTQ/EXL2/FP8)")
+	quantizeCmd.Flags().Int32Var(&quantBits, "bits", 4, "Quantization bits for AWQ/GPTQ/EXL2/FP8/COMPRESSED_TENSORS formats")
+	quantizeCmd.Flags().Int32Var(&quantGroupSize, "group-size", 128, "Quantization group size for AWQ/GPTQ/COMPRESSED_TENSORS formats")
+	quantizeCmd.Flags().BoolVar(&quantUseGPU, "use-gpu", true, "Use GPU for quantization (required for AWQ/GPTQ/EXL2/FP8/COMPRESSED_TENSORS)")
 	quantizeCmd.Flags().Int32Var(&quantMaxMemGB, "max-memory-gb", 0, "Maximum memory for quantization job in GB (0 = default)")
 	quantizeRecommendCmd.Flags().BoolVar(&quantRecApply, "apply", false, "Apply the recommendation to the ModelCache spec")
-	quantizeValidateCmd.Flags().StringVar(&quantValFormat, "format", "", "Quantization format (GGUF, AWQ, GPTQ, EXL2, FP8)")
+	quantizeValidateCmd.Flags().StringVar(&quantValFormat, "format", "", "Quantization format (GGUF, AWQ, GPTQ, EXL2, FP8, COMPRESSED_TENSORS)")
 	quantizeValidateCmd.Flags().Float64Var(&quantValBaseP, "baseline-perplexity", 0, "Baseline perplexity from reference model")
 	quantizeValidateCmd.Flags().Float64Var(&quantValCandP, "candidate-perplexity", 0, "Candidate perplexity from quantized artifact")
 	quantizeValidateCmd.Flags().Float64Var(&quantValBaseA, "baseline-acceptance", 0, "Baseline acceptance rate (0-1 or 0-100)")
@@ -123,11 +123,12 @@ func runQuantizeFormats(cmd *cobra.Command, _ []string) error {
 		notes string
 	}
 	info := map[aiv1alpha2.QuantizationFormat]formatInfo{
-		aiv1alpha2.QuantizationFormatGGUF: {bits: "2-8", notes: "Best for consumer GPUs"},
-		aiv1alpha2.QuantizationFormatAWQ:  {bits: "4", notes: "NVIDIA-focused throughput"},
-		aiv1alpha2.QuantizationFormatGPTQ: {bits: "4-8", notes: "Wide NVIDIA compatibility"},
-		aiv1alpha2.QuantizationFormatEXL2: {bits: "2-6", notes: "ExLlamaV2 optimized"},
-		aiv1alpha2.QuantizationFormatFP8:  {bits: "8", notes: "Datacenter GPU optimization"},
+		aiv1alpha2.QuantizationFormatGGUF:              {bits: "2-8", notes: "Best for consumer GPUs"},
+		aiv1alpha2.QuantizationFormatAWQ:               {bits: "4", notes: "NVIDIA-focused throughput"},
+		aiv1alpha2.QuantizationFormatGPTQ:              {bits: "4-8", notes: "Wide NVIDIA compatibility"},
+		aiv1alpha2.QuantizationFormatEXL2:              {bits: "2-6", notes: "ExLlamaV2 optimized"},
+		aiv1alpha2.QuantizationFormatFP8:               {bits: "8", notes: "Datacenter GPU optimization"},
+		aiv1alpha2.QuantizationFormatCompressedTensors: {bits: "4 (W4A16)", notes: "vLLM + LLM Compressor experiments"},
 	}
 	order := []aiv1alpha2.QuantizationFormat{
 		aiv1alpha2.QuantizationFormatGGUF,
@@ -135,6 +136,7 @@ func runQuantizeFormats(cmd *cobra.Command, _ []string) error {
 		aiv1alpha2.QuantizationFormatGPTQ,
 		aiv1alpha2.QuantizationFormatEXL2,
 		aiv1alpha2.QuantizationFormatFP8,
+		aiv1alpha2.QuantizationFormatCompressedTensors,
 	}
 
 	_, _ = fmt.Fprintf(out, "%-8s %-6s %-24s %-11s %s\n", "FORMAT", "BITS", "BACKENDS", "STATUS", "NOTES")
@@ -166,7 +168,7 @@ func runQuantizeFormats(cmd *cobra.Command, _ []string) error {
 func runQuantize(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 	cacheName := args[0]
-	format := aiv1alpha2.QuantizationFormat(strings.ToUpper(strings.TrimSpace(quantFormat)))
+	format := normalizeQuantizationFormatInput(quantFormat)
 	if format == "" {
 		return fmt.Errorf("quantization format is required")
 	}
@@ -211,7 +213,7 @@ func runQuantize(cmd *cobra.Command, args []string) error {
 	if format == aiv1alpha2.QuantizationFormatGGUF {
 		quantSpec.GGUFType = qType
 	}
-	if format == aiv1alpha2.QuantizationFormatAWQ || format == aiv1alpha2.QuantizationFormatGPTQ {
+	if format == aiv1alpha2.QuantizationFormatAWQ || format == aiv1alpha2.QuantizationFormatGPTQ || format == aiv1alpha2.QuantizationFormatCompressedTensors {
 		quantSpec.Bits = &effectiveBits
 		quantSpec.GroupSize = &quantGroupSize
 		quantSpec.UseGPU = quantUseGPU
@@ -247,6 +249,9 @@ func runQuantize(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintf(out, "  GPU:    %t\n", quantUseGPU)
 	} else if format == aiv1alpha2.QuantizationFormatFP8 {
 		_, _ = fmt.Fprintf(out, "  Type:   FP8_B%d\n", effectiveBits)
+		_, _ = fmt.Fprintf(out, "  GPU:    %t\n", quantUseGPU)
+	} else if format == aiv1alpha2.QuantizationFormatCompressedTensors {
+		_, _ = fmt.Fprintf(out, "  Type:   %s\n", quantization.CompressedTensorsType(int(effectiveBits), int(quantGroupSize)))
 		_, _ = fmt.Fprintf(out, "  GPU:    %t\n", quantUseGPU)
 	} else {
 		_, _ = fmt.Fprintf(out, "  Type:   W%d_G%d\n", effectiveBits, quantGroupSize)
@@ -291,6 +296,16 @@ func runQuantizeStatus(cmd *cobra.Command, args []string) error {
 			requested = fmt.Sprintf("%s/EXL2_B%d", requested, *cache.Spec.Quantization.Bits)
 		} else if aiv1alpha2.QuantizationFormat(cache.Spec.Quantization.Format) == aiv1alpha2.QuantizationFormatFP8 && cache.Spec.Quantization.Bits != nil {
 			requested = fmt.Sprintf("%s/FP8_B%d", requested, *cache.Spec.Quantization.Bits)
+		} else if aiv1alpha2.QuantizationFormat(cache.Spec.Quantization.Format) == aiv1alpha2.QuantizationFormatCompressedTensors {
+			bits := int32(quantization.DefaultCompressedTensorsBits)
+			if cache.Spec.Quantization.Bits != nil {
+				bits = *cache.Spec.Quantization.Bits
+			}
+			groupSize := int32(quantization.DefaultCompressedTensorsGroupSize)
+			if cache.Spec.Quantization.GroupSize != nil {
+				groupSize = *cache.Spec.Quantization.GroupSize
+			}
+			requested = fmt.Sprintf("%s/%s", requested, quantization.CompressedTensorsType(int(bits), int(groupSize)))
 		} else if cache.Spec.Quantization.Bits != nil && cache.Spec.Quantization.GroupSize != nil {
 			requested = fmt.Sprintf("%s/W%d_G%d", requested, *cache.Spec.Quantization.Bits, *cache.Spec.Quantization.GroupSize)
 		}
@@ -409,7 +424,7 @@ func runQuantizeRecommend(cmd *cobra.Command, args []string) error {
 
 func runQuantizeValidate(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
-	format := aiv1alpha2.QuantizationFormat(strings.ToUpper(strings.TrimSpace(quantValFormat)))
+	format := normalizeQuantizationFormatInput(quantValFormat)
 	if format == "" {
 		return fmt.Errorf("quantization format is required")
 	}
@@ -496,7 +511,23 @@ func quantizationSpecSummary(spec *aiv1alpha2.QuantizationSpec) string {
 			bits = *spec.Bits
 		}
 		return fmt.Sprintf("FP8/FP8_B%d", bits)
+	case aiv1alpha2.QuantizationFormatCompressedTensors:
+		bits := int32(quantization.DefaultCompressedTensorsBits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		group := int32(quantization.DefaultCompressedTensorsGroupSize)
+		if spec.GroupSize != nil {
+			group = *spec.GroupSize
+		}
+		return fmt.Sprintf("%s/%s", spec.Format, quantization.CompressedTensorsType(int(bits), int(group)))
 	default:
 		return string(spec.Format)
 	}
+}
+
+func normalizeQuantizationFormatInput(raw string) aiv1alpha2.QuantizationFormat {
+	s := strings.TrimSpace(raw)
+	s = strings.ReplaceAll(s, "-", "_")
+	return aiv1alpha2.QuantizationFormat(strings.ToUpper(s))
 }

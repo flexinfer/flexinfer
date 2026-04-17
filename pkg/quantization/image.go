@@ -9,13 +9,14 @@ import (
 type ImageFormat string
 
 const (
-	ImageFormatGPTQ         ImageFormat = "gptq"
-	ImageFormatAWQ          ImageFormat = "awq"
-	ImageFormatAbliteration ImageFormat = "abliteration"
-	ImageFormatFinetune     ImageFormat = "finetune"
-	ImageFormatEXL2         ImageFormat = "exl2"
-	ImageFormatFP8          ImageFormat = "fp8"
-	ImageFormatGGUF         ImageFormat = "gguf"
+	ImageFormatGPTQ              ImageFormat = "gptq"
+	ImageFormatAWQ               ImageFormat = "awq"
+	ImageFormatAbliteration      ImageFormat = "abliteration"
+	ImageFormatFinetune          ImageFormat = "finetune"
+	ImageFormatEXL2              ImageFormat = "exl2"
+	ImageFormatFP8               ImageFormat = "fp8"
+	ImageFormatGGUF              ImageFormat = "gguf"
+	ImageFormatCompressedTensors ImageFormat = "compressed_tensors"
 )
 
 // ResolveImage returns the container image for a quantization job.
@@ -61,6 +62,8 @@ func resolveFormatImage(format ImageFormat, gpuVendor, gpuArch string) string {
 		return resolveFP8Image()
 	case ImageFormatGGUF:
 		return resolveGGUFImage()
+	case ImageFormatCompressedTensors:
+		return resolveCompressedTensorsImage()
 	default:
 		return ""
 	}
@@ -154,4 +157,11 @@ func resolveGGUFImage() string {
 		return img
 	}
 	return DefaultGGUFImage
+}
+
+// resolveCompressedTensorsImage returns the compressed-tensors quantizer image.
+// There is intentionally no hardcoded default yet; this remains operator-provided
+// until LLM Compressor runtime plumbing is finalized.
+func resolveCompressedTensorsImage() string {
+	return os.Getenv("FLEXINFER_QUANTIZER_COMPRESSED_TENSORS_IMAGE")
 }
