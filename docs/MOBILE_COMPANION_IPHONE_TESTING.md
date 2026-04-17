@@ -4,7 +4,7 @@ Use this runbook to build and run Loom Companion on a physical iPhone and valida
 
 ## Goal
 
-- Launch HUD with mobile auth enabled.
+- Validate the shared Kubernetes HUD deployment (`loom-hub/mobile-hud`) with mobile auth enabled.
 - Run the iOS app from Xcode on your iPhone.
 - Verify pairing, dashboard reads, and session actions.
 
@@ -14,17 +14,56 @@ Use this runbook to build and run Loom Companion on a physical iPhone and valida
 - iOS platform components installed in Xcode (`Xcode > Settings > Components`).
 - iPhone connected to your Mac (USB recommended for first run), unlocked, and trusted.
 - This repo checked out locally.
+- Kubernetes access to the `loom-hub` namespace for shared-system testing.
 - For CI/distribution signing setup, see `docs/MOBILE_COMPANION_SIGNING_SETUP.md`.
 
-## Quick Start (LAN Mode)
+## Quick Start (Gateway/Kubernetes)
 
 Single-command bootstrap (recommended):
+
+```bash
+make mobile-gateway-dev
+```
+
+This rotates the mobile token, patches `loom-hub/loom-secrets`, rollout-restarts `deployment/mobile-hud`, verifies `https://mcp.flexinfer.ai/api/mobile/v1/ping`, and prints copy/paste-ready gateway URL + token values.
+
+Verify the main HUD deployment directly when debugging:
+
+```bash
+kubectl -n loom-hub rollout status deployment/mobile-hud
+kubectl -n loom-hub get pods -l app=mobile-hud
+kubectl -n loom-hub get ingress mobile-hud
+```
+
+Open the iOS app project in Xcode:
+
+```bash
+make mobile-app-open
+```
+
+In Xcode:
+- Select scheme `LoomCompanion`.
+- Select your physical iPhone as the run destination.
+- Set your Team under Signing if prompted.
+- Tap Run.
+
+In the app:
+- Mode: `Gateway`
+- Server URL: `https://mcp.flexinfer.ai` or the URL printed by `make mobile-gateway-dev`
+- Bearer Token: value printed by `make mobile-gateway-dev`
+- Tap `Connect`.
+
+## LAN Mode (Local Development Only)
+
+Use LAN mode only when testing a local HUD process instead of the shared Kubernetes deployment.
+
+Single-command local bootstrap:
 
 ```bash
 make mobile-dev
 ```
 
-This generates a fresh token, restarts HUD with mobile auth, opens the iOS app project in Xcode, and prints copy/paste-ready URL + token values.
+This generates a fresh token, restarts a local HUD with mobile auth, opens the iOS app project in Xcode, and prints copy/paste-ready URL + token values.
 
 Manual step-by-step:
 
@@ -48,13 +87,13 @@ export HUD_MOBILE_OPERATOR_TOKEN="$(openssl rand -hex 32)"
 export HUD_MOBILE_OPERATOR_SCOPES="mobile:read,mobile:session:create,mobile:session:end,mobile:push"
 ```
 
-4. Launch HUD for iPhone access.
+4. Launch the local HUD for iPhone access.
 
 ```bash
 make mobile-hud
 ```
 
-This serves HUD on `http://0.0.0.0:3333` with mobile routes enabled.
+This serves a local development HUD on `http://0.0.0.0:3333` with mobile routes enabled.
 
 5. Find your Mac LAN IP (use the interface your Mac is on).
 
@@ -94,9 +133,9 @@ make mobile-app-run-sim
 - Create/end session works from mobile UI.
 - Optional: push registration succeeds when `mobile:push` scope is enabled.
 
-## Gateway Mode (Remote)
+## Gateway Mode Details
 
-Use this when testing over the shared gateway host (`mcp.flexinfer.ai`) instead of LAN.
+Use this when testing over the shared gateway host (`mcp.flexinfer.ai`) and the in-cluster `loom-hub/mobile-hud` deployment.
 
 Quick bootstrap (recommended):
 
@@ -104,7 +143,7 @@ Quick bootstrap (recommended):
 make mobile-gateway-dev
 ```
 
-`make mobile-gateway-dev` now performs cluster bootstrap:
+`make mobile-gateway-dev` performs cluster bootstrap:
 - rotates `HUD_MOBILE_OPERATOR_TOKEN`,
 - patches `loom-hub/loom-secrets`,
 - rollout-restarts `deployment/mobile-hud`,

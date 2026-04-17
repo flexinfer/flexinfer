@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Skills registry entries** (`mcp/context/skills-registry.yaml`): Add `testing-guidelines`, `deployment-practices`, and `rust-acceleration` (56→59 entries).
 
 ### Fixed
+- **HUD Codex session wrapper coalescing** (`cmd/loom`, `internal/hud/frontend`): Codex proxy heartbeats now use the same workspace-scoped ID as generated keepalive wrappers, and Presence suppresses legacy process-scoped bootstrap duplicates when a stable wrapper exists for that namespace.
 - **HUD live-agent unification** (`internal/hud/frontend`): desktop Fleet, Presence, Overview, and status-bar surfaces now derive from a shared merged agent model that combines live sessions, presence heartbeats, and spawned agents. Presence-only and session-only agents now stay visible consistently, Fleet rows expose direct `Session` and `Traces` drilldowns, and the Traces panel can be filtered directly to a selected agent.
 - **HUD session hierarchy visibility** (`internal/hud/frontend`): Fleet now exposes session lineage instead of flattening spawned subagents into unrelated rows. Operators can group live agents by root session, see root/child relationships inline in the table, and use the Fleet drawer breadcrumb plus child-session list to move across the session tree without losing context.
 - **HUD fleet polling normalization** (`internal/hud/frontend`): Fleet polling now tracks panel ownership instead of letting the last mounted panel win. Fleet, Presence, Overview, Lifecycle, and the overlay can mount and unmount independently without downgrading data freshness or tearing down another surface's active Fleet feed.
@@ -55,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **gRPC security upgrade** (`go.mod`): Upgrade `google.golang.org/grpc` v1.78.0 → v1.79.3 to fix GO-2026-4762 (authorization bypass via missing leading slash in `:path` header).
 
 ### Changed
+- **HUD runbooks target Kubernetes first** (`README.md`, `docs/USER_GUIDE.md`, `docs/DEVELOPER_GUIDE.md`): Operator docs now point the main system at `loom-hub/mobile-hud` and `https://hud.flexinfer.ai`, with local `loom hud` commands labeled as development-only.
 - **schema.go split** (`pkg/agentcontext`): Split 1,257-line `schema.go` into `schema_workflow.go` (311), `schema_graph.go` (196), `schema_memory.go` (204), and `schema_presence.go` (119). Residual schema.go retains core types and utility functions (447 lines). DEBT-050.
 - **svc_context.go split** (`pkg/agentcontext`): Split 1,098-line `svc_context.go` into `svc_context_add.go` (364), `svc_context_search.go` (173), `svc_context_summary.go` (238), and `svc_context_annotations.go` (322). Residual retains struct and constructor (43 lines). DEBT-051.
 - **daemon_dispatch.go split** (`internal/daemon`): Split 928-line `daemon_dispatch.go` into `daemon_dispatch_status.go` (375), `daemon_dispatch_ops.go` (237), and `daemon_dispatch_otel.go` (217). Residual retains message router (129 lines). DEBT-052.

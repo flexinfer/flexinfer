@@ -57,8 +57,10 @@ make build
 - Safe local upgrade: `make dev-upgrade`
 - Force daemon restart upgrade: `make dev-reload`
 - Health check: `curl http://localhost:9876/health`
-- Launch HUD: `./bin/loom hud --port 3333`
-- HUD launchd lifecycle (macOS): `./bin/loom hud install`, `./bin/loom hud status`
+- Main HUD: `https://hud.flexinfer.ai` served by Kubernetes deployment `loom-hub/mobile-hud`
+- Verify main HUD deployment: `kubectl -n loom-hub rollout status deployment/mobile-hud`
+- Local development HUD only: `./bin/loom hud --port 3333`
+- Local HUD launchd lifecycle (macOS): `./bin/loom hud install`, `./bin/loom hud status`
 - Agent token launchd sync (Codex/Gemini): `./bin/loom sync agent-tokens install`, `./bin/loom sync agent-tokens status`
 
 ## Notable Capabilities
