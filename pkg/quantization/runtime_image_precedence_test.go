@@ -224,3 +224,14 @@ func TestResolveImage_GPTQArchSpecificWithRuntimeDisabled(t *testing.T) {
 		t.Errorf("ResolveImage(GPTQ, amd, gfx906) = %q, want arch-specific override", img)
 	}
 }
+
+func TestResolveImage_CompressedTensorsRequiresExplicitImage(t *testing.T) {
+	if got := ResolveImage(ImageFormatCompressedTensors, "", "nvidia", "sm_80"); got != "" {
+		t.Fatalf("ResolveImage(COMPRESSED_TENSORS) = %q, want empty default", got)
+	}
+
+	t.Setenv("FLEXINFER_QUANTIZER_COMPRESSED_TENSORS_IMAGE", "registry.example/quantizer:ct")
+	if got := ResolveImage(ImageFormatCompressedTensors, "", "nvidia", "sm_80"); got != "registry.example/quantizer:ct" {
+		t.Fatalf("ResolveImage(COMPRESSED_TENSORS) = %q, want env override", got)
+	}
+}

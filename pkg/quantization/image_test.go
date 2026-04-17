@@ -76,6 +76,23 @@ func TestResolveImage_GPUArchMatrix(t *testing.T) {
 			},
 			want: "custom/gptq",
 		},
+		{
+			name:   "compressed-tensors has no default image",
+			format: ImageFormatCompressedTensors,
+			vendor: "nvidia",
+			arch:   "sm_80",
+			want:   "",
+		},
+		{
+			name:   "compressed-tensors uses explicit env override",
+			format: ImageFormatCompressedTensors,
+			vendor: "nvidia",
+			arch:   "sm_80",
+			env: map[string]string{
+				"FLEXINFER_QUANTIZER_COMPRESSED_TENSORS_IMAGE": "custom/ct",
+			},
+			want: "custom/ct",
+		},
 	}
 
 	for _, tt := range tests {

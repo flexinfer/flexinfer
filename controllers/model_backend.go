@@ -161,6 +161,16 @@ func quantizedOutputDir(spec *aiv1alpha2.QuantizationSpec) string {
 			groupSize = *spec.GroupSize
 		}
 		return fmt.Sprintf("gptq-w%d-g%d", bits, groupSize)
+	case aiv1alpha2.QuantizationFormatCompressedTensors:
+		bits := int32(quantization.DefaultCompressedTensorsBits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		groupSize := int32(quantization.DefaultCompressedTensorsGroupSize)
+		if spec.GroupSize != nil {
+			groupSize = *spec.GroupSize
+		}
+		return quantization.CompressedTensorsOutputSubdir(int(bits), int(groupSize))
 	default:
 		return ""
 	}

@@ -639,6 +639,9 @@ func TestRunQuantizeFormats_PrintsTable(t *testing.T) {
 	if !strings.Contains(out, "FP8") || !strings.Contains(out, "implemented") {
 		t.Fatalf("expected FP8 implemented row, got: %q", out)
 	}
+	if !strings.Contains(out, "COMPRESSED_TENSORS") || !strings.Contains(out, "vllm") {
+		t.Fatalf("expected COMPRESSED_TENSORS compatibility row, got: %q", out)
+	}
 }
 
 func TestRunQuantize_RejectsUnsupportedFormat(t *testing.T) {
@@ -967,6 +970,77 @@ func TestRunQuantize_AppliesAWQSpec(t *testing.T) {
 	}
 }
 
+func TestRunQuantize_AppliesCompressedTensorsSpec(t *testing.T) {
+	stubNotifyContext(t)
+	stubInClusterConfig(t)
+
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cache", Namespace: "flexinfer-system"},
+		Spec:       aiv1alpha1.ModelCacheSpec{Source: "huggingface://meta-llama/Llama-3-8B"},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cache).Build()
+	stubClient(t, c)
+
+	cmd, stdout, _ := newTestCmd()
+
+	origNs := namespace
+	origFormat := quantFormat
+	origType := quantType
+	origBits := quantBits
+	origGroupSize := quantGroupSize
+	origUseGPU := quantUseGPU
+	origMem := quantMaxMemGB
+	t.Cleanup(func() {
+		namespace = origNs
+		quantFormat = origFormat
+		quantType = origType
+		quantBits = origBits
+		quantGroupSize = origGroupSize
+		quantUseGPU = origUseGPU
+		quantMaxMemGB = origMem
+	})
+
+	namespace = "flexinfer-system"
+	quantFormat = "compressed-tensors"
+	quantType = ""
+	quantBits = 4
+	quantGroupSize = 128
+	quantUseGPU = true
+	quantMaxMemGB = 48
+
+	if err := runQuantize(cmd, []string{"test-cache"}); err != nil {
+		t.Fatalf("runQuantize() error: %v", err)
+	}
+
+	updated := &aiv1alpha1.ModelCache{}
+	if err := c.Get(ctx(), types.NamespacedName{Name: "test-cache", Namespace: "flexinfer-system"}, updated); err != nil {
+		t.Fatalf("Get updated ModelCache: %v", err)
+	}
+	if updated.Spec.Quantization == nil {
+		t.Fatal("expected quantization spec to be set")
+	}
+	if updated.Spec.Quantization.Format != aiv1alpha1.QuantizationFormatCompressedTensors {
+		t.Fatalf("Format = %q, want %q", updated.Spec.Quantization.Format, aiv1alpha1.QuantizationFormatCompressedTensors)
+	}
+	if updated.Spec.Quantization.Bits == nil || *updated.Spec.Quantization.Bits != 4 {
+		t.Fatalf("Bits = %v, want 4", updated.Spec.Quantization.Bits)
+	}
+	if updated.Spec.Quantization.GroupSize == nil || *updated.Spec.Quantization.GroupSize != 128 {
+		t.Fatalf("GroupSize = %v, want 128", updated.Spec.Quantization.GroupSize)
+	}
+	if !updated.Spec.Quantization.UseGPU {
+		t.Fatalf("UseGPU = %v, want true", updated.Spec.Quantization.UseGPU)
+	}
+	if updated.Spec.Quantization.MaxMemoryGB == nil || *updated.Spec.Quantization.MaxMemoryGB != 48 {
+		t.Fatalf("MaxMemoryGB = %v, want 48", updated.Spec.Quantization.MaxMemoryGB)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Format: COMPRESSED_TENSORS") || !strings.Contains(out, "Type:   W4A16_G128") {
+		t.Fatalf("expected COMPRESSED_TENSORS output in stdout, got: %q", out)
+	}
+}
+
 func TestRunQuantizeStatus_PrintsCompletedQuantization(t *testing.T) {
 	stubNotifyContext(t)
 	stubInClusterConfig(t)
@@ -1237,5 +1311,266 @@ func TestRunQuantizeValidate_Fail(t *testing.T) {
 	}
 	if !strings.Contains(out, "Failure:      acceptance drop") {
 		t.Fatalf("expected acceptance failure in output, got: %q", out)
+	}
+}
+
+func TestQuantizeValidateArtifactCommand_WiredWithDefaults(t *testing.T) {
+	found, _, err := rootCmd.Find([]string{"quantize", "validate-artifact"})
+	if err != nil {
+		t.Fatalf("rootCmd.Find() error: %v", err)
+	}
+	if found != quantizeValidateArtifactCmd {
+		t.Fatalf("found command = %q, want %q", found.CommandPath(), quantizeValidateArtifactCmd.CommandPath())
+	}
+
+	if got := found.Flags().Lookup("layout").DefValue; got != "auto" {
+		t.Fatalf("layout default = %q, want %q", got, "auto")
+	}
+	if got := found.Flags().Lookup("family").DefValue; got != "auto" {
+		t.Fatalf("family default = %q, want %q", got, "auto")
+	}
+	if got := found.Flags().Lookup("script").DefValue; got != "build/scripts/validate_quantized_artifact.py" {
+		t.Fatalf("script default = %q, want %q", got, "build/scripts/validate_quantized_artifact.py")
+	}
+}
+
+func TestQuantizeValidateArtifactCommand_CobraParsesFlags(t *testing.T) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	origPath := quantValArtifactPath
+	origLayout := quantValArtifactLayout
+	origFamily := quantValArtifactFamily
+	origScript := quantValArtifactScript
+	origRun := quantValArtifactRunGeneration
+	origJSON := quantValArtifactJSON
+	origRunner := quantizeRunLocalCommandFn
+	t.Cleanup(func() {
+		quantValArtifactPath = origPath
+		quantValArtifactLayout = origLayout
+		quantValArtifactFamily = origFamily
+		quantValArtifactScript = origScript
+		quantValArtifactRunGeneration = origRun
+		quantValArtifactJSON = origJSON
+		quantizeRunLocalCommandFn = origRunner
+		rootCmd.SetArgs(nil)
+		rootCmd.SetOut(os.Stdout)
+		rootCmd.SetErr(os.Stderr)
+	})
+
+	var capturedArgs []string
+	quantizeRunLocalCommandFn = func(_ *cobra.Command, program string, args []string) error {
+		if program != "python3" {
+			t.Fatalf("program = %q, want %q", program, "python3")
+		}
+		capturedArgs = append([]string(nil), args...)
+		return nil
+	}
+
+	rootCmd.SetOut(stdout)
+	rootCmd.SetErr(stderr)
+	rootCmd.SetArgs([]string{
+		"quantize",
+		"validate-artifact",
+		"--artifact-path", "/tmp/gemma",
+		"--layout", "hf-native",
+		"--family", "GEMMA4-31B",
+		"--script", "tools/custom_validator.py",
+		"--json",
+	})
+
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("rootCmd.Execute() error: %v", err)
+	}
+
+	got := strings.Join(capturedArgs, " ")
+	wantTokens := []string{
+		"tools/custom_validator.py",
+		"--artifact-path /tmp/gemma",
+		"--layout hf-native",
+		"--family gemma4-31b",
+		"--json",
+	}
+	for _, token := range wantTokens {
+		if !strings.Contains(got, token) {
+			t.Fatalf("cobra parsed args missing token %q: %q", token, got)
+		}
+	}
+}
+
+func TestRunQuantizeValidateArtifact_RequiresArtifactPath(t *testing.T) {
+	cmd, _, _ := newTestCmd()
+
+	origPath := quantValArtifactPath
+	origLayout := quantValArtifactLayout
+	origFamily := quantValArtifactFamily
+	origScript := quantValArtifactScript
+	origRun := quantValArtifactRunGeneration
+	origJSON := quantValArtifactJSON
+	t.Cleanup(func() {
+		quantValArtifactPath = origPath
+		quantValArtifactLayout = origLayout
+		quantValArtifactFamily = origFamily
+		quantValArtifactScript = origScript
+		quantValArtifactRunGeneration = origRun
+		quantValArtifactJSON = origJSON
+	})
+
+	quantValArtifactPath = ""
+	quantValArtifactLayout = "auto"
+	quantValArtifactFamily = "auto"
+	quantValArtifactScript = "build/scripts/validate_quantized_artifact.py"
+	quantValArtifactRunGeneration = false
+	quantValArtifactJSON = false
+
+	err := runQuantizeValidateArtifact(cmd, nil)
+	if err == nil {
+		t.Fatal("runQuantizeValidateArtifact() should fail without --artifact-path")
+	}
+	if !strings.Contains(err.Error(), "--artifact-path is required") {
+		t.Fatalf("expected required artifact-path error, got: %v", err)
+	}
+}
+
+func TestRunQuantizeValidateArtifact_RejectsInvalidLayout(t *testing.T) {
+	cmd, _, _ := newTestCmd()
+
+	origPath := quantValArtifactPath
+	origLayout := quantValArtifactLayout
+	origFamily := quantValArtifactFamily
+	origScript := quantValArtifactScript
+	origRun := quantValArtifactRunGeneration
+	origJSON := quantValArtifactJSON
+	t.Cleanup(func() {
+		quantValArtifactPath = origPath
+		quantValArtifactLayout = origLayout
+		quantValArtifactFamily = origFamily
+		quantValArtifactScript = origScript
+		quantValArtifactRunGeneration = origRun
+		quantValArtifactJSON = origJSON
+	})
+
+	quantValArtifactPath = "/tmp/model-artifact"
+	quantValArtifactLayout = "bad-layout"
+	quantValArtifactFamily = "auto"
+	quantValArtifactScript = "build/scripts/validate_quantized_artifact.py"
+	quantValArtifactRunGeneration = false
+	quantValArtifactJSON = false
+
+	err := runQuantizeValidateArtifact(cmd, nil)
+	if err == nil {
+		t.Fatal("runQuantizeValidateArtifact() should fail for invalid layout")
+	}
+	if !strings.Contains(err.Error(), "invalid --layout") {
+		t.Fatalf("expected invalid layout error, got: %v", err)
+	}
+}
+
+func TestRunQuantizeValidateArtifact_ExecutesRunnerWithFlags(t *testing.T) {
+	cmd, stdout, stderr := newTestCmd()
+
+	origPath := quantValArtifactPath
+	origLayout := quantValArtifactLayout
+	origFamily := quantValArtifactFamily
+	origScript := quantValArtifactScript
+	origRun := quantValArtifactRunGeneration
+	origJSON := quantValArtifactJSON
+	origRunner := quantizeRunLocalCommandFn
+	t.Cleanup(func() {
+		quantValArtifactPath = origPath
+		quantValArtifactLayout = origLayout
+		quantValArtifactFamily = origFamily
+		quantValArtifactScript = origScript
+		quantValArtifactRunGeneration = origRun
+		quantValArtifactJSON = origJSON
+		quantizeRunLocalCommandFn = origRunner
+	})
+
+	quantValArtifactPath = "./models/gemma4-31b"
+	quantValArtifactLayout = "vllm-gptq"
+	quantValArtifactFamily = "llama4-70b"
+	quantValArtifactScript = "build/scripts/validate_quantized_artifact.py"
+	quantValArtifactRunGeneration = true
+	quantValArtifactJSON = true
+
+	called := false
+	quantizeRunLocalCommandFn = func(runCmd *cobra.Command, program string, args []string) error {
+		called = true
+		if runCmd != cmd {
+			t.Fatalf("command pointer mismatch")
+		}
+		if program != "python3" {
+			t.Fatalf("program = %q, want %q", program, "python3")
+		}
+		got := strings.Join(args, " ")
+		wantTokens := []string{
+			"build/scripts/validate_quantized_artifact.py",
+			"--artifact-path ./models/gemma4-31b",
+			"--layout vllm-gptq",
+			"--family llama4-70b",
+			"--json",
+			"--run-generation",
+		}
+		for _, token := range wantTokens {
+			if !strings.Contains(got, token) {
+				t.Fatalf("args missing token %q: %q", token, got)
+			}
+		}
+		_, _ = runCmd.OutOrStdout().Write([]byte("validator stdout\n"))
+		_, _ = runCmd.ErrOrStderr().Write([]byte("validator stderr\n"))
+		return nil
+	}
+
+	if err := runQuantizeValidateArtifact(cmd, nil); err != nil {
+		t.Fatalf("runQuantizeValidateArtifact() error: %v", err)
+	}
+	if !called {
+		t.Fatal("expected command runner to be invoked")
+	}
+	if !strings.Contains(stdout.String(), "validator stdout") {
+		t.Fatalf("expected stdout passthrough, got: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "validator stderr") {
+		t.Fatalf("expected stderr passthrough, got: %q", stderr.String())
+	}
+}
+
+func TestRunQuantizeValidateArtifact_RunnerError(t *testing.T) {
+	cmd, _, _ := newTestCmd()
+
+	origPath := quantValArtifactPath
+	origLayout := quantValArtifactLayout
+	origFamily := quantValArtifactFamily
+	origScript := quantValArtifactScript
+	origRun := quantValArtifactRunGeneration
+	origJSON := quantValArtifactJSON
+	origRunner := quantizeRunLocalCommandFn
+	t.Cleanup(func() {
+		quantValArtifactPath = origPath
+		quantValArtifactLayout = origLayout
+		quantValArtifactFamily = origFamily
+		quantValArtifactScript = origScript
+		quantValArtifactRunGeneration = origRun
+		quantValArtifactJSON = origJSON
+		quantizeRunLocalCommandFn = origRunner
+	})
+
+	quantValArtifactPath = "./models/gemma4-26b-a4b"
+	quantValArtifactLayout = "compressed-tensors"
+	quantValArtifactFamily = "gemma4-26b-a4b"
+	quantValArtifactScript = "build/scripts/validate_quantized_artifact.py"
+	quantValArtifactRunGeneration = false
+	quantValArtifactJSON = false
+
+	quantizeRunLocalCommandFn = func(_ *cobra.Command, _ string, _ []string) error {
+		return errors.New("exit status 2")
+	}
+
+	err := runQuantizeValidateArtifact(cmd, nil)
+	if err == nil {
+		t.Fatal("runQuantizeValidateArtifact() should fail when validator exits non-zero")
+	}
+	if !strings.Contains(err.Error(), "artifact validation command failed") {
+		t.Fatalf("expected wrapped validator failure, got: %v", err)
 	}
 }

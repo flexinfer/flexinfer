@@ -480,6 +480,11 @@ func TestModelCache_QuantizationTypeFromSpec(t *testing.T) {
 			spec: &aiv1alpha1.QuantizationSpec{Format: aiv1alpha1.QuantizationFormatFP8, Bits: int32Ptr(8)},
 			want: "FP8_B8",
 		},
+		{
+			name: "COMPRESSED_TENSORS with defaults",
+			spec: &aiv1alpha1.QuantizationSpec{Format: aiv1alpha1.QuantizationFormatCompressedTensors},
+			want: "W4A16_G128",
+		},
 	}
 
 	for _, tt := range tests {

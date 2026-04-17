@@ -14,4 +14,8 @@ var (
 
 	// ErrInvalidGroupSize is returned when groupSize is invalid.
 	ErrInvalidGroupSize = errors.New("groupSize must be > 0")
+
+	// ErrFormatNotConfigured is returned when a quantization format is wired in
+	// but missing required runtime/image configuration to launch jobs.
+	ErrFormatNotConfigured = errors.New("quantization format is not configured for job execution")
 )

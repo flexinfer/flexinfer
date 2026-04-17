@@ -33,11 +33,12 @@ type QualityEvaluation struct {
 }
 
 var qualityPolicies = map[aiv1alpha2.QuantizationFormat]QualityPolicy{
-	aiv1alpha2.QuantizationFormatGGUF: {MaxPerplexityRegressionPct: 10.0, MaxAcceptanceDropPct: 3.0},
-	aiv1alpha2.QuantizationFormatAWQ:  {MaxPerplexityRegressionPct: 7.0, MaxAcceptanceDropPct: 2.0},
-	aiv1alpha2.QuantizationFormatGPTQ: {MaxPerplexityRegressionPct: 8.0, MaxAcceptanceDropPct: 2.5},
-	aiv1alpha2.QuantizationFormatEXL2: {MaxPerplexityRegressionPct: 6.0, MaxAcceptanceDropPct: 2.0},
-	aiv1alpha2.QuantizationFormatFP8:  {MaxPerplexityRegressionPct: 5.0, MaxAcceptanceDropPct: 1.5},
+	aiv1alpha2.QuantizationFormatGGUF:              {MaxPerplexityRegressionPct: 10.0, MaxAcceptanceDropPct: 3.0},
+	aiv1alpha2.QuantizationFormatAWQ:               {MaxPerplexityRegressionPct: 7.0, MaxAcceptanceDropPct: 2.0},
+	aiv1alpha2.QuantizationFormatGPTQ:              {MaxPerplexityRegressionPct: 8.0, MaxAcceptanceDropPct: 2.5},
+	aiv1alpha2.QuantizationFormatEXL2:              {MaxPerplexityRegressionPct: 6.0, MaxAcceptanceDropPct: 2.0},
+	aiv1alpha2.QuantizationFormatFP8:               {MaxPerplexityRegressionPct: 5.0, MaxAcceptanceDropPct: 1.5},
+	aiv1alpha2.QuantizationFormatCompressedTensors: {MaxPerplexityRegressionPct: 8.0, MaxAcceptanceDropPct: 2.5},
 }
 
 // QualityPolicyFor returns deterministic quality thresholds for a format.

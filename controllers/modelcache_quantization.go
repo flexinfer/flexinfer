@@ -746,6 +746,16 @@ func quantizationTypeFromSpec(spec *aiv1alpha1.QuantizationSpec) string {
 			bits = *spec.Bits
 		}
 		return fmt.Sprintf("FP8_B%d", bits)
+	case aiv1alpha1.QuantizationFormatCompressedTensors:
+		bits := int32(quantization.DefaultCompressedTensorsBits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		groupSize := int32(quantization.DefaultCompressedTensorsGroupSize)
+		if spec.GroupSize != nil {
+			groupSize = *spec.GroupSize
+		}
+		return quantization.CompressedTensorsType(int(bits), int(groupSize))
 	default:
 		return string(spec.Format)
 	}
@@ -822,7 +832,8 @@ func truncateString(s string, maxLen int) string {
 }
 
 // quantizedOutputPath derives the quantized output subdirectory from the spec,
-// matching the OUT_DIR convention used by the GPTQ/AWQ builders (e.g. gptq-w4-g128).
+// matching the OUT_DIR convention used by quantization builders
+// (e.g. gptq-w4-g128, compressed-tensors-w4-g128).
 func quantizedOutputPath(spec *aiv1alpha1.QuantizationSpec, basePath string) string {
 	if spec == nil {
 		return basePath
@@ -849,6 +860,16 @@ func quantizedOutputPath(spec *aiv1alpha1.QuantizationSpec, basePath string) str
 			groupSize = *spec.GroupSize
 		}
 		subdir = fmt.Sprintf("awq-w%d-g%d", bits, groupSize)
+	case aiv1alpha1.QuantizationFormatCompressedTensors:
+		bits := int32(quantization.DefaultCompressedTensorsBits)
+		if spec.Bits != nil {
+			bits = *spec.Bits
+		}
+		groupSize := int32(quantization.DefaultCompressedTensorsGroupSize)
+		if spec.GroupSize != nil {
+			groupSize = *spec.GroupSize
+		}
+		subdir = quantization.CompressedTensorsOutputSubdir(int(bits), int(groupSize))
 	default:
 		return basePath
 	}

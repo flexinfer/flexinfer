@@ -21,15 +21,16 @@ import (
 )
 
 // QuantizationFormat identifies the quantization format to produce.
-// +kubebuilder:validation:Enum=GGUF;AWQ;GPTQ;EXL2;FP8
+// +kubebuilder:validation:Enum=GGUF;AWQ;GPTQ;EXL2;FP8;COMPRESSED_TENSORS
 type QuantizationFormat string
 
 const (
-	QuantizationFormatGGUF QuantizationFormat = "GGUF"
-	QuantizationFormatAWQ  QuantizationFormat = "AWQ"
-	QuantizationFormatGPTQ QuantizationFormat = "GPTQ"
-	QuantizationFormatEXL2 QuantizationFormat = "EXL2"
-	QuantizationFormatFP8  QuantizationFormat = "FP8"
+	QuantizationFormatGGUF              QuantizationFormat = "GGUF"
+	QuantizationFormatAWQ               QuantizationFormat = "AWQ"
+	QuantizationFormatGPTQ              QuantizationFormat = "GPTQ"
+	QuantizationFormatEXL2              QuantizationFormat = "EXL2"
+	QuantizationFormatFP8               QuantizationFormat = "FP8"
+	QuantizationFormatCompressedTensors QuantizationFormat = "COMPRESSED_TENSORS"
 )
 
 // CalibrationSpec configures calibration parameters for AWQ/GPTQ quantization.
@@ -77,21 +78,22 @@ type QuantizationSpec struct {
 	// +optional
 	GGUFType string `json:"ggufType,omitempty"`
 
-	// Bits is the quantization bit width for AWQ/GPTQ formats.
+	// Bits is the quantization bit width for AWQ/GPTQ/COMPRESSED_TENSORS formats.
 	// +optional
 	Bits *int32 `json:"bits,omitempty"`
 
-	// GroupSize is the quantization group size for AWQ/GPTQ formats.
+	// GroupSize is the quantization group size for AWQ/GPTQ/COMPRESSED_TENSORS formats.
 	// +optional
 	GroupSize *int32 `json:"groupSize,omitempty"`
 
-	// UseGPU enables GPU-accelerated quantization (required for AWQ/GPTQ).
+	// UseGPU enables GPU-accelerated quantization
+	// (required for AWQ/GPTQ/COMPRESSED_TENSORS).
 	// GGUF quantization runs on CPU only.
 	// +optional
 	UseGPU bool `json:"useGPU,omitempty"`
 
 	// MaxMemoryGB limits the memory available to the quantization job.
-	// Defaults to 32GB for GGUF, 48GB for AWQ/GPTQ.
+	// Defaults to 32GB for GGUF, 48GB for AWQ/GPTQ/COMPRESSED_TENSORS.
 	// +optional
 	MaxMemoryGB *int32 `json:"maxMemoryGB,omitempty"`
 

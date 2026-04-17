@@ -1,13 +1,16 @@
 ---
 title: Gemma4 ROCm Status
-description: "Living status for Gemma 4 E4B on unified gfx1100 runtimes."
+description: "Living status for Gemma4 quantized runtime gates on unified gfx1100 runtimes."
 ---
 
 # Gemma4 ROCm Status
 
-This document tracks the current managed state of `google/gemma-4-E4B-it` on
-the unified `gfx1100` runtime path, including the active profiles, measured
-performance, and the feature gaps still being chased.
+This document tracks the current managed state of the Gemma4 quantized
+deployments on the unified `gfx1100` runtime path.
+
+It also defines a reusable **quantized-artifact promotion gate** for other
+families (Qwen, Llama, Mistral, etc.): the gate is motivated by Gemma4 findings
+but is intentionally model-family agnostic.
 
 Update this document whenever a tuning change lands or a new blocker is found.
 
@@ -15,62 +18,52 @@ Update this document whenever a tuning change lands or a new blocker is found.
 
 | Model ID | Model CR | Node | Attention / KV path | Intent |
 |----------|----------|------|---------------------|--------|
-| `gemma4-e4b` | `gemma4-e4b-turboquant` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | Default alias |
-| `gemma4-e4b-fast` | `gemma4-e4b-turboquant` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | Lower-latency textgen |
-| `gemma4-e4b-long` | `gemma4-e4b-turboquant-canary` | `cblevins-5930k` | `CUSTOM` + `kvCacheCodec=turboquant` | Long-context profile |
-
-The standard runtime overlay still strips TurboQuant for the default serving
-images. The long-context canary must use the explicit TurboQuant plugin image
-path (`runtime:rocm-gfx1100-gemma4-turboquant-experimental`) so the plugin is
-bundled and patched at build time.
+| `gemma4-26b-a4b-gptq` | `gemma4-26b-a4b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | Primary 8K rollback baseline (`minReplicas: 1`) |
+| `gemma4-31b-gptq` | `gemma4-31b-gptq` | `cblevins-5930k` | `TRITON_ATTN` + float16 KV | Conservative on-demand dense lane (`minReplicas: 0`) |
+| `gemma4-26b-a4b-gptq-long` | `gemma4-26b-a4b-gptq-long` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | 32K canary only (`minReplicas: 0`, `warmPolicy: ondemand`) |
 
 ## Current profile knobs
 
 | Model ID | `maxModelLen` | `maxNumBatchedTokens` | `gpuMemoryUtilization` | Serverless |
 |----------|---------------|-----------------------|------------------------|------------|
-| `gemma4-e4b` / `gemma4-e4b-fast` | `16384` | `512` | `0.92` | `minReplicas: 1` |
-| `gemma4-e4b-long` | `32768` | `160` | `0.80` | `minReplicas: 0` |
+| `gemma4-26b-a4b-gptq` | `8192` | `512` | `0.95` | `minReplicas: 1` |
+| `gemma4-31b-gptq` | `4096` | runtime default | `0.95` | `minReplicas: 0` |
+| `gemma4-26b-a4b-gptq-long` | `32768` | `160` | `0.95` | `minReplicas: 0` |
 
 ## Latest baseline
 
-Source:
+Date: **2026-04-17**
 
-- `scripts/bench-gemma4-profiles.sh`
-- `scripts/bench-gemma4-suite.sh` for broader warm/cold and phase-matrix runs
-- run id: `gemma4-20260404T091910-e32744`
+Current finding:
 
-Environment:
+- The current Gemma4 26B-A4B hybrid artifact (`gptq-w4-g128-attnfp16-clean`) is
+  coherent and stable at **8K**.
+- The same artifact is too large/risky for default **32K** serving on a single
+  24 GB gfx1100 card.
+- The next promotion path is a **smaller validated artifact**, not manifest-only
+  tuning.
 
-- LiteLLM via `kubectl -n ai port-forward svc/litellm 18000:8000`
-- `WARMUP=1`
-- `SHORT_REPEAT=2000`
-- `LONG_REPEAT=6000`
-- `MAX_TOKENS=64`
+## Quantized-artifact promotion gate (reusable)
 
-Results:
+Use this gate before promoting any quantized artifact (any model family) from
+canary to default:
 
-| Model ID | Prompt tokens | Elapsed | Prompt tok/s | Completion tok/s | Notes |
-|----------|---------------|---------|--------------|------------------|-------|
-| `gemma4-e4b` | `73` | `0.880s` | `82.96` | `57.96` | Default alias health check |
-| `gemma4-e4b-fast` | `10035` | `5.317s` | `1887.31` | `12.04` | Stable fast path |
-| `gemma4-e4b-long` | `10035` | `25.802s` | `388.92` | `2.48` | Warmed short-context TurboQuant |
-| `gemma4-e4b-long` | `30035` | `112.088s` | `267.96` | `0.57` | Warmed long-context TurboQuant |
+1. **Artifact validation at target context**
+   - correctness/repetition checks pass (probe script + production parser path)
+   - warm and cold runs are both clean
+2. **Memory headroom validation**
+   - no OOM or allocator instability at target context on intended GPU class
+3. **Canary containment**
+   - `minReplicas: 0`
+   - `warmPolicy: ondemand` (or equivalent non-primary policy)
+   - no alias/default swap while unvalidated
+4. **Explicit promotion change**
+   - only after 1-3 pass, raise context/default aliases in a separate change
 
-Interpretation:
+## Long-context readiness probe (promotion gate input)
 
-- The fast profile is in a good place for interactive use on the 7900 XTX.
-- The long profile is functional at ~30k prompt tokens, but its prefill path is
-  still the main performance bottleneck.
-- Raising `gemma4-e4b-long` from `maxNumBatchedTokens=128` to `160` improved the
-  warmed long-context leg from roughly `223` to `268` prompt tok/s and the
-  warmed 10k leg from roughly `340` to `389` prompt tok/s.
-- Cold-start noise and prefix-cache artifacts must be excluded from measurements
-  or the fast profile numbers will be misleading.
-
-## Long-context readiness probe
-
-Use `scripts/probe-gemma4-long-context.sh` when you need a repeatable readiness
-check instead of a simple pod-health check. The probe runs three cases:
+Use `scripts/probe-gemma4-long-context.sh` for repeatable target-context
+validation before promoting any long-context quantized canary. The probe runs:
 
 - short sanity: `2 + 2`
 - medium context: repeated-token prompt with a retained verification code
@@ -102,24 +95,23 @@ ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Unified `gfx1100` runtime path | Working | No separate debug runtime required |
-| Managed Gemma 4 CRD deployment | Working | Both fast and long lanes reconcile through Flux |
-| LiteLLM aliases | Working | Public IDs are now trimmed to `gemma4-e4b`, `gemma4-e4b-fast`, `gemma4-e4b-long` |
-| Tool calling | Working | Gemma parser path is enabled on both profiles |
-| Warm compile-cache reuse | Working | Managed warm restart path loads compiled graphs from cache |
-| TurboQuant managed canary | Working | `kvCacheCodec: turboquant` resolves on the long lane |
-| ~30k prompt-token requests | Working | Served successfully on `gemma4-e4b-long` |
+| Managed Gemma4 CRD deployment | Working | 26B baseline + 31B on-demand + long canary reconcile through Flux |
+| LiteLLM aliases | Working | Baseline aliases are pinned to the 26B 8K primary |
+| Tool calling | Working | Gemma parser path remains enabled on baseline profiles |
+| Conservative rollout gates | Working | Canary remains scale-to-zero and non-primary |
+| 8K baseline coherence | Working | Current hybrid serves coherently at 8K on gfx1100 |
 
 ## Features still being chased
 
 | Feature | Status | Current read |
 |---------|--------|--------------|
-| TurboQuant long-context prefill speed | In progress | Functional, but still substantially slower than the fast lane |
-| Better long-lane batching | In progress | `maxNumBatchedTokens=128` is stable; higher values need measured retest |
-| Fast-lane batching ceiling | In progress | `512` is safe; larger values have not been revalidated on the stable lane yet |
+| Smaller long-context artifact | In progress | Needed before promoting beyond 8K baseline |
+| 16K/32K promotion validation | Blocked on artifact | Manifest-only tuning is insufficient for current hybrid |
+| Compressed-tensors + FP8 KV lane | Planned canary | Must remain disabled/non-default until validated |
 | AITER on ROCm | Blocked / deferred | `TRITON_ATTN` remains the stable path on RDNA3 |
-| Production-grade TurboQuant as default | Deferred | Keep on separate long profile until perf and correctness are more mature |
+| Production-grade long-context default | Deferred | Keep long profiles non-primary until gate checks pass |
 | Speculative decoding | Not started | No Gemma4 speculator path wired yet |
-| FP8-centric KV path | Not applicable on current lane | Current managed profiles use float16 KV |
+| FP8-centric KV path | Planned canary | Reference config only; not promoted |
 
 ## Gemma4 GPTQ Pipeline Models
 
@@ -136,7 +128,9 @@ ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
 | Shared Group | `7900xtx-textgen` (priority 200, always-on) |
 | Aliases | `gemma4-26b`, `gemma4-26b-a4b`, `gemma4-moe` |
 
-**MoE Architecture**: 25.2B total / 3.8B active, 128 experts top-8, 30 layers (25 GDN + 5 full-attention). Full MoE GPTQ quantization produces compact INT4 output that fits 24 GB VRAM with room for 32K context.
+**MoE Architecture**: 25.2B total / 3.8B active, 128 experts top-8, 30 layers (25 GDN + 5 full-attention).
+Current hybrid export is validated at 8K; it is not promoted for default 16K/32K service.
+Promotion path requires a smaller validated artifact.
 
 **Abliteration safety**: Only `o_proj` (shared attention output). Expert FFN weights auto-skipped. `ablitateLmHead: false` (save corruption bug).
 
@@ -147,11 +141,11 @@ ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
 | Field | Value |
 |-------|-------|
 | ModelCache | `gemma4-31b-gptq` |
+| Model CR | `gemma4-31b-gptq` |
 | Source | `google/gemma-4-31B-it` |
-| Node | `cblevins-radeonvii` (gfx906, 128 GB RAM) |
-| Pipeline | Download BF16 (~61 GB) → Abliterate → GPTQ INT4 (~16 GB) |
-| PVC | 120 Gi (nvme-1r-gpu) |
-| Status | In progress (abliteration complete, quantization pending) |
+| Node | `cblevins-5930k` (gfx1100) |
+| Pipeline | GPTQ INT4 runtime serving from `gptq-w4-g128` |
+| Status | Conservative 4K on-demand profile (`minReplicas: 0`) |
 
 **Dense Architecture**: 30.7B params, 60 layers (50 GDN + 10 full-attention). Requires 128 GB RAM node for abliteration + save overhead.
 
@@ -163,10 +157,37 @@ ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
 
 | Model | Decode tok/s | Prompt tok/s | VRAM | Context |
 |-------|-------------|-------------|------|---------|
-| 26B-A4B MoE INT4 | ~72 | ~1800 | ~13 GB | 32K |
+| 26B-A4B MoE INT4 | ~72 | ~1800 | ~13 GB | 8K baseline |
 | 31B Dense INT4 | TBD | TBD | ~16 GB | 4K-8K |
 
 ExLlama v2 kernels (HIP-compiled) with `sym=true` achieve 7x faster decode than AWQ on gfx1100.
+
+## Reference-only future canary (disabled)
+
+The following is a reference snippet for compressed-tensors + FP8 KV
+experiments. Keep this out of live defaults until artifact validation gates pass.
+
+```yaml
+# reference only: do not include in deploy/models/kustomization.yaml yet
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gemma4-31b-gptq-fp8kv-canary
+  annotations:
+    flexinfer.ai/promotion-gate: quantized-artifact-v1
+    flexinfer.ai/promotion-state: canary-reference-only
+spec:
+  backend: vllm
+  source: pvc://gemma4-31b-gptq/gemma4-31b-gptq/compressed-tensors-fp8kv-candidate
+  serverless:
+    enabled: true
+    minReplicas: 0
+  config:
+    quantization: compressed-tensors
+    kvCacheDtype: fp8_e4m3
+    maxModelLen: 16384
+    warmPolicy: ondemand
+```
 
 ## Deployment Reliability (2026-04-13)
 
@@ -180,11 +201,9 @@ ExLlama v2 kernels (HIP-compiled) with `sym=true` achieve 7x faster decode than 
 
 ## Next tuning queue
 
-1. Raise `gemma4-e4b-long` `maxNumBatchedTokens` conservatively and remeasure.
-2. Recheck whether the fast lane benefits from `maxNumBatchedTokens > 512`.
-3. Separate cold-start and warm-path benchmarks in automation and preserve
-   JSON artifacts per run.
-4. Inspect TurboQuant prefill behavior around paged decompress fallback rather
-   than continuing blind manifest tuning.
-5. Benchmark 26B-A4B MoE GPTQ INT4 against E4B GGUF for latency/throughput comparison.
-6. Benchmark 31B Dense GPTQ INT4 on radeonvii once quantization completes.
+1. Produce a smaller 26B artifact candidate for 16K/32K validation.
+2. Run long-context probe + warm/cold checks and archive JSON evidence.
+3. Keep long-context canaries non-primary (`minReplicas: 0`, `warmPolicy: ondemand`)
+   until promotion criteria are met.
+4. Validate compressed-tensors + FP8 KV on a dedicated canary before any alias/default changes.
+5. Generalize this gate to additional quantized model families in shared docs/manifests.
