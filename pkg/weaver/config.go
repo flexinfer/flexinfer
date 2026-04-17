@@ -217,3 +217,32 @@ func LoadBehaviorsFromFile(path string) (map[string]ModelBehavior, error) {
 	}
 	return result, nil
 }
+
+// F10 auto-compose configuration (append-only).
+const (
+	// EnvAutoComposeEnabled gates the weaver auto-compose feature. When true,
+	// unmatched compound queries will fall back to a deterministic keyword-based
+	// domain selection + parallel dispatch + synthesis pipeline.
+	EnvAutoComposeEnabled = "WEAVER_AUTO_COMPOSE_ENABLED"
+	// EnvAutoComposeMaxDomains caps how many domains auto-compose may pick.
+	EnvAutoComposeMaxDomains = "WEAVER_AUTO_COMPOSE_MAX_DOMAINS"
+
+	// DefaultAutoComposeMaxDomains is the default cap when unset.
+	DefaultAutoComposeMaxDomains = 3
+)
+
+// AutoComposeEnabled returns true when WEAVER_AUTO_COMPOSE_ENABLED is set.
+// Default is false.
+func AutoComposeEnabled() bool {
+	return env.Bool(EnvAutoComposeEnabled, false)
+}
+
+// AutoComposeMaxDomains returns the configured cap for auto-compose domain
+// selection. Default is DefaultAutoComposeMaxDomains.
+func AutoComposeMaxDomains() int {
+	n := env.Int(EnvAutoComposeMaxDomains, DefaultAutoComposeMaxDomains)
+	if n <= 0 {
+		return DefaultAutoComposeMaxDomains
+	}
+	return n
+}

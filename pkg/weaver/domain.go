@@ -14,6 +14,10 @@ type SubAgent struct {
 	Model        string   `json:"model,omitempty" yaml:"model,omitempty"`
 	TokenBudget  int      `json:"token_budget,omitempty" yaml:"token_budget,omitempty"`
 	MaxTokens    int      `json:"max_tokens,omitempty" yaml:"max_tokens,omitempty"`
+	// Write declares the domain performs mutating operations. Auto-compose
+	// refuses to implicitly include write domains; they must be explicitly
+	// selected by the caller.
+	Write bool `json:"write,omitempty" yaml:"write,omitempty"`
 }
 
 // DomainRegistry manages available orchestration domains.
