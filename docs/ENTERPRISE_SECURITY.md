@@ -112,6 +112,13 @@ audit:
   log_path: /var/log/loom/audit.jsonl   # Default: ~/.config/loom/audit.jsonl
 ```
 
+For containerized daemon deployments, the same settings can be supplied without a writable config file:
+
+```bash
+LOOM_AUDIT_ENABLED=true
+LOOM_AUDIT_LOG_PATH=/home/mcp/.config/loom/audit.jsonl
+```
+
 ### Entry Format
 
 Each line is a JSON object:
