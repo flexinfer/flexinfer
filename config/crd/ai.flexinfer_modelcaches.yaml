@@ -486,7 +486,8 @@ spec:
                   completes, converting the model to the specified format before marking Ready.
                 properties:
                   bits:
-                    description: Bits is the quantization bit width for AWQ/GPTQ formats.
+                    description: Bits is the quantization bit width for AWQ/GPTQ/COMPRESSED_TENSORS
+                      formats.
                     format: int32
                     type: integer
                   calibration:
@@ -557,6 +558,7 @@ spec:
                     - GPTQ
                     - EXL2
                     - FP8
+                    - COMPRESSED_TENSORS
                     type: string
                   ggufType:
                     description: |-
@@ -572,14 +574,14 @@ spec:
                       Only used for GPTQ format.
                     type: string
                   groupSize:
-                    description: GroupSize is the quantization group size for AWQ/GPTQ
+                    description: GroupSize is the quantization group size for AWQ/GPTQ/COMPRESSED_TENSORS
                       formats.
                     format: int32
                     type: integer
                   maxMemoryGB:
                     description: |-
                       MaxMemoryGB limits the memory available to the quantization job.
-                      Defaults to 32GB for GGUF, 48GB for AWQ/GPTQ.
+                      Defaults to 32GB for GGUF, 48GB for AWQ/GPTQ/COMPRESSED_TENSORS.
                     format: int32
                     type: integer
                   nodeSelector:
@@ -604,7 +606,8 @@ spec:
                     type: integer
                   useGPU:
                     description: |-
-                      UseGPU enables GPU-accelerated quantization (required for AWQ/GPTQ).
+                      UseGPU enables GPU-accelerated quantization
+                      (required for AWQ/GPTQ/COMPRESSED_TENSORS).
                       GGUF quantization runs on CPU only.
                     type: boolean
                 required:

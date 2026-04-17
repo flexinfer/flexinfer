@@ -184,7 +184,7 @@ spec:
     minReplicas: 0
   config:
     quantization: compressed-tensors
-    kvCacheDType: fp8_e4m3
+    kvCacheDtype: fp8_e4m3
     maxModelLen: 16384
     warmPolicy: ondemand
 ```

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +18,7 @@ except Exception:  # noqa: BLE001 - optional dependency.
 
 
 LAYOUT_CHOICES = ("hf-native", "vllm-gptq", "compressed-tensors", "auto")
-FAMILY_CHOICES = ("gemma4-26b-a4b", "gemma4-31b", "auto")
+FAMILY_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
 
 @dataclass(frozen=True)
@@ -508,10 +509,18 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--artifact-path", required=True, type=Path)
     parser.add_argument("--layout", choices=LAYOUT_CHOICES, default="auto")
-    parser.add_argument("--family", choices=FAMILY_CHOICES, default="auto")
+    parser.add_argument(
+        "--family",
+        default="auto",
+        help="Model family id such as auto, gemma4-26b-a4b, gemma4-31b, or a future profile id.",
+    )
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("--run-generation", action="store_true")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    args.family = args.family.strip().lower()
+    if not FAMILY_ID_RE.match(args.family):
+        parser.error("--family must be auto or a lowercase family id using letters, digits, '.', '_' or '-'")
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:

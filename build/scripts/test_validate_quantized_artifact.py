@@ -5,10 +5,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import gemma4_validate_artifact as validator
+import validate_quantized_artifact as validator
 
 
-class Gemma4ValidateArtifactTests(unittest.TestCase):
+class ValidateQuantizedArtifactTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.artifact = Path(self.temp_dir.name)
