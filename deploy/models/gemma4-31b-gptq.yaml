@@ -6,11 +6,18 @@
 #
 # On-demand model on 5930k (priority 200, scale-to-zero).
 # Moved from 7900xtx to free VRAM for 26B-A4B MoE.
+# Promotion gate (reusable for any quantized family):
+# future compressed-tensors/fp8-KV paths must stay canary-only until validated
+# at target context and explicitly promoted.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: gemma4-31b-gptq
   namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/promotion-gate: quantized-artifact-v1
+    flexinfer.ai/promotion-state: conservative-on-demand-baseline
+    flexinfer.ai/promotion-requires: validated-canary-before-alias-or-default-change
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:0c7e9ffb390f39a3b5fffe71e341a127ad20fc191a11cafa99f3c2c6a3e8a863
@@ -25,12 +32,15 @@ spec:
     priority: 200
   serverless:
     enabled: true
+    # Keep this lane cold by default so experimental artifacts cannot auto-promote.
     minReplicas: 0
     idleTimeout: 15m
     coldStartTimeout: 15m
   config:
     quantization: gptq
     dtype: "half"
+    # Baseline context limit for current validated artifact. Keep conservative
+    # until a smaller validated artifact clears promotion checks.
     maxModelLen: 4096
     gpuMemoryUtilization: "0.95"
     maxNumSeqs: 4

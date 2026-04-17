@@ -4,7 +4,7 @@ This document catalogs all runtime overrides, monkey-patches, and non-obvious
 configuration in the flexinfer GPTQ quantization pipeline. These exist because
 GPTQModel + ROCm + Qwen3.5/Gemma4 hybrid architectures require extensive workarounds.
 
-**Updated:** 2026-04-13 — Added Gemma4 MoE overrides, GPUProfile watch, script versioning.
+**Updated:** 2026-04-17 — Added reusable quantized-artifact promotion gate notes.
 
 ## Quick Reference
 
@@ -149,6 +149,23 @@ The `gemma4-text` model policy in `gptq.go:defaultGPTQModelPoliciesJSON()` handl
 The wrapper script reads the Python constant at job startup and compares against the Go constant (injected as shell variable). Mismatch → `exit 1` with `FATAL: Script version mismatch` in `/dev/termination-log`.
 
 **When to bump**: Any change to heredoc patches in `gptqWrapperScript()` or `quantize_gptq.py` logic requires bumping both constants and rebuilding the quantizer image.
+
+## Quantized-artifact promotion gate (reusable)
+
+Apply this gate to all quantized families (Gemma, Qwen, Llama, Mistral, etc.):
+
+1. Keep one conservative rollback baseline live (fixed context, known-good artifact).
+2. Keep candidate long-context or codec/KV experiments canary-only:
+   - `serverless.minReplicas: 0`
+   - non-primary warm policy (`warmPolicy: ondemand` or equivalent)
+   - no default alias swap
+3. Require explicit validation evidence before promotion:
+   - target-context correctness probe (no repetition/garbage regressions)
+   - warm + cold restart stability
+   - GPU memory headroom at target context on target hardware
+4. Promote via a follow-up manifest change, never as part of artifact generation alone.
+
+Reference-only (disabled until validated): compressed-tensors + fp8 KV canary.
 
 ## Known Constraints
 

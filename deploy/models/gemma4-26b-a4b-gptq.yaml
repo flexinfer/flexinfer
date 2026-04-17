@@ -7,11 +7,18 @@
 #
 # Primary model in 7900xtx-textgen shared group (priority 200, always-on).
 # Replaces gemma4-e4b-gptq as primary text model.
+# Promotion gate (reusable for any quantized family):
+# keep this baseline at 8K until a smaller validated artifact passes
+# long-context correctness + VRAM headroom checks.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: gemma4-26b-a4b-gptq
   namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/promotion-gate: quantized-artifact-v1
+    flexinfer.ai/promotion-state: baseline-8k-validated
+    flexinfer.ai/promotion-requires: target-context-validation-before-promotion
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
@@ -34,6 +41,8 @@ spec:
     dtype: "half"
     # Hybrid dense-FP16/MoE-GPTQ loads at ~17.7 GiB. Keep context to 8k on the
     # single 7900XTX so KV cache fits with ROCm/vLLM overhead.
+    # Do not raise this default serving limit until a smaller validated artifact
+    # is promoted through the quantized-artifact gate.
     maxModelLen: 8192
     gpuMemoryUtilization: "0.95"
     maxNumSeqs: 1
