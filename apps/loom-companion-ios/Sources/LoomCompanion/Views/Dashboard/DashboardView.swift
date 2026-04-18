@@ -7,7 +7,6 @@ struct DashboardView: View {
     let alertsViewModel: AlertsViewModel
     let broadcaster: SSEEventBroadcaster?
     var onNavigate: ((DashboardNavAction) -> Void)?
-    @State private var showingAlerts = false
     @State private var showingAgents = false
     @State private var showingConnection = false
     @State private var updatedAgo: String?
@@ -18,6 +17,7 @@ struct DashboardView: View {
         case work
         case connection
         case liveActivities
+        case alerts
     }
 
     init(apiClient: APIClient?, healthMonitor: ConnectionHealthMonitor, alertsViewModel: AlertsViewModel = AlertsViewModel(), broadcaster: SSEEventBroadcaster? = nil, onNavigate: ((DashboardNavAction) -> Void)? = nil) {
@@ -34,10 +34,8 @@ struct DashboardView: View {
             VStack(spacing: LoomSpacing.lg) {
                 ErrorBanner(health: healthMonitor.health)
 
-                if !alertsViewModel.criticalAlerts.isEmpty {
-                    criticalAlertBanner
-                        .transition(.slideInFromTop)
-                }
+                // Critical alerts are now folded into NextActionCard as the
+                // highest-priority action — no separate banner needed.
 
                 #if os(iOS)
                 if #available(iOS 16.2, *) {
@@ -55,10 +53,13 @@ struct DashboardView: View {
                 #endif
 
                 if let dashboard = viewModel.dashboard {
-                    // Hero: the ONE thing to do next (scales to critical/all-clear)
+                    // Hero: the ONE thing to do next (scales to critical/all-clear).
+                    // Critical alerts take top priority — they used to show as a
+                    // separate red banner, now fold into this single anchor.
                     NextActionCard(
                         lanes: dashboard.coordination.attentionLanes,
                         health: dashboard.health,
+                        criticalAlerts: alertsViewModel.criticalAlerts,
                         onNavigate: onNavigate
                     )
                     .cardAppear(index: 0)
@@ -161,12 +162,8 @@ struct DashboardView: View {
                 }
             }
             .padding()
-            .animation(.spring(duration: 0.4), value: alertsViewModel.criticalAlerts.isEmpty)
         }
         .navigationTitle("Dashboard")
-        .navigationDestination(isPresented: $showingAlerts) {
-            AlertsListView(viewModel: alertsViewModel)
-        }
         .onChange(of: viewModel.dashboard?.updatedAt) { _, newValue in
             if let ts = newValue {
                 withAnimation { updatedAgo = Self.relativeTime(ts) }
@@ -246,40 +243,6 @@ struct DashboardView: View {
         }
     }
 
-    private var criticalAlertBanner: some View {
-        Button {
-            HapticManager.medium()
-            showingAlerts = true
-        } label: {
-            HStack(spacing: LoomSpacing.sm) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.white)
-                    .symbolEffect(.pulse, isActive: true)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(alertsViewModel.criticalAlerts.count) Critical Alert\(alertsViewModel.criticalAlerts.count == 1 ? "" : "s")")
-                        .font(LoomTypography.bodyMedium)
-                        .foregroundStyle(.white)
-
-                    if let first = alertsViewModel.criticalAlerts.first {
-                        Text(first.message)
-                            .font(LoomTypography.caption)
-                            .foregroundStyle(.white.opacity(0.9))
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-            .padding(LoomSpacing.md)
-            .background(LoomColors.statusCritical, in: RoundedRectangle(cornerRadius: 10))
-        }
-        .buttonStyle(.plain)
-    }
 }
 
 private struct NoOpAPIClient: LoomAPIClientProtocol {

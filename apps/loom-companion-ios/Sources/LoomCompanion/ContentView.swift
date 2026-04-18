@@ -195,6 +195,8 @@ struct ContentView: View {
                     case .liveActivities:
                         selectedPeopleSection = .sessions
                         selectedTab = .people
+                    case .alerts:
+                        selectedTab = .alerts
                     }
                 }
             }
@@ -298,6 +300,8 @@ struct ContentView: View {
                     case .liveActivities:
                         selectedPeopleSection = .sessions
                         selectedTab = .people
+                    case .alerts:
+                        selectedTab = .alerts
                     }
                 }
             case .people:
