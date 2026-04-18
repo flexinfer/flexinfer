@@ -109,27 +109,10 @@ spec:
                   name: loom-secrets
                   key: WEAVER_SUBAGENT_MODEL
                   optional: true
-            - name: HUD_PIPELINE_PROJECTS
-              value: >-
-                labs/game,labs/git-tunes,labs/metelevator,
-                libs/banner-kit,libs/design-token-sync,libs/fi-accel,libs/fi-fhir,
-                libs/fi-gitlab-hookify,libs/fi-mcp-kit,libs/fractal-agents,
-                libs/langgraph-agents,libs/mcp-go,libs/py-browser-kit,
-                libs/py-changelog-ai,libs/py-chiptune,libs/py-codebase-memory,
-                libs/py-diagram-gen,libs/py-git-chronicles,libs/py-llm-kit,
-                libs/py-observability,libs/py-resilience,libs/py-sprite-kit,
-                libs/py-vector-utils,libs/py-visual-kit,libs/svg-sdk,
-                libs/ts-resilience,libs/ts-vscode-utils,libs/visual-kit,
-                platform/gitops,
-                services/ai-assisted-dev-starter,services/comfyui-images-proxy,
-                services/diff-surgeon,services/fi-mcp-gateway,services/flexdeck,
-                services/flexinfer,services/flexinfer-site,services/homelab-homepage,
-                services/imagegen-ui,services/jobsearch-app,services/k8s-cost-prophet,
-                services/kennedi-consulting-site,services/loom-core,services/loom-zed,
-                services/loom,services/mcp-gateway,services/mcp-orchestra,
-                services/mcp-sandbox,services/mentatlab,services/news-analyzer,
-                services/storyboard-generator,services/streamslate,
-                services/streamslate-site,services/substack,services/tech-radar
+            # HUD_PIPELINE_PROJECTS is intentionally unset: the embedded HUD
+            # auto-discovers projects via the `gitlab__list_projects` MCP tool
+            # at startup (internal/hud/embed.go). Set this env var explicitly
+            # only to pin a smaller subset of projects for pipeline monitoring.
           ports:
             - containerPort: 9876
               name: metrics

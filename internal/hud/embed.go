@@ -103,8 +103,32 @@ func (a *App) StartMonitors(ctx context.Context) error {
 			a.logger.Info("auto-detected pipeline project", "project", detected)
 		}
 	}
+	var projects []string
 	if pipelineProjects != "" {
-		projects := strings.Split(pipelineProjects, ",")
+		for _, p := range strings.Split(pipelineProjects, ",") {
+			if trimmed := strings.TrimSpace(p); trimmed != "" {
+				projects = append(projects, trimmed)
+			}
+		}
+	} else {
+		// Fallback: ask the gitlab MCP server what projects the authenticated
+		// user has access to. This makes "pipelines show up" work out of the
+		// box in the cluster/hub deployment without requiring an exhaustive
+		// hardcoded `HUD_PIPELINE_PROJECTS` env var to enumerate every repo.
+		if discovered, err := a.agent.ListPipelineProjects(ctx, 5); err != nil {
+			a.logger.Info(
+				"pipeline project auto-discovery unavailable, skipping pipeline monitor",
+				"reason", err.Error(),
+			)
+		} else if len(discovered) > 0 {
+			projects = discovered
+			a.logger.Info(
+				"auto-discovered pipeline projects via gitlab MCP",
+				"count", len(discovered),
+			)
+		}
+	}
+	if len(projects) > 0 {
 		a.pipelineMonitor = monitor.NewPipelineMonitor(a.agent, projects, a.cache, a.logger)
 	}
 

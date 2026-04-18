@@ -14,6 +14,7 @@ import (
 const (
 	pipelineListToolTimeout   = 5 * time.Second
 	pipelineDetailToolTimeout = 20 * time.Second
+	projectListToolTimeout    = 15 * time.Second
 )
 
 // --- Pipeline DTOs ---
@@ -438,4 +439,79 @@ func parsePipelineTime(raw string) time.Time {
 func unmarshalGitLabResult(raw json.RawMessage, target any) error {
 	// GitLab MCP tools return results in the standard MCP CallToolResult format.
 	return UnmarshalToolResult(raw, target)
+}
+
+// ListPipelineProjects returns all GitLab projects the authenticated user has
+// access to (as `path_with_namespace` strings like `services/loom-core`). It
+// pages through up to `maxPages` × 100 results and is intended for one-shot
+// startup-time discovery of the project list to pass to a PipelineMonitor —
+// so callers don't have to hardcode an exhaustive `HUD_PIPELINE_PROJECTS`
+// env var to get pipelines surfaced in the dashboard.
+//
+// Returns an empty slice (no error) when the gitlab MCP server isn't
+// reachable — callers should treat that as "no projects to monitor" and
+// continue to bring up other monitors. A non-nil error indicates a
+// configuration problem worth logging.
+func (a *AgentBridge) ListPipelineProjects(ctx context.Context, maxPages int) ([]string, error) {
+	if maxPages <= 0 {
+		maxPages = 5 // up to 500 projects by default
+	}
+	type projectEntry struct {
+		PathWithNamespace string `json:"path_with_namespace"`
+	}
+	type listResult struct {
+		Projects []projectEntry `json:"projects"`
+		Count    int            `json:"count"`
+	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 64)
+	for page := 1; page <= maxPages; page++ {
+		raw, err := a.client.CallToolWithTimeout("gitlab__list_projects", map[string]any{
+			"membership": true,
+			"per_page":   100,
+			"page":       page,
+		}, projectListToolTimeout)
+		if err != nil {
+			// First page failure is a real error; later pages just stop iteration.
+			if page == 1 {
+				return nil, fmt.Errorf("gitlab__list_projects: %w", err)
+			}
+			break
+		}
+		var result listResult
+		if err := unmarshalGitLabResult(raw, &result); err != nil {
+			if page == 1 {
+				return nil, fmt.Errorf("parse gitlab__list_projects page %d: %w", page, err)
+			}
+			break
+		}
+		if len(result.Projects) == 0 {
+			break
+		}
+		for _, p := range result.Projects {
+			path := p.PathWithNamespace
+			if path == "" {
+				continue
+			}
+			if _, ok := seen[path]; ok {
+				continue
+			}
+			seen[path] = struct{}{}
+			out = append(out, path)
+		}
+		// Short-circuit when the page isn't full — avoids a trailing
+		// empty request on the last partial page.
+		if len(result.Projects) < 100 {
+			break
+		}
+		// Cooperative cancel — long-lived cluster startups should honor context.
+		select {
+		case <-ctx.Done():
+			return out, ctx.Err()
+		default:
+		}
+	}
+	slices.Sort(out)
+	return out, nil
 }
