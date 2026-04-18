@@ -76,6 +76,43 @@ type SpawnOrchestrator struct {
 	// telemetry holds live SpawnTelemetryAccumulators for running spawns.
 	// map[spawnID]*bridge.SpawnTelemetryAccumulator
 	telemetry sync.Map
+
+	// autoHandoff is the F5/Slice C1 trigger hook. Nil-safe: if unset,
+	// the budget watcher skips auto-handoff evaluation. Set via
+	// SetAutoHandoffHook from the orchestrator's wiring layer so this
+	// file does not need to import pkg/agentcontext.
+	autoHandoff AutoHandoffHook
+}
+
+// AutoHandoffHook is the minimal surface the budget watcher needs to
+// evaluate + create an auto-handoff draft. Implemented by the
+// agentcontext wiring layer so internal/hud/spawn.go stays
+// dependency-light. All methods must be nil-safe at the call site.
+type AutoHandoffHook interface {
+	// Observe returns true if the trigger gate fires for this
+	// (sessionKey, reason) pair at `now`.
+	Observe(sessionKey, reason string, now time.Time) bool
+	// Create drafts a handoff tagged source="auto". Errors are
+	// logged by callers; Create must not panic on missing context.
+	Create(ctx context.Context, sessionKey, sourceAgent, targetAgent, reason string, details map[string]any) error
+	// Config exposes the live thresholds for inline breach evaluation.
+	Config() AutoHandoffThresholds
+}
+
+// AutoHandoffThresholds is the subset of AutoHandoffConfig the watcher
+// needs. Mirroring it here keeps this file independent of the
+// agentcontext package.
+type AutoHandoffThresholds struct {
+	Enabled         bool
+	InputTokenHigh  int
+	CostUSDHigh     float64
+	StalledDuration time.Duration
+}
+
+// SetAutoHandoffHook installs the auto-handoff trigger. Calling with a
+// nil hook disables the feature without restructuring the orchestrator.
+func (o *SpawnOrchestrator) SetAutoHandoffHook(h AutoHandoffHook) {
+	o.autoHandoff = h
 }
 
 // streamExecCapable is satisfied by *backend.K8sBackend. It provides the
@@ -1007,7 +1044,38 @@ func (o *SpawnOrchestrator) runBudgetWatcher(
 				cancelExec()
 				return
 			}
+			// F5 / Slice C1: auto-handoff triggers. Nil-safe — skipped when the
+			// hook is not installed or not enabled.
+			o.evalAutoHandoff(ctx, spawnID, req, snap)
 		}
+	}
+}
+
+// evalAutoHandoff checks the current telemetry snapshot against the
+// configured auto-handoff thresholds and, on a gate fire, creates a
+// draft handoff. Additive, ≤25 lines.
+func (o *SpawnOrchestrator) evalAutoHandoff(ctx context.Context, spawnID string, req SpawnRequest, snap bridge.SpawnTelemetry) {
+	hook := o.autoHandoff
+	if hook == nil {
+		return
+	}
+	cfg := hook.Config()
+	if !cfg.Enabled {
+		return
+	}
+	var reason string
+	switch {
+	case cfg.InputTokenHigh > 0 && snap.TokenUsage.InputTokens >= cfg.InputTokenHigh:
+		reason = "input_tokens"
+	case cfg.CostUSDHigh > 0 && snap.TotalCostUSD >= cfg.CostUSDHigh:
+		reason = "cost"
+	}
+	if !hook.Observe(spawnID, reason, time.Now()) {
+		return
+	}
+	details := map[string]any{"input_tokens": snap.TokenUsage.InputTokens, "cost_usd": snap.TotalCostUSD, "turns": snap.TurnCount}
+	if err := hook.Create(ctx, spawnID, req.AgentType, req.AgentType, reason, details); err != nil {
+		o.logger.Warn("auto-handoff create failed", "spawn_id", spawnID, "reason", reason, "error", err)
 	}
 }
 
