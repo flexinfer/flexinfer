@@ -363,10 +363,11 @@ func TestGenerateTomlConfig_CodexUsesServerApprovalMode(t *testing.T) {
 		t.Fatalf("read generated config: %v", err)
 	}
 
-	// Codex uses approval_mode at the MCP server stanza rather than
-	// always_allow on the tool list.
-	if !strings.Contains(string(content), `approval_mode = "always"`) {
-		t.Fatalf("expected codex config to emit approval_mode = \"always\", got:\n%s", string(content))
+	// Codex CLI 4.x uses `default_tools_approval_mode = "approve"` at the MCP
+	// server stanza (not `always_allow`, and not `approval_mode = "always"`
+	// which isn't a valid value and regresses to prompt-every-call behavior).
+	if !strings.Contains(string(content), `default_tools_approval_mode = "approve"`) {
+		t.Fatalf("expected codex config to emit default_tools_approval_mode = \"approve\", got:\n%s", string(content))
 	}
 
 	// Verify granular approval_policy is emitted with mcp_elicitations = false.
