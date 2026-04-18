@@ -91,6 +91,18 @@ type Metrics struct {
 	// Compaction fallbacks (Slice B / F2) — counts LLM-mode failures that
 	// degraded to the extractive path.
 	CompactionFallbacks atomic.Int64
+
+	// Handoff triggers (Slice C1 / F5) — per-reason fired/suppressed
+	// counters. Keyed by AutoHandoffReason* (input_tokens, cost,
+	// stalled). Appended to keep diff surgical.
+	handoffTriggerMu         sync.Mutex
+	handoffTriggerFired      map[string]*atomic.Int64
+	handoffTriggerSuppressed map[string]*atomic.Int64
+
+	// Fleet dispatch (Slice C2 / F6) — counts agent_task_dispatch invocations
+	// and mismatch outcomes (no_candidates or no_capability_match).
+	FleetDispatchRequests   atomic.Int64
+	FleetDispatchMismatches atomic.Int64
 }
 
 // NewMetrics creates a new metrics instance
@@ -696,5 +708,130 @@ func (m *Metrics) PrometheusFormatRerank() string {
 	b.WriteString(formatInt64(m.CompactionFallbacks.Load()))
 	b.WriteString("\n")
 
+	// F5/Slice C1: handoff trigger counters by reason. Appended for
+	// surgical diff — PrometheusFormatRerank is already called from the
+	// top-level PrometheusFormat so these lines reach the scraper.
+	b.WriteString(m.prometheusFormatHandoffTriggers())
+
+	// F6: fleet dispatch counters (appended for minimal diff).
+	b.WriteString("\n# HELP loom_fleet_dispatch_requests_total Total agent_task_dispatch requests\n")
+	b.WriteString("# TYPE loom_fleet_dispatch_requests_total counter\n")
+	b.WriteString("loom_fleet_dispatch_requests_total ")
+	b.WriteString(formatInt64(m.FleetDispatchRequests.Load()))
+	b.WriteString("\n")
+	b.WriteString("# HELP loom_fleet_dispatch_mismatch_total agent_task_dispatch calls that returned no_capability_match or no_candidates\n")
+	b.WriteString("# TYPE loom_fleet_dispatch_mismatch_total counter\n")
+	b.WriteString("loom_fleet_dispatch_mismatch_total ")
+	b.WriteString(formatInt64(m.FleetDispatchMismatches.Load()))
+	b.WriteString("\n")
+
 	return b.String()
+}
+
+// IncHandoffTriggerFired bumps the per-reason fired counter. Reason
+// values are bounded to the AutoHandoffReason* constants defined in
+// handoff_triggers.go.
+func (m *Metrics) IncHandoffTriggerFired(reason string) {
+	if reason == "" {
+		reason = "unknown"
+	}
+	m.handoffTriggerMu.Lock()
+	defer m.handoffTriggerMu.Unlock()
+	if m.handoffTriggerFired == nil {
+		m.handoffTriggerFired = make(map[string]*atomic.Int64)
+	}
+	c, ok := m.handoffTriggerFired[reason]
+	if !ok {
+		c = &atomic.Int64{}
+		m.handoffTriggerFired[reason] = c
+	}
+	c.Add(1)
+}
+
+// IncHandoffTriggerSuppressed bumps the per-reason suppressed counter.
+// Suppressions happen when a breach is observed but the gate does not
+// fire (first breach of a run, within debounce, etc).
+func (m *Metrics) IncHandoffTriggerSuppressed(reason string) {
+	if reason == "" {
+		reason = "unknown"
+	}
+	m.handoffTriggerMu.Lock()
+	defer m.handoffTriggerMu.Unlock()
+	if m.handoffTriggerSuppressed == nil {
+		m.handoffTriggerSuppressed = make(map[string]*atomic.Int64)
+	}
+	c, ok := m.handoffTriggerSuppressed[reason]
+	if !ok {
+		c = &atomic.Int64{}
+		m.handoffTriggerSuppressed[reason] = c
+	}
+	c.Add(1)
+}
+
+// HandoffTriggerFiredCount returns the fired count for a reason. Used
+// in tests and aggregated dashboards.
+func (m *Metrics) HandoffTriggerFiredCount(reason string) int64 {
+	m.handoffTriggerMu.Lock()
+	defer m.handoffTriggerMu.Unlock()
+	if c, ok := m.handoffTriggerFired[reason]; ok {
+		return c.Load()
+	}
+	return 0
+}
+
+// HandoffTriggerSuppressedCount returns the suppressed count for a reason.
+func (m *Metrics) HandoffTriggerSuppressedCount(reason string) int64 {
+	m.handoffTriggerMu.Lock()
+	defer m.handoffTriggerMu.Unlock()
+	if c, ok := m.handoffTriggerSuppressed[reason]; ok {
+		return c.Load()
+	}
+	return 0
+}
+
+func (m *Metrics) prometheusFormatHandoffTriggers() string {
+	m.handoffTriggerMu.Lock()
+	defer m.handoffTriggerMu.Unlock()
+
+	var b strings.Builder
+	b.WriteString("\n# HELP loom_handoff_trigger_fired_total Total auto-handoff trigger fires by reason\n")
+	b.WriteString("# TYPE loom_handoff_trigger_fired_total counter\n")
+	// Emit 0 lines for all well-known reasons so the series exist even
+	// before any fires. Keeps Grafana dashboards simple.
+	for _, reason := range handoffTriggerReasons() {
+		v := int64(0)
+		if c, ok := m.handoffTriggerFired[reason]; ok {
+			v = c.Load()
+		}
+		b.WriteString(`loom_handoff_trigger_fired_total{reason="`)
+		b.WriteString(reason)
+		b.WriteString(`"} `)
+		b.WriteString(formatInt64(v))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n# HELP loom_handoff_trigger_suppressed_total Total auto-handoff trigger suppressions by reason\n")
+	b.WriteString("# TYPE loom_handoff_trigger_suppressed_total counter\n")
+	for _, reason := range handoffTriggerReasons() {
+		v := int64(0)
+		if c, ok := m.handoffTriggerSuppressed[reason]; ok {
+			v = c.Load()
+		}
+		b.WriteString(`loom_handoff_trigger_suppressed_total{reason="`)
+		b.WriteString(reason)
+		b.WriteString(`"} `)
+		b.WriteString(formatInt64(v))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// handoffTriggerReasons returns the stable list of reason labels in a
+// sorted order for deterministic Prometheus output.
+func handoffTriggerReasons() []string {
+	return []string{
+		AutoHandoffReasonCost,
+		AutoHandoffReasonInputTokens,
+		AutoHandoffReasonStalled,
+	}
 }

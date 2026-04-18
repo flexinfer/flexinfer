@@ -185,4 +185,31 @@ func registerTaskTools(server *mcp.Server, svc *agentcontext.Service, tracer tra
 	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleTaskDelete(ctx, args)
 	})
+
+	// =========================================================================
+	// Fleet Dispatch (F6): capability-aware routing decision (v1 returns choice
+	// only, does not actually spawn).
+	// =========================================================================
+
+	server.AddTool(mcp.Tool{
+		Name:        "agent_task_dispatch",
+		Description: "Choose the best fleet agent for a task based on required capabilities and active presence. v1 returns the decision only (no spawn). Seeds live at mcp/context/agent-capabilities.yaml.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"capability_needed": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Capabilities the candidate agent must advertise. Empty = any active agent (lowest load wins).",
+				},
+				"scope": map[string]any{
+					"type":        "string",
+					"enum":        []string{"session", "fleet"},
+					"description": "Dispatch scope. Default: session.",
+				},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleTaskDispatch(ctx, args)
+	})
 }
