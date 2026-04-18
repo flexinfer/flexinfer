@@ -105,6 +105,21 @@ struct OpsWorkflowDetailView: View {
         }
         .navigationTitle("Workflow")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    LoomCopyLinkButton(link: .workflow(id: workflow.id, approve: false))
+                    LoomShareLink(link: .workflow(id: workflow.id, approve: false))
+                    Divider()
+                    LoomCopyLinkButton(
+                        link: .workflow(id: workflow.id, approve: true),
+                        label: "Copy approve link"
+                    )
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            }
+        }
         .task {
             await loadWorkflowDetail()
         }

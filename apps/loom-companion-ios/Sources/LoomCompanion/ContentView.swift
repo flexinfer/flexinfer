@@ -82,28 +82,72 @@ struct ContentView: View {
     }
 
     private func handleDeepLink(_ link: DeepLink) {
-        switch link.destinationGroup {
+        // Dispatch based on the specific link; destinationGroup handles the tab.
+        switch link {
         case .dashboard:
             selectedTab = .dashboard
+
         case .people:
-            if case let .session(id) = link {
-                pendingSessionDeepLinkID = id
-            }
-            selectedPeopleSection = .sessions
             selectedTab = .people
+
         case .work:
-            if case let .workflow(id, approve) = link {
-                if approve {
-                    // Trigger approval via API, then navigate to work.
-                    Task { await approveWorkflowFromDeepLink(workflowId: id) }
-                }
-                pendingWorkflowDeepLinkID = id
-            }
             selectedTab = .work
+
         case .alerts:
             selectedTab = .alerts
+
         case .connection:
             selectedTab = .connection
+
+        // People · single session / agent
+        case .session(let id):
+            pendingSessionDeepLinkID = id
+            selectedPeopleSection = .sessions
+            selectedTab = .people
+
+        case .agent(let id):
+            pendingAgentDeepLinkID = id
+            selectedPeopleSection = .agents
+            selectedTab = .people
+
+        // People · filtered lists (preset filter + navigate)
+        case .sessions(let status, let agentId):
+            navigationCoordinator.filterSessions(status: status, agentId: agentId)
+            selectedPeopleSection = .sessions
+            selectedTab = .people
+
+        case .agents(let status, let type):
+            navigationCoordinator.filterAgents(status: status, type: type)
+            selectedPeopleSection = .agents
+            selectedTab = .people
+
+        // Work · tasks filter
+        case .tasks(let status, let agentId, let sessionId):
+            navigationCoordinator.filterTasks(status: status, agentId: agentId, sessionId: sessionId)
+            selectedTab = .work
+
+        // Work · workflow (with optional approve intent)
+        case .workflow(let id, let approve):
+            if approve {
+                Task { await approveWorkflowFromDeepLink(workflowId: id) }
+            }
+            pendingWorkflowDeepLinkID = id
+            selectedTab = .work
+
+        // Work · spawn detail
+        case .spawn(let id):
+            navigationCoordinator.navigateToSpawn(id: id)
+            selectedTab = .work
+
+        // Work · handoff inbox
+        case .handoff:
+            navigationCoordinator.openHandoffInbox()
+            selectedTab = .work
+
+        // Alerts · single alert
+        case .alert(let id):
+            navigationCoordinator.navigateToAlert(id: id)
+            selectedTab = .alerts
         }
     }
 

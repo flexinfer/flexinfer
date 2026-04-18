@@ -1,6 +1,11 @@
 import SwiftUI
 import LoomCompanionKit
 
+/// Context card — shows server health as a proportion bar + summary.
+///
+/// Visually recedes to a compact single-line card when everything is healthy,
+/// and expands to a standard card when degraded/down — the "alarm when wrong,
+/// silent when right" principle.
 struct HealthStatusCard: View {
     let health: HealthSummary
 
@@ -12,40 +17,66 @@ struct HealthStatusCard: View {
         health.degradedServers == 0 && health.downServers == 0 && totalServers > 0
     }
 
-    var body: some View {
-        LoomCard {
-            VStack(alignment: .leading, spacing: LoomSpacing.sm) {
-                HStack {
-                    Text("Server Health")
-                        .font(LoomTypography.headlineMedium)
-                    Spacer()
-                    StatusBadge(healthStatus: health.overallStatus)
-                        .animateOnStatusChange(health.overallStatus.rawValue)
-                }
+    private var priority: LoomCardPriority {
+        allHealthy ? .compact : .standard
+    }
 
-                if allHealthy {
-                    // Collapsed single-line when all healthy
-                    HStack(spacing: LoomSpacing.sm) {
-                        healthBar
-                        Text("\(totalServers)/\(totalServers) healthy")
-                            .font(LoomTypography.labelSmall)
-                            .foregroundStyle(LoomColors.statusHealthy)
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundStyle(LoomColors.statusHealthy)
-                    }
-                } else {
-                    // Bar + summary text
-                    HStack(spacing: LoomSpacing.md) {
-                        healthBar
-                        summaryText
-                    }
-                }
+    private var accent: LoomCardAccent {
+        if health.downServers > 0 { return .severity(LoomColors.statusCritical) }
+        if health.degradedServers > 0 { return .severity(LoomColors.statusDegraded) }
+        return .none
+    }
+
+    var body: some View {
+        LoomCard(priority: priority, accent: accent) {
+            if allHealthy {
+                compactLayout
+            } else {
+                standardLayout
             }
         }
     }
 
-    // MARK: - Health Proportion Bar
+    // MARK: - Compact (steady state)
+
+    private var compactLayout: some View {
+        HStack(spacing: LoomSpacing.sm) {
+            Image(systemName: "checkmark.shield.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(LoomColors.statusHealthy)
+            Text("Server Health")
+                .font(LoomTypography.labelLarge)
+                .foregroundStyle(LoomColors.fgSecondary)
+            Spacer(minLength: LoomSpacing.sm)
+            healthBar
+                .frame(maxWidth: 120)
+            Text("\(totalServers)/\(totalServers)")
+                .font(LoomTypography.monoMedium)
+                .foregroundStyle(LoomColors.statusHealthy)
+                .monospacedDigit()
+        }
+    }
+
+    // MARK: - Standard (something wrong — expand)
+
+    private var standardLayout: some View {
+        VStack(alignment: .leading, spacing: LoomSpacing.sm) {
+            HStack(spacing: LoomSpacing.xs) {
+                Text("Server Health")
+                    .font(LoomTypography.headlineMedium)
+                    .foregroundStyle(LoomColors.fgPrimary)
+                Spacer()
+                StatusBadge(healthStatus: health.overallStatus)
+                    .animateOnStatusChange(health.overallStatus.rawValue)
+            }
+            HStack(spacing: LoomSpacing.md) {
+                healthBar
+                summaryText
+            }
+        }
+    }
+
+    // MARK: - Bars
 
     private var healthBar: some View {
         GeometryReader { geo in
@@ -72,7 +103,7 @@ struct HealthStatusCard: View {
                 }
             }
         }
-        .frame(height: 8)
+        .frame(height: allHealthy ? 6 : 8)
         .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
@@ -88,13 +119,11 @@ struct HealthStatusCard: View {
             .filter { $0 > 0 }.count
     }
 
-    // MARK: - Summary Text
-
     private var summaryText: some View {
         VStack(alignment: .leading, spacing: LoomSpacing.xxs) {
             Text("\(health.healthyServers)/\(totalServers) healthy")
                 .font(LoomTypography.labelSmall)
-                .foregroundStyle(LoomColors.textPrimary)
+                .foregroundStyle(LoomColors.fgPrimary)
 
             if health.degradedServers > 0 || health.downServers > 0 {
                 HStack(spacing: LoomSpacing.sm) {

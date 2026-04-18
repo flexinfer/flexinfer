@@ -160,6 +160,14 @@ struct SessionDetailView: View {
         }
         .navigationTitle("Session")
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    LoomCopyLinkButton(link: .session(id: sessionId))
+                    LoomShareLink(link: .session(id: sessionId))
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 if isActive {
                     #if os(iOS)

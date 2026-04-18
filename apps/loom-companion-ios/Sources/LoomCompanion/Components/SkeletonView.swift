@@ -41,23 +41,62 @@ struct SkeletonView: View {
 
 // MARK: - Pre-composed Skeleton Layouts
 
+/// Matches the hero NextActionCard layout (eyebrow + big headline + subtitle + CTA).
+struct SkeletonHeroCard: View {
+    var body: some View {
+        LoomCard(priority: .hero) {
+            VStack(alignment: .leading, spacing: LoomSpacing.md) {
+                HStack(spacing: LoomSpacing.xs) {
+                    SkeletonView(width: 7, height: 7, cornerRadius: 3.5)
+                    SkeletonView(width: 90, height: 10)
+                    Spacer()
+                    SkeletonView(width: 18, height: 18, cornerRadius: 4)
+                }
+                SkeletonView(height: 22)
+                SkeletonView(width: 220, height: 14)
+                HStack {
+                    SkeletonView(width: 100, height: 14)
+                    Spacer()
+                    SkeletonView(width: 60, height: 10)
+                }
+            }
+        }
+    }
+}
+
+/// Matches the standard attention-lanes / active-work cards (title row + data block).
 struct SkeletonDashboardCard: View {
     var body: some View {
-        LoomCard {
+        LoomCard(priority: .standard) {
             VStack(alignment: .leading, spacing: LoomSpacing.md) {
                 HStack {
                     SkeletonView(width: 120, height: 18)
                     Spacer()
-                    SkeletonView(width: 60, height: 22, cornerRadius: 11)
+                    SkeletonView(width: 60, height: 14)
                 }
                 HStack(spacing: LoomSpacing.xl) {
                     ForEach(0..<4, id: \.self) { _ in
                         VStack(spacing: LoomSpacing.xxs) {
-                            SkeletonView(width: 32, height: 28)
-                            SkeletonView(width: 44, height: 12)
+                            SkeletonView(width: 32, height: 22)
+                            SkeletonView(width: 44, height: 10)
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Matches compact context cards (fleet/health when steady — one-line inline).
+struct SkeletonCompactRow: View {
+    var body: some View {
+        LoomCard(priority: .compact) {
+            HStack(spacing: LoomSpacing.sm) {
+                SkeletonView(width: 14, height: 14, cornerRadius: 7)
+                SkeletonView(width: 70, height: 12)
+                Spacer()
+                SkeletonView(width: 110, height: 6, cornerRadius: 3)
+                SkeletonView(width: 40, height: 12)
             }
         }
     }
