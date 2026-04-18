@@ -22,5 +22,10 @@ enum LoomSpacing {
     static let rowVerticalPadding: CGFloat = 10
     static let rowHorizontalPadding: CGFloat = 16
     static let accentBarWidth: CGFloat = 4
+    static let accentBarWidthProminent: CGFloat = 6
     static let accentBarCornerRadius: CGFloat = 2
+    static let rowMinHeight: CGFloat = 44
+    static let rowContentSpacing: CGFloat = 10
+    static let pillVerticalPadding: CGFloat = 2
+    static let pillHorizontalPadding: CGFloat = 6
 }

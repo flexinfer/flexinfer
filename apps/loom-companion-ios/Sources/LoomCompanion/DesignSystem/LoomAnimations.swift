@@ -109,4 +109,83 @@ extension AnyTransition {
             removal: .move(edge: .top).combined(with: .opacity)
         )
     }
+
+    /// Used for pills and chips that appear mid-row when a state begins.
+    /// Scales from 0.8, fades in, moves a hair — reads as "this just happened"
+    /// rather than a generic fade.
+    static var loomPillAppear: AnyTransition {
+        .asymmetric(
+            insertion: .scale(scale: 0.8, anchor: .leading)
+                .combined(with: .opacity)
+                .combined(with: .move(edge: .leading)),
+            removal: .scale(scale: 0.8, anchor: .leading)
+                .combined(with: .opacity)
+        )
+    }
+}
+
+// MARK: - Value-Change Flash (communicates "this just changed")
+//
+// When a semantic value changes (status, count, severity), briefly brighten
+// a wrapping color tint. Decays quickly so it reads as acknowledgment, not
+// ambient noise. Use sparingly — every flash trains the eye to look here.
+
+struct ValueChangeFlashModifier<V: Equatable>: ViewModifier {
+    let value: V
+    let color: Color
+    @State private var flashOn = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(color.opacity(flashOn ? 0.22 : 0))
+                    .allowsHitTesting(false)
+                    .animation(.easeOut(duration: 0.7), value: flashOn)
+            )
+            .onChange(of: value) { _, _ in
+                flashOn = true
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    flashOn = false
+                }
+            }
+    }
+}
+
+extension View {
+    /// Flashes a colored overlay briefly when `value` changes. Perfect for
+    /// rows that transition status (pending → in-progress, idle → active).
+    func loomValueChangeFlash<V: Equatable>(_ value: V, color: Color) -> some View {
+        modifier(ValueChangeFlashModifier(value: value, color: color))
+    }
+}
+
+// MARK: - Tap Feedback (subtle press response distinct from navigation push)
+
+struct TapFeedbackModifier: ViewModifier {
+    @State private var pressed = false
+    let haptic: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(pressed ? 0.98 : 1.0)
+            .animation(.interactiveSpring(response: 0.25, dampingFraction: 0.7), value: pressed)
+            .onLongPressGesture(minimumDuration: 0.01, maximumDistance: 50) {
+                // Tap ended
+            } onPressingChanged: { isPressing in
+                pressed = isPressing
+                if isPressing && haptic {
+                    HapticManager.light()
+                }
+            }
+    }
+}
+
+extension View {
+    /// Adds a subtle press-scale + optional haptic. Distinguishes a touch from
+    /// accidental scroll momentum without the heavy look of `.buttonStyle(.plain)`.
+    func loomTapFeedback(haptic: Bool = true) -> some View {
+        modifier(TapFeedbackModifier(haptic: haptic))
+    }
 }

@@ -55,15 +55,36 @@ struct DashboardView: View {
                 #endif
 
                 if let dashboard = viewModel.dashboard {
-                    Button {
-                        HapticManager.selection()
-                        onNavigate?(.connection)
-                    } label: {
-                        HealthStatusCard(health: dashboard.health)
-                    }
-                    .buttonStyle(.plain)
+                    // Hero: the ONE thing to do next (scales to critical/all-clear)
+                    NextActionCard(
+                        lanes: dashboard.coordination.attentionLanes,
+                        health: dashboard.health,
+                        onNavigate: onNavigate
+                    )
                     .cardAppear(index: 0)
 
+                    // Remaining attention lanes — hero already represents #1
+                    if dashboard.coordination.attentionLanes.count > 1 {
+                        AttentionLanesCard(
+                            lanes: dashboard.coordination.attentionLanes,
+                            skipFirst: true
+                        ) { lane in
+                            HapticManager.selection()
+                            onNavigate?(navigationAction(for: lane))
+                        }
+                        .cardAppear(index: 1)
+                    }
+
+                    // Active work — scales itself (compact when steady, standard when blocked)
+                    if let counts = viewModel.taskCounts,
+                       counts.pending + counts.inProgress + counts.blocked > 0 {
+                        ActiveWorkCard(counts: counts) {
+                            onNavigate?(.work)
+                        }
+                        .cardAppear(index: 2)
+                    }
+
+                    // Context: fleet (compact when steady, standard when anomaly)
                     Button {
                         HapticManager.selection()
                         onNavigate?(.people)
@@ -71,28 +92,17 @@ struct DashboardView: View {
                         FleetSummaryCard(dashboard: dashboard)
                     }
                     .buttonStyle(.plain)
-                    .cardAppear(index: 1)
-
-                    if !dashboard.coordination.attentionLanes.isEmpty {
-                        AttentionLanesCard(lanes: dashboard.coordination.attentionLanes) { lane in
-                            HapticManager.selection()
-                            onNavigate?(navigationAction(for: lane))
-                        }
-                        .cardAppear(index: 2)
-                    }
-
-                    NextActionCard(
-                        lanes: dashboard.coordination.attentionLanes,
-                        health: dashboard.health,
-                        onNavigate: onNavigate
-                    )
                     .cardAppear(index: 3)
 
-                    if let counts = viewModel.taskCounts,
-                       counts.pending + counts.inProgress + counts.blocked > 0 {
-                        ActiveWorkCard(counts: counts)
-                            .cardAppear(index: 4)
+                    // Context: server health (compact when all-healthy)
+                    Button {
+                        HapticManager.selection()
+                        onNavigate?(.connection)
+                    } label: {
+                        HealthStatusCard(health: dashboard.health)
                     }
+                    .buttonStyle(.plain)
+                    .cardAppear(index: 4)
 
                     TimelineListView(entries: dashboard.recentTimeline)
                         .cardAppear(index: 5)
@@ -110,12 +120,14 @@ struct DashboardView: View {
                     }
                 } else if viewModel.isLoading {
                     VStack(spacing: LoomSpacing.lg) {
-                        SkeletonDashboardCard()
+                        SkeletonHeroCard()
                             .cardAppear(index: 0)
                         SkeletonDashboardCard()
                             .cardAppear(index: 1)
-                        SkeletonDashboardCard()
+                        SkeletonCompactRow()
                             .cardAppear(index: 2)
+                        SkeletonCompactRow()
+                            .cardAppear(index: 3)
                     }
                 } else if let error = viewModel.error {
                     ContentUnavailableView {

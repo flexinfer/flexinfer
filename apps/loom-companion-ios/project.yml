@@ -33,18 +33,30 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: ai.flexinfer.loom.companion
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: BX8243HJHS
-        GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.9"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         TARGETED_DEVICE_FAMILY: "1,2"
-        INFOPLIST_KEY_CFBundleDisplayName: Loom Companion
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Loom Companion needs local network access to connect to your local Loom HUD server.
-        INFOPLIST_KEY_NSBonjourServices:
+    info:
+      path: Sources/LoomCompanion/Info.plist
+      properties:
+        CFBundleDisplayName: Loom Companion
+        UIApplicationSupportsIndirectInputEvents: YES
+        UILaunchScreen:
+          UIColorName: ""
+          UIImageName: ""
+        NSLocalNetworkUsageDescription: Loom Companion needs local network access to connect to your local Loom HUD server.
+        NSBonjourServices:
           - _http._tcp
-        INFOPLIST_KEY_NSSupportsLiveActivities: YES
-        INFOPLIST_KEY_UIBackgroundModes: remote-notification
+        NSSupportsLiveActivities: YES
+        UIBackgroundModes:
+          - remote-notification
+        CFBundleURLTypes:
+          - CFBundleURLName: ai.flexinfer.loom.companion.deeplink
+            CFBundleURLSchemes:
+              - loom
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: NO
+          UISceneConfigurations: {}
     entitlements:
       path: Entitlements/LoomCompanion.entitlements
       properties:

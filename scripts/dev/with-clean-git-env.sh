@@ -13,7 +13,14 @@ unset GIT_PREFIX
 # the default macOS Go build cache under ~/Library/Caches/go-build. When callers
 # have not pinned their own cache locations, redirect Go scratch space into a
 # writable temp root so hooks and local CI helpers can run normally.
-tmp_root="${TMPDIR:-/tmp}"
+#
+# Anchor the temp root at /tmp (not $TMPDIR). On macOS, $TMPDIR resolves to
+# a per-user path inside /var/folders/XX/..., and the sum of that prefix plus
+# a nested test tempdir plus a Unix socket name routinely exceeds macOS's
+# 104-character sun_path limit — Go tests that bind Unix sockets
+# (pkg/toolexec) fail with `bind: invalid argument`. /tmp is short, writable
+# on every mac, and stable across reboots for the length of the push.
+tmp_root="/tmp"
 if [[ -z "${GOCACHE:-}" ]]; then
   export GOCACHE="${tmp_root%/}/loom-gocache"
 fi

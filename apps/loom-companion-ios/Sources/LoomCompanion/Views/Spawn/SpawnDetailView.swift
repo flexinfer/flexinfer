@@ -76,6 +76,14 @@ struct SpawnDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    LoomCopyLinkButton(link: .spawn(id: spawn.spawnId))
+                    LoomShareLink(link: .spawn(id: spawn.spawnId))
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 if spawn.isActive {
                     if spawn.request.multiTurn == true {

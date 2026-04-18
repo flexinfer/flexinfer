@@ -57,6 +57,16 @@ struct AgentDetailView: View {
         }
         .navigationTitle(agent.agentId)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    LoomCopyLinkButton(link: .agent(id: agent.agentId))
+                    LoomShareLink(link: .agent(id: agent.agentId))
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            }
+        }
         .task {
             await loadSession()
             await loadPipelines()
