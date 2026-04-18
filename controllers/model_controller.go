@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -83,6 +84,11 @@ type ModelReconciler struct {
 	// When non-nil and a runtime pod exists on the target node, models
 	// are loaded via the runtime API instead of creating Deployments.
 	Runtime *RuntimeReconciler
+	// KubeClient is used for API calls the controller-runtime client does not
+	// cover, notably pod log retrieval for loadingSubstage refinement. Optional:
+	// when nil, log-based substage refinement is skipped and the controller
+	// falls back to pod-container-state only.
+	KubeClient kubernetes.Interface
 
 	mgr ctrl.Manager // set by SetupWithManager, used for startup sweep
 }
