@@ -91,6 +91,11 @@ type Metrics struct {
 	// Compaction fallbacks (Slice B / F2) — counts LLM-mode failures that
 	// degraded to the extractive path.
 	CompactionFallbacks atomic.Int64
+
+	// Fleet dispatch (Slice C2 / F6) — counts agent_task_dispatch invocations
+	// and mismatch outcomes (no_candidates or no_capability_match).
+	FleetDispatchRequests   atomic.Int64
+	FleetDispatchMismatches atomic.Int64
 }
 
 // NewMetrics creates a new metrics instance
@@ -694,6 +699,18 @@ func (m *Metrics) PrometheusFormatRerank() string {
 	b.WriteString("# TYPE loom_agentcontext_compaction_fallback_total counter\n")
 	b.WriteString("loom_agentcontext_compaction_fallback_total ")
 	b.WriteString(formatInt64(m.CompactionFallbacks.Load()))
+	b.WriteString("\n")
+
+	// F6: fleet dispatch counters (appended for minimal diff).
+	b.WriteString("\n# HELP loom_fleet_dispatch_requests_total Total agent_task_dispatch requests\n")
+	b.WriteString("# TYPE loom_fleet_dispatch_requests_total counter\n")
+	b.WriteString("loom_fleet_dispatch_requests_total ")
+	b.WriteString(formatInt64(m.FleetDispatchRequests.Load()))
+	b.WriteString("\n")
+	b.WriteString("# HELP loom_fleet_dispatch_mismatch_total agent_task_dispatch calls that returned no_capability_match or no_candidates\n")
+	b.WriteString("# TYPE loom_fleet_dispatch_mismatch_total counter\n")
+	b.WriteString("loom_fleet_dispatch_mismatch_total ")
+	b.WriteString(formatInt64(m.FleetDispatchMismatches.Load()))
 	b.WriteString("\n")
 
 	return b.String()
