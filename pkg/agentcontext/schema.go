@@ -330,7 +330,20 @@ type Task struct {
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 
 	TokenCount int `json:"token_count"`
+
+	// F6: fleet task queue + capability-aware dispatch.
+	// CapabilityNeeded lists required capability tags (e.g. "go", "k8s").
+	// Scope is "session" (default) or "fleet" — fleet-scope tasks are eligible
+	// for capability-aware routing to any active agent in the fleet.
+	CapabilityNeeded []string `json:"capability_needed,omitempty"`
+	Scope            string   `json:"scope,omitempty"`
 }
+
+// TaskScope values for Task.Scope. Empty defaults to TaskScopeSession.
+const (
+	TaskScopeSession = "session"
+	TaskScopeFleet   = "fleet"
+)
 
 // CodeAnnotation represents an annotation attached to code
 type CodeAnnotation struct {

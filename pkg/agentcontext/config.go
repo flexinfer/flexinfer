@@ -323,3 +323,38 @@ func LoadRerankerConfigFromEnv() RerankerConfig {
 		Timeout: env.Duration("WEAVER_RERANKER_TIMEOUT", 5*time.Second),
 	}
 }
+
+// =========================================================================
+// Auto-handoff config (Slice C1 / F5) — opt-in trigger thresholds parsed
+// independently of the main Config so unrelated callers need not carry
+// the new struct.
+//
+// Env vars:
+//   - AGENTCONTEXT_HANDOFF_INPUT_TOKEN_HIGH : int, default 160000
+//   - AGENTCONTEXT_HANDOFF_COST_USD_HIGH    : float, default 1.50
+//   - AGENTCONTEXT_HANDOFF_STALLED          : Go duration, default "8m"
+//   - AGENTCONTEXT_HANDOFF_DEBOUNCE         : Go duration, default "10m"
+//   - AGENTCONTEXT_HANDOFF_ENABLED          : bool, default false
+// =========================================================================
+
+// LoadAutoHandoffConfigFromEnv parses auto-handoff trigger config from
+// the environment. Missing or malformed values fall back to the spec
+// defaults (§5.F5 of the 2026-04-17 orchestration spec). The returned
+// config has Enabled=false unless explicitly set.
+func LoadAutoHandoffConfigFromEnv() AutoHandoffConfig {
+	cfg := DefaultAutoHandoffConfig()
+	if v := env.IntWithZero("AGENTCONTEXT_HANDOFF_INPUT_TOKEN_HIGH", 0); v > 0 {
+		cfg.InputTokenHigh = v
+	}
+	if v := env.Float("AGENTCONTEXT_HANDOFF_COST_USD_HIGH", 0); v > 0 {
+		cfg.CostUSDHigh = v
+	}
+	if v := env.Duration("AGENTCONTEXT_HANDOFF_STALLED", 0); v > 0 {
+		cfg.StalledDuration = v
+	}
+	if v := env.Duration("AGENTCONTEXT_HANDOFF_DEBOUNCE", 0); v > 0 {
+		cfg.Debounce = v
+	}
+	cfg.Enabled = env.Bool("AGENTCONTEXT_HANDOFF_ENABLED", false)
+	return cfg
+}

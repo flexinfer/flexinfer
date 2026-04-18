@@ -1,0 +1,14 @@
+# Agent capability registry for F6 fleet task queue + capability-aware dispatch.
+#
+# Consumed by cmd/mcp-agent-context::agent_task_dispatch to filter presence-based
+# candidates down to agents that satisfy a task's capability_needed list.
+#
+# Seed values. Extend cautiously — keep tags lowercase, hyphenated if needed,
+# and prefer stable short synonyms (e.g. "ts" not "typescript").
+agents:
+  - id: claude-code
+    capabilities: [go, ts, python, k8s, docs, tests]
+  - id: codex
+    capabilities: [python, ts, tests]
+  - id: gemini
+    capabilities: [docs, summaries]
