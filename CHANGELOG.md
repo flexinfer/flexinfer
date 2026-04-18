@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **MCP tool refresh on upstream reconnect (Slice G)** (`internal/daemon/tool_refresh_debounce.go`, `internal/daemon/daemon_dispatch.go`): Daemon now advertises `tools.listChanged: true` in the initialize response and schedules `refreshToolCache()` with a 3s debounce whenever an upstream MCP server's pool is cleared (pod restart, process crash, network blip). The existing `EventToolsChanged` → `notifications/tools/list_changed` path then fires automatically so spec-compliant clients can re-fetch `tools/list` without restarting. New JSON-RPC method `loom/tools/reload` provides a manual escape hatch. Tests cover debounce coalescing (20 rapid calls → 1 fire), Stop cancellation, and nil-safety. Follow-up: wrap `loom/tools/reload` as an MCP tool for clients that don't honor the notification.
+
+### Fixed
+- **Codex Loom auto-approval regression** (`pkg/generator/configs_formats.go`): Regression from commit 848be7ef (2026-04-09) emitted `approval_mode = "always"` in Codex `mcp_servers.<name>` stanzas — not a valid Codex config key, so Codex fell back to prompt-every-tool behavior. Now emits the correct `default_tools_approval_mode = "approve"` per openai/codex#16501 and https://developers.openai.com/codex/mcp. Run `loom sync codex --regen` to refresh local `~/.codex/config.toml`.
+
+### Added
 - **Live file-claim conflict overlay (F9)** (`pkg/agentcontext/file_claims_conflict_bus.go`, `internal/hud/domain/fleet/handler_claims_stream.go`, `internal/hud/frontend/src/lib/components/fleet/ClaimConflictChip.svelte`): in-process `ConflictBus` (non-blocking fan-out, drop-on-full) + new `GET /api/fleet/claims/stream` SSE endpoint + Svelte chip mounted on the Fleet panel. `svc_claims.go` `Acquire` publishes a `ClaimConflictEvent` on collision. Target collision→UI latency <500ms. Tests cover subscribe/publish/unsubscribe/drop/race.
 
 ### Fixed
