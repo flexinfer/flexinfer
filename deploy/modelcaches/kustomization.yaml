@@ -9,7 +9,8 @@ resources:
   # Keep the manifests on disk for rebuild/reference, but stop reconciling the
   # old source caches so their detached Longhorn volumes can be pruned.
   # - abliteration-gptq.yaml         # qwen35-27b-opus-distill-gptq (disabled)
-  # - qwen35-9b-gptq.yaml            # qwen35-9b-gptq (disabled)
+  # - qwen35-9b-gptq.yaml            # qwen35-9b-gptq (disabled; radeonvii artifact)
+  # - qwen35-9b-gptq-gfx1100.yaml    # qwen35-9b-gptq-gfx1100 (staged; Slice B — enable to trigger build on cblevins-5930k)
   # - omnicoder-9b-gptq.yaml         # omnicoder-9b-gptq (disabled; OCI cache in use)
 
   # === Active Abliteration + GPTQ pipelines (Download → Abliterate → Quantize → Publish) ===

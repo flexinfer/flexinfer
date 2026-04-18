@@ -1,0 +1,89 @@
+# Qwen3.5-9B → Abliteration → GPTQ INT4 Pipeline on gfx1100
+#
+# gfx1100 counterpart to deploy/modelcaches/qwen35-9b-gptq.yaml (radeonvii/gfx906).
+# Same model, same pipeline steps; differs only in node pinning, storage class,
+# and memory overrides. Produces a distinct OCI tag so both artifacts can
+# coexist.
+#
+# Pipeline: Download BF16 (~19 GB) → Abliterate → GPTQ INT4 (~6 GB) → OCI publish
+#
+# Node: cblevins-5930k (single discrete 7900 XTX, no iGPU). Deliberately not
+# pinned to cblevins-7900xtx because that host already serves gemma4-26b-a4b-gptq
+# (Ready, MoE + dense). Running abliteration + quantization on the same dGPU
+# would contend for the 18 GB max VRAM budget (per gfx1100 GPUProfile) and
+# likely OOM the running 26B.
+#
+# Full-attention layers (9B): 3, 7, 11, 15, 19, 23, 27, 31 (24 GDN + 8 full).
+# Abliteration targets middle full-attention layers where refusal steering is
+# strongest.
+#
+# Memory overrides vs the radeonvii manifest:
+#   - maxGPUMemoryGB is enforced by the gfx1100 GPUProfile (18 GB); do not
+#     override here. The profile already injects ABLITERATION_*_MEMORY_GB env
+#     vars tuned for the 24 GB card.
+#   - maxCPUMemoryGB=44 is the gfx1100 profile ceiling (64 GB host).
+#   - CPU offload budget is sufficient for 9B (vs the 27B case that fills it).
+#
+# Status: DISABLED in kustomization.yaml. Enable only after:
+#   1. Resolving whether to deprecate the radeonvii qwen35-9b-gptq.yaml once
+#      this artifact is promoted, or keep both for per-node warm caches.
+#   2. Confirming cblevins-5930k has no higher-priority workload queued
+#      (e.g. FluxPony + 27B opus distill in some profiles).
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen35-9b-gptq-gfx1100
+  namespace: flexinfer-system
+spec:
+  source: "Qwen/Qwen3.5-9B"
+  storageStrategy: SharedPVC
+  storageSize: "80Gi"            # BF16 ~19 GB + working + GPTQ output ~6 GB + headroom
+  clusterStorageClassName: nvme-1r-gpu
+  secretRef: "hf-token"
+  nodeSelector:
+    flexinfer.ai/gpu.arch: gfx1100
+    kubernetes.io/hostname: cblevins-5930k
+  download:
+    maxMemoryGB: 8
+    hfTransfer: false
+    backoffLimit: 3
+  abliteration:
+    skipGDNLayers: true          # Skip 24 GDN layers
+    numSamples: 256
+    targetLayers: "11,15,19"     # Middle full-attention layers
+    useGPU: true
+    maxMemoryGB: 44              # gfx1100 profile maxCPUMemoryGB ceiling
+    timeoutSeconds: 7200         # 2 h (9B is ~30-60 min on gfx1100)
+    nodeSelector:
+      flexinfer.ai/gpu.arch: gfx1100
+      kubernetes.io/hostname: cblevins-5930k
+    normThreshold: "100"
+    ablitateLmHead: false        # Known streaming-save corruption; keep disabled.
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    dynamicExclusion: "none"
+    useGPU: true
+    maxMemoryGB: 44
+    timeoutSeconds: 14400        # 4 h upper bound; 9B quant should be ~30 min
+    nodeSelector:
+      flexinfer.ai/gpu.arch: gfx1100
+      kubernetes.io/hostname: cblevins-5930k
+    calibration:
+      maxSeqLen: 2048
+      maxSamples: 128
+  publish:
+    targets:
+      - oci
+    # Distinct tag from the radeonvii artifact so both can coexist in Harbor.
+    ociRef: "registry.harbor.lan/flexinfer/qwen35-9b:gptq-w4-g128-gfx1100"
+    secretRef: "harbor-oci-creds"
+    maxMemoryGB: 8
+    timeoutSeconds: 7200
+  retentionPriority: 50
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85
