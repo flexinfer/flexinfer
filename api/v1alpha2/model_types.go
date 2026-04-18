@@ -547,6 +547,14 @@ type ModelStatus struct {
 	// +optional
 	Message string `json:"message,omitempty"`
 
+	// LoadingProgressAt is the wall-clock time at which LoadingSubstage or
+	// Message last changed. The proxy reads this to detect stalled loads: if
+	// Phase==Loading and time.Since(LoadingProgressAt) exceeds a threshold
+	// with LoadingSubstage==LoadingWeights, new requests fail fast with 503
+	// instead of being queued indefinitely.
+	// +optional
+	LoadingProgressAt *metav1.Time `json:"loadingProgressAt,omitempty"`
+
 	// Conditions represent the latest observations of the Model's state.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`

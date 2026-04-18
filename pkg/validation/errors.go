@@ -183,6 +183,16 @@ func WriteRateLimited(w http.ResponseWriter, retryAfterSeconds int) {
 	WriteError(w, http.StatusTooManyRequests, "Rate limit exceeded, please retry later", ErrorTypeRateLimit, CodeRateLimitExceeded)
 }
 
+// WriteStalledLoad writes a 503 Service Unavailable for a model whose cold-start
+// load has stopped making progress. Sets Retry-After so clients back off instead
+// of retrying into a queue that is about to keep building.
+func WriteStalledLoad(w http.ResponseWriter, message string, retryAfterSeconds int) {
+	if retryAfterSeconds > 0 {
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfterSeconds))
+	}
+	WriteError(w, http.StatusServiceUnavailable, message, ErrorTypeServiceUnavailable, CodeActivationFailed)
+}
+
 // WriteUnauthorized writes a 401 Unauthorized error.
 func WriteUnauthorized(w http.ResponseWriter, message string) {
 	WriteError(w, http.StatusUnauthorized, message, ErrorTypeInvalidRequest, CodeInvalidAPIKey)

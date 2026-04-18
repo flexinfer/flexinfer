@@ -928,6 +928,15 @@ spec:
                 description: LastActiveTime is when the model last served a request.
                 format: date-time
                 type: string
+              loadingProgressAt:
+                description: |-
+                  LoadingProgressAt is the wall-clock time at which LoadingSubstage or
+                  Message last changed. The proxy reads this to detect stalled loads: if
+                  Phase==Loading and time.Since(LoadingProgressAt) exceeds a threshold
+                  with LoadingSubstage==LoadingWeights, new requests fail fast with 503
+                  instead of being queued indefinitely.
+                format: date-time
+                type: string
               loadingSubstage:
                 description: |-
                   LoadingSubstage refines Phase=Loading with granular progress detail so

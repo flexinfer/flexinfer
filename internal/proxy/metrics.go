@@ -177,6 +177,14 @@ var (
 		[]string{"model", "reason"},
 	)
 
+	stalledLoadTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_stalled_load_total",
+			Help: "Total times the proxy observed a Model's cold-start load as stalled (LoadingSubstage + no LoadingProgressAt advance within threshold).",
+		},
+		[]string{"model", "substage"},
+	)
+
 	activationFailuresTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "flexinfer_proxy_activation_failures_total",
@@ -230,5 +238,6 @@ func RegisterMetrics() {
 		prometheus.MustRegister(activationFailuresTotal)
 		prometheus.MustRegister(rateLimitedTotal)
 		prometheus.MustRegister(maxTokensClampedTotal)
+		prometheus.MustRegister(stalledLoadTotal)
 	})
 }
