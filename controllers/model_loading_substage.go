@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -65,6 +66,14 @@ func (r *ModelReconciler) populateLoadingSubstage(ctx context.Context, model *ai
 
 	if sub == "" && msg == "" {
 		return
+	}
+	// LoadingProgressAt tracks the last time the observable load state
+	// changed. Only bump it when substage or message actually differ from
+	// what status already holds, so a stalled load (same message every
+	// reconcile) leaves the timestamp frozen and the proxy can detect it.
+	if model.Status.LoadingSubstage != sub || model.Status.Message != msg {
+		now := metav1.Now()
+		model.Status.LoadingProgressAt = &now
 	}
 	model.Status.LoadingSubstage = sub
 	model.Status.Message = msg

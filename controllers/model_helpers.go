@@ -370,10 +370,12 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	}
 
 	// Determine phase from deployment status and set conditions.
-	// Substage/message are Loading-phase-only: reset them on every pass and
-	// repopulate below only when phase transitions to (or remains on) Loading.
+	// Substage/message/progress timestamp are Loading-phase-only: reset them on
+	// every pass and repopulate below only when phase transitions to (or remains
+	// on) Loading.
 	model.Status.LoadingSubstage = ""
 	model.Status.Message = ""
+	model.Status.LoadingProgressAt = nil
 
 	if deployment.Status.ReadyReplicas > 0 {
 		model.Status.Phase = aiv1alpha2.ModelPhaseReady

@@ -2232,6 +2232,87 @@ func TestUpdateStatusFromDeployment_ClearsSubstageOnReady(t *testing.T) {
 	if updated.Status.Message != "" {
 		t.Fatalf("message should be cleared on Ready, got %q", updated.Status.Message)
 	}
+	if updated.Status.LoadingProgressAt != nil {
+		t.Fatalf("LoadingProgressAt should be cleared on Ready, got %v", updated.Status.LoadingProgressAt)
+	}
+}
+
+func TestPopulateLoadingSubstage_BumpsProgressTimestamp(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add v1alpha2 scheme: %v", err)
+	}
+
+	modelName := "progress-bump-model"
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: "default", Generation: 1},
+		Spec:       aiv1alpha2.ModelSpec{Backend: "vllm", Source: "pvc://cache/model"},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              modelName + "-abc",
+			Namespace:         "default",
+			Labels:            map[string]string{LabelModel: modelName},
+			CreationTimestamp: metav1.Now(),
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "model",
+				State: corev1.ContainerState{
+					Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"},
+				},
+			}},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithRuntimeObjects(model, pod).
+		Build()
+	r := &ModelReconciler{Client: fakeClient, Scheme: s}
+
+	ctx := context.Background()
+	current := model.DeepCopy()
+
+	// First populate pass: substage empty -> ImagePulling; timestamp must be set.
+	r.populateLoadingSubstage(ctx, current)
+	if current.Status.LoadingSubstage != aiv1alpha2.LoadingSubstageImagePulling {
+		t.Fatalf("first pass: want ImagePulling, got %q", current.Status.LoadingSubstage)
+	}
+	if current.Status.LoadingProgressAt == nil {
+		t.Fatalf("first pass: LoadingProgressAt should be set")
+	}
+	firstStamp := current.Status.LoadingProgressAt.Time
+
+	// Second pass with no state change: timestamp must NOT advance so stalls
+	// are detectable.
+	time.Sleep(5 * time.Millisecond)
+	r.populateLoadingSubstage(ctx, current)
+	if current.Status.LoadingProgressAt == nil {
+		t.Fatalf("second pass: LoadingProgressAt should still be set")
+	}
+	if !current.Status.LoadingProgressAt.Time.Equal(firstStamp) {
+		t.Fatalf("second pass: LoadingProgressAt unexpectedly advanced from %v to %v",
+			firstStamp, current.Status.LoadingProgressAt.Time)
+	}
+
+	// Third pass simulates fresh progress by clearing Status.Message so the
+	// populator sees a (sub, msg) that differs from what is already on status.
+	// Using time.Sleep > 1s to cross a metav1.Time serialization boundary.
+	current.Status.Message = "stale message that will differ from derived"
+	time.Sleep(1100 * time.Millisecond)
+	r.populateLoadingSubstage(ctx, current)
+	if current.Status.LoadingProgressAt == nil {
+		t.Fatalf("third pass: LoadingProgressAt should still be set")
+	}
+	if !current.Status.LoadingProgressAt.Time.After(firstStamp) {
+		t.Fatalf("third pass: LoadingProgressAt should advance after message change, firstStamp=%v got=%v",
+			firstStamp, current.Status.LoadingProgressAt.Time)
+	}
 }
 
 func histogramSampleCount(t *testing.T, metricName string, labels map[string]string) uint64 {
