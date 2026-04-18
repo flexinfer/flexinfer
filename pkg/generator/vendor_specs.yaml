@@ -1,0 +1,56 @@
+# vendor_specs.yaml — vendor documentation drift check manifest.
+#
+# Each vendor declares what its current public docs MUST contain and what
+# deprecated/invalid tokens they MUST NOT contain. The `loom vendor-specs
+# check` command fetches `docs_url` (+ optional `extra_urls`), asserts those
+# substrings, and verifies that every `emitted_keys` token appears in
+# pkg/generator/configs_test.go so our fixtures cannot drift away from docs
+# without a failing signal.
+#
+# History: Slice G (2026-04-18) shipped after a Codex regression where
+# generator emitted `approval_mode = "always"`, which is not a valid Codex
+# key. This manifest is the durable process to catch that class of drift.
+#
+# Keep this file human-editable. Populate a vendor once you have verified the
+# exact strings in upstream docs, and leave a comment pointing at the anchor
+# if the docs page is long.
+
+#
+# Operational note: prefer docs URLs that serve the relevant content as
+# static HTML / plain text. Many vendor doc sites are JS-rendered SPAs
+# where a curl fetch returns only a skeleton shell without the keyword
+# content. Use GitHub issues / repo README raw files where possible.
+# A follow-up slice may add a headless-browser fetcher.
+
+vendors:
+  codex:
+    # The feature request + discussion around the canonical key.
+    docs_url: https://github.com/openai/codex/issues/16501
+    extra_urls:
+      # Agent approvals overview — often contains the key in prose.
+      - https://raw.githubusercontent.com/openai/codex/main/README.md
+    must_contain:
+      - default_tools_approval_mode
+    must_not_contain:
+      # Invalid/deprecated keys the generator must not regress to.
+      - 'approval_mode = "always"'
+    emitted_keys:
+      - 'default_tools_approval_mode = "approve"'
+
+  kilocode:
+    # Kilocode docs are a JS SPA — must_contain / emitted_keys intentionally
+    # left empty; the vendor entry exists so drift-checking picks up the URL
+    # on CI manual runs, and so future contributors can populate it once
+    # authoritative docs are confirmed.
+    docs_url: https://kilocode.ai
+
+  claude_code:
+    # README is a marketing page — does not mention MCP directly even though
+    # Claude Code ships MCP support. Keep the URL as the anchor; contributor
+    # should populate must_contain with a stable marker once identified.
+    docs_url: https://raw.githubusercontent.com/anthropics/claude-code/main/README.md
+
+  gemini_cli:
+    docs_url: https://raw.githubusercontent.com/google-gemini/gemini-cli/main/README.md
+    must_contain:
+      - mcp
