@@ -55,4 +55,7 @@ func (d *FleetDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFun
 
 	// F9: live file-claim conflict overlay (SSE).
 	mux.HandleFunc("GET /api/fleet/claims/stream", mw(d.handleClaimsStream))
+
+	// F8 (D2): token-economics dashboard.
+	mux.HandleFunc("GET /api/fleet/economics", mw(d.handleEconomics))
 }

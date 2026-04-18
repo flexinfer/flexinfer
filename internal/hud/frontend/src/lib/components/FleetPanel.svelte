@@ -19,6 +19,7 @@
   import DetailDrawer from './shared/DetailDrawer.svelte';
   import EmptyState from './shared/EmptyState.svelte';
   import ClaimConflictChip from './fleet/ClaimConflictChip.svelte';
+  import EconomicsPanel from './fleet/EconomicsPanel.svelte';
 
   const fleetPollingOwner = Symbol('FleetPanel');
   const tracePollingOwner = Symbol('FleetPanelTraces');
@@ -400,6 +401,8 @@
   <div class="fleet-panel-header">
     <ClaimConflictChip />
   </div>
+  <!-- F8 (D2): token-economics dashboard -->
+  <EconomicsPanel />
   <!-- FLEET OVERVIEW (always visible) -->
   <div class="fleet-grid">
     <!-- LEFT TOP: Agent Fleet Table -->
