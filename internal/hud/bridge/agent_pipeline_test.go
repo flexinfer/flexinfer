@@ -292,3 +292,76 @@ func (c *recordingCaller) Close() error { return nil }
 func toolTextResult(payload string) json.RawMessage {
 	return json.RawMessage(fmt.Sprintf(`{"content":[{"type":"text","text":%q}]}`, payload))
 }
+
+func TestAgentBridge_ListPipelineProjects_PaginatesAndDedupes(t *testing.T) {
+	var pagesRequested []int
+	caller := &recordingCaller{
+		callToolWithTimeoutFn: func(name string, args map[string]any, timeout time.Duration) (json.RawMessage, error) {
+			if name != "gitlab__list_projects" {
+				t.Fatalf("unexpected tool: %s", name)
+			}
+			if got, _ := args["membership"].(bool); !got {
+				t.Fatalf("expected membership=true, got %#v", args["membership"])
+			}
+			page, _ := args["page"].(int)
+			pagesRequested = append(pagesRequested, page)
+			switch page {
+			case 1:
+				return toolTextResult(`{"projects":[` +
+					pageProjects(100, 0, "services/") +
+					`],"count":100}`), nil
+			case 2:
+				return toolTextResult(`{"projects":[` +
+					`{"path_with_namespace":"services/p0"},` + // duplicate of page 1 entry
+					`{"path_with_namespace":"libs/banner-kit"}` +
+					`],"count":2}`), nil
+			}
+			t.Fatalf("unexpected page %d", page)
+			return nil, nil
+		},
+	}
+	bridge := NewAgentBridge(caller)
+	projects, err := bridge.ListPipelineProjects(context.Background(), 5)
+	if err != nil {
+		t.Fatalf("ListPipelineProjects: %v", err)
+	}
+	// 100 from page 1 + 1 new from page 2 (services/p0 is dropped as duplicate).
+	if len(projects) != 101 {
+		t.Fatalf("expected 101 deduped projects, got %d", len(projects))
+	}
+	// Stops after a short page.
+	if len(pagesRequested) != 2 {
+		t.Fatalf("expected 2 pages (early stop on partial), got %d", len(pagesRequested))
+	}
+	// Output must be sorted alphabetically.
+	for i := 1; i < len(projects); i++ {
+		if projects[i-1] > projects[i] {
+			t.Fatalf("results not sorted: %s > %s", projects[i-1], projects[i])
+		}
+	}
+}
+
+func TestAgentBridge_ListPipelineProjects_FirstPageErrorPropagates(t *testing.T) {
+	caller := &recordingCaller{
+		callToolWithTimeoutFn: func(name string, args map[string]any, timeout time.Duration) (json.RawMessage, error) {
+			return nil, fmt.Errorf("mcp unreachable")
+		},
+	}
+	bridge := NewAgentBridge(caller)
+	_, err := bridge.ListPipelineProjects(context.Background(), 3)
+	if err == nil {
+		t.Fatalf("expected error when gitlab MCP is unreachable")
+	}
+}
+
+// pageProjects produces a JSON array of n entries "services/p{offset}"…"services/p{offset+n-1}".
+func pageProjects(n, offset int, prefix string) string {
+	out := make([]byte, 0, n*50)
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = append(out, []byte(fmt.Sprintf(`{"path_with_namespace":%q}`, fmt.Sprintf("%sp%d", prefix, offset+i)))...)
+	}
+	return string(out)
+}
