@@ -170,6 +170,29 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
 
 ## 2026-04-18
 
+### Incident triage — 26B cold-start stall + observability gap
+
+- What happened:
+  - FlexDeck showed `gemma4-26b-a4b-gptq` stuck in `Loading` with a growing proxy queue. Verified against cluster: `kubectl get model … -o jsonpath='{.status.phase}'` → `Loading`. FlexDeck was accurate, not stale.
+  - Events showed a preemption at 13:26:48Z by `gemma4-26b-a4b-gptq-long` (priority 200 vs 150) in the `7900xtx-textgen` shared group.
+  - After re-activation, a fresh pod (`…-xtqb6`) pulled the runtime image in 749 ms, but vLLM weight load wedged for 8m47s on safetensors shard 31/34 (shards 1–30 loaded at ~2 s/it each).
+  - Serving PVC is `pvc-ec945ced-172d-439a-b386-abe6a439dc71` (`gemma4-26b-a4b-gptq-cache`, 50Gi, storage class `longhorn`, 3 replicas across k3s-w-4 / cblevins-radeonvii / cblevins-7900xtx). Longhorn volume state was `attached/healthy` throughout; the stall was a replica-read slowdown, not a volume failure.
+  - Pod eventually reached `Ready`; `/health` returns 200 and serves now.
+  - Separately spotted vLLM validation error in logs: `VLLMValidationError: ... your prompt contains 79 characters (more than 0 characters, which is the upper bound for 0 input tokens)` — looks like `max_tokens=8192` + `max_model_len=8192` leaves 0 prompt budget. Tracked as a separate small issue below.
+- Why it mattered:
+  - Operator UX on FlexDeck gave no indication of "transient Longhorn stall" vs "actually wedged". Queue built up. Only `kubectl logs` into the pod could distinguish the two.
+- Two decisions landed in `40-decisions.md`:
+  - Add `Model.status.loadingSubstage` enum + `status.message` to surface shard progress and distinguish `ImagePulling`/`Initializing`/`LoadingWeights`/`Compiling`/`HealthCheckPending`/`Preempted`.
+  - Migrate the 26B cache PVC off default 3-replica Longhorn to `local-path` or `nvme-1r-gpu` (1 replica, GPU-local NVMe), matching the 2026-02-20 Qwen3-30B GGUF precedent.
+- What's next:
+  - [services/flexinfer#53](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/53) tracks the CRD + controller + proxy + FlexDeck changes and the PVC migration.
+  - Separate follow-up for the `max_tokens == max_model_len` validation error if it turns out to be a manifest bug vs a vLLM upstream quirk.
+- Sources:
+  - `kubectl get model gemma4-26b-a4b-gptq -n flexinfer-system -o jsonpath='{.status.phase}'`
+  - `kubectl get events -n flexinfer-system --sort-by=.lastTimestamp | grep gemma4-26b`
+  - `kubectl logs gemma4-26b-a4b-gptq-87c45466d-xtqb6 -n flexinfer-system | grep Loading`
+  - `kubectl -n longhorn-system get volume pvc-ec945ced-172d-439a-b386-abe6a439dc71 -o yaml`
+
 ### Slice A1-lite — gemma4-26b-a4b-gptq validator evidence
 
 - What changed:
