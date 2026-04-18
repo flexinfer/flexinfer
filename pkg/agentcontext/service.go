@@ -442,3 +442,16 @@ func (s *Service) StopBackgroundServices() {
 		s.bgCancel()
 	}
 }
+
+// ConflictBus returns the ClaimSvc's ConflictBus used for F9 live file-claim
+// conflict overlay. Returns nil if claims are not initialized. Subscribers
+// (e.g. HUD SSE handler) get a process-local channel of ClaimConflictEvent.
+func (s *Service) ConflictBus() *ConflictBus {
+	if s == nil || s.claims == nil {
+		return DefaultConflictBus()
+	}
+	if s.claims.conflictBus == nil {
+		return DefaultConflictBus()
+	}
+	return s.claims.conflictBus
+}

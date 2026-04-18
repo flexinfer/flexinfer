@@ -199,7 +199,9 @@
       route: 'dispatch',
     },
     {
-      label: 'Health',
+      // U1: Top counter labeled "Running" (running+OK) to avoid contradicting
+      // the footer's broader "healthy" definition (which includes idle servers).
+      label: 'Running',
       value: healthyCount,
       max: Math.max(serverCount, 1),
       suffix: `/${serverCount}`,
@@ -384,7 +386,13 @@
   let hasAttention = $derived(attentionLanes.length > 0);
 
   /* ── Primary surface cards ── */
-  let primaryCards = $derived.by(() => [
+  let primaryCards = $derived.by(() => {
+    // U2: If no hotspots are surfaced in the body, zero out the Attention/Risk
+    // chips so the card stops contradicting itself.
+    const hotspotsPresent = activeBlockers.length > 0 || topRelations.length > 0;
+    const attentionValue = hotspotsPresent ? coordinationSummary.agents_needing_attention : 0;
+    const riskValue = hotspotsPresent ? coordinationSummary.namespaces_at_risk : 0;
+    return [
     {
       route: 'fleet',
       label: 'Coordination',
@@ -396,11 +404,11 @@
         : topRelations.length > 0
           ? `${topRelations[0].source_label} → ${topRelations[0].target_label}`
           : 'No hotspots',
-      alert: coordinationSummary.conflict_files > 0 || coordinationSummary.cross_agent_blockers > 0 || coordinationSummary.agents_needing_attention > 0,
+      alert: coordinationSummary.conflict_files > 0 || coordinationSummary.cross_agent_blockers > 0 || (hotspotsPresent && coordinationSummary.agents_needing_attention > 0),
       tags: [
         { label: 'Conflicts', value: coordinationSummary.conflict_files, active: coordinationSummary.conflict_files > 0 },
-        { label: 'Attention', value: coordinationSummary.agents_needing_attention, active: coordinationSummary.agents_needing_attention > 0 },
-        { label: 'Risk', value: coordinationSummary.namespaces_at_risk, active: coordinationSummary.namespaces_at_risk > 0 },
+        { label: 'Attention', value: attentionValue, active: attentionValue > 0 },
+        { label: 'Risk', value: riskValue, active: riskValue > 0 },
       ],
     },
     {
@@ -449,7 +457,8 @@
         { label: 'Conflicts', value: mergeQueueStore.conflicts.length, active: mergeQueueStore.hasConflicts },
       ],
     },
-  ]);
+  ];
+  });
 
   let sortedCards = $derived.by(() => {
     const cards = primaryCards;

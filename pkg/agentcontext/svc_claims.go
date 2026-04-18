@@ -20,16 +20,30 @@ type ClaimSvc struct {
 	qdrant  *QdrantClient
 	logger  *slog.Logger
 	metrics *Metrics
+
+	// conflictBus emits ClaimConflictEvent when Acquire detects a collision
+	// with an existing claim. Defaults to DefaultConflictBus() so in-process
+	// HUD subscribers see events without explicit wiring (F9 overlay).
+	conflictBus *ConflictBus
 }
 
 // NewClaimSvc creates a new ClaimSvc.
 func NewClaimSvc(qdrant *QdrantClient, logger *slog.Logger, metrics *Metrics) *ClaimSvc {
 	return &ClaimSvc{
-		claims:  make(map[string]map[string]*FileClaim),
-		qdrant:  qdrant,
-		logger:  logger,
-		metrics: metrics,
+		claims:      make(map[string]map[string]*FileClaim),
+		qdrant:      qdrant,
+		logger:      logger,
+		metrics:     metrics,
+		conflictBus: DefaultConflictBus(),
 	}
+}
+
+// SetConflictBus overrides the ConflictBus used for F9 overlay events.
+// Tests use this to inject an isolated bus instead of the process-wide default.
+func (c *ClaimSvc) SetConflictBus(bus *ConflictBus) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.conflictBus = bus
 }
 
 // Acquire claims a file for editing/review.
@@ -74,6 +88,15 @@ func (c *ClaimSvc) Acquire(ctx context.Context, args map[string]any) (*mcp.CallT
 				"reason":     otherClaim.Reason,
 				"created_at": otherClaim.CreatedAt.Format(time.RFC3339),
 			})
+			// F9: emit a live conflict event for HUD overlay subscribers.
+			if c.conflictBus != nil {
+				c.conflictBus.Publish(ClaimConflictEvent{
+					File:      filePath,
+					Holder:    otherAgent,
+					Requester: agentID,
+					TS:        now,
+				})
+			}
 		}
 	}
 	c.mu.RUnlock()
