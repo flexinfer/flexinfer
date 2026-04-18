@@ -213,6 +213,61 @@ struct DeepLinkTests {
 
     // MARK: - Share metadata
 
+    // MARK: - Configure (one-shot bootstrap via `make mobile-app-run-device`)
+
+    @Test("Configure with gateway + CF service token round-trips")
+    func configureGatewayRoundTrip() {
+        let spec = DeepLink.ConfigureSpec(
+            mode: "gateway",
+            url: "https://hud.flexinfer.ai",
+            bearer: "t0k3n-abc",
+            cfClientID: "cf-id",
+            cfClientSecret: "cf-secret"
+        )
+        let link = DeepLink.configure(spec)
+        let rt = DeepLink.from(URL(string: link.urlString)!)
+        #expect(rt == link)
+    }
+
+    @Test("Configure without CF fields round-trips")
+    func configureLANRoundTrip() {
+        let spec = DeepLink.ConfigureSpec(
+            mode: "lan",
+            url: "http://127.0.0.1:3333",
+            bearer: "dev-token"
+        )
+        let link = DeepLink.configure(spec)
+        let rt = DeepLink.from(URL(string: link.urlString)!)
+        #expect(rt == link)
+    }
+
+    @Test("Configure defaults mode to gateway when omitted")
+    func configureDefaultsMode() {
+        let url = URL(string: "loom://configure?url=https%3A%2F%2Fhud.example&bearer=abc")!
+        guard case let .configure(spec) = DeepLink.from(url) else {
+            #expect(Bool(false), "expected .configure case")
+            return
+        }
+        #expect(spec.mode == "gateway")
+        #expect(spec.url == "https://hud.example")
+        #expect(spec.bearer == "abc")
+        #expect(spec.cfClientID == nil)
+    }
+
+    @Test("Configure missing required params returns nil")
+    func configureMissingRequiredParams() {
+        // Missing bearer
+        #expect(DeepLink.from(URL(string: "loom://configure?url=https%3A%2F%2Fhud.example")!) == nil)
+        // Missing url
+        #expect(DeepLink.from(URL(string: "loom://configure?bearer=abc")!) == nil)
+    }
+
+    @Test("Configure routes to connection tab group")
+    func configureRoutesToConnection() {
+        let link = DeepLink.configure(.init(mode: "gateway", url: "https://x", bearer: "t"))
+        #expect(link.destinationGroup == .connection)
+    }
+
     @Test("shareTitle describes all cases")
     func shareTitles() {
         #expect(DeepLink.dashboard.shareTitle == "Loom Dashboard")

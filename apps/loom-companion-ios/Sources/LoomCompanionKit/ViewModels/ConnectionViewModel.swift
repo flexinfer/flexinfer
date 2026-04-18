@@ -133,6 +133,30 @@ public final class ConnectionViewModel {
         isAuthenticated = true
     }
 
+    /// Apply a one-shot configuration payload delivered via the
+    /// `loom://configure` deep link. Sets form fields from the payload, then
+    /// runs the normal `pair()` flow so the same validation, probe, and
+    /// keychain persistence paths apply.
+    ///
+    /// Always resets any existing auth first — on iOS the keychain survives
+    /// app uninstall, so a stale profile from a prior install would otherwise
+    /// shadow the new credentials. The caller has already signaled intent
+    /// (by invoking `make mobile-app-run-device` with fresh creds), so wiping
+    /// stored state is the right default.
+    ///
+    /// This is the mechanism `make mobile-app-run-device` uses to seed a
+    /// freshly installed dev build without making the user retype secrets
+    /// on the Connect screen.
+    public func applyConfigureSpec(_ spec: DeepLink.ConfigureSpec) async {
+        logout()
+        baseURLInput = spec.url
+        tokenInput = spec.bearer
+        connectionMode = (spec.mode == "lan") ? .lan : .gateway
+        cloudflareAccessClientIDInput = spec.cfClientID ?? ""
+        cloudflareAccessClientSecretInput = spec.cfClientSecret ?? ""
+        await pair()
+    }
+
     /// Log out and clear stored credentials.
     public func logout() {
         tokenStore.deleteToken()

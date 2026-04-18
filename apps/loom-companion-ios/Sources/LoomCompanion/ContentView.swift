@@ -41,6 +41,14 @@ struct ContentView: View {
         }
         .environment(\.navigationCoordinator, navigationCoordinator)
         .task {
+            // Launch-argument deep links are seeded in App.init and land here
+            // as the INITIAL value of `pendingDeepLink`. `.onChange` doesn't
+            // fire for initial values, so consume it explicitly on first
+            // appear before any other connection-setup work runs.
+            if let link = pendingDeepLink {
+                handleDeepLink(link)
+                pendingDeepLink = nil
+            }
             if connectionVM.isAuthenticated {
                 setupSSE()
             }
@@ -148,6 +156,11 @@ struct ContentView: View {
         case .alert(let id):
             navigationCoordinator.navigateToAlert(id: id)
             selectedTab = .alerts
+
+        // One-shot bootstrap from `make mobile-app-run-device` over USB.
+        case .configure(let spec):
+            Task { await connectionVM.applyConfigureSpec(spec) }
+            selectedTab = .connection
         }
     }
 

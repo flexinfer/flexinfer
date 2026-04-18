@@ -10,7 +10,7 @@
 		deploy deploy-check deploy-status \
 	browserkit-check browserkit-setup \
 	hud hud-dev hud-build hud-install hud-install-service hud-reload hud-frontend hud-dist-check hud-clean \
-		mobile-iphone-preflight mobile-gateway-sync-token mobile-gateway-preflight mobile-ios-project-sync mobile-hud mobile-app-open mobile-app-run-sim mobile-app-run-device mobile-dev mobile-gateway-dev \
+		mobile-iphone-preflight mobile-gateway-sync-token mobile-gateway-preflight mobile-gateway-configure-url mobile-ios-project-sync mobile-hud mobile-app-open mobile-app-run-sim mobile-app-run-device mobile-dev mobile-gateway-dev \
 		mobile-signing-check mobile-signing-prepare mobile-signing-cleanup mobile-app-archive-export \
 	accel accel-build accel-verify
 
@@ -134,6 +134,7 @@ help:
 	@echo "  make mobile-iphone-preflight - Verify Xcode + iOS device test prerequisites"
 	@echo "  make mobile-gateway-sync-token - Sync local mobile token/scopes from loom-hub/loom-secrets"
 	@echo "  make mobile-gateway-preflight - Verify MCP + mobile API surfaces on gateway host"
+	@echo "  make mobile-gateway-configure-url - Echo loom://configure URL for Companion gateway bootstrap"
 	@echo "  make mobile-ios-project-sync - Regenerate Xcode project from project.yml"
 	@echo "  make mobile-hud              - Launch HUD with mobile auth on 0.0.0.0:3333"
 	@echo "  make mobile-app-open         - Open iOS app project in Xcode"
@@ -894,6 +895,13 @@ mobile-gateway-sync-token:
 mobile-gateway-preflight: mobile-gateway-sync-token
 	@./scripts/mobile/gateway_preflight.sh
 
+# Echo the `loom://configure?...` URL used by mobile-app-run-{sim,device}
+# to bootstrap Gateway-mode creds on freshly installed builds. Reads from
+# env vars, ~/.config/loom/hud.env, or the loom-hub/loom-secrets secret.
+# Prints nothing (exit 0) if creds aren't resolvable — callers skip config.
+mobile-gateway-configure-url:
+	@./scripts/mobile/build_configure_url.sh; echo
+
 # Keep the generated Xcode project aligned with project.yml and source layout.
 mobile-ios-project-sync:
 	@if ! command -v xcodegen >/dev/null 2>&1; then \
@@ -946,8 +954,15 @@ mobile-app-run-sim: mobile-ios-project-sync
 	fi; \
 	echo "Installing $$APP_PATH on $$SIM_UDID"; \
 	xcrun simctl install "$$SIM_UDID" "$$APP_PATH"; \
-	echo "Launching $(MOBILE_IOS_BUNDLE_ID) on $$SIM_UDID"; \
-	xcrun simctl launch "$$SIM_UDID" "$(MOBILE_IOS_BUNDLE_ID)"
+	CONFIGURE_URL="$$(./scripts/mobile/build_configure_url.sh 2>/dev/null || true)"; \
+	if [ -n "$$CONFIGURE_URL" ]; then \
+		echo "Launching $(MOBILE_IOS_BUNDLE_ID) on $$SIM_UDID (with gateway bootstrap)"; \
+		xcrun simctl launch "$$SIM_UDID" "$(MOBILE_IOS_BUNDLE_ID)" "$$CONFIGURE_URL"; \
+	else \
+		echo "Launching $(MOBILE_IOS_BUNDLE_ID) on $$SIM_UDID"; \
+		echo "  (no gateway credentials found — skipping auto-configure)"; \
+		xcrun simctl launch "$$SIM_UDID" "$(MOBILE_IOS_BUNDLE_ID)"; \
+	fi
 
 # Build and install Loom Companion on a connected iPhone.
 # Requires: device in dev mode, trusted, and automatic signing configured in Xcode.
@@ -997,13 +1012,25 @@ mobile-app-run-device: mobile-ios-project-sync
 		echo "ERROR: app bundle not found at $$APP_PATH"; \
 		exit 1; \
 	fi; \
-	ios-deploy --bundle "$$APP_PATH" --id "$$DEVICE_ID" --justlaunch 2>/dev/null && { \
+	CONFIGURE_URL="$$(./scripts/mobile/build_configure_url.sh 2>/dev/null || true)"; \
+	if [ -n "$$CONFIGURE_URL" ]; then \
+		echo "Gateway bootstrap URL resolved (will pass as launch argument)."; \
+	else \
+		echo "No gateway credentials found — skipping auto-configure."; \
+		echo "  (set HUD_MOBILE_OPERATOR_TOKEN + CF_ACCESS_CLIENT_ID/SECRET, or ensure kubectl can read loom-hub/loom-secrets)"; \
+	fi; \
+	ios-deploy --bundle "$$APP_PATH" --id "$$DEVICE_ID" --justlaunch \
+		$$( [ -n "$$CONFIGURE_URL" ] && echo "--args '$$CONFIGURE_URL'" ) 2>/dev/null && { \
 		echo "Launched $(MOBILE_IOS_BUNDLE_ID) on $$DEVICE_NAME"; \
 		exit 0; \
 	}; \
 	echo "ios-deploy not available, trying devicectl..."; \
 	xcrun devicectl device install app --device "$$DEVICE_ID" "$$APP_PATH" 2>&1 && \
-	xcrun devicectl device process launch --device "$$DEVICE_ID" "$(MOBILE_IOS_BUNDLE_ID)" 2>&1 && { \
+	if [ -n "$$CONFIGURE_URL" ]; then \
+		xcrun devicectl device process launch --device "$$DEVICE_ID" "$(MOBILE_IOS_BUNDLE_ID)" "$$CONFIGURE_URL" 2>&1; \
+	else \
+		xcrun devicectl device process launch --device "$$DEVICE_ID" "$(MOBILE_IOS_BUNDLE_ID)" 2>&1; \
+	fi && { \
 		echo "Launched $(MOBILE_IOS_BUNDLE_ID) on $$DEVICE_NAME"; \
 		exit 0; \
 	}; \
