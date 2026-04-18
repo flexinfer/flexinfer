@@ -52,4 +52,7 @@ func (d *FleetDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFun
 	// Dispatch and claims.
 	mux.HandleFunc("POST "+bridge.AgentDispatchEndpoint, mw(d.handleAgentDispatch))
 	mux.HandleFunc("DELETE /api/claims/{agent_id}/{file_path...}", mw(d.handleClaimRelease))
+
+	// F9: live file-claim conflict overlay (SSE).
+	mux.HandleFunc("GET /api/fleet/claims/stream", mw(d.handleClaimsStream))
 }

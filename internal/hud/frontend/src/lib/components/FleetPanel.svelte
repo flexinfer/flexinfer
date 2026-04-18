@@ -18,6 +18,7 @@
   import DataTable from './shared/DataTable.svelte';
   import DetailDrawer from './shared/DetailDrawer.svelte';
   import EmptyState from './shared/EmptyState.svelte';
+  import ClaimConflictChip from './fleet/ClaimConflictChip.svelte';
 
   const fleetPollingOwner = Symbol('FleetPanel');
   const tracePollingOwner = Symbol('FleetPanelTraces');
@@ -395,6 +396,10 @@
 </script>
 
 <div class="panel fleet-panel">
+  <!-- F9: live file-claim conflict overlay chip -->
+  <div class="fleet-panel-header">
+    <ClaimConflictChip />
+  </div>
   <!-- FLEET OVERVIEW (always visible) -->
   <div class="fleet-grid">
     <!-- LEFT TOP: Agent Fleet Table -->
@@ -914,7 +919,10 @@
 
   .fleet-table-card {
     min-height: 200px;
-    overflow: hidden;
+    /* U10: Allow the agent list to scroll so the "Showing X of Y" footer
+       and overflowing rows stay reachable when the card is cropped. */
+    max-height: 60vh;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
   }
