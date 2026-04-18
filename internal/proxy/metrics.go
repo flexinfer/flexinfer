@@ -169,6 +169,14 @@ var (
 		[]string{"model", "backend", "result"},
 	)
 
+	maxTokensClampedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_max_tokens_clamped_total",
+			Help: "Total inbound requests whose max_tokens was reduced to fit the model's context window.",
+		},
+		[]string{"model", "reason"},
+	)
+
 	activationFailuresTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "flexinfer_proxy_activation_failures_total",
@@ -221,5 +229,6 @@ func RegisterMetrics() {
 		prometheus.MustRegister(activationDurationSeconds)
 		prometheus.MustRegister(activationFailuresTotal)
 		prometheus.MustRegister(rateLimitedTotal)
+		prometheus.MustRegister(maxTokensClampedTotal)
 	})
 }

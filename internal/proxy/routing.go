@@ -343,6 +343,16 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		bodyBytes = p.rewriteModelInBody(bodyBytes, backendModelName)
 	}
 
+	// Clamp max_tokens against the target model's context window so a client
+	// that sets max_tokens == max_model_len (common default in OpenAI-compatible
+	// UIs and LiteLLM) does not end up with a 0-token prompt budget and a
+	// guaranteed 400 from vLLM. No-op when the model has no declared context
+	// window or when max_tokens already fits.
+	if len(bodyBytes) > 0 &&
+		strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		bodyBytes = p.maybeClampMaxTokens(ctx, resolvedModel, bodyBytes)
+	}
+
 	// Restore body if we read it
 	if len(bodyBytes) > 0 {
 		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
