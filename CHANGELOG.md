@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Vendor spec drift check (Slice H)** (`cmd/loom/cmd_vendor_specs.go`, `pkg/generator/vendor_specs.{go,yaml,_test.go}`): new `loom vendor-specs check [--json] [--manifest PATH]` command reads a human-editable manifest of vendor doc URLs + expected keys per CLI platform, fetches each doc, and asserts (a) required substrings appear, (b) deprecated/invalid tokens do not, and (c) every emitted key appears in `pkg/generator/configs_test.go`. Catches the class of regression that caused the 2026-04-18 Codex fix. Seed manifest covers codex, claude_code, gemini_cli, kilocode; supports adding antigravity/zed/vscode. Follow-up H2 (scheduled CI job) deferred.
+
+### Added
 - **Live file-claim conflict overlay (F9)** (`pkg/agentcontext/file_claims_conflict_bus.go`, `internal/hud/domain/fleet/handler_claims_stream.go`, `internal/hud/frontend/src/lib/components/fleet/ClaimConflictChip.svelte`): in-process `ConflictBus` (non-blocking fan-out, drop-on-full) + new `GET /api/fleet/claims/stream` SSE endpoint + Svelte chip mounted on the Fleet panel. `svc_claims.go` `Acquire` publishes a `ClaimConflictEvent` on collision. Target collision→UI latency <500ms. Tests cover subscribe/publish/unsubscribe/drop/race.
 
 ### Fixed
