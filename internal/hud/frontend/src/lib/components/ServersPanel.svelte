@@ -208,7 +208,9 @@
   }
 
   function formatLatency(ms) {
-    if (ms == null) return '---';
+    // U3: Treat 0/missing as "no recent call" and render em-dash. Previously
+    // idle servers (no data) showed a misleading "<1ms".
+    if (ms == null || ms <= 0) return '—';
     if (ms < 1) return '<1ms';
     return ms.toFixed(0) + 'ms';
   }

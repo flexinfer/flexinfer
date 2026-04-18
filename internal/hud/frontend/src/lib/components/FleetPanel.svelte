@@ -914,7 +914,10 @@
 
   .fleet-table-card {
     min-height: 200px;
-    overflow: hidden;
+    /* U10: Allow the agent list to scroll so the "Showing X of Y" footer
+       and overflowing rows stay reachable when the card is cropped. */
+    max-height: 60vh;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
   }
