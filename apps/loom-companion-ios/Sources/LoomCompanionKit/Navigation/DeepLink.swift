@@ -41,6 +41,13 @@ public enum DeepLink: Equatable, Sendable {
     // Alerts · single alert
     case alert(id: String)
 
+    // One-shot configuration — typically issued by `make mobile-app-run-device`
+    // over USB via `xcrun devicectl device open-url` so a freshly installed
+    // build lands already connected to the cluster HUD. The bearer token and
+    // Cloudflare Access client secret ride along in the URL, so only ever use
+    // this over a trusted transport (USB is fine; do not paste into Messages).
+    case configure(ConfigureSpec)
+
     /// Destination tab group for routing.
     public enum DestinationGroup: Sendable {
         case dashboard
@@ -48,6 +55,30 @@ public enum DeepLink: Equatable, Sendable {
         case work
         case alerts
         case connection
+    }
+
+    /// Credentials + mode payload for a `loom://configure` deep link.
+    /// Equatable so tests can round-trip the case cleanly.
+    public struct ConfigureSpec: Equatable, Sendable {
+        public let mode: String            // "gateway" | "lan"
+        public let url: String             // e.g. "https://hud.flexinfer.ai"
+        public let bearer: String
+        public let cfClientID: String?
+        public let cfClientSecret: String?
+
+        public init(
+            mode: String,
+            url: String,
+            bearer: String,
+            cfClientID: String? = nil,
+            cfClientSecret: String? = nil
+        ) {
+            self.mode = mode
+            self.url = url
+            self.bearer = bearer
+            self.cfClientID = cfClientID
+            self.cfClientSecret = cfClientSecret
+        }
     }
 
     // MARK: - Parsing
@@ -94,6 +125,21 @@ public enum DeepLink: Equatable, Sendable {
         case "alert":
             guard let id = pathComponents.first?.nilIfEmpty else { return nil }
             return .alert(id: id)
+
+        case "configure":
+            guard let urlValue = query("url"),
+                  let bearer = query("bearer")
+            else {
+                return nil
+            }
+            let mode = query("mode")?.lowercased() ?? "gateway"
+            return .configure(ConfigureSpec(
+                mode: mode,
+                url: urlValue,
+                bearer: bearer,
+                cfClientID: query("cf_id"),
+                cfClientSecret: query("cf_secret")
+            ))
 
         // Filtered list routes
         case "sessions":
@@ -142,6 +188,18 @@ public enum DeepLink: Equatable, Sendable {
                 "loom://tasks",
                 [("status", status), ("agent", agentId), ("session", sessionId)]
             )
+
+        case .configure(let spec):
+            return Self.withQuery(
+                "loom://configure",
+                [
+                    ("mode", spec.mode),
+                    ("url", spec.url),
+                    ("bearer", spec.bearer),
+                    ("cf_id", spec.cfClientID),
+                    ("cf_secret", spec.cfClientSecret),
+                ]
+            )
         }
     }
 
@@ -172,7 +230,7 @@ public enum DeepLink: Equatable, Sendable {
         case .people, .session, .sessions, .agent, .agents: return .people
         case .work, .workflow, .tasks, .spawn, .handoff: return .work
         case .alerts, .alert: return .alerts
-        case .connection: return .connection
+        case .connection, .configure: return .connection
         }
     }
 
@@ -199,6 +257,7 @@ public enum DeepLink: Equatable, Sendable {
             return approve ? "Approve workflow \(id)" : "Workflow \(id)"
         case .spawn(let id): return "Spawn \(id)"
         case .alert(let id): return "Alert \(id)"
+        case .configure: return "Configure Loom Companion"
         }
     }
 }
