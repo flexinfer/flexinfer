@@ -218,14 +218,18 @@ func generateTomlConfig(p *GenerateParams) error {
 			sb.WriteString(fmt.Sprintf("%s = %d\n", field, spec.Timeout))
 		}
 
-		// Emit always_allow or approval_mode for platforms that support it.
-		// Codex (requires_preamble) uses approval_mode = "always" at the server level.
-		// Kilocode and others use always_allow = ["tool1", "tool2"].
+		// Emit always_allow or default_tools_approval_mode for platforms that support it.
+		// Codex CLI 4.x (requires_preamble) uses `default_tools_approval_mode = "approve"`
+		// at the server level to auto-approve every tool from that MCP server.
+		// Valid values are "approve" (auto-run) or "prompt" (require confirmation).
+		// Kilocode and others use `always_allow = ["tool1", "tool2"]`.
+		// See: https://developers.openai.com/codex/mcp
 		if len(spec.AlwaysAllow) > 0 {
 			if profile.Features.RequiresPreamble {
-				// For Codex, if any tools are always allowed, we trust the whole server
-				// using the server-level approval_mode key.
-				sb.WriteString("approval_mode = \"always\"\n")
+				// For Codex, non-empty AlwaysAllow is treated as "trust the whole server".
+				// Per-tool exceptions can be added later via [mcp_servers.<name>.tools.<tool>]
+				// stanzas with approval_mode = "prompt".
+				sb.WriteString("default_tools_approval_mode = \"approve\"\n")
 			} else {
 				allowJSON, _ := json.Marshal(spec.AlwaysAllow)
 				sb.WriteString(fmt.Sprintf("always_allow = %s\n", string(allowJSON)))

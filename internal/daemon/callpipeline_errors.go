@@ -52,6 +52,9 @@ func (p *callPipeline) transportFailure(stage string, err error, start time.Time
 				"reason": reason,
 			})
 		}
+		// Upstream restarted; debounce a tool cache refresh so clients learn
+		// about any new/removed tools once the pool repopulates.
+		p.daemon.scheduleToolRefresh()
 	} else if p.target == router.TargetHub && p.daemon.hubPool != nil {
 		p.daemon.logger.Warn("hub transport failure; clearing pool",
 			"server", p.serverName, "stage", stage, "error", err)
@@ -65,6 +68,8 @@ func (p *callPipeline) transportFailure(stage string, err error, start time.Time
 		if p.daemon.hubClient != nil {
 			p.daemon.hubClient.CloseConnection(p.serverName)
 		}
+		// Same rationale as the local branch above.
+		p.daemon.scheduleToolRefresh()
 	}
 
 	return p.internalError(err)

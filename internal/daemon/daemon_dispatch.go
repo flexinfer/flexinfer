@@ -78,6 +78,8 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 		resp, err = d.handleCall(ctx, msg)
 	case "loom/reload":
 		resp, err = d.handleReload(ctx, msg)
+	case "loom/tools/reload":
+		resp, err = d.handleToolsReload(ctx, msg)
 	case "loom/config-hash":
 		resp, err = d.handleConfigHash(ctx, msg)
 	case "loom/profile":
@@ -125,7 +127,11 @@ func (d *Daemon) handleMessage(ctx context.Context, msg *mcp.Message) (resp *mcp
 func (d *Daemon) handleInitialize(ctx context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	result := mcp.InitializeResult{
 		ProtocolVersion: negotiateProtocolVersion(msg.Params),
-		Capabilities:    mcp.Capabilities{},
+		Capabilities: mcp.Capabilities{
+			// Advertise listChanged so clients (Claude, Codex, Gemini) subscribe
+			// to tools/list refreshes when upstream MCP servers redeploy.
+			Tools: &mcp.ToolsCapability{ListChanged: true},
+		},
 		ServerInfo: mcp.ServerInfo{
 			Name:    "loom",
 			Version: "0.1.0",

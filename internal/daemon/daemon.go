@@ -145,6 +145,12 @@ type Daemon struct {
 
 	// weaver is the MCP weaver router (nil when not enabled).
 	weaver *weaver.Router
+
+	// toolRefresh debounces tool-cache refreshes triggered by upstream
+	// disconnect/reconnect events (see scheduleToolRefresh). Lazily created
+	// on first use via toolRefreshOnce.
+	toolRefresh     *toolRefreshDebounce
+	toolRefreshOnce gosync.Once
 }
 
 func (d *Daemon) callLock(serverName string) *gosync.Mutex {
