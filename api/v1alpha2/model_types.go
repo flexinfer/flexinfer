@@ -48,6 +48,24 @@ const (
 	ModelPhaseFailed ModelPhase = "Failed"
 )
 
+// LoadingSubstage refines the Loading phase with progress detail so operators
+// can distinguish a transient slow-load from a wedged-load without tailing pod
+// logs. Populated only while Phase == ModelPhaseLoading; cleared otherwise.
+type LoadingSubstage string
+
+const (
+	// LoadingSubstageImagePulling - kubelet is pulling the runtime container image.
+	LoadingSubstageImagePulling LoadingSubstage = "ImagePulling"
+	// LoadingSubstageInitializing - container is up and the runtime process is starting.
+	LoadingSubstageInitializing LoadingSubstage = "Initializing"
+	// LoadingSubstageLoadingWeights - the backend is reading model weights from storage.
+	LoadingSubstageLoadingWeights LoadingSubstage = "LoadingWeights"
+	// LoadingSubstageCompiling - backend is running torch.compile / kernel warmup.
+	LoadingSubstageCompiling LoadingSubstage = "Compiling"
+	// LoadingSubstageHealthCheckPending - weights loaded, awaiting readiness probe success.
+	LoadingSubstageHealthCheckPending LoadingSubstage = "HealthCheckPending"
+)
+
 // Condition types for Model status
 const (
 	// ConditionModelCached indicates the model is cached on disk
@@ -515,6 +533,19 @@ type ModelStatus struct {
 	// Phase is the current model lifecycle phase.
 	// +optional
 	Phase ModelPhase `json:"phase,omitempty"`
+
+	// LoadingSubstage refines Phase=Loading with granular progress detail so
+	// operators and the proxy can distinguish ImagePulling / Initializing /
+	// LoadingWeights / Compiling / HealthCheckPending. Populated while loading;
+	// empty otherwise.
+	// +optional
+	LoadingSubstage LoadingSubstage `json:"loadingSubstage,omitempty"`
+
+	// Message is a short human-readable summary of the current status, analogous
+	// to the STATUS column of `kubectl get pod`. During Loading it carries the
+	// most informative progress hint (e.g. "pulling image", "starting container").
+	// +optional
+	Message string `json:"message,omitempty"`
 
 	// Conditions represent the latest observations of the Model's state.
 	// +optional

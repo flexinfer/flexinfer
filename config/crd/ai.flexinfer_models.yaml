@@ -928,6 +928,19 @@ spec:
                 description: LastActiveTime is when the model last served a request.
                 format: date-time
                 type: string
+              loadingSubstage:
+                description: |-
+                  LoadingSubstage refines Phase=Loading with granular progress detail so
+                  operators and the proxy can distinguish ImagePulling / Initializing /
+                  LoadingWeights / Compiling / HealthCheckPending. Populated while loading;
+                  empty otherwise.
+                type: string
+              message:
+                description: |-
+                  Message is a short human-readable summary of the current status, analogous
+                  to the STATUS column of `kubectl get pod`. During Loading it carries the
+                  most informative progress hint (e.g. "pulling image", "starting container").
+                type: string
               metrics:
                 description: Metrics contains runtime performance metrics.
                 properties:

@@ -2096,6 +2096,144 @@ func TestUpdateStatusFromDeployment_EmitsLatencyMetrics(t *testing.T) {
 	}
 }
 
+func TestUpdateStatusFromDeployment_PopulatesLoadingSubstage(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add v1alpha2 scheme: %v", err)
+	}
+
+	replicas := int32(1)
+	modelName := "substage-model"
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: "default", Generation: 1},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+			Source:  "pvc://models-pvc/qwen3",
+		},
+	}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: "default"},
+		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+		Status: appsv1.DeploymentStatus{
+			ReadyReplicas:       0,
+			UnavailableReplicas: 1,
+		},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              modelName + "-abc123",
+			Namespace:         "default",
+			Labels:            map[string]string{LabelModel: modelName},
+			CreationTimestamp: metav1.Now(),
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "model",
+				State: corev1.ContainerState{
+					Waiting: &corev1.ContainerStateWaiting{
+						Reason:  "ImagePullBackOff",
+						Message: "pull access denied for registry.harbor.lan/flex:foo",
+					},
+				},
+			}},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithRuntimeObjects(model, deployment, pod).
+		WithStatusSubresource(&aiv1alpha2.Model{}, &appsv1.Deployment{}).
+		Build()
+
+	r := &ModelReconciler{Client: fakeClient, Scheme: s}
+
+	key := client.ObjectKey{Name: modelName, Namespace: "default"}
+	current := &aiv1alpha2.Model{}
+	if err := fakeClient.Get(context.Background(), key, current); err != nil {
+		t.Fatalf("get model: %v", err)
+	}
+
+	if err := r.updateStatusFromDeployment(context.Background(), current); err != nil {
+		t.Fatalf("updateStatusFromDeployment: %v", err)
+	}
+
+	updated := &aiv1alpha2.Model{}
+	if err := fakeClient.Get(context.Background(), key, updated); err != nil {
+		t.Fatalf("get updated model: %v", err)
+	}
+	if updated.Status.Phase != aiv1alpha2.ModelPhaseLoading {
+		t.Fatalf("phase: want Loading, got %s", updated.Status.Phase)
+	}
+	if updated.Status.LoadingSubstage != aiv1alpha2.LoadingSubstageImagePulling {
+		t.Fatalf("substage: want ImagePulling, got %q", updated.Status.LoadingSubstage)
+	}
+	if !strings.Contains(updated.Status.Message, "pulling image") {
+		t.Fatalf("message: want to contain 'pulling image', got %q", updated.Status.Message)
+	}
+}
+
+func TestUpdateStatusFromDeployment_ClearsSubstageOnReady(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add v1alpha2 scheme: %v", err)
+	}
+
+	replicas := int32(1)
+	modelName := "substage-ready-model"
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: "default", Generation: 1},
+		Spec:       aiv1alpha2.ModelSpec{Backend: "mlc-llm", Source: "pvc://models-pvc/qwen3"},
+		Status: aiv1alpha2.ModelStatus{
+			Phase:           aiv1alpha2.ModelPhaseLoading,
+			LoadingSubstage: aiv1alpha2.LoadingSubstageImagePulling,
+			Message:         "pulling image for model",
+		},
+	}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: modelName, Namespace: "default"},
+		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+		Status:     appsv1.DeploymentStatus{ReadyReplicas: 1},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithRuntimeObjects(model, deployment).
+		WithStatusSubresource(&aiv1alpha2.Model{}, &appsv1.Deployment{}).
+		Build()
+
+	r := &ModelReconciler{Client: fakeClient, Scheme: s}
+	key := client.ObjectKey{Name: modelName, Namespace: "default"}
+	current := &aiv1alpha2.Model{}
+	if err := fakeClient.Get(context.Background(), key, current); err != nil {
+		t.Fatalf("get model: %v", err)
+	}
+
+	if err := r.updateStatusFromDeployment(context.Background(), current); err != nil {
+		t.Fatalf("updateStatusFromDeployment: %v", err)
+	}
+
+	updated := &aiv1alpha2.Model{}
+	if err := fakeClient.Get(context.Background(), key, updated); err != nil {
+		t.Fatalf("get updated model: %v", err)
+	}
+	if updated.Status.Phase != aiv1alpha2.ModelPhaseReady {
+		t.Fatalf("phase: want Ready, got %s", updated.Status.Phase)
+	}
+	if updated.Status.LoadingSubstage != "" {
+		t.Fatalf("substage should be cleared on Ready, got %q", updated.Status.LoadingSubstage)
+	}
+	if updated.Status.Message != "" {
+		t.Fatalf("message should be cleared on Ready, got %q", updated.Status.Message)
+	}
+}
+
 func histogramSampleCount(t *testing.T, metricName string, labels map[string]string) uint64 {
 	t.Helper()
 	families, err := ctrlmetrics.Registry.Gather()

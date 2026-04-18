@@ -369,7 +369,12 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 		setModelCondition(model, aiv1alpha2.ConditionModelCached, true, aiv1alpha2.ReasonBackendReady, "Cache is ready")
 	}
 
-	// Determine phase from deployment status and set conditions
+	// Determine phase from deployment status and set conditions.
+	// Substage/message are Loading-phase-only: reset them on every pass and
+	// repopulate below only when phase transitions to (or remains on) Loading.
+	model.Status.LoadingSubstage = ""
+	model.Status.Message = ""
+
 	if deployment.Status.ReadyReplicas > 0 {
 		model.Status.Phase = aiv1alpha2.ModelPhaseReady
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, true, aiv1alpha2.ReasonBackendReady, "Backend is ready to serve requests")
@@ -419,6 +424,7 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	} else if deployment.Status.UnavailableReplicas > 0 {
 		model.Status.Phase = aiv1alpha2.ModelPhaseLoading
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonStartingBackend, "Backend container is starting")
+		r.populateLoadingSubstage(ctx, model)
 	} else {
 		model.Status.Phase = aiv1alpha2.ModelPhasePending
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonStartingBackend, "Waiting for deployment to be ready")
