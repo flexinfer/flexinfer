@@ -50,6 +50,7 @@ func main() {
 		// Diagnostics
 		newDoctorCmd(),
 		newCheckCmd(socketPath),
+		newVendorSpecsCmd(),
 
 		// Proxy
 		newProxyCmd(socketPath),
