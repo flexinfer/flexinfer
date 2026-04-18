@@ -323,3 +323,138 @@ Acceptance:
 - `build/Dockerfile.runtime:341-345`
 - https://huggingface.co/docs/transformers/main/big_models
 - https://huggingface.co/google/gemma-4-E4B
+
+## 2026-04-18 Execution Slice: gfx1100 Quant Pipeline Multi-Family Rollout
+
+### Objective
+
+Declare the **gfx1100 end-to-end quantization pipeline "fully functional"** across the priority model set, with artifact-validator gating and runtime smoke evidence recorded for each family.
+
+Pipeline definition (per-model):
+
+```
+Download (BF16) → [Abliterate] → Quantize (GPTQ INT4) → Artifact Validate → OCI Publish → vLLM Ready smoke
+```
+
+### Current State (evidence)
+
+- Gemma4 stabilization work merged through 2026-04-17 (dense GPTQ validation, artifact recovery, vLLM env pins, long-canary runtime overrides). See git log 2026-04-13..18.
+- `quantize artifact validate` CLI + profile-based validator + compressed-tensors plumbing landed (`551f6763`, `0378749e`, `0e8ec72a`).
+- gfx1100 runtime image pinned in `deploy/gpuprofiles/gfx1100.yaml:89` (`runtime@sha256:04631a8d...`) with Gemma4 vLLM patches baked in.
+- Deployed gfx1100 ModelCaches:
+  - `gemma4-26b-a4b-gptq` (cblevins-7900xtx) — MoE + partial-dense GPTQ, denseModulePolicy opt-in (`deploy/modelcaches/gemma4-26b-a4b-gptq.yaml:76`).
+  - `omnicoder-9b-gptq` (cblevins-7900xtx) — not yet driven to Ready (`deploy/modelcaches/omnicoder-9b-gptq.yaml`).
+- Deployed gfx906 ModelCaches (candidates to port/mirror to gfx1100):
+  - `gemma4-31b-gptq` (radeonvii) — long canary; recent eager/standard-attn + runtime digest pins.
+  - `qwen35-9b-gptq` (radeonvii) — GDN-aware pipeline proven on gfx906.
+
+### Target Family Set (priority order)
+
+| # | Model | Scope | Node | Why now |
+|---|-------|-------|------|---------|
+| 1 | `gemma4-26b-a4b-gptq` | MoE + dense validator exercise | cblevins-7900xtx | Validator gates just landed; prove they catch regressions. |
+| 2 | Gemma4 E4B dense re-quant | Re-quant under artifact validator + publish | cblevins-7900xtx | Smallest gfx1100 Gemma4 surface; fast signal. |
+| 3 | `omnicoder-9b-gptq` | First full Pending → Ready run | cblevins-7900xtx | Manifest present, never driven end-to-end on gfx1100. |
+| 4 | Qwen3.5-9B GPTQ on gfx1100 | Port from radeonvii | cblevins-7900xtx (add) | Validate GDN + gfx1100 runtime + artifact gate. |
+| 5 | Qwen3-14B GPTQ | Regression pass under validator | gfx1100 | Known-good 72–73 tok/s; confirm validator baseline. |
+| 6 | `gemma4-31b-gptq` canary | Scope feasibility on gfx1100 | cblevins-7900xtx | 20 GB GPTQ INT4 ≈ 24 GB VRAM ceiling; may stay gfx906. |
+
+### Delivery Slices
+
+#### Slice A — Gemma4 family completion on gfx1100
+
+- A1. Drive `gemma4-26b-a4b-gptq` through a full Download → Abliterate → Quantize → Validate → OCI run under `denseModulePolicy: validate` + `denseModuleCosineThreshold: 0.98`.
+  - Acceptance: status transitions through each phase; validator produces per-layer cosine report; vLLM serving pod reaches `Ready`; smoke prompt returns coherent output.
+- A2. Re-quantize Gemma4 E4B dense on gfx1100, publish OCI, record tok/s baseline.
+  - Acceptance: OCI ref populated in status; smoke pod returns coherent output; cosine report attached to worklog.
+- A3. Spike `gemma4-31b-gptq` on gfx1100 (eager + standard attn from recent canary fixes) for feasibility only.
+  - Acceptance: feasibility decision recorded (`keep on gfx906` or `promote to gfx1100`).
+
+#### Slice B — Qwen3.5-9B on gfx1100
+
+- Create `deploy/modelcaches/qwen35-9b-gptq-gfx1100.yaml` (copy radeonvii manifest, swap hostname + storage class, keep GDN-aware config).
+- Acceptance: full pipeline green on gfx1100; artifact validator passes; smoke output coherent; tok/s recorded.
+
+#### Slice C — OmniCoder-9B end-to-end on gfx1100
+
+- Drive `omnicoder-9b-gptq` to Ready + OCI publish using existing manifest (`deploy/modelcaches/omnicoder-9b-gptq.yaml`).
+- Acceptance: `retentionPriority: 50` honored; publish status shows OCI tag; smoke output coherent.
+
+#### Slice D — Qwen3-14B GPTQ validator regression
+
+- Run `quantize artifact validate` against the existing Qwen3-14B GPTQ artifact (no re-quant; validator-only pass).
+- Acceptance: validator green; cosine deltas + perplexity delta recorded in worklog; no regression vs. 72–73 tok/s baseline.
+
+#### Slice E — Cross-family validation matrix
+
+- Land `.loom/60-validation-matrix.md` capturing per-family:
+  - download shard count,
+  - abliteration norm/perplexity,
+  - quantize duration + compression ratio,
+  - validator cosine mean/min,
+  - runtime tok/s + prompt tok/s,
+  - OCI tag.
+- Acceptance: matrix populated for every family reaching Ready in this slice.
+
+### Hard Constraints / Risk Controls
+
+- GitOps-first. No `kubectl patch` on Flux-managed manifests (matrix 2026-02 memo). Push manifest updates through git.
+- `cblevins-7900xtx` has both discrete + iGPU. Honor `usableDeviceIndices: ["0"]` in GPUProfile — any new manifest must not override without justification (`deploy/gpuprofiles/gfx1100.yaml:22-24`).
+- `maxGPUMemoryGB: 18` and `maxCPUMemoryGB: 44` ceilings are live (`deploy/gpuprofiles/gfx1100.yaml:91-92`). 31B dense GPTQ likely exceeds — confirm before scheduling.
+- VRAM + CPU offload budget for MoE serving: follow `cpuOffloadGb: 30` + `enforceEager: true` pattern proven 2026-04-12 (see `memory/gemma4-moe-serving.md`).
+- Abliteration runs must use `ABLITERATION_ACTIVATION_CAPTURE_MODE=hidden_states` on gfx1100 (profile env already sets this).
+- Dense GPTQ policy stays opt-in (`denseModulePolicy: validate`) until a family passes both offline cosine ≥ 0.98 and runtime smoke. Do not widen the default.
+- `ablitateLmHead: false` remains the Gemma4 default — streaming-save corruption bug in `save_streaming_safetensors` is still outstanding (memory: `MEMORY.md`, Qwen3.5 root-cause entry).
+
+### Cross-Cutting Work to Finish Along the Way
+
+- Promote the shared-shard-integrity helper (Slice 1 of 2026-04-09 program) as prerequisite for A1.
+- Unify downloader / abliterate shard verification on a single call path.
+- Any new manifest change triggers artifact validator invocation automatically (wire `quantize artifact validate` into the CI publish job, or into the ModelCache controller publish phase).
+
+### Test Plan
+
+- Per-model:
+  - `kubectl get modelcache <name> -n flexinfer-system -o yaml` reaches `phase: Ready`.
+  - `quantize artifact validate` CLI exits 0 with cosine report attached.
+  - vLLM smoke: `POST /v1/chat/completions` returns coherent output at ≥ target tok/s.
+- System:
+  - `flux get kustomizations -A` is green after every manifest push.
+  - No regressions in `gemma4-26b-a4b-gptq` serving path after validator rollout.
+
+### Rollout / Backout
+
+- Rollout: per slice, one family at a time; land manifest + evidence before starting the next.
+- Backout: each slice touches one ModelCache + optional new YAML; revert the manifest commit and re-reconcile.
+
+### Acceptance Criteria (slice-level "done")
+
+- All six families in the priority table either (a) reach `Ready` on gfx1100 under artifact validator gating, or (b) have an evidence-backed decision to remain on gfx906.
+- `.loom/60-validation-matrix.md` populated and committed.
+- Worklog entry + decisions entry for each family.
+- No outstanding manual kubectl patches on gfx1100 ModelCaches.
+
+### Open Questions for `/feature-dev` to resolve before cutting branches
+
+Answered 2026-04-18 (see `50-worklog.md` for investigation sources):
+
+- **Q1 — Qwen3-14B validator artifact access:** Artifact lives on Longhorn RWX SharedPVC (`pvc://qwen3-14b-abliterated-v2-gptq/.../gptq-w4-g128`), mountable from any cluster node. Slice D runs via an operator Pod/Job that mounts the PVC — no re-download needed. (Source: `deploy/models/qwen3-14b-abliterated-v2-5930k.yaml:20`.)
+- **Q2 — Validator invocation path:** Wire `quantize validate-artifact` CLI (`cmd/flexinfer/commands/quantize.go:117-169`) through a one-shot **operator Pod/Job** that mounts the ModelCache PVC for this slice. Controller `modelcache_publish.go:103` currently has no validator call — promoting validation into the controller publish phase is a separate follow-up slice once the operator-pod path is proven.
+- **Q3 — 31B on gfx1100:** **Decision: skip.** `gemma4-31b-gptq` INT4 ≈ 20 GB weights + overhead; `gfx1100` profile caps at `maxGPUMemoryGB: 18` (`deploy/gpuprofiles/gfx1100.yaml:91`). Memory file `gemma4-gptq.md:61-64` already recorded "barely fits 24GB VRAM" + heterogeneous head_dim blocks FlashAttention. Keep 31B on gfx906 (`cblevins-radeonvii`); drop Slice A3 from this round.
+
+### Slice A1 execution path (2026-04-18 chosen)
+
+- **A1-lite first**: run `quantize validate-artifact` against the existing `gemma4-26b-a4b-gptq` artifact (already serving since 2026-04-12 per `memory/gemma4-moe-serving.md`) via a one-shot K8s Job on cblevins-7900xtx. ~10 min GPU cost; produces the first cosine report.
+- **A1-full (deferred)**: flip `denseModulePolicy: validate` in `deploy/modelcaches/gemma4-26b-a4b-gptq.yaml` only after A1-lite evidence shows either (a) current artifact fails the gate on specific layers (targeted re-quant), or (b) a clear product reason to widen dense coverage regardless.
+- Rationale: full re-quant is 12–24 h of dGPU on a single host and blocks other gfx1100 work; validator-first gives us a decision input before committing the cost.
+
+### Sources
+
+- Git log 2026-04-13..18 (`git log --oneline --since="2026-04-13"`).
+- `deploy/gpuprofiles/gfx1100.yaml:22-103`.
+- `deploy/modelcaches/gemma4-26b-a4b-gptq.yaml:48-90`.
+- `deploy/modelcaches/omnicoder-9b-gptq.yaml`.
+- `deploy/modelcaches/qwen35-9b-gptq.yaml`.
+- `deploy/modelcaches/gemma4-31b-gptq.yaml`.
+- Commits: `551f6763`, `0378749e`, `0e8ec72a`, `f3b6c164`, `3e77d9da`, `b8ab9cf4`, `d5355aec`, `e9c03311`, `95e5df1d`.
+- Memory: `gemma4-moe-quant.md`, `gemma4-moe-serving.md`, `gemma4-gptq.md`, `qwen35-investigation.md`, `MEMORY.md` (quantization + model layout sections).
