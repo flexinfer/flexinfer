@@ -7,7 +7,22 @@ import LoomCompanionKit
 struct NextActionCard: View {
     let lanes: [DashboardAttentionLane]
     let health: HealthSummary
+    /// Critical-severity alerts are folded into this card (priority #1) instead
+    /// of a separate red banner — the dashboard only shouts in one place.
+    let criticalAlerts: [AlertItem]
     var onNavigate: ((DashboardView.DashboardNavAction) -> Void)?
+
+    init(
+        lanes: [DashboardAttentionLane],
+        health: HealthSummary,
+        criticalAlerts: [AlertItem] = [],
+        onNavigate: ((DashboardView.DashboardNavAction) -> Void)? = nil
+    ) {
+        self.lanes = lanes
+        self.health = health
+        self.criticalAlerts = criticalAlerts
+        self.onNavigate = onNavigate
+    }
 
     // MARK: - Body
 
@@ -138,6 +153,7 @@ struct NextActionCard: View {
         case .work: return "Open Work"
         case .connection: return "Open Connection"
         case .liveActivities: return "View Live"
+        case .alerts: return "View Alerts"
         }
     }
 
@@ -155,6 +171,22 @@ struct NextActionCard: View {
     }
 
     private var resolvedAction: ResolvedAction? {
+        // Priority 0 — Unread critical alerts. These used to surface as a separate
+        // red banner at the top of the dashboard; folded here so the dashboard
+        // has exactly one hero at any moment.
+        let unreadCritical = criticalAlerts.filter { !$0.isRead }
+        if let alert = unreadCritical.first {
+            let countSuffix = unreadCritical.count > 1 ? " (+\(unreadCritical.count - 1) more)" : ""
+            return ResolvedAction(
+                icon: "exclamationmark.triangle.fill",
+                title: "\(unreadCritical.count) critical alert\(unreadCritical.count == 1 ? "" : "s")\(countSuffix)",
+                subtitle: alert.message,
+                color: LoomColors.statusCritical,
+                severity: .critical,
+                navAction: .alerts
+            )
+        }
+
         // Priority 1 — Critical severity lanes
         if let critical = lanes.first(where: { $0.severity == "critical" }) {
             return actionFromLane(critical, severity: .critical)
