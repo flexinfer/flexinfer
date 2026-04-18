@@ -18,6 +18,7 @@
   import DataTable from './shared/DataTable.svelte';
   import DetailDrawer from './shared/DetailDrawer.svelte';
   import EmptyState from './shared/EmptyState.svelte';
+  import ClaimConflictChip from './fleet/ClaimConflictChip.svelte';
 
   const fleetPollingOwner = Symbol('FleetPanel');
   const tracePollingOwner = Symbol('FleetPanelTraces');
@@ -395,6 +396,10 @@
 </script>
 
 <div class="panel fleet-panel">
+  <!-- F9: live file-claim conflict overlay chip -->
+  <div class="fleet-panel-header">
+    <ClaimConflictChip />
+  </div>
   <!-- FLEET OVERVIEW (always visible) -->
   <div class="fleet-grid">
     <!-- LEFT TOP: Agent Fleet Table -->
