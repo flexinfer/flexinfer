@@ -78,10 +78,12 @@ struct AttentionLanesCard: View {
 
     @ViewBuilder
     private func laneRow(_ lane: DashboardAttentionLane) -> some View {
+        let display = displayFields(for: lane)
+
         LoomListRow(
             accentColor: laneColor(lane.severity),
-            title: lane.label.isEmpty ? fallbackTitle(lane) : lane.label,
-            subtitle: lane.summary.isEmpty ? fallbackSummary(for: lane) : lane.summary,
+            title: display.title,
+            subtitle: display.subtitle,
             isLive: lane.severity == "critical",
             emphasizeTitle: lane.severity == "critical",
             leading: {
@@ -93,8 +95,8 @@ struct AttentionLanesCard: View {
             },
             trailing: {
                 HStack(spacing: LoomSpacing.xxs) {
-                    if !lane.scope.isEmpty {
-                        Text(lane.scope)
+                    if let metric = display.trailingMetric {
+                        Text(metric)
                             .font(LoomTypography.monoCaption)
                             .foregroundStyle(LoomColors.fgMuted)
                             .lineLimit(1)
@@ -105,6 +107,54 @@ struct AttentionLanesCard: View {
                 }
             }
         )
+    }
+
+    /// Collapses the raw lane fields into display values that avoid duplication
+    /// across title / subtitle / trailing. See the hero card for the same idea.
+    private func displayFields(for lane: DashboardAttentionLane) -> (title: String, subtitle: String?, trailingMetric: String?) {
+        let labelIsGeneric = isGenericLaneLabel(lane.label)
+
+        let title: String
+        if !labelIsGeneric {
+            title = lane.label
+        } else if !lane.summary.isEmpty {
+            title = lane.summary.prefix(1).uppercased() + lane.summary.dropFirst()
+        } else {
+            title = fallbackTitle(lane)
+        }
+
+        // Subtitle falls back to the scope only when the summary wasn't
+        // consumed by the title. Otherwise drop it so the row is clean.
+        let subtitle: String?
+        if labelIsGeneric, !lane.summary.isEmpty {
+            // summary was consumed by title
+            subtitle = lane.scope.isEmpty ? nil : lane.scope
+        } else if !lane.summary.isEmpty {
+            subtitle = lane.summary
+        } else {
+            subtitle = fallbackSummary(for: lane)
+        }
+
+        // Only show a trailing metric when it adds signal — we dedupe with
+        // the subtitle so path/scope doesn't appear twice in the same row.
+        let trailingMetric: String?
+        if labelIsGeneric, !lane.summary.isEmpty {
+            // Title took the summary, subtitle took the scope — nothing left.
+            trailingMetric = nil
+        } else if !lane.scope.isEmpty {
+            trailingMetric = lane.scope
+        } else {
+            trailingMetric = nil
+        }
+
+        return (title, subtitle, trailingMetric)
+    }
+
+    private func isGenericLaneLabel(_ label: String) -> Bool {
+        let trimmed = label.trimmingCharacters(in: .whitespaces).lowercased()
+        if trimmed.isEmpty { return true }
+        if trimmed.hasSuffix(" lane") || trimmed == "lane" { return true }
+        return false
     }
 
     // MARK: - Helpers

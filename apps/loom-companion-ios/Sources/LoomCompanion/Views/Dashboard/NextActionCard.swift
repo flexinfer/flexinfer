@@ -219,10 +219,28 @@ struct NextActionCard: View {
 
     private func actionFromLane(_ lane: DashboardAttentionLane, severity: Severity) -> ResolvedAction {
         let (icon, titleFallback, navAction) = laneMeta(for: lane)
-        let title = lane.label.isEmpty ? titleFallback : lane.label
-        let subtitle = lane.summary.isEmpty
-            ? (lane.scope.isEmpty ? "Tap to open" : lane.scope)
-            : lane.summary
+
+        // Backend often sends a category label (`"Agent lane"`, `"Work lane"`)
+        // plus a generic summary (`"blocked tasks"`). That reads as noise in
+        // the hero slot — compose a descriptive title from whatever signal
+        // we actually have and push the rest down to the subtitle.
+        let labelIsGeneric = isGenericLaneLabel(lane.label)
+        let typeIsKnown = isTypedLane(lane.type)
+
+        let title: String
+        if !labelIsGeneric {
+            title = lane.label
+        } else if typeIsKnown {
+            title = titleFallback
+        } else if !lane.summary.isEmpty {
+            // Capitalize so "blocked tasks" reads as a headline.
+            title = lane.summary.prefix(1).uppercased() + lane.summary.dropFirst()
+        } else {
+            title = titleFallback
+        }
+
+        let subtitle = composeSubtitle(lane: lane, titleConsumedSummary: labelIsGeneric && !typeIsKnown && !lane.summary.isEmpty)
+
         let color: Color
         switch severity {
         case .critical: color = LoomColors.statusCritical
@@ -239,10 +257,59 @@ struct NextActionCard: View {
         )
     }
 
+    /// Detects labels that are too generic to be useful as a hero title.
+    /// These are category names (e.g. "Agent lane", "Work lane") rather than
+    /// action-oriented descriptions.
+    private func isGenericLaneLabel(_ label: String) -> Bool {
+        let trimmed = label.trimmingCharacters(in: .whitespaces).lowercased()
+        if trimmed.isEmpty { return true }
+        // Matches "agent lane", "work lane", "system lane", etc.
+        if trimmed.hasSuffix(" lane") || trimmed == "lane" { return true }
+        return false
+    }
+
+    /// Whether `lane.type` maps to one of the known descriptive fallbacks in
+    /// `laneMeta`. Unknown types fall through to the generic "Review" title
+    /// which we avoid when we can compose something better from `summary`.
+    private func isTypedLane(_ type: String) -> Bool {
+        switch type {
+        case "approval", "workflow_approval",
+             "degraded_server", "server_health",
+             "blocked_task", "blocker",
+             "idle_agent", "stale_heartbeat",
+             "conflict", "merge_conflict",
+             "handoff":
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Builds the hero subtitle. Scope (path/namespace) is the most actionable
+    /// context after the title; include it when present. If the summary was
+    /// already consumed by the title, drop it here to avoid duplication.
+    private func composeSubtitle(lane: DashboardAttentionLane, titleConsumedSummary: Bool) -> String {
+        var parts: [String] = []
+        if !titleConsumedSummary, !lane.summary.isEmpty {
+            parts.append(lane.summary)
+        }
+        if !lane.scope.isEmpty {
+            parts.append(lane.scope)
+        }
+        if parts.isEmpty {
+            return "Tap to open"
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private func laneMeta(for lane: DashboardAttentionLane)
         -> (icon: String, title: String, nav: DashboardView.DashboardNavAction)
     {
-        let nav: DashboardView.DashboardNavAction = {
+        // Derived route. The backend `route` hint is a sensible default, but
+        // we override it when the *type* has a stronger affinity to a
+        // specific surface — e.g. a blocked task should route to Work even
+        // if the backend tagged the lane as `people`.
+        let backendRoute: DashboardView.DashboardNavAction = {
             switch lane.route {
             case "people": return .people
             case "connection": return .connection
@@ -251,19 +318,20 @@ struct NextActionCard: View {
         }()
         switch lane.type {
         case "approval", "workflow_approval":
-            return ("checkmark.seal.fill", "Approve workflow step", nav)
+            return ("checkmark.seal.fill", "Approve workflow step", .work)
         case "degraded_server", "server_health":
             return ("exclamationmark.triangle.fill", "Investigate degraded server", .connection)
         case "blocked_task", "blocker":
-            return ("hand.raised.fill", "Unblock stalled task", nav)
+            // Task work lives in the Work tab.
+            return ("hand.raised.fill", "Unblock stalled task", .work)
         case "idle_agent", "stale_heartbeat":
             return ("person.fill.questionmark", "Check idle agent", .people)
         case "conflict", "merge_conflict":
-            return ("arrow.triangle.merge", "Resolve merge conflict", nav)
+            return ("arrow.triangle.merge", "Resolve merge conflict", .work)
         case "handoff":
-            return ("arrow.right.arrow.left", "Accept pending handoff", nav)
+            return ("arrow.right.arrow.left", "Accept pending handoff", .work)
         default:
-            return ("arrow.right.circle.fill", "Review attention lane", nav)
+            return ("flag.fill", "Review attention lane", backendRoute)
         }
     }
 }

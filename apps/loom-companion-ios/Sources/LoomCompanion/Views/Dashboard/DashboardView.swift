@@ -164,6 +164,9 @@ struct DashboardView: View {
             .padding()
         }
         .navigationTitle("Dashboard")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
         .onChange(of: viewModel.dashboard?.updatedAt) { _, newValue in
             if let ts = newValue {
                 withAnimation { updatedAgo = Self.relativeTime(ts) }
