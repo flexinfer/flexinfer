@@ -10,7 +10,19 @@
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
 
-## Current Goal
+## Current Goal (2026-04-18)
+
+Drive the **gfx1100 quantization pipeline to "fully functional"** across model families, starting with Gemma4 and fanning out to Qwen3/3.5 + OmniCoder.
+
+- [ ] Slice A — Gemma4 family completion on gfx1100 (26B-A4B MoE under new dense GPTQ validator; E4B re-quant; 31B canary).
+- [ ] Slice B — Qwen3.5 9B port to gfx1100 with GDN-aware pipeline + artifact validation.
+- [ ] Slice C — OmniCoder-9B first full run (Pending → Ready → OCI) on cblevins-7900xtx.
+- [ ] Slice D — Qwen3-14B GPTQ regression pass under new artifact validator.
+- [ ] Slice E — Cross-family validation matrix (cosine / perplexity / tok/s gates) recorded in `.loom/`.
+
+See `30-implementation-plan.md` §"2026-04-18 Execution Slice" for slice detail and acceptance gates.
+
+Historical baseline goals (completed):
 
 - [x] Refresh `.loom/` templates and regenerate workspace snapshot.
 - [x] Capture current MCP/runtime inventory with tool counts and constraints.

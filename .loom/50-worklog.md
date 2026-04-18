@@ -167,3 +167,42 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
   - `kubectl logs -n flexinfer-system gemma4-26b-a4b-gptq-downloader-85mm9 --tail=80`
   - `kubectl logs -n flexinfer-system gemma4-31b-gptq-abliterate-28pj6 --tail=120`
   - `git rev-parse HEAD`
+
+## 2026-04-18
+
+### Slice A1-lite — gemma4-26b-a4b-gptq validator evidence
+
+- What changed:
+  - Ran `build/scripts/validate_quantized_artifact.py` via `kubectl exec` into the live runtime pod `gemma4-26b-a4b-gptq-87c45466d-wpkg6` on `cblevins-7900xtx`.
+  - Validated both on-PVC artifacts against `--layout vllm-gptq --family gemma4-26b-a4b`. Both returned `ok: true` with one flat-shape warning each. Raw JSON in `.loom/local/validation/gemma4-26b-a4b-gptq/20260418-085841/`.
+  - Confirmed the **active** serving artifact is `/models/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean` (extracted from `/proc/1/cmdline`).
+  - Populated `.loom/60-validation-matrix.md` with the first two rows (clean + hybrid-v10) and added a findings block noting two validator follow-ups (family auto-detect gap, flat-warning noise).
+  - Corrected the 2026-04-18 plan-refresh entry earlier today: the validator is **metadata/layout**, not cosine — see `30-implementation-plan.md` "Slice A1 execution path" for the A1-lite / A1-full split.
+- Why:
+  - Slice A1 acceptance asked for validator evidence. A1-lite (validate existing artifact) unblocks the matrix at ~10 min of cluster cost instead of committing to a 12–24 h A1-full re-quant on cblevins-7900xtx.
+  - The `detected_family: null` finding is itself a tractable fix for the next slice and proves the validator is safe to rely on once families are registered.
+- What's next:
+  - Add `gemma4_text` / architecture-string markers to `FAMILY_PROFILES` so `--family` auto-detects (small PR, 1 file, adds a test).
+  - Run `--run-generation` probe as a lightweight coherence gate (needs `torch` + a tokenizer import — confirm runtime pod has transformers before trying).
+  - Move on to Slice B (Qwen3.5-9B port to gfx1100) or Slice C (OmniCoder-9B end-to-end) — user's call on priority.
+- Sources:
+  - `kubectl exec -n flexinfer-system gemma4-26b-a4b-gptq-87c45466d-wpkg6 -- python3 /tmp/validate_quantized_artifact.py --artifact-path /models/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean --layout vllm-gptq --family gemma4-26b-a4b --json`
+  - `kubectl exec -n flexinfer-system gemma4-26b-a4b-gptq-87c45466d-wpkg6 -- sh -c 'cat /proc/1/cmdline'`
+  - `kubectl get pvc -n flexinfer-system` → `gemma4-26b-a4b-gptq` (96Gi, nvme-1r-gpu), `gemma4-26b-a4b-gptq-cache` (50Gi, longhorn).
+  - `build/scripts/validate_quantized_artifact.py:393-554` (validator entry point).
+  - `cmd/flexinfer/commands/quantize.go:117-169` (CLI spec).
+
+### gfx1100 quant pipeline multi-family plan refresh
+
+- What changed:
+  - Updated `00-index.md` Current Goal to target gfx1100 quant pipeline multi-family rollout (Gemma4 → Qwen3.5 → OmniCoder → Qwen3-14B regression → validation matrix).
+  - Appended 2026-04-18 Execution Slice to `30-implementation-plan.md` with six priority targets, five delivery slices (A–E), acceptance gates, and open questions for `/feature-dev` to resolve before branching.
+- Why:
+  - Recent merge train (2026-04-13..18) landed dense GPTQ validation, artifact recovery, and gfx1100 vLLM env pins. Pipeline is stable enough to stop firefighting and start systematic family coverage with artifact-validator evidence.
+- What's next:
+  - `/feature-dev` should pick Slice A1 (drive `gemma4-26b-a4b-gptq` through full pipeline under `denseModulePolicy: validate`), answer the three open questions in the slice, then proceed family-by-family.
+- Sources:
+  - `git log --oneline --since="2026-04-13"`
+  - `deploy/gpuprofiles/gfx1100.yaml`
+  - `deploy/modelcaches/{gemma4-26b-a4b-gptq,omnicoder-9b-gptq,qwen35-9b-gptq,gemma4-31b-gptq}.yaml`
+  - Commits: `551f6763`, `0378749e`, `0e8ec72a`, `f3b6c164`, `3e77d9da`, `b8ab9cf4`, `d5355aec`.
