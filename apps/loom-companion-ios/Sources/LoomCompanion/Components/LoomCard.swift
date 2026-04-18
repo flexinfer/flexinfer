@@ -102,7 +102,6 @@ struct LoomCard<Content: View>: View {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(backgroundColor)
                     .overlay(topGlow)
-                    .overlay(leftAccent)
                     .overlay(
                         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                             .strokeBorder(borderColor, lineWidth: borderWidth)
@@ -143,34 +142,6 @@ struct LoomCard<Content: View>: View {
         }
     }
 
-    /// Hero cards with an accent get a subtle left-edge vertical stripe
-    /// — reinforces the accent bar language from LoomListRow at card scale.
-    @ViewBuilder
-    private var leftAccent: some View {
-        if priority == .hero, accent.color != .clear {
-            HStack(spacing: 0) {
-                LinearGradient(
-                    colors: [
-                        accent.color.opacity(pulseOn && accent.pulse ? 0.85 : 0.6),
-                        accent.color.opacity(0.15)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(width: 3)
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: cornerRadius,
-                        bottomLeadingRadius: cornerRadius,
-                        bottomTrailingRadius: 0,
-                        topTrailingRadius: 0
-                    )
-                )
-                Spacer(minLength: 0)
-            }
-            .allowsHitTesting(false)
-        }
-    }
 }
 
 extension View {
