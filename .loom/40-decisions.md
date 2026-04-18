@@ -111,6 +111,58 @@ Record decisions as they are made, with date, rationale, and sources.
   - `platform/gitops/k3s/ai/flexinfer/values.yaml:72-74`
   - Gitops commit `80c934c9`
 
+### 2026-04-18: Add granular loading substages to `Model.status`
+
+- Decision:
+  - Extend the `ai.flexinfer/v1alpha2` Model CRD with `status.loadingSubstage` (enum) and `status.message` (human string). Populate from pod/container state, a scraped vLLM `/metrics` + log sidecar, and the readiness probe. Surface in FlexDeck + proxy.
+- Proposed enum values:
+  - `ImagePulling` — kubelet still pulling the runtime image (common for 18 GB ROCm images on cold cache).
+  - `Initializing` — container up, process starting.
+  - `LoadingWeights` — model read in progress; message carries `"<N>/<total> shards, last progress <age>"`.
+  - `Compiling` — torch.compile/kernel warmup.
+  - `HealthCheckPending` — load done, `/health` not yet 200.
+  - `Preempted` — shared-group peer took the slot; message carries preempting model name + timestamp.
+- Rationale:
+  - Observed 2026-04-18 ~13:26–13:45Z on `gemma4-26b-a4b-gptq`: shard 31/34 load stalled 8m47s on Longhorn (cache PVC `pvc-ec945ced`, `longhorn` storage class, 3 replicas on k3s-w-4, cblevins-radeonvii, cblevins-7900xtx). Load did eventually complete. During the stall, FlexDeck showed `Phase: Loading` with no progress info, the proxy queue built up (6+ requests), and an operator could not distinguish a transient Longhorn replica stall from a true hang without `kubectl logs` into the pod.
+  - The problem is **observability, not controller correctness** — `phase=Loading` was accurate; it just collapses all of "still fine, wait longer" and "actually wedged" into the same signal.
+- Alternatives considered:
+  - Single free-form `message` field (no enum): rejected — forces every consumer (proxy, FlexDeck, future operators) to string-parse to decide whether to back off.
+  - Add new top-level phases (`ImagePulling`, `LoadingWeights`, etc.): rejected — would break every consumer that switches on `.status.phase` today. A substage field keeps the phase enum stable and adds detail.
+  - Rely only on pod/container state from the replicaset: rejected — that covers `ImagePulling` and `Initializing` but can't see inside vLLM (weight shards, compile, health).
+- Consequences:
+  - CRD schema change (minor version bump on the `v1alpha2` status subresource; backward compatible because the new fields are optional).
+  - Controller needs a small vLLM log tailer or `/metrics` scraper to capture shard progress — vLLM v0.8+ exposes `vllm:engine_status` and `vllm:num_requests_waiting`; older builds expose progress only via stdout. The log tailer is the safer path near-term.
+  - Proxy can read `loadingSubstage` + last-progress age to decide between "keep waiting" and "fail-fast with 503 + retry-after" — prevents the queue-build-up feedback loop.
+  - FlexDeck gets a single place to surface richer status without inventing its own heuristics.
+- Related follow-up (separate decision below):
+  - Move `gemma4-26b-a4b-gptq-cache` off the default `longhorn` storage class to `local-path` or `nvme-1r-gpu` (1 replica on the GPU node), matching the 2026-02-20 Qwen3-30B GGUF precedent. Eliminates cross-node replica reads that caused this stall in the first place.
+- Sources:
+  - `.loom/60-validation-matrix.md` — gemma4-26b-a4b-gptq row.
+  - `kubectl -n longhorn-system get volume pvc-ec945ced-172d-439a-b386-abe6a439dc71` — `state=attached, robustness=healthy, replicas on k3s-w-4 + cblevins-radeonvii + cblevins-7900xtx`.
+  - `kubectl logs gemma4-26b-a4b-gptq-87c45466d-xtqb6 -n flexinfer-system` — shards 1-30 @ ~2 s/it, shard 31 @ 8m47s.
+  - `kubectl get events -n flexinfer-system | grep gemma4-26b-a4b-gptq` — `Preempted by gemma4-26b-a4b-gptq-long with priority 200` at 13:26:48Z.
+  - Precedent: `MEMORY.md` note "Use local-path storageClass for large GGUF model caches" (2026-02-20).
+  - Tracker: https://gitlab.flexinfer.ai/services/flexinfer/-/issues/53
+
+### 2026-04-18: Migrate `gemma4-26b-a4b-gptq-cache` PVC off default Longhorn to local/1-replica storage
+
+- Decision:
+  - Change `gemma4-26b-a4b-gptq-cache` PVC (and any other serving-path cache PVC used for vLLM weight loads on gfx1100) from `storageClassName: longhorn` (3 replicas by default, spread across nodes) to either `local-path` (K3s local provisioner, no replication) or `nvme-1r-gpu` (Longhorn 1-replica on GPU-local NVMe).
+- Rationale:
+  - The 2026-04-18 shard-31 stall is consistent with a Longhorn replica-read stall: engine on cblevins-7900xtx, but two of the three replicas live on k3s-w-4 and cblevins-radeonvii. Cross-node reads add network latency and fail-over handling that mmap-driven vLLM weight loads cannot tolerate well.
+  - 2026-02-20 precedent: Qwen3-30B GGUF mmap loads went from 15–20 min on Longhorn to ~3 min on `local-path` (`MEMORY.md`, "Use local-path storageClass for large GGUF model caches").
+- Alternatives considered:
+  - Keep Longhorn but pin `numberOfReplicas=1` via PVC annotation: matches `nvme-1r-gpu` intent; acceptable if we keep the storage class explicit and self-documenting.
+  - Keep Longhorn 3r and rely on Longhorn's "local-replica-first" read heuristic: rejected — the whole point of the 3 replicas is durability, not read speed; read-time behavior is still racy.
+- Consequences:
+  - Manifest change to `deploy/modelcaches/gemma4-26b-a4b-gptq.yaml` + any associated cache-PVC spec (if the cache PVC is controller-managed separately from the main SharedPVC).
+  - Cold rebuild cost: if we switch the cache PVC class, the 16 GB artifact must be re-staged into the new PVC. One-time. Acceptable given serving latency win.
+  - Durability trade-off: single replica means a node-disk failure re-downloads + re-stages the artifact. Already the operating model for serverless warm caches.
+- Sources:
+  - See phase-granularity decision above (same evidence base).
+  - `MEMORY.md` 2026-02-20 Longhorn/local-path precedent.
+  - Tracker: https://gitlab.flexinfer.ai/services/flexinfer/-/issues/53 (same issue).
+
 ### 2026-02-20: Reconcile branch deltas into master before backlog status updates
 
 - Decision:
