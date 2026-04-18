@@ -7,9 +7,14 @@
 #
 # Primary model in 7900xtx-textgen shared group (priority 200, always-on).
 # Replaces gemma4-e4b-gptq as primary text model.
-# Promotion gate (reusable for any quantized family):
-# keep this baseline at 8K until a smaller validated artifact passes
-# long-context correctness + VRAM headroom checks.
+#
+# Context uplift 2026-04-18: raised from 8192 to 16384. The 32K canary
+# (gemma4-26b-a4b-gptq-long, same weights, same node) has been running since
+# 2026-04-16 without runtime regressions. 16K is a conservative halfway step
+# that does not require the canary's long-context kernel fallbacks
+# (disableAiter / rocmCustomPagedAttn). Promotion gate state moved to
+# baseline-16k-validated; a full long-context correctness sweep is still
+# outstanding before raising to 32K on the primary.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -17,8 +22,8 @@ metadata:
   namespace: flexinfer-system
   annotations:
     flexinfer.ai/promotion-gate: quantized-artifact-v1
-    flexinfer.ai/promotion-state: baseline-8k-validated
-    flexinfer.ai/promotion-requires: target-context-validation-before-promotion
+    flexinfer.ai/promotion-state: baseline-16k-validated
+    flexinfer.ai/promotion-requires: long-context-correctness-sweep-before-32k
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
@@ -39,11 +44,13 @@ spec:
   config:
     quantization: gptq
     dtype: "half"
-    # Hybrid dense-FP16/MoE-GPTQ loads at ~17.7 GiB. Keep context to 8k on the
-    # single 7900XTX so KV cache fits with ROCm/vLLM overhead.
-    # Do not raise this default serving limit until a smaller validated artifact
-    # is promoted through the quantized-artifact gate.
-    maxModelLen: 8192
+    # Hybrid dense-FP16/MoE-GPTQ loads at ~17.7 GiB on gfx1100. At 16K context
+    # the KV cache estimate (5 full-attn layers plus 25 sliding layers at
+    # window=1024) sits well inside the 22.8 GiB practical cap (24 GiB card
+    # × gpuMemoryUtilization=0.95). A full dense GPTQ rebuild is still
+    # required to safely push past 16K on the primary without the canary's
+    # ROCm long-context kernel fallbacks.
+    maxModelLen: 16384
     gpuMemoryUtilization: "0.95"
     maxNumSeqs: 1
     trustRemoteCode: true
