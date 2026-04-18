@@ -27,42 +27,51 @@ class FamilyProfile:
     name: str
     aliases: tuple[str, ...]
     known_vllm_flat_modules: frozenset[str]
+    # variant_hints must ALL be present in the metadata hint blob for the
+    # profile to be considered. Used to disambiguate variants (e.g. 26B vs 31B)
+    # whose model_type/architectures strings alone are identical.
+    variant_hints: tuple[str, ...] = ()
+
+
+_GEMMA4_VLLM_FLAT_MODULES = frozenset(
+    (
+        "moe.gate_up_proj",
+        "moe.down_proj",
+        "self_attn.q_proj",
+        "self_attn.k_proj",
+        "self_attn.v_proj",
+        "self_attn.o_proj",
+        "mlp.gate_proj",
+        "mlp.up_proj",
+        "mlp.down_proj",
+    )
+)
 
 
 FAMILY_PROFILES: dict[str, FamilyProfile] = {
     "gemma4-26b-a4b": FamilyProfile(
         name="gemma4-26b-a4b",
-        aliases=("gemma-4-26b-a4b", "gemma4-26b-a4b", "26b-a4b"),
-        known_vllm_flat_modules=frozenset(
-            (
-                "moe.gate_up_proj",
-                "moe.down_proj",
-                "self_attn.q_proj",
-                "self_attn.k_proj",
-                "self_attn.v_proj",
-                "self_attn.o_proj",
-                "mlp.gate_proj",
-                "mlp.up_proj",
-                "mlp.down_proj",
-            )
+        aliases=(
+            "gemma-4-26b-a4b",
+            "gemma4-26b-a4b",
+            "26b-a4b",
+            "gemma4_text",
+            "gemma4forcausallm",
         ),
+        variant_hints=("num_hidden_layers=30",),
+        known_vllm_flat_modules=_GEMMA4_VLLM_FLAT_MODULES,
     ),
     "gemma4-31b": FamilyProfile(
         name="gemma4-31b",
-        aliases=("gemma-4-31b", "gemma4-31b", "31b"),
-        known_vllm_flat_modules=frozenset(
-            (
-                "moe.gate_up_proj",
-                "moe.down_proj",
-                "self_attn.q_proj",
-                "self_attn.k_proj",
-                "self_attn.v_proj",
-                "self_attn.o_proj",
-                "mlp.gate_proj",
-                "mlp.up_proj",
-                "mlp.down_proj",
-            )
+        aliases=(
+            "gemma-4-31b",
+            "gemma4-31b",
+            "31b",
+            "gemma4_text",
+            "gemma4forcausallm",
         ),
+        variant_hints=("num_hidden_layers=42",),
+        known_vllm_flat_modules=_GEMMA4_VLLM_FLAT_MODULES,
     ),
 }
 
@@ -161,12 +170,16 @@ def _load_weight_map(
             if not isinstance(key, str) or not isinstance(value, str)
         ]
         if bad_entries:
-            errors.append("model.safetensors.index.json weight_map contains non-string entries")
+            errors.append(
+                "model.safetensors.index.json weight_map contains non-string entries"
+            )
             return weight_map, tensor_keys, mode
         weight_map = dict(raw_weight_map)
         tensor_keys = sorted(weight_map)
         shard_files = sorted(set(weight_map.values()))
-        missing_shards = [name for name in shard_files if not (artifact_path / name).exists()]
+        missing_shards = [
+            name for name in shard_files if not (artifact_path / name).exists()
+        ]
         if missing_shards:
             errors.append(
                 "missing shard files from weight_map: " + ", ".join(missing_shards[:12])
@@ -256,6 +269,18 @@ def _collect_family_hints(
                 hints.append(value.lower())
             elif isinstance(value, list):
                 hints.extend(str(item).lower() for item in value)
+        # Numeric config fields emitted as "field=N" tokens so variant_hints can
+        # substring-match them. Lets us disambiguate same-architecture families
+        # (e.g. gemma4-26b-a4b vs gemma4-31b) by layer count when
+        # _name_or_path has been stripped from config.json.
+        for numeric_field in (
+            "num_hidden_layers",
+            "num_experts",
+            "moe_intermediate_size",
+        ):
+            value = config.get(numeric_field)
+            if isinstance(value, int):
+                hints.append(f"{numeric_field}={value}")
     for candidate in (quantize_config, config_qcfg):
         if not isinstance(candidate, dict):
             continue
@@ -287,9 +312,22 @@ def _detect_family(
     scores.sort(reverse=True)
     top_score = scores[0][0]
     winners = sorted(name for score, name in scores if score == top_score)
-    if len(winners) != 1:
-        return None, f"ambiguous profile markers: {', '.join(winners)}"
-    return winners[0], f"profile markers matched metadata ({winners[0]})"
+    if len(winners) == 1:
+        return winners[0], f"profile markers matched metadata ({winners[0]})"
+
+    # Alias score tie — try to disambiguate via variant_hints. A variant matches
+    # only if ALL of its variant_hints are present in the hint blob.
+    variant_matches = [
+        name
+        for name in winners
+        if FAMILY_PROFILES[name].variant_hints
+        and all(hint in hint_blob for hint in FAMILY_PROFILES[name].variant_hints)
+    ]
+    if len(variant_matches) == 1:
+        return variant_matches[0], (
+            f"profile aliases tied; variant hints selected {variant_matches[0]}"
+        )
+    return None, f"ambiguous profile markers: {', '.join(winners)}"
 
 
 def _validate_modules_shape(
@@ -298,7 +336,10 @@ def _validate_modules_shape(
     if not isinstance(modules, list) or not modules:
         return False, "invalid", "modules_in_block_to_quantize must be a non-empty list"
 
-    if all(isinstance(item, list) and all(isinstance(name, str) for name in item) for item in modules):
+    if all(
+        isinstance(item, list) and all(isinstance(name, str) for name in item)
+        for item in modules
+    ):
         return True, "nested", None
 
     if all(isinstance(item, str) for item in modules):
@@ -310,7 +351,11 @@ def _validate_modules_shape(
                 known_flat.update(profile.known_vllm_flat_modules)
         unknown = sorted(name for name in modules if name not in known_flat)
         if resolved_layout != "vllm-gptq":
-            return False, "flat", "flat module list is only accepted for layout=vllm-gptq"
+            return (
+                False,
+                "flat",
+                "flat module list is only accepted for layout=vllm-gptq",
+            )
         if unknown:
             return (
                 False,
@@ -319,7 +364,11 @@ def _validate_modules_shape(
             )
         return True, "flat", None
 
-    return False, "invalid", "modules_in_block_to_quantize must be nested lists or flat strings"
+    return (
+        False,
+        "invalid",
+        "modules_in_block_to_quantize must be nested lists or flat strings",
+    )
 
 
 def _flatten_declared_modules(modules: Any) -> list[str]:
@@ -360,7 +409,9 @@ def _run_generation_probe(artifact_path: Path) -> tuple[dict[str, Any], str | No
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
     except Exception as exc:  # noqa: BLE001 - expose import details for diagnostics.
-        return {"ok": False}, f"--run-generation unavailable: dependency import failed: {exc}"
+        return {
+            "ok": False
+        }, f"--run-generation unavailable: dependency import failed: {exc}"
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(
@@ -447,9 +498,13 @@ def validate_artifact(
     checks["has_quantize_config_json"] = quantize_config is not None
     checks["has_config_quantization_config"] = config_qcfg is not None
     if quantize_config is None and config_qcfg is None:
-        errors.append("missing quantization metadata: quantize_config.json or config.quantization_config")
+        errors.append(
+            "missing quantization metadata: quantize_config.json or config.quantization_config"
+        )
 
-    weight_map, tensor_keys, shard_mode = _load_weight_map(artifact_path, warnings, errors, checks)
+    weight_map, tensor_keys, shard_mode = _load_weight_map(
+        artifact_path, warnings, errors, checks
+    )
     checks["shard_mode"] = shard_mode or "missing"
     checks["weight_map_entries"] = len(weight_map)
     if not checks.get("tensor_key_count"):
@@ -473,7 +528,9 @@ def validate_artifact(
             )
     result["layout"] = resolved_layout
 
-    detected_family, family_reason = _detect_family(config, quantize_config, config_qcfg)
+    detected_family, family_reason = _detect_family(
+        config, quantize_config, config_qcfg
+    )
     checks["family_detection_reason"] = family_reason
     checks["detected_family"] = detected_family
     if requested_family == "auto":
@@ -498,12 +555,17 @@ def validate_artifact(
         errors.append("missing modules_in_block_to_quantize in quantization metadata")
     else:
         is_valid_modules, shape, module_error = _validate_modules_shape(
-            modules, resolved_layout, resolved_family if resolved_family != "auto" else None
+            modules,
+            resolved_layout,
+            resolved_family if resolved_family != "auto" else None,
         )
         checks["modules_in_block_to_quantize_shape"] = shape
-        if shape == "flat":
+        # Flat is the expected shape for layout=vllm-gptq; only emit a warning
+        # when the shape is flat outside that layout, where _validate_modules_shape
+        # has already promoted it to an error via module_error.
+        if shape == "flat" and resolved_layout != "vllm-gptq":
             warnings.append(
-                "modules_in_block_to_quantize uses flat string list (accepted for vLLM-serving format)"
+                "modules_in_block_to_quantize uses flat string list outside vllm-gptq layout"
             )
         if not is_valid_modules and module_error:
             errors.append(module_error)
@@ -528,11 +590,16 @@ def validate_artifact(
     forbidden = sorted(set(forbidden_quantized_modules or ()))
     for module in required:
         if module not in quantized_module_counts:
-            errors.append(f"required quantized module missing qweight tensors: {module}")
+            errors.append(
+                f"required quantized module missing qweight tensors: {module}"
+            )
     for module in forbidden:
         if module in quantized_module_counts:
             errors.append(f"forbidden quantized module has qweight tensors: {module}")
-    if min_quantized_modules is not None and len(quantized_module_counts) < min_quantized_modules:
+    if (
+        min_quantized_modules is not None
+        and len(quantized_module_counts) < min_quantized_modules
+    ):
         errors.append(
             f"only {len(quantized_module_counts)} quantized module families found; "
             f"want at least {min_quantized_modules}"
@@ -604,7 +671,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     args = parser.parse_args(argv)
     args.family = args.family.strip().lower()
     if not FAMILY_ID_RE.match(args.family):
-        parser.error("--family must be auto or a lowercase family id using letters, digits, '.', '_' or '-'")
+        parser.error(
+            "--family must be auto or a lowercase family id using letters, digits, '.', '_' or '-'"
+        )
     for field_name in ("require_quantized_module", "forbid_quantized_module"):
         values = getattr(args, field_name)
         cleaned = [value.strip() for value in values if value.strip()]

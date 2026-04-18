@@ -30,10 +30,13 @@ class ValidateQuantizedArtifactTests(unittest.TestCase):
         self,
         model_name: str = "google/gemma-4-26b-a4b-it",
         quantization_config: dict | None = None,
+        extra_config: dict | None = None,
     ) -> None:
-        config = {"_name_or_path": model_name}
+        config: dict = {"_name_or_path": model_name}
         if quantization_config is not None:
             config["quantization_config"] = quantization_config
+        if extra_config is not None:
+            config.update(extra_config)
         self._write_json("config.json", config)
 
     def test_detect_repeated_token_runs(self) -> None:
@@ -58,11 +61,16 @@ class ValidateQuantizedArtifactTests(unittest.TestCase):
                 }
             },
         )
-        result = validator.validate_artifact(self.artifact, requested_layout="vllm-gptq")
+        result = validator.validate_artifact(
+            self.artifact, requested_layout="vllm-gptq"
+        )
         self.assertFalse(result["ok"])
-        self.assertTrue(any("missing shard files" in error for error in result["errors"]))
+        self.assertTrue(
+            any("missing shard files" in error for error in result["errors"])
+        )
 
-    def test_vllm_flat_modules_warn_and_pass(self) -> None:
+    def test_vllm_flat_modules_pass_silently(self) -> None:
+        """Flat is the expected shape for vllm-gptq; no warning should fire."""
         self._seed_base_config(
             quantization_config={
                 "modules_in_block_to_quantize": ["moe.gate_up_proj", "moe.down_proj"]
@@ -87,10 +95,77 @@ class ValidateQuantizedArtifactTests(unittest.TestCase):
         self.assertEqual(
             result["checks"]["quantized_module_counts"], {"moe.gate_up_proj": 1}
         )
-        self.assertTrue(
+        self.assertFalse(
             any("flat string list" in warning for warning in result["warnings"]),
             result["warnings"],
         )
+
+    def test_family_autodetect_from_model_type_and_layer_count(self) -> None:
+        """Gemma4 serving artifacts strip _name_or_path; detect via model_type + num_hidden_layers."""
+        self._write_json(
+            "config.json",
+            {
+                "model_type": "gemma4_text",
+                "architectures": ["Gemma4ForCausalLM"],
+                "num_hidden_layers": 30,
+                "num_experts": 128,
+                "quantization_config": {
+                    "modules_in_block_to_quantize": [
+                        "moe.gate_up_proj",
+                        "moe.down_proj",
+                    ]
+                },
+            },
+        )
+        self._write_json(
+            "model.safetensors.index.json",
+            {
+                "weight_map": {
+                    "model.layers.0.moe.gate_up_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.moe.gate_up_proj.scales": "model-00001-of-00001.safetensors",
+                    "model.layers.0.moe.gate_up_proj.qzeros": "model-00001-of-00001.safetensors",
+                }
+            },
+        )
+        self._touch("model-00001-of-00001.safetensors")
+
+        result = validator.validate_artifact(self.artifact, requested_layout="auto")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["family"], "gemma4-26b-a4b")
+        self.assertEqual(result["checks"]["detected_family"], "gemma4-26b-a4b")
+
+    def test_family_autodetect_variant_discrimination_by_layer_count(self) -> None:
+        """Same model_type but num_hidden_layers=42 must resolve to gemma4-31b."""
+        self._write_json(
+            "config.json",
+            {
+                "model_type": "gemma4_text",
+                "architectures": ["Gemma4ForCausalLM"],
+                "num_hidden_layers": 42,
+                "quantization_config": {
+                    "modules_in_block_to_quantize": [
+                        "moe.gate_up_proj",
+                        "moe.down_proj",
+                    ]
+                },
+            },
+        )
+        self._write_json(
+            "model.safetensors.index.json",
+            {
+                "weight_map": {
+                    "model.layers.0.moe.gate_up_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.moe.gate_up_proj.scales": "model-00001-of-00001.safetensors",
+                    "model.layers.0.moe.gate_up_proj.qzeros": "model-00001-of-00001.safetensors",
+                }
+            },
+        )
+        self._touch("model-00001-of-00001.safetensors")
+
+        result = validator.validate_artifact(self.artifact, requested_layout="auto")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["family"], "gemma4-31b")
+        self.assertEqual(result["checks"]["detected_family"], "gemma4-31b")
 
     def test_required_and_forbidden_quantized_modules(self) -> None:
         self._seed_base_config(
@@ -169,10 +244,15 @@ class ValidateQuantizedArtifactTests(unittest.TestCase):
         )
         self._touch("model-00001-of-00001.safetensors")
 
-        result = validator.validate_artifact(self.artifact, requested_layout="hf-native")
+        result = validator.validate_artifact(
+            self.artifact, requested_layout="hf-native"
+        )
         self.assertFalse(result["ok"])
         self.assertTrue(
-            any("only accepted for layout=vllm-gptq" in error for error in result["errors"]),
+            any(
+                "only accepted for layout=vllm-gptq" in error
+                for error in result["errors"]
+            ),
             result["errors"],
         )
 
@@ -181,7 +261,9 @@ class ValidateQuantizedArtifactTests(unittest.TestCase):
             model_name="google/gemma-4-31b-it",
             quantization_config={
                 "format": "compressed-tensors",
-                "modules_in_block_to_quantize": [["self_attn.q_proj", "self_attn.k_proj"]],
+                "modules_in_block_to_quantize": [
+                    ["self_attn.q_proj", "self_attn.k_proj"]
+                ],
             },
         )
         self._write_json(
@@ -202,11 +284,15 @@ class ValidateQuantizedArtifactTests(unittest.TestCase):
     def test_single_file_safetensors_fallback(self) -> None:
         self._seed_base_config(
             quantization_config={
-                "modules_in_block_to_quantize": [["self_attn.q_proj", "self_attn.k_proj"]]
+                "modules_in_block_to_quantize": [
+                    ["self_attn.q_proj", "self_attn.k_proj"]
+                ]
             }
         )
         self._touch("model.safetensors")
-        result = validator.validate_artifact(self.artifact, requested_layout="hf-native")
+        result = validator.validate_artifact(
+            self.artifact, requested_layout="hf-native"
+        )
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["checks"]["shard_mode"], "single")
 
