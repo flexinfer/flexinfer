@@ -23,8 +23,27 @@ spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
+  # Cache PVC migration (2026-04-18): switched from the default 3-replica
+  # Longhorn storage class to single-replica local NVMe to stop
+  # mmap-driven weight loads from stalling on cross-node replica reads
+  # (shard-31 stall incident, services/flexinfer#53). Matches the
+  # qwen35-35b-a3b pattern: local-path + hostPath + SharedPVC.
+  #
+  # PersistentVolumeClaim.spec.storageClassName is immutable, so this
+  # Flux reconcile alone will NOT migrate the existing
+  # gemma4-26b-a4b-gptq-cache PVC. An operator must: (1) scale the
+  # primary Model to zero, (2) delete the existing -cache PVC,
+  # (3) wait for Flux to reconcile the new spec so the controller
+  # recreates the cache PVC with local-path, (4) wait for the
+  # controller cache-copy job to restage the ~17 GiB artifact from the
+  # source PVC (gemma4-26b-a4b-gptq, nvme-1r-gpu), (5) scale back to
+  # minReplicas=1. Full runbook in .loom/ or the follow-up issue; this
+  # manifest change is the durable half of the fix.
   cache:
     strategy: SharedPVC
+    storageClass: local-path
+    hostPath: /var/lib/flexinfer/models
+    size: 50Gi
   gpu:
     vendor: amd
     count: 1
