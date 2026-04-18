@@ -1,0 +1,113 @@
+# Gemma4 26B-A4B dense GPTQ rebuild on cblevins-5930k
+# ("option C" / issue #53 A1-full / quantized-artifact promotion gate).
+#
+# Parallel to deploy/modelcaches/gemma4-26b-a4b-gptq.yaml: same source
+# (google/gemma-4-26B-A4B-it), same MoE abliteration config, but pinned to the
+# currently-idle cblevins-5930k node and with denseModulePolicy=validate
+# enabled. The intent is to prove (or disprove) that a fully-quantized
+# attention/MLP dense GPTQ artifact passes per-layer cosine ≥ 0.98 vs the FP16
+# baseline. If it does:
+#   - artifact size shrinks from ~17.7 GiB (MoE INT4 + FP16 attention) to
+#     ~10 GiB (fully INT4), freeing VRAM budget for 32K+ context on the
+#     primary serving manifest without long-context kernel fallbacks,
+#   - the existing gemma4-26b-a4b-gptq ModelCache on cblevins-7900xtx stays
+#     untouched and keeps serving until we explicitly swap the Model CR's
+#     source path.
+#
+# Why cblevins-5930k and not cblevins-7900xtx:
+#   - 7900xtx is currently serving gemma4-26b-a4b-gptq (primary) + the 32K
+#     canary. A 12–24 h re-quant would compete for the dGPU and disrupt serving.
+#   - 5930k is gfx1100 as well (single discrete 7900 XTX, no iGPU), GPU
+#     currently idle (flexinfer.ai/gpu.util=0.00, free-memory=24087 MiB).
+#   - Both nodes are covered by the gfx1100 GPUProfile so the same runtime
+#     image + env overrides apply.
+#
+# Why not radeonvii:
+#   - Currently running gemma4-31b-gptq quantization (phase=Quantizing). GPU
+#     free-memory reports 36 MiB. No room for a second large quant job.
+#   - 16 GB VRAM vs 5930k's 24 GB; 26B-A4B quant benefits from the extra VRAM
+#     headroom under GPTQModel's per-layer flow.
+#
+# Output location:
+#   The controller writes to a format-derived subdirectory of the source cache
+#   PVC. denseModulePolicy=validate triggers the "versioned hybrid" directory
+#   naming convention (e.g. gptq-w4-g128-dense-v1) — separate from the
+#   attnfp16-clean / hybrid-v10 artifacts on the 7900xtx PVC so there's no
+#   collision even if the two PVCs are ever merged.
+#
+# Budget:
+#   - Download BF16 ≈ 27–30 GiB (HF → PVC). 60–90 min on local-path NFS.
+#   - Abliteration ≈ 1–2 h on gfx1100 with 44 GiB CPU + disk-offload save.
+#   - GPTQ quant ≈ 12–24 h (128 experts × 3 modules × 30 layers per memory
+#     gemma4-moe-quant.md). CRD timeout budget is 43200 (12 h). Controller
+#     DefaultActiveDeadlineSeconds is 86400 (24 h) so we can go to ~24 h total
+#     if needed by raising timeoutSeconds later.
+#
+# Safety:
+#   - ablitateLmHead remains false (streaming safetensors save corruption bug
+#     for lm_head under disk-offload is still outstanding).
+#   - normThreshold=100 aborts abliteration if refusal norm > 100 (matches the
+#     main manifest).
+#   - denseModulePolicy=validate is the gate: any layer with dense cosine
+#     < denseModuleCosineThreshold is dropped from the GPTQ module set and
+#     stays at source precision. A failed sweep produces an artifact that is
+#     still usable but falls back to the hybrid layout.
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: gemma4-26b-a4b-gptq-dense
+  namespace: flexinfer-system
+spec:
+  source: "google/gemma-4-26B-A4B-it"
+  storageStrategy: SharedPVC
+  storageSize: "96Gi"
+  clusterStorageClassName: nvme-1r-gpu
+  secretRef: "hf-token"
+  nodeSelector:
+    flexinfer.ai/gpu.arch: gfx1100
+    kubernetes.io/hostname: cblevins-5930k
+  download:
+    maxMemoryGB: 16
+    hfTransfer: false
+    backoffLimit: 3
+  abliteration:
+    numSamples: 256
+    targetLayers: "auto"
+    weightMatrices:
+      - o_proj
+    useGPU: true
+    # 5930k has 57 GiB allocatable RAM but co-tenants (litellm, openwebui,
+    # whisper, weaviate, etc.) occupy ~12–15 GiB. Stay below the gfx1100
+    # GPUProfile ceiling so the pod scheduler doesn't evict serving pods.
+    maxMemoryGB: 44
+    timeoutSeconds: 14400
+    nodeSelector:
+      flexinfer.ai/gpu.arch: gfx1100
+      kubernetes.io/hostname: cblevins-5930k
+    normThreshold: "100"
+    ablitateLmHead: false
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    # The whole point of this rebuild: validate dense (attention + MLP) GPTQ
+    # per-layer cosine against the FP16 baseline. Layers passing the threshold
+    # get emitted as INT4; layers below it stay at source precision. Produces
+    # an artifact that is safe to promote only if the full module set passes.
+    denseModulePolicy: validate
+    denseModuleCosineThreshold: "0.98"
+    useGPU: true
+    maxMemoryGB: 44
+    timeoutSeconds: 43200
+    nodeSelector:
+      flexinfer.ai/gpu.arch: gfx1100
+      kubernetes.io/hostname: cblevins-5930k
+    calibration:
+      maxSeqLen: 2048
+      maxSamples: 512
+  retentionPriority: 40
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85
