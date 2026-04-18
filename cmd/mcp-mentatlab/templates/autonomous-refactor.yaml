@@ -1,0 +1,49 @@
+# Autonomous refactor DAG flow template (F7 v1).
+#
+# Shipped as an in-repo seed for MentatLab. The contract is enforced by the
+# pkg/mentatlab autonomous validator: every write edge (agent_spawn, shell,
+# git_*) must pass through a human_gate or review_gate node on its path from
+# the flow start, so no write can land without a human review step.
+#
+# F7 v2 (actual DAG execution via the mcp-mentatlab proxy or engine) is a
+# follow-up. This template + the validator are callable standalone today.
+id: autonomous-refactor
+version: 1
+description: Autonomous refactor with human review gate before any write.
+nodes:
+  - id: plan
+    type: llm
+    agent: claude-code      # v1 single-agent; v2 may introduce multi-agent plan fanout.
+    output: plan
+  - id: spawn
+    type: agent_spawn
+    input: plan
+    output: diff
+  - id: verify
+    type: shell
+    command: make test && make lint
+    input: diff
+    output: verify_result
+  - id: review_gate
+    type: human_gate
+    input: { diff, verify_result }
+    required: true
+  - id: commit
+    type: shell
+    command: git commit -am "{{ plan.summary }}"
+    after: review_gate
+  - id: push
+    type: shell
+    command: git push
+    after: commit
+  - id: open_pr
+    type: shell
+    command: glab mr create --fill
+    after: push
+edges:
+  - { from: plan, to: spawn }
+  - { from: spawn, to: verify }
+  - { from: verify, to: review_gate }
+  - { from: review_gate, to: commit }
+  - { from: commit, to: push }
+  - { from: push, to: open_pr }

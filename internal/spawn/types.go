@@ -66,9 +66,19 @@ const (
 	StatusCompleted Status = "completed"
 )
 
+// Agent type discriminators for Request.AgentType. The mentatlab-node value
+// tags a spawn that originates from an autonomous MentatLab DAG node (F7).
+// v1 is a stub path validated by DispatchDAGNode; full engine integration is
+// a follow-up.
+const (
+	AgentTypeMentatLabNode = "mentatlab-node"
+)
+
 // Request contains the parameters for spawning a headless agent.
 type Request struct {
-	AgentType       string  `json:"agent_type"`       // "claude-code", "codex", "gemini"
+	// AgentType is one of "claude-code", "codex", "gemini", or
+	// AgentTypeMentatLabNode for autonomous DAG-originated spawns.
+	AgentType       string  `json:"agent_type"`
 	Namespace       string  `json:"namespace"`        // Agent context namespace.
 	Branch          string  `json:"branch"`           // Git branch to work on.
 	BaseBranch      string  `json:"base_branch"`      // Base branch for worktree.
