@@ -204,7 +204,7 @@ struct ContentView: View {
             .tag(AppTab.dashboard)
 
             peopleTab
-                .tabItem { Label("People", systemImage: "person.2.wave.2") }
+                .tabItem { Label("Agents", systemImage: "person.2.wave.2") }
                 .tag(AppTab.people)
 
             NavigationStack {
@@ -256,7 +256,7 @@ struct ContentView: View {
                 Label("Dashboard", systemImage: "gauge.open.with.lines.needle.33percent")
                     .contentShape(Rectangle())
                     .onTapGesture { selectedTab = .dashboard }
-                Label("People", systemImage: "person.2.wave.2")
+                Label("Agents", systemImage: "person.2.wave.2")
                     .contentShape(Rectangle())
                     .onTapGesture { selectedTab = .people }
                 Label("Work", systemImage: "square.grid.2x2")
@@ -343,14 +343,14 @@ struct ContentView: View {
         VStack(spacing: 6) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .center, spacing: 12) {
-                    Text("People")
+                    Text("Agents")
                         .font(.title.bold())
                         .foregroundStyle(LoomColors.textPrimary)
 
                     Spacer(minLength: 8)
 
-                    Picker("People Section", selection: $selectedPeopleSection) {
-                        Text("Agents").tag(PeopleSection.agents)
+                    Picker("Agents Section", selection: $selectedPeopleSection) {
+                        Text("Roster").tag(PeopleSection.agents)
                         Text("Sessions").tag(PeopleSection.sessions)
                     }
                     .pickerStyle(.segmented)
@@ -358,8 +358,8 @@ struct ContentView: View {
                 }
 
                 Text(selectedPeopleSection == .agents
-                     ? "Active agents and their sessions."
-                     : "Live sessions that need attention.")
+                     ? "Every agent on your fleet — live, idle, offline."
+                     : "Agent sessions across every namespace.")
                     .font(.caption)
                     .foregroundStyle(LoomColors.textSecondary)
                     .lineLimit(1)
