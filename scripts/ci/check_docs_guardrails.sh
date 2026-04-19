@@ -69,9 +69,23 @@ fi
 code_pattern='^(cmd/|internal/|pkg/|scripts/|Makefile$|go\.mod$|go\.sum$|\.gitlab-ci\.yml$|\.github/workflows/)'
 docs_pattern='^(README\.md$|CHANGELOG\.md$|ROADMAP\.md$|AGENTS\.md$|docs/)'
 
-# Generated/build artifacts that match code_pattern but don't require docs.
-# These are machine-produced outputs, not user-facing code changes.
-generated_pattern='(/dist/|/testdata/|_golden\.|\.min\.js$|\.min\.css$|\.snap$)'
+# Generated/build artifacts AND test-only files that match code_pattern but
+# don't require user-facing documentation. Machine-produced outputs and
+# internal test code are not visible to product users, so CHANGELOG drift
+# driven by these classes produces noise instead of signal.
+#
+# Classes:
+#   /dist/            - compiled frontend bundles
+#   /testdata/        - Go test fixtures
+#   _golden\.         - contract-golden snapshots
+#   \.min\.(js|css)$  - minified bundles
+#   \.snap$           - frontend snapshot tests
+#   _test\.go$        - Go unit/integration tests
+#   _test\.py$        - Python tests
+#   ^test_.*\.py$     - Python tests (pytest naming)
+#   _mock\.go$        - Go test mocks
+#   /mocks/           - Go mock directories
+generated_pattern='(/dist/|/testdata/|_golden\.|\.min\.js$|\.min\.css$|\.snap$|_test\.go$|_test\.py$|(^|/)test_[^/]+\.py$|_mock\.go$|/mocks/)'
 
 code_changes="$(printf '%s\n' "$changed_files" | grep -E "$code_pattern" || true)"
 docs_changes="$(printf '%s\n' "$changed_files" | grep -E "$docs_pattern" || true)"
