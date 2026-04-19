@@ -46,7 +46,15 @@ spec:
     size: 50Gi
   gpu:
     vendor: amd
-    count: 1
+    # count=2 is REQUIRED on cblevins-7900xtx. The node exposes the discrete
+    # 7900 XTX AND the Raphael iGPU both as amd.com/gpu (allocatable=2). With
+    # count=1 the AMD device plugin can hand this pod the iGPU slot, and
+    # `hipVisibleDevices="0"` then pins inference onto the iGPU → immediate
+    # "Memory access fault by GPU node-1 ... Page not present" on engine init.
+    # Claim BOTH plugin slots so nothing co-tenants the iGPU; hipVisibleDevices
+    # then deterministically selects the dGPU (plugin-local index 0).
+    # Originally added in 4dae96b9; regressed in 6f6e9a98. Do not lower.
+    count: 2
     vramEstimateMB: 16000
     shared: 7900xtx-textgen
     priority: 200
