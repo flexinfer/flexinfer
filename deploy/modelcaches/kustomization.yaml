@@ -14,7 +14,8 @@ resources:
   # - omnicoder-9b-gptq.yaml         # omnicoder-9b-gptq (disabled; OCI cache in use)
 
   # === Active Abliteration + GPTQ pipelines (Download → Abliterate → Quantize → Publish) ===
-  - gemma4-26b-a4b-gptq.yaml        # gemma4-26b-a4b-gptq (radeonvii)
+  - gemma4-26b-a4b-gptq.yaml        # gemma4-26b-a4b-gptq (cblevins-7900xtx)
+  - gemma4-26b-a4b-gptq-dense.yaml  # gemma4-26b-a4b-gptq-dense (cblevins-5930k, denseModulePolicy=validate canary — issue #53 C)
   - gemma4-31b-gptq.yaml            # gemma4-31b-gptq (radeonvii)
 
   # === Legacy OCI pull caches disabled with the old Qwen rollout ===
