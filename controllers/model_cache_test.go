@@ -1417,6 +1417,111 @@ func TestEnsureQuantizationWithGPUTolerationsAdded(t *testing.T) {
 	}
 }
 
+// TestEnsureCachePvcUIDChangeForceRecopy — #53 regression.
+//
+// When an operator migrates spec.cache.storageClass (e.g. Longhorn →
+// local-path), the PVC must be deleted + recreated because
+// PersistentVolumeClaim.spec.storageClassName is immutable. The recreated
+// PVC has the same name but a new UID, and an empty backing directory.
+// Before this check, the controller saw the completed cache-copy Job from
+// the previous PVC, treated cache.Ready as true, and serving pods mounted
+// the empty PVC → CrashLoopBackOff with path-not-found errors.
+//
+// This test asserts the controller deletes the stale cache-copy Job and
+// creates a fresh one when the cache PVC UID changes.
+func TestEnsureCachePvcUIDChangeForceRecopy(t *testing.T) {
+	const oldUID = "old-pvc-uid-9999"
+	const newUID = "new-pvc-uid-1111"
+
+	oldJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pvc-uid-drift-cache-copy",
+			Namespace: "flexinfer-system",
+			Annotations: map[string]string{
+				AnnotationSource:      "pvc://drift-source/variant",
+				AnnotationCachePvcUID: oldUID,
+			},
+		},
+		Status: batchv1.JobStatus{Succeeded: 1},
+	}
+
+	// Recreated cache PVC: same name as before, new UID.
+	newCachePVC := cachePVC("pvc-uid-drift-cache", "flexinfer-system")
+	newCachePVC.UID = types.UID(newUID)
+
+	model := modelWithCache("pvc-uid-drift", "flexinfer-system", "pvc://drift-source/variant", &aiv1alpha2.CacheSpec{
+		Strategy: "SharedPVC",
+	})
+	r, cl := newModelCacheReconciler(t,
+		model,
+		sourcePVC("drift-source", "flexinfer-system", corev1.ClaimBound),
+		newCachePVC,
+		oldJob,
+	)
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "vllm"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if ready {
+		t.Fatal("ensureCache() ready = true, want false — stale job should be deleted + new one created")
+	}
+
+	// The stale Succeeded job should have been deleted and replaced with a
+	// fresh one annotated with the new PVC UID.
+	newJob := &batchv1.Job{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: "pvc-uid-drift-cache-copy", Namespace: model.Namespace}, newJob); err != nil {
+		t.Fatalf("expected new copy job to be created: %v", err)
+	}
+	if got := newJob.Annotations[AnnotationCachePvcUID]; got != newUID {
+		t.Errorf("new job %s annotation = %q, want %q", AnnotationCachePvcUID, got, newUID)
+	}
+	if newJob.Status.Succeeded != 0 {
+		t.Errorf("new job should not have inherited stale Succeeded count; got %d", newJob.Status.Succeeded)
+	}
+}
+
+// TestEnsureCachePvcUIDMatch — companion to the drift test: when the
+// recorded UID matches the current PVC UID, the existing Succeeded job
+// is honored and ready=true. Guards against false positives where every
+// reconcile would recreate the job.
+func TestEnsureCachePvcUIDMatch(t *testing.T) {
+	const matchingUID = "matching-pvc-uid-0000"
+
+	existingJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pvc-uid-match-cache-copy",
+			Namespace: "flexinfer-system",
+			Annotations: map[string]string{
+				AnnotationSource:      "pvc://match-source/variant",
+				AnnotationCachePvcUID: matchingUID,
+			},
+		},
+		Status: batchv1.JobStatus{Succeeded: 1},
+	}
+
+	cp := cachePVC("pvc-uid-match-cache", "flexinfer-system")
+	cp.UID = types.UID(matchingUID)
+
+	model := modelWithCache("pvc-uid-match", "flexinfer-system", "pvc://match-source/variant", &aiv1alpha2.CacheSpec{
+		Strategy: "SharedPVC",
+	})
+	r, _ := newModelCacheReconciler(t,
+		model,
+		sourcePVC("match-source", "flexinfer-system", corev1.ClaimBound),
+		cp,
+		existingJob,
+	)
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "vllm"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if !ready {
+		t.Fatal("ensureCache() ready = false, want true — matching UID should honor Succeeded job")
+	}
+}
+
 // =============================================================================
 // Helper: newModelCacheReconciler with client.Object variadic (reuse from
 // model_cache_reconcile_test.go via same package).

@@ -44,6 +44,7 @@ const (
 	AnnotationSource      = "flexinfer.ai/source"
 	AnnotationCacheKind   = "flexinfer.ai/cache-kind"
 	AnnotationCachePVC    = "flexinfer.ai/cache-pvc"
+	AnnotationCachePvcUID = "flexinfer.ai/cache-pvc-uid"
 	AnnotationCacheDest   = "flexinfer.ai/cache-dest"
 	AnnotationCachePath   = "flexinfer.ai/cache-path"
 	AnnotationCacheSrcPVC = "flexinfer.ai/cache-src-pvc"
