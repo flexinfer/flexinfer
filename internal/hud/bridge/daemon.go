@@ -711,10 +711,19 @@ func (c *DaemonClient) CallTool(name string, args map[string]any) (json.RawMessa
 }
 
 // CallToolWithTimeout is like CallTool but uses a per-call timeout override.
+// The timeout is applied to both the client-side RPC deadline AND propagated
+// to the daemon via the `_timeout` params field, so the daemon can cap its
+// own recv deadline and release the per-server call mutex when the caller
+// gives up. Without this propagation the daemon would hold the mutex for its
+// default `LOOM_DAEMON_TOOL_TIMEOUT` (60s), starving other callers that were
+// willing to wait only a few seconds.
 func (c *DaemonClient) CallToolWithTimeout(name string, args map[string]any, timeout time.Duration) (json.RawMessage, error) {
 	params := map[string]any{
 		"name":      name,
 		"arguments": args,
+	}
+	if timeout > 0 {
+		params["_timeout"] = timeout.String()
 	}
 	return c.CallWithTimeout("tools/call", params, timeout)
 }
