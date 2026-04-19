@@ -58,22 +58,20 @@ func (c *LocalCaller) CallWithTimeout(method string, params any, timeout time.Du
 	return resp.Result, nil
 }
 
+// localCallerDefaultTimeout matches the 30s default used by Call() /
+// CallWithTimeout() when no explicit timeout is supplied. Propagating this
+// to the daemon via `_timeout` keeps the per-server call mutex from being
+// held for the daemon's default 60s when the HUD caller has already given up.
+const localCallerDefaultTimeout = 30 * time.Second
+
 // CallTool invokes an MCP tool in-process.
 func (c *LocalCaller) CallTool(name string, args map[string]any) (json.RawMessage, error) {
-	params := map[string]any{
-		"name":      name,
-		"arguments": args,
-	}
-	return c.Call("tools/call", params)
+	return c.Call("tools/call", buildToolCallParams(name, args, localCallerDefaultTimeout))
 }
 
 // CallToolWithTimeout invokes an MCP tool with a timeout.
 func (c *LocalCaller) CallToolWithTimeout(name string, args map[string]any, timeout time.Duration) (json.RawMessage, error) {
-	params := map[string]any{
-		"name":      name,
-		"arguments": args,
-	}
-	return c.CallWithTimeout("tools/call", params, timeout)
+	return c.CallWithTimeout("tools/call", buildToolCallParams(name, args, timeout), timeout)
 }
 
 // CircuitOpen always returns false — in-process calls have no transport failures.
