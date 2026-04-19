@@ -241,6 +241,14 @@ func registerRepositoryTools(srv *mcpscaffold.Server, gl *gitlabServer) {
 					"type":        "integer",
 					"description": "Page number (default 1).",
 				},
+				"order_by": map[string]any{
+					"type":        "string",
+					"description": "Sort field. Defaults to last_activity_at; accepts id, name, path, created_at, updated_at.",
+				},
+				"sort": map[string]any{
+					"type":        "string",
+					"description": "Sort direction asc|desc. Defaults to desc.",
+				},
 			},
 		},
 	}, gl.handleListProjects)
@@ -421,11 +429,14 @@ func (g *gitlabServer) handleListProjects(ctx context.Context, args map[string]a
 	membership := v.Bool("membership", false)
 	perPage := normalizePerPage(v.Int("per_page", 20), 20)
 	page := normalizePage(v.Int("page", 1))
+	orderBy := v.String("order_by", "last_activity_at")
+	sortDir := v.String("sort", "desc")
 	// No required fields, but still validate in case of future additions
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
-	path := fmt.Sprintf("/projects?per_page=%d&page=%d", perPage, page)
+	path := fmt.Sprintf("/projects?per_page=%d&page=%d&order_by=%s&sort=%s",
+		perPage, page, url.QueryEscape(orderBy), url.QueryEscape(sortDir))
 	if owned {
 		path += "&owned=true"
 	}

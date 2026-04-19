@@ -28,9 +28,9 @@ func (p *callPipeline) transportFailure(stage string, err error, start time.Time
 	if p.target == router.TargetLocal {
 		switch stage {
 		case "send":
-			p.daemon.logger.Warn("local server send failed; restarting", "server", p.serverName, "error", err)
+			p.daemon.logger.Warn("local server send failed; restarting", "server", p.serverName, "tool", p.toolName, "error", err)
 		default:
-			p.daemon.logger.Warn("local server recv failed; restarting", "server", p.serverName, "error", err)
+			p.daemon.logger.Warn("local server recv failed; restarting", "server", p.serverName, "tool", p.toolName, "error", err)
 		}
 		p.recordTransportSpanEvent("daemon.server.restart_triggered",
 			attribute.String("server.name", p.serverName),
@@ -57,7 +57,7 @@ func (p *callPipeline) transportFailure(stage string, err error, start time.Time
 		p.daemon.scheduleToolRefresh()
 	} else if p.target == router.TargetHub && p.daemon.hubPool != nil {
 		p.daemon.logger.Warn("hub transport failure; clearing pool",
-			"server", p.serverName, "stage", stage, "error", err)
+			"server", p.serverName, "tool", p.toolName, "stage", stage, "error", err)
 		p.recordTransportSpanEvent("daemon.proxy.hub_pool_cleared",
 			attribute.String("server.name", p.serverName),
 			attribute.String("failure.stage", stage),

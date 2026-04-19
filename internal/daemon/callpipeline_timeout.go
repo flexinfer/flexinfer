@@ -15,8 +15,21 @@ import (
 	"github.com/crb2nu/loom/pkg/env"
 )
 
+// minCallerTimeoutOverride is the smallest `_timeout` a caller can request.
+// Clamping to a very short floor prevents accidental sub-millisecond values
+// while still letting deadline-bounded callers (HUD monitors with 3s budgets)
+// release the per-server call mutex promptly when they give up.
+const minCallerTimeoutOverride = 500 * time.Millisecond
+
 // resolveToolCallTimeout determines the RPC timeout for a tools/call.
 // Priority: explicit _timeout field > auto-derived from arguments > env/default.
+//
+// An explicit `_timeout` is treated as a true caller-supplied deadline and is
+// clamped only against the `minCallerTimeoutOverride` floor and
+// `maxDaemonToolRPCTimeout` ceiling — NOT the env default. Auto-derived
+// argument hints still clamp to the env default as a minimum so a tool's
+// own small internal timeout doesn't shrink the daemon's RPC budget below
+// what the operator configured as baseline.
 func resolveToolCallTimeout(params callParams) time.Duration {
 	method := params.Method
 	if strings.TrimSpace(method) == "" {
@@ -33,7 +46,7 @@ func resolveToolCallTimeout(params callParams) time.Duration {
 	// 1. Explicit _timeout field (highest priority).
 	if hint := strings.TrimSpace(params.Timeout); hint != "" {
 		if d, err := time.ParseDuration(hint); err == nil && d > 0 {
-			return clampTimeout(d, base, maxDaemonToolRPCTimeout)
+			return clampTimeout(d, minCallerTimeoutOverride, maxDaemonToolRPCTimeout)
 		}
 		// Invalid _timeout: fall through to auto-derive.
 	}

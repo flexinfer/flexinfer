@@ -294,6 +294,10 @@ func toolTextResult(payload string) json.RawMessage {
 }
 
 func TestAgentBridge_ListPipelineProjects_PaginatesAndDedupes(t *testing.T) {
+	// Disable the default cap so this test exercises pagination + dedupe
+	// without the top-N short-circuit interfering.
+	t.Setenv("HUD_PIPELINE_MAX_PROJECTS", "0")
+
 	var pagesRequested []int
 	caller := &recordingCaller{
 		callToolWithTimeoutFn: func(name string, args map[string]any, timeout time.Duration) (json.RawMessage, error) {
@@ -302,6 +306,12 @@ func TestAgentBridge_ListPipelineProjects_PaginatesAndDedupes(t *testing.T) {
 			}
 			if got, _ := args["membership"].(bool); !got {
 				t.Fatalf("expected membership=true, got %#v", args["membership"])
+			}
+			if got, _ := args["order_by"].(string); got != "last_activity_at" {
+				t.Fatalf("expected order_by=last_activity_at, got %#v", args["order_by"])
+			}
+			if got, _ := args["sort"].(string); got != "desc" {
+				t.Fatalf("expected sort=desc, got %#v", args["sort"])
 			}
 			page, _ := args["page"].(int)
 			pagesRequested = append(pagesRequested, page)
@@ -338,6 +348,50 @@ func TestAgentBridge_ListPipelineProjects_PaginatesAndDedupes(t *testing.T) {
 		if projects[i-1] > projects[i] {
 			t.Fatalf("results not sorted: %s > %s", projects[i-1], projects[i])
 		}
+	}
+}
+
+func TestAgentBridge_ListPipelineProjects_DefaultCapAt20(t *testing.T) {
+	var pagesRequested []int
+	caller := &recordingCaller{
+		callToolWithTimeoutFn: func(name string, args map[string]any, timeout time.Duration) (json.RawMessage, error) {
+			page, _ := args["page"].(int)
+			pagesRequested = append(pagesRequested, page)
+			// Return 100 projects on page 1 so the cap (20) short-circuits before page 2.
+			return toolTextResult(`{"projects":[` +
+				pageProjects(100, 0, "services/") +
+				`],"count":100}`), nil
+		},
+	}
+	bridge := NewAgentBridge(caller)
+	projects, err := bridge.ListPipelineProjects(context.Background(), 5)
+	if err != nil {
+		t.Fatalf("ListPipelineProjects: %v", err)
+	}
+	if len(projects) != 20 {
+		t.Fatalf("expected default cap of 20 projects, got %d", len(projects))
+	}
+	if len(pagesRequested) != 1 {
+		t.Fatalf("expected cap to short-circuit after 1 page, got %d pages", len(pagesRequested))
+	}
+}
+
+func TestAgentBridge_ListPipelineProjects_CapOverrideViaEnv(t *testing.T) {
+	t.Setenv("HUD_PIPELINE_MAX_PROJECTS", "5")
+	caller := &recordingCaller{
+		callToolWithTimeoutFn: func(name string, args map[string]any, timeout time.Duration) (json.RawMessage, error) {
+			return toolTextResult(`{"projects":[` +
+				pageProjects(100, 0, "services/") +
+				`],"count":100}`), nil
+		},
+	}
+	bridge := NewAgentBridge(caller)
+	projects, err := bridge.ListPipelineProjects(context.Background(), 5)
+	if err != nil {
+		t.Fatalf("ListPipelineProjects: %v", err)
+	}
+	if len(projects) != 5 {
+		t.Fatalf("expected env-overridden cap of 5, got %d", len(projects))
 	}
 }
 

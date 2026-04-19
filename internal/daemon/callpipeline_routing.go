@@ -68,7 +68,7 @@ func (p *callPipeline) retryLocalAfterLocalSendFailure(err error, req *mcp.Messa
 	p.daemon.router.RecordFailure(p.serverName, p.target, err)
 	p.daemon.metrics.RecordServerFailure(p.serverName, p.targetStr, "send")
 	p.daemon.logger.Warn("local transport send failed; reconnecting and retrying once",
-		"server", p.serverName, "error", err)
+		"server", p.serverName, "tool", p.toolName, "error", err)
 
 	p.daemon.pool.ClearServer(p.serverName)
 	if p.daemon.procMgr != nil {
@@ -102,7 +102,7 @@ func (p *callPipeline) connectTargetWithTransportRetry(target router.Target, rea
 	}
 
 	p.daemon.logger.Warn("local reconnect returned closed transport; retrying dial once",
-		"server", p.serverName, "error", err)
+		"server", p.serverName, "tool", p.toolName, "error", err)
 	p.resetLocalServer("connect_retry_after_closed_transport")
 	p.releaseConnection()
 
@@ -308,6 +308,7 @@ func (p *callPipeline) retryHubAfterHubFailure(stage string, err error, req *mcp
 
 	p.daemon.logger.Warn("hub transport failed; reconnecting and retrying once",
 		"server", p.serverName,
+		"tool", p.toolName,
 		"stage", stage,
 		"error", err)
 	p.recordTransportSpanEvent("daemon.proxy.hub_retry_after_transport_failure",

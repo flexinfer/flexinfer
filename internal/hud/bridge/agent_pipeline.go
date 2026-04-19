@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -441,12 +444,22 @@ func unmarshalGitLabResult(raw json.RawMessage, target any) error {
 	return UnmarshalToolResult(raw, target)
 }
 
-// ListPipelineProjects returns all GitLab projects the authenticated user has
-// access to (as `path_with_namespace` strings like `services/loom-core`). It
-// pages through up to `maxPages` × 100 results and is intended for one-shot
-// startup-time discovery of the project list to pass to a PipelineMonitor —
-// so callers don't have to hardcode an exhaustive `HUD_PIPELINE_PROJECTS`
-// env var to get pipelines surfaced in the dashboard.
+// defaultPipelineProjectCap bounds auto-discovery so the pipeline monitor's
+// per-tick fanout stays manageable against the daemon's per-server call lock.
+// Each project costs 2 gitlab tool calls per tick (running + pending), and the
+// daemon serializes calls per server, so an unbounded 60+ project list forces
+// many calls to time out waiting on the lock.
+const defaultPipelineProjectCap = 20
+
+// ListPipelineProjects returns the GitLab projects the authenticated user has
+// access to (as `path_with_namespace` strings like `services/loom-core`),
+// sorted by most recent activity and capped at `defaultPipelineProjectCap`
+// (override via `HUD_PIPELINE_MAX_PROJECTS`, 0/negative disables the cap).
+//
+// Pages through up to `maxPages` × 100 results but stops early once the cap is
+// reached. Intended for one-shot startup-time discovery of the project list
+// to pass to a PipelineMonitor — so callers don't have to hardcode an
+// exhaustive `HUD_PIPELINE_PROJECTS` env var.
 //
 // Returns an empty slice (no error) when the gitlab MCP server isn't
 // reachable — callers should treat that as "no projects to monitor" and
@@ -455,6 +468,12 @@ func unmarshalGitLabResult(raw json.RawMessage, target any) error {
 func (a *AgentBridge) ListPipelineProjects(ctx context.Context, maxPages int) ([]string, error) {
 	if maxPages <= 0 {
 		maxPages = 5 // up to 500 projects by default
+	}
+	cap := defaultPipelineProjectCap
+	if raw := os.Getenv("HUD_PIPELINE_MAX_PROJECTS"); raw != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil {
+			cap = n
+		}
 	}
 	type projectEntry struct {
 		PathWithNamespace string `json:"path_with_namespace"`
@@ -471,6 +490,8 @@ func (a *AgentBridge) ListPipelineProjects(ctx context.Context, maxPages int) ([
 			"membership": true,
 			"per_page":   100,
 			"page":       page,
+			"order_by":   "last_activity_at",
+			"sort":       "desc",
 		}, projectListToolTimeout)
 		if err != nil {
 			// First page failure is a real error; later pages just stop iteration.
@@ -499,6 +520,12 @@ func (a *AgentBridge) ListPipelineProjects(ctx context.Context, maxPages int) ([
 			}
 			seen[path] = struct{}{}
 			out = append(out, path)
+			if cap > 0 && len(out) >= cap {
+				break
+			}
+		}
+		if cap > 0 && len(out) >= cap {
+			break
 		}
 		// Short-circuit when the page isn't full — avoids a trailing
 		// empty request on the last partial page.

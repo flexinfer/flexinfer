@@ -3093,6 +3093,16 @@ func TestResolveToolCallTimeout(t *testing.T) {
 			want: 5 * time.Minute,
 		},
 		{
+			name: "explicit _timeout honors short caller deadline below daemon default",
+			p:    callParams{Method: "tools/call", Timeout: "3s"},
+			want: 3 * time.Second,
+		},
+		{
+			name: "explicit _timeout clamped up to minCallerTimeoutOverride floor",
+			p:    callParams{Method: "tools/call", Timeout: "100ms"},
+			want: minCallerTimeoutOverride,
+		},
+		{
 			name: "explicit _timeout capped at max",
 			p:    callParams{Method: "tools/call", Timeout: "30m"},
 			want: maxDaemonToolRPCTimeout,

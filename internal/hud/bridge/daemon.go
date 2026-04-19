@@ -701,20 +701,41 @@ func (c *DaemonClient) OTelStatus() (*OTelStatusResult, error) {
 	return &result, nil
 }
 
-// CallTool invokes an MCP tool through the daemon's tools/call method.
-func (c *DaemonClient) CallTool(name string, args map[string]any) (json.RawMessage, error) {
+// buildToolCallParams builds the tools/call params map for a tool invocation.
+// Caller must provide `timeout`: the deadline to propagate to the daemon via
+// the `_timeout` params field so the daemon can cap its own recv deadline and
+// release the per-server call mutex when the caller gives up. Without this
+// propagation the daemon falls back to `LOOM_DAEMON_TOOL_TIMEOUT` (60s),
+// starving other callers with shorter deadlines queued on the same mutex.
+// A zero `timeout` omits `_timeout` and lets the daemon use its own default.
+func buildToolCallParams(name string, args map[string]any, timeout time.Duration) map[string]any {
 	params := map[string]any{
 		"name":      name,
 		"arguments": args,
 	}
-	return c.Call("tools/call", params)
+	if timeout > 0 {
+		params["_timeout"] = timeout.String()
+	}
+	return params
+}
+
+// defaultToolTimeout returns the client's configured default RPC timeout,
+// held behind the daemon-client mutex.
+func (c *DaemonClient) defaultToolTimeout() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.callTimeout
+}
+
+// CallTool invokes an MCP tool through the daemon's tools/call method.
+// The client's default call timeout is propagated to the daemon so the
+// per-server mutex is held no longer than the caller is willing to wait.
+func (c *DaemonClient) CallTool(name string, args map[string]any) (json.RawMessage, error) {
+	return c.Call("tools/call", buildToolCallParams(name, args, c.defaultToolTimeout()))
 }
 
 // CallToolWithTimeout is like CallTool but uses a per-call timeout override.
+// See buildToolCallParams for why the timeout is propagated to the daemon.
 func (c *DaemonClient) CallToolWithTimeout(name string, args map[string]any, timeout time.Duration) (json.RawMessage, error) {
-	params := map[string]any{
-		"name":      name,
-		"arguments": args,
-	}
-	return c.CallWithTimeout("tools/call", params, timeout)
+	return c.CallWithTimeout("tools/call", buildToolCallParams(name, args, timeout), timeout)
 }
