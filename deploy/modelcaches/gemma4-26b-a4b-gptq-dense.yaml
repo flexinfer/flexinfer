@@ -66,7 +66,7 @@ spec:
   secretRef: "hf-token"
   nodeSelector:
     flexinfer.ai/gpu.arch: gfx1100
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-7900xtx
   download:
     maxMemoryGB: 16
     hfTransfer: false
@@ -77,14 +77,14 @@ spec:
     weightMatrices:
       - o_proj
     useGPU: true
-    # 5930k has 57 GiB allocatable RAM but co-tenants (litellm, openwebui,
-    # whisper, weaviate, etc.) occupy ~12–15 GiB. Stay below the gfx1100
-    # GPUProfile ceiling so the pod scheduler doesn't evict serving pods.
+    # 5930k abliteration starved the host (etcd voter + control-plane co-tenants);
+    # 7900xtx is currently idle (primary serving Models in serverless idle).
+    # Move 2026-04-19 during incident; revisit if 5930k stabilizes.
     maxMemoryGB: 44
     timeoutSeconds: 14400
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
-      kubernetes.io/hostname: cblevins-5930k
+      kubernetes.io/hostname: cblevins-7900xtx
     normThreshold: "100"
     ablitateLmHead: false
   quantization:
@@ -104,7 +104,7 @@ spec:
     timeoutSeconds: 43200
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
-      kubernetes.io/hostname: cblevins-5930k
+      kubernetes.io/hostname: cblevins-7900xtx
     calibration:
       maxSeqLen: 2048
       maxSamples: 512
