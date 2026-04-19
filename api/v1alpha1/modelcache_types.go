@@ -564,6 +564,67 @@ type PublishSpec struct {
 	// Example: ["latest", "stable"].
 	// +optional
 	AdditionalTags []string `json:"additionalTags,omitempty"`
+
+	// Validate, when set with Enabled=true, runs the artifact validator
+	// (build/scripts/validate_quantized_artifact.py) as a one-shot Job before
+	// the publish job is created. Publish only proceeds if the validator
+	// returns ok=true. Failure marks the publish phase failed and emits a
+	// PublishValidationFailed event with the validator's error list.
+	// +optional
+	Validate *PublishValidateSpec `json:"validate,omitempty"`
+}
+
+// PublishValidateSpec configures the pre-publish artifact validation gate.
+// +kubebuilder:object:generate=true
+type PublishValidateSpec struct {
+	// Enabled gates whether the validator runs. Defaults to false so existing
+	// PublishSpecs without a Validate block keep their previous behavior.
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// Layout selects the artifact layout the validator should expect. "auto"
+	// lets the validator infer it from tensor patterns. Use a specific value
+	// (e.g. "vllm-gptq") to require that layout.
+	// +kubebuilder:validation:Enum=auto;hf-native;vllm-gptq;compressed-tensors
+	// +kubebuilder:default="auto"
+	// +optional
+	Layout *string `json:"layout,omitempty"`
+
+	// Family selects the model family for family-specific validation rules.
+	// "auto" lets the validator infer from config.json. Use a registered
+	// family ID (e.g. "gemma4-26b-a4b") to enforce family-specific checks.
+	// +kubebuilder:default="auto"
+	// +optional
+	Family *string `json:"family,omitempty"`
+
+	// Image overrides the validator container image. Defaults to the runtime
+	// image (which bundles the validator script at
+	// /opt/flexinfer/scripts/validate_quantized_artifact.py).
+	// +optional
+	Image *string `json:"image,omitempty"`
+
+	// MaxMemoryGB caps the validator container memory. Validator is CPU-only,
+	// reads safetensors metadata, and parses tensor shape headers — 4 GB is
+	// generous. Defaults to 4.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=64
+	// +optional
+	MaxMemoryGB *int32 `json:"maxMemoryGB,omitempty"`
+
+	// TimeoutSeconds caps the validator job runtime. Defaults to 600
+	// (10 min) which is comfortably above the observed ~10s metadata pass
+	// for a 26B GPTQ artifact.
+	// +kubebuilder:validation:Minimum=60
+	// +kubebuilder:validation:Maximum=3600
+	// +optional
+	TimeoutSeconds *int64 `json:"timeoutSeconds,omitempty"`
+
+	// FailOnWarnings, when true, treats validator warnings as errors and
+	// blocks publish. Defaults to false (warnings are recorded in status
+	// but do not block).
+	// +kubebuilder:default=false
+	// +optional
+	FailOnWarnings *bool `json:"failOnWarnings,omitempty"`
 }
 
 // PublishStatus records the result of model publishing.
@@ -606,6 +667,41 @@ type PublishStatus struct {
 	// Most recent digest is first.
 	// +optional
 	PreviousDigests []string `json:"previousDigests,omitempty"`
+
+	// Validate records the result of the pre-publish artifact validation gate
+	// when spec.publish.validate.enabled=true. Always populated for gated
+	// publishes, regardless of pass/fail.
+	// +optional
+	Validate *PublishValidateStatus `json:"validate,omitempty"`
+}
+
+// PublishValidateStatus records the outcome of the pre-publish validator job.
+// +kubebuilder:object:generate=true
+type PublishValidateStatus struct {
+	// Ok is true when the validator returned ok=true (no errors, and no
+	// warnings if FailOnWarnings was set).
+	Ok bool `json:"ok"`
+
+	// Layout is the resolved artifact layout the validator detected or used.
+	// +optional
+	Layout string `json:"layout,omitempty"`
+
+	// Family is the resolved model family the validator detected or used.
+	// +optional
+	Family string `json:"family,omitempty"`
+
+	// Errors is the list of validator errors that gated publish. Empty when Ok.
+	// +optional
+	Errors []string `json:"errors,omitempty"`
+
+	// Warnings is the list of validator warnings (non-blocking unless
+	// FailOnWarnings was set in the spec).
+	// +optional
+	Warnings []string `json:"warnings,omitempty"`
+
+	// ValidatedAt records when the validator job completed.
+	// +optional
+	ValidatedAt *metav1.Time `json:"validatedAt,omitempty"`
 }
 
 // DownloadSpec configures the model download job.
