@@ -14,8 +14,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/lifecycle"
-	"github.com/crb2nu/loom/pkg/mcplog"
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -38,18 +37,14 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	logger := mcplog.NewDefault()
-	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-neo4j", logger)
-	if err !=
-		nil {
-		logger.Warn("OTel tracer init failed",
-
-			"error",
-			err)
+	srv, cleanup, err := mcpscaffold.NewServer(ctx, "mcp-neo4j", version,
+		mcpscaffold.WithInstructions("Neo4j graph database MCP server. Execute Cypher queries, inspect schema, and explore graph data."),
+	)
+	if err != nil {
+		return err
 	}
-
-	defer func() { _ = shutdownTracer(ctx) }()
-	tracer := mcpotel.Tracer(tp, "mcp-neo4j")
+	defer func() { _ = cleanup(ctx) }()
+	logger := srv.Logger
 
 	uri := os.Getenv("NEO4J_URI")
 	if uri == "" {
@@ -88,13 +83,10 @@ func run(ctx context.Context) error {
 			_ = ns.driver.Close(ctx)
 		}
 	}()
-	logger.Info("starting server", "name", "mcp-neo4j", "version", version, "uri", uri)
-
-	server := mcp.NewServer("mcp-neo4j", version)
-	server.SetInstructions("Neo4j graph database MCP server. Execute Cypher queries, inspect schema, and explore graph data.")
+	logger.Info("neo4j driver initialized", "uri", uri)
 
 	// neo4j_query
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "neo4j_query",
 		Description: "Execute a Cypher query (read-only by default)",
 		InputSchema: mcp.InputSchema{
@@ -123,12 +115,10 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"query"},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, ns.handleQuery)
 
-		// neo4j_schema
-		tracer, "neo4j_query", ns.handleQuery))
-
-	server.AddTool(mcp.Tool{
+	// neo4j_schema
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "neo4j_schema",
 		Description: "Get database schema (labels, relationship types, property keys)",
 		InputSchema: mcp.InputSchema{
@@ -140,12 +130,10 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, ns.handleSchema)
 
-		// neo4j_labels
-		tracer, "neo4j_schema", ns.handleSchema))
-
-	server.AddTool(mcp.Tool{
+	// neo4j_labels
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "neo4j_labels",
 		Description: "List all node labels in the database",
 		InputSchema: mcp.InputSchema{
@@ -157,12 +145,10 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, ns.handleLabels)
 
-		// neo4j_relationship_types
-		tracer, "neo4j_labels", ns.handleLabels))
-
-	server.AddTool(mcp.Tool{
+	// neo4j_relationship_types
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "neo4j_relationship_types",
 		Description: "List all relationship types in the database",
 		InputSchema: mcp.InputSchema{
@@ -174,12 +160,10 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, mcpotel.TracedToolHandler(tracer,
+	}, ns.handleRelationshipTypes)
 
-		// neo4j_indexes
-		"neo4j_relationship_types", ns.handleRelationshipTypes))
-
-	server.AddTool(mcp.Tool{
+	// neo4j_indexes
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "neo4j_indexes",
 		Description: "List all indexes in the database",
 		InputSchema: mcp.InputSchema{
@@ -191,12 +175,10 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, ns.handleIndexes)
 
-		// neo4j_constraints
-		tracer, "neo4j_indexes", ns.handleIndexes))
-
-	server.AddTool(mcp.Tool{
+	// neo4j_constraints
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "neo4j_constraints",
 		Description: "List all constraints in the database",
 		InputSchema: mcp.InputSchema{
@@ -208,12 +190,10 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, ns.handleConstraints)
 
-		// neo4j_count_nodes
-		tracer, "neo4j_constraints", ns.handleConstraints))
-
-	server.AddTool(mcp.Tool{
+	// neo4j_count_nodes
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "neo4j_count_nodes",
 		Description: "Count nodes, optionally filtered by label",
 		InputSchema: mcp.InputSchema{
@@ -229,12 +209,10 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, ns.handleCountNodes)
 
-		// neo4j_count_relationships
-		tracer, "neo4j_count_nodes", ns.handleCountNodes))
-
-	server.AddTool(mcp.Tool{
+	// neo4j_count_relationships
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "neo4j_count_relationships",
 		Description: "Count relationships, optionally filtered by type",
 		InputSchema: mcp.InputSchema{
@@ -250,12 +228,10 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, mcpotel.TracedToolHandler(tracer,
+	}, ns.handleCountRelationships)
 
-		// neo4j_node_properties
-		"neo4j_count_relationships", ns.handleCountRelationships))
-
-	server.AddTool(mcp.Tool{
+	// neo4j_node_properties
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "neo4j_node_properties",
 		Description: "Get property keys for nodes with a specific label",
 		InputSchema: mcp.InputSchema{
@@ -272,21 +248,19 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"label"},
 		},
-	}, mcpotel.TracedToolHandler(tracer,
+	}, ns.handleNodeProperties)
 
-		// neo4j_databases
-		"neo4j_node_properties", ns.handleNodeProperties))
-
-	server.AddTool(mcp.Tool{
+	// neo4j_databases
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "neo4j_databases",
 		Description: "List all databases (Enterprise Edition)",
 		InputSchema: mcp.InputSchema{
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "neo4j_databases", ns.handleDatabases))
+	}, ns.handleDatabases)
 
-	return server.Run(ctx)
+	return srv.Run(ctx)
 }
 
 func (s *neo4jServer) ensureDriver(ctx context.Context) error {
