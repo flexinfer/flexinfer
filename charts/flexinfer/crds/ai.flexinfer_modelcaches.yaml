@@ -476,6 +476,73 @@ spec:
                     maximum: 43200
                     minimum: 300
                     type: integer
+                  validate:
+                    description: |-
+                      Validate, when set with Enabled=true, runs the artifact validator
+                      (build/scripts/validate_quantized_artifact.py) as a one-shot Job before
+                      the publish job is created. Publish only proceeds if the validator
+                      returns ok=true. Failure marks the publish phase failed and emits a
+                      PublishValidationFailed event with the validator's error list.
+                    properties:
+                      enabled:
+                        default: false
+                        description: |-
+                          Enabled gates whether the validator runs. Defaults to false so existing
+                          PublishSpecs without a Validate block keep their previous behavior.
+                        type: boolean
+                      failOnWarnings:
+                        default: false
+                        description: |-
+                          FailOnWarnings, when true, treats validator warnings as errors and
+                          blocks publish. Defaults to false (warnings are recorded in status
+                          but do not block).
+                        type: boolean
+                      family:
+                        default: auto
+                        description: |-
+                          Family selects the model family for family-specific validation rules.
+                          "auto" lets the validator infer from config.json. Use a registered
+                          family ID (e.g. "gemma4-26b-a4b") to enforce family-specific checks.
+                        type: string
+                      image:
+                        description: |-
+                          Image overrides the validator container image. Defaults to the runtime
+                          image (which bundles the validator script at
+                          /opt/flexinfer/scripts/validate_quantized_artifact.py).
+                        type: string
+                      layout:
+                        default: auto
+                        description: |-
+                          Layout selects the artifact layout the validator should expect. "auto"
+                          lets the validator infer it from tensor patterns. Use a specific value
+                          (e.g. "vllm-gptq") to require that layout.
+                        enum:
+                        - auto
+                        - hf-native
+                        - vllm-gptq
+                        - compressed-tensors
+                        type: string
+                      maxMemoryGB:
+                        description: |-
+                          MaxMemoryGB caps the validator container memory. Validator is CPU-only,
+                          reads safetensors metadata, and parses tensor shape headers — 4 GB is
+                          generous. Defaults to 4.
+                        format: int32
+                        maximum: 64
+                        minimum: 1
+                        type: integer
+                      timeoutSeconds:
+                        description: |-
+                          TimeoutSeconds caps the validator job runtime. Defaults to 600
+                          (10 min) which is comfortably above the observed ~10s metadata pass
+                          for a 26B GPTQ artifact.
+                        format: int64
+                        maximum: 3600
+                        minimum: 60
+                        type: integer
+                    required:
+                    - enabled
+                    type: object
                 required:
                 - targets
                 type: object
@@ -925,6 +992,45 @@ spec:
                     description: StartedAt is the timestamp when the publish job started.
                     format: date-time
                     type: string
+                  validate:
+                    description: |-
+                      Validate records the result of the pre-publish artifact validation gate
+                      when spec.publish.validate.enabled=true. Always populated for gated
+                      publishes, regardless of pass/fail.
+                    properties:
+                      errors:
+                        description: Errors is the list of validator errors that gated
+                          publish. Empty when Ok.
+                        items:
+                          type: string
+                        type: array
+                      family:
+                        description: Family is the resolved model family the validator
+                          detected or used.
+                        type: string
+                      layout:
+                        description: Layout is the resolved artifact layout the validator
+                          detected or used.
+                        type: string
+                      ok:
+                        description: |-
+                          Ok is true when the validator returned ok=true (no errors, and no
+                          warnings if FailOnWarnings was set).
+                        type: boolean
+                      validatedAt:
+                        description: ValidatedAt records when the validator job completed.
+                        format: date-time
+                        type: string
+                      warnings:
+                        description: |-
+                          Warnings is the list of validator warnings (non-blocking unless
+                          FailOnWarnings was set in the spec).
+                        items:
+                          type: string
+                        type: array
+                    required:
+                    - ok
+                    type: object
                 type: object
               quantization:
                 description: |-
