@@ -287,7 +287,7 @@ echo "Artifact present at file $TARGET"
 	return job, nil
 }
 
-func (r *ModelReconciler) jobForCacheCopy(model *aiv1alpha2.Model, sourcePVCName, cachePVCName, subPath string) (*batchv1.Job, error) {
+func (r *ModelReconciler) jobForCacheCopy(model *aiv1alpha2.Model, sourcePVCName, cachePVCName, cachePvcUID, subPath string) (*batchv1.Job, error) {
 	subPath = strings.Trim(subPath, "/")
 	src := "/src"
 	dst := "/models"
@@ -347,6 +347,7 @@ echo "Copy complete."
 			AnnotationCacheKind:   "copy",
 			AnnotationCacheSrcPVC: sourcePVCName,
 			AnnotationCachePVC:    cachePVCName,
+			AnnotationCachePvcUID: cachePvcUID,
 			AnnotationCachePath:   subPath,
 		},
 		NodeSelector:  nodeSelector,

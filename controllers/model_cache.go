@@ -127,12 +127,27 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 						}
 						err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
 					}
+					// Drift-detection: if the cache PVC was recreated (e.g. an
+					// operator migrated spec.cache.storageClass, which requires
+					// deleting + recreating the PVC), the existing cache-copy
+					// Job's recorded UID won't match the new PVC. Delete it so
+					// a fresh copy runs against the empty PVC. See #53.
+					if err == nil && job.Annotations != nil {
+						recorded := job.Annotations[AnnotationCachePvcUID]
+						current := string(cachePVC.UID)
+						if recorded != "" && current != "" && recorded != current {
+							if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
+								return false, delErr
+							}
+							err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+						}
+					}
 					if errors.IsNotFound(err) {
 						subPath := ""
 						if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
 							subPath = sp
 						}
-						newJob, err := r.jobForCacheCopy(model, pvcName, cachePVCName, subPath)
+						newJob, err := r.jobForCacheCopy(model, pvcName, cachePVCName, string(cachePVC.UID), subPath)
 						if err != nil {
 							return false, err
 						}
