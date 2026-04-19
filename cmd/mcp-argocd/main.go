@@ -17,8 +17,7 @@ import (
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcperror"
-	"github.com/crb2nu/loom/pkg/mcplog"
-	"github.com/crb2nu/loom/pkg/mcpotel"
+	"github.com/crb2nu/loom/pkg/mcpscaffold"
 	"github.com/crb2nu/loom/pkg/validate"
 )
 
@@ -48,31 +47,17 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	logger := mcplog.NewDefault()
-	tp, shutdownTracer, err := mcpotel.InitTracer(ctx, "mcp-argocd",
-		logger,
+	srv, cleanup, err := mcpscaffold.NewServer(ctx, "mcp-argocd", version,
+		mcpscaffold.WithInstructions("ArgoCD GitOps application management tools. Configure with ARGOCD_SERVER and ARGOCD_AUTH_TOKEN. Set ARGOCD_INSECURE=true to skip TLS verification."),
 	)
-	if err !=
-		nil {
-		logger.Warn("OTel tracer init failed",
-
-			"error",
-			err)
+	if err != nil {
+		return err
 	}
-	defer func() {
-
-		_ = shutdownTracer(ctx)
-	}()
-	tracer :=
-		mcpotel.Tracer(tp, "mcp-argocd")
-
-	logger.Info("starting server", "name", "mcp-argocd", "version", version, "url", argocdURL)
-
-	server := mcp.NewServer("mcp-argocd", version)
-	server.SetInstructions("ArgoCD GitOps application management tools. Configure with ARGOCD_SERVER and ARGOCD_AUTH_TOKEN. Set ARGOCD_INSECURE=true to skip TLS verification.")
+	defer func() { _ = cleanup(ctx) }()
+	srv.Logger.Info("argocd endpoint configured", "url", argocdURL)
 
 	// Applications
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_list_apps",
 		Description: "List all ArgoCD applications",
 		InputSchema: mcp.InputSchema{
@@ -88,9 +73,9 @@ func run(ctx context.Context) error {
 				},
 			},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "argocd_list_apps", handleListApps))
+	}, handleListApps)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_get_app",
 		Description: "Get details of a specific application",
 		InputSchema: mcp.InputSchema{
@@ -103,9 +88,9 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "argocd_get_app", handleGetApp))
+	}, handleGetApp)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_app_resources",
 		Description: "List resources managed by an application",
 		InputSchema: mcp.InputSchema{
@@ -118,9 +103,9 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "argocd_app_resources", handleAppResources))
+	}, handleAppResources)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_app_manifests",
 		Description: "Get rendered manifests for an application",
 		InputSchema: mcp.InputSchema{
@@ -137,9 +122,9 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "argocd_app_manifests", handleAppManifests))
+	}, handleAppManifests)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_app_diff",
 		Description: "Get diff between live and desired state",
 		InputSchema: mcp.InputSchema{
@@ -152,9 +137,9 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "argocd_app_diff", handleAppDiff))
+	}, handleAppDiff)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_sync_app",
 		Description: "Sync an application to its target state",
 		InputSchema: mcp.InputSchema{
@@ -179,9 +164,9 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "argocd_sync_app", handleSyncApp))
+	}, handleSyncApp)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_refresh_app",
 		Description: "Refresh application state from Git",
 		InputSchema: mcp.InputSchema{
@@ -198,9 +183,9 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "argocd_refresh_app", handleRefreshApp))
+	}, handleRefreshApp)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_app_history",
 		Description: "Get sync history for an application",
 		InputSchema: mcp.InputSchema{
@@ -213,21 +198,20 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleAppHistory)
 
-		// Projects
-		tracer, "argocd_app_history", handleAppHistory))
+	// Projects
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_list_projects",
 		Description: "List all ArgoCD projects",
 		InputSchema: mcp.InputSchema{
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "argocd_list_projects", handleListProjects))
+	}, handleListProjects)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_get_project",
 		Description: "Get details of a specific project",
 		InputSchema: mcp.InputSchema{
@@ -240,21 +224,20 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"name"},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleGetProject)
 
-		// Repositories
-		tracer, "argocd_get_project", handleGetProject))
+	// Repositories
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_list_repos",
 		Description: "List configured Git repositories",
 		InputSchema: mcp.InputSchema{
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "argocd_list_repos", handleListRepos))
+	}, handleListRepos)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_get_repo",
 		Description: "Get details of a specific repository",
 		InputSchema: mcp.InputSchema{
@@ -267,21 +250,20 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"repo"},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleGetRepo)
 
-		// Clusters
-		tracer, "argocd_get_repo", handleGetRepo))
+	// Clusters
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_list_clusters",
 		Description: "List configured Kubernetes clusters",
 		InputSchema: mcp.InputSchema{
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "argocd_list_clusters", handleListClusters))
+	}, handleListClusters)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_get_cluster",
 		Description: "Get details of a specific cluster",
 		InputSchema: mcp.InputSchema{
@@ -294,30 +276,29 @@ func run(ctx context.Context) error {
 			},
 			Required: []string{"server"},
 		},
-	}, mcpotel.TracedToolHandler(
+	}, handleGetCluster)
 
-		// Settings
-		tracer, "argocd_get_cluster", handleGetCluster))
+	// Settings
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_settings",
 		Description: "Get ArgoCD server settings",
 		InputSchema: mcp.InputSchema{
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "argocd_settings", handleSettings))
+	}, handleSettings)
 
-	server.AddTool(mcp.Tool{
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "argocd_version",
 		Description: "Get ArgoCD server version",
 		InputSchema: mcp.InputSchema{
 			Type:       "object",
 			Properties: map[string]any{},
 		},
-	}, mcpotel.TracedToolHandler(tracer, "argocd_version", handleVersion))
+	}, handleVersion)
 
-	return server.Run(ctx)
+	return srv.Run(ctx)
 }
 
 // argocdRequest makes an authenticated request to ArgoCD API
