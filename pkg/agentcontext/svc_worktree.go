@@ -31,6 +31,7 @@ type WorktreeSvc struct {
 	// Cross-domain callbacks (wired by Service).
 	setPresenceWorktreeID   func(agentID, worktreeID string)
 	clearPresenceWorktreeID func(agentID, worktreeID string)
+	getSession              func(ctx context.Context, sessionID string) (*Session, error)
 }
 
 // NewWorktreeSvc creates a new WorktreeSvc.
@@ -53,15 +54,16 @@ func (wt *WorktreeSvc) Allocate(ctx context.Context, args map[string]any) (*mcp.
 	baseBranch := v.String("base_branch", "HEAD")
 	purpose := v.String("purpose", "")
 	worktreePath := v.String("worktree_path", "")
+	explicitRepoPath := v.String("repo_path", "")
 	ttlHours := v.Int("ttl_hours", 0)
 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
-	repoPath := wt.cfg.GitRepoPath
-	if repoPath == "" {
-		return mcp.ErrorResult(fmt.Errorf("AGENT_CONTEXT_GIT_REPO_PATH or REPO_PATH must be set")), nil
+	repoPath, resolveErr := wt.resolveRepoPath(ctx, explicitRepoPath, sessionID)
+	if resolveErr != nil {
+		return mcp.ErrorResult(resolveErr), nil
 	}
 
 	// Determine worktree path
@@ -123,6 +125,47 @@ func (wt *WorktreeSvc) Allocate(ctx context.Context, args map[string]any) (*mcp.
 	}
 
 	return mcp.JSONResult(result)
+}
+
+// resolveRepoPath picks the git repo to operate on for Allocate, in priority
+// order: explicit arg > session.WorkingDir > cfg.GitRepoPath. The chosen path
+// is verified with `git rev-parse --show-toplevel` so callers get an actionable
+// error instead of a raw "not a git repository" from git worktree add.
+func (wt *WorktreeSvc) resolveRepoPath(ctx context.Context, explicitRepoPath, sessionID string) (string, error) {
+	type attempt struct {
+		source string
+		path   string
+	}
+	attempts := []attempt{{"repo_path arg", strings.TrimSpace(explicitRepoPath)}}
+	if wt.getSession != nil && sessionID != "" {
+		if sess, err := wt.getSession(ctx, sessionID); err == nil && sess != nil {
+			attempts = append(attempts, attempt{"session.working_dir", strings.TrimSpace(sess.WorkingDir)})
+		}
+	}
+	attempts = append(attempts, attempt{"AGENT_CONTEXT_GIT_REPO_PATH/REPO_PATH", strings.TrimSpace(wt.cfg.GitRepoPath)})
+
+	var tried []string
+	for _, a := range attempts {
+		if a.path == "" {
+			tried = append(tried, fmt.Sprintf("%s=(unset)", a.source))
+			continue
+		}
+		if out, err := wt.RunGit(ctx, a.path, "rev-parse", "--show-toplevel"); err == nil {
+			resolved := strings.TrimSpace(out)
+			if resolved == "" {
+				resolved = a.path
+			}
+			return resolved, nil
+		} else {
+			tried = append(tried, fmt.Sprintf("%s=%q (not a git repo: %v)", a.source, a.path, err))
+		}
+	}
+	return "", fmt.Errorf(
+		"could not resolve a git repository for worktree allocation; tried: %s. "+
+			"Pass the 'repo_path' argument, set session.working_dir on agent_session_start, "+
+			"or set AGENT_CONTEXT_GIT_REPO_PATH / REPO_PATH on the agent-context server",
+		strings.Join(tried, "; "),
+	)
 }
 
 // Release releases a worktree assignment.

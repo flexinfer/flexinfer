@@ -45,6 +45,10 @@ func registerWorktreeTools(server *mcp.Server, svc *agentcontext.Service, tracer
 					"type":        "string",
 					"description": "Custom worktree path (default: auto-generated).",
 				},
+				"repo_path": map[string]any{
+					"type":        "string",
+					"description": "Absolute path to the git repository to allocate from. Overrides session.working_dir and AGENT_CONTEXT_GIT_REPO_PATH/REPO_PATH.",
+				},
 				"ttl_hours": map[string]any{
 					"type":        "integer",
 					"description": "Max lifetime in hours. Worktree is auto-orphaned after this period (0 = no limit).",

@@ -197,6 +197,10 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	// Initialize session sub-service
 	svc.sess = NewSessionSvc(qdrantReg.Get(CollSessions), cfg, svc.logger, svc.metrics)
 
+	// Allow Allocate to fall back to session.working_dir when no explicit
+	// repo_path / cfg.GitRepoPath is available.
+	svc.worktrees.getSession = svc.getSession
+
 	// Wire session cleanup callbacks
 	svc.sess.releaseClaimsForAgent = func(agentID string) int {
 		return svc.claims.ReleaseAllForAgent(agentID)
