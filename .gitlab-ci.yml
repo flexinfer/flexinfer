@@ -283,6 +283,7 @@ guardrails:docs-cli:
       BASE_BRANCH="${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-$CI_DEFAULT_BRANCH}"
       git fetch -q origin "${BASE_BRANCH}:${BASE_BRANCH}" || true
       DOCS_CHECK_BASE_REF="${BASE_BRANCH}" bash scripts/ci/check_docs_guardrails.sh
+      bash scripts/ci/check_docs_guardrails_test.sh
       bash scripts/ci/check_flexinfer_site_integration.sh
     - go run ./cmd/loom --help >/dev/null
     - go run ./cmd/loom proxy --help >/dev/null
