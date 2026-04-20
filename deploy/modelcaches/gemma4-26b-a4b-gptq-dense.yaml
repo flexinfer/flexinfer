@@ -14,13 +14,31 @@
 #     untouched and keeps serving until we explicitly swap the Model CR's
 #     source path.
 #
-# Why cblevins-5930k and not cblevins-7900xtx:
-#   - 7900xtx is currently serving gemma4-26b-a4b-gptq (primary) + the 32K
-#     canary. A 12–24 h re-quant would compete for the dGPU and disrupt serving.
-#   - 5930k is gfx1100 as well (single discrete 7900 XTX, no iGPU), GPU
-#     currently idle (flexinfer.ai/gpu.util=0.00, free-memory=24087 MiB).
-#   - Both nodes are covered by the gfx1100 GPUProfile so the same runtime
-#     image + env overrides apply.
+# History (2026-04-19/20):
+#   - Originally pinned to cblevins-5930k (this file's original state).
+#   - 5099ab17 relocated to cblevins-7900xtx after abliterate starved 5930k's
+#     kubelet (control-plane conditions went Unknown; flexinfer controller
+#     lost its leader lease). 7900xtx was idle at that point.
+#   - Later the same day, MR !151 restored the primary serving pod on
+#     cblevins-7900xtx with gpu.count=2 (both amd.com/gpu plugin slots
+#     reserved to pin hipVisibleDevices onto the dGPU). That left no slot
+#     on 7900xtx for a co-tenant quant job → every retry fought the primary
+#     for GPU and the primary crashed on the iGPU. Moving dense back to
+#     5930k is the only gfx1100 slot left.
+#   - Abliteration is already complete (49m51s, started 2026-04-19T16:21Z,
+#     status.abliteration.refusalDirNorm=8.26). The 5930k starvation risk
+#     from 5099ab17 applied to abliterate specifically; only quantization
+#     remains, and its steady-state memory footprint is lower than
+#     abliterate's. maxMemoryGB tightened from 44→28 to stay within the
+#     control-plane's safety margin.
+#
+# Why cblevins-5930k and not cblevins-7900xtx or radeonvii:
+#   - 7900xtx: primary Model CR claims amd.com/gpu=2 (iGPU block), 0 slots free.
+#   - radeonvii: gfx906, Gemma4 tooling not validated on that PyTorch 2.3 /
+#     transformers<5 stack; also currently running gemma4-31b-gptq quantize.
+#   - 5930k: gfx1100 (single dGPU, no iGPU), shared group 5930k-imagegen-textgen
+#     with FluxPony/opus-distill fast-swap. Quant Job sits Pending until
+#     FluxPony idle-scales; accept the tradeoff as a known scheduling window.
 #
 # Why not radeonvii:
 #   - Currently running gemma4-31b-gptq quantization (phase=Quantizing). GPU
@@ -66,7 +84,7 @@ spec:
   secretRef: "hf-token"
   nodeSelector:
     flexinfer.ai/gpu.arch: gfx1100
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-5930k
   download:
     maxMemoryGB: 16
     hfTransfer: false
@@ -77,14 +95,18 @@ spec:
     weightMatrices:
       - o_proj
     useGPU: true
-    # 5930k abliteration starved the host (etcd voter + control-plane co-tenants);
-    # 7900xtx is currently idle (primary serving Models in serverless idle).
-    # Move 2026-04-19 during incident; revisit if 5930k stabilizes.
-    maxMemoryGB: 44
+    # Abliteration already completed on cblevins-7900xtx (2026-04-19 16:21Z,
+    # 49m51s). This stanza is kept aligned with quantization.nodeSelector for
+    # any future re-run; it will not trigger unless the abliterated artifact
+    # on the PVC is invalidated. maxMemoryGB lowered from 44→28 because the
+    # 5099ab17 incident (5930k kubelet starvation) showed the old ceiling
+    # could push this 57 GiB node past the control-plane's cgroup safety
+    # margin. Keep tighter caps on 5930k; raise only if node is quiesced.
+    maxMemoryGB: 28
     timeoutSeconds: 14400
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
-      kubernetes.io/hostname: cblevins-7900xtx
+      kubernetes.io/hostname: cblevins-5930k
     normThreshold: "100"
     ablitateLmHead: false
   quantization:
@@ -100,11 +122,16 @@ spec:
     denseModulePolicy: validate
     denseModuleCosineThreshold: "0.98"
     useGPU: true
-    maxMemoryGB: 44
+    # Tightened from 44→28 (same reasoning as abliteration.maxMemoryGB above):
+    # 5930k has 57 GiB allocatable memory and an active etcd voter + control
+    # plane role; the 5099ab17 incident showed 44 GiB ceilings can tip the
+    # kubelet. Per-layer GPTQ on a 3.8B-active MoE needs only ~18 GiB RSS +
+    # VRAM, so 28 GiB is sufficient with headroom.
+    maxMemoryGB: 28
     timeoutSeconds: 43200
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
-      kubernetes.io/hostname: cblevins-7900xtx
+      kubernetes.io/hostname: cblevins-5930k
     calibration:
       maxSeqLen: 2048
       maxSamples: 512
