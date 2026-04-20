@@ -1,3 +1,22 @@
+# MAINTENANCE WINDOW — 2026-04-19/20
+#
+# Temporarily disabled so the gemma4-26b-a4b-gptq-dense ModelCache can
+# complete its GPTQ quantization job on cblevins-5930k (the only remaining
+# gfx1100 slot after !151 locked both amd.com/gpu plugin slots on 7900xtx
+# for the primary serving pod). Dense quant budget: ~12–24 h per the
+# modelcache manifest comment.
+#
+# The shared-group warm-primary logic in controllers/model_helpers.go
+# should have auto-yielded the GPU once the quant pod appeared, but
+# nodeHasActivePipelineWork only checks scheduled pods (spec.nodeName set)
+# and the quant pod stays Pending until the GPU is free — chicken-and-egg
+# (tracked as a follow-up bug to fix in the controller).
+#
+# Restore steps when dense quant completes:
+#   1. Verify status.phase=Ready on modelcache/gemma4-26b-a4b-gptq-dense.
+#   2. Revert this file (serverless.enabled: true) and delete the
+#      maintenance header. FluxPony cold-starts in ~30s–30m depending on
+#      flash-loader cache state.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -17,7 +36,7 @@ spec:
     priority: 100
     vramEstimateMB: 12000
   serverless:
-    enabled: true
+    enabled: false
     minReplicas: 0
     idleTimeout: 5m
     coldStartTimeout: 30m
@@ -39,7 +58,8 @@ spec:
     scheduler: "euler"
     negativePrompt: "painting, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, deformed, ugly, blurry, bad anatomy, bad proportions, extra limbs, cloned face, skinny, glitchy, double torso, extra arms, extra hands, mangled fingers, missing lips, ugly face, distorted face, extra legs, anime"
     warmupResolutions: "512x512"
-    warmPolicy: primary
+    # warmPolicy: primary — removed for the dense-quant maintenance window;
+    # restore alongside serverless.enabled above.
     compilationCache: "true"
     hipVisibleDevices: "0"
   nodeSelector:
