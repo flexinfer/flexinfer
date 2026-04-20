@@ -12,10 +12,11 @@ import (
 // --- loom/session/open ---
 
 type sessionOpenParams struct {
-	AgentHint      string `json:"agent_hint,omitempty"`
-	HostPID        string `json:"host_pid,omitempty"`
-	Version        string `json:"version,omitempty"`
-	PriorSessionID string `json:"prior_session_id,omitempty"`
+	AgentHint       string `json:"agent_hint,omitempty"`
+	HostPID         string `json:"host_pid,omitempty"`
+	Version         string `json:"version,omitempty"`
+	PriorSessionID  string `json:"prior_session_id,omitempty"`
+	PresenceAgentID string `json:"presence_agent_id,omitempty"`
 }
 
 type sessionOpenResult struct {
@@ -39,14 +40,16 @@ func (d *Daemon) handleSessionOpen(ctx context.Context, msg *mcp.Message) (*mcp.
 	}
 
 	sess := d.sessions.Open(SessionClientInfo{
-		AgentHint: params.AgentHint,
-		HostPID:   params.HostPID,
-		Version:   params.Version,
+		AgentHint:       params.AgentHint,
+		HostPID:         params.HostPID,
+		Version:         params.Version,
+		PresenceAgentID: params.PresenceAgentID,
 	}, params.PriorSessionID)
 
 	span.SetAttributes(
 		attribute.String("session.id", sess.ID),
 		attribute.String("session.agent_hint", params.AgentHint),
+		attribute.String("session.presence_agent_id", params.PresenceAgentID),
 	)
 
 	d.logger.Info("proxy session opened",
@@ -54,6 +57,7 @@ func (d *Daemon) handleSessionOpen(ctx context.Context, msg *mcp.Message) (*mcp.
 		"prior_id", sess.PriorID,
 		"epoch", sess.DaemonEpoch,
 		"agent_hint", params.AgentHint,
+		"presence_agent_id", params.PresenceAgentID,
 	)
 
 	return mcp.NewResponse(msg.ID, sessionOpenResult{

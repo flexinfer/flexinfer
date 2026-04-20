@@ -227,7 +227,12 @@ func runAgentAuthStatus() error {
 	fmt.Println()
 
 	// K8s secret status (best-effort).
-	fmt.Println("  K8s Secrets:")
+	fmt.Println("  K8s Secrets (cluster-owned, preferred):")
+	printK8sSecretStatus("cluster-agent-api-keys", "devbox")
+	printK8sSecretStatus("cluster-agent-auth", "devbox")
+
+	fmt.Println()
+	fmt.Println("  K8s Secrets (legacy, Mac-sourced — DEPRECATED):")
 	printK8sSecretStatus("agent-api-keys", "devbox")
 	printK8sSecretStatus("agent-auth-tokens", "devbox")
 

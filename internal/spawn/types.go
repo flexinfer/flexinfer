@@ -108,7 +108,38 @@ type Request struct {
 	// UseSDKDriver=true; ignored on the legacy CLI path. Defaults to false
 	// for full backwards compatibility with single-shot spawns.
 	MultiTurn bool `json:"multi_turn,omitempty"`
+	// ParentSessionID is the daemon proxy session.ID that originated this
+	// spawn. When non-empty it is exposed to the pod as
+	// LOOM_PARENT_SESSION_ID so CLI session hooks can stitch the spawn's
+	// agent-context session to the caller's proxy session. Optional; leave
+	// empty for standalone spawns or when no proxy session exists (e.g.,
+	// direct K8s jobs, MentatLab DAG nodes).
+	ParentSessionID string `json:"parent_session_id,omitempty"`
 }
+
+// AuthMode describes which cluster credential path the spawned agent was
+// configured to use. Surfaced in HUD spawn detail and used to fail fast
+// before pod start when no credentials are available.
+type AuthMode string
+
+const (
+	// AuthModeClusterOAuth means the agent uses a cluster-owned OAuth
+	// token from ClusterAgentAuthSecret (Slice 2b).
+	AuthModeClusterOAuth AuthMode = "cluster_oauth"
+
+	// AuthModeClusterAPIKey means the agent uses a vendor API key from
+	// ClusterAgentAPIKeysSecret. Default for Slice 2a.
+	AuthModeClusterAPIKey AuthMode = "cluster_api_key"
+
+	// AuthModeClusterServiceAccount means the agent uses a service
+	// account JSON (Gemini path).
+	AuthModeClusterServiceAccount AuthMode = "cluster_service_account"
+
+	// AuthModeMissing means no cluster credentials were resolvable at
+	// spawn time. The spawn fails fast with an actionable error pointing
+	// the operator at `loom auth cluster-set-key`.
+	AuthModeMissing AuthMode = "missing"
+)
 
 // State holds the state of a spawned agent.
 type State struct {
@@ -121,6 +152,9 @@ type State struct {
 	EndedAt   *time.Time             `json:"ended_at,omitempty"`
 	Error     string                 `json:"error,omitempty"`
 	Telemetry *bridge.SpawnTelemetry `json:"telemetry,omitempty"`
+	// AuthMode records which cluster credential path the pod was
+	// configured to use. Populated by the orchestrator before pod start.
+	AuthMode AuthMode `json:"auth_mode,omitempty"`
 }
 
 // IsTerminal returns true if the status represents a terminal spawn state.

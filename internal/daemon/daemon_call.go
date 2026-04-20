@@ -31,7 +31,7 @@ func (d *Daemon) handleCallWithOptions(ctx context.Context, msg *mcp.Message, sk
 	// Reject new calls while daemon is draining.
 	if d.draining.Load() {
 		return newErrorResponse(msg.ID, mcp.InternalError,
-			"daemon is draining, retry after backoff", newGatePipelineError("DAEMON_DRAINING")), nil
+			"daemon is draining, retry after backoff", newDrainingPipelineError()), nil
 	}
 
 	d.activeRPCs.Add(1)

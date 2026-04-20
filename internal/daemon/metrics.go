@@ -69,6 +69,13 @@ type Metrics struct {
 	// Contention metrics
 	CallLockWaitTotal *prometheus.CounterVec
 
+	// Proxy session metrics
+	SessionActive             prometheus.Gauge
+	SessionDaemonEpoch        prometheus.Gauge
+	SessionReapedTotal        prometheus.Counter
+	SessionEvictedTotal       prometheus.Counter
+	SessionEpochMismatchTotal prometheus.Counter
+
 	registry *prometheus.Registry
 }
 
@@ -411,6 +418,48 @@ func NewMetrics() *Metrics {
 		[]string{"server"},
 	)
 
+	// Proxy session metrics
+	m.SessionActive = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "session_active",
+			Help:      "Number of proxy sessions currently in active state",
+		},
+	)
+	m.SessionDaemonEpoch = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "session_daemon_epoch",
+			Help:      "Current daemon epoch (increments on daemon restart)",
+		},
+	)
+	m.SessionReapedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "session_reaped_total",
+			Help:      "Total number of proxy sessions reaped after lease expiry",
+		},
+	)
+	m.SessionEvictedTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "session_evicted_total",
+			Help:      "Total number of proxy sessions evicted (LRU)",
+		},
+	)
+	m.SessionEpochMismatchTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "loom",
+			Subsystem: "daemon",
+			Name:      "session_epoch_mismatch_total",
+			Help:      "Total number of heartbeats rejected due to daemon epoch mismatch",
+		},
+	)
+
 	// Register all metrics
 	m.registry.MustRegister(
 		m.RequestsTotal,
@@ -447,9 +496,39 @@ func NewMetrics() *Metrics {
 		m.EventsDropped,
 		m.ConcurrentCalls,
 		m.CallLockWaitTotal,
+		m.SessionActive,
+		m.SessionDaemonEpoch,
+		m.SessionReapedTotal,
+		m.SessionEvictedTotal,
+		m.SessionEpochMismatchTotal,
 	)
 
 	return m
+}
+
+// UpdateSessionGauges sets the active-session count and daemon epoch gauges.
+// Called from the metrics collector loop.
+func (m *Metrics) UpdateSessionGauges(active int, daemonEpoch int64) {
+	m.SessionActive.Set(float64(active))
+	m.SessionDaemonEpoch.Set(float64(daemonEpoch))
+}
+
+// RecordSessionReaped increments the session-reaped counter by n.
+func (m *Metrics) RecordSessionReaped(n int) {
+	if n <= 0 {
+		return
+	}
+	m.SessionReapedTotal.Add(float64(n))
+}
+
+// RecordSessionEvicted increments the session-evicted (LRU) counter.
+func (m *Metrics) RecordSessionEvicted() {
+	m.SessionEvictedTotal.Inc()
+}
+
+// RecordSessionEpochMismatch increments the epoch-mismatch counter.
+func (m *Metrics) RecordSessionEpochMismatch() {
+	m.SessionEpochMismatchTotal.Inc()
 }
 
 // Handler returns an HTTP handler for the /metrics endpoint.

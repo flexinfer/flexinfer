@@ -282,6 +282,104 @@ func TestSessionManager_ConcurrentAccess(t *testing.T) {
 	}
 }
 
+// mockSessionMetrics counts evict + epoch-mismatch events recorded by the
+// SessionManager. Satisfies the sessionMetricsSink interface.
+type mockSessionMetrics struct {
+	mu       sync.Mutex
+	evicted  int
+	mismatch int
+}
+
+func (m *mockSessionMetrics) RecordSessionEvicted() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.evicted++
+}
+
+func (m *mockSessionMetrics) RecordSessionEpochMismatch() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mismatch++
+}
+
+func TestSessionManager_MetricsSink_EpochMismatch(t *testing.T) {
+	t.Parallel()
+
+	sm := NewSessionManager(100, 10*time.Minute, 1, nil)
+	sink := &mockSessionMetrics{}
+	sm.SetMetrics(sink)
+
+	sess := sm.Open(SessionClientInfo{}, "")
+	if _, err := sm.Heartbeat(sess.ID, 999); err == nil {
+		t.Fatal("expected epoch mismatch error")
+	}
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if sink.mismatch != 1 {
+		t.Fatalf("expected 1 epoch mismatch recorded, got %d", sink.mismatch)
+	}
+	if sink.evicted != 0 {
+		t.Fatalf("expected 0 evictions, got %d", sink.evicted)
+	}
+}
+
+func TestSessionManager_MetricsSink_Eviction(t *testing.T) {
+	t.Parallel()
+
+	// maxSessions=2 forces LRU eviction on the third Open.
+	sm := NewSessionManager(2, 10*time.Minute, 1, nil)
+	sink := &mockSessionMetrics{}
+	sm.SetMetrics(sink)
+
+	sm.Open(SessionClientInfo{}, "")
+	sm.Open(SessionClientInfo{}, "")
+	sm.Open(SessionClientInfo{}, "")
+
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if sink.evicted != 1 {
+		t.Fatalf("expected 1 eviction recorded, got %d", sink.evicted)
+	}
+}
+
+func TestSessionManager_FindByPresenceAgentID(t *testing.T) {
+	t.Parallel()
+
+	sm := NewSessionManager(100, 10*time.Minute, 1, nil)
+	sm.Open(SessionClientInfo{PresenceAgentID: "claude-host-1"}, "")
+	sm.Open(SessionClientInfo{PresenceAgentID: "codex-host-1"}, "")
+	sm.Open(SessionClientInfo{PresenceAgentID: "claude-host-1"}, "")
+
+	got := sm.FindByPresenceAgentID("claude-host-1")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 sessions for claude-host-1, got %d", len(got))
+	}
+	if got[0].ClientInfo.PresenceAgentID != "claude-host-1" {
+		t.Fatalf("unexpected PresenceAgentID %q", got[0].ClientInfo.PresenceAgentID)
+	}
+
+	if got := sm.FindByPresenceAgentID(""); got != nil {
+		t.Fatalf("expected nil for empty id, got %v", got)
+	}
+	if got := sm.FindByPresenceAgentID("nobody"); got != nil {
+		t.Fatalf("expected nil for missing id, got %v", got)
+	}
+}
+
+func TestSessionManager_Snapshot(t *testing.T) {
+	t.Parallel()
+
+	sm := NewSessionManager(100, 10*time.Minute, 1, nil)
+	sm.Open(SessionClientInfo{AgentHint: "a"}, "")
+	sm.Open(SessionClientInfo{AgentHint: "b"}, "")
+
+	snap := sm.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("expected 2 sessions in snapshot, got %d", len(snap))
+	}
+}
+
 func TestSessionManager_Defaults(t *testing.T) {
 	t.Parallel()
 

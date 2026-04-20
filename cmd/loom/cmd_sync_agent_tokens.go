@@ -95,12 +95,25 @@ func newAgentTokenSyncRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Sync file-backed agent tokens now",
-		Long:  "Read local auth files, update SOPS secret, optionally commit+push+reconcile.",
+		Long: `Read local auth files and optionally update the legacy agent-auth-tokens SOPS secret.
+
+DEPRECATED: the --apply path pushes Mac-sourced credentials into the k3s cluster,
+which can clobber cluster-owned OAuth refresh tokens. Use 'loom auth cluster-login'
+and 'loom auth cluster-set-key' to manage cluster credentials independently of
+your Mac Keychain. See .loom/87-product-spec-session-spawning-weaver-2026-04-19.md.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if apply {
+				fmt.Fprintln(os.Stderr,
+					"WARNING: 'loom agent-tokens run --apply' is deprecated. "+
+						"Pushing Mac credentials into the cluster risks clobbering "+
+						"cluster-owned refresh tokens. Use 'loom auth cluster-set-key' "+
+						"or 'loom auth cluster-login' instead. This path will be removed "+
+						"in a future release.")
+			}
 			return runAgentTokenSync(apply)
 		},
 	}
-	cmd.Flags().BoolVar(&apply, "apply", false, "Also commit, push, and reconcile Flux")
+	cmd.Flags().BoolVar(&apply, "apply", false, "Also commit, push, and reconcile Flux (DEPRECATED)")
 	return cmd
 }
 
