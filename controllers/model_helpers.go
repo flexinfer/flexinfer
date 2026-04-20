@@ -141,7 +141,7 @@ func (r *ModelReconciler) nodeHasActivePipelineWork(ctx context.Context, namespa
 
 	for i := range pods.Items {
 		pod := &pods.Items[i]
-		if pod.Spec.NodeName != nodeName {
+		if !podTargetsNode(pod, nodeName) {
 			continue
 		}
 		switch pod.Status.Phase {
@@ -150,6 +150,25 @@ func (r *ModelReconciler) nodeHasActivePipelineWork(ctx context.Context, namespa
 			continue
 		}
 		if isActivePipelinePod(pod) {
+			return true
+		}
+	}
+	return false
+}
+
+// podTargetsNode reports whether pod is either already scheduled to nodeName
+// or is Pending with a nodeSelector pinning it to nodeName. Unscheduled Pending
+// pods have an empty Spec.NodeName, so a naive NodeName comparison misses
+// quant/abliterate jobs blocked on a warm-primary GPU.
+func podTargetsNode(pod *corev1.Pod, nodeName string) bool {
+	if pod == nil || nodeName == "" {
+		return false
+	}
+	if pod.Spec.NodeName == nodeName {
+		return true
+	}
+	if pod.Spec.NodeName == "" && pod.Status.Phase == corev1.PodPending {
+		if pod.Spec.NodeSelector["kubernetes.io/hostname"] == nodeName {
 			return true
 		}
 	}

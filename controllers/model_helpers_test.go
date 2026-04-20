@@ -20,6 +20,7 @@ import (
 	"context"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -606,6 +607,84 @@ func TestCheckAliasConflicts(t *testing.T) {
 		}
 		if cond.Reason != aiv1alpha2.ReasonAliasConflict {
 			t.Errorf("ConfigValid reason = %q, want %q", cond.Reason, aiv1alpha2.ReasonAliasConflict)
+		}
+	})
+}
+
+func TestNodeHasActivePipelineWork(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+
+	const (
+		ns       = "flexinfer-system"
+		nodeName = "cblevins-5930k"
+	)
+
+	t.Run("pending pod targeting node via nodeSelector is detected", func(t *testing.T) {
+		// Regression for 2026-04-19/20 incident: gemma4-26b-a4b-gptq-dense quant
+		// job sat Pending on cblevins-5930k (no spec.NodeName assigned yet) while
+		// gonzalomo-fluxpony-imagegen held the GPU as warm primary. The prior
+		// NodeName-only check missed it, so the warm model never yielded.
+		pendingJobPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "gemma4-26b-a4b-gptq-dense-quantize-xyz",
+				Namespace: ns,
+				Labels:    map[string]string{"job-name": "gemma4-26b-a4b-gptq-dense-quantize"},
+			},
+			Spec: corev1.PodSpec{
+				NodeSelector: map[string]string{"kubernetes.io/hostname": nodeName},
+				// No NodeName — pod is Pending, unscheduled.
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodPending},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pendingJobPod).Build()
+		r := &ModelReconciler{Client: fakeClient}
+
+		if !r.nodeHasActivePipelineWork(context.Background(), ns, nodeName) {
+			t.Fatalf("nodeHasActivePipelineWork(%q) = false, want true for unscheduled Pending quantize pod", nodeName)
+		}
+	})
+
+	t.Run("pending pod targeting different node is ignored", func(t *testing.T) {
+		pendingJobPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "other-quantize-abc",
+				Namespace: ns,
+				Labels:    map[string]string{"job-name": "other-quantize"},
+			},
+			Spec: corev1.PodSpec{
+				NodeSelector: map[string]string{"kubernetes.io/hostname": "some-other-node"},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodPending},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pendingJobPod).Build()
+		r := &ModelReconciler{Client: fakeClient}
+
+		if r.nodeHasActivePipelineWork(context.Background(), ns, nodeName) {
+			t.Fatalf("nodeHasActivePipelineWork(%q) = true, want false when pending pod targets a different node", nodeName)
+		}
+	})
+
+	t.Run("pending pod with no node affinity is ignored", func(t *testing.T) {
+		pendingJobPod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "floating-quantize-abc",
+				Namespace: ns,
+				Labels:    map[string]string{"job-name": "floating-quantize"},
+			},
+			Spec:   corev1.PodSpec{},
+			Status: corev1.PodStatus{Phase: corev1.PodPending},
+		}
+
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pendingJobPod).Build()
+		r := &ModelReconciler{Client: fakeClient}
+
+		if r.nodeHasActivePipelineWork(context.Background(), ns, nodeName) {
+			t.Fatalf("nodeHasActivePipelineWork(%q) = true, want false when pending pod has no hostname selector", nodeName)
 		}
 	})
 }
