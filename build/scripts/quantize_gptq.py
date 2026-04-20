@@ -1928,11 +1928,33 @@ def patch_gptq_hessian_inverse():
         return
 
     def _patched_hessian_inverse(self, H: torch.Tensor):
-        H = H.clone()
+        # Move H to CPU upfront for gfx906 / ROCm LAPACK. Keeping H on the
+        # accelerator through the recovery loop triggered
+        # `torch.AcceleratorError: HIP error: invalid argument` on Vega20 for
+        # modules whose Hessian had extreme diagonal spread — once one GPU
+        # linalg op failed, subsequent GPU tensor ops on H (even `isfinite`)
+        # kept faulting and killed the whole job. CPU LAPACK is the backend
+        # we rely on for Cholesky anyway, so the only cost is a one-time host
+        # copy per module.
+        try:
+            H = H.detach().to("cpu").clone()
+        except Exception as exc:
+            print(
+                f"WARN: GPTQ Hessian CPU move failed for module="
+                f"{getattr(self, 'name', 'unknown')}: {exc!r}; retrying in place"
+            )
+            H = H.clone()
 
         if hessian_sanitize_nonfinite:
-            nonfinite_mask = ~torch.isfinite(H)
-            nonfinite_count = int(nonfinite_mask.sum().item())
+            try:
+                nonfinite_mask = ~torch.isfinite(H)
+                nonfinite_count = int(nonfinite_mask.sum().item())
+            except Exception as exc:
+                print(
+                    f"WARN: GPTQ Hessian nonfinite check failed for module="
+                    f"{getattr(self, 'name', 'unknown')}: {exc!r}; skipping sanitize"
+                )
+                nonfinite_count = 0
             if nonfinite_count:
                 fill_value = hessian_clamp_abs if hessian_clamp_abs > 0 else 0.0
                 H = torch.nan_to_num(
