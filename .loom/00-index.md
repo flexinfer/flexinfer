@@ -2,7 +2,8 @@
 
 ## Quick Links
 
-- **Phase 4 plan — Headless agent UX parity (2026-04-07)**: `83-plan-headless-agent-ux-parity-2026-04-07.md` ← **next batch**
+- **Session mgmt + spawn auth + weaver integration (2026-04-19)**: `86-research-session-spawning-weaver-integration-2026-04-19.md`, `87-product-spec-session-spawning-weaver-2026-04-19.md`, `88-implementation-plan-session-spawning-weaver-2026-04-19.md` ← **active planning slice**
+- **Phase 4 plan — Headless agent UX parity (2026-04-07)**: `83-plan-headless-agent-ux-parity-2026-04-07.md`
 - **Phase 3 plan — Headless agent full-stack drive + canonical telemetry (2026-04-07)**: `82-plan-headless-agent-fullstack-2026-04-07.md`
 - **Headless agent telemetry + SDK research (2026-04-06)**: `79-research-headless-agent-telemetry-sdk-2026-04-06.md`
 - **Headless agent telemetry + SDK product spec (2026-04-06)**: `80-product-spec-headless-agent-telemetry-sdk-2026-04-06.md`
