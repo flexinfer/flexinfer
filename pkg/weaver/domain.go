@@ -3,7 +3,29 @@ package weaver
 import (
 	"fmt"
 	"sync"
+	"time"
 )
+
+// Backend identifiers for SubAgent.Backend. Default ("" or BackendFlexInfer)
+// routes subagents through the local FlexInfer client. Non-flexinfer values
+// route through a SpawnBridge that creates real headless agent pods.
+const (
+	BackendFlexInfer = "flexinfer"
+	BackendClaude    = "claude-code"
+	BackendCodex     = "codex"
+	BackendGemini    = "gemini"
+)
+
+// SpawnOverrides lets a SubAgent tune the spawn.Request it produces when
+// dispatched via a non-flexinfer backend. Zero values fall through to the
+// bridge's defaults so most domains can leave this nil.
+type SpawnOverrides struct {
+	Timeout      time.Duration `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	MaxCostUSD   float64       `json:"max_cost_usd,omitempty" yaml:"max_cost_usd,omitempty"`
+	MaxTurns     int           `json:"max_turns,omitempty" yaml:"max_turns,omitempty"`
+	Project      string        `json:"project,omitempty" yaml:"project,omitempty"`
+	UseSDKDriver bool          `json:"use_sdk_driver,omitempty" yaml:"use_sdk_driver,omitempty"`
+}
 
 // SubAgent defines a domain-specific orchestration agent with a curated tool set.
 type SubAgent struct {
@@ -18,6 +40,49 @@ type SubAgent struct {
 	// refuses to implicitly include write domains; they must be explicitly
 	// selected by the caller.
 	Write bool `json:"write,omitempty" yaml:"write,omitempty"`
+	// Backend selects the execution path for this domain's subagent. Empty
+	// or "flexinfer" routes through the local FlexInfer client (default,
+	// backward-compatible). "claude-code", "codex", or "gemini" route
+	// through a SpawnBridge that creates a real headless agent pod.
+	Backend string `json:"backend,omitempty" yaml:"backend,omitempty"`
+	// SpawnOverrides tunes the spawn.Request produced when Backend is a
+	// non-flexinfer value. Nil means use bridge defaults.
+	SpawnOverrides *SpawnOverrides `json:"spawn,omitempty" yaml:"spawn,omitempty"`
+	// RequiresSpawn is a safety gate: non-flexinfer Backend values MUST
+	// set this true. Daemon-level handlers enforce that callers of a
+	// RequiresSpawn domain hold ScopeAgentSpawn. Prevents unintended
+	// pod creation from untrusted code paths.
+	RequiresSpawn bool `json:"requires_spawn,omitempty" yaml:"requires_spawn,omitempty"`
+}
+
+// IsFlexInferBackend reports whether the subagent runs on the local
+// FlexInfer client (the default, backward-compatible path).
+func (s SubAgent) IsFlexInferBackend() bool {
+	return s.Backend == "" || s.Backend == BackendFlexInfer
+}
+
+// Validate enforces the safety rules on SubAgent fields. Returns an error
+// describing the first violation; callers should return it to the operator
+// so misconfiguration is surfaced at load time rather than at dispatch.
+func (s SubAgent) Validate() error {
+	if s.Name == "" {
+		return fmt.Errorf("subagent: name is required")
+	}
+	if s.IsFlexInferBackend() {
+		return nil
+	}
+	switch s.Backend {
+	case BackendClaude, BackendCodex, BackendGemini:
+		// ok
+	default:
+		return fmt.Errorf("subagent %q: unknown backend %q (want %q, %q, %q, or empty for flexinfer)",
+			s.Name, s.Backend, BackendClaude, BackendCodex, BackendGemini)
+	}
+	if !s.RequiresSpawn {
+		return fmt.Errorf("subagent %q: backend %q requires requires_spawn: true to opt into real-agent dispatch",
+			s.Name, s.Backend)
+	}
+	return nil
 }
 
 // DomainRegistry manages available orchestration domains.

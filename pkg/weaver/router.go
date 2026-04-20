@@ -26,6 +26,13 @@ type QueryRequest struct {
 	Domains   []string `json:"domains,omitempty"`
 	MaxTokens int      `json:"max_tokens,omitempty"`
 	Identity  openairesponses.ExecutionIdentity
+	// ParentSessionID is the caller's proxy session ID (from the daemon
+	// SessionManager). When the Router dispatches to a SpawnBridge, it
+	// flows into the spawn pod as LOOM_PARENT_SESSION_ID so downstream
+	// CLI hooks can stitch the spawn's agent-context session to the
+	// originating proxy session. Optional; empty when the caller has no
+	// proxy session (e.g., internal daemon-initiated queries).
+	ParentSessionID string `json:"parent_session_id,omitempty"`
 }
 
 // DomainResult holds the output from a single domain's subagent.
@@ -60,16 +67,18 @@ type QueryHistoryEntry struct {
 	TotalTokens int       `json:"total_tokens"`
 }
 
-// Router orchestrates multi-domain queries using local FlexInfer models.
+// Router orchestrates multi-domain queries using local FlexInfer models,
+// with optional dispatch to real headless-agent pods via SpawnBridge.
 type Router struct {
-	cfg      Config
-	client   *flexinfer.Client
-	executor *DaemonToolExecutor
-	lister   ToolLister
-	registry *DomainRegistry
-	metrics  *Metrics
-	tracer   trace.Tracer
-	logger   *slog.Logger
+	cfg         Config
+	client      *flexinfer.Client
+	executor    *DaemonToolExecutor
+	lister      ToolLister
+	registry    *DomainRegistry
+	metrics     *Metrics
+	tracer      trace.Tracer
+	logger      *slog.Logger
+	spawnBridge SpawnBridge
 
 	historyMu sync.Mutex
 	history   []QueryHistoryEntry
@@ -83,13 +92,25 @@ func NewRouter(cfg Config, client *flexinfer.Client, executor *DaemonToolExecuto
 	}
 
 	return &Router{
-		cfg:      cfg,
-		client:   client,
-		executor: executor,
-		lister:   lister,
-		registry: reg,
-		logger:   logger.With("component", "weaver-router"),
+		cfg:         cfg,
+		client:      client,
+		executor:    executor,
+		lister:      lister,
+		registry:    reg,
+		logger:      logger.With("component", "weaver-router"),
+		spawnBridge: NoopSpawnBridge{},
 	}
+}
+
+// SetSpawnBridge installs a SpawnBridge used to dispatch SubAgents whose
+// Backend is non-flexinfer. Passing nil reverts to the NoopSpawnBridge
+// default, which fails fast with ErrSpawnBridgeNotConfigured.
+func (r *Router) SetSpawnBridge(b SpawnBridge) {
+	if b == nil {
+		r.spawnBridge = NoopSpawnBridge{}
+		return
+	}
+	r.spawnBridge = b
 }
 
 // SetMetrics sets the Prometheus metrics collector.
@@ -184,7 +205,7 @@ func (r *Router) Query(ctx context.Context, req QueryRequest) (QueryResult, erro
 		}, nil
 	}
 
-	result, err := r.dispatch(ctx, domains, req, qlog)
+	result, err := r.dispatch(ctx, domains, req, queryID, qlog)
 	if err != nil {
 		r.recordQuery(start, "error")
 		r.recordHistory(QueryHistoryEntry{
@@ -271,7 +292,7 @@ func (r *Router) classify(ctx context.Context, query string, logger *slog.Logger
 }
 
 // dispatch runs subagents for the specified domains in parallel.
-func (r *Router) dispatch(ctx context.Context, domains []string, req QueryRequest, logger *slog.Logger) (QueryResult, error) {
+func (r *Router) dispatch(ctx context.Context, domains []string, req QueryRequest, queryID string, logger *slog.Logger) (QueryResult, error) {
 	if r.tracer != nil {
 		var span trace.Span
 		ctx, span = r.tracer.Start(ctx, "weaver.dispatch",
@@ -309,7 +330,7 @@ func (r *Router) dispatch(ctx context.Context, domains []string, req QueryReques
 			subCtx, cancel := context.WithTimeout(ctx, r.cfg.Timeout)
 			defer cancel()
 
-			dr := r.runSubAgent(subCtx, agent, req, logger)
+			dr := r.runSubAgent(subCtx, agent, req, queryID, logger)
 
 			mu.Lock()
 			results[idx] = dr
@@ -341,9 +362,17 @@ func (r *Router) dispatch(ctx context.Context, domains []string, req QueryReques
 }
 
 // runSubAgent executes the orchestration loop for a single domain.
-func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryRequest, logger *slog.Logger) DomainResult {
+func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryRequest, queryID string, logger *slog.Logger) DomainResult {
 	start := time.Now()
 	domain := agent.Name
+
+	// Non-flexinfer backends route to a SpawnBridge that creates real
+	// headless-agent pods. The bridge returns a BridgeResult we fold into
+	// the standard DomainResult shape so callers downstream can treat
+	// real-agent and FlexInfer-agent outputs uniformly.
+	if !agent.IsFlexInferBackend() {
+		return r.runSubAgentViaBridge(ctx, agent, req, queryID, start, logger)
+	}
 
 	model := r.cfg.SubagentModel
 	if agent.Model != "" {
@@ -434,6 +463,77 @@ func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryReque
 		Tokens:     loopResult.TotalPromptTokens + loopResult.TotalCompletionTokens,
 		LatencyMs:  latencyMs,
 		Iterations: loopResult.Iterations,
+	}
+}
+
+// runSubAgentViaBridge dispatches a SubAgent to the configured SpawnBridge
+// (real headless Claude/Codex/Gemini pod) and folds the BridgeResult into
+// the standard DomainResult shape. Safety gate: domains that declared a
+// non-flexinfer backend without RequiresSpawn=true are rejected here so a
+// misconfigured YAML never causes surprise pod creation; the daemon-side
+// authorization layer is still responsible for gating by caller scope
+// (ScopeAgentSpawn).
+func (r *Router) runSubAgentViaBridge(
+	ctx context.Context,
+	agent SubAgent,
+	req QueryRequest,
+	queryID string,
+	start time.Time,
+	logger *slog.Logger,
+) DomainResult {
+	domain := agent.Name
+	sublog := logger.With("domain", domain, "backend", agent.Backend)
+
+	if r.tracer != nil {
+		var span trace.Span
+		ctx, span = r.tracer.Start(ctx, "weaver.subagent.bridge",
+			trace.WithAttributes(
+				attribute.String("domain", domain),
+				attribute.String("backend", agent.Backend),
+				attribute.String("query_id", queryID),
+			),
+		)
+		defer span.End()
+	}
+
+	if err := agent.Validate(); err != nil {
+		sublog.Warn("weaver: subagent validation failed", "error", err)
+		return DomainResult{
+			Domain:    domain,
+			Error:     err.Error(),
+			LatencyMs: time.Since(start).Milliseconds(),
+		}
+	}
+
+	bridge := r.spawnBridge
+	if bridge == nil {
+		bridge = NoopSpawnBridge{}
+	}
+
+	result, err := bridge.Dispatch(ctx, agent, req.Query, req.ParentSessionID, queryID)
+	latencyMs := time.Since(start).Milliseconds()
+	if err != nil {
+		sublog.Warn("weaver: spawn bridge dispatch failed", "error", err, "latency_ms", latencyMs)
+		return DomainResult{
+			Domain:    domain,
+			Error:     err.Error(),
+			LatencyMs: latencyMs,
+		}
+	}
+
+	sublog.Debug("weaver: spawn bridge dispatch ok",
+		"spawn_id", result.SpawnID,
+		"stop_reason", result.StopReason,
+		"tool_calls", result.ToolCalls,
+		"total_cost_usd", result.TotalCostUSD,
+		"latency_ms", latencyMs,
+	)
+
+	return DomainResult{
+		Domain:    domain,
+		Answer:    result.LastMessage,
+		Tokens:    result.Tokens,
+		LatencyMs: latencyMs,
 	}
 }
 
@@ -573,7 +673,11 @@ func (r *Router) TryAutoCompose(ctx context.Context, query string) (QueryResult,
 		m.RecordOutcome("refused")
 	}
 
-	result, err := r.dispatch(ctx, picked, QueryRequest{Query: query, Domains: picked}, r.logger.With("auto_compose", true))
+	// Auto-compose path has no dedicated query ID; generate a short tag so
+	// any spawn-bridge dispatches emitted under auto-compose still have a
+	// stable correlation identifier for HUD display.
+	acQueryID := "ac-" + uuid.New().String()[:6]
+	result, err := r.dispatch(ctx, picked, QueryRequest{Query: query, Domains: picked}, acQueryID, r.logger.With("auto_compose", true))
 	if err != nil {
 		return QueryResult{}, true, err
 	}
