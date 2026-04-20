@@ -1928,22 +1928,16 @@ def patch_gptq_hessian_inverse():
         return
 
     def _patched_hessian_inverse(self, H: torch.Tensor):
-        # Move H to CPU upfront for gfx906 / ROCm LAPACK. Keeping H on the
-        # accelerator through the recovery loop triggered
-        # `torch.AcceleratorError: HIP error: invalid argument` on Vega20 for
-        # modules whose Hessian had extreme diagonal spread — once one GPU
-        # linalg op failed, subsequent GPU tensor ops on H (even `isfinite`)
-        # kept faulting and killed the whole job. CPU LAPACK is the backend
-        # we rely on for Cholesky anyway, so the only cost is a one-time host
-        # copy per module.
-        try:
-            H = H.detach().to("cpu").clone()
-        except Exception as exc:
-            print(
-                f"WARN: GPTQ Hessian CPU move failed for module="
-                f"{getattr(self, 'name', 'unknown')}: {exc!r}; retrying in place"
-            )
-            H = H.clone()
+        # On gfx906 a Cholesky failure can put the ROCm HIP context in a bad
+        # state so the NEXT module's `torch.isfinite(H).sum().item()` raises
+        # `torch.AcceleratorError: HIP error: invalid argument` and kills the
+        # whole job. Do NOT move H to CPU as a workaround: the rocm/pytorch
+        # container is compiled without CPU LAPACK, so `torch.linalg.cholesky`
+        # on CPU fails with "LAPACK library not found in compilation" and
+        # every module exhausts. Instead, keep H on device and wrap the
+        # sanitize check so a HIP fault degrades to skip-sanitize rather than
+        # crashing the process.
+        H = H.clone()
 
         if hessian_sanitize_nonfinite:
             try:
@@ -1967,22 +1961,33 @@ def patch_gptq_hessian_inverse():
                     f"Patched GPTQ Hessian for module={getattr(self, 'name', 'unknown')}: "
                     f"replaced {nonfinite_count} non-finite entries"
                 )
-        H = 0.5 * (H + H.T)
-
-        diag_view = H.diagonal()
-        orig_diag = diag_view.clone()
-        finite_diag = torch.nan_to_num(orig_diag.abs(), nan=0.0, posinf=0.0, neginf=0.0)
-        base_abs_max = torch.max(finite_diag).item()
-        if not math.isfinite(base_abs_max) or base_abs_max == 0.0:
-            base_abs_max = 1.0
-        if hessian_diag_floor_mode == "mean":
-            base_mean = torch.mean(finite_diag).item()
-            if not math.isfinite(base_mean) or base_mean == 0.0:
-                base_mean = base_abs_max
-            floor_reference = base_mean
-        else:
-            floor_reference = base_abs_max
-        floor_base = floor_reference * hessian_diag_floor_scale
+        # Wrap the pre-recovery setup so a poisoned HIP context on entry
+        # (symmetrize, diag stats, etc.) can't take the whole job down — we
+        # degrade to returning None and let GPTQModel handle the module.
+        try:
+            H = 0.5 * (H + H.T)
+            diag_view = H.diagonal()
+            orig_diag = diag_view.clone()
+            finite_diag = torch.nan_to_num(
+                orig_diag.abs(), nan=0.0, posinf=0.0, neginf=0.0
+            )
+            base_abs_max = torch.max(finite_diag).item()
+            if not math.isfinite(base_abs_max) or base_abs_max == 0.0:
+                base_abs_max = 1.0
+            if hessian_diag_floor_mode == "mean":
+                base_mean = torch.mean(finite_diag).item()
+                if not math.isfinite(base_mean) or base_mean == 0.0:
+                    base_mean = base_abs_max
+                floor_reference = base_mean
+            else:
+                floor_reference = base_abs_max
+            floor_base = floor_reference * hessian_diag_floor_scale
+        except Exception as exc:
+            print(
+                f"GPTQ Hessian recovery aborted for module="
+                f"{getattr(self, 'name', 'unknown')}: setup failed: {exc!r}"
+            )
+            return None, 1.0
         used_damp = getattr(self.qcfg, "damp_percent", 0.01)
         damp_step = getattr(self.qcfg, "damp_auto_increment", 0.0015)
         last_error = None
