@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crb2nu/loom/internal/devbox/backend"
 	"github.com/crb2nu/loom/internal/spawn"
 )
 
@@ -189,6 +190,10 @@ func TestAgentSecretMounts_NoLegacySecretReferences(t *testing.T) {
 }
 
 func TestAgentSecretEnvVars_UsesClusterSecret(t *testing.T) {
+	allowed := map[string]bool{
+		ClusterAgentAPIKeysSecret: true,
+		ClusterAgentAuthSecret:    true,
+	}
 	for _, agentType := range []string{"claude-code", "codex", "gemini"} {
 		t.Run(agentType, func(t *testing.T) {
 			vars := agentSecretEnvVars(agentType)
@@ -196,12 +201,43 @@ func TestAgentSecretEnvVars_UsesClusterSecret(t *testing.T) {
 				t.Fatalf("expected non-empty env vars for %s", agentType)
 			}
 			for _, v := range vars {
-				if v.SecretName != ClusterAgentAPIKeysSecret {
-					t.Fatalf("%s env %q uses secret %q, want %q",
-						agentType, v.Name, v.SecretName, ClusterAgentAPIKeysSecret)
+				if !allowed[v.SecretName] {
+					t.Fatalf("%s env %q uses secret %q, want one of %v",
+						agentType, v.Name, v.SecretName, allowed)
 				}
 			}
 		})
+	}
+}
+
+func TestAgentSecretEnvVars_ClaudeOAuthToken(t *testing.T) {
+	// Per vendor-sanctioned headless auth path
+	// (https://code.claude.com/docs/en/authentication), CLAUDE_CODE_OAUTH_TOKEN
+	// sourced from cluster-agent-auth.claude-oauth-token takes precedence over
+	// ANTHROPIC_API_KEY when set. Both must be emitted so the pod gracefully
+	// falls back when the OAuth key is absent.
+	vars := agentSecretEnvVars("claude-code")
+	var oauthVar, apiKeyVar *backend.SecretEnvVar
+	for i := range vars {
+		switch vars[i].Name {
+		case "CLAUDE_CODE_OAUTH_TOKEN":
+			oauthVar = &vars[i]
+		case "ANTHROPIC_API_KEY":
+			apiKeyVar = &vars[i]
+		}
+	}
+	if oauthVar == nil {
+		t.Fatalf("expected CLAUDE_CODE_OAUTH_TOKEN env var, got %+v", vars)
+	}
+	if oauthVar.SecretName != ClusterAgentAuthSecret {
+		t.Fatalf("CLAUDE_CODE_OAUTH_TOKEN from secret %q, want %q",
+			oauthVar.SecretName, ClusterAgentAuthSecret)
+	}
+	if oauthVar.SecretKey != "claude-oauth-token" {
+		t.Fatalf("CLAUDE_CODE_OAUTH_TOKEN key %q, want claude-oauth-token", oauthVar.SecretKey)
+	}
+	if apiKeyVar == nil {
+		t.Fatalf("expected ANTHROPIC_API_KEY fallback env var, got %+v", vars)
 	}
 }
 
