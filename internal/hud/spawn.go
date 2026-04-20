@@ -1299,7 +1299,16 @@ func agentSecretEnvVars(agentType string) []backend.SecretEnvVar {
 	secretName := ClusterAgentAPIKeysSecret
 	switch agentType {
 	case "claude-code":
+		// CLAUDE_CODE_OAUTH_TOKEN is the officially documented headless auth path
+		// (https://code.claude.com/docs/en/authentication, "Long-Lived Authentication
+		// Token" section). Operators generate a 1-year token via `claude setup-token`
+		// on a machine with an active Pro/Max/Team subscription, then set it on the
+		// cluster-agent-auth secret under the claude-oauth-token key. When present,
+		// Claude CLI prefers it over ANTHROPIC_API_KEY. The SecretEnvVar is Optional
+		// so pods start cleanly when the key is absent; agent then falls back to
+		// ANTHROPIC_API_KEY from cluster-agent-api-keys.
 		return []backend.SecretEnvVar{
+			{Name: "CLAUDE_CODE_OAUTH_TOKEN", SecretName: ClusterAgentAuthSecret, SecretKey: "claude-oauth-token"},
 			{Name: "ANTHROPIC_API_KEY", SecretName: secretName, SecretKey: "ANTHROPIC_API_KEY"},
 		}
 	case "codex":
