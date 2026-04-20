@@ -115,6 +115,12 @@ type Request struct {
 	// empty for standalone spawns or when no proxy session exists (e.g.,
 	// direct K8s jobs, MentatLab DAG nodes).
 	ParentSessionID string `json:"parent_session_id,omitempty"`
+	// Metadata carries caller-supplied key/value tags on the spawn for
+	// HUD correlation. The weaver spawn bridge populates weaver_query_id
+	// and weaver_domain here so the HUD can render "spawn X came from
+	// weaver query Y". Keys are free-form; consumers should namespace
+	// their own keys (e.g. weaver_*).
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // AuthMode describes which cluster credential path the spawned agent was

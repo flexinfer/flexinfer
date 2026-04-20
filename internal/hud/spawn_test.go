@@ -1,8 +1,13 @@
 package hud
 
 import (
+	"context"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/crb2nu/loom/internal/spawn"
 )
 
 func TestBuildAgentCommand(t *testing.T) {
@@ -220,5 +225,94 @@ func TestResolveAuthMode(t *testing.T) {
 				t.Fatalf("resolveAuthMode(%q) = %q, want %q", tc.agentType, got, tc.want)
 			}
 		})
+	}
+}
+
+// newWaitTestOrchestrator builds a minimal SpawnOrchestrator with just a
+// controller attached, sufficient for exercising Wait() without pulling
+// in the full K8s backend. Pre-seeds any provided states.
+func newWaitTestOrchestrator(t *testing.T, seed ...*spawn.State) *SpawnOrchestrator {
+	t.Helper()
+	ctrl := spawn.NewK8sController(nil, "test", nil, slog.Default())
+	for _, st := range seed {
+		ctrl.UpdateState(context.Background(), st)
+	}
+	return &SpawnOrchestrator{ctrl: ctrl}
+}
+
+func TestSpawnOrchestrator_Wait_ReturnsImmediatelyForTerminalState(t *testing.T) {
+	o := newWaitTestOrchestrator(t, &spawn.State{
+		SpawnID: "already-done",
+		Status:  spawn.StatusCompleted,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	state, err := o.Wait(ctx, "already-done")
+	if err != nil {
+		t.Fatalf("Wait error: %v", err)
+	}
+	if state.Status != spawn.StatusCompleted {
+		t.Fatalf("Status = %q, want completed", state.Status)
+	}
+}
+
+func TestSpawnOrchestrator_Wait_BlocksUntilTerminal(t *testing.T) {
+	state := &spawn.State{
+		SpawnID: "running-then-done",
+		Status:  spawn.StatusRunning,
+	}
+	o := newWaitTestOrchestrator(t, state)
+
+	// Flip to terminal after a short delay.
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		done := *state
+		done.Status = spawn.StatusCompleted
+		o.ctrl.UpdateState(context.Background(), &done)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	got, err := o.Wait(ctx, "running-then-done")
+	if err != nil {
+		t.Fatalf("Wait error: %v", err)
+	}
+	if got.Status != spawn.StatusCompleted {
+		t.Fatalf("Status = %q, want completed", got.Status)
+	}
+}
+
+func TestSpawnOrchestrator_Wait_NotFound(t *testing.T) {
+	o := newWaitTestOrchestrator(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	_, err := o.Wait(ctx, "nope")
+	if err == nil {
+		t.Fatal("expected error for missing spawn")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' error, got %q", err.Error())
+	}
+}
+
+func TestSpawnOrchestrator_Wait_ContextCancellation(t *testing.T) {
+	o := newWaitTestOrchestrator(t, &spawn.State{
+		SpawnID: "stuck-running",
+		Status:  spawn.StatusRunning,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := o.Wait(ctx, "stuck-running")
+	if err == nil {
+		t.Fatal("expected context cancellation error")
+	}
+	if !strings.Contains(err.Error(), "deadline exceeded") && !strings.Contains(err.Error(), "canceled") {
+		t.Errorf("expected ctx error, got %q", err.Error())
 	}
 }
