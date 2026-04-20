@@ -2,12 +2,15 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/crb2nu/loom/internal/hud"
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/spawn"
 )
 
 // startEmbeddedHUD initializes and starts the embedded HUD application,
@@ -74,12 +77,108 @@ func (d *Daemon) startEmbeddedHUD(ctx context.Context, mux *http.ServeMux) error
 			"spawn_enabled", true)
 	}
 
+	// Sessions endpoint: joins proxy sessions (daemon) with spawns
+	// (HUD) via parent_session_id metadata for HUD observability.
+	mux.HandleFunc("GET /api/hud/sessions", d.handleHUDSessions)
+
 	logger.Info("embedded HUD started",
 		"spawn", hudCfg.SpawnEnabled,
 		"mobile", hudCfg.MobileOperatorToken != "",
 		"coordinator", hudCfg.FlexInferURL != "")
 
 	return nil
+}
+
+// hudSessionsResponse is the shape of GET /api/hud/sessions.
+type hudSessionsResponse struct {
+	DaemonEpoch int64                `json:"daemon_epoch"`
+	Draining    bool                 `json:"draining"`
+	Sessions    []hudSessionWithKids `json:"sessions"`
+}
+
+// hudSessionWithKids folds a proxy session together with the spawns that
+// were launched under it (joined by LOOM_PARENT_SESSION_ID, set in
+// Request.ParentSessionID by Slice 1). Lets the HUD render a single row
+// per session with a nested list of its children.
+type hudSessionWithKids struct {
+	ID              string               `json:"id"`
+	AgentHint       string               `json:"agent_hint,omitempty"`
+	PresenceAgentID string               `json:"presence_agent_id,omitempty"`
+	DaemonEpoch     int64                `json:"daemon_epoch"`
+	State           string               `json:"state"`
+	CreatedAt       time.Time            `json:"created_at"`
+	LastSeenAt      time.Time            `json:"last_seen_at"`
+	LeaseExpires    time.Time            `json:"lease_expires"`
+	Spawns          []hudSessionSpawnRef `json:"spawns,omitempty"`
+}
+
+type hudSessionSpawnRef struct {
+	SpawnID       string `json:"spawn_id"`
+	AgentID       string `json:"agent_id"`
+	AgentType     string `json:"agent_type"`
+	Status        string `json:"status"`
+	WeaverQueryID string `json:"weaver_query_id,omitempty"`
+	WeaverDomain  string `json:"weaver_domain,omitempty"`
+}
+
+// handleHUDSessions renders the current proxy-session fleet with their
+// spawns joined in. Read-only, no scope enforcement beyond what the
+// surrounding auth middleware already applies to /api/hud/*.
+func (d *Daemon) handleHUDSessions(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if d.sessions == nil {
+		_ = json.NewEncoder(w).Encode(hudSessionsResponse{DaemonEpoch: d.daemonEpoch})
+		return
+	}
+
+	var spawns []*spawn.State
+	if d.hudApp != nil {
+		if sp := d.hudApp.SpawnOrchestrator(); sp != nil {
+			spawns = sp.ListSpawns()
+		}
+	}
+
+	// Group spawns by parent session id (empty-string bucket excluded below).
+	spawnsByParent := make(map[string][]hudSessionSpawnRef, len(spawns))
+	for _, s := range spawns {
+		parent := s.Request.ParentSessionID
+		if parent == "" {
+			continue
+		}
+		spawnsByParent[parent] = append(spawnsByParent[parent], hudSessionSpawnRef{
+			SpawnID:       s.SpawnID,
+			AgentID:       s.AgentID,
+			AgentType:     s.Request.AgentType,
+			Status:        string(s.Status),
+			WeaverQueryID: s.Request.Metadata["weaver_query_id"],
+			WeaverDomain:  s.Request.Metadata["weaver_domain"],
+		})
+	}
+
+	snap := d.sessions.Snapshot()
+	out := hudSessionsResponse{
+		DaemonEpoch: d.daemonEpoch,
+		Draining:    d.draining.Load(),
+		Sessions:    make([]hudSessionWithKids, 0, len(snap)),
+	}
+	for _, sess := range snap {
+		out.Sessions = append(out.Sessions, hudSessionWithKids{
+			ID:              sess.ID,
+			AgentHint:       sess.ClientInfo.AgentHint,
+			PresenceAgentID: sess.ClientInfo.PresenceAgentID,
+			DaemonEpoch:     sess.DaemonEpoch,
+			State:           string(sess.State),
+			CreatedAt:       sess.CreatedAt,
+			LastSeenAt:      sess.LastSeenAt,
+			LeaseExpires:    sess.LeaseExpires,
+			Spawns:          spawnsByParent[sess.ID],
+		})
+	}
+
+	if err := json.NewEncoder(w).Encode(out); err != nil {
+		d.logger.Warn("failed to encode /api/hud/sessions response", "error", err)
+	}
 }
 
 // EnableEmbeddedHUD sets the embedded HUD enabled flag on the daemon's file

@@ -14,6 +14,13 @@ type Metrics struct {
 	ErrorsTotal       *prometheus.CounterVec
 	QueryDuration     *prometheus.HistogramVec
 	SubagentDuration  *prometheus.HistogramVec
+	// BackendDispatchTotal tracks whether subagent dispatch went to the
+	// local FlexInfer path or to a real headless-agent pod via the
+	// SpawnBridge. Labels: backend (flexinfer|claude-code|codex|gemini),
+	// outcome (success|error|timeout). Surfaces the post-Slice-3 routing
+	// decision in HUD/Prometheus so operators can see which domains fan
+	// out to pods vs. in-process LLM calls.
+	BackendDispatchTotal *prometheus.CounterVec
 
 	// Atomic lifetime counters for direct reads (HUD metrics endpoint).
 	lifetimeQueries   atomic.Int64
@@ -51,6 +58,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help:    "Per-subagent latency distribution.",
 			Buckets: prometheus.DefBuckets,
 		}, []string{"domain"}),
+		BackendDispatchTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "loom_weaver_backend_dispatch_total",
+			Help: "Weaver subagent dispatches by execution backend and outcome.",
+		}, []string{"backend", "outcome"}),
 	}
 
 	if reg != nil {
@@ -61,9 +72,21 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			m.ErrorsTotal,
 			m.QueryDuration,
 			m.SubagentDuration,
+			m.BackendDispatchTotal,
 		)
 	}
 	return m
+}
+
+// RecordBackendDispatch increments the backend-dispatch counter. backend is
+// one of "flexinfer", "claude-code", "codex", "gemini"; outcome is
+// "success", "error", or "timeout". Nil-safe so runSubAgent can call it
+// unconditionally even before Metrics is wired.
+func (m *Metrics) RecordBackendDispatch(backend, outcome string) {
+	if m == nil || m.BackendDispatchTotal == nil {
+		return
+	}
+	m.BackendDispatchTotal.WithLabelValues(backend, outcome).Inc()
 }
 
 // RecordQuery increments lifetime query counters.
