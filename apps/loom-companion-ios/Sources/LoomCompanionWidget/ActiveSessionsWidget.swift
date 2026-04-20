@@ -9,10 +9,11 @@ struct ActiveSessionsWidget: Widget {
         StaticConfiguration(kind: kind, provider: ActiveSessionsProvider()) { entry in
             ActiveSessionsWidgetView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)
+                .widgetURL(URL(string: "loom://people"))
         }
         .configurationDisplayName("Active Sessions")
         .description("See which agents are currently active.")
-        .supportedFamilies([.systemMedium])
+        .supportedFamilies([.systemMedium, .systemLarge])
     }
 }
 
@@ -41,6 +42,11 @@ struct ActiveSessionsProvider: TimelineProvider {
 
 struct ActiveSessionsWidgetView: View {
     let entry: ActiveSessionsEntry
+    @Environment(\.widgetFamily) var family
+
+    private var rowLimit: Int {
+        family == .systemLarge ? 8 : 3
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -73,10 +79,16 @@ struct ActiveSessionsWidgetView: View {
                 }
                 Spacer()
             } else {
-                ForEach(entry.data.topSessions.prefix(3)) { session in
+                ForEach(entry.data.topSessions.prefix(rowLimit)) { session in
                     sessionRow(session)
                 }
-                Spacer()
+                if entry.data.topSessions.count > rowLimit {
+                    Text("+\(entry.data.topSessions.count - rowLimit) more")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                }
+                Spacer(minLength: 0)
             }
         }
     }

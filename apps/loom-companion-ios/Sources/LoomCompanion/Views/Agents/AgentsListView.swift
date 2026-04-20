@@ -35,8 +35,10 @@ struct AgentsListView: View {
             List {
                 AgentFilterView(
                     statusFilter: $viewModel.statusFilter,
+                    attentionOnly: $viewModel.attentionOnly,
                     summary: viewModel.summary,
-                    pipelineAgentCount: viewModel.agents.filter { $0.pipelineCount > 0 }.count
+                    pipelineAgentCount: viewModel.agents.filter { $0.pipelineCount > 0 }.count,
+                    attentionCount: viewModel.attentionCount
                 )
 
                 ForEach(viewModel.groupedAgents) { group in

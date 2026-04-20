@@ -10,6 +10,7 @@ struct SessionSummaryWidget: Widget {
         StaticConfiguration(kind: kind, provider: SessionSummaryProvider()) { entry in
             SessionSummaryWidgetView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)
+                .widgetURL(SessionSummaryWidgetView.deepLink(for: entry.session))
         }
         .configurationDisplayName("Last Session")
         .description("Summary of the most recently completed coding session.")
@@ -141,5 +142,14 @@ struct SessionSummaryWidgetView: View {
             return String(format: "%.1fk", Double(count) / 1000.0)
         }
         return "\(count)"
+    }
+
+    static func deepLink(for session: CompletedSessionWidgetData?) -> URL? {
+        guard let session, !session.agentId.isEmpty,
+              let encoded = session.agentId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+        else {
+            return URL(string: "loom://people")
+        }
+        return URL(string: "loom://agent/\(encoded)")
     }
 }

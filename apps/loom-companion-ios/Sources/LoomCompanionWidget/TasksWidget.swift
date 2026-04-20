@@ -9,6 +9,7 @@ struct TasksWidget: Widget {
         StaticConfiguration(kind: kind, provider: TasksProvider()) { entry in
             TasksWidgetView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)
+                .widgetURL(URL(string: "loom://tasks"))
         }
         .configurationDisplayName("Tasks")
         .description("Track pending and blocked tasks.")
