@@ -192,12 +192,24 @@ func (b *GPTQJobBuilder) buildEnv(modelPath, outSubdir string, bits, groupSize i
 	}
 	hessianRepair := getenvDefault("FLEXINFER_GPTQ_HESSIAN_REPAIR", "true")
 	hessianSanitizeNonfinite := getenvDefault("FLEXINFER_GPTQ_HESSIAN_SANITIZE_NONFINITE", "true")
-	hessianDiagFloorScale := getenvDefault("FLEXINFER_GPTQ_HESSIAN_DIAG_FLOOR_SCALE", "1e-6")
+	// Floor mode "mean" scales diagonal floor by mean(|diag|), which keeps every
+	// attempt numerically meaningful relative to damp*mean. Legacy "abs_max"
+	// scaled by max|diag| and was dominated by damp for typical activations.
+	hessianDiagFloorMode := getenvDefault("FLEXINFER_GPTQ_HESSIAN_DIAG_FLOOR_MODE", "mean")
+	defaultFloorScale := "0.01"
+	if hessianDiagFloorMode == "abs_max" {
+		defaultFloorScale = "1e-6"
+	}
+	hessianDiagFloorScale := getenvDefault("FLEXINFER_GPTQ_HESSIAN_DIAG_FLOOR_SCALE", defaultFloorScale)
 	hessianFloorMultiplier := getenvDefault("FLEXINFER_GPTQ_HESSIAN_FLOOR_MULTIPLIER", "10")
 	hessianMaxFloorAttempts := getenvDefault("FLEXINFER_GPTQ_HESSIAN_MAX_FLOOR_ATTEMPTS", "6")
 	hessianClampAbs := getenvDefault("FLEXINFER_GPTQ_HESSIAN_CLAMP_ABS", "0")
 	dampPercentOverride := os.Getenv("FLEXINFER_GPTQ_DAMP_PERCENT_OVERRIDE")
-	dampAutoIncrementOverride := os.Getenv("FLEXINFER_GPTQ_DAMP_AUTO_INCREMENT_OVERRIDE")
+	// damp_step=0.1 (vs GPTQModel default 0.0015) cuts the initial damp sweep
+	// from ~95 Cholesky iterations to ~10. On slow CPU backends (gfx906 with
+	// ROCm LAPACK fallback), one Cholesky on a 21504² FP32 matrix is ~40s,
+	// turning a ~60min sweep into ~7min.
+	dampAutoIncrementOverride := getenvDefault("FLEXINFER_GPTQ_DAMP_AUTO_INCREMENT_OVERRIDE", "0.1")
 	resumeEnabled := getenvDefault("FLEXINFER_GPTQ_RESUME", "true")
 	calibrationCacheEnabled := getenvDefault("FLEXINFER_GPTQ_CALIBRATION_CACHE", "true")
 	deviceMap := getenvDefault("FLEXINFER_GPTQ_DEVICE_MAP", "auto")
@@ -222,6 +234,7 @@ func (b *GPTQJobBuilder) buildEnv(modelPath, outSubdir string, bits, groupSize i
 		{Name: "QUANTIZE_MODEL_POLICIES", Value: modelPolicies},
 		{Name: "GPTQ_HESSIAN_REPAIR", Value: hessianRepair},
 		{Name: "GPTQ_HESSIAN_SANITIZE_NONFINITE", Value: hessianSanitizeNonfinite},
+		{Name: "GPTQ_HESSIAN_DIAG_FLOOR_MODE", Value: hessianDiagFloorMode},
 		{Name: "GPTQ_HESSIAN_DIAG_FLOOR_SCALE", Value: hessianDiagFloorScale},
 		{Name: "GPTQ_HESSIAN_FLOOR_MULTIPLIER", Value: hessianFloorMultiplier},
 		{Name: "GPTQ_HESSIAN_MAX_FLOOR_ATTEMPTS", Value: hessianMaxFloorAttempts},
