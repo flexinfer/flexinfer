@@ -173,3 +173,86 @@ func TestDomainRegistry_ValidateTools_AllPresent(t *testing.T) {
 		t.Errorf("expected no warnings, got %d: %v", len(warnings), warnings)
 	}
 }
+
+func TestSubAgent_IsFlexInferBackend(t *testing.T) {
+	tests := []struct {
+		name    string
+		backend string
+		want    bool
+	}{
+		{"empty defaults to flexinfer", "", true},
+		{"explicit flexinfer", BackendFlexInfer, true},
+		{"claude is not flexinfer", BackendClaude, false},
+		{"codex is not flexinfer", BackendCodex, false},
+		{"gemini is not flexinfer", BackendGemini, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SubAgent{Backend: tc.backend}.IsFlexInferBackend()
+			if got != tc.want {
+				t.Fatalf("IsFlexInferBackend(%q) = %v, want %v", tc.backend, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSubAgent_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		agent   SubAgent
+		wantErr string // substring; empty means "no error"
+	}{
+		{
+			name:    "flexinfer default ok",
+			agent:   SubAgent{Name: "x"},
+			wantErr: "",
+		},
+		{
+			name:    "explicit flexinfer ok",
+			agent:   SubAgent{Name: "x", Backend: BackendFlexInfer},
+			wantErr: "",
+		},
+		{
+			name:    "missing name rejected",
+			agent:   SubAgent{},
+			wantErr: "name is required",
+		},
+		{
+			name:    "unknown backend rejected",
+			agent:   SubAgent{Name: "x", Backend: "gpt4", RequiresSpawn: true},
+			wantErr: "unknown backend",
+		},
+		{
+			name:    "claude backend without RequiresSpawn rejected",
+			agent:   SubAgent{Name: "x", Backend: BackendClaude},
+			wantErr: "requires_spawn",
+		},
+		{
+			name:    "codex backend without RequiresSpawn rejected",
+			agent:   SubAgent{Name: "x", Backend: BackendCodex},
+			wantErr: "requires_spawn",
+		},
+		{
+			name:    "gemini backend with RequiresSpawn ok",
+			agent:   SubAgent{Name: "x", Backend: BackendGemini, RequiresSpawn: true},
+			wantErr: "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.agent.Validate()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
