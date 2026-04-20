@@ -172,6 +172,17 @@ const (
 	pushTokenMaxIdle = 30 * 24 * time.Hour
 )
 
+// SpawnOrchestrator returns the App's concrete spawn orchestrator, or
+// nil if spawning is disabled in this deployment. Exposed so the daemon
+// layer can wire the orchestrator into the weaver SpawnBridge.
+//
+// Distinct from Spawner() (which returns a mobile.SpawnerOps adapter for
+// the mobile REST handlers) — this returns the raw *SpawnOrchestrator
+// so callers can reach Spawn/Wait/GetSpawn without the mobile facade.
+func (a *App) SpawnOrchestrator() *SpawnOrchestrator {
+	return a.spawner
+}
+
 // writeJSON marshals v as JSON and writes it to the response.
 func (a *App) writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

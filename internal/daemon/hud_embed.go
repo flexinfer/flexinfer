@@ -61,6 +61,19 @@ func (d *Daemon) startEmbeddedHUD(ctx context.Context, mux *http.ServeMux) error
 	// route registration and the HUD HTTP listener from becoming probeable.
 	go app.RefreshMonitors()
 
+	// Wire the weaver→spawn bridge: when the HUD's spawn orchestrator is
+	// enabled AND the weaver router is up, let weaver dispatch SubAgents
+	// with non-flexinfer Backend values to real headless-agent pods.
+	// Safe to call when either side is missing — SetSpawnBridge(nil)
+	// reverts to the noop default, and we only call it when both are set.
+	if sp := app.SpawnOrchestrator(); sp != nil && d.weaver != nil {
+		bridge := NewDaemonSpawnBridge(sp, d.logger, 0)
+		d.weaver.SetSpawnBridge(bridge)
+		logger.Info("weaver spawn bridge wired",
+			"router_configured", true,
+			"spawn_enabled", true)
+	}
+
 	logger.Info("embedded HUD started",
 		"spawn", hudCfg.SpawnEnabled,
 		"mobile", hudCfg.MobileOperatorToken != "",

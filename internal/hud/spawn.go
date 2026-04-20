@@ -1040,6 +1040,46 @@ func (o *SpawnOrchestrator) GetSpawn(spawnID string) (*SpawnState, bool) {
 	return o.ctrl.Get(spawnID)
 }
 
+// Wait blocks until the given spawn reaches a terminal state
+// (completed / failed / stopped) or ctx is canceled. Returns the terminal
+// SpawnState on success; ctx.Err() on cancellation; an error if the spawn
+// ID does not exist.
+//
+// Implemented via polling (spawn.IsTerminal) every waitPollInterval rather
+// than subscribing to the SSE hub because the hub's fan-out shape doesn't
+// let a single waiter filter by spawn_id without delivery contention with
+// browser clients. Polling is cheap — spawn state lookups are O(1) map
+// reads — and spawn lifecycles are measured in minutes, so 500ms poll
+// granularity is invisible to callers.
+func (o *SpawnOrchestrator) Wait(ctx context.Context, spawnID string) (*SpawnState, error) {
+	if _, ok := o.ctrl.Get(spawnID); !ok {
+		return nil, fmt.Errorf("spawn %s not found", spawnID)
+	}
+
+	ticker := time.NewTicker(waitPollInterval)
+	defer ticker.Stop()
+	for {
+		state, ok := o.ctrl.Get(spawnID)
+		if !ok {
+			return nil, fmt.Errorf("spawn %s disappeared while waiting", spawnID)
+		}
+		if spawn.IsTerminal(state.Status) {
+			return state, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+// waitPollInterval is the cadence at which Wait() re-checks terminal
+// state. Tuned for the minute-scale spawn lifecycle; low enough that
+// Wait returns quickly after completion, high enough to keep polling
+// overhead near zero.
+const waitPollInterval = 500 * time.Millisecond
+
 // Projects returns the configured project list for spawn pickers.
 func (o *SpawnOrchestrator) Projects() []string { return o.projects }
 
