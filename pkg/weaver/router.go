@@ -3,6 +3,7 @@ package weaver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -450,6 +451,7 @@ func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryReque
 
 	if err != nil {
 		logger.Warn("subagent failed", "domain", domain, "error", err, "latency_ms", latencyMs)
+		r.metrics.RecordBackendDispatch(BackendFlexInfer, backendOutcomeFromError(ctx, err))
 		return DomainResult{
 			Domain:    domain,
 			Error:     err.Error(),
@@ -457,6 +459,7 @@ func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryReque
 		}
 	}
 
+	r.metrics.RecordBackendDispatch(BackendFlexInfer, "success")
 	return DomainResult{
 		Domain:     domain,
 		Answer:     loopResult.Final.OutputText,
@@ -464,6 +467,22 @@ func (r *Router) runSubAgent(ctx context.Context, agent SubAgent, req QueryReque
 		LatencyMs:  latencyMs,
 		Iterations: loopResult.Iterations,
 	}
+}
+
+// backendOutcomeFromError maps a subagent error to a backend-dispatch
+// outcome label. Context-deadline errors become "timeout" so operators
+// can distinguish cluster-level slowness from genuine subagent failures.
+func backendOutcomeFromError(ctx context.Context, err error) string {
+	if err == nil {
+		return "success"
+	}
+	if ctx != nil && ctx.Err() == context.DeadlineExceeded {
+		return "timeout"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	return "error"
 }
 
 // runSubAgentViaBridge dispatches a SubAgent to the configured SpawnBridge
@@ -498,6 +517,7 @@ func (r *Router) runSubAgentViaBridge(
 
 	if err := agent.Validate(); err != nil {
 		sublog.Warn("weaver: subagent validation failed", "error", err)
+		r.metrics.RecordBackendDispatch(agent.Backend, "error")
 		return DomainResult{
 			Domain:    domain,
 			Error:     err.Error(),
@@ -514,12 +534,15 @@ func (r *Router) runSubAgentViaBridge(
 	latencyMs := time.Since(start).Milliseconds()
 	if err != nil {
 		sublog.Warn("weaver: spawn bridge dispatch failed", "error", err, "latency_ms", latencyMs)
+		r.metrics.RecordBackendDispatch(agent.Backend, backendOutcomeFromError(ctx, err))
 		return DomainResult{
 			Domain:    domain,
 			Error:     err.Error(),
 			LatencyMs: latencyMs,
 		}
 	}
+
+	r.metrics.RecordBackendDispatch(agent.Backend, "success")
 
 	sublog.Debug("weaver: spawn bridge dispatch ok",
 		"spawn_id", result.SpawnID,

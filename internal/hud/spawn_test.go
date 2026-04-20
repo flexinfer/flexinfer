@@ -316,3 +316,97 @@ func TestSpawnOrchestrator_Wait_ContextCancellation(t *testing.T) {
 		t.Errorf("expected ctx error, got %q", err.Error())
 	}
 }
+
+func TestSpawnOrchestrator_BroadcastWeaverParent_EmitsSidecar(t *testing.T) {
+	hub := NewSSEHub(slog.Default())
+	o := &SpawnOrchestrator{sseHub: hub}
+
+	state := &SpawnState{
+		SpawnID: "spawn-weaver-1",
+		Request: spawn.Request{
+			AgentType: "claude-code",
+			Metadata: map[string]string{
+				"weaver_query_id": "qid-42",
+				"weaver_domain":   "cluster-ops-claude",
+			},
+		},
+	}
+
+	// Subscribe BEFORE broadcast so we catch both events.
+	_, ch := hub.Subscribe()
+
+	o.broadcastSpawnEvent("agent.spawn.building", state)
+
+	seen := map[string]bool{}
+	timeout := time.After(200 * time.Millisecond)
+	for len(seen) < 2 {
+		select {
+		case ev := <-ch:
+			seen[ev.Type] = true
+		case <-timeout:
+			t.Fatalf("timed out waiting for events; got %v", seen)
+		}
+	}
+
+	if !seen["agent.spawn.building"] {
+		t.Error("expected agent.spawn.building event")
+	}
+	if !seen["agent.spawn.weaver_parent"] {
+		t.Error("expected agent.spawn.weaver_parent sidecar event")
+	}
+}
+
+func TestSpawnOrchestrator_BroadcastWeaverParent_SkipsNonWeaverSpawn(t *testing.T) {
+	hub := NewSSEHub(slog.Default())
+	o := &SpawnOrchestrator{sseHub: hub}
+
+	state := &SpawnState{
+		SpawnID: "spawn-direct-1",
+		Request: spawn.Request{AgentType: "claude-code"}, // no weaver metadata
+	}
+
+	_, ch := hub.Subscribe()
+	o.broadcastSpawnEvent("agent.spawn.building", state)
+
+	// Give the broadcast a moment; assert no weaver_parent event fires.
+	deadline := time.After(150 * time.Millisecond)
+	for {
+		select {
+		case ev := <-ch:
+			if ev.Type == "agent.spawn.weaver_parent" {
+				t.Fatal("unexpected weaver_parent event for direct spawn")
+			}
+		case <-deadline:
+			return // clean exit — no weaver_parent ever showed
+		}
+	}
+}
+
+func TestSpawnOrchestrator_BroadcastWeaverParent_OnlyOnFirstEvent(t *testing.T) {
+	hub := NewSSEHub(slog.Default())
+	o := &SpawnOrchestrator{sseHub: hub}
+
+	state := &SpawnState{
+		SpawnID: "spawn-weaver-2",
+		Request: spawn.Request{
+			AgentType: "codex",
+			Metadata:  map[string]string{"weaver_query_id": "qid-99"},
+		},
+	}
+
+	_, ch := hub.Subscribe()
+	// running is a later lifecycle event; weaver_parent should NOT fire here.
+	o.broadcastSpawnEvent("agent.spawn.running", state)
+
+	deadline := time.After(150 * time.Millisecond)
+	for {
+		select {
+		case ev := <-ch:
+			if ev.Type == "agent.spawn.weaver_parent" {
+				t.Fatal("weaver_parent should only fire on first broadcast (agent.spawn.building)")
+			}
+		case <-deadline:
+			return
+		}
+	}
+}

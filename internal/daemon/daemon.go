@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/crb2nu/loom/internal/hubproto"
+	"github.com/crb2nu/loom/internal/hud"
 	"github.com/crb2nu/loom/internal/pool"
 	"github.com/crb2nu/loom/internal/process"
 	"github.com/crb2nu/loom/internal/router"
@@ -58,11 +59,14 @@ type ResourceCache struct {
 	ttl       time.Duration
 }
 
-// hudAppStopper is satisfied by *hud.App. Defined as an interface here to
-// avoid an import cycle (daemon -> hud -> bridge -> daemon).
+// hudAppStopper is satisfied by *hud.App. Defined as an interface here
+// because d.hudApp is initialized from a nil-capable field path, and
+// narrowing to the methods we actually consume (vs. importing the
+// concrete type) keeps this file free of hud/bridge circular edges.
 type hudAppStopper interface {
 	StopMonitors()
 	RefreshMonitors()
+	SpawnOrchestrator() *hud.SpawnOrchestrator
 }
 
 // Daemon is the main Loom daemon.

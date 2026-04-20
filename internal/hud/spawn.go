@@ -1083,6 +1083,15 @@ const waitPollInterval = 500 * time.Millisecond
 // Projects returns the configured project list for spawn pickers.
 func (o *SpawnOrchestrator) Projects() []string { return o.projects }
 
+// NewSpawnOrchestratorForTest builds a minimal SpawnOrchestrator backed by
+// the given controller. Intended for external-package tests that need
+// ListSpawns / GetSpawn / Wait but can't construct a full orchestrator
+// because backend/sseHub/etc. fields are unexported. Do not use in
+// production code paths.
+func NewSpawnOrchestratorForTest(ctrl *spawn.K8sController) *SpawnOrchestrator {
+	return &SpawnOrchestrator{ctrl: ctrl}
+}
+
 // runBudgetWatcher polls the spawn telemetry accumulator at a fixed interval
 // and cancels the exec context when the configured cost or turn budget is
 // exceeded. It records a structured error on the accumulator ("max_budget" or
@@ -1183,6 +1192,10 @@ func (o *SpawnOrchestrator) runHeartbeatLoop(ctx context.Context, state *SpawnSt
 }
 
 // broadcastSpawnEvent sends a spawn lifecycle event to the SSE hub.
+// When the spawn was initiated by the weaver router (metadata carries
+// weaver_query_id), also emits a one-shot agent.spawn.weaver_parent
+// event on first broadcast so HUD clients can wire the "came from
+// weaver query X" badge without polling the spawn detail endpoint.
 func (o *SpawnOrchestrator) broadcastSpawnEvent(eventType string, state *SpawnState) {
 	data, err := json.Marshal(state)
 	if err != nil {
@@ -1191,6 +1204,38 @@ func (o *SpawnOrchestrator) broadcastSpawnEvent(eventType string, state *SpawnSt
 	o.sseHub.Broadcast(bridge.SSEEvent{
 		ID:        fmt.Sprintf("%s-%s-%d", eventType, state.SpawnID, time.Now().UnixMilli()),
 		Type:      eventType,
+		Timestamp: time.Now(),
+		Data:      data,
+	})
+
+	// First lifecycle broadcast for a weaver-originated spawn also emits
+	// a sidecar event carrying just the correlation keys. "agent.spawn.building"
+	// is the earliest lifecycle event; later transitions don't re-broadcast
+	// to avoid spamming the hub.
+	if eventType == "agent.spawn.building" {
+		o.broadcastWeaverParentIfApplicable(state)
+	}
+}
+
+// broadcastWeaverParentIfApplicable emits agent.spawn.weaver_parent when
+// the spawn's metadata carries weaver_query_id. No-op otherwise.
+func (o *SpawnOrchestrator) broadcastWeaverParentIfApplicable(state *SpawnState) {
+	queryID := state.Request.Metadata["weaver_query_id"]
+	if queryID == "" {
+		return
+	}
+	payload := map[string]string{
+		"spawn_id":        state.SpawnID,
+		"weaver_query_id": queryID,
+		"weaver_domain":   state.Request.Metadata["weaver_domain"],
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	o.sseHub.Broadcast(bridge.SSEEvent{
+		ID:        fmt.Sprintf("agent.spawn.weaver_parent-%s-%d", state.SpawnID, time.Now().UnixMilli()),
+		Type:      "agent.spawn.weaver_parent",
 		Timestamp: time.Now(),
 		Data:      data,
 	})

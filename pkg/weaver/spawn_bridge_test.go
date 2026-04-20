@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // captureBridge records the arguments of the most recent Dispatch call and
@@ -211,5 +213,101 @@ func TestRouter_RunSubAgentViaBridge_DispatchErrorReturnsDomainResult(t *testing
 	}
 	if got.Answer != "" {
 		t.Fatalf("on error, Answer should be empty; got %q", got.Answer)
+	}
+}
+
+func TestRouter_BackendDispatchMetric_BridgeSuccess(t *testing.T) {
+	router, _, _ := newTestRouter(t, func(_ chatCompletionRequestWithTools, _ int) chatCompletionResponseWithTools {
+		return terminalResponse("unused")
+	})
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	router.SetMetrics(m)
+	router.SetSpawnBridge(&captureBridge{
+		result: BridgeResult{SpawnID: "s1", LastMessage: "ok", StopReason: "end_turn"},
+	})
+
+	agent := SubAgent{Name: "d", Backend: BackendClaude, RequiresSpawn: true}
+	got := router.runSubAgentViaBridge(
+		context.Background(), agent, QueryRequest{Query: "q"}, "qid", time.Now(), router.logger,
+	)
+	if got.Error != "" {
+		t.Fatalf("unexpected error: %s", got.Error)
+	}
+
+	if v := counterValue(t, m.BackendDispatchTotal, BackendClaude, "success"); v != 1 {
+		t.Fatalf("expected BackendDispatchTotal[claude-code,success]=1, got %v", v)
+	}
+	if v := counterValue(t, m.BackendDispatchTotal, BackendFlexInfer, "success"); v != 0 {
+		t.Fatalf("expected no flexinfer dispatch, got %v", v)
+	}
+}
+
+func TestRouter_BackendDispatchMetric_BridgeError(t *testing.T) {
+	router, _, _ := newTestRouter(t, func(_ chatCompletionRequestWithTools, _ int) chatCompletionResponseWithTools {
+		return terminalResponse("unused")
+	})
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	router.SetMetrics(m)
+	router.SetSpawnBridge(&captureBridge{err: errors.New("quota")})
+
+	agent := SubAgent{Name: "d", Backend: BackendCodex, RequiresSpawn: true}
+	_ = router.runSubAgentViaBridge(
+		context.Background(), agent, QueryRequest{Query: "q"}, "qid", time.Now(), router.logger,
+	)
+
+	if v := counterValue(t, m.BackendDispatchTotal, BackendCodex, "error"); v != 1 {
+		t.Fatalf("expected BackendDispatchTotal[codex,error]=1, got %v", v)
+	}
+}
+
+func TestRouter_BackendDispatchMetric_ValidationFailure(t *testing.T) {
+	router, _, _ := newTestRouter(t, func(_ chatCompletionRequestWithTools, _ int) chatCompletionResponseWithTools {
+		return terminalResponse("unused")
+	})
+	reg := prometheus.NewRegistry()
+	m := NewMetrics(reg)
+	router.SetMetrics(m)
+
+	// Invalid: Backend set without RequiresSpawn.
+	agent := SubAgent{Name: "bad", Backend: BackendClaude}
+	got := router.runSubAgentViaBridge(
+		context.Background(), agent, QueryRequest{Query: "q"}, "qid", time.Now(), router.logger,
+	)
+	if got.Error == "" {
+		t.Fatal("expected validation error")
+	}
+	if v := counterValue(t, m.BackendDispatchTotal, BackendClaude, "error"); v != 1 {
+		t.Fatalf("expected BackendDispatchTotal[claude-code,error]=1 on validation fail, got %v", v)
+	}
+}
+
+func TestBackendOutcomeFromError(t *testing.T) {
+	tests := []struct {
+		name   string
+		ctxErr error
+		err    error
+		want   string
+	}{
+		{"nil error maps to success", nil, nil, "success"},
+		{"generic error maps to error", nil, errors.New("oops"), "error"},
+		{"deadline exceeded maps to timeout", context.DeadlineExceeded, errors.New("wrap"), "timeout"},
+		{"wrapped deadline maps to timeout", nil, fmt.Errorf("fail: %w", context.DeadlineExceeded), "timeout"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			if tc.ctxErr != nil {
+				c, cancel := context.WithTimeout(context.Background(), 0)
+				cancel()
+				_ = c // force ctx.Err() == DeadlineExceeded
+				ctx = c
+			}
+			got := backendOutcomeFromError(ctx, tc.err)
+			if got != tc.want {
+				t.Fatalf("backendOutcomeFromError = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
