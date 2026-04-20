@@ -84,5 +84,5 @@ spec:
       - gptq
       - gguf
     images:
-      gptq: registry.harbor.lan/flexinfer/quantizer@sha256:091fd394f57e4df101210ee29ed7b23f37e76fba4093d309729935c4d62fb8ea
+      gptq: registry.harbor.lan/flexinfer/quantizer@sha256:be407c42f308f93b3266cf0fb21abb502398e647b5baf564a3f0fe4b543df6e7
       abliteration: registry.harbor.lan/flexinfer/runtime@sha256:aefe41fac3e43a65982fb1da9744c9c485f08dd010bab859b0d1f90de3a6dc4e

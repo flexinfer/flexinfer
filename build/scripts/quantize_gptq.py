@@ -287,10 +287,14 @@ def _dense_gptq_cosine_threshold():
 
 
 def _dense_gptq_policy():
-    raw = os.environ.get(
-        "DENSE_GPTQ_POLICY",
-        os.environ.get("GEMMA4_DENSE_GPTQ_POLICY", "fallback"),
-    ).strip().lower()
+    raw = (
+        os.environ.get(
+            "DENSE_GPTQ_POLICY",
+            os.environ.get("GEMMA4_DENSE_GPTQ_POLICY", "fallback"),
+        )
+        .strip()
+        .lower()
+    )
     if raw in {"fallback", "fp16", "source", "safe"}:
         return "fallback"
     if raw in {"validate", "validated", "allow", "gptq"}:
@@ -310,13 +314,21 @@ def _dequantize_gptq_linear(save_dir, weight_map, prefix, zero_point_add):
     """Dequantize a GPTQ linear layer to HF .weight layout [out, in]."""
     import torch
 
-    qweight = _load_safetensor(save_dir, weight_map, f"{prefix}.qweight").to(torch.int32)
-    scales = _load_safetensor(save_dir, weight_map, f"{prefix}.scales").to(torch.float32)
+    qweight = _load_safetensor(save_dir, weight_map, f"{prefix}.qweight").to(
+        torch.int32
+    )
+    scales = _load_safetensor(save_dir, weight_map, f"{prefix}.scales").to(
+        torch.float32
+    )
     qzeros = None
     if f"{prefix}.qzeros" in weight_map:
-        qzeros = _load_safetensor(save_dir, weight_map, f"{prefix}.qzeros").to(torch.int32)
+        qzeros = _load_safetensor(save_dir, weight_map, f"{prefix}.qzeros").to(
+            torch.int32
+        )
     if f"{prefix}.g_idx" in weight_map:
-        group_idx = _load_safetensor(save_dir, weight_map, f"{prefix}.g_idx").to(torch.long)
+        group_idx = _load_safetensor(save_dir, weight_map, f"{prefix}.g_idx").to(
+            torch.long
+        )
     else:
         group_size = env_int("GROUP_SIZE", 128)
         input_size = qweight.shape[0] * 8
@@ -332,9 +344,9 @@ def _dequantize_gptq_linear(save_dir, weight_map, prefix, zero_point_add):
     if qzeros is not None and qzeros.numel() > 0:
         zero_points = torch.empty((qzeros.shape[0], output_size), dtype=torch.float32)
         for i in range(pack_factor):
-            zero_points[:, i::pack_factor] = (
-                ((qzeros >> (4 * i)) & 0xF).to(torch.float32) + zero_point_add
-            )
+            zero_points[:, i::pack_factor] = ((qzeros >> (4 * i)) & 0xF).to(
+                torch.float32
+            ) + zero_point_add
         unpacked = unpacked - zero_points[group_idx]
     else:
         unpacked = unpacked - 8.0
@@ -350,7 +362,9 @@ def _cosine_similarity(a, b):
     return torch.nn.functional.cosine_similarity(a, b, dim=0).item()
 
 
-def _validate_dense_gptq_family(save_dir, source_dir, target_weight_map, source_weight_map, family, prefixes):
+def _validate_dense_gptq_family(
+    save_dir, source_dir, target_weight_map, source_weight_map, family, prefixes
+):
     """Validate all layers for one dense module family against source weights."""
     threshold = _dense_gptq_cosine_threshold()
     zero_point_add = _dense_gptq_zero_point_add()
@@ -492,7 +506,9 @@ def emit_gemma4_moe_hybrid_gptq(save_dir, model_dir):
             )
             continue
         if family not in quant_prefixes_by_family:
-            print(f"Gemma4 dense GPTQ family {family} has no qweight keys; restoring source")
+            print(
+                f"Gemma4 dense GPTQ family {family} has no qweight keys; restoring source"
+            )
             continue
         if len(quant_prefixes_by_family[family]) != len(prefixes):
             print(
@@ -530,7 +546,8 @@ def emit_gemma4_moe_hybrid_gptq(save_dir, model_dir):
             target_by_layer.setdefault(layer_match.group(1), shard_name)
 
     new_weight_map = {
-        key: shard_name for key, shard_name in target_weight_map.items()
+        key: shard_name
+        for key, shard_name in target_weight_map.items()
         if key not in keys_to_drop
     }
 
@@ -570,7 +587,9 @@ def emit_gemma4_moe_hybrid_gptq(save_dir, model_dir):
                     source_open[source_shard] = stack.enter_context(
                         safe_open(os.path.join(model_dir, source_shard), framework="pt")
                     )
-                updated[key] = source_open[source_shard].get_tensor(key).to(torch.float16)
+                updated[key] = (
+                    source_open[source_shard].get_tensor(key).to(torch.float16)
+                )
             save_file(updated, target_path)
 
     if target_index_path:
@@ -1357,7 +1376,24 @@ else:
     dataset_name, dataset_config = dataset_raw, None
 hessian_repair_enabled = env_bool("GPTQ_HESSIAN_REPAIR", True)
 hessian_sanitize_nonfinite = env_bool("GPTQ_HESSIAN_SANITIZE_NONFINITE", True)
-hessian_diag_floor_scale = env_float("GPTQ_HESSIAN_DIAG_FLOOR_SCALE", 1e-6)
+# Mode "mean" scales floor proportionally to mean(|diag|), so floor attempts are
+# numerically comparable to damp*mean and each attempt shifts conditioning
+# meaningfully. "abs_max" preserves the legacy behavior (floor is a tiny
+# fraction of max|diag|), which is near-useless when mean and max are within
+# an order of magnitude.
+hessian_diag_floor_mode = (
+    os.environ.get("GPTQ_HESSIAN_DIAG_FLOOR_MODE", "mean").strip().lower() or "mean"
+)
+if hessian_diag_floor_mode not in ("mean", "abs_max"):
+    print(
+        f"WARN: unknown GPTQ_HESSIAN_DIAG_FLOOR_MODE={hessian_diag_floor_mode!r}; "
+        "falling back to mean"
+    )
+    hessian_diag_floor_mode = "mean"
+_floor_scale_default = 0.01 if hessian_diag_floor_mode == "mean" else 1e-6
+hessian_diag_floor_scale = env_float(
+    "GPTQ_HESSIAN_DIAG_FLOOR_SCALE", _floor_scale_default
+)
 hessian_floor_multiplier = env_float("GPTQ_HESSIAN_FLOOR_MULTIPLIER", 10.0)
 hessian_max_floor_attempts = env_int("GPTQ_HESSIAN_MAX_FLOOR_ATTEMPTS", 6)
 hessian_clamp_abs = env_float("GPTQ_HESSIAN_CLAMP_ABS", 0.0)
@@ -1917,7 +1953,14 @@ def patch_gptq_hessian_inverse():
         base_abs_max = torch.max(finite_diag).item()
         if not math.isfinite(base_abs_max) or base_abs_max == 0.0:
             base_abs_max = 1.0
-        floor_base = base_abs_max * hessian_diag_floor_scale
+        if hessian_diag_floor_mode == "mean":
+            base_mean = torch.mean(finite_diag).item()
+            if not math.isfinite(base_mean) or base_mean == 0.0:
+                base_mean = base_abs_max
+            floor_reference = base_mean
+        else:
+            floor_reference = base_abs_max
+        floor_base = floor_reference * hessian_diag_floor_scale
         used_damp = getattr(self.qcfg, "damp_percent", 0.01)
         damp_step = getattr(self.qcfg, "damp_auto_increment", 0.0015)
         last_error = None
@@ -1939,6 +1982,12 @@ def patch_gptq_hessian_inverse():
 
             mean = torch.mean(current_diag)
             damp = getattr(self.qcfg, "damp_percent", 0.01)
+            # Once a diagonal floor is applied, damp sweeping within the same
+            # attempt is wasted work — sweeping damp without touching the floor
+            # just shifts the mean by a constant, so if damp=damp_percent fails
+            # under this floor, damp+step will fail too. Jump to the next floor
+            # attempt instead. Attempt 0 (no floor) keeps sweeping.
+            effective_damp_step = damp_step if attempt == 0 else 0.0
             recovery_started = False
             recovery_initial = None
             recovery_last = None
@@ -1963,16 +2012,16 @@ def patch_gptq_hessian_inverse():
                 except Exception as exc:
                     last_error = exc
                     diag_view.copy_(current_diag)
-                    if damp_step == 0:
+                    if effective_damp_step == 0:
                         break
                     if not recovery_started:
                         recovery_started = True
                         recovery_initial = damp
                         print(
                             f"GPTQ Hessian recovery for module={getattr(self, 'name', 'unknown')}: "
-                            f"starting damp recovery at {damp:.5f} with step {damp_step:.5f}"
+                            f"starting damp recovery at {damp:.5f} with step {effective_damp_step:.5f}"
                         )
-                    damp += damp_step
+                    damp += effective_damp_step
                     recovery_last = damp
 
             if recovery_started:
