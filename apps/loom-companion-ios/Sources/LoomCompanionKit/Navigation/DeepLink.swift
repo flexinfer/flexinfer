@@ -240,7 +240,7 @@ public enum DeepLink: Equatable, Sendable {
     public var shareTitle: String {
         switch self {
         case .dashboard: return "Loom Dashboard"
-        case .people: return "Loom · People"
+        case .people: return "Loom · Agents"
         case .work: return "Loom · Work"
         case .alerts: return "Loom · Alerts"
         case .connection: return "Loom · Connection"

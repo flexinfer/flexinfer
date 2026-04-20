@@ -250,7 +250,7 @@ struct AttentionLanesCard: View {
 
     private func fallbackSummary(for lane: DashboardAttentionLane) -> String {
         switch lane.route {
-        case "people": return "Review the people lane for the agent or session behind this pressure."
+        case "people": return "Review the agents lane for the agent or session behind this pressure."
         case "connection": return "Open connection diagnostics for the next remediation step."
         default: return "Open Work for the workflow, namespace, or blocker driving this lane."
         }

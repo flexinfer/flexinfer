@@ -9,6 +9,7 @@ struct FleetHealthWidget: Widget {
         StaticConfiguration(kind: kind, provider: FleetHealthProvider()) { entry in
             FleetHealthWidgetView(entry: entry)
                 .containerBackground(.fill.tertiary, for: .widget)
+                .widgetURL(URL(string: "loom://dashboard"))
         }
         .configurationDisplayName("Fleet Health")
         .description("Monitor your Loom fleet health at a glance.")

@@ -12,6 +12,7 @@ public final class AgentsViewModel {
     public var statusFilter: MobilePresenceStatus?
     public var typeFilter: String?
     public var searchText: String = ""
+    public var attentionOnly: Bool = false
 
     // Session mutation state
     public var isCreating = false
@@ -100,9 +101,19 @@ public final class AgentsViewModel {
         }
     }
 
+    /// Total agents flagged as needing attention (ignores current filters).
+    public var attentionCount: Int {
+        agents.reduce(0) { count, agent in
+            count + ((agent.needsAttention || agent.blockedTasks > 0) ? 1 : 0)
+        }
+    }
+
     /// Agents after applying current filters.
     public var filteredAgents: [UnifiedAgent] {
         agents.filter { agent in
+            if attentionOnly, !(agent.needsAttention || agent.blockedTasks > 0) {
+                return false
+            }
             if let statusFilter, agent.status != statusFilter {
                 return false
             }

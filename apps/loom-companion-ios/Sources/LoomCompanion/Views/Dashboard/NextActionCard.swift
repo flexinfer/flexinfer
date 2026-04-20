@@ -149,7 +149,7 @@ struct NextActionCard: View {
 
     private func ctaLabel(for action: ResolvedAction) -> String {
         switch action.navAction {
-        case .people: return "Open People"
+        case .people: return "Open Agents"
         case .work: return "Open Work"
         case .connection: return "Open Connection"
         case .liveActivities: return "View Live"

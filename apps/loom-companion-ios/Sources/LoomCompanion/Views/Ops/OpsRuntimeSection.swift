@@ -85,7 +85,7 @@ struct OpsRuntimeSection: View {
                     .font(LoomTypography.headlineMedium)
                     .foregroundStyle(LoomColors.textPrimary)
 
-                Text("Use runtime status to spot whether the fleet is available before opening the deeper People views.")
+                Text("Use runtime status to spot whether the fleet is available before opening the deeper Agents views.")
                     .font(LoomTypography.caption)
                     .foregroundStyle(LoomColors.textTertiary)
 
