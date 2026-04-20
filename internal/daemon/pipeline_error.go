@@ -64,6 +64,15 @@ func newGatePipelineError(code string) *PipelineErrorData {
 	return newPipelineError(code, "", "", stageGate, true)
 }
 
+// newDrainingPipelineError returns a DAEMON_DRAINING gate error with a
+// backoff hint so callers (proxy, SDK clients) can schedule a retry without
+// probing heuristically.
+func newDrainingPipelineError() *PipelineErrorData {
+	ped := newGatePipelineError("DAEMON_DRAINING")
+	ped.RetryAfter = "2s"
+	return ped
+}
+
 func newRBACDeniedPipelineError(server, tool string, decision AccessDecision) *PipelineErrorData {
 	code := "RBAC_DENIED"
 	retryable := false

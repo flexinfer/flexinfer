@@ -151,6 +151,9 @@ func (d *Daemon) Start(ctx context.Context) (err error) {
 		sessTimeout = 30 * time.Minute
 	}
 	d.sessions = NewSessionManager(sessMax, sessTimeout, d.daemonEpoch, d.logger)
+	if d.metrics != nil {
+		d.sessions.SetMetrics(d.metrics)
+	}
 	d.logger.Info("proxy session manager initialized", "max_sessions", sessMax, "lease_minutes", int(sessTimeout.Minutes()))
 
 	// Start session reaper

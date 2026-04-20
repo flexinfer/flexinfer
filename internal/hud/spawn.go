@@ -313,6 +313,14 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 
 	state, _ := o.ctrl.Get(spawnID)
 
+	// Resolve which cluster auth path this spawn will use. Populated on
+	// the state so HUD detail endpoints can surface "cluster_api_key" vs
+	// "cluster_service_account" without introspecting the pod. In Slice 2a
+	// the resolver returns a default based on agent type; Slice 2b layers
+	// in cluster OAuth detection.
+	state.AuthMode = resolveAuthMode(req.AgentType)
+	o.ctrl.UpdateState(ctx, state)
+
 	projectDir := o.workspaceRoot + "/" + req.Project
 
 	// Step 1: Detect project environment and generate Dockerfile.
@@ -347,15 +355,26 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	// Step 2: Start K8s pod.
 	o.logger.Info("build completed, starting pod", "spawn_id", spawnID, "image", buildResult.ImageTag)
 	_, podSpan := o.tracer.Start(ctx, "agent.spawn.pod_create")
+	env := map[string]string{
+		"AGENT_ID":  state.AgentID,
+		"SPAWN_ID":  spawnID,
+		"NAMESPACE": req.Namespace,
+	}
+	if req.ParentSessionID != "" {
+		env["LOOM_PARENT_SESSION_ID"] = req.ParentSessionID
+	}
+	// Gemini picks up service-account auth via this standard Google env
+	// var, which the Google Auth Library reads to find the SA JSON file.
+	// Harmless when the SA JSON isn't present — Gemini falls back to
+	// GEMINI_API_KEY from cluster-agent-api-keys.
+	if req.AgentType == "gemini" {
+		env["GOOGLE_APPLICATION_CREDENTIALS"] = GeminiSAMountPath + "/" + GeminiSAFilename
+	}
 	startResult, err := o.backend.Start(ctx, backend.StartOpts{
-		Name:     "spawn-" + spawnID,
-		ImageTag: buildResult.ImageTag,
-		WorkDir:  "/workspace/" + req.Project,
-		Env: map[string]string{
-			"AGENT_ID":  state.AgentID,
-			"SPAWN_ID":  spawnID,
-			"NAMESPACE": req.Namespace,
-		},
+		Name:         "spawn-" + spawnID,
+		ImageTag:     buildResult.ImageTag,
+		WorkDir:      "/workspace/" + req.Project,
+		Env:          env,
 		SecretEnv:    agentSecretEnvVars(req.AgentType),
 		SecretMounts: agentSecretMounts(req.AgentType),
 		MemoryMB:     req.MemoryMB,
@@ -595,16 +614,24 @@ func (o *SpawnOrchestrator) injectAgentConfig(ctx context.Context, containerID, 
 	switch agentType {
 	case "claude-code":
 		// Claude Code reads project-level .claude/settings.json for permissions.
-		// apiKeyHelper extracts the subscription accessToken from the mounted
-		// OAuth JSON (synced from macOS Keychain), falling back to API key env var.
-		// The OAuth file is mounted at /root/.claude.auth/oauth.json (separate from
-		// .claude/ to avoid volume mount shadowing the injected settings.json).
+		// apiKeyHelper extracts the subscription accessToken from the
+		// cluster-owned OAuth JSON mounted at /root/.claude.auth/oauth.json
+		// (sourced from cluster-agent-auth, NOT the developer's Mac). If
+		// the mount is absent or the key is missing, python fails silently
+		// and the helper falls back to ANTHROPIC_API_KEY from
+		// cluster-agent-api-keys.
 		settings := `{"permissions":{"allow":["Bash","Read","Write","Edit","Glob","Grep"]},"apiKeyHelper":"python3 -c \"import json,sys; d=json.load(open('/root/.claude.auth/oauth.json')); print(d['claudeAiOauth']['accessToken'])\" 2>/dev/null || echo $ANTHROPIC_API_KEY"}`
 		if err := writeCmd(projectDir+"/.claude", "settings.json", settings); err != nil {
 			return fmt.Errorf("write claude settings: %w", err)
 		}
 	case "codex":
-		// Full Codex config with sandbox and multi-agent features.
+		// Codex reads ~/.codex/config.toml for sandbox + multi-agent features
+		// and ~/.codex/auth.json for OAuth (falling back to $OPENAI_API_KEY).
+		// Because the auth.json is a read-only secret volume mount staged at
+		// /root/.codex.auth/, we symlink it into the writable /root/.codex/
+		// directory so Codex CLI can read it at its native path. The symlink
+		// transparently reflects kubelet-propagated secret updates (e.g.,
+		// refreshed OAuth tokens written by mcp-auth-refresher).
 		//
 		// TODO(spawn): add MCP proxy section once the loom binary is available
 		// in spawned pods. Currently agentCLIInstallLines only installs the
@@ -628,8 +655,23 @@ unified_exec = true
 		if err := writeCmd("/root/.codex", "config.toml", config); err != nil {
 			return fmt.Errorf("write codex config: %w", err)
 		}
+		// Best-effort symlink; pipe "true" at the end so the exec doesn't
+		// fail when the auth mount is absent (API-key-only operators).
+		linkCmd := "ln -sf /root/.codex.auth/auth.json /root/.codex/auth.json 2>/dev/null || true"
+		if _, err := o.backend.Exec(ctx, backend.ExecOpts{
+			ContainerID: containerID,
+			Command:     linkCmd,
+			TimeoutSec:  10,
+		}); err != nil {
+			return fmt.Errorf("link codex auth.json: %w", err)
+		}
 	case "gemini":
-		// Gemini reads ~/.gemini/settings.json for permissions.
+		// Gemini reads ~/.gemini/settings.json for permissions. The Google
+		// Auth Library auto-detects GOOGLE_APPLICATION_CREDENTIALS; that env
+		// var is set at pod-start time in runSpawn(), pointing at the
+		// service-account JSON mounted from the cluster secret. If the SA
+		// JSON key is absent, the file is missing and Gemini falls back to
+		// GEMINI_API_KEY env.
 		settings := `{"permissions":{"allow_all":true}}`
 		if err := writeCmd("/root/.gemini", "settings.json", settings); err != nil {
 			return fmt.Errorf("write gemini settings: %w", err)
@@ -1114,11 +1156,62 @@ func (o *SpawnOrchestrator) broadcastSpawnEvent(eventType string, state *SpawnSt
 	})
 }
 
+// Cluster-scoped secret names. These hold credentials tied to the cluster
+// identity, decoupled from any developer's Mac Keychain. See
+// .loom/87-product-spec-session-spawning-weaver-2026-04-19.md §AUTH.
+const (
+	// ClusterAgentAPIKeysSecret holds vendor API keys (ANTHROPIC_API_KEY,
+	// OPENAI_API_KEY, GEMINI_API_KEY) and the Gemini service-account JSON,
+	// all scoped to the cluster's identity.
+	ClusterAgentAPIKeysSecret = "cluster-agent-api-keys"
+
+	// ClusterAgentAuthSecret holds cluster-owned OAuth tokens for agents
+	// that support subscription auth (Claude, Codex). Populated by
+	// `loom auth cluster-login`; refreshed in-cluster by mcp-auth-refresher.
+	// Unused in Slice 2a (API-key only); Slice 2b adds the OAuth mounts.
+	ClusterAgentAuthSecret = "cluster-agent-auth"
+
+	// GeminiSAKeyName is the Secret key that holds the full Google service
+	// account JSON for Gemini. When present it is mounted as a file at
+	// GeminiSAMountPath/sa.json so Gemini CLI can pick it up via the
+	// standard GOOGLE_APPLICATION_CREDENTIALS env var.
+	GeminiSAKeyName   = "GOOGLE_APPLICATION_CREDENTIALS_JSON"
+	GeminiSAMountPath = "/root/.gcp"
+	GeminiSAFilename  = "sa.json"
+)
+
+// resolveAuthMode returns the cluster-credential path the spawn will use.
+// Describes the *configured* auth path — the actual runtime fallback
+// (e.g., OAuth file absent → API-key env) is reflected in pod telemetry,
+// not here.
+//
+//   - claude-code, codex → cluster_oauth (both agents mount from
+//     cluster-agent-auth with OAuth-or-API-key fallback; an empty cluster
+//     secret silently degrades to API-key mode via env fallback)
+//   - gemini             → cluster_service_account (SA JSON mount from
+//     cluster-agent-api-keys; falls through to GEMINI_API_KEY env if the
+//     SA JSON key is absent)
+//
+// When the cluster-agent-auth secret is empty, Claude and Codex at runtime
+// effectively use cluster_api_key via $ANTHROPIC_API_KEY/$OPENAI_API_KEY.
+// Reporting cluster_oauth here reflects operator intent; a follow-up slice
+// can add pod-side AuthMode reporting for the runtime-actual value.
+func resolveAuthMode(agentType string) spawn.AuthMode {
+	switch agentType {
+	case "gemini":
+		return spawn.AuthModeClusterServiceAccount
+	case "claude-code", "codex":
+		return spawn.AuthModeClusterOAuth
+	default:
+		return ""
+	}
+}
+
 // agentSecretEnvVars returns K8s secret env vars for the given agent type.
-// These provide API key fallback authentication when subscription auth tokens
-// aren't available.
+// Sources credentials from the cluster-scoped secret (ClusterAgentAPIKeysSecret)
+// so pods never read the developer's Mac Keychain state.
 func agentSecretEnvVars(agentType string) []backend.SecretEnvVar {
-	const secretName = "agent-api-keys"
+	secretName := ClusterAgentAPIKeysSecret
 	switch agentType {
 	case "claude-code":
 		return []backend.SecretEnvVar{
@@ -1139,22 +1232,61 @@ func agentSecretEnvVars(agentType string) []backend.SecretEnvVar {
 	}
 }
 
-// agentSecretMounts returns K8s secret volume mounts for subscription auth
-// token files. File-backed CLIs that refresh OAuth state should use API-key env
-// auth in disposable pods instead of mounting a user's refresh-token file.
+// agentSecretMounts returns K8s secret volume mounts for credential files
+// that the agent CLI reads from disk. All sources come from cluster-scoped
+// secrets; no developer-Mac state is ever mounted.
+//
+//   - Claude: mounts cluster-agent-auth's claude-oauth-json at
+//     /root/.claude.auth/oauth.json when populated. Read-only; pod-side
+//     refresh is the job of mcp-auth-refresher (Slice 2b.2). At runtime
+//     the apiKeyHelper injected into .claude/settings.json prefers this
+//     OAuth accessToken and falls back to $ANTHROPIC_API_KEY from
+//     cluster-agent-api-keys.
+//   - Codex: mounts cluster-agent-auth's codex-auth-json at
+//     /root/.codex/auth.json when populated. Codex CLI reads this file
+//     natively and falls back to $OPENAI_API_KEY.
+//   - Gemini: mounts the service-account JSON from cluster-agent-api-keys
+//     at /root/.gcp/sa.json. GOOGLE_APPLICATION_CREDENTIALS env pointing
+//     at the file is set by runSpawn.
+//
+// All mounts are k8s-Optional (see buildPodSpec): a missing secret or key
+// results in an absent file, not a pod-start failure. The agent CLIs
+// handle missing OAuth files by falling back to env-var API keys.
 func agentSecretMounts(agentType string) []backend.SecretMount {
-	const secretName = "agent-auth-tokens"
 	switch agentType {
 	case "claude-code":
-		// Claude Code subscription OAuth token (synced from macOS Keychain).
-		// Mounted as /root/.claude.auth/oauth.json; apiKeyHelper in settings.json
-		// extracts the accessToken at runtime, falling back to ANTHROPIC_API_KEY.
 		return []backend.SecretMount{
 			{
-				SecretName: secretName,
+				SecretName: ClusterAgentAuthSecret,
 				MountPath:  "/root/.claude.auth",
 				Items: []backend.SecretMountItem{
 					{Key: "claude-oauth-json", Path: "oauth.json"},
+				},
+			},
+		}
+	case "codex":
+		// Stage the OAuth file at /root/.codex.auth/ (NOT /root/.codex/)
+		// so the injected config.toml and the symlink to auth.json can
+		// coexist in /root/.codex/ without the secret-volume mount
+		// shadowing injectAgentConfig's writes. injectAgentConfig creates
+		// /root/.codex/auth.json as a symlink to the staging mount so
+		// kubelet-propagated secret updates reach the CLI transparently.
+		return []backend.SecretMount{
+			{
+				SecretName: ClusterAgentAuthSecret,
+				MountPath:  "/root/.codex.auth",
+				Items: []backend.SecretMountItem{
+					{Key: "codex-auth-json", Path: "auth.json"},
+				},
+			},
+		}
+	case "gemini":
+		return []backend.SecretMount{
+			{
+				SecretName: ClusterAgentAPIKeysSecret,
+				MountPath:  GeminiSAMountPath,
+				Items: []backend.SecretMountItem{
+					{Key: GeminiSAKeyName, Path: GeminiSAFilename},
 				},
 			},
 		}

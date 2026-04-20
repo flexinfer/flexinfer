@@ -30,6 +30,12 @@ func proxyOpenSession(ctx context.Context, transport mcp.Transport) {
 	if proxySessionID != "" {
 		openParams["prior_session_id"] = proxySessionID
 	}
+	// Forward the agent's registered presence id (set by CLI session hooks)
+	// so the daemon can correlate proxy sessions with agentcontext presence
+	// entries without parsing agent_hint heuristically.
+	if id := os.Getenv("LOOM_AGENT_ID"); id != "" {
+		openParams["presence_agent_id"] = id
+	}
 
 	req, _ := mcp.NewRequest(99, "loom/session/open", openParams)
 	resp, err := proxyDaemonRoundTrip(ctx, transport, req, "loom/session/open")

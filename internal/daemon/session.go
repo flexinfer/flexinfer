@@ -36,6 +36,11 @@ type SessionClientInfo struct {
 	AgentHint string `json:"agentHint,omitempty"`
 	HostPID   string `json:"hostPid,omitempty"`
 	Version   string `json:"version,omitempty"`
+	// PresenceAgentID is the agent_id used in the agentcontext presence
+	// registry (mcp-agent-context). Optional; when populated, downstream
+	// services (HUD /api/hud/sessions) can correlate proxy sessions with
+	// presence entries without parsing AgentHint heuristically.
+	PresenceAgentID string `json:"presenceAgentId,omitempty"`
 }
 
 // SessionManager manages proxy sessions for the daemon.
@@ -46,6 +51,14 @@ type SessionManager struct {
 	leaseTime   time.Duration
 	daemonEpoch int64
 	logger      *slog.Logger
+	metrics     sessionMetricsSink
+}
+
+// sessionMetricsSink is the narrow interface SessionManager uses to surface
+// observability. Satisfied by *Metrics; nil-safe via the methods below.
+type sessionMetricsSink interface {
+	RecordSessionEvicted()
+	RecordSessionEpochMismatch()
 }
 
 // NewSessionManager creates a new session manager.
@@ -91,6 +104,15 @@ func (m *SessionManager) Open(clientInfo SessionClientInfo, priorID string) *Pro
 	return sess
 }
 
+// SetMetrics attaches a metrics sink used to record evictions and
+// epoch-mismatch rejections. Safe to call before or after sessions exist.
+// Passing nil disables metrics reporting.
+func (m *SessionManager) SetMetrics(sink sessionMetricsSink) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.metrics = sink
+}
+
 // Heartbeat refreshes a session's lease. Returns an error if the session is
 // not found or the provided epoch does not match the daemon epoch.
 func (m *SessionManager) Heartbeat(id string, epoch int64) (*ProxySession, error) {
@@ -103,6 +125,9 @@ func (m *SessionManager) Heartbeat(id string, epoch int64) (*ProxySession, error
 	}
 
 	if epoch != m.daemonEpoch {
+		if m.metrics != nil {
+			m.metrics.RecordSessionEpochMismatch()
+		}
 		return nil, fmt.Errorf("epoch mismatch: client=%d daemon=%d", epoch, m.daemonEpoch)
 	}
 
@@ -224,6 +249,39 @@ func (m *SessionManager) Epoch() int64 {
 	return m.daemonEpoch
 }
 
+// Snapshot returns a stable copy of every active session. Callers can
+// iterate without holding the SessionManager lock; useful for HUD/status
+// endpoints that need to join with external data (e.g. presence).
+func (m *SessionManager) Snapshot() []ProxySession {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	out := make([]ProxySession, 0, len(m.sessions))
+	for _, sess := range m.sessions {
+		out = append(out, *sess)
+	}
+	return out
+}
+
+// FindByPresenceAgentID returns active sessions whose ClientInfo
+// PresenceAgentID matches the supplied id. Typically at most one is
+// returned, but we do not enforce uniqueness to keep the contract simple.
+func (m *SessionManager) FindByPresenceAgentID(id string) []ProxySession {
+	if id == "" {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var out []ProxySession
+	for _, sess := range m.sessions {
+		if sess.ClientInfo.PresenceAgentID == id && sess.State == SessionActive {
+			out = append(out, *sess)
+		}
+	}
+	return out
+}
+
 // evictOldestLocked removes the session with the oldest LastSeenAt.
 // Caller must hold m.mu.
 func (m *SessionManager) evictOldestLocked() {
@@ -242,6 +300,9 @@ func (m *SessionManager) evictOldestLocked() {
 			m.logger.Debug("evicting oldest session (LRU)", "session_id", oldestID)
 		}
 		delete(m.sessions, oldestID)
+		if m.metrics != nil {
+			m.metrics.RecordSessionEvicted()
+		}
 	}
 }
 

@@ -94,6 +94,9 @@ func (d *Daemon) sessionReaperLoop() {
 			if d.sessions != nil {
 				if reaped := d.sessions.ReapExpired(); reaped > 0 {
 					d.logger.Info("reaped expired proxy sessions", "count", reaped)
+					if d.metrics != nil {
+						d.metrics.RecordSessionReaped(reaped)
+					}
 				}
 			}
 		}
@@ -164,6 +167,11 @@ func (d *Daemon) collectMetrics() {
 
 	// Concurrent call gauge (from activeRPCs atomic counter)
 	d.metrics.ConcurrentCalls.Set(float64(d.activeRPCs.Load()))
+
+	// Proxy session gauges (active count + current daemon epoch)
+	if d.sessions != nil {
+		d.metrics.UpdateSessionGauges(d.sessions.ActiveCount(), d.sessions.Epoch())
+	}
 
 	// Runtime stats
 	d.metrics.GoroutineCount.Set(float64(runtime.NumGoroutine()))

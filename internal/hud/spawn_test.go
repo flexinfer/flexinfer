@@ -105,29 +105,120 @@ func TestBuildAgentCommand_ClaudeStreamJSON(t *testing.T) {
 	}
 }
 
-func TestAgentSecretMounts_NoRefreshTokenMountsForKeyBackedCLIs(t *testing.T) {
-	for _, agentType := range []string{"codex", "gemini"} {
+func TestAgentSecretMounts_ClaudeOAuthFromClusterSecret(t *testing.T) {
+	mounts := agentSecretMounts("claude-code")
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(mounts))
+	}
+	m := mounts[0]
+	if m.SecretName != ClusterAgentAuthSecret {
+		t.Fatalf("SecretName = %q, want %q", m.SecretName, ClusterAgentAuthSecret)
+	}
+	if m.MountPath != "/root/.claude.auth" {
+		t.Fatalf("MountPath = %q, want %q (staging dir, not /root/.claude)", m.MountPath, "/root/.claude.auth")
+	}
+	if strings.HasPrefix(m.MountPath, "/root/.claude/") || m.MountPath == "/root/.claude" {
+		t.Fatalf("Claude mount must NOT shadow writable .claude/ config dir: %q", m.MountPath)
+	}
+	if len(m.Items) != 1 || m.Items[0].Key != "claude-oauth-json" || m.Items[0].Path != "oauth.json" {
+		t.Fatalf("unexpected items: %#v", m.Items)
+	}
+}
+
+func TestAgentSecretMounts_CodexOAuthFromClusterSecret(t *testing.T) {
+	mounts := agentSecretMounts("codex")
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(mounts))
+	}
+	m := mounts[0]
+	if m.SecretName != ClusterAgentAuthSecret {
+		t.Fatalf("SecretName = %q, want %q", m.SecretName, ClusterAgentAuthSecret)
+	}
+	if m.MountPath != "/root/.codex.auth" {
+		t.Fatalf("MountPath = %q, want %q (staging dir, not /root/.codex)", m.MountPath, "/root/.codex.auth")
+	}
+	if strings.HasPrefix(m.MountPath, "/root/.codex/") || m.MountPath == "/root/.codex" {
+		t.Fatalf("Codex mount must NOT shadow writable .codex/ config dir: %q", m.MountPath)
+	}
+	if len(m.Items) != 1 || m.Items[0].Key != "codex-auth-json" || m.Items[0].Path != "auth.json" {
+		t.Fatalf("unexpected items: %#v", m.Items)
+	}
+}
+
+func TestAgentSecretMounts_GeminiServiceAccount(t *testing.T) {
+	mounts := agentSecretMounts("gemini")
+	if len(mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(mounts))
+	}
+	m := mounts[0]
+	if m.SecretName != ClusterAgentAPIKeysSecret {
+		t.Fatalf("SecretName = %q, want %q", m.SecretName, ClusterAgentAPIKeysSecret)
+	}
+	if m.MountPath != GeminiSAMountPath {
+		t.Fatalf("MountPath = %q, want %q", m.MountPath, GeminiSAMountPath)
+	}
+	if len(m.Items) != 1 {
+		t.Fatalf("expected 1 mount item, got %d", len(m.Items))
+	}
+	if m.Items[0].Key != GeminiSAKeyName {
+		t.Fatalf("item key = %q, want %q", m.Items[0].Key, GeminiSAKeyName)
+	}
+	if m.Items[0].Path != GeminiSAFilename {
+		t.Fatalf("item path = %q, want %q", m.Items[0].Path, GeminiSAFilename)
+	}
+}
+
+func TestAgentSecretMounts_NoLegacySecretReferences(t *testing.T) {
+	// After Slice 2a, no mount should reference the Mac-sourced
+	// agent-auth-tokens secret. This is a correctness guard to prevent
+	// accidental reintroduction of the Mac->cluster credential bridge.
+	for _, agentType := range []string{"claude-code", "codex", "gemini"} {
 		t.Run(agentType, func(t *testing.T) {
-			if mounts := agentSecretMounts(agentType); len(mounts) != 0 {
-				t.Fatalf("expected no refresh-token mounts for %s, got %#v", agentType, mounts)
+			for _, m := range agentSecretMounts(agentType) {
+				if m.SecretName == "agent-auth-tokens" {
+					t.Fatalf("%s still references legacy agent-auth-tokens secret", agentType)
+				}
 			}
 		})
 	}
 }
 
-func TestAgentSecretMounts_ClaudeUsesStagingDir(t *testing.T) {
-	mounts := agentSecretMounts("claude-code")
-	if len(mounts) != 1 {
-		t.Fatalf("expected 1 mount, got %d", len(mounts))
+func TestAgentSecretEnvVars_UsesClusterSecret(t *testing.T) {
+	for _, agentType := range []string{"claude-code", "codex", "gemini"} {
+		t.Run(agentType, func(t *testing.T) {
+			vars := agentSecretEnvVars(agentType)
+			if len(vars) == 0 {
+				t.Fatalf("expected non-empty env vars for %s", agentType)
+			}
+			for _, v := range vars {
+				if v.SecretName != ClusterAgentAPIKeysSecret {
+					t.Fatalf("%s env %q uses secret %q, want %q",
+						agentType, v.Name, v.SecretName, ClusterAgentAPIKeysSecret)
+				}
+			}
+		})
 	}
-	mount := mounts[0]
-	if mount.MountPath != "/root/.claude.auth" {
-		t.Fatalf("MountPath = %q, want %q", mount.MountPath, "/root/.claude.auth")
+}
+
+func TestResolveAuthMode(t *testing.T) {
+	tests := []struct {
+		agentType string
+		want      string
+	}{
+		// Claude/Codex configured for OAuth via cluster-agent-auth; runtime
+		// fallback to API-key env is not reflected here (see resolveAuthMode
+		// docstring).
+		{"claude-code", "cluster_oauth"},
+		{"codex", "cluster_oauth"},
+		{"gemini", "cluster_service_account"},
+		{"unknown", ""},
 	}
-	if mount.MountPath == "/root/.claude" || strings.HasPrefix(mount.MountPath, "/root/.claude/") {
-		t.Fatalf("mount shadows writable Claude project config: %q", mount.MountPath)
-	}
-	if len(mount.Items) == 0 || mount.Items[0].Key != "claude-oauth-json" {
-		t.Fatalf("unexpected secret items: %#v", mount.Items)
+	for _, tc := range tests {
+		t.Run(tc.agentType, func(t *testing.T) {
+			got := string(resolveAuthMode(tc.agentType))
+			if got != tc.want {
+				t.Fatalf("resolveAuthMode(%q) = %q, want %q", tc.agentType, got, tc.want)
+			}
+		})
 	}
 }
