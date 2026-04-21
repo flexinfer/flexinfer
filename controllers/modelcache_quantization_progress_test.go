@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -63,6 +64,31 @@ func TestScanLatestQuantizationLayer_IgnoresNonCompletionText(t *testing.T) {
 	got := scanLatestQuantizationLayer(strings.NewReader(log))
 	if got != -1 {
 		t.Errorf("scanLatestQuantizationLayer with only subset events: got %d, want -1", got)
+	}
+}
+
+func TestScanLatestQuantizationLayer_ToleratesNoisyTail(t *testing.T) {
+	// Reproduces the layer_index=1 bug: GPTQModel emits a `Forward rows N/64`
+	// line per forward pass (dozens per second), which dominates the tail
+	// window. The scanner must still find the most recent `completed layer N`
+	// event even when hundreds of noise lines separate it from older events.
+	var b strings.Builder
+	b.WriteString(`{"event": "progress", "detail": "completed layer 1 | gpu_alloc=900MB"}` + "\n")
+	for layer := 2; layer <= 50; layer++ {
+		for row := 0; row < 64; row++ {
+			b.WriteString("Forward: Layer=`model.layers.")
+			b.WriteString(strconv.Itoa(layer))
+			b.WriteString("`, subset=1/2, batches=64 Forward rows ")
+			b.WriteString(strconv.Itoa(row))
+			b.WriteString("/64 | 0:00:05 / 0:05:00\n")
+		}
+		b.WriteString(`{"event": "progress", "detail": "completed layer `)
+		b.WriteString(strconv.Itoa(layer))
+		b.WriteString(` | gpu_alloc=1000MB"}` + "\n")
+	}
+	got := scanLatestQuantizationLayer(strings.NewReader(b.String()))
+	if got != 50 {
+		t.Errorf("scanLatestQuantizationLayer on noisy tail: got %d, want 50", got)
 	}
 }
 
