@@ -734,3 +734,67 @@ func TestBuild_MonorepoContextCompletesWithFakeK8s(t *testing.T) {
 		t.Fatalf("expected monorepo-relative context path in build command, got: %s", cmd)
 	}
 }
+
+// TestBuildPodSpec_ClaudeOAuthTokenEnvOptional is the integration-level
+// smoke test for Slice 2b.2a: when a caller (internal/hud/spawn.go
+// agentSecretEnvVars("claude-code") after !207) passes a SecretEnv entry
+// binding CLAUDE_CODE_OAUTH_TOKEN to cluster-agent-auth/claude-oauth-token,
+// buildPodSpec must emit a k8s env var with an Optional SecretKeyRef so
+// the pod starts cleanly while the token is still unpopulated. Anti-pattern
+// guard: if Optional ever flips to false, every spawn hard-fails until
+// an operator runs `claude setup-token`.
+func TestBuildPodSpec_ClaudeOAuthTokenEnvOptional(t *testing.T) {
+	// Values mirror internal/hud/spawn.go:1298-1318 agentSecretEnvVars("claude-code")
+	// post-!207. TestAgentSecretEnvVars_ClaudeOAuthToken (internal/hud/
+	// spawn_test.go) asserts that helper emits exactly these entries.
+	opts := StartOpts{
+		Name: "claude-spawn-test",
+		SecretEnv: []SecretEnvVar{
+			{Name: "CLAUDE_CODE_OAUTH_TOKEN", SecretName: "cluster-agent-auth", SecretKey: "claude-oauth-token"},
+			{Name: "ANTHROPIC_API_KEY", SecretName: "cluster-agent-api-keys", SecretKey: "ANTHROPIC_API_KEY"},
+		},
+	}
+	pod := testK8sBackend().buildPodSpec(opts, "registry.harbor.lan/devbox:latest")
+
+	envByName := make(map[string]corev1.EnvVar, len(pod.Spec.Containers[0].Env))
+	for _, e := range pod.Spec.Containers[0].Env {
+		envByName[e.Name] = e
+	}
+
+	oauthEnv, ok := envByName["CLAUDE_CODE_OAUTH_TOKEN"]
+	if !ok {
+		t.Fatalf("CLAUDE_CODE_OAUTH_TOKEN env var missing from pod spec; got keys %v", keysOf(envByName))
+	}
+	if oauthEnv.ValueFrom == nil || oauthEnv.ValueFrom.SecretKeyRef == nil {
+		t.Fatalf("CLAUDE_CODE_OAUTH_TOKEN must source from SecretKeyRef, got ValueFrom=%#v", oauthEnv.ValueFrom)
+	}
+	ref := oauthEnv.ValueFrom.SecretKeyRef
+	if ref.Name != "cluster-agent-auth" {
+		t.Errorf("CLAUDE_CODE_OAUTH_TOKEN secret name = %q, want cluster-agent-auth", ref.Name)
+	}
+	if ref.Key != "claude-oauth-token" {
+		t.Errorf("CLAUDE_CODE_OAUTH_TOKEN secret key = %q, want claude-oauth-token", ref.Key)
+	}
+	if ref.Optional == nil || !*ref.Optional {
+		t.Errorf("CLAUDE_CODE_OAUTH_TOKEN SecretKeyRef.Optional must be true (fail-soft when token absent); got %v", ref.Optional)
+	}
+
+	// ANTHROPIC_API_KEY must still be present as fallback — losing it
+	// would break spawns that haven't yet set claude-oauth-token.
+	apiKeyEnv, ok := envByName["ANTHROPIC_API_KEY"]
+	if !ok {
+		t.Fatalf("ANTHROPIC_API_KEY fallback env var missing; got keys %v", keysOf(envByName))
+	}
+	if apiKeyEnv.ValueFrom == nil || apiKeyEnv.ValueFrom.SecretKeyRef == nil ||
+		apiKeyEnv.ValueFrom.SecretKeyRef.Optional == nil || !*apiKeyEnv.ValueFrom.SecretKeyRef.Optional {
+		t.Errorf("ANTHROPIC_API_KEY must be Optional SecretKeyRef; got %#v", apiKeyEnv.ValueFrom)
+	}
+}
+
+func keysOf(m map[string]corev1.EnvVar) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
