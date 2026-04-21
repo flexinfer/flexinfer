@@ -153,7 +153,7 @@ type QuantizationSpec struct {
 
 	// TimeoutSeconds overrides the default 2-hour deadline for quantization jobs.
 	// +kubebuilder:validation:Minimum=300
-	// +kubebuilder:validation:Maximum=43200
+	// +kubebuilder:validation:Maximum=172800
 	// +optional
 	TimeoutSeconds *int64 `json:"timeoutSeconds,omitempty"`
 
@@ -295,7 +295,7 @@ type AbliterationSpec struct {
 
 	// TimeoutSeconds overrides the default 2-hour deadline.
 	// +kubebuilder:validation:Minimum=300
-	// +kubebuilder:validation:Maximum=43200
+	// +kubebuilder:validation:Maximum=172800
 	// +optional
 	TimeoutSeconds *int64 `json:"timeoutSeconds,omitempty"`
 
@@ -547,7 +547,7 @@ type PublishSpec struct {
 
 	// TimeoutSeconds overrides the default 2-hour deadline for publish jobs.
 	// +kubebuilder:validation:Minimum=300
-	// +kubebuilder:validation:Maximum=43200
+	// +kubebuilder:validation:Maximum=172800
 	// +optional
 	TimeoutSeconds *int64 `json:"timeoutSeconds,omitempty"`
 
