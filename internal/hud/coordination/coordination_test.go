@@ -214,3 +214,46 @@ func TestBuildIgnoresHistoricalSessionsForNamespaceCounts(t *testing.T) {
 		}
 	}
 }
+
+func TestBuild_OrphanAgentsAppearInAttention(t *testing.T) {
+	// An agent flagged IsOrphan by fleetview.Join should surface in the
+	// coordination attention list so HUD consumers can direct users to it.
+	agents := []bridge.PresenceInfo{
+		{AgentID: "ghost-agent", Status: "active", IsOrphan: true, OrphanAgeSeconds: 300},
+		{AgentID: "healthy-agent", Status: "active", SessionID: "s1"},
+	}
+	sessions := []bridge.SessionInfo{
+		{ID: "s1", AgentID: "healthy-agent", Namespace: "proj/live", Status: "active"},
+	}
+
+	snapshot := Build(sessions, nil, agents, nil, nil)
+
+	var ghost, healthy *AgentSummary
+	for i := range snapshot.Agents {
+		switch snapshot.Agents[i].AgentID {
+		case "ghost-agent":
+			ghost = &snapshot.Agents[i]
+		case "healthy-agent":
+			healthy = &snapshot.Agents[i]
+		}
+	}
+	if ghost == nil {
+		t.Fatal("ghost agent missing from coordination snapshot")
+	}
+	if !ghost.NeedsAttention {
+		t.Fatalf("orphan agent should need attention, got: %#v", ghost)
+	}
+	found := false
+	for _, r := range ghost.AttentionReasons {
+		if r == "orphan without session" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("orphan reason missing from AttentionReasons: %#v", ghost.AttentionReasons)
+	}
+	if healthy != nil && healthy.NeedsAttention {
+		t.Fatalf("healthy agent should not need attention, got: %#v", healthy)
+	}
+}

@@ -35,6 +35,8 @@ interface PresenceLike {
   heartbeat_age_seconds?: number;
   session_age_seconds?: number;
   telemetry_status?: string;
+  is_orphan?: boolean;
+  orphan_age_seconds?: number;
 }
 
 interface TaskLike {
@@ -90,6 +92,8 @@ export interface UnifiedAgent {
   has_presence: boolean;
   has_session: boolean;
   has_spawn: boolean;
+  is_orphan: boolean;
+  orphan_age_seconds: number;
 }
 
 export interface UnifiedAgentSummary {
@@ -101,6 +105,7 @@ export interface UnifiedAgentSummary {
   with_sessions: number;
   with_presence: number;
   with_spawns: number;
+  orphans: number;
 }
 
 export function inferAgentType(agentId: string | null | undefined, declaredType?: string | null): string {
@@ -224,6 +229,12 @@ export function buildUnifiedAgents(input: {
       has_presence: hasPresence,
       has_session: hasSession,
       has_spawn: false,
+      // is_orphan is authoritative from server (fleetview.Join applies the
+      // age threshold). Default to false when absent — a "heartbeating but
+      // no session" state within the grace window is legitimate during
+      // session bootstrap and should not flash as an alert.
+      is_orphan: agent.is_orphan ?? false,
+      orphan_age_seconds: agent.orphan_age_seconds ?? 0,
     });
   }
 
@@ -271,6 +282,8 @@ export function buildUnifiedAgents(input: {
       has_presence: false,
       has_session: true,
       has_spawn: false,
+      is_orphan: false,
+      orphan_age_seconds: 0,
     });
   }
 
@@ -316,6 +329,8 @@ export function buildUnifiedAgents(input: {
       has_presence: false,
       has_session: false,
       has_spawn: true,
+      is_orphan: false,
+      orphan_age_seconds: 0,
     });
   }
 
@@ -341,6 +356,7 @@ export function summarizeUnifiedAgents(agents: UnifiedAgent[]): UnifiedAgentSumm
     with_sessions: 0,
     with_presence: 0,
     with_spawns: 0,
+    orphans: 0,
   };
 
   for (const agent of agents) {
@@ -354,6 +370,7 @@ export function summarizeUnifiedAgents(agents: UnifiedAgent[]): UnifiedAgentSumm
     if (agent.has_session) summary.with_sessions += 1;
     if (agent.has_presence) summary.with_presence += 1;
     if (agent.has_spawn) summary.with_spawns += 1;
+    if (agent.is_orphan) summary.orphans += 1;
   }
 
   return summary;

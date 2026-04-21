@@ -444,6 +444,20 @@ func (a *AgentBridge) PresenceHeartbeat(agentID string, p PresenceHeartbeatParam
 	return &result, nil
 }
 
+// PresenceDeregister removes an agent from the presence registry. This is
+// the surgical counterpart to PresenceRegister used by the fleet monitor's
+// orphan reaper when an agent has been heartbeating without a session past
+// the reap threshold — we don't want a bogus identity lingering in the fleet
+// view and eating keepalive cycles forever.
+func (a *AgentBridge) PresenceDeregister(agentID string) error {
+	if strings.TrimSpace(agentID) == "" {
+		return fmt.Errorf("agent_id required")
+	}
+	return a.callAgentTool("agent_presence_deregister", map[string]any{
+		"agent_id": agentID,
+	}, nil)
+}
+
 // PresenceRegister registers an agent's presence without starting a session.
 // This is useful for clients that only want heartbeat-style liveness tracking.
 func (a *AgentBridge) PresenceRegister(agentID, sessionID, agentType, description string, heartbeatTTLSeconds int) error {

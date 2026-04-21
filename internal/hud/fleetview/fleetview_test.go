@@ -231,6 +231,122 @@ func TestJoin_DoesNotMutateInput(t *testing.T) {
 	}
 }
 
+// --- Orphan detection ---------------------------------------------------
+
+func TestOrphan_YoungPresenceWithoutSessionIsNotOrphan(t *testing.T) {
+	// Agent registered 30s ago, no session yet — still within the grace
+	// window for session bootstrap. Should NOT be flagged.
+	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
+	presences := []bridge.PresenceInfo{
+		{AgentID: "claude-code-1", Status: "active", RegisteredAt: mustTime(t, "2026-04-21T11:59:30Z"), LastHeartbeat: mustTime(t, "2026-04-21T11:59:55Z")},
+	}
+	rows := Join(presences, nil, now)
+	if rows[0].IsOrphan {
+		t.Fatalf("young presence must not be flagged orphan: %+v", rows[0])
+	}
+	if rows[0].OrphanAgeSeconds != 0 {
+		t.Fatalf("orphan age must be zero when not orphan, got %d", rows[0].OrphanAgeSeconds)
+	}
+}
+
+func TestOrphan_StalePresenceWithoutSessionIsOrphan(t *testing.T) {
+	// Agent registered 5min ago, still heartbeating, but never obtained a
+	// session. This is the screenshot's 9-orphans case.
+	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
+	presences := []bridge.PresenceInfo{
+		{AgentID: "claude-code-ghost", Status: "active", RegisteredAt: mustTime(t, "2026-04-21T11:55:00Z"), LastHeartbeat: mustTime(t, "2026-04-21T11:59:50Z")},
+	}
+	rows := Join(presences, nil, now)
+	if !rows[0].IsOrphan {
+		t.Fatalf("stale presence without session must be orphan: %+v", rows[0])
+	}
+	if rows[0].OrphanAgeSeconds < 290 || rows[0].OrphanAgeSeconds > 310 {
+		t.Fatalf("orphan age should be ~300s, got %d", rows[0].OrphanAgeSeconds)
+	}
+}
+
+func TestOrphan_PresenceWithActiveSessionIsNotOrphan(t *testing.T) {
+	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
+	presences := []bridge.PresenceInfo{
+		{AgentID: "claude-code-1", Status: "active", SessionID: "s1", RegisteredAt: mustTime(t, "2026-04-21T11:00:00Z")},
+	}
+	sessions := []bridge.SessionInfo{
+		{ID: "s1", AgentID: "claude-code-1", Status: "active", StartedAt: mustTime(t, "2026-04-21T11:30:00Z")},
+	}
+	rows := Join(presences, sessions, now)
+	if rows[0].IsOrphan {
+		t.Fatalf("presence with matched session must not be orphan: %+v", rows[0])
+	}
+}
+
+func TestOrphan_SessionOnlyRowIsNeverOrphan(t *testing.T) {
+	// Synthetic session-only row: Source="session", HasPresence=false.
+	// By definition no orphan because there's no dangling presence.
+	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
+	sessions := []bridge.SessionInfo{
+		{ID: "s1", AgentID: "claude-code-1", Status: "active", StartedAt: mustTime(t, "2026-04-21T11:30:00Z")},
+	}
+	rows := Join(nil, sessions, now)
+	if rows[0].IsOrphan {
+		t.Fatalf("session-only row must not be orphan: %+v", rows[0])
+	}
+}
+
+func TestOrphan_EndedSessionProducesOrphan(t *testing.T) {
+	// Presence is heartbeating but its session has ended. After the grace
+	// window, the row should be flagged — this catches sessions that
+	// terminate silently without deregistering presence.
+	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
+	presences := []bridge.PresenceInfo{
+		{AgentID: "claude-code-ghost", Status: "active", SessionID: "s-ended", RegisteredAt: mustTime(t, "2026-04-21T11:00:00Z"), LastHeartbeat: mustTime(t, "2026-04-21T11:59:50Z")},
+	}
+	sessions := []bridge.SessionInfo{
+		{ID: "s-ended", AgentID: "claude-code-ghost", Status: "ended", StartedAt: mustTime(t, "2026-04-21T10:30:00Z")},
+	}
+	rows := Join(presences, sessions, now)
+	if !rows[0].IsOrphan {
+		t.Fatalf("presence with only an ended session must be orphan: %+v", rows[0])
+	}
+}
+
+func TestOrphan_StaleFlagIsReset(t *testing.T) {
+	// An incoming presence row that somehow carries IsOrphan=true from
+	// upstream must have that reset before the new computation runs,
+	// otherwise Join would compound stale state.
+	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
+	presences := []bridge.PresenceInfo{
+		{
+			AgentID:          "claude-code-1",
+			Status:           "active",
+			IsOrphan:         true,
+			OrphanAgeSeconds: 9999,
+			SessionID:        "s1",
+			RegisteredAt:     mustTime(t, "2026-04-21T11:00:00Z"),
+		},
+	}
+	sessions := []bridge.SessionInfo{
+		{ID: "s1", AgentID: "claude-code-1", Status: "active", StartedAt: mustTime(t, "2026-04-21T11:30:00Z")},
+	}
+	rows := Join(presences, sessions, now)
+	if rows[0].IsOrphan {
+		t.Fatalf("stale IsOrphan must be reset when session joins: %+v", rows[0])
+	}
+	if rows[0].OrphanAgeSeconds != 0 {
+		t.Fatalf("stale OrphanAgeSeconds must be reset, got %d", rows[0].OrphanAgeSeconds)
+	}
+}
+
+func TestOrphan_FallsBackToLastHeartbeatWhenRegisteredAtMissing(t *testing.T) {
+	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
+	presences := []bridge.PresenceInfo{
+		{AgentID: "claude-code-1", Status: "active", LastHeartbeat: mustTime(t, "2026-04-21T11:55:00Z")},
+	}
+	rows := Join(presences, nil, now)
+	if !rows[0].IsOrphan {
+		t.Fatalf("should fall back to LastHeartbeat when RegisteredAt missing: %+v", rows[0])
+	}
+}
+
 func TestInferAgentType(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"claude-code-12345", "claude-code"},

@@ -361,6 +361,13 @@ type ContextInspectResult struct {
 // --- Presence / Coordination DTOs ---
 
 // PresenceInfo describes an agent in the presence registry.
+//
+// IsOrphan / OrphanAgeSeconds are derived by fleetview.Join from the
+// presence+session pair; they are never persisted or trusted across
+// snapshots. An orphan is a heartbeating presence that has no matching
+// active session — the typical signature of a vendor CLI that registered
+// presence (or got auto-registered on heartbeat) but never successfully
+// called agent_session_start.
 type PresenceInfo struct {
 	AgentID             string   `json:"agent_id"`
 	SessionID           string   `json:"session_id,omitempty"`
@@ -382,6 +389,8 @@ type PresenceInfo struct {
 	HeartbeatAgeSeconds int      `json:"heartbeat_age_seconds,omitempty"`
 	SessionAgeSeconds   int      `json:"session_age_seconds,omitempty"`
 	TelemetryStatus     string   `json:"telemetry_status,omitempty"`
+	IsOrphan            bool     `json:"is_orphan,omitempty"`
+	OrphanAgeSeconds    int      `json:"orphan_age_seconds,omitempty"`
 }
 
 // PresenceHeartbeatResult is the response from agent_presence_heartbeat.

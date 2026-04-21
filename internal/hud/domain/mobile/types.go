@@ -388,6 +388,8 @@ type unifiedAgent struct {
 	TelemetryStatus  string   `json:"telemetry_status,omitempty"`
 	HasPresence      bool     `json:"has_presence"`
 	HasSession       bool     `json:"has_session"`
+	IsOrphan         bool     `json:"is_orphan,omitempty"`
+	OrphanAgeSec     int      `json:"orphan_age_seconds,omitempty"`
 }
 
 type unifiedAgentsSummary struct {
@@ -397,4 +399,5 @@ type unifiedAgentsSummary struct {
 	OfflineAgents int `json:"offline_agents"`
 	SpawnedAgents int `json:"spawned_agents"`
 	WithSessions  int `json:"with_sessions"`
+	Orphans       int `json:"orphans,omitempty"`
 }

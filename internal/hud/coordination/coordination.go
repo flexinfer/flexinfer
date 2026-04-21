@@ -183,6 +183,12 @@ func Build(
 				ns.Branches[state.Branch] = struct{}{}
 			}
 		}
+		// Surface orphans in the attention list so the HUD "needs attention"
+		// bucket catches agents heartbeating without a session — the most
+		// common signature of a broken session-start path.
+		if agent.IsOrphan {
+			state.AttentionReasons["orphan without session"] = struct{}{}
+		}
 	}
 
 	for _, worktree := range worktrees {
