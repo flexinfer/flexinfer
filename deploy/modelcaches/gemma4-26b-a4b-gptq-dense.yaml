@@ -122,12 +122,17 @@ spec:
     denseModulePolicy: validate
     denseModuleCosineThreshold: "0.98"
     useGPU: true
-    # Tightened from 44→28 (same reasoning as abliteration.maxMemoryGB above):
-    # 5930k has 57 GiB allocatable memory and an active etcd voter + control
-    # plane role; the 5099ab17 incident showed 44 GiB ceilings can tip the
-    # kubelet. Per-layer GPTQ on a 3.8B-active MoE needs only ~18 GiB RSS +
-    # VRAM, so 28 GiB is sufficient with headroom.
-    maxMemoryGB: 28
+    # Was 28 (tightened from 44) to keep the 5930k kubelet stable — the
+    # per-layer quantize phase only needs ~18 GiB RSS + VRAM. BUT the save
+    # phase loads all shards to rewrite the output and blew past the 40 GiB
+    # container limit → OOMKilled at stage=saving, completed_layers=30 on
+    # 2026-04-20, and the resume path doesn't handle stage=saving so the
+    # whole quantize had to restart from layer 0 (~5 h of work lost). Bump
+    # to 40 GiB for save-phase headroom. Container limit becomes 52 GiB
+    # (40 + 12 GiB GPU driver overhead), which still leaves ~5 GiB on a 57
+    # GiB node — tight but workable for a short save window on a dedicated
+    # quant node.
+    maxMemoryGB: 40
     timeoutSeconds: 43200
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
