@@ -9,7 +9,11 @@ All configuration is read from environment variables set by the controller:
 
 # Bumped when controller-side patches change. The wrapper script checks this
 # against GPTQScriptVersion in gptq.go and aborts on mismatch.
-FLEXINFER_SCRIPT_VERSION = "v12"
+#
+# v13: .save-complete manifest marks save-phase completion; per-layer state
+# writer (flag-gated by GPTQ_RESUME_LAYERS) persists quantized layer tensors
+# to the PVC so future resume work can skip already-quantized layers.
+FLEXINFER_SCRIPT_VERSION = "v13"
 import copy
 import gc
 import json
@@ -27,6 +31,12 @@ POLICY_STATE_FILE = ".flexinfer-gptq-policy.json"
 CHECKPOINT_DIR_NAME = ".flexinfer-gptq-cache"
 CHECKPOINT_STATE_FILE = "checkpoint.json"
 CALIBRATION_CACHE_FILE = "calibration-examples.pt"
+# Per-layer quantized-state cache layout (Phase A — writer only).
+LAYER_CACHE_DIR_NAME = "layers"
+LAYER_CACHE_MANIFEST = "manifest.json"
+# Written by Python into save_tmp right before promotion; bash wrapper trusts
+# it as the "save-phase finished cleanly" signal on subsequent runs.
+SAVE_COMPLETE_MARKER = ".save-complete"
 DEFAULT_MODEL_POLICIES = [
     {
         "name": "qwen3.5-text",
@@ -1403,6 +1413,8 @@ qcfg_damp_auto_increment_override = os.environ.get(
 ).strip()
 gptq_resume_enabled = env_bool("GPTQ_RESUME", True)
 gptq_calibration_cache_enabled = env_bool("GPTQ_CALIBRATION_CACHE", True)
+# Phase A: writer-only for per-layer quantized state. Reload+skip path is Phase B.
+gptq_resume_layers_enabled = env_bool("GPTQ_RESUME_LAYERS", False)
 quantize_device_map = os.environ.get("QUANTIZE_DEVICE_MAP", "cpu")
 
 emit_progress(
@@ -1474,6 +1486,126 @@ def calibration_cache_fingerprint():
     }
 
 
+def _gptqmodel_version():
+    try:
+        return importlib_metadata.version("gptqmodel")
+    except Exception:
+        return "unknown"
+
+
+def resume_config_fingerprint():
+    """Correctness gate for per-layer resume cache.
+
+    Any change that alters the numerical output of a single layer's
+    quantization must show up here. If a cached layer's fingerprint doesn't
+    match the current run's fingerprint, the cache is invalidated.
+    """
+    import hashlib
+
+    payload = {
+        "script_version": FLEXINFER_SCRIPT_VERSION,
+        "gptqmodel_version": _gptqmodel_version(),
+        "bits": bits,
+        "group_size": group_size,
+        "sym": sym,
+        "desc_act": desc_act,
+        "damp_percent_override": qcfg_damp_percent_override,
+        "damp_auto_increment_override": qcfg_damp_auto_increment_override,
+        "hessian_repair": hessian_repair,
+        "hessian_sanitize_nonfinite": hessian_sanitize_nonfinite,
+        "hessian_diag_floor_mode": hessian_diag_floor_mode,
+        "hessian_diag_floor_scale": hessian_diag_floor_scale,
+        "hessian_floor_multiplier": hessian_floor_multiplier,
+        "hessian_max_floor_attempts": hessian_max_floor_attempts,
+        "hessian_clamp_abs": hessian_clamp_abs,
+        "dynamic_exclusion": dynamic_exclusion,
+        "calibration": calibration_cache_fingerprint(),
+    }
+    serialized = json.dumps(json_safe(payload), sort_keys=True)
+    return {
+        "hash": hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
+        "payload": payload,
+    }
+
+
+def layer_cache_dir(model_dir):
+    return os.path.join(checkpoint_dir(model_dir), LAYER_CACHE_DIR_NAME)
+
+
+def layer_cache_manifest_path(model_dir):
+    return os.path.join(layer_cache_dir(model_dir), LAYER_CACHE_MANIFEST)
+
+
+def load_layer_cache_manifest(model_dir):
+    path = layer_cache_manifest_path(model_dir)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+        if isinstance(data, dict) and isinstance(data.get("layers"), list):
+            return data
+    except Exception as exc:
+        print(f"WARN: failed to read layer cache manifest: {exc}")
+    return None
+
+
+def write_layer_cache_manifest(model_dir, manifest):
+    path = layer_cache_manifest_path(model_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w") as fh:
+        json.dump(json_safe(manifest), fh, indent=2, sort_keys=True)
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())
+        except OSError:
+            pass
+    os.replace(tmp_path, path)
+
+
+def reset_layer_cache(model_dir, reason):
+    """Remove the per-layer cache directory (manifest + layer files)."""
+    cache = layer_cache_dir(model_dir)
+    if not os.path.isdir(cache):
+        return
+    try:
+        shutil.rmtree(cache)
+        print(f"Cleared layer cache ({reason})")
+        emit_progress(
+            "quantization_layer_cache_reset", phase="quantizing", reason=reason
+        )
+    except Exception as exc:
+        print(f"WARN: failed to clear layer cache: {exc}")
+
+
+def gc_orphan_layer_files(model_dir):
+    """Delete layer-*.safetensors files not referenced by the manifest.
+
+    The manifest is the source of truth — any file left behind by a crash
+    between "write tensor file" and "update manifest" is an orphan and
+    costs disk without ever being consulted on reload.
+    """
+    cache = layer_cache_dir(model_dir)
+    if not os.path.isdir(cache):
+        return
+    manifest = load_layer_cache_manifest(model_dir) or {}
+    referenced = {
+        entry.get("path") for entry in manifest.get("layers", []) if entry.get("path")
+    }
+    referenced.add(LAYER_CACHE_MANIFEST)
+    for name in os.listdir(cache):
+        if name.startswith(".") or name in referenced:
+            continue
+        if not name.startswith("layer-") or not name.endswith(".safetensors"):
+            continue
+        try:
+            os.remove(os.path.join(cache, name))
+            print(f"Removed orphan layer file: {name}")
+        except OSError as exc:
+            print(f"WARN: failed to remove orphan {name}: {exc}")
+
+
 def load_cached_examples(model_dir):
     if not (gptq_resume_enabled and gptq_calibration_cache_enabled):
         return None
@@ -1528,14 +1660,171 @@ def infer_total_layers(gptq_model):
 
 
 class QuantizationCheckpointCallback:
-    def __init__(self, model_dir, total_layers, state):
+    def __init__(self, model_dir, total_layers, state, resume_layers_enabled=False):
         self.model_dir = model_dir
         self.total_layers = total_layers
         self.state = dict(state)
         self.state.setdefault("completed_layers", [])
+        self.resume_layers_enabled = bool(resume_layers_enabled)
+        self._gptq_model = None
+        self._layers_node_path = None
+        self._layer_fingerprint = None
 
     def _persist(self):
         persist_quant_checkpoint(self.model_dir, self.state)
+
+    def attach_model(self, gptq_model, fingerprint):
+        """Wire in the GPTQModel instance so layer_complete can walk its tree.
+
+        Called after GPTQModel.load(). `fingerprint` is the resume config hash
+        that gets stamped into every layer manifest entry so reload can detect
+        stale cache on config changes.
+        """
+        self._gptq_model = gptq_model
+        self._layer_fingerprint = fingerprint
+        try:
+            extract = getattr(gptq_model, "extract_layers_node", None)
+            if callable(extract):
+                nodes = extract() or []
+                if nodes:
+                    self._layers_node_path = nodes[0]
+        except Exception as exc:
+            print(f"WARN: could not resolve layers-node path: {exc}")
+
+    def _resolve_layer_module(self, layer_idx):
+        if self._gptq_model is None or not self._layers_node_path:
+            return None
+        current = getattr(self._gptq_model, "model", None)
+        if current is None:
+            return None
+        try:
+            for part in self._layers_node_path.split("."):
+                current = getattr(current, part)
+            return current[layer_idx]
+        except (AttributeError, IndexError, TypeError):
+            return None
+
+    def _collect_quantized_tensors(self, layer_module):
+        """Collect packed int4 state dict keyed by submodule-relative name.
+
+        Only names matching qweight/qzeros/scales/g_idx/bias are included —
+        these are the artifacts GPTQModel's QuantLinear replaces nn.Linear
+        with after submodule_finalize. Unquantized modules contribute nothing.
+        """
+        import torch
+
+        wanted = ("qweight", "qzeros", "scales", "g_idx", "bias")
+        state = {}
+        for name, param in layer_module.named_parameters(recurse=True):
+            if not isinstance(param, torch.Tensor):
+                continue
+            short = name.rsplit(".", 1)[-1]
+            if short in wanted:
+                state[name] = param.detach().cpu().contiguous()
+        for name, buf in layer_module.named_buffers(recurse=True):
+            if not isinstance(buf, torch.Tensor):
+                continue
+            short = name.rsplit(".", 1)[-1]
+            if short in wanted and name not in state:
+                state[name] = buf.detach().cpu().contiguous()
+        return state
+
+    def _write_layer_cache(self, layer_idx):
+        """Persist packed per-layer state to the PVC. Best-effort."""
+        if not self.resume_layers_enabled:
+            return
+        import hashlib
+
+        try:
+            from safetensors.torch import save_file as safetensors_save
+        except ImportError as exc:
+            print(f"WARN: safetensors unavailable, skipping layer cache: {exc}")
+            return
+
+        layer_module = self._resolve_layer_module(layer_idx)
+        if layer_module is None:
+            print(f"WARN: could not resolve layer module {layer_idx}; skipping cache")
+            return
+
+        try:
+            tensors = self._collect_quantized_tensors(layer_module)
+        except Exception as exc:
+            print(f"WARN: failed to collect layer {layer_idx} tensors: {exc}")
+            return
+        if not tensors:
+            # Layer has no quantized modules yet (submodule_finalize hasn't run
+            # for any Linear children). Skip — nothing to persist.
+            return
+
+        cache = layer_cache_dir(self.model_dir)
+        os.makedirs(cache, exist_ok=True)
+        rel_name = f"layer-{layer_idx:03d}.safetensors"
+        final_path = os.path.join(cache, rel_name)
+        tmp_path = f"{final_path}.tmp"
+        metadata = {
+            "layer_idx": str(layer_idx),
+            "config_hash": (self._layer_fingerprint or {}).get("hash", ""),
+            "script_version": FLEXINFER_SCRIPT_VERSION,
+        }
+        try:
+            safetensors_save(tensors, tmp_path, metadata=metadata)
+            os.replace(tmp_path, final_path)
+        except Exception as exc:
+            print(f"WARN: failed to write layer {layer_idx} cache: {exc}")
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+            return
+
+        try:
+            size_bytes = os.path.getsize(final_path)
+            sha = hashlib.sha256()
+            with open(final_path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    sha.update(chunk)
+            entry = {
+                "layer_idx": layer_idx,
+                "path": rel_name,
+                "size_bytes": size_bytes,
+                "sha256": sha.hexdigest(),
+                "tensor_count": len(tensors),
+                "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "config_hash": (self._layer_fingerprint or {}).get("hash", ""),
+                "script_version": FLEXINFER_SCRIPT_VERSION,
+            }
+        except Exception as exc:
+            print(f"WARN: failed to hash layer {layer_idx} cache: {exc}")
+            return
+
+        manifest = load_layer_cache_manifest(self.model_dir) or {
+            "version": 1,
+            "config_hash": (self._layer_fingerprint or {}).get("hash", ""),
+            "script_version": FLEXINFER_SCRIPT_VERSION,
+            "layers": [],
+        }
+        # Replace any existing entry for this layer_idx (re-quantized layer
+        # after a reset) so the manifest stays consistent.
+        manifest["layers"] = [
+            e for e in manifest.get("layers", []) if e.get("layer_idx") != layer_idx
+        ]
+        manifest["layers"].append(entry)
+        manifest["layers"].sort(key=lambda e: e.get("layer_idx", 0))
+        manifest["updated_at"] = entry["completed_at"]
+        try:
+            write_layer_cache_manifest(self.model_dir, manifest)
+        except Exception as exc:
+            print(f"WARN: failed to update layer manifest: {exc}")
+            return
+
+        emit_progress(
+            "quantization_layer_cached",
+            phase="quantizing",
+            layer_idx=layer_idx,
+            size_bytes=size_bytes,
+            tensor_count=len(tensors),
+        )
 
     def subset_event(
         self, stage, layer_idx, subset_index, subset_total, module_names, processor
@@ -1601,6 +1890,8 @@ class QuantizationCheckpointCallback:
             "progress", phase="quantizing", percent=round(percent, 1), detail=detail
         )
         self._persist()
+        if submodule_finalized:
+            self._write_layer_cache(layer_idx)
 
 
 quant_checkpoint_state = load_quant_checkpoint(model_dir) if gptq_resume_enabled else {}
@@ -2484,13 +2775,39 @@ emit_progress(
 # ── Quantize ───────────────────────────────────────────────────────────
 total_layers = infer_total_layers(model)
 checkpoint_callback = QuantizationCheckpointCallback(
-    model_dir, total_layers, quant_checkpoint_state
+    model_dir,
+    total_layers,
+    quant_checkpoint_state,
+    resume_layers_enabled=gptq_resume_layers_enabled,
 )
+
+# Layer-cache correctness: if the cached manifest's config hash doesn't match
+# the current run's fingerprint, the cache is stale (bits/group_size/hessian
+# settings/script version changed between runs). Blow it away up front so we
+# don't write new layers alongside incompatible old ones. When the flag is off
+# the manifest is ignored either way; we still GC orphan files for hygiene.
+_resume_fingerprint = None
+if gptq_resume_layers_enabled:
+    _resume_fingerprint = resume_config_fingerprint()
+    cached_manifest = load_layer_cache_manifest(model_dir)
+    if cached_manifest is not None:
+        cached_hash = cached_manifest.get("config_hash", "")
+        if cached_hash and cached_hash != _resume_fingerprint["hash"]:
+            reset_layer_cache(
+                model_dir,
+                reason=f"config_hash changed ({cached_hash[:8]}→{_resume_fingerprint['hash'][:8]})",
+            )
+    gc_orphan_layer_files(model_dir)
+    checkpoint_callback.attach_model(model, _resume_fingerprint)
+
 model.layer_callback = checkpoint_callback
 model.subset_callback = checkpoint_callback
 checkpoint_callback.state["stage"] = "quantizing"
 checkpoint_callback.state["total_layers"] = total_layers
 checkpoint_callback.state["resume_enabled"] = gptq_resume_enabled
+checkpoint_callback.state["resume_layers_enabled"] = gptq_resume_layers_enabled
+if _resume_fingerprint is not None:
+    checkpoint_callback.state["resume_config_hash"] = _resume_fingerprint["hash"]
 checkpoint_callback._persist()
 model.quantize(examples)
 
@@ -2685,6 +3002,72 @@ if should_apply_gemma4_moe_hybrid(cfg):
 emit_progress(
     "progress", phase="saving", percent=97.5, detail="promoting output directory"
 )
+
+
+def write_save_complete_marker(save_dir):
+    """Record the shard manifest inside save_tmp before the atomic rename.
+
+    The bash wrapper uses this marker on subsequent runs to short-circuit
+    cleanly without recomputing the du(1)/min-size heuristic. Writing into
+    save_tmp (pre-rename) keeps the marker atomic with the shards it
+    describes — if rename succeeds, the marker is valid; if it fails, there
+    is no OUT_DIR and nothing to trust.
+    """
+    import hashlib
+
+    shards = []
+    for name in sorted(os.listdir(save_dir)):
+        if not name.endswith(".safetensors"):
+            continue
+        path = os.path.join(save_dir, name)
+        size = os.path.getsize(path)
+        sha = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                sha.update(chunk)
+        shards.append(
+            {
+                "name": name,
+                "size_bytes": size,
+                "sha256": sha.hexdigest(),
+            }
+        )
+    if not shards:
+        raise RuntimeError(
+            "save-complete marker refused: save_dir has no .safetensors shards"
+        )
+    index_path = os.path.join(save_dir, "model.safetensors.index.json")
+    config_path = os.path.join(save_dir, "config.json")
+    quant_cfg_path = os.path.join(save_dir, "quantize_config.json")
+    manifest = {
+        "version": 1,
+        "script_version": FLEXINFER_SCRIPT_VERSION,
+        "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "shards": shards,
+        "has_index": os.path.exists(index_path),
+        "has_config": os.path.exists(config_path),
+        "has_quantize_config": os.path.exists(quant_cfg_path),
+    }
+    marker_path = os.path.join(save_dir, SAVE_COMPLETE_MARKER)
+    tmp_path = f"{marker_path}.tmp"
+    with open(tmp_path, "w") as fh:
+        json.dump(manifest, fh, indent=2, sort_keys=True)
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())
+        except OSError:
+            pass
+    os.replace(tmp_path, marker_path)
+    print(f"Wrote {SAVE_COMPLETE_MARKER} ({len(shards)} shards)")
+
+
+try:
+    write_save_complete_marker(save_tmp)
+except Exception as exc:
+    # A missing marker just means we fall back to the du-heuristic on
+    # subsequent runs. Do NOT fail the whole job over marker writing.
+    print(f"WARN: failed to write {SAVE_COMPLETE_MARKER}: {exc}")
+
 if os.path.exists(out_dir):
     shutil.rmtree(out_dir)
 os.rename(save_tmp, out_dir)
