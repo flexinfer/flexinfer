@@ -312,22 +312,32 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 	if resume == "" {
 		resume = "true"
 	}
-	// CPU memory: use the greater of (env-var override, GPUProfile, heuristic).
-	// The heuristic scales with the container limit; the env var was a legacy
-	// workaround for the old hardcapped formula and must not suppress the
-	// per-model budget when the container is larger than the env assumed.
+	// CPU memory: use the greater of (env-var override, GPUProfile, heuristic),
+	// then clamp to what the container can actually hold. accelerate treats
+	// this as a hard target — if it exceeds the cgroup limit, the process
+	// OOMs before reaching the target. The 2026-04-21 gemma4-26b-a4b-gptq-dense
+	// abliteration loop was exactly this mismatch: GPUProfile declared 44Gi,
+	// the per-ModelCache override capped the container at 40Gi, and retries
+	// burned through back-to-back OOMs with no change to the env target.
 	formulaCPU := abliterationCPUMaxMemoryGB(maxMemoryGB)
-	cpuMaxMemoryGB := fmt.Sprintf("%d", formulaCPU)
+	currentCPU := formulaCPU
 	if envCPU := os.Getenv("FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB"); envCPU != "" {
-		if v, err := strconv.ParseInt(envCPU, 10, 32); err == nil && int32(v) > formulaCPU {
-			cpuMaxMemoryGB = envCPU
+		if v, err := strconv.ParseInt(envCPU, 10, 32); err == nil && int32(v) > currentCPU {
+			currentCPU = int32(v)
 		}
 	}
-	if memCfg.MaxCPUMemoryGB > 0 {
-		if profileVal := fmt.Sprintf("%d", memCfg.MaxCPUMemoryGB); profileVal > cpuMaxMemoryGB {
-			cpuMaxMemoryGB = profileVal
-		}
+	if memCfg.MaxCPUMemoryGB > 0 && memCfg.MaxCPUMemoryGB > currentCPU {
+		currentCPU = memCfg.MaxCPUMemoryGB
 	}
+	// Clamp to container memory minus headroom for Python runtime, accelerate
+	// bookkeeping, and in-flight activation tensors. Without this, a small
+	// per-ModelCache maxMemoryGB override silently contradicts a larger
+	// profile-level CPU target and the pod OOMs on every retry.
+	const abliterationCPUHeadroomGB = int32(4)
+	if containerCap := maxMemoryGB - abliterationCPUHeadroomGB; containerCap > 0 && currentCPU > containerCap {
+		currentCPU = containerCap
+	}
+	cpuMaxMemoryGB := fmt.Sprintf("%d", currentCPU)
 	// GPU memory priority: env var > GPUProfile > arch-based heuristic.
 	gpuMaxMemoryGB := os.Getenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB")
 	if gpuMaxMemoryGB == "" {

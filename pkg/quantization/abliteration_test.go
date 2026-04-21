@@ -373,6 +373,38 @@ func TestAbliterationEnv_CPUMode(t *testing.T) {
 	}
 }
 
+// TestAbliterationEnv_CPUMemoryClampsToContainer is a regression test for the
+// 2026-04-21 gemma4-26b-a4b-gptq-dense abliteration OOM loop. GPUProfile
+// gfx1100 declared maxCPUMemoryGB=44 (fine for the profile's default 48Gi
+// container), but the per-ModelCache override set spec.abliteration.maxMemoryGB=28,
+// capping the container at 40Gi. The resulting ABLITERATION_CPU_MAX_MEMORY_GB=44
+// told accelerate to target 44Gi CPU offload and the cgroup killed the process
+// at 40Gi before the collection phase even started. Every retry used the same
+// mismatched values so the pipeline was stuck in a guaranteed-failure loop.
+func TestAbliterationEnv_CPUMemoryClampsToContainer(t *testing.T) {
+	spec := &aiv1alpha1.AbliterationSpec{
+		UseGPU:      true,
+		MaxMemoryGB: ablitInt32Ptr(28),
+	}
+	memCfg := GPUMemoryConfig{
+		ContainerMemoryGB: 48,
+		MaxCPUMemoryGB:    44,
+		MaxGPUMemoryGB:    18,
+		GPUDriverMemoryMB: 12288,
+	}
+
+	env := abliterationEnv("gemma4-26b-a4b-gptq-dense", "gfx1100", spec, memCfg)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	const wantClamped = "24"
+	if got := envMap["ABLITERATION_CPU_MAX_MEMORY_GB"]; got != wantClamped {
+		t.Errorf("ABLITERATION_CPU_MAX_MEMORY_GB = %q, want %q (clamped to spec.maxMemoryGB minus 4Gi Python/activation headroom; profile declared 44 which would OOM a 28Gi container)", got, wantClamped)
+	}
+}
+
 func TestAbliterationEnv_DefaultSavePolicyIsAuto(t *testing.T) {
 	spec := &aiv1alpha1.AbliterationSpec{
 		UseGPU:      true,
