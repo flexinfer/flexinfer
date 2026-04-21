@@ -18,7 +18,11 @@
 # 1R pool no longer has enough schedulable headroom for a clean 31B rebuild,
 # and the bulk Longhorn pool is currently failing replica prechecks.
 # GPU: 1x Radeon VII (gfx906, 16GB VRAM) for abliteration + quantization
-# Quantization timeout: 8 hours (larger model, ~2x layers vs 26B-A4B)
+# Quantization timeout: 14 hours. Original 8h was too tight — on gfx906 the
+# per-layer rate is ~9-10 min with the Hessian recovery fix, giving a quantize
+# floor of ~10 h + ~30 min save for 59 layers. 2026-04-20 run hit 8h deadline
+# at layer 52/59 (90%) and the retry budget (3) exhausted at the same point.
+# 14h leaves headroom for gfx906's ROCm LAPACK fallback variance.
 ---
 apiVersion: ai.flexinfer/v1alpha1
 kind: ModelCache
@@ -58,7 +62,7 @@ spec:
     descAct: false
     useGPU: true
     maxMemoryGB: 96
-    timeoutSeconds: 28800
+    timeoutSeconds: 50400
     nodeSelector:
       kubernetes.io/hostname: cblevins-radeonvii
     calibration:
