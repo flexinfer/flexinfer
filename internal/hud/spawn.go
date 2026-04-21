@@ -321,7 +321,16 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	state.AuthMode = resolveAuthMode(req.AgentType)
 	o.ctrl.UpdateState(ctx, state)
 
-	projectDir := o.workspaceRoot + "/" + req.Project
+	// Resolve the project name to an on-disk location plus the
+	// workspace-relative path used inside the spawned pod. Bare names like
+	// "loom-core" are searched under the standard buckets (services/, libs/,
+	// ...) so monorepo repos resolve without explicit registration.
+	projectDir, projectRel, resolveErr := resolveProjectPath(o.workspaceRoot, req.Project)
+	if resolveErr != nil {
+		o.failSpawn(ctx, state, fmt.Sprintf("project resolution failed: %v", resolveErr))
+		return
+	}
+	podProjectDir := "/workspace/" + projectRel
 
 	// Step 1: Detect project environment and generate Dockerfile.
 	state.Status = SpawnStatusBuilding
@@ -373,7 +382,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	startResult, err := o.backend.Start(ctx, backend.StartOpts{
 		Name:         "spawn-" + spawnID,
 		ImageTag:     buildResult.ImageTag,
-		WorkDir:      "/workspace/" + req.Project,
+		WorkDir:      podProjectDir,
 		Env:          env,
 		SecretEnv:    agentSecretEnvVars(req.AgentType),
 		SecretMounts: agentSecretMounts(req.AgentType),
@@ -395,7 +404,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	_, cfgSpan := o.tracer.Start(ctx, "agent.spawn.config_inject")
 	cfgCtx, cfgCancel := context.WithTimeout(ctx, 30*time.Second)
 	o.logger.Info("injecting agent config", "spawn_id", spawnID, "pod", startResult.ContainerID, "agent_type", req.AgentType)
-	if err := o.injectAgentConfig(cfgCtx, startResult.ContainerID, req.AgentType, req.Project); err != nil {
+	if err := o.injectAgentConfig(cfgCtx, startResult.ContainerID, req.AgentType, podProjectDir); err != nil {
 		cfgCancel()
 		cfgSpan.End()
 		o.failSpawn(ctx, state, fmt.Sprintf("config injection failed: %v", err))
@@ -469,7 +478,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 			req.TaskDescription,
 			state.AgentID,
 			spawnID,
-			"/workspace/"+req.Project,
+			podProjectDir,
 			controlFilePath,
 			req.MaxTurns,
 			req.MaxCostUSD,
@@ -511,7 +520,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 			backend.StreamExecOpts{
 				ContainerID: startResult.ContainerID,
 				Command:     agentCmd,
-				WorkDir:     "/workspace/" + req.Project,
+				WorkDir:     podProjectDir,
 				TimeoutSec:  req.TimeoutMinutes * 60,
 				OnLine: func(line []byte) {
 					parser.HandleLine(line)
@@ -523,7 +532,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 		execResult, execErr = o.backend.Exec(execCtx, backend.ExecOpts{
 			ContainerID: startResult.ContainerID,
 			Command:     agentCmd,
-			WorkDir:     "/workspace/" + req.Project,
+			WorkDir:     podProjectDir,
 			TimeoutSec:  req.TimeoutMinutes * 60,
 		})
 	}
@@ -598,7 +607,12 @@ WORKDIR /workspace
 // injectAgentConfig writes platform-specific config files into the pod.
 // Uses Exec (stdout-only SPDY) instead of WriteFile (stdin SPDY) to avoid
 // in-cluster SPDY stdin stream hangs observed on K3s.
-func (o *SpawnOrchestrator) injectAgentConfig(ctx context.Context, containerID, agentType, project string) error {
+//
+// projectDir is the pod-internal absolute path to the project root (e.g.
+// "/workspace/services/loom-core"), already resolved by the caller via
+// resolveProjectPath so this function does not need to know about
+// workspace bucket layouts.
+func (o *SpawnOrchestrator) injectAgentConfig(ctx context.Context, containerID, agentType, projectDir string) error {
 	writeCmd := func(dir, file, content string) error {
 		encoded := base64.StdEncoding.EncodeToString([]byte(content))
 		cmd := fmt.Sprintf("mkdir -p %s && echo '%s' | base64 -d > %s/%s", dir, encoded, dir, file)
@@ -610,7 +624,6 @@ func (o *SpawnOrchestrator) injectAgentConfig(ctx context.Context, containerID, 
 		return err
 	}
 
-	projectDir := "/workspace/" + project
 	switch agentType {
 	case "claude-code":
 		// Claude Code reads project-level .claude/settings.json for permissions.
