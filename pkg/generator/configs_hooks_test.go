@@ -265,6 +265,145 @@ func TestHookProfileHasEvent_CaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestVendorLifecycleContract pins the cross-vendor agent lifecycle contract
+// so future generator refactors cannot silently drop a session-start /
+// session-end / heartbeat hook for any supported vendor. See
+// docs/architecture/agent-lifecycle.md for the prose model.
+//
+// The contract for native-hook vendors (claude, gemini) is:
+//   - A SessionStart hook that invokes `loom agent session-start`.
+//   - A session-end hook (event name varies per vendor) invoking
+//     `loom agent session-end`.
+//   - A heartbeat hook (event name + matcher varies) invoking
+//     `loom agent heartbeat` with `--ensure-session`.
+//
+// Codex has no native lifecycle hook surface beyond `notify` (which fires on
+// turn completion only), so its contract is different:
+//   - A `notify = [...]` entry in config.toml whose shell command invokes
+//     `loom agent keepalive-wrap` with `--ensure-session` and passes
+//     `--session-id`.
+//
+// Session-end for codex is not representable at the hook layer; the fleet
+// monitor's orphan reaper (internal/hud/monitor + internal/hud/fleetview)
+// catches agents left without a session after process exit.
+func TestVendorLifecycleContract(t *testing.T) {
+	t.Run("claude", func(t *testing.T) {
+		profile, err := GetPlatformProfile("claude")
+		if err != nil {
+			t.Fatalf("get claude profile: %v", err)
+		}
+		hooks := buildPlatformHooks(testRegistry(), profile.Hooks, "")
+		assertNativeLifecycleHook(t, hooks, "SessionStart", "agent session-start")
+		assertNativeLifecycleHook(t, hooks, profile.Hooks.SessionEndEvent, "agent session-end")
+		assertNativeLifecycleHook(t, hooks, profile.Hooks.HeartbeatEvent, "agent heartbeat")
+		assertEventCommandContains(t, hooks, profile.Hooks.HeartbeatEvent, "--ensure-session")
+	})
+
+	t.Run("gemini", func(t *testing.T) {
+		profile, err := GetPlatformProfile("gemini")
+		if err != nil {
+			t.Fatalf("get gemini profile: %v", err)
+		}
+		hooks := buildPlatformHooks(testRegistry(), profile.Hooks, "")
+		assertNativeLifecycleHook(t, hooks, "SessionStart", "agent session-start")
+		assertNativeLifecycleHook(t, hooks, profile.Hooks.SessionEndEvent, "agent session-end")
+		assertNativeLifecycleHook(t, hooks, profile.Hooks.HeartbeatEvent, "agent heartbeat")
+		assertEventCommandContains(t, hooks, profile.Hooks.HeartbeatEvent, "--ensure-session")
+		// Gemini-specific event names differ from Claude's: pin them so a
+		// future profile edit doesn't silently flip to Stop / PostToolUse.
+		if profile.Hooks.SessionEndEvent != "SessionEnd" {
+			t.Errorf("gemini session_end_event must be SessionEnd, got %q", profile.Hooks.SessionEndEvent)
+		}
+		if profile.Hooks.HeartbeatEvent != "AfterTool" {
+			t.Errorf("gemini heartbeat_event must be AfterTool, got %q", profile.Hooks.HeartbeatEvent)
+		}
+	})
+
+	t.Run("codex_notify_only", func(t *testing.T) {
+		// Codex doesn't go through buildPlatformHooks (notify is a top-level
+		// TOML key, not a named event). Exercise emitCodexPreamble and
+		// assert the notify shell command invokes our keepalive wrapper
+		// with the right flags.
+		var sb strings.Builder
+		emitCodexPreamble(&sb, testRegistry(), "/tmp/workspace", "")
+		got := sb.String()
+
+		if !strings.Contains(got, "notify = [\"sh\", \"-c\",") {
+			t.Fatalf("codex preamble missing notify shell entry: %s", got)
+		}
+		for _, want := range []string{
+			"agent keepalive-wrap",
+			"--ensure-session",
+			"--session-id",
+			"--agent-type codex",
+			"--infer-namespace",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("codex notify command missing %q; full preamble:\n%s", want, got)
+			}
+		}
+		// Codex has no SessionStart / SessionEnd surface — make sure the
+		// preamble does not invent one (a real-vendor event name would get
+		// silently ignored by Codex and mislead readers of the config).
+		for _, forbidden := range []string{"SessionStart", "SessionEnd", "Stop =", "PostToolUse"} {
+			if strings.Contains(got, forbidden) {
+				t.Errorf("codex preamble must not mention %q (codex does not support named lifecycle events)", forbidden)
+			}
+		}
+	})
+}
+
+// assertNativeLifecycleHook asserts that `hooks[event]` is a non-empty list
+// containing at least one command matching substr. Used by the vendor
+// lifecycle contract test; pulled out so the failure message tells you
+// exactly which event / vendor / missing command tripped the check.
+func assertNativeLifecycleHook(t *testing.T, hooks map[string]any, event, substr string) {
+	t.Helper()
+	if event == "" {
+		t.Fatalf("profile declared an empty event name for substr=%q", substr)
+	}
+	entries, ok := hooks[event].([]map[string]any)
+	if !ok || len(entries) == 0 {
+		t.Fatalf("event %q missing from generated hooks; hooks=%#v", event, hooks)
+	}
+	for _, entry := range entries {
+		inner, ok := entry["hooks"].([]map[string]any)
+		if !ok {
+			continue
+		}
+		for _, cmd := range inner {
+			if s, ok := cmd["command"].(string); ok && strings.Contains(s, substr) {
+				return
+			}
+		}
+	}
+	t.Fatalf("no command under event %q contains %q", event, substr)
+}
+
+// assertEventCommandContains is like assertNativeLifecycleHook but does not
+// fail if the event is missing — it only checks commands under the event
+// when the event does exist. Useful for cross-cutting assertions (e.g.
+// heartbeat must always have --ensure-session when present).
+func assertEventCommandContains(t *testing.T, hooks map[string]any, event, substr string) {
+	t.Helper()
+	entries, ok := hooks[event].([]map[string]any)
+	if !ok {
+		return
+	}
+	for _, entry := range entries {
+		inner, ok := entry["hooks"].([]map[string]any)
+		if !ok {
+			continue
+		}
+		for _, cmd := range inner {
+			if s, ok := cmd["command"].(string); ok && strings.Contains(s, substr) {
+				return
+			}
+		}
+	}
+	t.Fatalf("event %q exists but no command contains %q", event, substr)
+}
+
 func TestAppendHookExtras_UnknownExtra(t *testing.T) {
 	hooks := map[string]any{
 		"SessionStart": []map[string]any{
