@@ -18,7 +18,10 @@ import (
 // v13: .save-complete manifest marks save-phase completion; per-layer state
 // writer (flag-gated) persists quantized layer tensors to the PVC so future
 // resume work can skip already-quantized layers.
-const GPTQScriptVersion = "v13"
+// v14: Phase B — reload cached layers before model.quantize() so the looper's
+// find_modules filter naturally skips them. Adds write dedup across the
+// multiple layer_complete fires per layer in v5.x GPTQModel.
+const GPTQScriptVersion = "v14"
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}
