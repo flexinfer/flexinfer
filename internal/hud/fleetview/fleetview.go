@@ -76,6 +76,7 @@ func Join(presences []bridge.PresenceInfo, sessions []bridge.SessionInfo, now ti
 		}
 
 		row.HeartbeatAgeSeconds = AgeSeconds(row.LastHeartbeat, now)
+		markOrphan(&row, now)
 		row.TelemetryStatus = TelemetryStatus(row)
 		result = append(result, row)
 		seen[agentID] = struct{}{}
@@ -107,6 +108,45 @@ func Join(presences []bridge.PresenceInfo, sessions []bridge.SessionInfo, now ti
 	return result
 }
 
+// OrphanStaleAfter is the age past which a heartbeating presence with no
+// matching active session is flagged as an orphan. Short enough to catch
+// real divergence, long enough to avoid false positives during normal
+// session-start bootstrap (vendor CLIs register presence, then call
+// session-start; the window between those is typically <1s). 120s leaves
+// generous room for a flaky daemon retry.
+const OrphanStaleAfter = 120 * time.Second
+
+// markOrphan sets the derived IsOrphan / OrphanAgeSeconds fields on an
+// enriched presence row. An orphan is a row with presence evidence but no
+// joined active session that has persisted past OrphanStaleAfter. Synthetic
+// session-only rows (Source="session") can never be orphans by definition.
+func markOrphan(row *bridge.PresenceInfo, now time.Time) {
+	if row == nil {
+		return
+	}
+	row.IsOrphan = false
+	row.OrphanAgeSeconds = 0
+	if !row.HasPresence || row.HasSession {
+		return
+	}
+	// Prefer RegisteredAt as the orphan clock (the agent has been
+	// *registered* without a session for this long). Fall back to
+	// LastHeartbeat when RegisteredAt is absent, e.g. in older fixtures.
+	anchor := parseTime(row.RegisteredAt)
+	if anchor.IsZero() {
+		anchor = parseTime(row.LastHeartbeat)
+	}
+	if anchor.IsZero() {
+		return
+	}
+	age := now.Sub(anchor)
+	if age < OrphanStaleAfter {
+		return
+	}
+	row.IsOrphan = true
+	row.OrphanAgeSeconds = int(age.Seconds())
+}
+
 // applySession writes session-derived fields onto an enriched presence row.
 // Must be called only when the session is active; callers filter first.
 func applySession(row *bridge.PresenceInfo, s bridge.SessionInfo, now time.Time) {
@@ -136,6 +176,8 @@ func resetSessionFields(row *bridge.PresenceInfo) {
 	row.SessionStatus = ""
 	row.SessionStartedAt = ""
 	row.SessionAgeSeconds = 0
+	row.IsOrphan = false
+	row.OrphanAgeSeconds = 0
 	// SessionID stays untouched here: it is an identity hint produced by the
 	// presence layer (from registration or heartbeat), and callers further
 	// down may use it to match against sessions fetched out-of-band. The

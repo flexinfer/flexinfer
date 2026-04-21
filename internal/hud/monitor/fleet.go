@@ -55,6 +55,7 @@ type FleetSnapshot struct {
 	ActiveAgents    int                    `json:"active_agents"`
 	IdleAgents      int                    `json:"idle_agents"`
 	OfflineAgents   int                    `json:"offline_agents"`
+	OrphanAgents    int                    `json:"orphan_agents"`
 	Agents          []bridge.PresenceInfo  `json:"agents"`
 	FileClaims      []bridge.FileClaimInfo `json:"file_claims"`
 	ActiveWorktrees int                    `json:"active_worktrees"`
@@ -116,6 +117,18 @@ type KPICounters struct {
 	resetDate string // YYYY-MM-DD of last reset
 }
 
+// fleetOrphanReapAfter is how long an orphan presence (heartbeating, no
+// matching active session) is tolerated before the fleet monitor auto-
+// deregisters it. 10 minutes is long enough that a genuine session-start
+// retry window has closed, short enough that orphans don't accumulate
+// across a workday.
+const fleetOrphanReapAfter = 10 * time.Minute
+
+// fleetOrphanReapCooldown prevents hammering the MCP server when a reap
+// fails: a just-attempted agent is skipped for this long before the next
+// refresh will queue it again.
+const fleetOrphanReapCooldown = 2 * time.Minute
+
 // FleetMonitor aggregates data from the daemon client and agent bridge
 // into a FleetSnapshot. It runs a background goroutine that polls all
 // data sources at a configurable interval.
@@ -135,6 +148,11 @@ type FleetMonitor struct {
 	// Handoff notification dedup: tracks handoff IDs already notified.
 	notifiedHandoffs map[string]bool
 
+	// Orphan reap dedup: agent_id -> time of last reap attempt. Prevents
+	// re-reaping the same agent on every 5s refresh while a single deregister
+	// call is still in flight or recently failed.
+	orphanReapedAt map[string]time.Time
+
 	// KPI counters -- daily aggregate metrics.
 	kpis KPICounters
 
@@ -149,9 +167,42 @@ func NewFleetMonitor(client bridge.Caller, agent *bridge.AgentBridge, logger *sl
 		client:           client,
 		agent:            agent,
 		notifiedHandoffs: make(map[string]bool),
+		orphanReapedAt:   make(map[string]time.Time),
 	}
 	m.InitBase(logger, nil, "fleet-monitor")
 	return m
+}
+
+// reapOrphans deregisters presence for agents that have been orphan
+// (heartbeating but with no matching active session) past
+// fleetOrphanReapAfter. Runs in a goroutine so the fleet refresh path
+// stays non-blocking; each candidate is gated by a per-agent cooldown so
+// a stuck MCP call doesn't flood retries. On success the presence row
+// disappears on the next refresh.
+func (m *FleetMonitor) reapOrphans(agentIDs []string) {
+	now := time.Now()
+	for _, agentID := range agentIDs {
+		if m.agent == nil {
+			return
+		}
+		m.Lock()
+		last, seen := m.orphanReapedAt[agentID]
+		if seen && now.Sub(last) < fleetOrphanReapCooldown {
+			m.Unlock()
+			continue
+		}
+		m.orphanReapedAt[agentID] = now
+		m.Unlock()
+
+		if err := m.agent.PresenceDeregister(agentID); err != nil {
+			m.Logger.Warn("fleet: orphan reap failed",
+				"agent_id", agentID, "error", err)
+			continue
+		}
+		m.Logger.Info("fleet: reaped orphan presence",
+			"agent_id", agentID,
+			"reap_after_seconds", int(fleetOrphanReapAfter.Seconds()))
+	}
 }
 
 // Ready reports whether the monitor has been fully initialized.
@@ -351,6 +402,7 @@ func (m *FleetMonitor) refresh(force bool) error {
 		snap.Agents = agents
 	}
 	snap.Agents = fleetview.Join(snap.Agents, snap.Sessions, snap.UpdatedAt)
+	var reapCandidates []string
 	for _, a := range snap.Agents {
 		switch a.Status {
 		case "active":
@@ -360,6 +412,18 @@ func (m *FleetMonitor) refresh(force bool) error {
 		case "offline":
 			snap.OfflineAgents++
 		}
+		if a.IsOrphan {
+			snap.OrphanAgents++
+			if a.OrphanAgeSeconds >= int(fleetOrphanReapAfter.Seconds()) {
+				reapCandidates = append(reapCandidates, a.AgentID)
+			}
+		}
+	}
+	// Auto-deregister orphans past the reap threshold. Fire-and-forget so
+	// the fleet refresh path stays non-blocking; failures are retried on
+	// the next refresh. See fleetOrphanReapAfter rationale.
+	if len(reapCandidates) > 0 {
+		go m.reapOrphans(reapCandidates)
 	}
 
 	// Fetch file claims.

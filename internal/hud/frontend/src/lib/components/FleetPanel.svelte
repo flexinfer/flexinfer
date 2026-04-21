@@ -113,6 +113,10 @@
   // carried a stale has_session flag into the snapshot.
   let agentsWithSession = $derived(fleetAgents.filter((a) => a.has_session).length);
   let agentsWithoutSession = $derived(fleetAgents.length - agentsWithSession);
+  // Orphan = heartbeating presence without an active session past the grace
+  // window. The backend (fleetview.Join, internal/hud/monitor) applies the
+  // threshold; we just count the flag here.
+  let orphanCount = $derived(fleetAgents.filter((a) => a.is_orphan).length);
   let tasks = $derived(taskStore.tasks ?? []);
   let workflows = $derived(workflowStore.workflows ?? []);
   let memStats = $derived(memoryStore.stats ?? {});
@@ -493,6 +497,12 @@
               {#if agent.has_spawn}
                 <span class="evidence-pill evidence-pill-active">spawn</span>
               {/if}
+              {#if agent.is_orphan}
+                <span
+                  class="evidence-pill evidence-pill-orphan"
+                  title={`Heartbeating without an active session for ${Math.round(agent.orphan_age_seconds / 60)}m. Auto-reaped at 10m.`}
+                >orphan</span>
+              {/if}
             </td>
             <td class="text-mono text-muted namespace-cell" title={sanitizeText(agent.namespace ?? agent.project ?? '---')}>
               {sanitizeText(agent.namespace ?? agent.project ?? '---')}
@@ -523,7 +533,11 @@
       <div class="stat-card" style="--accent-color: var(--info)">
         {#key agentsWithSession}<div class="metric-value data-updated">{agentsWithSession}</div>{/key}
         <div class="metric-label">Sessions</div>
-        {#if agentsWithoutSession > 0}
+        {#if orphanCount > 0}
+          <div class="metric-sub metric-sub-alert" title="Heartbeating presence without an active session past 2 min. Reaped automatically after 10 min.">
+            {orphanCount} orphan{orphanCount === 1 ? '' : 's'} · {agentsWithoutSession - orphanCount} bootstrapping
+          </div>
+        {:else if agentsWithoutSession > 0}
           <div class="metric-sub">{agentsWithoutSession} live without session</div>
         {:else if groupByRootSession}
           <div class="metric-sub">{rootGroupCount} root group{rootGroupCount === 1 ? '' : 's'}</div>
@@ -1497,6 +1511,12 @@
     color: var(--fg-secondary);
   }
 
+  .evidence-pill.evidence-pill-orphan {
+    border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
+    background: color-mix(in srgb, var(--warning) 12%, transparent);
+    color: var(--warning);
+  }
+
   .actions-cell {
     display: flex;
     gap: 6px;
@@ -1560,6 +1580,10 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     letter-spacing: var(--tracking-normal);
+  }
+
+  .metric-sub.metric-sub-alert {
+    color: var(--warning);
   }
 
   .priority-crit { color: var(--error); margin-right: 4px; }

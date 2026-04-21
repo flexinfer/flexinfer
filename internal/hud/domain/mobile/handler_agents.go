@@ -259,6 +259,8 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 			TelemetryStatus: pa.TelemetryStatus,
 			HasPresence:     pa.HasPresence,
 			HasSession:      pa.HasSession,
+			IsOrphan:        pa.IsOrphan,
+			OrphanAgeSec:    pa.OrphanAgeSeconds,
 			SessionID:       pa.SessionID,
 			SessionStatus:   pa.SessionStatus,
 			SessionStarted:  pa.SessionStartedAt,
@@ -410,6 +412,9 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 		}
 		if ua.SessionID != "" {
 			summary.WithSessions++
+		}
+		if ua.IsOrphan {
+			summary.Orphans++
 		}
 	}
 
