@@ -106,6 +106,13 @@
 
   let fleetAgents = $derived(fleetStore.liveAgents ?? []);
   let sessions = $derived(fleetStore.sessions ?? []);
+  // Counter matches the SESSION badge in each row: both read the derived
+  // `has_session` from buildUnifiedAgents (which joins live sessions only).
+  // Before: counter read sessions.length (raw), badge read agent.has_session
+  // (could be stale), so the two regularly disagreed when the backend
+  // carried a stale has_session flag into the snapshot.
+  let agentsWithSession = $derived(fleetAgents.filter((a) => a.has_session).length);
+  let agentsWithoutSession = $derived(fleetAgents.length - agentsWithSession);
   let tasks = $derived(taskStore.tasks ?? []);
   let workflows = $derived(workflowStore.workflows ?? []);
   let memStats = $derived(memoryStore.stats ?? {});
@@ -514,10 +521,10 @@
     <!-- RIGHT TOP: Quick Stats -->
     <div class="stats-grid">
       <div class="stat-card" style="--accent-color: var(--info)">
-        {#key sessions.length}<div class="metric-value data-updated">{sessions.length}</div>{/key}
+        {#key agentsWithSession}<div class="metric-value data-updated">{agentsWithSession}</div>{/key}
         <div class="metric-label">Sessions</div>
-        {#if fleetAgents.length > sessions.length}
-          <div class="metric-sub">{fleetAgents.length - sessions.length} live without session</div>
+        {#if agentsWithoutSession > 0}
+          <div class="metric-sub">{agentsWithoutSession} live without session</div>
         {:else if groupByRootSession}
           <div class="metric-sub">{rootGroupCount} root group{rootGroupCount === 1 ? '' : 's'}</div>
           {/if}

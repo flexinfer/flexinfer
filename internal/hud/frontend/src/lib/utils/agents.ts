@@ -185,7 +185,12 @@ export function buildUnifiedAgents(input: {
     const session =
       (agent.session_id ? liveSessionsByID.get(agent.session_id) : undefined) ??
       liveSessionsByAgent.get(agent.agent_id);
-    const hasSession = agent.has_session ?? !!session;
+    // hasSession is derived from the live sessions array only. The server
+    // also computes this in fleetview.Join (internal/hud/fleetview), so the
+    // two agree by construction. We deliberately do NOT fall back to
+    // `agent.has_session` here — treating it as authoritative was the source
+    // of the "SESSION badge lit but 0 sessions in counter" divergence.
+    const hasSession = !!session;
     const hasPresence = agent.has_presence ?? agent.source !== 'session';
     const source =
       agent.source === 'session' ? 'session' : hasSession ? 'presence+session' : 'presence';
