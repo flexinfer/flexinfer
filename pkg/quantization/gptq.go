@@ -14,7 +14,11 @@ import (
 
 // GPTQScriptVersion must match FLEXINFER_SCRIPT_VERSION in quantize_gptq.py.
 // Bump both when controller-side heredoc patches change to catch stale images.
-const GPTQScriptVersion = "v12"
+//
+// v13: .save-complete manifest marks save-phase completion; per-layer state
+// writer (flag-gated) persists quantized layer tensors to the PVC so future
+// resume work can skip already-quantized layers.
+const GPTQScriptVersion = "v13"
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}
@@ -212,6 +216,10 @@ func (b *GPTQJobBuilder) buildEnv(modelPath, outSubdir string, bits, groupSize i
 	dampAutoIncrementOverride := getenvDefault("FLEXINFER_GPTQ_DAMP_AUTO_INCREMENT_OVERRIDE", "0.1")
 	resumeEnabled := getenvDefault("FLEXINFER_GPTQ_RESUME", "true")
 	calibrationCacheEnabled := getenvDefault("FLEXINFER_GPTQ_CALIBRATION_CACHE", "true")
+	// Per-layer quantized-state persistence. Phase A ships the writer only
+	// (safe, observable, low risk). Phase B will wire the reload+skip path
+	// once we've verified the writer's artifacts against a live run.
+	resumeLayersEnabled := getenvDefault("FLEXINFER_GPTQ_RESUME_LAYERS", "false")
 	deviceMap := getenvDefault("FLEXINFER_GPTQ_DEVICE_MAP", "auto")
 	// GPU path uses init_empty_weights + infer_auto_device_map +
 	// load_checkpoint_in_model, which correctly materializes tensors on the
@@ -242,6 +250,7 @@ func (b *GPTQJobBuilder) buildEnv(modelPath, outSubdir string, bits, groupSize i
 		{Name: "GPTQ_DAMP_PERCENT_OVERRIDE", Value: dampPercentOverride},
 		{Name: "GPTQ_DAMP_AUTO_INCREMENT_OVERRIDE", Value: dampAutoIncrementOverride},
 		{Name: "GPTQ_RESUME", Value: resumeEnabled},
+		{Name: "GPTQ_RESUME_LAYERS", Value: resumeLayersEnabled},
 		{Name: "GPTQ_CALIBRATION_CACHE", Value: calibrationCacheEnabled},
 		{Name: "QUANTIZE_DEVICE_MAP", Value: deviceMap},
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
@@ -1192,18 +1201,78 @@ echo "Original size: ${ORIGINAL_SIZE} bytes"
 
 # Short-circuit: if quantization already completed (quantize_config.json + safetensors
 # in OUT_DIR), re-emit metadata and exit 0. Handles Job recreation after TTL GC.
-# Validates that the shard index file exists (written last by save_quantized) and that
-# the compressed size is at least 10% of the original — prevents false positives from
-# partial saves that wrote config + 1 shard before dying.
+#
+# Preferred signal: .save-complete manifest written by quantize_gptq.py after the
+# save + integrity-check phase succeeds. When present, we trust the explicit
+# marker + shard-size check and skip the du(1)/min-size heuristic below.
+#
+# Fallback for pre-v13 artifacts (no .save-complete): require the shard index
+# (written last by save_quantized) and compressed size ≥ 10% of original.
 QUANT_STATUS="${MODEL_DIR}/.quantization-status.json"
+SAVE_COMPLETE="${OUT_DIR}/.save-complete"
 if [ -f "${OUT_DIR}/quantize_config.json" ] && ls "${OUT_DIR}"/*.safetensors &>/dev/null; then
     COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
     SHARD_INDEX="${OUT_DIR}/model.safetensors.index.json"
     SINGLE_MODEL="${OUT_DIR}/model.safetensors"
     MIN_SIZE=$((ORIGINAL_SIZE / 10))
-    if { [ -f "${SHARD_INDEX}" ] || [ -f "${SINGLE_MODEL}" ]; } && [ "${COMPRESSED_SIZE}" -gt "${MIN_SIZE}" ]; then
-        emit_event "quantization_cached" "model" "${MODEL_DIR}" "type" "${TYPE}" "original_bytes" "${ORIGINAL_SIZE}" "compressed_bytes" "${COMPRESSED_SIZE}"
-        echo "Quantization already complete in ${OUT_DIR}"
+
+    SAVE_COMPLETE_OK="no"
+    SAVE_COMPLETE_REASON=""
+    if [ -f "${SAVE_COMPLETE}" ]; then
+        if python3 - "${OUT_DIR}" "${SAVE_COMPLETE}" <<'VERIFY_SAVE_COMPLETE' 2>&1; then
+import json, os, sys
+
+out_dir, marker_path = sys.argv[1], sys.argv[2]
+with open(marker_path) as fh:
+    manifest = json.load(fh)
+shards = manifest.get("shards") or []
+if not shards:
+    print("manifest has no shards", file=sys.stderr)
+    sys.exit(2)
+for entry in shards:
+    name = entry.get("name")
+    want = entry.get("size_bytes")
+    if not name or not isinstance(want, int):
+        print(f"malformed shard entry: {entry!r}", file=sys.stderr)
+        sys.exit(2)
+    shard_path = os.path.join(out_dir, name)
+    if not os.path.isfile(shard_path):
+        print(f"missing shard: {name}", file=sys.stderr)
+        sys.exit(3)
+    got = os.path.getsize(shard_path)
+    if got != want:
+        print(f"size mismatch {name}: on-disk={got} manifest={want}", file=sys.stderr)
+        sys.exit(3)
+print(f"save-complete verified: {len(shards)} shards match manifest")
+VERIFY_SAVE_COMPLETE
+            SAVE_COMPLETE_OK="yes"
+        else
+            SAVE_COMPLETE_REASON="manifest check failed; treating as partial"
+        fi
+    fi
+
+    if [ "${SAVE_COMPLETE_OK}" = "yes" ]; then
+        emit_event "quantization_cached" "model" "${MODEL_DIR}" "type" "${TYPE}" "original_bytes" "${ORIGINAL_SIZE}" "compressed_bytes" "${COMPRESSED_SIZE}" "source" "save_complete"
+        echo "Quantization already complete in ${OUT_DIR} (verified via .save-complete)"
+        echo "Output size: ${COMPRESSED_SIZE} bytes (original: ${ORIGINAL_SIZE})"
+        if [ -f "${QUANT_STATUS}" ]; then
+            cat "${QUANT_STATUS}" > /dev/termination-log 2>/dev/null || true
+        else
+            END_TS=$(date +%s)
+            DURATION_SEC=$((END_TS - START_TS))
+            cat > /dev/termination-log << TERMINATION
+{
+  "type": "${TYPE}",
+  "originalSizeBytes": ${ORIGINAL_SIZE},
+  "compressedSizeBytes": ${COMPRESSED_SIZE},
+  "quantizationTimeSeconds": ${DURATION_SEC}
+}
+TERMINATION
+        fi
+        exit 0
+    elif { [ -f "${SHARD_INDEX}" ] || [ -f "${SINGLE_MODEL}" ]; } && [ "${COMPRESSED_SIZE}" -gt "${MIN_SIZE}" ]; then
+        emit_event "quantization_cached" "model" "${MODEL_DIR}" "type" "${TYPE}" "original_bytes" "${ORIGINAL_SIZE}" "compressed_bytes" "${COMPRESSED_SIZE}" "source" "heuristic"
+        echo "Quantization already complete in ${OUT_DIR} (heuristic: no .save-complete marker)"
         echo "Output size: ${COMPRESSED_SIZE} bytes (original: ${ORIGINAL_SIZE})"
         if [ -f "${QUANT_STATUS}" ]; then
             cat "${QUANT_STATUS}" > /dev/termination-log 2>/dev/null || true
@@ -1221,10 +1290,12 @@ TERMINATION
         fi
         exit 0
     else
-        emit_event "quantization_partial_detected" "model" "${MODEL_DIR}" "type" "${TYPE}" "compressed_bytes" "${COMPRESSED_SIZE}" "min_expected" "${MIN_SIZE}" "has_index" "$([ -f \"${SHARD_INDEX}\" ] && echo yes || echo no)" "has_single" "$([ -f \"${SINGLE_MODEL}\" ] && echo yes || echo no)"
+        emit_event "quantization_partial_detected" "model" "${MODEL_DIR}" "type" "${TYPE}" "compressed_bytes" "${COMPRESSED_SIZE}" "min_expected" "${MIN_SIZE}" "has_index" "$([ -f \"${SHARD_INDEX}\" ] && echo yes || echo no)" "has_single" "$([ -f \"${SINGLE_MODEL}\" ] && echo yes || echo no)" "has_save_complete" "$([ -f \"${SAVE_COMPLETE}\" ] && echo yes || echo no)" "reason" "${SAVE_COMPLETE_REASON:-missing marker and below heuristic}"
         echo "WARNING: Output dir has quantize_config.json but save appears incomplete"
         echo "  shard_index_exists=$([ -f \"${SHARD_INDEX}\" ] && echo yes || echo no)"
         echo "  single_model_exists=$([ -f \"${SINGLE_MODEL}\" ] && echo yes || echo no)"
+        echo "  save_complete_exists=$([ -f \"${SAVE_COMPLETE}\" ] && echo yes || echo no)"
+        echo "  save_complete_reason=${SAVE_COMPLETE_REASON:-(absent)}"
         echo "  compressed_size=${COMPRESSED_SIZE} min_expected=${MIN_SIZE}"
         echo "Cleaning partial output and re-running quantization"
         rm -rf "${OUT_DIR}"
