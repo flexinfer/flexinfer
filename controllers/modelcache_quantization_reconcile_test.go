@@ -989,6 +989,122 @@ func TestReconcileQuantization_ImageDrift_DeletesJob(t *testing.T) {
 	assert.Error(t, err, "expected stale job to be deleted due to image drift")
 }
 
+// buildImageDriftFixture constructs a ModelCache, Job, and GPUProfile where
+// the running job's image differs from the GPUProfile's resolved image. The
+// caller controls the job's age via jobStartedAgo and optional annotation
+// overrides via cacheAnnotations. Returns a ready-to-use reconciler + client.
+func buildImageDriftFixture(
+	t *testing.T,
+	cacheName string,
+	jobStartedAgo time.Duration,
+	cacheAnnotations map[string]string,
+) (*ModelCacheReconciler, client.Client, *aiv1alpha1.ModelCache) {
+	t.Helper()
+
+	started := metav1.NewTime(time.Now().Add(-jobStartedAgo))
+
+	cache := newQuantizationCache(cacheName)
+	if cache.Annotations == nil {
+		cache.Annotations = map[string]string{}
+	}
+	cache.Annotations[annotationQuantSpecHash] = quantSpecHash(cache.Spec.Quantization)
+	for k, v := range cacheAnnotations {
+		cache.Annotations[k] = v
+	}
+
+	staleJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cacheName + "-quantize",
+			Namespace: "default",
+		},
+		Spec: batchv1.JobSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "quantizer",
+						Image: "registry.example.com/quantizer:OLD",
+					}},
+					RestartPolicy: corev1.RestartPolicyNever,
+				},
+			},
+		},
+		Status: batchv1.JobStatus{
+			Active:    1,
+			StartTime: &started,
+		},
+	}
+
+	profile := &aiv1alpha2.GPUProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gfx1100",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.GPUProfileSpec{
+			Architecture: "gfx1100",
+			Vendor:       "amd",
+			VRAMMB:       24576,
+			Quantization: &aiv1alpha2.QuantizationProfile{
+				Images: map[string]string{
+					"gptq": "registry.example.com/quantizer:NEW",
+				},
+			},
+		},
+	}
+
+	s := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme,
+		batchv1.AddToScheme,
+		aiv1alpha1.AddToScheme,
+		aiv1alpha2.AddToScheme,
+	} {
+		require.NoError(t, add(s))
+	}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&aiv1alpha1.ModelCache{}).
+		WithObjects(cache, staleJob, profile).
+		Build()
+
+	r := &ModelCacheReconciler{
+		Client:      cl,
+		Scheme:      s,
+		Recorder:    record.NewFakeRecorder(20),
+		GPUProfiles: &GPUProfileReconciler{Client: cl, Scheme: s},
+	}
+	return r, cl, cache
+}
+
+// Outside the grace window, image drift must not preempt the running job —
+// GPTQModel has no mid-run resume, so a recreate would lose hours of work.
+func TestReconcileQuantization_ImageDrift_GraceWindowElapsed_PreservesJob(t *testing.T) {
+	r, cl, cache := buildImageDriftFixture(t, "quant-drift-old", imageDriftGraceWindow+time.Minute, nil)
+	_, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+
+	job := &batchv1.Job{}
+	err = cl.Get(context.Background(), client.ObjectKey{Name: "quant-drift-old-quantize", Namespace: "default"}, job)
+	assert.NoError(t, err, "expected long-running job to survive image drift past the grace window")
+}
+
+// The admin-override annotation bypasses the grace window and preempts the
+// running job even if it has been quantizing for hours.
+func TestReconcileQuantization_ImageDrift_ForceAnnotation_DeletesJob(t *testing.T) {
+	r, cl, cache := buildImageDriftFixture(
+		t,
+		"quant-drift-force",
+		imageDriftGraceWindow+time.Minute,
+		map[string]string{AnnotationForceImageUpdate: "true"},
+	)
+	_, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+
+	job := &batchv1.Job{}
+	err = cl.Get(context.Background(), client.ObjectKey{Name: "quant-drift-force-quantize", Namespace: "default"}, job)
+	assert.Error(t, err, "expected forced image-update to delete the running job")
+}
+
 func newQuantizationTestReconciler(t *testing.T, kubeClient kubernetes.Interface, objs ...client.Object) (*ModelCacheReconciler, client.Client) {
 	t.Helper()
 

@@ -436,19 +436,41 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		// Image drift detection: if the GPUProfile image was updated while
 		// a quantization job is running, delete the stale job so the
 		// controller recreates it with the correct image on the next reconcile.
-		if resolvedImg := r.resolveCurrentQuantizerImage(ctx, modelCache); resolvedImg != "" {
-			runningImg := quantJob.Spec.Template.Spec.Containers[0].Image
-			if resolvedImg != runningImg {
-				log.Info("Quantizer image drift detected, deleting stale job",
-					"cache", modelCache.Name,
-					"running", runningImg,
-					"resolved", resolvedImg)
-				r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizerImageDrift",
-					fmt.Sprintf("Running image %s != resolved %s, recreating job", runningImg, resolvedImg))
-				if err := r.Delete(ctx, quantJob, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !errors.IsNotFound(err) {
-					return ctrl.Result{}, fmt.Errorf("deleting drifted quantization job: %w", err)
+		//
+		// Only fires within a grace window after job start — past that, we
+		// assume the job is making real progress and that preempting it to
+		// pick up a new image would cost more than it gains. A job that has
+		// been quantizing for hours loses all its per-layer work on a
+		// delete/recreate because GPTQModel doesn't resume mid-run.
+		//
+		// The grace window catches the genuine drift case (deploy raced Flux
+		// reconcile; new image digest should replace the old one) while
+		// protecting long-running jobs from getting blown away by transient
+		// digest flips during subsequent Flux reconciles of the same content.
+		//
+		// Override with the annotation ai.flexinfer/force-image-update: "true"
+		// if an admin really needs to preempt a running job with a new image.
+		withinDriftWindow := true
+		if quantJob.Status.StartTime != nil {
+			withinDriftWindow = time.Since(quantJob.Status.StartTime.Time) < imageDriftGraceWindow
+		}
+		forceUpdate := modelCache.Annotations[AnnotationForceImageUpdate] == "true"
+		if withinDriftWindow || forceUpdate {
+			if resolvedImg := r.resolveCurrentQuantizerImage(ctx, modelCache); resolvedImg != "" {
+				runningImg := quantJob.Spec.Template.Spec.Containers[0].Image
+				if resolvedImg != runningImg {
+					log.Info("Quantizer image drift detected, deleting stale job",
+						"cache", modelCache.Name,
+						"running", runningImg,
+						"resolved", resolvedImg,
+						"forced", forceUpdate)
+					r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizerImageDrift",
+						fmt.Sprintf("Running image %s != resolved %s, recreating job", runningImg, resolvedImg))
+					if err := r.Delete(ctx, quantJob, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !errors.IsNotFound(err) {
+						return ctrl.Result{}, fmt.Errorf("deleting drifted quantization job: %w", err)
+					}
+					return ctrl.Result{RequeueAfter: requeueShort}, nil
 				}
-				return ctrl.Result{RequeueAfter: requeueShort}, nil
 			}
 		}
 
