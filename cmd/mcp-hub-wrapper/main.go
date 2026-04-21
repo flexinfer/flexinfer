@@ -20,7 +20,6 @@ const (
 	defaultProfile        = "codex"
 	defaultHubURL         = "wss://mcp.flexinfer.ai/ws"
 	defaultConnectTimeout = 10 * time.Second
-	reconnectBackoff      = 500 * time.Millisecond
 	replayTimeout         = 10 * time.Second
 )
 
@@ -124,6 +123,7 @@ type reconnectingBridge struct {
 	hubMu      sync.RWMutex
 	hub        mcp.Transport
 	closedHubs map[mcp.Transport]struct{}
+	hubReady   chan struct{}
 
 	reconnectMu sync.Mutex
 
@@ -144,16 +144,19 @@ func bridge(ctx context.Context, stdio mcp.Transport, hub mcp.Transport, connect
 	if connect == nil {
 		connect = func(context.Context) (mcp.Transport, error) { return hub, nil }
 	}
+	bridgeCtx, cancel := context.WithCancel(ctx)
 	b := &reconnectingBridge{
-		ctx:           ctx,
+		ctx:           bridgeCtx,
 		stdio:         stdio,
 		connect:       connect,
 		hub:           hub,
 		closedHubs:    make(map[mcp.Transport]struct{}),
+		hubReady:      make(chan struct{}, 1),
 		requestPermit: make(chan struct{}, 1),
 	}
 	b.requestPermit <- struct{}{}
 	defer b.closeHub()
+	defer cancel()
 
 	errCh := make(chan error, 1)
 	go b.recvLoop(errCh)
@@ -165,7 +168,7 @@ func bridge(ctx context.Context, stdio mcp.Transport, hub mcp.Transport, connect
 		default:
 		}
 
-		msg, err := stdio.Recv(ctx)
+		msg, err := stdio.Recv(bridgeCtx)
 		if err != nil {
 			return fmt.Errorf("stdio recv: %w", err)
 		}
@@ -195,15 +198,22 @@ func bridge(ctx context.Context, stdio mcp.Transport, hub mcp.Transport, connect
 
 func (b *reconnectingBridge) recvLoop(errCh chan<- error) {
 	for {
-		hub, err := b.ensureHub()
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				errCh <- err
+		if err := b.ctx.Err(); err != nil {
+			errCh <- err
+			return
+		}
+
+		hub := b.currentHub()
+		if hub == nil {
+			// No active hub. Reconnection is driven by new work from the
+			// main loop (sendHubMessage) or by retryInFlight when an
+			// in-flight request needs retrying. Wait for a new hub to
+			// appear or for shutdown.
+			select {
+			case <-b.ctx.Done():
+				errCh <- b.ctx.Err()
 				return
-			}
-			if waitErr := waitForReconnectBackoff(b.ctx); waitErr != nil {
-				errCh <- waitErr
-				return
+			case <-b.hubReady:
 			}
 			continue
 		}
@@ -289,6 +299,9 @@ func (b *reconnectingBridge) reconnect() error {
 	if hub := b.currentHub(); hub != nil {
 		return nil
 	}
+	if err := b.ctx.Err(); err != nil {
+		return err
+	}
 
 	hub, err := b.connect(b.ctx)
 	if err != nil {
@@ -302,6 +315,10 @@ func (b *reconnectingBridge) reconnect() error {
 	b.hubMu.Lock()
 	b.hub = hub
 	b.hubMu.Unlock()
+	select {
+	case b.hubReady <- struct{}{}:
+	default:
+	}
 	return nil
 }
 
@@ -496,15 +513,6 @@ func (b *reconnectingBridge) releaseRequestPermit() {
 	select {
 	case b.requestPermit <- struct{}{}:
 	default:
-	}
-}
-
-func waitForReconnectBackoff(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(reconnectBackoff):
-		return nil
 	}
 }
 
