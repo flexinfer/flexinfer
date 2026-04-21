@@ -160,7 +160,12 @@ func (p *PresenceSvc) Heartbeat(ctx context.Context, args map[string]any) (*mcp.
 	if agentType != "" && presence.AgentType == "" {
 		presence.AgentType = agentType
 	}
-	if sessionID != "" && presence.SessionID == "" {
+	// Heartbeat is the last word on the agent's current session binding.
+	// When the caller provides a session_id, it represents the session the
+	// agent is actively working in *right now*; overwrite any prior value so
+	// correlators downstream never see a stale SessionID after a new
+	// agent_session_start pointed the agent at a different session.
+	if sessionID != "" {
 		presence.SessionID = sessionID
 	}
 	if statusRaw != "" && !autoRegistered {

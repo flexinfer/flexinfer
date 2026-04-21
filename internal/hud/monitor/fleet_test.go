@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/hud/fleetview"
 )
 
 func TestDetectConflicts_NoConflicts(t *testing.T) {
@@ -194,7 +195,7 @@ func TestEnrichFleetAgentsWithSessionsSynthesizesSessionOnlyAgents(t *testing.T)
 		},
 	}
 
-	enriched := enrichFleetAgentsWithSessions(agents, sessions, now)
+	enriched := fleetview.Join(agents, sessions, now)
 	byAgent := make(map[string]bridge.PresenceInfo)
 	for _, agent := range enriched {
 		byAgent[agent.AgentID] = agent

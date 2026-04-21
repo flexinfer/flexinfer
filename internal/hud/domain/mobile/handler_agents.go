@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/hud/fleetview"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 	"github.com/crb2nu/loom/pkg/projectmeta"
 )
@@ -204,16 +205,20 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 	typeFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
 
 	agentMap := make(map[string]*unifiedAgent)
-	liveSessionsByID := make(map[string]bridge.SessionInfo)
-	liveSessionsByAgent := make(map[string]bridge.SessionInfo)
 
+	// Re-run the canonical join so we get the same HasSession / SessionID /
+	// synthetic "session-only" rows regardless of whether the snapshot came
+	// from a live FleetMonitor (where Join is already applied) or from a
+	// hand-built test fixture. Join is idempotent on already-joined input —
+	// it resets session-derived fields and re-correlates from snap.Sessions.
+	joined := fleetview.Join(snap.Agents, snap.Sessions, snap.UpdatedAt)
+
+	// Look up session-local details (namespace, entry count, tokens) that
+	// are not carried on PresenceInfo.
+	sessionByID := make(map[string]bridge.SessionInfo, len(snap.Sessions))
 	for _, sess := range snap.Sessions {
-		if !mobileSessionIsLive(sess.Status) {
-			continue
-		}
-		liveSessionsByID[sess.ID] = sess
-		if current, ok := liveSessionsByAgent[sess.AgentID]; !ok || mobileSessionStartedAt(sess.StartedAt).After(mobileSessionStartedAt(current.StartedAt)) {
-			liveSessionsByAgent[sess.AgentID] = sess
+		if sess.ID != "" {
+			sessionByID[sess.ID] = sess
 		}
 	}
 
@@ -222,18 +227,28 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 	worktreeHints := buildMobileAgentHintsFromWorktrees(snap.Worktrees)
 	claimHints := buildMobileAgentHintsFromClaims(snap.FileClaims)
 
-	for _, pa := range snap.Agents {
+	for _, pa := range joined {
 		status := normalizeMobilePresenceStatus(pa.Status)
 		agentType := pa.AgentType
 		if agentType == "" || agentType == "unknown" {
 			agentType = inferAgentType(pa.AgentID)
 		}
-		hasPresence := pa.HasPresence || pa.Source == "" || strings.HasPrefix(pa.Source, "presence")
+		source := pa.Source
+		if source == "" {
+			source = "presence"
+		}
+		// Mobile clients (iOS) expect "session_only" for synthetic rows
+		// created when a session has no matching presence. fleetview.Join
+		// emits "session" for this case; translate here for wire
+		// compatibility. See apps/loom-companion-ios/.../AgentRowView.swift.
+		if source == "session" {
+			source = "session_only"
+		}
 		ua := &unifiedAgent{
 			AgentID:         pa.AgentID,
 			AgentType:       agentType,
 			Status:          status,
-			Source:          "presence",
+			Source:          source,
 			Description:     pa.Description,
 			CurrentTask:     pa.CurrentTask,
 			Branch:          pa.Branch,
@@ -242,36 +257,22 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 			HeartbeatAgeSec: pa.HeartbeatAgeSeconds,
 			SessionAgeSec:   pa.SessionAgeSeconds,
 			TelemetryStatus: pa.TelemetryStatus,
-			HasPresence:     hasPresence,
+			HasPresence:     pa.HasPresence,
 			HasSession:      pa.HasSession,
+			SessionID:       pa.SessionID,
+			SessionStatus:   pa.SessionStatus,
+			SessionStarted:  pa.SessionStartedAt,
 		}
-		if sess, ok := liveSessionsByID[pa.SessionID]; ok {
-			ua.SessionID = sess.ID
-			ua.Namespace = sess.Namespace
-			ua.Project = projectmeta.Canonical(sess.Project, sess.Namespace)
-			ua.SessionStatus = sess.Status
-			ua.SessionStarted = sess.StartedAt
-			ua.EntryCount = sess.EntryCount
-			ua.TotalTokens = sess.TotalTokens
-			ua.HasSession = true
-			if ua.Description == "" {
-				ua.Description = sess.Description
+		if pa.HasSession {
+			if sess, ok := sessionByID[pa.SessionID]; ok {
+				ua.Namespace = sess.Namespace
+				ua.Project = projectmeta.Canonical(sess.Project, sess.Namespace)
+				ua.EntryCount = sess.EntryCount
+				ua.TotalTokens = sess.TotalTokens
+				if ua.Description == "" {
+					ua.Description = sess.Description
+				}
 			}
-		} else if sess, ok := liveSessionsByAgent[pa.AgentID]; ok {
-			ua.SessionID = sess.ID
-			ua.Namespace = sess.Namespace
-			ua.Project = projectmeta.Canonical(sess.Project, sess.Namespace)
-			ua.SessionStatus = sess.Status
-			ua.SessionStarted = sess.StartedAt
-			ua.EntryCount = sess.EntryCount
-			ua.TotalTokens = sess.TotalTokens
-			ua.HasSession = true
-			if ua.Description == "" {
-				ua.Description = sess.Description
-			}
-		}
-		if ua.HasSession && ua.Source == "presence" {
-			ua.Source = "presence+session"
 		}
 		if ua.TelemetryStatus == "" {
 			ua.TelemetryStatus = mobileAgentTelemetryStatus(*ua)
@@ -281,51 +282,6 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 		applyMobileAgentHint(ua, claimHints[pa.AgentID])
 		applyMobileAgentHint(ua, buildMobileAgentHintFromActiveFiles(pa.ActiveFiles, pa.Branch))
 		agentMap[pa.AgentID] = ua
-	}
-
-	for _, sess := range liveSessionsByAgent {
-		if ua, ok := agentMap[sess.AgentID]; ok {
-			if ua.SessionID != "" && ua.SessionStatus == "active" && sess.Status != "active" {
-				continue
-			}
-			ua.SessionID = sess.ID
-			ua.Namespace = sess.Namespace
-			ua.Project = projectmeta.Canonical(sess.Project, sess.Namespace)
-			ua.SessionStatus = sess.Status
-			ua.SessionStarted = sess.StartedAt
-			ua.EntryCount = sess.EntryCount
-			ua.TotalTokens = sess.TotalTokens
-			ua.HasSession = true
-			if ua.TelemetryStatus == "" {
-				ua.TelemetryStatus = mobileAgentTelemetryStatus(*ua)
-			}
-			if ua.Description == "" {
-				ua.Description = sess.Description
-			}
-		} else {
-			status := "offline"
-			if sess.Status == "active" {
-				status = "active"
-			}
-			ua := &unifiedAgent{
-				AgentID:         sess.AgentID,
-				AgentType:       inferAgentType(sess.AgentID),
-				Status:          status,
-				Source:          "session_only",
-				Description:     sess.Description,
-				SessionID:       sess.ID,
-				Namespace:       sess.Namespace,
-				Project:         projectmeta.Canonical(sess.Project, sess.Namespace),
-				SessionStatus:   sess.Status,
-				SessionStarted:  sess.StartedAt,
-				EntryCount:      sess.EntryCount,
-				TotalTokens:     sess.TotalTokens,
-				TelemetryStatus: "session_only",
-				HasPresence:     false,
-				HasSession:      true,
-			}
-			agentMap[sess.AgentID] = ua
-		}
 	}
 
 	for _, sp := range snap.Spawns {
@@ -607,10 +563,6 @@ func applyMobileAgentHint(agent *unifiedAgent, hint mobileAgentHint) {
 
 func mobileSessionIsLive(status string) bool {
 	return strings.EqualFold(strings.TrimSpace(status), "active")
-}
-
-func mobileSessionStartedAt(raw string) time.Time {
-	return parseMobileTime(raw)
 }
 
 func mobileAgentTelemetryStatus(agent unifiedAgent) string {
