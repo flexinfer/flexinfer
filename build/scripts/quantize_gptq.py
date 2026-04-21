@@ -13,7 +13,10 @@ All configuration is read from environment variables set by the controller:
 # v13: .save-complete manifest marks save-phase completion; per-layer state
 # writer (flag-gated by GPTQ_RESUME_LAYERS) persists quantized layer tensors
 # to the PVC so future resume work can skip already-quantized layers.
-FLEXINFER_SCRIPT_VERSION = "v13"
+# v14: Phase B — reload cached layers before model.quantize() so the looper's
+# find_modules filter naturally skips them. Adds write dedup across the
+# multiple layer_complete fires per layer in v5.x GPTQModel.
+FLEXINFER_SCRIPT_VERSION = "v14"
 import copy
 import gc
 import json
@@ -1606,6 +1609,313 @@ def gc_orphan_layer_files(model_dir):
             print(f"WARN: failed to remove orphan {name}: {exc}")
 
 
+# ── Per-layer resume: reload side (Phase B) ────────────────────────────
+#
+# Phase A writes packed int4 state per completed layer. Phase B swaps those
+# tensors back into the live model BEFORE model.quantize() runs so the
+# per-layer looper's find_modules() filter naturally skips them (it only
+# walks nn.Linear/Conv1D/Conv2d — BaseQuantLinear children return an empty
+# subset and hit the loop body's `if len(subset) == 0: continue`). No
+# upstream monkey-patch is required for basic skip behavior; see v5.x probe
+# findings for the architectural invariants we rely on.
+
+
+def _find_quant_linear_class():
+    """Locate a concrete QuantLinear class to use at reload time.
+
+    Preference order: TorchQuantLinear (pure PyTorch, ubiquitous, no hw
+    dependencies). Returns None if no suitable class is importable — the
+    caller must treat this as "resume unavailable, fall back to full
+    re-quantize".
+    """
+    candidates = [
+        ("gptqmodel.nn_modules.qlinear.torch", "TorchQuantLinear"),
+    ]
+    for module_path, class_name in candidates:
+        try:
+            mod = __import__(module_path, fromlist=[class_name])
+            cls = getattr(mod, class_name, None)
+            if cls is not None:
+                return cls
+        except Exception:
+            continue
+    return None
+
+
+def _group_submodule_tensors(layer_tensors):
+    """Group a layer state_dict by submodule name.
+
+    Input: {"self_attn.q_proj.qweight": T, "self_attn.q_proj.scales": T, ...}
+    Output: {"self_attn.q_proj": {"qweight": T, "scales": T, ...}, ...}
+    """
+    groups = {}
+    for full_name, tensor in layer_tensors.items():
+        parts = full_name.rsplit(".", 1)
+        if len(parts) != 2:
+            continue
+        mod_path, buf_name = parts
+        if buf_name not in ("qweight", "qzeros", "scales", "g_idx", "bias"):
+            continue
+        groups.setdefault(mod_path, {})[buf_name] = tensor
+    return groups
+
+
+def _resolve_submodule_parent(root, dotted_name):
+    """Walk root.a.b.c and return (root.a.b, "c") suitable for setattr."""
+    parts = dotted_name.split(".")
+    parent = root
+    for p in parts[:-1]:
+        parent = getattr(parent, p)
+    return parent, parts[-1]
+
+
+def _build_quant_linear_shell(src_linear, buffers, q_cls):
+    """Construct a QuantLinear and hydrate its packed buffers.
+
+    Takes the source nn.Linear (for shape metadata) plus a dict of
+    pre-packed tensors. Returns a ready-to-serve QuantLinear instance.
+    Raises on mismatch — caller catches and resets cache.
+    """
+    import torch
+
+    in_features = src_linear.in_features
+    out_features = src_linear.out_features
+    has_bias = src_linear.bias is not None
+    pack_dtype = buffers["qweight"].dtype
+
+    ctor_kwargs = dict(
+        bits=bits,
+        group_size=group_size,
+        desc_act=desc_act,
+        sym=sym,
+        in_features=in_features,
+        out_features=out_features,
+        bias=has_bias,
+        pack_dtype=pack_dtype,
+        backend=None,
+        adapter=None,
+        register_buffers=True,
+    )
+    try:
+        q = q_cls(**ctor_kwargs)
+    except TypeError:
+        # Older / newer signatures may not accept every kwarg — retry with
+        # the minimum viable set.
+        q = q_cls(
+            bits=bits,
+            group_size=group_size,
+            desc_act=desc_act,
+            sym=sym,
+            in_features=in_features,
+            out_features=out_features,
+            bias=has_bias,
+        )
+
+    with torch.no_grad():
+        if (
+            not hasattr(q, "qweight")
+            or not hasattr(q, "qzeros")
+            or not hasattr(q, "scales")
+        ):
+            raise RuntimeError(
+                f"QuantLinear missing required buffers: "
+                f"qweight={hasattr(q, 'qweight')} qzeros={hasattr(q, 'qzeros')} scales={hasattr(q, 'scales')}"
+            )
+        q.qweight.copy_(buffers["qweight"])
+        q.qzeros.copy_(buffers["qzeros"])
+        q.scales.copy_(buffers["scales"])
+        if "g_idx" in buffers and hasattr(q, "g_idx") and q.g_idx is not None:
+            q.g_idx.copy_(buffers["g_idx"])
+        if has_bias and "bias" in buffers and hasattr(q, "bias") and q.bias is not None:
+            q.bias.copy_(buffers["bias"])
+
+    # post_init sets up dequant helpers (wf_unsqueeze_*), triggers torch.compile.
+    post_init = getattr(q, "post_init", None)
+    if callable(post_init):
+        try:
+            post_init()
+        except Exception as exc:
+            # post_init failure is non-fatal — the module will lazy-init on
+            # first forward. Log and continue.
+            print(f"WARN: QuantLinear.post_init failed (non-fatal): {exc}")
+    return q
+
+
+def _resolve_layer_list(gptq_model):
+    """Return the decoder-layer nn.ModuleList for this model, or None."""
+    extract = getattr(gptq_model, "extract_layers_node", None)
+    if not callable(extract):
+        return None
+    nodes = extract() or []
+    if not nodes:
+        return None
+    layers_path = nodes[0]
+    current = getattr(gptq_model, "model", None)
+    if current is None:
+        return None
+    try:
+        for part in layers_path.split("."):
+            current = getattr(current, part)
+        return current
+    except AttributeError:
+        return None
+
+
+def reload_quantized_layers(gptq_model, model_dir, fingerprint, total_layers):
+    """Rehydrate completed layers from disk cache into the live model.
+
+    Returns the sorted list of layer indices that were successfully loaded.
+    On ANY error, resets the cache and returns an empty list so the caller
+    can proceed with full re-quantization. Never raises — resume is a
+    best-effort optimization and must never block the happy path.
+
+    Idempotent: if called twice, the second call sees the same module
+    already swapped to QuantLinear, skips reload for those (src is not
+    nn.Linear anymore), and returns the same indices.
+    """
+    if not gptq_resume_layers_enabled:
+        return []
+    manifest = load_layer_cache_manifest(model_dir)
+    if manifest is None:
+        return []
+    expected_hash = (fingerprint or {}).get("hash", "")
+    actual_hash = manifest.get("config_hash", "")
+    if expected_hash and actual_hash != expected_hash:
+        reset_layer_cache(
+            model_dir,
+            reason=f"config_hash mismatch ({actual_hash[:8] or 'empty'}→{expected_hash[:8]})",
+        )
+        return []
+    entries = manifest.get("layers") or []
+    if not entries:
+        return []
+
+    try:
+        import torch.nn as nn
+        from safetensors.torch import load_file as safetensors_load
+    except ImportError as exc:
+        emit_progress(
+            "quantization_resume_fallback",
+            phase="quantizing",
+            reason=f"safetensors unavailable: {exc}",
+        )
+        return []
+
+    q_cls = _find_quant_linear_class()
+    if q_cls is None:
+        emit_progress(
+            "quantization_resume_fallback",
+            phase="quantizing",
+            reason="no QuantLinear class importable",
+        )
+        return []
+
+    layers = _resolve_layer_list(gptq_model)
+    if layers is None:
+        emit_progress(
+            "quantization_resume_fallback",
+            phase="quantizing",
+            reason="could not resolve decoder layers node",
+        )
+        return []
+
+    cache_root = layer_cache_dir(model_dir)
+    loaded_indices = []
+    percent_base = 10.0
+    percent_span = 80.0
+    total_for_percent = max(total_layers or len(layers), 1)
+
+    try:
+        for entry in entries:
+            layer_idx = entry.get("layer_idx")
+            if not isinstance(layer_idx, int):
+                raise RuntimeError(f"manifest entry missing layer_idx: {entry}")
+            if layer_idx < 0 or layer_idx >= len(layers):
+                raise RuntimeError(
+                    f"layer_idx {layer_idx} out of range 0..{len(layers)}"
+                )
+            rel_path = entry.get("path", "")
+            cached_path = os.path.join(cache_root, rel_path) if rel_path else ""
+            if not cached_path or not os.path.isfile(cached_path):
+                raise RuntimeError(f"missing cached shard: {cached_path}")
+
+            layer_tensors = safetensors_load(cached_path, device="cpu")
+            groups = _group_submodule_tensors(layer_tensors)
+            if not groups:
+                raise RuntimeError(
+                    f"layer {layer_idx}: cached shard has no quantized tensors"
+                )
+
+            layer_module = layers[layer_idx]
+            swaps = 0
+            for rel_name, buffers in groups.items():
+                if "qweight" not in buffers or "scales" not in buffers:
+                    raise RuntimeError(
+                        f"layer {layer_idx} submodule {rel_name}: missing qweight/scales"
+                    )
+                parent, child_name = _resolve_submodule_parent(layer_module, rel_name)
+                src = getattr(parent, child_name, None)
+                if src is None:
+                    raise RuntimeError(
+                        f"layer {layer_idx}: submodule {rel_name} not found"
+                    )
+                # Idempotent: if already swapped (re-entry), skip this submodule.
+                if hasattr(src, "qweight") and not isinstance(src, nn.Linear):
+                    continue
+                if not isinstance(src, nn.Linear):
+                    raise RuntimeError(
+                        f"layer {layer_idx} submodule {rel_name}: expected Linear, got {type(src).__name__}"
+                    )
+                q = _build_quant_linear_shell(src, buffers, q_cls)
+                setattr(parent, child_name, q)
+                swaps += 1
+
+            loaded_indices.append(layer_idx)
+            # Emit "completed layer N" so the controller-side Prom metric
+            # (controllers/modelcache_quantization.go:993) picks up the
+            # reloaded index. The log shape matches layer_complete()'s emit.
+            percent = min(
+                percent_base + percent_span - 1.0,
+                percent_base + ((layer_idx + 1) / total_for_percent) * percent_span,
+            )
+            emit_progress(
+                "progress",
+                phase="quantizing",
+                percent=round(percent, 1),
+                detail=f"completed layer {layer_idx + 1} (reloaded from cache, {swaps} submodules)",
+            )
+
+        loaded_indices.sort()
+        emit_progress(
+            "quantization_resume_loaded",
+            phase="quantizing",
+            loaded=len(loaded_indices),
+            total=total_for_percent,
+            config_hash=expected_hash,
+        )
+        print(
+            f"Resume: reloaded {len(loaded_indices)} quantized layers from cache "
+            f"(indices: {loaded_indices[:10]}{'...' if len(loaded_indices) > 10 else ''})"
+        )
+        return loaded_indices
+
+    except Exception as exc:
+        # Graceful fallback. The live model may have a mix of Linear and
+        # QuantLinear children now — that's OK, model.quantize() will
+        # re-process any Linear children it finds, and QuantLinears it
+        # ignores naturally. But the manifest is now suspect, so wipe it
+        # to force a clean full run.
+        print(f"WARN: layer cache reload failed: {exc}")
+        emit_progress(
+            "quantization_resume_fallback",
+            phase="quantizing",
+            reason=str(exc)[:200],
+            loaded_before_failure=len(loaded_indices),
+        )
+        reset_layer_cache(model_dir, reason=f"reload failed: {exc}")
+        return []
+
+
 def load_cached_examples(model_dir):
     if not (gptq_resume_enabled and gptq_calibration_cache_enabled):
         return None
@@ -1730,10 +2040,44 @@ class QuantizationCheckpointCallback:
         return state
 
     def _write_layer_cache(self, layer_idx):
-        """Persist packed per-layer state to the PVC. Best-effort."""
+        """Persist packed per-layer state to the PVC. Best-effort.
+
+        Idempotent across the multiple layer_complete() fires per layer
+        that v5.x's looper emits (stage_layer.py dispatches from ~3 sites).
+        If a manifest entry already exists for this layer_idx with the
+        current run's config_hash, the cached file is authoritative and
+        we skip the write.
+        """
         if not self.resume_layers_enabled:
             return
         import hashlib
+
+        expected_hash = (self._layer_fingerprint or {}).get("hash", "")
+
+        # Dedup: if a manifest entry for this layer already exists with the
+        # matching config hash AND the file is intact, skip. This avoids
+        # 3× NFS writes per layer when layer_complete fires multiply.
+        existing_manifest = load_layer_cache_manifest(self.model_dir)
+        if existing_manifest is not None:
+            for entry in existing_manifest.get("layers", []):
+                if entry.get("layer_idx") != layer_idx:
+                    continue
+                if expected_hash and entry.get("config_hash") != expected_hash:
+                    break  # stale — fall through to overwrite
+                cached_rel = entry.get("path", "")
+                cached_size = entry.get("size_bytes")
+                if not cached_rel:
+                    break
+                cached_path = os.path.join(layer_cache_dir(self.model_dir), cached_rel)
+                if not os.path.isfile(cached_path):
+                    break
+                if (
+                    isinstance(cached_size, int)
+                    and os.path.getsize(cached_path) != cached_size
+                ):
+                    break
+                # Entry matches and file is intact — nothing to do.
+                return
 
         try:
             from safetensors.torch import save_file as safetensors_save
@@ -2809,6 +3153,27 @@ checkpoint_callback.state["resume_layers_enabled"] = gptq_resume_layers_enabled
 if _resume_fingerprint is not None:
     checkpoint_callback.state["resume_config_hash"] = _resume_fingerprint["hash"]
 checkpoint_callback._persist()
+
+# Phase B: swap pre-quantized layers in before the looper runs. Each
+# swapped layer becomes invisible to GPTQModel's find_modules() (which
+# only walks nn.Linear/Conv descendants), so the per-layer loop naturally
+# short-circuits at `if len(subset) == 0: continue`. A reload failure
+# wipes the cache and proceeds to a full re-quantize — never blocks.
+reloaded_layers = reload_quantized_layers(
+    model, model_dir, _resume_fingerprint, total_layers
+)
+if reloaded_layers:
+    merged = sorted(
+        set(checkpoint_callback.state.get("completed_layers", []))
+        | set(reloaded_layers)
+    )
+    checkpoint_callback.state["completed_layers"] = merged
+    checkpoint_callback.state["reloaded_layers"] = list(reloaded_layers)
+    checkpoint_callback.state["reloaded_at"] = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+    )
+    checkpoint_callback._persist()
+
 model.quantize(examples)
 
 emit_progress("progress", phase="saving", percent=90.0, detail="saving quantized model")

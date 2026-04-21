@@ -192,11 +192,11 @@ These alerts ship from `charts/flexinfer/templates/prometheusrule.yaml` when `al
 
 ## 8. Known limitations (as of today)
 
-- **Mid-run resume: writer only (Phase A).** As of MR !163, each completed decoder layer's packed int4 state (`qweight`/`qzeros`/`scales`/`g_idx`) is persisted to `.flexinfer-gptq-cache/layers/layer-NNN.safetensors` with a `manifest.json` index and a `config_hash` that invalidates the cache on any numerically-material config change. Flag-gated by `FLEXINFER_GPTQ_RESUME_LAYERS` (default `false`). Today the files are written-and-forgotten — the reload + looper-skip consumer is Phase B.
+- **Mid-run resume: end-to-end shipped behind a flag (Phase A writer + Phase B reload).** As of MR !163 (writer) and MR !165 (reload), completed decoder layers are persisted to `.flexinfer-gptq-cache/layers/layer-NNN.safetensors` AND swapped back into the live model on job restart so the GPTQModel looper's `find_modules` filter naturally skips them (it only walks `nn.Linear`/`Conv1d`/`Conv2d` — pre-swapped `BaseQuantLinear` children yield an empty subset). Flag-gated by `FLEXINFER_GPTQ_RESUME_LAYERS` (default `false` until we've validated on a live run). Graceful-fallback semantics: any failure during reload wipes the cache and proceeds with a clean full re-quantize — resume NEVER blocks a run.
 - **Save-phase resume: marker shipped (MR !163).** `quantize_gptq.py` now writes `${OUT_DIR}/.save-complete` with a shard manifest (name / size / sha256) before the atomic rename. On job restart, the bash short-circuit verifies each shard's on-disk size against the manifest and skips save entirely when it matches. Partial saves (marker missing or size mismatch) still fall through to a full re-save — true per-shard resume inside `save_quantized` is NOT shipped. Mitigation for mid-save OOM is still to size memory correctly up front (§5).
 - **`make deploy-quantizer-full` BuildKit stale content.** Observed once — the remote builder shipped a quantizer image containing stale script content despite `--no-cache`. MR !160 added a post-build md5 parity check that catches this before push. If you see `ERROR: Image script content mismatch`, the check did its job; retry the deploy or `docker system prune` on the remote context.
 
-### 8.1 Resume artifact layout (Phase A — writer only)
+### 8.1 Resume artifact layout
 
 When `FLEXINFER_GPTQ_RESUME_LAYERS=true`, the PVC gains:
 
@@ -218,7 +218,7 @@ ${MODEL_DIR}/.flexinfer-gptq-cache/
 ```json
 {
   "version": 1,
-  "script_version": "v13",
+  "script_version": "v14",
   "completed_at": "2026-04-21T18:00:00Z",
   "shards": [
     {"name": "model-00001-of-00007.safetensors", "size_bytes": 4123456789, "sha256": "..."}
@@ -231,6 +231,23 @@ ${MODEL_DIR}/.flexinfer-gptq-cache/
 
 The bash short-circuit uses this to fast-path on job restart. Pre-v13 artifacts without the marker still fast-path via the legacy `du`-based heuristic.
 
+### 8.2 Reload path events (Phase B)
+
+Look for these Loki events to confirm resume behavior on a restarted job:
+
+| Event | Meaning | Action |
+|---|---|---|
+| `quantization_layer_cached` | Phase A writer persisted a layer (per layer, once) | Normal — cache is growing |
+| `quantization_resume_loaded` | Phase B reload succeeded; N layers swapped before quantize | Expected on restart with a valid cache |
+| `quantization_resume_fallback` | Reload failed for any reason; cache was wiped | Check the `reason` field; full re-quant will run normally |
+| `quantization_layer_cache_reset` | Cache invalidated (config hash changed, or fallback-triggered) | Normal on config changes; investigate if unexpected |
+
+```logql
+{namespace="flexinfer-system"} |= "quantization_resume"
+```
+
+**Important safety guarantee**: `quantization_resume_fallback` is NEVER fatal — any reload error path ends in a cache wipe + full re-quantize, never a job failure. If you see this event, the run will still complete correctly (just slowly, as if resume were disabled).
+
 ## 9. Related reading
 
 - `docs/design/quantization-pipelines.md` — architecture.
@@ -242,3 +259,4 @@ The bash short-circuit uses this to fast-path on job restart. Pre-v13 artifacts 
 - MR !161 — `timeoutSeconds` CRD cap raised to 48 h.
 - MR !162 — per-layer progress metric + alerts + this runbook.
 - MR !163 — `.save-complete` marker + per-layer state writer (Phase A).
+- MR !165 — per-layer reload path + looper-skip via natural `find_modules` filter (Phase B).
