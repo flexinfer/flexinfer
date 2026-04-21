@@ -192,9 +192,44 @@ These alerts ship from `charts/flexinfer/templates/prometheusrule.yaml` when `al
 
 ## 8. Known limitations (as of today)
 
-- **No mid-run resume.** GPTQModel runs `model.quantize()` top-to-bottom; there's no `start_layer=N` knob. The `.flexinfer-gptq-cache/checkpoint.json` file tracks progress but is informational only — a restart re-quantizes every layer. Real resume needs a GPTQModel looper hook plus per-layer state persistence; not shipped yet.
-- **No save-phase resume.** An OOM at `stage=saving` throws away the entire quantize pass. Mitigation: size memory correctly up front (§5).
+- **Mid-run resume: writer only (Phase A).** As of MR !163, each completed decoder layer's packed int4 state (`qweight`/`qzeros`/`scales`/`g_idx`) is persisted to `.flexinfer-gptq-cache/layers/layer-NNN.safetensors` with a `manifest.json` index and a `config_hash` that invalidates the cache on any numerically-material config change. Flag-gated by `FLEXINFER_GPTQ_RESUME_LAYERS` (default `false`). Today the files are written-and-forgotten — the reload + looper-skip consumer is Phase B.
+- **Save-phase resume: marker shipped (MR !163).** `quantize_gptq.py` now writes `${OUT_DIR}/.save-complete` with a shard manifest (name / size / sha256) before the atomic rename. On job restart, the bash short-circuit verifies each shard's on-disk size against the manifest and skips save entirely when it matches. Partial saves (marker missing or size mismatch) still fall through to a full re-save — true per-shard resume inside `save_quantized` is NOT shipped. Mitigation for mid-save OOM is still to size memory correctly up front (§5).
 - **`make deploy-quantizer-full` BuildKit stale content.** Observed once — the remote builder shipped a quantizer image containing stale script content despite `--no-cache`. MR !160 added a post-build md5 parity check that catches this before push. If you see `ERROR: Image script content mismatch`, the check did its job; retry the deploy or `docker system prune` on the remote context.
+
+### 8.1 Resume artifact layout (Phase A — writer only)
+
+When `FLEXINFER_GPTQ_RESUME_LAYERS=true`, the PVC gains:
+
+```
+${MODEL_DIR}/.flexinfer-gptq-cache/
+├── checkpoint.json                  # existing — progress + resume_config_hash
+├── calibration-examples.pt          # existing — cached calibration tensors
+└── layers/
+    ├── manifest.json                # {version, config_hash, script_version, layers: [...]}
+    ├── layer-000.safetensors        # packed int4 state for decoder layer 0
+    ├── layer-001.safetensors
+    └── ...
+```
+
+`manifest.json` is the source of truth; orphan `layer-*.safetensors` files (write succeeded, manifest update failed) are GC'd on each startup. A `config_hash` mismatch wipes the cache before any write.
+
+`${OUT_DIR}/.save-complete` is written unconditionally (not flag-gated) on any v13+ run:
+
+```json
+{
+  "version": 1,
+  "script_version": "v13",
+  "completed_at": "2026-04-21T18:00:00Z",
+  "shards": [
+    {"name": "model-00001-of-00007.safetensors", "size_bytes": 4123456789, "sha256": "..."}
+  ],
+  "has_index": true,
+  "has_config": true,
+  "has_quantize_config": true
+}
+```
+
+The bash short-circuit uses this to fast-path on job restart. Pre-v13 artifacts without the marker still fast-path via the legacy `du`-based heuristic.
 
 ## 9. Related reading
 
@@ -205,3 +240,5 @@ These alerts ship from `charts/flexinfer/templates/prometheusrule.yaml` when `al
 - MR !156 — Hessian recovery on gfx906.
 - MR !160 — image-drift grace window + deploy-script md5 check.
 - MR !161 — `timeoutSeconds` CRD cap raised to 48 h.
+- MR !162 — per-layer progress metric + alerts + this runbook.
+- MR !163 — `.save-complete` marker + per-layer state writer (Phase A).
