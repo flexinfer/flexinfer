@@ -8,12 +8,14 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -230,6 +232,7 @@ func runAgentAuthStatus() error {
 	fmt.Println("  K8s Secrets (cluster-owned, preferred):")
 	printK8sSecretStatus("cluster-agent-api-keys", "devbox")
 	printK8sSecretStatus("cluster-agent-auth", "devbox")
+	printClusterAuthOAuthDetail("devbox")
 
 	fmt.Println()
 	fmt.Println("  K8s Secrets (legacy, Mac-sourced — DEPRECATED):")
@@ -237,6 +240,66 @@ func runAgentAuthStatus() error {
 	printK8sSecretStatus("agent-auth-tokens", "devbox")
 
 	return nil
+}
+
+// printClusterAuthOAuthDetail inspects cluster-agent-auth for the specific keys
+// spawn pods mount (claude-oauth-token, codex-auth-json) and reports actionable
+// readiness. See internal/hud/spawn.go:1298-1381 for where the keys are consumed.
+func printClusterAuthOAuthDetail(namespace string) {
+	kubeconfig := findKubeconfig()
+	if kubeconfig == "" {
+		return
+	}
+	// Check claude-oauth-token (Slice 2b.2a — vendor-sanctioned 1yr headless token).
+	token := readSecretKey(kubeconfig, namespace, "cluster-agent-auth", "claude-oauth-token")
+	switch {
+	case token == "":
+		fmt.Println("      CLAUDE_CODE_OAUTH_TOKEN: absent — run `claude setup-token`, set under claude-oauth-token")
+	case token == "PLACEHOLDER":
+		fmt.Println("      CLAUDE_CODE_OAUTH_TOKEN: placeholder — run `claude setup-token`")
+	case strings.HasPrefix(token, "sk-ant-oat01-"):
+		fmt.Printf("      CLAUDE_CODE_OAUTH_TOKEN: present (%dB, sk-ant-oat01-…)\n", len(token))
+	default:
+		prefix := token
+		if len(prefix) > 12 {
+			prefix = prefix[:12] + "…"
+		}
+		fmt.Printf("      CLAUDE_CODE_OAUTH_TOKEN: unexpected format (prefix=%q)\n", prefix)
+	}
+}
+
+// findKubeconfig returns a usable kubeconfig path, or "" if none is available.
+func findKubeconfig() string {
+	candidates := []string{
+		os.Getenv("KUBECONFIG"),
+		filepath.Join(os.Getenv("HOME"), "workspace", "platform", "gitops", ".kube", "k3s.yaml"),
+	}
+	for _, p := range candidates {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// readSecretKey returns the decoded string value of a specific key in a Secret,
+// or "" if the secret or key is missing / unreadable.
+func readSecretKey(kubeconfig, namespace, secretName, key string) string {
+	out, err := exec.CommandContext(context.Background(), "kubectl", "--kubeconfig", kubeconfig, //nolint:gosec // trusted args
+		"get", "secret", secretName, "-n", namespace,
+		"-o", fmt.Sprintf("jsonpath={.data.%s}", key),
+	).Output()
+	if err != nil || len(out) == 0 {
+		return ""
+	}
+	decoded, err := base64.StdEncoding.DecodeString(string(out))
+	if err != nil {
+		return ""
+	}
+	return string(decoded)
 }
 
 func printFileTokenStatus(path, label string) {
