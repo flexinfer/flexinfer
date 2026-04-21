@@ -17,12 +17,15 @@ limitations under the License.
 package controllers
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -481,6 +484,17 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "QuantizationProgress",
 			fmt.Sprintf("Quantization in progress (elapsed %s)", elapsed))
 
+		// Pull the latest "completed layer N" telemetry out of the pod log so
+		// dashboards and alerts can distinguish real per-layer progress from
+		// elapsed-time progress. This is what drives the stall alert (and
+		// lets us tell "we're at 80% time but layer 2/59" apart from "we're
+		// at 80% time and layer 50/59").
+		progressDetail := fmt.Sprintf("elapsed %s", elapsed)
+		if layerIdx := r.readLatestQuantizationLayer(ctx, modelCache.Namespace, quantJob.Name); layerIdx >= 0 {
+			metrics.QuantizationLayerIndex.WithLabelValues(modelCache.Name, modelCache.Namespace).Set(float64(layerIdx))
+			progressDetail = fmt.Sprintf("elapsed %s, layer %d completed", elapsed, layerIdx)
+		}
+
 		// Update time-based progress estimate.
 		deadline := effectiveQuantizationDeadline(modelCache.Spec.Quantization)
 		if deadline > 0 {
@@ -496,7 +510,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			modelCache.Status.Publish = nil
 			modelCache.Status.Quantization.FailureMessage = ""
 			modelCache.Status.Quantization.Progress = &pct
-			modelCache.Status.Quantization.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
+			modelCache.Status.Quantization.ProgressDetail = progressDetail
 			modelCache.Status.Quantization.StartedAt = quantJob.Status.StartTime
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				log.Error(err, "Failed to update quantization progress")
@@ -970,4 +984,70 @@ func (r *ModelCacheReconciler) resolveCurrentQuantizerImage(ctx context.Context,
 		gpu.VendorFromLabels(effectiveNodeSelector),
 		gpuArch,
 	)
+}
+
+// completedLayerPattern extracts the layer index from progress details such
+// as `completed layer 34 | gpu_alloc=...`. The index is 1-based in the
+// script (first completion is layer 1); we return it as-is so the metric
+// reads "layer 34 of 59" consistently with what a user sees in the log.
+var completedLayerPattern = regexp.MustCompile(`completed layer (\d+)`)
+
+// readLatestQuantizationLayer tails the quantize pod's log and returns the
+// highest `completed layer N` value it finds, or -1 if none has been
+// emitted yet (job is still in model-load / calibration / first layer).
+//
+// One Kubelet logs call per reconcile (every requeueLong ≈ 30 s). For a
+// quantize pod logging ~100 lines/s the 500-line tail keeps the work
+// bounded; we scan from oldest to newest and always report the last match.
+func (r *ModelCacheReconciler) readLatestQuantizationLayer(ctx context.Context, namespace, jobName string) int {
+	if r.KubeClient == nil {
+		return -1
+	}
+
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
+		return -1
+	}
+
+	best := -1
+	for _, pod := range podList.Items {
+		req := r.KubeClient.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+			Container: "quantizer",
+			TailLines: func() *int64 { v := int64(500); return &v }(),
+		})
+		stream, err := req.Stream(ctx)
+		if err != nil {
+			continue
+		}
+		if layer := scanLatestQuantizationLayer(stream); layer > best {
+			best = layer
+		}
+		_ = stream.Close()
+	}
+	return best
+}
+
+// scanLatestQuantizationLayer returns the highest `completed layer N`
+// value found in the given log stream, or -1 if none exists. Split from
+// the pod-fetch path to make the parsing testable without a kubeClient.
+func scanLatestQuantizationLayer(r io.Reader) int {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	best := -1
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Fast path: the detail field contains `completed layer N`. Grab the
+		// match directly rather than JSON-parsing every log line — GPTQModel's
+		// TQDM output is interleaved into the same stream and parses as
+		// non-JSON.
+		match := completedLayerPattern.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+		if n, err := strconv.Atoi(match[1]); err == nil && n > best {
+			best = n
+		}
+	}
+	return best
 }
