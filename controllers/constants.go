@@ -37,6 +37,15 @@ const (
 	// defaultEvictionPriority is the default priority for KV-cache eviction
 	// ordering when multiple models share a GPU group.
 	defaultEvictionPriority = int32(50)
+
+	// imageDriftGraceWindow is how long after a quantization job starts the
+	// controller will preempt a running pod to pick up a new quantizer image
+	// digest from the GPUProfile. Past this window, a long-running job is
+	// assumed to be making real progress and is left alone — GPTQModel does
+	// not resume mid-run, so a delete/recreate would cost hours of work.
+	// Admins who need to force a new image mid-run can set
+	// AnnotationForceImageUpdate on the ModelCache.
+	imageDriftGraceWindow = 10 * time.Minute
 )
 
 // Annotation keys used on Jobs, Deployments, Pods, and Services.
@@ -52,6 +61,12 @@ const (
 	AnnotationServiceLabels = "flexinfer.ai/service-labels"
 	AnnotationVRAMEstimate  = "flexinfer.ai/gpu.vram-estimate-mb"
 	AnnotationKVCacheUsage  = "flexinfer.ai/kv-cache-usage"
+
+	// AnnotationForceImageUpdate, when "true" on a ModelCache, bypasses the
+	// imageDriftGraceWindow and lets the controller preempt a running
+	// quantization job to pick up the current GPUProfile image. Used for
+	// admin override; normal operation should never rely on this.
+	AnnotationForceImageUpdate = "flexinfer.ai/force-image-update"
 
 	// LiteLLM proxy annotations.
 	AnnotationLiteLLMServedModel     = "litellm.flexinfer.ai/served-model"
