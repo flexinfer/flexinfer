@@ -996,9 +996,12 @@ var completedLayerPattern = regexp.MustCompile(`completed layer (\d+)`)
 // highest `completed layer N` value it finds, or -1 if none has been
 // emitted yet (job is still in model-load / calibration / first layer).
 //
-// One Kubelet logs call per reconcile (every requeueLong ≈ 30 s). For a
-// quantize pod logging ~100 lines/s the 500-line tail keeps the work
-// bounded; we scan from oldest to newest and always report the last match.
+// One Kubelet logs call per reconcile (every requeueLong ≈ 30 s). The tail
+// window needs enough headroom that GPTQModel's per-forward-pass "Forward
+// rows N/64" spam and TQDM redraws between `completed layer N` events
+// don't push every completion event out of the window — empirically ~1
+// completion per 140 noise lines, so 2000 covers ~14 layers even under
+// the chattiest segments. We scan oldest→newest and always report the max.
 func (r *ModelCacheReconciler) readLatestQuantizationLayer(ctx context.Context, namespace, jobName string) int {
 	if r.KubeClient == nil {
 		return -1
@@ -1013,7 +1016,7 @@ func (r *ModelCacheReconciler) readLatestQuantizationLayer(ctx context.Context, 
 	for _, pod := range podList.Items {
 		req := r.KubeClient.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 			Container: "quantizer",
-			TailLines: func() *int64 { v := int64(500); return &v }(),
+			TailLines: func() *int64 { v := int64(2000); return &v }(),
 		})
 		stream, err := req.Stream(ctx)
 		if err != nil {
