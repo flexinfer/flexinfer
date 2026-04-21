@@ -189,6 +189,20 @@ var (
 		[]string{"model", "namespace", "job_type"},
 	)
 
+	// QuantizationLayerIndex tracks the highest transformer-layer index
+	// completed by a running quantize job (0-based). Unlike
+	// JobProgressPercent, which is a time-elapsed/deadline estimate, this
+	// reflects the actual quantization work completed. `rate()` or
+	// `changes()` on this series over a time window detects stalls even
+	// when the time-based progress keeps advancing.
+	QuantizationLayerIndex = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_quantization_layer_index",
+			Help: "Highest transformer-layer index (0-based) completed by a running quantize job. Not set for jobs that haven't completed a layer yet.",
+		},
+		[]string{"model", "namespace"},
+	)
+
 	// ModelColdStartDurationSeconds tracks time from activation/startup to Ready.
 	ModelColdStartDurationSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -454,6 +468,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(QuantizationJobsTotal)
 	ctrlmetrics.Registry.MustRegister(QuantizationCacheSizeBytes)
 	ctrlmetrics.Registry.MustRegister(JobProgressPercent)
+	ctrlmetrics.Registry.MustRegister(QuantizationLayerIndex)
 	ctrlmetrics.Registry.MustRegister(ModelColdStartDurationSeconds)
 	ctrlmetrics.Registry.MustRegister(ModelSwapDurationSeconds)
 
