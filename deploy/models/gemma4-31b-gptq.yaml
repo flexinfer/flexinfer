@@ -4,8 +4,25 @@
 # VRAM budget: ~15-16 GB weights + ~6 GB KV cache → tight fit in 24 GB.
 # Conservative maxModelLen=4096 to stay within VRAM.
 #
-# On-demand model on 5930k (priority 200, scale-to-zero).
-# Moved from 7900xtx to free VRAM for 26B-A4B MoE.
+# On-demand model on cblevins-7900xtx (priority 250, scale-to-zero) co-located
+# with the 26B-A4B MoE in the 7900xtx-textgen shared group. 5930k is currently
+# tied up with the 26B-dense abliteration Job (and the imagegen shared group
+# below), so the gfx1100 with available serving capacity is 7900xtx.
+#
+# Shared-group semantics: 31B priority=250 > 26B priority=200, so a call to
+# any 31B alias preempts the 26B MoE (scale-to-zero). When 31B goes idle
+# (idleTimeout=15m), the MoE's minReplicas=1 brings it back automatically.
+#
+# The quantized artifact lives on an RWX (nas-bulk-rwx) PVC so 7900xtx can
+# mount it without a cache-copy step.
+#
+# History (2026-04-21):
+#   - Original placement: 7900xtx.
+#   - Temporarily moved to 5930k to free VRAM for 26B-A4B MoE (commit 5099ab17).
+#   - Moved back to 7900xtx after 31B quantize finished (7h57m58s; artifact
+#     18.1 GiB / 3.4x compression). 5930k is blocked by the 26B-dense
+#     abliteration Job + imagegen shared group.
+#
 # Promotion gate (reusable for any quantized family):
 # future compressed-tensors/fp8-KV paths must stay canary-only until validated
 # at target context and explicitly promoted.
@@ -26,14 +43,27 @@ spec:
     strategy: SharedPVC
   gpu:
     vendor: amd
-    count: 1
-    vramEstimateMB: 17000
-    shared: 5930k-imagegen
-    priority: 200
+    # count=2 claims both amd.com/gpu slots on 7900xtx (discrete + iGPU).
+    # The iGPU is useless for inference and would otherwise be allocated
+    # to a co-tenant. Pair with config.hipVisibleDevices=0 to force the
+    # serving process onto the discrete 7900 XTX. Same pattern as the
+    # 26B-A4B MoE serving pod on this node.
+    count: 2
+    # 31B INT4 ≈ 16 GB weights + KV cache (~2 GB at maxModelLen=4096).
+    # Raised 17000→18000 to leave a safety margin above the previous
+    # estimate now that we have real serving load on this artifact.
+    vramEstimateMB: 18000
+    shared: 7900xtx-textgen
+    # Higher than the 26B-A4B MoE (priority=200). This is the always-warm
+    # primary in this group; the MoE runs on-demand as a fallback.
+    priority: 250
   serverless:
     enabled: true
-    # Keep this lane cold by default so experimental artifacts cannot auto-promote.
-    minReplicas: 0
+    # Always-warm primary lane on 7900xtx-textgen. The prior 26B-A4B MoE
+    # served zero requests in 13+ hours of always-on squatting — flipping
+    # the always-on slot to the 31B dense artifact which is the current
+    # promotion target. MoE stays in the group as minReplicas=0 fallback.
+    minReplicas: 1
     idleTimeout: 15m
     coldStartTimeout: 15m
   config:
@@ -46,6 +76,9 @@ spec:
     maxNumSeqs: 4
     trustRemoteCode: true
     attentionBackend: TRITON_ATTN
+    # Force serving onto the discrete GPU only — the 7900xtx node exposes
+    # an iGPU as amd.com/gpu index 1 which cannot run inference.
+    hipVisibleDevices: "0"
     servedModelName: gemma4-31b-gptq
     enableToolCalling: true
     toolCallParser: gemma4
@@ -53,7 +86,7 @@ spec:
     enablePrefixCaching: true
     disableLogStats: false
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
       cpu: "4"

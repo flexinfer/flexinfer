@@ -5,8 +5,12 @@
 # stay at post-abliteration FP16/BF16. Full dense-attention GPTQ produced bad
 # dequantized tensors and repeated-token output on vLLM/ROCm.
 #
-# Primary model in 7900xtx-textgen shared group (priority 200, always-on).
-# Replaces gemma4-e4b-gptq as primary text model.
+# On-demand fallback in 7900xtx-textgen (priority 200, scale-to-zero).
+# Demoted from always-on 2026-04-21 after 13h+ of zero request telemetry —
+# the hybrid artifact was a hack on the path to the proper dense build, and
+# the 31B-gptq finally has a serving slot. Kept in the group with lower
+# priority so it can still come up on explicit alias if needed, but the
+# always-warm lane is 31B now.
 # Promotion gate (reusable for any quantized family):
 # keep this baseline at 8K until a smaller validated artifact passes
 # long-context correctness + VRAM headroom checks.
@@ -60,7 +64,10 @@ spec:
     priority: 200
   serverless:
     enabled: true
-    minReplicas: 1
+    # Demoted 1→0 2026-04-21 after 13h+ of zero requests. 31B-gptq now owns
+    # the always-warm slot in 7900xtx-textgen; this lane only spins up on
+    # explicit alias call (and will scale back to zero after idleTimeout).
+    minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 15m
   config:
