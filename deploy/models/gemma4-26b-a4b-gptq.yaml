@@ -98,7 +98,12 @@ spec:
     # hybrid manager unifies all specs to FullAttentionSpec, bypassing it.
     disableHybridKVCacheManager: true
     hipVisibleDevices: "0"
-    warmPolicy: primary
+    # Demoted 2026-04-21 alongside minReplicas 1→0. warmPolicy=primary was
+    # keeping the shared-group Active on this model regardless of minReplicas,
+    # so the 31B (priority=250, minReplicas=1) stayed sharedGroupState=Queued
+    # and never got a warm replica. ondemand yields the always-warm slot to
+    # the 31B; MoE only activates when traffic explicitly hits its alias.
+    warmPolicy: ondemand
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:

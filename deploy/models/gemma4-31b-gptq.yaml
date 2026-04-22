@@ -79,6 +79,12 @@ spec:
     # Force serving onto the discrete GPU only — the 7900xtx node exposes
     # an iGPU as amd.com/gpu index 1 which cannot run inference.
     hipVisibleDevices: "0"
+    # Always-warm primary in 7900xtx-textgen (paired with serverless.minReplicas=1).
+    # Without this, the controller's shared-group scheduler leaves this model
+    # in sharedGroupState=Queued whenever another member of the group has
+    # warmPolicy=primary (e.g. the MoE did until 2026-04-21) — minReplicas
+    # alone doesn't win the group-Active slot.
+    warmPolicy: primary
     servedModelName: gemma4-31b-gptq
     enableToolCalling: true
     toolCallParser: gemma4
