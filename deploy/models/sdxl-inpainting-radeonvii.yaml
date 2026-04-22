@@ -8,9 +8,10 @@ spec:
   source: HF://diffusers/stable-diffusion-xl-1.0-inpainting-0.1
   gpu:
     vendor: amd
-    # Keep every 5930k contender in the same shared group so the unified
-    # runtime serializes image/text swaps cleanly on the single GPU.
-    shared: 5930k-textgen
+    # Relocated 2026-04-21 from 5930k back to radeonvii (its namesake node).
+    # Shares radeonvii-imagegen with gonzalomo-fluxpony-imagegen so text-to-
+    # image and image-edit swap cleanly on the single gfx906 GPU.
+    shared: radeonvii-imagegen
     priority: 200
     count: 1
     vramEstimateMB: 12000
@@ -47,7 +48,7 @@ spec:
     compilationCache: "true"
     hipVisibleDevices: '0'
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-radeonvii
   resources:
     requests:
       cpu: '2'
