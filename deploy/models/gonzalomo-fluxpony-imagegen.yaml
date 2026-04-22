@@ -1,22 +1,21 @@
-# MAINTENANCE WINDOW — 2026-04-19/20
+# Gonzalomo FluxPony SDXL text-to-image on Radeon VII (gfx906).
 #
-# Temporarily disabled so the gemma4-26b-a4b-gptq-dense ModelCache can
-# complete its GPTQ quantization job on cblevins-5930k (the only remaining
-# gfx1100 slot after !151 locked both amd.com/gpu plugin slots on 7900xtx
-# for the primary serving pod). Dense quant budget: ~12–24 h per the
-# modelcache manifest comment.
+# Relocated 2026-04-21 from cblevins-5930k to cblevins-radeonvii so the
+# 5930k gfx1100 slot stays dedicated to the gemma4-26b-a4b-gptq-dense
+# abliteration/quantization pipeline (and future gfx1100 textgen jobs).
+# radeonvii's GPU has been idle since the 31B GPTQ quantize completed
+# 2026-04-21T20:57Z — fine home for image-gen that doesn't need gfx1100
+# flash-attention features.
 #
-# The shared-group warm-primary logic in controllers/model_helpers.go
-# should have auto-yielded the GPU once the quant pod appeared, but
-# nodeHasActivePipelineWork only checks scheduled pods (spec.nodeName set)
-# and the quant pod stays Pending until the GPU is free — chicken-and-egg
-# (tracked as a follow-up bug to fix in the controller).
+# Radeon VII quirks (documented here so operators don't hit them blind):
+#   - gfx906 reports as gfx900 at runtime → HSA_OVERRIDE_GFX_VERSION=9.0.6
+#     is set by the GPUProfile, no per-Model override needed.
+#   - 16GB VRAM — SDXL + cpuOffload fits; do not stack additional models.
+#   - Community PyTorch image (mixa3607/pytorch-gfx906) is the baseline
+#     for any gfx906 runtime. Diffusers image is pre-built per GPUProfile.
 #
-# Restore steps when dense quant completes:
-#   1. Verify status.phase=Ready on modelcache/gemma4-26b-a4b-gptq-dense.
-#   2. Revert this file (serverless.enabled: true) and delete the
-#      maintenance header. FluxPony cold-starts in ~30s–30m depending on
-#      flash-loader cache state.
+# Co-tenant: sdxl-inpainting-radeonvii shares this group at the same
+# priority so image-gen and image-edit swap on demand on the single GPU.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -32,11 +31,13 @@ spec:
   gpu:
     vendor: amd
     count: 1
-    shared: 5930k-imagegen
-    priority: 100
+    shared: radeonvii-imagegen
+    # Same priority as sdxl-inpainting-radeonvii — first call wins;
+    # the other swaps in on explicit alias traffic.
+    priority: 200
     vramEstimateMB: 12000
   serverless:
-    enabled: false
+    enabled: true
     minReplicas: 0
     idleTimeout: 5m
     coldStartTimeout: 30m
@@ -58,12 +59,10 @@ spec:
     scheduler: "euler"
     negativePrompt: "painting, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, deformed, ugly, blurry, bad anatomy, bad proportions, extra limbs, cloned face, skinny, glitchy, double torso, extra arms, extra hands, mangled fingers, missing lips, ugly face, distorted face, extra legs, anime"
     warmupResolutions: "512x512"
-    # warmPolicy: primary — removed for the dense-quant maintenance window;
-    # restore alongside serverless.enabled above.
     compilationCache: "true"
     hipVisibleDevices: "0"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-radeonvii
   resources:
     requests:
       cpu: "2"
