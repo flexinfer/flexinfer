@@ -39,8 +39,33 @@ spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:0c7e9ffb390f39a3b5fffe71e341a127ad20fc191a11cafa99f3c2c6a3e8a863
   source: pvc://gemma4-31b-gptq/gemma4-31b-gptq/gptq-w4-g128
+  # Cache staging (2026-04-21): raw pvc:// sources require an explicit
+  # staged Local cache. Without storageClass+hostPath+size the controller
+  # emits `Skipping runtime-managed flow for model ... raw pvc:// sources
+  # require staged Local cache for runtime loads` and never schedules a
+  # runtime pod — the warmPolicy=primary swap in !171 landed cleanly but
+  # didn't spawn a pod because the controller was bailing out earlier in
+  # reconcile. Mirror the gemma4-26b-a4b-gptq pattern: local-path +
+  # hostPath + SharedPVC. This also sidesteps the cross-node Longhorn
+  # mmap-stall incident (#53) that motivated the 26B migration.
+  #
+  # **Operator migration step** — the existing gemma4-31b-gptq-cache PVC
+  # was provisioned on the default storageClass (longhorn) before this
+  # change. storageClassName is immutable on a PVC, so Flux alone will
+  # NOT re-create it. Manual sequence after this MR merges:
+  #   1. kubectl scale deploy gemma4-31b-gptq -n flexinfer-system --replicas=0
+  #   2. kubectl delete pvc gemma4-31b-gptq-cache -n flexinfer-system
+  #   3. flux reconcile kustomization flexinfer-models -n flux-system
+  #   4. Wait for controller to recreate cache PVC with local-path on
+  #      7900xtx and run a fresh cache-copy from the source PVC
+  #      (gemma4-31b-gptq, nas-bulk-rwx) — ~18 GiB artifact.
+  #   5. Model will transition Idle → Ready automatically; warmPolicy=primary
+  #      + minReplicas=1 then brings up the serving pod.
   cache:
     strategy: SharedPVC
+    storageClass: local-path
+    hostPath: /var/lib/flexinfer/models
+    size: 50Gi
   gpu:
     vendor: amd
     # count=2 claims both amd.com/gpu slots on 7900xtx (discrete + iGPU).
