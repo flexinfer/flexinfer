@@ -23,14 +23,19 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  # v1 → v2 rename on 2026-04-23: v1 pinned `bitnami/kubectl:1.31` which
-  # returns 404 from Docker Hub — Bitnami retired versioned `bitnami/*`
-  # tags (only `latest` + SHA digests survive; see hub.docker.com/v2
-  # listing). Swapped to `rancher/kubectl:v1.31.10` which tracks the
-  # k3s v1.31.x control plane and has real, pinnable tags. Job spec is
-  # immutable, so the image swap requires a rename to force Flux to
-  # prune v1 and create v2.
-  name: gemma4-31b-keqv-cache-copy-reset-v2
+  # v1 → v2 → v3 rename history on 2026-04-23:
+  #   v1: `bitnami/kubectl:1.31` → Docker Hub 404 (Bitnami retired
+  #       versioned tags, only `latest` + SHA digests survive).
+  #   v2: `rancher/kubectl:v1.31.10` → distroless image with only the
+  #       kubectl binary; no `/bin/bash` or even `/bin/sh`. Container
+  #       fails at runc create with `exec: "/bin/bash": stat /bin/bash:
+  #       no such file or directory`.
+  #   v3: `alpine/k8s:1.31.13` → alpine-based, ships `kubectl`, `bash`,
+  #       `sh`, coreutils. Verified via `docker run --rm alpine/k8s:
+  #       1.31.13 which kubectl bash sh`.
+  # Job spec is immutable, so each image swap requires a rename to
+  # force Flux to prune the prior Job and create the next one.
+  name: gemma4-31b-keqv-cache-copy-reset-v3
   namespace: flexinfer-system
   labels:
     app.kubernetes.io/managed-by: flexinfer
@@ -54,7 +59,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: reset
-          image: rancher/kubectl:v1.31.10
+          image: alpine/k8s:1.31.13
           imagePullPolicy: IfNotPresent
           command: ["/bin/bash", "-c"]
           args:
