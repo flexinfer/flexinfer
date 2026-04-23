@@ -215,6 +215,22 @@ push-runtimes: ## Build + push all runtime images
 dry-run-runtime-%: ## Print docker build command for a profile without executing
 	./build/build-runtime.sh $* --dry-run
 
+.PHONY: promote-runtime-digest-%
+promote-runtime-digest-%: ## Dry-run runtime digest promotion for a profile (DIGEST=sha256:... optional)
+	@if [ -n "$(DIGEST)" ]; then \
+		./scripts/promote-runtime-digest.sh $* --digest "$(DIGEST)"; \
+	else \
+		./scripts/promote-runtime-digest.sh $*; \
+	fi
+
+.PHONY: apply-runtime-digest-%
+apply-runtime-digest-%: ## Apply runtime digest promotion for a profile (DIGEST=sha256:... optional)
+	@if [ -n "$(DIGEST)" ]; then \
+		./scripts/promote-runtime-digest.sh $* --digest "$(DIGEST)" --apply; \
+	else \
+		./scripts/promote-runtime-digest.sh $* --apply; \
+	fi
+
 ##@ Legacy Backend Images
 
 HARBOR_REGISTRY ?= registry.harbor.lan
