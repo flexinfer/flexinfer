@@ -209,7 +209,7 @@ func inspectRepo(p brandParams, repo string) (inspectResult, error) {
 		Repo:              summary,
 		PlannedCLICommand: buildPlannedCommand(p, "lint", repo),
 	}
-	for _, name := range []string{"brand.json", "banner-kit.json", ".brand.json"} {
+	for _, name := range []string{"branding.json", "brand.json", "banner-kit.json", ".brand.json"} {
 		candidate := filepath.Join(summary.Path, name)
 		data, err := os.ReadFile(candidate)
 		if err != nil {
