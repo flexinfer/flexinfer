@@ -1,0 +1,80 @@
+# One-shot operator Job: post-process the gemma4-31b-gptq dense GPTQ
+# artifact to populate v_proj shards on Gemma4 heterogeneous (k_eq_v)
+# layers. See ../../scripts/gemma4_keqv_postprocess.py for the tool and
+# the README.md next to this file for the apply sequence.
+#
+# NOT GitOps-managed — intentionally outside deploy/ and no kustomization
+# reference from any Flux-tracked tree. This is a one-shot operator action.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gemma4-31b-keqv-postprocess
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/managed-by: flexinfer-operator-task
+    flexinfer.ai/task: gemma4-31b-keqv-postprocess
+spec:
+  backoffLimit: 0
+  # Keep the completed Job around for a day so operators can read logs
+  # before the TTL reaper clears it.
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: flexinfer-operator-task
+        flexinfer.ai/task: gemma4-31b-keqv-postprocess
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      # Source PVC is RWX (nas-bulk-rwx NFS), mounts anywhere. No GPU needed;
+      # this is CPU tensor file I/O. Leaving nodeSelector empty so the
+      # scheduler picks any control-plane node with headroom.
+      containers:
+        - name: postprocess
+          # Reuse the runtime image — it has python3 + torch + safetensors
+          # already. Same digest the 26B-A4B MoE serves with, proven-good.
+          image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/script/postprocess.py"]
+          env:
+            - name: SRC_DIR
+              # Source PVC mount; the gptq output lives at this subpath
+              # (the controller's quantize_gptq.py wrote it here during the
+              # 7h57m58s quant run that completed 2026-04-21T20:57Z).
+              value: /cache/gptq-w4-g128
+            - name: DST_DIR
+              value: /cache/gptq-w4-g128-keqv
+            - name: DRY_RUN
+              # Flip to "1" to inspect-only first. RECOMMENDED for first
+              # apply — confirm the plan summary before committing writes.
+              value: "0"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+            limits:
+              memory: 8Gi
+          volumeMounts:
+            - name: source
+              mountPath: /cache
+            - name: script
+              mountPath: /script
+              readOnly: true
+      volumes:
+        - name: source
+          persistentVolumeClaim:
+            claimName: gemma4-31b-gptq
+        - name: script
+          configMap:
+            # Operator creates this ConfigMap from the source script file
+            # before applying the Job (see README.md Apply section).
+            # Kept separate from the Job so the script lives in git as a
+            # reviewable .py file rather than a yaml blob.
+            name: gemma4-31b-keqv-script
+            defaultMode: 0755
