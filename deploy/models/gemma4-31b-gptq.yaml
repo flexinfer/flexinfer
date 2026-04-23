@@ -84,11 +84,26 @@ spec:
     priority: 250
   serverless:
     enabled: true
-    # Always-warm primary lane on 7900xtx-textgen. The prior 26B-A4B MoE
-    # served zero requests in 13+ hours of always-on squatting — flipping
-    # the always-on slot to the 31B dense artifact which is the current
-    # promotion target. MoE stays in the group as minReplicas=0 fallback.
-    minReplicas: 1
+    # Demoted to cold 2026-04-22. First serving attempt on 7900xtx
+    # crashed vLLM engine init with:
+    #
+    #   ValueError: Detected some but not all shards of
+    #   model.layers.5.self_attn.qkv_proj are quantized. All shards of
+    #   fused layers [must] have the same precision.
+    #
+    # The current gptq-w4-g128 artifact has mixed-precision fused layers
+    # that vLLM rejects. Gemma4 dense GPTQ in pure INT4 form has never
+    # served on this vLLM/ROCm stack (the 26B-A4B variant only works
+    # because it ships as a hybrid MoE-INT4 / dense-FP16 artifact at
+    # gptq-w4-g128-attnfp16-clean). 31B stays cold until either:
+    #   - post-process dequantizes the INT4 siblings in each fused group
+    #     to match their FP16 neighbors, or
+    #   - a re-quant with denseModulePolicy=fallback produces a hybrid
+    #     output that mirrors the working 26B pattern.
+    # Gate before flipping back to minReplicas=1: a throwaway pod must
+    # successfully load the artifact AND serve one completion. See the
+    # retro + plan docs in the services/flexinfer repo.
+    minReplicas: 0
     idleTimeout: 15m
     coldStartTimeout: 15m
   config:
@@ -104,12 +119,11 @@ spec:
     # Force serving onto the discrete GPU only — the 7900xtx node exposes
     # an iGPU as amd.com/gpu index 1 which cannot run inference.
     hipVisibleDevices: "0"
-    # Always-warm primary in 7900xtx-textgen (paired with serverless.minReplicas=1).
-    # Without this, the controller's shared-group scheduler leaves this model
-    # in sharedGroupState=Queued whenever another member of the group has
-    # warmPolicy=primary (e.g. the MoE did until 2026-04-21) — minReplicas
-    # alone doesn't win the group-Active slot.
-    warmPolicy: primary
+    # Demoted to ondemand 2026-04-22 alongside minReplicas 1→0 after the
+    # first serving attempt failed (mixed-precision qkv_proj rejected by
+    # vLLM engine init). The 26B-A4B MoE holds the group-Active slot
+    # again until a serveable 31B artifact exists.
+    warmPolicy: ondemand
     servedModelName: gemma4-31b-gptq
     enableToolCalling: true
     toolCallParser: gemma4

@@ -64,10 +64,15 @@ spec:
     priority: 200
   serverless:
     enabled: true
-    # Demoted 1→0 2026-04-21 after 13h+ of zero requests. 31B-gptq now owns
-    # the always-warm slot in 7900xtx-textgen; this lane only spins up on
-    # explicit alias call (and will scale back to zero after idleTimeout).
-    minReplicas: 0
+    # Restored to always-on 2026-04-22 after the 31B dense GPTQ artifact
+    # failed to serve on this stack (vLLM rejects mixed-precision fused
+    # layers: `ValueError: Detected some but not all shards of
+    # model.layers.5.self_attn.qkv_proj are quantized`). Gemma4 dense
+    # GPTQ has never served pure-INT4 on this vLLM/ROCm stack — the
+    # hybrid artifact this manifest points at is the only known-good
+    # gemma4-family serving path on 7900xtx. Until a verified-serveable
+    # 31B artifact exists, this lane stays warm.
+    minReplicas: 1
     idleTimeout: 30m
     coldStartTimeout: 15m
   config:
@@ -98,12 +103,12 @@ spec:
     # hybrid manager unifies all specs to FullAttentionSpec, bypassing it.
     disableHybridKVCacheManager: true
     hipVisibleDevices: "0"
-    # Demoted 2026-04-21 alongside minReplicas 1→0. warmPolicy=primary was
-    # keeping the shared-group Active on this model regardless of minReplicas,
-    # so the 31B (priority=250, minReplicas=1) stayed sharedGroupState=Queued
-    # and never got a warm replica. ondemand yields the always-warm slot to
-    # the 31B; MoE only activates when traffic explicitly hits its alias.
-    warmPolicy: ondemand
+    # Restored to primary 2026-04-22. The 31B dense GPTQ artifact crashed
+    # vLLM on load (mixed-precision fused qkv_proj). Re-promoting the MoE
+    # to warm-primary until a serveable 31B artifact exists. The 31B
+    # manifest is now on warmPolicy=ondemand/minReplicas=0 so the
+    # shared-group Active slot stays with this model.
+    warmPolicy: primary
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:
