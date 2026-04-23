@@ -68,6 +68,7 @@ make build
 - Multi-platform MCP config generation/sync (Codex, Claude, Gemini, Zed, VS Code, Kilocode).
 - Agent orchestration primitives via `mcp-agent-context` (sessions, tasks, memory, workflows, worktrees).
 - Project-aware sandbox execution via `mcp-devbox` (Docker/K8s backends, tar-pipe sync, git-clone initContainers).
+- Workspace branding automation via `mcp-brand-kit` wrapping `libs/banner-kit` for repository banners, icons, linting, previews, and explicit render/fix operations.
 - iOS companion app with sandbox monitoring, ops workflows, and push diagnostics.
 - Optional enterprise security controls (RBAC, audit, cost attribution, OAuth 2.1) with HUD dashboards.
 - Streamable HTTP remote transport for team and remote daemon topologies.

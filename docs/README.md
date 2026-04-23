@@ -20,6 +20,7 @@ If you need to know what is shipped vs still in progress:
 - Install, sync configs, run daemon/HUD: `docs/USER_GUIDE.md`
 - Build/reload loop for local development: `docs/DEV_BUILD_LIFECYCLE.md`
 - Add/update MCP servers safely: `docs/DEVELOPER_GUIDE.md`
+- Manage repository branding through MCP: `mcp-brand-kit` wraps `libs/banner-kit` with repo listing, inspection, lint, preview, render, and fix tools.
 - Understand compatibility commitments: `docs/API_STABILITY.md`
 - Follow MCP error-handling standards: `docs/ERROR_HANDLING.md`
 - Configure enterprise controls: `docs/ENTERPRISE_SECURITY.md`
