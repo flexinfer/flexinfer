@@ -20,6 +20,10 @@ type cachedDetail struct {
 // detailTTL is how long a cached workflow detail is considered fresh.
 const detailTTL = 10 * time.Second
 
+// OnNewApprovalFn is invoked with workflows that have just transitioned
+// into waiting_approval status (deduped against prior refreshes).
+type OnNewApprovalFn func([]bridge.WorkflowInfo)
+
 // WorkflowMonitor tracks active workflows and caches their details.
 // It polls the workflow list at a configurable interval and lazily
 // fetches individual workflow details on demand.
@@ -30,6 +34,9 @@ type WorkflowMonitor struct {
 
 	// Notification dedup: tracks workflow+step combos already notified.
 	notifiedApprovals map[string]bool // "workflowID:stepName" -> true
+
+	// Callbacks fired when new workflows enter waiting_approval.
+	approvalCallbacks []OnNewApprovalFn
 }
 
 // NewWorkflowMonitor creates a WorkflowMonitor backed by the given agent bridge.
@@ -147,6 +154,15 @@ func (m *WorkflowMonitor) refresh(_ context.Context) ([]bridge.WorkflowInfo, err
 	return workflows, nil
 }
 
+// OnNewApproval registers a callback invoked once per workflow+step
+// transition into waiting_approval. Callbacks fire outside the monitor
+// lock, after OnRefresh.
+func (m *WorkflowMonitor) OnNewApproval(fn OnNewApprovalFn) {
+	m.Lock()
+	m.approvalCallbacks = append(m.approvalCallbacks, fn)
+	m.Unlock()
+}
+
 // Update overrides BaseMonitor.Update to handle detail cache pruning
 // and notification-dedup bookkeeping.
 func (m *WorkflowMonitor) Update(workflows []bridge.WorkflowInfo) {
@@ -166,16 +182,21 @@ func (m *WorkflowMonitor) Update(workflows []bridge.WorkflowInfo) {
 		}
 	}
 
-	// Track waiting-approval workflow keys so the HUD UI and future consumers can
-	// still diff approval state without emitting noisy desktop notifications.
+	// Detect new waiting-approval transitions (keys not seen in the prior
+	// refresh) so listeners can emit a one-shot notification per transition.
+	var newApprovals []bridge.WorkflowInfo
 	for _, w := range workflows {
 		if w.Status == "waiting_approval" {
 			key := w.ID + ":" + w.CurrentStep
+			if !m.notifiedApprovals[key] {
+				newApprovals = append(newApprovals, w)
+			}
 			m.notifiedApprovals[key] = true
 		}
 	}
 
-	// Prune approval-tracking entries for workflows no longer waiting.
+	// Prune approval-tracking entries for workflows no longer waiting so a
+	// workflow re-entering waiting_approval later fires a fresh callback.
 	for key := range m.notifiedApprovals {
 		wID := key[:strings.Index(key, ":")]
 		found := false
@@ -189,12 +210,20 @@ func (m *WorkflowMonitor) Update(workflows []bridge.WorkflowInfo) {
 			delete(m.notifiedApprovals, key)
 		}
 	}
+
+	callbacks := append([]OnNewApprovalFn(nil), m.approvalCallbacks...)
 	m.Unlock()
 
 	// Notify listeners (e.g., SSE hub) with the fresh workflow list (outside lock).
 	out := make([]bridge.WorkflowInfo, len(workflows))
 	copy(out, workflows)
 	m.FireOnRefresh(out)
+
+	if len(newApprovals) > 0 {
+		for _, fn := range callbacks {
+			fn(newApprovals)
+		}
+	}
 }
 
 // Refresh forces an immediate refresh. Exposed for external callers.
