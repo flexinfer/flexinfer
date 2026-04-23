@@ -92,26 +92,32 @@ spec:
     priority: 250
   serverless:
     enabled: true
-    # Warm primary on 7900xtx-textgen, pointing at the k_eq_v-patched
-    # artifact (source: -keqv suffix above). Flux applies the Job + the
-    # source-path change + this minReplicas bump in the same reconcile.
-    # Order of operations on merge:
-    #   1. Flux creates the k_eq_v post-process Job → Job runs, writes
-    #      -keqv/ on the source PVC (~1-2 min).
-    #   2. Controller sees the new Model CR source path; its cache-copy
-    #      fails on first attempt (path doesn't exist yet), retries,
-    #      eventually succeeds once the Job output is visible.
-    #   3. Model transitions Idle → Ready; with warmPolicy=primary and
-    #      minReplicas=1 here the controller spawns the serving pod.
-    #   4. Meanwhile the 26B-A4B MoE (warmPolicy=primary, minReplicas=1)
-    #      is still running on 7900xtx. When the 31B becomes Active in
-    #      the 7900xtx-textgen shared group (priority=250 > MoE's 200),
-    #      the controller preempts the MoE — MoE scales to 0.
-    # If the cascade fails at any step (e.g. new artifact still doesn't
-    # load in vLLM), the 26B-A4B MoE stays serving and the 31B deployment
-    # crashloops visibly. `git revert` rolls back to the Phase 0 state
-    # (MoE warm, 31B cold) without further manual steps.
-    minReplicas: 1
+    # 2026-04-23: rolled back minReplicas 1 → 0, warmPolicy primary →
+    # ondemand (below). The full GitOps cascade lands cleanly — vLLM
+    # loads the -keqv artifact, passes the QKV shard check, allocates
+    # the KV cache at maxModelLen=1920, model → Ready — but inference
+    # produces pure <pad> tokens.
+    #
+    # Root cause is NOT the k_eq_v duplicate — verified by hashing every
+    # k_proj and v_proj qweight per layer: layers 40-59 (20 layers)
+    # share identical hashes across distinct layers for k_proj, v_proj,
+    # q_proj, o_proj, gate_proj, AND up_proj. The GPTQ quantizer bailed
+    # out at layer 39 and the remaining 20 layers got copies of the
+    # last successfully-quantized tensors (same class as the known
+    # "Hessian recovery exhaustion, 46 mlp.down_proj stayed FP16"
+    # symptom from the 31B dense run). The model is effectively 40
+    # layers deep with 20 layers of dead repeats — attention collapses,
+    # logits are meaningless.
+    #
+    # No on-disk postprocess can recover this; the weights themselves
+    # are corrupted. Requires re-quantization with better memory
+    # management (lower n_parallel_calib_samples, more CPU RAM for the
+    # turtle offload) or a different quant method. Tracked as a
+    # separate follow-up.
+    #
+    # Until then, 26B MoE stays primary on 7900xtx-textgen and the 31B
+    # is ondemand so it doesn't steal the GPU slot.
+    minReplicas: 0
     idleTimeout: 15m
     coldStartTimeout: 15m
   config:
@@ -150,7 +156,10 @@ spec:
     # post-process Job under deploy/tasks/gemma4-31b-keqv/. If the
     # keqv artifact ALSO fails to load, `git revert` restores the
     # working 26B-A4B MoE as the sole warm model on 7900xtx-textgen.
-    warmPolicy: primary
+    # 2026-04-23: primary → ondemand. See the lengthy comment in the
+    # serverless block above for the GPTQ corruption diagnosis. The
+    # 26B MoE reclaims primary on 7900xtx-textgen until we re-quantize.
+    warmPolicy: ondemand
     servedModelName: gemma4-31b-gptq
     enableToolCalling: true
     toolCallParser: gemma4
