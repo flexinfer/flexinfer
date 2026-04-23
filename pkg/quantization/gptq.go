@@ -1595,12 +1595,26 @@ COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
 OUTPUT_BASENAME=$(basename "${OUT_DIR}")
 echo "Compressed size: ${COMPRESSED_SIZE} bytes"
 
+# Post-quant source cleanup. Default: preserve BF16/FP16 source so a
+# re-quantize (spec change, kernel fix, parameter tweak) doesn't require
+# re-downloading the full upstream checkpoint + re-running abliteration
+# — a sequence that added ~2 h of wall-time the one time the 2026-04-21
+# 31B build produced a corrupt artifact.
+# Opt-in to the legacy delete behavior via FLEXINFER_GPTQ_DELETE_SOURCE=1
+# when PVC headroom is tight (54 GB BF16 + 27 GB GPTQ + abliteration
+# overhead can squeeze a 120Gi PVC for the dense 31B case).
 FP16_COUNT=$(find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) \
     ! -path "${OUT_DIR}/*" 2>/dev/null | wc -l)
 if [ "${FP16_COUNT}" -gt 0 ]; then
-    find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) \
-        ! -path "${OUT_DIR}/*" -print -delete 2>/dev/null || true
-    echo "FP16 source files cleaned up (${FP16_COUNT} files)"
+    if [ "${FLEXINFER_GPTQ_DELETE_SOURCE:-0}" = "1" ]; then
+        find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) \
+            ! -path "${OUT_DIR}/*" -print -delete 2>/dev/null || true
+        echo "FP16 source files cleaned up (${FP16_COUNT} files; FLEXINFER_GPTQ_DELETE_SOURCE=1)"
+    else
+        FP16_BYTES=$(find "${MODEL_DIR}" -maxdepth 1 \( -name '*.safetensors' -o -name '*.bin' -o -name '*.pt' \) \
+            ! -path "${OUT_DIR}/*" -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+        echo "FP16 source preserved (${FP16_COUNT} files, ${FP16_BYTES} bytes; set FLEXINFER_GPTQ_DELETE_SOURCE=1 to reclaim)"
+    fi
 fi
 
 END_TS=$(date +%s)
