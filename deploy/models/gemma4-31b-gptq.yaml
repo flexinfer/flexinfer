@@ -38,7 +38,12 @@ metadata:
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:0c7e9ffb390f39a3b5fffe71e341a127ad20fc191a11cafa99f3c2c6a3e8a863
-  source: pvc://gemma4-31b-gptq/gemma4-31b-gptq/gptq-w4-g128
+  # Points at the k_eq_v-patched artifact produced by the
+  # deploy/tasks/gemma4-31b-keqv/ Job. The controller's cache-copy will
+  # retry until the Job finishes writing this directory on the source
+  # PVC (~1-2 min CPU work). See that task's README for the algorithm
+  # and rationale.
+  source: pvc://gemma4-31b-gptq/gemma4-31b-gptq/gptq-w4-g128-keqv
   # Cache staging (2026-04-21): raw pvc:// sources require an explicit
   # staged Local cache. Without storageClass+hostPath+size the controller
   # emits `Skipping runtime-managed flow for model ... raw pvc:// sources
@@ -84,26 +89,26 @@ spec:
     priority: 250
   serverless:
     enabled: true
-    # Demoted to cold 2026-04-22. First serving attempt on 7900xtx
-    # crashed vLLM engine init with:
-    #
-    #   ValueError: Detected some but not all shards of
-    #   model.layers.5.self_attn.qkv_proj are quantized. All shards of
-    #   fused layers [must] have the same precision.
-    #
-    # The current gptq-w4-g128 artifact has mixed-precision fused layers
-    # that vLLM rejects. Gemma4 dense GPTQ in pure INT4 form has never
-    # served on this vLLM/ROCm stack (the 26B-A4B variant only works
-    # because it ships as a hybrid MoE-INT4 / dense-FP16 artifact at
-    # gptq-w4-g128-attnfp16-clean). 31B stays cold until either:
-    #   - post-process dequantizes the INT4 siblings in each fused group
-    #     to match their FP16 neighbors, or
-    #   - a re-quant with denseModulePolicy=fallback produces a hybrid
-    #     output that mirrors the working 26B pattern.
-    # Gate before flipping back to minReplicas=1: a throwaway pod must
-    # successfully load the artifact AND serve one completion. See the
-    # retro + plan docs in the services/flexinfer repo.
-    minReplicas: 0
+    # Warm primary on 7900xtx-textgen, pointing at the k_eq_v-patched
+    # artifact (source: -keqv suffix above). Flux applies the Job + the
+    # source-path change + this minReplicas bump in the same reconcile.
+    # Order of operations on merge:
+    #   1. Flux creates the k_eq_v post-process Job → Job runs, writes
+    #      -keqv/ on the source PVC (~1-2 min).
+    #   2. Controller sees the new Model CR source path; its cache-copy
+    #      fails on first attempt (path doesn't exist yet), retries,
+    #      eventually succeeds once the Job output is visible.
+    #   3. Model transitions Idle → Ready; with warmPolicy=primary and
+    #      minReplicas=1 here the controller spawns the serving pod.
+    #   4. Meanwhile the 26B-A4B MoE (warmPolicy=primary, minReplicas=1)
+    #      is still running on 7900xtx. When the 31B becomes Active in
+    #      the 7900xtx-textgen shared group (priority=250 > MoE's 200),
+    #      the controller preempts the MoE — MoE scales to 0.
+    # If the cascade fails at any step (e.g. new artifact still doesn't
+    # load in vLLM), the 26B-A4B MoE stays serving and the 31B deployment
+    # crashloops visibly. `git revert` rolls back to the Phase 0 state
+    # (MoE warm, 31B cold) without further manual steps.
+    minReplicas: 1
     idleTimeout: 15m
     coldStartTimeout: 15m
   config:
@@ -119,11 +124,13 @@ spec:
     # Force serving onto the discrete GPU only — the 7900xtx node exposes
     # an iGPU as amd.com/gpu index 1 which cannot run inference.
     hipVisibleDevices: "0"
-    # Demoted to ondemand 2026-04-22 alongside minReplicas 1→0 after the
-    # first serving attempt failed (mixed-precision qkv_proj rejected by
-    # vLLM engine init). The 26B-A4B MoE holds the group-Active slot
-    # again until a serveable 31B artifact exists.
-    warmPolicy: ondemand
+    # Warm primary in 7900xtx-textgen, tied to serverless.minReplicas=1.
+    # vLLM rejected the pre-keqv artifact on load, so this flip only
+    # takes effect together with the source: -keqv switch and the
+    # post-process Job under deploy/tasks/gemma4-31b-keqv/. If the
+    # keqv artifact ALSO fails to load, `git revert` restores the
+    # working 26B-A4B MoE as the sole warm model on 7900xtx-textgen.
+    warmPolicy: primary
     servedModelName: gemma4-31b-gptq
     enableToolCalling: true
     toolCallParser: gemma4

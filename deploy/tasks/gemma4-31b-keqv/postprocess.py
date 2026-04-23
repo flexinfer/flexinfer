@@ -364,9 +364,55 @@ def main() -> None:
 
     if not src.is_dir():
         fail(2, f"SRC_DIR not a directory: {src}")
+
+    # Idempotence check — critical for GitOps re-reconciles. Flux will
+    # re-apply the Job every reconcile window (once the TTL reaper
+    # eventually clears the previous pod). If DST is already a valid
+    # output, we exit 0 fast so the re-apply is a no-op. Three states:
+    #
+    #   1. DST doesn't exist            → do the work
+    #   2. DST exists + valid artifact  → already done, exit 0
+    #   3. DST exists + partial/invalid → abort (operator must rm -rf)
+    #
+    # "Valid artifact" means: index file exists AND the expected
+    # v_proj.qweight keys for every heterogeneous layer are in the
+    # weight_map. Cheap to check; doesn't require opening shards.
     if not dry_run:
         if dst.exists() and any(dst.iterdir()):
-            fail(2, f"DST_DIR not empty: {dst} (refusing to clobber)")
+            dst_index_path = dst / "model.safetensors.index.json"
+            if dst_index_path.exists():
+                try:
+                    with dst_index_path.open() as fh:
+                        dst_index = json.load(fh)
+                    dst_weight_map = dst_index.get("weight_map", {})
+                    # Cheap validation: pull heterogeneous layer indices
+                    # from the source config and check every v_proj.qweight
+                    # is in the destination index.
+                    cfg_for_check = load_config(src)
+                    het = heterogeneous_layer_indices(cfg_for_check)
+                    expected_keys = [
+                        f"model.layers.{i}.self_attn.v_proj.qweight" for i in het
+                    ]
+                    missing = [k for k in expected_keys if k not in dst_weight_map]
+                    if not missing:
+                        log(
+                            f"DST already complete: all {len(expected_keys)} "
+                            f"v_proj.qweight keys present in {dst_index_path}. "
+                            f"Exiting idempotently — GitOps-safe no-op."
+                        )
+                        return
+                    log(
+                        f"DST has index but is missing {len(missing)} expected "
+                        f"v_proj entries (first: {missing[:3]}). Aborting."
+                    )
+                except (OSError, ValueError) as exc:
+                    log(f"DST index unreadable: {exc}. Aborting.")
+            fail(
+                2,
+                f"DST_DIR not empty + not a complete artifact: {dst} "
+                f"(delete it manually and re-run, or point DST_DIR at a "
+                f"different name)",
+            )
         dst.mkdir(parents=True, exist_ok=True)
 
     log(f"src = {src}")
