@@ -26,14 +26,14 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  # Renamed from gemma4-31b-keqv-postprocess → -v2 on 2026-04-23.
-  # The v1 Job used the 20 GiB flexinfer/runtime image and got stuck
-  # pulling on non-GPU control-plane nodes for 10+ min. v2 uses a
-  # python:3.12-slim image + pip install numpy safetensors (~130 MiB
-  # total) since the script only copies packed INT4 tensor bytes —
-  # no torch math needed. Rename forces Flux to prune the stuck v1
-  # Job (Job spec is immutable, same-name updates would fail).
-  name: gemma4-31b-keqv-postprocess-v2
+  # v3 bump on 2026-04-23: path fix. v2 set SRC_DIR=/cache/gptq-w4-g128
+  # which was wrong — the source PVC has an extra gemma4-31b-gptq/
+  # subdirectory (shared PVC convention; see the controller's own
+  # cache-copy Job which uses /src/gemma4-31b-gptq/...). SRC_DIR +
+  # DST_DIR now include that subdir. Job spec is immutable so this
+  # requires a rename to force Flux to prune v2 and create v3.
+  # v1 → v2: swapped 20 GiB flexinfer/runtime image for python:3.12-slim.
+  name: gemma4-31b-keqv-postprocess-v3
   namespace: flexinfer-system
   labels:
     app.kubernetes.io/managed-by: flexinfer
@@ -74,12 +74,16 @@ spec:
               exec python3 /script/postprocess.py
           env:
             - name: SRC_DIR
-              # Controller's quantize_gptq.py wrote the INT4 artifact
-              # here during the 7h57m58s run that completed
-              # 2026-04-21T20:57Z.
-              value: /cache/gptq-w4-g128
+              # Source PVC layout puts each model under its own subdir so
+              # the PVC can be shared across models without collision.
+              # Model CR `source:` spec = pvc://<pvc>/gemma4-31b-gptq/<artifact>,
+              # so with the PVC mounted at /cache, the artifact lives at
+              # /cache/gemma4-31b-gptq/<artifact>. This matches the path
+              # the controller's quantize_gptq.py wrote during the
+              # 7h57m58s run that completed 2026-04-21T20:57Z.
+              value: /cache/gemma4-31b-gptq/gptq-w4-g128
             - name: DST_DIR
-              value: /cache/gptq-w4-g128-keqv
+              value: /cache/gemma4-31b-gptq/gptq-w4-g128-keqv
             - name: PYTHONUNBUFFERED
               value: "1"
           resources:
