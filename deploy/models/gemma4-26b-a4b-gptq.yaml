@@ -64,15 +64,13 @@ spec:
     priority: 200
   serverless:
     enabled: true
-    # Demoted back to cold fallback once the 31B k_eq_v artifact is
-    # ready (see deploy/tasks/gemma4-31b-keqv/). The 31B Model CR
-    # (priority 250, warmPolicy=primary) claims the 7900xtx-textgen
-    # group's Active slot; this MoE variant stays reachable via alias
-    # but scales to zero when idle.
-    # Rollback path: if the 31B keqv artifact fails to load, `git
-    # revert` restores minReplicas=1 + warmPolicy=primary here and
-    # the MoE becomes the sole warm model again.
-    minReplicas: 0
+    # 2026-04-23: promoted back to warm primary on 7900xtx-textgen. The
+    # 31B keqv artifact loaded cleanly (vLLM QKV shard check + KV cache
+    # both pass) but inference outputs pure <pad> — the GPTQ source
+    # artifact is corrupted on layers 40-59 (20 layers of repeated
+    # weights; see gemma4-31b-gptq.yaml). Until the 31B is re-quantized,
+    # this MoE variant is the textgen workhorse on the 7900 XTX.
+    minReplicas: 1
     idleTimeout: 30m
     coldStartTimeout: 15m
   config:
@@ -103,11 +101,11 @@ spec:
     # hybrid manager unifies all specs to FullAttentionSpec, bypassing it.
     disableHybridKVCacheManager: true
     hipVisibleDevices: "0"
-    # Demoted to ondemand fallback — the 31B keqv artifact is the
-    # warm primary in 7900xtx-textgen. This lane still responds to
-    # explicit gemma4-26b / gemma4-26b-a4b alias calls; the shared
-    # group scheduler will preempt the 31B when MoE traffic arrives.
-    warmPolicy: ondemand
+    # 2026-04-23: back to primary — the 31B keqv artifact has dead
+    # layers (GPTQ corruption, see gemma4-31b-gptq.yaml). This MoE is
+    # the only workable warm textgen on 7900xtx-textgen until a
+    # re-quantized 31B lands.
+    warmPolicy: primary
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:
