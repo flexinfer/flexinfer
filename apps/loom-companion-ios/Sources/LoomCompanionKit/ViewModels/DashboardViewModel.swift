@@ -199,7 +199,18 @@ public final class DashboardViewModel {
                 sessions: SessionWidgetData(
                     activeCount: dashboard.activeSessions,
                     topSessions: recentSessions(from: dashboard.recentTimeline)
-                )
+                ),
+                attentionLanes: dashboard.coordination.attentionLanes.prefix(4).map { lane in
+                    AttentionLaneWidgetEntry(
+                        type: lane.type,
+                        laneID: lane.id,
+                        label: lane.label,
+                        route: lane.route,
+                        scope: lane.scope,
+                        summary: lane.summary,
+                        severity: lane.severity
+                    )
+                }
             )
         )
 
