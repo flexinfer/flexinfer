@@ -225,10 +225,17 @@ def plan_duplications(
 
 
 def safetensors_lazy_open(path: Path):
-    """Return a safetensors file handle for lazy tensor reads."""
+    """Return a safetensors file handle for lazy tensor reads.
+
+    Uses the numpy framework so the script doesn't pull in the torch
+    dependency. The tensors we duplicate are packed INT4 blobs
+    (qweight/qzeros) plus small FP16/INT32 side tables; they're
+    bitwise-identical round-tripped through numpy, and the output
+    safetensors file is framework-agnostic.
+    """
     from safetensors import safe_open
 
-    return safe_open(str(path), framework="pt")
+    return safe_open(str(path), framework="numpy")
 
 
 def write_keqv_extras_shard(
@@ -241,8 +248,7 @@ def write_keqv_extras_shard(
     Returns:
         shard_filename (relative to dst), header_metadata for index
     """
-    import torch
-    from safetensors.torch import save_file
+    from safetensors.numpy import save_file
 
     if not plan:
         log("plan is empty — no duplications needed; skipping shard write")
@@ -253,7 +259,7 @@ def write_keqv_extras_shard(
     for layer_idx, suffix, src_shard in plan:
         by_shard[src_shard].append((layer_idx, suffix))
 
-    new_tensors: dict[str, "torch.Tensor"] = {}
+    new_tensors: dict = {}
     for src_shard, entries in by_shard.items():
         shard_path = src / src_shard
         if not shard_path.exists():
@@ -268,13 +274,18 @@ def write_keqv_extras_shard(
                         f"plan said {k_name} lives in {src_shard} but the file "
                         f"doesn't contain that key.",
                     )
-                tensor = fh.get_tensor(k_name)
-                # Clone into a contiguous CPU tensor so save_file is happy
-                new_tensors[v_name] = tensor.detach().clone().contiguous()
+                # numpy framework: get_tensor returns numpy.ndarray.
+                # .copy() materializes so we don't hold the mmap past
+                # the save_file call.
+                arr = fh.get_tensor(k_name)
+                new_tensors[v_name] = arr.copy()
         log(f"  read {len(entries)} k_proj tensors from {src_shard}")
 
     shard_name = "model-keqv-vproj.safetensors"
     shard_path = dst / shard_name
+    # Metadata format=pt keeps the file compatible with torch-based
+    # loaders (vLLM, transformers) even though we wrote it via numpy.
+    # safetensors is framework-neutral at the file level.
     save_file(new_tensors, str(shard_path), metadata={"format": "pt"})
     log(
         f"wrote {len(new_tensors)} v_proj tensors → {shard_name} ({shard_path.stat().st_size:,} bytes)"

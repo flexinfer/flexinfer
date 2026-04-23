@@ -26,7 +26,14 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: gemma4-31b-keqv-postprocess
+  # Renamed from gemma4-31b-keqv-postprocess → -v2 on 2026-04-23.
+  # The v1 Job used the 20 GiB flexinfer/runtime image and got stuck
+  # pulling on non-GPU control-plane nodes for 10+ min. v2 uses a
+  # python:3.12-slim image + pip install numpy safetensors (~130 MiB
+  # total) since the script only copies packed INT4 tensor bytes —
+  # no torch math needed. Rename forces Flux to prune the stuck v1
+  # Job (Job spec is immutable, same-name updates would fail).
+  name: gemma4-31b-keqv-postprocess-v2
   namespace: flexinfer-system
   labels:
     app.kubernetes.io/managed-by: flexinfer
@@ -52,12 +59,19 @@ spec:
       # CPU-only. Scheduler picks any control-plane node with headroom.
       containers:
         - name: postprocess
-          # Runtime image with python3 + torch + safetensors baked in.
-          # Pinned to the digest the 26B-A4B MoE currently serves with,
-          # proven-good on this cluster.
-          image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
+          # python:3.12-slim (~80 MiB) + pip-install numpy + safetensors
+          # at runtime. Pulls in seconds even on a cold node. No torch
+          # required since postprocess.py only duplicates packed INT4
+          # tensor bytes through safetensors.numpy — bitwise identical
+          # round-trip, framework-neutral output file.
+          image: python:3.12-slim
           imagePullPolicy: IfNotPresent
-          command: ["python3", "/script/postprocess.py"]
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              pip install --no-cache-dir --quiet numpy==2.1.3 safetensors==0.4.5
+              exec python3 /script/postprocess.py
           env:
             - name: SRC_DIR
               # Controller's quantize_gptq.py wrote the INT4 artifact
