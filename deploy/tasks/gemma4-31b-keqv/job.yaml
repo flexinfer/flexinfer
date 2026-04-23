@@ -1,0 +1,94 @@
+# Flux-managed one-shot Job: post-process the gemma4-31b-gptq dense GPTQ
+# artifact to populate v_proj shards on Gemma4 heterogeneous (k_eq_v)
+# layers.
+#
+# Lifecycle under GitOps
+# ----------------------
+# 1. kustomization.yaml generates a ConfigMap named
+#    gemma4-31b-keqv-script-<hash> from postprocess.py in this dir.
+#    Kustomize rewrites the configMap.name reference in this Job so it
+#    always matches the current hash.
+# 2. Flux applies ConfigMap + Job. The Job runs on any control-plane
+#    node (source PVC is RWX nas-bulk-rwx, mounts anywhere).
+# 3. Script is idempotent: if /cache/gptq-w4-g128-keqv/ already contains
+#    the expected v_proj.qweight keys, it exits 0 immediately without
+#    writing anything. That makes Flux re-reconcile safe.
+# 4. After ttlSecondsAfterFinished expires, Kubernetes removes the Job
+#    pod. Next Flux reconcile re-applies the Job (same name, same spec
+#    → kustomize-controller sees it as unchanged and does nothing). If
+#    the Job was already deleted by TTL, Flux recreates it and the
+#    script no-ops because DST is already complete.
+# 5. If postprocess.py is edited, its ConfigMap hash changes, which
+#    changes this Job's spec, which triggers Flux to recreate the Job.
+#    The script's idempotence check still wins if the output hasn't
+#    drifted — only a real logic/spec change does work.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gemma4-31b-keqv-postprocess
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/managed-by: flexinfer
+    flexinfer.ai/task: gemma4-31b-keqv-postprocess
+spec:
+  backoffLimit: 2
+  # Reap the completed Job pod after 24h so we can read logs during the
+  # common post-failure / post-success window without cluttering the
+  # namespace indefinitely.
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: flexinfer
+        flexinfer.ai/task: gemma4-31b-keqv-postprocess
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      # No nodeSelector — NFS PVC mounts from anywhere, and the task is
+      # CPU-only. Scheduler picks any control-plane node with headroom.
+      containers:
+        - name: postprocess
+          # Runtime image with python3 + torch + safetensors baked in.
+          # Pinned to the digest the 26B-A4B MoE currently serves with,
+          # proven-good on this cluster.
+          image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/script/postprocess.py"]
+          env:
+            - name: SRC_DIR
+              # Controller's quantize_gptq.py wrote the INT4 artifact
+              # here during the 7h57m58s run that completed
+              # 2026-04-21T20:57Z.
+              value: /cache/gptq-w4-g128
+            - name: DST_DIR
+              value: /cache/gptq-w4-g128-keqv
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+            limits:
+              memory: 8Gi
+          volumeMounts:
+            - name: source
+              mountPath: /cache
+            - name: script
+              mountPath: /script
+              readOnly: true
+      volumes:
+        - name: source
+          persistentVolumeClaim:
+            claimName: gemma4-31b-gptq
+        - name: script
+          configMap:
+            # The name here is replaced by kustomize at build time with
+            # the content-hashed ConfigMap name from kustomization.yaml.
+            # This literal string only needs to match the generator's
+            # `name:` field.
+            name: gemma4-31b-keqv-script
+            defaultMode: 0755
