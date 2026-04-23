@@ -2,7 +2,7 @@
 #
 # Dense: 30.7B params, 60 layers. GPTQ INT4 checkpoint ~16 GB weights.
 # VRAM budget: ~15-16 GB weights + ~6 GB KV cache → tight fit in 24 GB.
-# Conservative maxModelLen=4096 to stay within VRAM.
+# Conservative maxModelLen=2048 to stay within VRAM (see config block).
 #
 # On-demand model on cblevins-7900xtx (priority 250, scale-to-zero) co-located
 # with the 26B-A4B MoE in the 7900xtx-textgen shared group. 5930k is currently
@@ -79,9 +79,12 @@ spec:
     # serving process onto the discrete 7900 XTX. Same pattern as the
     # 26B-A4B MoE serving pod on this node.
     count: 2
-    # 31B INT4 ≈ 16 GB weights + KV cache (~2 GB at maxModelLen=4096).
-    # Raised 17000→18000 to leave a safety margin above the previous
-    # estimate now that we have real serving load on this artifact.
+    # 31B INT4 ≈ 16 GB weights + KV cache (~1.3 GB at maxModelLen=2048).
+    # 2026-04-23: kept 18000 despite the maxModelLen drop — first load
+    # actually showed ~5 GiB of activations + overhead (only 1.7 GiB
+    # free for KV at 0.95 util), so the real resident budget is closer
+    # to 21-22 GiB than the nominal 17-18. 18000 is a floor for the
+    # shared-group scheduler, not an exact estimate.
     vramEstimateMB: 18000
     shared: 7900xtx-textgen
     # Higher than the 26B-A4B MoE (priority=200). This is the always-warm
@@ -114,9 +117,20 @@ spec:
   config:
     quantization: gptq
     dtype: "half"
-    # Baseline context limit for current validated artifact. Keep conservative
-    # until a smaller validated artifact clears promotion checks.
-    maxModelLen: 4096
+    # 2026-04-23: dropped 4096 → 2048 after first successful load on the
+    # -keqv artifact. vLLM reported the KV cache check failing at 4096:
+    #
+    #   ValueError: To serve at least one request with the models's max
+    #   seq len (4096), (2.67 GiB KV cache is needed, which is larger
+    #   than the available KV cache memory (1.7 GiB). Based on the
+    #   available memory, the estimated maximum model length is 2000.
+    #
+    # 31B dense INT4 weights + heterogeneous attention activations eat
+    # more than the 26B MoE on the same 24 GiB card. Per-token KV is
+    # ~0.65 MiB, so 1.7 GiB budget ≈ 2610 tokens. 2048 leaves ~560
+    # tokens of headroom and keeps round numbers. Can be tuned up if we
+    # later swap in a quantized KV cache or lower maxNumSeqs.
+    maxModelLen: 2048
     gpuMemoryUtilization: "0.95"
     maxNumSeqs: 4
     trustRemoteCode: true
