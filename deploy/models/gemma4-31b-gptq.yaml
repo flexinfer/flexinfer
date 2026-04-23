@@ -2,7 +2,7 @@
 #
 # Dense: 30.7B params, 60 layers. GPTQ INT4 checkpoint ~16 GB weights.
 # VRAM budget: ~15-16 GB weights + ~6 GB KV cache → tight fit in 24 GB.
-# Conservative maxModelLen=2048 to stay within VRAM (see config block).
+# Conservative maxModelLen=1920 to stay within VRAM (see config block).
 #
 # On-demand model on cblevins-7900xtx (priority 250, scale-to-zero) co-located
 # with the 26B-A4B MoE in the 7900xtx-textgen shared group. 5930k is currently
@@ -117,20 +117,26 @@ spec:
   config:
     quantization: gptq
     dtype: "half"
-    # 2026-04-23: dropped 4096 → 2048 after first successful load on the
-    # -keqv artifact. vLLM reported the KV cache check failing at 4096:
+    # 2026-04-23: 4096 → 2048 → 1920 tuning on the -keqv artifact.
     #
-    #   ValueError: To serve at least one request with the models's max
-    #   seq len (4096), (2.67 GiB KV cache is needed, which is larger
-    #   than the available KV cache memory (1.7 GiB). Based on the
-    #   available memory, the estimated maximum model length is 2000.
+    # First load at 4096 hit:
+    #   ValueError: ... max seq len (4096), (2.67 GiB KV cache is needed,
+    #   which is larger than the available KV cache memory (1.7 GiB).
+    #   Based on the available memory, the estimated maximum model
+    #   length is 2000.
     #
-    # 31B dense INT4 weights + heterogeneous attention activations eat
-    # more than the 26B MoE on the same 24 GiB card. Per-token KV is
-    # ~0.65 MiB, so 1.7 GiB budget ≈ 2610 tokens. 2048 leaves ~560
-    # tokens of headroom and keeps round numbers. Can be tuned up if we
-    # later swap in a quantized KV cache or lower maxNumSeqs.
-    maxModelLen: 2048
+    # Dropped 4096 → 2048 from the per-token-KV estimate (0.65 MiB,
+    # assumed linear), but vLLM actually measured per-token KV at
+    # ~0.844 MiB (heterogeneous attention + k_eq_v reshapes) → 2048
+    # needed 1.73 GiB, still 30 MiB over the 1.7 GiB budget:
+    #   ValueError: ... max seq len (2048), (1.73 GiB KV cache is
+    #   needed, ... (1.7 GiB). ... estimated maximum model length is 2000.
+    #
+    # 1920 = 2000 / multiple-of-64, keeps a comfortable headroom below
+    # vLLM's estimate and matches what the engine can actually allocate.
+    # Can be bumped if we add quant KV, lower maxNumSeqs, or reclaim
+    # activation memory.
+    maxModelLen: 1920
     gpuMemoryUtilization: "0.95"
     maxNumSeqs: 4
     trustRemoteCode: true
