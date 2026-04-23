@@ -530,6 +530,25 @@ func (a *App) wireMonitorCallbacks() {
 			Data:      data,
 		})
 	})
+	a.workflowMonitor.OnNewApproval(func(workflows []bridge.WorkflowInfo) {
+		now := time.Now()
+		for _, w := range workflows {
+			data, err := json.Marshal(map[string]any{
+				"workflow_id":  w.ID,
+				"name":         w.Name,
+				"current_step": w.CurrentStep,
+			})
+			if err != nil {
+				continue
+			}
+			a.sseHub.Broadcast(bridge.SSEEvent{
+				ID:        fmt.Sprintf("hud-workflow-approval-%s-%d", w.ID, now.UnixMilli()),
+				Type:      "hud.workflow.waiting_approval",
+				Timestamp: now,
+				Data:      data,
+			})
+		}
+	})
 	a.streamMonitor.OnRefresh(func(entries []monitor.StreamEntry) {
 		data, err := json.Marshal(map[string]any{"entries": entries})
 		if err != nil {
