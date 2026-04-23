@@ -7,6 +7,7 @@ public struct WidgetData: Codable, Sendable {
     public let fleet: FleetWidgetData
     public let tasks: TaskWidgetData
     public let sessions: SessionWidgetData
+    public let attentionLanes: [AttentionLaneWidgetEntry]
     public let lastCompletedSession: CompletedSessionWidgetData?
     public let lastUpdated: Date
 
@@ -14,14 +15,58 @@ public struct WidgetData: Codable, Sendable {
         fleet: FleetWidgetData,
         tasks: TaskWidgetData,
         sessions: SessionWidgetData,
+        attentionLanes: [AttentionLaneWidgetEntry] = [],
         lastCompletedSession: CompletedSessionWidgetData? = nil,
         lastUpdated: Date = .now
     ) {
         self.fleet = fleet
         self.tasks = tasks
         self.sessions = sessions
+        self.attentionLanes = attentionLanes
         self.lastCompletedSession = lastCompletedSession
         self.lastUpdated = lastUpdated
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case fleet, tasks, sessions, attentionLanes, lastCompletedSession, lastUpdated
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.fleet = try c.decode(FleetWidgetData.self, forKey: .fleet)
+        self.tasks = try c.decode(TaskWidgetData.self, forKey: .tasks)
+        self.sessions = try c.decode(SessionWidgetData.self, forKey: .sessions)
+        self.attentionLanes = try c.decodeIfPresent([AttentionLaneWidgetEntry].self, forKey: .attentionLanes) ?? []
+        self.lastCompletedSession = try c.decodeIfPresent(CompletedSessionWidgetData.self, forKey: .lastCompletedSession)
+        self.lastUpdated = try c.decodeIfPresent(Date.self, forKey: .lastUpdated) ?? .now
+    }
+}
+
+public struct AttentionLaneWidgetEntry: Codable, Sendable, Hashable, Identifiable {
+    public let type: String
+    public let laneID: String
+    public let label: String
+    public let route: String
+    public let scope: String
+    public let summary: String
+    public let severity: String
+
+    public var id: String { "\(type):\(laneID)" }
+
+    public init(type: String, laneID: String, label: String, route: String, scope: String, summary: String, severity: String) {
+        self.type = type
+        self.laneID = laneID
+        self.label = label
+        self.route = route
+        self.scope = scope
+        self.summary = summary
+        self.severity = severity
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case laneID = "id"
+        case label, route, scope, summary, severity
     }
 }
 
@@ -144,7 +189,18 @@ public enum SharedDataStore {
             tasks: TaskWidgetData(pending: 3, inProgress: 2, blocked: 1, completed: 8, recentTitles: ["Implement auth flow", "Fix SSE reconnect"]),
             sessions: SessionWidgetData(activeCount: 3, topSessions: [
                 SessionWidgetEntry(id: "s1", namespace: "loom-core/feature", agentId: "claude-code", agentType: "claude-code", startedAt: "10m ago", lastHeartbeat: Date()),
-            ])
+            ]),
+            attentionLanes: [
+                AttentionLaneWidgetEntry(
+                    type: "namespace",
+                    laneID: "loom-core/mobile",
+                    label: "Work lane",
+                    route: "work",
+                    scope: "3 tasks",
+                    summary: "blocked tasks",
+                    severity: "critical"
+                ),
+            ]
         )
     }
 }

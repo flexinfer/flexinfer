@@ -6,6 +6,15 @@
     "attention_agents": [],
     "attention_lanes": [
       {
+        "id": "claude-code-1",
+        "label": "Agent lane",
+        "route": "people",
+        "scope": "services/loom-core",
+        "severity": "warning",
+        "summary": "blocked on review",
+        "type": "agent"
+      },
+      {
         "id": "services/loom-core/mobile",
         "label": "Work lane",
         "route": "work",
@@ -13,6 +22,24 @@
         "severity": "critical",
         "summary": "blocked tasks",
         "type": "namespace"
+      },
+      {
+        "id": "merge-ready",
+        "label": "Merge ready",
+        "route": "dispatch",
+        "scope": "2 branches",
+        "severity": "info",
+        "summary": "2 branches ready to merge",
+        "type": "merge"
+      },
+      {
+        "id": "file-conflicts",
+        "label": "File conflicts",
+        "route": "dispatch",
+        "scope": "1 file",
+        "severity": "critical",
+        "summary": "1 file claimed by multiple agents",
+        "type": "conflict"
       }
     ],
     "risky_namespaces": [],

@@ -1,0 +1,38 @@
+[
+  {
+    "type": "agent",
+    "id": "claude-code-1",
+    "label": "Agent lane",
+    "route": "people",
+    "scope": "services/loom-core",
+    "summary": "blocked on review",
+    "severity": "warning"
+  },
+  {
+    "type": "namespace",
+    "id": "services/loom-core/mobile",
+    "label": "Work lane",
+    "route": "work",
+    "scope": "3 tasks",
+    "summary": "blocked tasks",
+    "severity": "critical"
+  },
+  {
+    "type": "merge",
+    "id": "merge-ready",
+    "label": "Merge ready",
+    "route": "dispatch",
+    "scope": "2 branches",
+    "summary": "2 branches ready to merge",
+    "severity": "info"
+  },
+  {
+    "type": "conflict",
+    "id": "file-conflicts",
+    "label": "File conflicts",
+    "route": "dispatch",
+    "scope": "1 file",
+    "summary": "1 file claimed by multiple agents",
+    "severity": "critical"
+  }
+]

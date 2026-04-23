@@ -36,6 +36,7 @@
 		38D3200D5A8C6BDE3A933FA0 /* OpsWorkflowDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44757CFC5897EBCD1433E632 /* OpsWorkflowDetailView.swift */; };
 		39B08105D3D71BCBF12D14FF /* WorkflowLiveActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7AD9B82870900144B888406 /* WorkflowLiveActivityView.swift */; };
 		3B7D185E18B6B4441E16A8DB /* ConnectionProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB31D459E6D1D793F46A1B31 /* ConnectionProfileView.swift */; };
+		3BAC7689D199F940CE01F910 /* AttentionLaneWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF39FDA9C302A24F51EF12B /* AttentionLaneWidget.swift */; };
 		3D7DF6B0BB43A73F01DD47DE /* WorkflowActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 128A41D03D42222D5284768B /* WorkflowActivity.swift */; };
 		3E75C7C1AE8C0E15211840E0 /* SessionTimelineChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96C49B61AED887490A116605 /* SessionTimelineChart.swift */; };
 		4230844724B8E98B13157430 /* ActiveSessionsWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29969AE5F1FA24CA231E80EA /* ActiveSessionsWidget.swift */; };
@@ -225,6 +226,7 @@
 		4A87B4846EDF0FD1ED36EAA1 /* OpsModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsModels.swift; sourceTree = "<group>"; };
 		4C74F2A4DBC82061A9CBDC95 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		4F9CBC4D7A1057DDD87D00C6 /* CreateSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateSessionView.swift; sourceTree = "<group>"; };
+		4FF39FDA9C302A24F51EF12B /* AttentionLaneWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttentionLaneWidget.swift; sourceTree = "<group>"; };
 		525058B8CC6610D4C955F604 /* APIEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIEnvelope.swift; sourceTree = "<group>"; };
 		52AE107FC4C72CDDC7C2546E /* ConnectionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionViewModel.swift; sourceTree = "<group>"; };
 		531717108CA193976CD1D2E3 /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIError.swift; sourceTree = "<group>"; };
@@ -357,6 +359,7 @@
 			isa = PBXGroup;
 			children = (
 				29969AE5F1FA24CA231E80EA /* ActiveSessionsWidget.swift */,
+				4FF39FDA9C302A24F51EF12B /* AttentionLaneWidget.swift */,
 				7B34ABB0F4EB13226360A9DB /* FleetHealthWidget.swift */,
 				69611C28D852731CE58ABE15 /* Info.plist */,
 				30139D278B540C98AE965B6D /* LiveActivityHelpers.swift */,
@@ -868,6 +871,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4230844724B8E98B13157430 /* ActiveSessionsWidget.swift in Sources */,
+				3BAC7689D199F940CE01F910 /* AttentionLaneWidget.swift in Sources */,
 				43049187DD24603E3EC0A76F /* FleetHealthWidget.swift in Sources */,
 				B160EB1AC83AB4898CFA7B0F /* LiveActivityHelpers.swift in Sources */,
 				1174B15F742624950E57EA68 /* LockScreenWidgets.swift in Sources */,

@@ -151,6 +151,15 @@ func TestMobileDashboardContract(t *testing.T) {
 			"top_relations":    []any{},
 			"attention_lanes": []any{
 				map[string]any{
+					"type":     "agent",
+					"id":       "claude-code-1",
+					"label":    "Agent lane",
+					"route":    "people",
+					"scope":    "services/loom-core",
+					"summary":  "blocked on review",
+					"severity": "warning",
+				},
+				map[string]any{
 					"type":     "namespace",
 					"id":       "services/loom-core/mobile",
 					"label":    "Work lane",
@@ -159,11 +168,56 @@ func TestMobileDashboardContract(t *testing.T) {
 					"summary":  "blocked tasks",
 					"severity": "critical",
 				},
+				map[string]any{
+					"type":     "merge",
+					"id":       "merge-ready",
+					"label":    "Merge ready",
+					"route":    "dispatch",
+					"scope":    "2 branches",
+					"summary":  "2 branches ready to merge",
+					"severity": "info",
+				},
+				map[string]any{
+					"type":     "conflict",
+					"id":       "file-conflicts",
+					"label":    "File conflicts",
+					"route":    "dispatch",
+					"scope":    "1 file",
+					"summary":  "1 file claimed by multiple agents",
+					"severity": "critical",
+				},
 			},
 		},
 		"recent_timeline": []any{},
 	}
 	assertGolden(t, "mobile_dashboard", marshalIndent(t, dashboard))
+}
+
+// ---------------------------------------------------------------------------
+// Mobile Attention Lanes Contract
+// ---------------------------------------------------------------------------
+
+// attentionLane mirrors the attention-lane map emitted by
+// internal/hud/domain/mobile.buildMobileAttentionLanes. Freezing it as a typed
+// struct catches field renames that a plain map[string]any would hide.
+type attentionLane struct {
+	Type     string `json:"type"`
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Route    string `json:"route"`
+	Scope    string `json:"scope"`
+	Summary  string `json:"summary"`
+	Severity string `json:"severity"`
+}
+
+func TestMobileAttentionLanesContract(t *testing.T) {
+	lanes := []attentionLane{
+		{Type: "agent", ID: "claude-code-1", Label: "Agent lane", Route: "people", Scope: "services/loom-core", Summary: "blocked on review", Severity: "warning"},
+		{Type: "namespace", ID: "services/loom-core/mobile", Label: "Work lane", Route: "work", Scope: "3 tasks", Summary: "blocked tasks", Severity: "critical"},
+		{Type: "merge", ID: "merge-ready", Label: "Merge ready", Route: "dispatch", Scope: "2 branches", Summary: "2 branches ready to merge", Severity: "info"},
+		{Type: "conflict", ID: "file-conflicts", Label: "File conflicts", Route: "dispatch", Scope: "1 file", Summary: "1 file claimed by multiple agents", Severity: "critical"},
+	}
+	assertGolden(t, "mobile_attention_lanes", marshalIndent(t, lanes))
 }
 
 // ---------------------------------------------------------------------------
