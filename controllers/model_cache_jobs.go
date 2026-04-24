@@ -287,7 +287,7 @@ echo "Artifact present at file $TARGET"
 	return job, nil
 }
 
-func (r *ModelReconciler) jobForCacheCopy(model *aiv1alpha2.Model, sourcePVCName, cachePVCName, cachePvcUID, subPath string) (*batchv1.Job, error) {
+func (r *ModelReconciler) jobForCacheCopy(model *aiv1alpha2.Model, sourcePVCName, cachePVCName, cachePvcUID, subPath string, sourceReady *cacheSourceReadyStatus) (*batchv1.Job, error) {
 	subPath = strings.Trim(subPath, "/")
 	src := "/src"
 	dst := "/models"
@@ -338,18 +338,25 @@ echo "Copy complete."
 
 	nodeSelector, tolerations := modelNodeSelectorAndTolerations(model)
 
+	annotations := map[string]string{
+		AnnotationSource:      model.Spec.Source,
+		AnnotationCacheKind:   "copy",
+		AnnotationCacheSrcPVC: sourcePVCName,
+		AnnotationCachePVC:    cachePVCName,
+		AnnotationCachePvcUID: cachePvcUID,
+		AnnotationCachePath:   subPath,
+	}
+	if sourceReady != nil && sourceReady.Ready {
+		annotations[AnnotationCacheSourceReadyJob] = sourceReady.JobName
+		annotations[AnnotationCacheSourceReadyUID] = sourceReady.UID
+		annotations[AnnotationCacheSourceReadyCompletedAt] = sourceReady.CompletedAt
+	}
+
 	job := buildCacheJob(CacheJobParams{
-		Name:      model.Name + "-cache-copy",
-		Namespace: model.Namespace,
-		Labels:    r.labelsForModel(model),
-		Annotations: map[string]string{
-			AnnotationSource:      model.Spec.Source,
-			AnnotationCacheKind:   "copy",
-			AnnotationCacheSrcPVC: sourcePVCName,
-			AnnotationCachePVC:    cachePVCName,
-			AnnotationCachePvcUID: cachePvcUID,
-			AnnotationCachePath:   subPath,
-		},
+		Name:          model.Name + "-cache-copy",
+		Namespace:     model.Namespace,
+		Labels:        r.labelsForModel(model),
+		Annotations:   annotations,
 		NodeSelector:  nodeSelector,
 		Tolerations:   tolerations,
 		BackoffLimit:  1,

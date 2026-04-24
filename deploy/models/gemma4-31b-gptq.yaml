@@ -35,14 +35,14 @@ metadata:
     flexinfer.ai/promotion-gate: quantized-artifact-v1
     flexinfer.ai/promotion-state: conservative-on-demand-baseline
     flexinfer.ai/promotion-requires: validated-canary-before-alias-or-default-change
+    flexinfer.ai/cache-source-ready-job: gemma4-31b-keqv-postprocess-v3
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:0c7e9ffb390f39a3b5fffe71e341a127ad20fc191a11cafa99f3c2c6a3e8a863
   # Points at the k_eq_v-patched artifact produced by the
-  # deploy/tasks/gemma4-31b-keqv/ Job. The controller's cache-copy will
-  # retry until the Job finishes writing this directory on the source
-  # PVC (~1-2 min CPU work). See that task's README for the algorithm
-  # and rationale.
+  # deploy/tasks/gemma4-31b-keqv/ Job. The cache-source-ready-job annotation
+  # below makes the controller wait for that transform before cache-copy, then
+  # stamp copy Jobs with transform provenance for stale retry cleanup.
   source: pvc://gemma4-31b-gptq/gemma4-31b-gptq/gptq-w4-g128-keqv
   # Cache staging (2026-04-21): raw pvc:// sources require an explicit
   # staged Local cache. Without storageClass+hostPath+size the controller
