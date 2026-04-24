@@ -19,8 +19,8 @@ struct ContentView: View {
     enum AppTab {
         case dashboard
         case people
+        case spawn
         case work
-        case alerts
         case connection
     }
 
@@ -102,7 +102,10 @@ struct ContentView: View {
             selectedTab = .work
 
         case .alerts:
-            selectedTab = .alerts
+            // Alerts tab removed in Spawn-tab promotion. Route to Dashboard,
+            // which still surfaces the unread-alerts count and the critical
+            // "DO NEXT" card sourced from AlertsViewModel.
+            selectedTab = .dashboard
 
         case .connection:
             selectedTab = .connection
@@ -152,10 +155,13 @@ struct ContentView: View {
             navigationCoordinator.openHandoffInbox()
             selectedTab = .work
 
-        // Alerts · single alert
+        // Alerts · single alert — Alerts tab is gone in the Spawn-tab
+        // promotion. Hand the alert id to the navigation coordinator (which
+        // will surface it on the Dashboard once an alerts sheet/detail lands)
+        // and route to Dashboard.
         case .alert(let id):
             navigationCoordinator.navigateToAlert(id: id)
-            selectedTab = .alerts
+            selectedTab = .dashboard
 
         // One-shot bootstrap from `make mobile-app-run-device` over USB.
         case .configure(let spec):
@@ -209,7 +215,9 @@ struct ContentView: View {
                         selectedPeopleSection = .sessions
                         selectedTab = .people
                     case .alerts:
-                        selectedTab = .alerts
+                        // Alerts tab replaced by Spawn. Unread-alert cards
+                        // surface on the Dashboard itself.
+                        selectedTab = .dashboard
                     }
                 }
             }
@@ -221,6 +229,15 @@ struct ContentView: View {
                 .tag(AppTab.people)
 
             NavigationStack {
+                SpawnTabView(
+                    apiClient: connectionVM.buildAPIClient(),
+                    broadcaster: sseBroadcaster
+                )
+            }
+            .tabItem { Label("Spawn", systemImage: "sparkles") }
+            .tag(AppTab.spawn)
+
+            NavigationStack {
                 OpsView(
                     apiClient: connectionVM.buildAPIClient(),
                     broadcaster: sseBroadcaster,
@@ -230,27 +247,6 @@ struct ContentView: View {
             }
             .tabItem { Label("Work", systemImage: "square.grid.2x2") }
             .tag(AppTab.work)
-
-            NavigationStack {
-                AlertsListView(viewModel: alertsViewModel) { action, alert in
-                    switch action {
-                    case .viewSession:
-                        pendingSessionDeepLinkID = alert.relatedSessionId
-                        selectedPeopleSection = .sessions
-                        selectedTab = .people
-                    case .viewWorkflow:
-                        pendingWorkflowDeepLinkID = alert.relatedWorkflowId
-                        selectedTab = .work
-                    case .viewDashboard:
-                        selectedTab = .dashboard
-                    case .acknowledge:
-                        break
-                    }
-                }
-            }
-            .tabItem { Label("Alerts", systemImage: "bell") }
-            .tag(AppTab.alerts)
-            .badge(alertsViewModel.unreadCount)
 
             NavigationStack {
                 ConnectionDiagnosticsView(
@@ -272,27 +268,12 @@ struct ContentView: View {
                 Label("Agents", systemImage: "person.2.wave.2")
                     .contentShape(Rectangle())
                     .onTapGesture { selectedTab = .people }
+                Label("Spawn", systemImage: "sparkles")
+                    .contentShape(Rectangle())
+                    .onTapGesture { selectedTab = .spawn }
                 Label("Work", systemImage: "square.grid.2x2")
                     .contentShape(Rectangle())
                     .onTapGesture { selectedTab = .work }
-                Label {
-                    Text("Alerts")
-                } icon: {
-                    Image(systemName: "bell")
-                        .overlay(alignment: .topTrailing) {
-                            if alertsViewModel.unreadCount > 0 {
-                                Text("\(min(alertsViewModel.unreadCount, 99))")
-                                    .font(.caption2)
-                                    .fontWeight(.bold)
-                                    .foregroundStyle(.white)
-                                    .padding(3)
-                                    .background(LoomColors.statusCritical, in: Circle())
-                                    .offset(x: 8, y: -8)
-                            }
-                        }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture { selectedTab = .alerts }
                 Label("Connection", systemImage: "network")
                     .contentShape(Rectangle())
                     .onTapGesture { selectedTab = .connection }
@@ -314,11 +295,16 @@ struct ContentView: View {
                         selectedPeopleSection = .sessions
                         selectedTab = .people
                     case .alerts:
-                        selectedTab = .alerts
+                        selectedTab = .dashboard
                     }
                 }
             case .people:
                 peopleTab
+            case .spawn:
+                SpawnTabView(
+                    apiClient: connectionVM.buildAPIClient(),
+                    broadcaster: sseBroadcaster
+                )
             case .work:
                 OpsView(
                     apiClient: connectionVM.buildAPIClient(),
@@ -326,22 +312,6 @@ struct ContentView: View {
                     deepLinkWorkflowID: $pendingWorkflowDeepLinkID,
                     prefillEndSessionID: $pendingEndSessionPrefillID
                 )
-            case .alerts:
-                AlertsListView(viewModel: alertsViewModel) { action, alert in
-                    switch action {
-                    case .viewSession:
-                        pendingSessionDeepLinkID = alert.relatedSessionId
-                        selectedPeopleSection = .sessions
-                        selectedTab = .people
-                    case .viewWorkflow:
-                        pendingWorkflowDeepLinkID = alert.relatedWorkflowId
-                        selectedTab = .work
-                    case .viewDashboard:
-                        selectedTab = .dashboard
-                    case .acknowledge:
-                        break
-                    }
-                }
             case .connection:
                 ConnectionDiagnosticsView(
                     connectionVM: connectionVM,
@@ -359,6 +329,18 @@ struct ContentView: View {
                     Text("Agents")
                         .font(.title.bold())
                         .foregroundStyle(LoomColors.textPrimary)
+
+                    // Spawn shortcut — Agents tab is where you see the
+                    // current fleet, so make "create a new one" one tap away.
+                    Button {
+                        selectedTab = .spawn
+                    } label: {
+                        Image(systemName: "sparkles")
+                            .font(.title3)
+                            .foregroundStyle(LoomColors.accent)
+                            .padding(.horizontal, 4)
+                    }
+                    .accessibilityLabel("Spawn new agent")
 
                     Spacer(minLength: 8)
 
