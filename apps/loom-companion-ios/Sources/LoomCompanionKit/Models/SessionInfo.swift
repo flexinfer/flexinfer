@@ -34,6 +34,8 @@ public struct SessionInfo: Decodable, Identifiable, Sendable {
     public let endedAt: String?
     public let entryCount: Int
     public let totalTokens: Int
+    public let parentSessionId: String?
+    public let rootSessionId: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -45,9 +47,23 @@ public struct SessionInfo: Decodable, Identifiable, Sendable {
         case endedAt = "ended_at"
         case entryCount = "entry_count"
         case totalTokens = "total_tokens"
+        case parentSessionId = "parent_session_id"
+        case rootSessionId = "root_session_id"
     }
 
-    public init(id: String, agentId: String, namespace: String, status: SessionStatus, description: String, startedAt: String, endedAt: String? = nil, entryCount: Int, totalTokens: Int) {
+    public init(
+        id: String,
+        agentId: String,
+        namespace: String,
+        status: SessionStatus,
+        description: String,
+        startedAt: String,
+        endedAt: String? = nil,
+        entryCount: Int,
+        totalTokens: Int,
+        parentSessionId: String? = nil,
+        rootSessionId: String? = nil
+    ) {
         self.id = id
         self.agentId = agentId
         self.namespace = namespace
@@ -57,6 +73,23 @@ public struct SessionInfo: Decodable, Identifiable, Sendable {
         self.endedAt = endedAt
         self.entryCount = entryCount
         self.totalTokens = totalTokens
+        self.parentSessionId = parentSessionId
+        self.rootSessionId = rootSessionId
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.agentId = try c.decodeIfPresent(String.self, forKey: .agentId) ?? ""
+        self.namespace = try c.decodeIfPresent(String.self, forKey: .namespace) ?? ""
+        self.status = try c.decodeIfPresent(SessionStatus.self, forKey: .status) ?? .unknown
+        self.description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        self.startedAt = try c.decodeIfPresent(String.self, forKey: .startedAt) ?? ""
+        self.endedAt = try c.decodeIfPresent(String.self, forKey: .endedAt)
+        self.entryCount = try c.decodeIfPresent(Int.self, forKey: .entryCount) ?? 0
+        self.totalTokens = try c.decodeIfPresent(Int.self, forKey: .totalTokens) ?? 0
+        self.parentSessionId = try c.decodeIfPresent(String.self, forKey: .parentSessionId)
+        self.rootSessionId = try c.decodeIfPresent(String.self, forKey: .rootSessionId)
     }
 }
 

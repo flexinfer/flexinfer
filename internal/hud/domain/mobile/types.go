@@ -367,6 +367,8 @@ type unifiedAgent struct {
 	Branch           string   `json:"branch"`
 	LastHeartbeat    string   `json:"last_heartbeat"`
 	SessionID        string   `json:"session_id,omitempty"`
+	ParentSessionID  string   `json:"parent_session_id,omitempty"`
+	RootSessionID    string   `json:"root_session_id,omitempty"`
 	Namespace        string   `json:"namespace,omitempty"`
 	SessionStatus    string   `json:"session_status,omitempty"`
 	SessionStarted   string   `json:"session_started_at,omitempty"`
