@@ -4,16 +4,13 @@ import LoomCompanionKit
 /// Work section: tasks, legacy workflows/approvals, and session controls.
 struct OpsWorkSection: View {
     @Bindable var viewModel: OpsViewModel
-    var broadcaster: SSEEventBroadcaster?
     @State private var taskDisplayLimit = 8
     @State private var workflowDisplayLimit = 8
     @State private var showLegacyWorkflows = false
     @State private var showSessionControls = false
 
     @State private var createAgentID = ""
-    @State private var createProject: String = ""
-    @State private var createNamespaceOverride = ""
-    @State private var useCustomNamespace = false
+    @State private var createNamespace = ""
     @State private var createDescription = ""
     @State private var createAutoRecall = true
     @State private var endSessionID = ""
@@ -43,7 +40,7 @@ struct OpsWorkSection: View {
                 Task {
                     await viewModel.createSession(
                         agentID: createAgentID,
-                        namespace: resolvedCreateNamespace,
+                        namespace: createNamespace,
                         description: createDescription,
                         autoRecall: createAutoRecall
                     )
@@ -51,10 +48,7 @@ struct OpsWorkSection: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This binds a new agent-context session to an agent that is already running on your fleet.")
-        }
-        .task {
-            await viewModel.loadSpawnConfig()
+            Text("This creates a new agent-context session from mobile.")
         }
         .confirmationDialog("End Session?", isPresented: $showEndConfirmation, titleVisibility: .visible) {
             Button("End Session", role: .destructive) {
@@ -283,23 +277,74 @@ struct OpsWorkSection: View {
             VStack(alignment: .leading, spacing: LoomSpacing.sm) {
                 DisclosureGroup(isExpanded: $showSessionControls) {
                     VStack(alignment: .leading, spacing: LoomSpacing.md) {
-                        spawnCTA
+                        Text("Scoped mobile mutations: session create/end only.")
+                            .font(LoomTypography.caption)
+                            .foregroundStyle(LoomColors.textTertiary)
+
+                        Text("Start Session")
+                            .font(LoomTypography.bodyMedium)
+                        TextField("Agent ID", text: $createAgentID)
+                            .textFieldStyle(.roundedBorder)
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            #endif
+                        TextField("Namespace (optional)", text: $createNamespace)
+                            .textFieldStyle(.roundedBorder)
+                            .autocorrectionDisabled()
+                        TextField("Description (optional)", text: $createDescription)
+                            .textFieldStyle(.roundedBorder)
+                        Toggle("Auto recall", isOn: $createAutoRecall)
+
+                        Button {
+                            viewModel.clearMutationMessages()
+                            showCreateConfirmation = true
+                        } label: {
+                            if viewModel.isMutatingSession {
+                                ProgressView()
+                                    .frame(maxWidth: .infinity)
+                            } else {
+                                Text("Start Session")
+                                    .frame(maxWidth: .infinity)
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(createAgentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isMutatingSession)
 
                         Divider()
 
-                        startSessionForm
+                        Text("End Session")
+                            .font(LoomTypography.bodyMedium)
+                        TextField("Session ID", text: $endSessionID)
+                            .textFieldStyle(.roundedBorder)
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            #endif
+                        Toggle("Include summary", isOn: $endWithSummary)
 
-                        Divider()
-
-                        endSessionForm
+                        Button(role: .destructive) {
+                            viewModel.clearMutationMessages()
+                            showEndConfirmation = true
+                        } label: {
+                            if viewModel.isMutatingSession {
+                                ProgressView()
+                                    .frame(maxWidth: .infinity)
+                            } else {
+                                Text("End Session")
+                                    .frame(maxWidth: .infinity)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(endSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isMutatingSession)
                     }
                 } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Session controls")
+                            Text("Advanced session controls")
                                 .font(LoomTypography.headlineMedium)
                                 .foregroundStyle(LoomColors.textPrimary)
-                            Text("Attach a session to an agent that is already running, or end a stale one.")
+                            Text("Open only when you need to create or end a session from mobile.")
                                 .font(LoomTypography.caption)
                                 .foregroundStyle(LoomColors.textTertiary)
                         }
@@ -313,187 +358,6 @@ struct OpsWorkSection: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    private var spawnCTA: some View {
-        NavigationLink {
-            SpawnAgentView(
-                viewModel: SpawnViewModel(apiClient: viewModel.apiClient),
-                broadcaster: broadcaster
-            )
-        } label: {
-            HStack(alignment: .center, spacing: LoomSpacing.sm) {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(LoomColors.accent)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Spawn a new agent")
-                        .font(LoomTypography.bodyMedium)
-                        .foregroundStyle(LoomColors.textPrimary)
-                    Text("Launch a headless runtime with a task. Use this when you don't already have an agent to attach to.")
-                        .font(LoomTypography.caption)
-                        .foregroundStyle(LoomColors.textSecondary)
-                        .multilineTextAlignment(.leading)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(LoomColors.accent)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var startSessionForm: some View {
-        VStack(alignment: .leading, spacing: LoomSpacing.sm) {
-            Text("Start Session")
-                .font(LoomTypography.bodyMedium)
-            Text("Binds a session to an agent-context server so a live agent can record work against it.")
-                .font(LoomTypography.caption)
-                .foregroundStyle(LoomColors.textTertiary)
-
-            TextField("Agent ID (e.g. claude-code-…)", text: $createAgentID)
-                .textFieldStyle(.roundedBorder)
-                .autocorrectionDisabled()
-                #if os(iOS)
-                .textInputAutocapitalization(.never)
-                #endif
-
-            projectPicker
-
-            TextField("Description (optional)", text: $createDescription)
-                .textFieldStyle(.roundedBorder)
-            Toggle("Auto recall", isOn: $createAutoRecall)
-
-            Button {
-                viewModel.clearMutationMessages()
-                showCreateConfirmation = true
-            } label: {
-                if viewModel.isMutatingSession {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                } else {
-                    Text("Start Session")
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canStartSession)
-
-            if let hint = startSessionDisabledHint {
-                Text(hint)
-                    .font(LoomTypography.caption)
-                    .foregroundStyle(LoomColors.textTertiary)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var projectPicker: some View {
-        if let projects = viewModel.spawnConfig?.projects, !projects.isEmpty {
-            Menu {
-                Button("No namespace") {
-                    createProject = ""
-                    useCustomNamespace = false
-                }
-                ForEach(projects) { project in
-                    Button(project.name) {
-                        createProject = project.name
-                        useCustomNamespace = false
-                    }
-                }
-                Divider()
-                Button("Custom namespace…") {
-                    useCustomNamespace = true
-                }
-            } label: {
-                HStack {
-                    Image(systemName: "folder")
-                        .foregroundStyle(LoomColors.accent)
-                    Text(projectPickerLabel)
-                        .foregroundStyle(LoomColors.textPrimary)
-                    Spacer()
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(LoomColors.textTertiary)
-                }
-                .padding(.horizontal, LoomSpacing.sm)
-                .padding(.vertical, 10)
-                .background(LoomColors.bgElevated, in: RoundedRectangle(cornerRadius: 8))
-            }
-
-            if useCustomNamespace {
-                TextField("Namespace", text: $createNamespaceOverride)
-                    .textFieldStyle(.roundedBorder)
-                    .autocorrectionDisabled()
-                    #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    #endif
-            }
-        } else {
-            TextField("Namespace (optional)", text: $createNamespaceOverride)
-                .textFieldStyle(.roundedBorder)
-                .autocorrectionDisabled()
-                #if os(iOS)
-                .textInputAutocapitalization(.never)
-                #endif
-        }
-    }
-
-    private var projectPickerLabel: String {
-        if useCustomNamespace {
-            return "Custom: \(createNamespaceOverride.isEmpty ? "enter namespace" : createNamespaceOverride)"
-        }
-        return createProject.isEmpty ? "Select project" : createProject
-    }
-
-    private var endSessionForm: some View {
-        VStack(alignment: .leading, spacing: LoomSpacing.sm) {
-            Text("End Session")
-                .font(LoomTypography.bodyMedium)
-            TextField("Session ID", text: $endSessionID)
-                .textFieldStyle(.roundedBorder)
-                .autocorrectionDisabled()
-                #if os(iOS)
-                .textInputAutocapitalization(.never)
-                #endif
-            Toggle("Include summary", isOn: $endWithSummary)
-
-            Button(role: .destructive) {
-                viewModel.clearMutationMessages()
-                showEndConfirmation = true
-            } label: {
-                if viewModel.isMutatingSession {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                } else {
-                    Text("End Session")
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .buttonStyle(.bordered)
-            .disabled(endSessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isMutatingSession)
-        }
-    }
-
-    private var resolvedCreateNamespace: String {
-        if useCustomNamespace {
-            return createNamespaceOverride
-        }
-        return createProject
-    }
-
-    private var canStartSession: Bool {
-        !createAgentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !viewModel.isMutatingSession
-    }
-
-    private var startSessionDisabledHint: String? {
-        if viewModel.isMutatingSession { return nil }
-        if createAgentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "Enter an Agent ID to start a session."
-        }
-        return nil
     }
 
     // MARK: - Helpers
