@@ -1908,6 +1908,7 @@ platform_permissions:
       - "TaskOutput"
       - "TaskStop"
       - "KillShell"
+      - "Monitor"
 
   codex:
     settings:
