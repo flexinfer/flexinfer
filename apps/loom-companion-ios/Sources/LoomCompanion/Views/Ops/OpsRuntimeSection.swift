@@ -13,22 +13,19 @@ struct OpsRuntimeSection: View {
 
     var body: some View {
         VStack(spacing: LoomSpacing.cardSpacing) {
-            spawnLauncherCard
+            presenceCard
                 .cardAppear(index: 0)
 
-            presenceCard
+            claimsWorktreesCard
                 .cardAppear(index: 1)
 
-            claimsWorktreesCard
+            gatewayDaemonCard
                 .cardAppear(index: 2)
 
-            gatewayDaemonCard
+            sandboxCard
                 .cardAppear(index: 3)
 
-            sandboxCard
-                .cardAppear(index: 4)
-
-            Text("Presence remains read-only in mobile.")
+            Text("Presence remains read-only in mobile. Spawn agents from the Spawn tab.")
                 .font(LoomTypography.caption)
                 .foregroundStyle(LoomColors.textTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -48,31 +45,6 @@ struct OpsRuntimeSection: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This triggers sandbox start/build for the selected project.")
-        }
-    }
-
-    // MARK: - Spawn Launcher
-
-    private var spawnLauncherCard: some View {
-        NavigationLink {
-            SpawnAgentView(viewModel: SpawnViewModel(apiClient: viewModel.apiClient), broadcaster: broadcaster)
-        } label: {
-            LoomCard {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Launch Runtime")
-                            .font(LoomTypography.headlineMedium)
-                            .foregroundStyle(LoomColors.textPrimary)
-                        Text("Spawn a headless agent or warm a sandbox when you need to create capacity.")
-                            .font(LoomTypography.caption)
-                            .foregroundStyle(LoomColors.textSecondary)
-                    }
-                    Spacer()
-                    Image(systemName: "play.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(LoomColors.accent)
-                }
-            }
         }
     }
 

@@ -4,12 +4,10 @@ import LoomCompanionKit
 /// Work section: tasks, legacy workflows/approvals, and session controls.
 struct OpsWorkSection: View {
     @Bindable var viewModel: OpsViewModel
-    var broadcaster: SSEEventBroadcaster?
     @State private var taskDisplayLimit = 8
     @State private var workflowDisplayLimit = 8
     @State private var showLegacyWorkflows = false
     @State private var showSessionControls = false
-    @State private var showSpawnSheet = false
 
     @State private var createAgentID = ""
     @State private var createProject: String = ""
@@ -80,19 +78,6 @@ struct OpsWorkSection: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(endWithSummary ? "This will end the session and request a summary." : "This will end the session without summary.")
-        }
-        .sheet(isPresented: $showSpawnSheet) {
-            NavigationStack {
-                SpawnAgentView(
-                    viewModel: SpawnViewModel(apiClient: viewModel.apiClient),
-                    broadcaster: broadcaster
-                )
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close") { showSpawnSheet = false }
-                    }
-                }
-            }
         }
     }
 
@@ -338,14 +323,10 @@ struct OpsWorkSection: View {
     }
 
     // Content is only built when the disclosure is open, so the eager-render
-    // path on Work-tab entry never touches SpawnViewModel / SpawnAgentView /
-    // project-picker Menu. Prevents the 4558c12a crash that forced MR !220.
+    // path on Work-tab entry stays lightweight. Prevents the 4558c12a crash
+    // that forced MR !220.
     private var sessionControlsExpandedContent: some View {
         VStack(alignment: .leading, spacing: LoomSpacing.md) {
-            spawnCTA
-
-            Divider()
-
             Text("Start Session")
                 .font(LoomTypography.bodyMedium)
             Text("Binds a session to an agent-context server so a live agent can record work against it.")
@@ -411,34 +392,6 @@ struct OpsWorkSection: View {
         }
     }
 
-    // Plain Button + sheet(isPresented:) — SpawnAgentView (and its
-    // SpawnViewModel) are instantiated lazily only when the sheet opens, so
-    // we avoid the NavigationLink-in-DisclosureGroup eager-evaluation trap.
-    private var spawnCTA: some View {
-        Button {
-            showSpawnSheet = true
-        } label: {
-            HStack(alignment: .center, spacing: LoomSpacing.sm) {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(LoomColors.accent)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Spawn a new agent")
-                        .font(LoomTypography.bodyMedium)
-                        .foregroundStyle(LoomColors.textPrimary)
-                    Text("Launch a headless runtime with a task. Use this when you don't already have an agent to attach to.")
-                        .font(LoomTypography.caption)
-                        .foregroundStyle(LoomColors.textSecondary)
-                        .multilineTextAlignment(.leading)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(LoomColors.accent)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
 
     // Dedupes by name via `uniqueSpawnProjects` and keys ForEach on array index
     // so duplicate server-side project names can't trigger an Identifiable-id
