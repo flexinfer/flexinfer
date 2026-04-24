@@ -33,8 +33,19 @@ metadata:
   namespace: flexinfer-system
   annotations:
     flexinfer.ai/promotion-gate: quantized-artifact-v1
-    flexinfer.ai/promotion-state: conservative-on-demand-baseline
-    flexinfer.ai/promotion-requires: validated-canary-before-alias-or-default-change
+    # 2026-04-24: re-quant (MR !182) produced a clean artifact — all 17
+    # sampled layers have distinct per-projection qweight hashes (no more
+    # 40-59 hash collision from the 2026-04-21 build), keqv postprocess
+    # re-ran, and the serving pod returned coherent text end-to-end
+    # ("Paris", fibonacci code). Benchmark: 33 tok/s single-stream, 105
+    # tok/s agg at C=4 (pre-eager/ctx-bump). This stamps the gate so the
+    # controller can actually honor minReplicas=1 + warmPolicy=primary
+    # (PromotionGate condition was blocking the pod from spawning after
+    # the !188 maxModelLen bump).
+    flexinfer.ai/promotion-state: validated-3072-baseline
+    flexinfer.ai/promotion-validation: passed
+    flexinfer.ai/promotion-evidence: services/flexinfer!182,!185,!188
+    flexinfer.ai/promotion-requires: target-context-validation-before-promotion
     flexinfer.ai/cache-source-ready-job: gemma4-31b-keqv-postprocess-v3
 spec:
   backend: vllm
