@@ -22,6 +22,8 @@ metadata:
   annotations:
     flexinfer.ai/promotion-gate: quantized-artifact-v1
     flexinfer.ai/promotion-state: baseline-8k-validated
+    flexinfer.ai/promotion-validation: passed
+    flexinfer.ai/promotion-evidence: docs/dev/gemma4-rocm-status.md#latest-baseline
     flexinfer.ai/promotion-requires: target-context-validation-before-promotion
 spec:
   backend: vllm

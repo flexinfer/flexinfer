@@ -78,6 +78,8 @@ const (
 	ConditionModelSchedulable = "Schedulable"
 	// ConditionConfigValid indicates whether the model's config is conflict-free
 	ConditionConfigValid = "ConfigValid"
+	// ConditionPromotionGate indicates whether a gated quantized artifact may be promoted to a warm primary.
+	ConditionPromotionGate = "PromotionGate"
 )
 
 // Condition reasons for Model status
@@ -106,6 +108,14 @@ const (
 	ReasonAliasConflict = "AliasConflict"
 	// ReasonConfigValid - model config has no conflicts
 	ReasonConfigValid = "ConfigValid"
+	// ReasonPromotionGateNotRequired - no promotion gate is configured
+	ReasonPromotionGateNotRequired = "PromotionGateNotRequired"
+	// ReasonPromotionGateCanary - the gated artifact is canary/scale-to-zero only
+	ReasonPromotionGateCanary = "PromotionGateCanary"
+	// ReasonPromotionGateValidated - validation evidence permits primary promotion
+	ReasonPromotionGateValidated = "PromotionGateValidated"
+	// ReasonPromotionGateBlocked - validation evidence is missing for primary promotion
+	ReasonPromotionGateBlocked = "PromotionGateBlocked"
 )
 
 // KVCachePressurePolicy defines how to react to KV-cache pressure.
