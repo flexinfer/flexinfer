@@ -11,6 +11,8 @@ public struct UnifiedAgent: Decodable, Identifiable, Sendable {
     public let branch: String
     public let lastHeartbeat: String
     public let sessionId: String?
+    public let parentSessionId: String?
+    public let rootSessionId: String?
     public let namespace: String?
     public let sessionStatus: String?
     public let sessionStartedAt: String?
@@ -47,6 +49,8 @@ public struct UnifiedAgent: Decodable, Identifiable, Sendable {
         case branch
         case lastHeartbeat = "last_heartbeat"
         case sessionId = "session_id"
+        case parentSessionId = "parent_session_id"
+        case rootSessionId = "root_session_id"
         case namespace
         case sessionStatus = "session_status"
         case sessionStartedAt = "session_started_at"
@@ -81,6 +85,8 @@ public struct UnifiedAgent: Decodable, Identifiable, Sendable {
         self.branch = try container.decodeIfPresent(String.self, forKey: .branch) ?? ""
         self.lastHeartbeat = try container.decodeIfPresent(String.self, forKey: .lastHeartbeat) ?? ""
         self.sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
+        self.parentSessionId = try container.decodeIfPresent(String.self, forKey: .parentSessionId)
+        self.rootSessionId = try container.decodeIfPresent(String.self, forKey: .rootSessionId)
         self.namespace = try container.decodeIfPresent(String.self, forKey: .namespace)
         self.sessionStatus = try container.decodeIfPresent(String.self, forKey: .sessionStatus)
         self.sessionStartedAt = try container.decodeIfPresent(String.self, forKey: .sessionStartedAt)

@@ -235,6 +235,8 @@ type unifiedAgent struct {
 	Branch           string   `json:"branch"`
 	LastHeartbeat    string   `json:"last_heartbeat"`
 	SessionID        string   `json:"session_id,omitempty"`
+	ParentSessionID  string   `json:"parent_session_id,omitempty"`
+	RootSessionID    string   `json:"root_session_id,omitempty"`
 	Namespace        string   `json:"namespace,omitempty"`
 	SessionStatus    string   `json:"session_status,omitempty"`
 	SessionStarted   string   `json:"session_started_at,omitempty"`
@@ -273,6 +275,7 @@ func TestMobileAgentsContract(t *testing.T) {
 			Branch:          "feat/feature-x",
 			LastHeartbeat:   "2025-01-15T10:29:55Z",
 			SessionID:       "sess_abc123",
+			RootSessionID:   "sess_abc123",
 			Namespace:       "project/feature-x",
 			SessionStatus:   "active",
 			SessionStarted:  "2025-01-15T10:00:00Z",
@@ -285,6 +288,24 @@ func TestMobileAgentsContract(t *testing.T) {
 			ClaimCount:      2,
 		},
 		{
+			AgentID:         "claude-code-sub-1",
+			AgentType:       "claude-code",
+			Status:          "active",
+			Source:          "presence",
+			Description:     "Subagent exploring payment module",
+			Branch:          "feat/feature-x",
+			LastHeartbeat:   "2025-01-15T10:29:50Z",
+			SessionID:       "sess_sub_xyz",
+			ParentSessionID: "sess_abc123",
+			RootSessionID:   "sess_abc123",
+			Namespace:       "project/feature-x",
+			SessionStatus:   "active",
+			SessionStarted:  "2025-01-15T10:20:00Z",
+			EntryCount:      8,
+			TotalTokens:     1200,
+			NeedsAttention:  false,
+		},
+		{
 			AgentID:        "gemini-1",
 			AgentType:      "gemini",
 			Status:         "idle",
@@ -295,10 +316,10 @@ func TestMobileAgentsContract(t *testing.T) {
 		},
 	}
 	summary := unifiedAgentsSummary{
-		TotalAgents:  2,
-		ActiveAgents: 1,
+		TotalAgents:  3,
+		ActiveAgents: 2,
 		IdleAgents:   1,
-		WithSessions: 1,
+		WithSessions: 2,
 	}
 	resp := map[string]any{
 		"agents":  agents,
@@ -314,14 +335,27 @@ func TestMobileAgentsContract(t *testing.T) {
 func TestMobileSessionsContract(t *testing.T) {
 	sessions := []bridge.SessionInfo{
 		{
-			ID:          "sess_abc123",
-			AgentID:     "claude-code-1",
-			Namespace:   "project/feature-x",
-			StartedAt:   "2025-01-15T10:00:00Z",
-			Status:      "active",
-			Description: "Working on feature X",
-			EntryCount:  42,
-			TotalTokens: 8500,
+			ID:            "sess_abc123",
+			AgentID:       "claude-code-1",
+			Namespace:     "project/feature-x",
+			StartedAt:     "2025-01-15T10:00:00Z",
+			Status:        "active",
+			Description:   "Working on feature X",
+			EntryCount:    42,
+			TotalTokens:   8500,
+			RootSessionID: "sess_abc123",
+		},
+		{
+			ID:              "sess_sub_xyz",
+			AgentID:         "claude-code-sub-1",
+			Namespace:       "project/feature-x",
+			StartedAt:       "2025-01-15T10:20:00Z",
+			Status:          "active",
+			Description:     "Subagent exploring payment module",
+			EntryCount:      8,
+			TotalTokens:     1200,
+			ParentSessionID: "sess_abc123",
+			RootSessionID:   "sess_abc123",
 		},
 		{
 			ID:          "sess_def456",

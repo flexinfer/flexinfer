@@ -8,7 +8,20 @@
       "status": "active",
       "description": "Working on feature X",
       "entry_count": 42,
-      "total_tokens": 8500
+      "total_tokens": 8500,
+      "root_session_id": "sess_abc123"
+    },
+    {
+      "id": "sess_sub_xyz",
+      "agent_id": "claude-code-sub-1",
+      "namespace": "project/feature-x",
+      "started_at": "2025-01-15T10:20:00Z",
+      "status": "active",
+      "description": "Subagent exploring payment module",
+      "entry_count": 8,
+      "total_tokens": 1200,
+      "parent_session_id": "sess_abc123",
+      "root_session_id": "sess_abc123"
     },
     {
       "id": "sess_def456",

@@ -10,6 +10,7 @@
       "branch": "feat/feature-x",
       "last_heartbeat": "2025-01-15T10:29:55Z",
       "session_id": "sess_abc123",
+      "root_session_id": "sess_abc123",
       "namespace": "project/feature-x",
       "session_status": "active",
       "session_started_at": "2025-01-15T10:00:00Z",
@@ -20,6 +21,29 @@
       "task_count": 5,
       "blocked_tasks": 1,
       "claim_count": 2
+    },
+    {
+      "agent_id": "claude-code-sub-1",
+      "agent_type": "claude-code",
+      "status": "active",
+      "source": "presence",
+      "description": "Subagent exploring payment module",
+      "current_task": "",
+      "branch": "feat/feature-x",
+      "last_heartbeat": "2025-01-15T10:29:50Z",
+      "session_id": "sess_sub_xyz",
+      "parent_session_id": "sess_abc123",
+      "root_session_id": "sess_abc123",
+      "namespace": "project/feature-x",
+      "session_status": "active",
+      "session_started_at": "2025-01-15T10:20:00Z",
+      "entry_count": 8,
+      "total_tokens": 1200,
+      "active_file_count": 0,
+      "needs_attention": false,
+      "task_count": 0,
+      "blocked_tasks": 0,
+      "claim_count": 0
     },
     {
       "agent_id": "gemini-1",
@@ -40,11 +64,11 @@
     }
   ],
   "summary": {
-    "total_agents": 2,
-    "active_agents": 1,
+    "total_agents": 3,
+    "active_agents": 2,
     "idle_agents": 1,
     "offline_agents": 0,
     "spawned_agents": 0,
-    "with_sessions": 1
+    "with_sessions": 2
   }
 }

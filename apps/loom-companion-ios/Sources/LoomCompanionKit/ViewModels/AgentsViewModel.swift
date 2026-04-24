@@ -166,6 +166,30 @@ public final class AgentsViewModel {
     }
 
     private func groupDescriptor(for agent: UnifiedAgent) -> (id: String, title: String, subtitle: String?) {
+        // Codex infrastructure sessions (keepalive wrapper / heartbeat bootstrap)
+        // cluster by namespace so they don't fragment the roster.
+        if let infraKey = codexInfrastructureGroupKey(for: agent) {
+            return (
+                infraKey,
+                "Codex infrastructure",
+                normalized(agent.namespace)
+            )
+        }
+
+        // Primary: session-hierarchy grouping so subagents cluster under their
+        // spawning root. Mirrors web HUD PresenceAgentsTab.groupKeyFor().
+        if let root = normalized(agent.rootSessionId) ?? normalized(agent.sessionId) {
+            let title = normalized(agent.project)?.components(separatedBy: "/").last
+                ?? normalized(agent.namespace)?.components(separatedBy: "/").last
+                ?? displayAgentType(agent.agentType)
+            let subtitle = normalized(agent.project)
+                ?? normalized(agent.namespace).map { "Namespace \($0)" }
+                ?? normalized(agent.branch).map { "Branch \($0)" }
+                ?? "Session \(String(root.prefix(8)))"
+            return ("session:\(root)", title, subtitle)
+        }
+
+        // Fallbacks for presence-only agents without any session binding.
         if let project = normalized(agent.project) {
             return (
                 "project:\(project)",
@@ -187,19 +211,33 @@ public final class AgentsViewModel {
                 "Branch group"
             )
         }
-        let runtime = displayAgentType(agent.agentType)
+        // No signals at all: group per-agent so each row still has its own
+        // header instead of collapsing into a runtime bucket.
         return (
-            "runtime:\(runtime.lowercased())",
-            runtime,
-            "Ungrouped runtime"
+            "agent:\(agent.agentId)",
+            displayAgentType(agent.agentType),
+            agent.agentId
         )
     }
 
+    private func codexInfrastructureGroupKey(for agent: UnifiedAgent) -> String? {
+        let typeBlob = "\(agent.agentType) \(agent.agentId)".lowercased()
+        guard typeBlob.contains("codex") else { return nil }
+        let desc = agent.description.lowercased()
+        let isInfra = desc.contains("keepalive wrapper session")
+            || desc.contains("heartbeat bootstrap session")
+        guard isInfra, let namespace = normalized(agent.namespace) else { return nil }
+        return "codex-infra:\(namespace)"
+    }
+
     private func groupSortRank(_ id: String) -> Int {
-        if id.hasPrefix("project:") { return 0 }
-        if id.hasPrefix("namespace:") { return 1 }
-        if id.hasPrefix("branch:") { return 2 }
-        return 3
+        if id.hasPrefix("session:") { return 0 }
+        if id.hasPrefix("project:") { return 1 }
+        if id.hasPrefix("namespace:") { return 2 }
+        if id.hasPrefix("branch:") { return 3 }
+        if id.hasPrefix("agent:") { return 4 }
+        if id.hasPrefix("codex-infra:") { return 5 }
+        return 6
     }
 
     private func normalized(_ value: String?) -> String? {

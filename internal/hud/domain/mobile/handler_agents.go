@@ -271,6 +271,8 @@ func (d *MobileDomain) handleMobileAgents(w http.ResponseWriter, r *http.Request
 				ua.Project = projectmeta.Canonical(sess.Project, sess.Namespace)
 				ua.EntryCount = sess.EntryCount
 				ua.TotalTokens = sess.TotalTokens
+				ua.ParentSessionID = sess.ParentSessionID
+				ua.RootSessionID = sess.RootSessionID
 				if ua.Description == "" {
 					ua.Description = sess.Description
 				}
