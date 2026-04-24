@@ -197,6 +197,7 @@ struct OpsView: View {
         } else {
             OpsWorkSection(
                 viewModel: viewModel,
+                broadcaster: broadcaster,
                 prefillEndSession: { sessionID in
                     prefillEndSession(with: sessionID)
                 }
