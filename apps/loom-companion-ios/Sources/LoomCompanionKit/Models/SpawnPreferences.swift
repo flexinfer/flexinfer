@@ -11,6 +11,7 @@ public enum SpawnPreferences {
         static let lastAgentType = "spawn.lastAgentType"
         static let lastProject = "spawn.lastProject"
         static let lastBranch = "spawn.lastBranch"
+        static let templates = "spawn.templates"
     }
 
     public struct Snapshot: Equatable, Sendable {
@@ -45,6 +46,57 @@ public enum SpawnPreferences {
         defaults.set(snapshot.agentType.rawValue, forKey: Keys.lastAgentType)
         defaults.set(snapshot.project, forKey: Keys.lastProject)
         defaults.set(snapshot.branch, forKey: Keys.lastBranch)
+    }
+
+    // MARK: - Templates
+
+    /// Load user-saved templates from App Group storage. Malformed entries are
+    /// skipped silently so a corrupted write never prevents the tab from
+    /// loading.
+    public static func loadTemplates() -> [SpawnTemplate] {
+        guard let defaults = UserDefaults(suiteName: appGroupID),
+              let data = defaults.data(forKey: Keys.templates)
+        else { return [] }
+        return (try? JSONDecoder().decode([SpawnTemplate].self, from: data)) ?? []
+    }
+
+    /// Persist the full template array; callers are expected to mutate the
+    /// array returned from `loadTemplates()` and hand the result back.
+    public static func saveTemplates(_ templates: [SpawnTemplate]) {
+        guard let defaults = UserDefaults(suiteName: appGroupID) else { return }
+        guard let data = try? JSONEncoder().encode(templates) else { return }
+        defaults.set(data, forKey: Keys.templates)
+    }
+}
+
+/// A user-saved spawn configuration. Gets surfaced as a chip row on the Spawn
+/// tab so operators can re-run a common "agent + project + branch + task
+/// scaffold" combination with one tap.
+public struct SpawnTemplate: Codable, Identifiable, Hashable, Sendable {
+    public let id: UUID
+    public var name: String
+    public var agentType: AgentType
+    public var project: String
+    public var branch: String
+    public var taskTemplate: String
+    public var createdAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        agentType: AgentType,
+        project: String,
+        branch: String,
+        taskTemplate: String,
+        createdAt: Date = .now
+    ) {
+        self.id = id
+        self.name = name
+        self.agentType = agentType
+        self.project = project
+        self.branch = branch
+        self.taskTemplate = taskTemplate
+        self.createdAt = createdAt
     }
 }
 

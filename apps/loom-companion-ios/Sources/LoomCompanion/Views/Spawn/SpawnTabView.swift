@@ -21,6 +21,11 @@ struct SpawnTabView: View {
     @State private var showMoreOptions = false
     @State private var showConfirmation = false
 
+    @State private var templates: [SpawnTemplate] = []
+    @State private var showSaveTemplateSheet = false
+    @State private var templateBeingRenamed: SpawnTemplate?
+    @State private var renameDraft: String = ""
+
     init(apiClient: APIClient?, broadcaster: SSEEventBroadcaster? = nil) {
         self.apiClient = apiClient
         self.broadcaster = broadcaster
@@ -31,11 +36,15 @@ struct SpawnTabView: View {
         _agentType = State(initialValue: prefs.agentType)
         _project = State(initialValue: prefs.project)
         _branch = State(initialValue: prefs.branch)
+        _templates = State(initialValue: SpawnPreferences.loadTemplates())
     }
 
     var body: some View {
         List {
             quickSpawnSection
+            if !templates.isEmpty {
+                templatesSection
+            }
             presetsSection
             moreOptionsSection
             activeSpawnsSection
@@ -60,6 +69,29 @@ struct SpawnTabView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Launch \(agentType.displayName) on \(project.isEmpty ? "(no project)" : project)\(branch.isEmpty ? "" : " @ \(branch)") to work on:\n\n\(taskDescription)")
+        }
+        .sheet(isPresented: $showSaveTemplateSheet) {
+            SaveTemplateSheet(
+                agentType: agentType,
+                project: project,
+                branch: branch,
+                taskDescription: taskDescription,
+                onSave: { name in
+                    addTemplate(name: name)
+                    showSaveTemplateSheet = false
+                },
+                onCancel: { showSaveTemplateSheet = false }
+            )
+        }
+        .sheet(item: $templateBeingRenamed) { template in
+            RenameTemplateSheet(
+                initialName: template.name,
+                onSave: { newName in
+                    renameTemplate(template.id, to: newName)
+                    templateBeingRenamed = nil
+                },
+                onCancel: { templateBeingRenamed = nil }
+            )
         }
     }
 
@@ -87,6 +119,16 @@ struct SpawnTabView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!isFormValid || viewModel.isSpawning)
 
+                Button {
+                    showSaveTemplateSheet = true
+                } label: {
+                    Label("Save as template…", systemImage: "bookmark")
+                        .font(LoomTypography.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(LoomColors.accent)
+                .disabled(!canSaveTemplate)
+
                 if let hint = disabledHint {
                     Text(hint)
                         .font(LoomTypography.caption)
@@ -97,6 +139,10 @@ struct SpawnTabView: View {
         } header: {
             Text("Quick Spawn")
         }
+    }
+
+    private var canSaveTemplate: Bool {
+        !project.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var quickSpawnHeaderChips: some View {
@@ -179,6 +225,99 @@ struct SpawnTabView: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Templates
+
+    private var templatesSection: some View {
+        Section {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: LoomSpacing.xs) {
+                    ForEach(templates) { template in
+                        templateChip(template)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+        } header: {
+            HStack {
+                Text("Saved templates")
+                Spacer()
+                Text("\(templates.count)")
+                    .font(LoomTypography.caption)
+                    .foregroundStyle(LoomColors.textTertiary)
+            }
+        } footer: {
+            Text("Tap a saved template to load its agent, project, branch, and task. Long-press to rename or delete.")
+                .font(LoomTypography.caption)
+        }
+    }
+
+    private func templateChip(_ template: SpawnTemplate) -> some View {
+        Button {
+            applyTemplate(template)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "bookmark.fill")
+                    .font(.caption)
+                Text(template.name)
+                    .font(LoomTypography.bodyMedium)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(LoomColors.bgElevated, in: Capsule())
+            .foregroundStyle(LoomColors.textPrimary)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                templateBeingRenamed = template
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            Button(role: .destructive) {
+                deleteTemplate(template.id)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+
+    private func applyTemplate(_ template: SpawnTemplate) {
+        agentType = template.agentType
+        project = template.project
+        branch = template.branch
+        taskDescription = template.taskTemplate
+        selectedPresetID = nil
+    }
+
+    private func addTemplate(name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let template = SpawnTemplate(
+            name: trimmed,
+            agentType: agentType,
+            project: project,
+            branch: branch,
+            taskTemplate: taskDescription
+        )
+        templates.append(template)
+        SpawnPreferences.saveTemplates(templates)
+    }
+
+    private func deleteTemplate(_ id: UUID) {
+        templates.removeAll { $0.id == id }
+        SpawnPreferences.saveTemplates(templates)
+    }
+
+    private func renameTemplate(_ id: UUID, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let idx = templates.firstIndex(where: { $0.id == id }) else { return }
+        templates[idx].name = trimmed
+        SpawnPreferences.saveTemplates(templates)
     }
 
     // MARK: - More Options
@@ -385,5 +524,103 @@ private func spawnStatusColor(_ status: String) -> Color {
     case "failed": return LoomColors.statusCritical
     case "stopped": return LoomColors.statusDegraded
     default: return LoomColors.textTertiary
+    }
+}
+
+// MARK: - Save Template Sheet
+
+private struct SaveTemplateSheet: View {
+    let agentType: AgentType
+    let project: String
+    let branch: String
+    let taskDescription: String
+    let onSave: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var name: String = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Template name") {
+                    TextField("e.g. Fix CI failures on main", text: $name)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.sentences)
+                        #endif
+                }
+                Section("Captures") {
+                    LabeledContent("Agent", value: agentType.displayName)
+                    LabeledContent("Project", value: project.isEmpty ? "—" : project)
+                    if !branch.isEmpty {
+                        LabeledContent("Branch", value: branch)
+                    }
+                    if !taskDescription.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Task")
+                                .font(LoomTypography.caption)
+                                .foregroundStyle(LoomColors.textTertiary)
+                            Text(taskDescription)
+                                .font(LoomTypography.bodyRegular)
+                                .lineLimit(6)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Save template")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { onSave(name) }
+                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Rename Template Sheet
+
+private struct RenameTemplateSheet: View {
+    let initialName: String
+    let onSave: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var name: String
+
+    init(initialName: String, onSave: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+        self.initialName = initialName
+        self.onSave = onSave
+        self.onCancel = onCancel
+        _name = State(initialValue: initialName)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Template name") {
+                    TextField("Name", text: $name)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.sentences)
+                        #endif
+                }
+            }
+            .navigationTitle("Rename")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { onSave(name) }
+                        .disabled(
+                            name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                            name == initialName
+                        )
+                }
+            }
+        }
     }
 }
