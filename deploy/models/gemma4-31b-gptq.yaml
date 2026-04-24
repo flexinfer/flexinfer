@@ -106,28 +106,28 @@ spec:
   config:
     quantization: gptq
     dtype: "half"
-    # 2026-04-23: 4096 → 2048 → 1920 tuning on the -keqv artifact.
+    # 2026-04-24: 1920 → 3072 after reclaiming 1.31 GiB from disabling
+    # CUDAGraph. User hit the 1920 ceiling in litellm
+    # (ContextWindowExceededError on a 71-char prompt asking for 1920
+    # output tokens). vLLM profiling on the running pod showed:
+    #   Model loading took      20.02 GiB  (INT4 weights + scales + metadata)
+    #   Graph capturing took     1.31 GiB  (CUDAGraph payload)
+    #   Available KV cache mem   1.70 GiB  = 1,856 tokens @ ~0.844 MiB/tok
+    # 22.8 GiB (0.95 util × 24 GiB) is essentially fully consumed.
     #
-    # First load at 4096 hit:
-    #   ValueError: ... max seq len (4096), (2.67 GiB KV cache is needed,
-    #   which is larger than the available KV cache memory (1.7 GiB).
-    #   Based on the available memory, the estimated maximum model
-    #   length is 2000.
+    # Changes to widen the KV pool without model re-quant:
+    #   - enforceEager: true          → reclaim 1.31 GiB → ~+1,550 tokens
+    #   - maxNumSeqs: 4 → 2           → free activation memory (~+0.3 GiB)
+    #   - maxModelLen: 1920 → 3072    → 1.6× context, leaves headroom
     #
-    # Dropped 4096 → 2048 from the per-token-KV estimate (0.65 MiB,
-    # assumed linear), but vLLM actually measured per-token KV at
-    # ~0.844 MiB (heterogeneous attention + k_eq_v reshapes) → 2048
-    # needed 1.73 GiB, still 30 MiB over the 1.7 GiB budget:
-    #   ValueError: ... max seq len (2048), (1.73 GiB KV cache is
-    #   needed, ... (1.7 GiB). ... estimated maximum model length is 2000.
-    #
-    # 1920 = 2000 / multiple-of-64, keeps a comfortable headroom below
-    # vLLM's estimate and matches what the engine can actually allocate.
-    # Can be bumped if we add quant KV, lower maxNumSeqs, or reclaim
-    # activation memory.
-    maxModelLen: 1920
+    # gfx1100 does not support FP8 KV cache (hip-emu FP8 still MI300X+
+    # only on vLLM v1.x — backend/vllm.go:139 comment stands), so we can't
+    # lean on --kv-cache-dtype here; eager + fewer seqs are the
+    # recoverable levers. Follow-up could push 3072 → 4096 if vLLM v2
+    # lands gfx1100 fp8 OR we promote a smaller weight quant.
+    maxModelLen: 3072
     gpuMemoryUtilization: "0.95"
-    maxNumSeqs: 4
+    maxNumSeqs: 2
     trustRemoteCode: true
     attentionBackend: TRITON_ATTN
     # Force serving onto the discrete GPU only — the 7900xtx node exposes
@@ -148,6 +148,11 @@ spec:
     toolCallParser: gemma4
     reasoningParser: gemma4
     enablePrefixCaching: true
+    # 2026-04-24: disabled CUDAGraph to reclaim 1.31 GiB for a bigger KV
+    # pool (see the maxModelLen block above). Cost: ~5-10% per-step
+    # latency from kernel launch overhead that graphs would amortize.
+    # The tradeoff favours context over tok/s for user-facing chat.
+    enforceEager: true
     disableLogStats: false
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
