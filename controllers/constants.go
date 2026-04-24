@@ -68,6 +68,15 @@ const (
 	// admin override; normal operation should never rely on this.
 	AnnotationForceImageUpdate = "flexinfer.ai/force-image-update"
 
+	// Quantized artifact promotion gate annotations. A Model with
+	// AnnotationPromotionGate=quantized-artifact-v1 can run as a canary or
+	// scale-to-zero model without evidence, but warm-primary promotion requires
+	// validation evidence recorded on the object.
+	AnnotationPromotionGate       = "flexinfer.ai/promotion-gate"
+	AnnotationPromotionState      = "flexinfer.ai/promotion-state"
+	AnnotationPromotionValidation = "flexinfer.ai/promotion-validation"
+	AnnotationPromotionEvidence   = "flexinfer.ai/promotion-evidence"
+
 	// LiteLLM proxy annotations.
 	AnnotationLiteLLMServedModel     = "litellm.flexinfer.ai/served-model"
 	AnnotationLiteLLMAliases         = "litellm.flexinfer.ai/aliases"

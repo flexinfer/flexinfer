@@ -162,6 +162,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	r.checkAliasConflicts(ctx, model)
 
 	desiredReplicas := r.desiredReplicasForContext(ctx, model, b)
+	desiredReplicas = applyPromotionGate(model, desiredReplicas)
 	requeueAfter := requeueLong
 
 	// Initialize status based on desired state.
@@ -186,6 +187,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 		// Continue reconciliation even if queued/preempted; desiredReplicas will keep it at 0.
 		desiredReplicas = r.desiredReplicasForContext(ctx, model, b)
+		desiredReplicas = applyPromotionGate(model, desiredReplicas)
 		if result.Requeue {
 			return result, nil
 		}
