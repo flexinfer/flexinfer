@@ -39,6 +39,7 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
     var spawnTelemetryFilesResponse: SpawnTelemetryFilesPage?
     var spawnTelemetryErrorsResponse: SpawnTelemetryErrorsPage?
     var spawnControlAckResponse: SpawnControlAck?
+    var spawnConfigResponse: SpawnConfig?
 
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         if let specificError = endpointFailures[endpoint.path] {
@@ -113,7 +114,9 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
             if let r = spawnTelemetryErrorsResponse as? T { return r }
         case .spawnSendMessage, .spawnInterrupt:
             if let r = spawnControlAckResponse as? T { return r }
-        case .spawnAgent, .spawnList, .spawnConfig, .spawnDetail, .spawnStop,
+        case .spawnConfig:
+            if let r = spawnConfigResponse as? T { return r }
+        case .spawnAgent, .spawnList, .spawnDetail, .spawnStop,
              .agents, .workflowApprove, .workflowReject, .handoffs, .namespaces:
             break
         case .audit, .ping, .eventsStream:

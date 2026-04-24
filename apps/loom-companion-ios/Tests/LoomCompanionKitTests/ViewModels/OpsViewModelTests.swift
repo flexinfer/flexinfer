@@ -564,6 +564,37 @@ struct OpsViewModelTests {
         #expect(vm.mutationErrorMessage == "Agent ID is required")
     }
 
+    @Test("Load spawn config caches project list for session-start picker")
+    func loadSpawnConfigCaches() async {
+        let client = MockAPIClient()
+        client.spawnConfigResponse = SpawnConfig(
+            agentTypes: [SpawnAgentTypeInfo(id: "claude-code", name: "Claude Code", available: true)],
+            projects: [
+                SpawnProjectInfo(name: "loom-core", path: "/workspace/services/loom-core"),
+                SpawnProjectInfo(name: "flexinfer", path: "/workspace/services/flexinfer"),
+            ],
+            defaults: SpawnDefaults(agentType: "claude-code", baseBranch: "main", memoryMB: 2048, cpus: 2, timeoutMinutes: 60)
+        )
+        let vm = OpsViewModel(apiClient: client)
+        #expect(vm.spawnConfig == nil)
+
+        await vm.loadSpawnConfig()
+
+        #expect(vm.spawnConfig?.projects.count == 2)
+        #expect(vm.spawnConfig?.projects.first?.name == "loom-core")
+    }
+
+    @Test("Load spawn config failure leaves spawnConfig nil so picker falls back")
+    func loadSpawnConfigFailureSilent() async {
+        let client = MockAPIClient()
+        client.shouldFail = true
+        let vm = OpsViewModel(apiClient: client)
+
+        await vm.loadSpawnConfig()
+
+        #expect(vm.spawnConfig == nil)
+    }
+
     @Test("End session mutation requires session ID")
     func endSessionMutationValidation() async {
         let client = MockAPIClient()
