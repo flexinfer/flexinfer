@@ -633,6 +633,157 @@ func TestEnsureCachePvcSourceChangeCleansUpOldJob(t *testing.T) {
 	}
 }
 
+func TestEnsureCachePvcSourceReadyJobGatesCacheCopy(t *testing.T) {
+	model := modelWithCache("ready-gated", "flexinfer-system", "pvc://source-pvc/model-a", &aiv1alpha2.CacheSpec{
+		Strategy: "SharedPVC",
+	})
+	model.Annotations = map[string]string{
+		AnnotationCacheSourceReadyJob: "artifact-transform",
+	}
+	transformJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "artifact-transform",
+			Namespace: "flexinfer-system",
+		},
+		Status: batchv1.JobStatus{Active: 1},
+	}
+
+	r, cl := newModelCacheReconciler(t,
+		model,
+		sourcePVC("source-pvc", "flexinfer-system", corev1.ClaimBound),
+		cachePVC("ready-gated-cache", "flexinfer-system"),
+		transformJob,
+	)
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "vllm"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if ready {
+		t.Fatal("ensureCache() ready = true, want false while source-ready job runs")
+	}
+
+	cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+	assertCacheStatus(t, cached, false, "Pending", "waiting for source-ready job artifact-transform to complete", "CacheCopy", false)
+
+	copyJob := &batchv1.Job{}
+	err = cl.Get(context.Background(), types.NamespacedName{Name: "ready-gated-cache-copy", Namespace: model.Namespace}, copyJob)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("cache-copy job should not be created before source-ready job completes; get err=%v", err)
+	}
+}
+
+func TestEnsureCachePvcSourceReadyJobCompletionCreatesProvenanceAnnotatedCopy(t *testing.T) {
+	completedAt := metav1.NewTime(time.Date(2026, 4, 24, 15, 4, 5, 0, time.UTC))
+	model := modelWithCache("ready-complete", "flexinfer-system", "pvc://source-pvc/model-a", &aiv1alpha2.CacheSpec{
+		Strategy: "SharedPVC",
+	})
+	model.Annotations = map[string]string{
+		AnnotationCacheSourceReadyJob: "artifact-transform",
+	}
+	transformJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "artifact-transform",
+			Namespace: "flexinfer-system",
+			UID:       types.UID("transform-uid-1"),
+		},
+		Status: batchv1.JobStatus{
+			Succeeded:      1,
+			CompletionTime: &completedAt,
+		},
+	}
+
+	r, cl := newModelCacheReconciler(t,
+		model,
+		sourcePVC("source-pvc", "flexinfer-system", corev1.ClaimBound),
+		cachePVC("ready-complete-cache", "flexinfer-system"),
+		transformJob,
+	)
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "vllm"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if ready {
+		t.Fatal("ensureCache() ready = true, want false while new copy job runs")
+	}
+
+	copyJob := &batchv1.Job{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: "ready-complete-cache-copy", Namespace: model.Namespace}, copyJob); err != nil {
+		t.Fatalf("expected cache-copy job: %v", err)
+	}
+	if got := copyJob.Annotations[AnnotationCacheSourceReadyJob]; got != "artifact-transform" {
+		t.Fatalf("copy job ready-job annotation = %q, want artifact-transform", got)
+	}
+	if got := copyJob.Annotations[AnnotationCacheSourceReadyUID]; got != "transform-uid-1" {
+		t.Fatalf("copy job ready-job UID annotation = %q, want transform-uid-1", got)
+	}
+	if got := copyJob.Annotations[AnnotationCacheSourceReadyCompletedAt]; got != "2026-04-24T15:04:05Z" {
+		t.Fatalf("copy job ready-job completion annotation = %q, want 2026-04-24T15:04:05Z", got)
+	}
+}
+
+func TestEnsureCachePvcSourceReadyJobProvenanceChangeRecreatesFailedCopy(t *testing.T) {
+	completedAt := metav1.NewTime(time.Date(2026, 4, 24, 15, 4, 5, 0, time.UTC))
+	oldJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "provenance-drift-cache-copy",
+			Namespace: "flexinfer-system",
+			Annotations: map[string]string{
+				AnnotationSource:                      "pvc://source-pvc/model-a",
+				AnnotationCacheSourceReadyJob:         "artifact-transform",
+				AnnotationCacheSourceReadyUID:         "old-transform-uid",
+				AnnotationCacheSourceReadyCompletedAt: "2026-04-24T14:00:00Z",
+			},
+		},
+		Status: batchv1.JobStatus{Failed: 1},
+	}
+	model := modelWithCache("provenance-drift", "flexinfer-system", "pvc://source-pvc/model-a", &aiv1alpha2.CacheSpec{
+		Strategy: "SharedPVC",
+	})
+	model.Annotations = map[string]string{
+		AnnotationCacheSourceReadyJob: "artifact-transform",
+	}
+	transformJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "artifact-transform",
+			Namespace: "flexinfer-system",
+			UID:       types.UID("new-transform-uid"),
+		},
+		Status: batchv1.JobStatus{
+			Succeeded:      1,
+			CompletionTime: &completedAt,
+		},
+	}
+
+	r, cl := newModelCacheReconciler(t,
+		model,
+		sourcePVC("source-pvc", "flexinfer-system", corev1.ClaimBound),
+		cachePVC("provenance-drift-cache", "flexinfer-system"),
+		oldJob,
+		transformJob,
+	)
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "vllm"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if ready {
+		t.Fatal("ensureCache() ready = true, want false — stale failed copy should be recreated")
+	}
+
+	newJob := &batchv1.Job{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: "provenance-drift-cache-copy", Namespace: model.Namespace}, newJob); err != nil {
+		t.Fatalf("expected recreated cache-copy job: %v", err)
+	}
+	if got := newJob.Annotations[AnnotationCacheSourceReadyUID]; got != "new-transform-uid" {
+		t.Fatalf("new copy job ready-job UID annotation = %q, want new-transform-uid", got)
+	}
+	if newJob.Status.Failed != 0 {
+		t.Fatalf("new copy job should not inherit stale failure count, got %d", newJob.Status.Failed)
+	}
+}
+
 func TestEnsureCachePvcCheckJobFailed(t *testing.T) {
 	// Default pvc:// path with strategy=None runs a cache check job.
 	// Test the failed job path.

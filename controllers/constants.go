@@ -57,6 +57,13 @@ const (
 	AnnotationCacheDest   = "flexinfer.ai/cache-dest"
 	AnnotationCachePath   = "flexinfer.ai/cache-path"
 	AnnotationCacheSrcPVC = "flexinfer.ai/cache-src-pvc"
+	// AnnotationCacheSourceReadyJob makes cache-copy wait for an artifact
+	// transform Job before mounting a newly materialized source path. Copy Jobs
+	// record the ready Job's UID/completion time so stale failures can be
+	// recreated when the source artifact provenance changes.
+	AnnotationCacheSourceReadyJob         = "flexinfer.ai/cache-source-ready-job"
+	AnnotationCacheSourceReadyUID         = "flexinfer.ai/cache-source-ready-uid"
+	AnnotationCacheSourceReadyCompletedAt = "flexinfer.ai/cache-source-ready-completed-at"
 
 	AnnotationServiceLabels = "flexinfer.ai/service-labels"
 	AnnotationVRAMEstimate  = "flexinfer.ai/gpu.vram-estimate-mb"

@@ -5,7 +5,6 @@ namespace: flexinfer-system
 
 resources:
   - job.yaml
-  - cleanup-cache-copy.yaml
 
 # Generate the ConfigMap from postprocess.py in this same directory —
 # kustomize's security boundary is satisfied because the file is inside
