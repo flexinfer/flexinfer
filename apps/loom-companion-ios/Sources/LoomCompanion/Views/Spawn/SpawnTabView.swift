@@ -55,12 +55,14 @@ struct SpawnTabView: View {
             async let config: () = viewModel.loadConfig()
             async let spawns: () = viewModel.loadSpawns()
             _ = await (config, spawns)
+            await viewModel.refreshActiveTelemetry()
             if let broadcaster {
                 viewModel.startListening(broadcaster: broadcaster)
             }
         }
         .refreshable {
             await viewModel.loadSpawns()
+            await viewModel.refreshActiveTelemetry()
         }
         .alert("Spawn Agent?", isPresented: $showConfirmation) {
             Button("Spawn", role: .destructive) {
@@ -395,8 +397,25 @@ struct SpawnTabView: View {
                                 apiClient: viewModel.apiClient
                             )
                         } label: {
-                            SpawnRowView(spawn: spawn) {
-                                Task { await viewModel.stopSpawn(id: spawn.spawnId) }
+                            SpawnRowView(
+                                spawn: spawn,
+                                telemetry: viewModel.telemetryBySpawnID[spawn.spawnId]
+                            )
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            if spawn.isActive {
+                                Button(role: .destructive) {
+                                    Task { await viewModel.stopSpawn(id: spawn.spawnId) }
+                                } label: {
+                                    Label("Stop", systemImage: "stop.circle")
+                                }
+                            } else {
+                                Button {
+                                    Task { await viewModel.retrySpawn(spawn) }
+                                } label: {
+                                    Label("Retry", systemImage: "arrow.clockwise")
+                                }
+                                .tint(LoomColors.accent)
                             }
                         }
                     }
@@ -466,11 +485,12 @@ struct SpawnTabView: View {
     }
 }
 
-// Row displaying a single spawn's status. Replicated from the old
-// SpawnAgentView so the new Spawn tab body is self-contained.
+// Row displaying a single spawn's status with live telemetry chips. The Stop
+// action moved to a .swipeActions modifier in the parent list, so the row
+// itself stays free of per-row buttons.
 private struct SpawnRowView: View {
     let spawn: MobileSpawnStatus
-    let onStop: () -> Void
+    let telemetry: SpawnTelemetry?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -478,13 +498,15 @@ private struct SpawnRowView: View {
                 Text(spawn.request.project)
                     .font(.headline)
                 Spacer()
-                StatusBadge(spawn.status, color: spawnStatusColor(spawn.status))
+                StatusBadge(stageLabel, color: spawnStatusColor(spawn.status))
             }
 
             Text(spawn.request.taskDescription)
                 .font(.caption)
                 .foregroundStyle(LoomColors.textSecondary)
                 .lineLimit(2)
+
+            telemetryChips
 
             HStack {
                 Text(spawn.agentId)
@@ -497,14 +519,86 @@ private struct SpawnRowView: View {
                         .foregroundStyle(LoomColors.textTertiary)
                         .monospacedDigit()
                 }
-                if spawn.isActive {
-                    Button("Stop", role: .destructive, action: onStop)
-                        .font(.caption)
-                        .buttonStyle(.bordered)
-                }
             }
         }
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var telemetryChips: some View {
+        if let t = telemetry, hasMeaningfulTelemetry(t) {
+            HStack(spacing: 6) {
+                if t.turnCount > 0 {
+                    miniChip(icon: "arrow.triangle.2.circlepath", text: "\(t.turnCount) turn\(t.turnCount == 1 ? "" : "s")")
+                }
+                let tokens = totalTokens(t)
+                if tokens > 0 {
+                    miniChip(icon: "text.word.spacing", text: formatTokens(tokens))
+                }
+                if t.totalCostUSD > 0.0001 {
+                    miniChip(
+                        icon: "dollarsign.circle",
+                        text: "\(t.costEstimated ? "~" : "")\(formatCost(t.totalCostUSD))"
+                    )
+                }
+                Spacer()
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private func miniChip(icon: String, text: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.caption2)
+            Text(text)
+                .font(.caption2)
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(LoomColors.bgElevated, in: Capsule())
+        .foregroundStyle(LoomColors.textSecondary)
+    }
+
+    private func hasMeaningfulTelemetry(_ t: SpawnTelemetry) -> Bool {
+        t.turnCount > 0 || totalTokens(t) > 0 || t.totalCostUSD > 0.0001
+    }
+
+    private func totalTokens(_ t: SpawnTelemetry) -> Int {
+        t.tokenUsage.inputTokens
+            + t.tokenUsage.outputTokens
+            + t.tokenUsage.cacheCreationTokens
+            + t.tokenUsage.cacheReadTokens
+    }
+
+    private func formatTokens(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            return String(format: "%.1fM", Double(count) / 1_000_000)
+        }
+        if count >= 1_000 {
+            return String(format: "%.1fK", Double(count) / 1_000)
+        }
+        return "\(count)"
+    }
+
+    private func formatCost(_ usd: Double) -> String {
+        if usd >= 1.0 { return String(format: "$%.2f", usd) }
+        return String(format: "$%.3f", usd)
+    }
+
+    // Translates the raw status string into a slightly friendlier stage label
+    // so the badge reads as a lifecycle stage instead of an enum value. Keeps
+    // the underlying status for color mapping via spawnStatusColor.
+    private var stageLabel: String {
+        switch spawn.status {
+        case "creating": return "starting"
+        case "running": return "running"
+        case "completed": return "done"
+        case "failed": return "failed"
+        case "stopped": return "stopped"
+        default: return spawn.status
+        }
     }
 
     private var elapsedString: String? {

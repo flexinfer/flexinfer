@@ -10,6 +10,11 @@ public final class SpawnViewModel {
     public var isSpawning = false
     public var error: LoomAPIError?
 
+    /// Per-spawn telemetry (token usage, cost, turn count). Populated by
+    /// `refreshActiveTelemetry()` and re-fetched on active-spawn SSE deltas.
+    /// Used by the Spawn tab to render chips on each active row.
+    public var telemetryBySpawnID: [String: SpawnTelemetry] = [:]
+
     /// Exposed so sibling views (e.g. SpawnDetailView) can reuse the same
     /// client for telemetry sub-requests without requiring a separate
     /// injection path from `OpsView`.
@@ -65,6 +70,10 @@ public final class SpawnViewModel {
     private func handleSSEEvent(_ event: SSEEvent) async {
         if Self.refreshEventTypes.contains(event.type) {
             await loadSpawns()
+            // Spawn list just changed — re-fetch telemetry so the row chips
+            // (tokens / cost / turns) stay aligned with whatever just started
+            // or finished.
+            await refreshActiveTelemetry()
         } else if Self.liveStreamEventTypes.contains(event.type) {
             liveEvents.append(event)
             if liveEvents.count > 200 {
@@ -97,6 +106,49 @@ public final class SpawnViewModel {
         } catch {
             self.error = .networkError(underlying: error.localizedDescription)
         }
+    }
+
+    /// Fetch telemetry for every currently-active spawn in parallel. Best
+    /// effort: failures are swallowed silently so a single bad spawn id
+    /// doesn't wipe the whole chips row. Call periodically from the Spawn
+    /// tab (e.g., on SSE list-refresh) rather than on a tight timer.
+    public func refreshActiveTelemetry() async {
+        let activeIDs = spawns.filter(\.isActive).map(\.spawnId)
+        guard !activeIDs.isEmpty else { return }
+
+        await withTaskGroup(of: (String, SpawnTelemetry?).self) { group in
+            for id in activeIDs {
+                group.addTask { [apiClient] in
+                    let response: SpawnTelemetryResponse? = try? await apiClient.request(.spawnTelemetry(id: id))
+                    return (id, response?.telemetry)
+                }
+            }
+            for await (id, telemetry) in group {
+                if let telemetry {
+                    telemetryBySpawnID[id] = telemetry
+                }
+            }
+        }
+
+        // Drop telemetry for spawns that are no longer active / in the list
+        // so the dictionary doesn't grow unbounded over a long session.
+        let liveIDs = Set(spawns.map(\.spawnId))
+        telemetryBySpawnID = telemetryBySpawnID.filter { liveIDs.contains($0.key) }
+    }
+
+    /// Re-run a spawn with the same request params (project / branch / task /
+    /// agent-type). Returns the new spawn response on success; the active
+    /// list refreshes automatically via `spawnAgent`. Useful for one-tap
+    /// retry on failed/completed spawns.
+    @discardableResult
+    public func retrySpawn(_ spawn: MobileSpawnStatus) async -> MobileSpawnResponse? {
+        let agentType = AgentType(rawValue: spawn.request.agentType) ?? .claudeCode
+        return await spawnAgent(
+            agentType: agentType,
+            project: spawn.request.project,
+            branch: spawn.request.branch ?? "",
+            taskDescription: spawn.request.taskDescription
+        )
     }
 
     /// Spawn a new headless agent.
