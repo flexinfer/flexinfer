@@ -66,13 +66,11 @@ spec:
     priority: 200
   serverless:
     enabled: true
-    # 2026-04-23: promoted back to warm primary on 7900xtx-textgen. The
-    # 31B keqv artifact loaded cleanly (vLLM QKV shard check + KV cache
-    # both pass) but inference outputs pure <pad> — the GPTQ source
-    # artifact is corrupted on layers 40-59 (20 layers of repeated
-    # weights; see gemma4-31b-gptq.yaml). Until the 31B is re-quantized,
-    # this MoE variant is the textgen workhorse on the 7900 XTX.
-    minReplicas: 1
+    # 2026-04-24: demoted back to cold fallback. The 31B re-quant with
+    # nParallelCalibSamples=8 produced a clean artifact (distinct per-layer
+    # hashes verified), so 31B is warm primary in 7900xtx-textgen again
+    # and this MoE variant goes back to scale-to-zero on-demand.
+    minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 15m
   config:
@@ -103,11 +101,9 @@ spec:
     # hybrid manager unifies all specs to FullAttentionSpec, bypassing it.
     disableHybridKVCacheManager: true
     hipVisibleDevices: "0"
-    # 2026-04-23: back to primary — the 31B keqv artifact has dead
-    # layers (GPTQ corruption, see gemma4-31b-gptq.yaml). This MoE is
-    # the only workable warm textgen on 7900xtx-textgen until a
-    # re-quantized 31B lands.
-    warmPolicy: primary
+    # 2026-04-24: primary → ondemand. 31B re-quant verified clean, so
+    # the MoE is back to on-demand fallback in 7900xtx-textgen.
+    warmPolicy: ondemand
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:
