@@ -117,26 +117,23 @@ spec:
   config:
     quantization: gptq
     dtype: "half"
-    # 2026-04-24: 1920 → 3072 after reclaiming 1.31 GiB from disabling
-    # CUDAGraph. User hit the 1920 ceiling in litellm
-    # (ContextWindowExceededError on a 71-char prompt asking for 1920
-    # output tokens). vLLM profiling on the running pod showed:
-    #   Model loading took      20.02 GiB  (INT4 weights + scales + metadata)
-    #   Graph capturing took     1.31 GiB  (CUDAGraph payload)
-    #   Available KV cache mem   1.70 GiB  = 1,856 tokens @ ~0.844 MiB/tok
-    # 22.8 GiB (0.95 util × 24 GiB) is essentially fully consumed.
+    # 2026-04-24: 1920 → 3072 attempt failed at engine init. Theory was
+    # that enforceEager=true would reclaim the 1.31 GiB CUDAGraph
+    # payload and widen the KV pool enough for 3072 tokens. Reality
+    # check from the crashing pod:
+    #   ValueError: ... max seq len (3072), 2.59 GiB KV cache needed,
+    #   available 1.79 GiB. Estimated max = 2112 tokens.
+    # Eager actually only reclaimed 0.09 GiB of KV budget (1.70 → 1.79).
+    # Inductor/attention caches apparently refill whatever CUDAGraph
+    # vacates, so on gfx1100 for this model eager ≈ no-op memory-wise
+    # (but still kills CUDAGraph's decode-speed gain).
     #
-    # Changes to widen the KV pool without model re-quant:
-    #   - enforceEager: true          → reclaim 1.31 GiB → ~+1,550 tokens
-    #   - maxNumSeqs: 4 → 2           → free activation memory (~+0.3 GiB)
-    #   - maxModelLen: 1920 → 3072    → 1.6× context, leaves headroom
-    #
-    # gfx1100 does not support FP8 KV cache (hip-emu FP8 still MI300X+
-    # only on vLLM v1.x — backend/vllm.go:139 comment stands), so we can't
-    # lean on --kv-cache-dtype here; eager + fewer seqs are the
-    # recoverable levers. Follow-up could push 3072 → 4096 if vLLM v2
-    # lands gfx1100 fp8 OR we promote a smaller weight quant.
-    maxModelLen: 3072
+    # Scaled back to 2048 — a modest 6.7% bump over the original 1920
+    # that the vLLM ceiling of 2112 definitely supports. Keeps eager and
+    # maxNumSeqs=2 as they were already validated to boot.
+    # Real context unlock (8K-32K) requires TurboQuant KV codec canary;
+    # tracked separately (see !188 discussion for sequencing).
+    maxModelLen: 2048
     gpuMemoryUtilization: "0.95"
     maxNumSeqs: 2
     trustRemoteCode: true
