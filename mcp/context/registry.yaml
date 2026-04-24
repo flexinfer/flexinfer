@@ -1228,6 +1228,31 @@ servers:
         command: "${repo}/services/loom-core/bin/mcp-quality"
         args: []
 
+  - name: brand-kit
+    categories: [branding, assets, local-only]
+    common:
+      description: Banner, icon, README branding, lint, preview, render, and fix tools backed by banner-kit
+      hint: Use for repository branding maintenance. Read-only tools may lint and preview; mutating tools require explicit repo selectors or all=true.
+      command: "${repo}/services/loom-core/bin/mcp-brand-kit"
+      args: []
+      timeout: 60
+      always_allow:
+        - brand_list_repos
+        - brand_inspect
+        - brand_lint
+        - brand_preview
+      env:
+        BRAND_KIT_CLI: "${repo}/libs/banner-kit/bin/banner-kit"
+        BRAND_KIT_DEFAULT_ROOT: "${repo}"
+    targets:
+      vscode:
+        type: stdio
+        command: "${repo}/services/loom-core/bin/mcp-brand-kit"
+        args: []
+        env:
+          BRAND_KIT_CLI: "${repo}/libs/banner-kit/bin/banner-kit"
+          BRAND_KIT_DEFAULT_ROOT: "${repo}"
+
   - name: alertmanager
     categories: [monitoring, alerting]
     common:
