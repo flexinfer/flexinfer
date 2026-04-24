@@ -47,6 +47,11 @@ public final class OpsViewModel {
     public var sandboxMutationMessage: String?
     public var sandboxMutationError: String?
 
+    /// Spawn config (projects + agent types) cached so the Work session-start
+    /// form can offer a project picker instead of a free-text namespace field.
+    /// Loaded lazily; falls back to a nil picker + raw text entry.
+    public var spawnConfig: SpawnConfig?
+
     @ObservationIgnored
     public let apiClient: any LoomAPIClientProtocol
 
@@ -310,6 +315,18 @@ public final class OpsViewModel {
 
     public func loadReasoningChainDetail(id: String) async throws -> MobileReasoningChainDetailResponse {
         try await apiClient.request(.reasoningChainDetail(id: id))
+    }
+
+    /// Load spawn config (project list + agent types) on demand. Kept best-effort:
+    /// the Work session-start form degrades to a free-text namespace field if
+    /// this endpoint is unavailable.
+    public func loadSpawnConfig() async {
+        guard spawnConfig == nil else { return }
+        do {
+            spawnConfig = try await apiClient.request(.spawnConfig)
+        } catch {
+            // Leave spawnConfig nil; callers fall back to manual text entry.
+        }
     }
 
     /// Start a session using the mobile mutation endpoint.
