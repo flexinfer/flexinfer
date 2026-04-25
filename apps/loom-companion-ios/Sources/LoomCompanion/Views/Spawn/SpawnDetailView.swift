@@ -27,9 +27,41 @@ struct SpawnDetailView: View {
 
     @State private var selectedTab: DetailTab = .tools
     @State private var showingStopConfirmation = false
-    @State private var showingFollowUp = false
+    @State private var showingInterruptConfirmation = false
     @State private var followUpText = ""
     @State private var isSending = false
+    @State private var isInterrupting = false
+    @State private var sendStatus: SendStatus = .idle
+    @State private var alertMessage: AlertMessage?
+
+    /// One-shot toast/HUD-style status for the message-send affordance.
+    private enum SendStatus: Equatable {
+        case idle
+        case sending
+        case sent
+
+        var label: String? {
+            switch self {
+            case .idle: return nil
+            case .sending: return "Sending\u{2026}"
+            case .sent: return "Sent"
+            }
+        }
+    }
+
+    private struct AlertMessage: Identifiable {
+        let id = UUID()
+        let title: String
+        let body: String
+    }
+
+    /// True only when the spawn is in a state that accepts follow-up messages
+    /// or interrupts. Multi-turn opt-in is gated on `request.multiTurn` so we
+    /// don't show the input row for one-shot spawns where the server rejects
+    /// it with 409 anyway.
+    private var canSendFollowUp: Bool {
+        spawn.request.multiTurn == true && spawn.status == "running"
+    }
 
     private enum DetailTab: String, Hashable, CaseIterable {
         case tools, files, errors, usage, activity
@@ -56,20 +88,25 @@ struct SpawnDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                statusHeader
-                telemetrySummaryCard
-                tabPicker
-                tabContent
-                if let loadError {
-                    Text(loadError)
-                        .font(.caption)
-                        .foregroundStyle(LoomColors.statusCritical)
-                        .padding(.horizontal)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    statusHeader
+                    telemetrySummaryCard
+                    tabPicker
+                    tabContent
+                    if let loadError {
+                        Text(loadError)
+                            .font(.caption)
+                            .foregroundStyle(LoomColors.statusCritical)
+                            .padding(.horizontal)
+                    }
                 }
+                .padding(.vertical)
             }
-            .padding(.vertical)
+            if spawn.request.multiTurn == true {
+                followUpInputRow
+            }
         }
         .navigationTitle(spawn.request.project)
         #if os(iOS)
@@ -87,12 +124,11 @@ struct SpawnDetailView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 if spawn.isActive {
                     if spawn.request.multiTurn == true {
-                        Button(action: { showingFollowUp = true }) {
-                            Image(systemName: "paperplane")
-                        }
                         Button("Interrupt", role: .destructive) {
-                            Task { await viewModel.interruptSpawn(id: spawn.spawnId) }
+                            showingInterruptConfirmation = true
                         }
+                        .disabled(isInterrupting)
+                        .accessibilityIdentifier("spawn.interrupt.button")
                     }
                     Button("Stop", role: .destructive) {
                         showingStopConfirmation = true
@@ -112,44 +148,132 @@ struct SpawnDetailView: View {
         } message: {
             Text("This will terminate the running agent and clean up its pod.")
         }
+        .confirmationDialog(
+            "Interrupt this turn?",
+            isPresented: $showingInterruptConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Interrupt", role: .destructive) {
+                Task { await performInterrupt() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Aborts the in-flight turn. The agent stays running and you can send a new message after.")
+        }
+        .alert(item: $alertMessage) { msg in
+            Alert(
+                title: Text(msg.title),
+                message: Text(msg.body),
+                dismissButton: .default(Text("OK"))
+            )
+        }
         .task {
             await loadAll()
         }
         .refreshable {
             await loadAll()
         }
-        .sheet(isPresented: $showingFollowUp) {
-            NavigationStack {
-                Form {
-                    Section("Message") {
-                        TextEditor(text: $followUpText)
-                            .frame(minHeight: 100)
-                    }
-                }
-                .navigationTitle("Follow Up")
-                #if os(iOS)
-                .navigationBarTitleDisplayMode(.inline)
-                #endif
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { showingFollowUp = false }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Send") {
-                            let text = followUpText
-                            Task {
-                                isSending = true
-                                _ = await viewModel.sendMessage(spawnId: spawn.spawnId, message: text)
-                                isSending = false
-                                showingFollowUp = false
-                                followUpText = ""
-                            }
-                        }
-                        .disabled(followUpText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
-                    }
-                }
+    }
+
+    // MARK: - Follow-up message input
+
+    /// Bottom-pinned row for sending follow-up messages to a multi-turn spawn.
+    /// Disabled when the spawn is not in a state that accepts new turns
+    /// (matches the server's 409 semantics — only `running` is accepted).
+    private var followUpInputRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let label = sendStatus.label {
+                Text(label)
+                    .font(.caption2)
+                    .foregroundStyle(sendStatus == .sent ? LoomColors.statusHealthy : LoomColors.fgSecondary)
+                    .accessibilityIdentifier("spawn.message.status")
             }
-            .presentationDetents([.medium, .large])
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField(
+                    "Send a follow-up message\u{2026}",
+                    text: $followUpText,
+                    axis: .vertical
+                )
+                .lineLimit(1 ... 5)
+                .textFieldStyle(.roundedBorder)
+                .disabled(!canSendFollowUp || isSending)
+                .accessibilityIdentifier("spawn.message.field")
+
+                Button(action: { Task { await performSend() } }) {
+                    if isSending {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "paperplane.fill")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canSendFollowUp || isSending || trimmedFollowUp.isEmpty)
+                .accessibilityLabel("Send")
+                .accessibilityIdentifier("spawn.message.send")
+            }
+            if !canSendFollowUp {
+                Text(disabledHint)
+                    .font(.caption2)
+                    .foregroundStyle(LoomColors.fgMuted)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(LoomColors.bgSecondary)
+        .overlay(alignment: .top) {
+            Divider().background(LoomColors.border)
+        }
+    }
+
+    private var trimmedFollowUp: String {
+        followUpText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var disabledHint: String {
+        switch spawn.status {
+        case "running": return ""
+        case "creating": return "Spawn is still starting up\u{2026}"
+        case "completed", "stopped": return "Spawn has finished — start a new one to continue."
+        case "failed": return "Spawn failed — start a new one to continue."
+        default: return "Spawn is not in a state that accepts messages."
+        }
+    }
+
+    private func performSend() async {
+        let text = trimmedFollowUp
+        guard !text.isEmpty, canSendFollowUp else { return }
+        isSending = true
+        sendStatus = .sending
+        defer { isSending = false }
+        do {
+            _ = try await viewModel.sendMessage(spawnId: spawn.spawnId, message: text)
+            followUpText = ""
+            sendStatus = .sent
+            // Auto-clear the "Sent" hint after a short beat so the row goes
+            // back to a clean state without the user having to dismiss it.
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                if sendStatus == .sent { sendStatus = .idle }
+            }
+        } catch let err as LoomAPIError {
+            sendStatus = .idle
+            alertMessage = AlertMessage(title: "Send Failed", body: err.description)
+        } catch {
+            sendStatus = .idle
+            alertMessage = AlertMessage(title: "Send Failed", body: error.localizedDescription)
+        }
+    }
+
+    private func performInterrupt() async {
+        isInterrupting = true
+        defer { isInterrupting = false }
+        do {
+            _ = try await viewModel.interruptSpawn(id: spawn.spawnId)
+        } catch let err as LoomAPIError {
+            alertMessage = AlertMessage(title: "Interrupt Failed", body: err.description)
+        } catch {
+            alertMessage = AlertMessage(title: "Interrupt Failed", body: error.localizedDescription)
         }
     }
 

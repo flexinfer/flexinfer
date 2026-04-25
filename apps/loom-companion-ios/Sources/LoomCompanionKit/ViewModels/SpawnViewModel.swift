@@ -226,22 +226,21 @@ public final class SpawnViewModel {
     }
 
     /// Send a follow-up message to a multi-turn spawn.
-    public func sendMessage(spawnId: String, message: String) async -> Bool {
-        do {
-            let _: SpawnControlAck = try await apiClient.request(.spawnSendMessage(id: spawnId, text: message))
-            return true
-        } catch {
-            return false
-        }
+    ///
+    /// Returns the server ack on success. Throws `LoomAPIError` (preserving the
+    /// HUD response body / message) on failure so callers can surface 4xx
+    /// validation errors (e.g. spawn not running, empty text) to the user.
+    @discardableResult
+    public func sendMessage(spawnId: String, message: String) async throws -> SpawnControlResponse {
+        try await apiClient.request(.spawnSendMessage(id: spawnId, text: message))
     }
 
-    /// Interrupt a running spawn.
-    public func interruptSpawn(id: String) async -> Bool {
-        do {
-            let _: SpawnControlAck = try await apiClient.request(.spawnInterrupt(id: id))
-            return true
-        } catch {
-            return false
-        }
+    /// Interrupt the in-flight turn of a running multi-turn spawn.
+    ///
+    /// Returns the server ack on success. Throws `LoomAPIError` on failure so
+    /// callers can present the HUD-supplied message in a UI alert.
+    @discardableResult
+    public func interruptSpawn(id: String) async throws -> SpawnControlResponse {
+        try await apiClient.request(.spawnInterrupt(id: id))
     }
 }
