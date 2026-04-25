@@ -96,6 +96,32 @@ func (d *CouncilDAO) List(ctx context.Context, limit int) ([]*CouncilRun, error)
 	return out, rows.Err()
 }
 
+// SumCostSince returns total council spend (frontier + local) since the given
+// timestamp. Used by the budget enforcer to honor per-day caps.
+func (d *CouncilDAO) SumCostSince(ctx context.Context, since time.Time) (float64, error) {
+	row := d.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(cost_frontier_usd) + SUM(cost_local_usd), 0)
+		FROM council_runs WHERE started_at >= ?
+	`, timeRFC3339(since))
+	var total float64
+	if err := row.Scan(&total); err != nil {
+		return 0, fmt.Errorf("council sum-cost: %w", err)
+	}
+	return total, nil
+}
+
+// CountSince returns the number of council runs started at-or-after `since`.
+func (d *CouncilDAO) CountSince(ctx context.Context, since time.Time) (int, error) {
+	row := d.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM council_runs WHERE started_at >= ?`,
+		timeRFC3339(since))
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("council count-since: %w", err)
+	}
+	return n, nil
+}
+
 func scanCouncil(s scanner) (*CouncilRun, error) {
 	var (
 		run               CouncilRun

@@ -89,6 +89,44 @@ func (d *PipelineDAO) ListByState(ctx context.Context, state PipelineState) ([]*
 	return out, rows.Err()
 }
 
+// SumCostSince totals pipeline spend since the given timestamp.
+func (d *PipelineDAO) SumCostSince(ctx context.Context, since time.Time) (float64, error) {
+	row := d.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(cost_usd), 0) FROM pipeline_runs WHERE started_at >= ?`,
+		timeRFC3339(since))
+	var total float64
+	if err := row.Scan(&total); err != nil {
+		return 0, fmt.Errorf("pipeline sum-cost: %w", err)
+	}
+	return total, nil
+}
+
+// CountSince returns the number of pipeline runs started at-or-after `since`.
+func (d *PipelineDAO) CountSince(ctx context.Context, since time.Time) (int, error) {
+	row := d.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pipeline_runs WHERE started_at >= ?`,
+		timeRFC3339(since))
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("pipeline count-since: %w", err)
+	}
+	return n, nil
+}
+
+// CountActive returns the number of pipeline runs in any non-terminal state.
+// "Terminal" = done, escalated, paused. Used by the concurrency cap.
+func (d *PipelineDAO) CountActive(ctx context.Context) (int, error) {
+	row := d.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM pipeline_runs
+		WHERE state NOT IN ('done', 'escalated', 'paused')
+	`)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("pipeline count-active: %w", err)
+	}
+	return n, nil
+}
+
 // ListByBacklog returns all pipeline runs (across attempts) for a backlog item.
 func (d *PipelineDAO) ListByBacklog(ctx context.Context, backlogID string) ([]*PipelineRun, error) {
 	rows, err := d.db.QueryContext(ctx,
