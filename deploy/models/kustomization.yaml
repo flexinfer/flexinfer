@@ -11,7 +11,14 @@ resources:
   # Experimental 32K/TurboQuant canary on the 7900xtx lane. Scale-to-zero keeps
   # it from interfering with the always-on primary 26B profile until explicitly tested.
   - gemma4-26b-a4b-gptq-long.yaml   # vLLM GPTQ INT4, 32K TurboQuant canary (priority 50)
-  - gemma4-31b-gptq-long.yaml       # vLLM GPTQ INT4 + TurboQuant 16K canary (priority 50)
+  # gemma4-31b-gptq-long.yaml: SUPERSEDED on 2026-04-25. Canary boot OOM'd at
+  # 23.59/24 GiB during weight load — plugin rotation-matrix allocations
+  # (~3.5 GiB) plus 31B INT4 weights (20 GiB) leave no headroom for
+  # activations or KV. Full analysis + math in
+  # docs/dev/gemma4-31b-turboquant-24gb-oom.md. File kept on disk for
+  # historical reference; do not reconcile until one of the unblockers
+  # from that doc lands.
+  # - gemma4-31b-gptq-long.yaml     # vLLM GPTQ INT4 + TurboQuant 16K canary (priority 50)
   # E4B multimodal/turboquant variants disabled during the 26B-A4B rollout.
   # - gemma4-e4b-turboquant.yaml
   # - gemma4-e4b-multimodal.yaml

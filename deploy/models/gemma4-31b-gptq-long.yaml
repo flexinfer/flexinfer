@@ -56,11 +56,22 @@ metadata:
   namespace: flexinfer-system
   annotations:
     flexinfer.ai/promotion-gate: quantized-artifact-v1
-    # Canary explicitly NOT validated. The primary
-    # (gemma4-31b-gptq) carries the validated stamp; this lane stays
-    # gated until the four-step gauntlet above passes.
-    flexinfer.ai/promotion-state: turboquant-canary-unvalidated
-    flexinfer.ai/promotion-requires: turboquant-quality-gauntlet-before-primary-promotion
+    # 2026-04-25: canary boot OOM'd at 23.59/24 GiB during weight load —
+    # plugin rotation-matrix + tensor state (~3.5 GiB) plus 31B INT4
+    # weights (20.02 GiB) leaves no headroom for activations or KV on
+    # a single 24 GiB gfx1100. The math doesn't work at any
+    # gpuMemoryUtilization value on this hardware.
+    #
+    # Full analysis: docs/dev/gemma4-31b-turboquant-24gb-oom.md
+    #
+    # Manifest is intentionally dropped from deploy/models/kustomization.yaml
+    # so Flux does NOT reconcile it. File kept on disk as a reference
+    # point for any future re-attempt (e.g. if weights drop below
+    # ~15 GiB via a different quant scheme, or the plugin defers
+    # rotation-matrix allocation).
+    flexinfer.ai/promotion-state: turboquant-canary-superseded-gfx1100-24gb-insufficient-vram
+    flexinfer.ai/promotion-evidence: docs/dev/gemma4-31b-turboquant-24gb-oom.md
+    flexinfer.ai/promotion-requires: see-evidence-doc-before-re-enabling
     flexinfer.ai/cache-source-ready-job: gemma4-31b-keqv-postprocess-v3
 spec:
   backend: vllm
