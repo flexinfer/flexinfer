@@ -181,12 +181,35 @@ public struct SpawnFileChange: Codable, Equatable, Hashable, Sendable, Identifia
     public let path: String
     /// One of `create`, `modify`, `delete`.
     public let kind: String
+    /// Lines added by the agent. Mirrors Go `lines_added,omitempty`; absent in
+    /// JSON means zero.
+    public let linesAdded: Int
+    /// Lines removed by the agent. Mirrors Go `lines_removed,omitempty`; absent
+    /// in JSON means zero.
+    public let linesRemoved: Int
 
     public var id: String { "\(kind)|\(path)" }
 
-    public init(path: String, kind: String) {
+    public init(path: String, kind: String, linesAdded: Int = 0, linesRemoved: Int = 0) {
         self.path = path
         self.kind = kind
+        self.linesAdded = linesAdded
+        self.linesRemoved = linesRemoved
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        path = try c.decode(String.self, forKey: .path)
+        kind = try c.decode(String.self, forKey: .kind)
+        linesAdded = try c.decodeIfPresent(Int.self, forKey: .linesAdded) ?? 0
+        linesRemoved = try c.decodeIfPresent(Int.self, forKey: .linesRemoved) ?? 0
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case path
+        case kind
+        case linesAdded = "lines_added"
+        case linesRemoved = "lines_removed"
     }
 }
 
