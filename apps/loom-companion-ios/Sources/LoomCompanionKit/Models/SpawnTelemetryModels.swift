@@ -290,19 +290,62 @@ public typealias SpawnTelemetryToolsPage = SpawnTelemetryPage<SpawnToolCall>
 public typealias SpawnTelemetryFilesPage = SpawnTelemetryPage<SpawnFileChange>
 public typealias SpawnTelemetryErrorsPage = SpawnTelemetryPage<SpawnAgentError>
 
-/// Response envelope for the `POST /message` and `POST /interrupt`
-/// control-plane endpoints. Success is a 202 with this body.
-public struct SpawnControlAck: Codable, Sendable {
+/// Response payload for the spawn multi-turn control-plane endpoints.
+///
+/// Both `POST /api/mobile/v1/agent/spawn/{id}/message` and
+/// `POST /api/mobile/v1/agent/spawn/{id}/interrupt` return a 202 envelope
+/// whose `data` matches this shape. The server emits one of two timestamp
+/// fields depending on the endpoint:
+///
+/// - `queued_at` for `/message` (the follow-up was accepted into the queue)
+/// - `interrupted_at` for `/interrupt` (the in-flight turn was aborted)
+///
+/// We accept either field on decode so callers don't need to know which
+/// endpoint they hit, and re-emit a stable `sent` field on encode for
+/// round-trip parity with the legacy field name used in older test fixtures.
+public struct SpawnControlResponse: Codable, Sendable, Equatable {
     public let spawnId: String
-    public let sent: String
+    /// RFC3339 timestamp of the server-side acknowledgment. Comes from
+    /// `queued_at` (message) or `interrupted_at` (interrupt) on the wire.
+    public let timestamp: String
 
-    public init(spawnId: String, sent: String) {
+    public init(spawnId: String, timestamp: String) {
         self.spawnId = spawnId
-        self.sent = sent
+        self.timestamp = timestamp
     }
 
     enum CodingKeys: String, CodingKey {
         case spawnId = "spawn_id"
-        case sent
+        case queuedAt = "queued_at"
+        case interruptedAt = "interrupted_at"
+        case sent // legacy
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        spawnId = try container.decode(String.self, forKey: .spawnId)
+        if let queued = try container.decodeIfPresent(String.self, forKey: .queuedAt) {
+            timestamp = queued
+        } else if let interrupted = try container.decodeIfPresent(String.self, forKey: .interruptedAt) {
+            timestamp = interrupted
+        } else if let legacy = try container.decodeIfPresent(String.self, forKey: .sent) {
+            timestamp = legacy
+        } else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .queuedAt,
+                in: container,
+                debugDescription: "missing one of queued_at, interrupted_at, sent"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(spawnId, forKey: .spawnId)
+        try container.encode(timestamp, forKey: .sent)
     }
 }
+
+/// Legacy alias kept for source compatibility with code/tests written against
+/// the original Wave 2 scaffolding. Prefer `SpawnControlResponse` in new code.
+public typealias SpawnControlAck = SpawnControlResponse

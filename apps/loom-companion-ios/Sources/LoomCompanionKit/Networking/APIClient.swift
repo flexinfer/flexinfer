@@ -114,15 +114,15 @@ public final class APIClient: LoomAPIClientProtocol, Sendable {
     /// Forward a follow-up user message to a running multi-turn spawn.
     /// The HUD responds with a 202 envelope containing the ack shape.
     @discardableResult
-    public func spawnSendMessage(id: String, text: String) async throws -> SpawnControlAck {
-        try await request(.spawnSendMessage(id: id, text: text))
+    public func sendSpawnMessage(spawnID: String, text: String) async throws -> SpawnControlResponse {
+        try await request(.spawnSendMessage(id: spawnID, text: text))
     }
 
     /// Abort the in-flight turn of a running multi-turn spawn. The HUD
     /// responds with a 202 envelope containing the ack shape.
     @discardableResult
-    public func spawnInterrupt(id: String) async throws -> SpawnControlAck {
-        try await request(.spawnInterrupt(id: id))
+    public func interruptSpawn(spawnID: String) async throws -> SpawnControlResponse {
+        try await request(.spawnInterrupt(id: spawnID))
     }
 
     /// Decode and validate the standard mobile API envelope contract.

@@ -338,9 +338,13 @@ func (d *MobileDomain) handleMobileSpawnMessage(w http.ResponseWriter, r *http.R
 		"spawn_id":     spawnID,
 		"command_type": spawn.ControlCommandMessage,
 	}, "success", nil)
+	// FROZEN contract (mirrored at /api/agent/spawn/{id}/message):
+	//   202 {spawn_id, queued_at: rfc3339}
+	// `sent` is retained for backwards compatibility with v0 clients.
 	d.writeMobileJSON(w, http.StatusAccepted, map[string]any{
-		"spawn_id": spawnID,
-		"sent":     "message",
+		"spawn_id":  spawnID,
+		"queued_at": time.Now().UTC().Format(time.RFC3339),
+		"sent":      "message",
 	})
 }
 
@@ -375,9 +379,13 @@ func (d *MobileDomain) handleMobileSpawnInterrupt(w http.ResponseWriter, r *http
 		"spawn_id":     spawnID,
 		"command_type": spawn.ControlCommandInterrupt,
 	}, "success", nil)
+	// FROZEN contract (mirrored at /api/agent/spawn/{id}/interrupt):
+	//   202 {spawn_id, interrupted_at: rfc3339}
+	// `sent` is retained for backwards compatibility with v0 clients.
 	d.writeMobileJSON(w, http.StatusAccepted, map[string]any{
-		"spawn_id": spawnID,
-		"sent":     "interrupt",
+		"spawn_id":       spawnID,
+		"interrupted_at": time.Now().UTC().Format(time.RFC3339),
+		"sent":           "interrupt",
 	})
 }
 
