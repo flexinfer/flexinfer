@@ -33,16 +33,32 @@ metadata:
   namespace: flexinfer-system
   annotations:
     flexinfer.ai/promotion-gate: quantized-artifact-v1
-    flexinfer.ai/promotion-state: conservative-on-demand-baseline
-    flexinfer.ai/promotion-requires: validated-canary-before-alias-or-default-change
+    # 2026-04-24: re-quant (MR !182) produced a clean artifact — all 17
+    # sampled layers have distinct per-projection qweight hashes (no more
+    # 40-59 hash collision from the 2026-04-21 build), keqv postprocess
+    # re-ran, and the serving pod returned coherent text end-to-end
+    # ("Paris", fibonacci code). Benchmark: 33 tok/s single-stream, 105
+    # tok/s agg at C=4 (pre-eager/ctx-bump). This stamps the gate so the
+    # controller can actually honor minReplicas=1 + warmPolicy=primary
+    # (PromotionGate condition was blocking the pod from spawning after
+    # the !188 maxModelLen bump).
+    # 2026-04-25: baseline settled at 2048 after !188 (3072 attempt) failed
+    # and !190 fell back. TurboQuant canary (gemma4-31b-gptq-long) also
+    # failed to boot — plugin + weights don't fit on 24 GiB gfx1100.
+    # See docs/dev/gemma4-31b-turboquant-24gb-oom.md before re-attempting
+    # any long-context promotion on this model + hardware combo.
+    flexinfer.ai/promotion-state: validated-2048-gfx1100-ceiling
+    flexinfer.ai/promotion-validation: passed
+    flexinfer.ai/promotion-evidence: services/flexinfer!182,!185,!188,!190
+    flexinfer.ai/promotion-requires: docs/dev/gemma4-31b-turboquant-24gb-oom.md
+    flexinfer.ai/cache-source-ready-job: gemma4-31b-keqv-postprocess-v4
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:0c7e9ffb390f39a3b5fffe71e341a127ad20fc191a11cafa99f3c2c6a3e8a863
   # Points at the k_eq_v-patched artifact produced by the
-  # deploy/tasks/gemma4-31b-keqv/ Job. The controller's cache-copy will
-  # retry until the Job finishes writing this directory on the source
-  # PVC (~1-2 min CPU work). See that task's README for the algorithm
-  # and rationale.
+  # deploy/tasks/gemma4-31b-keqv/ Job. The cache-source-ready-job annotation
+  # below makes the controller wait for that transform before cache-copy, then
+  # stamp copy Jobs with transform provenance for stale retry cleanup.
   source: pvc://gemma4-31b-gptq/gemma4-31b-gptq/gptq-w4-g128-keqv
   # Cache staging (2026-04-21): raw pvc:// sources require an explicit
   # staged Local cache. Without storageClass+hostPath+size the controller
@@ -92,59 +108,39 @@ spec:
     priority: 250
   serverless:
     enabled: true
-    # 2026-04-23: rolled back minReplicas 1 → 0, warmPolicy primary →
-    # ondemand (below). The full GitOps cascade lands cleanly — vLLM
-    # loads the -keqv artifact, passes the QKV shard check, allocates
-    # the KV cache at maxModelLen=1920, model → Ready — but inference
-    # produces pure <pad> tokens.
-    #
-    # Root cause is NOT the k_eq_v duplicate — verified by hashing every
-    # k_proj and v_proj qweight per layer: layers 40-59 (20 layers)
-    # share identical hashes across distinct layers for k_proj, v_proj,
-    # q_proj, o_proj, gate_proj, AND up_proj. The GPTQ quantizer bailed
-    # out at layer 39 and the remaining 20 layers got copies of the
-    # last successfully-quantized tensors (same class as the known
-    # "Hessian recovery exhaustion, 46 mlp.down_proj stayed FP16"
-    # symptom from the 31B dense run). The model is effectively 40
-    # layers deep with 20 layers of dead repeats — attention collapses,
-    # logits are meaningless.
-    #
-    # No on-disk postprocess can recover this; the weights themselves
-    # are corrupted. Requires re-quantization with better memory
-    # management (lower n_parallel_calib_samples, more CPU RAM for the
-    # turtle offload) or a different quant method. Tracked as a
-    # separate follow-up.
-    #
-    # Until then, 26B MoE stays primary on 7900xtx-textgen and the 31B
-    # is ondemand so it doesn't steal the GPU slot.
-    minReplicas: 0
+    # 2026-04-24: re-promoted to warm primary on 7900xtx-textgen after
+    # the GPTQ re-quant with calibration.nParallelCalibSamples=8 produced
+    # a clean artifact. The 2026-04-21 corruption (layers 40-59 sharing
+    # hashes, Hessian recovery exhaustion) is resolved — verify-hashes
+    # confirmed all 17 sampled sliding + full-attention layers have
+    # distinct per-projection qweight hashes, and the keqv postprocess
+    # re-ran against the fresh artifact (40 v_proj tensors, q+k+v
+    # complete on all 10 heterogeneous layers).
+    minReplicas: 1
     idleTimeout: 15m
     coldStartTimeout: 15m
   config:
     quantization: gptq
     dtype: "half"
-    # 2026-04-23: 4096 → 2048 → 1920 tuning on the -keqv artifact.
+    # 2026-04-24: 1920 → 3072 attempt failed at engine init. Theory was
+    # that enforceEager=true would reclaim the 1.31 GiB CUDAGraph
+    # payload and widen the KV pool enough for 3072 tokens. Reality
+    # check from the crashing pod:
+    #   ValueError: ... max seq len (3072), 2.59 GiB KV cache needed,
+    #   available 1.79 GiB. Estimated max = 2112 tokens.
+    # Eager actually only reclaimed 0.09 GiB of KV budget (1.70 → 1.79).
+    # Inductor/attention caches apparently refill whatever CUDAGraph
+    # vacates, so on gfx1100 for this model eager ≈ no-op memory-wise
+    # (but still kills CUDAGraph's decode-speed gain).
     #
-    # First load at 4096 hit:
-    #   ValueError: ... max seq len (4096), (2.67 GiB KV cache is needed,
-    #   which is larger than the available KV cache memory (1.7 GiB).
-    #   Based on the available memory, the estimated maximum model
-    #   length is 2000.
-    #
-    # Dropped 4096 → 2048 from the per-token-KV estimate (0.65 MiB,
-    # assumed linear), but vLLM actually measured per-token KV at
-    # ~0.844 MiB (heterogeneous attention + k_eq_v reshapes) → 2048
-    # needed 1.73 GiB, still 30 MiB over the 1.7 GiB budget:
-    #   ValueError: ... max seq len (2048), (1.73 GiB KV cache is
-    #   needed, ... (1.7 GiB). ... estimated maximum model length is 2000.
-    #
-    # 1920 = 2000 / multiple-of-64, keeps a comfortable headroom below
-    # vLLM's estimate and matches what the engine can actually allocate.
-    # Can be bumped if we add quant KV, lower maxNumSeqs, or reclaim
-    # activation memory.
-    maxModelLen: 1920
+    # Scaled back to 2048 — a modest 6.7% bump over the original 1920
+    # that the vLLM ceiling of 2112 definitely supports. Keeps eager and
+    # maxNumSeqs=2 as they were already validated to boot.
+    # Real context unlock (8K-32K) requires TurboQuant KV codec canary;
+    # tracked separately (see !188 discussion for sequencing).
+    maxModelLen: 2048
     gpuMemoryUtilization: "0.95"
-    maxNumSeqs: 4
+    maxNumSeqs: 2
     trustRemoteCode: true
     attentionBackend: TRITON_ATTN
     # Force serving onto the discrete GPU only — the 7900xtx node exposes
@@ -156,15 +152,20 @@ spec:
     # post-process Job under deploy/tasks/gemma4-31b-keqv/. If the
     # keqv artifact ALSO fails to load, `git revert` restores the
     # working 26B-A4B MoE as the sole warm model on 7900xtx-textgen.
-    # 2026-04-23: primary → ondemand. See the lengthy comment in the
-    # serverless block above for the GPTQ corruption diagnosis. The
-    # 26B MoE reclaims primary on 7900xtx-textgen until we re-quantize.
-    warmPolicy: ondemand
+    # 2026-04-24: ondemand → primary. Re-quant with nParallelCalibSamples=8
+    # verified clean (distinct hashes per layer), so 31B reclaims the warm
+    # primary slot in 7900xtx-textgen and 26B MoE drops back to fallback.
+    warmPolicy: primary
     servedModelName: gemma4-31b-gptq
     enableToolCalling: true
     toolCallParser: gemma4
     reasoningParser: gemma4
     enablePrefixCaching: true
+    # 2026-04-24: disabled CUDAGraph to reclaim 1.31 GiB for a bigger KV
+    # pool (see the maxModelLen block above). Cost: ~5-10% per-step
+    # latency from kernel launch overhead that graphs would amortize.
+    # The tradeoff favours context over tok/s for user-facing chat.
+    enforceEager: true
     disableLogStats: false
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx

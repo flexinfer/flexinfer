@@ -57,6 +57,13 @@ const (
 	AnnotationCacheDest   = "flexinfer.ai/cache-dest"
 	AnnotationCachePath   = "flexinfer.ai/cache-path"
 	AnnotationCacheSrcPVC = "flexinfer.ai/cache-src-pvc"
+	// AnnotationCacheSourceReadyJob makes cache-copy wait for an artifact
+	// transform Job before mounting a newly materialized source path. Copy Jobs
+	// record the ready Job's UID/completion time so stale failures can be
+	// recreated when the source artifact provenance changes.
+	AnnotationCacheSourceReadyJob         = "flexinfer.ai/cache-source-ready-job"
+	AnnotationCacheSourceReadyUID         = "flexinfer.ai/cache-source-ready-uid"
+	AnnotationCacheSourceReadyCompletedAt = "flexinfer.ai/cache-source-ready-completed-at"
 
 	AnnotationServiceLabels = "flexinfer.ai/service-labels"
 	AnnotationVRAMEstimate  = "flexinfer.ai/gpu.vram-estimate-mb"
@@ -67,6 +74,15 @@ const (
 	// quantization job to pick up the current GPUProfile image. Used for
 	// admin override; normal operation should never rely on this.
 	AnnotationForceImageUpdate = "flexinfer.ai/force-image-update"
+
+	// Quantized artifact promotion gate annotations. A Model with
+	// AnnotationPromotionGate=quantized-artifact-v1 can run as a canary or
+	// scale-to-zero model without evidence, but warm-primary promotion requires
+	// validation evidence recorded on the object.
+	AnnotationPromotionGate       = "flexinfer.ai/promotion-gate"
+	AnnotationPromotionState      = "flexinfer.ai/promotion-state"
+	AnnotationPromotionValidation = "flexinfer.ai/promotion-validation"
+	AnnotationPromotionEvidence   = "flexinfer.ai/promotion-evidence"
 
 	// LiteLLM proxy annotations.
 	AnnotationLiteLLMServedModel     = "litellm.flexinfer.ai/served-model"

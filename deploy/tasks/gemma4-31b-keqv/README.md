@@ -31,6 +31,7 @@ git merge  →  Flux reconciles  →  Job runs  →  artifact on PVC
 | `postprocess.py` | The transform (single source of truth; no duplicated copies). |
 | `job.yaml` | Kubernetes Job spec. References the generated ConfigMap by the unhashed name; kustomize rewrites to the hashed name at build time. |
 | `kustomization.yaml` | Registers the Job + generates the ConfigMap from `postprocess.py` via `configMapGenerator`. Script edits → new CM hash → new Job spec → Flux recreates the Job. |
+| `cleanup-cache-copy.yaml` | Legacy reset fallback. Not applied by default; the controller now waits for `flexinfer.ai/cache-source-ready-job` and recreates stale cache-copy Jobs from source-ready provenance. |
 
 ## Lifecycle
 
@@ -40,7 +41,8 @@ git merge  →  Flux reconciles  →  Job runs  →  artifact on PVC
 4. Pod starts, mounts the script via ConfigMap, execs `python3 /script/postprocess.py`.
 5. Script validates `config.json` + `index.json`, plans duplications, writes a single extra shard `model-keqv-vproj.safetensors`, hardlinks every other file into the new dir, rewrites the index. Validates q+k+v coverage before exit.
 6. Pod exits 0. After 86400 seconds the TTL reaper cleans up.
-7. Subsequent Flux reconciles are no-ops: the Job resource is unchanged, kustomize-controller doesn't recreate; and even if it did, the script's idempotence check sees a complete artifact and exits 0.
+7. The Model CR points `flexinfer.ai/cache-source-ready-job` at this Job, so the controller does not start cache-copy until the transform is complete. Cache-copy Jobs record the transform Job UID/completion time and are recreated automatically if stale provenance is detected.
+8. Subsequent Flux reconciles are no-ops: the Job resource is unchanged, kustomize-controller doesn't recreate; and even if it did, the script's idempotence check sees a complete artifact and exits 0.
 
 ## Inspecting
 
@@ -62,6 +64,10 @@ kubectl logs -n flexinfer-system -l job-name=gemma4-31b-keqv-postprocess --tail=
 # prune both. The `gptq-w4-g128-keqv/` output stays on the PVC (harmless; can
 # be hand-removed later).
 ```
+
+If the controller-owned source-ready gate regresses, temporarily re-add
+`cleanup-cache-copy.yaml` to this directory's `resources:` list and Flux will
+restore the legacy failed cache-copy reset Job.
 
 ## Editing the script
 

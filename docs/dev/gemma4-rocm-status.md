@@ -60,6 +60,18 @@ canary to default:
 4. **Explicit promotion change**
    - only after 1-3 pass, raise context/default aliases in a separate change
 
+Controller enforcement:
+
+- Mark guarded models with
+  `flexinfer.ai/promotion-gate: quantized-artifact-v1`.
+- Warm-primary promotion (`serverless.minReplicas > 0`, serverless disabled,
+  or `config.warmPolicy: primary`) requires either
+  `flexinfer.ai/promotion-validation: passed` or
+  `flexinfer.ai/promotion-evidence: <artifact-or-runbook-ref>`.
+- Canary / scale-to-zero operation remains allowed without evidence so
+  candidate artifacts can be probed deliberately.
+- The controller reports the decision in the Model `PromotionGate` condition.
+
 ## Long-context readiness probe (promotion gate input)
 
 Use `scripts/probe-gemma4-long-context.sh` for repeatable target-context

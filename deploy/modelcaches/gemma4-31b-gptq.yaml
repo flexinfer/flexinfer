@@ -71,3 +71,14 @@ spec:
     calibration:
       maxSeqLen: 2048
       maxSamples: 256
+      # Halved from default 16 → 8 after the 2026-04-21 run produced a
+      # corrupt artifact: layers 0-39 quantized distinctly but layers
+      # 40-59 had qweight hashes identical across every sliding-window
+      # set and every full-attention set — the canonical "Hessian
+      # recovery exhaustion" failure mode where the quantizer bailed
+      # and wrote copies of the last-succeeded layer's tensors. Lower
+      # parallel batch reduces peak GPU+CPU memory during Hessian
+      # inverse compute. MEMORY.md explicitly recommends reducing
+      # calibration samples over bumping container memory because
+      # ROCm HIP driver allocations are outside the cgroup.
+      nParallelCalibSamples: 8

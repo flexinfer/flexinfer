@@ -16,6 +16,10 @@ kind: Model
 metadata:
   name: gemma4-26b-a4b-gptq-long
   namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/promotion-gate: quantized-artifact-v1
+    flexinfer.ai/promotion-state: long-context-canary-unvalidated
+    flexinfer.ai/promotion-requires: target-context-validation-before-primary-promotion
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
