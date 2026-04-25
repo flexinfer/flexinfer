@@ -130,6 +130,18 @@ const (
 	KVCachePressurePolicyEvict KVCachePressurePolicy = "Evict"
 )
 
+// KVCacheReconfigureStrategy defines which backend knobs to reduce under pressure.
+type KVCacheReconfigureStrategy string
+
+const (
+	// KVCacheReconfigureStrategyReduceSeqs reduces vLLM maxNumSeqs.
+	KVCacheReconfigureStrategyReduceSeqs KVCacheReconfigureStrategy = "ReduceSeqs"
+	// KVCacheReconfigureStrategyReduceMaxLen reduces vLLM maxModelLen.
+	KVCacheReconfigureStrategyReduceMaxLen KVCacheReconfigureStrategy = "ReduceMaxLen"
+	// KVCacheReconfigureStrategyBoth reduces both maxNumSeqs and maxModelLen.
+	KVCacheReconfigureStrategyBoth KVCacheReconfigureStrategy = "Both"
+)
+
 // KVCacheSpec configures KV-cache management policies for a model.
 // FlexInfer observes cache pressure from agent metrics and reacts according to the policy.
 // +kubebuilder:object:generate=true
@@ -155,6 +167,13 @@ type KVCacheSpec struct {
 	// SwapSpace configures the vLLM --swap-space argument (GiB) for CPU-offloaded KV-cache.
 	// +optional
 	SwapSpace *resource.Quantity `json:"swapSpace,omitempty"`
+
+	// ReconfigureStrategy defines which vLLM config knobs the Reconfigure
+	// pressure policy reduces. Defaults to reducing maxNumSeqs.
+	// +kubebuilder:validation:Enum=ReduceSeqs;ReduceMaxLen;Both
+	// +kubebuilder:default=ReduceSeqs
+	// +optional
+	ReconfigureStrategy KVCacheReconfigureStrategy `json:"reconfigureStrategy,omitempty"`
 
 	// ReconfigureCooldown is how long after a reconfigure action before
 	// the controller considers restoring the original config.
@@ -192,6 +211,11 @@ type KVCacheStatus struct {
 	// +optional
 	ReconfiguredAt *metav1.Time `json:"reconfiguredAt,omitempty"`
 
+	// OriginalConfig captures the original backend config fields that were
+	// overridden by the active reconfigure action.
+	// +optional
+	OriginalConfig *apiextensionsv1.JSON `json:"originalConfig,omitempty"`
+
 	// OriginalMaxNumSeqs is the original maxNumSeqs value before reconfigure,
 	// used to restore the config when pressure subsides.
 	// +optional
@@ -200,6 +224,15 @@ type KVCacheStatus struct {
 	// ReconfiguredMaxNumSeqs is the reduced maxNumSeqs value applied by reconfigure.
 	// +optional
 	ReconfiguredMaxNumSeqs *int32 `json:"reconfiguredMaxNumSeqs,omitempty"`
+
+	// OriginalMaxModelLen is the original maxModelLen value before reconfigure,
+	// used to restore the config when pressure subsides.
+	// +optional
+	OriginalMaxModelLen *int32 `json:"originalMaxModelLen,omitempty"`
+
+	// ReconfiguredMaxModelLen is the reduced maxModelLen value applied by reconfigure.
+	// +optional
+	ReconfiguredMaxModelLen *int32 `json:"reconfiguredMaxModelLen,omitempty"`
 
 	// Evicted indicates the controller has scaled down replicas due to KV-cache pressure.
 	// +optional
@@ -830,6 +863,14 @@ func (s *ModelSpec) GetKVCachePressurePolicy() KVCachePressurePolicy {
 		return s.KVCache.PressurePolicy
 	}
 	return KVCachePressurePolicyObserve
+}
+
+// GetKVCacheReconfigureStrategy returns the reconfigure strategy, defaulting to ReduceSeqs.
+func (s *ModelSpec) GetKVCacheReconfigureStrategy() KVCacheReconfigureStrategy {
+	if s.KVCache != nil && s.KVCache.ReconfigureStrategy != "" {
+		return s.KVCache.ReconfigureStrategy
+	}
+	return KVCacheReconfigureStrategyReduceSeqs
 }
 
 // GetKVCacheReconfigureCooldown returns the reconfigure cooldown, defaulting to 5m.
