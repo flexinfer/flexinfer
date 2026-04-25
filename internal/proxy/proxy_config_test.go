@@ -14,17 +14,19 @@ import (
 // validConfig returns a Config with all fields set to valid defaults for testing.
 func validConfig() Config {
 	return Config{
-		Namespace:            "test-ns",
-		MaxQueueSize:         100,
-		QueueTimeout:         60 * time.Second,
-		ColdStartTimeout:     60 * time.Second,
-		BackoffMaxRetries:    3,
-		BackoffInitialWait:   5 * time.Second,
-		BackoffMaxWait:       30 * time.Second,
-		RateLimitPerModel:    100,
-		RateLimitBurst:       50,
-		RateLimitGlobal:      1000,
-		RateLimitGlobalBurst: 200,
+		Namespace:                   "test-ns",
+		MaxQueueSize:                100,
+		QueueTimeout:                60 * time.Second,
+		ColdStartTimeout:            60 * time.Second,
+		BackoffMaxRetries:           3,
+		BackoffInitialWait:          5 * time.Second,
+		BackoffMaxWait:              30 * time.Second,
+		RateLimitPerModel:           100,
+		RateLimitBurst:              50,
+		RateLimitGlobal:             1000,
+		RateLimitGlobalBurst:        200,
+		MaxTokensClampEnabled:       true,
+		MaxTokensClampPromptReserve: defaultPromptReserveTokens,
 	}
 }
 
@@ -96,6 +98,14 @@ func TestConfigValidate_Errors(t *testing.T) {
 				c.AuthToken = ""
 			},
 			wantErr: "PROXY_AUTH_TOKEN must be set",
+		},
+		{
+			name: "max tokens clamp zero reserve",
+			modify: func(c *Config) {
+				c.MaxTokensClampEnabled = true
+				c.MaxTokensClampPromptReserve = 0
+			},
+			wantErr: "PROXY_MAX_TOKENS_CLAMP_PROMPT_RESERVE_TOKENS must be > 0",
 		},
 	}
 
@@ -178,6 +188,12 @@ func TestDebugConfigEndpoint(t *testing.T) {
 	if result.MaxQueueSize != 100 {
 		t.Errorf("expected maxQueueSize=100, got %d", result.MaxQueueSize)
 	}
+	if !result.MaxTokensClampEnabled {
+		t.Errorf("expected maxTokensClampEnabled=true")
+	}
+	if result.MaxTokensClampPromptReserve != defaultPromptReserveTokens {
+		t.Errorf("expected maxTokensClampPromptReserve=%d, got %d", defaultPromptReserveTokens, result.MaxTokensClampPromptReserve)
+	}
 }
 
 func TestDebugConfigEndpoint_EmptyToken(t *testing.T) {
@@ -214,6 +230,19 @@ func TestConfigFromEnv_RoutingKeyStrictness(t *testing.T) {
 	}
 	if cfg.RoutingDocSegmentMaxLength != 120 {
 		t.Fatalf("document max length=%d want 120", cfg.RoutingDocSegmentMaxLength)
+	}
+}
+
+func TestConfigFromEnv_MaxTokensClamp(t *testing.T) {
+	t.Setenv("PROXY_MAX_TOKENS_CLAMP_ENABLED", "false")
+	t.Setenv("PROXY_MAX_TOKENS_CLAMP_PROMPT_RESERVE_TOKENS", "256")
+
+	cfg := ConfigFromEnv(nil, "flexinfer-system")
+	if cfg.MaxTokensClampEnabled {
+		t.Fatal("MaxTokensClampEnabled=true want false")
+	}
+	if cfg.MaxTokensClampPromptReserve != 256 {
+		t.Fatalf("MaxTokensClampPromptReserve=%d want 256", cfg.MaxTokensClampPromptReserve)
 	}
 }
 

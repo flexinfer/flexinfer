@@ -109,26 +109,27 @@ func (p *Proxy) fetchTokenLimits(ctx context.Context, modelName string) modelmet
 	return modelmeta.ResolveTokenLimits(&m.Spec)
 }
 
-// maybeClampMaxTokens is the routing-side adapter used in the request forward
-// path. It consults the model's token limits and clamps max_tokens in the JSON
-// body if necessary, logging and incrementing the clamp counter on change.
-func (p *Proxy) maybeClampMaxTokens(ctx context.Context, modelName string, body []byte) []byte {
-	if len(body) == 0 || modelName == "" {
-		return body
+func (p *Proxy) maybeClampMaxTokensForResponse(ctx context.Context, modelName string, body []byte) ([]byte, int, int) {
+	if len(body) == 0 || modelName == "" || !p.maxTokensClampEnabled {
+		return body, -1, -1
 	}
 	limits := p.fetchTokenLimits(ctx, modelName)
-	clamped, orig, to := clampMaxTokensInBody(body, limits, defaultPromptReserveTokens)
+	reserve := p.maxTokensClampPromptReserve
+	if reserve <= 0 {
+		reserve = defaultPromptReserveTokens
+	}
+	clamped, orig, to := clampMaxTokensInBody(body, limits, reserve)
 	if orig < 0 || to < 0 {
-		return body
+		return body, -1, -1
 	}
 	slog.InfoContext(ctx, "clamped max_tokens",
 		"model", modelName,
 		"from", orig,
 		"to", to,
 		"context_window", limits.ContextWindow,
-		"prompt_reserve_tokens", defaultPromptReserveTokens,
+		"prompt_reserve_tokens", reserve,
 		"reason", "context_window_headroom",
 	)
 	maxTokensClampedTotal.WithLabelValues(modelName, "context_window_headroom").Inc()
-	return clamped
+	return clamped, orig, to
 }

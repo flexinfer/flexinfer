@@ -1,10 +1,15 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/pkg/modelmeta"
+	"github.com/stretchr/testify/require"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestClampMaxTokensInBody(t *testing.T) {
@@ -117,5 +122,58 @@ func TestClampMaxTokensInBody(t *testing.T) {
 				t.Fatalf("serialized max_tokens: want %d got %d", tc.wantMaxToken, gotMax)
 			}
 		})
+	}
+}
+
+func TestMaybeClampMaxTokensForResponse_UsesProxyConfig(t *testing.T) {
+	p := setupTestProxy(t)
+	p.maxTokensClampEnabled = true
+	p.maxTokensClampPromptReserve = 256
+
+	ctx := context.Background()
+	require.NoError(t, p.client.Create(ctx, &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://test/model",
+			Config: &apiextensionsv1.JSON{
+				Raw: []byte(`{"maxModelLen":4096}`),
+			},
+		},
+	}))
+
+	out, orig, to := p.maybeClampMaxTokensForResponse(ctx, "test-model", []byte(`{"model":"test-model","max_tokens":4096}`))
+	if orig != 4096 {
+		t.Fatalf("original max_tokens=%d want 4096", orig)
+	}
+	if to != 4096-256 {
+		t.Fatalf("clamped max_tokens=%d want %d", to, 4096-256)
+	}
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(out, &parsed))
+	got, ok := toPositiveInt(parsed["max_tokens"])
+	if !ok {
+		t.Fatalf("max_tokens missing or not integer: %v", parsed["max_tokens"])
+	}
+	if got != 4096-256 {
+		t.Fatalf("serialized max_tokens=%d want %d", got, 4096-256)
+	}
+}
+
+func TestMaybeClampMaxTokensForResponse_Disabled(t *testing.T) {
+	p := setupTestProxy(t)
+	p.maxTokensClampEnabled = false
+
+	body := []byte(`{"model":"test-model","max_tokens":4096}`)
+	out, orig, to := p.maybeClampMaxTokensForResponse(context.Background(), "test-model", body)
+	if orig != -1 || to != -1 {
+		t.Fatalf("disabled clamp returned orig=%d to=%d, want no-op", orig, to)
+	}
+	if string(out) != string(body) {
+		t.Fatalf("disabled clamp modified body: %s", string(out))
 	}
 }

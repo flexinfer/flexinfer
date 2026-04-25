@@ -74,6 +74,14 @@ spec:
               value: {{ $proxy.routing.documentSegmentMaxLength | quote }}
             {{- end }}
             {{- end }}
+            {{- if $proxy.maxTokensClamp }}
+            - name: PROXY_MAX_TOKENS_CLAMP_ENABLED
+              value: {{ $proxy.maxTokensClamp.enabled | quote }}
+            {{- if $proxy.maxTokensClamp.promptReserveTokens }}
+            - name: PROXY_MAX_TOKENS_CLAMP_PROMPT_RESERVE_TOKENS
+              value: {{ $proxy.maxTokensClamp.promptReserveTokens | quote }}
+            {{- end }}
+            {{- end }}
             {{- if $proxy.rateLimit }}
             {{- if $proxy.rateLimit.enabled }}
             - name: PROXY_RATE_LIMIT_ENABLED
