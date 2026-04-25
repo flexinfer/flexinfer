@@ -154,6 +154,12 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	if readyLeader != nil {
 		return readyLeader
 	}
+	if recentLeader != nil && warmPrimaryLeader != nil {
+		if recentLeader.Spec.GetPriority() >= warmPrimaryLeader.Spec.GetPriority() {
+			return recentLeader
+		}
+		return warmPrimaryLeader
+	}
 	if recentLeader != nil {
 		return recentLeader
 	}
