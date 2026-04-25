@@ -36,15 +36,18 @@ What this script does
    ``layer_types[idx] == "full_attention"`` (the layer-type entries that
    require k_eq_v handling).
 2. Reads ``<src>/model.safetensors.index.json`` and walks every shard.
-3. For each heterogeneous layer, finds the k_proj.* tensors and clones
+3. Refuses source artifacts with identical projection qweight tensors across
+   different layers. This catches the observed corrupt 31B artifact class
+   before the deterministic k_eq_v copy can make it look runnable.
+4. For each heterogeneous layer, finds the k_proj.* tensors and clones
    them into v_proj.* names. Writes those clones into a single extra
    shard ``model-keqv-vproj.safetensors`` to keep the original shards
    untouched.
-4. Hardlinks (falls back to copy on cross-FS) every existing shard +
+5. Hardlinks (falls back to copy on cross-FS) every existing shard +
    non-shard file from ``<src>/`` into ``<dst>/``, then writes a new
    ``model.safetensors.index.json`` that references the original shards
    PLUS the v_proj entries in the new shard.
-5. Validates that the resulting tensor set covers q+k+v on every layer
+6. Validates that the resulting tensor set covers q+k+v on every layer
    that the source had q+k for.
 
 Inputs (env vars):
@@ -74,6 +77,7 @@ Author: services/flexinfer (2026-04-22)
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -162,6 +166,13 @@ LAYER_TENSOR_RE = re.compile(
     r"^(?P<prefix>model\.layers\.(?P<idx>\d+)\.self_attn\.)"
     r"(?P<proj>k_proj|v_proj)\.(?P<suffix>[A-Za-z_0-9]+)$"
 )
+LAYER_QWEIGHT_RE = re.compile(
+    r"^model\.layers\.(?P<idx>\d+)\."
+    r"(?P<module>"
+    r"self_attn\.(?:q_proj|k_proj|v_proj|o_proj)"
+    r"|mlp\.(?:gate_proj|up_proj|down_proj)"
+    r")\.qweight$"
+)
 
 
 def collect_attention_keys(
@@ -219,6 +230,70 @@ def plan_duplications(
                 continue
             plan.append((layer_idx, suffix, k[suffix]))
     return plan
+
+
+def tensor_signature(arr) -> str:
+    import numpy as np
+
+    data = np.ascontiguousarray(arr)
+    digest = hashlib.sha256()
+    digest.update(str(data.dtype).encode())
+    digest.update(str(tuple(int(dim) for dim in data.shape)).encode())
+    digest.update(memoryview(data))
+    return digest.hexdigest()
+
+
+def validate_no_repeated_layer_qweights(src: Path, weight_map: dict[str, str]) -> None:
+    """Fail if the same projection qweight appears on more than one layer.
+
+    The broken 31B artifact that led to pad-only output had late layers whose
+    attention and MLP projection tensors repeated across many layer indices.
+    k_eq_v intentionally copies k_proj to v_proj within a layer, so this guard
+    only compares the same module family across different layers.
+    """
+    candidates: list[tuple[int, str, str, str]] = []
+    for tname, shard in weight_map.items():
+        match = LAYER_QWEIGHT_RE.match(tname)
+        if not match:
+            continue
+        candidates.append(
+            (int(match.group("idx")), match.group("module"), tname, shard)
+        )
+
+    log(f"source integrity: checking {len(candidates)} projection qweight tensors")
+    if len(candidates) < 2:
+        return
+
+    by_shard: dict[str, list[tuple[int, str, str]]] = defaultdict(list)
+    for layer_idx, module, tname, shard in candidates:
+        by_shard[shard].append((layer_idx, module, tname))
+
+    by_module_digest: dict[tuple[str, str], list[tuple[int, str]]] = defaultdict(list)
+    for shard, entries in sorted(by_shard.items()):
+        shard_path = src / shard
+        if not shard_path.exists():
+            fail(3, f"index references {shard} but file missing at {shard_path}")
+        with safetensors_lazy_open(shard_path) as fh:
+            for layer_idx, module, tname in entries:
+                if tname not in fh.keys():
+                    fail(3, f"index says {tname} lives in {shard}, but key is absent")
+                by_module_digest[(module, tensor_signature(fh.get_tensor(tname)))].append(
+                    (layer_idx, tname)
+                )
+
+    duplicate_groups: list[str] = []
+    for (module, _digest), entries in sorted(by_module_digest.items()):
+        layers = sorted({layer for layer, _tname in entries})
+        if len(layers) > 1:
+            duplicate_groups.append(f"{module} layers={layers[:12]}")
+
+    if duplicate_groups:
+        fail(
+            4,
+            "source integrity failed: repeated qweight tensors across layers: "
+            + "; ".join(duplicate_groups[:8]),
+        )
+    log("source integrity: no repeated projection qweights across layers")
 
 
 # ── Tensor I/O ────────────────────────────────────────────────────────
@@ -398,8 +473,15 @@ def main() -> None:
                     dst_weight_map = dst_index.get("weight_map", {})
                     # Cheap validation: pull heterogeneous layer indices
                     # from the source config and check every v_proj.qweight
-                    # is in the destination index.
+                    # is in the destination index. Also re-check source
+                    # qweight integrity before returning: a corrupt source can
+                    # otherwise keep an already-complete but bad k_eq_v output
+                    # alive forever.
                     cfg_for_check = load_config(src)
+                    index_for_check = load_index(src)
+                    validate_no_repeated_layer_qweights(
+                        src, index_for_check.get("weight_map", {})
+                    )
                     het = heterogeneous_layer_indices(cfg_for_check)
                     expected_keys = [
                         f"model.layers.{i}.self_attn.v_proj.qweight" for i in het
@@ -454,6 +536,7 @@ def main() -> None:
     index = load_index(src)
     weight_map = index.get("weight_map", {})
     log(f"index has {len(weight_map)} tensor entries")
+    validate_no_repeated_layer_qweights(src, weight_map)
     attn_keys = collect_attention_keys(weight_map)
 
     # Show pre-state for the first few heterogeneous layers

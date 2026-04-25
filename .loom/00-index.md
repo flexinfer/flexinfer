@@ -9,18 +9,21 @@
 - Implementation plan: `30-implementation-plan.md`
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
+- Gemma4 26B/31B GPTQ + TurboQuant plan: `gemma4-26b-31b-gptq-turboquant-plan.md`
+- Gemma4 31B TurboQuant closeout: `gemma4-31b-turboquant-closeout.md`
+- Gemma4 31B TurboQuant memory fix plan: `gemma4-31b-turboquant-memory-fix-plan.md`
 
-## Current Goal (2026-04-18)
+## Current Goal (2026-04-25)
 
-Drive the **gfx1100 quantization pipeline to "fully functional"** across model families, starting with Gemma4 and fanning out to Qwen3/3.5 + OmniCoder.
+Drive the Gemma4 26B/31B gfx1100 lanes to fully working abliterated GPTQ artifacts first, then promote TurboQuant only through validated KV-cache canaries.
 
-- [ ] Slice A — Gemma4 family completion on gfx1100 (26B-A4B MoE under new dense GPTQ validator; E4B re-quant; 31B canary).
-- [ ] Slice B — Qwen3.5 9B port to gfx1100 with GDN-aware pipeline + artifact validation.
-- [ ] Slice C — OmniCoder-9B first full run (Pending → Ready → OCI) on cblevins-7900xtx.
-- [ ] Slice D — Qwen3-14B GPTQ regression pass under new artifact validator.
-- [ ] Slice E — Cross-family validation matrix (cosine / perplexity / tok/s gates) recorded in `.loom/`.
+- [ ] Slice A - 26B guardrails: fix long-canary dGPU selector and keep hybrid 8K as fallback.
+- [ ] Slice B - 26B validation: finish dense-validated rebuild and run 16K/32K canary gates.
+- [ ] Slice C - 31B rebuild: re-quantize from source with repeated-tensor integrity checks before `k_eq_v`.
+- [ ] Slice D - 31B recovery: validate coherent 1920 serving before testing 2048/4096.
+- [ ] Slice E - TurboQuant canaries: patch primitive sharing, then test E4B, 31B boot-only, and 26B layer-selective lanes.
 
-See `30-implementation-plan.md` §"2026-04-18 Execution Slice" for slice detail and acceptance gates.
+See `gemma4-26b-31b-gptq-turboquant-plan.md` and `30-implementation-plan.md` for slice detail and acceptance gates.
 
 Historical baseline goals (completed):
 

@@ -10,7 +10,7 @@
 # - standard vLLM ROCm attention path
 # - prefix caching disabled
 # - eager execution, matching the working 8K primary profile
-# - single-GPU, text-only profile
+# - text-only profile on the discrete 7900 XTX
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -31,7 +31,12 @@ spec:
     strategy: None
   gpu:
     vendor: amd
-    count: 1
+    # Match the working primary 26B profile on cblevins-7900xtx. That node
+    # exposes both the discrete 7900 XTX and the Raphael iGPU as amd.com/gpu;
+    # with count=1 the device plugin can hand this canary the iGPU slot, while
+    # hipVisibleDevices=0 then pins vLLM to the wrong device. Claim both plugin
+    # slots so plugin-local device 0 is deterministically the dGPU.
+    count: 2
     shared: 7900xtx-textgen
     # Equal to the primary model so explicit long-context demand can swap this
     # canary in when the primary is idle; lower priority can never preempt it.

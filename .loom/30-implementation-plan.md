@@ -1,5 +1,70 @@
 # Implementation Plan
 
+## Update (2026-04-25): Gemma4 26B/31B GPTQ + TurboQuant Plan
+
+Focused plan: `.loom/gemma4-26b-31b-gptq-turboquant-plan.md`.
+
+Primary sequencing:
+
+1. Keep the current 26B hybrid GPTQ lane as the 8K fallback.
+2. Fix `gemma4-26b-a4b-gptq-long.yaml` so the long canary requires the same real dGPU selector as the primary 26B manifest.
+3. Finish or rerun the 26B dense-validated artifact path, then promote only if it is coherent and materially smaller than the hybrid artifact.
+4. Treat the current 31B `gptq-w4-g128-keqv` artifact as corrupt because it loads but emits `<pad>` from repeated late-layer tensors.
+5. Re-quantize 31B with repeated-tensor integrity guards before the `k_eq_v` post-process.
+6. Patch TurboQuant primitive sharing only after the clean GPTQ lanes exist.
+7. Reintroduce TurboQuant through canaries:
+   - 26B: layer-selective/SWA-aware first.
+   - 31B: boot-only first, then 4096/8192/16384 context ladder.
+
+Near-term work items:
+
+- Guardrail patch:
+  - align 26B long-canary selector with primary 26B selector,
+  - add repeated-tensor signature checks for Gemma4 quantized artifacts,
+  - make resume refuse suspicious cached late-layer reuse.
+- 26B validation:
+  - test 16K before 32K on fp16 KV,
+  - compare hybrid and dense-validated artifacts for output quality and VRAM.
+- 31B rebuild:
+  - rerun clean quantization on the gfx906/Radeon VII path,
+  - apply `k_eq_v` only after integrity passes,
+  - validate coherent short-generation at the current 1920 ceiling before raising context.
+- TurboQuant:
+  - implement shared immutable codec primitive cache in `build/scripts/patch_turboquant_quantizer_gpu_qr.py`,
+  - gate with `TQ4_SHARE_PRIMITIVES=1`,
+  - keep E4B as the fast regression probe.
+
+Acceptance ladder:
+
+1. Artifact validator catches repeated late-layer signatures.
+2. 26B primary remains coherent while long/dense canaries run.
+3. 26B long canary proves 16K, then 32K if VRAM allows.
+4. 31B clean GPTQ plus `k_eq_v` answers a short prompt without `<pad>` collapse.
+5. TurboQuant 31B boot-only reaches KV sizing instead of plugin allocation OOM.
+6. TurboQuant canaries pass a context ladder and quality gauntlet before promotion.
+
+## Update (2026-04-25): Gemma4 31B TurboQuant Memory Fix
+
+Focused plan: `.loom/gemma4-31b-turboquant-memory-fix-plan.md`.
+
+The preferred implementation is a TurboQuant plugin patch, not a controller or
+manifest workaround. Patch `build/scripts/patch_turboquant_quantizer_gpu_qr.py`
+so the generated `tq4_backend.py` shares immutable codec primitives across
+attention layers by `(device, head_size, bits, seed)` and avoids allocating
+split rotation halves on ROCm when `TQ4_USE_PYTORCH_CODEC=1`.
+
+Acceptance ladder:
+
+1. Patch applies idempotently to `Alberto-Codes/turboquant-vllm@9d19b87c`.
+2. E4B TurboQuant debug probe remains coherent.
+3. 31B boot-only probe reaches KV-cache sizing instead of attention-module OOM.
+4. 31B context ladder passes 4096, 8192, then 16384 tokens.
+5. Quality gauntlet passes before `gemma4-31b-gptq-long.yaml` is re-enabled in
+   Flux.
+
+Production `gemma4-31b-gptq` stays at the current manifest ceiling
+(`maxModelLen: 1920`) until clean-artifact and TurboQuant gates pass.
+
 ## Scope
 
 - Keep `.loom` context docs current and source-backed.
