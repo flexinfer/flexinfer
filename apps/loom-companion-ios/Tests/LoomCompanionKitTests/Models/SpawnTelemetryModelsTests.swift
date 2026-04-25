@@ -53,7 +53,7 @@ struct SpawnTelemetryModelsTests {
         }
       ],
       "file_changes": [
-        { "path": "src/foo.go", "kind": "modify" },
+        { "path": "src/foo.go", "kind": "modify", "lines_added": 12, "lines_removed": 3 },
         { "path": "docs/new.md", "kind": "create" }
       ],
       "errors": [
@@ -123,13 +123,18 @@ struct SpawnTelemetryModelsTests {
         #expect(write.exitCode == 1)
         #expect(write.error == "permission denied")
 
-        // File changes.
+        // File changes — first entry exercises lines_added/lines_removed,
+        // second exercises the omitempty default-to-zero path.
         let files = try #require(telemetry.fileChanges)
         #expect(files.count == 2)
         #expect(files[0].path == "src/foo.go")
         #expect(files[0].kind == "modify")
+        #expect(files[0].linesAdded == 12)
+        #expect(files[0].linesRemoved == 3)
         #expect(files[1].path == "docs/new.md")
         #expect(files[1].kind == "create")
+        #expect(files[1].linesAdded == 0)
+        #expect(files[1].linesRemoved == 0)
 
         // Errors.
         let errors = try #require(telemetry.errors)
@@ -194,6 +199,30 @@ struct SpawnTelemetryModelsTests {
         #expect(tool.serverName == nil)
         #expect(tool.durationMs == nil)
         #expect(tool.error == nil)
+    }
+
+    @Test("SpawnFileChange decodes line deltas, defaults to zero when absent")
+    func decodesFileChangeLineDeltas() throws {
+        let withDeltas = """
+        { "path": "src/a.go", "kind": "modify", "lines_added": 7, "lines_removed": 2 }
+        """
+        let withoutDeltas = """
+        { "path": "src/b.go", "kind": "create" }
+        """
+        let a = try JSONDecoder().decode(SpawnFileChange.self, from: Data(withDeltas.utf8))
+        let b = try JSONDecoder().decode(SpawnFileChange.self, from: Data(withoutDeltas.utf8))
+
+        #expect(a.linesAdded == 7)
+        #expect(a.linesRemoved == 2)
+        #expect(b.linesAdded == 0)
+        #expect(b.linesRemoved == 0)
+
+        // Encoded keys must match the Go server's snake_case contract.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let json = try #require(String(data: try encoder.encode(a), encoding: .utf8))
+        #expect(json.contains("\"lines_added\":7"))
+        #expect(json.contains("\"lines_removed\":2"))
     }
 
     @Test("Round-trip encode/decode preserves equality")
