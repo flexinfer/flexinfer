@@ -423,3 +423,111 @@ func TestAppendHookExtras_UnknownExtra(t *testing.T) {
 		t.Errorf("expected 1 SessionStart block (unchanged), got %d", len(sessionStart))
 	}
 }
+
+// hooksConfigContainsRetro returns true when any command in the platform
+// hooks map references session-retro.sh. Used to assert end-to-end opt-in
+// wiring through hooksConfigFromProfile.
+func hooksConfigContainsRetro(t *testing.T, cfg map[string]any) bool {
+	t.Helper()
+	hooks, ok := cfg["hooks"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, v := range hooks {
+		entries, ok := v.([]map[string]any)
+		if !ok {
+			continue
+		}
+		for _, entry := range entries {
+			inner, ok := entry["hooks"].([]map[string]any)
+			if !ok {
+				continue
+			}
+			for _, h := range inner {
+				if cmd, ok := h["command"].(string); ok && strings.Contains(cmd, "session-retro.sh") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// TestHooksConfigFromProfile_RetroOptIn_Claude verifies the
+// postSessionEnd_retrospective extra is opt-in for Claude: absent by default,
+// present when the profile's extras list includes it. This pins the opt-in
+// contract end-to-end through hooksConfigFromProfile (the path loom sync uses
+// to materialize Claude's settings.json).
+func TestHooksConfigFromProfile_RetroOptIn_Claude(t *testing.T) {
+	profile, err := GetPlatformProfile("claude")
+	if err != nil {
+		t.Fatalf("get claude profile: %v", err)
+	}
+
+	// Default profile (no retro extra) should NOT generate the retro hook.
+	cfgDefault := hooksConfigFromProfile(testRegistry(), profile, "")
+	if hooksConfigContainsRetro(t, cfgDefault) {
+		t.Error("retro hook generated for Claude without postSessionEnd_retrospective extra")
+	}
+
+	// Clone the profile with an added extras entry; do not mutate the cached
+	// profile registry returned by GetPlatformProfile.
+	clone := *profile
+	clone.Hooks.Extras = append([]string{}, profile.Hooks.Extras...)
+	clone.Hooks.Extras = append(clone.Hooks.Extras, "postSessionEnd_retrospective")
+
+	cfgEnabled := hooksConfigFromProfile(testRegistry(), &clone, "")
+	if !hooksConfigContainsRetro(t, cfgEnabled) {
+		t.Error("retro hook missing for Claude with postSessionEnd_retrospective extra enabled")
+	}
+}
+
+// TestHooksConfigFromProfile_RetroOptIn_Gemini verifies the same opt-in
+// contract for Gemini. Gemini uses SessionEnd (not Stop), so this also
+// guards against the dispatcher only handling Claude's event name.
+func TestHooksConfigFromProfile_RetroOptIn_Gemini(t *testing.T) {
+	profile, err := GetPlatformProfile("gemini")
+	if err != nil {
+		t.Fatalf("get gemini profile: %v", err)
+	}
+
+	cfgDefault := hooksConfigFromProfile(testRegistry(), profile, "")
+	if hooksConfigContainsRetro(t, cfgDefault) {
+		t.Error("retro hook generated for Gemini without postSessionEnd_retrospective extra")
+	}
+
+	clone := *profile
+	clone.Hooks.Extras = append([]string{}, profile.Hooks.Extras...)
+	clone.Hooks.Extras = append(clone.Hooks.Extras, "postSessionEnd_retrospective")
+
+	cfgEnabled := hooksConfigFromProfile(testRegistry(), &clone, "")
+	if !hooksConfigContainsRetro(t, cfgEnabled) {
+		t.Error("retro hook missing for Gemini with postSessionEnd_retrospective extra enabled")
+	}
+
+	// Sanity: the retro hook must have landed on Gemini's SessionEnd event,
+	// not on Claude's Stop event (Gemini does not emit Stop).
+	hooks := cfgEnabled["hooks"].(map[string]any)
+	if _, ok := hooks["Stop"]; ok {
+		t.Error("Gemini hooks must not contain a Stop event (Gemini uses SessionEnd)")
+	}
+	sessionEnd, ok := hooks["SessionEnd"].([]map[string]any)
+	if !ok || len(sessionEnd) == 0 {
+		t.Fatal("Gemini hooks missing SessionEnd entries")
+	}
+	var foundRetroOnSessionEnd bool
+	for _, entry := range sessionEnd {
+		inner, ok := entry["hooks"].([]map[string]any)
+		if !ok {
+			continue
+		}
+		for _, h := range inner {
+			if cmd, ok := h["command"].(string); ok && strings.Contains(cmd, "session-retro.sh") {
+				foundRetroOnSessionEnd = true
+			}
+		}
+	}
+	if !foundRetroOnSessionEnd {
+		t.Error("retro hook did not attach to Gemini SessionEnd event")
+	}
+}
