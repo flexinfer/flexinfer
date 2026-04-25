@@ -1,4 +1,7 @@
 import Foundation
+#if os(iOS)
+import WidgetKit
+#endif
 
 /// ViewModel for the agent spawn UI.
 @Observable
@@ -106,6 +109,7 @@ public final class SpawnViewModel {
         } catch {
             self.error = .networkError(underlying: error.localizedDescription)
         }
+        publishSpawnBudgetSnapshot()
     }
 
     /// Fetch telemetry for every currently-active spawn in parallel. Best
@@ -114,7 +118,12 @@ public final class SpawnViewModel {
     /// tab (e.g., on SSE list-refresh) rather than on a tight timer.
     public func refreshActiveTelemetry() async {
         let activeIDs = spawns.filter(\.isActive).map(\.spawnId)
-        guard !activeIDs.isEmpty else { return }
+        guard !activeIDs.isEmpty else {
+            // Even with no active spawns, publish so the widget clears stale
+            // entries from the previous burst of activity.
+            publishSpawnBudgetSnapshot()
+            return
+        }
 
         await withTaskGroup(of: (String, SpawnTelemetry?).self) { group in
             for id in activeIDs {
@@ -134,6 +143,22 @@ public final class SpawnViewModel {
         // so the dictionary doesn't grow unbounded over a long session.
         let liveIDs = Set(spawns.map(\.spawnId))
         telemetryBySpawnID = telemetryBySpawnID.filter { liveIDs.contains($0.key) }
+
+        publishSpawnBudgetSnapshot()
+    }
+
+    /// Persist the current spawn-budget snapshot to the App Group store and
+    /// nudge WidgetKit. iOS-only; on other platforms (macOS testing) this is
+    /// a no-op so the model code stays portable.
+    private func publishSpawnBudgetSnapshot() {
+        let snapshot = SpawnBudgetWidgetData.from(
+            spawns: spawns,
+            telemetry: telemetryBySpawnID
+        )
+        SharedDataStore.saveSpawnBudget(snapshot)
+        #if os(iOS)
+        WidgetCenter.shared.reloadTimelines(ofKind: SpawnBudgetWidgetKind)
+        #endif
     }
 
     /// Re-run a spawn with the same request params (project / branch / task /

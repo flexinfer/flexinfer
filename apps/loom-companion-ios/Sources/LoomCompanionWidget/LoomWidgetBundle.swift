@@ -9,6 +9,7 @@ struct LoomWidgetBundle: WidgetBundle {
         ActiveSessionsWidget()
         SessionSummaryWidget()
         AttentionLaneWidget()
+        SpawnBudgetWidget()
         LockScreenWidgets()
         WorkflowLiveActivityView()
         SessionLiveActivityView()
