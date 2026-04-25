@@ -5,8 +5,8 @@
 	codebase-bench-baseline codebase-bench-full codebase-bench-incremental codebase-bench-watch \
 		security security-gosec security-vuln \
 		changelog changelog-html changelog-json \
-		docker-build docker-build-loom-core docker-build-custom-server \
-		docker-push docker-push-loom-core docker-push-custom-server \
+		docker-build docker-build-loom-core docker-build-custom-server docker-build-loom-hive-operator \
+		docker-push docker-push-loom-core docker-push-custom-server docker-push-loom-hive-operator \
 		deploy deploy-check deploy-status \
 	browserkit-check browserkit-setup \
 	hud hud-dev hud-build hud-install hud-install-service hud-reload hud-frontend hud-dist-check hud-clean \
@@ -39,6 +39,7 @@ MOBILE_IOS_PROJECT_YAML ?= apps/loom-companion-ios/project.yml
 REGISTRY ?= registry.harbor.lan
 LOOM_CORE_IMAGE := $(REGISTRY)/mcp/loom-core
 CUSTOM_SERVER_IMAGE := $(REGISTRY)/mcp/custom-server
+LOOM_HIVE_OPERATOR_IMAGE := $(REGISTRY)/mcp/loom-hive-operator
 IMAGE_TAG ?= $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "dev")
 
 # Workspace root (for local Docker builds that need libs/)
@@ -1178,7 +1179,7 @@ changelog-json:
 # =============================================================================
 
 # Build all Docker images (uses local Dockerfiles with workspace context)
-docker-build: docker-build-loom-core docker-build-custom-server
+docker-build: docker-build-loom-core docker-build-custom-server docker-build-loom-hive-operator
 	@echo "✓ All Docker images built"
 
 # Build loom-core image (local build using workspace root context)
@@ -1206,8 +1207,20 @@ docker-build-custom-server:
 		-f Dockerfile.custom-server.local .
 	@echo "✓ custom-server image built"
 
+# Build loom-hive-operator image (cluster operator for the council + pipeline)
+docker-build-loom-hive-operator:
+	@echo "Building loom-hive-operator image..."
+	@echo "Image: $(LOOM_HIVE_OPERATOR_IMAGE):$(IMAGE_TAG)"
+	@echo "Context: $(CURDIR)"
+	cd $(CURDIR) && docker build \
+		--build-arg VERSION=$(VERSION) \
+		-t $(LOOM_HIVE_OPERATOR_IMAGE):$(IMAGE_TAG) \
+		-t $(LOOM_HIVE_OPERATOR_IMAGE):latest \
+		-f Dockerfile.loom-hive-operator .
+	@echo "✓ loom-hive-operator image built"
+
 # Push all images
-docker-push: docker-push-loom-core docker-push-custom-server
+docker-push: docker-push-loom-core docker-push-custom-server docker-push-loom-hive-operator
 	@echo "✓ All images pushed to $(REGISTRY)"
 
 # Push loom-core image
@@ -1223,6 +1236,13 @@ docker-push-custom-server: docker-build-custom-server
 	docker push $(CUSTOM_SERVER_IMAGE):$(IMAGE_TAG)
 	docker push $(CUSTOM_SERVER_IMAGE):latest
 	@echo "✓ custom-server pushed"
+
+# Push loom-hive-operator image
+docker-push-loom-hive-operator: docker-build-loom-hive-operator
+	@echo "Pushing loom-hive-operator image..."
+	docker push $(LOOM_HIVE_OPERATOR_IMAGE):$(IMAGE_TAG)
+	docker push $(LOOM_HIVE_OPERATOR_IMAGE):latest
+	@echo "✓ loom-hive-operator pushed"
 
 # =============================================================================
 # DEPLOY TARGETS
