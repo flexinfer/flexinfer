@@ -18,12 +18,14 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -103,11 +105,14 @@ func (r *ModelReconciler) reconcileKVCachePressure(ctx context.Context, model *a
 			model.Status.KVCache.Reconfigured = false
 			model.Status.KVCache.ReconfiguredMaxNumSeqs = nil
 			model.Status.KVCache.OriginalMaxNumSeqs = nil
+			model.Status.KVCache.ReconfiguredMaxModelLen = nil
+			model.Status.KVCache.OriginalMaxModelLen = nil
+			model.Status.KVCache.OriginalConfig = nil
 			model.Status.KVCache.ReconfiguredAt = nil
 			model.Status.KVCache.LastAction = "Restored"
 			model.Status.KVCache.Pressure = false
 			r.Recorder.Event(model, corev1.EventTypeNormal, "KVCacheRestored",
-				fmt.Sprintf("KV-cache utilization %.2f below low watermark %.2f, restored original maxNumSeqs", util, lowWatermark))
+				fmt.Sprintf("KV-cache utilization %.2f below low watermark %.2f, restored original config", util, lowWatermark))
 			return
 		}
 	}
@@ -138,7 +143,7 @@ func (r *ModelReconciler) reconcileKVCachePressure(ctx context.Context, model *a
 	}
 }
 
-// handleKVCacheReconfigure reduces maxNumSeqs to alleviate KV-cache pressure.
+// handleKVCacheReconfigure reduces backend config to alleviate KV-cache pressure.
 // On the next reconcile, ensureDeployment merges the override into backend args,
 // triggering a rolling update of the model deployment.
 func (r *ModelReconciler) handleKVCacheReconfigure(ctx context.Context, model *aiv1alpha2.Model, util, highWatermark, lowWatermark float64) {
@@ -150,31 +155,54 @@ func (r *ModelReconciler) handleKVCacheReconfigure(ctx context.Context, model *a
 		return
 	}
 
-	// Determine current maxNumSeqs from spec config.
-	currentMaxSeqs := int32(model.Spec.ConfigInt("maxNumSeqs", 256))
+	strategy := model.Spec.GetKVCacheReconfigureStrategy()
+	changes := make([]string, 0, 2)
+	originalConfig := map[string]any{}
 
-	// Reduce by 50%, minimum 1.
-	reduced := currentMaxSeqs / 2
-	if reduced < 1 {
-		reduced = 1
+	if strategy == aiv1alpha2.KVCacheReconfigureStrategyReduceSeqs || strategy == aiv1alpha2.KVCacheReconfigureStrategyBoth {
+		currentMaxSeqs := int32(model.Spec.ConfigInt("maxNumSeqs", 256))
+		reduced := reduceInt32ByHalf(currentMaxSeqs, 1)
+		model.Status.KVCache.OriginalMaxNumSeqs = &currentMaxSeqs
+		model.Status.KVCache.ReconfiguredMaxNumSeqs = &reduced
+		originalConfig["maxNumSeqs"] = currentMaxSeqs
+		changes = append(changes, fmt.Sprintf("maxNumSeqs=%d->%d", currentMaxSeqs, reduced))
+	}
+
+	if strategy == aiv1alpha2.KVCacheReconfigureStrategyReduceMaxLen || strategy == aiv1alpha2.KVCacheReconfigureStrategyBoth {
+		currentMaxModelLen := int32(model.Spec.ConfigInt("maxModelLen", 8192))
+		reduced := reduceInt32ByHalf(currentMaxModelLen, 1024)
+		model.Status.KVCache.OriginalMaxModelLen = &currentMaxModelLen
+		model.Status.KVCache.ReconfiguredMaxModelLen = &reduced
+		originalConfig["maxModelLen"] = currentMaxModelLen
+		changes = append(changes, fmt.Sprintf("maxModelLen=%d->%d", currentMaxModelLen, reduced))
+	}
+
+	if raw, err := json.Marshal(originalConfig); err == nil {
+		model.Status.KVCache.OriginalConfig = &apiextensionsv1.JSON{Raw: raw}
 	}
 
 	now := metav1.Now()
 	model.Status.KVCache.Reconfigured = true
 	model.Status.KVCache.ReconfiguredAt = &now
-	model.Status.KVCache.OriginalMaxNumSeqs = &currentMaxSeqs
-	model.Status.KVCache.ReconfiguredMaxNumSeqs = &reduced
-	model.Status.KVCache.LastAction = fmt.Sprintf("Reconfigured:maxNumSeqs=%d->%d", currentMaxSeqs, reduced)
+	model.Status.KVCache.LastAction = fmt.Sprintf("Reconfigured:%s", strings.Join(changes, ","))
 
-	log.Info("KV-cache pressure: reconfiguring maxNumSeqs",
+	log.Info("KV-cache pressure: reconfiguring backend config",
 		"model", model.Name, "utilization", util,
 		"highWatermark", highWatermark,
-		"originalMaxNumSeqs", currentMaxSeqs,
-		"reducedMaxNumSeqs", reduced)
+		"strategy", strategy,
+		"changes", strings.Join(changes, ","))
 
 	r.Recorder.Event(model, corev1.EventTypeWarning, "KVCacheReconfigure",
-		fmt.Sprintf("KV-cache utilization %.2f exceeds high watermark %.2f, reducing maxNumSeqs %d -> %d",
-			util, highWatermark, currentMaxSeqs, reduced))
+		fmt.Sprintf("KV-cache utilization %.2f exceeds high watermark %.2f, applying reconfigure strategy %s (%s)",
+			util, highWatermark, strategy, strings.Join(changes, ", ")))
+}
+
+func reduceInt32ByHalf(value, minimum int32) int32 {
+	reduced := value / 2
+	if reduced < minimum {
+		return minimum
+	}
+	return reduced
 }
 
 // handleKVCacheEvict scales down the model to 0 replicas to relieve KV-cache pressure.

@@ -961,6 +961,11 @@ func (in *KVCacheStatus) DeepCopyInto(out *KVCacheStatus) {
 		in, out := &in.ReconfiguredAt, &out.ReconfiguredAt
 		*out = (*in).DeepCopy()
 	}
+	if in.OriginalConfig != nil {
+		in, out := &in.OriginalConfig, &out.OriginalConfig
+		*out = new(apiextensionsv1.JSON)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.OriginalMaxNumSeqs != nil {
 		in, out := &in.OriginalMaxNumSeqs, &out.OriginalMaxNumSeqs
 		*out = new(int32)
@@ -968,6 +973,16 @@ func (in *KVCacheStatus) DeepCopyInto(out *KVCacheStatus) {
 	}
 	if in.ReconfiguredMaxNumSeqs != nil {
 		in, out := &in.ReconfiguredMaxNumSeqs, &out.ReconfiguredMaxNumSeqs
+		*out = new(int32)
+		**out = **in
+	}
+	if in.OriginalMaxModelLen != nil {
+		in, out := &in.OriginalMaxModelLen, &out.OriginalMaxModelLen
+		*out = new(int32)
+		**out = **in
+	}
+	if in.ReconfiguredMaxModelLen != nil {
+		in, out := &in.ReconfiguredMaxModelLen, &out.ReconfiguredMaxModelLen
 		*out = new(int32)
 		**out = **in
 	}
