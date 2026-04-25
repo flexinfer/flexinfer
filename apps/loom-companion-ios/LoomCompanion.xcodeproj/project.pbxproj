@@ -121,6 +121,7 @@
 		DCF74D2FF639DB17590A1117 /* SessionDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE5346286B85D5DBFA4FDEE2 /* SessionDetailViewModel.swift */; };
 		E0D0A8B42F44F4323B1313B6 /* ConnectionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52AE107FC4C72CDDC7C2546E /* ConnectionViewModel.swift */; };
 		E3AE33E013D5ED66431516CA /* NavigationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC42DDAAC5EBA6BF3E7280E5 /* NavigationCoordinator.swift */; };
+		E455390F8D671F1C5FEC003D /* SpawnBudgetWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB3701A886BB8AD9A90F9FD6 /* SpawnBudgetWidget.swift */; };
 		E6194D5C397C9AA9C5C1A08F /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C6C5A521E38D6D36836C8F0 /* SwiftUI.framework */; };
 		E943F11E27034571454731BE /* FleetSummaryCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CF7388A60BCC73E46496965 /* FleetSummaryCard.swift */; };
 		E9DD7BD5630A1354ADCA7C85 /* OpsContextSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE765D2A48410A9872E4AE9B /* OpsContextSection.swift */; };
@@ -276,6 +277,7 @@
 		A5336E3C4F0A0451AD7F4F7E /* DashboardData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardData.swift; sourceTree = "<group>"; };
 		A882B8682E19E4E7B3C5A671 /* LoomCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomCard.swift; sourceTree = "<group>"; };
 		AAF63671E767B7D9DE9F7F13 /* LoomShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomShortcuts.swift; sourceTree = "<group>"; };
+		AB3701A886BB8AD9A90F9FD6 /* SpawnBudgetWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpawnBudgetWidget.swift; sourceTree = "<group>"; };
 		AB62C2266F9CC7DC0B860BB8 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		ABD30CC7930CFA14D3DB2836 /* SessionLiveActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLiveActivityView.swift; sourceTree = "<group>"; };
 		B1D118C36E14FC9B7B901282 /* SpawnViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpawnViewModel.swift; sourceTree = "<group>"; };
@@ -372,6 +374,7 @@
 				351DF692E793E5470B23617D /* PipelineLiveActivityView.swift */,
 				ABD30CC7930CFA14D3DB2836 /* SessionLiveActivityView.swift */,
 				C0DF931D47B733827DCCFA11 /* SessionSummaryWidget.swift */,
+				AB3701A886BB8AD9A90F9FD6 /* SpawnBudgetWidget.swift */,
 				6062C007A1A6883CBBFA06DA /* TasksWidget.swift */,
 				C7AD9B82870900144B888406 /* WorkflowLiveActivityView.swift */,
 			);
@@ -886,6 +889,7 @@
 				D51570C66C0B485EBCF6ADB6 /* PipelineLiveActivityView.swift in Sources */,
 				0D01D277C24B8DA64CB64C59 /* SessionLiveActivityView.swift in Sources */,
 				A685AF86282F5A0BB05803D9 /* SessionSummaryWidget.swift in Sources */,
+				E455390F8D671F1C5FEC003D /* SpawnBudgetWidget.swift in Sources */,
 				C642BC1312F6F9E56083E501 /* TasksWidget.swift in Sources */,
 				39B08105D3D71BCBF12D14FF /* WorkflowLiveActivityView.swift in Sources */,
 			);
