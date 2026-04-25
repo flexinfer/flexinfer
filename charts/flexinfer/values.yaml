@@ -149,6 +149,11 @@ proxy:
     explicitKeyMaxLength: 128
     systemSegmentMaxLength: 512
     documentSegmentMaxLength: 256
+  # Clamp inbound OpenAI max_tokens so clients that request the full context
+  # window still leave room for prompt tokens.
+  maxTokensClamp:
+    enabled: true
+    promptReserveTokens: 512
   # Rate limiting configuration
   # Protects K8s API server from excessive per-request API calls
   rateLimit:

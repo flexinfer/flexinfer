@@ -40,6 +40,8 @@ curl -s http://proxy/v1/chat/completions \
 
 The proxy forwards the request to the backend Service for that model.
 
+If a client sends `max_tokens` equal to the model's full advertised context window, the proxy clamps it before forwarding so the backend still has prompt-token headroom. Clamped responses include `X-FlexInfer-MaxTokens-Clamped: <original>-><clamped>`, and the behavior is controlled by `PROXY_MAX_TOKENS_CLAMP_ENABLED` plus `PROXY_MAX_TOKENS_CLAMP_PROMPT_RESERVE_TOKENS`.
+
 ## Scale-to-zero behavior
 
 When a model is idle (replicas = 0), the proxy:
@@ -68,4 +70,3 @@ For models in a `GPUGroup`, only one model is active at a time. When a request a
 - Watch model readiness:
   - v1alpha2: `kubectl -n flexinfer-system get models -w`
   - v1alpha1: `kubectl -n flexinfer-system get modeldeployments -w`
-

@@ -350,7 +350,11 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 	// window or when max_tokens already fits.
 	if len(bodyBytes) > 0 &&
 		strings.Contains(r.Header.Get("Content-Type"), "application/json") {
-		bodyBytes = p.maybeClampMaxTokens(ctx, resolvedModel, bodyBytes)
+		var originalMaxTokens, clampedMaxTokens int
+		bodyBytes, originalMaxTokens, clampedMaxTokens = p.maybeClampMaxTokensForResponse(ctx, resolvedModel, bodyBytes)
+		if originalMaxTokens >= 0 && clampedMaxTokens >= 0 {
+			w.Header().Set("X-FlexInfer-MaxTokens-Clamped", fmt.Sprintf("%d->%d", originalMaxTokens, clampedMaxTokens))
+		}
 	}
 
 	// Restore body if we read it
