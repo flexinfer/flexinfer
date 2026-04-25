@@ -42,10 +42,15 @@ metadata:
     # controller can actually honor minReplicas=1 + warmPolicy=primary
     # (PromotionGate condition was blocking the pod from spawning after
     # the !188 maxModelLen bump).
-    flexinfer.ai/promotion-state: validated-3072-baseline
+    # 2026-04-25: baseline settled at 2048 after !188 (3072 attempt) failed
+    # and !190 fell back. TurboQuant canary (gemma4-31b-gptq-long) also
+    # failed to boot — plugin + weights don't fit on 24 GiB gfx1100.
+    # See docs/dev/gemma4-31b-turboquant-24gb-oom.md before re-attempting
+    # any long-context promotion on this model + hardware combo.
+    flexinfer.ai/promotion-state: validated-2048-gfx1100-ceiling
     flexinfer.ai/promotion-validation: passed
-    flexinfer.ai/promotion-evidence: services/flexinfer!182,!185,!188
-    flexinfer.ai/promotion-requires: target-context-validation-before-promotion
+    flexinfer.ai/promotion-evidence: services/flexinfer!182,!185,!188,!190
+    flexinfer.ai/promotion-requires: docs/dev/gemma4-31b-turboquant-24gb-oom.md
     flexinfer.ai/cache-source-ready-job: gemma4-31b-keqv-postprocess-v3
 spec:
   backend: vllm
