@@ -26,6 +26,24 @@ class ValidateQuantizedArtifactTests(unittest.TestCase):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"")
 
+    def _write_safetensors(self, relative_path: str, tensors: dict) -> None:
+        try:
+            import torch
+            from safetensors.torch import save_file
+        except Exception as exc:  # noqa: BLE001 - optional test dependency.
+            self.skipTest(f"safetensors/torch unavailable: {exc}")
+
+        normalized = {}
+        for key, value in tensors.items():
+            if hasattr(value, "detach"):
+                normalized[key] = value
+            else:
+                normalized[key] = torch.tensor(value, dtype=torch.int32)
+
+        target = self.artifact / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        save_file(normalized, str(target))
+
     def _seed_base_config(
         self,
         model_name: str = "google/gemma-4-26b-a4b-it",
@@ -166,6 +184,88 @@ class ValidateQuantizedArtifactTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["family"], "gemma4-31b")
         self.assertEqual(result["checks"]["detected_family"], "gemma4-31b")
+
+    def test_gemma4_31b_repeated_qweights_fail_validation(self) -> None:
+        self._write_json(
+            "config.json",
+            {
+                "model_type": "gemma4_text",
+                "architectures": ["Gemma4ForCausalLM"],
+                "num_hidden_layers": 42,
+                "quantization_config": {
+                    "modules_in_block_to_quantize": ["self_attn.q_proj"]
+                },
+            },
+        )
+        keys = {
+            "model.layers.40.self_attn.q_proj.qweight": "model-00001-of-00001.safetensors",
+            "model.layers.40.self_attn.q_proj.qzeros": "model-00001-of-00001.safetensors",
+            "model.layers.41.self_attn.q_proj.qweight": "model-00001-of-00001.safetensors",
+            "model.layers.41.self_attn.q_proj.qzeros": "model-00001-of-00001.safetensors",
+        }
+        self._write_json("model.safetensors.index.json", {"weight_map": keys})
+        self._write_safetensors(
+            "model-00001-of-00001.safetensors",
+            {
+                "model.layers.40.self_attn.q_proj.qweight": [[1, 2], [3, 4]],
+                "model.layers.40.self_attn.q_proj.qzeros": [[0, 0]],
+                "model.layers.41.self_attn.q_proj.qweight": [[1, 2], [3, 4]],
+                "model.layers.41.self_attn.q_proj.qzeros": [[0, 0]],
+            },
+        )
+
+        result = validator.validate_artifact(
+            self.artifact, requested_layout="vllm-gptq", requested_family="gemma4-31b"
+        )
+
+        self.assertFalse(result["ok"], result)
+        self.assertTrue(
+            any("repeated qweight tensors" in error for error in result["errors"]),
+            result["errors"],
+        )
+        duplicate_groups = result["checks"]["repeated_tensor_guard"][
+            "duplicate_groups"
+        ]
+        self.assertEqual(duplicate_groups[0]["module"], "self_attn.q_proj")
+        self.assertEqual(duplicate_groups[0]["layers"], [40, 41])
+
+    def test_gemma4_31b_distinct_qweights_pass_repeated_guard(self) -> None:
+        self._write_json(
+            "config.json",
+            {
+                "model_type": "gemma4_text",
+                "architectures": ["Gemma4ForCausalLM"],
+                "num_hidden_layers": 42,
+                "quantization_config": {
+                    "modules_in_block_to_quantize": ["self_attn.q_proj"]
+                },
+            },
+        )
+        keys = {
+            "model.layers.40.self_attn.q_proj.qweight": "model-00001-of-00001.safetensors",
+            "model.layers.40.self_attn.q_proj.qzeros": "model-00001-of-00001.safetensors",
+            "model.layers.41.self_attn.q_proj.qweight": "model-00001-of-00001.safetensors",
+            "model.layers.41.self_attn.q_proj.qzeros": "model-00001-of-00001.safetensors",
+        }
+        self._write_json("model.safetensors.index.json", {"weight_map": keys})
+        self._write_safetensors(
+            "model-00001-of-00001.safetensors",
+            {
+                "model.layers.40.self_attn.q_proj.qweight": [[1, 2], [3, 4]],
+                "model.layers.40.self_attn.q_proj.qzeros": [[0, 0]],
+                "model.layers.41.self_attn.q_proj.qweight": [[1, 2], [3, 5]],
+                "model.layers.41.self_attn.q_proj.qzeros": [[0, 0]],
+            },
+        )
+
+        result = validator.validate_artifact(
+            self.artifact, requested_layout="vllm-gptq", requested_family="gemma4-31b"
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            result["checks"]["repeated_tensor_guard"]["duplicate_groups"], []
+        )
 
     def test_required_and_forbidden_quantized_modules(self) -> None:
         self._seed_base_config(

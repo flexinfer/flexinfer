@@ -68,3 +68,28 @@ During Qwen3-30B-A3B model deployment, three cold-start reliability bugs were di
 - [C1] `python /Users/cblevins/.codex/skills/plan-loom-core/scripts/init_loom_context.py --root .`
 - [C2] `python /Users/cblevins/.codex/skills/plan-loom-core/scripts/workspace_snapshot.py --root .`
 - [C3] `loom tools list --json --limit 500 --page 1 | jq '{server,page,pageSize,totalTools,totalPages,serverCount,cachedAt}'`
+
+## Scope Extension (2026-04-25): Gemma4 26B/31B GPTQ + TurboQuant
+
+Product objective:
+
+- Establish reliable gfx1100 serving lanes for Gemma4 26B A4B and Gemma4 31B Dense that are abliterated, GPTQ weight-quantized, and validated for coherent generation before TurboQuant KV-cache compression is promoted.
+
+Requirements:
+
+- Keep GPTQ artifact correctness independent from TurboQuant runtime validation.
+- Preserve the current 26B hybrid 8K lane as fallback until a smaller coherent artifact passes gates.
+- Treat the current 31B `gptq-w4-g128-keqv` artifact as corrupt until a clean re-quant passes repeated-tensor integrity checks.
+- Reintroduce TurboQuant only through opt-in canaries with explicit quality and context ladders.
+- Keep manifest annotations, `.loom` docs, and observed runtime behavior aligned on the active context ceilings.
+
+Acceptance criteria:
+
+- 26B serves coherently on the intended gfx1100 dGPU at the selected production context.
+- 31B serves coherently from a clean GPTQ artifact without `<pad>` collapse.
+- TurboQuant canaries prove load, KV sizing, context ladder, and prompt-quality gates before Flux promotion.
+- Every promotion decision cites artifact validation, runtime load evidence, and a short-generation quality probe.
+
+Reference plan:
+
+- `.loom/gemma4-26b-31b-gptq-turboquant-plan.md`

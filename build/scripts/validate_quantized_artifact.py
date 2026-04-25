@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -20,6 +21,14 @@ except Exception:  # noqa: BLE001 - optional dependency.
 
 LAYOUT_CHOICES = ("hf-native", "vllm-gptq", "compressed-tensors", "auto")
 FAMILY_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+LAYER_QWEIGHT_RE = re.compile(
+    r"^model\.layers\.(?P<layer>\d+)\."
+    r"(?P<module>"
+    r"self_attn\.(?:q_proj|k_proj|v_proj|o_proj)"
+    r"|mlp\.(?:gate_proj|up_proj|down_proj)"
+    r"|moe\.(?:gate_up_proj|down_proj)"
+    r")\.qweight$"
+)
 
 
 @dataclass(frozen=True)
@@ -404,6 +413,108 @@ def _collect_quantized_module_counts(tensor_keys: Sequence[str]) -> dict[str, in
     return dict(sorted(counts.items()))
 
 
+def _tensor_signature(tensor: Any) -> str:
+    if hasattr(tensor, "detach"):
+        tensor = tensor.detach().cpu().contiguous()
+        dtype = str(tensor.dtype)
+        shape = tuple(int(dim) for dim in tensor.shape)
+        data = tensor.numpy()
+    else:
+        import numpy as np
+
+        data = np.ascontiguousarray(tensor)
+        dtype = str(data.dtype)
+        shape = tuple(int(dim) for dim in data.shape)
+
+    digest = hashlib.sha256()
+    digest.update(dtype.encode())
+    digest.update(str(shape).encode())
+    digest.update(memoryview(data))
+    return digest.hexdigest()
+
+
+def _detect_repeated_layer_qweights(
+    artifact_path: Path,
+    weight_map: dict[str, str],
+    tensor_keys: Sequence[str],
+) -> tuple[dict[str, Any], str | None]:
+    check: dict[str, Any] = {
+        "enabled": True,
+        "candidate_count": 0,
+        "duplicate_groups": [],
+    }
+    if _safe_open is None:
+        return check, "safetensors not installed; cannot run repeated tensor guard"
+
+    effective_weight_map = dict(weight_map)
+    if not effective_weight_map and (artifact_path / "model.safetensors").exists():
+        effective_weight_map = {key: "model.safetensors" for key in tensor_keys}
+
+    candidates: list[tuple[int, str, str, str]] = []
+    for key in tensor_keys:
+        match = LAYER_QWEIGHT_RE.match(key)
+        if not match:
+            continue
+        shard = effective_weight_map.get(key)
+        if not shard:
+            continue
+        candidates.append(
+            (
+                int(match.group("layer")),
+                match.group("module"),
+                key,
+                shard,
+            )
+        )
+
+    check["candidate_count"] = len(candidates)
+    if len(candidates) < 2:
+        return check, None
+
+    by_shard: dict[str, list[tuple[int, str, str]]] = defaultdict(list)
+    for layer, module, key, shard in candidates:
+        by_shard[shard].append((layer, module, key))
+
+    by_module_digest: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for shard, entries in sorted(by_shard.items()):
+        shard_path = artifact_path / shard
+        try:
+            with _safe_open(str(shard_path), framework="pt") as handle:
+                for layer, module, key in entries:
+                    signature = _tensor_signature(handle.get_tensor(key))
+                    by_module_digest[(module, signature)].append(
+                        {"layer": layer, "tensor": key, "shard": shard}
+                    )
+        except Exception as exc:  # noqa: BLE001 - report exact shard/key failure.
+            return check, f"repeated tensor guard failed while reading {shard}: {exc}"
+
+    duplicate_groups: list[dict[str, Any]] = []
+    for (module, signature), entries in sorted(by_module_digest.items()):
+        unique_layers = sorted({int(entry["layer"]) for entry in entries})
+        if len(unique_layers) < 2:
+            continue
+        duplicate_groups.append(
+            {
+                "module": module,
+                "sha256": signature,
+                "layers": unique_layers,
+                "tensors": [entry["tensor"] for entry in entries[:8]],
+            }
+        )
+
+    check["duplicate_groups"] = duplicate_groups[:20]
+    if duplicate_groups:
+        summary = "; ".join(
+            f"{group['module']} layers={group['layers'][:8]}"
+            for group in duplicate_groups[:6]
+        )
+        return (
+            check,
+            "repeated qweight tensors across different layers: " + summary,
+        )
+    return check, None
+
+
 def _run_generation_probe(artifact_path: Path) -> tuple[dict[str, Any], str | None]:
     try:
         import torch
@@ -604,6 +715,14 @@ def validate_artifact(
             f"only {len(quantized_module_counts)} quantized module families found; "
             f"want at least {min_quantized_modules}"
         )
+
+    if resolved_family == "gemma4-31b" and resolved_layout == "vllm-gptq":
+        repeated_check, repeated_error = _detect_repeated_layer_qweights(
+            artifact_path, weight_map, tensor_keys
+        )
+        checks["repeated_tensor_guard"] = repeated_check
+        if repeated_error:
+            errors.append(repeated_error)
 
     if run_generation:
         generation_probe, generation_error = _run_generation_probe(artifact_path)

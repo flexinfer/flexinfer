@@ -35,7 +35,7 @@ metadata:
   #       1.31.13 which kubectl bash sh`.
   # Job spec is immutable, so each image swap requires a rename to
   # force Flux to prune the prior Job and create the next one.
-  name: gemma4-31b-keqv-cache-copy-reset-v3
+  name: gemma4-31b-keqv-cache-copy-reset-v4
   namespace: flexinfer-system
   labels:
     app.kubernetes.io/managed-by: flexinfer
@@ -65,12 +65,12 @@ spec:
           args:
             - |
               set -euo pipefail
-              echo "[reset] waiting for gemma4-31b-keqv-postprocess-v3 to complete (up to 15m)"
+              echo "[reset] waiting for gemma4-31b-keqv-postprocess-v4 to complete (up to 15m)"
               # --for=condition=complete returns non-zero if the condition
               # isn't met within the timeout; trap that so a not-yet-
               # created Job doesn't fail the whole reset loop.
               if ! kubectl wait --for=condition=complete \
-                   job/gemma4-31b-keqv-postprocess-v3 \
+                   job/gemma4-31b-keqv-postprocess-v4 \
                    -n flexinfer-system --timeout=15m; then
                 echo "[reset] postprocess Job did NOT complete in 15m; skipping reset"
                 exit 0

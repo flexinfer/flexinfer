@@ -26,6 +26,9 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
+  # v4 bump on 2026-04-25: source-integrity guard. Refuses repeated
+  # cross-layer qweight tensors before k_eq_v can produce a complete-looking
+  # but semantically corrupt artifact.
   # v3 bump on 2026-04-23: path fix. v2 set SRC_DIR=/cache/gptq-w4-g128
   # which was wrong — the source PVC has an extra gemma4-31b-gptq/
   # subdirectory (shared PVC convention; see the controller's own
@@ -33,7 +36,7 @@ metadata:
   # DST_DIR now include that subdir. Job spec is immutable so this
   # requires a rename to force Flux to prune v2 and create v3.
   # v1 → v2: swapped 20 GiB flexinfer/runtime image for python:3.12-slim.
-  name: gemma4-31b-keqv-postprocess-v3
+  name: gemma4-31b-keqv-postprocess-v4
   namespace: flexinfer-system
   labels:
     app.kubernetes.io/managed-by: flexinfer

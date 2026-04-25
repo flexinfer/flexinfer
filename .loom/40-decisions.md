@@ -2,6 +2,67 @@
 
 Record decisions as they are made, with date, rationale, and sources.
 
+### 2026-04-25: Sequence clean GPTQ artifacts before TurboQuant promotion
+
+- Decision:
+  - Treat GPTQ artifact correctness as the first gate and TurboQuant as a later runtime optimization gate.
+  - Keep the current 26B hybrid GPTQ lane as the known-good 8K fallback while dense and long-context canaries run.
+  - Treat the current 31B `gptq-w4-g128-keqv` artifact as corrupt and non-promotable; re-quantize 31B before any further 31B TurboQuant promotion attempt.
+  - Keep `k_eq_v` as a post-process after clean 31B quantization, not as a repair mechanism for repeated late-layer tensors.
+- Rationale:
+  - Current manifests record that 31B can load and allocate KV at `maxModelLen: 1920`, but output collapses to pure `<pad>` because layers 40-59 contain repeated tensors across attention and MLP families.
+  - Earlier 31B TurboQuant OOM analysis remains valid, but it is a second-stage problem. The current artifact must be fixed before plugin memory optimization can prove serving correctness.
+  - The 26B lane already has a coherent hybrid artifact, so it should remain the fallback while smaller dense or long-context variants are validated.
+- Consequences:
+  - The next engineering slice should add artifact integrity guards and fix the 26B long-canary dGPU selector before spending more long GPU cycles.
+  - TurboQuant primitive sharing remains useful, but it should be verified against clean artifacts and canaries rather than primary manifests.
+- Sources:
+  - `.loom/gemma4-26b-31b-gptq-turboquant-plan.md`.
+  - `deploy/models/gemma4-26b-a4b-gptq.yaml`.
+  - `deploy/models/gemma4-26b-a4b-gptq-long.yaml`.
+  - `deploy/models/gemma4-31b-gptq.yaml`.
+  - `.loom/gemma4-31b-turboquant-closeout.md`.
+  - `.loom/gemma4-31b-turboquant-memory-fix-plan.md`.
+
+### 2026-04-25: Close the 31B TurboQuant long-context lane on 24 GiB gfx1100
+
+- Decision:
+  - Historical note: this decision was made when the validated ceiling was
+    documented as `maxModelLen: 2048`. Current manifests now cap
+    `gemma4-31b-gptq` at `maxModelLen: 1920` because the loaded `keqv` artifact
+    is semantically corrupt.
+  - Keep `gemma4-31b-gptq-long.yaml` on disk for reference, but leave it out of
+    Flux reconciliation.
+  - Treat new 31B long-context attempts on this hardware as blocked until there
+    is a new memory lever: smaller weights, deferred/lower plugin allocations,
+    a different KV compression path, or larger VRAM.
+- Rationale:
+  - The TurboQuant canary OOM'd during weight construction, before KV cache
+    allocation. The merged analysis records 20.02 GiB of 31B INT4 weights plus
+    about 3.57 GiB of TurboQuant plugin state, leaving about 0.4 GiB on a
+    23.98 GiB card before activations, graph payload, or KV.
+  - `gpuMemoryUtilization` cannot bound the plugin's raw `torch.empty()`
+    allocations, and vLLM V1 CPU offload is not available as a current runtime
+    lever.
+- Consequences:
+  - Future agents should read the primary CR and current manifest annotations
+    for the live ceiling. The newer planning decision above supersedes the
+    historical `validated-2048-gfx1100-ceiling` wording.
+  - The superseded canary CR carries
+    `turboquant-canary-superseded-gfx1100-24gb-insufficient-vram` and evidence
+    pointing to the same doc.
+  - Long-context work pivots to `gemma4-26b-a4b-gptq-long` in a later MR.
+- Sources:
+  - `glab mr view 192` -> `state: merged`.
+  - `git show b64f0502:docs/dev/gemma4-31b-turboquant-24gb-oom.md | nl -ba`
+    lines 13-34, 40-55, 57-90, 120-137.
+  - `git show b64f0502:deploy/models/gemma4-31b-gptq.yaml | nl -ba`
+    lines 45-53, 125-141.
+  - `git show b64f0502:deploy/models/gemma4-31b-gptq-long.yaml | nl -ba`
+    lines 65-74.
+  - `git show b64f0502:deploy/models/kustomization.yaml | nl -ba`
+    lines 14-21.
+
 ### 2026-02-19: Use CLI fallback for MCP inventory
 
 - Decision:

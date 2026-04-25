@@ -11,6 +11,42 @@ Capture current MCP/runtime capabilities and constraints for FlexInfer planning 
 - Result: loom resource-proxy mode (`loom://config`, `loom://servers`, `loom://tools/index`) was not discoverable via MCP resource APIs in this session.
 - Fallback used: `loom` CLI inventory commands.
 
+### Update (2026-04-25): Loom resource mode is available
+
+- `functions.list_mcp_resources({})` now exposes loom resources:
+  `loom://config`, `loom://servers`, `loom://tools`, `loom://tools/index`, and
+  `loom://health`.
+- `functions.list_mcp_resource_templates({})` exposes paged loom templates:
+  `loom://tools/page/{page}` and
+  `loom://tools/server/{server}/page/{page}`.
+- `functions.read_mcp_resource(server="loom", uri="loom://config")` reported:
+  - active profile: `full`
+  - server count: `47`
+  - tool count: `504`
+- `functions.read_mcp_resource(server="loom", uri="loom://tools/index")`
+  reported:
+  - page size: `100`
+  - total tools: `504`
+  - total pages: `6`
+- `loom tools call codebase_memory__codebase_stats --args '{"repo_id":"flexinfer"}' --json`
+  reported `total_chunks: 2831` in `codebase_memory_v1`.
+- Planning implication: prefer loom-resource inventory for future planning
+  refreshes; keep CLI fallback available for direct tool calls or long outputs.
+
+### Update (2026-04-25): Semantic search degraded during Gemma4 planning
+
+- `codebase_memory__codebase_stats(repo_id=flexinfer)` reported:
+  - collection: `codebase_memory_v1`
+  - `total_chunks: 2831`
+- Two `codebase_memory__codebase_search` attempts failed with Morph embeddings
+  HTTP 521 `origin_down`.
+- Planning implication:
+  - The index exists and lexical/local discovery remains usable.
+  - Do not gate the Gemma4 26B/31B plan on semantic search until the Morph
+    embeddings endpoint recovers.
+  - Use `rg`, direct file reads, git history, and Tavily-backed external
+    research for the current planning pass.
+
 ## Server Inventory (CLI fallback)
 
 - `loom servers --json | jq '.servers | length'` -> `42`
