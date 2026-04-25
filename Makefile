@@ -1,5 +1,5 @@
 .PHONY: all build clean test install servers lint fmt vet check setup hooks git-setup dev help \
-		loom loomd \
+		loom loomd loom-hive-operator \
 		install-core install-all bootstrap-local dev-sync dev-sync-repo dev-upgrade dev-reload \
 	ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-enterprise-smoke ci-test-race ci-benchmark ci-security ci-baseline ci-contracts \
 	codebase-bench-baseline codebase-bench-full codebase-bench-incremental codebase-bench-watch \
@@ -170,10 +170,13 @@ help:
 	@echo "  make browserkit-check  - Verify Python deps + Playwright Chromium"
 	@echo "  make browserkit-setup  - Install Python deps + Playwright Chromium (downloads)"
 
-build: loomd loom servers mcp-hub-wrapper
+build: loomd loom servers mcp-hub-wrapper loom-hive-operator
 
 loomd:
 	go build $(LDFLAGS) -o bin/loomd ./cmd/loomd
+
+loom-hive-operator:
+	go build $(LDFLAGS) -o bin/loom-hive-operator ./cmd/loom-hive-operator
 
 loom:
 	@# cmd/loom embeds internal/hud/frontend/dist via //go:embed.
