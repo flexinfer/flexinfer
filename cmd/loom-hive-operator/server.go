@@ -75,6 +75,7 @@ func (o *operator) httpMux() *http.ServeMux {
 	// Backlog.
 	mux.HandleFunc("GET /api/hive/backlog", o.handleBacklogList)
 	mux.HandleFunc("GET /api/hive/backlog/{id}", o.handleBacklogGet)
+	mux.HandleFunc("POST /api/hive/backlog", requireAdmin(o.handleBacklogCreate))
 	mux.HandleFunc("POST /api/hive/backlog/sync", requireAdmin(o.handleBacklogSync))
 
 	// Eval.

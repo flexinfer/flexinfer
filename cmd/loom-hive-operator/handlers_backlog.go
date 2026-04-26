@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/crb2nu/loom/pkg/hive/store"
 )
@@ -18,6 +20,53 @@ func (o *operator) handleBacklogList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, items)
+}
+
+// handleBacklogCreate accepts a JSON BacklogItem body and upserts it into
+// the canonical store. Required fields: id, title. Defaults applied when
+// unset: state=queued, priority=P3, created_by="api". Always returns the
+// persisted item (so callers can see normalized timestamps).
+//
+// Until slice 3.x lands the council-driven backlog mutator + GitLab sync,
+// this endpoint is the only mutation path — used by smoke tests, manual
+// queue insertions, and any external automation that wants to feed the
+// hive without going through the GitLab issue → sync flow.
+func (o *operator) handleBacklogCreate(w http.ResponseWriter, r *http.Request) {
+	var item store.BacklogItem
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&item); err != nil {
+		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	item.ID = strings.TrimSpace(item.ID)
+	if item.ID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(item.Title) == "" {
+		http.Error(w, "title is required", http.StatusBadRequest)
+		return
+	}
+	if item.State == "" {
+		item.State = store.BacklogQueued
+	}
+	if item.Priority == "" {
+		item.Priority = store.P3
+	}
+	if item.CreatedBy == "" {
+		item.CreatedBy = "api"
+	}
+	if err := o.store.Backlog.Put(r.Context(), &item); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	persisted, err := o.store.Backlog.Get(r.Context(), item.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusCreated, persisted)
 }
 
 // handleBacklogGet returns one backlog item.
