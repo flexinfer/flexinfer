@@ -18,8 +18,10 @@ metadata:
   namespace: flexinfer-system
   annotations:
     flexinfer.ai/promotion-gate: quantized-artifact-v1
-    flexinfer.ai/promotion-state: long-context-canary-unvalidated
-    flexinfer.ai/promotion-requires: target-context-validation-before-primary-promotion
+    flexinfer.ai/promotion-state: validated-16k-fp8kv-gfx1100-canary
+    flexinfer.ai/promotion-validation: passed
+    flexinfer.ai/promotion-evidence: docs/dev/gemma4-rocm-status.md#16k-fp8-kv-proof-2026-04-26
+    flexinfer.ai/promotion-requires: separate-primary-promotion-change
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
