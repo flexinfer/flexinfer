@@ -1,10 +1,10 @@
 # Gemma4 26B-A4B GPTQ long-context canary via vLLM on AMD gfx1100.
 #
 # Experimental 32K lane for the same clean 26B-A4B GPTQ source
-# artifact used by the primary model. This is a separate scale-to-zero canary
+# artifact used by the 26B fallback model. This is a separate scale-to-zero canary
 # on cblevins-7900xtx so the RWO source PVC stays on the node that already owns
 # the working 26B artifact. It must be scaled/tested deliberately and should
-# not replace the always-on 8K primary until the long-context probe passes.
+# not replace any default alias until the long-context probe passes.
 #
 # Runtime requirements:
 # - standard vLLM ROCm attention path
@@ -38,9 +38,9 @@ spec:
     # slots so plugin-local device 0 is deterministically the dGPU.
     count: 2
     shared: 7900xtx-textgen
-    # Equal to the primary model so explicit long-context demand can swap this
-    # canary in when the primary is idle; lower priority can never preempt it.
-    priority: 200
+    # Equal to the current 31B primary so explicit long-context demand can swap
+    # this canary in when the primary is idle; lower priority can never preempt it.
+    priority: 250
     vramEstimateMB: 18000
   serverless:
     enabled: true
