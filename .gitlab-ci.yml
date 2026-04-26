@@ -6,6 +6,14 @@ include:
 
   - project: 'services/tech-radar'
     file: '/ci/radar.yml'
+
+workflow:
+  rules:
+    # Avoid burning runner time on duplicate branch pipelines once an MR exists.
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS && $CI_PIPELINE_SOURCE == "push"
+      when: never
+    - when: always
+
 stages:
   - lint
   - test
@@ -18,17 +26,52 @@ stages:
 default:
   interruptible: true
 
-.rules-validation: &rules-validation
+.rules-go-validation: &rules-go-validation
   rules:
-    - if: $CI_COMMIT_BRANCH
-    - if: $CI_MERGE_REQUEST_ID
     - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_MERGE_REQUEST_ID
+      changes: &go-validation-changes
+        - "**/*.go"
+        - go.mod
+        - go.sum
+        - Makefile
+        - .golangci.yml
+        - .gitlab-ci.yml
+        - config/**/*
+    - if: $CI_COMMIT_BRANCH
+      changes: *go-validation-changes
+
+.rules-helm-validation: &rules-helm-validation
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_MERGE_REQUEST_ID
+      changes: &helm-validation-changes
+        - charts/**/*
+        - config/crd/**/*
+        - .gitlab-ci.yml
+    - if: $CI_COMMIT_BRANCH
+      changes: *helm-validation-changes
+
+.rules-dependency-validation: &rules-dependency-validation
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_MERGE_REQUEST_ID
+      changes: &dependency-validation-changes
+        - go.mod
+        - go.sum
+        - .gitlab-ci.yml
 
 variables:
   # Keep in sync with Harbor mirror: registry.harbor.lan/library/golang:${GO_VERSION}
   # Bump promptly on Go security releases; Trivy/govulncheck will flag vulnerable stdlib builds.
   GO_VERSION: "1.25.9"
   ENVTEST_VERSION: "release-0.23"
+  GOLANGCI_LINT_VERSION: "v2.10.1"
+  GOVULNCHECK_VERSION: "latest"
+  GO_LICENSES_VERSION: "v1.6.0"
   # Disable CGO for static binaries where possible
   CGO_ENABLED: "0"
   REGISTRY: "registry.harbor.lan/flexinfer"
@@ -63,8 +106,13 @@ variables:
       paths:
         - .go/cache/
       policy: pull-push
+    - key: gotools-${GO_VERSION}-${GOLANGCI_LINT_VERSION}-${ENVTEST_VERSION}-${GOVULNCHECK_VERSION}-${GO_LICENSES_VERSION}
+      paths:
+        - .go/bin/
+        - .go/envtest/
+      policy: pull-push
   before_script:
-    - mkdir -p .go .go/cache
+    - mkdir -p .go .go/cache .go/bin .go/envtest
     - export GOPATH=${CI_PROJECT_DIR}/.go
     - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
     - export PATH=$PATH:$GOPATH/bin
@@ -73,22 +121,23 @@ variables:
 lint:
   stage: lint
   <<: *go-cache
-  <<: *rules-validation
+  <<: *rules-go-validation
+  needs: []
   before_script:
-    - mkdir -p .go .go/cache
+    - mkdir -p .go .go/cache .go/bin
     - export GOPATH=${CI_PROJECT_DIR}/.go
     - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
     - export PATH=$PATH:$GOPATH/bin
     - |
       set -e
       if ! command -v golangci-lint >/dev/null 2>&1; then
-        echo "Installing golangci-lint v2..."
+        echo "Installing golangci-lint ${GOLANGCI_LINT_VERSION}..."
         if ! curl --retry 5 --retry-delay 2 --retry-connrefused -sSfL \
           https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
-          | sh -s -- -b "$GOPATH/bin" v2.10.1; then
+          | sh -s -- -b "$GOPATH/bin" "${GOLANGCI_LINT_VERSION}"; then
           echo "WARN: installer script failed; falling back to go install via module proxies"
           GOPROXY="https://proxy.golang.org|http://athens.ci.svc.cluster.local:3000|direct" \
-            go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1
+            go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@"${GOLANGCI_LINT_VERSION}"
         fi
       fi
   script:
@@ -97,7 +146,8 @@ lint:
 fmt:
   stage: lint
   <<: *go-cache
-  <<: *rules-validation
+  <<: *rules-go-validation
+  needs: []
   script:
     - |
       files="$(git ls-files '*.go')"
@@ -111,7 +161,8 @@ fmt:
 helm:
   stage: lint
   image: registry.harbor.lan/library/helm:3.15.4
-  <<: *rules-validation
+  <<: *rules-helm-validation
+  needs: []
   script:
     - helm lint charts/flexinfer
     - helm template flexinfer charts/flexinfer --namespace flexinfer-system >/dev/null
@@ -119,7 +170,8 @@ helm:
 vet:
   stage: lint
   <<: *go-cache
-  <<: *rules-validation
+  <<: *rules-go-validation
+  needs: []
   script:
     - go vet ./...
 
@@ -127,7 +179,8 @@ vet:
 unit_test:
   stage: test
   <<: *go-cache
-  <<: *rules-validation
+  <<: *rules-go-validation
+  needs: []
   variables:
     # Minimum code coverage percentage required to pass CI.
     # Raise this as coverage improves; lowering requires justification.
@@ -153,33 +206,44 @@ unit_test:
 gpugroup_test:
   stage: test
   <<: *go-cache
-  <<: *rules-validation
+  <<: *rules-go-validation
+  needs: []
   script:
     - SKIP_ENVTEST=1 go test -v ./controllers/... -run "GPUGroup" -timeout 5m
 
 proxy_test:
   stage: test
   <<: *go-cache
-  <<: *rules-validation
+  <<: *rules-go-validation
+  needs: []
   script:
     - go test -v ./internal/proxy/... -timeout 2m
 
 race_test:
   stage: test
   <<: *go-cache
-  <<: *rules-validation
+  needs: []
   script:
     - echo "Running tests with race detector..."
     - CGO_ENABLED=1 go test -race ./... -short -timeout 10m
   allow_failure: false
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_MERGE_REQUEST_ID
+      changes: *go-validation-changes
+      when: manual
+      allow_failure: true
 
 integration_test:
   stage: test
   <<: *go-cache
-  <<: *rules-validation
+  <<: *rules-go-validation
+  needs: []
   script:
     - go install sigs.k8s.io/controller-runtime/tools/setup-envtest@${ENVTEST_VERSION}
-    - export KUBEBUILDER_ASSETS=$(setup-envtest use 1.28.x -p path)
+    - export KUBEBUILDER_ASSETS=$(setup-envtest use 1.28.x --bin-dir "${CI_PROJECT_DIR}/.go/envtest" -p path)
     - go test -v ./controllers/...
 
 # Targeted promotion gate for master/merge pipelines.
@@ -191,16 +255,12 @@ promotion_gate_test:
     - job: unit_test
     - job: gpugroup_test
     - job: proxy_test
-    - job: race_test
     - job: integration_test
   variables:
     FLEXINFER_E2E_PROMOTION_GATE: "1"
   script:
     - go test -v ./e2e -run '^TestModelCachePromotionGate$' -count=1 -timeout 5m -short
-  rules:
-    - if: $CI_COMMIT_BRANCH == "master"
-    - if: $CI_MERGE_REQUEST_ID
-    - if: $CI_COMMIT_TAG
+  <<: *rules-go-validation
 
 # E2E tests against real cluster (nightly)
 # Requires k3s kubeconfig to be available
@@ -234,69 +294,26 @@ e2e_test:
     when: always
 
 # --- Build Stage ---
-build_manager:
+build_binaries:
   stage: build
   <<: *go-cache
-  <<: *rules-validation
+  <<: *rules-go-validation
+  needs: []
   script:
+    - mkdir -p bin
     - go build -o bin/manager cmd/flexinfer-manager/main.go
-  artifacts:
-    paths:
-      - bin/manager
-    expire_in: 1 day
-
-build_agent:
-  stage: build
-  <<: *go-cache
-  <<: *rules-validation
-  script:
     - GOOS=linux GOARCH=amd64 go build -o bin/agent cmd/flexinfer-agent/main.go
-  artifacts:
-    paths:
-      - bin/agent
-    expire_in: 1 day
-
-build_proxy:
-  stage: build
-  <<: *go-cache
-  <<: *rules-validation
-  script:
-    - go build -o bin/proxy ./cmd/flexinfer-proxy/
-  artifacts:
-    paths:
-      - bin/proxy
-    expire_in: 1 day
-    
-build_scheduler:
-  stage: build
-  <<: *go-cache
-  <<: *rules-validation
-  script:
     - go build -o bin/scheduler cmd/flexinfer-sched/main.go
-  artifacts:
-    paths:
-      - bin/scheduler
-    expire_in: 1 day
-
-build_benchmarker:
-  stage: build
-  <<: *go-cache
-  <<: *rules-validation
-  script:
     - go build -o bin/benchmarker cmd/flexinfer-bench/main.go
-  artifacts:
-    paths:
-      - bin/benchmarker
-    expire_in: 1 day
-
-build_flash_loader:
-  stage: build
-  <<: *go-cache
-  <<: *rules-validation
-  script:
+    - go build -o bin/proxy ./cmd/flexinfer-proxy/
     - go build -o bin/flash-loader ./cmd/flexinfer-flash-loader/
   artifacts:
     paths:
+      - bin/manager
+      - bin/agent
+      - bin/scheduler
+      - bin/benchmarker
+      - bin/proxy
       - bin/flash-loader
     expire_in: 1 day
 
@@ -309,17 +326,7 @@ publish:
   needs:
     - job: promotion_gate_test
       artifacts: false
-    - job: build_manager
-      artifacts: true
-    - job: build_agent
-      artifacts: true
-    - job: build_scheduler
-      artifacts: true
-    - job: build_benchmarker
-      artifacts: true
-    - job: build_proxy
-      artifacts: true
-    - job: build_flash_loader
+    - job: build_binaries
       artifacts: true
   before_script:
     - echo "Assuming CI runner has auth for ${REGISTRY} or it is open."
@@ -433,17 +440,7 @@ publish_binaries:
   needs:
     - job: promotion_gate_test
       artifacts: false
-    - job: build_manager
-      artifacts: true
-    - job: build_agent
-      artifacts: true
-    - job: build_scheduler
-      artifacts: true
-    - job: build_benchmarker
-      artifacts: true
-    - job: build_proxy
-      artifacts: true
-    - job: build_flash_loader
+    - job: build_binaries
       artifacts: true
   script:
     - apk add --no-cache curl
@@ -1466,25 +1463,25 @@ publish_vllm_rocm_gfx906_fa:
 govulncheck:
   stage: security
   <<: *go-cache
+  <<: *rules-dependency-validation
+  needs: []
   before_script:
-    - mkdir -p .go .go/cache
+    - mkdir -p .go .go/cache .go/bin
     - export GOPATH=${CI_PROJECT_DIR}/.go
     - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
     - export PATH=$PATH:$GOPATH/bin
-    - go install golang.org/x/vuln/cmd/govulncheck@latest
+    - command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
   script:
     - echo "Scanning Go dependencies for known vulnerabilities..."
     - govulncheck -show verbose ./...
-  rules:
-    - if: $CI_COMMIT_BRANCH == "master"
-    - if: $CI_MERGE_REQUEST_ID
-    - if: $CI_PIPELINE_SOURCE == "schedule"
   allow_failure: false
 
 # Trivy filesystem scanning for go.mod vulnerabilities
 trivy_scan_deps:
   stage: security
   image: registry.harbor.lan/library/trivy:0.58.0
+  <<: *rules-dependency-validation
+  needs: []
   variables:
     TRIVY_NO_PROGRESS: "true"
     TRIVY_CACHE_DIR: ".trivycache/"
@@ -1501,11 +1498,6 @@ trivy_scan_deps:
     reports:
       dependency_scanning: trivy-deps-report.json
     when: always
-  rules:
-    - if: $CI_COMMIT_BRANCH == "master"
-    - if: $CI_MERGE_REQUEST_ID
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-
 # SBOM generation using syft (spdx-json format)
 # Generates Software Bill of Materials for CNCF compliance
 sbom_generate:
@@ -1545,13 +1537,15 @@ sbom_generate:
 go_licenses_check:
   stage: security
   <<: *go-cache
+  <<: *rules-dependency-validation
+  needs: []
   before_script:
-    - mkdir -p .go .go/cache
+    - mkdir -p .go .go/cache .go/bin
     - export GOPATH=${CI_PROJECT_DIR}/.go
     - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
     - export PATH=$PATH:$GOPATH/bin
     - go mod download
-    - go install github.com/google/go-licenses@v1.6.0
+    - command -v go-licenses >/dev/null 2>&1 || go install github.com/google/go-licenses@${GO_LICENSES_VERSION}
   script:
     - echo "Checking license compliance for all Go dependencies..."
     - go-licenses report ./... 2>licenses-errors.txt | tee licenses-report.csv || true
@@ -1571,10 +1565,6 @@ go_licenses_check:
       - licenses-errors.txt
     expire_in: 30 days
     when: always
-  rules:
-    - if: $CI_COMMIT_BRANCH == "master"
-    - if: $CI_MERGE_REQUEST_ID
-    - if: $CI_PIPELINE_SOURCE == "schedule"
   allow_failure: true
 
 # Go module update check (informational)
