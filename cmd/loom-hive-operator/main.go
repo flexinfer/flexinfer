@@ -195,16 +195,25 @@ func run(cfg Config) error {
 	}
 
 	// Pipeline starter routes fan-out items through the integrator when
-	// the worktree allocator + branch merger are both wired. Without
-	// them, single-slice items take the straight Runner path.
+	// the worktree allocator + branch merger are both available.
 	var integrator *pipeline.Integrator
-	if hubClient != nil && sessionID != "" {
+	if hubClient != nil && sessionID != "" && cfg.RepoRoot != "" {
 		alloc := clients.NewWorktreeAllocator(hubClient, "loom-hive-operator", sessionID, cfg.RepoRoot)
-		// BranchMerger is still stub-only until git-merge wiring lands;
-		// without it the integrator can't reach MR state, so we skip
-		// fan-out routing entirely.
-		_ = alloc
-		logger.Warn("integrator path disabled: worktree allocator wired but BranchMerger not yet implemented")
+		merger := clients.NewGitBranchMerger(cfg.RepoRoot)
+		integrator = pipeline.NewIntegrator(st, pipelineRunner, alloc, merger)
+		integrator.Logger = logger
+		// Inherit the pipeline runner's MaxConcurrentRuns budget for the
+		// integrator's parallel fan-out cap so a single backlog item
+		// can't blow through the daily run budget.
+		if max := pm.Current().Budgets.Pipeline.MaxConcurrentRuns; max > 0 {
+			integrator.MaxParallel = max
+		}
+		// Hook the same Escalator the runner uses so a fan-out parent
+		// that escalates publishes a failure record + handoff.
+		integrator.Escalator = pipelineRunner.Escalator
+		logger.Info("integrator enabled (worktree allocator + git branch merger)")
+	} else {
+		logger.Warn("integrator disabled; multi-slice items will run via Runner only (no fan-out)")
 	}
 	starter := pipeline.NewRunnerStarter(pipelineRunner, integrator)
 	starter.Logger = logger
