@@ -42,6 +42,33 @@ type Config struct {
 
 	// Debug enables verbose slog output.
 	Debug bool
+
+	// FlexInferProxyURL is the OpenAI-compatible HTTP proxy that
+	// LLM-judged gates and the WeaverWorker call. Empty disables the
+	// real LLM clients (gates fall back to skip; the research stage
+	// returns empty notes via NoOpDispatcher).
+	FlexInferProxyURL string
+	// FlexInferToken is an optional bearer auth token forwarded to the
+	// proxy.
+	FlexInferToken string
+	// FlexInferJudgeModel is the model id rubric judges target. Empty
+	// uses the client's "qwen3-8b-instruct" default.
+	FlexInferJudgeModel string
+	// FlexInferWeaverModel is the model id WeaverWorker targets. Empty
+	// falls through to JudgeModel.
+	FlexInferWeaverModel string
+
+	// GitLabAPIURL is the GitLab REST API base, e.g.
+	// "https://gitlab.flexinfer.ai/api/v4". Empty disables the GitLab
+	// client (mr/ci_watch/merge/cleanup stages stub out, escalation
+	// issues are skipped with a warn log).
+	GitLabAPIURL string
+	// GitLabToken is the project or personal access token sent as the
+	// PRIVATE-TOKEN header.
+	GitLabToken string
+	// GitLabProject is the URL-encoded slug or numeric id of the
+	// project the operator manages MRs against.
+	GitLabProject string
 }
 
 // DefaultConfig returns the values used when neither flag nor env supplies one.
@@ -88,6 +115,27 @@ func (c *Config) ApplyEnv() {
 		case "1", "true", "yes", "on":
 			c.Debug = true
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv("FLEXINFER_PROXY_URL")); v != "" {
+		c.FlexInferProxyURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("FLEXINFER_TOKEN")); v != "" {
+		c.FlexInferToken = v
+	}
+	if v := strings.TrimSpace(os.Getenv("FLEXINFER_JUDGE_MODEL")); v != "" {
+		c.FlexInferJudgeModel = v
+	}
+	if v := strings.TrimSpace(os.Getenv("FLEXINFER_WEAVER_MODEL")); v != "" {
+		c.FlexInferWeaverModel = v
+	}
+	if v := strings.TrimSpace(os.Getenv("GITLAB_API_URL")); v != "" {
+		c.GitLabAPIURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("GITLAB_TOKEN")); v != "" {
+		c.GitLabToken = v
+	}
+	if v := strings.TrimSpace(os.Getenv("GITLAB_PROJECT")); v != "" {
+		c.GitLabProject = v
 	}
 }
 
