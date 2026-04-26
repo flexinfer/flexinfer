@@ -116,6 +116,55 @@ func TestHandleBacklog_GetMissingIs404(t *testing.T) {
 	}
 }
 
+func TestHandleBacklog_CreateRoundTrip(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+
+	body := `{"ID":"HIVE-CREATE-1","Title":"smoke item","Labels":["docs"]}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/hive/backlog", strings.NewReader(body))
+	op.handleBacklogCreate(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	got, err := op.store.Backlog.Get(context.Background(), "HIVE-CREATE-1")
+	if err != nil {
+		t.Fatalf("post-create get: %v", err)
+	}
+	if got.Title != "smoke item" {
+		t.Errorf("title = %q, want smoke item", got.Title)
+	}
+	if got.State != store.BacklogQueued {
+		t.Errorf("state = %q, want queued (default)", got.State)
+	}
+	if got.Priority != store.P3 {
+		t.Errorf("priority = %q, want P3 (default)", got.Priority)
+	}
+	if got.CreatedBy != "api" {
+		t.Errorf("created_by = %q, want api (default)", got.CreatedBy)
+	}
+}
+
+func TestHandleBacklog_CreateRequiresIDAndTitle(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+
+	cases := []struct{ name, body string }{
+		{"empty body", `{}`},
+		{"missing id", `{"Title":"only title"}`},
+		{"missing title", `{"ID":"X"}`},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/hive/backlog", strings.NewReader(tc.body))
+		op.handleBacklogCreate(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: code = %d, want 400", tc.name, rec.Code)
+		}
+	}
+}
+
 func TestHandleCouncilRuns_ListAndGet(t *testing.T) {
 	op, cleanup := newTestOperator(t)
 	defer cleanup()
