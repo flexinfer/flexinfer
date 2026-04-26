@@ -69,6 +69,15 @@ type Config struct {
 	// GitLabProject is the URL-encoded slug or numeric id of the
 	// project the operator manages MRs against.
 	GitLabProject string
+
+	// HUDBaseURL is the loom HUD's HTTP base, e.g.
+	// "http://hud.loom-system.svc.cluster.local:8090". Empty disables
+	// the HUD spawn client (plan_slice/implement/pr_self_review fall
+	// back to NoOpDispatcher).
+	HUDBaseURL string
+	// HUDToken is the mobile bearer token configured via
+	// HUD_MOBILE_OPERATOR_TOKEN on the HUD process.
+	HUDToken string
 }
 
 // DefaultConfig returns the values used when neither flag nor env supplies one.
@@ -136,6 +145,12 @@ func (c *Config) ApplyEnv() {
 	}
 	if v := strings.TrimSpace(os.Getenv("GITLAB_PROJECT")); v != "" {
 		c.GitLabProject = v
+	}
+	if v := strings.TrimSpace(os.Getenv("LOOM_HUD_URL")); v != "" {
+		c.HUDBaseURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("LOOM_HUD_TOKEN")); v != "" {
+		c.HUDToken = v
 	}
 }
 

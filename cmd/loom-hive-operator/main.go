@@ -349,16 +349,15 @@ func buildGitLabClient(cfg Config, logger *slog.Logger) *clients.GitLabClient {
 // done in a smoke-test sense. Each gap is logged at startup so
 // production deployments can see exactly what's still stub.
 //
-// Stub gaps as of this slice (need follow-up work):
-//   - SpawnClient: spawn lives in HUD process; no in-cluster HTTP API.
-//
-// Wired in this slice:
+// Wired stages (when env-configured):
 //   - WeaverWorker (research): FlexInfer proxy
 //   - GitLabWorker (mr/ci_watch/merge/cleanup): GitLab REST API
 //   - DevboxWorker (tests): mcp-devbox via MCP hub
+//   - SpawnWorker (plan_slice/implement/pr_self_review): HUD mobile API
 func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCPHubClient, logger *slog.Logger) pipeline.WorkerDispatcher {
 	noop := &pipeline.NoOpDispatcher{}
 	gitlab := buildGitLabClient(cfg, logger)
+	spawn := buildHUDSpawnClient(cfg, logger)
 
 	routes := map[string]pipeline.Worker{}
 	if flex != nil {
@@ -377,11 +376,12 @@ func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCP
 	} else {
 		logger.Warn("mr/ci_watch/merge/cleanup stages stub: NoOpDispatcher (GITLAB_API_URL/TOKEN/PROJECT unset)")
 	}
+
+	project := cfg.GitLabProject
+	if project == "" {
+		project = "loom-core"
+	}
 	if hub != nil {
-		project := cfg.GitLabProject
-		if project == "" {
-			project = "loom-core"
-		}
 		routes["tests"] = &pipeline.DevboxWorker{
 			Client:  clients.NewDevboxClient(hub),
 			Project: project,
@@ -391,9 +391,86 @@ func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCP
 	} else {
 		logger.Warn("tests stage stub: NoOpDispatcher (LOOM_MCP_HUB_URL unset)")
 	}
-	logger.Warn("plan_slice/implement/pr_self_review stages stub: NoOpDispatcher (spawn HTTP API not yet shipped)")
+
+	if spawn != nil {
+		// All three Claude/Codex-backed stages share the spawn client.
+		// Per-stage Model + PromptFor closures select agent type and
+		// prompt body; production deployments register richer prompt
+		// builders here once spec doc loaders ship.
+		routes["plan_slice"] = &pipeline.SpawnWorker{
+			Client:    spawn,
+			Model:     "claude-code",
+			Project:   project,
+			Namespace: "loom-hive",
+			PromptFor: stagePromptFor("plan_slice"),
+		}
+		routes["implement"] = &pipeline.SpawnWorker{
+			Client:        spawn,
+			Model:         "claude-code",
+			Project:       project,
+			Namespace:     "loom-hive",
+			PromptFor:     stagePromptFor("implement"),
+			NeedsWorktree: true,
+		}
+		routes["pr_self_review"] = &pipeline.SpawnWorker{
+			Client:    spawn,
+			Model:     "claude-code",
+			Project:   project,
+			Namespace: "loom-hive",
+			PromptFor: stagePromptFor("pr_self_review"),
+		}
+		logger.Info("plan_slice/implement/pr_self_review stages wired to HUD spawn API")
+	} else {
+		logger.Warn("plan_slice/implement/pr_self_review stages stub: NoOpDispatcher (LOOM_HUD_URL+LOOM_HUD_TOKEN unset)")
+	}
 
 	return &fallbackDispatcher{routes: routes, fallback: noop}
+}
+
+// stagePromptFor returns a default per-stage prompt builder. Production
+// deployments override this with spec-doc-aware closures; the default
+// gives each stage a terse but pointed prompt that the runner's
+// JobContext fills with item title + slice scope.
+func stagePromptFor(stage string) func(jc pipeline.JobContext) string {
+	templates := map[string]string{
+		"plan_slice":     "Plan implementation slices for backlog item %s (%q). Output a numbered list of independent slices with files touched and test strategy per slice.",
+		"implement":      "Implement backlog item %s (%q). Write code + tests in the allocated worktree. Commit with conventional commit format.",
+		"pr_self_review": "Review your own diff for backlog item %s (%q) before opening a merge request. Score on the pr_self_review_v1 rubric and fix anything below 0.8.",
+	}
+	tmpl := templates[stage]
+	if tmpl == "" {
+		tmpl = "Run stage %s for item %s (%q)."
+	}
+	return func(jc pipeline.JobContext) string {
+		title := ""
+		id := ""
+		if jc.Item != nil {
+			id = jc.Item.ID
+			title = jc.Item.Title
+		}
+		if stage == "" {
+			return fmt.Sprintf(tmpl, jc.Stage.ID, id, title)
+		}
+		return fmt.Sprintf(tmpl, id, title)
+	}
+}
+
+// buildHUDSpawnClient returns a configured SpawnClient when LOOM_HUD_URL
+// and LOOM_HUD_TOKEN are both set. Nil otherwise + warn log so the
+// operator boots without it.
+func buildHUDSpawnClient(cfg Config, logger *slog.Logger) *clients.HUDSpawnClient {
+	if cfg.HUDBaseURL == "" || cfg.HUDToken == "" {
+		return nil
+	}
+	c, err := clients.NewHUDSpawnClient(clients.HUDSpawnConfig{
+		BaseURL: cfg.HUDBaseURL,
+		Token:   cfg.HUDToken,
+	})
+	if err != nil {
+		logger.Error("HUD spawn client init failed; spawn-driven stages disabled", "error", err)
+		return nil
+	}
+	return c
 }
 
 // fallbackDispatcher routes stages with a real worker through that

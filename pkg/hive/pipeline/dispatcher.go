@@ -132,6 +132,16 @@ type SpawnRequest struct {
 	BudgetMinutes   int
 	ParentSessionID string
 	StageID         string
+
+	// BacklogID, Project, Branch, BaseBranch, and Namespace are
+	// populated by SpawnWorker from JobContext for spawn services that
+	// require git + agent-context routing (the loom HUD mobile API).
+	// Stage workers that don't need them ignore them.
+	BacklogID  string
+	Project    string
+	Branch     string
+	BaseBranch string
+	Namespace  string
 }
 
 // SpawnResponse summarises what the spawn returned. Workers translate
@@ -163,6 +173,17 @@ type SpawnWorker struct {
 	// before invoking the spawn (implement). The allocator wires in
 	// from outside; the worker just propagates run.WorktreePath.
 	NeedsWorktree bool
+	// Project is the repo name spawns target. Falls back to
+	// "loom-core" when empty. The HUD spawn API needs this to resolve
+	// the worktree base + git remote.
+	Project string
+	// Namespace is the agent_context namespace the spawn writes into.
+	// Falls back to "loom-hive" — the same namespace the operator's
+	// own session uses, so handoffs stay routable.
+	Namespace string
+	// BaseBranch is what spawned worktrees branch off. Empty falls
+	// through to spawn-side default ("main").
+	BaseBranch string
 }
 
 // Run satisfies Worker.
@@ -174,6 +195,15 @@ func (w *SpawnWorker) Run(ctx context.Context, jc JobContext) (StageOutput, erro
 	if w.PromptFor != nil {
 		prompt = w.PromptFor(jc)
 	}
+	project := w.Project
+	if project == "" {
+		project = "loom-core"
+	}
+	namespace := w.Namespace
+	if namespace == "" {
+		namespace = "loom-hive"
+	}
+	branch := fmt.Sprintf("hive/%s/%s", jc.Item.ID, jc.Stage.ID)
 	req := SpawnRequest{
 		Prompt:          prompt,
 		WorkingDir:      jc.Run.WorktreePath,
@@ -184,6 +214,11 @@ func (w *SpawnWorker) Run(ctx context.Context, jc JobContext) (StageOutput, erro
 		BudgetMinutes:   jc.Budget.MaxPipelineMinutes,
 		ParentSessionID: jc.Run.ParentSessionID,
 		StageID:         jc.Stage.ID,
+		BacklogID:       jc.Item.ID,
+		Project:         project,
+		Branch:          branch,
+		BaseBranch:      w.BaseBranch,
+		Namespace:       namespace,
 	}
 	resp, err := w.Client.Run(ctx, req)
 	if err != nil {
