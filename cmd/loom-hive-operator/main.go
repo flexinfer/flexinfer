@@ -79,6 +79,10 @@ func run(cfg Config) error {
 		return fmt.Errorf("ensure db dir: %w", err)
 	}
 
+	// Read the admin token from env once. setAdminToken is atomic so a
+	// future K8s Secret rotation path can swap it in without a restart.
+	loadAdminTokenFromEnv()
+
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 

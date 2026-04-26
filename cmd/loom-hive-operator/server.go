@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -39,13 +38,49 @@ func newOperator(st *store.Store, pm *hive.PolicyManager, b *hive.Budget, logger
 // policy load are done.
 func (o *operator) markReady() { o.ready.Store(true) }
 
-// httpMux returns the REST + MCP listener mux. Currently exposes a tiny stub
-// surface; slice 2.4 wires the full /api/hive/* routes.
+// httpMux returns the REST + MCP listener mux. Read-only routes are
+// open; mutating routes are wrapped in requireAdmin so they reject
+// every caller when LOOM_HIVE_ADMIN_TOKEN is unset and require a Bearer
+// match when it isn't.
 func (o *operator) httpMux() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/hive/status", o.handleStatus)
+
+	// Status / policy / KPIs (read-only).
+	mux.HandleFunc("GET /api/hive/status", o.handleStatusFull)
+	mux.HandleFunc("GET /api/hive/policy", o.handlePolicy)
+	mux.HandleFunc("GET /api/hive/kpis", o.handleKPIs)
+
+	// Council.
+	mux.HandleFunc("GET /api/hive/council/runs", o.handleCouncilRunsList)
+	mux.HandleFunc("GET /api/hive/council/runs/{id}", o.handleCouncilRunGet)
+	mux.HandleFunc("POST /api/hive/council/run", requireAdmin(o.handleCouncilRun))
+	mux.HandleFunc("POST /api/hive/council/dryrun", requireAdmin(o.handleCouncilDryrun))
+
+	// Pipeline.
+	mux.HandleFunc("GET /api/hive/pipeline/runs", o.handlePipelineRunsList)
+	mux.HandleFunc("GET /api/hive/pipeline/runs/{id}", o.handlePipelineRunGet)
+	mux.HandleFunc("POST /api/hive/pipeline/runs/{backlog_id}/start", requireAdmin(o.handlePipelineStart))
+	mux.HandleFunc("POST /api/hive/pipeline/runs/{id}/pause", requireAdmin(o.handlePipelinePause))
+	mux.HandleFunc("POST /api/hive/pipeline/runs/{id}/resume", requireAdmin(o.handlePipelineResume))
+	mux.HandleFunc("POST /api/hive/pipeline/runs/{id}/escalate", requireAdmin(o.handlePipelineEscalate))
+
+	// Backlog.
+	mux.HandleFunc("GET /api/hive/backlog", o.handleBacklogList)
+	mux.HandleFunc("GET /api/hive/backlog/{id}", o.handleBacklogGet)
+	mux.HandleFunc("POST /api/hive/backlog/sync", requireAdmin(o.handleBacklogSync))
+
+	// Eval.
+	mux.HandleFunc("GET /api/hive/eval/scores", o.handleEvalScores)
+	mux.HandleFunc("POST /api/hive/eval/run-cross", requireAdmin(o.handleEvalRunCross))
+
+	// Anything else under /api/hive returns 404 with a clear message; the
+	// catch-all "/" stays 501 so unprefixed paths don't get mistaken for
+	// missing API routes.
+	mux.HandleFunc("/api/hive/", func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not implemented (slice 2.4)", http.StatusNotImplemented)
+		http.Error(w, "operator REST root; see /api/hive/status", http.StatusNotFound)
 	})
 	return mux
 }
@@ -79,22 +114,8 @@ func (o *operator) handleReady(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ready"))
 }
 
-// handleStatus is a placeholder that proves the server is wired end-to-end.
-// Slice 2.4 replaces it with the full /api/hive/status contract from the
-// product spec (budgets remaining, queue depth, last council run, etc.).
-func (o *operator) handleStatus(w http.ResponseWriter, _ *http.Request) {
-	resp := map[string]any{
-		"db_ok":                o.store != nil,
-		"policy_enabled":       o.policy.Current().IsEnabled(),
-		"policy_version":       o.policy.Current().Version,
-		"queue_depth":          nil, // slice 2.4
-		"last_council_at":      nil, // slice 2.4
-		"active_pipeline_runs": nil, // slice 2.4
-		"slice":                "1.2-skeleton",
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
-}
+// (handleStatus stub removed — slice 2.4 wires handleStatusFull which
+// pulls real values from the canonical store.)
 
 // httpServer constructs an http.Server with sensible timeouts.
 func httpServer(addr string, h http.Handler) *http.Server {

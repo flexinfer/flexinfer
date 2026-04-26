@@ -113,7 +113,7 @@ func TestMetrics_Endpoint(t *testing.T) {
 	}
 }
 
-func TestStatus_StubResponds(t *testing.T) {
+func TestStatus_FullResponds(t *testing.T) {
 	op, cleanup := newTestOperator(t)
 	defer cleanup()
 	op.markReady()
@@ -123,21 +123,31 @@ func TestStatus_StubResponds(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
-	for _, want := range []string{`"db_ok":true`, `"policy_enabled":true`, `"slice":"1.2-skeleton"`} {
+	// Slice 2.4 wires real values: queue_depth and active_pipeline_runs
+	// are now ints (zero on a fresh DB), and the slice tag advances.
+	for _, want := range []string{
+		`"db_ok":true`, `"policy_enabled":true`,
+		`"queue_depth":0`, `"active_pipeline_runs":0`,
+		`"slice":"2.4-rest-surface"`,
+	} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Errorf("response missing %q: %s", want, rec.Body.String())
 		}
 	}
 }
 
-func TestUnknownPath_ReturnsNotImplemented(t *testing.T) {
+func TestUnknownPath_Returns404(t *testing.T) {
 	op, cleanup := newTestOperator(t)
 	defer cleanup()
 
+	// /api/hive/council/runs is now wired (slice 2.4) — pick a definitely
+	// unknown path under /api/hive/ instead. Returns 404 from the
+	// catch-all, not 501 (which is reserved for action stubs whose
+	// implementation lands in a later slice).
 	rec := httptest.NewRecorder()
-	op.httpMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/hive/council/runs", nil))
-	if rec.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501, got %d", rec.Code)
+	op.httpMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/hive/no-such-endpoint", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
 	}
 }
 
