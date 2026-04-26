@@ -151,6 +151,11 @@ type Runner struct {
 	Stages     []Stage
 	Clock      func() time.Time
 	Logger     *slog.Logger
+	// Escalator, when set, is invoked after the runner transitions a
+	// run to PipelineEscalated. Failure-record + issue + handoff
+	// publication is best-effort: an Escalator error is logged but does
+	// not undo the state transition.
+	Escalator EscalationHandler
 }
 
 // New constructs a Runner with sensible defaults. A nil PolicyManager is
@@ -233,7 +238,7 @@ func (r *Runner) Drive(ctx context.Context, run *store.PipelineRun, item *store.
 		if stage.Type == "auto_gate" {
 			pass, err := r.runGate(ctx, run, item, stage, prior, policy)
 			if err != nil {
-				return r.escalate(ctx, run, fmt.Sprintf("gate %s: %v", stage.ID, err))
+				return r.escalateWithItem(ctx, run, item, fmt.Sprintf("gate %s: %v", stage.ID, err))
 			}
 			if pass {
 				continue
@@ -242,10 +247,10 @@ func (r *Runner) Drive(ctx context.Context, run *store.PipelineRun, item *store.
 			// the upstream stage's attempt counter. Cap at maxAttempts.
 			rewindIdx, ok := r.indexOf(stage.RetryFrom)
 			if !ok || stage.RetryFrom == "" {
-				return r.escalate(ctx, run, fmt.Sprintf("gate %s failed and no RetryFrom defined", stage.ID))
+				return r.escalateWithItem(ctx, run, item, fmt.Sprintf("gate %s failed and no RetryFrom defined", stage.ID))
 			}
 			if attempts[stage.RetryFrom]+1 > maxAttempts {
-				return r.escalate(ctx, run, fmt.Sprintf("gate %s failed; %s exceeded %d attempts", stage.ID, stage.RetryFrom, maxAttempts))
+				return r.escalateWithItem(ctx, run, item, fmt.Sprintf("gate %s failed; %s exceeded %d attempts", stage.ID, stage.RetryFrom, maxAttempts))
 			}
 			r.logger().Info("pipeline retry", "run", run.ID, "from", stage.RetryFrom, "attempt", attempts[stage.RetryFrom]+1)
 			i = rewindIdx - 1 // -1 so the for-loop ++ lands on rewindIdx
@@ -257,7 +262,7 @@ func (r *Runner) Drive(ctx context.Context, run *store.PipelineRun, item *store.
 		out, err := r.runStage(ctx, run, item, stage, prior, attempts[stage.ID])
 		if err != nil {
 			if attempts[stage.ID] >= maxAttempts {
-				return r.escalate(ctx, run, fmt.Sprintf("stage %s errored after %d attempts: %v", stage.ID, attempts[stage.ID], err))
+				return r.escalateWithItem(ctx, run, item, fmt.Sprintf("stage %s errored after %d attempts: %v", stage.ID, attempts[stage.ID], err))
 			}
 			// Retry the same stage by stepping back one (loop will ++).
 			i--
@@ -526,9 +531,11 @@ func (r *Runner) markDone(ctx context.Context, run *store.PipelineRun) error {
 	return nil
 }
 
-// escalate transitions a run to escalated and records the reason. The
-// escalation slice (4.4) layers richer handoff on top.
-func (r *Runner) escalate(ctx context.Context, run *store.PipelineRun, reason string) error {
+// escalateWithItem transitions a run to escalated, records the reason,
+// and invokes the optional EscalationHandler for issue+handoff
+// publication. Handler failures are logged but don't undo the state
+// transition.
+func (r *Runner) escalateWithItem(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem, reason string) error {
 	t := r.now()
 	run.State = store.PipelineEscalated
 	run.EndedAt = &t
@@ -538,6 +545,11 @@ func (r *Runner) escalate(ctx context.Context, run *store.PipelineRun, reason st
 	r.event(ctx, "pipeline.run.escalated", "error", map[string]any{
 		"run": run.ID, "reason": reason,
 	})
+	if r.Escalator != nil && item != nil {
+		if err := r.Escalator.Handle(ctx, run, item, reason); err != nil {
+			r.logger().Warn("pipeline escalator failed", "run", run.ID, "error", err)
+		}
+	}
 	return nil
 }
 

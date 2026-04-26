@@ -86,6 +86,10 @@ type Integrator struct {
 	// "no cap"; recommend setting from policy.budgets.pipeline
 	// .max_concurrent_runs at startup.
 	MaxParallel int
+	// Escalator publishes the failure record + issue + handoff when a
+	// fan-out parent transitions to escalated. Nil falls back to the
+	// bare state transition.
+	Escalator EscalationHandler
 }
 
 // NewIntegrator constructs an Integrator with sensible defaults.
@@ -137,7 +141,7 @@ func (i *Integrator) Run(ctx context.Context, run *store.PipelineRun, item *stor
 
 	results, err := i.runSubRuns(ctx, &parentRun, item)
 	if err != nil {
-		return i.escalate(ctx, &parentRun, fmt.Sprintf("sub-run failure: %v", err))
+		return i.escalateWithItem(ctx, &parentRun, item, fmt.Sprintf("sub-run failure: %v", err))
 	}
 
 	// Stable order: sort by slice name so merge order is deterministic.
@@ -157,7 +161,7 @@ func (i *Integrator) Run(ctx context.Context, run *store.PipelineRun, item *stor
 		BaseBranch:        "main",
 	})
 	if err != nil {
-		return i.escalate(ctx, &parentRun, fmt.Sprintf("merge failed: %v", err))
+		return i.escalateWithItem(ctx, &parentRun, item, fmt.Sprintf("merge failed: %v", err))
 	}
 	if mergeResp.Conflict {
 		i.event(ctx, "pipeline.integrate.conflict", "fail", map[string]any{
@@ -165,7 +169,7 @@ func (i *Integrator) Run(ctx context.Context, run *store.PipelineRun, item *stor
 			"item":  item.ID,
 			"files": mergeResp.ConflictedFiles,
 		})
-		return i.escalate(ctx, &parentRun, fmt.Sprintf("merge conflict in %d files", len(mergeResp.ConflictedFiles)))
+		return i.escalateWithItem(ctx, &parentRun, item, fmt.Sprintf("merge conflict in %d files", len(mergeResp.ConflictedFiles)))
 	}
 
 	// Land the integration branch on the parent run; the runner picks up
@@ -314,7 +318,7 @@ func (i *Integrator) semaphore() chan struct{} {
 	return make(chan struct{}, i.MaxParallel)
 }
 
-func (i *Integrator) escalate(ctx context.Context, run *store.PipelineRun, reason string) error {
+func (i *Integrator) escalateWithItem(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem, reason string) error {
 	t := i.now()
 	run.State = store.PipelineEscalated
 	run.EndedAt = &t
@@ -324,6 +328,11 @@ func (i *Integrator) escalate(ctx context.Context, run *store.PipelineRun, reaso
 	i.event(ctx, "pipeline.integrate.escalated", "error", map[string]any{
 		"run": run.ID, "reason": reason,
 	})
+	if i.Escalator != nil && item != nil {
+		if err := i.Escalator.Handle(ctx, run, item, reason); err != nil && i.Logger != nil {
+			i.Logger.Warn("integrator escalator failed", "run", run.ID, "error", err)
+		}
+	}
 	return nil
 }
 
