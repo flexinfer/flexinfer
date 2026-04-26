@@ -33,7 +33,11 @@
 #     control-plane's safety margin. The latest live retry reached only
 #     harmful prompt 80/128 before the 4h deadline, so this canary needs a
 #     full-day deadline to reach the dense cosine gate instead of repeating
-#     the same partial activation capture.
+#     the same partial activation capture. A later live retry on 2026-04-26
+#     proved the 28 GiB workload budget is too aggressive for this mixed-use
+#     62 GiB node: the abliterator reached ~36 GiB RSS, MemAvailable fell to
+#     ~0.6 GiB, and kubelet stopped heartbeating. Keep the budget low enough
+#     that the container fails before the host does.
 #
 # Why cblevins-5930k and not cblevins-7900xtx or radeonvii:
 #   - 7900xtx: primary Model CR claims amd.com/gpu=2 (iGPU block), 0 slots free.
@@ -105,7 +109,7 @@ spec:
     # 5099ab17 incident (5930k kubelet starvation) showed the old ceiling
     # could push this 57 GiB node past the control-plane's cgroup safety
     # margin. Keep tighter caps on 5930k; raise only if node is quiesced.
-    maxMemoryGB: 28
+    maxMemoryGB: 20
     timeoutSeconds: 86400
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
