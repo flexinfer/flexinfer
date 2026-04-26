@@ -21,6 +21,7 @@ Update this document whenever a tuning change lands or a new blocker is found.
 | `gemma4-31b-gptq` | `gemma4-31b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | Current warm primary at the validated 2K ceiling (`minReplicas: 1`) |
 | `gemma4-26b-a4b-gptq` | `gemma4-26b-a4b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | 8K rollback baseline / fallback (`minReplicas: 0`) |
 | `gemma4-26b-a4b-gptq-long` | `gemma4-26b-a4b-gptq-long` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 16K canary only (`minReplicas: 0`, `warmPolicy: ondemand`, priority matches the primary for demand swaps) |
+| `gemma4-26b-a4b-gptq-22k` | `gemma4-26b-a4b-gptq-22k` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 22K upper-bound probe (`minReplicas: 0`, `warmPolicy: ondemand`, priority 260 for explicit validation demand) |
 
 ## Current profile knobs
 
@@ -29,6 +30,7 @@ Update this document whenever a tuning change lands or a new blocker is found.
 | `gemma4-31b-gptq` | `2048` | runtime default | `0.95` | `minReplicas: 1` |
 | `gemma4-26b-a4b-gptq` | `8192` | `512` | `0.95` | `minReplicas: 0` |
 | `gemma4-26b-a4b-gptq-long` | `16384` | `160` | `0.98` | `minReplicas: 0` |
+| `gemma4-26b-a4b-gptq-22k` | `22000` | `160` | `0.98` | `minReplicas: 0` |
 
 ## Latest baseline
 
@@ -49,6 +51,10 @@ Current finding:
   `gemma4-long-ok` marker with zero pod restarts. It remains a scale-to-zero
   canary; promoting it to a warm/default profile still requires a separate
   change.
+- vLLM reported 22,608 GPU KV cache tokens for the 16K FP8-KV boot, so a
+  separate `gemma4-26b-a4b-gptq-22k` canary probes the next practical rung
+  without changing the validated 16K profile. Treat it as unvalidated until it
+  passes a target-context probe.
 - The smaller dense-validated artifact path remains blocked behind the
   `cblevins-5930k` memory guard; do not uncordon that node or remove the taint
   just to accelerate this lane.
@@ -154,6 +160,7 @@ ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
 |---------|--------|--------------|
 | Smaller long-context artifact | In progress | Needed before promoting beyond 8K baseline |
 | 16K promotion validation | Passed as canary | 26B canary uses FP8 KV and passed the 14K-token probe; keep scale-to-zero until a separate primary-promotion change |
+| 22K upper-bound validation | In progress | Separate 22K FP8-KV canary probes the highest context likely to fit with the current artifact |
 | 32K promotion validation | Blocked on artifact | Current hybrid needs a smaller artifact; FP16 KV boot needs 6.88 GiB with only 1.87 GiB available |
 | Compressed-tensors + FP8 KV lane | Planned canary | Separate compressed-tensors artifact work remains disabled/non-default until validated |
 | AITER on ROCm | Blocked / deferred | `TRITON_ATTN` remains the stable path on RDNA3 |
@@ -250,10 +257,11 @@ spec:
 
 ## Next tuning queue
 
-1. Rebuild the unified runtime with decoder-layer debug logging disabled by
+1. Validate the 22K FP8-KV canary with an 18K-20K prompt probe.
+2. Rebuild the unified runtime with decoder-layer debug logging disabled by
    default, then re-run the 16K probe to measure prefill without instrumentation.
-2. Produce a smaller 26B artifact candidate for 32K validation.
-3. Keep long-context canaries non-primary (`minReplicas: 0`, `warmPolicy: ondemand`)
+3. Produce a smaller 26B artifact candidate for 32K validation.
+4. Keep long-context canaries non-primary (`minReplicas: 0`, `warmPolicy: ondemand`)
    until promotion criteria are met.
-4. Validate compressed-tensors + FP8 KV on a dedicated canary before any alias/default changes.
-5. Generalize this gate to additional quantized model families in shared docs/manifests.
+5. Validate compressed-tensors + FP8 KV on a dedicated canary before any alias/default changes.
+6. Generalize this gate to additional quantized model families in shared docs/manifests.
