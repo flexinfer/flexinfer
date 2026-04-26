@@ -126,10 +126,22 @@ func TestPipeline_E2E_QueuedItemMergesWithEvalRow(t *testing.T) {
 		t.Errorf("mr_iid = %v, want 4242 (from NoOpDispatcher)", donePR.MRIID)
 	}
 
-	// Eval row must exist exactly once for this run.
-	scores, err := st.Eval.LatestPerSubject(context.Background(), store.EvalSubjectPipelineRun, donePR.ID)
-	if err != nil {
-		t.Fatalf("read eval: %v", err)
+	// Eval row is written by the OnMerged hook synchronously inside
+	// markDone — but markDone runs in a goroutine spawned by
+	// Runner.Start, so there's a small window between the
+	// pipeline_runs.state→done write and the eval_scores insert. Poll
+	// briefly for the row before asserting.
+	var scores []*store.EvalScore
+	evalDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(evalDeadline) {
+		scores, err = st.Eval.LatestPerSubject(context.Background(), store.EvalSubjectPipelineRun, donePR.ID)
+		if err != nil {
+			t.Fatalf("read eval: %v", err)
+		}
+		if len(scores) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if len(scores) != 1 {
 		t.Fatalf("expected 1 eval row, got %d", len(scores))
