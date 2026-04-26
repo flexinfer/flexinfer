@@ -25,6 +25,8 @@ import (
 	"github.com/crb2nu/loom/pkg/hive"
 	"github.com/crb2nu/loom/pkg/hive/council"
 	"github.com/crb2nu/loom/pkg/hive/eval"
+	"github.com/crb2nu/loom/pkg/hive/gates"
+	"github.com/crb2nu/loom/pkg/hive/pipeline"
 	"github.com/crb2nu/loom/pkg/hive/runner"
 	"github.com/crb2nu/loom/pkg/hive/store"
 )
@@ -138,13 +140,23 @@ func run(cfg Config) error {
 	httpSrv := httpServer(cfg.HTTPAddr, op.httpMux())
 	metricsSrv := httpServer(cfg.MetricsAddr, op.metricsMux())
 
-	// Reconciler / scheduler. The starter is intentionally nil for slice
-	// 2.3 — the reconciler will transition queued items to running and
-	// persist a pipeline_runs row, but no stages execute until slice 4.x
-	// wires the real pipeline runner. The operator still surfaces the
-	// scheduler's ticks via the events table so HUD and Prometheus see
-	// the loop is alive.
-	reconciler := hive.NewReconciler(st, pm, budget, nil)
+	// Pipeline runner. Slice 4.7 wires the runner into the reconciler
+	// using the NoOpDispatcher placeholder — the engine drives the full
+	// stage DAG and produces eval rows, but per-stage workers are stubs
+	// until spawn / weaver / devbox / gitlab clients are connected. The
+	// operator logs a clear warning when this dispatcher is in use so
+	// it's obvious the autonomous loop is not actually shipping code.
+	gateRegistry := gates.Default()
+	pipelineRunner := pipeline.New(st, gateRegistry, &pipeline.NoOpDispatcher{}, pm)
+	pipelineRunner.Logger = logger
+	attributor := eval.NewOutcomeAttributor(st)
+	pipelineRunner.OnMerged = attributor.OnMerged
+	logger.Warn("pipeline runner using NoOpDispatcher; merges will be stubs until worker clients land")
+
+	// Reconciler / scheduler. The reconciler hands queued items to the
+	// pipeline runner (which spawns goroutines that drive the DAG and
+	// fire OnMerged → eval Loop B per merge).
+	reconciler := hive.NewReconciler(st, pm, budget, pipelineRunner)
 	reconciler.Logger = logger
 	scheduler := hive.NewScheduler(reconciler)
 	scheduler.Logger = logger

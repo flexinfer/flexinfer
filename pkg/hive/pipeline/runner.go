@@ -156,6 +156,12 @@ type Runner struct {
 	// publication is best-effort: an Escalator error is logged but does
 	// not undo the state transition.
 	Escalator EscalationHandler
+	// OnMerged, when set, is invoked synchronously after a run reaches
+	// PipelineDone (the merge stage + cleanup completed). Slice 4.7
+	// wires this to eval.OutcomeAttributor.OnMerged so each merge
+	// produces exactly one pipeline_outcome eval row. Errors are logged
+	// but do not undo the state transition.
+	OnMerged func(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error
 }
 
 // New constructs a Runner with sensible defaults. A nil PolicyManager is
@@ -271,7 +277,7 @@ func (r *Runner) Drive(ctx context.Context, run *store.PipelineRun, item *store.
 		prior[stage.ID] = out
 	}
 
-	return r.markDone(ctx, run)
+	return r.markDone(ctx, run, item)
 }
 
 // resumeIndex returns the stage index to start (or restart) at. A run
@@ -516,8 +522,9 @@ func (r *Runner) gateInputFor(stage Stage, item *store.BacklogItem, policy *hive
 	return in
 }
 
-// markDone closes out a run that completed cleanup successfully.
-func (r *Runner) markDone(ctx context.Context, run *store.PipelineRun) error {
+// markDone closes out a run that completed cleanup successfully and
+// fires the OnMerged hook for downstream eval Loop B attribution.
+func (r *Runner) markDone(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error {
 	t := r.now()
 	run.State = store.PipelineDone
 	run.CurrentStage = ""
@@ -528,6 +535,11 @@ func (r *Runner) markDone(ctx context.Context, run *store.PipelineRun) error {
 	r.event(ctx, "pipeline.run.done", "ok", map[string]any{
 		"run": run.ID, "cost_usd": run.CostUSD,
 	})
+	if r.OnMerged != nil && item != nil {
+		if err := r.OnMerged(ctx, run, item); err != nil {
+			r.logger().Warn("pipeline OnMerged hook failed", "run", run.ID, "error", err)
+		}
+	}
 	return nil
 }
 
