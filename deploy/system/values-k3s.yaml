@@ -78,7 +78,7 @@ proxy:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-proxy
     tag: "master"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   service:
     type: ClusterIP
     port: 80
