@@ -12,18 +12,18 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/crb2nu/loom/pkg/hive"
+	"github.com/crb2nu/loom/pkg/hive/runner"
 	"github.com/crb2nu/loom/pkg/hive/store"
 )
 
-// operator owns the state shared between HTTP handlers — the canonical store,
-// the policy manager, and the budget enforcer. Slice 2.4 replaces the
-// placeholder REST handlers with the full surface; this slice exposes only
-// the lifecycle endpoints (healthz / readyz / metrics) plus a stub status
-// endpoint so smoke tests can confirm wiring.
+// operator owns the state shared between HTTP handlers — the canonical
+// store, the policy manager, the budget enforcer, and (slice 3.7+) the
+// council runner that orchestrates an end-to-end planning pass.
 type operator struct {
 	store  *store.Store
 	policy *hive.PolicyManager
 	budget *hive.Budget
+	runner *runner.Runner // optional; nil disables /api/hive/council/{run,dryrun}
 	logger *slog.Logger
 
 	ready atomic.Bool
@@ -31,6 +31,14 @@ type operator struct {
 
 func newOperator(st *store.Store, pm *hive.PolicyManager, b *hive.Budget, logger *slog.Logger) *operator {
 	return &operator{store: st, policy: pm, budget: b, logger: logger}
+}
+
+// withRunner attaches a council runner. Operators that don't want
+// council functionality (e.g. the stub used by handler tests) leave
+// runner unset and the council POST endpoints respond 503.
+func (o *operator) withRunner(r *runner.Runner) *operator {
+	o.runner = r
+	return o
 }
 
 // markReady flips the readyz response from 503 to 200. Called once startup

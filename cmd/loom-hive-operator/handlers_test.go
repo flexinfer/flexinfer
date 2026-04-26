@@ -262,13 +262,17 @@ func TestRequireAdmin_CorrectTokenReachesHandler(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer secret-abc")
 	rec := httptest.NewRecorder()
 	op.httpMux().ServeHTTP(rec, req)
-	// Action stub returns 501 with a slice ref. The point of this test is
-	// that the auth gate let the request through; the body proves it.
-	if rec.Code != http.StatusNotImplemented {
-		t.Errorf("expected 501 from action stub, got %d body=%s", rec.Code, rec.Body.String())
+	// newTestOperator doesn't wire a council runner, so the handler
+	// short-circuits with 503. The point of this test is that the auth
+	// gate *let the request through* to the handler — anything other
+	// than 401 proves that. We assert 503 specifically so we'd notice
+	// if the gate accidentally became authorisation-only-no-handler.
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 (no runner wired in tests), got %d body=%s",
+			rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "3.x") {
-		t.Errorf("action stub should name the slice that fills it: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "council runner not configured") {
+		t.Errorf("body should explain the 503: %s", rec.Body.String())
 	}
 }
 

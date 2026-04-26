@@ -23,6 +23,9 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/crb2nu/loom/pkg/hive"
+	"github.com/crb2nu/loom/pkg/hive/council"
+	"github.com/crb2nu/loom/pkg/hive/eval"
+	"github.com/crb2nu/loom/pkg/hive/runner"
 	"github.com/crb2nu/loom/pkg/hive/store"
 )
 
@@ -55,6 +58,7 @@ func newRootCmd() *cobra.Command {
 	flags.StringVar(&cfg.PolicyPath, "policy-path", cfg.PolicyPath, "Path to the YAML policy file")
 	flags.StringVar(&cfg.HTTPAddr, "listen", cfg.HTTPAddr, "Bind address for the REST + MCP listener (empty disables)")
 	flags.StringVar(&cfg.MetricsAddr, "metrics-addr", cfg.MetricsAddr, "Bind address for /healthz, /readyz, /metrics (empty disables)")
+	flags.StringVar(&cfg.RepoRoot, "repo-root", cfg.RepoRoot, "Path to the loom-core checkout the council writes into")
 	flags.BoolVar(&cfg.Debug, "debug", cfg.Debug, "Enable verbose logging")
 	return cmd
 }
@@ -118,7 +122,16 @@ func run(cfg Config) error {
 	})
 
 	budget := hive.NewBudget(pm, hive.NewStoreBudgetReader(st))
-	op := newOperator(st, pm, budget, logger)
+
+	// Council runner. Reviewers + editor are FakeReviewer + FakeEditor
+	// for slice 3.7 — they make /api/hive/council/{run,dryrun} produce
+	// real artifacts + sidecar + eval row + backlog mutations end to
+	// end without a live agent. Production wiring swaps in spawn-backed
+	// implementations in a follow-up slice once the spawn integration
+	// for FlexInfer + Claude/Codex headless is wired.
+	councilRunner := buildCouncilRunner(st, pm, budget, cfg.RepoRoot, logger)
+
+	op := newOperator(st, pm, budget, logger).withRunner(councilRunner)
 	op.markReady()
 	logger.Info("operator ready", "policy_enabled", pm.Current().IsEnabled())
 
@@ -157,4 +170,58 @@ func newLogger(debug bool) *slog.Logger {
 		level = slog.LevelDebug
 	}
 	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+}
+
+// buildCouncilRunner wires the slice 3.7 fakes — FakeReviewer for every
+// configured lens, FakeEditor as the synthesis agent, and the deterministic
+// rubric with no LLM judge — into a runner. Production wiring swaps the
+// fakes for spawn-backed implementations in a follow-up slice once the
+// FlexInfer + Claude/Codex headless integration ships.
+//
+// Returns nil + a structured log line if the policy doesn't configure any
+// reviewer ensemble. The operator continues to serve read-only endpoints
+// in that case; council POSTs respond 503.
+func buildCouncilRunner(
+	st *store.Store,
+	pm *hive.PolicyManager,
+	budget *hive.Budget,
+	repoRoot string,
+	logger *slog.Logger,
+) *runner.Runner {
+	policy := pm.Current()
+	lenses := council.LensesFromPolicy(policy)
+	if len(lenses) == 0 {
+		logger.Warn("no council reviewers configured; council POST endpoints will return 503")
+		return nil
+	}
+	reviewers := map[string]council.Reviewer{}
+	for _, l := range lenses {
+		reviewers[l.Name] = &council.FakeReviewer{
+			Notes:   "fake reviewer (slice 3.7)",
+			CostUSD: 0.05,
+		}
+	}
+	dispatcher := &council.Dispatcher{Reviewers: reviewers}
+	editor := &council.FakeEditor{
+		Backend: policy.Council.Ensemble.Editor.Backend,
+		Model:   policy.Council.Ensemble.Editor.Model,
+		CostUSD: 0.42,
+		Notes:   "FakeEditor (slice 3.7); production swap-in pending",
+	}
+	writer := &council.ArtifactWriter{RepoRoot: repoRoot}
+	mutator := &council.BacklogMutator{Store: st}
+	judge := &eval.Judge{Criteria: eval.DefaultRubric(&eval.FakeLLMJudge{Score: 1.0})}
+
+	return &runner.Runner{
+		Store:     st,
+		Policy:    pm,
+		Budget:    budget,
+		Reviewers: dispatcher,
+		Editor:    editor,
+		Writer:    writer,
+		Mutator:   mutator,
+		Judge:     judge,
+		RepoRoot:  repoRoot,
+		Logger:    logger,
+	}
 }

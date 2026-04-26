@@ -33,6 +33,13 @@ type Config struct {
 	// Unset (the default) defers to the policy.
 	EnableReconciler *bool
 
+	// RepoRoot is the absolute path to the loom-core checkout the
+	// council writes artifacts into and the brief assembler reads
+	// .loom/00-index.md from. In production this is the operator pod's
+	// mounted clone (a read-write PVC). For local dev it's the
+	// developer's worktree.
+	RepoRoot string
+
 	// Debug enables verbose slog output.
 	Debug bool
 }
@@ -44,6 +51,7 @@ func DefaultConfig() Config {
 		PolicyPath:  "/etc/loom-hive/policy.yaml",
 		HTTPAddr:    ":8090",
 		MetricsAddr: ":9090",
+		RepoRoot:    "/workspace/loom-core",
 	}
 }
 
@@ -61,6 +69,9 @@ func (c *Config) ApplyEnv() {
 	}
 	if v := strings.TrimSpace(os.Getenv("LOOM_HIVE_METRICS_ADDR")); v != "" {
 		c.MetricsAddr = v
+	}
+	if v := strings.TrimSpace(os.Getenv("LOOM_HIVE_REPO_ROOT")); v != "" {
+		c.RepoRoot = v
 	}
 	if v := strings.TrimSpace(os.Getenv("LOOM_HIVE_ENABLED")); v != "" {
 		switch strings.ToLower(v) {
