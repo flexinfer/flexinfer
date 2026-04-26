@@ -2,7 +2,8 @@
 
 ## Quick Links
 
-- **Session mgmt + spawn auth + weaver integration (2026-04-19)**: `86-research-session-spawning-weaver-integration-2026-04-19.md`, `87-product-spec-session-spawning-weaver-2026-04-19.md`, `88-implementation-plan-session-spawning-weaver-2026-04-19.md` ← **active planning slice**
+- **Loom Hive — Council + Pipeline (agent swarm meta-orchestration, 2026-04-25)**: `89-research-agent-swarm-council-pipeline-2026-04-25.md`, `90-product-spec-agent-swarm-council-pipeline-2026-04-25.md`, `91-implementation-plan-agent-swarm-council-pipeline-2026-04-25.md` ← **active planning slice**
+- **Session mgmt + spawn auth + weaver integration (2026-04-19)**: `86-research-session-spawning-weaver-integration-2026-04-19.md`, `87-product-spec-session-spawning-weaver-2026-04-19.md`, `88-implementation-plan-session-spawning-weaver-2026-04-19.md`
 - **Phase 4 plan — Headless agent UX parity (2026-04-07)**: `83-plan-headless-agent-ux-parity-2026-04-07.md`
 - **Phase 3 plan — Headless agent full-stack drive + canonical telemetry (2026-04-07)**: `82-plan-headless-agent-fullstack-2026-04-07.md`
 - **Headless agent telemetry + SDK research (2026-04-06)**: `79-research-headless-agent-telemetry-sdk-2026-04-06.md`
@@ -43,6 +44,23 @@
 - Prior HUD/TUI slice handoff: `55-ralph-slice-handoff-hud-tui-presence-2026-02-17.md`
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
+
+## Current Planning Addendum (2026-04-25)
+
+- Active planning slice: **Loom Hive — Council + Pipeline.** A cluster-resident meta-orchestration layer above weaver/spawn/MentatLab that runs continuous software development with a planning *council* (scheduled ensemble emitting `.loom/` docs + backlog deltas) and a deterministic *pipeline* (event-driven, gated execution per backlog item). "CI above CI for agents."
+- New planning docs:
+  - `89-research-agent-swarm-council-pipeline-2026-04-25.md` — current-state inventory, gap analysis, decisions (resolved 2026-04-25), persistence + cluster topology rationale, evaluation framework, risks
+  - `90-product-spec-agent-swarm-council-pipeline-2026-04-25.md` — `cmd/loom-hive-operator/`, SQLite schema (canonical), policy file, MentatLab `hive-default-pipeline` template, REST + MCP surface, gates, eval framework, KPIs
+  - `91-implementation-plan-agent-swarm-council-pipeline-2026-04-25.md` — six phases: (0) prerequisites, (1) cluster substrate (persistence + operator), (2) hive primitives, (3) council MVP + Eval Loop A, (4) pipeline MVP + Eval Loop B, (5) HUD + telemetry, (6) hardening + Eval Loop C + docs + default-on
+- Locked decisions (D1–D12 resolved):
+  - **Cluster-only.** Operator runs in k3s as `loom-hive-operator` deployment with PVC; Mac CLI is client only (laptop sleeps; hive doesn't).
+  - **Persistence is canonical SQLite**, not YAML. `.loom/backlog/*.yaml` is a derived export; GitLab issues are a federated mirror; resilient to GitLab outages.
+  - **Hybrid council ensemble**: frontier editor (Claude/Codex via spawn) + FlexInfer reviewers (heterogeneous models), editor pattern.
+  - **Pipeline runs on MentatLab** (extend, not replace); per-DAG worktrees; reconcile-loop pickup; cap+queue budget.
+  - **Three eval loops**: synchronous artifact judge (gates backlog mutation at score < 0.7), per-merge outcome attribution (Council ROI KPI), weekly cross-run consistency check (feeds next council brief).
+  - **Policy-driven human override**: protected-paths default-deny; per-label `auto_merge` and `human_review` knobs.
+  - **Council fast-merges `.loom/` only**; `ROADMAP.md`, skills-registry, code → MR for human review.
+  - **Conservative v1 gate set**: lint/tests/diff-size/scope/path-policy/secret-scan/commit-format (pure-Go) + spec-conformance/pr-self-review (FlexInfer); no frontier inside gates.
 
 ## Current Planning Addendum (2026-04-06)
 

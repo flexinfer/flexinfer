@@ -3,6 +3,7 @@ bin/
 /mcp-*
 /loom
 /loomd
+/loom-hive-operator
 /custom-server
 *.exe
 *.test

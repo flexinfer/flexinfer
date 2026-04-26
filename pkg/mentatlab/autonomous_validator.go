@@ -23,10 +23,24 @@ var writeOpNodeTypes = map[string]bool{
 	"agent_spawn": true,
 }
 
-// gateNodeTypes enumerates node types that represent a human review gate.
+// gateNodeTypes enumerates node types that satisfy the write-op invariant.
+//
+// Two flavours coexist:
+//   - human_gate / review_gate — synchronous human approval (F7 default).
+//   - auto_gate — deterministic machine check (lint, tests, diff-size,
+//     scope, secret-scan, commit-format, plus FlexInfer-judged spec-
+//     conformance and pr-self-review). The "dark factory" pivot from
+//     .loom/78- + .loom/91- replaces human approval with an automated
+//     verdict; failure escalates to a human handoff via the runtime
+//     policy, but the *static* template is unblocked by the gate alone.
+//
+// A flow may mix the two — e.g. auto_gate between every stage with a
+// human_gate immediately before merge — and the validator is happy as
+// long as some gate sits on every start-to-write-op path.
 var gateNodeTypes = map[string]bool{
 	"human_gate":  true,
 	"review_gate": true,
+	"auto_gate":   true,
 }
 
 // flowDoc is the minimal YAML shape the validator needs. It intentionally
@@ -127,7 +141,7 @@ func ValidateAutonomousFlow(yamlBytes []byte) error {
 			continue
 		}
 		return fmt.Errorf(
-			"node %q (type=%s) has no upstream human_gate on its path to the start",
+			"node %q (type=%s) has no upstream gate (human_gate, review_gate, or auto_gate) on its path to the start",
 			n.ID, n.Type,
 		)
 	}
