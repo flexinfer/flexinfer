@@ -48,8 +48,10 @@ func (r *ModelReconciler) desiredReplicas(model *aiv1alpha2.Model, b backend.Bac
 }
 
 func (r *ModelReconciler) desiredReplicasForContext(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend) int32 {
-	// KV-cache eviction: override to 0 replicas while evicted.
-	if model.Status.KVCache != nil && model.Status.KVCache.Evicted {
+	// KV-cache eviction: override to 0 replicas while an active KV-cache
+	// policy is evicting. Ignore stale status left behind after the policy is
+	// removed so old pressure events cannot pin a model at zero forever.
+	if model.Spec.KVCache != nil && model.Status.KVCache != nil && model.Status.KVCache.Evicted {
 		return 0
 	}
 

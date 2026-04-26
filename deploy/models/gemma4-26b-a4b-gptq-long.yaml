@@ -1,6 +1,6 @@
 # Gemma4 26B-A4B GPTQ long-context canary via vLLM on AMD gfx1100.
 #
-# Experimental 32K lane for the same clean 26B-A4B GPTQ source
+# Experimental 16K lane for the same clean 26B-A4B GPTQ source
 # artifact used by the 26B fallback model. This is a separate scale-to-zero canary
 # on cblevins-7900xtx so the RWO source PVC stays on the node that already owns
 # the working 26B artifact. It must be scaled/tested deliberately and should
@@ -50,8 +50,9 @@ spec:
   config:
     quantization: gptq
     dtype: "half"
-    maxModelLen: 32768
-    gpuMemoryUtilization: "0.95"
+    maxModelLen: 16384
+    gpuMemoryUtilization: "0.98"
+    kvCacheDtype: fp8_e4m3
     maxNumSeqs: 1
     trustRemoteCode: true
     attentionBackend: TRITON_ATTN
@@ -64,14 +65,13 @@ spec:
     # Match the working primary profile: disable torch.compile + CUDAGraph on
     # ROCm/GPTQ, where vLLM warns that GPTQ GEMM and compiled GELU are unstable.
     enforceEager: true
-    # Force source-backed ROCm fallback kernels for the 32K canary. vLLM keeps
+    # Force source-backed ROCm fallback kernels for the long-context canary. vLLM keeps
     # AITER opt-in, but the package still initializes AITER modules; pinning
     # these env-backed switches also disables ROCm custom paged attention.
     disableAiter: true
     rocmCustomPagedAttn: false
     # Gemma4's mixed sliding/full attention KV specs trip vLLM's hybrid manager
-    # on this runtime. The primary uses this workaround successfully; the 32K
-    # fp16 KV estimate remains small enough for the single 7900 XTX.
+    # on this runtime. The 16K profile uses FP8 KV to fit the single 7900 XTX.
     disableHybridKVCacheManager: true
     limitMmPerPrompt: '{"image":0,"audio":0,"video":0}'
     disableLogStats: false
