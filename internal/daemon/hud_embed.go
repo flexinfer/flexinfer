@@ -38,6 +38,8 @@ func (d *Daemon) startEmbeddedHUD(ctx context.Context, mux *http.ServeMux) error
 		FlexInferURL:         firstNonEmpty(cfg.FlexInferURL, os.Getenv("FLEXINFER_URL")),
 		FlexInferKey:         firstNonEmpty(cfg.FlexInferKey, os.Getenv("FLEXINFER_API_KEY")),
 		CoordinatorModel:     firstNonEmpty(cfg.CoordinatorModel, os.Getenv("COORDINATOR_MODEL")),
+		HiveOperatorURL:      os.Getenv("LOOM_HIVE_OPERATOR_URL"),
+		HiveOperatorToken:    os.Getenv("LOOM_HIVE_OPERATOR_TOKEN"),
 	}
 
 	// Default mobile operator scopes when token is set.

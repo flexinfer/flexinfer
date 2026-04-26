@@ -93,6 +93,19 @@ export const views: ViewDef[] = [
       { id: 'spawn',   label: 'Spawn',   key: 'b' },
     ],
   },
+  {
+    id: 'hive',
+    label: 'Hive',
+    icon: '❖', // BLACK DIAMOND MINUS WHITE X — autonomous-loop control plane
+    key: '7',
+    default: 'pipelines',
+    subViews: [
+      { id: 'pipelines', label: 'Pipelines', key: 'a' },
+      { id: 'backlog',   label: 'Backlog',   key: 'b' },
+      { id: 'council',   label: 'Council',   key: 'c' },
+      { id: 'eval',      label: 'Eval',      key: 'd' },
+    ],
+  },
 ];
 
 // Overview is standalone (no sub-views)

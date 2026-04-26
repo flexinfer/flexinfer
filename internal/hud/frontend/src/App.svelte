@@ -318,6 +318,38 @@
                   {:catch}
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
+                {:else if router.subView === 'pipelines'}
+                  {#await import('./lib/components/Hive/PipelinesPanel.svelte')}
+                    <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
+                  {:then { default: HivePipelinesPanel }}
+                    <HivePipelinesPanel />
+                  {:catch}
+                    <EmptyState icon="!" heading="Failed to load panel" compact />
+                  {/await}
+                {:else if router.subView === 'backlog'}
+                  {#await import('./lib/components/Hive/BacklogPanel.svelte')}
+                    <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
+                  {:then { default: HiveBacklogPanel }}
+                    <HiveBacklogPanel />
+                  {:catch}
+                    <EmptyState icon="!" heading="Failed to load panel" compact />
+                  {/await}
+                {:else if router.subView === 'council'}
+                  {#await import('./lib/components/Hive/CouncilPanel.svelte')}
+                    <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
+                  {:then { default: HiveCouncilPanel }}
+                    <HiveCouncilPanel />
+                  {:catch}
+                    <EmptyState icon="!" heading="Failed to load panel" compact />
+                  {/await}
+                {:else if router.subView === 'eval'}
+                  {#await import('./lib/components/Hive/EvalPanel.svelte')}
+                    <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
+                  {:then { default: HiveEvalPanel }}
+                    <HiveEvalPanel />
+                  {:catch}
+                    <EmptyState icon="!" heading="Failed to load panel" compact />
+                  {/await}
                 {/if}
               </ViewShell>
             {/if}
