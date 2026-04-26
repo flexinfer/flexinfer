@@ -2,6 +2,8 @@
 
 Date: 2026-04-25
 
+Status refresh: 2026-04-26
+
 ## Goal
 
 Get two production-usable Gemma4 gfx1100 serving lanes:
@@ -22,14 +24,14 @@ This plan intentionally separates GPTQ from TurboQuant:
 - The active safe artifact is hybrid: MoE expert weights are GPTQ INT4 while dense attention/MLP remains source precision. The manifest notes that full dense GPTQ produced bad dequant/repeated-token output on ROCm/vLLM.
 - The hybrid artifact loads at about 17.7 GiB on the 24 GiB 7900 XTX lane, so the current safe context is 8K. The docs warn not to raise context until a smaller validated artifact exists.
 - The primary manifest requires `flexinfer.ai/gpu.count: "2"` because the node exposes an AMD dGPU plus iGPU through the device plugin. A count of `1` can place the pod on the iGPU and crash.
-- The long canary manifest currently targets 32K with fp16 KV, but its selector still uses `flexinfer.ai/gpu.count: "1"`. That should be corrected before spending validation time.
+- The long canary manifest now uses the safe dGPU selector and targets 32K with fp16 KV, but the live 2026-04-26 canary failed during KV sizing. vLLM estimated the maximum context at `8896` tokens after loading the hybrid weights, so 16K and 32K remain blocked until the artifact or KV format changes.
+- The dense-validated rebuild has not reached cosine validation. The latest live job reached harmful prompt `80/128` before the 4h abliteration deadline, and the manifest now extends the abliteration and quantization deadlines to 24h for the next managed retry.
 
 ### 31B Dense
 
 - Current primary manifest is `deploy/models/gemma4-31b-gptq.yaml`.
-- The current `gptq-w4-g128-keqv` artifact can load and allocate KV at `maxModelLen: 1920`, but inference emits pure `<pad>`.
-- Manifest evidence points away from the `k_eq_v` post-process as the root cause. Layers 40-59 have repeated tensors across q/k/v/o/gate/up families, so the current artifact cannot be repaired by on-disk `k_eq_v` surgery.
-- A clean 31B re-quant is required before any 31B TurboQuant work is meaningful.
+- The landed !193/!194 recovery resolved the immediate corrupt-artifact issue. `gemma4-31b-keqv-postprocess-v4` and `gemma4-31b-gptq-cache-copy` succeeded on 2026-04-25, and the active `gptq-w4-g128-keqv` artifact is Ready/Active at `maxModelLen: 2048`.
+- Direct 31B smoke returned HTTP 200 with answer `4` in 0.158s, so the conservative 2048 production lane is restored.
 - The earlier 31B TurboQuant lane OOMed before KV allocation: about 20.02 GiB weights plus about 3.57 GiB TurboQuant plugin state on a 23.98 GiB GPU. `gpuMemoryUtilization` and CPU offload do not fix that allocation path.
 
 ## External Findings
@@ -69,16 +71,14 @@ Correct reading of the history: do not force TurboQuant onto the current artifac
 ## Correct Direction
 
 1. Preserve the current 26B hybrid 8K lane as the known-good fallback.
-2. Fix the 26B long canary selector to require the real dGPU lane before probing 16K/32K.
+2. Keep the 26B long canary selector on the real dGPU lane, but do not promote 16K/32K on the current fp16-KV hybrid artifact; the live canary capped out around 8896 tokens.
 3. Finish or rerun the 26B dense-validated artifact path with strict output and cosine checks. Promote only if it is coherent and smaller than the hybrid artifact.
-4. Rebuild 31B from source with corruption guards before `k_eq_v`; current 31B `keqv` output is not recoverable.
-5. Re-apply `k_eq_v` only after the clean 31B quantization passes artifact integrity checks.
-6. Keep 31B production capped at a conservative context until it passes text coherence, artifact integrity, and a context ladder.
-7. Patch TurboQuant primitive allocation only after clean GPTQ lanes exist. The 31B fix should share immutable rotation/codec primitives across layers and avoid split rotation allocations when the PyTorch codec is enabled on ROCm.
-8. Reintroduce TurboQuant through canaries:
+4. Keep 31B production capped at the proven conservative context while any larger context or TurboQuant work runs as a canary.
+5. TurboQuant primitive allocation is now patched behind `TQ4_SHARE_PRIMITIVES=1`. The 31B fix shares immutable rotation/codec primitives across layers and avoids split rotation allocations when the PyTorch codec is enabled on ROCm.
+6. Reintroduce TurboQuant through canaries:
    - 26B: layer-selective or SWA-aware first, because global MoE TurboQuant has external quality-risk signals.
    - 31B: boot-only first, then 4096, 8192, 16384 context ladder if primitive sharing gets past the previous OOM.
-9. Treat FP8 KV cache as an independent lower-risk canary, not a substitute for TurboQuant validation.
+7. Treat FP8 KV cache as an independent lower-risk canary, not a substitute for TurboQuant validation.
 
 ## Workstreams
 
@@ -86,10 +86,11 @@ Correct reading of the history: do not force TurboQuant onto the current artifac
 
 Acceptance criteria:
 
-- `gemma4-26b-a4b-gptq-long.yaml` uses the same dGPU-safe selector as primary 26B.
-- 31B quantization emits an integrity manifest that detects repeated q/k/v/o/gate/up tensors before `k_eq_v`.
-- Resume mode refuses to reuse a cached late layer when tensor signatures collide unexpectedly.
-- Save/finalization never deletes source checkpoints before artifact validation and durable copy complete.
+- Done: `gemma4-26b-a4b-gptq-long.yaml` uses the same dGPU-safe selector as primary 26B.
+- Done for the immediate 31B recovery: postprocess/copy jobs succeeded and the restored 2048 lane smokes coherently.
+- Still open for future rebuilds: 31B quantization should emit an integrity manifest that detects repeated q/k/v/o/gate/up tensors before `k_eq_v`.
+- Still open for future rebuilds: resume mode should refuse to reuse a cached late layer when tensor signatures collide unexpectedly.
+- Still open for future rebuilds: save/finalization should never delete source checkpoints before artifact validation and durable copy complete.
 
 ### B. 26B Fully Working Lane
 
@@ -97,8 +98,8 @@ Steps:
 
 1. Keep `gemma4-26b-a4b-gptq` warm/primary at 8K until a replacement passes gates.
 2. Correct the 32K long canary selector.
-3. Run the long canary first at 16K, then 32K with the existing fp16 KV path.
-4. Finish dense-validated rebuild from `deploy/modelcaches/gemma4-26b-a4b-gptq-dense.yaml`.
+3. The long canary failed at 32K with the existing fp16 KV path after successful weight load; vLLM estimated the maximum context at `8896`, so 16K is also blocked on this artifact/runtime combination.
+4. Finish dense-validated rebuild from `deploy/modelcaches/gemma4-26b-a4b-gptq-dense.yaml`; the 2026-04-26 investigation showed the existing 4h deadline prevented reaching cosine validation.
 5. Compare hybrid vs dense-validated:
    - artifact validator clean,
    - short generation coherence,
@@ -111,20 +112,19 @@ Steps:
 
 Steps:
 
-1. Treat current `gptq-w4-g128-keqv` as corrupt and non-promotable.
-2. Re-quantize 31B on the gfx906/Radeon VII pipeline with current 12h timeout and 96 GB memory budget, but add late-layer corruption guards.
+1. The immediate `gptq-w4-g128-keqv` recovery is complete through !193/!194 and passes the short deterministic smoke at `maxModelLen: 2048`.
+2. Future 31B requants should still add late-layer corruption guards before `k_eq_v`, because that was the failure mode in the bad artifact lineage.
 3. Reduce corruption risk with lower `n_parallel_calib_samples`, stronger per-layer save validation, or smaller resume chunks if repeated tensor signatures appear again.
-4. Apply `k_eq_v` after clean quantization to satisfy vLLM quant-state checks.
-5. Validate at `maxModelLen: 1920`, then test 2048/4096 only after output is coherent.
-6. Promote 31B only if it can answer a short deterministic prompt without `<pad>` collapse and passes artifact integrity.
+4. Apply `k_eq_v` only after clean quantization to satisfy vLLM quant-state checks.
+5. Test 4096+ only after the current 2048 lane remains coherent and a separate canary is available.
 
 ### D. TurboQuant Runtime Work
 
 Steps:
 
-1. Patch `build/scripts/patch_turboquant_quantizer_gpu_qr.py` to share immutable TurboQuant primitives by device/head geometry/bits/seed/codec.
-2. Gate the behavior with `TQ4_SHARE_PRIMITIVES=1`.
-3. Keep E4B TurboQuant as the fast regression probe.
+1. Done: patch `build/scripts/patch_turboquant_quantizer_gpu_qr.py` to share immutable TurboQuant primitives by device/head geometry/bits/seed/codec.
+2. Done: gate the behavior with `TQ4_SHARE_PRIMITIVES=1`.
+3. Still pending: build a runtime image with the patched profile and keep E4B TurboQuant as the fast regression probe.
 4. For 31B, prove boot-only first. Success means the model reaches KV-cache sizing instead of OOMing in attention-module construction.
 5. For 26B, start with layer-selective/SWA-aware TurboQuant rather than all-layer global compression.
 6. Run a context ladder and a quality gauntlet before any TurboQuant manifest enters Flux by default.

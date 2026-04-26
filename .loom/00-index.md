@@ -13,15 +13,15 @@
 - Gemma4 31B TurboQuant closeout: `gemma4-31b-turboquant-closeout.md`
 - Gemma4 31B TurboQuant memory fix plan: `gemma4-31b-turboquant-memory-fix-plan.md`
 
-## Current Goal (2026-04-25)
+## Current Goal (2026-04-26)
 
 Drive the Gemma4 26B/31B gfx1100 lanes to fully working abliterated GPTQ artifacts first, then promote TurboQuant only through validated KV-cache canaries.
 
-- [ ] Slice A - 26B guardrails: fix long-canary dGPU selector and keep hybrid 8K as fallback.
-- [ ] Slice B - 26B validation: finish dense-validated rebuild and run 16K/32K canary gates.
-- [ ] Slice C - 31B rebuild: re-quantize from source with repeated-tensor integrity checks before `k_eq_v`.
-- [ ] Slice D - 31B recovery: validate coherent 1920 serving before testing 2048/4096.
-- [ ] Slice E - TurboQuant canaries: patch primitive sharing, then test E4B, 31B boot-only, and 26B layer-selective lanes.
+- [x] Slice A - 26B guardrails: long-canary dGPU selector is safe, hybrid 8K remains the fallback.
+- [ ] Slice B - 26B validation: 32K fp16-KV canary failed at engine init with an estimated max length of 8896 tokens; dense-validated rebuild reached only harmful prompt 80/128 before the 4h abliteration deadline and still needs a rerun with the longer timeout.
+- [x] Slice C - 31B rebuild/recovery: immediate GPTQ lane is back on the clean `keqv` artifact from !193/!194, Ready/Active at `maxModelLen: 2048`, and direct smoke returned HTTP 200 with answer `4`.
+- [x] Slice D - 31B production posture: 31B is the primary warm model with `minReplicas: 1`, `priority: 250`, `gpu.count: 2`, and `warmPolicy: primary`; 26B fallback is queued/preempted.
+- [ ] Slice E - TurboQuant canaries: primitive sharing is implemented and patch-idempotence tested, but E4B/31B/26B runtime canaries are still pending a built runtime image.
 
 See `gemma4-26b-31b-gptq-turboquant-plan.md` and `30-implementation-plan.md` for slice detail and acceptance gates.
 

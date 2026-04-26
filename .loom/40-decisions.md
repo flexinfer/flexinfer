@@ -2,6 +2,54 @@
 
 Record decisions as they are made, with date, rationale, and sources.
 
+### 2026-04-26: Block 26B fp16-KV long-context promotion above 8K
+
+- Decision:
+  - Do not promote `gemma4-26b-a4b-gptq-long` to 16K or 32K on the current hybrid artifact with fp16 KV.
+  - Keep the canary manifest as an opt-in probe, but treat it as failed until a memory lever changes the KV budget.
+- Rationale:
+  - The live 32K canary loaded weights successfully, but vLLM had only `1.87 GiB` available for KV while `32768` tokens required `6.88 GiB`.
+  - vLLM estimated the maximum model length at `8896`, which is below the 16K rung as well as the 32K target.
+- Consequences:
+  - The current production-safe 26B path remains the 8K hybrid lane.
+  - Long-context work should move to a smaller dense-validated artifact, FP8 KV, or a TurboQuant/layer-selective KV canary.
+- Sources:
+  - Live pod log from `gemma4-26b-a4b-gptq-long` on 2026-04-26.
+  - `.loom/60-validation-matrix.md`.
+  - `deploy/models/gemma4-26b-a4b-gptq-long.yaml`.
+
+### 2026-04-26: Treat the dense-validated 26B rebuild as timeout-blocked, not cosine-failed
+
+- Decision:
+  - Extend the dense 26B abliteration and quantization deadlines to 24h before retrying the managed rebuild.
+  - Do not record any dense cosine result until a job actually reaches the quantize-time dense-module gate.
+- Rationale:
+  - The latest live dense retry reached harmful prompt `80/128` before the 4h abliteration deadline and left the checkpoint in `stage: harmful_activations`.
+  - The current abliteration script resumes completed payload files, not partial prompt indices, so retries repeat the partial harmful pass instead of continuing at prompt 80.
+- Consequences:
+  - The next durable Flux-managed run has enough wall time to reach harmless activations and cosine validation.
+  - A later improvement can add partial activation resume, but the timeout change is the smallest unblocker.
+- Sources:
+  - PVC inspection of `gemma4-26b-a4b-gptq-dense` on 2026-04-26.
+  - `deploy/modelcaches/gemma4-26b-a4b-gptq-dense.yaml`.
+  - `build/scripts/abliterate.py`.
+
+### 2026-04-26: Gate TurboQuant primitive sharing behind `TQ4_SHARE_PRIMITIVES`
+
+- Decision:
+  - Share immutable TurboQuant rotation/codec primitives by device/head geometry/bits/seed/codec when `TQ4_SHARE_PRIMITIVES=1`.
+  - Keep the behavior opt-in through runtime profile environment, not unconditional patch behavior.
+- Rationale:
+  - The previous 31B TurboQuant lane OOMed before KV sizing because per-layer plugin state consumed about `3.57 GiB` on a 24 GiB card.
+  - Sharing primitives should reduce fixed per-layer residency and makes the next canary distinguish plugin construction memory from true KV-cache limits.
+- Consequences:
+  - TurboQuant canaries still require a rebuilt runtime image and a boot-only gate before any context ladder.
+  - The patcher remains idempotent against the pinned upstream TurboQuant source.
+- Sources:
+  - `build/scripts/patch_turboquant_quantizer_gpu_qr.py`.
+  - `build/runtime.yaml`.
+  - `.loom/gemma4-31b-turboquant-memory-fix-plan.md`.
+
 ### 2026-04-25: Sequence clean GPTQ artifacts before TurboQuant promotion
 
 - Decision:
