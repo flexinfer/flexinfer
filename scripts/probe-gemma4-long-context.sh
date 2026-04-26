@@ -255,6 +255,8 @@ if body_path.exists():
             body = json.loads(raw)
         except Exception as exc:
             result["status"] = "invalid_json"
+            result["passed"] = False
+            result["failure_reasons"] = ["invalid_json"]
             result["error"] = f"invalid_json: {exc}"
             result["content_preview"] = raw[:240]
             print(json.dumps(result, separators=(",", ":")))
@@ -262,6 +264,8 @@ if body_path.exists():
 
 if http_code != 200 or body is None:
     result["status"] = "request_failed"
+    result["passed"] = False
+    result["failure_reasons"] = ["request_failed"]
     if body is not None:
         result["error"] = body
     elif body_path.exists():
@@ -742,7 +746,7 @@ main() {
             report_json: $report_json,
             report_md: $report_md,
             raw_dir: $raw_dir,
-            status: (if ([ $cases[] | select(.passed == false) ] | length) == 0 then "pass" else "fail" end)
+            status: (if ([ $cases[] | select(.passed != true) ] | length) == 0 then "pass" else "fail" end)
         }' >"$REPORT_JSON"
 
     generate_markdown "$REPORT_JSON" "$REPORT_MD"
