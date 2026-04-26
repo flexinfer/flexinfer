@@ -44,9 +44,39 @@ Current finding:
   cache after loading the hybrid artifact, but only 1.87 GiB remained. The
   canary is therefore narrowed to 16K with `kvCacheDtype: fp8_e4m3` for live
   validation.
+- The 16K FP8-KV canary passed the long-context probe on 2026-04-26 on
+  `cblevins-7900xtx`: 14,088 prompt tokens returned the expected
+  `gemma4-long-ok` marker with zero pod restarts. It remains a scale-to-zero
+  canary; promoting it to a warm/default profile still requires a separate
+  change.
 - The smaller dense-validated artifact path remains blocked behind the
   `cblevins-5930k` memory guard; do not uncordon that node or remove the taint
   just to accelerate this lane.
+
+## 16K FP8-KV proof (2026-04-26)
+
+Run ID: `gemma4-long-context-20260426T142859-1f6000`
+
+| Case | HTTP | Prompt tokens | Completion tokens | Elapsed | Output |
+|------|------|---------------|-------------------|---------|--------|
+| `short-sanity` | `200` | `50` | `2` | `4.565s` | `4` |
+| `medium-context` | `200` | `6088` | `8` | `456.216s` | `gemma4-medium-ok` |
+| `long-context` | `200` | `14088` | `8` | `1014.343s` | `gemma4-long-ok` |
+
+Cluster evidence:
+
+- Pod: `gemma4-26b-a4b-gptq-long-5678f5499d-8lhnd`
+- Node: `cblevins-7900xtx`
+- Image:
+  `registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac`
+- Probe artifact:
+  `/tmp/flexinfer-gemma4-probes/gemma4-long-context-20260426T142859-1f6000/gemma4-long-context-20260426T142859-1f6000.md`
+- Result after idle timeout: `gemma4-26b-a4b-gptq-long` returned to `Idle`;
+  `gemma4-31b-gptq` returned to `Ready`.
+
+Runtime note: the current image includes verbose `gemma4_layer_debug` warnings,
+which made 6K/14K prefill slow. Future images should keep the decoder-layer
+debug patch disabled unless actively chasing NaNs.
 
 ## Quantized-artifact promotion gate (reusable)
 
@@ -123,7 +153,7 @@ ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
 | Feature | Status | Current read |
 |---------|--------|--------------|
 | Smaller long-context artifact | In progress | Needed before promoting beyond 8K baseline |
-| 16K promotion validation | In progress | 26B canary uses FP8 KV and remains scale-to-zero until probe evidence passes |
+| 16K promotion validation | Passed as canary | 26B canary uses FP8 KV and passed the 14K-token probe; keep scale-to-zero until a separate primary-promotion change |
 | 32K promotion validation | Blocked on artifact | Current hybrid needs a smaller artifact; FP16 KV boot needs 6.88 GiB with only 1.87 GiB available |
 | Compressed-tensors + FP8 KV lane | Planned canary | Separate compressed-tensors artifact work remains disabled/non-default until validated |
 | AITER on ROCm | Blocked / deferred | `TRITON_ATTN` remains the stable path on RDNA3 |
@@ -220,7 +250,8 @@ spec:
 
 ## Next tuning queue
 
-1. Validate the 26B 16K FP8-KV canary with warm/cold probe evidence.
+1. Rebuild the unified runtime with decoder-layer debug logging disabled by
+   default, then re-run the 16K probe to measure prefill without instrumentation.
 2. Produce a smaller 26B artifact candidate for 32K validation.
 3. Keep long-context canaries non-primary (`minReplicas: 0`, `warmPolicy: ondemand`)
    until promotion criteria are met.
