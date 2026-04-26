@@ -121,9 +121,21 @@ func run(cfg Config) error {
 	httpSrv := httpServer(cfg.HTTPAddr, op.httpMux())
 	metricsSrv := httpServer(cfg.MetricsAddr, op.metricsMux())
 
+	// Reconciler / scheduler. The starter is intentionally nil for slice
+	// 2.3 — the reconciler will transition queued items to running and
+	// persist a pipeline_runs row, but no stages execute until slice 4.x
+	// wires the real pipeline runner. The operator still surfaces the
+	// scheduler's ticks via the events table so HUD and Prometheus see
+	// the loop is alive.
+	reconciler := hive.NewReconciler(st, pm, budget, nil)
+	reconciler.Logger = logger
+	scheduler := hive.NewScheduler(reconciler)
+	scheduler.Logger = logger
+
 	g, gctx := errgroup.WithContext(rootCtx)
 	g.Go(func() error { return runListener(gctx, "http", httpSrv, logger) })
 	g.Go(func() error { return runListener(gctx, "metrics", metricsSrv, logger) })
+	g.Go(func() error { return scheduler.Run(gctx) })
 
 	err = g.Wait()
 	if err != nil && !errors.Is(err, context.Canceled) {
