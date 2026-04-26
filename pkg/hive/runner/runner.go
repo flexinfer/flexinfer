@@ -230,6 +230,13 @@ func (r *Runner) Run(ctx context.Context, in RunInput) (*RunResult, error) {
 	}
 
 	res.EndedAt = r.now()
+	if !in.Dryrun {
+		trigger := string(in.Trigger)
+		outcome := string(wr.Run.Outcome)
+		hive.CouncilRunsTotal.WithLabelValues(trigger, outcome).Inc()
+		hive.CouncilCostUSDTotal.WithLabelValues(trigger).Add(res.CostUSDApprox)
+		hive.CouncilDurationSeconds.WithLabelValues(trigger).Observe(res.EndedAt.Sub(res.StartedAt).Seconds())
+	}
 	r.logf("council run complete",
 		"run_id", res.RunID,
 		"score", verdict.Score,

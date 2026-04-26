@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/crb2nu/loom/pkg/hive"
@@ -393,10 +394,12 @@ func (r *Runner) runStage(
 	out, derr := r.Dispatcher.Dispatch(ctx, run, item, stage, prior)
 	endedAt := r.now()
 
+	hive.PipelineStageDurationSeconds.WithLabelValues(stage.ID).Observe(endedAt.Sub(now).Seconds())
 	outcome := store.StageOutcomeSuccess
 	if derr != nil {
 		outcome = store.StageOutcomeError
 	}
+	hive.PipelineStageAttemptsTotal.WithLabelValues(stage.ID, string(outcome)).Inc()
 	sr := &store.StageResult{
 		PipelineRunID: run.ID,
 		Stage:         stage.ID,
@@ -497,6 +500,7 @@ func (r *Runner) runGate(
 		if !no.Outcome.Pass {
 			row.Outcome = store.GateOutcomeFail
 		}
+		hive.GateEvaluationsTotal.WithLabelValues(no.Name, string(row.Outcome)).Inc()
 		if perr := r.Store.Pipeline.PutGate(ctx, row); perr != nil {
 			r.logger().Warn("pipeline gate persist failed", "error", perr)
 		}
@@ -532,6 +536,8 @@ func (r *Runner) markDone(ctx context.Context, run *store.PipelineRun, item *sto
 	if err := r.Store.Pipeline.PutRun(ctx, run); err != nil {
 		return fmt.Errorf("persist run done: %w", err)
 	}
+	hive.PipelineRunsTotal.WithLabelValues(string(store.PipelineDone)).Inc()
+	hive.PipelineCostUSDTotal.WithLabelValues(string(store.PipelineDone)).Add(run.CostUSD)
 	r.event(ctx, "pipeline.run.done", "ok", map[string]any{
 		"run": run.ID, "cost_usd": run.CostUSD,
 	})
@@ -554,6 +560,9 @@ func (r *Runner) escalateWithItem(ctx context.Context, run *store.PipelineRun, i
 	if err := r.Store.Pipeline.PutRun(ctx, run); err != nil {
 		return fmt.Errorf("persist run escalated: %w", err)
 	}
+	hive.PipelineRunsTotal.WithLabelValues(string(store.PipelineEscalated)).Inc()
+	hive.PipelineCostUSDTotal.WithLabelValues(string(store.PipelineEscalated)).Add(run.CostUSD)
+	hive.EscalationsTotal.WithLabelValues(classifyEscalationReason(reason)).Inc()
 	r.event(ctx, "pipeline.run.escalated", "error", map[string]any{
 		"run": run.ID, "reason": reason,
 	})
@@ -644,4 +653,25 @@ func boolStr(b bool, t, f string) string {
 		return t
 	}
 	return f
+}
+
+// classifyEscalationReason maps the free-form escalation reason string
+// into one of a small set of label values bounded enough to keep
+// Prometheus cardinality predictable. Anything we don't recognise gets
+// "other" so dashboards always see a complete partition.
+func classifyEscalationReason(reason string) string {
+	switch {
+	case strings.Contains(reason, "exceeded"):
+		return "retry_cap_exceeded"
+	case strings.Contains(reason, "merge conflict"):
+		return "integrator_conflict"
+	case strings.Contains(reason, "allocate worktree") || strings.Contains(reason, "alloc"):
+		return "integrator_alloc_fail"
+	case strings.Contains(reason, "gate ") || strings.Contains(reason, "gate:"):
+		return "gate_fail"
+	case strings.Contains(reason, "errored") || strings.Contains(reason, "stage error"):
+		return "stage_error"
+	default:
+		return "other"
+	}
 }

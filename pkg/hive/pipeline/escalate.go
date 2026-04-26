@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crb2nu/loom/pkg/hive"
 	"github.com/crb2nu/loom/pkg/hive/store"
 )
 
@@ -145,6 +146,7 @@ func (e *Escalator) Handle(ctx context.Context, run *store.PipelineRun, item *st
 			e.logger().Warn("escalator: create issue failed", "error", ierr, "run", run.ID)
 		} else {
 			issueURL = resp.URL
+			hive.EscalationIssueCreatedTotal.Inc()
 		}
 	}
 
@@ -164,6 +166,8 @@ func (e *Escalator) Handle(ctx context.Context, run *store.PipelineRun, item *st
 		}
 		if _, herr := e.Handoff.CreateHandoff(ctx, req); herr != nil {
 			e.logger().Warn("escalator: create handoff failed", "error", herr, "run", run.ID)
+		} else {
+			hive.EscalationHandoffCreatedTotal.Inc()
 		}
 	}
 
