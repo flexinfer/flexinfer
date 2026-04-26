@@ -18,21 +18,21 @@ Update this document whenever a tuning change lands or a new blocker is found.
 
 | Model ID | Model CR | Node | Attention / KV path | Intent |
 |----------|----------|------|---------------------|--------|
-| `gemma4-26b-a4b-gptq` | `gemma4-26b-a4b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | Primary 8K rollback baseline (`minReplicas: 1`) |
-| `gemma4-31b-gptq` | `gemma4-31b-gptq` | `cblevins-5930k` | `TRITON_ATTN` + float16 KV | Conservative on-demand dense lane (`minReplicas: 0`) |
-| `gemma4-26b-a4b-gptq-long` | `gemma4-26b-a4b-gptq-long` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | 32K canary only (`minReplicas: 0`, `warmPolicy: ondemand`) |
+| `gemma4-31b-gptq` | `gemma4-31b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | Current warm primary at the validated 2K ceiling (`minReplicas: 1`) |
+| `gemma4-26b-a4b-gptq` | `gemma4-26b-a4b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | 8K rollback baseline / fallback (`minReplicas: 0`) |
+| `gemma4-26b-a4b-gptq-long` | `gemma4-26b-a4b-gptq-long` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | 32K canary only (`minReplicas: 0`, `warmPolicy: ondemand`, priority matches the primary for demand swaps) |
 
 ## Current profile knobs
 
 | Model ID | `maxModelLen` | `maxNumBatchedTokens` | `gpuMemoryUtilization` | Serverless |
 |----------|---------------|-----------------------|------------------------|------------|
-| `gemma4-26b-a4b-gptq` | `8192` | `512` | `0.95` | `minReplicas: 1` |
-| `gemma4-31b-gptq` | `4096` | runtime default | `0.95` | `minReplicas: 0` |
+| `gemma4-31b-gptq` | `2048` | runtime default | `0.95` | `minReplicas: 1` |
+| `gemma4-26b-a4b-gptq` | `8192` | `512` | `0.95` | `minReplicas: 0` |
 | `gemma4-26b-a4b-gptq-long` | `32768` | `160` | `0.95` | `minReplicas: 0` |
 
 ## Latest baseline
 
-Date: **2026-04-17**
+Date: **2026-04-26**
 
 Current finding:
 
@@ -40,8 +40,12 @@ Current finding:
   coherent and stable at **8K**.
 - The same artifact is too large/risky for default **32K** serving on a single
   24 GB gfx1100 card.
-- The next promotion path is a **smaller validated artifact**, not manifest-only
-  tuning.
+- The 32K canary is reconciled and cache-verified, but remains unpromoted until
+  the long-context probe passes against the live `gemma4-26b-a4b-gptq-long`
+  alias.
+- The smaller dense-validated artifact path remains blocked behind the
+  `cblevins-5930k` memory guard; do not uncordon that node or remove the taint
+  just to accelerate this lane.
 
 ## Quantized-artifact promotion gate (reusable)
 
@@ -137,12 +141,13 @@ ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
 | Node | `cblevins-7900xtx` (gfx1100) |
 | Pipeline | Download BF16 (~27 GB) → Abliterate → GPTQ INT4 (~7-13 GB) |
 | PVC | 96 Gi (nvme-1r-gpu) |
-| Shared Group | `7900xtx-textgen` (priority 200, always-on) |
+| Shared Group | `7900xtx-textgen` (priority 200, on-demand fallback) |
 | Aliases | `gemma4-26b`, `gemma4-26b-a4b`, `gemma4-moe` |
 
 **MoE Architecture**: 25.2B total / 3.8B active, 128 experts top-8, 30 layers (25 GDN + 5 full-attention).
 Current hybrid export is validated at 8K; it is not promoted for default 16K/32K service.
-Promotion path requires a smaller validated artifact.
+The separate `gemma4-26b-a4b-gptq-long` canary runs at priority 250 so explicit
+32K demand can swap it in ahead of the idle 31B primary for validation only.
 
 **Abliteration safety**: Only `o_proj` (shared attention output). Expert FFN weights auto-skipped. `ablitateLmHead: false` (save corruption bug).
 
@@ -155,9 +160,9 @@ Promotion path requires a smaller validated artifact.
 | ModelCache | `gemma4-31b-gptq` |
 | Model CR | `gemma4-31b-gptq` |
 | Source | `google/gemma-4-31B-it` |
-| Node | `cblevins-5930k` (gfx1100) |
-| Pipeline | GPTQ INT4 runtime serving from `gptq-w4-g128` |
-| Status | Conservative 4K on-demand profile (`minReplicas: 0`) |
+| Node | `cblevins-7900xtx` (gfx1100) |
+| Pipeline | GPTQ INT4 runtime serving from `gptq-w4-g128-keqv` |
+| Status | Warm primary at 2K (`minReplicas: 1`) |
 
 **Dense Architecture**: 30.7B params, 60 layers (50 GDN + 10 full-attention). Requires 128 GB RAM node for abliteration + save overhead.
 
@@ -170,7 +175,7 @@ Promotion path requires a smaller validated artifact.
 | Model | Decode tok/s | Prompt tok/s | VRAM | Context |
 |-------|-------------|-------------|------|---------|
 | 26B-A4B MoE INT4 | ~72 | ~1800 | ~13 GB | 8K baseline |
-| 31B Dense INT4 | TBD | TBD | ~16 GB | 4K-8K |
+| 31B Dense INT4 | TBD | TBD | ~20 GB | 2K validated ceiling |
 
 ExLlama v2 kernels (HIP-compiled) with `sym=true` achieve 7x faster decode than AWQ on gfx1100.
 
