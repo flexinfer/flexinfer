@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sys/cpu"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -112,30 +113,20 @@ func (a *Agent) ProbeAndLabel(ctx context.Context) error {
 
 	log.Info("Applying labels and annotations", "labels", labels, "annotations", annotations)
 
-	node, err := a.kubeClient.CoreV1().Nodes().Get(ctx, a.nodeName, metav1.GetOptions{})
+	patch := map[string]any{
+		"metadata": map[string]any{
+			"labels":      labels,
+			"annotations": annotations,
+		},
+	}
+	patchBytes, err := json.Marshal(patch)
 	if err != nil {
-		return fmt.Errorf("failed to get node %s: %w", a.nodeName, err)
+		return fmt.Errorf("failed to build node metadata patch for %s: %w", a.nodeName, err)
 	}
 
-	// Merge new labels
-	if node.Labels == nil {
-		node.Labels = make(map[string]string)
-	}
-	for k, v := range labels {
-		node.Labels[k] = v
-	}
-
-	// Merge new annotations
-	if node.Annotations == nil {
-		node.Annotations = make(map[string]string)
-	}
-	for k, v := range annotations {
-		node.Annotations[k] = v
-	}
-
-	_, err = a.kubeClient.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+	_, err = a.kubeClient.CoreV1().Nodes().Patch(ctx, a.nodeName, types.MergePatchType, patchBytes, metav1.PatchOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to update node %s: %w", a.nodeName, err)
+		return fmt.Errorf("failed to patch node %s metadata: %w", a.nodeName, err)
 	}
 
 	log.Info("Successfully applied labels to node.")
