@@ -17,6 +17,7 @@ import (
 	"github.com/crb2nu/loom/internal/hud/domain/fleet"
 	"github.com/crb2nu/loom/internal/hud/domain/graph"
 	"github.com/crb2nu/loom/internal/hud/domain/handoff"
+	domainhive "github.com/crb2nu/loom/internal/hud/domain/hive"
 	"github.com/crb2nu/loom/internal/hud/domain/memory"
 	domainmerge "github.com/crb2nu/loom/internal/hud/domain/merge"
 	"github.com/crb2nu/loom/internal/hud/domain/mobile"
@@ -43,6 +44,7 @@ func (a *App) initDomainRegistry() {
 	a.domainRegistry.Register(workflow.New(&workflowDepsAdapter{app: a}))
 	a.domainRegistry.Register(memory.New(&memoryDepsAdapter{app: a}))
 	a.domainRegistry.Register(handoff.New(&handoffDepsAdapter{app: a}))
+	a.domainRegistry.Register(domainhive.New(&hiveDepsAdapter{app: a}))
 	a.domainRegistry.Register(domainmerge.New(&mergeDepsAdapter{app: a}))
 	a.domainRegistry.Register(domainshuttle.New(&shuttleDepsAdapter{app: a}))
 	a.domainRegistry.Register(domainctx.New(&ctxDepsAdapter{app: a}))

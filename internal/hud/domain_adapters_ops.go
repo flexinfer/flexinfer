@@ -10,6 +10,7 @@ import (
 	"github.com/crb2nu/loom/internal/hud/coordination"
 	domainalerting "github.com/crb2nu/loom/internal/hud/domain/alerting"
 	domainctx "github.com/crb2nu/loom/internal/hud/domain/context"
+	domainhive "github.com/crb2nu/loom/internal/hud/domain/hive"
 	"github.com/crb2nu/loom/internal/hud/domain/memory"
 	domainweaver "github.com/crb2nu/loom/internal/hud/domain/weaver"
 	"github.com/crb2nu/loom/internal/hud/monitor"
@@ -87,6 +88,33 @@ func (h *handoffDepsAdapter) Agent() *bridge.AgentBridge { return h.app.Agent() 
 
 func (h *handoffDepsAdapter) BroadcastAgentEvent(eventType string, payload any) {
 	h.app.BroadcastAgentEvent(eventType, payload)
+}
+
+// --- Hive domain Deps adapter ---
+
+type hiveDepsAdapter struct {
+	app *App
+}
+
+func (h *hiveDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	h.app.WriteJSON(w, status, v)
+}
+
+func (h *hiveDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	h.app.WriteError(w, status, msg, err)
+}
+
+func (h *hiveDepsAdapter) RequireAdminToken(w http.ResponseWriter, r *http.Request) bool {
+	return h.app.RequireAdminToken(w, r)
+}
+
+func (h *hiveDepsAdapter) Logger() *slog.Logger { return h.app.Logger() }
+
+func (h *hiveDepsAdapter) HiveConfig() domainhive.Config {
+	return domainhive.Config{
+		BaseURL:    h.app.config.HiveOperatorURL,
+		AdminToken: h.app.config.HiveOperatorToken,
+	}
 }
 
 // --- Merge domain Deps adapter ---
