@@ -32,6 +32,13 @@ type EditorOutput struct {
 	// supplies Models, BacklogDeltas, SignalsConsumed, Notes.
 	Sidecar Sidecar
 
+	// BacklogProposals are the structured items the council intends to
+	// add to the canonical backlog. The mutator (backlog_mutator.go)
+	// consumes these — it never re-parses the markdown documents. The
+	// editor lifts them out of its own LLM output and into this typed
+	// slice so the mutator's contract stays narrow.
+	BacklogProposals []BacklogProposal
+
 	// Backend / Model identify which agent produced this output, for
 	// audit + cost attribution.
 	Backend string
