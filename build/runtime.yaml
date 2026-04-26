@@ -147,6 +147,7 @@ profiles:
       TQ4_USE_FUSED_PAGED: "0"
       TQ4_USE_INT8_PREFILL: "0"
       TQ4_USE_PYTORCH_CODEC: "1"
+      TQ4_SHARE_PRIMITIVES: "1"
       TQ4_K_BITS: "4"
       TQ4_V_BITS: "4"
     build_context: 7900xtx
@@ -200,6 +201,7 @@ profiles:
       TQ4_USE_FUSED_PAGED: "0"
       TQ4_USE_INT8_PREFILL: "0"
       TQ4_USE_PYTORCH_CODEC: "1"
+      TQ4_SHARE_PRIMITIVES: "1"
       TQ4_K_BITS: "4"
       TQ4_V_BITS: "4"
     build_context: 7900xtx

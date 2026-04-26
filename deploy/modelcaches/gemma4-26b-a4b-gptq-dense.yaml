@@ -30,7 +30,10 @@
 #     from 5099ab17 applied to abliterate specifically; only quantization
 #     remains, and its steady-state memory footprint is lower than
 #     abliterate's. maxMemoryGB tightened from 44→28 to stay within the
-#     control-plane's safety margin.
+#     control-plane's safety margin. The latest live retry reached only
+#     harmful prompt 80/128 before the 4h deadline, so this canary needs a
+#     full-day deadline to reach the dense cosine gate instead of repeating
+#     the same partial activation capture.
 #
 # Why cblevins-5930k and not cblevins-7900xtx or radeonvii:
 #   - 7900xtx: primary Model CR claims amd.com/gpu=2 (iGPU block), 0 slots free.
@@ -103,7 +106,7 @@ spec:
     # could push this 57 GiB node past the control-plane's cgroup safety
     # margin. Keep tighter caps on 5930k; raise only if node is quiesced.
     maxMemoryGB: 28
-    timeoutSeconds: 14400
+    timeoutSeconds: 86400
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
       kubernetes.io/hostname: cblevins-5930k
@@ -133,7 +136,7 @@ spec:
     # GiB node — tight but workable for a short save window on a dedicated
     # quant node.
     maxMemoryGB: 40
-    timeoutSeconds: 43200
+    timeoutSeconds: 86400
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
       kubernetes.io/hostname: cblevins-5930k
