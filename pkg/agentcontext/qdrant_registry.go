@@ -35,26 +35,28 @@ type QdrantRegistry struct {
 // After SIMP-12 consolidation: 12 active collections (annotations merged into context,
 // templates removed).
 func NewQdrantRegistry(hc *httpclient.Client, cfg Config) *QdrantRegistry {
-	mk := func(collection string) *QdrantClient {
-		return NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, collection, cfg.QdrantDistance)
+	mk := func(kind, collection string) *QdrantClient {
+		c := NewQdrantClient(hc, cfg.QdrantURL, cfg.QdrantAPIKey, collection, cfg.QdrantDistance)
+		c.SetKind(kind)
+		return c
 	}
 
-	contextClient := mk(cfg.ContextCollection)
+	contextClient := mk(CollContext, cfg.ContextCollection)
 
 	return &QdrantRegistry{
 		clients: map[string]*QdrantClient{
 			CollContext:        contextClient,
-			CollSessions:       mk(cfg.SessionsCollection),
-			CollTasks:          mk(cfg.TasksCollection),
-			CollHandoffs:       mk(cfg.HandoffsCollection),
-			CollGraphEntities:  mk(cfg.GraphEntitiesCollection),
-			CollGraphRelations: mk(cfg.GraphRelationsCollection),
-			CollWorkflows:      mk(cfg.WorkflowsCollection),
-			CollWorkflowDefs:   mk(cfg.WorkflowDefsCollection),
-			CollMemory:         mk(cfg.MemoryCollection),
-			CollPresence:       mk(cfg.PresenceCollection),
-			CollFileClaims:     mk(cfg.FileClaimsCollection),
-			CollWorktree:       mk(cfg.WorktreeCollection),
+			CollSessions:       mk(CollSessions, cfg.SessionsCollection),
+			CollTasks:          mk(CollTasks, cfg.TasksCollection),
+			CollHandoffs:       mk(CollHandoffs, cfg.HandoffsCollection),
+			CollGraphEntities:  mk(CollGraphEntities, cfg.GraphEntitiesCollection),
+			CollGraphRelations: mk(CollGraphRelations, cfg.GraphRelationsCollection),
+			CollWorkflows:      mk(CollWorkflows, cfg.WorkflowsCollection),
+			CollWorkflowDefs:   mk(CollWorkflowDefs, cfg.WorkflowDefsCollection),
+			CollMemory:         mk(CollMemory, cfg.MemoryCollection),
+			CollPresence:       mk(CollPresence, cfg.PresenceCollection),
+			CollFileClaims:     mk(CollFileClaims, cfg.FileClaimsCollection),
+			CollWorktree:       mk(CollWorktree, cfg.WorktreeCollection),
 		},
 	}
 }

@@ -137,7 +137,7 @@ func (c *QdrantClient) EnsureCollection(ctx context.Context, vectorSize int) err
 		if existingSize > 0 && vectorSize > 0 && existingSize != vectorSize {
 			return fmt.Errorf("qdrant collection %q vector size=%d expected=%d (change AGENT_CONTEXT_COLLECTION or delete/recreate collection)", c.collection, existingSize, vectorSize)
 		}
-		return nil
+		return c.ensureRegisteredIndexes(ctx)
 	}
 	if vectorSize <= 0 {
 		return fmt.Errorf("invalid vectorSize %d", vectorSize)
@@ -149,5 +149,8 @@ func (c *QdrantClient) EnsureCollection(ctx context.Context, vectorSize int) err
 			"distance": c.distance,
 		},
 	}
-	return c.doJSON(ctx, http.MethodPut, "/collections/"+c.collection, body, nil)
+	if err := c.doJSON(ctx, http.MethodPut, "/collections/"+c.collection, body, nil); err != nil {
+		return err
+	}
+	return c.ensureRegisteredIndexes(ctx)
 }
