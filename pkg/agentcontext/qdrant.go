@@ -24,6 +24,10 @@ type QdrantClient struct {
 	apiKey     string
 	collection string
 	distance   string
+	// kind is the canonical collection kind (CollTasks, CollSessions, …) and is
+	// used by EnsureCollection to look up the keyword payload indexes that should
+	// exist on this collection. Empty kind means "no auto-indexing."
+	kind string
 }
 
 type Point struct {
@@ -50,6 +54,13 @@ func NewQdrantClient(httpc *httpclient.Client, baseURL, apiKey, collection, dist
 
 func (c *QdrantClient) SetCollection(collection string) {
 	c.collection = collection
+}
+
+// SetKind tags the client with its canonical collection kind so that
+// EnsureCollection can auto-create the keyword payload indexes registered for
+// that kind. Safe to call multiple times.
+func (c *QdrantClient) SetKind(kind string) {
+	c.kind = kind
 }
 
 func (c *QdrantClient) setHeaders(req *http.Request) {

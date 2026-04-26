@@ -256,6 +256,10 @@ func TestAdd_AutoMirrorsHighValueEntriesToMemory(t *testing.T) {
 			upserts++
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"status":"ok","result":{"status":"acknowledged"}}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/collections/context/index":
+			// Auto-created keyword payload indexes; idempotent ack is fine.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok","result":{"status":"acknowledged"}}`))
 		default:
 			t.Fatalf("unexpected qdrant request: %s %s", r.Method, r.URL.Path)
 		}
