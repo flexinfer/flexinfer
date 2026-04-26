@@ -20,7 +20,7 @@ Update this document whenever a tuning change lands or a new blocker is found.
 |----------|----------|------|---------------------|--------|
 | `gemma4-31b-gptq` | `gemma4-31b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | Current warm primary at the validated 2K ceiling (`minReplicas: 1`) |
 | `gemma4-26b-a4b-gptq` | `gemma4-26b-a4b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | 8K rollback baseline / fallback (`minReplicas: 0`) |
-| `gemma4-26b-a4b-gptq-long` | `gemma4-26b-a4b-gptq-long` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | 32K canary only (`minReplicas: 0`, `warmPolicy: ondemand`, priority matches the primary for demand swaps) |
+| `gemma4-26b-a4b-gptq-long` | `gemma4-26b-a4b-gptq-long` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 16K canary only (`minReplicas: 0`, `warmPolicy: ondemand`, priority matches the primary for demand swaps) |
 
 ## Current profile knobs
 
@@ -28,7 +28,7 @@ Update this document whenever a tuning change lands or a new blocker is found.
 |----------|---------------|-----------------------|------------------------|------------|
 | `gemma4-31b-gptq` | `2048` | runtime default | `0.95` | `minReplicas: 1` |
 | `gemma4-26b-a4b-gptq` | `8192` | `512` | `0.95` | `minReplicas: 0` |
-| `gemma4-26b-a4b-gptq-long` | `32768` | `160` | `0.95` | `minReplicas: 0` |
+| `gemma4-26b-a4b-gptq-long` | `16384` | `160` | `0.98` | `minReplicas: 0` |
 
 ## Latest baseline
 
@@ -40,9 +40,10 @@ Current finding:
   coherent and stable at **8K**.
 - The same artifact is too large/risky for default **32K** serving on a single
   24 GB gfx1100 card.
-- The 32K canary is reconciled and cache-verified, but remains unpromoted until
-  the long-context probe passes against the live `gemma4-26b-a4b-gptq-long`
-  alias.
+- A 32K FP16-KV boot failed cleanly on 2026-04-26: vLLM needed 6.88 GiB of KV
+  cache after loading the hybrid artifact, but only 1.87 GiB remained. The
+  canary is therefore narrowed to 16K with `kvCacheDtype: fp8_e4m3` for live
+  validation.
 - The smaller dense-validated artifact path remains blocked behind the
   `cblevins-5930k` memory guard; do not uncordon that node or remove the taint
   just to accelerate this lane.
@@ -122,8 +123,9 @@ ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
 | Feature | Status | Current read |
 |---------|--------|--------------|
 | Smaller long-context artifact | In progress | Needed before promoting beyond 8K baseline |
-| 16K/32K promotion validation | Blocked on artifact | Manifest-only tuning is insufficient for current hybrid |
-| Compressed-tensors + FP8 KV lane | Planned canary | Must remain disabled/non-default until validated |
+| 16K promotion validation | In progress | 26B canary uses FP8 KV and remains scale-to-zero until probe evidence passes |
+| 32K promotion validation | Blocked on artifact | Current hybrid needs a smaller artifact; FP16 KV boot needs 6.88 GiB with only 1.87 GiB available |
+| Compressed-tensors + FP8 KV lane | Planned canary | Separate compressed-tensors artifact work remains disabled/non-default until validated |
 | AITER on ROCm | Blocked / deferred | `TRITON_ATTN` remains the stable path on RDNA3 |
 | Production-grade long-context default | Deferred | Keep long profiles non-primary until gate checks pass |
 | Speculative decoding | Not started | No Gemma4 speculator path wired yet |
@@ -147,7 +149,7 @@ ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
 **MoE Architecture**: 25.2B total / 3.8B active, 128 experts top-8, 30 layers (25 GDN + 5 full-attention).
 Current hybrid export is validated at 8K; it is not promoted for default 16K/32K service.
 The separate `gemma4-26b-a4b-gptq-long` canary runs at priority 250 so explicit
-32K demand can swap it in ahead of the idle 31B primary for validation only.
+16K demand can swap it in ahead of the idle 31B primary for validation only.
 
 **Abliteration safety**: Only `o_proj` (shared attention output). Expert FFN weights auto-skipped. `ablitateLmHead: false` (save corruption bug).
 
@@ -218,8 +220,8 @@ spec:
 
 ## Next tuning queue
 
-1. Produce a smaller 26B artifact candidate for 16K/32K validation.
-2. Run long-context probe + warm/cold checks and archive JSON evidence.
+1. Validate the 26B 16K FP8-KV canary with warm/cold probe evidence.
+2. Produce a smaller 26B artifact candidate for 32K validation.
 3. Keep long-context canaries non-primary (`minReplicas: 0`, `warmPolicy: ondemand`)
    until promotion criteria are met.
 4. Validate compressed-tensors + FP8 KV on a dedicated canary before any alias/default changes.

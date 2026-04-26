@@ -87,6 +87,14 @@ func TestDesiredReplicasServerless(t *testing.T) {
 		t.Errorf("desiredReplicas() = %d, want 1 (recent activity)", got)
 	}
 
+	// Stale KV-cache eviction status from an old policy should not pin a model
+	// at zero after the policy has been removed.
+	model.Status.KVCache = &aiv1alpha2.KVCacheStatus{Evicted: true}
+	if got := r.desiredReplicas(model, vllmBackend); got != 1 {
+		t.Errorf("desiredReplicas() = %d, want 1 (stale kv-cache eviction ignored without policy)", got)
+	}
+	model.Status.KVCache = nil
+
 	// Old activity => scale back down to min replicas (0).
 	oldTime := metav1.Time{Time: time.Now().Add(-10 * time.Minute)}
 	model.Status.LastActiveTime = &oldTime

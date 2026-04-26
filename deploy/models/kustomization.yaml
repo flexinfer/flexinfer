@@ -8,9 +8,9 @@ resources:
   # but do not reconcile them here.
   - gemma4-26b-a4b-gptq.yaml        # vLLM GPTQ INT4, MoE 3.8B active, fallback (priority 200)
   - gemma4-31b-gptq.yaml            # vLLM GPTQ INT4, Dense 31B, primary (priority 250)
-  # Experimental 32K long-context canary on the 7900xtx lane. Scale-to-zero keeps
+  # Experimental 16K FP8-KV long-context canary on the 7900xtx lane. Scale-to-zero keeps
   # it from interfering with the warm primary until explicitly tested.
-  - gemma4-26b-a4b-gptq-long.yaml   # vLLM GPTQ INT4, 32K canary (priority 250)
+  - gemma4-26b-a4b-gptq-long.yaml   # vLLM GPTQ INT4, 16K FP8-KV canary (priority 250)
   # gemma4-31b-gptq-long.yaml: SUPERSEDED on 2026-04-25. Canary boot OOM'd at
   # 23.59/24 GiB during weight load — plugin rotation-matrix allocations
   # (~3.5 GiB) plus 31B INT4 weights (20 GiB) leave no headroom for
