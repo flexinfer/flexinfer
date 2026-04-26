@@ -65,7 +65,7 @@ edges:
 	if err == nil {
 		t.Fatal("expected error for flow with no gate, got nil")
 	}
-	if !strings.Contains(err.Error(), "no upstream human_gate") {
+	if !strings.Contains(err.Error(), "no upstream gate") {
 		t.Fatalf("error should name the invariant clearly, got: %v", err)
 	}
 }
@@ -145,6 +145,68 @@ edges:
 }
 
 // TestIsWriteOpType exercises the exported classifier directly.
+// TestValidateAutonomousFlow_HiveTemplate ensures the dark-factory hive
+// pipeline template parses + passes the write-op invariant. It uses
+// auto_gate (machine-judged) instead of human_gate, exercising the gate
+// taxonomy extension landed in this slice.
+func TestValidateAutonomousFlow_HiveTemplate(t *testing.T) {
+	path := findRepoFile(t, "cmd/mcp-mentatlab/templates/hive-default-pipeline.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read template: %v", err)
+	}
+	if err := ValidateAutonomousFlow(data); err != nil {
+		t.Fatalf("hive-default-pipeline should validate, got: %v", err)
+	}
+}
+
+// TestValidateAutonomousFlow_AutoGateSatisfiesInvariant directly proves the
+// taxonomy change: a flow that has an auto_gate (no human_gate) on every
+// path to a write-op should validate.
+func TestValidateAutonomousFlow_AutoGateSatisfiesInvariant(t *testing.T) {
+	yml := []byte(`
+id: auto-only
+version: 1
+nodes:
+  - id: plan
+    type: llm
+  - id: lint
+    type: auto_gate
+  - id: commit
+    type: git_commit
+edges:
+  - { from: plan,  to: lint }
+  - { from: lint,  to: commit }
+`)
+	if err := ValidateAutonomousFlow(yml); err != nil {
+		t.Errorf("auto_gate should satisfy invariant, got: %v", err)
+	}
+}
+
+// TestValidateAutonomousFlow_NoGateStillFails sanity-checks the negative
+// path: even with the new auto_gate type, an entirely ungated write-op
+// must still error.
+func TestValidateAutonomousFlow_NoGateStillFails(t *testing.T) {
+	yml := []byte(`
+id: still-bad
+version: 1
+nodes:
+  - id: plan
+    type: llm
+  - id: commit
+    type: git_commit
+edges:
+  - { from: plan, to: commit }
+`)
+	err := ValidateAutonomousFlow(yml)
+	if err == nil {
+		t.Fatal("expected validation error for ungated write-op")
+	}
+	if !strings.Contains(err.Error(), "auto_gate") {
+		t.Errorf("error message should mention auto_gate option: %v", err)
+	}
+}
+
 func TestIsWriteOpType(t *testing.T) {
 	cases := map[string]bool{
 		"shell":       true,
