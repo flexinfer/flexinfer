@@ -11,13 +11,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
@@ -152,36 +155,58 @@ func run(cfg Config) error {
 		logger.Warn("LLM-judged gates disabled; spec_conformance + pr_self_review skipped (set FLEXINFER_PROXY_URL)")
 	}
 
+	// MCP hub client: shared by Devbox, Handoff, and Worktree wrappers.
+	// Nil hub means stage workers + escalator handoff fall back to
+	// stubs. The operator establishes a persistent agent-context session
+	// so handoff + worktree-allocate calls have a stable source session
+	// id; defer cleanup so a clean shutdown ends the session row.
+	hubClient, sessionID := establishHubAndSession(rootCtx, cfg, logger)
+	if hubClient != nil {
+		defer endOperatorSession(hubClient, sessionID, logger)
+	}
+
 	// Worker dispatcher: real clients where configured, NoOpDispatcher
-	// for stages whose backing service isn't wired yet (spawn, devbox,
-	// agent-context handoff/worktree). The operator logs each gap so
-	// it's obvious which surfaces are stub vs production.
-	dispatcher := buildDispatcher(cfg, flexClient, logger)
+	// for stages whose backing service isn't wired yet. The operator
+	// logs each gap so it's obvious which surfaces are stub vs production.
+	dispatcher := buildDispatcher(cfg, flexClient, hubClient, logger)
 
 	pipelineRunner := pipeline.New(st, gateRegistry, dispatcher, pm)
 	pipelineRunner.Logger = logger
 	attributor := eval.NewOutcomeAttributor(st)
 	pipelineRunner.OnMerged = attributor.OnMerged
 
-	// Escalator: only enabled when GitLab is configured (issues + handoff
-	// posting need a real backend). Without it the runner still
-	// transitions to escalated state, just without the human-handoff
-	// publication.
-	if gitlabClient := buildGitLabClient(cfg, logger); gitlabClient != nil {
-		escalator := pipeline.NewEscalator(st, gitlabClient, nil)
+	// Escalator: GitLab for issues, MCP hub for handoff. Either may be
+	// disabled independently; the escalator runs whichever it has.
+	gitlabClient := buildGitLabClient(cfg, logger)
+	var handoffClient pipeline.HandoffClient
+	if hubClient != nil && sessionID != "" {
+		handoffClient = clients.NewHandoffClient(hubClient, sessionID)
+		logger.Info("escalator handoff enabled (mcp-agent-context)")
+	} else {
+		logger.Warn("escalator handoff disabled (no MCP hub or operator session)")
+	}
+	if gitlabClient != nil || handoffClient != nil {
+		escalator := pipeline.NewEscalator(st, gitlabClient, handoffClient)
 		escalator.Logger = logger
 		pipelineRunner.Escalator = escalator
-		logger.Info("escalator enabled (GitLab issues)")
+		logger.Info("escalator enabled", "issue", gitlabClient != nil, "handoff", handoffClient != nil)
 	} else {
-		logger.Warn("escalator disabled; failures will transition to escalated state without issue/handoff (set GITLAB_API_URL+GITLAB_TOKEN+GITLAB_PROJECT)")
+		logger.Warn("escalator disabled; failures will transition to escalated state without issue/handoff publication")
 	}
 
-	// Pipeline starter routes fan-out items through the integrator
-	// when one is configured. The integrator's WorktreeAllocator and
-	// BranchMerger remain stubs until the agent-context bridge ships,
-	// so for now single-slice items are the only ones that fully
-	// execute.
-	starter := pipeline.NewRunnerStarter(pipelineRunner, nil)
+	// Pipeline starter routes fan-out items through the integrator when
+	// the worktree allocator + branch merger are both wired. Without
+	// them, single-slice items take the straight Runner path.
+	var integrator *pipeline.Integrator
+	if hubClient != nil && sessionID != "" {
+		alloc := clients.NewWorktreeAllocator(hubClient, "loom-hive-operator", sessionID, cfg.RepoRoot)
+		// BranchMerger is still stub-only until git-merge wiring lands;
+		// without it the integrator can't reach MR state, so we skip
+		// fan-out routing entirely.
+		_ = alloc
+		logger.Warn("integrator path disabled: worktree allocator wired but BranchMerger not yet implemented")
+	}
+	starter := pipeline.NewRunnerStarter(pipelineRunner, integrator)
 	starter.Logger = logger
 
 	// Reconciler / scheduler. The reconciler hands queued items to the
@@ -316,15 +341,13 @@ func buildGitLabClient(cfg Config, logger *slog.Logger) *clients.GitLabClient {
 // production deployments can see exactly what's still stub.
 //
 // Stub gaps as of this slice (need follow-up work):
-//   - SpawnClient:   spawn lives in HUD process; no in-cluster HTTP API.
-//   - DevboxClient:  mcp-devbox is stdio-only.
-//   - HandoffClient: mcp-agent-context is stdio-only.
-//   - WorktreeAllocator: same as HandoffClient.
+//   - SpawnClient: spawn lives in HUD process; no in-cluster HTTP API.
 //
-// Until those bridges land, the routes table omits real clients for
-// plan_slice/implement/pr_self_review/tests and falls back to the
-// NoOpDispatcher's deterministic outputs.
-func buildDispatcher(cfg Config, flex *clients.FlexInferClient, logger *slog.Logger) pipeline.WorkerDispatcher {
+// Wired in this slice:
+//   - WeaverWorker (research): FlexInfer proxy
+//   - GitLabWorker (mr/ci_watch/merge/cleanup): GitLab REST API
+//   - DevboxWorker (tests): mcp-devbox via MCP hub
+func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCPHubClient, logger *slog.Logger) pipeline.WorkerDispatcher {
 	noop := &pipeline.NoOpDispatcher{}
 	gitlab := buildGitLabClient(cfg, logger)
 
@@ -345,7 +368,21 @@ func buildDispatcher(cfg Config, flex *clients.FlexInferClient, logger *slog.Log
 	} else {
 		logger.Warn("mr/ci_watch/merge/cleanup stages stub: NoOpDispatcher (GITLAB_API_URL/TOKEN/PROJECT unset)")
 	}
-	logger.Warn("plan_slice/implement/pr_self_review/tests stages stub: NoOpDispatcher (spawn/devbox bridges not yet shipped)")
+	if hub != nil {
+		project := cfg.GitLabProject
+		if project == "" {
+			project = "loom-core"
+		}
+		routes["tests"] = &pipeline.DevboxWorker{
+			Client:  clients.NewDevboxClient(hub),
+			Project: project,
+			AgentID: "loom-hive-operator",
+		}
+		logger.Info("tests stage wired to devbox via MCP hub")
+	} else {
+		logger.Warn("tests stage stub: NoOpDispatcher (LOOM_MCP_HUB_URL unset)")
+	}
+	logger.Warn("plan_slice/implement/pr_self_review stages stub: NoOpDispatcher (spawn HTTP API not yet shipped)")
 
 	return &fallbackDispatcher{routes: routes, fallback: noop}
 }
@@ -372,4 +409,107 @@ func (d *fallbackDispatcher) Dispatch(ctx context.Context, run *store.PipelineRu
 		return w.Run(ctx, jc)
 	}
 	return d.fallback.Dispatch(ctx, run, item, stage, prior)
+}
+
+// establishHubAndSession constructs the MCP hub client (when
+// LOOM_MCP_HUB_URL is set) and registers a long-lived agent-context
+// session for the operator. The session id is the SourceSessionID
+// passed to HandoffClient + WorktreeAllocator so handoff packages and
+// worktree-allocate calls have a consistent source.
+//
+// Returns (nil, "") and a warn log when the hub is unconfigured or the
+// session-start call fails — the operator still boots, just without
+// hub-backed clients.
+func establishHubAndSession(ctx context.Context, cfg Config, logger *slog.Logger) (*clients.MCPHubClient, string) {
+	hubCfg, ok := clients.MCPHubConfigFromEnv(os.Getenv)
+	if !ok {
+		logger.Warn("MCP hub disabled (set LOOM_MCP_HUB_URL); devbox/handoff/worktree clients fall back to stubs")
+		return nil, ""
+	}
+	hub, err := clients.NewMCPHubClient(hubCfg)
+	if err != nil {
+		logger.Error("MCP hub init failed; devbox/handoff/worktree clients disabled", "error", err)
+		return nil, ""
+	}
+	logger.Info("MCP hub configured", "url", hubCfg.HubURL, "profile", hubCfg.Profile)
+
+	// Establish a persistent operator session so handoff + worktree
+	// calls have a stable source. Best-effort: a session-start failure
+	// is logged but doesn't block boot — the affected clients fall
+	// back to stub behavior.
+	startCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	body, err := hub.CallTool(startCtx, clients.AgentContextServerName, "agent_session_start", map[string]any{
+		"namespace":   "loom-hive",
+		"agent_id":    "loom-hive-operator",
+		"agent_type":  "operator",
+		"description": "loom-hive-operator persistent session (boot " + time.Now().UTC().Format(time.RFC3339) + ")",
+	})
+	if err != nil {
+		logger.Error("agent_session_start failed; handoff + worktree clients disabled", "error", err)
+		return hub, ""
+	}
+	sessionID := extractSessionID(body)
+	if sessionID == "" {
+		logger.Warn("agent_session_start returned empty session_id; handoff + worktree clients disabled", "body_tail", truncateForLog(body, 200))
+		return hub, ""
+	}
+	logger.Info("operator session established", "session_id", sessionID)
+	return hub, sessionID
+}
+
+// endOperatorSession is the deferred cleanup that ends the operator's
+// agent-context session on shutdown. Best-effort: errors are logged.
+func endOperatorSession(hub *clients.MCPHubClient, sessionID string, logger *slog.Logger) {
+	if hub == nil || sessionID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := hub.CallTool(ctx, clients.AgentContextServerName, "agent_session_end", map[string]any{
+		"session_id": sessionID,
+		"summarize":  false,
+	}); err != nil {
+		logger.Warn("agent_session_end on shutdown failed", "error", err)
+		return
+	}
+	logger.Info("operator session ended", "session_id", sessionID)
+}
+
+// extractSessionID pulls session_id out of the agent_session_start
+// response body. The mcp-agent-context tool emits its result via the
+// active LOOM_MCP_OUTPUT_FORMAT — usually TOON (yaml-like) in
+// production, JSON when override env is set. Try JSON first; fall back
+// to a line-by-line scan for "session_id: <value>" which works for
+// both TOON and JSON-pretty formats.
+func extractSessionID(body string) string {
+	if body == "" {
+		return ""
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(body), &parsed); err == nil {
+		if v, ok := parsed["session_id"].(string); ok {
+			return v
+		}
+	}
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "session_id:") {
+			continue
+		}
+		val := strings.TrimSpace(strings.TrimPrefix(line, "session_id:"))
+		val = strings.Trim(val, "\"' ")
+		if val != "" && val != "null" {
+			return val
+		}
+	}
+	return ""
+}
+
+// truncateForLog clips a string to n characters for safe slog output.
+func truncateForLog(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
