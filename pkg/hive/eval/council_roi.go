@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/crb2nu/loom/pkg/hive"
 	"github.com/crb2nu/loom/pkg/hive/store"
 )
 
@@ -64,6 +65,7 @@ func (c *CouncilROI) AggregateSince(ctx context.Context, since time.Time) (int, 
 		if !ok {
 			continue
 		}
+		hive.EvalScoreSummary.WithLabelValues(string(store.EvalSubjectCouncilRun), CouncilROIRubric).Observe(score)
 		if err := c.Store.Eval.RecordScore(ctx, &store.EvalScore{
 			SubjectKind: store.EvalSubjectCouncilRun,
 			SubjectID:   run.ID,

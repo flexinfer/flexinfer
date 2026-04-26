@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/crb2nu/loom/pkg/hive"
 	"github.com/crb2nu/loom/pkg/hive/store"
 )
 
@@ -73,6 +74,7 @@ func (a *OutcomeAttributor) OnMerged(ctx context.Context, run *store.PipelineRun
 	if err != nil {
 		return err
 	}
+	hive.EvalScoreSummary.WithLabelValues(string(store.EvalSubjectPipelineRun), PipelineOutcomeRubric).Observe(score)
 	return a.Store.Eval.RecordScore(ctx, &store.EvalScore{
 		SubjectKind: store.EvalSubjectPipelineRun,
 		SubjectID:   run.ID,

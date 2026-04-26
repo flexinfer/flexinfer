@@ -66,16 +66,23 @@ func (r *Reconciler) Tick(ctx context.Context) (TickResult, error) {
 	if r == nil || r.Store == nil {
 		return TickResult{}, errors.New("reconciler: not configured")
 	}
+	tickStart := r.now()
+	defer func() {
+		ReconcileTickDurationSeconds.Observe(r.now().Sub(tickStart).Seconds())
+	}()
 	policy := r.Policy.Current()
 	if !policy.IsEnabled() {
+		ReconcileTicksTotal.WithLabelValues("skipped").Inc()
 		r.append(ctx, "reconciler.tick", "skipped", map[string]any{"reason": "policy disabled"})
 		return TickResult{SkipReason: "policy disabled"}, nil
 	}
 
 	queued, err := r.Store.Backlog.ListByState(ctx, store.BacklogQueued)
 	if err != nil {
+		ReconcileTicksTotal.WithLabelValues("errored").Inc()
 		return TickResult{}, fmt.Errorf("read queue: %w", err)
 	}
+	r.refreshActiveGauges(ctx)
 
 	res := TickResult{Inspected: len(queued)}
 	for _, item := range queued {
@@ -97,6 +104,8 @@ func (r *Reconciler) Tick(ctx context.Context) (TickResult, error) {
 		}
 	}
 
+	tickOutcome := tickOutcomeLabel(res)
+	ReconcileTicksTotal.WithLabelValues(tickOutcome).Inc()
 	r.append(ctx, "reconciler.tick", "ok", map[string]any{
 		"inspected": res.Inspected, "started": res.Started,
 		"deferred": res.Deferred, "skipped": res.Skipped, "errored": res.Errored,
@@ -237,6 +246,48 @@ func (r *Reconciler) now() time.Time {
 		return r.Clock()
 	}
 	return time.Now()
+}
+
+// pipelineActiveStates is the set of non-terminal pipeline states the
+// reconciler refreshes gauges for. Mirrors the active-list filter in
+// handlePipelineRunsList so the dashboard count matches the REST API.
+var pipelineActiveStates = []store.PipelineState{
+	store.PipelineQueued, store.PipelinePlanning, store.PipelineSlicing,
+	store.PipelineImplementing, store.PipelineTesting, store.PipelineReviewing,
+	store.PipelineMR, store.PipelineCI, store.PipelineMerging,
+}
+
+// refreshActiveGauges samples the per-state active-pipeline counts and
+// writes them to PipelineActiveGauge. Called once per tick — cheap
+// because the DAO indexes pipeline_runs by state.
+func (r *Reconciler) refreshActiveGauges(ctx context.Context) {
+	if r.Store == nil || r.Store.Pipeline == nil {
+		return
+	}
+	for _, s := range pipelineActiveStates {
+		runs, err := r.Store.Pipeline.ListByState(ctx, s)
+		if err != nil {
+			continue
+		}
+		PipelineActiveGauge.WithLabelValues(string(s)).Set(float64(len(runs)))
+	}
+}
+
+// tickOutcomeLabel collapses TickResult into a single label value for
+// ReconcileTicksTotal so cardinality stays bounded.
+func tickOutcomeLabel(res TickResult) string {
+	switch {
+	case res.Errored > 0:
+		return "errored"
+	case res.Started > 0:
+		return "started_one"
+	case res.Deferred > 0:
+		return "deferred"
+	case res.Skipped > 0:
+		return "skipped"
+	default:
+		return "no_op"
+	}
 }
 
 func (r *Reconciler) append(ctx context.Context, kind, outcome string, payload map[string]any) {
