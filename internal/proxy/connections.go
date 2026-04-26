@@ -13,13 +13,8 @@ func (p *Proxy) trackAndServe(w http.ResponseWriter, r *http.Request, modelName 
 	p.incrementConnections(modelName)
 	defer p.decrementConnections(modelName)
 
-	// Update LastAccessTime (Async) — use a short-lived derived context so it
-	// respects proxy shutdown but doesn't block the caller.
-	ctx := p.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	go p.updateLastAccess(ctx, modelName)
+	stopHeartbeat := p.startLastAccessHeartbeat(modelName)
+	defer stopHeartbeat()
 
 	// Forward Request
 	p.serveProxy(w, r, modelName)
@@ -27,6 +22,32 @@ func (p *Proxy) trackAndServe(w http.ResponseWriter, r *http.Request, modelName 
 	// Metrics update
 	requestsTotal.WithLabelValues(modelName, "success").Inc()
 	requestDuration.WithLabelValues(modelName).Observe(time.Since(start).Seconds())
+}
+
+func (p *Proxy) startLastAccessHeartbeat(modelName string) func() {
+	ctx := p.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	heartbeatCtx, cancel := context.WithCancel(ctx)
+
+	p.updateLastAccess(heartbeatCtx, modelName)
+
+	go func() {
+		ticker := time.NewTicker(lastAccessHeartbeatInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				p.updateLastAccess(heartbeatCtx, modelName)
+			}
+		}
+	}()
+
+	return cancel
 }
 
 // incrementConnections atomically increments the connection count.

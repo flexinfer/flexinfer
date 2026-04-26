@@ -46,6 +46,10 @@ const (
 	// LastAccessTime updates if the last update was within this duration.
 	lastAccessThrottleInterval = 1 * time.Minute
 
+	// lastAccessHeartbeatInterval keeps serverless models warm while a single
+	// long-running request is still in flight.
+	lastAccessHeartbeatInterval = 30 * time.Second
+
 	// defaultBackendPort is used when a model's backend port cannot be determined.
 	defaultBackendPort int32 = 8000
 
