@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -41,7 +42,12 @@ Set LOOM_HIVE_TOKEN for admin-token-gated endpoints once they ship.`,
 	cmd.PersistentFlags().Duration("timeout", 10*time.Second, "Per-request timeout")
 	cmd.PersistentFlags().Bool("json", false, "Emit raw JSON instead of the human-readable summary")
 
-	cmd.AddCommand(newHiveStatusCmd())
+	cmd.AddCommand(
+		newHiveStatusCmd(),
+		newHiveCouncilCmd(),
+		newHiveBacklogCmd(),
+		newHiveEvalCmd(),
+	)
 	return cmd
 }
 
@@ -75,11 +81,32 @@ func resolveHiveClient(cmd *cobra.Command) (*hiveClient, error) {
 // get performs an authenticated GET against path (relative to the operator
 // base URL) and decodes the JSON body into out.
 func (c *hiveClient) get(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	return c.do(ctx, http.MethodGet, path, nil, out)
+}
+
+// post sends a JSON body. body=nil sends an empty request — mirrors how
+// the operator parses missing bodies as a zero councilRunRequest.
+func (c *hiveClient) post(ctx context.Context, path string, body, out any) error {
+	return c.do(ctx, http.MethodPost, path, body, out)
+}
+
+func (c *hiveClient) do(ctx context.Context, method, path string, body, out any) error {
+	var reqBody io.Reader
+	if body != nil {
+		buf, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("marshal request body: %w", err)
+		}
+		reqBody = bytes.NewReader(buf)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
+	if reqBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
@@ -89,18 +116,18 @@ func (c *hiveClient) get(ctx context.Context, path string, out any) error {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MiB cap
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MiB cap
 	if err != nil {
 		return fmt.Errorf("read body: %w", err)
 	}
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("operator returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("operator returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	if out == nil {
 		return nil
 	}
-	if err := json.Unmarshal(body, out); err != nil {
-		return fmt.Errorf("decode %s: %w (body=%q)", path, err, truncateForError(body, 200))
+	if err := json.Unmarshal(respBody, out); err != nil {
+		return fmt.Errorf("decode %s: %w (body=%q)", path, err, truncateForError(respBody, 200))
 	}
 	return nil
 }
