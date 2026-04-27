@@ -58,8 +58,10 @@ RUN apk add --no-cache ca-certificates git
 RUN adduser -D -u 1000 mcp
 USER mcp
 
-# Copy binaries
-COPY --from=builder /bin/loomd /bin/loom /bin/mcp-* /usr/local/bin/
+# Copy binaries. Split so the stable mcp-* layer caches across commits while
+# only the small loomd/loom layer rebuilds when the version ldflag changes.
+COPY --from=builder /bin/mcp-* /usr/local/bin/
+COPY --from=builder /bin/loomd /bin/loom /usr/local/bin/
 
 # Default to running the daemon
 ENTRYPOINT ["/usr/local/bin/loomd"]
