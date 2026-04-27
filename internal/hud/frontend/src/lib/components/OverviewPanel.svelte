@@ -13,6 +13,8 @@
   import { coordinationStore } from '../stores/coordination.svelte.ts';
   import { mergeQueueStore } from '../stores/mergeQueue.svelte.ts';
   import { shuttleStore } from '../stores/shuttle.svelte.ts';
+  import { hiveStore } from '../stores/hive.svelte.ts';
+  import HiveKPIRow from './Hive/HiveKPIRow.svelte';
   import { navigateToAgentSessionOrTraces } from '../utils/drilldown.ts';
 
   const fleetPollingOwner = Symbol('OverviewPanel');
@@ -130,6 +132,7 @@
     coordinationStore.startPolling(30000);
     mergeQueueStore.startPolling(30000);
     shuttleStore.startPolling(30000);
+    hiveStore.startPolling(30000);
     const t = setInterval(fetchOTelStatus, 30000);
     return () => {
       clearInterval(t);
@@ -143,6 +146,7 @@
       coordinationStore.stopPolling();
       mergeQueueStore.stopPolling();
       shuttleStore.stopPolling();
+      hiveStore.stopPolling();
     };
   });
 
@@ -647,6 +651,9 @@
         {/each}
       </div>
     </section>
+
+    <!-- ═══ Hive KPIs ═══ -->
+    <HiveKPIRow />
 
     <!-- ═══ Supporting Surfaces ═══ -->
     <section class="support-section">

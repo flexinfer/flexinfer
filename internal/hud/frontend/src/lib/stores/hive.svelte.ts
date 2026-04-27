@@ -52,6 +52,38 @@ export interface PolicyView {
   raw?: unknown;
 }
 
+// HiveKPISnapshot mirrors the operator's `kpi_snapshots.metrics_json`
+// rollup. Fields are optional because the recorder only emits keys it has
+// data for; missing keys render as "—" placeholders. Field names here are
+// the contract the (future) snapshot recorder must honor.
+export interface HiveKPISnapshot {
+  snapshot_at?: string;
+  window_seconds?: number;
+  metrics?: {
+    cost_per_merged_change_usd?: number;
+    slice_to_merge_p50_seconds?: number;
+    gate_pass_rate?: number;        // 0..1
+    auto_merge_rate?: number;       // 0..1
+    regression_rate?: number;       // 0..1
+    council_roi?: number;           // merged-changes-per-council-USD
+  };
+}
+
+// Operator returns snapshots with PascalCase fields (Go struct json tags
+// follow Go naming). Accept both casings so a recorder that emits
+// snake_case `metrics_json` payloads also works.
+interface RawKPISnapshot {
+  ID?: number;
+  SnapshotAt?: string;
+  WindowSeconds?: number;
+  Metrics?: HiveKPISnapshot['metrics'];
+  snapshot_at?: string;
+  window_seconds?: number;
+  metrics?: HiveKPISnapshot['metrics'];
+}
+
+const KPI_HISTORY_MAX = 24;
+
 class HiveStore {
   // Per-panel data
   backlog = $state<BacklogItem[]>([]);
@@ -59,6 +91,12 @@ class HiveStore {
   councilRuns = $state<CouncilRun[]>([]);
   evalScores = $state<EvalScore[]>([]);
   policy = $state<PolicyView | null>(null);
+
+  // KPI snapshot for the rolling 1d window plus a small in-memory history
+  // for sparkline trends. The history is only de-duped on snapshot_at so
+  // repeated polls of the same snapshot don't pad the trend.
+  kpis = $state<HiveKPISnapshot | null>(null);
+  kpisHistory = $state<HiveKPISnapshot[]>([]);
 
   // Connection state
   loading = $state(false);
@@ -88,18 +126,22 @@ class HiveStore {
     this.loading = true;
     this.error = null;
     try {
-      const [policy, backlog, pipelines, council, scores] = await Promise.all([
+      const [policy, backlog, pipelines, council, scores, kpis] = await Promise.all([
         this.getJSON<PolicyView>('/api/hive/policy'),
         this.getJSON<BacklogItem[]>('/api/hive/backlog'),
         this.getJSON<PipelineRun[]>('/api/hive/pipeline/runs'),
         this.getJSON<CouncilRun[]>('/api/hive/council/runs'),
         this.getJSON<EvalScore[]>('/api/hive/eval/scores'),
+        // KPI endpoint returns 404 until the snapshot recorder ships.
+        // Tolerate that by passing { tolerate404: true }; null is fine.
+        this.getJSON<RawKPISnapshot>('/api/hive/kpis?window=1d', { tolerate404: true }),
       ]);
       this.policy = policy;
       this.backlog = backlog ?? [];
       this.pipelineRuns = pipelines ?? [];
       this.councilRuns = council ?? [];
       this.evalScores = scores ?? [];
+      this.applyKPISnapshot(kpis);
       this.lastUpdated = new Date();
       this.disabled = false;
     } catch (e) {
@@ -118,11 +160,14 @@ class HiveStore {
     }
   }
 
-  private async getJSON<T>(path: string): Promise<T | null> {
+  private async getJSON<T>(path: string, opts: { tolerate404?: boolean } = {}): Promise<T | null> {
     const res = await globalThis.fetch(path);
     if (res.status === 503) {
       // Surface to fetchAll so it can flip the disabled flag.
       throw new Error(`hive proxy: 503 (operator not configured)`);
+    }
+    if (res.status === 404 && opts.tolerate404) {
+      return null;
     }
     if (!res.ok) {
       throw new Error(`${path}: ${res.status}`);
@@ -131,6 +176,38 @@ class HiveStore {
     const text = await res.text();
     if (!text) return null;
     return JSON.parse(text) as T;
+  }
+
+  private applyKPISnapshot(raw: RawKPISnapshot | null): void {
+    if (!raw) {
+      this.kpis = null;
+      return;
+    }
+    const snap: HiveKPISnapshot = {
+      snapshot_at: raw.SnapshotAt ?? raw.snapshot_at,
+      window_seconds: raw.WindowSeconds ?? raw.window_seconds,
+      metrics: raw.Metrics ?? raw.metrics ?? {},
+    };
+    this.kpis = snap;
+    // Append to history only when snapshot_at advances; otherwise the
+    // sparkline would just plot the same point N times.
+    const last = this.kpisHistory[this.kpisHistory.length - 1];
+    if (!last || last.snapshot_at !== snap.snapshot_at) {
+      const next = [...this.kpisHistory, snap];
+      this.kpisHistory = next.slice(-KPI_HISTORY_MAX);
+    }
+  }
+
+  // Pull a single KPI metric series from the in-memory history. Missing
+  // values are skipped (no zero-filling) so the sparkline reflects only
+  // observed data points.
+  metricSeries(key: keyof NonNullable<HiveKPISnapshot['metrics']>): number[] {
+    const out: number[] = [];
+    for (const snap of this.kpisHistory) {
+      const v = snap.metrics?.[key];
+      if (typeof v === 'number' && Number.isFinite(v)) out.push(v);
+    }
+    return out;
   }
 
   startPolling(intervalMs = 15000): void {
