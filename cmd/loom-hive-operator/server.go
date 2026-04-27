@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/crb2nu/loom/pkg/hive"
+	"github.com/crb2nu/loom/pkg/hive/gates"
 	"github.com/crb2nu/loom/pkg/hive/runner"
 	"github.com/crb2nu/loom/pkg/hive/store"
 )
@@ -20,17 +21,26 @@ import (
 // store, the policy manager, the budget enforcer, and (slice 3.7+) the
 // council runner that orchestrates an end-to-end planning pass.
 type operator struct {
-	store  *store.Store
-	policy *hive.PolicyManager
-	budget *hive.Budget
-	runner *runner.Runner // optional; nil disables /api/hive/council/{run,dryrun}
-	logger *slog.Logger
+	store          *store.Store
+	policy         *hive.PolicyManager
+	budget         *hive.Budget
+	runner         *runner.Runner        // optional; nil disables /api/hive/council/{run,dryrun}
+	regressionGate *gates.RegressionGate // optional; nil makes the alerts webhook return 503
+	logger         *slog.Logger
 
 	ready atomic.Bool
 }
 
 func newOperator(st *store.Store, pm *hive.PolicyManager, b *hive.Budget, logger *slog.Logger) *operator {
-	return &operator{store: st, policy: pm, budget: b, logger: logger}
+	return &operator{
+		store:  st,
+		policy: pm,
+		budget: b,
+		logger: logger,
+		// Default regression gate: same store + policy + default 30min
+		// window. Tests that want to skip the gate clear this field.
+		regressionGate: &gates.RegressionGate{Store: st, Policy: pm},
+	}
 }
 
 // withRunner attaches a council runner. Operators that don't want
@@ -81,6 +91,10 @@ func (o *operator) httpMux() *http.ServeMux {
 	// Eval.
 	mux.HandleFunc("GET /api/hive/eval/scores", o.handleEvalScores)
 	mux.HandleFunc("POST /api/hive/eval/run-cross", requireAdmin(o.handleEvalRunCross))
+
+	// Regression gate (slice 6.3): Alertmanager webhook target. Admin-
+	// gated so a misconfigured external pushes can't bump our metric.
+	mux.HandleFunc("POST /api/hive/alerts/regression", requireAdmin(o.handleRegressionAlert))
 
 	// Anything else under /api/hive returns 404 with a clear message; the
 	// catch-all "/" stays 501 so unprefixed paths don't get mistaken for
