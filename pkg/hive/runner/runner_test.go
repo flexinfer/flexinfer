@@ -48,11 +48,28 @@ human_handoff:
   on_escalation_create_issue: true
 `
 
+// runnerSampleTitles supplies distinct multi-token titles so the slice
+// 6.2 dedup logic doesn't collapse the fixture (single-char
+// disambiguators all normalize to the same token set after stopwords +
+// single-char drops).
+var runnerSampleTitles = []string{
+	"exercise reconciler pipeline starter",
+	"exercise gate library expansion",
+	"exercise eval loop attribution",
+	"exercise integrator fan-out",
+	"exercise escalation runbook",
+	"exercise weaver subagent dispatch",
+}
+
 func sampleProposals(n int) []council.BacklogProposal {
 	out := make([]council.BacklogProposal, n)
 	for i := 0; i < n; i++ {
+		title := "exercise sample council " + string(rune('A'+i))
+		if i < len(runnerSampleTitles) {
+			title = runnerSampleTitles[i]
+		}
 		out[i] = council.BacklogProposal{
-			Title:    "exercise the council " + string(rune('A'+i)),
+			Title:    title,
 			Labels:   []string{"debt"},
 			Priority: store.P2,
 			Slices: []store.Slice{{
