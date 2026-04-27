@@ -124,6 +124,15 @@ type TickResult struct {
 	SkipReason string
 }
 
+// IsNoOp reports whether the tick had nothing to look at — either the
+// queue was empty or the policy was disabled. The scheduler uses this to
+// decide when to back off to the idle-throttle cadence (slice 6.1).
+// Inspected > 0 means the operator is doing meaningful bookkeeping even
+// if every item was deferred, so we keep ticking on the fast cadence.
+func (r TickResult) IsNoOp() bool {
+	return r.Inspected == 0 && r.Started == 0
+}
+
 type startDecision int
 
 const (
