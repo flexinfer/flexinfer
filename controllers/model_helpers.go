@@ -391,9 +391,8 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	}
 
 	// Determine phase from deployment status and set conditions.
-	// Substage/message/progress timestamp are Loading-phase-only: reset them on
-	// every pass and repopulate below only when phase transitions to (or remains
-	// on) Loading.
+	// Substage/message/progress timestamp are reset on every pass and
+	// repopulated below for Loading and Preempted status refinements.
 	model.Status.LoadingSubstage = ""
 	model.Status.Message = ""
 	model.Status.LoadingProgressAt = nil
@@ -442,7 +441,10 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 			model.Status.Phase = aiv1alpha2.ModelPhaseIdle
 			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonWaitingForActivation, "Model is idle, waiting for traffic")
 		} else {
-			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonPreempted, "Model was preempted by higher priority model")
+			msg := preemptedStatusMessage(model)
+			model.Status.LoadingSubstage = aiv1alpha2.LoadingSubstagePreempted
+			model.Status.Message = msg
+			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonPreempted, msg)
 		}
 	} else if deployment.Status.UnavailableReplicas > 0 {
 		model.Status.Phase = aiv1alpha2.ModelPhaseLoading
@@ -457,6 +459,13 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	r.recordPhaseMetrics(model, prevPhase, model.Status.Phase)
 
 	return r.Status().Update(ctx, model)
+}
+
+func preemptedStatusMessage(model *aiv1alpha2.Model) string {
+	if model != nil && model.Status.SharedGroup != nil && model.Status.SharedGroup.PreemptedBy != "" {
+		return fmt.Sprintf("preempted by %s", model.Status.SharedGroup.PreemptedBy)
+	}
+	return "Model was preempted by higher priority model"
 }
 
 // updatePhase updates just the phase field in status and emits lifecycle metrics.

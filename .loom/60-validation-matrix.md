@@ -43,6 +43,7 @@ This matrix tracks both layers per family.
 | Field | How captured |
 |---|---|
 | `smoke.ready_minutes` | ModelCache phase timing: download + ablit + quant + publish + runtime Ready |
+| `smoke.cold_load_min` | Fresh activation time from demand/scale-up to runtime Ready; use this to track #53 cold-load regression targets |
 | `smoke.decode_tps` | vLLM: `decode_tokens / decode_seconds` |
 | `smoke.prompt_tps` | vLLM prompt processing tps |
 | `smoke.coherent` | manual review of smoke prompt output |
@@ -50,18 +51,18 @@ This matrix tracks both layers per family.
 
 ## Matrix
 
-| Family | Node | val.status | val.layout | val.family | val.mods_shape | declared_missing | quantized_mods | warn/err | cos.min | smoke.decode_tps | oci.ref | gate |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| gemma4-26b-a4b-gptq (attnfp16-clean, **active**) | 7900xtx | PASS | vllm-gptq | gemma4-26b-a4b (forced) | flat | [] | 2 (moe.down_proj×30, moe.gate_up_proj×30) | 1/0 | n/a (not re-quant) | TBD | TBD | **conditional** (detected_family=None) |
-| gemma4-26b-a4b-gptq (hybrid-v10, on-PVC) | 7900xtx | PASS | vllm-gptq | gemma4-26b-a4b (forced) | flat | [] | 9 (incl. self_attn.v_proj×25 — not 30) | 1/0 | n/a | n/a (not served) | n/a | **conditional** (v_proj count anomaly) |
-| gemma4-26b-a4b-gptq-long (fp16 KV canary) | 7900xtx | PASS (inherits hybrid) | vllm-gptq | gemma4-26b-a4b | flat | [] | 2 active / 9 hybrid-v10 | 1/0 | n/a | n/a (engine init failed) | n/a | **fail** (KV memory ceiling) |
-| gemma4-26b-a4b-gptq-dense (dense validate rebuild) | 7900xtx | TBD | TBD | TBD | TBD | TBD | TBD | TBD | not reached | n/a | n/a | **blocked** (4h abliteration deadline) |
-| gemma4-31b-gptq (keqv recovery) | 7900xtx | PASS (postprocess/copy succeeded) | vllm-gptq | gemma4-31b | TBD | [] | TBD | TBD | n/a | smoke 0.158s HTTP 200 | pvc://gemma4-31b-gptq/gemma4-31b-gptq/gptq-w4-g128-keqv | **pass at 2048** |
-| gemma4-e4b-gptq | 7900xtx | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| omnicoder-9b-gptq | 7900xtx | TBD | TBD | TBD | TBD | TBD | TBD | TBD | n/a | TBD | TBD | TBD |
-| qwen35-9b-gptq-gfx1100 | 7900xtx | TBD | TBD | TBD | TBD | TBD | TBD | TBD | n/a | TBD | TBD | TBD |
-| qwen3-14b-gptq | 5930k | TBD | TBD | TBD | TBD | TBD | TBD | TBD | n/a | TBD | TBD | TBD |
-| gemma4-31b-gptq | radeonvii | n/a (off-gfx1100) | — | — | — | — | — | — | — | — | — | skipped: VRAM ceiling |
+| Family | Node | val.status | val.layout | val.family | val.mods_shape | declared_missing | quantized_mods | warn/err | cos.min | smoke.cold_load_min | smoke.decode_tps | oci.ref | gate |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| gemma4-26b-a4b-gptq (attnfp16-clean, **active**) | 7900xtx | PASS | vllm-gptq | gemma4-26b-a4b (forced) | flat | [] | 2 (moe.down_proj×30, moe.gate_up_proj×30) | 1/0 | n/a (not re-quant) | TBD (#53 target ≤3m after cache migration) | TBD | TBD | **conditional** (detected_family=None) |
+| gemma4-26b-a4b-gptq (hybrid-v10, on-PVC) | 7900xtx | PASS | vllm-gptq | gemma4-26b-a4b (forced) | flat | [] | 9 (incl. self_attn.v_proj×25 — not 30) | 1/0 | n/a | n/a (not served) | n/a (not served) | n/a | **conditional** (v_proj count anomaly) |
+| gemma4-26b-a4b-gptq-long (fp16 KV canary) | 7900xtx | PASS (inherits hybrid) | vllm-gptq | gemma4-26b-a4b | flat | [] | 2 active / 9 hybrid-v10 | 1/0 | n/a | n/a (engine init failed) | n/a (engine init failed) | n/a | **fail** (KV memory ceiling) |
+| gemma4-26b-a4b-gptq-dense (dense validate rebuild) | 7900xtx | TBD | TBD | TBD | TBD | TBD | TBD | TBD | not reached | TBD | n/a | n/a | **blocked** (4h abliteration deadline) |
+| gemma4-31b-gptq (keqv recovery) | 7900xtx | PASS (postprocess/copy succeeded) | vllm-gptq | gemma4-31b | TBD | [] | TBD | TBD | n/a | TBD | smoke 0.158s HTTP 200 | pvc://gemma4-31b-gptq/gemma4-31b-gptq/gptq-w4-g128-keqv | **pass at 2048** |
+| gemma4-e4b-gptq | 7900xtx | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| omnicoder-9b-gptq | 7900xtx | TBD | TBD | TBD | TBD | TBD | TBD | TBD | n/a | TBD | TBD | TBD | TBD |
+| qwen35-9b-gptq-gfx1100 | 7900xtx | TBD | TBD | TBD | TBD | TBD | TBD | TBD | n/a | TBD | TBD | TBD | TBD |
+| qwen3-14b-gptq | 5930k | TBD | TBD | TBD | TBD | TBD | TBD | TBD | n/a | TBD | TBD | TBD | TBD |
+| gemma4-31b-gptq | radeonvii | n/a (off-gfx1100) | — | — | — | — | — | — | — | — | — | — | skipped: VRAM ceiling |
 
 ## Gate definitions
 
