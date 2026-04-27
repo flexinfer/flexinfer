@@ -226,10 +226,21 @@ func run(cfg Config) error {
 	scheduler := hive.NewScheduler(reconciler)
 	scheduler.Logger = logger
 
+	// Eval Loop C — weekly cross-run consistency check (default Sunday
+	// 06:00 UTC). Runs alongside the reconciler scheduler in the same
+	// errgroup so a panic in either takes the whole operator down for a
+	// supervised restart, not a silent stuck loop.
+	crossRunChecker := &eval.CrossRunChecker{Store: st, Logger: logger}
+	crossRunSched := eval.NewCrossRunScheduler(crossRunChecker)
+	crossRunSched.Logger = logger
+	logger.Info("eval Loop C scheduler armed",
+		"weekday", crossRunSched.Weekday.String(), "hour_utc", crossRunSched.Hour)
+
 	g, gctx := errgroup.WithContext(rootCtx)
 	g.Go(func() error { return runListener(gctx, "http", httpSrv, logger) })
 	g.Go(func() error { return runListener(gctx, "metrics", metricsSrv, logger) })
 	g.Go(func() error { return scheduler.Run(gctx) })
+	g.Go(func() error { return crossRunSched.Run(gctx) })
 
 	err = g.Wait()
 	if err != nil && !errors.Is(err, context.Canceled) {

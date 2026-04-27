@@ -178,3 +178,50 @@ func TestCompile_RequiresStore(t *testing.T) {
 		t.Error("expected error when Store is nil")
 	}
 }
+
+// TestCompile_SurfacesCrossRunFindings confirms Loop C eval scores
+// recorded in the last 7 days appear in the brief markdown so the next
+// council run can see flaky-gate / stale-plan / divergent-outcome
+// signals without re-running the queries.
+func TestCompile_SurfacesCrossRunFindings(t *testing.T) {
+	st := newCouncilTestStore(t)
+	now := fixedTime()
+	if err := st.Eval.RecordScore(context.Background(), &store.EvalScore{
+		SubjectKind: store.EvalSubjectCrossRun,
+		SubjectID:   "2026-04-19..2026-04-26",
+		Rubric:      "loop_c_stale_plans",
+		Score:       0.5,
+		JudgedBy:    "loop_c_cross_run",
+		EvaluatedAt: now.Add(-2 * time.Hour),
+		Notes:       "1 backlog item stale: stale-001",
+	}); err != nil {
+		t.Fatalf("seed score: %v", err)
+	}
+	b, err := Compile(context.Background(), BriefSources{Store: st, Now: fixedTime})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if !strings.Contains(b.Markdown, "Cross-run findings") {
+		t.Errorf("brief missing Cross-run findings section:\n%s", b.Markdown)
+	}
+	if !strings.Contains(b.Markdown, "loop_c_stale_plans") {
+		t.Errorf("brief missing rubric name:\n%s", b.Markdown)
+	}
+	if b.SourceCounts.CrossRunFindings != 1 {
+		t.Errorf("CrossRunFindings = %d, want 1", b.SourceCounts.CrossRunFindings)
+	}
+}
+
+// TestCompile_OmitsCrossRunSectionWhenEmpty asserts the section is
+// dropped entirely when no Loop C scores landed in the window — the
+// brief stays compact for routine runs.
+func TestCompile_OmitsCrossRunSectionWhenEmpty(t *testing.T) {
+	st := newCouncilTestStore(t)
+	b, err := Compile(context.Background(), BriefSources{Store: st, Now: fixedTime})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if strings.Contains(b.Markdown, "Cross-run findings") {
+		t.Errorf("empty Loop C should drop the section, got:\n%s", b.Markdown)
+	}
+}

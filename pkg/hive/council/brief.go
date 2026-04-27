@@ -66,13 +66,20 @@ type BriefSection struct {
 
 // BriefSourceCounts is the audit footprint of one Compile call.
 type BriefSourceCounts struct {
-	Intents       int
-	BacklogQueued int
-	BacklogActive int
-	KPISnapshot   bool
-	IndexBytes    int
-	TruncatedTo   int // final byte length after truncation, equal to MaxBytes if we hit the cap
+	Intents          int
+	BacklogQueued    int
+	BacklogActive    int
+	KPISnapshot      bool
+	IndexBytes       int
+	CrossRunFindings int // number of Loop C eval rows surfaced
+	TruncatedTo      int // final byte length after truncation, equal to MaxBytes if we hit the cap
 }
+
+// crossRunBriefWindow is how far back Compile reaches for Loop C
+// findings to surface in the next council brief. Matches the cross-run
+// scheduler's weekly cadence with a small grace overlap so a brief
+// compiled Sunday afternoon still sees that morning's findings.
+const crossRunBriefWindow = 8 * 24 * time.Hour
 
 // Compile assembles the brief from the configured sources. Sections are
 // rendered in priority order:
@@ -135,9 +142,51 @@ func Compile(ctx context.Context, src BriefSources) (*Brief, error) {
 		}
 	}
 
+	// Loop C — surface the most recent cross-run findings so the council
+	// can react to flaky gates / stale plans / divergent outcomes
+	// without the operator humans having to query the eval table by hand.
+	// We fetch the whole crossRunBriefWindow worth and let the renderer
+	// drop the section if there are no findings.
+	scores, _ := src.Store.Eval.ListSince(ctx, now.Add(-crossRunBriefWindow), 50)
+	crossRunFindings := filterCrossRun(scores)
+	if len(crossRunFindings) > 0 {
+		b.Sections = append(b.Sections, BriefSection{
+			Heading: "Cross-run findings (Loop C, last 7 days)",
+			Body:    renderCrossRun(crossRunFindings),
+		})
+		b.SourceCounts.CrossRunFindings = len(crossRunFindings)
+	}
+
 	b.Markdown = renderMarkdown(now, b.Sections, maxBytes)
 	b.SourceCounts.TruncatedTo = len(b.Markdown)
 	return b, nil
+}
+
+// filterCrossRun selects only Loop C eval scores from a mixed result.
+func filterCrossRun(scores []*store.EvalScore) []*store.EvalScore {
+	out := make([]*store.EvalScore, 0, len(scores))
+	for _, s := range scores {
+		if s.SubjectKind == store.EvalSubjectCrossRun {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// renderCrossRun formats Loop C findings. Score < 1.0 means the rubric
+// flagged something — we surface the rubric, score, and notes line so
+// the council brief reads at a glance.
+func renderCrossRun(scores []*store.EvalScore) string {
+	var b strings.Builder
+	for _, s := range scores {
+		notes := s.Notes
+		if notes == "" {
+			notes = "_(no details)_"
+		}
+		fmt.Fprintf(&b, "- **%s** (score `%.2f`, %s): %s\n",
+			s.Rubric, s.Score, s.SubjectID, notes)
+	}
+	return b.String()
 }
 
 // ----- renderers -----
