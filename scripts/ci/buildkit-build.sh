@@ -10,7 +10,7 @@
 #   CI_COMMIT_BRANCH, CI_DEFAULT_BRANCH
 # Optional env vars:
 #   BUILDKIT_FALLBACK_HOSTS, IMAGE_REGISTRIES, IMAGE_REGISTRY, CI_COMMIT_TAG
-set -eu
+set -euo pipefail
 
 IMAGE_REPO="$1"
 DOCKERFILE="$2"
@@ -89,7 +89,11 @@ for REGISTRY in $REGISTRY_CANDIDATES; do
   echo "Building with image names: $IMAGE_NAMES"
   LOG_FILE="$CI_PROJECT_DIR/.buildctl-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
   rm -f "$LOG_FILE"
-  if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 build \
+  # Stream output live to the trace via tee so that GitLab's PodActiveDeadline
+  # killing the pod mid-build still leaves visible buildctl progress. Without
+  # this, the trace ends at "Building with image names: ..." and we can't tell
+  # whether compile, layer export, or push is the slow step.
+  if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 --progress=plain build \
     --frontend dockerfile.v0 \
     --local context="$CI_PROJECT_DIR" \
     --local dockerfile="$CI_PROJECT_DIR" \
@@ -99,20 +103,18 @@ for REGISTRY in $REGISTRY_CANDIDATES; do
     --opt "build-arg:VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
     --import-cache "type=registry,ref=${CACHE_REF}" \
     --export-cache "type=registry,ref=${CACHE_REF},mode=min,image-manifest=true" \
-    --output "type=image,\"name=${IMAGE_NAMES}\",push=true" "$@" >"$LOG_FILE" 2>&1; then
-    cat "$LOG_FILE"
+    --output "type=image,\"name=${IMAGE_NAMES}\",push=true" "$@" 2>&1 | tee "$LOG_FILE"; then
     rm -f "$LOG_FILE"
     SUCCESS=1
     break
   else
     LAST_RC=$?
   fi
-  cat "$LOG_FILE"
   if grep -Eqi "error writing manifest blob|/manifests/buildcache|buildcache" "$LOG_FILE"; then
     echo "Registry cache export failed; retrying without cache flags."
     rm -f "$LOG_FILE"
     LOG_FILE="$CI_PROJECT_DIR/.buildctl-nocache-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
-    if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 build \
+    if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 --progress=plain build \
       --frontend dockerfile.v0 \
       --local context="$CI_PROJECT_DIR" \
       --local dockerfile="$CI_PROJECT_DIR" \
@@ -120,15 +122,13 @@ for REGISTRY in $REGISTRY_CANDIDATES; do
       --opt "filename=$DOCKERFILE" \
       --opt "build-arg:RUNTIME_REGISTRY=$REGISTRY" \
       --opt "build-arg:VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
-      --output "type=image,\"name=${IMAGE_NAMES}\",push=true" "$@" >"$LOG_FILE" 2>&1; then
-      cat "$LOG_FILE"
+      --output "type=image,\"name=${IMAGE_NAMES}\",push=true" "$@" 2>&1 | tee "$LOG_FILE"; then
       rm -f "$LOG_FILE"
       SUCCESS=1
       break
     else
       LAST_RC=$?
     fi
-    cat "$LOG_FILE"
   fi
 
   if grep -Eqi "x509|certificate|tls handshake timeout|unknown authority|connection refused|i/o timeout|no route to host|context deadline exceeded|temporary failure in name resolution|unauthorized|denied|failed to list workers|transport: error while dialing|dial tcp|unexpected EOF|connection reset by peer" "$LOG_FILE"; then
