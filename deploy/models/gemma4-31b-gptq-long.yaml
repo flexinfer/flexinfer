@@ -1,0 +1,163 @@
+# Gemma4 31B Dense GPTQ + TurboQuant long-context canary on AMD gfx1100.
+#
+# Experimental long-context lane for the clean 31B dense GPTQ source
+# artifact (the keqv-patched variant the primary serves at maxModelLen=2048).
+# This canary stacks the TurboQuant KV-cache codec on top of GPTQ weights to
+# unlock 8k-32k context within the same 24 GiB VRAM that limits the primary
+# to ~2,048 tokens (1.79 GiB KV pool ÷ 0.844 MiB/token).
+#
+# History / why this exists:
+#   - Re-quant in !182 produced a clean GPTQ artifact (verified via hash
+#     sweep, 33 tok/s single-stream). Smoke + 1221-token long-prompt PASS.
+#   - !188 attempted a 1920 → 3072 maxModelLen bump via enforceEager + fewer
+#     seqs to reclaim CUDAGraph memory. Empirically only freed +0.09 GiB
+#     of KV pool — inductor/compilation caches refilled what graph-payload
+#     vacated. vLLM ceiling was 2112 tokens.
+#   - !190 fell back to maxModelLen=2048 to stop the crashloop.
+#   - This canary is the next attempt at a real context unlock. It does
+#     NOT replace the primary; it serves alongside via a separate Model
+#     name (`gemma4-31b-gptq-long`) and only via on-demand alias.
+#
+# What's experimental and untested in this combination:
+#   1. TurboQuant has only ever been validated on Gemma4-E4B (4B params,
+#      native bf16 weights) on this stack — see .loom/10-research.md
+#      lines 480-679. E4B numbers were ~43k tokens/GiB KV vs 1.1k for
+#      stock float16 — that is the prize if it transfers.
+#   2. 31B Dense has heterogeneous attention (50 sliding-window 256-dim
+#      layers + 10 full-attention 512-dim layers) and our artifact
+#      additionally carries duplicated v_proj tensors from the keqv
+#      postprocess. Each of these could surface a new plugin edge case.
+#   3. TurboQuant on top of GPTQ INT4 weights (vs FP16 weights as in the
+#      E4B research) is also a first.
+#
+# Validation gauntlet (all four must pass before we promote):
+#   1. Engine init reaches Ready without ValueError on KV setup.
+#   2. Single chat/completions request returns coherent text (the
+#      Paris/fibonacci smoke that the primary passes).
+#   3. Repeat 30 sequential requests; output stays coherent (no
+#      degenerate repetition or token-soup that the E4B research showed
+#      before the shared-KV guard patch).
+#   4. Perplexity on a held-out prompt is within ~25% of the primary's.
+# Failures are recorded in promotion-state and the canary stays parked
+# at minReplicas=0 / priority=50 (cannot preempt anyone).
+#
+# Runtime requirements (per .loom/10-research.md observations):
+#   - turboquant-vllm plugin baked into the experimental runtime image
+#   - kvCacheCodec=turboquant → backend sets FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC
+#     env vars + forces attentionBackend=CUSTOM via resolveVLLMAttentionBackend()
+#   - gpuMemoryUtilization=0.90 (research showed 0.95 OOMs on the plugin's
+#     extra rotation-matrix buffers + dense K/V reconstruction in the ROCm
+#     SDPA fallback path)
+#   - maxNumSeqs=1 to keep this canary single-stream while validating
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gemma4-31b-gptq-long
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/promotion-gate: quantized-artifact-v1
+    # 2026-04-25: canary boot OOM'd at 23.59/24 GiB during weight load —
+    # plugin rotation-matrix + tensor state (~3.5 GiB) plus 31B INT4
+    # weights (20.02 GiB) leaves no headroom for activations or KV on
+    # a single 24 GiB gfx1100. The math doesn't work at any
+    # gpuMemoryUtilization value on this hardware.
+    #
+    # Full analysis: docs/dev/gemma4-31b-turboquant-24gb-oom.md
+    #
+    # Manifest is intentionally dropped from deploy/models/kustomization.yaml
+    # so Flux does NOT reconcile it. File kept on disk as a reference
+    # point for any future re-attempt (e.g. if weights drop below
+    # ~15 GiB via a different quant scheme, or the plugin defers
+    # rotation-matrix allocation).
+    flexinfer.ai/promotion-state: turboquant-canary-superseded-gfx1100-24gb-insufficient-vram
+    flexinfer.ai/promotion-evidence: docs/dev/gemma4-31b-turboquant-24gb-oom.md
+    flexinfer.ai/promotion-requires: see-evidence-doc-before-re-enabling
+    flexinfer.ai/cache-source-ready-job: gemma4-31b-keqv-postprocess-v3
+spec:
+  backend: vllm
+  # Experimental TurboQuant-capable runtime image. The :rocm-gfx1100-textgen-turboquant
+  # tag carries the plugin install but pins the stable TRITON KV path; we need the
+  # gemma4-specific experimental tag with the shared-KV guard, page_size_padded
+  # alignment fix, and ROCm SDPA fallback (.loom/10-research.md lines 530-678).
+  image: registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-turboquant-experimental
+  # Same source artifact the primary serves — point at the keqv-patched output
+  # so the v_proj duplicates are visible to the plugin's QKV path.
+  source: pvc://gemma4-31b-gptq/gemma4-31b-gptq/gptq-w4-g128-keqv
+  cache:
+    # Direct-mount the primary's local-path cache instead of staging another
+    # 18 GiB copy. Both this canary and the primary live on cblevins-7900xtx
+    # so they read the same hostPath; vLLM open(..., O_RDONLY) is safe
+    # under concurrent readers.
+    strategy: None
+  gpu:
+    vendor: amd
+    count: 2
+    # Lower than the 26B's 200 and the primary 31B's 250: this canary
+    # cannot preempt anything in 7900xtx-textgen. It only spawns when an
+    # explicit `gemma4-31b-long` alias request arrives AND the primary
+    # plus 26B are both idle, OR via direct CR name.
+    priority: 50
+    shared: 7900xtx-textgen
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    # Strict on-demand. Validation runs trigger a request → cold start →
+    # measure → idle out. Promotion later flips this to minReplicas=1.
+    minReplicas: 0
+    idleTimeout: 15m
+    coldStartTimeout: 30m
+  config:
+    quantization: gptq
+    dtype: "half"
+    # 16k as the first canary target. If quality holds, follow-up MR pushes
+    # to 32k. E4B research validated up to 27,136 tokens KV pool capacity;
+    # 31B per-token KV is ~2.2× larger, so 16k is a calibrated first step.
+    maxModelLen: 16384
+    # 0.90 not 0.95: the plugin needs headroom for rotation matrices and
+    # the dense K/V reconstruction buffer in the SDPA fallback.
+    gpuMemoryUtilization: "0.90"
+    maxNumSeqs: 1
+    trustRemoteCode: true
+    # The kvCacheCodec=turboquant knob below auto-forces attentionBackend=CUSTOM
+    # via resolveVLLMAttentionBackend (backend/vllm.go:288). Keeping this empty
+    # makes the wiring explicit and avoids a duplicate-flag warning.
+    kvCacheCodec: turboquant
+    servedModelName: gemma4-31b-gptq-long
+    enableToolCalling: true
+    toolCallParser: gemma4
+    reasoningParser: gemma4
+    # Prefix cache disabled on canary to keep KV math predictable while we
+    # validate the codec; can be re-enabled after the gauntlet passes.
+    enablePrefixCaching: false
+    # Eager mode keeps us aligned with the primary's known-good profile.
+    # CUDAGraph + plugin custom backend was an additional unknown we don't
+    # need to debug yet.
+    enforceEager: true
+    # Heterogeneous attention spec workaround — same fix the primary uses.
+    # The plugin's page_size_padded patch from 2026-04-02 still relies on
+    # this being disabled when the model has mixed sliding/full layers.
+    disableHybridKVCacheManager: true
+    limitMmPerPrompt: '{"image":0,"audio":0,"video":0}'
+    disableLogStats: false
+    warmPolicy: ondemand
+    hipVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 24Gi
+  serviceLabels:
+    - gemma4-31b-gptq-long
+  litellm:
+    enabled: true
+    servedModelName: gemma4-31b-gptq-long
+    aliases:
+      - gemma4-31b-long
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

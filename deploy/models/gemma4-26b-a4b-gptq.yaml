@@ -5,16 +5,17 @@
 # stay at post-abliteration FP16/BF16. Full dense-attention GPTQ produced bad
 # dequantized tensors and repeated-token output on vLLM/ROCm.
 #
-# Primary model in 7900xtx-textgen shared group (priority 200, always-on).
-# Replaces gemma4-e4b-gptq as primary text model.
+# On-demand fallback in 7900xtx-textgen (priority 200, scale-to-zero).
+# Demoted from always-on 2026-04-21 after 13h+ of zero request telemetry —
+# the hybrid artifact was a hack on the path to the proper dense build, and
+# the 31B-gptq finally has a serving slot. Kept in the group with lower
+# priority so it can still come up on explicit alias if needed, but the
+# always-warm lane is 31B now.
 #
-# Context uplift 2026-04-18: raised from 8192 to 16384. The 32K canary
-# (gemma4-26b-a4b-gptq-long, same weights, same node) has been running since
-# 2026-04-16 without runtime regressions. 16K is a conservative halfway step
-# that does not require the canary's long-context kernel fallbacks
-# (disableAiter / rocmCustomPagedAttn). Promotion gate state moved to
-# baseline-16k-validated; a full long-context correctness sweep is still
-# outstanding before raising to 32K on the primary.
+# Context uplift 2026-04-27: the separate gemma4-26b-a4b-gptq-long canary
+# proved the same hybrid artifact at 16K with FP8 KV on 2026-04-26. Promote
+# those runtime knobs to the default 26B alias while keeping this model
+# scale-to-zero and non-primary.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -23,35 +24,68 @@ metadata:
   annotations:
     flexinfer.ai/promotion-gate: quantized-artifact-v1
     flexinfer.ai/promotion-state: baseline-16k-validated
-    flexinfer.ai/promotion-requires: long-context-correctness-sweep-before-32k
+    flexinfer.ai/promotion-validation: passed
+    flexinfer.ai/promotion-evidence: docs/dev/gemma4-rocm-status.md#16k-fp8-kv-proof-2026-04-26
+    flexinfer.ai/promotion-requires: dense-artifact-or-22k-target-proof-before-next-rung
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
+  # Cache PVC migration (2026-04-18): switched from the default 3-replica
+  # Longhorn storage class to single-replica local NVMe to stop
+  # mmap-driven weight loads from stalling on cross-node replica reads
+  # (shard-31 stall incident, services/flexinfer#53). Matches the
+  # qwen35-35b-a3b pattern: local-path + hostPath + SharedPVC.
+  #
+  # PersistentVolumeClaim.spec.storageClassName is immutable, so this
+  # Flux reconcile alone will NOT migrate the existing
+  # gemma4-26b-a4b-gptq-cache PVC. An operator must: (1) scale the
+  # primary Model to zero, (2) delete the existing -cache PVC,
+  # (3) wait for Flux to reconcile the new spec so the controller
+  # recreates the cache PVC with local-path, (4) wait for the
+  # controller cache-copy job to restage the ~17 GiB artifact from the
+  # source PVC (gemma4-26b-a4b-gptq, nvme-1r-gpu), (5) scale back to
+  # minReplicas=1. Full runbook in .loom/ or the follow-up issue; this
+  # manifest change is the durable half of the fix.
   cache:
     strategy: SharedPVC
+    storageClass: local-path
+    hostPath: /var/lib/flexinfer/models
+    size: 50Gi
   gpu:
     vendor: amd
-    count: 1
+    # count=2 is REQUIRED on cblevins-7900xtx. The node exposes the discrete
+    # 7900 XTX AND the Raphael iGPU both as amd.com/gpu (allocatable=2). With
+    # count=1 the AMD device plugin can hand this pod the iGPU slot, and
+    # `hipVisibleDevices="0"` then pins inference onto the iGPU → immediate
+    # "Memory access fault by GPU node-1 ... Page not present" on engine init.
+    # Claim BOTH plugin slots so nothing co-tenants the iGPU; hipVisibleDevices
+    # then deterministically selects the dGPU (plugin-local index 0).
+    # Originally added in 4dae96b9; regressed in 6f6e9a98. Do not lower.
+    count: 2
     vramEstimateMB: 16000
     shared: 7900xtx-textgen
     priority: 200
   serverless:
     enabled: true
-    minReplicas: 1
+    # 2026-04-24: demoted back to cold fallback. The 31B re-quant with
+    # nParallelCalibSamples=8 produced a clean artifact (distinct per-layer
+    # hashes verified), so 31B is warm primary in 7900xtx-textgen again
+    # and this MoE variant goes back to scale-to-zero on-demand.
+    minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 15m
   config:
     quantization: gptq
     dtype: "half"
-    # Hybrid dense-FP16/MoE-GPTQ loads at ~17.7 GiB on gfx1100. At 16K context
-    # the KV cache estimate (5 full-attn layers plus 25 sliding layers at
-    # window=1024) sits well inside the 22.8 GiB practical cap (24 GiB card
-    # × gpuMemoryUtilization=0.95). A full dense GPTQ rebuild is still
-    # required to safely push past 16K on the primary without the canary's
-    # ROCm long-context kernel fallbacks.
+    # Hybrid dense-FP16/MoE-GPTQ loads at ~17.7 GiB. 16K requires FP8 KV on the
+    # single 7900 XTX; the canary proof processed a 14,088-token prompt with
+    # these runtime knobs and returned the expected marker. Do not raise this
+    # default serving limit again until a smaller dense artifact or a 22K target
+    # proof passes the promotion gate.
     maxModelLen: 16384
-    gpuMemoryUtilization: "0.95"
+    gpuMemoryUtilization: "0.98"
+    kvCacheDtype: fp8_e4m3
     maxNumSeqs: 1
     trustRemoteCode: true
     attentionBackend: TRITON_ATTN
@@ -59,8 +93,8 @@ spec:
     enableToolCalling: true
     toolCallParser: gemma4
     reasoningParser: gemma4
-    enablePrefixCaching: true
-    maxNumBatchedTokens: 512
+    enablePrefixCaching: false
+    maxNumBatchedTokens: 160
     disableLogStats: false
     # Disable torch.compile + CUDAGraph: gptq_gemm kernel is "buggy" per
     # vLLM warning, and GELU tanh approximation falls back to 'none' under
@@ -70,8 +104,14 @@ spec:
     # which triggers V1 KV cache page_size_padded assertion. Disabling the
     # hybrid manager unifies all specs to FullAttentionSpec, bypassing it.
     disableHybridKVCacheManager: true
+    # Match the validated 16K canary: force source-backed ROCm fallback kernels
+    # and disable ROCm custom paged attention for this long-context profile.
+    disableAiter: true
+    rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
-    warmPolicy: primary
+    # 2026-04-24: primary → ondemand. 31B re-quant verified clean, so
+    # the MoE is back to on-demand fallback in 7900xtx-textgen.
+    warmPolicy: ondemand
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:

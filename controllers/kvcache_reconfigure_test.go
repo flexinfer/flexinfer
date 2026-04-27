@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/backend"
 )
 
 func kvCacheTestSetup(t *testing.T, utilization string, objects ...runtime.Object) (*ModelReconciler, *aiv1alpha2.Model) {
@@ -118,6 +119,16 @@ func TestKVCacheReconfigure_TriggersOnHighPressure(t *testing.T) {
 	if model.Status.KVCache.ReconfiguredAt == nil {
 		t.Fatal("expected ReconfiguredAt to be set")
 	}
+	if model.Status.KVCache.OriginalConfig == nil {
+		t.Fatal("expected OriginalConfig to be set")
+	}
+	var original map[string]int32
+	if err := json.Unmarshal(model.Status.KVCache.OriginalConfig.Raw, &original); err != nil {
+		t.Fatalf("failed to unmarshal OriginalConfig: %v", err)
+	}
+	if original["maxNumSeqs"] != 8 {
+		t.Fatalf("expected OriginalConfig.maxNumSeqs=8, got %d", original["maxNumSeqs"])
+	}
 	if !model.Status.KVCache.Pressure {
 		t.Fatal("expected Pressure=true")
 	}
@@ -151,13 +162,17 @@ func TestKVCacheReconfigure_RestoresAfterCooldown(t *testing.T) {
 	past := metav1.NewTime(time.Now().Add(-10 * time.Minute))
 	originalSeqs := int32(8)
 	reducedSeqs := int32(4)
+	originalLen := int32(8192)
+	reducedLen := int32(4096)
 	model.Status.KVCache = &aiv1alpha2.KVCacheStatus{
-		Reconfigured:           true,
-		ReconfiguredAt:         &past,
-		OriginalMaxNumSeqs:     &originalSeqs,
-		ReconfiguredMaxNumSeqs: &reducedSeqs,
-		Pressure:               true,
-		LastAction:             "Reconfigured:maxNumSeqs=8->4",
+		Reconfigured:            true,
+		ReconfiguredAt:          &past,
+		OriginalMaxNumSeqs:      &originalSeqs,
+		ReconfiguredMaxNumSeqs:  &reducedSeqs,
+		OriginalMaxModelLen:     &originalLen,
+		ReconfiguredMaxModelLen: &reducedLen,
+		Pressure:                true,
+		LastAction:              "Reconfigured:maxNumSeqs=8->4,maxModelLen=8192->4096",
 	}
 
 	r.reconcileKVCachePressure(context.Background(), model)
@@ -170,6 +185,15 @@ func TestKVCacheReconfigure_RestoresAfterCooldown(t *testing.T) {
 	}
 	if model.Status.KVCache.OriginalMaxNumSeqs != nil {
 		t.Fatal("expected OriginalMaxNumSeqs=nil after restore")
+	}
+	if model.Status.KVCache.ReconfiguredMaxModelLen != nil {
+		t.Fatal("expected ReconfiguredMaxModelLen=nil after restore")
+	}
+	if model.Status.KVCache.OriginalMaxModelLen != nil {
+		t.Fatal("expected OriginalMaxModelLen=nil after restore")
+	}
+	if model.Status.KVCache.OriginalConfig != nil {
+		t.Fatal("expected OriginalConfig=nil after restore")
 	}
 	if model.Status.KVCache.LastAction != "Restored" {
 		t.Fatalf("expected LastAction=Restored, got %s", model.Status.KVCache.LastAction)
@@ -247,6 +271,108 @@ func TestKVCacheReconfigure_MinimumOneSequence(t *testing.T) {
 	}
 	if model.Status.KVCache.ReconfiguredMaxNumSeqs == nil || *model.Status.KVCache.ReconfiguredMaxNumSeqs != 1 {
 		t.Fatalf("expected ReconfiguredMaxNumSeqs=1 (minimum), got %v", model.Status.KVCache.ReconfiguredMaxNumSeqs)
+	}
+}
+
+func TestKVCacheReconfigure_ReduceMaxLenStrategy(t *testing.T) {
+	r, model := kvCacheTestSetup(t, "0.95")
+	model.Spec.KVCache.ReconfigureStrategy = aiv1alpha2.KVCacheReconfigureStrategyReduceMaxLen
+
+	configJSON, _ := json.Marshal(map[string]any{
+		"maxNumSeqs":  8,
+		"maxModelLen": 16384,
+	})
+	model.Spec.Config = &apiextensionsv1.JSON{Raw: configJSON}
+
+	r.reconcileKVCachePressure(context.Background(), model)
+
+	if !model.Status.KVCache.Reconfigured {
+		t.Fatal("expected Reconfigured=true")
+	}
+	if model.Status.KVCache.ReconfiguredMaxNumSeqs != nil {
+		t.Fatalf("expected maxNumSeqs unchanged for ReduceMaxLen, got %v", *model.Status.KVCache.ReconfiguredMaxNumSeqs)
+	}
+	if model.Status.KVCache.OriginalMaxModelLen == nil || *model.Status.KVCache.OriginalMaxModelLen != 16384 {
+		t.Fatalf("expected OriginalMaxModelLen=16384, got %v", model.Status.KVCache.OriginalMaxModelLen)
+	}
+	if model.Status.KVCache.ReconfiguredMaxModelLen == nil || *model.Status.KVCache.ReconfiguredMaxModelLen != 8192 {
+		t.Fatalf("expected ReconfiguredMaxModelLen=8192, got %v", model.Status.KVCache.ReconfiguredMaxModelLen)
+	}
+	if model.Status.KVCache.LastAction != "Reconfigured:maxModelLen=16384->8192" {
+		t.Fatalf("unexpected LastAction: %s", model.Status.KVCache.LastAction)
+	}
+}
+
+func TestKVCacheReconfigure_BothStrategy(t *testing.T) {
+	r, model := kvCacheTestSetup(t, "0.95")
+	model.Spec.KVCache.ReconfigureStrategy = aiv1alpha2.KVCacheReconfigureStrategyBoth
+
+	configJSON, _ := json.Marshal(map[string]any{
+		"maxNumSeqs":  8,
+		"maxModelLen": 8192,
+	})
+	model.Spec.Config = &apiextensionsv1.JSON{Raw: configJSON}
+
+	r.reconcileKVCachePressure(context.Background(), model)
+
+	if model.Status.KVCache.ReconfiguredMaxNumSeqs == nil || *model.Status.KVCache.ReconfiguredMaxNumSeqs != 4 {
+		t.Fatalf("expected ReconfiguredMaxNumSeqs=4, got %v", model.Status.KVCache.ReconfiguredMaxNumSeqs)
+	}
+	if model.Status.KVCache.ReconfiguredMaxModelLen == nil || *model.Status.KVCache.ReconfiguredMaxModelLen != 4096 {
+		t.Fatalf("expected ReconfiguredMaxModelLen=4096, got %v", model.Status.KVCache.ReconfiguredMaxModelLen)
+	}
+	if model.Status.KVCache.LastAction != "Reconfigured:maxNumSeqs=8->4,maxModelLen=8192->4096" {
+		t.Fatalf("unexpected LastAction: %s", model.Status.KVCache.LastAction)
+	}
+	var original map[string]int32
+	if err := json.Unmarshal(model.Status.KVCache.OriginalConfig.Raw, &original); err != nil {
+		t.Fatalf("failed to unmarshal OriginalConfig: %v", err)
+	}
+	if original["maxNumSeqs"] != 8 || original["maxModelLen"] != 8192 {
+		t.Fatalf("unexpected OriginalConfig: %v", original)
+	}
+}
+
+func TestKVCacheReconfigure_MinimumMaxModelLen(t *testing.T) {
+	r, model := kvCacheTestSetup(t, "0.95")
+	model.Spec.KVCache.ReconfigureStrategy = aiv1alpha2.KVCacheReconfigureStrategyReduceMaxLen
+
+	configJSON, _ := json.Marshal(map[string]any{
+		"maxModelLen": 1024,
+	})
+	model.Spec.Config = &apiextensionsv1.JSON{Raw: configJSON}
+
+	r.reconcileKVCachePressure(context.Background(), model)
+
+	if model.Status.KVCache.ReconfiguredMaxModelLen == nil || *model.Status.KVCache.ReconfiguredMaxModelLen != 1024 {
+		t.Fatalf("expected ReconfiguredMaxModelLen=1024 minimum, got %v", model.Status.KVCache.ReconfiguredMaxModelLen)
+	}
+}
+
+func TestApplyKVCacheReconfigureOverrides(t *testing.T) {
+	maxSeqs := int32(4)
+	maxLen := int32(4096)
+	model := &aiv1alpha2.Model{
+		Status: aiv1alpha2.ModelStatus{
+			KVCache: &aiv1alpha2.KVCacheStatus{
+				Reconfigured:            true,
+				ReconfiguredMaxNumSeqs:  &maxSeqs,
+				ReconfiguredMaxModelLen: &maxLen,
+			},
+		},
+	}
+	spec := &backend.ModelSpec{Config: map[string]any{"temperature": 0.7}}
+
+	applyKVCacheReconfigureOverrides(model, spec)
+
+	if got := spec.Config["maxNumSeqs"]; got != float64(4) {
+		t.Fatalf("expected maxNumSeqs override 4, got %v", got)
+	}
+	if got := spec.Config["maxModelLen"]; got != float64(4096) {
+		t.Fatalf("expected maxModelLen override 4096, got %v", got)
+	}
+	if got := spec.Config["temperature"]; got != 0.7 {
+		t.Fatalf("expected existing config to be preserved, got %v", got)
 	}
 }
 

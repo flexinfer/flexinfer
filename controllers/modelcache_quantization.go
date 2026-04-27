@@ -17,12 +17,15 @@ limitations under the License.
 package controllers
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -436,19 +439,41 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		// Image drift detection: if the GPUProfile image was updated while
 		// a quantization job is running, delete the stale job so the
 		// controller recreates it with the correct image on the next reconcile.
-		if resolvedImg := r.resolveCurrentQuantizerImage(ctx, modelCache); resolvedImg != "" {
-			runningImg := quantJob.Spec.Template.Spec.Containers[0].Image
-			if resolvedImg != runningImg {
-				log.Info("Quantizer image drift detected, deleting stale job",
-					"cache", modelCache.Name,
-					"running", runningImg,
-					"resolved", resolvedImg)
-				r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizerImageDrift",
-					fmt.Sprintf("Running image %s != resolved %s, recreating job", runningImg, resolvedImg))
-				if err := r.Delete(ctx, quantJob, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !errors.IsNotFound(err) {
-					return ctrl.Result{}, fmt.Errorf("deleting drifted quantization job: %w", err)
+		//
+		// Only fires within a grace window after job start — past that, we
+		// assume the job is making real progress and that preempting it to
+		// pick up a new image would cost more than it gains. A job that has
+		// been quantizing for hours loses all its per-layer work on a
+		// delete/recreate because GPTQModel doesn't resume mid-run.
+		//
+		// The grace window catches the genuine drift case (deploy raced Flux
+		// reconcile; new image digest should replace the old one) while
+		// protecting long-running jobs from getting blown away by transient
+		// digest flips during subsequent Flux reconciles of the same content.
+		//
+		// Override with the annotation ai.flexinfer/force-image-update: "true"
+		// if an admin really needs to preempt a running job with a new image.
+		withinDriftWindow := true
+		if quantJob.Status.StartTime != nil {
+			withinDriftWindow = time.Since(quantJob.Status.StartTime.Time) < imageDriftGraceWindow
+		}
+		forceUpdate := modelCache.Annotations[AnnotationForceImageUpdate] == "true"
+		if withinDriftWindow || forceUpdate {
+			if resolvedImg := r.resolveCurrentQuantizerImage(ctx, modelCache); resolvedImg != "" {
+				runningImg := quantJob.Spec.Template.Spec.Containers[0].Image
+				if resolvedImg != runningImg {
+					log.Info("Quantizer image drift detected, deleting stale job",
+						"cache", modelCache.Name,
+						"running", runningImg,
+						"resolved", resolvedImg,
+						"forced", forceUpdate)
+					r.Recorder.Event(modelCache, corev1.EventTypeWarning, "QuantizerImageDrift",
+						fmt.Sprintf("Running image %s != resolved %s, recreating job", runningImg, resolvedImg))
+					if err := r.Delete(ctx, quantJob, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !errors.IsNotFound(err) {
+						return ctrl.Result{}, fmt.Errorf("deleting drifted quantization job: %w", err)
+					}
+					return ctrl.Result{RequeueAfter: requeueShort}, nil
 				}
-				return ctrl.Result{RequeueAfter: requeueShort}, nil
 			}
 		}
 
@@ -458,6 +483,17 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		}
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "QuantizationProgress",
 			fmt.Sprintf("Quantization in progress (elapsed %s)", elapsed))
+
+		// Pull the latest "completed layer N" telemetry out of the pod log so
+		// dashboards and alerts can distinguish real per-layer progress from
+		// elapsed-time progress. This is what drives the stall alert (and
+		// lets us tell "we're at 80% time but layer 2/59" apart from "we're
+		// at 80% time and layer 50/59").
+		progressDetail := fmt.Sprintf("elapsed %s", elapsed)
+		if layerIdx := r.readLatestQuantizationLayer(ctx, modelCache.Namespace, quantJob.Name); layerIdx >= 0 {
+			metrics.QuantizationLayerIndex.WithLabelValues(modelCache.Name, modelCache.Namespace).Set(float64(layerIdx))
+			progressDetail = fmt.Sprintf("elapsed %s, layer %d completed", elapsed, layerIdx)
+		}
 
 		// Update time-based progress estimate.
 		deadline := effectiveQuantizationDeadline(modelCache.Spec.Quantization)
@@ -474,7 +510,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			modelCache.Status.Publish = nil
 			modelCache.Status.Quantization.FailureMessage = ""
 			modelCache.Status.Quantization.Progress = &pct
-			modelCache.Status.Quantization.ProgressDetail = fmt.Sprintf("elapsed %s", elapsed)
+			modelCache.Status.Quantization.ProgressDetail = progressDetail
 			modelCache.Status.Quantization.StartedAt = quantJob.Status.StartTime
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				log.Error(err, "Failed to update quantization progress")
@@ -948,4 +984,73 @@ func (r *ModelCacheReconciler) resolveCurrentQuantizerImage(ctx context.Context,
 		gpu.VendorFromLabels(effectiveNodeSelector),
 		gpuArch,
 	)
+}
+
+// completedLayerPattern extracts the layer index from progress details such
+// as `completed layer 34 | gpu_alloc=...`. The index is 1-based in the
+// script (first completion is layer 1); we return it as-is so the metric
+// reads "layer 34 of 59" consistently with what a user sees in the log.
+var completedLayerPattern = regexp.MustCompile(`completed layer (\d+)`)
+
+// readLatestQuantizationLayer tails the quantize pod's log and returns the
+// highest `completed layer N` value it finds, or -1 if none has been
+// emitted yet (job is still in model-load / calibration / first layer).
+//
+// One Kubelet logs call per reconcile (every requeueLong ≈ 30 s). The tail
+// window needs enough headroom that GPTQModel's per-forward-pass "Forward
+// rows N/64" spam and TQDM redraws between `completed layer N` events
+// don't push every completion event out of the window — empirically ~1
+// completion per 140 noise lines, so 2000 covers ~14 layers even under
+// the chattiest segments. We scan oldest→newest and always report the max.
+func (r *ModelCacheReconciler) readLatestQuantizationLayer(ctx context.Context, namespace, jobName string) int {
+	if r.KubeClient == nil {
+		return -1
+	}
+
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
+		return -1
+	}
+
+	best := -1
+	for _, pod := range podList.Items {
+		req := r.KubeClient.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
+			Container: "quantizer",
+			TailLines: func() *int64 { v := int64(2000); return &v }(),
+		})
+		stream, err := req.Stream(ctx)
+		if err != nil {
+			continue
+		}
+		if layer := scanLatestQuantizationLayer(stream); layer > best {
+			best = layer
+		}
+		_ = stream.Close()
+	}
+	return best
+}
+
+// scanLatestQuantizationLayer returns the highest `completed layer N`
+// value found in the given log stream, or -1 if none exists. Split from
+// the pod-fetch path to make the parsing testable without a kubeClient.
+func scanLatestQuantizationLayer(r io.Reader) int {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	best := -1
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Fast path: the detail field contains `completed layer N`. Grab the
+		// match directly rather than JSON-parsing every log line — GPTQModel's
+		// TQDM output is interleaved into the same stream and parses as
+		// non-JSON.
+		match := completedLayerPattern.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+		if n, err := strconv.Atoi(match[1]); err == nil && n > best {
+			best = n
+		}
+	}
+	return best
 }

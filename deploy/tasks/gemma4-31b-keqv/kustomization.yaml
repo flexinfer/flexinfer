@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: flexinfer-system
+
+resources:
+  - job.yaml
+
+# Generate the ConfigMap from postprocess.py in this same directory —
+# kustomize's security boundary is satisfied because the file is inside
+# the kustomization root. The generated name gets a content hash suffix
+# (e.g. gemma4-31b-keqv-script-<hash>), and the Job's configMap ref is
+# rewritten automatically by kustomize to match. That means script edits
+# change the ConfigMap name, which changes the Job spec hash, which
+# prompts Flux to recreate the Job — exactly the cascade we want.
+configMapGenerator:
+  - name: gemma4-31b-keqv-script
+    files:
+      - postprocess.py

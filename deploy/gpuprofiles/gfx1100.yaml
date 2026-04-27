@@ -89,7 +89,17 @@ spec:
     image: registry.harbor.lan/flexinfer/runtime@sha256:04631a8db20fb7c2ea62a9846938b155d031d180c962477e011936765bcfeb88
   containerMemoryGB: 48
   maxGPUMemoryGB: 18
-  maxCPUMemoryGB: 44
+  # Dropped 44 → 24 on 2026-04-21 to unblock gemma4-26b-a4b-gptq-dense
+  # abliteration which was looping OOM on 5930k. The ModelCache overrides
+  # spec.abliteration.maxMemoryGB=28 (kubelet-stability protection after
+  # incident 5099ab17), which caps the container cgroup at 40Gi. The prior
+  # value of 44 told accelerate to target 44Gi CPU offload → cgroup kills
+  # the process at 40 before collection even starts. 24 fits any per-ModelCache
+  # override ≥ 28Gi with 4Gi headroom for Python runtime + activation tensors.
+  # Once !167's controller-side clamp rolls out, this can be revisited upward
+  # for jobs that actually have larger containers available — the clamp is
+  # the safety net, this is the floor.
+  maxCPUMemoryGB: 24
   gpuDriverMemoryMB: 12288
   quantization:
     supported:
@@ -98,5 +108,5 @@ spec:
       - gguf
       - exl2
     images:
-      gptq: registry.harbor.lan/flexinfer/quantizer@sha256:de6b4a3e85135d4711062c961e0cb07f338b084e0dba4cf81437c2cae45cb919
+      gptq: registry.harbor.lan/flexinfer/quantizer@sha256:bf7de58ecbb1fe0167a4989825cb1f0ef40ae01131cebe57b9f9a0d899c12b75
       abliteration: registry.harbor.lan/flexinfer/runtime@sha256:eb977b01cd8751bcc111cbaed5f8b5171f3968eccc783bfcfc25f36cef7f0365

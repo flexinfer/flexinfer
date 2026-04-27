@@ -6,11 +6,22 @@ resources:
   # qwen35-27b-opus-distill.yaml and qwen35-9b.yaml are intentionally disabled
   # for the Gemma4 rollout. Keep the manifests on disk for rollback/reference,
   # but do not reconcile them here.
-  - gemma4-26b-a4b-gptq.yaml        # vLLM GPTQ INT4, MoE 3.8B active, primary (priority 200)
-  - gemma4-31b-gptq.yaml            # vLLM GPTQ INT4, Dense 31B, on-demand (priority 150)
-  # Experimental 32K/TurboQuant canary on the 7900xtx lane. Scale-to-zero keeps
-  # it from interfering with the always-on primary 26B profile until explicitly tested.
-  - gemma4-26b-a4b-gptq-long.yaml   # vLLM GPTQ INT4, 32K TurboQuant canary (priority 50)
+  - gemma4-26b-a4b-gptq.yaml        # vLLM GPTQ INT4, MoE 3.8B active, fallback (priority 200)
+  - gemma4-31b-gptq.yaml            # vLLM GPTQ INT4, Dense 31B, primary (priority 250)
+  # Experimental 16K FP8-KV long-context canary on the 7900xtx lane. Scale-to-zero keeps
+  # it from interfering with the warm primary until explicitly tested.
+  - gemma4-26b-a4b-gptq-long.yaml   # vLLM GPTQ INT4, 16K FP8-KV canary (priority 250)
+  # Experimental 22K FP8-KV canary. Keeps the validated 16K profile intact while
+  # probing the practical upper bound of the current hybrid artifact on 24 GB.
+  - gemma4-26b-a4b-gptq-22k.yaml    # vLLM GPTQ INT4, 22K FP8-KV canary (priority 260)
+  # gemma4-31b-gptq-long.yaml: SUPERSEDED on 2026-04-25. Canary boot OOM'd at
+  # 23.59/24 GiB during weight load — plugin rotation-matrix allocations
+  # (~3.5 GiB) plus 31B INT4 weights (20 GiB) leave no headroom for
+  # activations or KV. Full analysis + math in
+  # docs/dev/gemma4-31b-turboquant-24gb-oom.md. File kept on disk for
+  # historical reference; do not reconcile until one of the unblockers
+  # from that doc lands.
+  # - gemma4-31b-gptq-long.yaml     # vLLM GPTQ INT4 + TurboQuant 16K canary (priority 50)
   # E4B multimodal/turboquant variants disabled during the 26B-A4B rollout.
   # - gemma4-e4b-turboquant.yaml
   # - gemma4-e4b-multimodal.yaml

@@ -78,6 +78,8 @@ const (
 	ConditionModelSchedulable = "Schedulable"
 	// ConditionConfigValid indicates whether the model's config is conflict-free
 	ConditionConfigValid = "ConfigValid"
+	// ConditionPromotionGate indicates whether a gated quantized artifact may be promoted to a warm primary.
+	ConditionPromotionGate = "PromotionGate"
 )
 
 // Condition reasons for Model status
@@ -106,6 +108,14 @@ const (
 	ReasonAliasConflict = "AliasConflict"
 	// ReasonConfigValid - model config has no conflicts
 	ReasonConfigValid = "ConfigValid"
+	// ReasonPromotionGateNotRequired - no promotion gate is configured
+	ReasonPromotionGateNotRequired = "PromotionGateNotRequired"
+	// ReasonPromotionGateCanary - the gated artifact is canary/scale-to-zero only
+	ReasonPromotionGateCanary = "PromotionGateCanary"
+	// ReasonPromotionGateValidated - validation evidence permits primary promotion
+	ReasonPromotionGateValidated = "PromotionGateValidated"
+	// ReasonPromotionGateBlocked - validation evidence is missing for primary promotion
+	ReasonPromotionGateBlocked = "PromotionGateBlocked"
 )
 
 // KVCachePressurePolicy defines how to react to KV-cache pressure.
@@ -118,6 +128,18 @@ const (
 	KVCachePressurePolicyReconfigure KVCachePressurePolicy = "Reconfigure"
 	// KVCachePressurePolicyEvict scales down the lowest-priority replica under pressure.
 	KVCachePressurePolicyEvict KVCachePressurePolicy = "Evict"
+)
+
+// KVCacheReconfigureStrategy defines which backend knobs to reduce under pressure.
+type KVCacheReconfigureStrategy string
+
+const (
+	// KVCacheReconfigureStrategyReduceSeqs reduces vLLM maxNumSeqs.
+	KVCacheReconfigureStrategyReduceSeqs KVCacheReconfigureStrategy = "ReduceSeqs"
+	// KVCacheReconfigureStrategyReduceMaxLen reduces vLLM maxModelLen.
+	KVCacheReconfigureStrategyReduceMaxLen KVCacheReconfigureStrategy = "ReduceMaxLen"
+	// KVCacheReconfigureStrategyBoth reduces both maxNumSeqs and maxModelLen.
+	KVCacheReconfigureStrategyBoth KVCacheReconfigureStrategy = "Both"
 )
 
 // KVCacheSpec configures KV-cache management policies for a model.
@@ -145,6 +167,13 @@ type KVCacheSpec struct {
 	// SwapSpace configures the vLLM --swap-space argument (GiB) for CPU-offloaded KV-cache.
 	// +optional
 	SwapSpace *resource.Quantity `json:"swapSpace,omitempty"`
+
+	// ReconfigureStrategy defines which vLLM config knobs the Reconfigure
+	// pressure policy reduces. Defaults to reducing maxNumSeqs.
+	// +kubebuilder:validation:Enum=ReduceSeqs;ReduceMaxLen;Both
+	// +kubebuilder:default=ReduceSeqs
+	// +optional
+	ReconfigureStrategy KVCacheReconfigureStrategy `json:"reconfigureStrategy,omitempty"`
 
 	// ReconfigureCooldown is how long after a reconfigure action before
 	// the controller considers restoring the original config.
@@ -182,6 +211,11 @@ type KVCacheStatus struct {
 	// +optional
 	ReconfiguredAt *metav1.Time `json:"reconfiguredAt,omitempty"`
 
+	// OriginalConfig captures the original backend config fields that were
+	// overridden by the active reconfigure action.
+	// +optional
+	OriginalConfig *apiextensionsv1.JSON `json:"originalConfig,omitempty"`
+
 	// OriginalMaxNumSeqs is the original maxNumSeqs value before reconfigure,
 	// used to restore the config when pressure subsides.
 	// +optional
@@ -190,6 +224,15 @@ type KVCacheStatus struct {
 	// ReconfiguredMaxNumSeqs is the reduced maxNumSeqs value applied by reconfigure.
 	// +optional
 	ReconfiguredMaxNumSeqs *int32 `json:"reconfiguredMaxNumSeqs,omitempty"`
+
+	// OriginalMaxModelLen is the original maxModelLen value before reconfigure,
+	// used to restore the config when pressure subsides.
+	// +optional
+	OriginalMaxModelLen *int32 `json:"originalMaxModelLen,omitempty"`
+
+	// ReconfiguredMaxModelLen is the reduced maxModelLen value applied by reconfigure.
+	// +optional
+	ReconfiguredMaxModelLen *int32 `json:"reconfiguredMaxModelLen,omitempty"`
 
 	// Evicted indicates the controller has scaled down replicas due to KV-cache pressure.
 	// +optional
@@ -547,6 +590,14 @@ type ModelStatus struct {
 	// +optional
 	Message string `json:"message,omitempty"`
 
+	// LoadingProgressAt is the wall-clock time at which LoadingSubstage or
+	// Message last changed. The proxy reads this to detect stalled loads: if
+	// Phase==Loading and time.Since(LoadingProgressAt) exceeds a threshold
+	// with LoadingSubstage==LoadingWeights, new requests fail fast with 503
+	// instead of being queued indefinitely.
+	// +optional
+	LoadingProgressAt *metav1.Time `json:"loadingProgressAt,omitempty"`
+
 	// Conditions represent the latest observations of the Model's state.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
@@ -812,6 +863,14 @@ func (s *ModelSpec) GetKVCachePressurePolicy() KVCachePressurePolicy {
 		return s.KVCache.PressurePolicy
 	}
 	return KVCachePressurePolicyObserve
+}
+
+// GetKVCacheReconfigureStrategy returns the reconfigure strategy, defaulting to ReduceSeqs.
+func (s *ModelSpec) GetKVCacheReconfigureStrategy() KVCacheReconfigureStrategy {
+	if s.KVCache != nil && s.KVCache.ReconfigureStrategy != "" {
+		return s.KVCache.ReconfigureStrategy
+	}
+	return KVCacheReconfigureStrategyReduceSeqs
 }
 
 // GetKVCacheReconfigureCooldown returns the reconfigure cooldown, defaulting to 5m.

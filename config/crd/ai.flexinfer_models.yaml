@@ -310,6 +310,16 @@ spec:
                       Prevents thrashing between reduced and original settings.
                       Default: 5m.
                     type: string
+                  reconfigureStrategy:
+                    default: ReduceSeqs
+                    description: |-
+                      ReconfigureStrategy defines which vLLM config knobs the Reconfigure
+                      pressure policy reduces. Defaults to reducing maxNumSeqs.
+                    enum:
+                    - ReduceSeqs
+                    - ReduceMaxLen
+                    - Both
+                    type: string
                   swapSpace:
                     anyOf:
                     - type: integer
@@ -894,6 +904,17 @@ spec:
                       detected.
                     format: date-time
                     type: string
+                  originalConfig:
+                    description: |-
+                      OriginalConfig captures the original backend config fields that were
+                      overridden by the active reconfigure action.
+                    x-kubernetes-preserve-unknown-fields: true
+                  originalMaxModelLen:
+                    description: |-
+                      OriginalMaxModelLen is the original maxModelLen value before reconfigure,
+                      used to restore the config when pressure subsides.
+                    format: int32
+                    type: integer
                   originalMaxNumSeqs:
                     description: |-
                       OriginalMaxNumSeqs is the original maxNumSeqs value before reconfigure,
@@ -914,6 +935,11 @@ spec:
                       applied.
                     format: date-time
                     type: string
+                  reconfiguredMaxModelLen:
+                    description: ReconfiguredMaxModelLen is the reduced maxModelLen
+                      value applied by reconfigure.
+                    format: int32
+                    type: integer
                   reconfiguredMaxNumSeqs:
                     description: ReconfiguredMaxNumSeqs is the reduced maxNumSeqs
                       value applied by reconfigure.
@@ -926,6 +952,15 @@ spec:
                 type: object
               lastActiveTime:
                 description: LastActiveTime is when the model last served a request.
+                format: date-time
+                type: string
+              loadingProgressAt:
+                description: |-
+                  LoadingProgressAt is the wall-clock time at which LoadingSubstage or
+                  Message last changed. The proxy reads this to detect stalled loads: if
+                  Phase==Loading and time.Since(LoadingProgressAt) exceeds a threshold
+                  with LoadingSubstage==LoadingWeights, new requests fail fast with 503
+                  instead of being queued indefinitely.
                 format: date-time
                 type: string
               loadingSubstage:

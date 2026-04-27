@@ -257,6 +257,21 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 	})
 
+	t.Run("resume_layers default off", func(t *testing.T) {
+		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
+		if v := findEnv(env, "GPTQ_RESUME_LAYERS"); v != "false" {
+			t.Errorf("GPTQ_RESUME_LAYERS = %q, want false (Phase A: writer off by default)", v)
+		}
+	})
+
+	t.Run("resume_layers env override", func(t *testing.T) {
+		t.Setenv("FLEXINFER_GPTQ_RESUME_LAYERS", "true")
+		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
+		if v := findEnv(env, "GPTQ_RESUME_LAYERS"); v != "true" {
+			t.Errorf("GPTQ_RESUME_LAYERS = %q, want true", v)
+		}
+	})
+
 	t.Run("wrapper script has version check", func(t *testing.T) {
 		script := builder.gptqWrapperScript()
 		if !strings.Contains(script, "mkdir -p /workspace") {
@@ -293,6 +308,31 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 		if !strings.Contains(script, "Patched GPTQModel save path to skip meta-backed tensors") {
 			t.Error("wrapper missing save-path meta tensor patch")
+		}
+	})
+
+	t.Run("wrapper script has save-complete short-circuit", func(t *testing.T) {
+		script := builder.gptqWrapperScript()
+		if !strings.Contains(script, ".save-complete") {
+			t.Error("wrapper missing .save-complete marker reference")
+		}
+		if !strings.Contains(script, "SAVE_COMPLETE=") {
+			t.Error("wrapper missing SAVE_COMPLETE path var")
+		}
+		if !strings.Contains(script, "VERIFY_SAVE_COMPLETE") {
+			t.Error("wrapper missing save-complete verification heredoc")
+		}
+		if !strings.Contains(script, "verified via .save-complete") {
+			t.Error("wrapper missing save-complete verified message")
+		}
+		if !strings.Contains(script, "heuristic: no .save-complete marker") {
+			t.Error("wrapper missing heuristic-fallback message")
+		}
+	})
+
+	t.Run("wrapper script version is v14", func(t *testing.T) {
+		if GPTQScriptVersion != "v14" {
+			t.Errorf("GPTQScriptVersion = %q, want v14 (Phase B adds reload path)", GPTQScriptVersion)
 		}
 	})
 }

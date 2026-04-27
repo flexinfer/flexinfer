@@ -1,6 +1,6 @@
 # Workspace Snapshot
 
-- Generated: 2026-04-09T17:08:16-04:00
+- Generated: 2026-04-25T10:10:29-04:00
 - Root: `/Users/cblevins/workspace/services/flexinfer`
 - Git toplevel: `/Users/cblevins/workspace/services/flexinfer`
 - Platform: `macOS-26.4-arm64-arm-64bit`
@@ -8,14 +8,25 @@
 
 ## Git
 ```
-## master...origin/master
+## fix/gemma4-31b-keqv-lean-image...origin/fix/gemma4-31b-keqv-lean-image [gone]
+ M .loom/00-index.md
+ M .loom/00-mcp-inventory.md
  M .loom/00-workspace-snapshot.md
- M .loom/10-research.md
  M .loom/30-implementation-plan.md
+ M .loom/40-decisions.md
  M .loom/50-worklog.md
-?? .go/
+?? .claude/worktrees/
+?? .loom/gemma4-31b-turboquant-closeout.md
+?? .loom/gemma4-31b-turboquant-memory-fix-plan.md
+?? .loom/gemma4-pipeline-retro.md
 ?? .tmp/
-?? build/scripts/__pycache__/
+?? docs/roadmap-reconciliation-2026-04-19.md
+?? docs/roadmap-reconciliation-2026-04-20.md
+?? docs/roadmap-reconciliation-2026-04-21.md
+?? docs/roadmap-reconciliation-2026-04-22.md
+?? docs/roadmap-reconciliation-2026-04-23.md
+?? docs/roadmap-reconciliation-2026-04-24.md
+?? docs/roadmap-reconciliation-2026-04-25.md
 ```
 
 ### Remotes
@@ -32,7 +43,7 @@ origin	https://gitlab.flexinfer.ai/services/flexinfer.git (push)
 
 ### HEAD
 ```
-fdadc03d fix(download): require complete shard sets before reuse
+2a4292af fix(textgen): revert 31B to ondemand, restore 26B MoE primary
 ```
 
 ## Top-Level Layout
@@ -44,7 +55,6 @@ fdadc03d fix(download): require complete shard sets before reuse
 - `.gemini/`
 - `.git/`
 - `.githooks/`
-- `.go/`
 - `.gocache/`
 - `.golangci-lint-cache/`
 - `.gotmp/`
@@ -117,6 +127,7 @@ fdadc03d fix(download): require complete shard sets before reuse
 - `.loom/30-implementation-plan.md`
 - `.loom/40-decisions.md`
 - `.loom/50-worklog.md`
+- `.loom/60-validation-matrix.md`
 - `.loom/tech-debt-inventory.json`
 - `.loom/tech-debt-plan.md`
 - `.loom/tech-debt-priority.md`
@@ -252,7 +263,9 @@ fdadc03d fix(download): require complete shard sets before reuse
 - `build/Dockerfile.quantizer-gptq`
 - `build/Dockerfile.quantizer-gptq-rocm`
 - `build/Dockerfile.quantizer-gptq-rocm-gfx906`
+- `build/Dockerfile.quantizer-overlay`
 - `build/Dockerfile.runtime`
+- `build/Dockerfile.runtime-patch`
 - `build/Dockerfile.sched`
 - `build/Dockerfile.sched.bin`
 - `build/Dockerfile.unified-gfx906`
@@ -276,6 +289,7 @@ fdadc03d fix(download): require complete shard sets before reuse
 - `build/runtime.yaml`
 - `build/scripts/abliterate.py`
 - `build/scripts/finetune.py`
+- `build/scripts/gemma4_emit_hybrid_from_existing.py`
 - `build/scripts/patch_turboquant_quantizer_gpu_qr.py`
 - `build/scripts/patch_vllm_env_override_torch29.py`
 - `build/scripts/publish_hf.py`
@@ -283,7 +297,10 @@ fdadc03d fix(download): require complete shard sets before reuse
 - `build/scripts/quantize_awq.py`
 - `build/scripts/quantize_gguf.sh`
 - `build/scripts/quantize_gptq.py`
+- `build/scripts/test_validate_quantized_artifact.py`
+- `build/scripts/validate_quantized_artifact.py`
 - `build/scripts/vllm-patched-entrypoint.sh`
+- `build/scripts/vllm_gemma4_moe_gptq_patch.py`
 - `build/scripts/vllm_qwen35_patches.py`
 - `build/scripts/vllm_qwen35_patches_nodiag.py`
 - `build/server-diffusers-cuda.py`
@@ -296,20 +313,1903 @@ fdadc03d fix(download): require complete shard sets before reuse
 - `charts/flexinfer/crds/ai.flexinfer_globalproxies.yaml`
 - `charts/flexinfer/crds/ai.flexinfer_gpugroups.yaml`
 - `charts/flexinfer/crds/ai.flexinfer_gpuprofiles.yaml`
-- `charts/flexinfer/crds/ai.flexinfer_loraadapters.yaml`
-- `charts/flexinfer/crds/ai.flexinfer_modelcaches.yaml`
-- `charts/flexinfer/crds/ai.flexinfer_modelcatalogs.yaml`
-- `charts/flexinfer/crds/ai.flexinfer_modeldeployments.yaml`
-- `charts/flexinfer/crds/ai.flexinfer_models.yaml`
-- `charts/flexinfer/templates/NOTES.txt`
-- `charts/flexinfer/templates/_helpers.tpl`
 - `…`
 
 ## AGENTS.md Files
+- `.claude/worktrees/competent-cannon-8ed3a4/AGENTS.md`
+- `.claude/worktrees/epic-feistel-42e808/AGENTS.md`
+- `.claude/worktrees/heuristic-snyder-a398a5/AGENTS.md`
+- `.claude/worktrees/laughing-kowalevski-e8388b/AGENTS.md`
+- `.claude/worktrees/nice-mclean-339861/AGENTS.md`
+- `.claude/worktrees/strange-brahmagupta-1ca196/AGENTS.md`
+- `.claude/worktrees/vibrant-black-f76761/AGENTS.md`
+- `.worktrees/debt-DEBT-401/AGENTS.md`
+- `.worktrees/debt-DEBT-402/AGENTS.md`
+- `.worktrees/debt-DEBT-403/AGENTS.md`
+- `.worktrees/fix-gemma4-gfx906-quantizer/AGENTS.md`
+- `.worktrees/gemma4-26b-32k-integration/AGENTS.md`
+- `.worktrees/gemma4-26b-32k-runtime-profile/AGENTS.md`
+- `.worktrees/gemma4-long-context-verifier/AGENTS.md`
+- `.worktrees/gemma4-turboquant-runtime-hardening/AGENTS.md`
 - `.worktrees/sdxl-radeonvii-flash-disable/AGENTS.md`
 - `AGENTS.md`
 
 ### AGENTS.md Contents (head)
+
+#### `.claude/worktrees/competent-cannon-8ed3a4/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.claude/worktrees/epic-feistel-42e808/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.claude/worktrees/heuristic-snyder-a398a5/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.claude/worktrees/laughing-kowalevski-e8388b/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.claude/worktrees/nice-mclean-339861/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.claude/worktrees/strange-brahmagupta-1ca196/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.claude/worktrees/vibrant-black-f76761/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.worktrees/debt-DEBT-401/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.worktrees/debt-DEBT-402/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.worktrees/debt-DEBT-403/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.worktrees/fix-gemma4-gfx906-quantizer/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.worktrees/gemma4-26b-32k-integration/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.worktrees/gemma4-26b-32k-runtime-profile/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.worktrees/gemma4-long-context-verifier/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
+
+#### `.worktrees/gemma4-turboquant-runtime-hardening/AGENTS.md`
+```
+# FlexInfer Agents & Runtime Components
+
+## Tracking
+- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+
+
+FlexInfer is split into **six** cooperating executables (all written in Go).
+This document explains what each agent does, how they communicate, and which options you can tune.
+
+| Component | Binary | Runs on | Key responsibility |
+|-----------|--------|---------|--------------------|
+| Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
+| Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
+| Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
+| Scheduler Extender | `flexinfer-sched` | Control-plane | Filters & scores nodes during scheduling |
+| Global Proxy | `flexinfer-global-proxy` | Control-plane | Routes traffic across healthy cluster-local proxies |
+| Metrics Exporter | built-in | All components | Collects Prometheus metrics for all of the above |
+
+---
+
+## 1. Node Agent (`flexinfer-agent`)
+
+### What it detects
+
+The node agent performs comprehensive hardware discovery and applies labels to nodes:
+
+| Label | Example | Notes |
+|-------|---------|-------|
+| `flexinfer.ai/gpu.vendor` | `AMD` / `NVIDIA` | Populated from PCI ID detection |
+| `flexinfer.ai/gpu.vram` | `24Gi` | Total VRAM per GPU in GiB |
+| `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
+| `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
+| `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
+
+The node agent also applies node annotations that the scheduler can use as heuristic inputs:
+
+| Annotation | Example | Notes |
+|-----------|---------|-------|
+| `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
+| `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
+| `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+
+### Implementation Details
+
+- **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
+- **Label Management**: Automatically applies and updates node labels based on detected capabilities
+- **Error Handling**: Robust error handling for hardware detection failures
+- **Caching**: Efficient caching of hardware information to reduce system load
+
+### GPU Detection Sources (gfx1100 + Maxwell focus)
+
+- **NVIDIA**: uses `nvidia-smi` (direct, then `chroot /host nvidia-smi` for glibc compatibility) to get architecture (`sm_52` for Maxwell), VRAM, and utilization.
+- **AMD**: prefers `rocm-smi` + `rocminfo` (direct, then `chroot /host ...` as a fallback). If those utilities are unavailable, it falls back to sysfs VRAM detection and may omit `flexinfer.ai/gpu.arch`.
+
+When multiple GPUs are present, the agent chooses the "best" representative values (highest major `gfx*` generation / highest `sm_*`, and max VRAM) so scheduling stays stable on mixed or heterogeneous nodes.
+
+If the agent cannot list pods in `flexinfer-system`, it will still label hardware but may set telemetry annotations like `flexinfer.ai/gpu-free-memory` or `flexinfer.ai/kv-cache-usage` to `0`, which reduces scheduler placement quality.
+
+### Config flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval` | `30s` | How often to re-probe hardware |
+| `--metrics-port` | `9100` | Prometheus scrape port |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--dry-run` | `false` | Log actions without applying labels |
+| `--node-name` | auto-detected | Override node name for labeling |
+
+---
+
+## 2. Benchmarker (`flexinfer-bench`)
+
+### Execution Model
+
+The benchmarker runs as a Kubernetes Job, executed once per unique model × device class combination:
+
+1. **Model Acquisition**: Pulls the model artifact into the node's shared cache path
+2. **Container Launch**: Starts the specified backend container with configured resources
+3. **Performance Testing**: Executes benchmark runs with configurable parameters
+4. **Result Storage**: Publishes results to a `ConfigMap` for scheduler consumption
+
+### Implementation Features
+
+- **Real Benchmarking**: Runs real inference requests through `flexinfer-proxy` and records tokens/sec into a ConfigMap (used by the scheduler extender)
+- **Extensible Backend**: Designed to support multiple inference backends (Ollama, vLLM, etc.)
+- **Resource Management**: Proper cleanup of test resources after completion
+- **Error Recovery**: Robust error handling and retry logic
+
+### Configuration Options
+
+Available through the `ModelDeployment` CRD spec:
+
+| CRD Field | Default | Purpose |
+|-----------|---------|---------|
+| `spec.benchmark.warmupIterations` | `2` | Number of warm-up runs before measurement |
+| `spec.benchmark.minDuration` | `30s` | Minimum benchmark duration |
+| `spec.benchmark.batchSize` | `128` | Tokens per benchmark batch |
+| `spec.benchmark.iterations` | `5` | Number of measurement iterations |
+
+---
+
+## 3. Controller Manager (`flexinfer-manager`)
+
+### Core Functionality
+
+A comprehensive Kubernetes controller built with `controller-runtime` that provides:
+
+- **CRD Reconciliation**: Complete lifecycle management of `ModelDeployment` resources
+- **Status Management**: Detailed status tracking with conditions and phases
+- **Event Recording**: Comprehensive event logging for debugging and monitoring
+- **Finalizer Handling**: Proper cleanup of dependent resources
+- **Benchmark Orchestration**: Automatic triggering of benchmarking jobs
+
+### Status Tracking
+
+The controller maintains detailed status information:
+
+```go
+type ModelDeploymentStatus struct {
+…
+```
 
 #### `.worktrees/sdxl-radeonvii-flash-disable/AGENTS.md`
 ```
@@ -323,7 +2223,7 @@ FlexInfer is split into **six** cooperating executables (all written in Go).
 This document explains what each agent does, how they communicate, and which options you can tune.
 
 | Component | Binary | Runs on | Key responsibility |
-|-----------|--------|---------|--------------------| 
+|-----------|--------|---------|--------------------|
 | Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
 | Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
 | Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |
@@ -448,7 +2348,7 @@ FlexInfer is split into **six** cooperating executables (all written in Go).
 This document explains what each agent does, how they communicate, and which options you can tune.
 
 | Component | Binary | Runs on | Key responsibility |
-|-----------|--------|---------|--------------------| 
+|-----------|--------|---------|--------------------|
 | Node Agent | `flexinfer-agent` | Every GPU-capable node | Detect hardware & emit labels |
 | Benchmarker | `flexinfer-bench` | Job pod (ephemeral) | Measure tokens/s per model-device pair |
 | Controller Manager | `flexinfer-manager` | Control-plane | Reconciles `Model` (v1alpha2) and legacy v1alpha1 CRDs |

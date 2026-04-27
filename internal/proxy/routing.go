@@ -350,7 +350,11 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 	// window or when max_tokens already fits.
 	if len(bodyBytes) > 0 &&
 		strings.Contains(r.Header.Get("Content-Type"), "application/json") {
-		bodyBytes = p.maybeClampMaxTokens(ctx, resolvedModel, bodyBytes)
+		var originalMaxTokens, clampedMaxTokens int
+		bodyBytes, originalMaxTokens, clampedMaxTokens = p.maybeClampMaxTokensForResponse(ctx, resolvedModel, bodyBytes)
+		if originalMaxTokens >= 0 && clampedMaxTokens >= 0 {
+			w.Header().Set("X-FlexInfer-MaxTokens-Clamped", fmt.Sprintf("%d->%d", originalMaxTokens, clampedMaxTokens))
+		}
 	}
 
 	// Restore body if we read it
@@ -534,14 +538,19 @@ func (p *Proxy) loadOrCreateProxy(targetURL string) (*httputil.ReverseProxy, boo
 	return rp, true
 }
 
-// updateLastAccess updates the LastAccessTime for a model.
+// updateLastAccess updates the last-access timestamp for a model.
 func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 	// Optimization: Don't update on every request to avoid API spam.
 	// Only update if current LastAccessTime is old (> 1 minute ago).
 
 	// Try v1alpha2 Model first
-	m := &aiv1alpha2.Model{}
-	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err == nil {
+	var modelErr error
+	for i := 0; i < 3; i++ {
+		m := &aiv1alpha2.Model{}
+		if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
+			modelErr = err
+			break
+		}
 		if m.Status.LastActiveTime != nil && time.Since(m.Status.LastActiveTime.Time) < lastAccessThrottleInterval {
 			return
 		}
@@ -549,11 +558,19 @@ func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 		now := metav1.Now()
 		m.Status.LastActiveTime = &now
 		if err := p.client.Status().Update(ctx, m); err != nil {
+			if errors.IsConflict(err) {
+				continue
+			}
 			slog.Debug("failed to update LastActiveTime", "model", modelName, "error", err)
 		}
 		return
-	} else if !errors.IsNotFound(err) {
-		slog.Warn("error fetching model for stats update", "model", modelName, "error", err)
+	}
+	if modelErr == nil {
+		slog.Debug("failed to update LastActiveTime after retries", "model", modelName)
+		return
+	}
+	if !errors.IsNotFound(modelErr) {
+		slog.Warn("error fetching model for stats update", "model", modelName, "error", modelErr)
 		return
 	}
 

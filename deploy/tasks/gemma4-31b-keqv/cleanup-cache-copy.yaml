@@ -1,0 +1,101 @@
+# Companion Job: once the keqv postprocess succeeds, delete the stale
+# cache-copy Job so the flexinfer controller creates a fresh one
+# against the now-valid `-keqv/` source path.
+#
+# Background
+# ----------
+#
+# When the Model CR's source path changes, the controller creates a new
+# cache-copy Job. If the source path doesn't exist yet (timing race with
+# the postprocess Job that writes it), cache-copy's pod exits non-zero
+# and the Job hits backoffLimit. Failed Jobs don't self-recover — the
+# controller waits for external signal (Job resource deletion) to try
+# again.
+#
+# This Job closes that loop: waits for the postprocess Job to succeed,
+# then deletes the failed cache-copy. Controller's next reconcile
+# notices cache-copy gone and creates a fresh one; this time the source
+# exists and the copy succeeds.
+#
+# Uses the flexinfer-controller SA which already has rbac to
+# create/delete Jobs in the flexinfer-system namespace.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # v1 → v2 → v3 rename history on 2026-04-23:
+  #   v1: `bitnami/kubectl:1.31` → Docker Hub 404 (Bitnami retired
+  #       versioned tags, only `latest` + SHA digests survive).
+  #   v2: `rancher/kubectl:v1.31.10` → distroless image with only the
+  #       kubectl binary; no `/bin/bash` or even `/bin/sh`. Container
+  #       fails at runc create with `exec: "/bin/bash": stat /bin/bash:
+  #       no such file or directory`.
+  #   v3: `alpine/k8s:1.31.13` → alpine-based, ships `kubectl`, `bash`,
+  #       `sh`, coreutils. Verified via `docker run --rm alpine/k8s:
+  #       1.31.13 which kubectl bash sh`.
+  # Job spec is immutable, so each image swap requires a rename to
+  # force Flux to prune the prior Job and create the next one.
+  name: gemma4-31b-keqv-cache-copy-reset-v4
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/managed-by: flexinfer
+    flexinfer.ai/task: gemma4-31b-keqv-cache-copy-reset
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: flexinfer
+        flexinfer.ai/task: gemma4-31b-keqv-cache-copy-reset
+    spec:
+      restartPolicy: Never
+      # Piggyback on the controller SA; it already has job create/delete
+      # rbac for flexinfer-system.
+      serviceAccountName: flexinfer-controller
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: reset
+          image: alpine/k8s:1.31.13
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              echo "[reset] waiting for gemma4-31b-keqv-postprocess-v4 to complete (up to 15m)"
+              # --for=condition=complete returns non-zero if the condition
+              # isn't met within the timeout; trap that so a not-yet-
+              # created Job doesn't fail the whole reset loop.
+              if ! kubectl wait --for=condition=complete \
+                   job/gemma4-31b-keqv-postprocess-v4 \
+                   -n flexinfer-system --timeout=15m; then
+                echo "[reset] postprocess Job did NOT complete in 15m; skipping reset"
+                exit 0
+              fi
+              echo "[reset] postprocess complete — looking at cache-copy state"
+              cc_succ=$(kubectl get job gemma4-31b-gptq-cache-copy -n flexinfer-system \
+                        -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "")
+              cc_fail=$(kubectl get job gemma4-31b-gptq-cache-copy -n flexinfer-system \
+                        -o jsonpath='{.status.failed}' 2>/dev/null || echo "")
+              echo "[reset] cache-copy: succeeded=$cc_succ failed=$cc_fail"
+              if [ "$cc_succ" = "1" ]; then
+                echo "[reset] cache-copy already succeeded — nothing to do"
+                exit 0
+              fi
+              if [ -z "$cc_fail" ] || [ "$cc_fail" = "0" ]; then
+                echo "[reset] cache-copy is not in failed state — nothing to do"
+                exit 0
+              fi
+              echo "[reset] deleting failed cache-copy Job so the controller regenerates"
+              kubectl delete job gemma4-31b-gptq-cache-copy \
+                -n flexinfer-system --ignore-not-found=true
+              echo "[reset] done; controller will create a fresh cache-copy on next reconcile"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi

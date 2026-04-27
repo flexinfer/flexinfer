@@ -1,3 +1,21 @@
+# Gonzalomo FluxPony SDXL text-to-image on Radeon VII (gfx906).
+#
+# Relocated 2026-04-21 from cblevins-5930k to cblevins-radeonvii so the
+# 5930k gfx1100 slot stays dedicated to the gemma4-26b-a4b-gptq-dense
+# abliteration/quantization pipeline (and future gfx1100 textgen jobs).
+# radeonvii's GPU has been idle since the 31B GPTQ quantize completed
+# 2026-04-21T20:57Z — fine home for image-gen that doesn't need gfx1100
+# flash-attention features.
+#
+# Radeon VII quirks (documented here so operators don't hit them blind):
+#   - gfx906 reports as gfx900 at runtime → HSA_OVERRIDE_GFX_VERSION=9.0.6
+#     is set by the GPUProfile, no per-Model override needed.
+#   - 16GB VRAM — SDXL + cpuOffload fits; do not stack additional models.
+#   - Community PyTorch image (mixa3607/pytorch-gfx906) is the baseline
+#     for any gfx906 runtime. Diffusers image is pre-built per GPUProfile.
+#
+# Co-tenant: sdxl-inpainting-radeonvii shares this group at the same
+# priority so image-gen and image-edit swap on demand on the single GPU.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -13,8 +31,10 @@ spec:
   gpu:
     vendor: amd
     count: 1
-    shared: 5930k-imagegen
-    priority: 100
+    shared: radeonvii-imagegen
+    # Same priority as sdxl-inpainting-radeonvii — first call wins;
+    # the other swaps in on explicit alias traffic.
+    priority: 200
     vramEstimateMB: 12000
   serverless:
     enabled: true
@@ -39,11 +59,10 @@ spec:
     scheduler: "euler"
     negativePrompt: "painting, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, deformed, ugly, blurry, bad anatomy, bad proportions, extra limbs, cloned face, skinny, glitchy, double torso, extra arms, extra hands, mangled fingers, missing lips, ugly face, distorted face, extra legs, anime"
     warmupResolutions: "512x512"
-    warmPolicy: primary
     compilationCache: "true"
     hipVisibleDevices: "0"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-radeonvii
   resources:
     requests:
       cpu: "2"

@@ -2,6 +2,133 @@
 
 Chronological notes while executing the plan (useful for handoffs and debugging).
 
+## 2026-04-25
+
+### Planned 31B TurboQuant memory fix
+
+- What changed:
+  - Added `.loom/gemma4-31b-turboquant-memory-fix-plan.md`.
+  - Updated `.loom/30-implementation-plan.md` with the preferred fix:
+    patch TurboQuant to share/lazily materialize immutable codec primitives
+    across attention layers.
+- Key finding:
+  - Pinned upstream `turboquant-vllm@9d19b87c` constructs `TurboQuantMSE` and
+    moves rotation/codebook tensors onto the target device for every
+    `TQ4AttentionImpl`.
+  - Those primitives depend on head size, bit width, and seed, not layer
+    identity, so sharing them is the lowest-risk memory fix before trying
+    weight re-quantization or hardware changes.
+- Sources:
+  - `git clone --depth 1 https://github.com/Alberto-Codes/turboquant-vllm.git /tmp/turboquant-vllm-plan`
+  - `git fetch --depth 1 origin 9d19b87cef462cf0abd5643f6d052ac5a3bc99b6`
+  - `/tmp/turboquant-vllm-plan/src/turboquant_vllm/vllm/tq4_backend.py:347-392`
+  - `/tmp/turboquant-vllm-plan/src/turboquant_vllm/quantizer.py:93-110`
+  - `build/scripts/patch_turboquant_quantizer_gpu_qr.py`
+
+### MR !192 closeout and durable knowledge capture
+
+- What changed:
+  - Refreshed the Loom context templates and regenerated
+    `.loom/00-workspace-snapshot.md`.
+  - Confirmed current MCP runtime is loom-resource mode rather than the old
+    CLI-only fallback path:
+    - `functions.list_mcp_resources({})` exposed `loom://config`,
+      `loom://servers`, `loom://tools`, `loom://tools/index`, and
+      `loom://health`.
+    - `functions.read_mcp_resource(server="loom", uri="loom://config")`
+      reported profile `full`, `serverCount=47`, `toolCount=504`.
+  - Confirmed `codebase_memory` is healthy through the CLI fallback:
+    `repo_id=flexinfer`, `total_chunks=2831`.
+  - Fetched GitLab remotes and verified MR !192 state with `glab mr view 192`:
+    `state: merged`.
+  - Added `.loom/gemma4-31b-turboquant-closeout.md` and the decision entry above
+    so future agents can recover the 31B TurboQuant ceiling without reading the
+    whole MR thread.
+- Production state after MR !192:
+  - Historical closeout notes referenced `maxModelLen: 2048`, but the current
+    manifest now caps `gemma4-31b-gptq` at `maxModelLen: 1920` because the
+    loaded `keqv` artifact is semantically corrupt.
+  - `gemma4-31b-gptq-long.yaml` is preserved but removed from Flux
+    reconciliation.
+  - The 31B TurboQuant lane is closed on 24 GiB gfx1100.
+  - The next long-context path is the separate
+    `gemma4-26b-a4b-gptq-long` canary.
+- Sources:
+  - `python /Users/cblevins/.codex/skills/plan-loom-core/scripts/init_loom_context.py --root .`
+  - `python /Users/cblevins/.codex/skills/plan-loom-core/scripts/workspace_snapshot.py --root .`
+  - `functions.list_mcp_resources({})`
+  - `functions.list_mcp_resource_templates({})`
+  - `functions.read_mcp_resource(server="loom", uri="loom://config")`
+  - `loom tools call codebase_memory__codebase_stats --args '{"repo_id":"flexinfer"}' --json`
+  - `git fetch --all --prune`
+  - `glab mr view 192`
+  - `git show b64f0502:docs/dev/gemma4-31b-turboquant-24gb-oom.md | nl -ba`
+
+### Gemma4 26B/31B GPTQ + TurboQuant planning pass
+
+- What changed:
+  - Added `.loom/gemma4-26b-31b-gptq-turboquant-plan.md`.
+  - Updated `10-research.md`, `20-product-spec.md`, `30-implementation-plan.md`, and `40-decisions.md` with the current direction.
+  - Refreshed `00-workspace-snapshot.md` with the plan-loom-core snapshot script.
+- Key conclusion:
+  - The correct direction is clean GPTQ artifacts first, TurboQuant second. The current 31B `keqv` artifact is semantically corrupt and must be re-quantized before TurboQuant memory work can prove anything useful.
+- Remaining issues accounted for:
+  - 26B hybrid is coherent but large; 32K requires canary validation.
+  - 26B long canary has a selector risk because it currently allows `gpu.count: 1`.
+  - 31B `keqv` loads at 1920 but collapses to `<pad>` because late-layer tensors repeat.
+  - 31B TurboQuant previously OOMed before KV because plugin state consumed about 3.57 GiB on top of about 20.02 GiB of weights.
+  - TurboQuant is KV/vector compression, not GPTQ weight quantization.
+- Evidence reviewed:
+  - Tavily searches/extracts for Gemma4 official docs, TurboQuant paper/blog, vLLM ROCm docs, vLLM quantized KV docs, ROCm quantization docs, GPTQModel support, and community TurboQuant/Gemma4 reports.
+  - Git history for Gemma4/GPTQ/TurboQuant/gfx1100 work, including commits `bde445f0`, `96d091e3`, `3b6f52b9`, `0fb31ecd`, `078914ae`, and `b64f0502`.
+  - Current manifests under `deploy/models/` and `deploy/modelcaches/`.
+- Tool note:
+  - `codebase_memory` stats reported `total_chunks: 2831`, but semantic search failed with Morph HTTP 521 `origin_down`, so the plan relied on `rg`, direct file reads, git history, and Tavily.
+
+### Rapid iteration 1 — 26B long canary dGPU selector
+
+- Isolate:
+  - The 26B long-context canary still rendered and lived with `spec.gpu.count: 1`, while the working primary 26B profile requires `count: 2` on `cblevins-7900xtx` to avoid the Raphael iGPU slot.
+- Hypothesis:
+  - Matching the primary's `count: 2` selector retires the iGPU-placement failure mode without starting the canary, because the canary remains `minReplicas: 0`.
+- Patch:
+  - Updated `deploy/models/gemma4-26b-a4b-gptq-long.yaml` to set `gpu.count: 2` and document why.
+  - Updated `deploy/models/kustomization.yaml` stale comments from "TurboQuant/priority 50" to "32K long-context/priority 200".
+- Build/prove:
+  - `kubectl kustomize deploy/models` rendered `gemma4-26b-a4b-gptq-long` with `gpu.count: 2`, `config.hipVisibleDevices: "0"`, `minReplicas: 0`, and `shared: 7900xtx-textgen`.
+  - `kubectl diff -f deploy/models/gemma4-26b-a4b-gptq-long.yaml` showed a single intended live spec delta: `gpu.count: 1` -> `2`.
+- Observe:
+  - Live cluster before reconcile: `kubectl -n flexinfer-system get model gemma4-26b-a4b-gptq-long -o jsonpath='{.spec.gpu.count}{"\n"}{.spec.config.hipVisibleDevices}{"\n"}{.spec.serverless.minReplicas}{"\n"}{.status.phase}{"\n"}'` returned `1`, `0`, `0`, `Idle`.
+  - `kubectl diff -k deploy/models` also showed unrelated drift on the primary 26B and 31B objects, so no broad apply was performed.
+- Next:
+  - Land/reconcile this scoped GitOps change when ready.
+  - Next technical blocker after selector safety: add repeated-tensor integrity checks so a corrupt 31B GPTQ artifact cannot advance into `k_eq_v`.
+
+### Rapid iteration 2 — 31B repeated qweight integrity guard
+
+- Isolate:
+  - The current 31B `gptq-w4-g128-keqv` artifact loads but emits `<pad>` because the source GPTQ artifact has repeated projection tensors on late layers. The existing `k_eq_v` task could make a complete-looking artifact from that corrupt source.
+- Hypothesis:
+  - Hashing projection `qweight` tensors by module family and failing when the same qweight appears on different layers catches this corruption class before serving promotion.
+- Patch:
+  - Added a Gemma4 31B repeated-qweight guard to `build/scripts/validate_quantized_artifact.py`.
+  - Added unit tests for duplicate-vs-distinct 31B qweights in `build/scripts/test_validate_quantized_artifact.py`.
+  - Added the same source-integrity guard to `deploy/tasks/gemma4-31b-keqv/postprocess.py` before any `v_proj` duplication.
+  - Re-check source integrity even when `DST_DIR` already contains a complete-looking `keqv` output, so an old bad artifact cannot keep no-oping forever.
+  - Bumped the Flux Job names to `gemma4-31b-keqv-postprocess-v4` and `gemma4-31b-keqv-cache-copy-reset-v4`; updated the reset helper to wait for the v4 postprocess Job.
+- Build/prove:
+  - `python3 -m py_compile build/scripts/validate_quantized_artifact.py build/scripts/test_validate_quantized_artifact.py deploy/tasks/gemma4-31b-keqv/postprocess.py`
+  - `python3 build/scripts/test_validate_quantized_artifact.py` -> 11 tests OK.
+  - Synthetic duplicate source with an already-complete destination returned `dup_existing_dst_rc=4` and logged `source integrity failed: repeated qweight tensors across layers: self_attn.q_proj layers=[0, 1]`.
+  - Synthetic distinct source with an already-complete destination returned `ok_existing_dst_rc=0` and logged `DST already complete... GitOps-safe no-op`.
+  - `kubectl kustomize deploy/tasks/gemma4-31b-keqv` renders `gemma4-31b-keqv-postprocess-v4`, `gemma4-31b-keqv-cache-copy-reset-v4`, and the new source-integrity code.
+- Observe:
+  - Live cluster still has only `gemma4-31b-keqv-postprocess-v3` complete; no Flux reconcile or hot apply was performed in this iteration.
+  - `kubectl diff -k deploy/tasks/gemma4-31b-keqv` shows v4 Job/ConfigMap additions, as expected.
+- Next:
+  - Land the GitOps changes, reconcile the task kustomization, and expect the v4 postprocess Job to fail on the current corrupt source. That failure is useful evidence confirming the guard caught the known bad artifact.
+  - After the guard lands, the next technical blocker is a clean 31B re-quant with lower corruption risk and the same guard in front of `k_eq_v`.
+
 ## 2026-02-19
 
 - What changed:

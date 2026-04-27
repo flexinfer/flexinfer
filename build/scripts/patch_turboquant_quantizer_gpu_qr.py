@@ -363,9 +363,174 @@ def _parse_pytorch_codec_env() -> bool:
     )
 
 
+def _parse_share_primitives_env() -> bool:
+    \"\"\"Parse ``TQ4_SHARE_PRIMITIVES`` environment variable.\"\"\"
+    return os.environ.get(\"TQ4_SHARE_PRIMITIVES\", \"\").lower() in (
+        \"1\",
+        \"true\",
+        \"yes\",
+    )
+
+
+_TQ4_PRIMITIVE_CACHE: dict[
+    tuple[str, int | None, int, int, int, int, bool], dict[str, torch.Tensor | None]
+] = {}
+
+
+def _tq4_primitive_cache_key(
+    device: torch.device,
+    head_size: int,
+    k_bits: int,
+    v_bits: int,
+    seed: int,
+    use_pytorch_codec: bool,
+) -> tuple[str, int | None, int, int, int, int, bool]:
+    device_index = device.index
+    if device_index is None and device.type == \"cuda\" and torch.cuda.is_available():
+        device_index = torch.cuda.current_device()
+    return (device.type, device_index, head_size, k_bits, v_bits, seed, use_pytorch_codec)
+
+
+def _tq4_build_primitives(
+    device: torch.device,
+    head_size: int,
+    k_bits: int,
+    v_bits: int,
+    seed: int,
+    use_pytorch_codec: bool,
+) -> dict[str, torch.Tensor | None]:
+    k_quantizer = TurboQuantMSE(head_size, k_bits, seed=seed)
+    v_quantizer = (
+        k_quantizer
+        if v_bits == k_bits
+        else TurboQuantMSE(head_size, v_bits, seed=seed)
+    )
+
+    rotation = k_quantizer.rotation.to(device)
+    rot_t_even = None
+    rot_t_odd = None
+    if not use_pytorch_codec:
+        rot_t = rotation.T.contiguous()
+        rot_t_even = rot_t[:, 0::2].contiguous()
+        rot_t_odd = rot_t[:, 1::2].contiguous()
+
+    return {
+        \"rotation\": rotation,
+        \"rot_t_even\": rot_t_even,
+        \"rot_t_odd\": rot_t_odd,
+        \"k_centroids\": k_quantizer.codebook.centroids.to(device),
+        \"k_boundaries\": k_quantizer.codebook.boundaries.to(device),
+        \"v_centroids\": v_quantizer.codebook.centroids.to(device),
+        \"v_boundaries\": v_quantizer.codebook.boundaries.to(device),
+    }
+
+
+def _tq4_get_primitives(
+    device: torch.device,
+    head_size: int,
+    k_bits: int,
+    v_bits: int,
+    seed: int,
+    use_pytorch_codec: bool,
+) -> dict[str, torch.Tensor | None]:
+    key = _tq4_primitive_cache_key(
+        device, head_size, k_bits, v_bits, seed, use_pytorch_codec
+    )
+    primitives = _TQ4_PRIMITIVE_CACHE.get(key)
+    if primitives is None:
+        primitives = _tq4_build_primitives(
+            device, head_size, k_bits, v_bits, seed, use_pytorch_codec
+        )
+        _TQ4_PRIMITIVE_CACHE[key] = primitives
+        logger.info(
+            \"TQ4 primitive cache miss: device=%s head_size=%d k_bits=%d v_bits=%d pytorch_codec=%s\",
+            device,
+            head_size,
+            k_bits,
+            v_bits,
+            use_pytorch_codec,
+        )
+    else:
+        logger.info(
+            \"TQ4 primitive cache hit: device=%s head_size=%d k_bits=%d v_bits=%d pytorch_codec=%s\",
+            device,
+            head_size,
+            k_bits,
+            v_bits,
+            use_pytorch_codec,
+        )
+    return primitives
+
+
 # ---------------------------------------------------------------------------
 # KV cache spec (3c.1)
 # ---------------------------------------------------------------------------
+"""
+
+PRIMITIVES_OLD = """        # TQ4 compression primitives (deterministic from seed, shared across layers)
+        # Rotation matrix is dim-dependent only (not bits-dependent), so shared.
+        k_quantizer = TurboQuantMSE(head_size, k_bits, seed=TQ4_SEED)
+        v_quantizer = (
+            k_quantizer
+            if v_bits == k_bits
+            else TurboQuantMSE(head_size, v_bits, seed=TQ4_SEED)
+        )
+
+        # Eagerly move primitives to the target device (D7 mod 5).
+        # FlashAttentionImpl.__init__ doesn't expose device, but
+        # vLLM's global config is available during model construction.
+        from vllm.config import get_current_vllm_config_or_none
+
+        vllm_config = get_current_vllm_config_or_none()
+        device = (
+            vllm_config.device_config.device
+            if vllm_config is not None
+            else torch.device("cpu")
+        )
+
+        # Shared rotation (dim-dependent only, same seed → identical matrix)
+        self._tq4_rotation = k_quantizer.rotation.to(device)  # (D, D) fp32
+        # Pre-split rotation.T for fused compress kernel (contiguous loads)
+        rot_t = k_quantizer.rotation.T.contiguous()
+        self._tq4_rot_T_even = rot_t[:, 0::2].contiguous().to(device)  # (D, D//2) fp32
+        self._tq4_rot_T_odd = rot_t[:, 1::2].contiguous().to(device)  # (D, D//2) fp32
+
+        # Per-component codebooks (may differ when k_bits != v_bits)
+        self._k_centroids = k_quantizer.codebook.centroids.to(device)
+        self._k_boundaries = k_quantizer.codebook.boundaries.to(device)
+        self._v_centroids = v_quantizer.codebook.centroids.to(device)
+        self._v_boundaries = v_quantizer.codebook.boundaries.to(device)
+"""
+
+PRIMITIVES_NEW = """        # Eagerly move primitives to the target device (D7 mod 5).
+        # FlashAttentionImpl.__init__ doesn't expose device, but
+        # vLLM's global config is available during model construction.
+        from vllm.config import get_current_vllm_config_or_none
+
+        vllm_config = get_current_vllm_config_or_none()
+        device = (
+            vllm_config.device_config.device
+            if vllm_config is not None
+            else torch.device("cpu")
+        )
+
+        use_pytorch_codec = _parse_pytorch_codec_env()
+        if _parse_share_primitives_env():
+            primitives = _tq4_get_primitives(
+                device, head_size, k_bits, v_bits, TQ4_SEED, use_pytorch_codec
+            )
+        else:
+            primitives = _tq4_build_primitives(
+                device, head_size, k_bits, v_bits, TQ4_SEED, use_pytorch_codec
+            )
+
+        self._tq4_rotation = primitives["rotation"]  # (D, D) fp32
+        self._tq4_rot_T_even = primitives["rot_t_even"]  # (D, D//2) fp32 or None
+        self._tq4_rot_T_odd = primitives["rot_t_odd"]  # (D, D//2) fp32 or None
+        self._k_centroids = primitives["k_centroids"]
+        self._k_boundaries = primitives["k_boundaries"]
+        self._v_centroids = primitives["v_centroids"]
+        self._v_boundaries = primitives["v_boundaries"]
 """
 
 CODEC_METHODS_OLD = """        logger.info(
@@ -904,6 +1069,7 @@ def patch_backend(target: pathlib.Path) -> bool:
         (CACHE_HELPER_OLD, CACHE_HELPER_NEW, "cache helper"),
         (CODEC_ENV_OLD, CODEC_ENV_NEW, "codec env"),
         (BACKEND_CLASS_OLD, BACKEND_CLASS_NEW, "head-size support"),
+        (PRIMITIVES_OLD, PRIMITIVES_NEW, "shared primitives"),
         (SPEC_OLD, SPEC_NEW, "spec page size"),
         (SHAPE_OLD, SHAPE_NEW, "kv cache shape"),
         (TOTAL_BYTES_OLD, TOTAL_BYTES_NEW, "payload/row bytes"),

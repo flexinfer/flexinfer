@@ -9,7 +9,14 @@ All configuration is read from environment variables set by the controller:
 
 # Bumped when controller-side patches change. The wrapper script checks this
 # against GPTQScriptVersion in gptq.go and aborts on mismatch.
-FLEXINFER_SCRIPT_VERSION = "v12"
+#
+# v13: .save-complete manifest marks save-phase completion; per-layer state
+# writer (flag-gated by GPTQ_RESUME_LAYERS) persists quantized layer tensors
+# to the PVC so future resume work can skip already-quantized layers.
+# v14: Phase B — reload cached layers before model.quantize() so the looper's
+# find_modules filter naturally skips them. Adds write dedup across the
+# multiple layer_complete fires per layer in v5.x GPTQModel.
+FLEXINFER_SCRIPT_VERSION = "v14"
 import copy
 import gc
 import json
@@ -27,6 +34,12 @@ POLICY_STATE_FILE = ".flexinfer-gptq-policy.json"
 CHECKPOINT_DIR_NAME = ".flexinfer-gptq-cache"
 CHECKPOINT_STATE_FILE = "checkpoint.json"
 CALIBRATION_CACHE_FILE = "calibration-examples.pt"
+# Per-layer quantized-state cache layout (Phase A — writer only).
+LAYER_CACHE_DIR_NAME = "layers"
+LAYER_CACHE_MANIFEST = "manifest.json"
+# Written by Python into save_tmp right before promotion; bash wrapper trusts
+# it as the "save-phase finished cleanly" signal on subsequent runs.
+SAVE_COMPLETE_MARKER = ".save-complete"
 DEFAULT_MODEL_POLICIES = [
     {
         "name": "qwen3.5-text",
@@ -287,10 +300,14 @@ def _dense_gptq_cosine_threshold():
 
 
 def _dense_gptq_policy():
-    raw = os.environ.get(
-        "DENSE_GPTQ_POLICY",
-        os.environ.get("GEMMA4_DENSE_GPTQ_POLICY", "fallback"),
-    ).strip().lower()
+    raw = (
+        os.environ.get(
+            "DENSE_GPTQ_POLICY",
+            os.environ.get("GEMMA4_DENSE_GPTQ_POLICY", "fallback"),
+        )
+        .strip()
+        .lower()
+    )
     if raw in {"fallback", "fp16", "source", "safe"}:
         return "fallback"
     if raw in {"validate", "validated", "allow", "gptq"}:
@@ -310,13 +327,21 @@ def _dequantize_gptq_linear(save_dir, weight_map, prefix, zero_point_add):
     """Dequantize a GPTQ linear layer to HF .weight layout [out, in]."""
     import torch
 
-    qweight = _load_safetensor(save_dir, weight_map, f"{prefix}.qweight").to(torch.int32)
-    scales = _load_safetensor(save_dir, weight_map, f"{prefix}.scales").to(torch.float32)
+    qweight = _load_safetensor(save_dir, weight_map, f"{prefix}.qweight").to(
+        torch.int32
+    )
+    scales = _load_safetensor(save_dir, weight_map, f"{prefix}.scales").to(
+        torch.float32
+    )
     qzeros = None
     if f"{prefix}.qzeros" in weight_map:
-        qzeros = _load_safetensor(save_dir, weight_map, f"{prefix}.qzeros").to(torch.int32)
+        qzeros = _load_safetensor(save_dir, weight_map, f"{prefix}.qzeros").to(
+            torch.int32
+        )
     if f"{prefix}.g_idx" in weight_map:
-        group_idx = _load_safetensor(save_dir, weight_map, f"{prefix}.g_idx").to(torch.long)
+        group_idx = _load_safetensor(save_dir, weight_map, f"{prefix}.g_idx").to(
+            torch.long
+        )
     else:
         group_size = env_int("GROUP_SIZE", 128)
         input_size = qweight.shape[0] * 8
@@ -332,9 +357,9 @@ def _dequantize_gptq_linear(save_dir, weight_map, prefix, zero_point_add):
     if qzeros is not None and qzeros.numel() > 0:
         zero_points = torch.empty((qzeros.shape[0], output_size), dtype=torch.float32)
         for i in range(pack_factor):
-            zero_points[:, i::pack_factor] = (
-                ((qzeros >> (4 * i)) & 0xF).to(torch.float32) + zero_point_add
-            )
+            zero_points[:, i::pack_factor] = ((qzeros >> (4 * i)) & 0xF).to(
+                torch.float32
+            ) + zero_point_add
         unpacked = unpacked - zero_points[group_idx]
     else:
         unpacked = unpacked - 8.0
@@ -350,7 +375,9 @@ def _cosine_similarity(a, b):
     return torch.nn.functional.cosine_similarity(a, b, dim=0).item()
 
 
-def _validate_dense_gptq_family(save_dir, source_dir, target_weight_map, source_weight_map, family, prefixes):
+def _validate_dense_gptq_family(
+    save_dir, source_dir, target_weight_map, source_weight_map, family, prefixes
+):
     """Validate all layers for one dense module family against source weights."""
     threshold = _dense_gptq_cosine_threshold()
     zero_point_add = _dense_gptq_zero_point_add()
@@ -492,7 +519,9 @@ def emit_gemma4_moe_hybrid_gptq(save_dir, model_dir):
             )
             continue
         if family not in quant_prefixes_by_family:
-            print(f"Gemma4 dense GPTQ family {family} has no qweight keys; restoring source")
+            print(
+                f"Gemma4 dense GPTQ family {family} has no qweight keys; restoring source"
+            )
             continue
         if len(quant_prefixes_by_family[family]) != len(prefixes):
             print(
@@ -530,7 +559,8 @@ def emit_gemma4_moe_hybrid_gptq(save_dir, model_dir):
             target_by_layer.setdefault(layer_match.group(1), shard_name)
 
     new_weight_map = {
-        key: shard_name for key, shard_name in target_weight_map.items()
+        key: shard_name
+        for key, shard_name in target_weight_map.items()
         if key not in keys_to_drop
     }
 
@@ -570,7 +600,9 @@ def emit_gemma4_moe_hybrid_gptq(save_dir, model_dir):
                     source_open[source_shard] = stack.enter_context(
                         safe_open(os.path.join(model_dir, source_shard), framework="pt")
                     )
-                updated[key] = source_open[source_shard].get_tensor(key).to(torch.float16)
+                updated[key] = (
+                    source_open[source_shard].get_tensor(key).to(torch.float16)
+                )
             save_file(updated, target_path)
 
     if target_index_path:
@@ -1357,7 +1389,24 @@ else:
     dataset_name, dataset_config = dataset_raw, None
 hessian_repair_enabled = env_bool("GPTQ_HESSIAN_REPAIR", True)
 hessian_sanitize_nonfinite = env_bool("GPTQ_HESSIAN_SANITIZE_NONFINITE", True)
-hessian_diag_floor_scale = env_float("GPTQ_HESSIAN_DIAG_FLOOR_SCALE", 1e-6)
+# Mode "mean" scales floor proportionally to mean(|diag|), so floor attempts are
+# numerically comparable to damp*mean and each attempt shifts conditioning
+# meaningfully. "abs_max" preserves the legacy behavior (floor is a tiny
+# fraction of max|diag|), which is near-useless when mean and max are within
+# an order of magnitude.
+hessian_diag_floor_mode = (
+    os.environ.get("GPTQ_HESSIAN_DIAG_FLOOR_MODE", "mean").strip().lower() or "mean"
+)
+if hessian_diag_floor_mode not in ("mean", "abs_max"):
+    print(
+        f"WARN: unknown GPTQ_HESSIAN_DIAG_FLOOR_MODE={hessian_diag_floor_mode!r}; "
+        "falling back to mean"
+    )
+    hessian_diag_floor_mode = "mean"
+_floor_scale_default = 0.01 if hessian_diag_floor_mode == "mean" else 1e-6
+hessian_diag_floor_scale = env_float(
+    "GPTQ_HESSIAN_DIAG_FLOOR_SCALE", _floor_scale_default
+)
 hessian_floor_multiplier = env_float("GPTQ_HESSIAN_FLOOR_MULTIPLIER", 10.0)
 hessian_max_floor_attempts = env_int("GPTQ_HESSIAN_MAX_FLOOR_ATTEMPTS", 6)
 hessian_clamp_abs = env_float("GPTQ_HESSIAN_CLAMP_ABS", 0.0)
@@ -1367,6 +1416,8 @@ qcfg_damp_auto_increment_override = os.environ.get(
 ).strip()
 gptq_resume_enabled = env_bool("GPTQ_RESUME", True)
 gptq_calibration_cache_enabled = env_bool("GPTQ_CALIBRATION_CACHE", True)
+# Phase A: writer-only for per-layer quantized state. Reload+skip path is Phase B.
+gptq_resume_layers_enabled = env_bool("GPTQ_RESUME_LAYERS", False)
 quantize_device_map = os.environ.get("QUANTIZE_DEVICE_MAP", "cpu")
 
 emit_progress(
@@ -1438,6 +1489,433 @@ def calibration_cache_fingerprint():
     }
 
 
+def _gptqmodel_version():
+    try:
+        return importlib_metadata.version("gptqmodel")
+    except Exception:
+        return "unknown"
+
+
+def resume_config_fingerprint():
+    """Correctness gate for per-layer resume cache.
+
+    Any change that alters the numerical output of a single layer's
+    quantization must show up here. If a cached layer's fingerprint doesn't
+    match the current run's fingerprint, the cache is invalidated.
+    """
+    import hashlib
+
+    payload = {
+        "script_version": FLEXINFER_SCRIPT_VERSION,
+        "gptqmodel_version": _gptqmodel_version(),
+        "bits": bits,
+        "group_size": group_size,
+        "sym": sym,
+        "desc_act": desc_act,
+        "damp_percent_override": qcfg_damp_percent_override,
+        "damp_auto_increment_override": qcfg_damp_auto_increment_override,
+        "hessian_repair": hessian_repair,
+        "hessian_sanitize_nonfinite": hessian_sanitize_nonfinite,
+        "hessian_diag_floor_mode": hessian_diag_floor_mode,
+        "hessian_diag_floor_scale": hessian_diag_floor_scale,
+        "hessian_floor_multiplier": hessian_floor_multiplier,
+        "hessian_max_floor_attempts": hessian_max_floor_attempts,
+        "hessian_clamp_abs": hessian_clamp_abs,
+        "dynamic_exclusion": dynamic_exclusion,
+        "calibration": calibration_cache_fingerprint(),
+    }
+    serialized = json.dumps(json_safe(payload), sort_keys=True)
+    return {
+        "hash": hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
+        "payload": payload,
+    }
+
+
+def layer_cache_dir(model_dir):
+    return os.path.join(checkpoint_dir(model_dir), LAYER_CACHE_DIR_NAME)
+
+
+def layer_cache_manifest_path(model_dir):
+    return os.path.join(layer_cache_dir(model_dir), LAYER_CACHE_MANIFEST)
+
+
+def load_layer_cache_manifest(model_dir):
+    path = layer_cache_manifest_path(model_dir)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+        if isinstance(data, dict) and isinstance(data.get("layers"), list):
+            return data
+    except Exception as exc:
+        print(f"WARN: failed to read layer cache manifest: {exc}")
+    return None
+
+
+def write_layer_cache_manifest(model_dir, manifest):
+    path = layer_cache_manifest_path(model_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w") as fh:
+        json.dump(json_safe(manifest), fh, indent=2, sort_keys=True)
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())
+        except OSError:
+            pass
+    os.replace(tmp_path, path)
+
+
+def reset_layer_cache(model_dir, reason):
+    """Remove the per-layer cache directory (manifest + layer files)."""
+    cache = layer_cache_dir(model_dir)
+    if not os.path.isdir(cache):
+        return
+    try:
+        shutil.rmtree(cache)
+        print(f"Cleared layer cache ({reason})")
+        emit_progress(
+            "quantization_layer_cache_reset", phase="quantizing", reason=reason
+        )
+    except Exception as exc:
+        print(f"WARN: failed to clear layer cache: {exc}")
+
+
+def gc_orphan_layer_files(model_dir):
+    """Delete layer-*.safetensors files not referenced by the manifest.
+
+    The manifest is the source of truth — any file left behind by a crash
+    between "write tensor file" and "update manifest" is an orphan and
+    costs disk without ever being consulted on reload.
+    """
+    cache = layer_cache_dir(model_dir)
+    if not os.path.isdir(cache):
+        return
+    manifest = load_layer_cache_manifest(model_dir) or {}
+    referenced = {
+        entry.get("path") for entry in manifest.get("layers", []) if entry.get("path")
+    }
+    referenced.add(LAYER_CACHE_MANIFEST)
+    for name in os.listdir(cache):
+        if name.startswith(".") or name in referenced:
+            continue
+        if not name.startswith("layer-") or not name.endswith(".safetensors"):
+            continue
+        try:
+            os.remove(os.path.join(cache, name))
+            print(f"Removed orphan layer file: {name}")
+        except OSError as exc:
+            print(f"WARN: failed to remove orphan {name}: {exc}")
+
+
+# ── Per-layer resume: reload side (Phase B) ────────────────────────────
+#
+# Phase A writes packed int4 state per completed layer. Phase B swaps those
+# tensors back into the live model BEFORE model.quantize() runs so the
+# per-layer looper's find_modules() filter naturally skips them (it only
+# walks nn.Linear/Conv1D/Conv2d — BaseQuantLinear children return an empty
+# subset and hit the loop body's `if len(subset) == 0: continue`). No
+# upstream monkey-patch is required for basic skip behavior; see v5.x probe
+# findings for the architectural invariants we rely on.
+
+
+def _find_quant_linear_class():
+    """Locate a concrete QuantLinear class to use at reload time.
+
+    Preference order: TorchQuantLinear (pure PyTorch, ubiquitous, no hw
+    dependencies). Returns None if no suitable class is importable — the
+    caller must treat this as "resume unavailable, fall back to full
+    re-quantize".
+    """
+    candidates = [
+        ("gptqmodel.nn_modules.qlinear.torch", "TorchQuantLinear"),
+    ]
+    for module_path, class_name in candidates:
+        try:
+            mod = __import__(module_path, fromlist=[class_name])
+            cls = getattr(mod, class_name, None)
+            if cls is not None:
+                return cls
+        except Exception:
+            continue
+    return None
+
+
+def _group_submodule_tensors(layer_tensors):
+    """Group a layer state_dict by submodule name.
+
+    Input: {"self_attn.q_proj.qweight": T, "self_attn.q_proj.scales": T, ...}
+    Output: {"self_attn.q_proj": {"qweight": T, "scales": T, ...}, ...}
+    """
+    groups = {}
+    for full_name, tensor in layer_tensors.items():
+        parts = full_name.rsplit(".", 1)
+        if len(parts) != 2:
+            continue
+        mod_path, buf_name = parts
+        if buf_name not in ("qweight", "qzeros", "scales", "g_idx", "bias"):
+            continue
+        groups.setdefault(mod_path, {})[buf_name] = tensor
+    return groups
+
+
+def _resolve_submodule_parent(root, dotted_name):
+    """Walk root.a.b.c and return (root.a.b, "c") suitable for setattr."""
+    parts = dotted_name.split(".")
+    parent = root
+    for p in parts[:-1]:
+        parent = getattr(parent, p)
+    return parent, parts[-1]
+
+
+def _build_quant_linear_shell(src_linear, buffers, q_cls):
+    """Construct a QuantLinear and hydrate its packed buffers.
+
+    Takes the source nn.Linear (for shape metadata) plus a dict of
+    pre-packed tensors. Returns a ready-to-serve QuantLinear instance.
+    Raises on mismatch — caller catches and resets cache.
+    """
+    import torch
+
+    in_features = src_linear.in_features
+    out_features = src_linear.out_features
+    has_bias = src_linear.bias is not None
+    pack_dtype = buffers["qweight"].dtype
+
+    ctor_kwargs = dict(
+        bits=bits,
+        group_size=group_size,
+        desc_act=desc_act,
+        sym=sym,
+        in_features=in_features,
+        out_features=out_features,
+        bias=has_bias,
+        pack_dtype=pack_dtype,
+        backend=None,
+        adapter=None,
+        register_buffers=True,
+    )
+    try:
+        q = q_cls(**ctor_kwargs)
+    except TypeError:
+        # Older / newer signatures may not accept every kwarg — retry with
+        # the minimum viable set.
+        q = q_cls(
+            bits=bits,
+            group_size=group_size,
+            desc_act=desc_act,
+            sym=sym,
+            in_features=in_features,
+            out_features=out_features,
+            bias=has_bias,
+        )
+
+    with torch.no_grad():
+        if (
+            not hasattr(q, "qweight")
+            or not hasattr(q, "qzeros")
+            or not hasattr(q, "scales")
+        ):
+            raise RuntimeError(
+                f"QuantLinear missing required buffers: "
+                f"qweight={hasattr(q, 'qweight')} qzeros={hasattr(q, 'qzeros')} scales={hasattr(q, 'scales')}"
+            )
+        q.qweight.copy_(buffers["qweight"])
+        q.qzeros.copy_(buffers["qzeros"])
+        q.scales.copy_(buffers["scales"])
+        if "g_idx" in buffers and hasattr(q, "g_idx") and q.g_idx is not None:
+            q.g_idx.copy_(buffers["g_idx"])
+        if has_bias and "bias" in buffers and hasattr(q, "bias") and q.bias is not None:
+            q.bias.copy_(buffers["bias"])
+
+    # post_init sets up dequant helpers (wf_unsqueeze_*), triggers torch.compile.
+    post_init = getattr(q, "post_init", None)
+    if callable(post_init):
+        try:
+            post_init()
+        except Exception as exc:
+            # post_init failure is non-fatal — the module will lazy-init on
+            # first forward. Log and continue.
+            print(f"WARN: QuantLinear.post_init failed (non-fatal): {exc}")
+    return q
+
+
+def _resolve_layer_list(gptq_model):
+    """Return the decoder-layer nn.ModuleList for this model, or None."""
+    extract = getattr(gptq_model, "extract_layers_node", None)
+    if not callable(extract):
+        return None
+    nodes = extract() or []
+    if not nodes:
+        return None
+    layers_path = nodes[0]
+    current = getattr(gptq_model, "model", None)
+    if current is None:
+        return None
+    try:
+        for part in layers_path.split("."):
+            current = getattr(current, part)
+        return current
+    except AttributeError:
+        return None
+
+
+def reload_quantized_layers(gptq_model, model_dir, fingerprint, total_layers):
+    """Rehydrate completed layers from disk cache into the live model.
+
+    Returns the sorted list of layer indices that were successfully loaded.
+    On ANY error, resets the cache and returns an empty list so the caller
+    can proceed with full re-quantization. Never raises — resume is a
+    best-effort optimization and must never block the happy path.
+
+    Idempotent: if called twice, the second call sees the same module
+    already swapped to QuantLinear, skips reload for those (src is not
+    nn.Linear anymore), and returns the same indices.
+    """
+    if not gptq_resume_layers_enabled:
+        return []
+    manifest = load_layer_cache_manifest(model_dir)
+    if manifest is None:
+        return []
+    expected_hash = (fingerprint or {}).get("hash", "")
+    actual_hash = manifest.get("config_hash", "")
+    if expected_hash and actual_hash != expected_hash:
+        reset_layer_cache(
+            model_dir,
+            reason=f"config_hash mismatch ({actual_hash[:8] or 'empty'}→{expected_hash[:8]})",
+        )
+        return []
+    entries = manifest.get("layers") or []
+    if not entries:
+        return []
+
+    try:
+        import torch.nn as nn
+        from safetensors.torch import load_file as safetensors_load
+    except ImportError as exc:
+        emit_progress(
+            "quantization_resume_fallback",
+            phase="quantizing",
+            reason=f"safetensors unavailable: {exc}",
+        )
+        return []
+
+    q_cls = _find_quant_linear_class()
+    if q_cls is None:
+        emit_progress(
+            "quantization_resume_fallback",
+            phase="quantizing",
+            reason="no QuantLinear class importable",
+        )
+        return []
+
+    layers = _resolve_layer_list(gptq_model)
+    if layers is None:
+        emit_progress(
+            "quantization_resume_fallback",
+            phase="quantizing",
+            reason="could not resolve decoder layers node",
+        )
+        return []
+
+    cache_root = layer_cache_dir(model_dir)
+    loaded_indices = []
+    percent_base = 10.0
+    percent_span = 80.0
+    total_for_percent = max(total_layers or len(layers), 1)
+
+    try:
+        for entry in entries:
+            layer_idx = entry.get("layer_idx")
+            if not isinstance(layer_idx, int):
+                raise RuntimeError(f"manifest entry missing layer_idx: {entry}")
+            if layer_idx < 0 or layer_idx >= len(layers):
+                raise RuntimeError(
+                    f"layer_idx {layer_idx} out of range 0..{len(layers)}"
+                )
+            rel_path = entry.get("path", "")
+            cached_path = os.path.join(cache_root, rel_path) if rel_path else ""
+            if not cached_path or not os.path.isfile(cached_path):
+                raise RuntimeError(f"missing cached shard: {cached_path}")
+
+            layer_tensors = safetensors_load(cached_path, device="cpu")
+            groups = _group_submodule_tensors(layer_tensors)
+            if not groups:
+                raise RuntimeError(
+                    f"layer {layer_idx}: cached shard has no quantized tensors"
+                )
+
+            layer_module = layers[layer_idx]
+            swaps = 0
+            for rel_name, buffers in groups.items():
+                if "qweight" not in buffers or "scales" not in buffers:
+                    raise RuntimeError(
+                        f"layer {layer_idx} submodule {rel_name}: missing qweight/scales"
+                    )
+                parent, child_name = _resolve_submodule_parent(layer_module, rel_name)
+                src = getattr(parent, child_name, None)
+                if src is None:
+                    raise RuntimeError(
+                        f"layer {layer_idx}: submodule {rel_name} not found"
+                    )
+                # Idempotent: if already swapped (re-entry), skip this submodule.
+                if hasattr(src, "qweight") and not isinstance(src, nn.Linear):
+                    continue
+                if not isinstance(src, nn.Linear):
+                    raise RuntimeError(
+                        f"layer {layer_idx} submodule {rel_name}: expected Linear, got {type(src).__name__}"
+                    )
+                q = _build_quant_linear_shell(src, buffers, q_cls)
+                setattr(parent, child_name, q)
+                swaps += 1
+
+            loaded_indices.append(layer_idx)
+            # Emit "completed layer N" so the controller-side Prom metric
+            # (controllers/modelcache_quantization.go:993) picks up the
+            # reloaded index. The log shape matches layer_complete()'s emit.
+            percent = min(
+                percent_base + percent_span - 1.0,
+                percent_base + ((layer_idx + 1) / total_for_percent) * percent_span,
+            )
+            emit_progress(
+                "progress",
+                phase="quantizing",
+                percent=round(percent, 1),
+                detail=f"completed layer {layer_idx + 1} (reloaded from cache, {swaps} submodules)",
+            )
+
+        loaded_indices.sort()
+        emit_progress(
+            "quantization_resume_loaded",
+            phase="quantizing",
+            loaded=len(loaded_indices),
+            total=total_for_percent,
+            config_hash=expected_hash,
+        )
+        print(
+            f"Resume: reloaded {len(loaded_indices)} quantized layers from cache "
+            f"(indices: {loaded_indices[:10]}{'...' if len(loaded_indices) > 10 else ''})"
+        )
+        return loaded_indices
+
+    except Exception as exc:
+        # Graceful fallback. The live model may have a mix of Linear and
+        # QuantLinear children now — that's OK, model.quantize() will
+        # re-process any Linear children it finds, and QuantLinears it
+        # ignores naturally. But the manifest is now suspect, so wipe it
+        # to force a clean full run.
+        print(f"WARN: layer cache reload failed: {exc}")
+        emit_progress(
+            "quantization_resume_fallback",
+            phase="quantizing",
+            reason=str(exc)[:200],
+            loaded_before_failure=len(loaded_indices),
+        )
+        reset_layer_cache(model_dir, reason=f"reload failed: {exc}")
+        return []
+
+
 def load_cached_examples(model_dir):
     if not (gptq_resume_enabled and gptq_calibration_cache_enabled):
         return None
@@ -1492,14 +1970,205 @@ def infer_total_layers(gptq_model):
 
 
 class QuantizationCheckpointCallback:
-    def __init__(self, model_dir, total_layers, state):
+    def __init__(self, model_dir, total_layers, state, resume_layers_enabled=False):
         self.model_dir = model_dir
         self.total_layers = total_layers
         self.state = dict(state)
         self.state.setdefault("completed_layers", [])
+        self.resume_layers_enabled = bool(resume_layers_enabled)
+        self._gptq_model = None
+        self._layers_node_path = None
+        self._layer_fingerprint = None
 
     def _persist(self):
         persist_quant_checkpoint(self.model_dir, self.state)
+
+    def attach_model(self, gptq_model, fingerprint):
+        """Wire in the GPTQModel instance so layer_complete can walk its tree.
+
+        Called after GPTQModel.load(). `fingerprint` is the resume config hash
+        that gets stamped into every layer manifest entry so reload can detect
+        stale cache on config changes.
+        """
+        self._gptq_model = gptq_model
+        self._layer_fingerprint = fingerprint
+        try:
+            extract = getattr(gptq_model, "extract_layers_node", None)
+            if callable(extract):
+                nodes = extract() or []
+                if nodes:
+                    self._layers_node_path = nodes[0]
+        except Exception as exc:
+            print(f"WARN: could not resolve layers-node path: {exc}")
+
+    def _resolve_layer_module(self, layer_idx):
+        if self._gptq_model is None or not self._layers_node_path:
+            return None
+        current = getattr(self._gptq_model, "model", None)
+        if current is None:
+            return None
+        try:
+            for part in self._layers_node_path.split("."):
+                current = getattr(current, part)
+            return current[layer_idx]
+        except (AttributeError, IndexError, TypeError):
+            return None
+
+    def _collect_quantized_tensors(self, layer_module):
+        """Collect packed int4 state dict keyed by submodule-relative name.
+
+        Only names matching qweight/qzeros/scales/g_idx/bias are included —
+        these are the artifacts GPTQModel's QuantLinear replaces nn.Linear
+        with after submodule_finalize. Unquantized modules contribute nothing.
+        """
+        import torch
+
+        wanted = ("qweight", "qzeros", "scales", "g_idx", "bias")
+        state = {}
+        for name, param in layer_module.named_parameters(recurse=True):
+            if not isinstance(param, torch.Tensor):
+                continue
+            short = name.rsplit(".", 1)[-1]
+            if short in wanted:
+                state[name] = param.detach().cpu().contiguous()
+        for name, buf in layer_module.named_buffers(recurse=True):
+            if not isinstance(buf, torch.Tensor):
+                continue
+            short = name.rsplit(".", 1)[-1]
+            if short in wanted and name not in state:
+                state[name] = buf.detach().cpu().contiguous()
+        return state
+
+    def _write_layer_cache(self, layer_idx):
+        """Persist packed per-layer state to the PVC. Best-effort.
+
+        Idempotent across the multiple layer_complete() fires per layer
+        that v5.x's looper emits (stage_layer.py dispatches from ~3 sites).
+        If a manifest entry already exists for this layer_idx with the
+        current run's config_hash, the cached file is authoritative and
+        we skip the write.
+        """
+        if not self.resume_layers_enabled:
+            return
+        import hashlib
+
+        expected_hash = (self._layer_fingerprint or {}).get("hash", "")
+
+        # Dedup: if a manifest entry for this layer already exists with the
+        # matching config hash AND the file is intact, skip. This avoids
+        # 3× NFS writes per layer when layer_complete fires multiply.
+        existing_manifest = load_layer_cache_manifest(self.model_dir)
+        if existing_manifest is not None:
+            for entry in existing_manifest.get("layers", []):
+                if entry.get("layer_idx") != layer_idx:
+                    continue
+                if expected_hash and entry.get("config_hash") != expected_hash:
+                    break  # stale — fall through to overwrite
+                cached_rel = entry.get("path", "")
+                cached_size = entry.get("size_bytes")
+                if not cached_rel:
+                    break
+                cached_path = os.path.join(layer_cache_dir(self.model_dir), cached_rel)
+                if not os.path.isfile(cached_path):
+                    break
+                if (
+                    isinstance(cached_size, int)
+                    and os.path.getsize(cached_path) != cached_size
+                ):
+                    break
+                # Entry matches and file is intact — nothing to do.
+                return
+
+        try:
+            from safetensors.torch import save_file as safetensors_save
+        except ImportError as exc:
+            print(f"WARN: safetensors unavailable, skipping layer cache: {exc}")
+            return
+
+        layer_module = self._resolve_layer_module(layer_idx)
+        if layer_module is None:
+            print(f"WARN: could not resolve layer module {layer_idx}; skipping cache")
+            return
+
+        try:
+            tensors = self._collect_quantized_tensors(layer_module)
+        except Exception as exc:
+            print(f"WARN: failed to collect layer {layer_idx} tensors: {exc}")
+            return
+        if not tensors:
+            # Layer has no quantized modules yet (submodule_finalize hasn't run
+            # for any Linear children). Skip — nothing to persist.
+            return
+
+        cache = layer_cache_dir(self.model_dir)
+        os.makedirs(cache, exist_ok=True)
+        rel_name = f"layer-{layer_idx:03d}.safetensors"
+        final_path = os.path.join(cache, rel_name)
+        tmp_path = f"{final_path}.tmp"
+        metadata = {
+            "layer_idx": str(layer_idx),
+            "config_hash": (self._layer_fingerprint or {}).get("hash", ""),
+            "script_version": FLEXINFER_SCRIPT_VERSION,
+        }
+        try:
+            safetensors_save(tensors, tmp_path, metadata=metadata)
+            os.replace(tmp_path, final_path)
+        except Exception as exc:
+            print(f"WARN: failed to write layer {layer_idx} cache: {exc}")
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+            return
+
+        try:
+            size_bytes = os.path.getsize(final_path)
+            sha = hashlib.sha256()
+            with open(final_path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    sha.update(chunk)
+            entry = {
+                "layer_idx": layer_idx,
+                "path": rel_name,
+                "size_bytes": size_bytes,
+                "sha256": sha.hexdigest(),
+                "tensor_count": len(tensors),
+                "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "config_hash": (self._layer_fingerprint or {}).get("hash", ""),
+                "script_version": FLEXINFER_SCRIPT_VERSION,
+            }
+        except Exception as exc:
+            print(f"WARN: failed to hash layer {layer_idx} cache: {exc}")
+            return
+
+        manifest = load_layer_cache_manifest(self.model_dir) or {
+            "version": 1,
+            "config_hash": (self._layer_fingerprint or {}).get("hash", ""),
+            "script_version": FLEXINFER_SCRIPT_VERSION,
+            "layers": [],
+        }
+        # Replace any existing entry for this layer_idx (re-quantized layer
+        # after a reset) so the manifest stays consistent.
+        manifest["layers"] = [
+            e for e in manifest.get("layers", []) if e.get("layer_idx") != layer_idx
+        ]
+        manifest["layers"].append(entry)
+        manifest["layers"].sort(key=lambda e: e.get("layer_idx", 0))
+        manifest["updated_at"] = entry["completed_at"]
+        try:
+            write_layer_cache_manifest(self.model_dir, manifest)
+        except Exception as exc:
+            print(f"WARN: failed to update layer manifest: {exc}")
+            return
+
+        emit_progress(
+            "quantization_layer_cached",
+            phase="quantizing",
+            layer_idx=layer_idx,
+            size_bytes=size_bytes,
+            tensor_count=len(tensors),
+        )
 
     def subset_event(
         self, stage, layer_idx, subset_index, subset_total, module_names, processor
@@ -1565,6 +2234,8 @@ class QuantizationCheckpointCallback:
             "progress", phase="quantizing", percent=round(percent, 1), detail=detail
         )
         self._persist()
+        if submodule_finalized:
+            self._write_layer_cache(layer_idx)
 
 
 quant_checkpoint_state = load_quant_checkpoint(model_dir) if gptq_resume_enabled else {}
@@ -1892,11 +2563,27 @@ def patch_gptq_hessian_inverse():
         return
 
     def _patched_hessian_inverse(self, H: torch.Tensor):
+        # On gfx906 a Cholesky failure can put the ROCm HIP context in a bad
+        # state so the NEXT module's `torch.isfinite(H).sum().item()` raises
+        # `torch.AcceleratorError: HIP error: invalid argument` and kills the
+        # whole job. Do NOT move H to CPU as a workaround: the rocm/pytorch
+        # container is compiled without CPU LAPACK, so `torch.linalg.cholesky`
+        # on CPU fails with "LAPACK library not found in compilation" and
+        # every module exhausts. Instead, keep H on device and wrap the
+        # sanitize check so a HIP fault degrades to skip-sanitize rather than
+        # crashing the process.
         H = H.clone()
 
         if hessian_sanitize_nonfinite:
-            nonfinite_mask = ~torch.isfinite(H)
-            nonfinite_count = int(nonfinite_mask.sum().item())
+            try:
+                nonfinite_mask = ~torch.isfinite(H)
+                nonfinite_count = int(nonfinite_mask.sum().item())
+            except Exception as exc:
+                print(
+                    f"WARN: GPTQ Hessian nonfinite check failed for module="
+                    f"{getattr(self, 'name', 'unknown')}: {exc!r}; skipping sanitize"
+                )
+                nonfinite_count = 0
             if nonfinite_count:
                 fill_value = hessian_clamp_abs if hessian_clamp_abs > 0 else 0.0
                 H = torch.nan_to_num(
@@ -1909,15 +2596,33 @@ def patch_gptq_hessian_inverse():
                     f"Patched GPTQ Hessian for module={getattr(self, 'name', 'unknown')}: "
                     f"replaced {nonfinite_count} non-finite entries"
                 )
-        H = 0.5 * (H + H.T)
-
-        diag_view = H.diagonal()
-        orig_diag = diag_view.clone()
-        finite_diag = torch.nan_to_num(orig_diag.abs(), nan=0.0, posinf=0.0, neginf=0.0)
-        base_abs_max = torch.max(finite_diag).item()
-        if not math.isfinite(base_abs_max) or base_abs_max == 0.0:
-            base_abs_max = 1.0
-        floor_base = base_abs_max * hessian_diag_floor_scale
+        # Wrap the pre-recovery setup so a poisoned HIP context on entry
+        # (symmetrize, diag stats, etc.) can't take the whole job down — we
+        # degrade to returning None and let GPTQModel handle the module.
+        try:
+            H = 0.5 * (H + H.T)
+            diag_view = H.diagonal()
+            orig_diag = diag_view.clone()
+            finite_diag = torch.nan_to_num(
+                orig_diag.abs(), nan=0.0, posinf=0.0, neginf=0.0
+            )
+            base_abs_max = torch.max(finite_diag).item()
+            if not math.isfinite(base_abs_max) or base_abs_max == 0.0:
+                base_abs_max = 1.0
+            if hessian_diag_floor_mode == "mean":
+                base_mean = torch.mean(finite_diag).item()
+                if not math.isfinite(base_mean) or base_mean == 0.0:
+                    base_mean = base_abs_max
+                floor_reference = base_mean
+            else:
+                floor_reference = base_abs_max
+            floor_base = floor_reference * hessian_diag_floor_scale
+        except Exception as exc:
+            print(
+                f"GPTQ Hessian recovery aborted for module="
+                f"{getattr(self, 'name', 'unknown')}: setup failed: {exc!r}"
+            )
+            return None, 1.0
         used_damp = getattr(self.qcfg, "damp_percent", 0.01)
         damp_step = getattr(self.qcfg, "damp_auto_increment", 0.0015)
         last_error = None
@@ -1939,6 +2644,12 @@ def patch_gptq_hessian_inverse():
 
             mean = torch.mean(current_diag)
             damp = getattr(self.qcfg, "damp_percent", 0.01)
+            # Once a diagonal floor is applied, damp sweeping within the same
+            # attempt is wasted work — sweeping damp without touching the floor
+            # just shifts the mean by a constant, so if damp=damp_percent fails
+            # under this floor, damp+step will fail too. Jump to the next floor
+            # attempt instead. Attempt 0 (no floor) keeps sweeping.
+            effective_damp_step = damp_step if attempt == 0 else 0.0
             recovery_started = False
             recovery_initial = None
             recovery_last = None
@@ -1963,16 +2674,16 @@ def patch_gptq_hessian_inverse():
                 except Exception as exc:
                     last_error = exc
                     diag_view.copy_(current_diag)
-                    if damp_step == 0:
+                    if effective_damp_step == 0:
                         break
                     if not recovery_started:
                         recovery_started = True
                         recovery_initial = damp
                         print(
                             f"GPTQ Hessian recovery for module={getattr(self, 'name', 'unknown')}: "
-                            f"starting damp recovery at {damp:.5f} with step {damp_step:.5f}"
+                            f"starting damp recovery at {damp:.5f} with step {effective_damp_step:.5f}"
                         )
-                    damp += damp_step
+                    damp += effective_damp_step
                     recovery_last = damp
 
             if recovery_started:
@@ -2408,14 +3119,61 @@ emit_progress(
 # ── Quantize ───────────────────────────────────────────────────────────
 total_layers = infer_total_layers(model)
 checkpoint_callback = QuantizationCheckpointCallback(
-    model_dir, total_layers, quant_checkpoint_state
+    model_dir,
+    total_layers,
+    quant_checkpoint_state,
+    resume_layers_enabled=gptq_resume_layers_enabled,
 )
+
+# Layer-cache correctness: if the cached manifest's config hash doesn't match
+# the current run's fingerprint, the cache is stale (bits/group_size/hessian
+# settings/script version changed between runs). Blow it away up front so we
+# don't write new layers alongside incompatible old ones. When the flag is off
+# the manifest is ignored either way; we still GC orphan files for hygiene.
+_resume_fingerprint = None
+if gptq_resume_layers_enabled:
+    _resume_fingerprint = resume_config_fingerprint()
+    cached_manifest = load_layer_cache_manifest(model_dir)
+    if cached_manifest is not None:
+        cached_hash = cached_manifest.get("config_hash", "")
+        if cached_hash and cached_hash != _resume_fingerprint["hash"]:
+            reset_layer_cache(
+                model_dir,
+                reason=f"config_hash changed ({cached_hash[:8]}→{_resume_fingerprint['hash'][:8]})",
+            )
+    gc_orphan_layer_files(model_dir)
+    checkpoint_callback.attach_model(model, _resume_fingerprint)
+
 model.layer_callback = checkpoint_callback
 model.subset_callback = checkpoint_callback
 checkpoint_callback.state["stage"] = "quantizing"
 checkpoint_callback.state["total_layers"] = total_layers
 checkpoint_callback.state["resume_enabled"] = gptq_resume_enabled
+checkpoint_callback.state["resume_layers_enabled"] = gptq_resume_layers_enabled
+if _resume_fingerprint is not None:
+    checkpoint_callback.state["resume_config_hash"] = _resume_fingerprint["hash"]
 checkpoint_callback._persist()
+
+# Phase B: swap pre-quantized layers in before the looper runs. Each
+# swapped layer becomes invisible to GPTQModel's find_modules() (which
+# only walks nn.Linear/Conv descendants), so the per-layer loop naturally
+# short-circuits at `if len(subset) == 0: continue`. A reload failure
+# wipes the cache and proceeds to a full re-quantize — never blocks.
+reloaded_layers = reload_quantized_layers(
+    model, model_dir, _resume_fingerprint, total_layers
+)
+if reloaded_layers:
+    merged = sorted(
+        set(checkpoint_callback.state.get("completed_layers", []))
+        | set(reloaded_layers)
+    )
+    checkpoint_callback.state["completed_layers"] = merged
+    checkpoint_callback.state["reloaded_layers"] = list(reloaded_layers)
+    checkpoint_callback.state["reloaded_at"] = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+    )
+    checkpoint_callback._persist()
+
 model.quantize(examples)
 
 emit_progress("progress", phase="saving", percent=90.0, detail="saving quantized model")
@@ -2609,6 +3367,72 @@ if should_apply_gemma4_moe_hybrid(cfg):
 emit_progress(
     "progress", phase="saving", percent=97.5, detail="promoting output directory"
 )
+
+
+def write_save_complete_marker(save_dir):
+    """Record the shard manifest inside save_tmp before the atomic rename.
+
+    The bash wrapper uses this marker on subsequent runs to short-circuit
+    cleanly without recomputing the du(1)/min-size heuristic. Writing into
+    save_tmp (pre-rename) keeps the marker atomic with the shards it
+    describes — if rename succeeds, the marker is valid; if it fails, there
+    is no OUT_DIR and nothing to trust.
+    """
+    import hashlib
+
+    shards = []
+    for name in sorted(os.listdir(save_dir)):
+        if not name.endswith(".safetensors"):
+            continue
+        path = os.path.join(save_dir, name)
+        size = os.path.getsize(path)
+        sha = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                sha.update(chunk)
+        shards.append(
+            {
+                "name": name,
+                "size_bytes": size,
+                "sha256": sha.hexdigest(),
+            }
+        )
+    if not shards:
+        raise RuntimeError(
+            "save-complete marker refused: save_dir has no .safetensors shards"
+        )
+    index_path = os.path.join(save_dir, "model.safetensors.index.json")
+    config_path = os.path.join(save_dir, "config.json")
+    quant_cfg_path = os.path.join(save_dir, "quantize_config.json")
+    manifest = {
+        "version": 1,
+        "script_version": FLEXINFER_SCRIPT_VERSION,
+        "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "shards": shards,
+        "has_index": os.path.exists(index_path),
+        "has_config": os.path.exists(config_path),
+        "has_quantize_config": os.path.exists(quant_cfg_path),
+    }
+    marker_path = os.path.join(save_dir, SAVE_COMPLETE_MARKER)
+    tmp_path = f"{marker_path}.tmp"
+    with open(tmp_path, "w") as fh:
+        json.dump(manifest, fh, indent=2, sort_keys=True)
+        fh.flush()
+        try:
+            os.fsync(fh.fileno())
+        except OSError:
+            pass
+    os.replace(tmp_path, marker_path)
+    print(f"Wrote {SAVE_COMPLETE_MARKER} ({len(shards)} shards)")
+
+
+try:
+    write_save_complete_marker(save_tmp)
+except Exception as exc:
+    # A missing marker just means we fall back to the du-heuristic on
+    # subsequent runs. Do NOT fail the whole job over marker writing.
+    print(f"WARN: failed to write {SAVE_COMPLETE_MARKER}: {exc}")
+
 if os.path.exists(out_dir):
     shutil.rmtree(out_dir)
 os.rename(save_tmp, out_dir)

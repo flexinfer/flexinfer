@@ -1415,8 +1415,11 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if env["GPTQ_HESSIAN_SANITIZE_NONFINITE"] != "true" {
 		t.Errorf("GPTQ_HESSIAN_SANITIZE_NONFINITE env = %q, want true", env["GPTQ_HESSIAN_SANITIZE_NONFINITE"])
 	}
-	if env["GPTQ_HESSIAN_DIAG_FLOOR_SCALE"] != "1e-6" {
-		t.Errorf("GPTQ_HESSIAN_DIAG_FLOOR_SCALE env = %q, want 1e-6", env["GPTQ_HESSIAN_DIAG_FLOOR_SCALE"])
+	if env["GPTQ_HESSIAN_DIAG_FLOOR_MODE"] != "mean" {
+		t.Errorf("GPTQ_HESSIAN_DIAG_FLOOR_MODE env = %q, want mean", env["GPTQ_HESSIAN_DIAG_FLOOR_MODE"])
+	}
+	if env["GPTQ_HESSIAN_DIAG_FLOOR_SCALE"] != "0.01" {
+		t.Errorf("GPTQ_HESSIAN_DIAG_FLOOR_SCALE env = %q, want 0.01", env["GPTQ_HESSIAN_DIAG_FLOOR_SCALE"])
 	}
 	if env["GPTQ_HESSIAN_FLOOR_MULTIPLIER"] != "10" {
 		t.Errorf("GPTQ_HESSIAN_FLOOR_MULTIPLIER env = %q, want 10", env["GPTQ_HESSIAN_FLOOR_MULTIPLIER"])

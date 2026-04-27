@@ -163,13 +163,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	spec := r.buildBackendModelSpec(model, b, gpuVendor)
 	spec.GPUArch = gpuArch
 
-	// Apply KV-cache reconfigure overrides (reduced maxNumSeqs) if active.
-	if model.Status.KVCache != nil && model.Status.KVCache.Reconfigured && model.Status.KVCache.ReconfiguredMaxNumSeqs != nil {
-		if spec.Config == nil {
-			spec.Config = map[string]any{}
-		}
-		spec.Config["maxNumSeqs"] = float64(*model.Status.KVCache.ReconfiguredMaxNumSeqs)
-	}
+	applyKVCacheReconfigureOverrides(model, spec)
 
 	storagePlan := resolveBackendStoragePlan(model, b, spec.Config)
 
@@ -719,6 +713,24 @@ func firstContainer(spec *appsv1.DeploymentSpec) *corev1.Container {
 		return &spec.Template.Spec.Containers[0]
 	}
 	return nil
+}
+
+func applyKVCacheReconfigureOverrides(model *aiv1alpha2.Model, spec *backend.ModelSpec) {
+	if model.Status.KVCache == nil || !model.Status.KVCache.Reconfigured {
+		return
+	}
+	if model.Status.KVCache.ReconfiguredMaxNumSeqs == nil && model.Status.KVCache.ReconfiguredMaxModelLen == nil {
+		return
+	}
+	if spec.Config == nil {
+		spec.Config = map[string]any{}
+	}
+	if model.Status.KVCache.ReconfiguredMaxNumSeqs != nil {
+		spec.Config["maxNumSeqs"] = float64(*model.Status.KVCache.ReconfiguredMaxNumSeqs)
+	}
+	if model.Status.KVCache.ReconfiguredMaxModelLen != nil {
+		spec.Config["maxModelLen"] = float64(*model.Status.KVCache.ReconfiguredMaxModelLen)
+	}
 }
 
 // deploymentManagedFieldChanges compares only the fields the controller manages between

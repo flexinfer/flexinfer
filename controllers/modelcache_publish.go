@@ -39,7 +39,7 @@ import (
 // reconcilePublish handles the publishing phase of the ModelCache lifecycle.
 // It is called after the last pipeline phase (quantize/finetune/abliterate/download)
 // succeeds, when spec.publish is set.
-// Pipeline: Download → [Abliterate] → [Finetune] → [Quantize] → Publish → Ready
+// Pipeline: Download → [Abliterate] → [Finetune] → [Quantize] → [Validate] → Publish → Ready
 func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache *aiv1alpha1.ModelCache, pvcName, modelPath string) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
@@ -48,8 +48,13 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 		return ctrl.Result{}, nil
 	}
 
-	// If publish succeeded previously, mark Ready.
-	if modelCache.Status.Publish != nil && modelCache.Status.Publish.FailureMessage == "" {
+	// If publish actually completed, mark Ready. We require evidence the
+	// publish *job* ran (PublishedAt set), not just that the validator gate
+	// populated Status.Publish — otherwise the validate-only branch below
+	// would short-circuit to Ready before publishing.
+	if modelCache.Status.Publish != nil &&
+		modelCache.Status.Publish.FailureMessage == "" &&
+		modelCache.Status.Publish.PublishedAt != nil {
 		if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 			modelCache.Status.CurrentPhase = "ready"
@@ -60,6 +65,14 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 				fmt.Sprintf("Model published and cached at %s", modelCache.Status.Path))
 		}
 		return ctrl.Result{}, nil
+	}
+
+	// Pre-publish validator gate. When spec.publish.validate.enabled=true,
+	// run the artifact validator first and only proceed to the publish job
+	// when it returns ok=true. The gate is a no-op when disabled.
+	cont, gateResult, gateErr := r.reconcilePublishValidate(ctx, modelCache, pvcName, modelPath)
+	if gateErr != nil || !cont {
+		return gateResult, gateErr
 	}
 
 	// Look for existing publish job.
@@ -332,13 +345,20 @@ func (r *ModelCacheReconciler) readPublishMetadataFromPods(ctx context.Context, 
 
 // capturePublishFailureLogs reads the termination message from the publisher container.
 func capturePublishFailureLogs(ctx context.Context, c client.Client, namespace, jobName string) string {
+	return captureContainerFailureLogs(ctx, c, namespace, jobName, "publisher")
+}
+
+// captureContainerFailureLogs returns the termination message (or reason
+// fallback) from the named container of any pod owned by jobName. Returns
+// "" when nothing is available.
+func captureContainerFailureLogs(ctx context.Context, c client.Client, namespace, jobName, containerName string) string {
 	podList := &corev1.PodList{}
 	if err := c.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
 		return ""
 	}
 	for _, pod := range podList.Items {
 		for _, cs := range pod.Status.ContainerStatuses {
-			if cs.Name != "publisher" {
+			if cs.Name != containerName {
 				continue
 			}
 			terminated := cs.State.Terminated

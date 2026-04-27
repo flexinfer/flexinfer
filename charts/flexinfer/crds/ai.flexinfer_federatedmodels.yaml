@@ -388,6 +388,16 @@ spec:
                           Prevents thrashing between reduced and original settings.
                           Default: 5m.
                         type: string
+                      reconfigureStrategy:
+                        default: ReduceSeqs
+                        description: |-
+                          ReconfigureStrategy defines which vLLM config knobs the Reconfigure
+                          pressure policy reduces. Defaults to reducing maxNumSeqs.
+                        enum:
+                        - ReduceSeqs
+                        - ReduceMaxLen
+                        - Both
+                        type: string
                       swapSpace:
                         anyOf:
                         - type: integer

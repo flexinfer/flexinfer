@@ -214,6 +214,22 @@ func TestChooseSharedGroupLeader_Comprehensive(t *testing.T) {
 			wantName: "imagegen-primary",
 		},
 		{
+			name: "warm primary beats lower priority recent fallback demand",
+			models: []*aiv1alpha2.Model{
+				makeSharedModel("fallback-demand", 200, aiv1alpha2.ModelPhaseLoading, timePtr(recent), nil),
+				markWarmPrimary(makeSharedModel("primary", 250, aiv1alpha2.ModelPhaseIdle, nil, nil)),
+			},
+			wantName: "primary",
+		},
+		{
+			name: "higher priority recent demand beats warm primary",
+			models: []*aiv1alpha2.Model{
+				makeSharedModel("urgent-demand", 300, aiv1alpha2.ModelPhaseLoading, timePtr(recent), nil),
+				markWarmPrimary(makeSharedModel("primary", 250, aiv1alpha2.ModelPhaseIdle, nil, nil)),
+			},
+			wantName: "urgent-demand",
+		},
+		{
 			name: "demanded model with cache miss does not preempt warm primary",
 			models: func() []*aiv1alpha2.Model {
 				qwen := makeSharedModel("qwen-demand", 200, aiv1alpha2.ModelPhasePending, timePtr(recent), nil)

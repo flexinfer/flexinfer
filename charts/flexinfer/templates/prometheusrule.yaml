@@ -140,4 +140,67 @@ spec:
           annotations:
             summary: "GPUGroup {{ "{{ $labels.gpugroup }}" }} swap may be stalled"
             description: "Swap signals are being sent but no requests are being queued for GPUGroup {{ "{{ $labels.gpugroup }}" }}."
+
+    - name: flexinfer-quantization
+      rules:
+        # Elapsed-time-based progress is approaching the job deadline while
+        # the job is still running. Gives us a heads-up hour or so before
+        # the kubelet kills the pod with DeadlineExceeded — enough time to
+        # either raise the timeout or accept the loss.
+        - alert: FlexInferQuantizationDeadlineApproaching
+          expr: |
+            flexinfer_job_progress_percent{job_type="quantize"} > {{ default 80 $thresholds.quantDeadlineWarnPercent }}
+          for: {{ default "5m" $thresholds.quantDeadlineWarnFor }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "Quantization for {{ "{{ $labels.model }}" }} nearing deadline ({{ "{{ $value | humanize }}" }}%)"
+            description: "The quantize job for ModelCache {{ "{{ $labels.model }}" }} in {{ "{{ $labels.namespace }}" }} has consumed {{ "{{ $value | humanize }}" }}% of its configured timeoutSeconds. Consider raising spec.quantization.timeoutSeconds or investigating why the job is slow."
+
+        # At 95%+ of deadline, the job is almost certainly about to be
+        # killed by the kubelet. Page so the operator can decide whether
+        # to extend the timeout before losing the whole run.
+        - alert: FlexInferQuantizationDeadlineCritical
+          expr: |
+            flexinfer_job_progress_percent{job_type="quantize"} > {{ default 95 $thresholds.quantDeadlineCriticalPercent }}
+          for: {{ default "2m" $thresholds.quantDeadlineCriticalFor }}
+          labels:
+            severity: critical
+          annotations:
+            summary: "Quantization for {{ "{{ $labels.model }}" }} about to hit deadline ({{ "{{ $value | humanize }}" }}%)"
+            description: "The quantize job for ModelCache {{ "{{ $labels.model }}" }} in {{ "{{ $labels.namespace }}" }} will be killed with DeadlineExceeded within minutes. GPTQModel does not resume mid-run, so all progress will be lost. Raise spec.quantization.timeoutSeconds now or accept the loss and plan a retry."
+
+        # A fresh quantization job failure. Different from the accumulated
+        # failure counter — we only want alerts on NEW failures, not
+        # historical ones.
+        - alert: FlexInferQuantizationJobFailed
+          expr: |
+            increase(flexinfer_quantization_jobs_total{result="failed"}[15m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Quantization job failed for {{ "{{ $labels.model }}" }}"
+            description: "A quantize job for ModelCache {{ "{{ $labels.model }}" }} failed in the last 15 minutes. Check controller logs and pod termination message for the cause (OOM, DeadlineExceeded, HIP error, etc.)."
+
+        # No forward progress on per-layer completion for a long time while
+        # the job is still active. Catches the "stuck in Hessian recovery"
+        # pattern we saw on gfx906 before the MR !156 fix — the time-based
+        # progress keeps climbing, but the layer index hasn't moved.
+        # `changes()` counts distinct values in the window; if the layer
+        # index series exists but never changed, stall is real.
+        - alert: FlexInferQuantizationStalled
+          expr: |
+            (
+              changes(flexinfer_quantization_layer_index[45m]) == 0
+            )
+            and
+            (
+              flexinfer_job_progress_percent{job_type="quantize"} > 0
+            )
+          for: {{ default "5m" $thresholds.quantStalledFor }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "Quantization for {{ "{{ $labels.model }}" }} stalled at layer {{ "{{ $value }}" }}"
+            description: "No layer completion in the last 45 minutes for ModelCache {{ "{{ $labels.model }}" }} in {{ "{{ $labels.namespace }}" }}. Likely causes: Hessian recovery exhaustion, a stuck Cholesky on a pathological module, or a HIP/GPU driver fault. Inspect the quantize pod logs for the module currently being processed."
 {{- end }}

@@ -54,6 +54,9 @@ This matrix tracks both layers per family.
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | gemma4-26b-a4b-gptq (attnfp16-clean, **active**) | 7900xtx | PASS | vllm-gptq | gemma4-26b-a4b (forced) | flat | [] | 2 (moe.down_proj×30, moe.gate_up_proj×30) | 1/0 | n/a (not re-quant) | TBD | TBD | **conditional** (detected_family=None) |
 | gemma4-26b-a4b-gptq (hybrid-v10, on-PVC) | 7900xtx | PASS | vllm-gptq | gemma4-26b-a4b (forced) | flat | [] | 9 (incl. self_attn.v_proj×25 — not 30) | 1/0 | n/a | n/a (not served) | n/a | **conditional** (v_proj count anomaly) |
+| gemma4-26b-a4b-gptq-long (fp16 KV canary) | 7900xtx | PASS (inherits hybrid) | vllm-gptq | gemma4-26b-a4b | flat | [] | 2 active / 9 hybrid-v10 | 1/0 | n/a | n/a (engine init failed) | n/a | **fail** (KV memory ceiling) |
+| gemma4-26b-a4b-gptq-dense (dense validate rebuild) | 7900xtx | TBD | TBD | TBD | TBD | TBD | TBD | TBD | not reached | n/a | n/a | **blocked** (4h abliteration deadline) |
+| gemma4-31b-gptq (keqv recovery) | 7900xtx | PASS (postprocess/copy succeeded) | vllm-gptq | gemma4-31b | TBD | [] | TBD | TBD | n/a | smoke 0.158s HTTP 200 | pvc://gemma4-31b-gptq/gemma4-31b-gptq/gptq-w4-g128-keqv | **pass at 2048** |
 | gemma4-e4b-gptq | 7900xtx | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
 | omnicoder-9b-gptq | 7900xtx | TBD | TBD | TBD | TBD | TBD | TBD | TBD | n/a | TBD | TBD | TBD |
 | qwen35-9b-gptq-gfx1100 | 7900xtx | TBD | TBD | TBD | TBD | TBD | TBD | TBD | n/a | TBD | TBD | TBD |
@@ -89,3 +92,12 @@ Large JSON outputs and smoke transcripts go under `.loom/local/validation/<famil
 - No re-quant or cosine gate ran — `denseModulePolicy: validate` remains commented out in `deploy/modelcaches/gemma4-26b-a4b-gptq.yaml:76`. A1-full is deferred pending a product decision to expand dense coverage.
 
 Raw outputs: `.loom/local/validation/gemma4-26b-a4b-gptq/20260418-085841/{clean.json,clean.txt,hybrid-v10.json}` (gitignored).
+
+### 2026-04-26 gemma4 26B/31B execution findings
+
+- Live Flux truth before hot validation: `flexinfer-system` and `flexinfer-models` were Ready at `master@sha1:50cf1d977d502357df1c5c6b998c05b1dc05f429`; !193 and !194 were already merged.
+- `gemma4-31b-gptq` was Ready/Active with `minReplicas: 1`, `priority: 250`, `gpu.count: 2`, `warmPolicy: primary`, and `maxModelLen: 2048`. The direct smoke through a port-forward returned HTTP 200 with answer `4` in 0.158s.
+- After the long-canary hot test, 31B was restored to Ready/Running and a second direct smoke returned HTTP 200 with answer `4` in 0.304s.
+- `gemma4-26b-a4b-gptq-long` has the safe dGPU selector, cache Ready, `minReplicas: 0`, and `maxModelLen: 32768`, but the fp16-KV long-context canary failed at engine initialization. vLLM loaded the weights successfully (`17.74 GiB`, `56.69s`) but reported only `1.87 GiB` available for KV while `32768` tokens required `6.88 GiB`; the logged estimated maximum model length was `8896`. This blocks both 16K and 32K promotion on the current hybrid/fp16-KV lane.
+- The 26B dense-validated cache did not reach the cosine gate. Its latest retry reached only harmful prompt `80/128` before the 4h abliteration deadline; the checkpoint remained in `stage: harmful_activations`. Because `abliterate.py` resumes only completed activation payloads, each retry restarts the partial harmful pass. The manifest now raises abliteration and quantization deadlines to 24h so the next Flux-managed rebuild can reach dense cosine validation.
+- TurboQuant primitive sharing is implemented behind `TQ4_SHARE_PRIMITIVES=1` and the patcher was verified idempotent against upstream `turboquant-vllm` commit `9d19b87cef462cf0abd5643f6d052ac5a3bc99b6`. Runtime canaries still require a rebuilt image carrying the patched profile.

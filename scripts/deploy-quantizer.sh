@@ -108,6 +108,36 @@ docker --context "${DOCKER_CONTEXT}" build \
     -t "${IMAGE_NAME}" \
     "${REPO_ROOT}"
 
+# Post-build sanity check: confirm the script embedded in the image matches
+# the local source. We hit a BuildKit regression where `docker build --no-cache`
+# silently shipped stale script content despite new local edits; catching that
+# at build time is much cheaper than discovering it via a stuck quantize job.
+SCRIPT_PATH_LOCAL=""
+SCRIPT_PATH_IMAGE=""
+case "${FORMAT}" in
+    gptq)
+        SCRIPT_PATH_LOCAL="${REPO_ROOT}/build/scripts/quantize_gptq.py"
+        SCRIPT_PATH_IMAGE="/opt/flexinfer/scripts/quantize_gptq.py"
+        ;;
+    awq)
+        SCRIPT_PATH_LOCAL="${REPO_ROOT}/build/scripts/quantize_awq.py"
+        SCRIPT_PATH_IMAGE="/opt/flexinfer/scripts/quantize_awq.py"
+        ;;
+esac
+if [[ -n "${SCRIPT_PATH_LOCAL}" && -f "${SCRIPT_PATH_LOCAL}" ]]; then
+    LOCAL_MD5=$(md5sum "${SCRIPT_PATH_LOCAL}" | awk '{print $1}')
+    IMAGE_MD5=$(docker --context "${DOCKER_CONTEXT}" run --rm --entrypoint "" \
+        "${IMAGE_NAME}" md5sum "${SCRIPT_PATH_IMAGE}" 2>/dev/null | awk '{print $1}')
+    if [[ "${LOCAL_MD5}" != "${IMAGE_MD5}" ]]; then
+        echo "ERROR: Image script content mismatch — BuildKit likely shipped stale content." >&2
+        echo "  Local ${SCRIPT_PATH_LOCAL}: md5=${LOCAL_MD5}" >&2
+        echo "  Image ${SCRIPT_PATH_IMAGE}: md5=${IMAGE_MD5}" >&2
+        echo "  Try a fresh docker context (docker system prune on the remote) or rebuild manually." >&2
+        exit 2
+    fi
+    echo "  Script parity verified: md5=${LOCAL_MD5}"
+fi
+
 echo ""
 echo "=== Step 2/5: Push to registry ==="
 docker --context "${DOCKER_CONTEXT}" push "${IMAGE_NAME}"

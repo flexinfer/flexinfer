@@ -266,13 +266,18 @@ func (p *Proxy) drainQueue(queue *RequestQueue) {
 // drainQueueWithError rejects all pending requests with an error.
 func (p *Proxy) drainQueueWithError(queue *RequestQueue, err error) {
 	queue.draining.Store(true)
+	stall, stalled := isStalledLoadError(err)
 	for {
 		select {
 		case qr := <-queue.items:
 			queueDepth.WithLabelValues(queue.model).Dec()
 			qr.err = err
 			if qr.responded.CompareAndSwap(false, true) {
-				validation.WriteActivationFailed(qr.w, fmt.Sprintf("Failed to activate model: %v", err))
+				if stalled {
+					validation.WriteStalledLoad(qr.w, stall.Error(), defaultStalledLoadRetryAfter)
+				} else {
+					validation.WriteActivationFailed(qr.w, fmt.Sprintf("Failed to activate model: %v", err))
+				}
 			}
 			close(qr.done)
 		default:
@@ -332,6 +337,13 @@ func (p *Proxy) waitForReady(ctx context.Context, modelName string) error {
 			if err == nil {
 				if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 					return nil
+				}
+				// Fail fast if the cold-start has obviously wedged on weight
+				// loading (LoadingProgressAt timestamp hasn't advanced in long
+				// enough that the proxy should stop queuing more work).
+				if s := detectStalledLoad(m, defaultStalledLoadThreshold); s != nil {
+					stalledLoadTotal.WithLabelValues(modelName, string(s.Substage)).Inc()
+					return s
 				}
 				continue
 			}

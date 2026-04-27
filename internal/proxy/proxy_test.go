@@ -245,6 +245,63 @@ func TestUpdateLastAccess(t *testing.T) {
 	}
 }
 
+func TestTrackAndServeTouchesLastActiveBeforeProxying(t *testing.T) {
+	RegisterMetrics()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha1.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha2.AddToScheme(scheme))
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://org/model",
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhaseReady,
+		},
+	}
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(model).
+		WithStatusSubresource(model).
+		Build()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		updated := &aiv1alpha2.Model{}
+		require.NoError(t, k8sClient.Get(context.Background(), client.ObjectKeyFromObject(model), updated))
+		require.NotNil(t, updated.Status.LastActiveTime)
+		assert.WithinDuration(t, time.Now(), updated.Status.LastActiveTime.Time, 5*time.Second)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := &Proxy{
+		client:    k8sClient,
+		namespace: "default",
+		resolver:  NewModelResolver(k8sClient, "default"),
+		ctx:       ctx,
+		cancel:    cancel,
+	}
+	p.directLoadTargets.Store("test-model", server.URL)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"test-model"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.trackAndServe(w, req, "test-model", time.Now())
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
 // Serverless/Queue Tests
 
 func TestGetOrCreateQueue(t *testing.T) {

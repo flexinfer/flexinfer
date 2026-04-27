@@ -29,6 +29,7 @@ Usage:
 
 If vllm_root is omitted, the script auto-detects the vLLM package location.
 """
+import os
 import pathlib
 import re
 import sys
@@ -1208,6 +1209,18 @@ def patch_gemma4_decoder_layer_debug(vllm_root: pathlib.Path) -> bool:
     NOTE: This runs AFTER patch_gemma4_mlp_fp32_upcast, so the MLP
     line has already been modified. Patterns match the upcast version.
     """
+    if os.environ.get("GEMMA4_DECODER_LAYER_DEBUG", "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        print(
+            "[gemma4-moe-patch] SKIP: decoder layer debug patch disabled "
+            "(set GEMMA4_DECODER_LAYER_DEBUG=1 to enable)"
+        )
+        return True
+
     gemma4_py = vllm_root / "model_executor" / "models" / "gemma4.py"
     if not gemma4_py.exists():
         print(f"[gemma4-moe-patch] SKIP: {gemma4_py} not found")

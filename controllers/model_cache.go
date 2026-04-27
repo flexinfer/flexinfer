@@ -116,51 +116,81 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 					jobPhase = "Pending"
 					message = sourceMessage
 				} else {
-					job := &batchv1.Job{}
-					err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
-					if err != nil && !errors.IsNotFound(err) {
+					sourceReadyStatus, sourceReadyMessage, err := r.cacheSourceReadyJobStatus(ctx, model)
+					if err != nil {
 						return false, err
 					}
-					if err == nil && job.Annotations != nil && job.Annotations[AnnotationSource] != model.Spec.Source {
-						if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
-							return false, delErr
-						}
-						err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
-					}
-					if errors.IsNotFound(err) {
-						subPath := ""
-						if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
-							subPath = sp
-						}
-						newJob, err := r.jobForCacheCopy(model, pvcName, cachePVCName, subPath)
-						if err != nil {
+					if !sourceReadyStatus.Ready {
+						jobPhase = "Pending"
+						message = sourceReadyMessage
+					} else {
+						job := &batchv1.Job{}
+						err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
+						if err != nil && !errors.IsNotFound(err) {
 							return false, err
 						}
-						if err := r.Create(ctx, newJob); err != nil {
-							if errors.IsAlreadyExists(err) {
-								jobPhase = "Running"
-								message = "cache copy job already exists"
-							} else {
+						if err == nil && job.Annotations != nil && job.Annotations[AnnotationSource] != model.Spec.Source {
+							if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
+								return false, delErr
+							}
+							err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+						}
+						// Drift-detection: if the cache PVC was recreated (e.g. an
+						// operator migrated spec.cache.storageClass, which requires
+						// deleting + recreating the PVC), the existing cache-copy
+						// Job's recorded UID won't match the new PVC. Delete it so
+						// a fresh copy runs against the empty PVC. See #53.
+						if err == nil && job.Annotations != nil {
+							recorded := job.Annotations[AnnotationCachePvcUID]
+							current := string(cachePVC.UID)
+							if recorded != "" && current != "" && recorded != current {
+								if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
+									return false, delErr
+								}
+								err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+							}
+						}
+						if err == nil && cacheCopySourceReadyJobStale(job, sourceReadyStatus) {
+							if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
+								return false, delErr
+							}
+							err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+						}
+						if errors.IsNotFound(err) {
+							subPath := ""
+							if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
+								subPath = sp
+							}
+							newJob, err := r.jobForCacheCopy(model, pvcName, cachePVCName, string(cachePVC.UID), subPath, sourceReadyStatus)
+							if err != nil {
 								return false, err
 							}
+							if err := r.Create(ctx, newJob); err != nil {
+								if errors.IsAlreadyExists(err) {
+									jobPhase = "Running"
+									message = "cache copy job already exists"
+								} else {
+									return false, err
+								}
+							} else {
+								jobPhase = "Running"
+								message = "cache copy job started"
+							}
 						} else {
-							jobPhase = "Running"
-							message = "cache copy job started"
-						}
-					} else {
-						if job.Status.Succeeded > 0 {
-							ready = true
-							jobPhase = "Succeeded"
-							message = "artifact copied to cache PVC"
-						} else if job.Status.Failed > 0 {
-							jobPhase = "Failed"
-							message = "cache copy job failed"
-						} else if job.Status.Active > 0 {
-							jobPhase = "Running"
-							message = "cache copy job running"
-						} else {
-							jobPhase = "Pending"
-							message = "cache copy job pending"
+							if job.Status.Succeeded > 0 {
+								ready = true
+								jobPhase = "Succeeded"
+								message = "artifact copied to cache PVC"
+							} else if job.Status.Failed > 0 {
+								jobPhase = "Failed"
+								message = "cache copy job failed"
+							} else if job.Status.Active > 0 {
+								jobPhase = "Running"
+								message = "cache copy job running"
+							} else {
+								jobPhase = "Pending"
+								message = "cache copy job pending"
+							}
 						}
 					}
 				}
@@ -675,6 +705,64 @@ func (r *ModelReconciler) pvcSourceArtifactReady(ctx context.Context, pvc *corev
 		message = fmt.Sprintf("waiting for source ModelCache %s to be ready (current phase: %s)", sourceCache.Name, sourceCache.Status.Phase)
 	}
 	return false, message, nil
+}
+
+type cacheSourceReadyStatus struct {
+	Ready       bool
+	JobName     string
+	UID         string
+	CompletedAt string
+}
+
+func (r *ModelReconciler) cacheSourceReadyJobStatus(ctx context.Context, model *aiv1alpha2.Model) (*cacheSourceReadyStatus, string, error) {
+	jobName := strings.TrimSpace(model.GetAnnotations()[AnnotationCacheSourceReadyJob])
+	if jobName == "" {
+		return &cacheSourceReadyStatus{Ready: true}, "", nil
+	}
+
+	job := &batchv1.Job{}
+	if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job); err != nil {
+		if errors.IsNotFound(err) {
+			return &cacheSourceReadyStatus{JobName: jobName}, fmt.Sprintf("waiting for source-ready job %s to exist", jobName), nil
+		}
+		return nil, "", err
+	}
+
+	status := &cacheSourceReadyStatus{
+		Ready:   job.Status.Succeeded > 0,
+		JobName: jobName,
+		UID:     string(job.UID),
+	}
+	if job.Status.CompletionTime != nil {
+		status.CompletedAt = job.Status.CompletionTime.UTC().Format(time.RFC3339)
+	}
+	if status.Ready {
+		return status, "", nil
+	}
+	if job.Status.Failed > 0 {
+		return status, fmt.Sprintf("waiting for source-ready job %s to succeed (failed=%d)", jobName, job.Status.Failed), nil
+	}
+	if job.Status.Active > 0 {
+		return status, fmt.Sprintf("waiting for source-ready job %s to complete", jobName), nil
+	}
+	return status, fmt.Sprintf("waiting for source-ready job %s to start", jobName), nil
+}
+
+func cacheCopySourceReadyJobStale(job *batchv1.Job, sourceReady *cacheSourceReadyStatus) bool {
+	if job == nil || sourceReady == nil || !sourceReady.Ready || sourceReady.JobName == "" {
+		return false
+	}
+	annotations := job.GetAnnotations()
+	if annotations[AnnotationCacheSourceReadyJob] != sourceReady.JobName {
+		return true
+	}
+	if sourceReady.UID != "" && annotations[AnnotationCacheSourceReadyUID] != sourceReady.UID {
+		return true
+	}
+	if sourceReady.CompletedAt != "" && annotations[AnnotationCacheSourceReadyCompletedAt] != sourceReady.CompletedAt {
+		return true
+	}
+	return false
 }
 
 // ensureQuantization manages the quantization job lifecycle for a model.

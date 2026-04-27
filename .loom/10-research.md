@@ -676,3 +676,42 @@ TurboQuant Gemma4 prompt-format quality fix:
 - Current interpretation:
   - Gemma4 + TurboQuant on ROCm now has a sane end-to-end text response on the debug path
   - the most visible remaining “quality bug” was caused by using completion-style prompting against an instruction-tuned checkpoint
+
+## Update (2026-04-25): Gemma4 26B/31B GPTQ + TurboQuant Direction
+
+Focused planning artifact: `.loom/gemma4-26b-31b-gptq-turboquant-plan.md`.
+
+Research summary:
+
+- Gemma4 26B A4B and 31B Dense both advertise 256K context in Google docs, but the published Q4 base-weight memory numbers do not include vLLM runtime overhead, KV cache, allocator fragmentation, ROCm graph state, or TurboQuant plugin allocations.
+- GPTQModel remains the right local weight-quantization base because upstream support includes Gemma-family models and AMD ROCm. AutoGPTQ-era assumptions should stay out of the current pipeline.
+- TurboQuant is KV/vector compression, not weight quantization. Treat it as a runtime optimization after clean GPTQ artifacts exist.
+- vLLM's current ROCm docs support Radeon RX 7900/gfx1100, but older ROCm guidance and FlexInfer history justify keeping Triton/fallback attention controls for Gemma4.
+- Community TurboQuant/Gemma4 reports indicate that global TurboQuant over the 26B A4B MoE lane can be quality-dangerous without attention/layer selectivity. Use this as a risk signal for the 26B canary path.
+
+Git-history synthesis:
+
+- The 26B lane is not blocked on basic serving. It has a known-good hybrid 8K fallback, but full dense GPTQ and 32K promotion still need validation.
+- The 31B lane is currently blocked by a bad GPTQ artifact, not merely by TurboQuant memory. The `k_eq_v` artifact loads at 1920 but emits `<pad>` because late layers have repeated tensors.
+- The previous 31B TurboQuant OOM remains real, but it is the second gate. A clean 31B GPTQ artifact must come first.
+
+Correct direction:
+
+1. Keep 26B hybrid 8K as fallback.
+2. Fix the 26B long-canary dGPU selector before probing 16K/32K.
+3. Finish or rerun the 26B dense-validated artifact path.
+4. Re-quantize 31B with repeated-tensor integrity guards before `k_eq_v`.
+5. Patch TurboQuant primitive sharing only after clean GPTQ lanes exist.
+6. Reintroduce TurboQuant through canaries, not primary manifests.
+
+Primary external sources:
+
+- https://ai.google.dev/gemma/docs/core
+- https://ai.google.dev/gemma/docs/core/model_card_4
+- https://research.google/blog/turboquant-redefining-ai-efficiency-with-extreme-compression/
+- https://arxiv.org/html/2504.19874v1
+- https://docs.vllm.ai/en/stable/getting_started/installation/gpu/
+- https://docs.vllm.ai/en/stable/features/quantization/quantized_kvcache/
+- https://rocm.docs.amd.com/en/docs-6.4.3/how-to/rocm-for-ai/inference-optimization/model-quantization.html
+- https://github.com/modelcloud/gptqmodel
+- https://github.com/ggml-org/llama.cpp/discussions/21526

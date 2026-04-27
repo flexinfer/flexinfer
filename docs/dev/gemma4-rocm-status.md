@@ -18,30 +18,106 @@ Update this document whenever a tuning change lands or a new blocker is found.
 
 | Model ID | Model CR | Node | Attention / KV path | Intent |
 |----------|----------|------|---------------------|--------|
-| `gemma4-26b-a4b-gptq` | `gemma4-26b-a4b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | Primary 8K rollback baseline (`minReplicas: 1`) |
-| `gemma4-31b-gptq` | `gemma4-31b-gptq` | `cblevins-5930k` | `TRITON_ATTN` + float16 KV | Conservative on-demand dense lane (`minReplicas: 0`) |
-| `gemma4-26b-a4b-gptq-long` | `gemma4-26b-a4b-gptq-long` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | 32K canary only (`minReplicas: 0`, `warmPolicy: ondemand`) |
+| `gemma4-31b-gptq` | `gemma4-31b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | Current warm primary at the validated 2K ceiling (`minReplicas: 1`) |
+| `gemma4-26b-a4b-gptq` | `gemma4-26b-a4b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 16K validated default 26B alias / fallback (`minReplicas: 0`) |
+| `gemma4-26b-a4b-gptq-long` | `gemma4-26b-a4b-gptq-long` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 16K proof canary retained as scale-to-zero validation lane |
+| `gemma4-26b-a4b-gptq-22k` | `gemma4-26b-a4b-gptq-22k` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 22K upper-bound canary; validated at 17K prompt tokens so far (`minReplicas: 0`, `warmPolicy: ondemand`, priority 260 for explicit validation demand) |
 
 ## Current profile knobs
 
 | Model ID | `maxModelLen` | `maxNumBatchedTokens` | `gpuMemoryUtilization` | Serverless |
 |----------|---------------|-----------------------|------------------------|------------|
-| `gemma4-26b-a4b-gptq` | `8192` | `512` | `0.95` | `minReplicas: 1` |
-| `gemma4-31b-gptq` | `4096` | runtime default | `0.95` | `minReplicas: 0` |
-| `gemma4-26b-a4b-gptq-long` | `32768` | `160` | `0.95` | `minReplicas: 0` |
+| `gemma4-31b-gptq` | `2048` | runtime default | `0.95` | `minReplicas: 1` |
+| `gemma4-26b-a4b-gptq` | `16384` | `160` | `0.98` | `minReplicas: 0` |
+| `gemma4-26b-a4b-gptq-long` | `16384` | `160` | `0.98` | `minReplicas: 0` |
+| `gemma4-26b-a4b-gptq-22k` | `22000` | `160` | `0.98` | `minReplicas: 0` |
 
 ## Latest baseline
 
-Date: **2026-04-17**
+Date: **2026-04-26**
 
 Current finding:
 
 - The current Gemma4 26B-A4B hybrid artifact (`gptq-w4-g128-attnfp16-clean`) is
-  coherent and stable at **8K**.
+  coherent and stable at **16K** when served with FP8 KV and the validated ROCm
+  fallback switches.
 - The same artifact is too large/risky for default **32K** serving on a single
   24 GB gfx1100 card.
-- The next promotion path is a **smaller validated artifact**, not manifest-only
-  tuning.
+- A 32K FP16-KV boot failed cleanly on 2026-04-26: vLLM needed 6.88 GiB of KV
+  cache after loading the hybrid artifact, but only 1.87 GiB remained. The
+  canary is therefore narrowed to 16K with `kvCacheDtype: fp8_e4m3` for live
+  validation.
+- The 16K FP8-KV canary passed the long-context probe on 2026-04-26 on
+  `cblevins-7900xtx`: 14,088 prompt tokens returned the expected
+  `gemma4-long-ok` marker with zero pod restarts. The default 26B alias now
+  uses those same runtime knobs while remaining scale-to-zero and non-primary.
+- vLLM reported 22,608 GPU KV cache tokens for the 22K FP8-KV boot. The
+  separate `gemma4-26b-a4b-gptq-22k` canary validates the next practical rung
+  without changing the validated 16K profile.
+- The 22K canary passed an in-cluster 17,092-token prompt retention probe on
+  2026-04-26. It is **partially validated** only: keep it scale-to-zero and
+  non-primary until the 18K-22K target window is re-qualified with a less noisy
+  runtime build.
+- The smaller dense-validated artifact path remains blocked behind the
+  `cblevins-5930k` memory guard; do not uncordon that node or remove the taint
+  just to accelerate this lane.
+
+## 16K FP8-KV proof (2026-04-26)
+
+Run ID: `gemma4-long-context-20260426T142859-1f6000`
+
+| Case | HTTP | Prompt tokens | Completion tokens | Elapsed | Output |
+|------|------|---------------|-------------------|---------|--------|
+| `short-sanity` | `200` | `50` | `2` | `4.565s` | `4` |
+| `medium-context` | `200` | `6088` | `8` | `456.216s` | `gemma4-medium-ok` |
+| `long-context` | `200` | `14088` | `8` | `1014.343s` | `gemma4-long-ok` |
+
+Cluster evidence:
+
+- Pod: `gemma4-26b-a4b-gptq-long-5678f5499d-8lhnd`
+- Node: `cblevins-7900xtx`
+- Image:
+  `registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac`
+- Probe artifact:
+  `/tmp/flexinfer-gemma4-probes/gemma4-long-context-20260426T142859-1f6000/gemma4-long-context-20260426T142859-1f6000.md`
+- Result after idle timeout: `gemma4-26b-a4b-gptq-long` returned to `Idle`;
+  `gemma4-31b-gptq` returned to `Ready`.
+
+Runtime note: the current image includes verbose `gemma4_layer_debug` warnings,
+which made 6K/14K prefill slow. Future images should keep the decoder-layer
+debug patch disabled unless actively chasing NaNs.
+
+## 22K FP8-KV canary proof (2026-04-26)
+
+The 22K profile boots successfully on `cblevins-7900xtx`; vLLM reports
+`max_seq_len=22000`, `kv_cache_dtype=fp8_e4m3`, and 22,608 GPU KV-cache tokens.
+
+In-cluster 17K probe:
+
+| Case | HTTP | Prompt tokens | Completion tokens | Elapsed | Output |
+|------|------|---------------|-------------------|---------|--------|
+| `17k-incluster` | `200` | `17092` | `10` | `1223.656s` | `gemma4-17k-ok` |
+
+Cluster evidence:
+
+- Job: `gemma4-22k-incluster-probe`
+- Probe pod: `gemma4-22k-incluster-probe-hgzhc` on `k3s-w-10`
+- Backend pod: `gemma4-26b-a4b-gptq-22k-65d79f6b4c-8h4ws`
+  on `cblevins-7900xtx`
+- Finished: `2026-04-26T23:38:13Z`
+- Result source: Kubernetes termination message on the completed probe pod
+
+Operational finding:
+
+- Proxy keepalive now refreshes `status.lastActiveTime` during long in-flight
+  requests; the 17K run advanced the timestamp through the full 20-minute
+  request instead of being idled out.
+- A local port-forwarded 20K probe is not accepted as model evidence because
+  the port-forward died with `lost connection to pod`. Use in-cluster jobs for
+  future 18K-22K proofs.
+- An earlier 17K in-cluster run returned HTTP 200 and processed 17,092 prompt
+  tokens, but the marker was truncated by `max_tokens=8`; use at least
+  `max_tokens=24` for marker probes at this profile.
 
 ## Quantized-artifact promotion gate (reusable)
 
@@ -59,6 +135,18 @@ canary to default:
    - no alias/default swap while unvalidated
 4. **Explicit promotion change**
    - only after 1-3 pass, raise context/default aliases in a separate change
+
+Controller enforcement:
+
+- Mark guarded models with
+  `flexinfer.ai/promotion-gate: quantized-artifact-v1`.
+- Warm-primary promotion (`serverless.minReplicas > 0`, serverless disabled,
+  or `config.warmPolicy: primary`) requires either
+  `flexinfer.ai/promotion-validation: passed` or
+  `flexinfer.ai/promotion-evidence: <artifact-or-runbook-ref>`.
+- Canary / scale-to-zero operation remains allowed without evidence so
+  candidate artifacts can be probed deliberately.
+- The controller reports the decision in the Model `PromotionGate` condition.
 
 ## Long-context readiness probe (promotion gate input)
 
@@ -95,19 +183,21 @@ ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Unified `gfx1100` runtime path | Working | No separate debug runtime required |
-| Managed Gemma4 CRD deployment | Working | 26B baseline + 31B on-demand + long canary reconcile through Flux |
-| LiteLLM aliases | Working | Baseline aliases are pinned to the 26B 8K primary |
+| Managed Gemma4 CRD deployment | Working | 26B 16K fallback + 31B warm primary + long canaries reconcile through Flux |
+| LiteLLM aliases | Working | 26B aliases are promoted to the validated 16K FP8-KV profile |
 | Tool calling | Working | Gemma parser path remains enabled on baseline profiles |
 | Conservative rollout gates | Working | Canary remains scale-to-zero and non-primary |
-| 8K baseline coherence | Working | Current hybrid serves coherently at 8K on gfx1100 |
+| 16K baseline coherence | Working | Current hybrid serves coherently at 16K on gfx1100 with FP8 KV |
 
 ## Features still being chased
 
 | Feature | Status | Current read |
 |---------|--------|--------------|
-| Smaller long-context artifact | In progress | Needed before promoting beyond 8K baseline |
-| 16K/32K promotion validation | Blocked on artifact | Manifest-only tuning is insufficient for current hybrid |
-| Compressed-tensors + FP8 KV lane | Planned canary | Must remain disabled/non-default until validated |
+| Smaller long-context artifact | In progress | Needed before promoting beyond 16K baseline |
+| 16K promotion validation | Promoted to 26B alias | 26B canary used FP8 KV and passed the 14K-token probe; the default 26B alias now carries those knobs |
+| 22K upper-bound validation | Partial pass | 22K boots and 17,092 prompt tokens pass in-cluster; 18K-22K target proof still pending on a quieter runtime |
+| 32K promotion validation | Blocked on artifact | Current hybrid needs a smaller artifact; FP16 KV boot needs 6.88 GiB with only 1.87 GiB available |
+| Compressed-tensors + FP8 KV lane | Planned canary | Separate compressed-tensors artifact work remains disabled/non-default until validated |
 | AITER on ROCm | Blocked / deferred | `TRITON_ATTN` remains the stable path on RDNA3 |
 | Production-grade long-context default | Deferred | Keep long profiles non-primary until gate checks pass |
 | Speculative decoding | Not started | No Gemma4 speculator path wired yet |
@@ -125,12 +215,13 @@ ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
 | Node | `cblevins-7900xtx` (gfx1100) |
 | Pipeline | Download BF16 (~27 GB) → Abliterate → GPTQ INT4 (~7-13 GB) |
 | PVC | 96 Gi (nvme-1r-gpu) |
-| Shared Group | `7900xtx-textgen` (priority 200, always-on) |
+| Shared Group | `7900xtx-textgen` (priority 200, on-demand fallback) |
 | Aliases | `gemma4-26b`, `gemma4-26b-a4b`, `gemma4-moe` |
 
 **MoE Architecture**: 25.2B total / 3.8B active, 128 experts top-8, 30 layers (25 GDN + 5 full-attention).
-Current hybrid export is validated at 8K; it is not promoted for default 16K/32K service.
-Promotion path requires a smaller validated artifact.
+Current hybrid export is validated at 16K with FP8 KV; it is not promoted for
+22K/32K service. The separate `gemma4-26b-a4b-gptq-long` canary is retained as
+a proof lane, and `gemma4-26b-a4b-gptq-22k` remains the upper-bound canary.
 
 **Abliteration safety**: Only `o_proj` (shared attention output). Expert FFN weights auto-skipped. `ablitateLmHead: false` (save corruption bug).
 
@@ -143,9 +234,9 @@ Promotion path requires a smaller validated artifact.
 | ModelCache | `gemma4-31b-gptq` |
 | Model CR | `gemma4-31b-gptq` |
 | Source | `google/gemma-4-31B-it` |
-| Node | `cblevins-5930k` (gfx1100) |
-| Pipeline | GPTQ INT4 runtime serving from `gptq-w4-g128` |
-| Status | Conservative 4K on-demand profile (`minReplicas: 0`) |
+| Node | `cblevins-7900xtx` (gfx1100) |
+| Pipeline | GPTQ INT4 runtime serving from `gptq-w4-g128-keqv` |
+| Status | Warm primary at 2K (`minReplicas: 1`) |
 
 **Dense Architecture**: 30.7B params, 60 layers (50 GDN + 10 full-attention). Requires 128 GB RAM node for abliteration + save overhead.
 
@@ -157,8 +248,8 @@ Promotion path requires a smaller validated artifact.
 
 | Model | Decode tok/s | Prompt tok/s | VRAM | Context |
 |-------|-------------|-------------|------|---------|
-| 26B-A4B MoE INT4 | ~72 | ~1800 | ~13 GB | 8K baseline |
-| 31B Dense INT4 | TBD | TBD | ~16 GB | 4K-8K |
+| 26B-A4B MoE INT4 | ~72 | ~1800 | ~17.7 GB weights + FP8 KV | 16K baseline |
+| 31B Dense INT4 | TBD | TBD | ~20 GB | 2K validated ceiling |
 
 ExLlama v2 kernels (HIP-compiled) with `sym=true` achieve 7x faster decode than AWQ on gfx1100.
 
@@ -201,9 +292,12 @@ spec:
 
 ## Next tuning queue
 
-1. Produce a smaller 26B artifact candidate for 16K/32K validation.
-2. Run long-context probe + warm/cold checks and archive JSON evidence.
-3. Keep long-context canaries non-primary (`minReplicas: 0`, `warmPolicy: ondemand`)
+1. Rebuild the unified runtime with decoder-layer debug logging disabled by
+   default, then re-run the 16K probe to measure prefill without instrumentation.
+2. Re-run the 22K FP8-KV canary with in-cluster 18K-22K prompt probes using
+   `max_tokens >= 24`.
+3. Produce a smaller 26B artifact candidate for 32K validation.
+4. Keep 22K+ long-context canaries non-primary (`minReplicas: 0`, `warmPolicy: ondemand`)
    until promotion criteria are met.
-4. Validate compressed-tensors + FP8 KV on a dedicated canary before any alias/default changes.
-5. Generalize this gate to additional quantized model families in shared docs/manifests.
+5. Validate compressed-tensors + FP8 KV on a dedicated canary before any alias/default changes.
+6. Generalize this gate to additional quantized model families in shared docs/manifests.

@@ -46,6 +46,10 @@ const (
 	// LastAccessTime updates if the last update was within this duration.
 	lastAccessThrottleInterval = 1 * time.Minute
 
+	// lastAccessHeartbeatInterval keeps serverless models warm while a single
+	// long-running request is still in flight.
+	lastAccessHeartbeatInterval = 30 * time.Second
+
 	// defaultBackendPort is used when a model's backend port cannot be determined.
 	defaultBackendPort int32 = 8000
 
@@ -90,6 +94,8 @@ type Config struct {
 	AuthEnabled                      bool
 	AuthToken                        string
 	DirectRuntimeEnabled             bool // Enable direct proxy-to-runtime fast path
+	MaxTokensClampEnabled            bool
+	MaxTokensClampPromptReserve      int
 }
 
 // Validate checks the Config for conflicting or invalid settings. Returns a
@@ -125,6 +131,9 @@ func (c Config) Validate() error {
 	if c.AuthEnabled && c.AuthToken == "" {
 		errs = append(errs, fmt.Errorf("PROXY_AUTH_TOKEN must be set when PROXY_AUTH_ENABLED=true"))
 	}
+	if c.MaxTokensClampEnabled && c.MaxTokensClampPromptReserve <= 0 {
+		errs = append(errs, fmt.Errorf("PROXY_MAX_TOKENS_CLAMP_PROMPT_RESERVE_TOKENS must be > 0 when max_tokens clamp is enabled (got %d)", c.MaxTokensClampPromptReserve))
+	}
 
 	return stderrors.Join(errs...)
 }
@@ -155,6 +164,8 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		AuthEnabled:                      envutil.BoolOrDefault("PROXY_AUTH_ENABLED", false),
 		AuthToken:                        os.Getenv("PROXY_AUTH_TOKEN"),
 		DirectRuntimeEnabled:             envutil.BoolOrDefault("PROXY_DIRECT_RUNTIME_ENABLED", true),
+		MaxTokensClampEnabled:            envutil.BoolOrDefault("PROXY_MAX_TOKENS_CLAMP_ENABLED", true),
+		MaxTokensClampPromptReserve:      envutil.IntOrDefault("PROXY_MAX_TOKENS_CLAMP_PROMPT_RESERVE_TOKENS", defaultPromptReserveTokens),
 	}
 
 	return cfg
@@ -219,6 +230,10 @@ type Proxy struct {
 	authEnabled bool   // Enable bearer token authentication
 	authToken   string // Expected bearer token (from Secret)
 
+	// max_tokens clamping
+	maxTokensClampEnabled       bool
+	maxTokensClampPromptReserve int
+
 	// Direct runtime communication (fast path)
 	runtimeCache         *RuntimeCache                // cached runtime pod endpoints
 	directRuntimeEnabled bool                         // enable direct proxy-to-runtime loading
@@ -244,31 +259,33 @@ func New(cfg Config) *Proxy {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	p := &Proxy{
-		client:               cfg.Client,
-		namespace:            cfg.Namespace,
-		resolver:             NewModelResolver(cfg.Client, cfg.Namespace),
-		activator:            NewK8sModelActivator(cfg.Client, cfg.Namespace, cfg.ColdStartTimeout),
-		maxQueueSize:         cfg.MaxQueueSize,
-		queueTimeout:         cfg.QueueTimeout,
-		coldStartTimeout:     cfg.ColdStartTimeout,
-		router:               routing.NewRouter(),
-		routingEnabled:       cfg.RoutingEnabled,
-		validateRequests:     cfg.ValidateRequests,
-		backoffEnabled:       cfg.BackoffEnabled,
-		backoffMaxRetries:    cfg.BackoffMaxRetries,
-		backoffInitialWait:   cfg.BackoffInitialWait,
-		backoffMaxWait:       cfg.BackoffMaxWait,
-		rateLimitEnabled:     cfg.RateLimitEnabled,
-		rateLimitPerModel:    cfg.RateLimitPerModel,
-		rateLimitBurst:       cfg.RateLimitBurst,
-		rateLimitGlobal:      cfg.RateLimitGlobal,
-		rateLimitGlobalBurst: cfg.RateLimitGlobalBurst,
-		authEnabled:          cfg.AuthEnabled,
-		authToken:            cfg.AuthToken,
-		directRuntimeEnabled: cfg.DirectRuntimeEnabled,
-		ctx:                  ctx,
-		cancel:               cancel,
-		debugConfig:          newDebugConfigView(cfg),
+		client:                      cfg.Client,
+		namespace:                   cfg.Namespace,
+		resolver:                    NewModelResolver(cfg.Client, cfg.Namespace),
+		activator:                   NewK8sModelActivator(cfg.Client, cfg.Namespace, cfg.ColdStartTimeout),
+		maxQueueSize:                cfg.MaxQueueSize,
+		queueTimeout:                cfg.QueueTimeout,
+		coldStartTimeout:            cfg.ColdStartTimeout,
+		router:                      routing.NewRouter(),
+		routingEnabled:              cfg.RoutingEnabled,
+		validateRequests:            cfg.ValidateRequests,
+		backoffEnabled:              cfg.BackoffEnabled,
+		backoffMaxRetries:           cfg.BackoffMaxRetries,
+		backoffInitialWait:          cfg.BackoffInitialWait,
+		backoffMaxWait:              cfg.BackoffMaxWait,
+		rateLimitEnabled:            cfg.RateLimitEnabled,
+		rateLimitPerModel:           cfg.RateLimitPerModel,
+		rateLimitBurst:              cfg.RateLimitBurst,
+		rateLimitGlobal:             cfg.RateLimitGlobal,
+		rateLimitGlobalBurst:        cfg.RateLimitGlobalBurst,
+		authEnabled:                 cfg.AuthEnabled,
+		authToken:                   cfg.AuthToken,
+		maxTokensClampEnabled:       cfg.MaxTokensClampEnabled,
+		maxTokensClampPromptReserve: cfg.MaxTokensClampPromptReserve,
+		directRuntimeEnabled:        cfg.DirectRuntimeEnabled,
+		ctx:                         ctx,
+		cancel:                      cancel,
+		debugConfig:                 newDebugConfigView(cfg),
 	}
 
 	if cfg.DirectRuntimeEnabled {
@@ -333,6 +350,8 @@ func (p *Proxy) Run(port int) error {
 		"rate_limit_enabled", p.rateLimitEnabled,
 		"rate_limit_per_model", p.rateLimitPerModel,
 		"rate_limit_global", p.rateLimitGlobal,
+		"max_tokens_clamp_enabled", p.maxTokensClampEnabled,
+		"max_tokens_clamp_prompt_reserve", p.maxTokensClampPromptReserve,
 		"direct_runtime_enabled", p.directRuntimeEnabled)
 
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
@@ -476,24 +495,26 @@ func isReady(md *aiv1alpha1.ModelDeployment) bool {
 // debugConfigView is a JSON-safe, redacted view of the proxy configuration
 // exposed via the /debug/config endpoint.
 type debugConfigView struct {
-	Namespace            string  `json:"namespace"`
-	MaxQueueSize         int     `json:"maxQueueSize"`
-	QueueTimeout         string  `json:"queueTimeout"`
-	ColdStartTimeout     string  `json:"coldStartTimeout"`
-	RoutingEnabled       bool    `json:"routingEnabled"`
-	ValidateRequests     bool    `json:"validateRequests"`
-	BackoffEnabled       bool    `json:"backoffEnabled"`
-	BackoffMaxRetries    int     `json:"backoffMaxRetries"`
-	BackoffInitialWait   string  `json:"backoffInitialWait"`
-	BackoffMaxWait       string  `json:"backoffMaxWait"`
-	RateLimitEnabled     bool    `json:"rateLimitEnabled"`
-	RateLimitPerModel    float64 `json:"rateLimitPerModel"`
-	RateLimitBurst       int     `json:"rateLimitBurst"`
-	RateLimitGlobal      float64 `json:"rateLimitGlobal"`
-	RateLimitGlobalBurst int     `json:"rateLimitGlobalBurst"`
-	AuthEnabled          bool    `json:"authEnabled"`
-	AuthToken            string  `json:"authToken"` // always redacted
-	DirectRuntimeEnabled bool    `json:"directRuntimeEnabled"`
+	Namespace                   string  `json:"namespace"`
+	MaxQueueSize                int     `json:"maxQueueSize"`
+	QueueTimeout                string  `json:"queueTimeout"`
+	ColdStartTimeout            string  `json:"coldStartTimeout"`
+	RoutingEnabled              bool    `json:"routingEnabled"`
+	ValidateRequests            bool    `json:"validateRequests"`
+	BackoffEnabled              bool    `json:"backoffEnabled"`
+	BackoffMaxRetries           int     `json:"backoffMaxRetries"`
+	BackoffInitialWait          string  `json:"backoffInitialWait"`
+	BackoffMaxWait              string  `json:"backoffMaxWait"`
+	RateLimitEnabled            bool    `json:"rateLimitEnabled"`
+	RateLimitPerModel           float64 `json:"rateLimitPerModel"`
+	RateLimitBurst              int     `json:"rateLimitBurst"`
+	RateLimitGlobal             float64 `json:"rateLimitGlobal"`
+	RateLimitGlobalBurst        int     `json:"rateLimitGlobalBurst"`
+	AuthEnabled                 bool    `json:"authEnabled"`
+	AuthToken                   string  `json:"authToken"` // always redacted
+	DirectRuntimeEnabled        bool    `json:"directRuntimeEnabled"`
+	MaxTokensClampEnabled       bool    `json:"maxTokensClampEnabled"`
+	MaxTokensClampPromptReserve int     `json:"maxTokensClampPromptReserve"`
 }
 
 func newDebugConfigView(cfg Config) debugConfigView {
@@ -502,24 +523,26 @@ func newDebugConfigView(cfg Config) debugConfigView {
 		tokenDisplay = "***redacted***"
 	}
 	return debugConfigView{
-		Namespace:            cfg.Namespace,
-		MaxQueueSize:         cfg.MaxQueueSize,
-		QueueTimeout:         cfg.QueueTimeout.String(),
-		ColdStartTimeout:     cfg.ColdStartTimeout.String(),
-		RoutingEnabled:       cfg.RoutingEnabled,
-		ValidateRequests:     cfg.ValidateRequests,
-		BackoffEnabled:       cfg.BackoffEnabled,
-		BackoffMaxRetries:    cfg.BackoffMaxRetries,
-		BackoffInitialWait:   cfg.BackoffInitialWait.String(),
-		BackoffMaxWait:       cfg.BackoffMaxWait.String(),
-		RateLimitEnabled:     cfg.RateLimitEnabled,
-		RateLimitPerModel:    cfg.RateLimitPerModel,
-		RateLimitBurst:       cfg.RateLimitBurst,
-		RateLimitGlobal:      cfg.RateLimitGlobal,
-		RateLimitGlobalBurst: cfg.RateLimitGlobalBurst,
-		AuthEnabled:          cfg.AuthEnabled,
-		AuthToken:            tokenDisplay,
-		DirectRuntimeEnabled: cfg.DirectRuntimeEnabled,
+		Namespace:                   cfg.Namespace,
+		MaxQueueSize:                cfg.MaxQueueSize,
+		QueueTimeout:                cfg.QueueTimeout.String(),
+		ColdStartTimeout:            cfg.ColdStartTimeout.String(),
+		RoutingEnabled:              cfg.RoutingEnabled,
+		ValidateRequests:            cfg.ValidateRequests,
+		BackoffEnabled:              cfg.BackoffEnabled,
+		BackoffMaxRetries:           cfg.BackoffMaxRetries,
+		BackoffInitialWait:          cfg.BackoffInitialWait.String(),
+		BackoffMaxWait:              cfg.BackoffMaxWait.String(),
+		RateLimitEnabled:            cfg.RateLimitEnabled,
+		RateLimitPerModel:           cfg.RateLimitPerModel,
+		RateLimitBurst:              cfg.RateLimitBurst,
+		RateLimitGlobal:             cfg.RateLimitGlobal,
+		RateLimitGlobalBurst:        cfg.RateLimitGlobalBurst,
+		AuthEnabled:                 cfg.AuthEnabled,
+		AuthToken:                   tokenDisplay,
+		DirectRuntimeEnabled:        cfg.DirectRuntimeEnabled,
+		MaxTokensClampEnabled:       cfg.MaxTokensClampEnabled,
+		MaxTokensClampPromptReserve: cfg.MaxTokensClampPromptReserve,
 	}
 }
 

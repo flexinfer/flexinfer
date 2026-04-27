@@ -160,6 +160,52 @@ func TestDetectCPU(t *testing.T) {
 	assert.True(t, ok)
 }
 
+func TestProbeAndLabelPreservesNodeSchedulingSpec(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "test-node",
+			Labels:      map[string]string{"existing": "label"},
+			Annotations: map[string]string{"existing": "annotation"},
+		},
+		Spec: corev1.NodeSpec{
+			Unschedulable: true,
+			Taints: []corev1.Taint{
+				{Key: "flexinfer.ai/maintenance", Value: "memory-guard", Effect: corev1.TaintEffectNoSchedule},
+			},
+		},
+		Status: corev1.NodeStatus{
+			Allocatable: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("8"),
+				corev1.ResourceMemory: resource.MustParse("32Gi"),
+			},
+		},
+	}
+	client := fake.NewSimpleClientset(node)
+	a := &Agent{
+		labelPrefix: "flexinfer.ai/",
+		nodeName:    "test-node",
+		namespace:   "flexinfer-system",
+		kubeClient:  client,
+		sysfsRoot:   t.TempDir(),
+	}
+	a.runCmd = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return nil, exec.ErrNotFound
+	}
+
+	require.NoError(t, a.ProbeAndLabel(context.Background()))
+
+	updated, err := client.CoreV1().Nodes().Get(context.Background(), "test-node", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.True(t, updated.Spec.Unschedulable)
+	require.Len(t, updated.Spec.Taints, 1)
+	assert.Equal(t, "flexinfer.ai/maintenance", updated.Spec.Taints[0].Key)
+	assert.Equal(t, "memory-guard", updated.Spec.Taints[0].Value)
+	assert.Equal(t, "label", updated.Labels["existing"])
+	assert.Equal(t, "annotation", updated.Annotations["existing"])
+	assert.Contains(t, updated.Labels, "flexinfer.ai/cpu.avx512")
+	assert.Contains(t, updated.Annotations, "flexinfer.ai/gpu.util")
+}
+
 // TestParseNvidiaFreeMemory tests NVIDIA free memory parsing.
 func TestParseNvidiaFreeMemory(t *testing.T) {
 	a := &Agent{}

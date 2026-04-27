@@ -6,3 +6,6 @@ resources:
   - modelcaches/
   - gpuprofiles/
   - gpugroups.yaml
+  # One-shot, Flux-managed artifact-transform tasks. Each subdirectory
+  # is idempotent so Flux re-reconciles are no-ops once complete.
+  - tasks/gemma4-31b-keqv/

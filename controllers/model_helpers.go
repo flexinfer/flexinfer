@@ -48,8 +48,10 @@ func (r *ModelReconciler) desiredReplicas(model *aiv1alpha2.Model, b backend.Bac
 }
 
 func (r *ModelReconciler) desiredReplicasForContext(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend) int32 {
-	// KV-cache eviction: override to 0 replicas while evicted.
-	if model.Status.KVCache != nil && model.Status.KVCache.Evicted {
+	// KV-cache eviction: override to 0 replicas while an active KV-cache
+	// policy is evicting. Ignore stale status left behind after the policy is
+	// removed so old pressure events cannot pin a model at zero forever.
+	if model.Spec.KVCache != nil && model.Status.KVCache != nil && model.Status.KVCache.Evicted {
 		return 0
 	}
 
@@ -141,7 +143,7 @@ func (r *ModelReconciler) nodeHasActivePipelineWork(ctx context.Context, namespa
 
 	for i := range pods.Items {
 		pod := &pods.Items[i]
-		if pod.Spec.NodeName != nodeName {
+		if !podTargetsNode(pod, nodeName) {
 			continue
 		}
 		switch pod.Status.Phase {
@@ -150,6 +152,25 @@ func (r *ModelReconciler) nodeHasActivePipelineWork(ctx context.Context, namespa
 			continue
 		}
 		if isActivePipelinePod(pod) {
+			return true
+		}
+	}
+	return false
+}
+
+// podTargetsNode reports whether pod is either already scheduled to nodeName
+// or is Pending with a nodeSelector pinning it to nodeName. Unscheduled Pending
+// pods have an empty Spec.NodeName, so a naive NodeName comparison misses
+// quant/abliterate jobs blocked on a warm-primary GPU.
+func podTargetsNode(pod *corev1.Pod, nodeName string) bool {
+	if pod == nil || nodeName == "" {
+		return false
+	}
+	if pod.Spec.NodeName == nodeName {
+		return true
+	}
+	if pod.Spec.NodeName == "" && pod.Status.Phase == corev1.PodPending {
+		if pod.Spec.NodeSelector["kubernetes.io/hostname"] == nodeName {
 			return true
 		}
 	}
@@ -370,10 +391,12 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	}
 
 	// Determine phase from deployment status and set conditions.
-	// Substage/message are Loading-phase-only: reset them on every pass and
-	// repopulate below only when phase transitions to (or remains on) Loading.
+	// Substage/message/progress timestamp are Loading-phase-only: reset them on
+	// every pass and repopulate below only when phase transitions to (or remains
+	// on) Loading.
 	model.Status.LoadingSubstage = ""
 	model.Status.Message = ""
+	model.Status.LoadingProgressAt = nil
 
 	if deployment.Status.ReadyReplicas > 0 {
 		model.Status.Phase = aiv1alpha2.ModelPhaseReady
