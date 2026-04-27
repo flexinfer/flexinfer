@@ -160,6 +160,31 @@ var (
 	})
 )
 
+// ----- Regression gate metrics (slice 6.3) -----
+
+var (
+	// RegressionCountTotal counts post-merge alert correlations: every
+	// time the regression gate's webhook receives an Alertmanager fire
+	// AND a hive-merged pipeline run landed within RegressionWindow,
+	// the counter is bumped once per (alert, severity, run_id) tuple.
+	// Dashboards alert on a non-zero rate so a hands-off auto-merge
+	// regression surfaces fast.
+	RegressionCountTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "hive_regression_count_total",
+		Help: "Post-merge alert correlations attributed to a hive auto-merge.",
+	}, []string{"alert", "severity"})
+
+	// RegressionAutoRevertPendingTotal is incremented when policy.
+	// pipeline.auto_revert_on_regression=true would have opened a
+	// revert MR. The MR-opening flow itself ships in a follow-up
+	// slice; this counter exposes the gap so we can monitor adoption
+	// of the flag without losing visibility.
+	RegressionAutoRevertPendingTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "hive_regression_auto_revert_pending_total",
+		Help: "Auto-revert candidates the gate would have opened when the MR-opener lands.",
+	})
+)
+
 // ----- Eval metrics -----
 
 var (
