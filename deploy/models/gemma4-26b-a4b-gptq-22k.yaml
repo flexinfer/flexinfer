@@ -11,8 +11,10 @@ metadata:
   namespace: flexinfer-system
   annotations:
     flexinfer.ai/promotion-gate: quantized-artifact-v1
-    flexinfer.ai/promotion-state: 22k-fp8kv-canary-unvalidated
-    flexinfer.ai/promotion-requires: target-context-validation-before-primary-promotion
+    flexinfer.ai/promotion-state: 17k-fp8kv-canary-validated
+    flexinfer.ai/promotion-validation: partial
+    flexinfer.ai/promotion-evidence: incluster-job/gemma4-22k-incluster-probe@2026-04-26T23:38:13Z
+    flexinfer.ai/promotion-requires: 18k-22k-validation-before-primary-promotion
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
