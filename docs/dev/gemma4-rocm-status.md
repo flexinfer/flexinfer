@@ -19,8 +19,8 @@ Update this document whenever a tuning change lands or a new blocker is found.
 | Model ID | Model CR | Node | Attention / KV path | Intent |
 |----------|----------|------|---------------------|--------|
 | `gemma4-31b-gptq` | `gemma4-31b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | Current warm primary at the validated 2K ceiling (`minReplicas: 1`) |
-| `gemma4-26b-a4b-gptq` | `gemma4-26b-a4b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | 8K rollback baseline / fallback (`minReplicas: 0`) |
-| `gemma4-26b-a4b-gptq-long` | `gemma4-26b-a4b-gptq-long` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 16K canary only (`minReplicas: 0`, `warmPolicy: ondemand`, priority matches the primary for demand swaps) |
+| `gemma4-26b-a4b-gptq` | `gemma4-26b-a4b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 16K validated default 26B alias / fallback (`minReplicas: 0`) |
+| `gemma4-26b-a4b-gptq-long` | `gemma4-26b-a4b-gptq-long` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 16K proof canary retained as scale-to-zero validation lane |
 | `gemma4-26b-a4b-gptq-22k` | `gemma4-26b-a4b-gptq-22k` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 22K upper-bound canary; validated at 17K prompt tokens so far (`minReplicas: 0`, `warmPolicy: ondemand`, priority 260 for explicit validation demand) |
 
 ## Current profile knobs
@@ -28,7 +28,7 @@ Update this document whenever a tuning change lands or a new blocker is found.
 | Model ID | `maxModelLen` | `maxNumBatchedTokens` | `gpuMemoryUtilization` | Serverless |
 |----------|---------------|-----------------------|------------------------|------------|
 | `gemma4-31b-gptq` | `2048` | runtime default | `0.95` | `minReplicas: 1` |
-| `gemma4-26b-a4b-gptq` | `8192` | `512` | `0.95` | `minReplicas: 0` |
+| `gemma4-26b-a4b-gptq` | `16384` | `160` | `0.98` | `minReplicas: 0` |
 | `gemma4-26b-a4b-gptq-long` | `16384` | `160` | `0.98` | `minReplicas: 0` |
 | `gemma4-26b-a4b-gptq-22k` | `22000` | `160` | `0.98` | `minReplicas: 0` |
 
@@ -39,7 +39,8 @@ Date: **2026-04-26**
 Current finding:
 
 - The current Gemma4 26B-A4B hybrid artifact (`gptq-w4-g128-attnfp16-clean`) is
-  coherent and stable at **8K**.
+  coherent and stable at **16K** when served with FP8 KV and the validated ROCm
+  fallback switches.
 - The same artifact is too large/risky for default **32K** serving on a single
   24 GB gfx1100 card.
 - A 32K FP16-KV boot failed cleanly on 2026-04-26: vLLM needed 6.88 GiB of KV
@@ -48,9 +49,8 @@ Current finding:
   validation.
 - The 16K FP8-KV canary passed the long-context probe on 2026-04-26 on
   `cblevins-7900xtx`: 14,088 prompt tokens returned the expected
-  `gemma4-long-ok` marker with zero pod restarts. It remains a scale-to-zero
-  canary; promoting it to a warm/default profile still requires a separate
-  change.
+  `gemma4-long-ok` marker with zero pod restarts. The default 26B alias now
+  uses those same runtime knobs while remaining scale-to-zero and non-primary.
 - vLLM reported 22,608 GPU KV cache tokens for the 22K FP8-KV boot. The
   separate `gemma4-26b-a4b-gptq-22k` canary validates the next practical rung
   without changing the validated 16K profile.
@@ -183,18 +183,18 @@ ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Unified `gfx1100` runtime path | Working | No separate debug runtime required |
-| Managed Gemma4 CRD deployment | Working | 26B baseline + 31B on-demand + long canary reconcile through Flux |
-| LiteLLM aliases | Working | Baseline aliases are pinned to the 26B 8K primary |
+| Managed Gemma4 CRD deployment | Working | 26B 16K fallback + 31B warm primary + long canaries reconcile through Flux |
+| LiteLLM aliases | Working | 26B aliases are promoted to the validated 16K FP8-KV profile |
 | Tool calling | Working | Gemma parser path remains enabled on baseline profiles |
 | Conservative rollout gates | Working | Canary remains scale-to-zero and non-primary |
-| 8K baseline coherence | Working | Current hybrid serves coherently at 8K on gfx1100 |
+| 16K baseline coherence | Working | Current hybrid serves coherently at 16K on gfx1100 with FP8 KV |
 
 ## Features still being chased
 
 | Feature | Status | Current read |
 |---------|--------|--------------|
-| Smaller long-context artifact | In progress | Needed before promoting beyond 8K baseline |
-| 16K promotion validation | Passed as canary | 26B canary uses FP8 KV and passed the 14K-token probe; keep scale-to-zero until a separate primary-promotion change |
+| Smaller long-context artifact | In progress | Needed before promoting beyond 16K baseline |
+| 16K promotion validation | Promoted to 26B alias | 26B canary used FP8 KV and passed the 14K-token probe; the default 26B alias now carries those knobs |
 | 22K upper-bound validation | Partial pass | 22K boots and 17,092 prompt tokens pass in-cluster; 18K-22K target proof still pending on a quieter runtime |
 | 32K promotion validation | Blocked on artifact | Current hybrid needs a smaller artifact; FP16 KV boot needs 6.88 GiB with only 1.87 GiB available |
 | Compressed-tensors + FP8 KV lane | Planned canary | Separate compressed-tensors artifact work remains disabled/non-default until validated |
@@ -219,9 +219,9 @@ ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
 | Aliases | `gemma4-26b`, `gemma4-26b-a4b`, `gemma4-moe` |
 
 **MoE Architecture**: 25.2B total / 3.8B active, 128 experts top-8, 30 layers (25 GDN + 5 full-attention).
-Current hybrid export is validated at 8K; it is not promoted for default 16K/32K service.
-The separate `gemma4-26b-a4b-gptq-long` canary runs at priority 250 so explicit
-16K demand can swap it in ahead of the idle 31B primary for validation only.
+Current hybrid export is validated at 16K with FP8 KV; it is not promoted for
+22K/32K service. The separate `gemma4-26b-a4b-gptq-long` canary is retained as
+a proof lane, and `gemma4-26b-a4b-gptq-22k` remains the upper-bound canary.
 
 **Abliteration safety**: Only `o_proj` (shared attention output). Expert FFN weights auto-skipped. `ablitateLmHead: false` (save corruption bug).
 
@@ -248,7 +248,7 @@ The separate `gemma4-26b-a4b-gptq-long` canary runs at priority 250 so explicit
 
 | Model | Decode tok/s | Prompt tok/s | VRAM | Context |
 |-------|-------------|-------------|------|---------|
-| 26B-A4B MoE INT4 | ~72 | ~1800 | ~13 GB | 8K baseline |
+| 26B-A4B MoE INT4 | ~72 | ~1800 | ~17.7 GB weights + FP8 KV | 16K baseline |
 | 31B Dense INT4 | TBD | TBD | ~20 GB | 2K validated ceiling |
 
 ExLlama v2 kernels (HIP-compiled) with `sym=true` achieve 7x faster decode than AWQ on gfx1100.
@@ -297,7 +297,7 @@ spec:
 2. Re-run the 22K FP8-KV canary with in-cluster 18K-22K prompt probes using
    `max_tokens >= 24`.
 3. Produce a smaller 26B artifact candidate for 32K validation.
-4. Keep long-context canaries non-primary (`minReplicas: 0`, `warmPolicy: ondemand`)
+4. Keep 22K+ long-context canaries non-primary (`minReplicas: 0`, `warmPolicy: ondemand`)
    until promotion criteria are met.
 5. Validate compressed-tensors + FP8 KV on a dedicated canary before any alias/default changes.
 6. Generalize this gate to additional quantized model families in shared docs/manifests.

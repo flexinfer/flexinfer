@@ -11,9 +11,11 @@
 # the 31B-gptq finally has a serving slot. Kept in the group with lower
 # priority so it can still come up on explicit alias if needed, but the
 # always-warm lane is 31B now.
-# Promotion gate (reusable for any quantized family):
-# keep this baseline at 8K until a smaller validated artifact passes
-# long-context correctness + VRAM headroom checks.
+#
+# Context uplift 2026-04-27: the separate gemma4-26b-a4b-gptq-long canary
+# proved the same hybrid artifact at 16K with FP8 KV on 2026-04-26. Promote
+# those runtime knobs to the default 26B alias while keeping this model
+# scale-to-zero and non-primary.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -21,10 +23,10 @@ metadata:
   namespace: flexinfer-system
   annotations:
     flexinfer.ai/promotion-gate: quantized-artifact-v1
-    flexinfer.ai/promotion-state: baseline-8k-validated
+    flexinfer.ai/promotion-state: baseline-16k-validated
     flexinfer.ai/promotion-validation: passed
-    flexinfer.ai/promotion-evidence: docs/dev/gemma4-rocm-status.md#latest-baseline
-    flexinfer.ai/promotion-requires: target-context-validation-before-promotion
+    flexinfer.ai/promotion-evidence: docs/dev/gemma4-rocm-status.md#16k-fp8-kv-proof-2026-04-26
+    flexinfer.ai/promotion-requires: dense-artifact-or-22k-target-proof-before-next-rung
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
@@ -76,12 +78,14 @@ spec:
   config:
     quantization: gptq
     dtype: "half"
-    # Hybrid dense-FP16/MoE-GPTQ loads at ~17.7 GiB. Keep context to 8k on the
-    # single 7900XTX so KV cache fits with ROCm/vLLM overhead.
-    # Do not raise this default serving limit until a smaller validated artifact
-    # is promoted through the quantized-artifact gate.
-    maxModelLen: 8192
-    gpuMemoryUtilization: "0.95"
+    # Hybrid dense-FP16/MoE-GPTQ loads at ~17.7 GiB. 16K requires FP8 KV on the
+    # single 7900 XTX; the canary proof processed a 14,088-token prompt with
+    # these runtime knobs and returned the expected marker. Do not raise this
+    # default serving limit again until a smaller dense artifact or a 22K target
+    # proof passes the promotion gate.
+    maxModelLen: 16384
+    gpuMemoryUtilization: "0.98"
+    kvCacheDtype: fp8_e4m3
     maxNumSeqs: 1
     trustRemoteCode: true
     attentionBackend: TRITON_ATTN
@@ -89,8 +93,8 @@ spec:
     enableToolCalling: true
     toolCallParser: gemma4
     reasoningParser: gemma4
-    enablePrefixCaching: true
-    maxNumBatchedTokens: 512
+    enablePrefixCaching: false
+    maxNumBatchedTokens: 160
     disableLogStats: false
     # Disable torch.compile + CUDAGraph: gptq_gemm kernel is "buggy" per
     # vLLM warning, and GELU tanh approximation falls back to 'none' under
@@ -100,6 +104,10 @@ spec:
     # which triggers V1 KV cache page_size_padded assertion. Disabling the
     # hybrid manager unifies all specs to FullAttentionSpec, bypassing it.
     disableHybridKVCacheManager: true
+    # Match the validated 16K canary: force source-backed ROCm fallback kernels
+    # and disable ROCm custom paged attention for this long-context profile.
+    disableAiter: true
+    rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
     # 2026-04-24: primary → ondemand. 31B re-quant verified clean, so
     # the MoE is back to on-demand fallback in 7900xtx-textgen.
