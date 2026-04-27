@@ -59,16 +59,42 @@ type MutationOptions struct {
 	// mutator should write the .loom/backlog/ exports into. Empty
 	// disables YAML export (canonical store still gets the inserts).
 	RepoRoot string
+
+	// DedupSimilarityThreshold is the Jaccard similarity threshold above
+	// which a proposal is treated as a duplicate of an existing
+	// backlog_items row and skipped. Slice 6.2: range 0..1, zero
+	// substitutes the default (0.7). Set to a value >= 1 to disable
+	// dedup entirely (only exact title matches would skip — and even
+	// those won't, since 1 is exclusive).
+	DedupSimilarityThreshold float64
 }
+
+// defaultDedupThreshold is the Jaccard cutoff that flags two titles as
+// the same proposal. 0.7 is the spec-recommended starting point: most
+// re-asks of the same plan produce ≥ 0.8 overlap, while genuinely
+// distinct slices stay well under. Tunable via MutationOptions.
+const defaultDedupThreshold = 0.7
 
 // MutationResult is the audit footprint of one Apply call.
 type MutationResult struct {
-	TotalProposed   int
-	Skipped         bool
-	SkipReason      string
-	CreatedItems    []*store.BacklogItem
-	CreatedYAMLPath []string
-	Truncated       int // proposals dropped to honour MaxNewItems
+	TotalProposed     int
+	Skipped           bool
+	SkipReason        string
+	CreatedItems      []*store.BacklogItem
+	CreatedYAMLPath   []string
+	Truncated         int                // proposals dropped to honour MaxNewItems
+	DuplicatesSkipped []DuplicateSkipped // dedup matches (slice 6.2)
+}
+
+// DuplicateSkipped records one proposal the mutator dropped because it
+// looked like an existing item. Surfaces in events + the council run
+// summary so the editor can avoid re-proposing on the next run.
+type DuplicateSkipped struct {
+	ProposalIndex int     `json:"proposal_index"`
+	ProposalTitle string  `json:"proposal_title"`
+	SimilarToID   string  `json:"similar_to_id"`
+	SimilarTitle  string  `json:"similar_title"`
+	JaccardScore  float64 `json:"jaccard_score"`
 }
 
 // defaultMaxNewItems matches the spec's "≤ 10 new items per council
@@ -121,12 +147,39 @@ func (m *BacklogMutator) Apply(ctx context.Context, runID string, out *EditorOut
 		now = m.Now().UTC()
 	}
 
+	threshold := opts.DedupSimilarityThreshold
+	if threshold == 0 {
+		threshold = defaultDedupThreshold
+	}
+
+	// Snapshot the canonical backlog once per Apply so we don't pay the
+	// query cost per proposal. Just-created items in this same Apply are
+	// appended to the candidate pool below so within-batch duplicates
+	// also dedup against each other.
+	existing, err := m.Store.Backlog.List(ctx)
+	if err != nil {
+		return res, fmt.Errorf("dedup snapshot: %w", err)
+	}
+	candidates := make([]*store.BacklogItem, 0, len(existing)+len(proposals))
+	candidates = append(candidates, existing...)
+
 	for i, p := range proposals {
+		if dup := findDuplicate(p.Title, candidates, threshold); dup != nil {
+			res.DuplicatesSkipped = append(res.DuplicatesSkipped, DuplicateSkipped{
+				ProposalIndex: i,
+				ProposalTitle: p.Title,
+				SimilarToID:   dup.item.ID,
+				SimilarTitle:  dup.item.Title,
+				JaccardScore:  dup.score,
+			})
+			continue
+		}
 		item, err := m.persistOne(ctx, runID, now, i, p)
 		if err != nil {
 			return res, fmt.Errorf("persist proposal %d (%q): %w", i, p.Title, err)
 		}
 		res.CreatedItems = append(res.CreatedItems, item)
+		candidates = append(candidates, item)
 	}
 
 	if opts.RepoRoot != "" {
@@ -135,6 +188,127 @@ func (m *BacklogMutator) Apply(ctx context.Context, runID string, out *EditorOut
 		}
 	}
 	return res, nil
+}
+
+// dedupHit pairs a duplicate match with the score that produced it.
+type dedupHit struct {
+	item  *store.BacklogItem
+	score float64
+}
+
+// findDuplicate returns the highest-scoring candidate whose Jaccard
+// similarity to title meets or exceeds threshold, or nil when nothing
+// crosses the bar. Empty titles never dedup (defensive — Title is
+// validated as non-empty earlier in persistOne, but Apply may run
+// before that check).
+func findDuplicate(title string, candidates []*store.BacklogItem, threshold float64) *dedupHit {
+	if title == "" || threshold <= 0 || threshold > 1 {
+		return nil
+	}
+	tokens := normalizeTitleTokens(title)
+	if len(tokens) == 0 {
+		return nil
+	}
+	var best *dedupHit
+	for _, c := range candidates {
+		score := jaccard(tokens, normalizeTitleTokens(c.Title))
+		if score < threshold {
+			continue
+		}
+		if best == nil || score > best.score {
+			best = &dedupHit{item: c, score: score}
+		}
+	}
+	return best
+}
+
+// stopwords are the English filler tokens we drop before computing
+// Jaccard so that "Add the new HUD panel" and "Add new HUD panel"
+// produce identical token sets. Kept tiny by design — bigger lists
+// risk hiding genuine differences (e.g. "before" vs "after").
+var stopwords = map[string]struct{}{
+	"a": {}, "an": {}, "the": {},
+	"to": {}, "of": {}, "for": {}, "and": {}, "or": {},
+	"with": {}, "in": {}, "on": {}, "at": {}, "by": {},
+	"is": {}, "are": {},
+}
+
+// normalizeTitleTokens lowercases title and splits on non-alphanumeric
+// characters, then drops stopwords and tokens shorter than 2 chars.
+// Returns a deduplicated slice in original token order so the function
+// is also useful for displays/tests that want stable output.
+func normalizeTitleTokens(title string) []string {
+	if title == "" {
+		return nil
+	}
+	lower := strings.ToLower(title)
+	out := make([]string, 0, 8)
+	seen := make(map[string]struct{}, 8)
+	start := -1
+	for i, r := range lower {
+		alnum := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if alnum {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		if start >= 0 {
+			tok := lower[start:i]
+			start = -1
+			if len(tok) < 2 {
+				continue
+			}
+			if _, skip := stopwords[tok]; skip {
+				continue
+			}
+			if _, dup := seen[tok]; dup {
+				continue
+			}
+			seen[tok] = struct{}{}
+			out = append(out, tok)
+		}
+	}
+	if start >= 0 {
+		tok := lower[start:]
+		if len(tok) >= 2 {
+			if _, skip := stopwords[tok]; !skip {
+				if _, dup := seen[tok]; !dup {
+					out = append(out, tok)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// jaccard returns |A ∩ B| / |A ∪ B|. Both empty → 0 (we only ever
+// compare non-empty token slices, but defensive zero is the right
+// answer either way: empty titles aren't "duplicates" of each other).
+func jaccard(a, b []string) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	setA := make(map[string]struct{}, len(a))
+	for _, t := range a {
+		setA[t] = struct{}{}
+	}
+	inter := 0
+	setB := make(map[string]struct{}, len(b))
+	for _, t := range b {
+		if _, dup := setB[t]; dup {
+			continue
+		}
+		setB[t] = struct{}{}
+		if _, ok := setA[t]; ok {
+			inter++
+		}
+	}
+	union := len(setA) + len(setB) - inter
+	if union == 0 {
+		return 0
+	}
+	return float64(inter) / float64(union)
 }
 
 // persistOne writes one BacklogProposal to the canonical store. The id
@@ -265,6 +439,9 @@ func (r *MutationResult) Summary() string {
 	}
 	if r.Truncated > 0 {
 		parts = append(parts, fmt.Sprintf("truncated=%d", r.Truncated))
+	}
+	if n := len(r.DuplicatesSkipped); n > 0 {
+		parts = append(parts, fmt.Sprintf("deduped=%d", n))
 	}
 	return strings.Join(parts, " ")
 }
