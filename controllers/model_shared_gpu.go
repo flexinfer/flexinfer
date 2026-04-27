@@ -301,6 +301,9 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 			// Preempt this model
 			log.Info("Preempting model in favor of higher priority", "preemptedBy", activeModel.Name)
 			model.Status.Phase = aiv1alpha2.ModelPhasePreempted
+			model.Status.LoadingSubstage = aiv1alpha2.LoadingSubstagePreempted
+			model.Status.Message = preemptedStatusMessage(model)
+			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonPreempted, model.Status.Message)
 			model.Status.SharedGroup.PreemptedAt = &metav1.Time{Time: time.Now()}
 			r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted",
 				fmt.Sprintf("Preempted by %s with priority %d", activeModel.Name, activeModel.Spec.GetPriority()))

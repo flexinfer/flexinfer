@@ -967,8 +967,16 @@ spec:
                 description: |-
                   LoadingSubstage refines Phase=Loading with granular progress detail so
                   operators and the proxy can distinguish ImagePulling / Initializing /
-                  LoadingWeights / Compiling / HealthCheckPending. Populated while loading;
-                  empty otherwise.
+                  LoadingWeights / Compiling / HealthCheckPending. When Phase=Preempted,
+                  it is set to Preempted so clients can surface shared-GPU eviction in the
+                  same status field.
+                enum:
+                - ImagePulling
+                - Initializing
+                - LoadingWeights
+                - Compiling
+                - HealthCheckPending
+                - Preempted
                 type: string
               message:
                 description: |-

@@ -50,7 +50,9 @@ const (
 
 // LoadingSubstage refines the Loading phase with progress detail so operators
 // can distinguish a transient slow-load from a wedged-load without tailing pod
-// logs. Populated only while Phase == ModelPhaseLoading; cleared otherwise.
+// logs. It also carries the explicit Preempted state while Phase ==
+// ModelPhasePreempted so clients can show one status column for startup and
+// shared-GPU eviction.
 type LoadingSubstage string
 
 const (
@@ -64,6 +66,8 @@ const (
 	LoadingSubstageCompiling LoadingSubstage = "Compiling"
 	// LoadingSubstageHealthCheckPending - weights loaded, awaiting readiness probe success.
 	LoadingSubstageHealthCheckPending LoadingSubstage = "HealthCheckPending"
+	// LoadingSubstagePreempted - loading/serving was interrupted by a higher-priority peer.
+	LoadingSubstagePreempted LoadingSubstage = "Preempted"
 )
 
 // Condition types for Model status
@@ -579,8 +583,10 @@ type ModelStatus struct {
 
 	// LoadingSubstage refines Phase=Loading with granular progress detail so
 	// operators and the proxy can distinguish ImagePulling / Initializing /
-	// LoadingWeights / Compiling / HealthCheckPending. Populated while loading;
-	// empty otherwise.
+	// LoadingWeights / Compiling / HealthCheckPending. When Phase=Preempted,
+	// it is set to Preempted so clients can surface shared-GPU eviction in the
+	// same status field.
+	// +kubebuilder:validation:Enum=ImagePulling;Initializing;LoadingWeights;Compiling;HealthCheckPending;Preempted
 	// +optional
 	LoadingSubstage LoadingSubstage `json:"loadingSubstage,omitempty"`
 

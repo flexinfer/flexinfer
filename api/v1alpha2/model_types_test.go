@@ -200,6 +200,25 @@ func TestModelPhases(t *testing.T) {
 	}
 }
 
+func TestLoadingSubstages(t *testing.T) {
+	substages := []LoadingSubstage{
+		LoadingSubstageImagePulling,
+		LoadingSubstageInitializing,
+		LoadingSubstageLoadingWeights,
+		LoadingSubstageCompiling,
+		LoadingSubstageHealthCheckPending,
+		LoadingSubstagePreempted,
+	}
+
+	expected := []string{"ImagePulling", "Initializing", "LoadingWeights", "Compiling", "HealthCheckPending", "Preempted"}
+
+	for i, substage := range substages {
+		if string(substage) != expected[i] {
+			t.Errorf("Substage %d = %q, want %q", i, substage, expected[i])
+		}
+	}
+}
+
 func TestModelStatus(t *testing.T) {
 	status := &ModelStatus{
 		Phase:    ModelPhaseReady,

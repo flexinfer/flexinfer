@@ -570,6 +570,94 @@ func TestHandleSharedGPU_NoSelfElectionWhenNoModelReady(t *testing.T) {
 	}
 }
 
+func TestHandleSharedGPUPreemptionSetsStatusMessage(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	shared := "test-shared"
+	highPrio := int32(200)
+	lowPrio := int32(50)
+	now := time.Now()
+
+	high := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "high",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+			GPU: &aiv1alpha2.GPUSpec{
+				Shared:   shared,
+				Priority: &highPrio,
+			},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase:          aiv1alpha2.ModelPhasePending,
+			LastActiveTime: &metav1.Time{Time: now},
+		},
+	}
+	low := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "low",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "mlc-llm",
+			GPU: &aiv1alpha2.GPUSpec{
+				Shared:   shared,
+				Priority: &lowPrio,
+			},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase:          aiv1alpha2.ModelPhaseReady,
+			LastActiveTime: &metav1.Time{Time: now.Add(-10 * time.Minute)},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&aiv1alpha2.Model{}).
+		WithRuntimeObjects(high, low).
+		Build()
+	r := &ModelReconciler{
+		Client:   fakeClient,
+		Scheme:   s,
+		Recorder: record.NewFakeRecorder(10),
+	}
+	ctx := context.Background()
+
+	lowObj := &aiv1alpha2.Model{}
+	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(low), lowObj); err != nil {
+		t.Fatalf("get low model: %v", err)
+	}
+	if _, err := r.handleSharedGPU(ctx, lowObj); err != nil {
+		t.Fatalf("handleSharedGPU(low) error: %v", err)
+	}
+
+	updatedLow := &aiv1alpha2.Model{}
+	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(low), updatedLow); err != nil {
+		t.Fatalf("get updated low model: %v", err)
+	}
+	if updatedLow.Status.Phase != aiv1alpha2.ModelPhasePreempted {
+		t.Fatalf("expected low model phase Preempted, got %q", updatedLow.Status.Phase)
+	}
+	if updatedLow.Status.LoadingSubstage != aiv1alpha2.LoadingSubstagePreempted {
+		t.Fatalf("expected low model substage Preempted, got %q", updatedLow.Status.LoadingSubstage)
+	}
+	if updatedLow.Status.Message != "preempted by high" {
+		t.Fatalf("expected preemption message, got %q", updatedLow.Status.Message)
+	}
+	ready := modelCondition(updatedLow.Status.Conditions, aiv1alpha2.ConditionModelReady)
+	if ready == nil || ready.Reason != aiv1alpha2.ReasonPreempted || ready.Message != "preempted by high" {
+		t.Fatalf("expected Ready condition to carry preemption detail, got %#v", ready)
+	}
+}
+
 func TestDetectGPU_UsesOnlyReadyNodes(t *testing.T) {
 	s := runtime.NewScheme()
 	if err := scheme.AddToScheme(s); err != nil {
