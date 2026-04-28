@@ -59,6 +59,7 @@ func (d *MobileDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFu
 	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/{spawn_id}/telemetry/tools", mw(d.HandleGetSpawnTelemetryTools))
 	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/{spawn_id}/telemetry/files", mw(d.HandleGetSpawnTelemetryFiles))
 	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/{spawn_id}/telemetry/errors", mw(d.HandleGetSpawnTelemetryErrors))
+	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/{spawn_id}/trace", mw(d.handleMobileSpawnTrace))
 
 	// Mutation endpoints.
 	mux.HandleFunc("POST /api/mobile/v1/sessions", mw(d.handleMobileSessionCreate))

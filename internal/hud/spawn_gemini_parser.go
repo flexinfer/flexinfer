@@ -101,6 +101,7 @@ func (p *GeminiJSONLParser) handleMessage(line []byte) {
 		p.sink.IncrementTurns()
 		if ev.Content != "" {
 			p.sink.SetLastMessage(ev.Content)
+			p.sink.AddMessage("assistant", "text", ev.Content)
 			if p.broadcast != nil {
 				p.broadcast("agent.spawn.message", p.agentID, map[string]string{
 					"text":     ev.Content,

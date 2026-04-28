@@ -29,6 +29,7 @@ func (d *SpawnDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFun
 	mux.HandleFunc("GET /api/agent/spawn/{spawn_id}/telemetry/tools", mw(d.HandleGetTelemetryTools))
 	mux.HandleFunc("GET /api/agent/spawn/{spawn_id}/telemetry/files", mw(d.HandleGetTelemetryFiles))
 	mux.HandleFunc("GET /api/agent/spawn/{spawn_id}/telemetry/errors", mw(d.HandleGetTelemetryErrors))
+	mux.HandleFunc("GET /api/agent/spawn/{spawn_id}/trace", mw(d.HandleSpawnTrace))
 	mux.HandleFunc("POST /api/agent/spawn/{spawn_id}/stop", mw(d.handleAgentSpawnStop))
 	mux.HandleFunc("DELETE /api/agent/spawn/{spawn_id}", mw(d.handleAgentSpawnDelete))
 	mux.HandleFunc("POST /api/agent/spawn/{spawn_id}/message", mw(d.handleAgentSpawnMessage))

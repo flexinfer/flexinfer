@@ -479,4 +479,65 @@ func TestSpawnAccumulator_InitialState(t *testing.T) {
 	if snap.ModelUsage == nil {
 		t.Error("initial ModelUsage should not be nil")
 	}
+	if len(snap.Messages) != 0 {
+		t.Errorf("initial Messages: got %d, want 0", len(snap.Messages))
+	}
+}
+
+// --- AddMessage ---
+
+func TestSpawnAccumulator_AddMessage_AppendsAndDefaultsRole(t *testing.T) {
+	acc := NewSpawnTelemetryAccumulator()
+	acc.AddMessage("", "text", "hello")
+	acc.AddMessage("assistant", "thinking", "internal monologue")
+	acc.AddMessage("assistant", "reasoning", "codex reasoning")
+	acc.AddMessage("assistant", "todo", "[ ] do thing")
+	acc.AddMessage("assistant", "result", "final")
+
+	snap := acc.Snapshot()
+	if got, want := len(snap.Messages), 5; got != want {
+		t.Fatalf("Messages len: got %d, want %d", got, want)
+	}
+	if snap.Messages[0].Role != "assistant" {
+		t.Errorf("empty role should default to assistant; got %q", snap.Messages[0].Role)
+	}
+	wantKinds := []string{"text", "thinking", "reasoning", "todo", "result"}
+	for i, k := range wantKinds {
+		if snap.Messages[i].Kind != k {
+			t.Errorf("Messages[%d].Kind: got %q, want %q", i, snap.Messages[i].Kind, k)
+		}
+	}
+	for i, m := range snap.Messages {
+		if m.Time == "" {
+			t.Errorf("Messages[%d].Time should be set", i)
+		}
+	}
+}
+
+func TestSpawnAccumulator_AddMessage_DropsEmptyText(t *testing.T) {
+	acc := NewSpawnTelemetryAccumulator()
+	acc.AddMessage("assistant", "text", "")
+	if got := len(acc.Snapshot().Messages); got != 0 {
+		t.Errorf("empty text should be dropped; got %d entries", got)
+	}
+}
+
+func TestSpawnAccumulator_AddMessage_RespectsCapAndSnapshotIsolation(t *testing.T) {
+	acc := NewSpawnTelemetryAccumulator()
+	for i := 0; i < maxMessages+25; i++ {
+		acc.AddMessage("assistant", "text", "msg")
+	}
+	snap := acc.Snapshot()
+	if got, want := len(snap.Messages), maxMessages; got != want {
+		t.Errorf("cap violated: got %d, want %d", got, want)
+	}
+
+	// Mutating snapshot must not bleed back into the accumulator.
+	if len(snap.Messages) > 0 {
+		snap.Messages[0].Text = "MUTATED"
+	}
+	again := acc.Snapshot()
+	if again.Messages[0].Text != "msg" {
+		t.Errorf("Snapshot should deep-copy Messages; accumulator state mutated to %q", again.Messages[0].Text)
+	}
 }

@@ -564,3 +564,60 @@ func (d *MobileDomain) handleMobileSpawnTelemetry(w http.ResponseWriter, r *http
 		"telemetry": tel,
 	})
 }
+
+// handleMobileSpawnTrace handles GET /api/mobile/v1/agent/spawn/{spawn_id}/trace.
+// Returns the per-spawn conversation transcript plus telemetry sub-resources
+// in a single response. Mirror of the web HUD's /api/agent/spawn/{id}/trace
+// endpoint with mobile-style errors.
+func (d *MobileDomain) handleMobileSpawnTrace(w http.ResponseWriter, r *http.Request) {
+	if !d.requireMobileScope(w, r, ScopeRead) {
+		return
+	}
+
+	spawnID := r.PathValue("spawn_id")
+	if spawnID == "" {
+		d.writeMobileError(w, http.StatusBadRequest, "missing_param", "spawn_id required")
+		return
+	}
+
+	spawner := d.deps.Spawner()
+	if spawner == nil {
+		d.writeMobileError(w, http.StatusServiceUnavailable, "spawn_unavailable", "spawn orchestrator not configured")
+		return
+	}
+
+	state, ok := spawner.GetSpawn(spawnID)
+	if !ok {
+		d.writeMobileError(w, http.StatusNotFound, "not_found", "spawn not found")
+		return
+	}
+
+	tel, _ := spawner.GetSpawnTelemetry(spawnID)
+
+	resp := map[string]any{
+		"spawn_id":     spawnID,
+		"agent_id":     state.AgentID,
+		"status":       string(state.Status),
+		"messages":     []bridge.Message{},
+		"tool_calls":   []bridge.ToolCallEntry{},
+		"file_changes": []bridge.FileChangeEntry{},
+		"errors":       []bridge.AgentError{},
+		"telemetry":    tel,
+	}
+	if tel != nil {
+		if tel.Messages != nil {
+			resp["messages"] = tel.Messages
+		}
+		if tel.ToolCalls != nil {
+			resp["tool_calls"] = tel.ToolCalls
+		}
+		if tel.FileChanges != nil {
+			resp["file_changes"] = tel.FileChanges
+		}
+		if tel.Errors != nil {
+			resp["errors"] = tel.Errors
+		}
+	}
+
+	d.writeMobileJSON(w, http.StatusOK, resp)
+}

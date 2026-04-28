@@ -225,6 +225,130 @@ func TestHandleSpawnTelemetry_NoSpawner(t *testing.T) {
 	}
 }
 
+// --- Trace handler tests ---
+
+func TestHandleSpawnTrace_Success(t *testing.T) {
+	exitCode := 0
+	spawner := &mockTelemetrySpawner{
+		spawns: map[string]*pkgspawn.State{
+			"spawn-1": {SpawnID: "spawn-1", AgentID: "spawn-claude-code-1", Status: "running"},
+		},
+		telemetry: map[string]*bridge.SpawnTelemetry{
+			"spawn-1": {
+				Messages: []bridge.Message{
+					{Role: "assistant", Kind: "thinking", Text: "let me think", Time: "2026-04-28T14:00:00Z"},
+					{Role: "assistant", Kind: "text", Text: "starting work", Time: "2026-04-28T14:00:01Z"},
+					{Role: "assistant", Kind: "result", Text: "done", Time: "2026-04-28T14:01:00Z"},
+				},
+				ToolCalls: []bridge.ToolCallEntry{
+					{Name: "Bash", DurationMs: 42, ExitCode: &exitCode, Timestamp: "2026-04-28T14:00:30Z"},
+				},
+				FileChanges: []bridge.FileChangeEntry{
+					{Path: "main.go", Kind: "modify", LinesAdded: 3, LinesRemoved: 1},
+				},
+			},
+		},
+	}
+	deps := &mockTelemetryDeps{spawner: spawner, authed: true}
+	d := New(deps)
+
+	mux := http.NewServeMux()
+	mw := func(next http.HandlerFunc) http.HandlerFunc { return next }
+	d.RegisterRoutes(mux, mw)
+
+	req := httptest.NewRequest("GET", "/api/agent/spawn/spawn-1/trace", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["spawn_id"] != "spawn-1" {
+		t.Errorf("spawn_id: got %v, want spawn-1", body["spawn_id"])
+	}
+	if body["agent_id"] != "spawn-claude-code-1" {
+		t.Errorf("agent_id: got %v, want spawn-claude-code-1", body["agent_id"])
+	}
+	if body["status"] != "running" {
+		t.Errorf("status: got %v, want running", body["status"])
+	}
+	msgs, _ := body["messages"].([]any)
+	if got, want := len(msgs), 3; got != want {
+		t.Fatalf("messages len: got %d, want %d", got, want)
+	}
+	first, _ := msgs[0].(map[string]any)
+	if first["kind"] != "thinking" {
+		t.Errorf("messages[0].kind: got %v, want thinking", first["kind"])
+	}
+	tools, _ := body["tool_calls"].([]any)
+	if got, want := len(tools), 1; got != want {
+		t.Errorf("tool_calls len: got %d, want %d", got, want)
+	}
+	files, _ := body["file_changes"].([]any)
+	if got, want := len(files), 1; got != want {
+		t.Errorf("file_changes len: got %d, want %d", got, want)
+	}
+}
+
+func TestHandleSpawnTrace_SpawnExistsButNoTelemetry(t *testing.T) {
+	spawner := &mockTelemetrySpawner{
+		spawns: map[string]*pkgspawn.State{
+			"spawn-2": {SpawnID: "spawn-2", AgentID: "spawn-gemini-2", Status: "building"},
+		},
+		telemetry: map[string]*bridge.SpawnTelemetry{}, // no telemetry yet
+	}
+	deps := &mockTelemetryDeps{spawner: spawner, authed: true}
+	d := New(deps)
+
+	mux := http.NewServeMux()
+	mw := func(next http.HandlerFunc) http.HandlerFunc { return next }
+	d.RegisterRoutes(mux, mw)
+
+	req := httptest.NewRequest("GET", "/api/agent/spawn/spawn-2/trace", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with empty payload, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["telemetry"] != nil {
+		t.Errorf("telemetry should be nil for spawn without telemetry; got %v", body["telemetry"])
+	}
+	if msgs, _ := body["messages"].([]any); len(msgs) != 0 {
+		t.Errorf("messages should be empty slice, got %d entries", len(msgs))
+	}
+}
+
+func TestHandleSpawnTrace_NotFound(t *testing.T) {
+	spawner := &mockTelemetrySpawner{
+		spawns:    map[string]*pkgspawn.State{},
+		telemetry: map[string]*bridge.SpawnTelemetry{},
+	}
+	deps := &mockTelemetryDeps{spawner: spawner, authed: true}
+	d := New(deps)
+
+	mux := http.NewServeMux()
+	mw := func(next http.HandlerFunc) http.HandlerFunc { return next }
+	d.RegisterRoutes(mux, mw)
+
+	req := httptest.NewRequest("GET", "/api/agent/spawn/nonexistent/trace", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
 func TestTelemetryRouteRegistered(t *testing.T) {
 	spawner := &mockTelemetrySpawner{
 		spawns:    map[string]*pkgspawn.State{},
