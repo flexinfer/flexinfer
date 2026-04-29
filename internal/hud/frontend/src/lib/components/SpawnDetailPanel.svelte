@@ -12,6 +12,7 @@
   import Badge from '../widgets/Badge.svelte';
   import BudgetBar from '../widgets/BudgetBar.svelte';
   import ActivityTab from './SpawnTelemetry/ActivityTab.svelte';
+  import TranscriptTab from './SpawnTelemetry/TranscriptTab.svelte';
   import ToolsTab from './SpawnTelemetry/ToolsTab.svelte';
   import FilesTab from './SpawnTelemetry/FilesTab.svelte';
   import ErrorsTab from './SpawnTelemetry/ErrorsTab.svelte';
@@ -19,10 +20,11 @@
   import LabsAccessBar from './shared/LabsAccessBar.svelte';
   import ConfirmDialog from './shared/ConfirmDialog.svelte';
 
-  type TabId = 'activity' | 'tools' | 'files' | 'errors' | 'usage';
+  type TabId = 'activity' | 'transcript' | 'tools' | 'files' | 'errors' | 'usage';
 
   const tabs: Array<{ id: TabId; label: string }> = [
     { id: 'activity', label: 'Activity' },
+    { id: 'transcript', label: 'Transcript' },
     { id: 'tools', label: 'Tools' },
     { id: 'files', label: 'Files' },
     { id: 'errors', label: 'Errors' },
@@ -484,6 +486,8 @@
       <div class="tab-body">
         {#if activeTab === 'activity'}
           <ActivityTab spawnId={spawn.spawn_id} />
+        {:else if activeTab === 'transcript'}
+          <TranscriptTab spawnId={spawn.spawn_id} />
         {:else if activeTab === 'tools'}
           <ToolsTab spawnId={spawn.spawn_id} />
         {:else if activeTab === 'files'}
