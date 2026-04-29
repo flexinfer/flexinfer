@@ -350,6 +350,11 @@ func (s *OAuthServer) HandleAuthorize(w http.ResponseWriter, r *http.Request) {
 		"scope", scope,
 	)
 
+	// #nosec G710 -- redirectURI is validated against client.RedirectURIs at line
+	// 315 above (containsString whitelist check); gosec taint analysis cannot
+	// follow that flow. This is the standard OAuth 2.0 authorization-code
+	// redirect (RFC 6749 §4.1.2) where the registered redirect_uri receives
+	// the authorization code.
 	http.Redirect(w, r, location, http.StatusFound)
 }
 
