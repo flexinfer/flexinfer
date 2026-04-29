@@ -18,6 +18,25 @@ type SpawnTelemetry struct {
 	Errors            []AgentError        `json:"errors,omitempty"`
 	StopReason        string              `json:"stop_reason,omitempty"`
 	LastMessage       string              `json:"last_message,omitempty"`
+	// Messages is the per-turn conversation transcript. Accumulated by parsers
+	// from agent JSONL stdout: assistant text, thinking blocks (Claude),
+	// reasoning items and todo lists (Codex). Capped at maxMessages to bound
+	// memory; older entries are kept (FIFO drop is a future option).
+	Messages []Message `json:"messages,omitempty"`
+}
+
+// Message is a single transcript entry from a spawned agent. Multiple Kind
+// values exist because different agents emit different content types:
+//   - "text"      — assistant prose (Claude/Codex/Gemini final output)
+//   - "thinking"  — Claude extended-thinking block
+//   - "reasoning" — Codex internal reasoning item
+//   - "todo"      — Codex todo_list item
+//   - "result"    — terminal result message (Claude `result` event)
+type Message struct {
+	Role string `json:"role"` // "assistant" by default; reserved for future "user"
+	Kind string `json:"kind"` // see Message doc comment
+	Text string `json:"text"`
+	Time string `json:"time"` // RFC3339 UTC
 }
 
 // SpawnTokenUsage aggregates token counts across all turns.
@@ -63,6 +82,7 @@ type AgentError struct {
 const (
 	maxToolCalls   = 500
 	maxFileChanges = 200
+	maxMessages    = 500
 )
 
 // SpawnTelemetryAccumulator is a thread-safe accumulator for building SpawnTelemetry
@@ -255,6 +275,32 @@ func (a *SpawnTelemetryAccumulator) SetLastMessage(msg string) {
 	a.data.LastMessage = msg
 }
 
+// AddMessage appends a transcript entry. role is typically "assistant"; kind
+// is one of the documented Message.Kind values (text, thinking, reasoning,
+// todo, result). Empty text entries are ignored. Capped at maxMessages —
+// further entries are dropped silently to bound per-spawn memory; the cap is
+// large enough for normal sessions (~500 turns).
+func (a *SpawnTelemetryAccumulator) AddMessage(role, kind, text string) {
+	if text == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if len(a.data.Messages) >= maxMessages {
+		return
+	}
+	if role == "" {
+		role = "assistant"
+	}
+	a.data.Messages = append(a.data.Messages, Message{
+		Role: role,
+		Kind: kind,
+		Text: text,
+		Time: time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
 // IncrementTurns adds one to the turn counter.
 func (a *SpawnTelemetryAccumulator) IncrementTurns() {
 	a.mu.Lock()
@@ -287,6 +333,10 @@ func (a *SpawnTelemetryAccumulator) Snapshot() SpawnTelemetry {
 	if a.data.Errors != nil {
 		snap.Errors = make([]AgentError, len(a.data.Errors))
 		copy(snap.Errors, a.data.Errors)
+	}
+	if a.data.Messages != nil {
+		snap.Messages = make([]Message, len(a.data.Messages))
+		copy(snap.Messages, a.data.Messages)
 	}
 
 	// Deep copy map

@@ -248,6 +248,10 @@ func (p *CodexJSONLParser) handleItemCompleted(line []byte) {
 	case "mcp_tool_call":
 		p.handleMCPToolCall(item)
 	case "reasoning":
+		if item.Text != "" {
+			p.sink.AddMessage("assistant", "reasoning", item.Text)
+			p.emitTelemetryDelta()
+		}
 		if p.broadcast != nil {
 			p.broadcast("agent.spawn.reasoning", p.agentID, map[string]string{
 				"text": item.Text,
@@ -261,6 +265,10 @@ func (p *CodexJSONLParser) handleItemCompleted(line []byte) {
 		p.sink.AddError("execution", msg)
 		p.emitTelemetryDelta()
 	case "todo_list":
+		if item.Text != "" {
+			p.sink.AddMessage("assistant", "todo", item.Text)
+			p.emitTelemetryDelta()
+		}
 		if p.broadcast != nil {
 			p.broadcast("agent.spawn.todo", p.agentID, map[string]string{
 				"text": item.Text,
@@ -313,6 +321,7 @@ func (p *CodexJSONLParser) handleAgentMessage(item codexItem) {
 	}
 	if text != "" {
 		p.sink.SetLastMessage(text)
+		p.sink.AddMessage("assistant", "text", text)
 	}
 	if p.broadcast != nil {
 		p.broadcast("agent.spawn.message", p.agentID, map[string]string{

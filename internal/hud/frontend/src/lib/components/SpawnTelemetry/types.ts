@@ -38,4 +38,30 @@ export interface PaginatedResponse<T> {
   offset: number;
 }
 
+// Message mirrors bridge.Message in Go. Kind classifies content type:
+//   "text"      — assistant prose
+//   "thinking"  — Claude extended-thinking block
+//   "reasoning" — Codex internal reasoning item
+//   "todo"      — Codex todo_list item
+//   "result"    — terminal result message (Claude `result` event)
+export interface Message {
+  role: string;
+  kind: string;
+  text: string;
+  time: string;
+}
+
+// SpawnTraceResponse is the GET /api/agent/spawn/{id}/trace payload. Empty
+// slices (not undefined) when the spawn exists but has no telemetry yet.
+export interface SpawnTraceResponse {
+  spawn_id: string;
+  agent_id: string;
+  status: string;
+  messages: Message[];
+  tool_calls: ToolCallEntry[];
+  file_changes: FileChangeEntry[];
+  errors: AgentErrorEntry[];
+  telemetry: unknown | null;
+}
+
 export const PAGE_LIMIT = 50;

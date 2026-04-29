@@ -171,6 +171,7 @@ func (p *ClaudeJSONLParser) handleAssistant(line []byte) {
 		case "text":
 			if block.Text != "" {
 				p.sink.SetLastMessage(block.Text)
+				p.sink.AddMessage("assistant", "text", block.Text)
 				changed = true
 				if p.broadcast != nil {
 					p.broadcast("agent.spawn.message", p.agentID, map[string]string{
@@ -179,6 +180,10 @@ func (p *ClaudeJSONLParser) handleAssistant(line []byte) {
 				}
 			}
 		case "thinking":
+			if block.Thinking != "" {
+				p.sink.AddMessage("assistant", "thinking", block.Thinking)
+				changed = true
+			}
 			if p.broadcast != nil {
 				p.broadcast("agent.spawn.thinking", p.agentID, map[string]string{
 					"thinking": block.Thinking,
@@ -320,6 +325,7 @@ func (p *ClaudeJSONLParser) handleResult(line []byte) {
 		p.sink.AddError(ev.Subtype, ev.Result)
 	} else if ev.Result != "" {
 		p.sink.SetLastMessage(ev.Result)
+		p.sink.AddMessage("assistant", "result", ev.Result)
 	}
 
 	// Surface permission-denied tool calls as structured errors on the

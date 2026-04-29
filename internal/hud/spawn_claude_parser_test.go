@@ -38,6 +38,10 @@ type errorCall struct {
 	ErrType, Message string
 }
 
+type messageCall struct {
+	Role, Kind, Text string
+}
+
 type resultCall struct {
 	CostUSD    float64
 	Turns      int
@@ -59,6 +63,7 @@ type mockSink struct {
 	errors         []errorCall
 	result         *resultCall
 	lastMessage    string
+	messages       []messageCall
 	externalID     string
 	turns          int
 	estimatedCost  float64
@@ -118,6 +123,12 @@ func (m *mockSink) SetLastMessage(msg string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.lastMessage = msg
+}
+
+func (m *mockSink) AddMessage(role, kind, text string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.messages = append(m.messages, messageCall{role, kind, text})
 }
 
 func (m *mockSink) IncrementTurns() {

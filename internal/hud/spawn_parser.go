@@ -46,6 +46,11 @@ type SpawnEventSink interface {
 	SetResult(costUSD float64, turns int, stopReason string)
 	// SetLastMessage stores the most recent agent text output.
 	SetLastMessage(msg string)
+	// AddMessage appends a transcript entry. role defaults to "assistant" when
+	// empty; kind classifies the content (text, thinking, reasoning, todo,
+	// result). Empty text is dropped. See bridge.Message for kind semantics.
+	// Implementations must be safe to call concurrently with other sink methods.
+	AddMessage(role, kind, text string)
 	// IncrementTurns increments the turn counter by one.
 	IncrementTurns()
 	// AddEstimatedCost adds a Loom-side estimated USD cost (used by Codex,

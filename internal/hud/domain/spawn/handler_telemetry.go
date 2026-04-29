@@ -235,3 +235,81 @@ func sliceAgentErrors(items []bridge.AgentError, offset, limit int) []bridge.Age
 func emptyToolCallSlice() []bridge.ToolCallEntry     { return []bridge.ToolCallEntry{} }
 func emptyFileChangeSlice() []bridge.FileChangeEntry { return []bridge.FileChangeEntry{} }
 func emptyAgentErrorSlice() []bridge.AgentError      { return []bridge.AgentError{} }
+func emptyMessageSlice() []bridge.Message            { return []bridge.Message{} }
+
+// HandleSpawnTrace handles GET /api/agent/spawn/{spawn_id}/trace.
+//
+// Returns a per-spawn conversation transcript plus the supporting telemetry
+// fields needed to reconstruct the run after-the-fact. Companion to
+// /api/sessions/{id}/trace, but scoped to a single spawn (which may not have a
+// daemon session at all). The returned shape is intentionally close to a
+// session trace so the HUD/mobile can share rendering code.
+//
+// Response shape:
+//
+//	{
+//	  "spawn_id":  "<id>",
+//	  "agent_id":  "<spawn-claude-code-...>",
+//	  "status":    "running|completed|failed|...",
+//	  "messages":  [Message...],
+//	  "tool_calls":[ToolCallEntry...],
+//	  "file_changes":[FileChangeEntry...],
+//	  "errors":   [AgentError...],
+//	  "telemetry": SpawnTelemetry        // includes token_usage, model_usage, total_cost_usd
+//	}
+//
+// Returns 404 when the spawn is unknown. When the spawn exists but no
+// telemetry has accumulated yet (e.g. still pending build, or gemini agent),
+// returns the spawn metadata with empty slices and telemetry: null.
+func (d *SpawnDomain) HandleSpawnTrace(w http.ResponseWriter, r *http.Request) {
+	if !d.deps.RequireAdminToken(w, r) {
+		return
+	}
+
+	spawnID := r.PathValue("spawn_id")
+	if spawnID == "" {
+		d.deps.WriteError(w, http.StatusBadRequest, "spawn_id required", nil)
+		return
+	}
+
+	spawner := d.deps.Spawner()
+	if spawner == nil {
+		d.deps.WriteError(w, http.StatusServiceUnavailable, "spawn orchestrator not configured", nil)
+		return
+	}
+
+	state, ok := spawner.GetSpawn(spawnID)
+	if !ok {
+		d.deps.WriteError(w, http.StatusNotFound, "spawn not found", nil)
+		return
+	}
+
+	tel, _ := spawner.GetSpawnTelemetry(spawnID)
+
+	resp := map[string]any{
+		"spawn_id":     spawnID,
+		"agent_id":     state.AgentID,
+		"status":       string(state.Status),
+		"messages":     emptyMessageSlice(),
+		"tool_calls":   emptyToolCallSlice(),
+		"file_changes": emptyFileChangeSlice(),
+		"errors":       emptyAgentErrorSlice(),
+		"telemetry":    tel, // may be nil; clients should branch
+	}
+	if tel != nil {
+		if tel.Messages != nil {
+			resp["messages"] = tel.Messages
+		}
+		if tel.ToolCalls != nil {
+			resp["tool_calls"] = tel.ToolCalls
+		}
+		if tel.FileChanges != nil {
+			resp["file_changes"] = tel.FileChanges
+		}
+		if tel.Errors != nil {
+			resp["errors"] = tel.Errors
+		}
+	}
+
+	d.deps.WriteJSON(w, http.StatusOK, resp)
+}

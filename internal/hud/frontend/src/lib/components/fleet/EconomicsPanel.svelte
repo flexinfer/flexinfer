@@ -13,7 +13,21 @@
     error = null;
     try {
       const res = await fetch(`/api/fleet/economics?window=${WINDOW}`, { credentials: 'same-origin' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        // Surface the daemon's error message (e.g. admin-token not configured)
+        // instead of a bare "HTTP 403". Falls back to status code if the body
+        // isn't JSON or has no message.
+        let detail = `HTTP ${res.status}`;
+        try {
+          const body = await res.json();
+          if (body && typeof body.error === 'string' && body.error.length > 0) {
+            detail = body.error;
+          }
+        } catch {
+          // body wasn't JSON — keep the status-code fallback
+        }
+        throw new Error(detail);
+      }
       snapshot = await res.json();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
