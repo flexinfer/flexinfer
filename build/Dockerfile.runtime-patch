@@ -39,7 +39,16 @@ RUN if [ "${INCLUDE_TURBOQUANT}" = "true" ]; then \
       git fetch --depth 1 origin "${TURBOQUANT_REF}" && \
       git checkout FETCH_HEAD && \
       python3 /opt/flexinfer/scripts/patch_turboquant_quantizer_gpu_qr.py /tmp/turboquant-src && \
-      pip install --no-cache-dir --no-deps /tmp/turboquant-src; \
+      pip install --no-cache-dir --no-deps /tmp/turboquant-src && \
+      mkdir -p /etc/flexinfer && \
+      sed -i '/^TQ4_SHARE_PRIMITIVES=/d' /etc/flexinfer/runtime.env 2>/dev/null || true && \
+      sed -i '/^FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC=/d' /etc/flexinfer/runtime.env 2>/dev/null || true && \
+      sed -i '/^FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS=/d' /etc/flexinfer/runtime.env 2>/dev/null || true && \
+      printf '%s\n' \
+        'FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC=turboquant' \
+        'FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS=plugin' \
+        'TQ4_SHARE_PRIMITIVES=1' >> /etc/flexinfer/runtime.env && \
+      python3 -c 'import importlib.metadata as md; eps=[e.name for e in md.entry_points(group="vllm.general_plugins")]; assert "tq4_backend" in eps, eps; print("turboquant-vllm", md.version("turboquant-vllm"), "entrypoints", eps)'; \
     else \
       pip uninstall -y turboquant-vllm 2>/dev/null || true; \
       if [ -f /etc/flexinfer/runtime.env ]; then \

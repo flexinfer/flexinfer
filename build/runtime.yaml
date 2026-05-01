@@ -102,6 +102,12 @@ profiles:
 
   gfx1100-gemma4-turboquant-experimental:
     tag: "runtime:rocm-gfx1100-gemma4-turboquant-experimental"
+    promotion:
+      gpuprofile: false
+      values_runtime_profiles: false
+      model_manifests:
+        - deploy/models/gemma4-e4b-turboquant.yaml
+        - deploy/models/gemma4-31b-gptq-long.yaml
     gpu_vendor: amd
     gpu_arch: gfx1100
     base_image: "rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0"

@@ -264,7 +264,7 @@ RUN if [ "${INCLUDE_VLLM}" = "true" ] && command -v pip >/dev/null 2>&1; then \
           echo "Constraining vLLM ROCm build to GPU_TARGETS=${GPU_ARCH}"; \
         fi && \
         pip install --no-cache-dir cmake ninja packaging "setuptools>=74" wheel jinja2 && \
-        pip install --no-cache-dir --no-build-isolation /tmp/vllm-src; \
+        pip install --no-cache-dir --no-build-isolation /tmp/vllm-src && \
       else \
         pip install --no-cache-dir --no-deps \
           "vllm==${VLLM_VERSION}" \

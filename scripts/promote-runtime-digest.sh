@@ -36,6 +36,7 @@ Examples:
 The script updates:
   - deploy/gpuprofiles/<profile-or-arch>.yaml: .spec.runtime.image
   - deploy/system/values-k3s.yaml runtime.profiles entries matching profile name or gpuArch
+  - optional profile promotion.model_manifests entries: .spec.image
 USAGE
 }
 
@@ -113,6 +114,22 @@ profile_arch() {
   yq -r ".profiles[\"${profile}\"].gpu_arch" "${REPO_ROOT}/${RUNTIME_CONFIG}"
 }
 
+promotion_bool() {
+  local profile="$1" key="$2" default="$3"
+  local value
+  value="$(yq -r ".profiles[\"${profile}\"].promotion.${key}" "${REPO_ROOT}/${RUNTIME_CONFIG}")"
+  if [[ -z "${value}" || "${value}" == "null" ]]; then
+    echo "${default}"
+  else
+    echo "${value}"
+  fi
+}
+
+promotion_model_manifests() {
+  local profile="$1"
+  yq -r ".profiles[\"${profile}\"].promotion.model_manifests[]?" "${REPO_ROOT}/${RUNTIME_CONFIG}" | sed '/^null$/d'
+}
+
 profile_consumer_file() {
   local profile="$1" arch="$2"
   if [[ -f "${REPO_ROOT}/deploy/gpuprofiles/${profile}.yaml" ]]; then
@@ -132,8 +149,9 @@ runtime_profile_matches() {
 }
 
 update_files() {
-  local root="$1" profile_file="$2" values_file="$3" profile="$4" arch="$5" target="$6"
-  python3 - "$root" "$profile_file" "$values_file" "$profile" "$arch" "$target" <<'PY'
+  local root="$1" profile_file="$2" values_file="$3" profile="$4" arch="$5" target="$6" update_gpuprofile="$7" update_values="$8"
+  shift 8
+  python3 - "$root" "$profile_file" "$values_file" "$profile" "$arch" "$target" "$update_gpuprofile" "$update_values" "$@" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -144,6 +162,9 @@ values_file = sys.argv[3]
 profile = sys.argv[4]
 arch = sys.argv[5]
 target = sys.argv[6]
+update_gpuprofile = sys.argv[7] == "true"
+update_values = sys.argv[8] == "true"
+model_files = sys.argv[9:]
 
 
 def replace_gpuprofile(path: Path) -> int:
@@ -243,21 +264,55 @@ def replace_values_runtime_profiles(path: Path) -> int:
     return changed
 
 
-replace_gpuprofile(root / profile_file)
-replace_values_runtime_profiles(root / values_file)
+def replace_model_image(path: Path) -> int:
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    in_spec = False
+    changed = 0
+    for i, line in enumerate(lines):
+        if re.match(r"^spec:\s*$", line):
+            in_spec = True
+            continue
+        if in_spec and re.match(r"^[^ \n#]", line):
+            in_spec = False
+        if in_spec and re.match(r"^  image:\s*", line):
+            newline = "\n" if line.endswith("\n") else ""
+            lines[i] = f"  image: {target}{newline}"
+            changed += 1
+            break
+    if changed != 1:
+        raise SystemExit(f"expected to update exactly one Model spec.image in {path}, updated {changed}")
+    path.write_text("".join(lines), encoding="utf-8")
+    return changed
+
+
+if update_gpuprofile:
+    replace_gpuprofile(root / profile_file)
+if update_values:
+    replace_values_runtime_profiles(root / values_file)
+for model_file in model_files:
+    replace_model_image(root / model_file)
 PY
 }
 
 print_current_consumers() {
-  local profile_file="$1" values_file="$2" profile="$3" arch="$4"
+  local profile_file="$1" values_file="$2" profile="$3" arch="$4" update_gpuprofile="$5" update_values="$6"
+  shift 6
   echo "Current consumers:"
-  echo "  ${profile_file}: $(yq -r '.spec.runtime.image // "<unset>"' "${REPO_ROOT}/${profile_file}")"
-  while IFS= read -r name; do
-    [[ -n "${name}" ]] || continue
-    local image
-    image="$(PROFILE_NAME="${name}" yq -r '.runtime.profiles[] | select(.name == strenv(PROFILE_NAME)) | .image' "${REPO_ROOT}/${values_file}")"
-    echo "  ${values_file}: runtime.profiles[${name}].image = ${image}"
-  done < <(runtime_profile_matches "${REPO_ROOT}/${values_file}" "${profile}" "${arch}")
+  if [[ "${update_gpuprofile}" == "true" ]]; then
+    echo "  ${profile_file}: $(yq -r '.spec.runtime.image // "<unset>"' "${REPO_ROOT}/${profile_file}")"
+  fi
+  if [[ "${update_values}" == "true" ]]; then
+    while IFS= read -r name; do
+      [[ -n "${name}" ]] || continue
+      local image
+      image="$(PROFILE_NAME="${name}" yq -r '.runtime.profiles[] | select(.name == strenv(PROFILE_NAME)) | .image' "${REPO_ROOT}/${values_file}")"
+      echo "  ${values_file}: runtime.profiles[${name}].image = ${image}"
+    done < <(runtime_profile_matches "${REPO_ROOT}/${values_file}" "${profile}" "${arch}")
+  fi
+  local model_file
+  for model_file in "$@"; do
+    echo "  ${model_file}: $(yq -r '.spec.image // "<unset>"' "${REPO_ROOT}/${model_file}")"
+  done
 }
 
 while [[ $# -gt 0 ]]; do
@@ -311,16 +366,33 @@ if [[ -z "${IMAGE_REF}" ]]; then
 fi
 
 ARCH="$(profile_arch "${PROFILE}")"
-PROFILE_FILE="$(profile_consumer_file "${PROFILE}" "${ARCH}")"
+UPDATE_GPUPROFILE="$(promotion_bool "${PROFILE}" "gpuprofile" "true")"
+UPDATE_VALUES="$(promotion_bool "${PROFILE}" "values_runtime_profiles" "true")"
+mapfile -t MODEL_MANIFESTS < <(promotion_model_manifests "${PROFILE}")
+if [[ "${UPDATE_GPUPROFILE}" == "true" ]]; then
+  PROFILE_FILE="$(profile_consumer_file "${PROFILE}" "${ARCH}")"
+else
+  PROFILE_FILE=""
+fi
 TARGET_DIGEST="${DIGEST:-$(resolve_digest "${IMAGE_REF}")}"
 TARGET_DIGEST="$(normalize_digest "${TARGET_DIGEST}")"
 TARGET_IMAGE="$(image_repo "${IMAGE_REF}")@${TARGET_DIGEST}"
 
-[[ -f "${PROFILE_FILE}" ]] || fail "GPUProfile file missing: ${PROFILE_FILE}"
+if [[ "${UPDATE_GPUPROFILE}" == "true" ]]; then
+  [[ -f "${PROFILE_FILE}" ]] || fail "GPUProfile file missing: ${PROFILE_FILE}"
+fi
 [[ -f "${VALUES_FILE}" ]] || fail "values file missing: ${VALUES_FILE}"
+for model_file in "${MODEL_MANIFESTS[@]}"; do
+  [[ -f "${model_file}" ]] || fail "model manifest missing: ${model_file}"
+done
 
-matched_values="$(runtime_profile_matches "${VALUES_FILE}" "${PROFILE}" "${ARCH}" | sed '/^$/d' | wc -l | tr -d ' ')"
-[[ "${matched_values}" != "0" ]] || fail "no runtime.profiles entries in ${VALUES_FILE} match profile=${PROFILE} arch=${ARCH}"
+if [[ "${UPDATE_VALUES}" == "true" ]]; then
+  matched_values="$(runtime_profile_matches "${VALUES_FILE}" "${PROFILE}" "${ARCH}" | sed '/^$/d' | wc -l | tr -d ' ')"
+  [[ "${matched_values}" != "0" ]] || fail "no runtime.profiles entries in ${VALUES_FILE} match profile=${PROFILE} arch=${ARCH}"
+fi
+if [[ "${UPDATE_GPUPROFILE}" != "true" && "${UPDATE_VALUES}" != "true" && "${#MODEL_MANIFESTS[@]}" == "0" ]]; then
+  fail "profile=${PROFILE} has no promotion consumers"
+fi
 
 echo "Runtime digest promotion"
 echo "  profile: ${PROFILE}"
@@ -329,24 +401,37 @@ echo "  source:  ${IMAGE_REF}"
 echo "  target:  ${TARGET_IMAGE}"
 echo "  mode:    $([[ "${APPLY}" == "true" ]] && echo apply || echo dry-run)"
 echo ""
-print_current_consumers "${PROFILE_FILE}" "${VALUES_FILE}" "${PROFILE}" "${ARCH}"
+print_current_consumers "${PROFILE_FILE}" "${VALUES_FILE}" "${PROFILE}" "${ARCH}" "${UPDATE_GPUPROFILE}" "${UPDATE_VALUES}" "${MODEL_MANIFESTS[@]}"
 echo ""
 
 if [[ "${APPLY}" == "true" ]]; then
-  update_files "${REPO_ROOT}" "${PROFILE_FILE}" "${VALUES_FILE}" "${PROFILE}" "${ARCH}" "${TARGET_IMAGE}"
+  update_files "${REPO_ROOT}" "${PROFILE_FILE}" "${VALUES_FILE}" "${PROFILE}" "${ARCH}" "${TARGET_IMAGE}" "${UPDATE_GPUPROFILE}" "${UPDATE_VALUES}" "${MODEL_MANIFESTS[@]}"
   echo "Updated files:"
-  echo "  ${PROFILE_FILE}"
-  echo "  ${VALUES_FILE}"
+  [[ "${UPDATE_GPUPROFILE}" == "true" ]] && echo "  ${PROFILE_FILE}"
+  [[ "${UPDATE_VALUES}" == "true" ]] && echo "  ${VALUES_FILE}"
+  for model_file in "${MODEL_MANIFESTS[@]}"; do
+    echo "  ${model_file}"
+  done
 else
   tmpdir="$(mktemp -d)"
   trap 'rm -rf "${tmpdir}"' EXIT
-  mkdir -p "${tmpdir}/$(dirname "${PROFILE_FILE}")" "${tmpdir}/$(dirname "${VALUES_FILE}")"
-  cp "${PROFILE_FILE}" "${tmpdir}/${PROFILE_FILE}"
+  if [[ "${UPDATE_GPUPROFILE}" == "true" ]]; then
+    mkdir -p "${tmpdir}/$(dirname "${PROFILE_FILE}")"
+    cp "${PROFILE_FILE}" "${tmpdir}/${PROFILE_FILE}"
+  fi
+  mkdir -p "${tmpdir}/$(dirname "${VALUES_FILE}")"
   cp "${VALUES_FILE}" "${tmpdir}/${VALUES_FILE}"
-  update_files "${tmpdir}" "${PROFILE_FILE}" "${VALUES_FILE}" "${PROFILE}" "${ARCH}" "${TARGET_IMAGE}"
+  for model_file in "${MODEL_MANIFESTS[@]}"; do
+    mkdir -p "${tmpdir}/$(dirname "${model_file}")"
+    cp "${model_file}" "${tmpdir}/${model_file}"
+  done
+  update_files "${tmpdir}" "${PROFILE_FILE}" "${VALUES_FILE}" "${PROFILE}" "${ARCH}" "${TARGET_IMAGE}" "${UPDATE_GPUPROFILE}" "${UPDATE_VALUES}" "${MODEL_MANIFESTS[@]}"
   echo "Dry-run diff:"
-  diff -u "${PROFILE_FILE}" "${tmpdir}/${PROFILE_FILE}" || true
-  diff -u "${VALUES_FILE}" "${tmpdir}/${VALUES_FILE}" || true
+  [[ "${UPDATE_GPUPROFILE}" == "true" ]] && diff -u "${PROFILE_FILE}" "${tmpdir}/${PROFILE_FILE}" || true
+  [[ "${UPDATE_VALUES}" == "true" ]] && diff -u "${VALUES_FILE}" "${tmpdir}/${VALUES_FILE}" || true
+  for model_file in "${MODEL_MANIFESTS[@]}"; do
+    diff -u "${model_file}" "${tmpdir}/${model_file}" || true
+  done
   echo ""
   echo "No files changed. Re-run with --apply after validating the digest."
 fi
