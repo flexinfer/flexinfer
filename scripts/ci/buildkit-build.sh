@@ -12,6 +12,12 @@
 #   BUILDKIT_FALLBACK_HOSTS, IMAGE_REGISTRIES, IMAGE_REGISTRY, CI_COMMIT_TAG
 set -euo pipefail
 
+# Force plain progress output so the streamed trace lines are line-buffered and
+# survive PodActiveDeadline kills. Use the env var (honored by buildctl v0.12.x)
+# rather than the --progress flag, which v0.12.5 in our central buildkitd does
+# not define ("flag provided but not defined: -progress").
+export BUILDKIT_PROGRESS=plain
+
 IMAGE_REPO="$1"
 DOCKERFILE="$2"
 CACHE_NAME="$3"
@@ -93,7 +99,7 @@ for REGISTRY in $REGISTRY_CANDIDATES; do
   # killing the pod mid-build still leaves visible buildctl progress. Without
   # this, the trace ends at "Building with image names: ..." and we can't tell
   # whether compile, layer export, or push is the slow step.
-  if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 --progress=plain build \
+  if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 build \
     --frontend dockerfile.v0 \
     --local context="$CI_PROJECT_DIR" \
     --local dockerfile="$CI_PROJECT_DIR" \
@@ -114,7 +120,7 @@ for REGISTRY in $REGISTRY_CANDIDATES; do
     echo "Registry cache export failed; retrying without cache flags."
     rm -f "$LOG_FILE"
     LOG_FILE="$CI_PROJECT_DIR/.buildctl-nocache-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
-    if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 --progress=plain build \
+    if buildctl --addr "$BUILDKIT_HOST" --timeout 2700 build \
       --frontend dockerfile.v0 \
       --local context="$CI_PROJECT_DIR" \
       --local dockerfile="$CI_PROJECT_DIR" \
