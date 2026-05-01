@@ -35,11 +35,31 @@ RUN --mount=type=secret,id=ci_job_token,required=false \
 # Copy source
 COPY . .
 
-# Build all binaries in a single layer to share build cache and parallelise MCP servers
+# Build all binaries in a single layer to share build cache and parallelise MCP servers.
+# The secret mount is repeated here because /go/pkg/mod is a cache mount (sharing=shared
+# by default), which means concurrent image jobs can race it; if the cache is missing
+# fi-mcp-kit's pseudo-version VCS metadata, `go build` falls back to `git ls-remote`
+# and needs auth even though `go mod download` already ran. Re-applying git config is
+# cheap and a no-op when the cache is intact.
 ARG VERSION=dev
 ARG MCP_BUILD_JOBS=4
-RUN --mount=type=cache,target=/go/pkg/mod \
+RUN --mount=type=secret,id=ci_job_token,required=false \
+    --mount=type=secret,id=gitlab_token,required=false \
+    --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    set -eu; \
+    token=""; \
+    token_user=""; \
+    if [ -s /run/secrets/ci_job_token ]; then \
+      token="$(cat /run/secrets/ci_job_token)"; \
+      token_user="gitlab-ci-token"; \
+    elif [ -s /run/secrets/gitlab_token ]; then \
+      token="$(cat /run/secrets/gitlab_token)"; \
+      token_user="oauth2"; \
+    fi; \
+    if [ -n "$token" ]; then \
+      git config --global url."https://${token_user}:${token}@gitlab.flexinfer.ai/".insteadOf "https://gitlab.flexinfer.ai/"; \
+    fi; \
     mkdir -p /bin && \
     CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -trimpath \
       -ldflags="-s -w -X main.version=${VERSION}" -o /bin/loomd ./cmd/loomd && \
