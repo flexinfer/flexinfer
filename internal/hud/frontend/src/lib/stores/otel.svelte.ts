@@ -20,6 +20,9 @@ export interface OTelStatus {
   runtime_trace_coverage: string;
 }
 
+type PollingOwner = string | symbol;
+const DEFAULT_POLLING_OWNER: PollingOwner = 'default';
+
 class OTelStore {
   data = $state<OTelStatus | null>(null);
   loading = $state(false);
@@ -27,6 +30,7 @@ class OTelStore {
   lastUpdated = $state<Date | null>(null);
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private pollingOwners = new Map<PollingOwner, number>();
 
   get configured(): boolean {
     return this.data?.runtime_otlp_configured ?? false;
@@ -84,17 +88,26 @@ class OTelStore {
     }
   }
 
-  startPolling(intervalMs = 60000): void {
-    this.stopPolling();
-    this.fetch();
-    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
-  }
-
-  stopPolling(): void {
+  private refreshPollTimer(): void {
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    if (this.pollingOwners.size === 0) return;
+    const intervalMs = Math.min(...this.pollingOwners.values());
+    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+  }
+
+  startPolling(intervalMs = 60000, owner: PollingOwner = DEFAULT_POLLING_OWNER): void {
+    const wasIdle = this.pollingOwners.size === 0;
+    this.pollingOwners.set(owner, intervalMs);
+    this.refreshPollTimer();
+    if (wasIdle) this.fetch();
+  }
+
+  stopPolling(owner: PollingOwner = DEFAULT_POLLING_OWNER): void {
+    this.pollingOwners.delete(owner);
+    this.refreshPollTimer();
   }
 }
 
