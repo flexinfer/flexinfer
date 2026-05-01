@@ -2,6 +2,7 @@
   import { healthStore } from '../stores/health.svelte.ts';
   import { rbacStore } from '../stores/rbac.svelte.ts';
   import { daemonMetricsStore } from '../stores/daemonMetrics.svelte.ts';
+  import { otelStore } from '../stores/otel.svelte.ts';
   import StatusDot from '../widgets/StatusDot.svelte';
   import SparkLine from '../widgets/SparkLine.svelte';
   import Badge from '../widgets/Badge.svelte';
@@ -11,6 +12,8 @@
   import EmptyState from './shared/EmptyState.svelte';
   import { sanitizeText } from '../utils/format.ts';
 
+  const otelPollingOwner = Symbol('ServersPanel');
+
   // --- RBAC state ---
   $effect(() => {
     rbacStore.startPolling(30000);
@@ -18,17 +21,18 @@
   });
 
   // --- OTel state ---
-  let otelInfo = $state({ otlp_endpoint: '', otlp_configured: false, log_format: 'text', json_logs_enabled: false, traced_servers: 0, total_servers: 0, trace_coverage: '0%' });
-  async function fetchOTelInfo() {
-    try {
-      const res = await globalThis.fetch('/api/otel');
-      if (res.ok) otelInfo = await res.json();
-    } catch { /* non-critical */ }
-  }
+  let otelInfo = $derived({
+    otlp_endpoint: otelStore.data?.otlp_endpoint ?? '',
+    otlp_configured: otelStore.data?.otlp_configured ?? false,
+    log_format: otelStore.data?.log_format ?? 'text',
+    json_logs_enabled: otelStore.data?.json_logs_enabled ?? false,
+    traced_servers: otelStore.data?.traced_servers ?? 0,
+    total_servers: otelStore.data?.total_servers ?? 0,
+    trace_coverage: otelStore.data?.trace_coverage ?? '0%',
+  });
   $effect(() => {
-    fetchOTelInfo();
-    const t = setInterval(fetchOTelInfo, 30000);
-    return () => clearInterval(t);
+    otelStore.startPolling(30000, otelPollingOwner);
+    return () => otelStore.stopPolling(otelPollingOwner);
   });
 
   $effect(() => {

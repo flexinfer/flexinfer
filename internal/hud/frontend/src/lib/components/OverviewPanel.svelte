@@ -14,10 +14,12 @@
   import { mergeQueueStore } from '../stores/mergeQueue.svelte.ts';
   import { shuttleStore } from '../stores/shuttle.svelte.ts';
   import { hiveStore } from '../stores/hive.svelte.ts';
+  import { otelStore } from '../stores/otel.svelte.ts';
   import HiveKPIRow from './Hive/HiveKPIRow.svelte';
   import { navigateToAgentSessionOrTraces } from '../utils/drilldown.ts';
 
   const fleetPollingOwner = Symbol('OverviewPanel');
+  const otelPollingOwner = Symbol('OverviewPanel');
 
   let initialLoad = $state(true);
   let kpis = $state({
@@ -109,17 +111,9 @@
   let rbacDeniedCount = $derived(rbacStore.deniedCount);
   let auditEnabled = $derived(rbacStore.auditEnabled);
 
-  let otelStatus = $state({ otlp_configured: false, traced_servers: 0, total_servers: 0 });
-  async function fetchOTelStatus() {
-    try {
-      const res = await globalThis.fetch('/api/otel');
-      if (res.ok) otelStatus = await res.json();
-    } catch {
-      // Non-critical.
-    }
-  }
+  let otelConfigured = $derived(otelStore.data?.otlp_configured ?? false);
+
   $effect(() => {
-    fetchOTelStatus();
     // Start core stores so the dashboard renders useful data even when
     // Overview is the first (or only) panel the user visits.
     fleetStore.startPolling(10000, fleetPollingOwner);
@@ -133,9 +127,8 @@
     mergeQueueStore.startPolling(30000);
     shuttleStore.startPolling(30000);
     hiveStore.startPolling(30000);
-    const t = setInterval(fetchOTelStatus, 30000);
+    otelStore.startPolling(30000, otelPollingOwner);
     return () => {
-      clearInterval(t);
       fleetStore.stopPolling(fleetPollingOwner);
       healthStore.stopPolling();
       taskStore.stopPolling();
@@ -147,6 +140,7 @@
       mergeQueueStore.stopPolling();
       shuttleStore.stopPolling();
       hiveStore.stopPolling();
+      otelStore.stopPolling(otelPollingOwner);
     };
   });
 
@@ -421,12 +415,12 @@
       value: serverCount > 0 ? `${healthyCount}` : '—',
       unit: serverCount > 0 ? `of ${serverCount} healthy` : 'no servers',
       detail: `${downCount > 0 ? `${downCount} down` : 'All reachable'} · ${daemonRunning ? 'daemon up' : 'daemon down'} · ${processCount} proc`,
-      foot: `${otelStatus.otlp_configured ? 'OTel on' : 'OTel off'} · ${costEnabled ? 'cost on' : 'cost off'}`,
+      foot: `${otelConfigured ? 'OTel on' : 'OTel off'} · ${costEnabled ? 'cost on' : 'cost off'}`,
       alert: downCount > 0 || !daemonRunning,
       tags: [
         { label: 'RBAC', value: rbacEnabled && rbacDeniedCount > 0 ? rbacDeniedCount : (rbacEnabled ? 1 : 0), active: rbacEnabled },
         { label: 'Audit', value: auditEnabled ? 1 : 0, active: auditEnabled },
-        { label: 'OTel', value: otelStatus.otlp_configured ? 1 : 0, active: otelStatus.otlp_configured },
+        { label: 'OTel', value: otelConfigured ? 1 : 0, active: otelConfigured },
       ],
     },
     {

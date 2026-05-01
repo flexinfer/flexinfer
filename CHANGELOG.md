@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **HUD `/api/otel` polling consolidated onto shared `otelStore`** (`internal/hud/frontend/src/lib/stores/otel.svelte.ts`, `internal/hud/frontend/src/lib/components/{OverviewPanel,ServersPanel}.svelte`, closes services/loom-core#54): `OverviewPanel` and `ServersPanel` previously each kept their own `otelStatus`/`otelInfo` `$state`, fetcher, and `setInterval(..., 30_000)` against `/api/otel`. Both panels now read from the existing shared `otelStore` via `$derived`, and the store gained an owner-set polling pattern (refcounted) so multiple panels can independently start/stop without tearing down each other's feed — same shape as `fleetStore` / `tracesStore`. Net result: one OTel timer + one source of truth, even when both panels are mounted; consistent `OTel on/off` rendering across the daemon-tile and ServersPanel observability card.
+
 ### Fixed
 - **Claude Code Monitor tool permission** (`mcp/context/registry.yaml`, `pkg/generator/configs_claude.go`, `pkg/generator/configs_test.go`): `Monitor` now ships in the Claude Code permission allowlist emitted by `loom sync claude --regen`. Previously every `Monitor` call (streaming events from a long-running script, or until-loop one-shot waits) hit a prompt; ad-hoc additions to `~/.claude/settings.json` were undone on the next sync because the registry + generator regex didn't know about the tool. Registry YAML `platform_permissions.claude.allow` gains the entry; `claudePermissionRuleRegexp` RE2 fallback lists `Monitor` so `filterClaudePermissionRules` keeps it when the embedded upstream schema (which uses lookaheads Go can't compile) isn't available; the "all known tool names" filter test is updated.
 
