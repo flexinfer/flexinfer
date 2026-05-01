@@ -173,6 +173,44 @@ func TestVLLMBackendArgs_AttentionBackend(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendTurboQuantE4BPath(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model:     "/models/flexinfer-system/gemma4-e4b-turboquant",
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+		Config: map[string]any{
+			"kvCacheCodec": "turboquant",
+			"maxModelLen":  4096,
+			"maxNumSeqs":   1,
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if len(args[i]) > 0 && args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+	if v := argMap["--attention-backend"]; v != "CUSTOM" {
+		t.Fatalf("kvCacheCodec=turboquant should select CUSTOM attention backend, got %q", v)
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+	if v := envMap["FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC"]; v != "turboquant" {
+		t.Fatalf("codec env = %q, want turboquant", v)
+	}
+	if v := envMap["FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS"]; v != "plugin" {
+		t.Fatalf("codec status env = %q, want plugin", v)
+	}
+}
+
 func TestVLLMBackendArgs_ToolCalling(t *testing.T) {
 	b := &VLLMBackend{}
 

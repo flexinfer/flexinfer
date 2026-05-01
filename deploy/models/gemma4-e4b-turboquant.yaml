@@ -3,19 +3,23 @@
 # Source: staged on llm-models-nfs at google/gemma-4-E4B-it, then copied into
 # node-local cache for the runtime-managed service on cblevins-7900xtx.
 #
-# Runtime: unified runtime with the textgen/turboquant-capable image.
-# The managed path is currently pinned to the stable TRITON KV-cache flow while
-# TurboQuant-on-ROCm remains experimental in the runtime image.
+# Runtime: opt-in TurboQuant canary image. This manifest stays disabled in
+# deploy/models/kustomization.yaml and is promoted by digest only after the
+# runtime image build/probe completes.
 #
-# Stable fast profile on the 7900 XTX.
+# Small E4B regression probe for the Gemma4/TurboQuant path on the 7900 XTX.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
   name: gemma4-e4b-turboquant
   namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/promotion-gate: turboquant-runtime-v1
+    flexinfer.ai/promotion-state: canary-disabled-pending-runtime-probe
+    flexinfer.ai/promotion-requires: E4B chat smoke plus TurboQuant plugin/shared-primitive log evidence
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-textgen-turboquant
+  image: registry.harbor.lan/flexinfer/runtime@sha256:f9c69576b2681feafe0ba845054ebd5ff0c52a0edddf5c05b08e0fca6ed8817c
   source: pvc://llm-models-nfs/google/gemma-4-E4B-it
   cache:
     strategy: Local
@@ -24,7 +28,7 @@ spec:
     count: 1
     vramEstimateMB: 18000
     shared: 7900xtx-textgen
-    priority: 200
+    priority: 50
   serverless:
     enabled: true
     minReplicas: 0
@@ -32,20 +36,19 @@ spec:
     coldStartTimeout: 15m
   config:
     dtype: "half"
-    kvCacheDtype: float16
     maxModelLen: 16384
-    gpuMemoryUtilization: "0.92"
+    gpuMemoryUtilization: "0.90"
     maxNumSeqs: 1
     trustRemoteCode: true
-    attentionBackend: TRITON_ATTN
-    servedModelName: gemma4-e4b-fast
+    kvCacheCodec: turboquant
+    servedModelName: gemma4-e4b-turboquant
     enableToolCalling: true
     toolCallParser: gemma4
     reasoningParser: gemma4
-    enablePrefixCaching: true
+    enablePrefixCaching: false
     maxNumBatchedTokens: 512
     disableLogStats: false
-    warmPolicy: primary
+    warmPolicy: ondemand
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:
@@ -56,12 +59,12 @@ spec:
       cpu: "8"
       memory: 24Gi
   serviceLabels:
-    - gemma4-e4b-fast
+    - gemma4-e4b-turboquant
   litellm:
     enabled: true
-    servedModelName: gemma4-e4b-fast
+    servedModelName: gemma4-e4b-turboquant
     aliases:
-      - gemma4-e4b-fast
+      - gemma4-e4b-turboquant
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"

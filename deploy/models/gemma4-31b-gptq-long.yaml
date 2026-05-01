@@ -64,14 +64,16 @@ metadata:
     #
     # Full analysis: docs/dev/gemma4-31b-turboquant-24gb-oom.md
     #
+    # 2026-05-01: eligible for opt-in re-test only after the digest-pinned
+    # gfx1100-gemma4-turboquant-experimental runtime image is built with
+    # TQ4_SHARE_PRIMITIVES=1. Keep disabled from kustomization until E4B passes
+    # the TurboQuant smoke and this canary reaches KV sizing.
+    #
     # Manifest is intentionally dropped from deploy/models/kustomization.yaml
-    # so Flux does NOT reconcile it. File kept on disk as a reference
-    # point for any future re-attempt (e.g. if weights drop below
-    # ~15 GiB via a different quant scheme, or the plugin defers
-    # rotation-matrix allocation).
-    flexinfer.ai/promotion-state: turboquant-canary-superseded-gfx1100-24gb-insufficient-vram
+    # so Flux does NOT reconcile it.
+    flexinfer.ai/promotion-state: turboquant-canary-disabled-pending-shared-primitives-boot
     flexinfer.ai/promotion-evidence: docs/dev/gemma4-31b-turboquant-24gb-oom.md
-    flexinfer.ai/promotion-requires: see-evidence-doc-before-re-enabling
+    flexinfer.ai/promotion-requires: digest-pinned-runtime-plus-e4b-smoke-before-re-enabling
     flexinfer.ai/cache-source-ready-job: gemma4-31b-keqv-postprocess-v3
 spec:
   backend: vllm
@@ -79,7 +81,7 @@ spec:
   # tag carries the plugin install but pins the stable TRITON KV path; we need the
   # gemma4-specific experimental tag with the shared-KV guard, page_size_padded
   # alignment fix, and ROCm SDPA fallback (.loom/10-research.md lines 530-678).
-  image: registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-turboquant-experimental
+  image: registry.harbor.lan/flexinfer/runtime@sha256:f9c69576b2681feafe0ba845054ebd5ff0c52a0edddf5c05b08e0fca6ed8817c
   # Same source artifact the primary serves — point at the keqv-patched output
   # so the v_proj duplicates are visible to the plugin's QKV path.
   source: pvc://gemma4-31b-gptq/gemma4-31b-gptq/gptq-w4-g128-keqv

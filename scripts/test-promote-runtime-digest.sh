@@ -15,6 +15,9 @@ mkdir -p \
 cp "${REPO_ROOT}/build/runtime.yaml" "${TMP_ROOT}/build/runtime.yaml"
 cp "${REPO_ROOT}/deploy/gpuprofiles/gfx1100.yaml" "${TMP_ROOT}/deploy/gpuprofiles/gfx1100.yaml"
 cp "${REPO_ROOT}/deploy/system/values-k3s.yaml" "${TMP_ROOT}/deploy/system/values-k3s.yaml"
+mkdir -p "${TMP_ROOT}/deploy/models"
+cp "${REPO_ROOT}/deploy/models/gemma4-e4b-turboquant.yaml" "${TMP_ROOT}/deploy/models/gemma4-e4b-turboquant.yaml"
+cp "${REPO_ROOT}/deploy/models/gemma4-31b-gptq-long.yaml" "${TMP_ROOT}/deploy/models/gemma4-31b-gptq-long.yaml"
 cp "${REPO_ROOT}/scripts/promote-runtime-digest.sh" "${TMP_ROOT}/scripts/promote-runtime-digest.sh"
 
 digest="sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -49,5 +52,28 @@ if [[ "${dry_before}" != "${dry_after}" ]]; then
   echo "dry-run mutated files" >&2
   exit 1
 fi
+
+canary_digest="sha256:1111111111111111111111111111111111111111111111111111111111111111"
+canary_target="registry.harbor.lan/flexinfer/runtime@${canary_digest}"
+profile_before="$(shasum "${TMP_ROOT}/deploy/gpuprofiles/gfx1100.yaml" "${TMP_ROOT}/deploy/system/values-k3s.yaml")"
+"${TMP_ROOT}/scripts/promote-runtime-digest.sh" gfx1100-gemma4-turboquant-experimental \
+  --repo-root "${TMP_ROOT}" \
+  --digest "${canary_digest}" \
+  --apply >/tmp/flexinfer-promote-runtime-canary-test.log
+profile_after="$(shasum "${TMP_ROOT}/deploy/gpuprofiles/gfx1100.yaml" "${TMP_ROOT}/deploy/system/values-k3s.yaml")"
+if [[ "${profile_before}" != "${profile_after}" ]]; then
+  echo "canary promotion mutated broad runtime consumers" >&2
+  exit 1
+fi
+
+for model_file in \
+  "${TMP_ROOT}/deploy/models/gemma4-e4b-turboquant.yaml" \
+  "${TMP_ROOT}/deploy/models/gemma4-31b-gptq-long.yaml"; do
+  model_image="$(yq -r '.spec.image' "${model_file}")"
+  if [[ "${model_image}" != "${canary_target}" ]]; then
+    echo "canary model image mismatch in ${model_file}: got ${model_image}, want ${canary_target}" >&2
+    exit 1
+  fi
+done
 
 echo "promote-runtime-digest tests passed"
