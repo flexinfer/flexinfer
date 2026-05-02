@@ -49,6 +49,7 @@ Set LOOM_HIVE_TOKEN for admin-token-gated endpoints once they ship.`,
 		newHiveEvalCmd(),
 		newHivePipelinesCmd(),
 		newHiveSquadsCmd(),
+		newHiveCrossRepoCmd(),
 	)
 	return cmd
 }

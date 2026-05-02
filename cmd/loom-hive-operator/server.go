@@ -141,6 +141,12 @@ func (o *operator) httpMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/hive/audit/findings/{id}", o.handleAuditFindingDetails)
 	mux.HandleFunc("POST /api/hive/audit/run", requireAdmin(o.handleAuditRun))
 
+	// Cross-repo (Phase 4 slice 4.4). Read endpoints serve canonical-store
+	// rows; abort is admin-gated like other mutating endpoints.
+	mux.HandleFunc("GET /api/hive/cross-repo/runs", o.handleCrossRepoList)
+	mux.HandleFunc("GET /api/hive/cross-repo/runs/{id}", o.handleCrossRepoGet)
+	mux.HandleFunc("POST /api/hive/cross-repo/runs/{id}/abort", requireAdmin(o.handleCrossRepoAbort))
+
 	// Regression gate (slice 6.3): Alertmanager webhook target. Admin-
 	// gated so a misconfigured external pushes can't bump our metric.
 	mux.HandleFunc("POST /api/hive/alerts/regression", requireAdmin(o.handleRegressionAlert))

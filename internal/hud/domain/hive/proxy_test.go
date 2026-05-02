@@ -294,6 +294,78 @@ func TestProxy_AuditRunRequiresAdmin(t *testing.T) {
 	}
 }
 
+// TestProxy_ForwardsCrossRepoReadsWithoutAdmin verifies cross-repo
+// list + per-run detail proxy through without the HUD admin gate
+// firing — the HUD's CrossRepo card must poll these from a browser
+// without elevated auth.
+func TestProxy_ForwardsCrossRepoReadsWithoutAdmin(t *testing.T) {
+	cases := []struct{ method, path string }{
+		{http.MethodGet, "/api/hive/cross-repo/runs"},
+		{http.MethodGet, "/api/hive/cross-repo/runs/XR-1"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.path, func(t *testing.T) {
+			seen := ""
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = r.URL.Path
+				if got := r.Header.Get("X-Loom-Admin-Token"); got != "" {
+					t.Errorf("upstream got X-Loom-Admin-Token=%q, want empty", got)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer upstream.Close()
+
+			d := New(&fakeDeps{cfg: Config{BaseURL: upstream.URL}})
+			mux := http.NewServeMux()
+			d.RegisterRoutes(mux, func(h http.HandlerFunc) http.HandlerFunc { return h })
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if seen != tc.path {
+				t.Errorf("upstream saw path = %q, want %q", seen, tc.path)
+			}
+		})
+	}
+}
+
+// TestProxy_CrossRepoAbortRequiresAdmin verifies the admin POST gate
+// blocks unauthenticated callers before the request reaches the
+// operator's own admin gate.
+func TestProxy_CrossRepoAbortRequiresAdmin(t *testing.T) {
+	hits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	d := New(&fakeDeps{
+		cfg:          Config{BaseURL: upstream.URL, AdminToken: "x"},
+		adminAllowed: false,
+	})
+	mux := http.NewServeMux()
+	d.RegisterRoutes(mux, func(h http.HandlerFunc) http.HandlerFunc { return h })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/hive/cross-repo/runs/XR-1/abort", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if hits != 0 {
+		t.Errorf("upstream was called %d times, want 0 (HUD gate must block)", hits)
+	}
+}
+
 // TestProxy_BadGatewayWhenUpstreamDown returns 502 when the upstream is
 // unreachable, with the underlying error in the body.
 func TestProxy_BadGatewayWhenUpstreamDown(t *testing.T) {
