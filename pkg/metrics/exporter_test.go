@@ -534,6 +534,18 @@ func TestColdStartHistogramBuckets(t *testing.T) {
 	ModelColdStartDurationSeconds.DeleteLabelValues("cold-test", "ns", "vllm", "shm")
 }
 
+func TestSwapHistogramBuckets(t *testing.T) {
+	ModelSwapDurationSeconds.WithLabelValues("swap-test", "ns", "mlc-llm", "gfx1100").Observe(3.0)
+
+	h := collectHistogram(t, ModelSwapDurationSeconds)
+	require.NotNil(t, h, "expected histogram metric")
+	// 13 explicit buckets (0.25, 0.5, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 120).
+	assert.Len(t, h.Bucket, 13, "expected 13 explicit buckets")
+	assert.Greater(t, h.GetSampleCount(), uint64(0), "sample count should be > 0")
+
+	ModelSwapDurationSeconds.DeleteLabelValues("swap-test", "ns", "mlc-llm", "gfx1100")
+}
+
 func TestReconcileDurationHistogramBuckets(t *testing.T) {
 	ReconcileDurationSeconds.WithLabelValues("reconcile-test").Observe(0.05)
 

@@ -12,18 +12,22 @@
 - Gemma4 26B/31B GPTQ + TurboQuant plan: `gemma4-26b-31b-gptq-turboquant-plan.md`
 - Gemma4 31B TurboQuant closeout: `gemma4-31b-turboquant-closeout.md`
 - Gemma4 31B TurboQuant memory fix plan: `gemma4-31b-turboquant-memory-fix-plan.md`
+- gfx1100 quantization validation matrix: `60-validation-matrix.md`
+- PR-2 readiness plan: `../docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md`
 
-## Current Goal (2026-04-26)
+## Current Goal (2026-05-02)
 
-Drive the Gemma4 26B/31B gfx1100 lanes to fully working abliterated GPTQ artifacts first, then promote TurboQuant only through validated KV-cache canaries.
+Close the remaining Gemma4/Qwen/TurboQuant gfx1100 queue through spec-driven gates. Keep closure evidence in `60-validation-matrix.md`, with runtime posture summarized in `gemma4-26b-31b-gptq-turboquant-plan.md` and `docs/dev/gemma4-rocm-status.md`.
 
-- [x] Slice A - 26B guardrails: long-canary dGPU selector is safe, hybrid 8K remains the fallback.
-- [ ] Slice B - 26B validation: 32K fp16-KV canary failed at engine init with an estimated max length of 8896 tokens; dense-validated rebuild reached only harmful prompt 80/128 before the 4h abliteration deadline and still needs a rerun with the longer timeout.
+- [x] Slice A - 26B guardrails: long-canary dGPU selector is safe; 16K FP8-KV is the validated fallback posture and 22K remains partial/non-primary.
+- [ ] Slice B - `26B-dense-rerun-gate`: dense-validated rebuild reached only harmful prompt 80/128 before the 4h abliteration deadline and still needs a rerun with the longer timeout plus cosine/runtime evidence.
 - [x] Slice C - 31B rebuild/recovery: immediate GPTQ lane is back on the clean `keqv` artifact from !193/!194, Ready/Active at `maxModelLen: 2048`, and direct smoke returned HTTP 200 with answer `4`.
-- [x] Slice D - 31B production posture: 31B is the primary warm model with `minReplicas: 1`, `priority: 250`, `gpu.count: 2`, and `warmPolicy: primary`; 26B fallback is queued/preempted.
-- [ ] Slice E - TurboQuant canaries: primitive sharing is implemented and patch-idempotence tested, but E4B/31B/26B runtime canaries are still pending a built runtime image.
+- [x] Slice D - 31B production posture: 31B is the primary warm model at the validated 2048 ceiling with `minReplicas: 1`, `priority: 250`, `gpu.count: 2`, and `warmPolicy: primary`.
+- [ ] Slice E - `E4B-turboquant-runtime-probe`: primitive sharing is implemented and patch-idempotence tested, but E4B/31B/26B runtime canaries are still pending a digest-pinned built runtime image.
+- [ ] Slice F - `31B-long-turboquant-posture-gate`: keep 31B long/TurboQuant disabled until E4B passes and the 31B canary reaches KV sizing without the previous plugin allocation OOM.
+- [ ] Slice G - `Qwen35-9B-gfx1100-validation-gate`: staged manifest remains disabled; run the full gfx1100 ModelCache/validator/smoke path before promotion or retiring the gfx906 artifact.
 
-See `gemma4-26b-31b-gptq-turboquant-plan.md` and `30-implementation-plan.md` for slice detail and acceptance gates.
+See `gemma4-26b-31b-gptq-turboquant-plan.md`, `60-validation-matrix.md`, and `../docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md` for slice detail, acceptance gates, and evidence targets.
 
 Historical baseline goals (completed):
 

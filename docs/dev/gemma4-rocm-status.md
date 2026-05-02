@@ -301,3 +301,18 @@ spec:
    until promotion criteria are met.
 5. Validate compressed-tensors + FP8 KV on a dedicated canary before any alias/default changes.
 6. Generalize this gate to additional quantized model families in shared docs/manifests.
+
+## gfx1100 canary closure queue (2026-05-02)
+
+This section is a docs-only closure note. No live cluster validation was run for
+this update. Future canary evidence should have one canonical home in
+[`.loom/60-validation-matrix.md`](../../.loom/60-validation-matrix.md), then
+link back here and to the PR-2 readiness plan at
+[`docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md`](../planning/rocm-gfx1100-deploy-swap-tracing-slice.md).
+
+| Gate | Acceptance criteria | Validation commands | Evidence target |
+|---|---|---|---|
+| `26B-dense-rerun-gate` | `gemma4-26b-a4b-gptq-dense` reaches the dense-module cosine gate with `cos.min >= 0.98`, artifact metadata validation passes, runtime smoke is coherent, and load/context numbers are compared against the validated 16K FP8-KV fallback. | `kubectl get modelcache gemma4-26b-a4b-gptq-dense -n flexinfer-system -o yaml`; `flexinfer quantize validate-artifact --path <mounted-artifact> --layout vllm-gptq --family gemma4-26b-a4b --run-generation`; `ENDPOINT=<url> MODEL=<dense-canary> ./scripts/probe-gemma4-long-context.sh`. | Update `.loom/60-validation-matrix.md` row `gemma4-26b-a4b-gptq-dense`; raw logs under `.loom/local/validation/gemma4-26b-a4b-gptq-dense/<timestamp>/`. |
+| `E4B-turboquant-runtime-probe` | A digest-pinned gfx1100 TurboQuant runtime with `TQ4_SHARE_PRIMITIVES=1` boots E4B to Ready, reaches KV sizing, returns coherent short/medium output, and avoids repeated-token collapse across a small sequential request loop. | Build/promote the current `gfx1100-gemma4-turboquant-experimental` runtime profile; `kubectl logs -n flexinfer-system <e4b-pod> \| rg 'TQ4_SHARE_PRIMITIVES|KV|TurboQuant|OOM'`; run LiteLLM chat smokes against the E4B canary. | Add an E4B TurboQuant row to `.loom/60-validation-matrix.md`; record digest and transcript path here after the run. |
+| `31B-long-turboquant-posture-gate` | Keep 31B production at `maxModelLen: 2048` unless the TurboQuant canary reaches KV sizing without attention-construction OOM and then passes a 4096 -> 8192 -> 16384 coherence ladder with memory headroom. Failure should produce an explicit closed posture, not an ambiguous canary. | `kubectl get model gemma4-31b-gptq gemma4-31b-gptq-long -n flexinfer-system -o yaml`; `kubectl logs -n flexinfer-system <31b-long-pod> \| rg 'Model loading took|KV|TurboQuant|OOM|TQ4_SHARE_PRIMITIVES'`; run the short deterministic smoke before any long prompt. | Update `.loom/60-validation-matrix.md` 31B rows and link continued OOM evidence from `docs/dev/gemma4-31b-turboquant-24gb-oom.md`. |
+| `Qwen35-9B-gfx1100-validation-gate` | Staged `qwen35-9b-gptq-gfx1100` completes Download -> Abliterate -> GPTQ -> OCI publish on gfx1100, artifact validator passes, serving smoke is coherent, and the keep/retire decision for the gfx906 artifact is recorded. | `kubectl get modelcache qwen35-9b-gptq-gfx1100 -n flexinfer-system -o yaml`; `flexinfer quantize validate-artifact --path <mounted-artifact> --layout vllm-gptq --family qwen35 --run-generation`; `kubectl get pods -n flexinfer-system -o wide \| rg qwen35`; run a LiteLLM chat smoke against the gfx1100 canary. | Populate `.loom/60-validation-matrix.md` row `qwen35-9b-gptq-gfx1100`; raw logs under `.loom/local/validation/qwen35-9b-gptq-gfx1100/<timestamp>/`. |
