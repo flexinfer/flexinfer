@@ -297,7 +297,7 @@ push-vllm-gfx1100-nightly: ## Push vLLM nightly gfx1100 image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX1100_NIGHTLY_IMAGE)
 
 .PHONY: build-vllm-gfx906
-build-vllm-gfx906: ## Build vLLM gfx906 image from prebuilt community ROCm 6.3.3 base
+build-vllm-gfx906: ## Build custom vLLM gfx906 image from source (no FA)
 	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-rocm-gfx906 -t $(VLLM_GFX906_IMAGE) .
 
 .PHONY: push-vllm-gfx906
