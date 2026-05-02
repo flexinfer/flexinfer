@@ -134,12 +134,13 @@ all built with gfx906 targets. Rebuilds rocBLAS+Tensile from source for gfx906.
 - **Pro**: GPU compute confirmed working by community
 - **Con**: Community builds, not AMD-supported
 - **Status**: **Adopted** as base for unified gfx906 image. See `build/Dockerfile.unified-gfx906`.
-- **Available images**: `mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3` (recommended),
-  `mixa3607/vllm-gfx906:0.12.0-rocm-6.3.3-nlzy` (vLLM inference)
-- FlexInfer's `build/Dockerfile.vllm-rocm-gfx906` inherits the prebuilt
-  `mixa3607/vllm-gfx906:0.12.0-rocm-6.3.3-nlzy` image rather than rebuilding
-  vLLM from source. This avoids the known vLLM 0.7.3 CMake failure caused by
-  ROCm 6.4.4 headers and PyTorch ROCm wheel drift on gfx906.
+- **Available images**: `mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3` (recommended)
+- FlexInfer's `build/Dockerfile.vllm-rocm-gfx906` does not consume a prebuilt
+  community vLLM runtime. It keeps a custom source-build runtime and uses the
+  official `rocm/vllm-dev:base` image, pinned by digest, only as a coherent
+  HIP/CMake/PyTorch build environment. The Dockerfile also patches vLLM 0.7.3's
+  HIP-side `WARP_SIZE` macro to the gfx906 wavefront size (`64`) so ROCm 7.x can
+  compile the MoE kernels.
 
 ### Option C: nlzy/vllm-gfx906 (Archived)
 
@@ -164,8 +165,9 @@ too slow for inference or iterative quantization calibration.
 ## Inference on gfx906
 
 For inference, gfx906 **works** with:
-- **vLLM** through the prebuilt mixa3607 ROCm 6.3.3 image — the FlexInfer
-  Dockerfile wraps this base instead of rebuilding vLLM locally
+- **vLLM** through FlexInfer's custom source-build runtime image — the
+  Dockerfile builds the pinned vLLM wheel with `BUILD_FA=0` from the official
+  ROCm vLLM development base
 - **llama.cpp** with `patch-hipmemgetinfo.sh` for GGUF models
 - **Ollama** with patched llama.cpp backend
 - **Diffusers** (SDXL inpainting) with bitsandbytes built from source for gfx906

@@ -66,9 +66,10 @@ docker build \
 
 ### vLLM
 
-This image wraps the prebuilt `mixa3607/vllm-gfx906:0.12.0-rocm-6.3.3-nlzy`
-base. It does not rebuild vLLM from source, avoiding the known ROCm 6.4.4 +
-PyTorch ROCm wheel CMake failure on gfx906.
+This image is a FlexInfer-owned source build. It uses the official
+`rocm/vllm-dev:base` image, pinned by digest, only as the build environment so
+HIP, CMake, and PyTorch are from a coherent ROCm stack. It then clones the
+pinned vLLM tag and builds the wheel with `BUILD_FA=0` for gfx906.
 
 ```bash
 docker build \
@@ -168,9 +169,20 @@ kubectl exec <pod> -- env | grep PYTORCH_ROCM_ARCH
 source-build path mixed ROCm 6.4.4 headers with a PyTorch ROCm wheel from a
 different ROCm generation.
 
-**Solution**: Use `build/Dockerfile.vllm-rocm-gfx906`, which inherits prebuilt
-`mixa3607/vllm-gfx906:0.12.0-rocm-6.3.3-nlzy` instead of compiling vLLM during
-the FlexInfer image build.
+**Solution**: Use `build/Dockerfile.vllm-rocm-gfx906`, which keeps the custom
+FlexInfer runtime image but builds from the official ROCm vLLM development base
+instead of mixing a generic ROCm base with a PyTorch wheel from another ROCm
+generation.
+
+### vLLM 0.7.3 WARP_SIZE compile failure on ROCm 7.x
+
+**Cause**: ROCm 7.x exposes HIP `warpSize` as a device-only object. vLLM 0.7.3
+uses `WARP_SIZE` inside host/device dispatch code, which fails while compiling
+MoE alignment kernels for gfx906.
+
+**Solution**: `build/Dockerfile.vllm-rocm-gfx906` patches vLLM's HIP-side
+`#define WARP_SIZE warpSize` macros to `#define WARP_SIZE 64`, matching the
+gfx906 wavefront size.
 
 ### Out of Memory
 

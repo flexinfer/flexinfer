@@ -1,33 +1,33 @@
 # vLLM Docker image for AMD gfx906 (Radeon VII / Vega20)
+# Built from source with BUILD_FA=0 to disable flash attention.
 #
-# The earlier source-build image used rocm/dev-ubuntu-24.04:6.4.4 plus the
-# PyTorch rocm6.2 wheel and failed during vLLM 0.7.3 CMake configuration. gfx906
-# is deprecated in recent ROCm releases, so the stable path is the community
-# gfx906 vLLM base that already carries rebuilt ROCm/PyTorch/vLLM components.
+# The original rocm/dev-ubuntu-24.04:6.4.4 + PyTorch rocm6.2 wheel build path
+# failed during vLLM CMake configuration because the ROCm headers/tooling and
+# PyTorch wheel came from different ROCm generations. Use the official ROCm vLLM
+# development base for a coherent HIP/CMake/PyTorch build environment, but still
+# build and install FlexInfer's pinned vLLM wheel in this Dockerfile.
 #
 # Build command:
 #   docker build -f build/Dockerfile.vllm-rocm-gfx906 -t vllm-rocm-gfx906 .
-#
-# Base provenance:
-# - docs/dev/gfx906-gpu-support.md documents the adopted mixa3607 gfx906 stack.
-# - vLLM is prebuilt in the base image, so this Dockerfile intentionally avoids
-#   rebuilding vLLM from source.
 
-ARG BASE_IMAGE=docker.io/mixa3607/vllm-gfx906:0.12.0-rocm-6.3.3-nlzy
+ARG BASE_IMAGE=rocm/vllm-dev:base@sha256:8404161df58334093533b2419b669e71d8cc4a4da2c74a2563bb833944fda8b4
 FROM ${BASE_IMAGE}
+
+ARG PYTORCH_ROCM_ARCH=gfx906
+ARG VLLM_VERSION=0.7.3
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_BREAK_SYSTEM_PACKAGES=1
+    PIP_NO_CACHE_DIR=1
 
 # gfx906 runtime environment.
 # Radeon VII hardware can report gfx900; override to gfx906 for correct ISA
 # dispatch. SDMA/SVM are disabled because they are fragile on Vega20 with ROCm.
 ENV ROCM_PATH=/opt/rocm \
-    HIP_PATH=/opt/rocm/hip \
-    PYTORCH_ROCM_ARCH=gfx906 \
+    HIP_PATH=/opt/rocm \
+    CMAKE_PREFIX_PATH=/opt/rocm:/usr/local/lib/python3.12/dist-packages/torch/share/cmake \
+    PYTORCH_ROCM_ARCH=${PYTORCH_ROCM_ARCH} \
     HSA_OVERRIDE_GFX_VERSION=9.0.6 \
     HSA_ENABLE_SDMA=0 \
     HSA_USE_SVM=0 \
@@ -36,12 +36,58 @@ ENV ROCM_PATH=/opt/rocm \
     TORCH_BLAS_PREFER_HIPBLASLT=0 \
     MIOPEN_FIND_MODE=2
 
-# Conservative vLLM defaults for gfx906. Flash attention remains disabled for
-# this non-FA image; operators should prefer llama.cpp or this image before any
-# experimental FA path on Radeon VII.
+# Conservative vLLM defaults for gfx906. The non-FA image intentionally builds
+# with BUILD_FA=0; keep V0 and non-Triton attention defaults at runtime too.
 ENV VLLM_USE_V1=0 \
     VLLM_USE_TRITON_FLASH_ATTN=0 \
     VLLM_ROCM_USE_AITER=0
+
+# Install additional build/runtime dependencies not guaranteed in the base.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    sqlite3 \
+    libsqlite3-dev \
+    libfmt-dev \
+    libmsgpack-dev \
+    libsuitesparse-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone vLLM with tags for version detection.
+# ROCm 7.x exposes HIP warpSize as a device-only object. vLLM 0.7.3 uses
+# WARP_SIZE in host/device dispatch code, so pin the gfx906 wavefront size.
+WORKDIR /build
+RUN git clone --branch v${VLLM_VERSION} https://github.com/vllm-project/vllm.git && \
+    cd vllm && \
+    git fetch --tags && \
+    find csrc -type f \( -name '*.h' -o -name '*.cuh' -o -name '*.cu' \) \
+      -exec sed -i 's/#define WARP_SIZE warpSize/#define WARP_SIZE 64/' {} +
+
+# Build vLLM with flash attention DISABLED for gfx906.
+WORKDIR /build/vllm
+ENV MAX_JOBS=8 \
+    CMAKE_BUILD_PARALLEL_LEVEL=8 \
+    VLLM_TARGET_DEVICE=rocm \
+    BUILD_FA=0 \
+    SETUPTOOLS_SCM_PRETEND_VERSION=${VLLM_VERSION}
+
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel setuptools_scm
+
+RUN pip install --no-cache-dir -r requirements-rocm.txt
+
+RUN python setup.py clean --all && \
+    python setup.py bdist_wheel --dist-dir=dist
+
+RUN pip install --no-cache-dir dist/*.whl
+
+RUN pip install --no-cache-dir \
+    "diffusers>=0.30.0" \
+    pillow \
+    sentencepiece \
+    protobuf \
+    "numpy<2"
+
+RUN rm -rf /build
 
 WORKDIR /workspace
 RUN mkdir -p /models
@@ -49,7 +95,7 @@ RUN mkdir -p /models
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=10)"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=10)"
 
-ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+ENTRYPOINT ["python", "-m", "vllm.entrypoints.openai.api_server"]
 CMD ["--host", "0.0.0.0", "--port", "8000"]
