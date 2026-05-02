@@ -14,6 +14,7 @@ import (
 	"github.com/crb2nu/loom/pkg/hive"
 	"github.com/crb2nu/loom/pkg/hive/gates"
 	"github.com/crb2nu/loom/pkg/hive/runner"
+	"github.com/crb2nu/loom/pkg/hive/squads"
 	"github.com/crb2nu/loom/pkg/hive/store"
 )
 
@@ -26,6 +27,7 @@ type operator struct {
 	budget         *hive.Budget
 	runner         *runner.Runner        // optional; nil disables /api/hive/council/{run,dryrun}
 	regressionGate *gates.RegressionGate // optional; nil makes the alerts webhook return 503
+	squadsLoader   *squads.Loader        // optional; nil makes squad endpoints return empty / 404
 	logger         *slog.Logger
 
 	ready atomic.Bool
@@ -48,6 +50,14 @@ func newOperator(st *store.Store, pm *hive.PolicyManager, b *hive.Budget, logger
 // runner unset and the council POST endpoints respond 503.
 func (o *operator) withRunner(r *runner.Runner) *operator {
 	o.runner = r
+	return o
+}
+
+// withSquadsLoader attaches a squads.Loader. nil leaves the loader unset
+// so the squad endpoints return empty list / 404 — the operator still
+// boots cleanly when no squad manifests are mounted.
+func (o *operator) withSquadsLoader(l *squads.Loader) *operator {
+	o.squadsLoader = l
 	return o
 }
 
@@ -87,6 +97,15 @@ func (o *operator) httpMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/hive/backlog/{id}", o.handleBacklogGet)
 	mux.HandleFunc("POST /api/hive/backlog", requireAdmin(o.handleBacklogCreate))
 	mux.HandleFunc("POST /api/hive/backlog/sync", requireAdmin(o.handleBacklogSync))
+
+	// Squads (Phase 2 slice 2.4). Read endpoints are open; route-test is
+	// admin-gated because it loads + executes the live router which is
+	// otherwise an internal call surface.
+	mux.HandleFunc("GET /api/hive/squads", o.handleSquadsList)
+	mux.HandleFunc("GET /api/hive/squads/{name}", o.handleSquadGet)
+	mux.HandleFunc("GET /api/hive/squads/{name}/memory", o.handleSquadMemory)
+	mux.HandleFunc("GET /api/hive/squads/{name}/outcomes", o.handleSquadOutcomes)
+	mux.HandleFunc("POST /api/hive/squads/{name}/route-test", requireAdmin(o.handleSquadRouteTest))
 
 	// Eval.
 	mux.HandleFunc("GET /api/hive/eval/scores", o.handleEvalScores)

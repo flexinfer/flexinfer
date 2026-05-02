@@ -19,6 +19,13 @@ type Config struct {
 	// ConfigMap or a developer's local file).
 	PolicyPath string
 
+	// SquadsPath is the directory containing squad manifest YAMLs (one per
+	// squad). The loader scans this path on boot and watches it via
+	// fsnotify for hot-reload. Empty / missing dir is non-fatal: the
+	// operator boots without squads and the squad endpoints return empty
+	// results.
+	SquadsPath string
+
 	// HTTPAddr is the bind address for the REST + MCP Streamable HTTP
 	// listener. Pods expose this via a ClusterIP Service.
 	HTTPAddr string
@@ -85,6 +92,7 @@ func DefaultConfig() Config {
 	return Config{
 		DBPath:      "/var/lib/loom-hive/state.db",
 		PolicyPath:  "/etc/loom-hive/policy.yaml",
+		SquadsPath:  "/etc/loom-hive/squads",
 		HTTPAddr:    ":8090",
 		MetricsAddr: ":9090",
 		RepoRoot:    "/workspace/loom-core",
@@ -99,6 +107,9 @@ func (c *Config) ApplyEnv() {
 	}
 	if v := strings.TrimSpace(os.Getenv("LOOM_HIVE_POLICY_PATH")); v != "" {
 		c.PolicyPath = v
+	}
+	if v := strings.TrimSpace(os.Getenv("LOOM_HIVE_SQUADS_PATH")); v != "" {
+		c.SquadsPath = v
 	}
 	if v := strings.TrimSpace(os.Getenv("LOOM_HIVE_HTTP_ADDR")); v != "" {
 		c.HTTPAddr = v
