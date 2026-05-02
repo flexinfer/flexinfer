@@ -17,9 +17,9 @@
 
   const claimColumns = [
     { key: 'file_path', label: 'File' },
-    { key: 'agent_id', label: 'Agent', width: '100px' },
+    { key: 'agent_id', label: 'Agent', width: '120px' },
     { key: 'claim_type', label: 'Type', width: '80px' },
-    { key: 'reason', label: 'Reason' },
+    { key: 'reason', label: 'Reason', width: '220px' },
     { key: 'created_at', label: 'Since', width: '90px' },
     { key: 'actions', label: 'Actions', width: '80px' },
   ];
@@ -121,6 +121,7 @@
       columns={claimColumns}
       rows={claims}
       selectable={true}
+      stableLayout={true}
       selectedIds={selectedClaimIds}
       onSelect={handleClaimSelect}
     >

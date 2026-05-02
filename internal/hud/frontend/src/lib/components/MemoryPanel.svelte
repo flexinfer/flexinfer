@@ -460,6 +460,7 @@
         {sortDir}
         expandedIds={expandedItems}
         idKey="id"
+        stableLayout={true}
         selectable={true}
         selectedIds={selectedMemIds}
         onSelect={handleMemSelect}

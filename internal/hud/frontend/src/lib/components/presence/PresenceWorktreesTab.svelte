@@ -7,8 +7,8 @@
   let { worktrees = [] } = $props();
 
   const worktreeColumns = [
-    { key: 'branch', label: 'Branch' },
-    { key: 'agent_id', label: 'Agent', width: '100px' },
+    { key: 'branch', label: 'Branch', width: '180px' },
+    { key: 'agent_id', label: 'Agent', width: '120px' },
     { key: 'status', label: 'Status', width: '90px' },
     { key: 'git_status', label: 'Git', width: '100px' },
     { key: 'purpose', label: 'Purpose' },
@@ -37,6 +37,7 @@
       columns={worktreeColumns}
       rows={worktrees}
       idKey="assignment_id"
+      stableLayout={true}
     >
       {#snippet row({ row: wt })}
         <td class="text-mono">{wt.branch}</td>

@@ -228,11 +228,11 @@
   }
 
   const agentColumns = [
-    { key: 'agent_id', label: 'Agent' },
+    { key: 'agent_id', label: 'Agent', width: '180px' },
     { key: 'status', label: 'Status', width: '100px' },
     { key: 'agent_type', label: 'Type', width: '90px' },
     { key: 'current_task', label: 'Current Task' },
-    { key: 'branch', label: 'Branch / PR', width: '120px' },
+    { key: 'branch', label: 'Branch / PR', width: '140px' },
     { key: 'last_heartbeat', label: 'Heartbeat', width: '90px' },
     { key: 'actions', label: 'Actions', width: '200px' },
   ];
@@ -337,6 +337,7 @@
           columns={agentColumns}
           rows={flatGroupedAgents}
           idKey="id"
+          stableLayout={true}
         >
           {#snippet row({ row })}
             {@const agent = row.agent}
