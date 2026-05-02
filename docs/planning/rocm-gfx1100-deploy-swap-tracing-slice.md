@@ -139,14 +139,21 @@ observable, and reversible through Helm and GitOps.
 
 ### PR-2B: Lifecycle Latency Metrics Proof
 
-- Status: already implemented; needs proof and lifecycle edge-case review.
+- Status: complete as of 2026-05-02.
 - Owner boundary:
   - `controllers/model_helpers.go`
   - `pkg/metrics/exporter.go`
   - `pkg/metrics/exporter_test.go`
   - optional metrics docs
-- Agent-ready task: prove histogram registration and observations for cold-start
-  and shared-swap transitions, including labels and bucket sanity.
+- Proof summary:
+  - `pkg/metrics/exporter.go` defines and registers
+    `flexinfer_model_cold_start_duration_seconds{model,namespace,backend,cache_strategy}`
+    and `flexinfer_model_swap_duration_seconds{model,namespace,backend,group}`.
+  - `controllers/model_helpers.go` observes cold-start latency when a model
+    becomes `Ready` and observes shared-swap latency when a preempted/shared
+    model returns to `Ready`.
+  - `pkg/metrics/exporter_test.go` covers histogram bucket counts and sample
+    observation for both metric families.
 - Do not touch: Helm chart runtime config or tracing bootstrap.
 - Validation:
   - `go test ./pkg/metrics`
@@ -155,8 +162,7 @@ observable, and reversible through Helm and GitOps.
 
 ### PR-2C: Tracing Foundation Proof
 
-- Status: already implemented at bootstrap and initial spans; needs proof and
-  docs alignment.
+- Status: complete as of 2026-05-02.
 - Owner boundary:
   - `pkg/observability/tracing.go`
   - `cmd/flexinfer-manager/main.go`
@@ -165,8 +171,17 @@ observable, and reversible through Helm and GitOps.
   - `internal/proxy/models.go`
   - `internal/proxy/queue.go`
   - controller files that already call `StartReconcileSpan`
-- Agent-ready task: verify disabled-by-default startup behavior, OTLP env
-  handling, trace-context propagation, and initial manager/proxy spans.
+- Proof summary:
+  - `pkg/observability/tracing.go` initializes OTLP/HTTP tracing only when
+    `FLEXINFER_OTEL_ENABLED=true` and installs W3C trace-context/baggage
+    propagation.
+  - `pkg/observability/tracing_test.go` proves disabled-by-default startup does
+    not fail even when OTLP env is invalid, and covers boolean env parsing.
+  - `cmd/flexinfer-manager/main.go` and `cmd/flexinfer-proxy/main.go` call
+    `observability.InitTracing`; Helm renders tracing env for the manager and
+    activator/proxy templates when `observability.tracing.enabled=true`.
+  - Controller reconcilers use `StartReconcileSpan`; proxy request/queue paths
+    keep request tracing opt-in through the shared bootstrap.
 - Do not touch: flash-loader config or lifecycle metric definitions.
 - Validation:
   - `go test ./pkg/observability ./internal/proxy ./controllers`
@@ -191,8 +206,8 @@ observable, and reversible through Helm and GitOps.
 
 ## Readiness
 
-- Status: Ready for proof-focused follow-up slices; not marked complete until
-  PR-2A through PR-2C validation evidence is attached to their MRs.
+- Status: PR-2A through PR-2C proof-complete; ready for live rollout validation
+  on a selected gfx1100 model/node pair.
 - Target files/modules:
   - Flash-loader config: `charts/flexinfer/templates/deployment.yaml`,
     `charts/flexinfer/values.yaml`, `controllers/flash_loader.go`,
@@ -209,8 +224,8 @@ observable, and reversible through Helm and GitOps.
 - Validation commands:
   - `git diff --check`
   - `rg 'Readiness|Implementation Slices|Rollout' docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md`
-  - Follow-up code slices should add the targeted `go test` and `helm template`
-    commands listed under their implementation slice.
+  - `go test ./pkg/metrics ./pkg/observability ./controllers -run 'ColdStart|Swap|Metric|Tracing|FlashLoader'`
+  - `helm template flexinfer ./charts/flexinfer --set controller.runtime.flashLoader.enabled=true --set observability.tracing.enabled=true --set observability.tracing.otlpEndpoint=http://otel-collector.observability:4318`
 - Generated artifacts: none for this planning-only conversion; no CRDs,
   dashboards, screenshots, or `.loom` artifacts are expected.
 - Rollout/backout: see the dedicated rollout section below; follow-up code
