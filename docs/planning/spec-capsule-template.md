@@ -11,6 +11,11 @@ Routine bug fixes and urgent incident response can use a shorter note, but they
 should still capture acceptance criteria and validation commands before code
 changes begin.
 
+Before implementation starts, run the slice through
+`docs/planning/slice-readiness-gate.md` and mark the spec `Ready` only when the
+target modules, validation commands, generated artifacts, and rollback notes are
+complete.
+
 ## Copyable Template
 
 ````markdown
@@ -63,6 +68,17 @@ Who is affected, and what workflow do they need to complete?
 |-------|----------------------|----------------|------------|------------------|
 | 1 | | | | |
 
+## Readiness
+
+Status: Draft
+
+- Target files/modules:
+- Owner boundary:
+- Validation commands:
+- Generated artifacts:
+- Rollout/backout:
+- Non-blocking open questions:
+
 ## Validation Plan
 
 Run before opening the MR:
@@ -104,6 +120,7 @@ Cluster or runtime checks, when required:
       incident note, or command result.
 - [ ] Acceptance criteria are testable by a reviewer.
 - [ ] Target files/modules are listed before implementation begins.
+- [ ] Slice readiness gate is satisfied or a bypass reason is recorded.
 - [ ] Validation commands are explicit and runnable from the repo root.
 - [ ] Generated artifacts are named when API, CRD, Helm, or docs indexes change.
 - [ ] Rollout and backout notes cover Helm, CRD, Flux, and runtime-image changes

@@ -16,6 +16,7 @@ If you’re looking for “what exists today” docs, start here instead:
 - `feature-inventory.md`: what features exist, what’s stable, what’s experimental, and what’s missing.
 - `next-roadmap.md`: the next series of features/enhancements to implement (prioritized).
 - `spec-capsule-template.md`: reusable source-backed template, checklist, and examples for new feature slices.
+- `slice-readiness-gate.md`: ready-for-implementation gate for target modules, validation, generated artifacts, and rollback notes.
 - `context-aware-router-execution.md`: execution checklist for issue `#8` (context-aware routing).
 - `phase-1-controller-api-hardening.md`: PR-sized checklist for the next series of controller hardening work.
 - `../design/multi-tenancy.md`: M1 design for namespace-isolated tenancy baseline.
@@ -42,7 +43,8 @@ Operational note (k3s homelab): if a node goes NotReady/unreachable, old FlexInf
 ## Planning checklist
 
 Before implementation starts on a multi-file feature or operational workflow
-change, copy `spec-capsule-template.md` and fill in:
+change, copy `spec-capsule-template.md`, then use `slice-readiness-gate.md` to
+mark it `Ready` only after filling in:
 
 - Goal, non-goals, users/operators, and current evidence.
 - Requirements and acceptance criteria.
