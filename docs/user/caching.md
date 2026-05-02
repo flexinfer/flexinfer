@@ -46,6 +46,40 @@ FlexInfer also sets HuggingFace cache env vars to keep secondary caches under th
 - `HF_HOME=/models/.cache/huggingface`
 - `HF_HUB_CACHE=/models/.cache/huggingface/hub`
 
+## Flash-loader
+
+Flash-loader preloads model artifacts from the mounted cache volume into
+`/dev/shm` before the backend container starts. This is useful for ROCm/gfx1100
+deployments where repeated model swaps should avoid slow PVC reads.
+
+Global defaults are configured on the controller through Helm:
+
+```yaml
+controller:
+  runtime:
+    shmSizeLimit: 8Gi
+    flashLoader:
+      enabled: true
+      image: registry.harbor.lan/flexinfer/flash-loader:latest
+      concurrency: 4
+      tmpfsSizeLimit: 16Gi
+```
+
+The controller resolves flash-loader settings in this order:
+
+1. Helm-rendered controller env defaults.
+2. Matching v1alpha1 `ModelCache.spec.flashLoader`.
+3. v1alpha2 `Model.spec.cache.flashLoader`.
+
+The v1alpha2 model cache setting wins when multiple layers are present. Shared
+models using `cache.strategy: Local` are auto-enabled for flash-loader unless
+`spec.cache.flashLoader.enabled: false` is set.
+
+Shared models use a persistent host path at
+`/dev/shm/flexinfer/<namespace>/<model-name>` so a warm cache can survive pod
+replacement on the same node. Non-shared models use an ephemeral `emptyDir`
+tmpfs, optionally capped by `tmpfsSizeLimit`.
+
 ## v1alpha1 `ModelCache`
 
 `ModelCache` lets you pre-download (and optionally pre-warm) a model artifact.
