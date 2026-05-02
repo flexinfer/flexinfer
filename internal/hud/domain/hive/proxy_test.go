@@ -145,6 +145,82 @@ func TestProxy_DisabledWhenBaseURLEmpty(t *testing.T) {
 	}
 }
 
+// TestProxy_ForwardsSquadsReadsWithoutAdmin verifies that squad read
+// endpoints (list + per-squad detail/memory/outcomes) reach the upstream
+// operator without the HUD admin gate firing — the HUD's Squads panel
+// must be able to poll these from a browser without elevated auth.
+func TestProxy_ForwardsSquadsReadsWithoutAdmin(t *testing.T) {
+	cases := []struct{ method, path string }{
+		{http.MethodGet, "/api/hive/squads"},
+		{http.MethodGet, "/api/hive/squads/hud-frontend"},
+		{http.MethodGet, "/api/hive/squads/hud-frontend/memory"},
+		{http.MethodGet, "/api/hive/squads/hud-frontend/outcomes"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.path, func(t *testing.T) {
+			seen := ""
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = r.URL.Path
+				if got := r.Header.Get("X-Loom-Admin-Token"); got != "" {
+					t.Errorf("upstream got X-Loom-Admin-Token=%q, want empty", got)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`[]`))
+			}))
+			defer upstream.Close()
+
+			d := New(&fakeDeps{cfg: Config{BaseURL: upstream.URL}})
+			mux := http.NewServeMux()
+			d.RegisterRoutes(mux, func(h http.HandlerFunc) http.HandlerFunc { return h })
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if seen != tc.path {
+				t.Errorf("upstream saw path = %q, want %q", seen, tc.path)
+			}
+		})
+	}
+}
+
+// TestProxy_SquadsRouteTestRequiresAdmin verifies the admin POST gate
+// blocks unauthenticated callers before the request reaches the
+// operator. Mirrors TestProxy_HUDAdminGateBlocksUnauthorizedMutations
+// but exercises the squad-specific path.
+func TestProxy_SquadsRouteTestRequiresAdmin(t *testing.T) {
+	hits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	d := New(&fakeDeps{
+		cfg:          Config{BaseURL: upstream.URL, AdminToken: "x"},
+		adminAllowed: false,
+	})
+	mux := http.NewServeMux()
+	d.RegisterRoutes(mux, func(h http.HandlerFunc) http.HandlerFunc { return h })
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/hive/squads/hud-frontend/route-test",
+		strings.NewReader(`{"backlog_id":"X"}`))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if hits != 0 {
+		t.Errorf("upstream was called %d times, want 0 (HUD gate must block)", hits)
+	}
+}
+
 // TestProxy_BadGatewayWhenUpstreamDown returns 502 when the upstream is
 // unreachable, with the underlying error in the body.
 func TestProxy_BadGatewayWhenUpstreamDown(t *testing.T) {

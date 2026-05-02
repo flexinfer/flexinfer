@@ -49,6 +49,14 @@ func (d *Domain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFunc) ht
 	mux.HandleFunc("GET /api/hive/backlog/{id}", mw(d.handleProxyGet))
 	mux.HandleFunc("GET /api/hive/eval/scores", mw(d.handleProxyGet))
 
+	// Squads (Phase 2 slice 2.5). Read endpoints proxy through without
+	// an admin gate so the HUD's Squads panel can poll them. The
+	// route-test path is admin-gated to mirror the operator's own gate.
+	mux.HandleFunc("GET /api/hive/squads", mw(d.handleProxyGet))
+	mux.HandleFunc("GET /api/hive/squads/{name}", mw(d.handleProxyGet))
+	mux.HandleFunc("GET /api/hive/squads/{name}/memory", mw(d.handleProxyGet))
+	mux.HandleFunc("GET /api/hive/squads/{name}/outcomes", mw(d.handleProxyGet))
+
 	// Mutations — gated by the HUD's existing admin-token check before
 	// the operator's own admin gate. Two layers of auth keep stray
 	// browser tabs from triggering the autonomy loop.
@@ -61,6 +69,7 @@ func (d *Domain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFunc) ht
 	mux.HandleFunc("POST /api/hive/backlog", mw(d.handleProxyAdminPost))
 	mux.HandleFunc("POST /api/hive/backlog/sync", mw(d.handleProxyAdminPost))
 	mux.HandleFunc("POST /api/hive/eval/run-cross", mw(d.handleProxyAdminPost))
+	mux.HandleFunc("POST /api/hive/squads/{name}/route-test", mw(d.handleProxyAdminPost))
 }
 
 func (d *Domain) handleProxyGet(w http.ResponseWriter, r *http.Request) {

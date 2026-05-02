@@ -32,6 +32,7 @@ import (
 	"github.com/crb2nu/loom/pkg/hive/gates"
 	"github.com/crb2nu/loom/pkg/hive/pipeline"
 	"github.com/crb2nu/loom/pkg/hive/runner"
+	"github.com/crb2nu/loom/pkg/hive/squads"
 	"github.com/crb2nu/loom/pkg/hive/store"
 )
 
@@ -62,6 +63,7 @@ func newRootCmd() *cobra.Command {
 	flags := cmd.Flags()
 	flags.StringVar(&cfg.DBPath, "db-path", cfg.DBPath, "Path to the canonical SQLite database")
 	flags.StringVar(&cfg.PolicyPath, "policy-path", cfg.PolicyPath, "Path to the YAML policy file")
+	flags.StringVar(&cfg.SquadsPath, "squads-path", cfg.SquadsPath, "Directory containing squad manifest YAMLs (missing dir is non-fatal)")
 	flags.StringVar(&cfg.HTTPAddr, "listen", cfg.HTTPAddr, "Bind address for the REST + MCP listener (empty disables)")
 	flags.StringVar(&cfg.MetricsAddr, "metrics-addr", cfg.MetricsAddr, "Bind address for /healthz, /readyz, /metrics (empty disables)")
 	flags.StringVar(&cfg.RepoRoot, "repo-root", cfg.RepoRoot, "Path to the loom-core checkout the council writes into")
@@ -129,6 +131,19 @@ func run(cfg Config) error {
 
 	budget := hive.NewBudget(pm, hive.NewStoreBudgetReader(st))
 
+	// Squad loader (Phase 2 slice 2.4). Reflects squad manifests from
+	// cfg.SquadsPath into the canonical store and watches the dir via
+	// fsnotify. A missing dir is non-fatal: the squads endpoints return
+	// empty results until manifests are mounted.
+	squadsLoader := buildSquadsLoader(rootCtx, cfg, st, logger)
+	if squadsLoader != nil {
+		defer func() {
+			if cerr := squadsLoader.Close(); cerr != nil {
+				logger.Warn("squads loader close", "error", cerr)
+			}
+		}()
+	}
+
 	// Council runner. Reviewers + editor are FakeReviewer + FakeEditor
 	// for slice 3.7 — they make /api/hive/council/{run,dryrun} produce
 	// real artifacts + sidecar + eval row + backlog mutations end to
@@ -137,7 +152,7 @@ func run(cfg Config) error {
 	// for FlexInfer + Claude/Codex headless is wired.
 	councilRunner := buildCouncilRunner(st, pm, budget, cfg.RepoRoot, logger)
 
-	op := newOperator(st, pm, budget, logger).withRunner(councilRunner)
+	op := newOperator(st, pm, budget, logger).withRunner(councilRunner).withSquadsLoader(squadsLoader)
 	op.markReady()
 	logger.Info("operator ready", "policy_enabled", pm.Current().IsEnabled())
 
@@ -312,6 +327,35 @@ func buildCouncilRunner(
 		RepoRoot:  repoRoot,
 		Logger:    logger,
 	}
+}
+
+// buildSquadsLoader instantiates the squads manifest loader pointing at
+// cfg.SquadsPath. Missing dir is non-fatal: a warn log fires and the
+// operator boots without a loader (squad endpoints return empty results
+// until manifests are mounted). Other errors (fsnotify failure) also
+// log + return nil so a busted watcher doesn't block boot.
+func buildSquadsLoader(ctx context.Context, cfg Config, st *store.Store, logger *slog.Logger) *squads.Loader {
+	if strings.TrimSpace(cfg.SquadsPath) == "" {
+		logger.Warn("squads loader disabled (squads-path empty)")
+		return nil
+	}
+	if _, err := os.Stat(cfg.SquadsPath); err != nil {
+		logger.Warn("squads loader skipped: path not present",
+			"squads_path", cfg.SquadsPath, "error", err)
+		return nil
+	}
+	loader, err := squads.NewLoader(ctx, cfg.SquadsPath, st, squads.LoaderOptions{
+		OnError: func(e error) { logger.Warn("squads reload error", "error", e) },
+		Logger:  logger,
+	})
+	if err != nil {
+		logger.Warn("squads loader init failed; squad endpoints will return empty",
+			"error", err)
+		return nil
+	}
+	logger.Info("squads loader running", "squads_path", cfg.SquadsPath,
+		"loaded", len(loader.Current()))
+	return loader
 }
 
 // buildFlexInferClient returns a configured FlexInfer client when

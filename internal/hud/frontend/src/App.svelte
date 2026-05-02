@@ -350,6 +350,14 @@
                   {:catch}
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
+                {:else if router.subView === 'squads'}
+                  {#await import('./lib/components/Hive/SquadsPanel.svelte')}
+                    <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
+                  {:then { default: HiveSquadsPanel }}
+                    <HiveSquadsPanel />
+                  {:catch}
+                    <EmptyState icon="!" heading="Failed to load panel" compact />
+                  {/await}
                 {/if}
               </ViewShell>
             {/if}
