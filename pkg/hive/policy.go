@@ -103,9 +103,12 @@ type HumanHandoffPolicy struct {
 }
 
 // Default returns a baseline policy suitable for local development. Production
-// deployments override via the ConfigMap-mounted policy.yaml.
+// deployments override via the ConfigMap-mounted policy.yaml. Enabled is true
+// because phase 6 has shipped (slice 6.6 default-on flip, 2026-05-02). The
+// kill switch is `enabled: false` in the YAML; nil treats as enabled per
+// IsEnabled.
 func Default() *Policy {
-	enabled := false // start disabled; flipped on by phase 6
+	enabled := true
 	return &Policy{
 		Version: 1,
 		Enabled: &enabled,

@@ -7655,3 +7655,112 @@ skills:
       gemini:
         enabled: true
         type: skill
+
+  - name: hive-ops
+    categories: [hive, operations, gitops]
+    common:
+      description: |
+        Operate the Loom Hive cluster operator (`loom-hive-operator`): inspect status, pause/resume, force-escalate, replay council runs, audit merges, and recover from corrupted state. Read-only inspection by default; destructive ops gated behind explicit admin steps.
+      instructions: |
+        # Hive Ops
+
+        Day-2 operations for the always-on cluster operator that runs the Loom Hive Council + Pipeline. Use when triaging, replaying, recovering, or rolling out hive features. Read-only inspection is safe; mutating endpoints (`/run`, `/escalate`, `/sync`, kill switch edits) require admin confirmation.
+
+        Architecture and policy reference: `docs/HIVE.md`. Full procedures: `docs/HIVE_RUNBOOK.md`. Forward-looking design (Hive v2): `.loom/92-…hive-v2…md` through `.loom/94-…hive-v2…md`.
+
+        ## Quick Start
+
+        Required env: `LOOM_HIVE_OPERATOR_URL`, `LOOM_ADMIN_TOKEN`, optional `KUBECONFIG` for cluster snapshot.
+
+        1. Snapshot:
+           - `bash ${SKILL_PATH}/scripts/hive_status_snapshot.sh > /tmp/hive-status.md`
+        2. CLI peek:
+           - `loom hive status`
+           - `loom hive pipelines list --state=running`
+           - `loom hive eval list --subject=council`
+        3. Choose intent below.
+
+        ## Guardrails
+
+        - Default-deny on mutations: `POST /api/hive/...` requires explicit admin confirmation. Never call `council/run`, `pipeline/.../escalate`, `backlog/sync`, or DB-restore Jobs without operator buy-in.
+        - All policy edits go through GitOps (`platform/gitops/k3s/hive/configmap-policy.yaml`). Never `kubectl edit configmap` unless GitOps is unavailable; if you do, re-commit immediately or Flux will fight you.
+        - Kill switch is `policy.enabled: false`. Reconcile via Flux; in-flight runs continue under their captured policy. Do not delete the operator pod to "stop" the hive — state is preserved on the PVC, but you lose the clean exit signal.
+        - Restoring the canonical SQLite from MinIO drops items committed since the last nightly backup. Re-run the council to reproduce; `roadmap_intents` is idempotent and `.loom/backlog/*.yaml` regenerates.
+
+        ## Workflows
+
+        ### 1) Inspect
+
+        - Cluster: `kubectl get deploy,po,pvc,cm -n loom-hive`
+        - Logs: `kubectl logs -n loom-hive deploy/loom-hive-operator --tail=200`
+        - Status: `loom hive status` and `curl -sf $LOOM_HIVE_OPERATOR_URL/readyz`
+        - Snapshot script captures all of the above to markdown for handoff.
+
+        ### 2) Pause and resume
+
+        - Edit `platform/gitops/k3s/hive/configmap-policy.yaml`, set `enabled: false`, commit, reconcile.
+        - Watch for `policy reloaded` log line.
+        - Resume by reverting the edit + reconcile.
+
+        ### 3) Force-escalate a stuck pipeline run
+
+        - `loom hive pipelines list --state=running`
+        - `curl -X POST -H "Authorization: Bearer $LOOM_ADMIN_TOKEN" $LOOM_HIVE_OPERATOR_URL/api/hive/pipeline/runs/<run_id>/escalate`
+        - Confirm with `loom hive pipelines list --state=escalated`. The reconciler does not auto-retry escalated items.
+
+        ### 4) Replay a council run
+
+        - Dry-run (safe): `loom hive council dryrun` — scratch DB, no commits, returns sidecar + plan paths.
+        - Real replay with different ensemble: edit `policy.council.ensemble` in the ConfigMap, reconcile, then `loom hive council run`. Compare scores in HUD `Hive` → `Eval` panel.
+
+        ### 5) Audit a merged change
+
+        - By MR iid: `curl -sf "$LOOM_HIVE_OPERATOR_URL/api/hive/pipeline/runs?mr_iid=<iid>"`
+        - Loop B attribution shows the originating council run id. Then look up Loop A score via the eval endpoint.
+
+        ### 6) Recover from corrupted DB
+
+        - Confirm with `sqlite3 ... 'PRAGMA integrity_check;'` inside the operator pod.
+        - Scale operator to 0 → run a one-shot restore Job that copies the latest backup from `minio/loom-hive-backups/` to the PVC → scale back to 1.
+        - Detail and an example Job manifest in `docs/HIVE_RUNBOOK.md`.
+
+        ### 7) Rollout staging (local → dev → prod)
+
+        - Local: `make build/loom-hive-operator && ./bin/loom-hive-operator --db-path /tmp/loom-hive/state.db --policy-path testdata/policy.yaml`.
+        - Dev cluster: edit ConfigMap `enabled: true`, reconcile, soak 7 days against the v1 acceptance checklist.
+        - Production: only after dev is green for 7 consecutive days. Watch `loom_hive_regression_count_total` for the first 24h; pause via `enabled: false` if non-zero.
+
+        ## Output Discipline
+
+        Reports + handoffs reuse the snapshot markdown structure: cluster section, operator status, recent runs, eval scores, headline KPIs. When summarizing, lead with the change in posture (paused / resumed / escalated) and link the artifact paths.
+
+        ## References
+
+        - Workflow + source links: `references/workflow.md`
+      scripts:
+        - name: hive_status_snapshot.sh
+          path: scripts/hive_status_snapshot.sh
+          description: Read-only markdown snapshot of operator status, runs, eval scores, KPIs
+      references:
+        - workflow.md
+      assets: []
+      always_allow:
+        - hive_status_snapshot.sh
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: workflow
+      gemini:
+        enabled: true
+        type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
