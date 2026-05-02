@@ -35,7 +35,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel v0.0.0-20260318222621-ce3294e404e0
 	gitlab.flexinfer.ai/libs/fi-mcp-kit v0.2.1-0.20260412164817-1a41094d2496
-	gitlab.flexinfer.ai/libs/mcp-go v0.2.1-0.20260303153918-d2e5fba8ab13
+	gitlab.flexinfer.ai/libs/mcp-go v0.2.1-0.20260317181133-7ff2221818cd
 	go.mongodb.org/mongo-driver v1.17.8
 	go.opentelemetry.io/otel v1.40.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.40.0
