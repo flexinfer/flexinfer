@@ -353,7 +353,7 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "CacheFailed",
 			fmt.Sprintf("Model download job failed after %d retries - check job logs for details",
 				modelCache.Status.RetryCount))
-	} else if blocked, message, err := r.downloadJobSchedulingBlocker(ctx, modelCache.Namespace, jobName); err != nil {
+	} else if blocked, scheduled, message, err := r.downloadJobSchedulingState(ctx, modelCache.Namespace, jobName); err != nil {
 		return ctrl.Result{}, err
 	} else if blocked {
 		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
@@ -369,6 +369,20 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			return ctrl.Result{}, err
 		}
 		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "DownloadJobUnschedulable", message)
+		return ctrl.Result{RequeueAfter: requeueMedium}, nil
+	} else if scheduled && downloadJobScheduledConditionNeedsUpdate(modelCache, metav1.ConditionTrue, "DownloadJobScheduled") {
+		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
+		modelCache.Status.CurrentPhase = "download"
+		apimeta.SetStatusCondition(&modelCache.Status.Conditions, metav1.Condition{
+			Type:               "DownloadJobScheduled",
+			Status:             metav1.ConditionTrue,
+			Reason:             "DownloadJobScheduled",
+			Message:            fmt.Sprintf("download job %s has a scheduled pod", jobName),
+			ObservedGeneration: modelCache.Generation,
+		})
+		if err := r.Status().Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: requeueMedium}, nil
 	}
 
@@ -1273,19 +1287,26 @@ func downloadJobPredatesPVC(job *batchv1.Job, pvc *corev1.PersistentVolumeClaim)
 	return job.CreationTimestamp.Time.Before(pvc.CreationTimestamp.Time)
 }
 
-func (r *ModelCacheReconciler) downloadJobSchedulingBlocker(ctx context.Context, namespace, jobName string) (bool, string, error) {
+func (r *ModelCacheReconciler) downloadJobSchedulingState(ctx context.Context, namespace, jobName string) (blocked, scheduled bool, message string, err error) {
 	pods := &corev1.PodList{}
 	if err := r.List(ctx, pods, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
-		return false, "", err
+		return false, false, "", err
 	}
 	if len(pods.Items) == 0 {
 		if err := r.List(ctx, pods, client.InNamespace(namespace), client.MatchingLabels{"batch.kubernetes.io/job-name": jobName}); err != nil {
-			return false, "", err
+			return false, false, "", err
 		}
 	}
 
 	for _, pod := range pods.Items {
+		if pod.Spec.NodeName != "" {
+			scheduled = true
+		}
 		for _, condition := range pod.Status.Conditions {
+			if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionTrue {
+				scheduled = true
+				continue
+			}
 			if condition.Type != corev1.PodScheduled || condition.Status != corev1.ConditionFalse {
 				continue
 			}
@@ -1296,10 +1317,20 @@ func (r *ModelCacheReconciler) downloadJobSchedulingBlocker(ctx context.Context,
 			if message == "" {
 				message = fmt.Sprintf("download job %s is waiting for a schedulable node", jobName)
 			}
-			return true, message, nil
+			return true, scheduled, message, nil
 		}
 	}
-	return false, "", nil
+	return false, scheduled, "", nil
+}
+
+func downloadJobScheduledConditionNeedsUpdate(modelCache *aiv1alpha1.ModelCache, status metav1.ConditionStatus, reason string) bool {
+	condition := apimeta.FindStatusCondition(modelCache.Status.Conditions, "DownloadJobScheduled")
+	if condition == nil {
+		return true
+	}
+	return condition.Status != status ||
+		condition.Reason != reason ||
+		condition.ObservedGeneration != modelCache.Generation
 }
 
 func modelCacheNeedsResetWhilePVCDeleting(status *aiv1alpha1.ModelCacheStatus) bool {
