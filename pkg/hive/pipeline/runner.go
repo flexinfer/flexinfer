@@ -163,6 +163,23 @@ type Runner struct {
 	// produces exactly one pipeline_outcome eval row. Errors are logged
 	// but do not undo the state transition.
 	OnMerged func(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error
+	// CrossRepoIntegrator, when set, switches the runner into the
+	// cross-repo path for any backlog item that has an open
+	// cross_repo_run row. Unset means single-repo behaviour for every
+	// item; an open cross_repo_run with no integrator wired returns a
+	// clear error rather than silently routing through the single-repo
+	// flow. See slice 4.2/4.3 in
+	// .loom/94-implementation-plan-hive-v2-…2026-05-02.md.
+	CrossRepoIntegrator CrossRepoIntegrator
+}
+
+// CrossRepoIntegrator is the subset of crossrepo.Integrator the pipeline
+// runner depends on. Defined here so the runner stays agnostic to the
+// concrete crossrepo package and tests can supply a fake without pulling
+// in the GitLab/policy wiring.
+type CrossRepoIntegrator interface {
+	WaitForGreen(ctx context.Context, run *store.CrossRepoRun) (store.CrossRepoState, error)
+	AtomicMerge(ctx context.Context, run *store.CrossRepoRun) (store.CrossRepoState, error)
 }
 
 // New constructs a Runner with sensible defaults. A nil PolicyManager is
@@ -209,9 +226,20 @@ func (r *Runner) Start(ctx context.Context, run *store.PipelineRun, item *store.
 // Drive is resume-safe: if run.CurrentStage is set and matches a stage
 // in r.Stages, execution picks up at that index. New runs (CurrentStage
 // empty) start at index 0.
+//
+// Cross-repo branch (slice 4.2/4.3): when the backlog item has an open
+// cross_repo_run row the Runner hands off to handleCrossRepoRun instead
+// of stepping through r.Stages. The detection is "open run exists" —
+// the planner's caller is responsible for materialising that row before
+// dispatching the pipeline. See .loom/94-…2026-05-02.md slice 4.2.
 func (r *Runner) Drive(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error {
 	if r.Store == nil || r.Dispatcher == nil {
 		return errors.New("pipeline: runner not configured")
+	}
+	if cross, err := r.openCrossRepoRun(ctx, item); err != nil {
+		return err
+	} else if cross != nil {
+		return r.handleCrossRepoRun(ctx, cross, run, item)
 	}
 	startIdx, err := r.resumeIndex(run)
 	if err != nil {
@@ -655,6 +683,91 @@ func boolStr(b bool, t, f string) string {
 	return f
 }
 
+// openCrossRepoRun returns the most-recent cross_repo_runs row for the
+// backlog item if it sits in a non-terminal state the runner should
+// drive. Returns (nil, nil) for the common single-repo case.
+//
+// "Non-terminal" today is open + gates_green + merging — anything before
+// the integrator finishes its job. Merged/reverted/failed rows are
+// historical artifacts and should not re-enter the pipeline.
+func (r *Runner) openCrossRepoRun(ctx context.Context, item *store.BacklogItem) (*store.CrossRepoRun, error) {
+	if r.Store == nil || r.Store.CrossRepo == nil || item == nil {
+		return nil, nil
+	}
+	rows, err := r.Store.CrossRepo.ListByBacklog(ctx, item.ID)
+	if err != nil {
+		return nil, fmt.Errorf("pipeline: lookup cross_repo for %s: %w", item.ID, err)
+	}
+	for _, row := range rows {
+		if isCrossRepoActive(row.State) {
+			return row, nil
+		}
+	}
+	return nil, nil
+}
+
+func isCrossRepoActive(s store.CrossRepoState) bool {
+	switch s {
+	case store.CrossRepoOpen, store.CrossRepoGatesGreen, store.CrossRepoMerging:
+		return true
+	default:
+		return false
+	}
+}
+
+// handleCrossRepoRun drives a cross-repo run through WaitForGreen +
+// AtomicMerge, persisting state transitions on cross_repo_runs and
+// closing out the *store.PipelineRun envelope when the integrator
+// reaches a terminal state. Per-repo MR creation is intentionally
+// out-of-band today (see TODO below).
+func (r *Runner) handleCrossRepoRun(
+	ctx context.Context,
+	cross *store.CrossRepoRun,
+	run *store.PipelineRun,
+	item *store.BacklogItem,
+) error {
+	if r.CrossRepoIntegrator == nil {
+		return r.escalateWithItem(ctx, run, item, fmt.Sprintf(
+			"cross-repo run %s present but integrator not configured", cross.ID))
+	}
+	// TODO(slice 4.2 followup): fan out per-repo plan stages; for now
+	// assume MRs are created out-of-band by the planner caller.
+	greenState, err := r.CrossRepoIntegrator.WaitForGreen(ctx, cross)
+	if perr := r.persistCrossState(ctx, cross, greenState); perr != nil {
+		r.logger().Warn("crossrepo persist gates_green failed",
+			"cross_repo_run", cross.ID, "error", perr)
+	}
+	if err != nil {
+		return r.escalateWithItem(ctx, run, item, fmt.Sprintf(
+			"cross-repo wait_for_green: %v", err))
+	}
+	mergeState, err := r.CrossRepoIntegrator.AtomicMerge(ctx, cross)
+	if perr := r.persistCrossState(ctx, cross, mergeState); perr != nil {
+		r.logger().Warn("crossrepo persist merge state failed",
+			"cross_repo_run", cross.ID, "state", mergeState, "error", perr)
+	}
+	if err != nil {
+		return r.escalateWithItem(ctx, run, item, fmt.Sprintf(
+			"cross-repo atomic_merge: %v", err))
+	}
+	if mergeState != store.CrossRepoMerged {
+		return r.escalateWithItem(ctx, run, item, fmt.Sprintf(
+			"cross-repo terminal state %s", mergeState))
+	}
+	return r.markDone(ctx, run, item)
+}
+
+// persistCrossState pushes a state transition onto cross_repo_runs.
+// Wraps the DAO so the runner doesn't grow conditional nil checks at
+// every call site.
+func (r *Runner) persistCrossState(ctx context.Context, cross *store.CrossRepoRun, state store.CrossRepoState) error {
+	if r.Store == nil || r.Store.CrossRepo == nil || cross == nil || state == "" {
+		return nil
+	}
+	cross.State = state
+	return r.Store.CrossRepo.SetState(ctx, cross.ID, state)
+}
+
 // classifyEscalationReason maps the free-form escalation reason string
 // into one of a small set of label values bounded enough to keep
 // Prometheus cardinality predictable. Anything we don't recognise gets
@@ -671,6 +784,8 @@ func classifyEscalationReason(reason string) string {
 		return "gate_fail"
 	case strings.Contains(reason, "errored") || strings.Contains(reason, "stage error"):
 		return "stage_error"
+	case strings.Contains(reason, "cross-repo"):
+		return "cross_repo"
 	default:
 		return "other"
 	}
