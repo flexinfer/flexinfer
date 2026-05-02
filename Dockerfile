@@ -20,12 +20,12 @@ RUN --mount=type=secret,id=ci_job_token,required=false \
     set -eu; \
     token=""; \
     token_user=""; \
-    if [ -s /run/secrets/ci_job_token ]; then \
-      token="$(cat /run/secrets/ci_job_token)"; \
-      token_user="gitlab-ci-token"; \
-    elif [ -s /run/secrets/gitlab_token ]; then \
+    if [ -s /run/secrets/gitlab_token ]; then \
       token="$(cat /run/secrets/gitlab_token)"; \
       token_user="oauth2"; \
+    elif [ -s /run/secrets/ci_job_token ]; then \
+      token="$(cat /run/secrets/ci_job_token)"; \
+      token_user="gitlab-ci-token"; \
     fi; \
     if [ -n "$token" ]; then \
       git config --global url."https://${token_user}:${token}@gitlab.flexinfer.ai/".insteadOf "https://gitlab.flexinfer.ai/"; \
@@ -50,12 +50,12 @@ RUN --mount=type=secret,id=ci_job_token,required=false \
     set -eu; \
     token=""; \
     token_user=""; \
-    if [ -s /run/secrets/ci_job_token ]; then \
-      token="$(cat /run/secrets/ci_job_token)"; \
-      token_user="gitlab-ci-token"; \
-    elif [ -s /run/secrets/gitlab_token ]; then \
+    if [ -s /run/secrets/gitlab_token ]; then \
       token="$(cat /run/secrets/gitlab_token)"; \
       token_user="oauth2"; \
+    elif [ -s /run/secrets/ci_job_token ]; then \
+      token="$(cat /run/secrets/ci_job_token)"; \
+      token_user="gitlab-ci-token"; \
     fi; \
     if [ -n "$token" ]; then \
       git config --global url."https://${token_user}:${token}@gitlab.flexinfer.ai/".insteadOf "https://gitlab.flexinfer.ai/"; \
