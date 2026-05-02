@@ -15,6 +15,7 @@ If you’re looking for “what exists today” docs, start here instead:
 
 - `feature-inventory.md`: what features exist, what’s stable, what’s experimental, and what’s missing.
 - `next-roadmap.md`: the next series of features/enhancements to implement (prioritized).
+- `spec-capsule-template.md`: reusable source-backed template, checklist, and examples for new feature slices.
 - `context-aware-router-execution.md`: execution checklist for issue `#8` (context-aware routing).
 - `phase-1-controller-api-hardening.md`: PR-sized checklist for the next series of controller hardening work.
 - `../design/multi-tenancy.md`: M1 design for namespace-isolated tenancy baseline.
@@ -37,6 +38,17 @@ Reference homelab topology used while hardening these paths:
 - `cblevins-gtx980ti`: NVIDIA GTX 980 Ti (Maxwell `sm_52`)
 
 Operational note (k3s homelab): if a node goes NotReady/unreachable, old FlexInfer pods can get stuck `Terminating` on that node and block Helm rollouts. Force-delete the stuck pods in `flexinfer-system` to unblock upgrades.
+
+## Planning checklist
+
+Before implementation starts on a multi-file feature or operational workflow
+change, copy `spec-capsule-template.md` and fill in:
+
+- Goal, non-goals, users/operators, and current evidence.
+- Requirements and acceptance criteria.
+- PR-sized implementation slices with target files/modules.
+- Validation commands and generated artifacts.
+- Rollout/backout notes for Helm, CRD, Flux, and runtime-image changes.
 
 ## Loom context pack
 

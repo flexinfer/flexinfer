@@ -20,9 +20,10 @@ FlexInfer is **production-ready** at 95%+ completion. Phases 1-4 are complete pl
 - Spot-instance resilience with proactive draining (AWS, Azure, GCP, Harvester)
 - CNCF Sandbox prep (GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM, license scanning)
 
-Open roadmap scope is currently maintenance-focused:
+Open roadmap scope is currently maintenance and delivery-process focused:
 - Dependency refresh and scheduled upgrade rollout ([Issue #9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9)) — in progress, with Prometheus + golang-x minor/patch batches merged to `master` (`a16b2d1`)
 - Next roadmap slice selection and tracking updates ([Issue #1](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1))
+- Spec-driven delivery acceleration: source-backed spec capsules, PR-sized implementation slices, validation matrices, and roadmap reconciliation discipline ([Template](docs/planning/spec-capsule-template.md))
 
 Recently closed roadmap slices (Feb-Mar 2026):
 - FLUX.1 diffusers support with NF4 quantization for 24GB VRAM (three-layer dtype strategy, gc.collect OOM fix, PyTorch 2.3 polyfills) (`db4cfde`..`053a2d6`)
@@ -152,6 +153,13 @@ Shipped in pipeline #498 across 3 commits.
 - [x] **Multi-tenancy** - Namespace isolation baseline + admission guardrails + tenant fair-share scheduling shipped ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2), [Design](docs/design/multi-tenancy.md))
 - [x] **CNCF submission** - Sandbox application preparation (shipped: governance, security, SBOM, licenses)
 
+### Delivery Acceleration (Spec-Driven Development)
+- [x] **Spec capsule template** - Add a reusable template for goal, non-goals, requirements, acceptance criteria, validation, rollout/backout, and sources ([Issue #55](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/55))
+- [ ] **Slice readiness gate** - Require target modules, validation commands, and rollback notes before multi-file feature implementation ([Issue #56](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/56))
+- [ ] **Validation matrix expansion** - Make `.loom/60-validation-matrix.md` the canonical canary and runtime-promotion evidence table ([Issue #57](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/57))
+- [ ] **Agent-ready work slices** - Add delegation notes and disjoint ownership boundaries to feature plans ([Issue #58](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/58))
+- [ ] **Roadmap reconciliation discipline** - Keep roadmap docs, `.loom` context, and tracking issues aligned after planning cycles ([Issue #59](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/59))
+
 ## Phase 5: Multi-Cluster (Mostly Complete)
 
 See `docs/design/multi-cluster.md` and `docs/planning/phase-5-multi-cluster.md` for details.
@@ -179,6 +187,7 @@ See `docs/design/multi-cluster.md` and `docs/planning/phase-5-multi-cluster.md` 
 | [SECURITY.md](SECURITY.md) | Security policy and vulnerability reporting |
 | [ADOPTERS.md](ADOPTERS.md) | Production adopters |
 | [docs/planning/](docs/planning/) | Phase planning documents |
+| [docs/planning/spec-capsule-template.md](docs/planning/spec-capsule-template.md) | Reusable spec capsule template and examples |
 | [docs/design/multi-cluster.md](docs/design/multi-cluster.md) | Multi-cluster design |
 | [docs/design/model-registry-integration.md](docs/design/model-registry-integration.md) | Model registry design (implemented) |
 | [docs/design/quantization-pipelines.md](docs/design/quantization-pipelines.md) | Quantization pipelines design |
