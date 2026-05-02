@@ -1,132 +1,55 @@
-# vLLM Docker image for AMD gfx906 (Radeon VII)
-# Built from source with BUILD_FA=0 to disable flash attention
-# Flash attention causes GPU hangs on consumer RDNA3 GPUs
+# vLLM Docker image for AMD gfx906 (Radeon VII / Vega20)
+#
+# The earlier source-build image used rocm/dev-ubuntu-24.04:6.4.4 plus the
+# PyTorch rocm6.2 wheel and failed during vLLM 0.7.3 CMake configuration. gfx906
+# is deprecated in recent ROCm releases, so the stable path is the community
+# gfx906 vLLM base that already carries rebuilt ROCm/PyTorch/vLLM components.
 #
 # Build command:
 #   docker build -f build/Dockerfile.vllm-rocm-gfx906 -t vllm-rocm-gfx906 .
 #
-# Based on: https://github.com/vllm-project/vllm/pull/2768
-# "support Radeon VII (gfx906) without using flash-attention"
+# Base provenance:
+# - docs/dev/gfx906-gpu-support.md documents the adopted mixa3607 gfx906 stack.
+# - vLLM is prebuilt in the base image, so this Dockerfile intentionally avoids
+#   rebuilding vLLM from source.
 
-ARG ROCM_VERSION=6.4.4
-FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION}
+ARG BASE_IMAGE=docker.io/mixa3607/vllm-gfx906:0.12.0-rocm-6.3.3-nlzy
+FROM ${BASE_IMAGE}
 
-ARG PYTHON_VERSION=3.12
-ARG PYTORCH_ROCM_ARCH=gfx906
-ARG VLLM_VERSION=0.7.3
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+# gfx906 runtime environment.
+# Radeon VII hardware can report gfx900; override to gfx906 for correct ISA
+# dispatch. SDMA/SVM are disabled because they are fragile on Vega20 with ROCm.
+ENV ROCM_PATH=/opt/rocm \
+    HIP_PATH=/opt/rocm/hip \
+    PYTORCH_ROCM_ARCH=gfx906 \
+    HSA_OVERRIDE_GFX_VERSION=9.0.6 \
+    HSA_ENABLE_SDMA=0 \
+    HSA_USE_SVM=0 \
+    HIP_VISIBLE_DEVICES=0 \
+    ROCR_VISIBLE_DEVICES=0 \
+    TORCH_BLAS_PREFER_HIPBLASLT=0 \
+    MIOPEN_FIND_MODE=2
 
-# ROCm environment for gfx906
-ENV ROCM_PATH=/opt/rocm
-ENV HIP_PATH=/opt/rocm/hip
-ENV PYTORCH_ROCM_ARCH=${PYTORCH_ROCM_ARCH}
-ENV HIP_VISIBLE_DEVICES=0
-ENV ROCR_VISIBLE_DEVICES=0
+# Conservative vLLM defaults for gfx906. Flash attention remains disabled for
+# this non-FA image; operators should prefer llama.cpp or this image before any
+# experimental FA path on Radeon VII.
+ENV VLLM_USE_V1=0 \
+    VLLM_USE_TRITON_FLASH_ATTN=0 \
+    VLLM_ROCM_USE_AITER=0
 
-# Force vLLM to use V0 engine (V1 only supports Triton attention which fails on gfx906)
-ENV VLLM_USE_V1=0
-# Disable Triton flash attention in favor of CK flash attention
-ENV VLLM_USE_TRITON_FLASH_ATTN=0
-# Disable AITER (optimized for MI300X, not RDNA3)
-ENV VLLM_ROCM_USE_AITER=0
-# Enable experimental AOTriton
-ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    python3-dev \
-    python3-venv \
-    git \
-    curl \
-    cmake \
-    ninja-build \
-    build-essential \
-    wget \
-    sqlite3 \
-    libsqlite3-dev \
-    libfmt-dev \
-    libmsgpack-dev \
-    libsuitesparse-dev \
-    hipblas \
-    rocblas \
-    rocsparse \
-    hipsparse \
-    rocthrust \
-    rocprim \
-    hipcub \
-    rccl \
-    && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/python3 /usr/bin/python
-
-# Create virtual environment (PEP 668 compliance on Ubuntu 24.04)
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:${PATH}"
-ENV VIRTUAL_ENV=/opt/venv
-
-# Install Python build dependencies
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel setuptools_scm
-
-# Install PyTorch for ROCm
-RUN pip install --no-cache-dir \
-    torch==2.5.1 \
-    --index-url https://download.pytorch.org/whl/rocm6.2
-
-# Clone vLLM with tags for version detection
-WORKDIR /build
-RUN git clone --branch v${VLLM_VERSION} https://github.com/vllm-project/vllm.git && \
-    cd vllm && \
-    git fetch --tags
-
-# Build vLLM with flash attention DISABLED for gfx906
-# BUILD_FA=0 is critical - flash attention kernels cause issues on Vega20
-WORKDIR /build/vllm
-ENV MAX_JOBS=8
-ENV CMAKE_BUILD_PARALLEL_LEVEL=8
-ENV VLLM_TARGET_DEVICE=rocm
-# CRITICAL: Disable flash attention for gfx906
-ENV BUILD_FA=0
-# Pretend version to avoid setuptools_scm issues
-ENV SETUPTOOLS_SCM_PRETEND_VERSION=${VLLM_VERSION}
-
-# Install ROCm requirements
-RUN pip install --no-cache-dir -r requirements-rocm.txt
-
-# Build vLLM wheel using setup.py (like official Dockerfile)
-RUN python setup.py clean --all && \
-    python setup.py bdist_wheel --dist-dir=dist
-
-# Install the built wheel
-RUN pip install --no-cache-dir dist/*.whl
-
-# Install additional dependencies
-RUN pip install --no-cache-dir \
-    diffusers>=0.30.0 \
-    pillow \
-    sentencepiece \
-    protobuf \
-    "numpy<2"
-
-# Cleanup build files to reduce image size
-RUN rm -rf /build
-
-# Create model directory
 WORKDIR /workspace
 RUN mkdir -p /models
 
-# Expose vLLM API port
 EXPOSE 8000
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=10)"
 
-# Default entrypoint for vLLM OpenAI-compatible server
-ENTRYPOINT ["python", "-m", "vllm.entrypoints.openai.api_server"]
-
-# Default arguments (can be overridden)
+ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
 CMD ["--host", "0.0.0.0", "--port", "8000"]

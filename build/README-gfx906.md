@@ -66,6 +66,10 @@ docker build \
 
 ### vLLM
 
+This image wraps the prebuilt `mixa3607/vllm-gfx906:0.12.0-rocm-6.3.3-nlzy`
+base. It does not rebuild vLLM from source, avoiding the known ROCm 6.4.4 +
+PyTorch ROCm wheel CMake failure on gfx906.
+
 ```bash
 docker build \
   -f build/Dockerfile.vllm-rocm-gfx906 \
@@ -157,6 +161,16 @@ kubectl exec <pod> -- env | grep HSA_ENABLE_SDMA
 kubectl exec <pod> -- env | grep PYTORCH_ROCM_ARCH
 # Should show: PYTORCH_ROCM_ARCH=gfx906
 ```
+
+### vLLM CMake failure on ROCm 6.4.4
+
+**Cause**: gfx906 support is fragile in newer ROCm releases, and the old vLLM
+source-build path mixed ROCm 6.4.4 headers with a PyTorch ROCm wheel from a
+different ROCm generation.
+
+**Solution**: Use `build/Dockerfile.vllm-rocm-gfx906`, which inherits prebuilt
+`mixa3607/vllm-gfx906:0.12.0-rocm-6.3.3-nlzy` instead of compiling vLLM during
+the FlexInfer image build.
 
 ### Out of Memory
 
