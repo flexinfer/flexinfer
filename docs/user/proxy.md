@@ -53,6 +53,14 @@ When a model is idle (replicas = 0), the proxy:
 
 Timeouts and queue sizing are configured via env vars (see `docs/CONFIGURATION.md`).
 
+For v1alpha2 `Model` resources, the proxy also watches
+`status.loadingSubstage` and `status.loadingProgressAt` while activation is in
+progress. If the controller reports `LoadingWeights` and the progress timestamp
+does not advance for the stalled-load threshold, fresh queued requests receive
+`503 Service Unavailable` with `Retry-After` instead of continuing to build an
+unbounded cold-start queue. Check `status.message` for the last observed shard
+or backend progress hint.
+
 ## GPUGroup demand signaling (v1alpha1)
 
 For models in a `GPUGroup`, only one model is active at a time. When a request arrives for an inactive model, the proxy:
