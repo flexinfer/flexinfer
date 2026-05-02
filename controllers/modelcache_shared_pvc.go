@@ -29,6 +29,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -286,6 +287,13 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 
 		// Path includes both PVC name and model subdirectory
 		modelCache.Status.Path = fmt.Sprintf("%s:%s", pvcName, modelPath)
+		apimeta.SetStatusCondition(&modelCache.Status.Conditions, metav1.Condition{
+			Type:               "DownloadJobScheduled",
+			Status:             metav1.ConditionTrue,
+			Reason:             "DownloadJobSucceeded",
+			Message:            fmt.Sprintf("download job %s completed", jobName),
+			ObservedGeneration: modelCache.Generation,
+		})
 
 		// Set OCI-specific status fields
 		if isOCISource(modelCache.Spec.Source) {
@@ -345,6 +353,23 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "CacheFailed",
 			fmt.Sprintf("Model download job failed after %d retries - check job logs for details",
 				modelCache.Status.RetryCount))
+	} else if blocked, message, err := r.downloadJobSchedulingBlocker(ctx, modelCache.Namespace, jobName); err != nil {
+		return ctrl.Result{}, err
+	} else if blocked {
+		modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseProvisioning
+		modelCache.Status.CurrentPhase = "download"
+		apimeta.SetStatusCondition(&modelCache.Status.Conditions, metav1.Condition{
+			Type:               "DownloadJobScheduled",
+			Status:             metav1.ConditionFalse,
+			Reason:             "DownloadJobUnschedulable",
+			Message:            message,
+			ObservedGeneration: modelCache.Generation,
+		})
+		if err := r.Status().Update(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+		r.Recorder.Event(modelCache, corev1.EventTypeWarning, "DownloadJobUnschedulable", message)
+		return ctrl.Result{RequeueAfter: requeueMedium}, nil
 	}
 
 	// Emit metrics for SharedPVC caches as well (the Memory strategy already does this).
@@ -1246,6 +1271,35 @@ func downloadJobPredatesPVC(job *batchv1.Job, pvc *corev1.PersistentVolumeClaim)
 		return false
 	}
 	return job.CreationTimestamp.Time.Before(pvc.CreationTimestamp.Time)
+}
+
+func (r *ModelCacheReconciler) downloadJobSchedulingBlocker(ctx context.Context, namespace, jobName string) (bool, string, error) {
+	pods := &corev1.PodList{}
+	if err := r.List(ctx, pods, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
+		return false, "", err
+	}
+	if len(pods.Items) == 0 {
+		if err := r.List(ctx, pods, client.InNamespace(namespace), client.MatchingLabels{"batch.kubernetes.io/job-name": jobName}); err != nil {
+			return false, "", err
+		}
+	}
+
+	for _, pod := range pods.Items {
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type != corev1.PodScheduled || condition.Status != corev1.ConditionFalse {
+				continue
+			}
+			if condition.Reason != corev1.PodReasonUnschedulable && !strings.Contains(condition.Message, "0/") {
+				continue
+			}
+			message := strings.TrimSpace(condition.Message)
+			if message == "" {
+				message = fmt.Sprintf("download job %s is waiting for a schedulable node", jobName)
+			}
+			return true, message, nil
+		}
+	}
+	return false, "", nil
 }
 
 func modelCacheNeedsResetWhilePVCDeleting(status *aiv1alpha1.ModelCacheStatus) bool {
