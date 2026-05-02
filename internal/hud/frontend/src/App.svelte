@@ -366,6 +366,14 @@
                   {:catch}
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
+                {:else if router.subView === 'cross-repo'}
+                  {#await import('./lib/components/Hive/CrossRepoCard.svelte')}
+                    <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
+                  {:then { default: HiveCrossRepoCard }}
+                    <HiveCrossRepoCard />
+                  {:catch}
+                    <EmptyState icon="!" heading="Failed to load panel" compact />
+                  {/await}
                 {/if}
               </ViewShell>
             {/if}
