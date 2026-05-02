@@ -30,9 +30,24 @@ The controller manager handles reconciliation of FlexInfer CRDs and manages the 
 | `DEFAULT_FLASH_LOADER_IMAGE` | `registry.harbor.lan/flexinfer/flash-loader:latest` | Default flash-loader image |
 | `DEFAULT_FLASH_LOADER_CONCURRENCY` | `4` | Default flash-loader copy parallelism |
 | `DEFAULT_FLASH_LOADER_TMPFS_SIZE_LIMIT` | - | Optional default tmpfs size limit for flash-loader staging volume |
+| `DEFAULT_FLASH_LOADER_BUFFER_KB` | `4096` | Default flash-loader copy buffer size in KiB |
+| `DEFAULT_FLASH_LOADER_VERIFY` | `false` | Verify copied files after flash-loader transfer |
+| `DEFAULT_FLASH_LOADER_EXCLUDE` | - | Comma-separated flash-loader exclude patterns |
 | `FLEXINFER_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing export (manager + proxy) |
 | `FLEXINFER_OTEL_SERVICE_NAMESPACE` | - | Optional `service.namespace` attribute for exported spans |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTEL SDK default | OTLP endpoint for tracing exporter (typically `http://collector:4318`) |
+
+Flash-loader defaults can be set globally through Helm at
+`controller.runtime.flashLoader.*`. Per-cache and per-model settings override
+those defaults in this order:
+
+1. Controller env defaults rendered from Helm.
+2. Matching v1alpha1 `ModelCache.spec.flashLoader`.
+3. v1alpha2 `Model.spec.cache.flashLoader`.
+
+The v1alpha2 override is the highest-priority layer. Shared-GPU models with
+`cache.strategy: Local` auto-enable flash-loader unless an explicit flash-loader
+config says otherwise.
 
 ### Backend Image Overrides
 

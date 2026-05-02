@@ -116,16 +116,22 @@ observable, and reversible through Helm and GitOps.
 
 ### PR-2A: Flash-Loader Config Proof
 
-- Status: already implemented; needs proof and any missing tests/docs.
+- Status: complete as of 2026-05-02.
 - Owner boundary:
   - `controllers/flash_loader.go`
   - `controllers/model_controller_test.go`
   - `charts/flexinfer/templates/deployment.yaml`
   - `charts/flexinfer/values.yaml`
   - related configuration docs only
-- Agent-ready task: verify Helm env rendering and controller precedence from
-  env defaults to `ModelCache.spec.flashLoader` to v1alpha2 model cache
-  overrides.
+- Proof summary:
+  - Controller tests cover global defaults, matching v1alpha1
+    `ModelCache.spec.flashLoader` overrides, v1alpha2
+    `Model.spec.cache.flashLoader` overrides, Local/shared auto-enable,
+    persistent shared tmpfs, and non-shared ephemeral tmpfs.
+  - Helm renders `DEFAULT_SHM_SIZE_LIMIT` and the `DEFAULT_FLASH_LOADER_*`
+    defaults from `controller.runtime`.
+  - `docs/CONFIGURATION.md` and `docs/user/caching.md` document the precedence
+    chain and rollout/backout knobs.
 - Do not touch: metrics exporter, tracing package, proxy request handling.
 - Validation:
   - `go test ./controllers -run 'Test.*FlashLoader|Test.*ModelCache'`
@@ -215,8 +221,9 @@ observable, and reversible through Helm and GitOps.
   - Should cold-start histogram labels use the CRD backend string only, or should
     runtime profile / GPU architecture be added later through a low-cardinality
     label?
-  - Should flash-loader docs describe v1alpha1 `ModelCache` and v1alpha2
-    `Model.spec.cache.flashLoader` precedence in one shared user-facing page?
+  - Resolved for PR-2A: flash-loader docs now describe v1alpha1 `ModelCache`
+    and v1alpha2 `Model.spec.cache.flashLoader` precedence in one shared
+    user-facing page.
 
 ## Validation Plan
 
