@@ -312,7 +312,7 @@
     router.navigate('sandbox', 'spawn', spawnId);
   }
 
-  function buildFleetRow(agent, depth = 0) {
+  function buildFleetRow(agent, depth = 0, ungrouped = false) {
     const session = agent.session_id ? fleetStore.sessionById.get(agent.session_id) : null;
     const parentSession = session ? fleetStore.parentSession(session.id) : null;
     const rootSession = session ? fleetStore.rootSession(session.id) : null;
@@ -323,6 +323,7 @@
       id: agent.agent_id,
       agent,
       depth,
+      ungrouped,
       session,
       parentSession,
       rootSession,
@@ -390,21 +391,41 @@
       for (const row of rows) seenAgents.add(row.agent.agent_id);
     }
 
+    // Anything not slotted into a session tree (orphans, session-less
+    // bootstrapping presences, spawn-only entries) gets appended below the
+    // grouped section with `ungrouped: true` so the row renderer can show a
+    // visual divider before the first one. This keeps "real" sessions
+    // tightly grouped at the top and separates everything else.
     for (const row of flatRows) {
-      if (!seenAgents.has(row.agent.agent_id)) groupedRows.push(row);
+      if (!seenAgents.has(row.agent.agent_id)) {
+        groupedRows.push({ ...row, ungrouped: true });
+      }
     }
 
     return groupedRows;
   });
 
+  // Index of the first ungrouped row so the snippet below can render a
+  // divider above it without re-walking the array per row.
+  let ungroupedStartIndex = $derived.by(() => {
+    if (!groupByRootSession) return -1;
+    for (let i = 0; i < fleetRows.length; i++) {
+      if (fleetRows[i].ungrouped) return i;
+    }
+    return -1;
+  });
+
   let rootGroupCount = $derived.by(() => {
     const groupKeys = new Set();
     for (const row of fleetRows) {
+      if (row.ungrouped) continue;
       const groupKey = row.rootSession?.id || row.session?.id || row.id;
       groupKeys.add(groupKey);
     }
     return groupKeys.size;
   });
+
+  let ungroupedCount = $derived(fleetRows.filter((r) => r.ungrouped).length);
 </script>
 
 <div class="panel fleet-panel">
@@ -450,10 +471,14 @@
           onSort={handleFleetSort}
           onRowClick={(row) => openAgentDetail(row)}
         >
-          {#snippet row({ row })}
+          {#snippet row({ row, index })}
             {@const agent = row.agent}
             {@const linkedSpawn = spawnByAgentId.get(agent.agent_id)}
-            <td class="text-mono agent-cell" class:subagent-row={row.depth > 0} title={sanitizeText(agent.agent_id ?? '---')}>
+            {@const showUngroupedDivider = groupByRootSession && row.ungrouped && index === ungroupedStartIndex}
+            <td class="text-mono agent-cell" class:subagent-row={row.depth > 0} class:ungrouped-divider={showUngroupedDivider} title={sanitizeText(agent.agent_id ?? '---')}>
+              {#if showUngroupedDivider}
+                <span class="ungrouped-label" aria-hidden="true">No active session match{ungroupedCount > 1 ? ` · ${ungroupedCount}` : ''}</span>
+              {/if}
               {#if groupByRootSession && row.depth > 0}
                 <span class="subagent-indent" aria-hidden="true">└─</span>
               {/if}
@@ -488,10 +513,10 @@
                 </div>
               {/if}
             </td>
-            <td>
+            <td class:ungrouped-divider={showUngroupedDivider}>
               <StatusDot status={unifiedAgentStatus(agent)} />
             </td>
-            <td class="evidence-cell">
+            <td class="evidence-cell" class:ungrouped-divider={showUngroupedDivider}>
               <span class="evidence-pill" class:evidence-pill-active={agent.has_presence}>presence</span>
               <span class="evidence-pill" class:evidence-pill-active={agent.has_session}>session</span>
               {#if agent.has_spawn}
@@ -504,16 +529,16 @@
                 >orphan</span>
               {/if}
             </td>
-            <td class="text-mono text-muted namespace-cell" title={sanitizeText(agent.namespace ?? agent.project ?? '---')}>
+            <td class="text-mono text-muted namespace-cell" class:ungrouped-divider={showUngroupedDivider} title={sanitizeText(agent.namespace ?? agent.project ?? '---')}>
               {sanitizeText(agent.namespace ?? agent.project ?? '---')}
             </td>
-            <td class="text-muted text-xs description-cell" title={sanitizeText(agent.current_task || agent.description || '')}>
+            <td class="text-muted text-xs description-cell" class:ungrouped-divider={showUngroupedDivider} title={sanitizeText(agent.current_task || agent.description || '')}>
               {sanitizeText(agent.current_task || agent.description || '---')}
             </td>
-            <td class="text-mono text-muted" title={formatTime(agent.last_heartbeat || agent.session_started_at)}>
+            <td class="text-mono text-muted" class:ungrouped-divider={showUngroupedDivider} title={formatTime(agent.last_heartbeat || agent.session_started_at)}>
               {relativeTime(agent.last_heartbeat || agent.session_started_at)}
             </td>
-            <td class="actions-cell">
+            <td class="actions-cell" class:ungrouped-divider={showUngroupedDivider}>
               {#if agent.session_id}
                 <button class="btn btn-xs btn-ghost" onclick={(e) => { e.stopPropagation(); navigateToSession(agent.session_id); }}>
                   Session
@@ -539,9 +564,12 @@
           </div>
         {:else if agentsWithoutSession > 0}
           <div class="metric-sub">{agentsWithoutSession} live without session</div>
-        {:else if groupByRootSession}
-          <div class="metric-sub">{rootGroupCount} root group{rootGroupCount === 1 ? '' : 's'}</div>
-          {/if}
+        {/if}
+        {#if groupByRootSession && rootGroupCount > 0}
+          <div class="metric-sub" title="Distinct root sessions (subagents grouped under their parent).">
+            {rootGroupCount} root group{rootGroupCount === 1 ? '' : 's'}{ungroupedCount > 0 ? ` · ${ungroupedCount} ungrouped` : ''}
+          </div>
+        {/if}
       </div>
       <div class="stat-card" style="--accent-color: var(--warning)">
         {#key tasks.length}<div class="metric-value data-updated">{tasks.length}</div>{/key}
@@ -1486,6 +1514,28 @@
     top: 2px;
     color: var(--fg-dim);
     font-size: 11px;
+  }
+
+  /* Visual separator above the first ungrouped agent row, applied to every
+     cell of that row so the divider spans the full table width. */
+  .ungrouped-divider {
+    border-top: 1px dashed color-mix(in srgb, var(--warning) 40%, var(--border)) !important;
+    padding-top: 14px;
+  }
+
+  .ungrouped-label {
+    position: absolute;
+    top: -6px;
+    left: 0;
+    font-size: 9px;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--warning);
+    background: var(--bg-secondary);
+    padding: 0 6px;
+    border-radius: var(--radius-sm);
+    z-index: 1;
   }
 
   .evidence-cell {

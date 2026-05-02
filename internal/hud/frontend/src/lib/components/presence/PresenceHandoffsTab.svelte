@@ -55,6 +55,7 @@
     <DataTable
       columns={handoffColumns}
       rows={handoffs}
+      stableLayout={true}
     >
       {#snippet row({ row: handoff })}
         <td class="text-mono">{handoff.from_agent || '---'}</td>

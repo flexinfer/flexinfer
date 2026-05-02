@@ -62,13 +62,21 @@
     } catch { /* ignore */ }
   });
 
-  // Row pagination: show maxRows initially, expand on demand
-  let displayCount = $state(Infinity);
+  // Row pagination: show maxRows initially, expand on demand.
+  // Important: do NOT reset displayCount on every `rows` update — polled
+  // tables (fleet, tasks, etc.) update `rows` continuously, and resetting
+  // would snap a user-expanded page back to maxRows on every poll. Initialize
+  // from maxRows; only react to maxRows itself changing.
+  let displayCount = $state(typeof maxRows === 'number' ? maxRows : Infinity);
 
-  // Reset display count when rows change
   $effect(() => {
-    rows;
-    displayCount = maxRows ?? Infinity;
+    if (typeof maxRows !== 'number') {
+      displayCount = Infinity;
+      return;
+    }
+    // Ensure the floor stays at maxRows if the prop shrank; never clobber a
+    // user-expanded page on every rows update.
+    if (displayCount < maxRows) displayCount = maxRows;
   });
 
   let displayRows = $derived(maxRows ? rows.slice(0, displayCount) : rows);
