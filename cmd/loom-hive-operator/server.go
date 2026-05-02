@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/crb2nu/loom/pkg/hive"
+	"github.com/crb2nu/loom/pkg/hive/audit"
 	"github.com/crb2nu/loom/pkg/hive/gates"
 	"github.com/crb2nu/loom/pkg/hive/runner"
 	"github.com/crb2nu/loom/pkg/hive/squads"
@@ -28,7 +29,16 @@ type operator struct {
 	runner         *runner.Runner        // optional; nil disables /api/hive/council/{run,dryrun}
 	regressionGate *gates.RegressionGate // optional; nil makes the alerts webhook return 503
 	squadsLoader   *squads.Loader        // optional; nil makes squad endpoints return empty / 404
-	logger         *slog.Logger
+
+	// Audit (Phase 3). Set by main.go when FlexInfer is configured + a
+	// reviewer is registered; nil leaves the read endpoints serving
+	// canonical-store rows and the admin /run endpoint returning 503.
+	auditDispatcher *audit.Dispatcher
+	auditWorker     *audit.QueueWorker
+	auditTriggers   *audit.Triggers
+	auditPolicy     *audit.PoolPolicy
+
+	logger *slog.Logger
 
 	ready atomic.Bool
 }
@@ -58,6 +68,18 @@ func (o *operator) withRunner(r *runner.Runner) *operator {
 // boots cleanly when no squad manifests are mounted.
 func (o *operator) withSquadsLoader(l *squads.Loader) *operator {
 	o.squadsLoader = l
+	return o
+}
+
+// withAudit attaches the Phase 3 audit subsystem: dispatcher, queue
+// worker, triggers, and the pool policy used when admin re-runs default
+// to the policy ensemble. Any nil leaves the audit endpoints in their
+// degraded state (read-only via canonical store; /run returns 503).
+func (o *operator) withAudit(d *audit.Dispatcher, w *audit.QueueWorker, t *audit.Triggers, p *audit.PoolPolicy) *operator {
+	o.auditDispatcher = d
+	o.auditWorker = w
+	o.auditTriggers = t
+	o.auditPolicy = p
 	return o
 }
 
@@ -110,6 +132,14 @@ func (o *operator) httpMux() *http.ServeMux {
 	// Eval.
 	mux.HandleFunc("GET /api/hive/eval/scores", o.handleEvalScores)
 	mux.HandleFunc("POST /api/hive/eval/run-cross", requireAdmin(o.handleEvalRunCross))
+
+	// Audit (Phase 3 slice 3.4). Read endpoints serve canonical-store
+	// rows even when the dispatcher isn't wired (HUD never sees a 503
+	// on a poll). The admin /run endpoint requires the dispatcher +
+	// queue worker; without them it returns 503 with a clear message.
+	mux.HandleFunc("GET /api/hive/audit/findings", o.handleAuditFindings)
+	mux.HandleFunc("GET /api/hive/audit/findings/{id}", o.handleAuditFindingDetails)
+	mux.HandleFunc("POST /api/hive/audit/run", requireAdmin(o.handleAuditRun))
 
 	// Regression gate (slice 6.3): Alertmanager webhook target. Admin-
 	// gated so a misconfigured external pushes can't bump our metric.

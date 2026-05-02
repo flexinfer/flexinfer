@@ -46,6 +46,13 @@ type Runner struct {
 	// Now is injectable for deterministic IDs in tests + dryrun. Defaults
 	// to time.Now.
 	Now func() time.Time
+
+	// OnArtifactsCommitted fires after a non-dryrun council run has
+	// successfully persisted its artifacts + verdict + (optionally)
+	// backlog deltas. The audit Triggers wire here to enqueue an
+	// adversarial review against the freshly-committed artifact set.
+	// Errors are logged but do NOT roll back the run.
+	OnArtifactsCommitted func(ctx context.Context, run *store.CouncilRun, refs []store.ArtifactRef)
 }
 
 // RunInput tunes one Run() invocation.
@@ -236,6 +243,13 @@ func (r *Runner) Run(ctx context.Context, in RunInput) (*RunResult, error) {
 		hive.CouncilRunsTotal.WithLabelValues(trigger, outcome).Inc()
 		hive.CouncilCostUSDTotal.WithLabelValues(trigger).Add(res.CostUSDApprox)
 		hive.CouncilDurationSeconds.WithLabelValues(trigger).Observe(res.EndedAt.Sub(res.StartedAt).Seconds())
+		// Fire the post-commit hook so the audit Triggers can enqueue
+		// an adversarial review of the freshly-committed artifact set.
+		// Best-effort: hook errors are not surfaced (the run succeeded
+		// regardless), so we wrap in a safe call that logs internally.
+		if r.OnArtifactsCommitted != nil {
+			r.OnArtifactsCommitted(ctx, wr.Run, wr.ArtifactRefs)
+		}
 	}
 	r.logf("council run complete",
 		"run_id", res.RunID,

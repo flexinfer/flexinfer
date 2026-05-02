@@ -26,6 +26,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/crb2nu/loom/pkg/hive"
+	"github.com/crb2nu/loom/pkg/hive/audit"
 	"github.com/crb2nu/loom/pkg/hive/clients"
 	"github.com/crb2nu/loom/pkg/hive/council"
 	"github.com/crb2nu/loom/pkg/hive/eval"
@@ -152,7 +153,12 @@ func run(cfg Config) error {
 	// for FlexInfer + Claude/Codex headless is wired.
 	councilRunner := buildCouncilRunner(st, pm, budget, cfg.RepoRoot, logger)
 
-	op := newOperator(st, pm, budget, logger).withRunner(councilRunner).withSquadsLoader(squadsLoader)
+	op := newOperator(st, pm, budget, logger).
+		withRunner(councilRunner).
+		withSquadsLoader(squadsLoader)
+	// Audit subsystem is attached below after the pipeline runner +
+	// FlexInfer client are ready; handlers read the fields at request
+	// time so late attachment is fine.
 	op.markReady()
 	logger.Info("operator ready", "policy_enabled", pm.Current().IsEnabled())
 
@@ -196,7 +202,23 @@ func run(cfg Config) error {
 	// fire on every successful merge.
 	squadRecorder := squads.NewOutcomeRecorder(st)
 	squadRecorder.Logger = logger
-	pipelineRunner.OnMerged = chainOnMerged(attributor.OnMerged, squadRecorder.OnMerged)
+	mergedHooks := []pipelineMergedHook{attributor.OnMerged, squadRecorder.OnMerged}
+
+	// Audit subsystem (Phase 3). Activates only when FlexInfer is
+	// configured AND the operator can reach the canonical store +
+	// council runner. Without it the audit endpoints serve canonical
+	// rows but the dispatcher / trigger fire-paths short-circuit.
+	auditDispatcher, auditWorker, auditTriggers, auditPolicy := buildAuditSubsystem(
+		flexClient, councilRunner, st, cfg.RepoRoot, logger,
+	)
+	if auditTriggers != nil {
+		mergedHooks = append(mergedHooks, auditTriggers.OnPipelineMerged)
+		logger.Info("audit triggers enabled (council + pipeline)")
+	} else {
+		logger.Info("audit triggers disabled (FLEXINFER_PROXY_URL or council runner missing)")
+	}
+	pipelineRunner.OnMerged = chainPipelineMerged(mergedHooks...)
+	op.withAudit(auditDispatcher, auditWorker, auditTriggers, auditPolicy)
 
 	// Escalator: GitLab for issues, MCP hub for handoff. Either may be
 	// disabled independently; the escalator runs whichever it has.
@@ -276,6 +298,16 @@ func run(cfg Config) error {
 	g.Go(func() error { return runListener(gctx, "metrics", metricsSrv, logger) })
 	g.Go(func() error { return scheduler.Run(gctx) })
 	g.Go(func() error { return crossRunSched.Run(gctx) })
+	if auditWorker != nil {
+		g.Go(func() error {
+			auditWorker.Run(gctx)
+			return nil
+		})
+		// Stop the worker on shutdown so Run() unblocks before Wait()
+		// returns. defer Stop here (after errgroup setup) so a panic
+		// in any sibling goroutine still triggers a clean drain.
+		defer auditWorker.Stop()
+	}
 
 	err = g.Wait()
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -700,23 +732,121 @@ func (a *squadRouterAdapter) Pick(ctx context.Context, item *store.BacklogItem) 
 	}, nil
 }
 
-// chainOnMerged composes two pipeline.OnMerged hooks. Both fire even if
-// the first errors; the returned error is the first non-nil one so the
-// runner's logging surfaces the upstream cause without losing the
-// downstream's signal.
-func chainOnMerged(
-	first, second func(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error,
-) func(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error {
+// pipelineMergedHook is the on-merge callback shape pipeline.Runner
+// fires after a successful merge. Aliased so the operator can build a
+// chain of N hooks from a slice without a wall of identical signatures.
+type pipelineMergedHook = func(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error
+
+// chainPipelineMerged composes N hooks. Each hook fires even if a
+// previous one errored; the returned error is the FIRST non-nil error
+// so the runner's logging surfaces the upstream cause without losing
+// downstream signals.
+func chainPipelineMerged(hooks ...pipelineMergedHook) pipelineMergedHook {
 	return func(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error {
 		var firstErr error
-		if first != nil {
-			firstErr = first(ctx, run, item)
-		}
-		if second != nil {
-			if err := second(ctx, run, item); err != nil && firstErr == nil {
+		for _, h := range hooks {
+			if h == nil {
+				continue
+			}
+			if err := h(ctx, run, item); err != nil && firstErr == nil {
 				firstErr = err
 			}
 		}
 		return firstErr
+	}
+}
+
+// buildAuditSubsystem stands up the Phase 3 audit dispatcher, queue
+// worker, and trigger plumbing when FlexInfer is configured. Returns
+// (nil, nil, nil, nil) when any required dependency is missing — the
+// operator boots with the audit endpoints in degraded mode.
+//
+// PoolPolicy defaults are conservative: bulk = Llama 4 70B + Qwen 3 32B
+// (both on FlexInfer), escalation = Claude Opus + Codex GPT-5 backed by
+// the same flexinfer reviewer (proxy routes by model id). v2.1 will
+// load the pool from policy.yaml so operators can rotate without a
+// restart.
+func buildAuditSubsystem(
+	flex *clients.FlexInferClient,
+	councilRunner *runner.Runner,
+	st *store.Store,
+	repoRoot string,
+	logger *slog.Logger,
+) (*audit.Dispatcher, *audit.QueueWorker, *audit.Triggers, *audit.PoolPolicy) {
+	if flex == nil {
+		return nil, nil, nil, nil
+	}
+	reviewer := clients.NewFlexInferAuditReviewer(flex)
+	if reviewer == nil {
+		return nil, nil, nil, nil
+	}
+	rubric, err := audit.LoadRubric()
+	if err != nil {
+		logger.Warn("audit: rubric load failed; subsystem disabled", "error", err)
+		return nil, nil, nil, nil
+	}
+	dispatcher := audit.New(map[string]audit.Reviewer{reviewer.Backend(): reviewer}, rubric)
+	dispatcher.Logger = logger
+
+	policy := &audit.PoolPolicy{
+		Bulk: []audit.PoolMember{
+			{Backend: "flexinfer", Model: "llama-4-70b-instruct"},
+			{Backend: "flexinfer", Model: "qwen-3-32b"},
+		},
+		Escalation: []audit.PoolMember{
+			{Backend: "flexinfer", Model: "claude-opus-4-7"},
+			{Backend: "flexinfer", Model: "codex-gpt5"},
+		},
+	}
+	worker := audit.NewQueueWorker(dispatcher, st.Audit, *policy, audit.QueueOptions{
+		Capacity: 64,
+		Logger:   logger,
+	})
+	triggers := &audit.Triggers{
+		Worker:              worker,
+		LoadCouncilArtifact: audit.LoadCouncilArtifactFromFS(repoRoot),
+		LoadMergedDiff:      stubMergedDiffLoader(),
+		Logger:              logger,
+	}
+	if councilRunner != nil {
+		// Wire the council runner's post-commit hook so successful
+		// council artifacts auto-enqueue an audit job. Pipeline merges
+		// are wired separately via the pipelineRunner.OnMerged chain.
+		councilRunner.OnArtifactsCommitted = triggers.OnArtifactsCommitted
+		logger.Info("audit: council post-commit trigger wired")
+	}
+	logger.Info("audit subsystem enabled",
+		"bulk", len(policy.Bulk),
+		"escalation", len(policy.Escalation),
+	)
+	return dispatcher, worker, triggers, policy
+}
+
+// stubMergedDiffLoader is a v2.0 placeholder: returns a brief metadata
+// summary derived from the run + item state. v2.1 will fetch the real
+// unified diff via mcp-gitlab so the rubric scores actual code rather
+// than commit metadata. The audit row still produces today; the rubric
+// just has less to work with.
+func stubMergedDiffLoader() func(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) (string, error) {
+	return func(_ context.Context, run *store.PipelineRun, item *store.BacklogItem) (string, error) {
+		if run == nil {
+			return "", nil
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "# Pipeline merge %s\n", run.ID)
+		if item != nil {
+			fmt.Fprintf(&b, "Backlog: %s — %s\n", item.ID, item.Title)
+			if len(item.Slices) > 0 {
+				b.WriteString("\n## Slices\n")
+				for _, sl := range item.Slices {
+					fmt.Fprintf(&b, "- %s — files: %v\n", sl.Name, sl.Files)
+				}
+			}
+		}
+		if run.MRIID != nil {
+			fmt.Fprintf(&b, "\nMR iid: %d\n", *run.MRIID)
+		}
+		fmt.Fprintf(&b, "\nCost: $%.2f, attempts: %d\n", run.CostUSD, run.Attempts)
+		return b.String(), nil
 	}
 }
