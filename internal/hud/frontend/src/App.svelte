@@ -358,6 +358,14 @@
                   {:catch}
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
+                {:else if router.subView === 'audit'}
+                  {#await import('./lib/components/Hive/AuditPanel.svelte')}
+                    <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
+                  {:then { default: HiveAuditPanel }}
+                    <HiveAuditPanel />
+                  {:catch}
+                    <EmptyState icon="!" heading="Failed to load panel" compact />
+                  {/await}
                 {/if}
               </ViewShell>
             {/if}
