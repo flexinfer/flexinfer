@@ -8,18 +8,22 @@ Preferred entrypoints:
 - `docs/dev/backends.md` (backend plugin system)
 - `docs/planning/spec-capsule-template.md` (feature specs, acceptance criteria,
   validation, and rollback planning)
+- `docs/planning/slice-readiness-gate.md` (ready-for-implementation checks for
+  target modules, validation commands, generated artifacts, and backout notes)
 
 ## Pre-Implementation Checklist
 
 Use a spec capsule for multi-file features, roadmap slices, operational workflow
 changes, and risky runtime-image work. Start from
-`docs/planning/spec-capsule-template.md`, then confirm:
+`docs/planning/spec-capsule-template.md`, run
+`docs/planning/slice-readiness-gate.md`, then confirm:
 
 - [ ] The goal describes the user or operator outcome.
 - [ ] Non-goals make the slice small enough to review.
 - [ ] Current evidence links to code, docs, issues, incidents, or command output.
 - [ ] Acceptance criteria are specific enough for a reviewer to verify.
 - [ ] Target files/modules and owner boundaries are listed before edits begin.
+- [ ] Slice status is `Ready`, or the MR explains why the gate was bypassed.
 - [ ] Validation commands are explicit and runnable from the repo root.
 - [ ] Rollout/backout notes cover Helm, CRD, Flux, or runtime-image effects when
       those surfaces are touched.
