@@ -99,6 +99,29 @@ cache:
   # archiving tens of thousands of small Go cache files on every job.
   policy: pull
 
+# Shared source-fetch anchor. Idempotent: skips when already inside a git work
+# tree, otherwise initialises one and fetches `${CI_COMMIT_SHA}`. Mirrors the
+# `.clone_repo` pattern used by sister services (flexdeck, jobsearch-app) so
+# every job's source-fetch path is consistent regardless of whether the runner
+# pre-checks-out, downloads via tarball, or starts from a clean container.
+# Backports services/loom-core#80.
+.clone_repo: &clone_repo
+  - |
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "Fetching repository sources (git)..."
+      if [ -z "${CI_JOB_TOKEN:-}" ]; then
+        echo "ERROR: CI_JOB_TOKEN is not set; cannot fetch via git"
+        exit 1
+      fi
+      # Avoid printing the token in logs.
+      git init -q
+      git remote add origin "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+      # Fetch the exact commit SHA (not just branch tip) so checkout always
+      # works even when the branch has advanced since the pipeline was created.
+      git fetch -q origin "${CI_COMMIT_SHA}"
+      git checkout -q -f "${CI_COMMIT_SHA}"
+    fi
+
 # Base template for Go jobs
 .go-template: &go-template
   image: registry.harbor.lan/dockerhub-cache/library/golang:${GO_VERSION}
@@ -117,22 +140,7 @@ cache:
         apt-get install -y --no-install-recommends git curl ca-certificates
         rm -rf /var/lib/apt/lists/*
       fi
-    - |
-      if [ ! -f go.mod ]; then
-        echo "Fetching repository sources (git)..."
-        if [ -z "${CI_JOB_TOKEN:-}" ]; then
-          echo "ERROR: CI_JOB_TOKEN is not set; cannot fetch via git"
-          exit 1
-        fi
-
-        # Avoid printing the token in logs.
-        git init -q
-        git remote add origin "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
-        # Fetch the exact commit SHA (not just branch tip) so checkout always works,
-        # even when the branch has advanced since the pipeline was created.
-        git fetch -q origin "${CI_COMMIT_SHA}"
-        git checkout -q -f "${CI_COMMIT_SHA}"
-      fi
+    - *clone_repo
     - |
       # Authenticate direct Git module fetches for private libs/* modules without
       # recloning sibling repositories into the workspace.
@@ -272,14 +280,8 @@ guardrails:docs-cli:
     GO_WARM_MOD_CACHE: "false"
   script:
     - |
-      # The shared template may fetch sources via archive (no .git metadata).
-      # Recreate a minimal git checkout so docs drift checks can diff against base.
-      if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        git init -q
-        git remote add origin "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
-        git fetch -q origin "${CI_COMMIT_SHA}"
-        git checkout -q -f "${CI_COMMIT_SHA}"
-      fi
+      # .go-template's before_script ran *clone_repo, so .git metadata is
+      # available here. Fetch the base branch so docs-drift diffs work.
       BASE_BRANCH="${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-$CI_DEFAULT_BRANCH}"
       git fetch -q origin "${BASE_BRANCH}:${BASE_BRANCH}" || true
       DOCS_CHECK_BASE_REF="${BASE_BRANCH}" bash scripts/ci/check_docs_guardrails.sh
