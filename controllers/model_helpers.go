@@ -379,6 +379,7 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	if model.Status.Cache != nil && !model.Status.Cache.Ready {
 		setModelCondition(model, aiv1alpha2.ConditionModelCached, false, aiv1alpha2.ReasonCacheNotReady, "Cache is not ready")
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonCacheNotReady, "Waiting for cache to be ready")
+		clearLoadingStatus(model)
 		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
 			model.Status.Phase = aiv1alpha2.ModelPhasePending
 		}
@@ -391,14 +392,15 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	}
 
 	// Determine phase from deployment status and set conditions.
-	// Substage/message/progress timestamp are reset on every pass and
-	// repopulated below for Loading and Preempted status refinements.
-	model.Status.LoadingSubstage = ""
-	model.Status.Message = ""
-	model.Status.LoadingProgressAt = nil
+	// LoadingSubstage/Message/LoadingProgressAt are Loading-phase-only, but do
+	// not clear them before a Loading update. populateLoadingSubstage compares
+	// against the previous values so LoadingProgressAt advances only when the
+	// observed load state changes; that frozen timestamp is what lets the proxy
+	// detect wedged weight loads.
 
 	if deployment.Status.ReadyReplicas > 0 {
 		model.Status.Phase = aiv1alpha2.ModelPhaseReady
+		clearLoadingStatus(model)
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, true, aiv1alpha2.ReasonBackendReady, "Backend is ready to serve requests")
 
 		if prevPhase != aiv1alpha2.ModelPhaseReady && !readyStartedAt.IsZero() {
@@ -437,6 +439,7 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 			}
 		}
 	} else if *deployment.Spec.Replicas == 0 {
+		clearLoadingStatus(model)
 		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
 			model.Status.Phase = aiv1alpha2.ModelPhaseIdle
 			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonWaitingForActivation, "Model is idle, waiting for traffic")
@@ -452,6 +455,7 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 		r.populateLoadingSubstage(ctx, model)
 	} else {
 		model.Status.Phase = aiv1alpha2.ModelPhasePending
+		clearLoadingStatus(model)
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonStartingBackend, "Waiting for deployment to be ready")
 	}
 
@@ -466,6 +470,15 @@ func preemptedStatusMessage(model *aiv1alpha2.Model) string {
 		return fmt.Sprintf("preempted by %s", model.Status.SharedGroup.PreemptedBy)
 	}
 	return "Model was preempted by higher priority model"
+}
+
+func clearLoadingStatus(model *aiv1alpha2.Model) {
+	if model == nil {
+		return
+	}
+	model.Status.LoadingSubstage = ""
+	model.Status.Message = ""
+	model.Status.LoadingProgressAt = nil
 }
 
 // updatePhase updates just the phase field in status and emits lifecycle metrics.

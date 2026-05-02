@@ -167,6 +167,14 @@ Semantic labels describing the model (for dynamic routing). Example: `["textgen"
 `status` reflects lifecycle + routing metadata:
 
 - `phase`: `Idle`, `Pending`, `Loading`, `Ready`, `Preempted`, `Failed`
+- `loadingSubstage`: while `phase=Loading`, the best-known load stage:
+  `ImagePulling`, `Initializing`, `LoadingWeights`, `Compiling`, or
+  `HealthCheckPending`
+- `message`: a short operator-facing status hint, such as the image pull reason
+  or vLLM shard-load progress
+- `loadingProgressAt`: when `loadingSubstage` or `message` last changed; the
+  proxy uses this to return `503` with `Retry-After` when a weight load stalls
+  instead of allowing the activation queue to grow indefinitely
 - `endpoint`: service URL (cluster-internal)
 - `lastActiveTime`: last time the proxy observed traffic (used for scale-to-zero)
 - `cache`: cache readiness details (`ready`, plus the prefetch/check Job state)

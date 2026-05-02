@@ -203,6 +203,7 @@ func (r *ModelReconciler) reconcileViaRuntime(
 			r.Recorder.Event(model, corev1.EventTypeNormal, "RuntimeReady", "Model is ready via runtime")
 		}
 		model.Status.Phase = aiv1alpha2.ModelPhaseReady
+		clearLoadingStatus(model)
 		if err := r.Status().Update(ctx, model); err != nil {
 			log.Error(err, "Failed to update status")
 			return ctrl.Result{}, err
@@ -216,6 +217,7 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		r.removeRuntimeEndpoints(ctx, model)
 		model.Status.Endpoint = ""
 		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+		clearLoadingStatus(model)
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, "RuntimeFailed", status.Error)
 		r.Recorder.Event(model, corev1.EventTypeWarning, "RuntimeFailed", status.Error)
 		if err := r.Status().Update(ctx, model); err != nil {
@@ -278,6 +280,16 @@ func (r *ModelReconciler) updateRuntimeStatus(
 	oldPhase := model.Status.Phase
 	model.Status.Phase = phase
 	model.Status.Endpoint = ""
+	if phase == aiv1alpha2.ModelPhaseLoading {
+		if model.Status.LoadingSubstage != aiv1alpha2.LoadingSubstageInitializing || model.Status.Message != message {
+			now := metav1.Now()
+			model.Status.LoadingProgressAt = &now
+		}
+		model.Status.LoadingSubstage = aiv1alpha2.LoadingSubstageInitializing
+		model.Status.Message = message
+	} else {
+		clearLoadingStatus(model)
+	}
 	setModelCondition(model, aiv1alpha2.ConditionModelReady, ready, reason, message)
 	r.recordPhaseMetrics(model, oldPhase, phase)
 	r.removeRuntimeEndpoints(ctx, model)
