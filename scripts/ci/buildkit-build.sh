@@ -64,6 +64,19 @@ REGISTRY_CANDIDATES="${IMAGE_REGISTRIES:-${IMAGE_REGISTRY}}"
 SUCCESS=0
 LAST_RC=1
 
+# Optional fallback token for fetching private Go modules whose source repo's
+# inbound CI/CD job-token allowlist either rejects services/loom-core's
+# CI_JOB_TOKEN or which require a permissions level the job token doesn't have
+# (e.g. libs/fi-mcp-kit, fetched as a private module from GitLab once
+# 20c66ada dropped the local workspace replace). Configured via the masked
+# GITLAB_TOKEN CI/CD variable (a project access token with read_repository
+# scope on the target repo). When unset the build falls back to CI_JOB_TOKEN
+# alone, matching pre-2026-05 behavior.
+GITLAB_TOKEN_SECRET=""
+if [ -n "${GITLAB_TOKEN:-}" ]; then
+  GITLAB_TOKEN_SECRET="--secret id=gitlab_token,env=GITLAB_TOKEN"
+fi
+
 for REGISTRY in $REGISTRY_CANDIDATES; do
   PROBE_LOG="$CI_PROJECT_DIR/.probe-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
   rm -f "$PROBE_LOG"
@@ -103,7 +116,7 @@ for REGISTRY in $REGISTRY_CANDIDATES; do
     --frontend dockerfile.v0 \
     --local context="$CI_PROJECT_DIR" \
     --local dockerfile="$CI_PROJECT_DIR" \
-    --secret id=ci_job_token,env=CI_JOB_TOKEN \
+    --secret id=ci_job_token,env=CI_JOB_TOKEN $GITLAB_TOKEN_SECRET \
     --opt "filename=$DOCKERFILE" \
     --opt "build-arg:RUNTIME_REGISTRY=$REGISTRY" \
     --opt "build-arg:VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
@@ -124,7 +137,7 @@ for REGISTRY in $REGISTRY_CANDIDATES; do
       --frontend dockerfile.v0 \
       --local context="$CI_PROJECT_DIR" \
       --local dockerfile="$CI_PROJECT_DIR" \
-      --secret id=ci_job_token,env=CI_JOB_TOKEN \
+      --secret id=ci_job_token,env=CI_JOB_TOKEN $GITLAB_TOKEN_SECRET \
       --opt "filename=$DOCKERFILE" \
       --opt "build-arg:RUNTIME_REGISTRY=$REGISTRY" \
       --opt "build-arg:VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}" \
