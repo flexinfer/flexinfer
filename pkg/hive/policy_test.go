@@ -189,6 +189,168 @@ pipeline:
 	}
 }
 
+// TestPolicy_V1ForwardCompat proves a v1-shaped YAML (no version field,
+// no v2 sections) still parses on a v2 binary, and that v2-only helpers
+// report safe defaults so the operator doesn't accidentally turn on a
+// feature the operator never opted into.
+func TestPolicy_V1ForwardCompat(t *testing.T) {
+	v1Body := `
+budgets:
+  council:  { max_usd_per_run: 15, max_usd_per_day: 50 }
+  pipeline: { max_usd_per_run: 5, max_usd_per_day: 75 }
+pipeline:
+  retry: { max_attempts: 3, cooldown_seconds: 300 }
+`
+	p, err := ParsePolicy([]byte(v1Body))
+	if err != nil {
+		t.Fatalf("v1 forward-compat parse: %v", err)
+	}
+	if !p.IsEnabled() {
+		t.Errorf("default enabled when omitted")
+	}
+	if p.SquadsEnabled() {
+		t.Errorf("squads must default off for v1 YAML")
+	}
+	if p.AuditEnabled() {
+		t.Errorf("audit must default off when YAML omits the section")
+	}
+	if !p.AuditAdvisoryOnly() {
+		t.Errorf("audit advisory_only must default true (fail-safe)")
+	}
+}
+
+// TestPolicy_V2Roundtrip proves a v2-shaped YAML parses, validates, and
+// the helpers return the YAML's values verbatim.
+func TestPolicy_V2Roundtrip(t *testing.T) {
+	v2Body := `
+version: 2
+budgets:
+  council:  { max_usd_per_run: 15, max_usd_per_day: 50 }
+  pipeline: { max_usd_per_run: 5, max_usd_per_day: 75 }
+pipeline:
+  retry: { max_attempts: 3, cooldown_seconds: 300 }
+squads:
+  enabled: true
+  routing:
+    min_confidence: 0.7
+    fallback: _default
+audit:
+  enabled: true
+  advisory_only: false
+  survival_threshold: 0.85
+  daily_budget_usd: 12.0
+  pool_default:
+    - { backend: flexinfer, model: llama-4-70b-instruct }
+    - { backend: flexinfer, model: qwen-3-32b }
+cross_repo:
+  enabled: true
+  per_repo_timeout_minutes: 60
+  revert_strategy: all_or_revert
+debate:
+  enabled:
+    cron: false
+    incident: true
+    manual: true
+  max_usd: 8.0
+  max_rounds: 3
+recursion:
+  enabled: true
+  max_depth: 2
+  subrun_max_budget_share: 0.6
+adaptive_policy:
+  enabled: true
+  auto_apply: false
+  relax_path_denylist:
+    - "platform/gitops/**"
+  revert_window_hours: 24
+`
+	p, err := ParsePolicy([]byte(v2Body))
+	if err != nil {
+		t.Fatalf("v2 parse: %v", err)
+	}
+	if p.Version != 2 {
+		t.Errorf("version: got %d want 2", p.Version)
+	}
+	if !p.SquadsEnabled() {
+		t.Errorf("squads.enabled true must surface via helper")
+	}
+	if p.Squads.Routing.MinConfidence != 0.7 {
+		t.Errorf("routing.min_confidence: got %v want 0.7", p.Squads.Routing.MinConfidence)
+	}
+	if !p.AuditEnabled() {
+		t.Errorf("audit.enabled true must surface via helper")
+	}
+	if p.AuditAdvisoryOnly() {
+		t.Errorf("audit.advisory_only false must surface via helper")
+	}
+	if p.Audit.SurvivalThreshold != 0.85 {
+		t.Errorf("survival_threshold: got %v want 0.85", p.Audit.SurvivalThreshold)
+	}
+	if len(p.Audit.PoolDefault) != 2 {
+		t.Errorf("pool_default: got %d members want 2", len(p.Audit.PoolDefault))
+	}
+	if !p.CrossRepo.Enabled || p.CrossRepo.PerRepoTimeoutMinutes != 60 {
+		t.Errorf("cross_repo: %+v", p.CrossRepo)
+	}
+	if !p.Debate.Enabled.Incident || p.Debate.Enabled.Cron {
+		t.Errorf("debate triggers: %+v", p.Debate.Enabled)
+	}
+	if !p.Recursion.Enabled || p.Recursion.MaxDepth != 2 {
+		t.Errorf("recursion: %+v", p.Recursion)
+	}
+	if !p.AdaptivePolicy.Enabled || p.AdaptivePolicy.AutoApply {
+		t.Errorf("adaptive_policy: %+v", p.AdaptivePolicy)
+	}
+	if len(p.AdaptivePolicy.RelaxPathDenylist) != 1 {
+		t.Errorf("relax_path_denylist: %v", p.AdaptivePolicy.RelaxPathDenylist)
+	}
+}
+
+// TestPolicy_EmptyYAMLMatchesDefault proves that parsing an essentially
+// empty policy (only the required sections to clear validation) yields
+// the same gating defaults as Default() — so v2 helpers fail closed
+// when the operator forgets to fill the YAML.
+func TestPolicy_EmptyYAMLMatchesDefault(t *testing.T) {
+	body := `
+budgets:
+  council:  { max_usd_per_run: 0, max_usd_per_day: 0 }
+  pipeline: { max_usd_per_run: 0, max_usd_per_day: 0 }
+pipeline:
+  retry: { max_attempts: 0, cooldown_seconds: 0 }
+`
+	p, err := ParsePolicy([]byte(body))
+	if err != nil {
+		t.Fatalf("empty parse: %v", err)
+	}
+	// SquadsEnabled is the only helper Default() also reports false for
+	// in spirit — Default() *does* turn squads on/off via the explicit
+	// false. Both must agree.
+	d := Default()
+	if p.SquadsEnabled() != d.Squads.Enabled {
+		t.Errorf("squads default mismatch: parsed=%v default=%v",
+			p.SquadsEnabled(), d.Squads.Enabled)
+	}
+	if !p.AuditAdvisoryOnly() {
+		t.Errorf("audit advisory_only must default true even on empty YAML")
+	}
+}
+
+// TestPolicy_V2HelpersNilSafe codifies the fail-closed contract: every
+// helper must return a safe value on a nil receiver so a misconfigured
+// caller never accidentally enables a v2 feature.
+func TestPolicy_V2HelpersNilSafe(t *testing.T) {
+	var p *Policy
+	if p.SquadsEnabled() {
+		t.Errorf("nil policy must report squads disabled")
+	}
+	if p.AuditEnabled() {
+		t.Errorf("nil policy must report audit disabled")
+	}
+	if !p.AuditAdvisoryOnly() {
+		t.Errorf("nil policy must report audit advisory_only true (fail-safe)")
+	}
+}
+
 func TestPolicyManager_HotReload(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "policy.yaml")

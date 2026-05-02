@@ -2,6 +2,7 @@
 
 ## Quick Links
 
+- **Loom Hive v2 — implementation status (2026-05-02)**: `95-implementation-status-hive-v2-2026-05-02.md` ← **current status + spec-driven next steps**
 - **Loom Hive v2 — Hierarchical Swarm + Adversarial Audit + Cross-Repo (2026-05-02)**: `92-research-hive-v2-hierarchical-swarm-2026-05-02.md`, `93-product-spec-hive-v2-hierarchical-swarm-2026-05-02.md`, `94-implementation-plan-hive-v2-hierarchical-swarm-2026-05-02.md` ← **active planning slice**
 - **Loom Hive v1 — Council + Pipeline (agent swarm meta-orchestration, 2026-04-25)**: `89-research-agent-swarm-council-pipeline-2026-04-25.md`, `90-product-spec-agent-swarm-council-pipeline-2026-04-25.md`, `91-implementation-plan-agent-swarm-council-pipeline-2026-04-25.md` (phases 1–6 shipped except 6.5 docs + 6.6 default-on flip; both rolled into v2 phase 0)
 - **Session mgmt + spawn auth + weaver integration (2026-04-19)**: `86-research-session-spawning-weaver-integration-2026-04-19.md`, `87-product-spec-session-spawning-weaver-2026-04-19.md`, `88-implementation-plan-session-spawning-weaver-2026-04-19.md`
@@ -49,6 +50,19 @@
 ## Current Planning Addendum (2026-05-02)
 
 - Active planning slice: **Loom Hive v2 — Hierarchical Swarm.** Promote the v1 flat two-tier system (Council → Pipeline) to a true three-tier hierarchical swarm with persistent domain-owning **Squads**, an independent **Adversarial Audit** ensemble, **Cross-Repo Federation** with atomic merge, **Council Debate Mode** (v1.1 deferral #4), bounded **Pipeline Recursion** ≤ 2 (v1.1 deferral #7), an **Adaptive Policy** engine, **Cost Preview**, and **Mobile Hive parity** (v1.1 deferral #1). V1 phase 6.5 (docs/runbook/skill) and 6.6 (default-on flip) are folded into v2 Phase 0.
+- **Implementation status (2026-05-02)** — see `95-implementation-status-hive-v2-2026-05-02.md`:
+  - Phase 0.1 docs/runbook 🟡 partial (`docs/HIVE.md`, `docs/HIVE_RUNBOOK.md` shipped; `mcp/skills/hive-ops/SKILL.md` empty)
+  - Phase 0.2 default-on 🟡 partial (ConfigMap `enabled: true`; no compile-time default)
+  - Phase 1 substrate ✅ shipped (commit `20870464`)
+  - Phase 2 squads ✅ shipped (commits `5222a95d`, `c4bd9f72`, `1655d1ac`)
+  - Phase 3 audit ✅ shipped (commits `97549c97`, `174e0c14`, `a30d943f`)
+  - Phases 4–8 ❌ not started
+- **Open gaps in shipped work** (block Phase 8 flip; address before Phase 4):
+  - G-1: `pkg/hive/policy.go` `Policy` struct missing v2 fields (`Squads`, `Audit`, `CrossRepo`, `Debate`, `Recursion`, `AdaptivePolicy`)
+  - G-2: `platform/gitops/k3s/hive/configmap-policy.yaml` still v1 schema (no v2 sections)
+  - G-3: `mcp/skills/hive-ops/SKILL.md` is empty
+  - G-4: policy schema version not bumped to 2
+- **Spec-driven next sequence**: Slice A (G-1+G-2+G-4) ⫽ Slice B (G-3) → Slice C (Phase 4.1 registry) → Slices D/E/F (Phase 4.2–4.5 parallel) → Phase 5 → Phase 6 → Phase 7 → Phase 8.
 - New planning docs:
   - `92-research-hive-v2-hierarchical-swarm-2026-05-02.md` — V1 ship state inventory, hierarchy thesis, capability gaps, prior-art mapping, v2 architecture, telemetry deltas, risks
   - `93-product-spec-hive-v2-hierarchical-swarm-2026-05-02.md` — V2-D1..V2-D10 decisions resolved; new SQLite migration `002_v2.sql`; squad manifests; audit rubric; cross-repo state machine; debate flow; recursion guards; adaptive proposal kinds; REST + MCP surface; success criteria
