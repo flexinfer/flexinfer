@@ -2,7 +2,7 @@
 
 Date: 2026-04-25
 
-Status refresh: 2026-04-26
+Status refresh: 2026-05-02
 
 ## Goal
 
@@ -22,9 +22,10 @@ This plan intentionally separates GPTQ from TurboQuant:
 
 - Current primary manifest is `deploy/models/gemma4-26b-a4b-gptq.yaml`.
 - The active safe artifact is hybrid: MoE expert weights are GPTQ INT4 while dense attention/MLP remains source precision. The manifest notes that full dense GPTQ produced bad dequant/repeated-token output on ROCm/vLLM.
-- The hybrid artifact loads at about 17.7 GiB on the 24 GiB 7900 XTX lane, so the current safe context is 8K. The docs warn not to raise context until a smaller validated artifact exists.
+- The hybrid artifact loads at about 17.7 GiB on the 24 GiB 7900 XTX lane. It previously stayed at an 8K safe context; FP8 KV has since validated the 16K fallback, but 22K/32K still require separate canary proof.
 - The primary manifest requires `flexinfer.ai/gpu.count: "2"` because the node exposes an AMD dGPU plus iGPU through the device plugin. A count of `1` can place the pod on the iGPU and crash.
-- The long canary manifest now uses the safe dGPU selector and targets 32K with fp16 KV, but the live 2026-04-26 canary failed during KV sizing. vLLM estimated the maximum context at `8896` tokens after loading the hybrid weights, so 16K and 32K remain blocked until the artifact or KV format changes.
+- The fp16-KV long canary failed during KV sizing. vLLM estimated the maximum context at `8896` tokens after loading the hybrid weights, so fp16 16K and 32K remain blocked until the artifact or KV format changes.
+- The FP8-KV 16K profile passed the 2026-04-26 long-context probe and is now the validated 26B fallback posture. The 22K FP8-KV canary has only a partial 17K proof and stays non-primary.
 - The dense-validated rebuild has not reached cosine validation. The latest live job reached harmful prompt `80/128` before the 4h abliteration deadline, and the manifest now extends the abliteration and quantization deadlines to 24h for the next managed retry.
 
 ### 31B Dense
@@ -70,8 +71,8 @@ Correct reading of the history: do not force TurboQuant onto the current artifac
 
 ## Correct Direction
 
-1. Preserve the current 26B hybrid 8K lane as the known-good fallback.
-2. Keep the 26B long canary selector on the real dGPU lane, but do not promote 16K/32K on the current fp16-KV hybrid artifact; the live canary capped out around 8896 tokens.
+1. Preserve the current 26B hybrid FP8-KV 16K lane as the known-good fallback.
+2. Keep the 26B long canary selector on the real dGPU lane, but do not promote 22K/32K without a fresh target-window proof; the live fp16-KV canary capped out around 8896 tokens, while the FP8-KV 22K lane has only partial 17K evidence.
 3. Finish or rerun the 26B dense-validated artifact path with strict output and cosine checks. Promote only if it is coherent and smaller than the hybrid artifact.
 4. Keep 31B production capped at the proven conservative context while any larger context or TurboQuant work runs as a canary.
 5. TurboQuant primitive allocation is now patched behind `TQ4_SHARE_PRIMITIVES=1`. The 31B fix shares immutable rotation/codec primitives across layers and avoids split rotation allocations when the PyTorch codec is enabled on ROCm.
@@ -96,9 +97,9 @@ Acceptance criteria:
 
 Steps:
 
-1. Keep `gemma4-26b-a4b-gptq` warm/primary at 8K until a replacement passes gates.
+1. Keep `gemma4-26b-a4b-gptq` at the validated 16K FP8-KV fallback posture until a replacement passes gates.
 2. Correct the 32K long canary selector.
-3. The long canary failed at 32K with the existing fp16 KV path after successful weight load; vLLM estimated the maximum context at `8896`, so 16K is also blocked on this artifact/runtime combination.
+3. The long canary failed at 32K with the fp16 KV path after successful weight load; vLLM estimated the maximum context at `8896`, so fp16 16K/32K are blocked on this artifact/runtime combination. The validated 16K fallback uses FP8 KV instead.
 4. Finish dense-validated rebuild from `deploy/modelcaches/gemma4-26b-a4b-gptq-dense.yaml`; the 2026-04-26 investigation showed the existing 4h deadline prevented reaching cosine validation.
 5. Compare hybrid vs dense-validated:
    - artifact validator clean,
@@ -153,9 +154,26 @@ Minimum gates before declaring a lane "fully working":
   - canaries stay out of default Flux reconciliation until promoted,
   - docs and manifests agree on current `maxModelLen`.
 
+Canonical closure evidence:
+
+- Matrix: [`.loom/60-validation-matrix.md`](60-validation-matrix.md)
+- PR-2 readiness plan: [`docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md`](../docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md)
+- Runtime status: [`docs/dev/gemma4-rocm-status.md`](../docs/dev/gemma4-rocm-status.md)
+- Local raw evidence convention: `.loom/local/validation/<family>/<timestamp>/`
+
+## Remaining Closure Queue
+
+This slice did not run live cluster validation. The queue below names the next gates and where the resulting evidence should land.
+
+| Gate | Current posture | Acceptance criteria | Validation commands | Evidence location |
+|---|---|---|---|---|
+| `26B-dense-rerun-gate` | Pending rerun. The previous dense-validated job stopped at harmful prompt `80/128` before the cosine gate. | `gemma4-26b-a4b-gptq-dense` reaches quantize-time dense cosine validation with `cos.min >= 0.98`; artifact metadata validator passes; runtime smoke is coherent; VRAM/load/context results are compared against the validated 16K FP8-KV fallback. | `kubectl get modelcache gemma4-26b-a4b-gptq-dense -n flexinfer-system -o yaml`; `flexinfer quantize validate-artifact --path <mounted-artifact> --layout vllm-gptq --family gemma4-26b-a4b --run-generation`; `ENDPOINT=<litellm-or-service-url> MODEL=<dense-canary-name> ./scripts/probe-gemma4-long-context.sh`. | Add/update the `gemma4-26b-a4b-gptq-dense` row in `.loom/60-validation-matrix.md`; summarize runtime outcome in `docs/dev/gemma4-rocm-status.md`; store raw logs under `.loom/local/validation/gemma4-26b-a4b-gptq-dense/<timestamp>/`. |
+| `E4B-turboquant-runtime-probe` | Pending rebuilt gfx1100 TurboQuant runtime image with `TQ4_SHARE_PRIMITIVES=1`. E4B remains the fast regression probe before larger Gemma4 canaries. | Digest-pinned runtime image is recorded; E4B TurboQuant boots to Ready, reaches KV sizing, returns coherent short/medium output, and shows no repeated-token or token-soup collapse across a small sequential request loop. | `make deploy-runtime RUNTIME_PROFILE=gfx1100-gemma4-turboquant-experimental` or the current runtime promotion command; `kubectl get pods -n flexinfer-system -l app=<e4b-canary> -o wide`; `kubectl logs -n flexinfer-system <pod> | rg 'TQ4_SHARE_PRIMITIVES|KV|TurboQuant|OOM'`; `curl`/LiteLLM chat smoke against the E4B canary. | Add an E4B TurboQuant row to `.loom/60-validation-matrix.md`; record the digest and smoke transcript path in `docs/dev/gemma4-rocm-status.md`; raw evidence under `.loom/local/validation/gemma4-e4b-turboquant/<timestamp>/`. |
+| `31B-long-turboquant-posture-gate` | Primary 31B remains validated only at `maxModelLen: 2048`; TurboQuant long canary is disabled until the shared-primitives runtime passes E4B and the canary reaches KV sizing. | Do not promote 31B beyond 2048 on 24 GiB gfx1100 unless boot reaches KV sizing without attention-construction OOM, a 4096 -> 8192 -> 16384 ladder passes coherence checks, and the memory accounting leaves operational headroom. A failure should close the 24 GiB posture with explicit evidence rather than keeping the lane ambiguous. | `kubectl get model gemma4-31b-gptq gemma4-31b-gptq-long -n flexinfer-system -o yaml`; `kubectl logs -n flexinfer-system <31b-long-pod> | rg 'Model loading took|KV|TurboQuant|OOM|TQ4_SHARE_PRIMITIVES'`; run the same short deterministic smoke used for the 2048 lane before any long prompt. | Update the `gemma4-31b-gptq` and `gemma4-31b-gptq-long` rows in `.loom/60-validation-matrix.md`; append a dated posture note to `docs/dev/gemma4-rocm-status.md`; keep any continued OOM evidence linked from `docs/dev/gemma4-31b-turboquant-24gb-oom.md`. |
+| `Qwen35-9B-gfx1100-validation-gate` | Still staged/disabled in `deploy/modelcaches/kustomization.yaml`; no gfx1100 validation evidence has been recorded in this slice. | `qwen35-9b-gptq-gfx1100` runs Download -> Abliterate -> GPTQ -> OCI publish; artifact validator passes; serving smoke is coherent; any decision to keep or retire the gfx906 artifact is recorded. | `kubectl get modelcache qwen35-9b-gptq-gfx1100 -n flexinfer-system -o yaml`; `flexinfer quantize validate-artifact --path <mounted-artifact> --layout vllm-gptq --family qwen35 --run-generation`; `kubectl get pods -n flexinfer-system -o wide | rg qwen35`; `curl`/LiteLLM chat smoke against the gfx1100 canary. | Populate the `qwen35-9b-gptq-gfx1100` row in `.loom/60-validation-matrix.md`; add a short Qwen section or dated bullet in `docs/dev/gemma4-rocm-status.md` because that document owns the reusable quantized-artifact promotion gate; raw evidence under `.loom/local/validation/qwen35-9b-gptq-gfx1100/<timestamp>/`. |
+
 ## Open Questions
 
 - Is the current 26B dense-validated rebuild still running, complete but unvalidated, or failed after the last save-memory bump?
 - Should 31B re-quant lower calibration parallelism immediately, or first reproduce with the current settings plus the new repeated-tensor guard?
-- Should FP8 KV cache be the first 26B long-context memory canary before TurboQuant, given vLLM has official ROCm FP8 KV documentation?
 - Do we want to preserve the 31B corrupt artifact under a forensic name, or delete it after the clean rebuild succeeds?
