@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -9,6 +10,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
@@ -140,6 +144,98 @@ func TestDownloadJobPredatesPVC(t *testing.T) {
 			assert.Equal(t, tt.want, downloadJobPredatesPVC(tt.job, tt.pvc))
 		})
 	}
+}
+
+func TestReconcileSharedPVCReportsUnschedulableDownloadJob(t *testing.T) {
+	scheme := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme,
+		batchv1.AddToScheme,
+		aiv1alpha1.AddToScheme,
+	} {
+		if err := add(scheme); err != nil {
+			t.Fatalf("AddToScheme() error = %v", err)
+		}
+	}
+
+	cache := &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "gemma4-26b-a4b-gptq-dense",
+			Namespace:  "flexinfer-system",
+			Generation: 7,
+		},
+		Spec: aiv1alpha1.ModelCacheSpec{
+			Source:            "HF://google/gemma-4-26B-A4B-it",
+			StorageStrategy:   aiv1alpha1.StorageStrategySharedPVC,
+			ExistingClaimName: strPtr("shared-models"),
+		},
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              cache.Name + "-downloader",
+			Namespace:         cache.Namespace,
+			CreationTimestamp: metav1.Now(),
+		},
+	}
+	schedulerMessage := "0/15 nodes are available: 1 node(s) were unschedulable, 7 node(s) didn't match Pod's node affinity/selector."
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cache.Name + "-downloader-pod",
+			Namespace: cache.Namespace,
+			Labels: map[string]string{
+				"job-name": job.Name,
+			},
+		},
+		Status: corev1.PodStatus{
+			Conditions: []corev1.PodCondition{{
+				Type:    corev1.PodScheduled,
+				Status:  corev1.ConditionFalse,
+				Reason:  corev1.PodReasonUnschedulable,
+				Message: schedulerMessage,
+			}},
+		},
+	}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&aiv1alpha1.ModelCache{}).
+		WithObjects(cache, job, pod).
+		Build()
+	r := &ModelCacheReconciler{
+		Client:   cl,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(10),
+	}
+
+	result, err := r.reconcileSharedPVC(context.Background(), cache)
+	if err != nil {
+		t.Fatalf("reconcileSharedPVC() error = %v", err)
+	}
+	assert.Equal(t, requeueMedium, result.RequeueAfter)
+
+	updated := &aiv1alpha1.ModelCache{}
+	if err := cl.Get(context.Background(), client.ObjectKeyFromObject(cache), updated); err != nil {
+		t.Fatalf("Get(ModelCache) error = %v", err)
+	}
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseProvisioning, updated.Status.Phase)
+	assert.Equal(t, "download", updated.Status.CurrentPhase)
+	cond := findModelCacheCondition(updated.Status.Conditions, "DownloadJobScheduled")
+	if cond == nil {
+		t.Fatal("expected DownloadJobScheduled condition")
+	}
+	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+	assert.Equal(t, "DownloadJobUnschedulable", cond.Reason)
+	assert.Equal(t, schedulerMessage, cond.Message)
+	assert.Equal(t, int64(7), cond.ObservedGeneration)
+}
+
+func findModelCacheCondition(conditions []metav1.Condition, conditionType string) *metav1.Condition {
+	for i := range conditions {
+		if conditions[i].Type == conditionType {
+			return &conditions[i]
+		}
+	}
+	return nil
 }
 
 func TestModelCacheNeedsResetWhilePVCDeleting(t *testing.T) {

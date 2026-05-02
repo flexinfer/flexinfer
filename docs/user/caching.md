@@ -101,6 +101,10 @@ Examples:
   kubectl -n flexinfer-system get modelcache -o wide
   kubectl -n flexinfer-system describe modelcache <name>
   ```
+- If a v1alpha1 `ModelCache` stays in `Provisioning`, check the
+  `DownloadJobScheduled` condition. `Reason=DownloadJobUnschedulable` means the
+  downloader pod is blocked by scheduling constraints such as a cordoned node,
+  taints, or a node selector that no Ready node can satisfy.
 - Check downloader logs (v1alpha1):
   ```bash
   kubectl -n flexinfer-system logs -l job-name=<cache-name>-downloader
