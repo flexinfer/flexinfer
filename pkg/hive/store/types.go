@@ -143,6 +143,12 @@ const (
 )
 
 // PipelineRun is one execution of the pipeline DAG for a backlog item.
+//
+// ParentRunID + Depth implement bounded recursion (Hive v2). Top-level runs
+// have ParentRunID == nil and Depth == 0; sub-runs created via
+// hive_pipeline_subrun_create increment Depth from their parent. The
+// dispatcher rejects creation when Depth would exceed
+// policy.pipeline.max_recursion_depth (default 2).
 type PipelineRun struct {
 	ID              string
 	BacklogID       string
@@ -156,6 +162,8 @@ type PipelineRun struct {
 	EndedAt         *time.Time
 	CostUSD         float64
 	ParentSessionID string
+	ParentRunID     *string
+	Depth           int
 }
 
 // StageOutcome captures whether one stage attempt succeeded.
@@ -254,4 +262,199 @@ type RoadmapIntent struct {
 	LastSeenInRoadmapSHA string
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+}
+
+// ----- Hive v2 — Hierarchical Swarm types ---------------------------------
+
+// Squad is the persistence-side mirror of a squad manifest YAML
+// (`platform/gitops/k3s/hive/squads/<name>.yaml`). The squad loader
+// writes into this table on boot + on fsnotify change.
+type Squad struct {
+	ID               string // PK = Name; kept as ID for symmetry with other DAOs
+	Name             string
+	Paths            []string
+	Tests            []string
+	Gates            map[string]any // {required:[…], advisory:[…]}
+	Ensemble         map[string]any // editor / reviewers / judge
+	BudgetShare      float64
+	RecursionEnabled bool
+	Enabled          bool
+	LastLoadedSHA    string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+// SquadMemoryKind classifies a working-memory entry.
+type SquadMemoryKind string
+
+const (
+	SquadMemoryMerge      SquadMemoryKind = "merge"
+	SquadMemoryTechDebt   SquadMemoryKind = "tech_debt"
+	SquadMemoryConvention SquadMemoryKind = "convention"
+	SquadMemoryFollowup   SquadMemoryKind = "followup"
+)
+
+// SquadMemory is one append-on-merge working-memory entry. The weekly
+// pruner drops rows with importance < 0.3 older than 30 days.
+type SquadMemory struct {
+	ID         int64
+	SquadName  string
+	Kind       SquadMemoryKind
+	Title      string
+	Body       string
+	Refs       []string
+	Importance float64
+	CreatedAt  time.Time
+	LastSeenAt time.Time
+}
+
+// SquadOutcomeKind reports how a squad-routed pipeline run resolved.
+type SquadOutcomeKind string
+
+const (
+	SquadOutcomeMergedClean     SquadOutcomeKind = "merged_clean"
+	SquadOutcomeMergedRegressed SquadOutcomeKind = "merged_regressed"
+	SquadOutcomeFailed          SquadOutcomeKind = "failed"
+	SquadOutcomeSelfVetoed      SquadOutcomeKind = "self_vetoed"
+)
+
+// SquadOutcome is the per-run record the router consults to compute
+// rolling success rate per (squad, path_class).
+type SquadOutcome struct {
+	ID              int64
+	SquadName       string
+	PathClass       string
+	PipelineRunID   string
+	Outcome         SquadOutcomeKind
+	CostUSD         float64
+	DurationSeconds int64
+	CreatedAt       time.Time
+}
+
+// AuditSubjectKind names what an AuditFinding row is judging.
+type AuditSubjectKind string
+
+const (
+	AuditSubjectCouncilArtifact AuditSubjectKind = "council_artifact"
+	AuditSubjectPipelineMerge   AuditSubjectKind = "pipeline_merge"
+)
+
+// AuditSeverity is the categorical severity emitted by the audit rubric.
+type AuditSeverity string
+
+const (
+	AuditSeverityInfo     AuditSeverity = "info"
+	AuditSeverityWarn     AuditSeverity = "warn"
+	AuditSeverityCritical AuditSeverity = "critical"
+)
+
+// AuditFinding is one independent adversarial verdict on a council artifact
+// or a pipeline merge. The auditor pool is captured per row so policy
+// rotations are auditable in retrospect.
+type AuditFinding struct {
+	ID            int64
+	SubjectKind   AuditSubjectKind
+	SubjectID     string
+	Severity      AuditSeverity
+	RubricID      string
+	SurvivalScore float64
+	Findings      []map[string]any
+	AuditorPool   []map[string]any
+	CostUSD       float64
+	CreatedAt     time.Time
+}
+
+// CrossRepoState is the lifecycle state of an atomic cross-repo run.
+type CrossRepoState string
+
+const (
+	CrossRepoPlanning   CrossRepoState = "planning"
+	CrossRepoOpen       CrossRepoState = "open"
+	CrossRepoGatesGreen CrossRepoState = "gates_green"
+	CrossRepoMerging    CrossRepoState = "merging"
+	CrossRepoMerged     CrossRepoState = "merged"
+	CrossRepoReverted   CrossRepoState = "reverted"
+	CrossRepoFailed     CrossRepoState = "failed"
+)
+
+// CrossRepoRepoEntry is one repo's slice of an atomic cross-repo run.
+type CrossRepoRepoEntry struct {
+	ProjectID  int64  `json:"project_id"`
+	RepoName   string `json:"repo_name,omitempty"`
+	Branch     string `json:"branch"`
+	MRIID      *int64 `json:"mr_iid,omitempty"`
+	CIStatus   string `json:"ci_status,omitempty"`
+	GateStatus string `json:"gate_status,omitempty"`
+}
+
+// CrossRepoRun coordinates a backlog item that spans multiple repos.
+type CrossRepoRun struct {
+	ID                string
+	BacklogItemID     string
+	Repos             []CrossRepoRepoEntry
+	State             CrossRepoState
+	AtomicityStrategy string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+// DebateRole names which step in a Council Debate round emitted this row.
+type DebateRole string
+
+const (
+	DebateRoleEditorProposes    DebateRole = "editor_proposes"
+	DebateRoleReviewerCritiques DebateRole = "reviewer_critiques"
+	DebateRoleModeratorDecision DebateRole = "moderator_decision"
+	DebateRoleEditorRevises     DebateRole = "editor_revises"
+)
+
+// CouncilDebateRound is one entry in a Council Debate transcript.
+// ArtifactDeltas references path + line range pairs so the sidecar
+// stays small even on long debates.
+type CouncilDebateRound struct {
+	ID             int64
+	CouncilRunID   string
+	RoundIndex     int
+	Role           DebateRole
+	CostUSD        float64
+	Summary        string
+	ArtifactDeltas []map[string]any
+	CreatedAt      time.Time
+}
+
+// PolicyProposalKind classifies an adaptive-policy suggestion.
+type PolicyProposalKind string
+
+const (
+	PolicyProposalRelax          PolicyProposalKind = "relax"
+	PolicyProposalTighten        PolicyProposalKind = "tighten"
+	PolicyProposalRotateEnsemble PolicyProposalKind = "rotate_ensemble"
+)
+
+// PolicyProposalState tracks the lifecycle of one adaptive proposal.
+type PolicyProposalState string
+
+const (
+	PolicyProposalPending      PolicyProposalState = "pending"
+	PolicyProposalAppliedHuman PolicyProposalState = "applied_human"
+	PolicyProposalAppliedAuto  PolicyProposalState = "applied_auto"
+	PolicyProposalRejected     PolicyProposalState = "rejected"
+	PolicyProposalReverted     PolicyProposalState = "reverted"
+)
+
+// PolicyProposal is one machine-emitted suggestion to relax, tighten, or
+// rotate a policy element. Rationale cites kpi_snapshots / eval_scores /
+// audit_findings / gate_outcomes; the .loom/hive/policy_proposals/<date>.md
+// markdown is the human-facing copy.
+type PolicyProposal struct {
+	ID             int64
+	ProposalDate   string // YYYY-MM-DD
+	Kind           PolicyProposalKind
+	Target         string
+	Diff           string
+	Rationale      string
+	State          PolicyProposalState
+	AppliedAt      *time.Time
+	RevertDeadline *time.Time
+	CreatedAt      time.Time
 }

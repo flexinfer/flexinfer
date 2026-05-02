@@ -14,7 +14,8 @@ type PipelineDAO struct {
 }
 
 const pipelineColumns = `id, backlog_id, template, state, current_stage, attempts,
-		worktree_path, mr_iid, started_at, ended_at, cost_usd, parent_session_id`
+		worktree_path, mr_iid, started_at, ended_at, cost_usd, parent_session_id,
+		parent_run_id, depth`
 
 // PutRun inserts or replaces a pipeline run.
 func (d *PipelineDAO) PutRun(ctx context.Context, run *PipelineRun) error {
@@ -24,12 +25,16 @@ func (d *PipelineDAO) PutRun(ctx context.Context, run *PipelineRun) error {
 	if run.BacklogID == "" {
 		return errors.New("pipeline: run.BacklogID required")
 	}
+	if run.Depth < 0 {
+		return errors.New("pipeline: run.Depth must be >= 0")
+	}
 	if run.StartedAt.IsZero() {
 		run.StartedAt = time.Now().UTC()
 	}
 	var (
-		mrIID   sql.NullInt64
-		endedAt sql.NullString
+		mrIID     sql.NullInt64
+		endedAt   sql.NullString
+		parentRun sql.NullString
 	)
 	if run.MRIID != nil {
 		mrIID = sql.NullInt64{Int64: *run.MRIID, Valid: true}
@@ -37,9 +42,12 @@ func (d *PipelineDAO) PutRun(ctx context.Context, run *PipelineRun) error {
 	if run.EndedAt != nil {
 		endedAt = sql.NullString{String: timeRFC3339(*run.EndedAt), Valid: true}
 	}
+	if run.ParentRunID != nil && *run.ParentRunID != "" {
+		parentRun = sql.NullString{String: *run.ParentRunID, Valid: true}
+	}
 	_, err := d.db.ExecContext(ctx, `
 		INSERT INTO pipeline_runs (`+pipelineColumns+`)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			backlog_id        = excluded.backlog_id,
 			template          = excluded.template,
@@ -50,16 +58,40 @@ func (d *PipelineDAO) PutRun(ctx context.Context, run *PipelineRun) error {
 			mr_iid            = excluded.mr_iid,
 			ended_at          = excluded.ended_at,
 			cost_usd          = excluded.cost_usd,
-			parent_session_id = excluded.parent_session_id
+			parent_session_id = excluded.parent_session_id,
+			parent_run_id     = excluded.parent_run_id,
+			depth             = excluded.depth
 	`,
 		run.ID, run.BacklogID, run.Template, string(run.State),
 		nullStr(run.CurrentStage), run.Attempts, nullStr(run.WorktreePath), mrIID,
 		timeRFC3339(run.StartedAt), endedAt, run.CostUSD, nullStr(run.ParentSessionID),
+		parentRun, run.Depth,
 	)
 	if err != nil {
 		return fmt.Errorf("pipeline put %s: %w", run.ID, err)
 	}
 	return nil
+}
+
+// ListSubruns returns every direct child of the given parent pipeline run,
+// ordered by started_at. Empty result is not an error. v2 recursion path.
+func (d *PipelineDAO) ListSubruns(ctx context.Context, parentRunID string) ([]*PipelineRun, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT `+pipelineColumns+` FROM pipeline_runs WHERE parent_run_id = ? ORDER BY started_at ASC`,
+		parentRunID)
+	if err != nil {
+		return nil, fmt.Errorf("pipeline list-subruns: %w", err)
+	}
+	defer rows.Close()
+	var out []*PipelineRun
+	for rows.Next() {
+		r, err := scanPipelineRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // GetRun fetches one pipeline run by id.
@@ -149,15 +181,16 @@ func (d *PipelineDAO) ListByBacklog(ctx context.Context, backlogID string) ([]*P
 
 func scanPipelineRun(s scanner) (*PipelineRun, error) {
 	var (
-		run                                                       PipelineRun
-		currentStage, worktreePath, parentSession, endedAt, state sql.NullString
-		mrIID                                                     sql.NullInt64
-		startedAt                                                 string
+		run                                                                  PipelineRun
+		currentStage, worktreePath, parentSession, endedAt, state, parentRun sql.NullString
+		mrIID                                                                sql.NullInt64
+		startedAt                                                            string
 	)
 	err := s.Scan(
 		&run.ID, &run.BacklogID, &run.Template, &state,
 		&currentStage, &run.Attempts, &worktreePath, &mrIID,
 		&startedAt, &endedAt, &run.CostUSD, &parentSession,
+		&parentRun, &run.Depth,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -178,6 +211,7 @@ func scanPipelineRun(s scanner) (*PipelineRun, error) {
 		run.ParentSessionID = parentSession.String
 	}
 	run.MRIID = nullableInt64(mrIID)
+	run.ParentRunID = nullableString(parentRun)
 	if run.StartedAt, err = parseTime(startedAt); err != nil {
 		return nil, fmt.Errorf("started_at: %w", err)
 	}
