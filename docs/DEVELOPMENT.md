@@ -6,6 +6,27 @@ Preferred entrypoints:
 - `docs/dev/rapid-iteration.md` (fast experimental patch-build-push-probe loops)
 - `docs/dev/architecture.md` (component + code map)
 - `docs/dev/backends.md` (backend plugin system)
+- `docs/planning/spec-capsule-template.md` (feature specs, acceptance criteria,
+  validation, and rollback planning)
+
+## Pre-Implementation Checklist
+
+Use a spec capsule for multi-file features, roadmap slices, operational workflow
+changes, and risky runtime-image work. Start from
+`docs/planning/spec-capsule-template.md`, then confirm:
+
+- [ ] The goal describes the user or operator outcome.
+- [ ] Non-goals make the slice small enough to review.
+- [ ] Current evidence links to code, docs, issues, incidents, or command output.
+- [ ] Acceptance criteria are specific enough for a reviewer to verify.
+- [ ] Target files/modules and owner boundaries are listed before edits begin.
+- [ ] Validation commands are explicit and runnable from the repo root.
+- [ ] Rollout/backout notes cover Helm, CRD, Flux, or runtime-image effects when
+      those surfaces are touched.
+- [ ] Generated artifacts are named when API, CRD, Helm, or docs indexes change.
+
+Routine one-file fixes can skip the full template, but still name the acceptance
+criteria and validation command in the MR description.
 
 ## Prerequisites
 

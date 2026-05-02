@@ -12,6 +12,7 @@ This document tracks the implementation phases for FlexInfer. **Phases 1-4 plus 
 ## Principles
 
 - Prefer **small, reversible** iterations.
+- Prefer **spec capsules before implementation** for any multi-file feature or operational workflow change.
 - Prefer **better status + better errors** over silent behavior.
 - Avoid "big rewrites"; keep v1alpha2 stable while iterating.
 
@@ -164,6 +165,23 @@ Tracking issue: [#9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9)
 - [x] Merge safe `docker` minor/patch subset: alpine 3.23, golang 1.26.0, rocm 6.4.4, cuda 12.2.2 (`7a3f95a`)
 - [ ] Stage major docker updates in a separate rollout: python 3.14, pytorch 2.3, cuda 12.9, rocm 6.4 (mlc) ([#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21))
 - [x] Keep roadmap tracking issue `#1` synchronized with dependency rollout status (updated 2026-02-26)
+
+## Delivery Acceleration: Spec-Driven Development 🚧 PLANNED
+
+Objective: make future feature delivery faster by requiring small, source-backed
+specs and explicit validation gates before multi-file implementation begins.
+
+- [x] SD-1: Add reusable spec capsule template and contributor checklist ([#55](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/55)).
+- [ ] SD-2: Define a slice-readiness gate with target files/modules, validation commands, and rollback notes ([#56](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/56)).
+- [ ] SD-3: Expand `.loom/60-validation-matrix.md` as the canonical canary and runtime-promotion evidence table ([#57](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/57)).
+- [ ] SD-4: Add agent-ready delegation notes to feature plans so parallel slices have clear ownership boundaries ([#58](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/58)).
+- [ ] SD-5: Run roadmap reconciliation after planning changes and keep tracking issues linked ([#59](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/59)).
+
+Acceptance criteria:
+
+- Every future roadmap slice either links to a spec capsule or declares why a full spec is unnecessary.
+- Every multi-file feature plan includes acceptance criteria, validation commands, and rollback/backout notes.
+- Runtime canary promotions can be traced from spec to validation evidence without relying on chat history.
 
 ## Tech Debt (Ongoing)
 
