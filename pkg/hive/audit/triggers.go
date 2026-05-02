@@ -66,6 +66,12 @@ type QueueWorker struct {
 	done       chan struct{}
 	stopOnce   sync.Once
 	logger     *slog.Logger
+
+	// OnRecorded fires after a finding has been persisted to the
+	// canonical store. Production wires squads.audit.Followup here so
+	// low-survival findings auto-open advisory issues. Errors from the
+	// hook are logged + swallowed — the worker keeps draining.
+	OnRecorded func(ctx context.Context, finding *store.AuditFinding) error
 }
 
 // NewQueueWorker constructs a worker. The caller is responsible for
@@ -201,6 +207,19 @@ func (w *QueueWorker) process(parent context.Context, req Request) {
 			"error", err,
 		)
 		return
+	}
+	// Fire the post-record hook (followup writer in production). Errors
+	// here are advisory — the audit row already persisted, and the hook
+	// has its own logger; never block subsequent drains on a hook
+	// failure.
+	if w.OnRecorded != nil {
+		if err := w.OnRecorded(parent, res.Finding); err != nil {
+			w.warn("audit: OnRecorded hook returned error",
+				"subject_kind", string(req.SubjectKind),
+				"subject_id", req.SubjectID,
+				"error", err,
+			)
+		}
 	}
 	w.info("audit: finding recorded",
 		"subject_kind", string(req.SubjectKind),

@@ -239,6 +239,20 @@ func run(cfg Config) error {
 		logger.Warn("escalator disabled; failures will transition to escalated state without issue/handoff publication")
 	}
 
+	// Audit follow-up writer (Phase 3 slice 3.6). When the audit
+	// subsystem and a GitLab client are both wired, low-survival
+	// findings auto-open advisory issues. Without GitLab, audits still
+	// land in the canonical store + HUD; the follow-up step is a no-op.
+	if auditWorker != nil && gitlabClient != nil {
+		followup := audit.NewFollowup(gitlabClient)
+		followup.Logger = logger
+		auditWorker.OnRecorded = followup.OnRecorded
+		logger.Info("audit follow-up writer enabled",
+			"threshold", followup.Threshold)
+	} else if auditWorker != nil {
+		logger.Info("audit follow-up writer disabled (no GitLab client)")
+	}
+
 	// Pipeline starter routes fan-out items through the integrator when
 	// the worktree allocator + branch merger are both available.
 	var integrator *pipeline.Integrator

@@ -105,6 +105,7 @@ export const views: ViewDef[] = [
       { id: 'council',   label: 'Council',   key: 'c' },
       { id: 'eval',      label: 'Eval',      key: 'd' },
       { id: 'squads',    label: 'Squads',    key: 'e' },
+      { id: 'audit',     label: 'Audit',     key: 'f' },
     ],
   },
 ];
