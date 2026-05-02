@@ -188,7 +188,15 @@ func run(cfg Config) error {
 	pipelineRunner := pipeline.New(st, gateRegistry, dispatcher, pm)
 	pipelineRunner.Logger = logger
 	attributor := eval.NewOutcomeAttributor(st)
-	pipelineRunner.OnMerged = attributor.OnMerged
+
+	// Squad outcome recorder (Phase 2 v2.0 reconciler integration).
+	// Reads the squad attribution event the reconciler emits at routing
+	// time and writes a squad_outcomes row when a run merges. Wired
+	// alongside attributor.OnMerged via a small composite hook so both
+	// fire on every successful merge.
+	squadRecorder := squads.NewOutcomeRecorder(st)
+	squadRecorder.Logger = logger
+	pipelineRunner.OnMerged = chainOnMerged(attributor.OnMerged, squadRecorder.OnMerged)
 
 	// Escalator: GitLab for issues, MCP hub for handoff. Either may be
 	// disabled independently; the escalator runs whichever it has.
@@ -238,6 +246,18 @@ func run(cfg Config) error {
 	// fire OnMerged → eval Loop B per merge).
 	reconciler := hive.NewReconciler(st, pm, budget, starter)
 	reconciler.Logger = logger
+	if squadsLoader != nil {
+		// Wire the squad router into the reconciler so each tick attributes
+		// the chosen squad via a "reconciler.squad_routed" event keyed on
+		// the new run id. squadRecorder.OnMerged then reads it back at merge
+		// time. Adapter glues squads.Decision → hive.SquadDecision without
+		// pulling pkg/hive/squads into pkg/hive (no import cycle).
+		router := squads.NewRouter(squadsLoader, st)
+		reconciler.SquadRouter = &squadRouterAdapter{router: router}
+		logger.Info("squad routing enabled", "min_confidence", router.MinConfidence)
+	} else {
+		logger.Info("squad routing disabled (no squads loader)")
+	}
 	scheduler := hive.NewScheduler(reconciler)
 	scheduler.Logger = logger
 
@@ -653,4 +673,50 @@ func truncateForLog(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// squadRouterAdapter glues the squads-package Router (which returns the
+// rich squads.Decision) onto the slimmer hive.SquadRouter contract. The
+// indirection keeps pkg/hive free of an import on pkg/hive/squads — the
+// operator owns the type translation here.
+type squadRouterAdapter struct {
+	router *squads.Router
+}
+
+func (a *squadRouterAdapter) Pick(ctx context.Context, item *store.BacklogItem) (hive.SquadDecision, error) {
+	if a == nil || a.router == nil {
+		return hive.SquadDecision{SquadName: squads.FallbackName}, nil
+	}
+	d, err := a.router.Pick(ctx, item)
+	if err != nil {
+		return hive.SquadDecision{}, err
+	}
+	return hive.SquadDecision{
+		SquadName:  d.SquadName,
+		PathClass:  d.PathClass,
+		Confidence: d.Confidence,
+		SampleSize: d.SampleSize,
+		Reason:     d.Reason,
+	}, nil
+}
+
+// chainOnMerged composes two pipeline.OnMerged hooks. Both fire even if
+// the first errors; the returned error is the first non-nil one so the
+// runner's logging surfaces the upstream cause without losing the
+// downstream's signal.
+func chainOnMerged(
+	first, second func(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error,
+) func(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error {
+	return func(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error {
+		var firstErr error
+		if first != nil {
+			firstErr = first(ctx, run, item)
+		}
+		if second != nil {
+			if err := second(ctx, run, item); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		return firstErr
+	}
 }

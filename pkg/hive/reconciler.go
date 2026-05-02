@@ -28,8 +28,38 @@ type Reconciler struct {
 	Clock   func() time.Time
 	Logger  *slog.Logger
 
+	// SquadRouter, when set, is consulted before handing each pipeline
+	// run off to the Starter (Phase 2 v2.0 reconciler integration). The
+	// returned squad attribution is emitted as a "reconciler.squad_routed"
+	// event keyed on (subject_kind=pipeline_run, subject_id=run.ID) so
+	// the squads.OutcomeRecorder can read it back at merge time. Nil
+	// keeps v1 behavior — no routing, no event, no attribution.
+	SquadRouter SquadRouter
+
 	// Now is unset by default; constructors fill it. Public so tests can
 	// rewrite it between ticks.
+}
+
+// SquadRouter is the contract the reconciler depends on for v2 squad
+// routing. Production wiring satisfies this with *squads.Router; tests
+// inject a fake. Returning a SquadDecision with SquadName==FallbackName
+// is normal — the reconciler still emits an attribution event so the
+// audit trail records the routing decision (even when the choice was
+// "none of the configured squads").
+type SquadRouter interface {
+	Pick(ctx context.Context, item *store.BacklogItem) (SquadDecision, error)
+}
+
+// SquadDecision is the subset of the squads.Decision shape the reconciler
+// needs. Defined here to keep pkg/hive free of an import cycle on
+// pkg/hive/squads (squads imports pkg/hive/store, not pkg/hive itself,
+// but the operator wiring is cleaner with the contract here too).
+type SquadDecision struct {
+	SquadName  string
+	PathClass  string
+	Confidence float64
+	SampleSize int
+	Reason     string
 }
 
 // PipelineStarter spawns a pipeline run for a queued backlog item. The
@@ -209,6 +239,13 @@ func (r *Reconciler) tryStart(ctx context.Context, item *store.BacklogItem, poli
 		return decisionDeferred, fmt.Errorf("transition backlog: %w", err)
 	}
 
+	// Squad routing: when configured, consult the router before handing
+	// the run off. The decision is emitted as an event keyed on the run
+	// id so squads.OutcomeRecorder can read it back at merge time. A
+	// router error is logged but does not block the run — v1 behavior
+	// always wins on degraded paths.
+	r.routeToSquad(ctx, run, item)
+
 	if r.Starter != nil {
 		if err := r.Starter.Start(ctx, run, item); err != nil {
 			r.append(ctx, "reconciler.start_failed", "starter", map[string]any{
@@ -222,6 +259,46 @@ func (r *Reconciler) tryStart(ctx context.Context, item *store.BacklogItem, poli
 		"item": item.ID, "run": run.ID, "estimate_usd": estimate,
 	})
 	return decisionStarted, nil
+}
+
+// routeToSquad runs the squad router and emits an attribution event
+// keyed on (subject_kind=pipeline_run, subject_id=run.ID). Best-effort:
+// router errors and event-append errors are logged but do not block the
+// run. When SquadRouter is nil, the function is a no-op.
+func (r *Reconciler) routeToSquad(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) {
+	if r == nil || r.SquadRouter == nil {
+		return
+	}
+	decision, err := r.SquadRouter.Pick(ctx, item)
+	if err != nil {
+		if r.Logger != nil {
+			r.Logger.Warn("reconciler: squad routing failed", "item", item.ID, "error", err)
+		}
+		return
+	}
+	payload := map[string]any{
+		"run_id":      run.ID,
+		"backlog_id":  item.ID,
+		"squad_name":  decision.SquadName,
+		"path_class":  decision.PathClass,
+		"confidence":  decision.Confidence,
+		"sample_size": decision.SampleSize,
+		"reason":      decision.Reason,
+		"outcome":     "ok",
+	}
+	if r.Store == nil || r.Store.Events == nil {
+		return
+	}
+	if err := r.Store.Events.Append(ctx, &store.Event{
+		Actor:       "reconciler",
+		Kind:        "reconciler.squad_routed",
+		SubjectKind: "pipeline_run",
+		SubjectID:   run.ID,
+		Payload:     payload,
+	}); err != nil && r.Logger != nil {
+		r.Logger.Warn("reconciler: append squad_routed event failed",
+			"error", err, "run", run.ID)
+	}
 }
 
 // dependenciesMet returns (true, "", nil) when every Dependency item is
