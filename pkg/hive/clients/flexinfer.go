@@ -313,6 +313,31 @@ func modelFrom(resp *chatResponse, fallback string) string {
 	return fallback
 }
 
+// Chat is the public chat-completion entry point for callers that need
+// the bare model output + cost estimate without the gate-judge envelope.
+// Used by the squads.FlexInferSpawner adapter (Phase 2 reconciler
+// integration). Empty model falls back to the configured WeaverModel
+// then JudgeModel; maxTokens=0 falls back to 1024.
+func (c *FlexInferClient) Chat(ctx context.Context, model, prompt string, maxTokens int) (string, float64, error) {
+	if c == nil {
+		return "", 0, errors.New("flexinfer: client nil")
+	}
+	if model == "" {
+		model = c.cfg.WeaverModel
+	}
+	if model == "" {
+		model = c.cfg.JudgeModel
+	}
+	if maxTokens <= 0 {
+		maxTokens = 1024
+	}
+	content, resp, err := c.chat(ctx, model, prompt, maxTokens)
+	if err != nil {
+		return "", 0, err
+	}
+	return content, estimateCostUSD(resp), nil
+}
+
 // ----- WeaverClient (research stage) -----
 
 // WeaverClient satisfies pipeline.WeaverClient. The research stage in
