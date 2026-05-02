@@ -9,6 +9,7 @@ import (
 type HUDMetrics struct {
 	AgentSpawnTotal       metric.Int64Counter
 	PushNotificationTotal metric.Int64Counter
+	PushTokenInvalidated  metric.Int64Counter
 	SpawnedAgentActive    metric.Int64UpDownCounter
 	PushDeliveryLatency   metric.Float64Histogram
 
@@ -41,6 +42,10 @@ func NewHUDMetrics() *HUDMetrics {
 		metric.WithDescription("APNs push delivery latency"),
 		metric.WithUnit("s"),
 	)
+	pushTokenInvalidated, _ := meter.Int64Counter("push_token_invalidated_total",
+		metric.WithDescription("Total push tokens removed after provider rejection (404/410)"),
+		metric.WithUnit("{token}"),
+	)
 
 	spawnTokens, _ := meter.Int64Counter("spawn_tokens_total",
 		metric.WithDescription("Total tokens consumed by spawned agents"),
@@ -70,6 +75,7 @@ func NewHUDMetrics() *HUDMetrics {
 	return &HUDMetrics{
 		AgentSpawnTotal:       spawnTotal,
 		PushNotificationTotal: pushTotal,
+		PushTokenInvalidated:  pushTokenInvalidated,
 		SpawnedAgentActive:    spawnActive,
 		PushDeliveryLatency:   pushLatency,
 

@@ -27,11 +27,12 @@ type APNsSenderConfig struct {
 
 // APNsSender delivers push notifications via APNs HTTP/2.
 type APNsSender struct {
-	config  APNsSenderConfig
-	client  *http.Client
-	tracer  trace.Tracer
-	metrics *HUDMetrics
-	logger  *slog.Logger
+	config     APNsSenderConfig
+	client     *http.Client
+	tracer     trace.Tracer
+	metrics    *HUDMetrics
+	logger     *slog.Logger
+	tokenStore *DeviceTokenStore // Optional: when set, 404/410 responses remove the token.
 
 	// JWT token caching (tokens valid for 1 hour).
 	mu       sync.RWMutex
@@ -56,6 +57,15 @@ func NewAPNsSender(cfg APNsSenderConfig, tracer trace.Tracer, metrics *HUDMetric
 		metrics: metrics,
 		logger:  logger.With("component", "apns"),
 	}
+}
+
+// WithTokenStore wires a DeviceTokenStore so 404/410 responses from APNs cause
+// the token to be removed from the store. Without this, invalidation decisions
+// are observed (logged + traced) but not actioned, leaving stale tokens that
+// keep generating noisy 410 responses on every subsequent push.
+func (s *APNsSender) WithTokenStore(store *DeviceTokenStore) *APNsSender {
+	s.tokenStore = store
+	return s
 }
 
 // Send delivers a push notification to the given device token.
@@ -131,7 +141,19 @@ func (s *APNsSender) Send(ctx context.Context, deviceToken string, payload PushP
 	)
 
 	if decision.Action == PushInvalidateToken {
-		s.logger.Warn("APNs token invalidated", "token_prefix", safeTokenPrefix(deviceToken))
+		removed := false
+		if s.tokenStore != nil {
+			removed = s.tokenStore.Invalidate(deviceToken)
+		}
+		span.SetAttributes(attribute.Bool("push.token_removed", removed))
+		if s.metrics != nil && s.metrics.PushTokenInvalidated != nil {
+			s.metrics.PushTokenInvalidated.Add(ctx, 1)
+		}
+		s.logger.Warn("APNs token invalidated",
+			"token_prefix", safeTokenPrefix(deviceToken),
+			"reason", decision.Reason,
+			"removed_from_store", removed,
+		)
 	}
 
 	if resp.StatusCode >= 400 {
