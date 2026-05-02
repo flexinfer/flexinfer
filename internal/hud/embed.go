@@ -462,7 +462,7 @@ func (a *App) initPushBridge() {
 		TeamID:  cfg.APNsTeamID,
 		Topic:   cfg.APNsTopic,
 		Sandbox: cfg.APNsSandbox,
-	}, a.tracer, a.metrics, a.logger)
+	}, a.tracer, a.metrics, a.logger).WithTokenStore(a.deviceTokenStore)
 
 	a.pushBridge = NewPushEventBridge(
 		apnsSender, a.deviceTokenStore, a.tracer, a.metrics, a.logger,
