@@ -63,6 +63,11 @@ func (d *Domain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFunc) ht
 	mux.HandleFunc("GET /api/hive/audit/findings", mw(d.handleProxyGet))
 	mux.HandleFunc("GET /api/hive/audit/findings/{id}", mw(d.handleProxyGet))
 
+	// Cross-repo (Phase 4 slice 4.4). Reads proxy through; abort is
+	// HUD-admin-gated before reaching the operator's own admin gate.
+	mux.HandleFunc("GET /api/hive/cross-repo/runs", mw(d.handleProxyGet))
+	mux.HandleFunc("GET /api/hive/cross-repo/runs/{id}", mw(d.handleProxyGet))
+
 	// Mutations — gated by the HUD's existing admin-token check before
 	// the operator's own admin gate. Two layers of auth keep stray
 	// browser tabs from triggering the autonomy loop.
@@ -77,6 +82,7 @@ func (d *Domain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFunc) ht
 	mux.HandleFunc("POST /api/hive/eval/run-cross", mw(d.handleProxyAdminPost))
 	mux.HandleFunc("POST /api/hive/squads/{name}/route-test", mw(d.handleProxyAdminPost))
 	mux.HandleFunc("POST /api/hive/audit/run", mw(d.handleProxyAdminPost))
+	mux.HandleFunc("POST /api/hive/cross-repo/runs/{id}/abort", mw(d.handleProxyAdminPost))
 }
 
 func (d *Domain) handleProxyGet(w http.ResponseWriter, r *http.Request) {
