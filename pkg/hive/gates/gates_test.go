@@ -14,8 +14,8 @@ import (
 func fixturePolicy(t *testing.T) *hive.Policy {
 	t.Helper()
 	p := hive.Default()
-	// Default returns enabled=false to keep production safe; flip on for
-	// the gates tests so policy.IsEnabled() doesn't short-circuit.
+	// Default returns enabled=true (slice 6.6, 2026-05-02). Re-affirm
+	// explicitly so the gates tests don't depend on the default flipping.
 	on := true
 	p.Enabled = &on
 	if err := p.Validate(); err != nil {

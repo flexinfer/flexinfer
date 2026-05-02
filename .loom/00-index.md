@@ -2,7 +2,8 @@
 
 ## Quick Links
 
-- **Loom Hive — Council + Pipeline (agent swarm meta-orchestration, 2026-04-25)**: `89-research-agent-swarm-council-pipeline-2026-04-25.md`, `90-product-spec-agent-swarm-council-pipeline-2026-04-25.md`, `91-implementation-plan-agent-swarm-council-pipeline-2026-04-25.md` ← **active planning slice**
+- **Loom Hive v2 — Hierarchical Swarm + Adversarial Audit + Cross-Repo (2026-05-02)**: `92-research-hive-v2-hierarchical-swarm-2026-05-02.md`, `93-product-spec-hive-v2-hierarchical-swarm-2026-05-02.md`, `94-implementation-plan-hive-v2-hierarchical-swarm-2026-05-02.md` ← **active planning slice**
+- **Loom Hive v1 — Council + Pipeline (agent swarm meta-orchestration, 2026-04-25)**: `89-research-agent-swarm-council-pipeline-2026-04-25.md`, `90-product-spec-agent-swarm-council-pipeline-2026-04-25.md`, `91-implementation-plan-agent-swarm-council-pipeline-2026-04-25.md` (phases 1–6 shipped except 6.5 docs + 6.6 default-on flip; both rolled into v2 phase 0)
 - **Session mgmt + spawn auth + weaver integration (2026-04-19)**: `86-research-session-spawning-weaver-integration-2026-04-19.md`, `87-product-spec-session-spawning-weaver-2026-04-19.md`, `88-implementation-plan-session-spawning-weaver-2026-04-19.md`
 - **Phase 4 plan — Headless agent UX parity (2026-04-07)**: `83-plan-headless-agent-ux-parity-2026-04-07.md`
 - **Phase 3 plan — Headless agent full-stack drive + canonical telemetry (2026-04-07)**: `82-plan-headless-agent-fullstack-2026-04-07.md`
@@ -45,9 +46,27 @@
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
 
+## Current Planning Addendum (2026-05-02)
+
+- Active planning slice: **Loom Hive v2 — Hierarchical Swarm.** Promote the v1 flat two-tier system (Council → Pipeline) to a true three-tier hierarchical swarm with persistent domain-owning **Squads**, an independent **Adversarial Audit** ensemble, **Cross-Repo Federation** with atomic merge, **Council Debate Mode** (v1.1 deferral #4), bounded **Pipeline Recursion** ≤ 2 (v1.1 deferral #7), an **Adaptive Policy** engine, **Cost Preview**, and **Mobile Hive parity** (v1.1 deferral #1). V1 phase 6.5 (docs/runbook/skill) and 6.6 (default-on flip) are folded into v2 Phase 0.
+- New planning docs:
+  - `92-research-hive-v2-hierarchical-swarm-2026-05-02.md` — V1 ship state inventory, hierarchy thesis, capability gaps, prior-art mapping, v2 architecture, telemetry deltas, risks
+  - `93-product-spec-hive-v2-hierarchical-swarm-2026-05-02.md` — V2-D1..V2-D10 decisions resolved; new SQLite migration `002_v2.sql`; squad manifests; audit rubric; cross-repo state machine; debate flow; recursion guards; adaptive proposal kinds; REST + MCP surface; success criteria
+  - `94-implementation-plan-hive-v2-hierarchical-swarm-2026-05-02.md` — eight phases (0: close v1; 1: substrate; 2: squads; 3: audit; 4: cross-repo; 5: debate; 6: recursion; 7: adaptive + cost preview + mobile; 8: hardening + default-on)
+- Locked V2 decisions (V2-D1..V2-D10):
+  - **Two squads to start**: `hud-frontend` and `gitops`. Add others empirically.
+  - **Squad memory in canonical store**, not agent-context. Hive remains self-contained.
+  - **Hybrid audit pool**: FlexInfer (Llama 4 70B + Qwen 3 32B) bulk; escalate to frontier (Claude Opus + Codex GPT-5) only for ambiguous (0.4–0.7 band).
+  - **Cross-repo disabled by default** in v2.0; flip after 4-week loom-core+loom dogfood.
+  - **Debate enabled for incident triggers only** in v2.0; disabled for cron/roadmap-change.
+  - **Recursion opt-in per squad** via squad manifest; depth cap 2.
+  - **Adaptive policy is human-applied** in v2.0; v2.1 will auto-relax with 24h revert window and protected-path denylist (`platform/gitops/`, `pkg/security/`, `cmd/loomd/`).
+  - **Audit advisory-only** in v2.0; blocking deferred to v2.1 once survival KPIs prove low-noise.
+  - **Mobile parity in v2.0** (one read-only Hive screen).
+
 ## Current Planning Addendum (2026-04-25)
 
-- Active planning slice: **Loom Hive — Council + Pipeline.** A cluster-resident meta-orchestration layer above weaver/spawn/MentatLab that runs continuous software development with a planning *council* (scheduled ensemble emitting `.loom/` docs + backlog deltas) and a deterministic *pipeline* (event-driven, gated execution per backlog item). "CI above CI for agents."
+- Active planning slice (closed; folded into v2): **Loom Hive — Council + Pipeline.** Phases 1–6 shipped except 6.5 (docs) + 6.6 (default-on flip).
 - New planning docs:
   - `89-research-agent-swarm-council-pipeline-2026-04-25.md` — current-state inventory, gap analysis, decisions (resolved 2026-04-25), persistence + cluster topology rationale, evaluation framework, risks
   - `90-product-spec-agent-swarm-council-pipeline-2026-04-25.md` — `cmd/loom-hive-operator/`, SQLite schema (canonical), policy file, MentatLab `hive-default-pipeline` template, REST + MCP surface, gates, eval framework, KPIs
