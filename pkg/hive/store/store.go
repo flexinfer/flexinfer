@@ -30,6 +30,13 @@ type Store struct {
 	Eval     *EvalDAO
 	Events   *EventDAO
 	Roadmap  *RoadmapDAO
+
+	// Hive v2 — Hierarchical Swarm DAOs.
+	Squads          *SquadDAO
+	Audit           *AuditDAO
+	CrossRepo       *CrossRepoDAO
+	Debate          *DebateDAO
+	PolicyProposals *PolicyProposalDAO
 }
 
 // Options controls Store creation.
@@ -86,6 +93,13 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 	s.Eval = &EvalDAO{db: db}
 	s.Events = &EventDAO{db: db}
 	s.Roadmap = &RoadmapDAO{db: db}
+
+	// Hive v2.
+	s.Squads = &SquadDAO{db: db}
+	s.Audit = &AuditDAO{db: db}
+	s.CrossRepo = &CrossRepoDAO{db: db}
+	s.Debate = &DebateDAO{db: db}
+	s.PolicyProposals = &PolicyProposalDAO{db: db}
 	return s, nil
 }
 
