@@ -24,6 +24,16 @@ const DefaultBaselineConfidence = 0.65
 // SuccessRate. Mirrors the spec's "last 30 outcomes" example.
 const DefaultSampleWindow = 30
 
+// PolicyGate is the minimal contract the router needs to honor the v2
+// policy.squads.enabled flag without importing pkg/hive (which would
+// invert the existing one-way import boundary documented in
+// pkg/hive/reconciler.go's SquadRouter comment). Production wires this
+// to a closure over hive.PolicyManager.Current().SquadsEnabled so the
+// router picks up policy hot-reloads without restart.
+type PolicyGate interface {
+	SquadsEnabled() bool
+}
+
 // Router maps a backlog item to a squad based on path scope and the
 // squad's recent outcome history. It is read-only; configuration changes
 // flow through the Loader and the canonical store.
@@ -34,6 +44,13 @@ type Router struct {
 	MinConfidence      float64
 	BaselineConfidence float64
 	SampleWindow       int
+
+	// Policy, when non-nil, gates Pick on policy.squads.enabled. Nil
+	// preserves pre-v2 behavior — Pick always evaluates squads. The
+	// operator wires this to the live PolicyManager so a hot-reload
+	// that flips squads.enabled takes effect on the next tick without
+	// reconstructing the router.
+	Policy PolicyGate
 }
 
 // NewRouter wires a router with the loader's manifest snapshot as the
@@ -78,9 +95,17 @@ type Decision struct {
 // Pick selects the best squad for a backlog item. It never errors on
 // empty input — items with no slice files route to FallbackName so the
 // reconciler still progresses.
+//
+// Policy gate: when r.Policy is non-nil and SquadsEnabled() returns
+// false, Pick short-circuits to the fallback decision. This is the v2
+// rollout gate (policy.squads.enabled) — a high-confidence path-class
+// match does NOT route to a squad while the operator has the flag off.
 func (r *Router) Pick(ctx context.Context, item *store.BacklogItem) (Decision, error) {
 	if r == nil || r.loader == nil || r.store == nil {
 		return Decision{}, errors.New("squads: router is nil")
+	}
+	if r.Policy != nil && !r.Policy.SquadsEnabled() {
+		return fallback("policy.squads.enabled=false"), nil
 	}
 	if r.MinConfidence <= 0 {
 		r.MinConfidence = DefaultMinConfidence

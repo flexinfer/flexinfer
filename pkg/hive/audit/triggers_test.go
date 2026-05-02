@@ -260,6 +260,90 @@ func TestTriggers_OnPipelineMergedNeverErrors(t *testing.T) {
 	}
 }
 
+// fakeAuditGate implements audit.PolicyGate for unit tests. Lets the
+// test flip the flag mid-run to mirror PolicyManager hot-reload.
+type fakeAuditGate struct{ enabled bool }
+
+func (f *fakeAuditGate) AuditEnabled() bool { return f.enabled }
+
+// TestTriggers_PolicyGateBlocksCouncil proves that with
+// policy.audit.enabled=false, OnArtifactsCommitted does NOT load the
+// artifact and does NOT enqueue an audit job — even though a loader is
+// wired and the run is well-formed.
+func TestTriggers_PolicyGateBlocksCouncil(t *testing.T) {
+	env := newTriggerEnv(t)
+	loaderCalls := 0
+	env.triggers.LoadCouncilArtifact = func(_ context.Context, run *store.CouncilRun, _ []store.ArtifactRef) (string, string, error) {
+		loaderCalls++
+		return "## should not be loaded", "", nil
+	}
+	env.triggers.Policy = &fakeAuditGate{enabled: false}
+
+	env.triggers.OnArtifactsCommitted(context.Background(),
+		&store.CouncilRun{ID: "COUNCIL-GATED"}, nil)
+	env.drain(context.Background())
+
+	if loaderCalls != 0 {
+		t.Errorf("artifact loader must not run when audit disabled; got %d calls", loaderCalls)
+	}
+	rows, _ := env.store.Audit.ListForSubject(context.Background(),
+		store.AuditSubjectCouncilArtifact, "COUNCIL-GATED")
+	if len(rows) != 0 {
+		t.Errorf("audit gate ignored: got %d council audit rows; want 0", len(rows))
+	}
+}
+
+// TestTriggers_PolicyGateBlocksPipeline is the merged-diff symmetric
+// case. With audit disabled the merge callback returns nil and never
+// touches the diff loader or the queue.
+func TestTriggers_PolicyGateBlocksPipeline(t *testing.T) {
+	env := newTriggerEnv(t)
+	loaderCalls := 0
+	env.triggers.LoadMergedDiff = func(_ context.Context, _ *store.PipelineRun, _ *store.BacklogItem) (string, error) {
+		loaderCalls++
+		return "diff --git a/x b/x", nil
+	}
+	env.triggers.Policy = &fakeAuditGate{enabled: false}
+
+	if err := env.triggers.OnPipelineMerged(context.Background(),
+		&store.PipelineRun{ID: "PIPE-GATED"}, &store.BacklogItem{ID: "HIVE-GATED"}); err != nil {
+		t.Errorf("gated callback should not error; got %v", err)
+	}
+	env.drain(context.Background())
+
+	if loaderCalls != 0 {
+		t.Errorf("diff loader must not run when audit disabled; got %d calls", loaderCalls)
+	}
+	rows, _ := env.store.Audit.ListForSubject(context.Background(),
+		store.AuditSubjectPipelineMerge, "PIPE-GATED")
+	if len(rows) != 0 {
+		t.Errorf("audit gate ignored: got %d pipeline audit rows; want 0", len(rows))
+	}
+}
+
+// TestTriggers_PolicyGateOnAllowsAudit is the symmetric on-state: with
+// the gate explicitly enabled, the trigger behaves exactly as v1 did.
+func TestTriggers_PolicyGateOnAllowsAudit(t *testing.T) {
+	env := newTriggerEnv(t)
+	env.triggers.LoadCouncilArtifact = func(_ context.Context, run *store.CouncilRun, _ []store.ArtifactRef) (string, string, error) {
+		return "## Plan for " + run.ID, "", nil
+	}
+	env.triggers.Policy = &fakeAuditGate{enabled: true}
+
+	env.triggers.OnArtifactsCommitted(context.Background(),
+		&store.CouncilRun{ID: "COUNCIL-ON"}, nil)
+	env.drain(context.Background())
+
+	rows, err := env.store.Audit.ListForSubject(context.Background(),
+		store.AuditSubjectCouncilArtifact, "COUNCIL-ON")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("gate-on must permit audit; got %d rows want 1", len(rows))
+	}
+}
+
 func TestLoadCouncilArtifactFromFS_ReadsRefs(t *testing.T) {
 	dir := t.TempDir()
 	loomDir := filepath.Join(dir, ".loom")

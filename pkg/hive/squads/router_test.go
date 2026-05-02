@@ -232,6 +232,63 @@ spec:
 	}
 }
 
+// fakeGate implements squads.PolicyGate for unit tests. It returns the
+// stored bool and lets tests flip the flag mid-test to mirror the
+// production hot-reload path (PolicyManager.Current() returning a new
+// *Policy with squads.enabled flipped).
+type fakeGate struct{ enabled bool }
+
+func (f *fakeGate) SquadsEnabled() bool { return f.enabled }
+
+// TestRouter_PolicyGateBlocksHighConfidenceMatch proves the v2 gate
+// short-circuits Pick before any path-class scoring. Even with a
+// baseline-confidence match that *would* route to hud-frontend, the
+// gate forces the fallback decision when policy.squads.enabled=false.
+//
+// This is the default-off rollout safety check from
+// .loom/93-product-spec-hive-v2-…2026-05-02.md §"Policy file additions"
+// (policy.squads.enabled defaults to false, flipped per Phase 8).
+func TestRouter_PolicyGateBlocksHighConfidenceMatch(t *testing.T) {
+	r, st := newRouterFixture(t, map[string]string{
+		"hud-frontend": validHUDFrontend,
+	})
+	// Seed measured 95% confidence so the routing decision would
+	// definitely fire if the gate weren't honored.
+	seedOutcomes(t, st, "hud-frontend", "internal/hud/frontend/**", 19, 1)
+	r.Policy = &fakeGate{enabled: false}
+
+	dec, err := r.Pick(context.Background(),
+		itemWithFiles("internal/hud/frontend/src/lib/components/SpawnPanel.svelte"))
+	if err != nil {
+		t.Fatalf("pick: %v", err)
+	}
+	if dec.SquadName != FallbackName {
+		t.Errorf("policy gate ignored: got squad %q (conf=%.3f); want fallback",
+			dec.SquadName, dec.Confidence)
+	}
+	if dec.Reason == "" {
+		t.Error("gated fallback must surface a reason for HUD/log audit")
+	}
+}
+
+// TestRouter_PolicyGateOnAllowsRouting is the symmetric case: with the
+// gate on, routing behaves exactly as v1 did.
+func TestRouter_PolicyGateOnAllowsRouting(t *testing.T) {
+	r, _ := newRouterFixture(t, map[string]string{
+		"hud-frontend": validHUDFrontend,
+	})
+	r.Policy = &fakeGate{enabled: true}
+
+	dec, err := r.Pick(context.Background(),
+		itemWithFiles("internal/hud/frontend/src/lib/components/SpawnPanel.svelte"))
+	if err != nil {
+		t.Fatalf("pick: %v", err)
+	}
+	if dec.SquadName != "hud-frontend" {
+		t.Errorf("gate-on must permit routing: got %q want hud-frontend", dec.SquadName)
+	}
+}
+
 func TestRouter_FallsBackWhenNoSquadsLoaded(t *testing.T) {
 	r, _ := newRouterFixture(t, map[string]string{})
 	dec, err := r.Pick(context.Background(), itemWithFiles("anywhere.go"))

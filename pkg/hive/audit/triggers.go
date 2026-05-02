@@ -246,6 +246,15 @@ func (w *QueueWorker) info(msg string, kv ...any) {
 
 // ----- Triggers -----
 
+// PolicyGate is the minimal contract Triggers needs to honor the v2
+// policy.audit.enabled flag without importing pkg/hive (which would
+// invert the existing one-way import boundary). Production wires this
+// to a closure over hive.PolicyManager.Current().AuditEnabled so the
+// trigger picks up policy hot-reloads without restart.
+type PolicyGate interface {
+	AuditEnabled() bool
+}
+
 // Triggers is the producer-side surface the operator wires into the
 // council runner's OnArtifactsCommitted callback and the pipeline
 // runner's OnMerged hook chain. Both translate domain events into
@@ -263,6 +272,12 @@ type Triggers struct {
 	// merged pipeline run. Production calls mcp-gitlab; tests fake.
 	LoadMergedDiff func(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) (string, error)
 
+	// Policy, when non-nil, gates every enqueue on policy.audit.enabled.
+	// Nil preserves pre-v2 behavior — both callbacks always enqueue.
+	// Wired to the live hive.PolicyManager so hot-reload flips take
+	// effect on the next callback without restart.
+	Policy PolicyGate
+
 	Logger *slog.Logger
 }
 
@@ -270,8 +285,15 @@ type Triggers struct {
 // fires after a successful council run persistence. Loads the artifact
 // text + sidecar via LoadCouncilArtifact and enqueues an audit job.
 // Best-effort: load failures log but do not block.
+//
+// Policy gate: when t.Policy is non-nil and AuditEnabled() returns
+// false, the callback no-ops before any IO — no artifact load, no
+// enqueue, no canonical-store write. Mirrors policy.audit.enabled.
 func (t *Triggers) OnArtifactsCommitted(ctx context.Context, run *store.CouncilRun, refs []store.ArtifactRef) {
 	if t == nil || t.Worker == nil || run == nil {
+		return
+	}
+	if t.Policy != nil && !t.Policy.AuditEnabled() {
 		return
 	}
 	if t.LoadCouncilArtifact == nil {
@@ -309,8 +331,15 @@ func (t *Triggers) OnArtifactsCommitted(ctx context.Context, run *store.CouncilR
 // OnPipelineMerged is the callback shape pipelineRunner.OnMerged
 // expects. Loads the merged diff via LoadMergedDiff and enqueues an
 // audit job. Errors are logged but never block the merge.
+//
+// Policy gate: when t.Policy is non-nil and AuditEnabled() returns
+// false, the callback no-ops before any IO. Returns nil so chained
+// OnMerged hooks see no merge-side error from a disabled audit.
 func (t *Triggers) OnPipelineMerged(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error {
 	if t == nil || t.Worker == nil || run == nil {
+		return nil
+	}
+	if t.Policy != nil && !t.Policy.AuditEnabled() {
 		return nil
 	}
 	if t.LoadMergedDiff == nil {
