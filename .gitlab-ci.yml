@@ -913,7 +913,7 @@ publish_diffusers_rocm_gfx906:
 publish_unified_rocm_gfx1100:
   stage: publish
   image: registry.harbor.lan/library/buildkit:v0.12.5
-  timeout: 1h
+  timeout: 2h
   needs: []
   resource_group: buildkit-rocm-images
   retry:
