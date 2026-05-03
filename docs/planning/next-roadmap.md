@@ -174,13 +174,14 @@ specs and explicit validation gates before multi-file implementation begins.
 - [x] SD-1: Add reusable spec capsule template and contributor checklist ([#55](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/55)).
 - [x] SD-2: Define a slice-readiness gate with target files/modules, validation commands, and rollback notes ([#56](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/56)).
 - [x] SD-3: Expand `.loom/60-validation-matrix.md` as the canonical canary and runtime-promotion evidence table, with the contract tracked in `docs/planning/spec-driven-delivery.md` ([#57](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/57)).
-- [ ] SD-4: Add agent-ready delegation notes to feature plans so parallel slices have clear ownership boundaries ([#58](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/58)).
+- [x] SD-4: Add agent-ready delegation notes to feature plans so parallel slices have clear ownership boundaries, safe-to-edit modules, local verification commands, and expected output signals ([#58](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/58)).
 - [ ] SD-5: Run roadmap reconciliation after planning changes and keep tracking issues linked ([#59](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/59)).
 
 Acceptance criteria:
 
 - Every future roadmap slice either links to a spec capsule or declares why a full spec is unnecessary.
 - Every multi-file feature plan includes acceptance criteria, validation commands, and rollback/backout notes.
+- Parallel implementation plans include agent delegation notes with disjoint ownership boundaries, files/modules to avoid, local verification, and expected output signals.
 - Runtime canary promotions can be traced from spec to `.loom/60-validation-matrix.md` evidence without relying on chat history.
 
 ## Tech Debt (Ongoing)

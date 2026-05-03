@@ -204,6 +204,28 @@ observable, and reversible through Helm and GitOps.
   - `git diff --check`
   - `rg 'Readiness|Implementation Slices|Rollout' docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md`
 
+## Agent Delegation Notes
+
+These workstreams are safe to assign independently only if each agent stays
+inside its row and preserves the shared Helm/env/status contracts named below.
+
+| Workstream | Safe-to-edit files/modules | Do not touch | Local verification | Expected output/signals |
+|------------|----------------------------|--------------|--------------------|-------------------------|
+| Flash-loader config | `controllers/flash_loader.go`, `controllers/model_controller_test.go`, `charts/flexinfer/templates/deployment.yaml`, `charts/flexinfer/values.yaml`, related configuration docs | metrics exporter, tracing package, proxy request handling, generated CRDs | `go test ./controllers -run 'Test.*FlashLoader|Test.*ModelCache'`; `helm template flexinfer ./charts/flexinfer --set controller.runtime.flashLoader.enabled=true` | Tests pass; Helm output contains the expected `DEFAULT_FLASH_LOADER_*` env vars and no tracing changes |
+| Lifecycle latency metrics | `controllers/model_helpers.go`, `pkg/metrics/exporter.go`, `pkg/metrics/exporter_test.go`, optional metrics docs | Helm runtime defaults, tracing bootstrap, proxy routing | `go test ./pkg/metrics`; `go test ./controllers -run 'Test.*Phase|Test.*Shared|Test.*Ready'`; `rg 'flexinfer_model_(cold_start|swap)_duration_seconds' pkg controllers docs` | Tests pass; both histogram names appear in metrics code and relevant docs |
+| Tracing foundation | `pkg/observability/tracing.go`, `cmd/flexinfer-manager/main.go`, `cmd/flexinfer-proxy/main.go`, `internal/proxy/*`, controller files already using `StartReconcileSpan` | flash-loader config, lifecycle metric definitions, generated CRDs | `go test ./pkg/observability ./internal/proxy ./controllers`; `FLEXINFER_OTEL_ENABLED=false go test ./cmd/...`; `rg 'StartReconcileSpan|InitTracing|TraceContext|Extract' pkg cmd controllers internal` | Disabled-by-default tests pass; tracing symbols appear only in expected bootstrap/request/reconcile paths |
+| Readiness docs | `docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md`, `docs/planning/README.md`, optional `docs/CONFIGURATION.md` alignment | `.loom`, generated CRDs, controllers, metrics, proxy, chart templates | `git diff --check`; `rg 'Readiness|Implementation Slices|Agent Delegation Notes|Rollout' docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md` | No whitespace errors; plan names implementation slices, delegation boundaries, validation, and rollout/backout |
+
+Coordination notes:
+
+- Shared contracts: Helm env names, tracing env names, metric names, and
+  controller status transitions used as evidence.
+- Merge order: code/proof workstreams should land before readiness docs mark a
+  sub-slice complete; docs may merge first only when they explicitly call out
+  proof gaps.
+- Conflict risks: chart values/templates and generated outputs must have a
+  single owner in a given MR.
+
 ## Readiness
 
 - Status: PR-2A through PR-2C proof-complete; ready for live rollout validation

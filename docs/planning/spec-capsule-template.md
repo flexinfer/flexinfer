@@ -68,6 +68,21 @@ Who is affected, and what workflow do they need to complete?
 |-------|----------------------|----------------|------------|------------------|
 | 1 | | | | |
 
+## Agent Delegation Notes
+
+Use this section when more than one human or agent may work on the feature at
+the same time. Each row must be safe to assign independently.
+
+| Workstream | Safe-to-edit files/modules | Do not touch | Local verification | Expected output/signals |
+|------------|----------------------------|--------------|--------------------|-------------------------|
+| 1 | | | | |
+
+Coordination notes:
+
+- Shared contracts:
+- Merge order:
+- Conflict risks:
+
 ## Readiness
 
 Status: Draft
@@ -121,6 +136,10 @@ Cluster or runtime checks, when required:
 - [ ] Acceptance criteria are testable by a reviewer.
 - [ ] Target files/modules are listed before implementation begins.
 - [ ] Slice readiness gate is satisfied or a bypass reason is recorded.
+- [ ] Agent delegation notes list independent workstreams when parallel work is
+      expected.
+- [ ] Each delegated workstream names safe-to-edit files/modules, files/modules
+      to avoid, local verification commands, and expected output/signals.
 - [ ] Validation commands are explicit and runnable from the repo root.
 - [ ] Generated artifacts are named when API, CRD, Helm, or docs indexes change.
 - [ ] Rollout and backout notes cover Helm, CRD, Flux, and runtime-image changes
@@ -175,6 +194,20 @@ controller logs.
 |-------|----------------------|----------------|------------|------------------|
 | Status condition | `api/v1alpha2`, `controllers` | Controller/API only | `go test ./controllers/...` | Revert status condition and CRD changes |
 | Docs | `docs/user/models-v1alpha2.md` | Docs only | `rg "Preempted" docs` | Revert docs |
+
+## Agent Delegation Notes
+
+| Workstream | Safe-to-edit files/modules | Do not touch | Local verification | Expected output/signals |
+|------------|----------------------------|--------------|--------------------|-------------------------|
+| Controller/API | `api/v1alpha2`, `controllers` | `charts/`, runtime Dockerfiles, proxy routing | `make manifests`; `go test ./controllers/... ./api/...` | CRD diff contains only status schema changes; controller tests pass |
+| Docs | `docs/user/models-v1alpha2.md`, planning links | `api/`, `controllers/`, generated CRDs | `git diff --check`; `rg "Preempted|GPUGroup" docs/user/models-v1alpha2.md` | No whitespace errors; docs mention operator next action |
+
+Coordination notes:
+
+- Shared contracts: status field names and condition reasons from the API slice.
+- Merge order: Controller/API before docs if field names are still changing.
+- Conflict risks: generated CRD output should be owned by the Controller/API
+  workstream only.
 ```
 
 ## Example: Runtime Image Slice
@@ -220,6 +253,13 @@ without source-install shell drift.
 |-------|----------------------|----------------|------------|------------------|
 | Build fix | `build/docker` | Runtime image only | CI image build | Revert Dockerfile change |
 | Docs | `build/README-gfx906.md` | Runtime docs only | `rg "gfx906" build` | Revert docs |
+
+## Agent Delegation Notes
+
+| Workstream | Safe-to-edit files/modules | Do not touch | Local verification | Expected output/signals |
+|------------|----------------------------|--------------|--------------------|-------------------------|
+| Docker build | `build/docker/vllm-custom-gfx906.Dockerfile` | Helm chart image references, production manifests | `docker build <args>`; CI publish job | Image build reaches final layer without shell/package errors |
+| Runtime docs | `build/README-gfx906.md` | Dockerfile, chart values, deploy manifests | `git diff --check`; `rg "gfx906|vLLM|canary" build/README-gfx906.md` | Docs include the canary command and no stale image tag |
 ```
 
 ## Example: Operational-Docs-Only Slice
@@ -263,4 +303,10 @@ which Kubernetes or Longhorn objects to inspect.
 | Slice | Target files/modules | Owner boundary | Validation | Rollback/backout |
 |-------|----------------------|----------------|------------|------------------|
 | Runbook | `docs/user/troubleshooting.md` | Docs only | `rg "VolumeAttachment" docs` | Revert docs |
+
+## Agent Delegation Notes
+
+| Workstream | Safe-to-edit files/modules | Do not touch | Local verification | Expected output/signals |
+|------------|----------------------------|--------------|--------------------|-------------------------|
+| Runbook | `docs/user/troubleshooting.md` | controllers, charts, CRDs, runtime manifests | `git diff --check`; `rg "VolumeAttachment|Longhorn" docs/user/troubleshooting.md` | Ordered diagnostics appear before destructive cleanup |
 ```

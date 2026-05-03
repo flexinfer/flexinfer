@@ -16,7 +16,7 @@ If you’re looking for “what exists today” docs, start here instead:
 - `feature-inventory.md`: what features exist, what’s stable, what’s experimental, and what’s missing.
 - `next-roadmap.md`: the next series of features/enhancements to implement (prioritized).
 - `spec-capsule-template.md`: reusable source-backed template, checklist, and examples for new feature slices.
-- `slice-readiness-gate.md`: ready-for-implementation gate for target modules, validation, generated artifacts, and rollback notes.
+- `slice-readiness-gate.md`: ready-for-implementation gate for target modules, agent delegation notes, validation, generated artifacts, and rollback notes.
 - `rocm-gfx1100-deploy-swap-tracing-slice.md`: PR-2 readiness/proof capsule for gfx1100 deploy/swap controls, latency metrics, and opt-in tracing.
 - `context-aware-router-execution.md`: execution checklist for issue `#8` (context-aware routing).
 - `phase-1-controller-api-hardening.md`: PR-sized checklist for the next series of controller hardening work.
@@ -50,6 +50,8 @@ mark it `Ready` only after filling in:
 - Goal, non-goals, users/operators, and current evidence.
 - Requirements and acceptance criteria.
 - PR-sized implementation slices with target files/modules.
+- Agent delegation notes for parallel work, including safe-to-edit modules,
+  files/modules to avoid, local verification, and expected output signals.
 - Validation commands and generated artifacts.
 - Rollout/backout notes for Helm, CRD, Flux, and runtime-image changes.
 
