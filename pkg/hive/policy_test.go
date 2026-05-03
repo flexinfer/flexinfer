@@ -295,6 +295,23 @@ adaptive_policy:
 	if !p.Debate.Enabled.Incident || p.Debate.Enabled.Cron {
 		t.Errorf("debate triggers: %+v", p.Debate.Enabled)
 	}
+	// AllowedFor mirrors store.CouncilTrigger strings to the
+	// per-trigger flags (and returns false on unknown strings).
+	if !p.Debate.Enabled.AllowedFor("incident") {
+		t.Error("debate.AllowedFor(incident) must be true when triggers.incident is true")
+	}
+	if p.Debate.Enabled.AllowedFor("cron") {
+		t.Error("debate.AllowedFor(cron) must be false when triggers.cron is false")
+	}
+	if p.Debate.Enabled.AllowedFor("roadmap") {
+		t.Error("debate.AllowedFor(roadmap) must be false when triggers.roadmap_change is unset")
+	}
+	if !p.Debate.Enabled.AllowedFor("manual") {
+		t.Error("debate.AllowedFor(manual) must be true when triggers.manual is true")
+	}
+	if p.Debate.Enabled.AllowedFor("not-a-real-trigger") {
+		t.Error("debate.AllowedFor must return false on unknown trigger strings")
+	}
 	if !p.Recursion.Enabled || p.Recursion.MaxDepth != 2 {
 		t.Errorf("recursion: %+v", p.Recursion)
 	}

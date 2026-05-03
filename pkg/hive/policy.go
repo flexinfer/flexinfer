@@ -192,6 +192,30 @@ type DebateTriggers struct {
 	Manual        bool `yaml:"manual,omitempty"`
 }
 
+// AllowedFor reports whether the debate runner should engage for the
+// given store.CouncilTrigger string. Mapping: cron → Cron, roadmap →
+// RoadmapChange (spec naming differs from store enum), incident →
+// Incident, manual → Manual. Unknown triggers return false (safe
+// default; the runner falls back to single-pass).
+//
+// Lives on DebateTriggers rather than DebatePolicy so the policy
+// validation tests can pin trigger gating without instantiating a
+// whole DebatePolicy.
+func (t DebateTriggers) AllowedFor(trigger string) bool {
+	switch trigger {
+	case "cron":
+		return t.Cron
+	case "roadmap":
+		return t.RoadmapChange
+	case "incident":
+		return t.Incident
+	case "manual":
+		return t.Manual
+	default:
+		return false
+	}
+}
+
 // RecursionPolicy controls bounded sub-runs in the pipeline. Disabled
 // by default; opt-in per-squad via the squad manifest's
 // default_ensemble.recursion: true (V2-D6).
