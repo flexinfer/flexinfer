@@ -40,6 +40,8 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
     var spawnTelemetryErrorsResponse: SpawnTelemetryErrorsPage?
     var spawnControlAckResponse: SpawnControlAck?
     var spawnConfigResponse: SpawnConfig?
+    var hivePipelineRunsResponse: [HivePipelineRun]?
+    var hiveKPIResponse: HiveKPISnapshot?
 
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         if let specificError = endpointFailures[endpoint.path] {
@@ -121,6 +123,10 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
             break
         case .audit, .ping, .eventsStream:
             break
+        case .hivePipelineRuns:
+            if let r = hivePipelineRunsResponse as? T { return r }
+        case .hiveKPIs:
+            if let r = hiveKPIResponse as? T { return r }
         }
 
         throw LoomAPIError.noToken

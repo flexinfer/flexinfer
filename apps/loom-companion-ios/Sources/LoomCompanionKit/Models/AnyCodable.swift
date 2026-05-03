@@ -71,4 +71,15 @@ extension AnyCodable {
         if case let .bool(v) = self { return v }
         return nil
     }
+
+    /// Extract the underlying numeric value as Double, if the case is
+    /// numeric. Used by `HiveKPISnapshot` to coerce the operator's
+    /// `map[string]any` payload into typed metric numbers.
+    public var doubleValue: Double? {
+        switch self {
+        case let .double(v): return v
+        case let .int(v): return Double(v)
+        default: return nil
+        }
+    }
 }
