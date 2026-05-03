@@ -1,21 +1,14 @@
-# Gonzalomo FluxPony SDXL text-to-image on Radeon VII (gfx906).
+# Gonzalomo FluxPony SDXL text-to-image on cblevins-5930k (gfx1100).
 #
-# Relocated 2026-04-21 from cblevins-5930k to cblevins-radeonvii so the
-# 5930k gfx1100 slot stays dedicated to the gemma4-26b-a4b-gptq-dense
-# abliteration/quantization pipeline (and future gfx1100 textgen jobs).
-# radeonvii's GPU has been idle since the 31B GPTQ quantize completed
-# 2026-04-21T20:57Z — fine home for image-gen that doesn't need gfx1100
-# flash-attention features.
+# Relocated 2026-05-03 back from cblevins-radeonvii to cblevins-5930k so
+# image generation stays warm on the alternate 7900 XTX node while textgen
+# runs on cblevins-7900xtx.
 #
-# Radeon VII quirks (documented here so operators don't hit them blind):
-#   - gfx906 reports as gfx900 at runtime → HSA_OVERRIDE_GFX_VERSION=9.0.6
-#     is set by the GPUProfile, no per-Model override needed.
-#   - 16GB VRAM — SDXL + cpuOffload fits; do not stack additional models.
-#   - Community PyTorch image (mixa3607/pytorch-gfx906) is the baseline
-#     for any gfx906 runtime. Diffusers image is pre-built per GPUProfile.
+# 7900 XTX quirks:
+#   - gfx1100 needs the ROCm/PyTorch env injected by the GPUProfile.
+#   - 24GB VRAM — SDXL + cpuOffload fits with room for compile caches.
 #
-# Co-tenant: sdxl-inpainting-radeonvii shares this group at the same
-# priority so image-gen and image-edit swap on demand on the single GPU.
+# Keep minReplicas=1 so the image-gen runtime remains warm.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -31,15 +24,13 @@ spec:
   gpu:
     vendor: amd
     count: 1
-    shared: radeonvii-imagegen
-    # Same priority as sdxl-inpainting-radeonvii — first call wins;
-    # the other swaps in on explicit alias traffic.
+    shared: 5930k-imagegen
     priority: 200
     vramEstimateMB: 12000
   serverless:
     enabled: true
-    minReplicas: 0
-    idleTimeout: 5m
+    minReplicas: 1
+    idleTimeout: 30m
     coldStartTimeout: 30m
   config:
     # Gonzalomo FluxPony is an SDXL model despite the FLUX-like name.
@@ -62,7 +53,7 @@ spec:
     compilationCache: "true"
     hipVisibleDevices: "0"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-radeonvii
+    kubernetes.io/hostname: cblevins-5930k
   resources:
     requests:
       cpu: "2"
