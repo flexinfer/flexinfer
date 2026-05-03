@@ -49,6 +49,13 @@ public enum Endpoint: Sendable {
     case handoffs(limit: Int? = nil)
     case namespaces
 
+    // Phase 7 slice 7.5 — Hive screen reads. These hit the HUD's
+    // /api/hive/* proxy directly (different prefix from /api/mobile/v1/*).
+    // Both are read-only and tolerate the operator-not-configured 503 the
+    // proxy returns when LOOM_HIVE_OPERATOR_URL is unset.
+    case hivePipelineRuns
+    case hiveKPIs(window: String)
+
     var method: String {
         switch self {
         case .ping, .dashboard, .controlPlane, .alertsPolicy, .sessions, .sessionDetail, .sessionEvents,
@@ -57,7 +64,8 @@ public enum Endpoint: Sendable {
              .graphPath, .reasoningChains, .reasoningChainDetail,
              .eventsStream, .audit, .sandbox, .spawnList, .spawnConfig, .spawnDetail, .agents,
              .pipelines, .handoffs, .namespaces,
-             .spawnTelemetry, .spawnTelemetryTools, .spawnTelemetryFiles, .spawnTelemetryErrors:
+             .spawnTelemetry, .spawnTelemetryTools, .spawnTelemetryFiles, .spawnTelemetryErrors,
+             .hivePipelineRuns, .hiveKPIs:
             return "GET"
         case .createSession, .endSession, .pushRegister, .pushUnregister,
              .sandboxStart, .sandboxStop, .spawnAgent, .spawnStop,
@@ -161,6 +169,10 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/handoffs"
         case .namespaces:
             return "/api/mobile/v1/namespaces"
+        case .hivePipelineRuns:
+            return "/api/hive/pipeline/runs"
+        case .hiveKPIs:
+            return "/api/hive/kpis"
         }
     }
 
@@ -315,6 +327,10 @@ public enum Endpoint: Sendable {
                 items.append(URLQueryItem(name: "limit", value: String(limit)))
             }
             if !items.isEmpty { components.queryItems = items }
+        case let .hiveKPIs(window):
+            // The operator's /api/hive/kpis handler requires ?window=, so
+            // pass it through verbatim. The HUD's proxy preserves query.
+            components.queryItems = [URLQueryItem(name: "window", value: window)]
         default:
             break
         }

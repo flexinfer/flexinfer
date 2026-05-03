@@ -136,6 +136,7 @@ func (o *operator) httpMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/hive/backlog/{id}", o.handleBacklogGet)
 	mux.HandleFunc("POST /api/hive/backlog", requireAdmin(o.handleBacklogCreate))
 	mux.HandleFunc("POST /api/hive/backlog/sync", requireAdmin(o.handleBacklogSync))
+	mux.HandleFunc("GET /api/hive/cost-preview", o.handleCostPreview)
 
 	// Squads (Phase 2 slice 2.4). Read endpoints are open; route-test is
 	// admin-gated because it loads + executes the live router which is

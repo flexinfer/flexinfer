@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/crb2nu/loom/pkg/hive/budget"
 	"github.com/crb2nu/loom/pkg/hive/store"
 )
 
@@ -93,4 +94,49 @@ func (o *operator) handleBacklogGet(w http.ResponseWriter, r *http.Request) {
 // in here.
 func (o *operator) handleBacklogSync(w http.ResponseWriter, _ *http.Request) {
 	notImplemented(w, "3.x backlog mutator + GitLab sync")
+}
+
+// handleCostPreview returns a Phase 7 slice 7.3 cost preview for one
+// backlog item. Read-only: no admin token required. Required query
+// param: ?backlog_id=. Responses:
+//   - 200 + CostEstimate JSON on the happy path
+//   - 400 when backlog_id is missing
+//   - 404 when the backlog id is unknown
+//   - 503 when the policy manager isn't configured (operator boot race)
+//
+// The estimator is constructed per-request because it's just two pointer
+// wires; profiling didn't justify caching it on the operator struct.
+func (o *operator) handleCostPreview(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.URL.Query().Get("backlog_id"))
+	if id == "" {
+		http.Error(w, "backlog_id is required", http.StatusBadRequest)
+		return
+	}
+	if o.policy == nil {
+		http.Error(w, "policy manager not ready", http.StatusServiceUnavailable)
+		return
+	}
+	est := &budget.Estimator{
+		Store:      o.store,
+		PolicyFunc: o.policy.Current,
+	}
+	preview, err := est.Preview(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "backlog item not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Echo a small marker on the body so HUD callers can distinguish
+	// preview vs. live spend in their own logging without re-parsing.
+	type previewEnvelope struct {
+		*budget.CostEstimate
+		Source string `json:"source"`
+	}
+	writeJSON(w, http.StatusOK, previewEnvelope{
+		CostEstimate: preview,
+		Source:       "estimator/v1",
+	})
 }

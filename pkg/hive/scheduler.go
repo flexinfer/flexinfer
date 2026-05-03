@@ -13,6 +13,13 @@ import (
 // .Tick on an interval (default 60s) and logs each pass. Council triggers
 // (cron + roadmap-change + incident) wire in slice 3.7.
 //
+// Phase 7 introduces sibling schedulers that the operator's errgroup
+// supervises alongside this one — pkg/hive/eval/cross_run_scheduler.go
+// (Loop C, Sunday 06:00 UTC) and pkg/hive/adaptive/scheduler.go (Phase 7
+// slice 7.1, Sunday 05:00 UTC). Both follow an hourly-poll + de-duplicate
+// pattern instead of a real cron library; see those files for the
+// production wiring contract.
+//
 // Design notes:
 //   - Tick duration is read from policy on every loop iteration so a
 //     hot-reload to policy.scheduler.tick_seconds takes effect on the next
