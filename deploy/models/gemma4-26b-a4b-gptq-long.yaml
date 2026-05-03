@@ -40,9 +40,9 @@ spec:
     # slots so plugin-local device 0 is deterministically the dGPU.
     count: 2
     shared: 7900xtx-textgen
-    # Equal to the current 31B primary so explicit long-context demand can swap
-    # this canary in when the primary is idle; lower priority can never preempt it.
-    priority: 250
+    # Below the 31B primary and above the 22K probe, so explicit long-context
+    # demand can run as a canary without displacing the warm primary.
+    priority: 245
     vramEstimateMB: 18000
   serverless:
     enabled: true

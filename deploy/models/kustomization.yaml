@@ -10,7 +10,7 @@ resources:
   - gemma4-31b-gptq.yaml            # vLLM GPTQ INT4, Dense 31B, primary (priority 250)
   # Experimental 16K FP8-KV long-context canary on the 7900xtx lane. Scale-to-zero keeps
   # it from interfering with the warm primary until explicitly tested.
-  - gemma4-26b-a4b-gptq-long.yaml   # vLLM GPTQ INT4, 16K FP8-KV canary (priority 250)
+  - gemma4-26b-a4b-gptq-long.yaml   # vLLM GPTQ INT4, 16K FP8-KV canary (priority 245)
   # Experimental 22K FP8-KV canary. Keeps the validated 16K profile intact while
   # probing the practical upper bound of the current hybrid artifact on 24 GB.
   - gemma4-26b-a4b-gptq-22k.yaml    # vLLM GPTQ INT4, 22K FP8-KV canary (priority 240)
