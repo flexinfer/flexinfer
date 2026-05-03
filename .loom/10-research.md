@@ -715,3 +715,142 @@ Primary external sources:
 - https://rocm.docs.amd.com/en/docs-6.4.3/how-to/rocm-for-ai/inference-optimization/model-quantization.html
 - https://github.com/modelcloud/gptqmodel
 - https://github.com/ggml-org/llama.cpp/discussions/21526
+
+---
+
+## 2026-05-03 Refresh — Upstream Shifts: TurboQuant Upstream + Heretic + GPTQModel 6.0.3
+
+Date: 2026-05-03
+Author: claude-opus-4-7
+Trigger: pick-up-context for gemma4 + TurboQuant; survey new upstream fixes and abliteration / model candidates.
+
+### Local truth recap (verified against branch `master` at `88587463`)
+
+- Reconciled Gemma4 surface (`deploy/models/kustomization.yaml`):
+  - `gemma4-31b-gptq` — warm primary, `maxModelLen: 2048`, `gpuMemoryUtilization: 0.95`, `cblevins-7900xtx`, priority 250.
+  - `gemma4-26b-a4b-gptq-long` — 16K FP8-KV on-demand canary, priority 255 (preempts 31B), `minReplicas: 0`.
+  - `gemma4-e4b-gguf-gtx980ti` — Maxwell GGUF cold-start lane (restored 2026-05-03 by commit `90417977`).
+- `gemma4-e4b-turboquant.yaml` is staged but NOT in kustomization — pinned to digest `f9c69576...` and waiting on runtime probe.
+- Omnicoder lane fully deprecated (commit `245b0d91`, 2026-05-03); coding traffic should fold into Gemma4 26B-A4B or a new candidate.
+- Local TurboQuant runtime: `Alberto-Codes/turboquant-vllm` patched via `build/scripts/patch_turboquant_quantizer_gpu_qr.py` (CPU LAPACK fallback to GPU QR + Gemma4 head-dim padding). Gated behind `TQ4_SHARE_PRIMITIVES=1`.
+- 31B TurboQuant lane closed by !192: 23.59 GiB allocated of 23.98 GiB (~3.57 GiB plugin rotation overhead). Closeout doc: `docs/dev/gemma4-31b-turboquant-24gb-oom.md`.
+
+### Upstream findings (sources at end)
+
+#### vLLM — TurboQuant is now first-party (CUDA only)
+
+- PR `vllm-project/vllm#38479` merged **2026-04-15**, ships in **vLLM 0.20** (and showcased in 0.19.x recipes).
+- New `--kv-cache-dtype` presets (no plugin needed):
+  - `turboquant_k8v4` — FP8 keys + 4-bit values, ~2.6× compression
+  - `turboquant_4bit_nc` — 4-bit MSE + norm-correction, ~3.8×
+  - `turboquant_k3v4_nc` — 3-bit keys + 4-bit values + NC, ~4.3×
+  - `turboquant_3bit_nc` — 3-bit symmetric + NC, ~4.9×
+- Supports full-attention and *uniform* sliding-window architectures. Hybrid (Mamba+attention) explicitly errors out — Qwen3-Next/3.6 hybrids will not work on this path.
+- The PR explicitly does NOT discuss ROCm/HIP. Implementation uses Walsh-Hadamard Transform + random sign flips (different from the rotation-matrix path in `Alberto-Codes/turboquant-vllm`); upstream hot-path is CUDA SM-specific (Ampere vs Hopper FP8).
+- vLLM 0.19.1 ships Transformers 5.5.3 + Gemma4 bug fixes.
+- vLLM ROCm docker (`vllm/vllm-openai-rocm:latest`) targets Python 3.12, ROCm 7.2.1, glibc ≥2.35.
+- AMD pre-built vLLM wheels (`vllm 0.16+`) cover gfx950/942/1200/1201/1151. **gfx1100 and gfx906 are NOT in the official pre-built list** — our custom builds remain load-bearing.
+
+Implication: our `turboquant-vllm` plugin path is not made obsolete on ROCm yet. But for any future CUDA target (or a future ROCm port of #38479), our 3.57 GiB rotation-matrix overhead is no longer architectural — upstream uses WHT and should be cheaper. Shared-primitives patch remains correct.
+
+#### llama.cpp — Gemma4 tokenizer/template fixes
+
+- `ggml-org/llama.cpp#21326` — Gemma 4 template parser fixes (chat template).
+- `ggml-org/llama.cpp#21343` — Gemma4 tokenizer fix (multi-newline split-token bug). C++ change only — **GGUF re-generation NOT required**.
+- `ggml-org/llama.cpp#21488` — BPE detokenizer byte-token handling (follow-up to #21343 unicode regression).
+- Issue `#21516` — Gemma 4 infinite `<unused>` loop on Vulkan backend (still reported in some configs).
+- Issue `#21726` — Gemma4 gibberish with `-nkvo` (-no-kv-offload). Watch this if our 980ti config touches `-nkvo`.
+
+Action: confirm the 980ti GGUF runtime is at b8665+ (preferably b8778+) so all three patches land. Gemma4 e4b-gguf-gtx980ti currently at `unsloth/gemma-4-E4B-it-GGUF` — Unsloth re-uploaded GGUFs after the llama.cpp fixes (HF discussion `#11`).
+
+#### GPTQModel 6.0.3 — native Gemma4 support (2026-04-03)
+
+- 6.0.3 added Gemma4, MiniCPM-O/V, GLM4 MoE-lite + ParoQuant, GGUF, FP8, EXL3, FOEM methods.
+- 5.8.0 (2026-03-19) added Transformers 5.3.0 and auto-defusing of fused models — this is what our custom Gemma4 MoE defusion code was emulating.
+
+Implication: our `pkg/quantization/gptq.go` Gemma4 patches (custom defusion + module_tree + `dynamic=None`) may now be deletable on GPTQModel ≥6.0.3. **High-leverage cleanup target** — but verify 26B-A4B 128-expert MoE handling matches our hybrid result before dropping the patch.
+
+#### Heretic — automated abliteration (state of the art as of late 2025/2026)
+
+- `p-e-w/heretic` GitHub. 1000+ community-uploaded Heretic models on HF.
+- Innovations vs single-direction ablation:
+  - TPE-optimizer (Optuna) over a flexible per-layer kernel curve (different attention vs MLP weights).
+  - **Float-valued direction index** — interpolates between adjacent refusal directions, often beats any single-layer direction.
+  - Supports MoE architectures.
+- Benchmark on Gemma-3-12B-IT: 3/100 refusals at 0.16 KL divergence — vs mlabonne 1.04 KL (6.5× less capability damage).
+- Hardware: PyTorch 2.2+; bitsandbytes 4-bit supported; no explicit ROCm/AMD docs but PyTorch ROCm should work.
+- One-command UX: `heretic --model <name>`.
+
+#### TrevorS/gemma-4-abliteration — Gemma4-specific (Biprojection + EGA)
+
+- Norm-preserving biprojection: per-layer refusal directions from 800 harmful/harmless prompt residuals; orthogonalize against harmless means; project out of `o_proj` + `mlp.down_proj` while preserving row norms.
+- **Expert-Granular Abliteration (EGA)** — extends biprojection to MoE by hooking the router and applying the projection to each of 128 expert `down_proj` slices per layer. **Dense-only achieves 29/100 refusals on 26B; EGA achieves 5/686 (0.7%) at KL 0.090.**
+- Reference results: E2B 3/686 @ KL 0.346, E4B 5/686 @ 0.068, **26B-A4B 5/686 @ 0.090, 31B 22/686 @ 0.124**.
+- This is a strong fit for our 26B-A4B lane: existing pipeline likely hits the 29/100 dense ceiling because our abliteration is dense-pathway only.
+
+#### Other abliteration research (deferred, lower priority)
+
+- **Gabliteration** (arxiv 2512.18901) — multi-direction via SVD on harmful/harmless paired diff matrix; lower KL across 10 models.
+- **Projected / ORBA / DeepRefusal / MOSE** — geometric refinements; novel-but-unverified-at-our-scale.
+
+#### Candidate models (14B–30B, GPTQ-friendly)
+
+| Model | Active / Total | Notes | Why it matters |
+|---|---|---|---|
+| `Qwen/Qwen3-30B-A3B-GPTQ-Int4` | 3B / 30B MoE | Official Qwen pre-quant, 32K native (131K w/ YaRN) | Drop-in for current 31B-dense lane; only 3B active params → much faster decode at 24 GiB. |
+| `Qwen3-30B-A3B-Instruct-2507` | 3B / 30B | Updated instruct | Pair with our GPTQ pipeline. |
+| `QuantTrio/Qwen3.6-35B-A3B-AWQ` | 3B / 35B | AWQ Int4 | Caveat: verify quant_method is native AWQ not compressed-tensors (memory: 9.3 tok/s vs 2 tok/s on gfx1100). |
+| `Qwen2.5-Coder-14B` | 14B dense | Strong code model | Replacement candidate for retired omnicoder lane. |
+| `DeepSeek-R1-Distill-Qwen-32B` | 32B dense | Reasoning-strong, fits 24GB at INT4 | Could be a 31B replacement if Gemma4-31B-dense stays painful. |
+| `nvidia/Gemma-4-31B-IT-NVFP4` | 31B dense | NVFP4 4-bit by Nvidia | NVFP4 needs Hopper/Blackwell FP4 hardware — likely **not viable on gfx1100**. |
+| `Phi-4 14B` | 14B | Single-GPU friendly | Less interesting given Gemma4-26B-A4B works. |
+
+Recommendation: **Qwen3-30B-A3B-GPTQ-Int4** is the highest-leverage new candidate for `cblevins-7900xtx` — MoE with 3B active, official pre-quant artifact, no dense-attention TurboQuant trap.
+
+#### ROCm / PyTorch versions
+
+- ROCm 7.2.2 latest stable (release notes link below). ROCm 7.1.1 enables PyTorch 2.9.
+- PyTorch 2.9 has variant wheels for ROCm 6.3 / 6.4 only; ROCm ≥7.0 needs nightly wheels.
+- Our turboquant runtime base `rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0` is current.
+- gfx906 (Vega 20) remains in ROCm maintenance mode — `HSA_OVERRIDE_GFX_VERSION=9.0.6` still required, mixa3607 community torch still load-bearing.
+
+### Implications for the active codebase
+
+1. **TurboQuant plugin path is not yet replaceable on ROCm.** The 31B 24 GiB OOM root cause (3.57 GiB plugin overhead) is local to `Alberto-Codes/turboquant-vllm`. Upstream WHT path (PR #38479) is CUDA-only. Continue with `TQ4_SHARE_PRIMITIVES=1` shared-primitives patch and E4B canary as the regression probe.
+2. **GPTQModel custom Gemma4 defusion may be removable.** Before dropping our patches, run a side-by-side 26B-A4B re-quant on GPTQModel ≥6.0.3 native vs our patched flow; compare cosine + load size + serving smoke.
+3. **EGA (TrevorS/gemma-4-abliteration) is a strong upgrade for 26B-A4B abliteration.** Our current dense-pathway abliteration likely caps at the documented 29/100 refusal rate for 26B; EGA reaches 5/686 with lower KL. This is a higher-priority replacement than Heretic for the 26B/31B Gemma4 lanes (Heretic is more general and a better fit for adopting Qwen/DeepSeek candidates).
+4. **Heretic is the right tool for non-Gemma4 candidates.** If/when we onboard Qwen3-30B-A3B or DeepSeek-Distill-32B, Heretic's automated TPE optimization is the lowest-friction path; runtime ≈45 min for an 8B model on a 3090, expect ~3–5× scaling for 30B.
+5. **llama.cpp 980ti runtime should validate b8778+.** PRs #21326, #21343, #21488 must all be present, or 26B/E4B GGUFs may emit `<unused24>` token-soup.
+6. **Qwen3-30B-A3B-GPTQ-Int4 is the highest-leverage new lane.** It is a direct candidate to either replace 31B-dense or sit alongside as the omnicoder-replacement coder/general lane. MoE 3B-active gives big throughput wins on a 24 GiB card.
+
+### Recommended next actions (ranked)
+
+1. **Probe upstream Heretic on a small model (E4B or Qwen-7B) on gfx1100** to confirm ROCm compatibility. If it works, queue it as the abliteration tool for Qwen3-30B-A3B candidate. *Cost:* ~1 hr GPU + a few hours integration.
+2. **Run TrevorS/gemma-4-abliteration EGA on Gemma4-26B-A4B** as a parallel artifact to current hybrid. This is the cleanest path to a low-KL 26B-A4B abliterated model. *Cost:* one calibration run on radeonvii/gfx1100 + cosine validation.
+3. **Stand up a Qwen3-30B-A3B-GPTQ-Int4 modelcache** on `cblevins-7900xtx`, served via vLLM. No quantization needed (pre-quantized). Use it as an A/B against Gemma4-31B for general/coding traffic. *Cost:* manifest + smoke test, no quant time.
+4. **Validate llama.cpp version on 980ti runtime image.** Bump to b8778+ if behind. Run a deterministic prompt smoke after the bump. *Cost:* image rebuild + smoke.
+5. **Build the TurboQuant runtime image with `TQ4_SHARE_PRIMITIVES=1`** (the existing pending-runtime gate from the plan) and run the E4B regression probe. This is still the gate before any 31B re-attempt. *Cost:* one runtime build + E4B probe.
+6. **Schedule a GPTQModel 6.0.3 vs in-tree-patches A/B for 26B-A4B** (after EGA artifact lands so we have a clean abliterated base). If parity holds, delete our custom defusion code in `pkg/quantization/gptq.go`. *Cost:* one re-quant run + diff.
+7. **Defer**: NVFP4, Gabliteration, MOSE, hybrid-attention candidates (Qwen3-Next/3.6) until upstream ROCm support exists and TurboQuant ROCm port lands.
+
+### Sources (new this refresh)
+
+- https://github.com/vllm-project/vllm/pull/38479 — TurboQuant upstream merged 2026-04-15
+- https://github.com/vllm-project/vllm/releases — vLLM 0.19/0.20 release notes
+- https://docs.vllm.ai/projects/recipes/en/latest/Google/Gemma4.html — official Gemma4 vLLM recipe (FP8 KV recommended; ROCm 7.2.1)
+- https://pypi.org/project/GPTQModel/ — 6.0.3 / 5.8.0 release timeline
+- https://github.com/ModelCloud/GPTQModel — Gemma4 + ROCm support
+- https://github.com/ggml-org/llama.cpp/pull/21326 — Gemma4 template parser
+- https://github.com/ggml-org/llama.cpp/pull/21343 — Gemma4 tokenizer fix
+- https://github.com/ggml-org/llama.cpp/pull/21488 — BPE detokenizer byte-token handling
+- https://github.com/ggml-org/llama.cpp/issues/21516 — Vulkan `<unused>` infinite-loop
+- https://github.com/ggml-org/llama.cpp/issues/21726 — Gemma4 gibberish with `-nkvo`
+- https://github.com/p-e-w/heretic — Heretic abliteration tool
+- https://github.com/TrevorS/gemma-4-abliteration — Biprojection + EGA for E2B/E4B/26B/31B
+- https://arxiv.org/html/2512.18901 — Gabliteration (multi-directional SVD)
+- https://arxiv.org/html/2512.13655 — Comparative analysis of LLM abliteration methods
+- https://huggingface.co/Qwen/Qwen3-30B-A3B-GPTQ-Int4 — pre-quantized MoE candidate
+- https://huggingface.co/nvidia/Gemma-4-31B-IT-NVFP4 — NVFP4 (CUDA-only)
+- https://rocm.docs.amd.com/en/latest/about/release-notes.html — ROCm 7.2.2
+- https://www.amd.com/en/developer/resources/technical-articles/2025/pytorch-2-9-wheel-variant-support-expands-to-rocm.html — PyTorch 2.9 wheel variants
+- https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/discussions/11 — Unsloth re-uploaded GGUFs after llama.cpp fixes

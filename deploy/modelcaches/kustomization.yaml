@@ -21,6 +21,10 @@ resources:
   # - gemma4-26b-a4b-gptq-dense.yaml  # gemma4-26b-a4b-gptq-dense (cblevins-5930k, denseModulePolicy=validate canary — issue #53 C)
   - gemma4-31b-gptq.yaml            # gemma4-31b-gptq (radeonvii)
 
+  # === Pre-quantized HF artifacts (download-only, no Abliteration/Quantization) ===
+  # 2026-05-03: official Qwen GPTQ INT4 MoE — fills omnicoder gap on 7900xtx.
+  - qwen3-30b-a3b-gptq-int4.yaml    # qwen3-30b-a3b-gptq-int4 (cblevins-7900xtx, download-only)
+
   # === Legacy OCI pull caches disabled with the old Qwen rollout ===
   # - qwen35-27b-opus-distill-oci.yaml # disabled
   # - qwen35-9b-oci.yaml               # disabled
