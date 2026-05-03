@@ -3,9 +3,11 @@ package proxy
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // defaultStalledLoadThreshold is how long a Model may sit in
@@ -56,6 +58,54 @@ func isStalledLoadError(err error) (*StalledLoadError, bool) {
 		return s, true
 	}
 	return nil, false
+}
+
+// ModelFailedError is returned when a Model has reached a terminal Failed
+// phase. The proxy should fail queued activation requests immediately instead
+// of waiting for the full cold-start timeout.
+type ModelFailedError struct {
+	Model   string
+	Message string
+}
+
+func (e *ModelFailedError) Error() string {
+	if e == nil {
+		return "model failed"
+	}
+	if e.Message == "" {
+		return fmt.Sprintf("model %q is Failed", e.Model)
+	}
+	return fmt.Sprintf("model %q is Failed: %s", e.Model, e.Message)
+}
+
+func detectFailedModel(model *aiv1alpha2.Model) *ModelFailedError {
+	if model == nil || model.Status.Phase != aiv1alpha2.ModelPhaseFailed {
+		return nil
+	}
+	return &ModelFailedError{
+		Model:   model.Name,
+		Message: failedModelMessage(model),
+	}
+}
+
+func failedModelMessage(model *aiv1alpha2.Model) string {
+	if model.Status.Message != "" {
+		return model.Status.Message
+	}
+	for _, cond := range model.Status.Conditions {
+		if cond.Status == metav1.ConditionFalse && cond.Message != "" {
+			parts := []string{}
+			if cond.Type != "" {
+				parts = append(parts, cond.Type)
+			}
+			if cond.Reason != "" {
+				parts = append(parts, cond.Reason)
+			}
+			parts = append(parts, cond.Message)
+			return strings.Join(parts, ": ")
+		}
+	}
+	return ""
 }
 
 // detectStalledLoad checks whether a Model is currently in a wedged cold start.

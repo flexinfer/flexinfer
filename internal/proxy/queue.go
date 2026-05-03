@@ -338,6 +338,9 @@ func (p *Proxy) waitForReady(ctx context.Context, modelName string) error {
 				if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 					return nil
 				}
+				if failed := detectFailedModel(m); failed != nil {
+					return failed
+				}
 				// Fail fast if the cold-start has obviously wedged on weight
 				// loading (LoadingProgressAt timestamp hasn't advanced in long
 				// enough that the proxy should stop queuing more work).

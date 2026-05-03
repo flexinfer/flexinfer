@@ -234,6 +234,47 @@ func TestWaitForReady_V1Alpha2Timeout(t *testing.T) {
 	assert.Contains(t, err.Error(), "timeout")
 }
 
+func TestWaitForReady_V1Alpha2FailedModel(t *testing.T) {
+	RegisterMetrics()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha1.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha2.AddToScheme(scheme))
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "failed-model",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "pvc://missing/model",
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase:   aiv1alpha2.ModelPhaseFailed,
+			Message: "no matching ready nodes",
+		},
+	}
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(model).
+		WithStatusSubresource(model).
+		Build()
+
+	p := &Proxy{
+		client:           k8sClient,
+		namespace:        "default",
+		coldStartTimeout: 5 * time.Second,
+	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", 5*time.Second)
+
+	err := p.waitForReady(context.Background(), "failed-model")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no matching ready nodes")
+}
+
 func TestWaitForReady_V1Alpha1Fallback(t *testing.T) {
 	RegisterMetrics()
 
