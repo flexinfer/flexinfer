@@ -177,6 +177,22 @@ func (r *Runner) Run(ctx context.Context, in RunInput) (*RunResult, error) {
 			EarlyExitReason: dres.EarlyExitReason,
 			TotalCostUSD:    dres.TotalCostUSD,
 		}
+		// Roll the full debate spend (editor.propose + every
+		// reviewer.critique + every moderator.assess + every
+		// editor.revise) into the run's CostUSD so the artifact
+		// writer's downstream stamp into council_runs.cost_*_usd
+		// reflects the *full* debate cost — not just the editor's
+		// final-revise cost (which is what out.CostUSD alone holds).
+		// Without this, CouncilDAO.SumCostSince undercounts debate
+		// runs and the daily council cap can overshoot.
+		//
+		// All debate spend is attributed to the Frontier bucket in
+		// slice 5.2; per-round backend tracking lands in slice 5.3
+		// alongside the HUD panel and refines the split.
+		out.Sidecar.CostUSD = council.SidecarCost{
+			Frontier: dres.TotalCostUSD,
+			Local:    0,
+		}
 		r.logf("debate complete",
 			"run_id", res.RunID,
 			"trigger", in.Trigger,
@@ -255,6 +271,15 @@ func (r *Runner) Run(ctx context.Context, in RunInput) (*RunResult, error) {
 		}
 		if err := verdict.PersistTo(ctx, r.Store.Eval, res.RunID); err != nil {
 			r.logf("persist eval verdict failed", "run_id", res.RunID, "error", err)
+		}
+		// Persist debate transcript rows after the council run row
+		// exists (FK on council_run_id). Slice 5.2: skip in dryrun
+		// to keep .loom/dryrun runs zero-side-effect; best-effort
+		// logging on per-row error so a single failure doesn't
+		// unwind the whole run (the run already succeeded — its
+		// artifacts are already on disk).
+		if out.Sidecar.Debate != nil && len(out.Sidecar.Debate.Rounds) > 0 {
+			persistDebateTranscript(ctx, r.Store.Debate, res.RunID, out.Sidecar.Debate.Rounds, r.now, r.logf)
 		}
 	}
 
@@ -343,4 +368,71 @@ func (r *Runner) logf(msg string, kv ...any) {
 // to os.MkdirAll.
 func mkdirAll(path string, perm uint32) error {
 	return os.MkdirAll(path, os.FileMode(perm))
+}
+
+// persistDebateTranscript inserts every SidecarDebateRound into
+// council_debate_rounds. Lives outside Runner.Run so the loop body
+// stays scannable; per-row failures are logged but do not bubble — by
+// the time we get here the council artifacts are already on disk and
+// the council_runs row is committed, so re-raising would leave the
+// caller no recovery path. Returns the number of rows successfully
+// persisted (mainly for tests + future telemetry).
+func persistDebateTranscript(
+	ctx context.Context,
+	dao *store.DebateDAO,
+	runID string,
+	rounds []council.SidecarDebateRound,
+	now func() time.Time,
+	logf func(msg string, kv ...any),
+) int {
+	if dao == nil || len(rounds) == 0 {
+		return 0
+	}
+	written := 0
+	for i := range rounds {
+		round := &rounds[i]
+		dbRound := &store.CouncilDebateRound{
+			CouncilRunID:   runID,
+			RoundIndex:     round.Round,
+			Role:           store.DebateRole(round.Role),
+			CostUSD:        round.CostUSD,
+			Summary:        round.Summary,
+			ArtifactDeltas: artifactDeltasToStore(round.ArtifactDeltas),
+			CreatedAt:      now(),
+		}
+		if err := dao.AppendRound(ctx, dbRound); err != nil {
+			if logf != nil {
+				logf("persist debate round failed",
+					"run_id", runID,
+					"round_index", round.Round,
+					"role", round.Role,
+					"error", err,
+				)
+			}
+			continue
+		}
+		written++
+	}
+	return written
+}
+
+// artifactDeltasToStore adapts the sidecar's typed delta slice to the
+// loose []map[string]any shape the store DAO accepts. Mirrors the
+// schema's `artifact_deltas_json` column (free-form JSON).
+func artifactDeltasToStore(deltas []council.SidecarDebateDelta) []map[string]any {
+	if len(deltas) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(deltas))
+	for _, d := range deltas {
+		entry := map[string]any{"path": d.Path}
+		if d.LineRange != "" {
+			entry["line_range"] = d.LineRange
+		}
+		if d.Action != "" {
+			entry["action"] = d.Action
+		}
+		out = append(out, entry)
+	}
+	return out
 }

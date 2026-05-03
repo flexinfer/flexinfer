@@ -25,6 +25,15 @@ type BudgetReader interface {
 	CouncilRunsSince(ctx context.Context, since time.Time) (int, error)
 	PipelineRunsSince(ctx context.Context, since time.Time) (int, error)
 	PipelineActiveRuns(ctx context.Context) (int, error)
+
+	// DebateCostSince exposes the *debate-only* slice of spend so
+	// future tier-aware caps + HUD telemetry can answer "how much
+	// did we spend on Council Debate Mode in the last 24h" without
+	// joining through council_runs. Council Debate spend is also
+	// rolled into council_runs.cost_*_usd at run completion (via the
+	// runner's post-debate stamp), so CouncilCostSince already
+	// includes it; DebateCostSince is the narrower projection.
+	DebateCostSince(ctx context.Context, since time.Time) (float64, error)
 }
 
 // Budget enforces the spend, concurrency, and per-day-count caps captured in
@@ -148,6 +157,18 @@ func (b *Budget) Allow(ctx context.Context, tier Tier, estimateUSD float64) (Dec
 	}
 
 	return d, nil
+}
+
+// DebateSpentSince returns the total debate spend across the rolling
+// 24h window ending at b.Now(). Informational helper for HUD widgets
+// and slice 5.3's "Debate Rounds" panel; does not enforce any cap on
+// its own. Returns 0 with nil error when no debate has run yet.
+func (b *Budget) DebateSpentSince(ctx context.Context) (float64, error) {
+	if b == nil || b.Reader == nil {
+		return 0, fmt.Errorf("budget: not configured")
+	}
+	since := b.now().Add(-24 * time.Hour)
+	return b.Reader.DebateCostSince(ctx, since)
 }
 
 // Remaining returns the daily USD remaining for the tier, clamped at zero.
