@@ -25,9 +25,9 @@ spec:
     vendor: amd
     count: 2
     shared: 7900xtx-textgen
-    # Slightly above the warm 31B primary and the validated 16K canary so
-    # explicit 22K demand can take the lane during validation.
-    priority: 260
+    # Below the warm 31B primary so successful 22K validation does not strand
+    # the shared 7900xtx-textgen lane away from the default chat model.
+    priority: 240
     vramEstimateMB: 18000
   serverless:
     enabled: true

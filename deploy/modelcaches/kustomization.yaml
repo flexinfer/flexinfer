@@ -15,7 +15,10 @@ resources:
 
   # === Active Abliteration + GPTQ pipelines (Download → Abliterate → Quantize → Publish) ===
   - gemma4-26b-a4b-gptq.yaml        # gemma4-26b-a4b-gptq (cblevins-7900xtx)
-  - gemma4-26b-a4b-gptq-dense.yaml  # gemma4-26b-a4b-gptq-dense (cblevins-5930k, denseModulePolicy=validate canary — issue #53 C)
+  # Dense rebuild paused 2026-05-03: it monopolizes cblevins-5930k and blocks
+  # active serving validation for Omnicoder. Re-enable only during a dedicated
+  # rebuild window or after ModelCache grows a first-class suspend knob.
+  # - gemma4-26b-a4b-gptq-dense.yaml  # gemma4-26b-a4b-gptq-dense (cblevins-5930k, denseModulePolicy=validate canary — issue #53 C)
   - gemma4-31b-gptq.yaml            # gemma4-31b-gptq (radeonvii)
 
   # === Legacy OCI pull caches disabled with the old Qwen rollout ===
