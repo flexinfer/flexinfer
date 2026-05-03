@@ -109,6 +109,24 @@ spec:
                   name: loom-secrets
                   key: WEAVER_SUBAGENT_MODEL
                   optional: true
+            # Hive operator proxy. Setting LOOM_HIVE_OPERATOR_URL flips
+            # the HUD's hive proxy from "503 — operator not configured"
+            # to live read-through against the loom-hive-operator
+            # service in the loom-hive namespace. Reads (Council
+            # panel, Pipelines panel, Backlog, Audit, Cross-repo,
+            # Squads, Debate transcripts) work immediately. Mutations
+            # (POST /council/run, /subrun, etc.) additionally require
+            # LOOM_HIVE_OPERATOR_TOKEN; until that's wired through
+            # SOPS into loom-secrets, mutating endpoints respond 401
+            # (graceful — the panels stay read-only).
+            - name: LOOM_HIVE_OPERATOR_URL
+              value: http://loom-hive-operator.loom-hive.svc.cluster.local:8090
+            - name: LOOM_HIVE_OPERATOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: loom-secrets
+                  key: LOOM_HIVE_OPERATOR_TOKEN
+                  optional: true
             # HUD_PIPELINE_PROJECTS is intentionally unset: the embedded HUD
             # auto-discovers projects via the `gitlab__list_projects` MCP tool
             # at startup (internal/hud/embed.go). Set this env var explicitly
