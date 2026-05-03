@@ -192,6 +192,78 @@ func TestHandleCouncilRuns_ListAndGet(t *testing.T) {
 	}
 }
 
+// TestHandleCouncilRunDebate covers the slice-5.3 debate transcript
+// endpoint: 200 + populated array when debate ran, 200 + [] when the
+// run had no debate, 404 when the run id itself is unknown.
+func TestHandleCouncilRunDebate(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Seed a council run + 3-row debate transcript matching the
+	// slice 5.2 fixture's converge-on-round-1 shape.
+	if err := op.store.Council.Put(ctx, &store.CouncilRun{
+		ID: "COUNCIL-DEBATE", Trigger: store.CouncilTriggerIncident,
+		StartedAt: time.Now().UTC(), Outcome: store.CouncilOutcomeSuccess,
+	}); err != nil {
+		t.Fatalf("seed council: %v", err)
+	}
+	rounds := []*store.CouncilDebateRound{
+		{CouncilRunID: "COUNCIL-DEBATE", RoundIndex: 0, Role: store.DebateRoleEditorProposes, CostUSD: 0.42, Summary: "draft v0"},
+		{CouncilRunID: "COUNCIL-DEBATE", RoundIndex: 1, Role: store.DebateRoleReviewerCritiques, CostUSD: 0.40, Summary: "critiques"},
+		{CouncilRunID: "COUNCIL-DEBATE", RoundIndex: 1, Role: store.DebateRoleModeratorDecision, CostUSD: 0.05, Summary: "converged"},
+	}
+	for i, r := range rounds {
+		if err := op.store.Debate.AppendRound(ctx, r); err != nil {
+			t.Fatalf("seed round %d: %v", i, err)
+		}
+	}
+
+	// Seed a single-pass run so the API can show 200 + [] for runs
+	// that don't have debate.
+	if err := op.store.Council.Put(ctx, &store.CouncilRun{
+		ID: "COUNCIL-NODEBATE", Trigger: store.CouncilTriggerCron,
+		StartedAt: time.Now().UTC(), Outcome: store.CouncilOutcomeSuccess,
+	}); err != nil {
+		t.Fatalf("seed nodebate: %v", err)
+	}
+
+	cases := []struct {
+		name      string
+		runID     string
+		wantCode  int
+		wantRows  int
+		wantNotIn string // substring that must NOT appear in body
+	}{
+		{"with_debate", "COUNCIL-DEBATE", http.StatusOK, 3, ""},
+		{"no_debate_returns_empty", "COUNCIL-NODEBATE", http.StatusOK, 0, "draft v0"},
+		{"unknown_run_404", "COUNCIL-MISSING", http.StatusNotFound, 0, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			op.httpMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+				"/api/hive/council/runs/"+tc.runID+"/debate", nil))
+			if rec.Code != tc.wantCode {
+				t.Fatalf("code: got %d want %d body=%s", rec.Code, tc.wantCode, rec.Body.String())
+			}
+			if tc.wantCode != http.StatusOK {
+				return
+			}
+			var got []*store.CouncilDebateRound
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(got) != tc.wantRows {
+				t.Errorf("rows: got %d want %d", len(got), tc.wantRows)
+			}
+			if tc.wantNotIn != "" && strings.Contains(rec.Body.String(), tc.wantNotIn) {
+				t.Errorf("body should not contain %q: %s", tc.wantNotIn, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestHandlePipelineRuns_GetWithStagesAndGates(t *testing.T) {
 	op, cleanup := newTestOperator(t)
 	defer cleanup()

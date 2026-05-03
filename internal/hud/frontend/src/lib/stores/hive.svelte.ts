@@ -37,6 +37,30 @@ export interface CouncilRun {
   CostUSD?: number;
 }
 
+// CouncilDebateRound mirrors the Go store.CouncilDebateRound shape.
+// Used by the Council panel's "Debate Rounds" expander (Phase 5 slice
+// 5.3) to render the per-round transcript persisted by slice 5.2.
+export interface CouncilDebateRound {
+  ID: number;
+  CouncilRunID: string;
+  RoundIndex: number;
+  // editor_proposes | reviewer_critiques | moderator_decision | editor_revises
+  Role: string;
+  CostUSD: number;
+  Summary?: string;
+  ArtifactDeltas?: Array<{ path?: string; line_range?: string; action?: string }>;
+  CreatedAt?: string;
+}
+
+// DebateLoadState tracks the lazy fetch lifecycle per council run.
+// Stored in the hiveStore so the panel can render a spinner / error
+// / cached transcript without re-fetching on every poll tick.
+type DebateLoadState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'loaded'; rounds: CouncilDebateRound[] }
+  | { status: 'error'; message: string };
+
 export interface EvalScore {
   ID: string;
   Loop: string;        // "A" | "B" | "C"
@@ -97,6 +121,12 @@ class HiveStore {
   // repeated polls of the same snapshot don't pad the trend.
   kpis = $state<HiveKPISnapshot | null>(null);
   kpisHistory = $state<HiveKPISnapshot[]>([]);
+
+  // Per-run debate transcripts, keyed by CouncilRun.ID. Populated
+  // lazily by loadDebate() so the council list itself stays cheap.
+  // Phase 5 slice 5.3 — feeds the CouncilPanel's "Debate Rounds"
+  // expander.
+  debateByRun = $state<Record<string, DebateLoadState>>({});
 
   // Connection state
   loading = $state(false);
@@ -208,6 +238,37 @@ class HiveStore {
       if (typeof v === 'number' && Number.isFinite(v)) out.push(v);
     }
     return out;
+  }
+
+  // loadDebate fetches the per-round transcript for one council run.
+  // Cache-on-success: subsequent calls for the same id return without
+  // network. Errors are surfaced via debateByRun[id].status === 'error'
+  // so the panel can show a retry affordance instead of a silent fail.
+  // The 'idle' / 'loading' transitions are explicit so the panel can
+  // distinguish "never tried" from "in flight".
+  async loadDebate(runID: string): Promise<void> {
+    if (!runID) return;
+    const cached = this.debateByRun[runID];
+    if (cached && (cached.status === 'loaded' || cached.status === 'loading')) {
+      return;
+    }
+    this.debateByRun = { ...this.debateByRun, [runID]: { status: 'loading' } };
+    try {
+      const rounds =
+        (await this.getJSON<CouncilDebateRound[]>(
+          `/api/hive/council/runs/${encodeURIComponent(runID)}/debate`,
+        )) ?? [];
+      this.debateByRun = {
+        ...this.debateByRun,
+        [runID]: { status: 'loaded', rounds },
+      };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.debateByRun = {
+        ...this.debateByRun,
+        [runID]: { status: 'error', message },
+      };
+    }
   }
 
   startPolling(intervalMs = 15000): void {
