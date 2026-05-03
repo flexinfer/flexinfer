@@ -673,6 +673,43 @@ func TestEnsureCachePvcSourceReadyJobGatesCacheCopy(t *testing.T) {
 	}
 }
 
+func TestEnsureCachePvcSourceReadyJobExpiredTrustsCompletedCopy(t *testing.T) {
+	cache := cachePVC("ready-expired-cache", "flexinfer-system")
+	cache.UID = types.UID("cache-pvc-uid")
+	copy := copyJob("ready-expired-cache-copy", "flexinfer-system", 1, 0, 0)
+	copy.Annotations = map[string]string{
+		AnnotationSource:                      "pvc://source-pvc/model-a",
+		AnnotationCachePvcUID:                 "cache-pvc-uid",
+		AnnotationCacheSourceReadyJob:         "artifact-transform",
+		AnnotationCacheSourceReadyUID:         "expired-transform-uid",
+		AnnotationCacheSourceReadyCompletedAt: "2026-04-24T15:04:05Z",
+	}
+	model := modelWithCache("ready-expired", "flexinfer-system", "pvc://source-pvc/model-a", &aiv1alpha2.CacheSpec{
+		Strategy: "SharedPVC",
+	})
+	model.Annotations = map[string]string{
+		AnnotationCacheSourceReadyJob: "artifact-transform",
+	}
+
+	r, cl := newModelCacheReconciler(t,
+		model,
+		sourcePVC("source-pvc", "flexinfer-system", corev1.ClaimBound),
+		cache,
+		copy,
+	)
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "vllm"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if !ready {
+		t.Fatal("ensureCache() ready = false, want true when completed copy has matching source-ready provenance")
+	}
+
+	cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+	assertCacheStatus(t, cached, true, "Succeeded", "artifact copied to cache PVC", "CacheCopy", true)
+}
+
 func TestEnsureCachePvcSourceReadyJobCompletionCreatesProvenanceAnnotatedCopy(t *testing.T) {
 	completedAt := metav1.NewTime(time.Date(2026, 4, 24, 15, 4, 5, 0, time.UTC))
 	model := modelWithCache("ready-complete", "flexinfer-system", "pvc://source-pvc/model-a", &aiv1alpha2.CacheSpec{
