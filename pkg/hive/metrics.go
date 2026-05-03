@@ -160,6 +160,27 @@ var (
 	})
 )
 
+// ----- Recursion metrics (Phase 6 slice 6.3) -----
+
+var (
+	// PipelineRecursionDepthHistogram observes the depth of every
+	// successfully-created subrun (parent.depth + 1). The Grafana
+	// dashboard reads this to render a "what depth do subruns
+	// actually reach" panel; alerting on the .99 quantile catches a
+	// runaway recursion before the depth-cap guard rejects every
+	// subsequent call.
+	//
+	// Buckets are tuned for the V2-D6 default of max_depth = 2 plus
+	// headroom: 1, 2, 3 cover the realistic range, 5 + 10 give the
+	// histogram room to grow if policy.recursion.max_depth is
+	// raised. Depth is an integer so float buckets are upper bounds.
+	PipelineRecursionDepthHistogram = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "hive_pipeline_recursion_depth",
+		Help:    "Depth of successfully-created pipeline subruns. 1 = first child of a top-level run.",
+		Buckets: []float64{1, 2, 3, 5, 10},
+	})
+)
+
 // ----- Regression gate metrics (slice 6.3) -----
 
 var (

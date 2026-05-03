@@ -33,6 +33,7 @@ func TestMetricsRegistered(t *testing.T) {
 		{"hive_reconciler_ticks_total", ReconcileTicksTotal},
 		{"hive_reconciler_tick_duration_seconds", ReconcileTickDurationSeconds},
 		{"hive_eval_score", EvalScoreSummary},
+		{"hive_pipeline_recursion_depth", PipelineRecursionDepthHistogram},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -71,6 +72,8 @@ func TestCounterVecLabelsAccept(t *testing.T) {
 
 	EvalScoreSummary.WithLabelValues("pipeline_run", "pipeline_outcome_v1").Observe(0.87)
 
+	PipelineRecursionDepthHistogram.Observe(1)
+
 	// Confirm at least one sample landed somewhere readable. testutil
 	// panics if the metric isn't registered — implicit assertion.
 	if got := testutil.ToFloat64(EscalationIssueCreatedTotal); got < 1 {
@@ -96,6 +99,7 @@ func TestGatherableExposesHiveMetrics(t *testing.T) {
 		"hive_reconciler_ticks_total":        false,
 		"hive_eval_score":                    false,
 		"hive_pipeline_stage_attempts_total": false,
+		"hive_pipeline_recursion_depth":      false,
 	}
 	for _, mf := range mfs {
 		if _, ok := want[mf.GetName()]; ok {
