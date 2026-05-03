@@ -73,6 +73,55 @@ func (d *PipelineDAO) PutRun(ctx context.Context, run *PipelineRun) error {
 	return nil
 }
 
+// CreateSubrun inserts one new pipeline_runs row for a v2 recursion
+// subrun. The caller (pkg/hive/pipeline/recursion.SubrunGuard) is
+// responsible for the depth/budget/cycle guards and for filling
+// run.ParentRunID + run.Depth before this call. CreateSubrun adds an
+// existence check on parent_run_id (so a misuse can't silently dangle)
+// and fails if the row id already exists (subruns are insert-only;
+// PutRun is the upsert-friendly path for ongoing rollups).
+func (d *PipelineDAO) CreateSubrun(ctx context.Context, run *PipelineRun) error {
+	if run == nil || run.ID == "" {
+		return errors.New("pipeline: subrun.ID required")
+	}
+	if run.ParentRunID == nil || *run.ParentRunID == "" {
+		return errors.New("pipeline: subrun.ParentRunID required")
+	}
+	if run.Depth <= 0 {
+		return fmt.Errorf("pipeline: subrun.Depth must be > 0 (got %d)", run.Depth)
+	}
+	// Defensive existence check on the parent — prevents a
+	// dangling subrun row when the caller forgets to verify
+	// upstream. The recursion guard already does this lookup, but
+	// the DAO can be invoked directly from tests / future callers.
+	row := d.db.QueryRowContext(ctx,
+		`SELECT 1 FROM pipeline_runs WHERE id = ?`, *run.ParentRunID)
+	var got int
+	if err := row.Scan(&got); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("pipeline: subrun parent %q does not exist", *run.ParentRunID)
+		}
+		return fmt.Errorf("pipeline: subrun parent lookup: %w", err)
+	}
+	if run.StartedAt.IsZero() {
+		run.StartedAt = time.Now().UTC()
+	}
+	parentRun := sql.NullString{String: *run.ParentRunID, Valid: true}
+	_, err := d.db.ExecContext(ctx, `
+		INSERT INTO pipeline_runs (`+pipelineColumns+`)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	`,
+		run.ID, run.BacklogID, run.Template, string(run.State),
+		nullStr(run.CurrentStage), run.Attempts, nullStr(run.WorktreePath), sql.NullInt64{},
+		timeRFC3339(run.StartedAt), sql.NullString{}, run.CostUSD, nullStr(run.ParentSessionID),
+		parentRun, run.Depth,
+	)
+	if err != nil {
+		return fmt.Errorf("pipeline create-subrun %s: %w", run.ID, err)
+	}
+	return nil
+}
+
 // ListSubruns returns every direct child of the given parent pipeline run,
 // ordered by started_at. Empty result is not an error. v2 recursion path.
 func (d *PipelineDAO) ListSubruns(ctx context.Context, parentRunID string) ([]*PipelineRun, error) {

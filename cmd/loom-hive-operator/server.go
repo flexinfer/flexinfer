@@ -14,6 +14,7 @@ import (
 	"github.com/crb2nu/loom/pkg/hive"
 	"github.com/crb2nu/loom/pkg/hive/audit"
 	"github.com/crb2nu/loom/pkg/hive/gates"
+	"github.com/crb2nu/loom/pkg/hive/pipeline"
 	"github.com/crb2nu/loom/pkg/hive/runner"
 	"github.com/crb2nu/loom/pkg/hive/squads"
 	"github.com/crb2nu/loom/pkg/hive/store"
@@ -38,6 +39,13 @@ type operator struct {
 	auditTriggers   *audit.Triggers
 	auditPolicy     *audit.PoolPolicy
 
+	// Pipeline recursion (Phase 6 slice 6.1). The guard runs the
+	// depth/budget/cycle checks before the DAO insert. Always set
+	// — the guard itself short-circuits when policy.recursion is
+	// disabled (V2-D6 default), so wiring it from newOperator is
+	// safe.
+	subrunGuard *pipeline.SubrunGuard
+
 	logger *slog.Logger
 
 	ready atomic.Bool
@@ -52,6 +60,13 @@ func newOperator(st *store.Store, pm *hive.PolicyManager, b *hive.Budget, logger
 		// Default regression gate: same store + policy + default 30min
 		// window. Tests that want to skip the gate clear this field.
 		regressionGate: &gates.RegressionGate{Store: st, Policy: pm},
+		// Phase 6 recursion guard. PolicyFunc reads from the same
+		// PolicyManager so hot-reloads of recursion.enabled /
+		// max_depth / subrun_max_budget_share take effect mid-run.
+		subrunGuard: &pipeline.SubrunGuard{
+			Store:      st,
+			PolicyFunc: pm.Current,
+		},
 	}
 }
 
@@ -114,6 +129,7 @@ func (o *operator) httpMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/hive/pipeline/runs/{id}/pause", requireAdmin(o.handlePipelinePause))
 	mux.HandleFunc("POST /api/hive/pipeline/runs/{id}/resume", requireAdmin(o.handlePipelineResume))
 	mux.HandleFunc("POST /api/hive/pipeline/runs/{id}/escalate", requireAdmin(o.handlePipelineEscalate))
+	mux.HandleFunc("POST /api/hive/pipeline/runs/{id}/subrun", requireAdmin(o.handlePipelineSubrunCreate))
 
 	// Backlog.
 	mux.HandleFunc("GET /api/hive/backlog", o.handleBacklogList)
