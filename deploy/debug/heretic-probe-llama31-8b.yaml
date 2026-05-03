@@ -1,0 +1,322 @@
+# Heretic ROCm gfx1100 probe Job.
+#
+# One-off debug Job that runs `p-e-w/heretic` (Optuna-driven automated
+# abliteration tool, https://github.com/p-e-w/heretic) on cblevins-7900xtx
+# (Radeon RX 7900 XTX, gfx1100, 24 GiB VRAM) against
+# meta-llama/Llama-3.1-8B-Instruct.
+#
+# Probe goals:
+#   1. Confirm `heretic-llm` PyPI install works on top of our existing ROCm
+#      quantizer image (which already ships PyTorch 2.6 + transformers + numpy).
+#   2. Confirm `bitsandbytes` (heretic dependency, ~=0.49) imports cleanly with
+#      the gfx1100 wheel — no source rebuild required.
+#   3. Confirm Heretic produces a Hugging-Face-compatible artifact (config.json
+#      + sharded safetensors) that transformers can load and run a benign
+#      generation against without NaN / token collapse.
+#
+# Pass/fail of this probe gates whether we adopt Heretic as our abliteration
+# tool for the new Qwen3-30B-A3B candidate (and other future models).
+#
+# Prerequisites:
+#   - A free 7900 XTX on cblevins-7900xtx (no other vLLM/runtime pod claiming
+#     amd.com/gpu). Pause/scale-down conflicting model deployments first.
+#   - hf-token Secret in flexinfer-system namespace with key HF_TOKEN
+#     (Llama 3.1 is a gated repo and will refuse to download without it).
+#
+# Usage:
+#   kubectl apply -f deploy/debug/heretic-probe-llama31-8b.yaml
+#   kubectl logs -f job/heretic-probe-llama31-8b -n flexinfer-system
+#   kubectl delete -f deploy/debug/heretic-probe-llama31-8b.yaml
+#
+# Cleanup is automatic via ttlSecondsAfterFinished: 7200 (2h after completion).
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: heretic-probe-llama31-8b
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+    agent_id: claude-opus-4-7
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    OUT_DIR=/workspace/out
+    LOG_FILE="${OUT_DIR}/heretic.log"
+    HERETIC_OUT="${OUT_DIR}/llama31-8b-heretic"
+    mkdir -p "${OUT_DIR}"
+
+    echo "============================================================"
+    echo "Heretic ROCm gfx1100 probe — meta-llama/Llama-3.1-8B-Instruct"
+    echo "============================================================"
+    date -u
+    echo "Hostname: $(hostname)"
+    free -h | head -3
+    echo "----- GPU visibility -----"
+    rocm-smi --showid --showproductname 2>&1 | head -40 || echo "rocm-smi not available"
+    echo "----- HIP env -----"
+    env | grep -E '^(HIP|HSA|ROCR|PYTORCH_ROCM|HF_)' | sort
+
+    echo
+    echo "[1/6] Baseline package versions"
+    python3 - <<'PY'
+    import importlib, sys
+    print(f"python: {sys.version.split()[0]}")
+    for mod in ("torch", "transformers", "numpy", "bitsandbytes"):
+        try:
+            m = importlib.import_module(mod)
+            print(f"{mod}: {getattr(m, '__version__', '?')}")
+        except Exception as e:
+            print(f"{mod}: NOT INSTALLED ({e!r})")
+    try:
+        import torch
+        print(f"torch.cuda.is_available: {torch.cuda.is_available()}")
+        print(f"torch.version.hip: {getattr(torch.version, 'hip', None)}")
+        if torch.cuda.is_available():
+            print(f"device: {torch.cuda.get_device_name(0)}")
+            free, total = torch.cuda.mem_get_info(0)
+            print(f"vram free/total: {free/1024**3:.2f} / {total/1024**3:.2f} GiB")
+    except Exception as e:
+        print(f"torch GPU probe failed: {e!r}")
+    PY
+
+    echo
+    echo "[2/6] Installing heretic-llm (no-deps) + runtime extras"
+    # heretic pulls aggressive pins (numpy~=2.2, transformers~=5.6, bitsandbytes~=0.49).
+    # The base image already has compatible-enough versions of torch/transformers,
+    # so we install heretic without its dep tree and add only what is needed.
+    python3 -m pip install --no-cache-dir --no-deps "heretic-llm"
+    # Heretic's runtime imports — install separately so pip can negotiate against
+    # the existing torch/transformers without trying to upgrade them.
+    python3 -m pip install --no-cache-dir \
+        "optuna>=4.0,<5" \
+        "lm-eval>=0.4" \
+        "pacmap" \
+        "geom-median" \
+        "langdetect" \
+        "immutabledict" \
+        "questionary" \
+        "tomli-w" \
+        "py-cpuinfo" \
+        "pydantic-settings" \
+        "rich" \
+        "kernels"
+
+    echo
+    echo "[3/6] Numpy compatibility check"
+    # ROCm PyTorch 2.6 was compiled against numpy 1.x. heretic claims numpy~=2.2.
+    # Try to import; if heretic refuses, attempt a numpy 2.x bump and re-test.
+    if ! python3 -c "import heretic; print('heretic', heretic.__version__)" 2>/tmp/heretic-import.err; then
+        echo "First import failed:"
+        cat /tmp/heretic-import.err
+        echo "Attempting numpy 2.x upgrade..."
+        python3 -m pip install --no-cache-dir --upgrade "numpy>=2.2,<3"
+        python3 -c "import heretic; print('heretic', heretic.__version__)" || {
+            echo "FATAL: heretic still fails to import after numpy upgrade."
+            exit 1
+        }
+    fi
+
+    echo
+    echo "[4/6] bitsandbytes ROCm import smoke"
+    python3 - <<'PY'
+    import bitsandbytes as bnb
+    print("bnb", bnb.__version__)
+    # Touch a CUDA op to confirm the gfx1100 kernel binding is real, not a CPU stub.
+    import torch
+    if torch.cuda.is_available():
+        x = torch.randn(64, 64, device="cuda", dtype=torch.float16)
+        y = bnb.functional.quantize_blockwise(x)
+        print("blockwise quant ok, output type:", type(y))
+    else:
+        print("WARNING: no CUDA device — bnb GPU path NOT exercised")
+    PY
+
+    echo
+    echo "[5/6] Running heretic abliteration probe"
+    echo "    target: meta-llama/Llama-3.1-8B-Instruct"
+    echo "    output: ${HERETIC_OUT}"
+    set +e
+    heretic --help 2>&1 | head -60
+    set -e
+    # Run heretic. We do NOT pass --n-trials because the flag name varies between
+    # Heretic releases; let it use its default Optuna budget. Output is captured
+    # verbatim to the log so post-mortem inspection is possible regardless of
+    # exit code.
+    set +e
+    heretic meta-llama/Llama-3.1-8B-Instruct \
+        --output-path "${HERETIC_OUT}" 2>&1 | tee "${LOG_FILE}"
+    HERETIC_EC=${PIPESTATUS[0]}
+    set -e
+    echo "heretic exit code: ${HERETIC_EC}"
+    if [ "${HERETIC_EC}" -ne 0 ]; then
+        echo "FAIL: heretic exited non-zero. Inspect ${LOG_FILE} for details."
+        exit "${HERETIC_EC}"
+    fi
+
+    echo
+    echo "[6/6] Loading abliterated artifact in transformers + benign generation"
+    if [ ! -f "${HERETIC_OUT}/config.json" ]; then
+        echo "FAIL: heretic output dir missing config.json — output may be a LoRA adapter only."
+        ls -la "${HERETIC_OUT}" || true
+        exit 2
+    fi
+    ls -la "${HERETIC_OUT}"
+    python3 - <<PY
+    import os, sys, math, torch
+    from transformers import AutoTokenizer, AutoModelForCausalLM
+
+    out_dir = "${HERETIC_OUT}"
+    print(f"Loading from {out_dir}")
+    tok = AutoTokenizer.from_pretrained(out_dir, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        out_dir,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    model.eval()
+
+    prompts = [
+        "Write a four-line poem about chocolate chip cookies.",
+        "What is the capital of France?",
+        "Briefly describe a sunny day at the beach.",
+        "Give me three tips for baking sourdough bread.",
+        "Compose a haiku about autumn leaves.",
+    ]
+    failures = 0
+    for i, prompt in enumerate(prompts, 1):
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            text = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        except Exception:
+            text = prompt
+        inputs = tok(text, return_tensors="pt").to(model.device)
+        with torch.no_grad():
+            out = model.generate(
+                **inputs,
+                max_new_tokens=80,
+                do_sample=False,
+                pad_token_id=tok.eos_token_id,
+            )
+        gen = tok.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+        # NaN / inf in logits would surface as empty / weird strings, but check explicitly.
+        with torch.no_grad():
+            logits = model(**inputs).logits
+            has_nan = torch.isnan(logits).any().item()
+            has_inf = torch.isinf(logits).any().item()
+        marker = "OK"
+        if has_nan or has_inf:
+            marker = f"FAIL (nan={has_nan} inf={has_inf})"
+            failures += 1
+        elif not gen.strip():
+            marker = "FAIL (empty generation)"
+            failures += 1
+        elif "<unused" in gen or len(set(gen[:80])) < 6:
+            marker = "FAIL (token collapse)"
+            failures += 1
+        print(f"  [{i}/{len(prompts)}] {marker}")
+        print(f"    prompt:   {prompt}")
+        print(f"    response: {gen[:200].replace(chr(10), ' / ')}")
+
+    if failures:
+        print(f"\nSMOKE FAILED: {failures}/{len(prompts)} prompts had issues")
+        sys.exit(3)
+    print(f"\nSMOKE PASSED: all {len(prompts)} benign prompts produced clean output")
+    PY
+
+    echo
+    echo "============================================================"
+    echo "Heretic probe completed successfully."
+    echo "Artifacts (will be discarded when emptyDir is reclaimed):"
+    du -sh "${HERETIC_OUT}" || true
+    ls -la "${HERETIC_OUT}" | head -40
+    echo "============================================================"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: heretic-probe-llama31-8b
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+    agent_id: claude-opus-4-7
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: flexinfer
+        flexinfer.ai/purpose: debug
+        agent_id: claude-opus-4-7
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-7900xtx
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+        - key: amd.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: heretic
+          image: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "/scripts/run.sh"]
+          resources:
+            requests:
+              cpu: "8"
+              memory: "32Gi"
+              amd.com/gpu: "1"
+            limits:
+              cpu: "16"
+              memory: "64Gi"
+              amd.com/gpu: "1"
+          env:
+            - name: HF_HOME
+              value: /workspace/hf
+            - name: HF_HUB_CACHE
+              value: /workspace/hf/hub
+            - name: TRANSFORMERS_CACHE
+              value: /workspace/hf
+            - name: HF_HUB_DISABLE_XET
+              value: "1"
+            - name: PYTORCH_ROCM_ARCH
+              value: gfx1100
+            - name: HSA_OVERRIDE_GFX_VERSION
+              value: "11.0.0"
+            - name: PYTORCH_HIP_ALLOC_CONF
+              value: "expandable_segments:True"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: HF_TOKEN
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: workspace
+              mountPath: /workspace
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: scripts
+          configMap:
+            name: heretic-probe-llama31-8b
+            defaultMode: 0755
+        - name: workspace
+          emptyDir:
+            sizeLimit: "80Gi"
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: "8Gi"
