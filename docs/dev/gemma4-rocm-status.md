@@ -19,25 +19,27 @@ Update this document whenever a tuning change lands or a new blocker is found.
 | Model ID | Model CR | Node | Attention / KV path | Intent |
 |----------|----------|------|---------------------|--------|
 | `gemma4-31b-gptq` | `gemma4-31b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + float16 KV | Current warm primary at the validated 2K ceiling (`minReplicas: 1`) |
-| `gemma4-26b-a4b-gptq` | `gemma4-26b-a4b-gptq` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 16K validated default 26B alias / fallback (`minReplicas: 0`) |
-| `gemma4-26b-a4b-gptq-long` | `gemma4-26b-a4b-gptq-long` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 16K proof canary retained as scale-to-zero validation lane |
-| `gemma4-26b-a4b-gptq-22k` | `gemma4-26b-a4b-gptq-22k` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 22K upper-bound canary; validated at 17K prompt tokens so far (`minReplicas: 0`, `warmPolicy: ondemand`, priority 260 for explicit validation demand) |
+| `gemma4-26b-a4b-gptq-long` | `gemma4-26b-a4b-gptq-long` | `cblevins-7900xtx` | `TRITON_ATTN` + FP8 KV | 16K proof lane and only reconciled 26B profile (`minReplicas: 0`, priority 255 for explicit validation demand) |
 
 ## Current profile knobs
 
 | Model ID | `maxModelLen` | `maxNumBatchedTokens` | `gpuMemoryUtilization` | Serverless |
 |----------|---------------|-----------------------|------------------------|------------|
 | `gemma4-31b-gptq` | `2048` | runtime default | `0.95` | `minReplicas: 1` |
-| `gemma4-26b-a4b-gptq` | `16384` | `160` | `0.98` | `minReplicas: 0` |
 | `gemma4-26b-a4b-gptq-long` | `16384` | `160` | `0.98` | `minReplicas: 0` |
-| `gemma4-26b-a4b-gptq-22k` | `22000` | `160` | `0.98` | `minReplicas: 0` |
 
 ## Latest baseline
 
-Date: **2026-04-26**
+Date: **2026-05-03**
 
 Current finding:
 
+- The reconciled Gemma4 serving surface is deduplicated to `gemma4-31b-gptq`
+  and `gemma4-26b-a4b-gptq-long`. The base 26B profile and 22K canary remain
+  on disk for reference, but are not reconciled.
+- `gemma4-26b-a4b-gptq-long` intentionally outranks the warm 31B primary
+  (`priority: 255` vs `250`) so explicit 26B validation demand can preempt,
+  serve, and hand the lane back after its idle timeout.
 - The current Gemma4 26B-A4B hybrid artifact (`gptq-w4-g128-attnfp16-clean`) is
   coherent and stable at **16K** when served with FP8 KV and the validated ROCm
   fallback switches.
@@ -52,11 +54,11 @@ Current finding:
   `gemma4-long-ok` marker with zero pod restarts. The default 26B alias now
   uses those same runtime knobs while remaining scale-to-zero and non-primary.
 - vLLM reported 22,608 GPU KV cache tokens for the 22K FP8-KV boot. The
-  separate `gemma4-26b-a4b-gptq-22k` canary validates the next practical rung
-  without changing the validated 16K profile.
+  separate `gemma4-26b-a4b-gptq-22k` manifest remains available for the next
+  practical rung, but it is not part of the reconciled serving set.
 - The 22K canary passed an in-cluster 17,092-token prompt retention probe on
-  2026-04-26. It is **partially validated** only: keep it scale-to-zero and
-  non-primary until the 18K-22K target window is re-qualified with a less noisy
+  2026-04-26, but it is **partially validated** only. It is no longer
+  reconciled until the 18K-22K target window is re-qualified with a less noisy
   runtime build.
 - The smaller dense-validated artifact path remains blocked behind the
   `cblevins-5930k` memory guard; do not uncordon that node or remove the taint

@@ -25,5 +25,7 @@ resources:
   # - qwen35-27b-opus-distill-oci.yaml # disabled
   # - qwen35-9b-oci.yaml               # disabled
 
-  # === Active OCI pull caches (Harbor → local PVC → Model CRs) ===
-  - omnicoder-9b-oci.yaml           # → cblevins-5930k
+  # === Deprecated OCI pull caches ===
+  # Deprecated 2026-05-03 with omnicoder-9b Model: staged GPTQ artifact serves
+  # corrupted text. Keep the pull-cache manifest for forensic rebuilds only.
+  # - omnicoder-9b-oci.yaml
