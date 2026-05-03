@@ -26,6 +26,11 @@ export interface PipelineRun {
   Attempts: number;
   StartedAt?: string;
   EndedAt?: string;
+  // Phase 6 (bounded recursion): top-level runs have ParentRunID == null
+  // and Depth == 0. Subruns created via hive_pipeline_subrun_create
+  // carry their parent's ID and depth+1.
+  ParentRunID?: string | null;
+  Depth?: number;
 }
 
 export interface CouncilRun {

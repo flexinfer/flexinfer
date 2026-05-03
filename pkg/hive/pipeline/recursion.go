@@ -236,6 +236,7 @@ func (g *SubrunGuard) SubrunCreate(ctx context.Context, req SubrunRequest) (stri
 	if err := g.claimBacklog(ctx, req.BacklogID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return newID, fmt.Errorf("recursion: claim backlog: %w", err)
 	}
+	hive.PipelineRecursionDepthHistogram.Observe(float64(newDepth))
 	return newID, nil
 }
 
