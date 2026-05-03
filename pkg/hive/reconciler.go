@@ -134,13 +134,78 @@ func (r *Reconciler) Tick(ctx context.Context) (TickResult, error) {
 		}
 	}
 
+	// Phase 6 slice 6.2: also pick up queued subruns. A worker
+	// running under this operator may have called the recursion
+	// endpoint mid-stage, which inserts a pipeline_runs row in
+	// state=queued with parent_run_id != NULL. The Starter knows
+	// how to drive an existing run row forward, so the same
+	// PipelineStarter wired for backlog-item launches is reused.
+	subStarted, subErrs := r.pickupQueuedSubruns(ctx)
+	res.Started += subStarted
+	res.Errored += subErrs
+
 	tickOutcome := tickOutcomeLabel(res)
 	ReconcileTicksTotal.WithLabelValues(tickOutcome).Inc()
 	r.append(ctx, "reconciler.tick", "ok", map[string]any{
 		"inspected": res.Inspected, "started": res.Started,
 		"deferred": res.Deferred, "skipped": res.Skipped, "errored": res.Errored,
+		"subrun_started": subStarted, "subrun_errored": subErrs,
 	})
 	return res, nil
+}
+
+// pickupQueuedSubruns looks up every pipeline run created by
+// recursion.SubrunGuard but not yet started (state=queued AND
+// parent_run_id IS NOT NULL AND attempts=0) and asks the
+// PipelineStarter to drive each forward. Errors are logged
+// per-row and counted into the tick result; one failure does not
+// block the rest. Returns (started, errored) so Tick can roll the
+// counters into TickResult.
+func (r *Reconciler) pickupQueuedSubruns(ctx context.Context) (int, int) {
+	if r.Store == nil || r.Starter == nil {
+		return 0, 0
+	}
+	subruns, err := r.Store.Pipeline.ListQueuedSubruns(ctx)
+	if err != nil {
+		r.append(ctx, "reconciler.subrun_pickup_failed", "error", map[string]any{"error": err.Error()})
+		return 0, 1
+	}
+	var started, errored int
+	for _, run := range subruns {
+		// Look up the backlog item the subrun targets so the
+		// Starter has the same JobContext shape it gets for a
+		// fresh-from-backlog launch. A subrun with a missing
+		// item is a corrupted state — log + skip.
+		item, lerr := r.Store.Backlog.Get(ctx, run.BacklogID)
+		if lerr != nil {
+			r.append(ctx, "reconciler.subrun_pickup_failed", "error", map[string]any{
+				"run": run.ID, "backlog": run.BacklogID, "error": lerr.Error(),
+			})
+			errored++
+			continue
+		}
+		if err := r.Starter.Start(ctx, run, item); err != nil {
+			r.append(ctx, "reconciler.subrun_start_failed", "error", map[string]any{
+				"run": run.ID, "backlog": run.BacklogID, "error": err.Error(),
+			})
+			errored++
+			continue
+		}
+		r.append(ctx, "reconciler.subrun_started", "ok", map[string]any{
+			"run": run.ID, "backlog": run.BacklogID, "depth": run.Depth,
+			"parent_run": derefString(run.ParentRunID),
+		})
+		started++
+	}
+	return started, errored
+}
+
+// derefString safely dereferences a *string for log payloads.
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // TickResult summarises the work one Tick performed. Useful for tests +

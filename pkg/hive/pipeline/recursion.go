@@ -225,7 +225,33 @@ func (g *SubrunGuard) SubrunCreate(ctx context.Context, req SubrunRequest) (stri
 	if err := g.Store.Pipeline.CreateSubrun(ctx, newRun); err != nil {
 		return "", fmt.Errorf("recursion: create subrun: %w", err)
 	}
+	// Claim the backlog item by transitioning it to Running so the
+	// reconciler's main loop (which scans BacklogQueued) doesn't ALSO
+	// try to start a duplicate pipeline run for the same item. The
+	// subrun-pickup loop in pkg/hive/reconciler.go's Tick is the
+	// authoritative kickoff path for recursion-spawned runs. Best-
+	// effort: a missing backlog row is logged but doesn't unwind the
+	// successful subrun create — the caller is expected to have
+	// seeded the backlog before calling SubrunCreate.
+	if err := g.claimBacklog(ctx, req.BacklogID); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return newID, fmt.Errorf("recursion: claim backlog: %w", err)
+	}
 	return newID, nil
+}
+
+// claimBacklog flips the target backlog item to Running so the
+// parallel queued-backlog reconciler doesn't see it. Idempotent —
+// already-Running items are left alone.
+func (g *SubrunGuard) claimBacklog(ctx context.Context, backlogID string) error {
+	item, err := g.Store.Backlog.Get(ctx, backlogID)
+	if err != nil {
+		return err
+	}
+	if item.State == store.BacklogRunning {
+		return nil
+	}
+	item.State = store.BacklogRunning
+	return g.Store.Backlog.Put(ctx, item)
 }
 
 // detectCycle walks the ancestor chain looking for a backlog id match

@@ -309,6 +309,127 @@ func TestScheduler_StopMethodEndsRun(t *testing.T) {
 	}
 }
 
+// TestReconciler_PicksUpQueuedSubrun pins the slice-6.2 dispatcher
+// pickup contract: a pipeline_run row in state=queued with a non-null
+// parent_run_id and attempts=0 (i.e. created by recursion.SubrunGuard
+// but never started) is picked up by the next reconcile tick and
+// handed to PipelineStarter — exactly the way a fresh-from-backlog
+// run is. The starter sees the same Run + Item shape, so the runner
+// downstream needs no recursion-specific branch.
+func TestReconciler_PicksUpQueuedSubrun(t *testing.T) {
+	env := newRecEnv(t, nil)
+	ctx := context.Background()
+
+	// Seed a parent backlog item + parent pipeline run.
+	parentItem := &store.BacklogItem{
+		ID: "BACK-PARENT", Title: "parent", State: store.BacklogRunning,
+		Priority: store.P2, CreatedBy: "test",
+	}
+	if err := env.store.Backlog.Put(ctx, parentItem); err != nil {
+		t.Fatalf("seed parent backlog: %v", err)
+	}
+	parentRun := &store.PipelineRun{
+		ID: "PIPE-P", BacklogID: "BACK-PARENT", Template: "hive-default",
+		State: store.PipelineImplementing, StartedAt: env.now, Depth: 0,
+	}
+	if err := env.store.Pipeline.PutRun(ctx, parentRun); err != nil {
+		t.Fatalf("seed parent run: %v", err)
+	}
+
+	// Seed a child backlog + a queued subrun row pointing at the
+	// parent. This is what recursion.SubrunGuard.SubrunCreate would
+	// have produced just before this tick — backlog state Running
+	// because SubrunGuard claims the item to prevent the main
+	// reconciler loop from double-picking.
+	childItem := &store.BacklogItem{
+		ID: "BACK-CHILD", Title: "child slice", State: store.BacklogRunning,
+		Priority: store.P2, CreatedBy: "test",
+	}
+	if err := env.store.Backlog.Put(ctx, childItem); err != nil {
+		t.Fatalf("seed child backlog: %v", err)
+	}
+	parentID := "PIPE-P"
+	subrun := &store.PipelineRun{
+		ID: "PIPE-C", BacklogID: "BACK-CHILD", Template: "hive-default",
+		State: store.PipelineQueued, StartedAt: env.now,
+		Depth: 1, ParentRunID: &parentID,
+	}
+	if err := env.store.Pipeline.CreateSubrun(ctx, subrun); err != nil {
+		t.Fatalf("seed subrun: %v", err)
+	}
+
+	res, err := env.rec.Tick(ctx)
+	if err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	// Tick should have invoked the starter once — for the subrun.
+	// (No queued backlog items, so the main loop is a no-op.)
+	if env.starter.calls() != 1 {
+		t.Fatalf("starter calls: got %d want 1", env.starter.calls())
+	}
+	got := env.starter.runs[0]
+	if got.ID != "PIPE-C" {
+		t.Errorf("starter run id: got %q want PIPE-C", got.ID)
+	}
+	if got.Depth != 1 {
+		t.Errorf("starter run depth: got %d want 1", got.Depth)
+	}
+	gotItem := env.starter.items[0]
+	if gotItem.ID != "BACK-CHILD" {
+		t.Errorf("starter item id: got %q want BACK-CHILD", gotItem.ID)
+	}
+	// res.Started should reflect the subrun pickup.
+	if res.Started != 1 {
+		t.Errorf("res.Started: got %d want 1", res.Started)
+	}
+	if res.Errored != 0 {
+		t.Errorf("res.Errored: got %d want 0", res.Errored)
+	}
+}
+
+// TestReconciler_SubrunPickupSurvivesStarterError pins that a single
+// failing subrun start doesn't block the rest of the tick.
+func TestReconciler_SubrunPickupSurvivesStarterError(t *testing.T) {
+	env := newRecEnv(t, nil)
+	ctx := context.Background()
+	env.starter.fail = errors.New("simulated starter failure")
+
+	if err := env.store.Backlog.Put(ctx, &store.BacklogItem{
+		ID: "BACK-P", Title: "p", State: store.BacklogRunning,
+		Priority: store.P2, CreatedBy: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.Pipeline.PutRun(ctx, &store.PipelineRun{
+		ID: "PIPE-P", BacklogID: "BACK-P", Template: "hive-default",
+		State: store.PipelineImplementing, StartedAt: env.now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.Backlog.Put(ctx, &store.BacklogItem{
+		ID: "BACK-C", Title: "c", State: store.BacklogRunning,
+		Priority: store.P2, CreatedBy: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	parentID := "PIPE-P"
+	if err := env.store.Pipeline.CreateSubrun(ctx, &store.PipelineRun{
+		ID: "PIPE-C", BacklogID: "BACK-C", Template: "hive-default",
+		State: store.PipelineQueued, StartedAt: env.now,
+		Depth: 1, ParentRunID: &parentID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := env.rec.Tick(ctx)
+	if err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if res.Errored != 1 {
+		t.Errorf("expected one errored subrun start, got Errored=%d", res.Errored)
+	}
+}
+
 func TestScheduler_DoubleRunErrors(t *testing.T) {
 	env := newRecEnv(t, nil)
 	sch := NewScheduler(env.rec)
