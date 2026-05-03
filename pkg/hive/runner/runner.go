@@ -37,6 +37,12 @@ type Runner struct {
 	Budget    *hive.Budget
 	Reviewers *council.Dispatcher
 	Editor    council.Editor
+	// Moderator is the optional Phase 5 dependency wired only when
+	// `policy.debate.enabled.<trigger>` is true. When nil (the v1
+	// default) the runner skips the debate path even if the policy
+	// flag is set, falling back to single-pass and logging the
+	// degradation. Production wires a frontier-model moderator.
+	Moderator council.Moderator
 	Writer    *council.ArtifactWriter
 	Mutator   *council.BacklogMutator
 	Judge     *eval.Judge
@@ -125,32 +131,83 @@ func (r *Runner) Run(ctx context.Context, in RunInput) (*RunResult, error) {
 	}
 	res.Brief = brief
 
-	// ----- Reviewers -----
+	// ----- Reviewers + Editor -----
+	// Hive v2 Phase 5: when policy.Debate enables this trigger, the
+	// reviewers + editor run as a multi-round debate via
+	// council.Debate. Otherwise we follow the v1 single-pass path
+	// (parallel reviewers → editor.Edit). Both paths converge on the
+	// same EditorOutput shape so the artifact / judge / mutator
+	// stages downstream are unchanged.
 	lenses := council.LensesFromPolicy(policy)
 	reviews := []council.ReviewerOutput(nil)
-	if len(lenses) > 0 {
-		reviews, err = r.Reviewers.Dispatch(ctx, brief, lenses, council.DispatchOptions{
+	var out *council.EditorOutput
+	debateEnabledByPolicy := len(lenses) > 0 && policy.Debate.Enabled.AllowedFor(string(in.Trigger))
+	debateEngaged := debateEnabledByPolicy && r.Moderator != nil
+	if debateEnabledByPolicy && !debateEngaged {
+		r.logf("debate skipped: no moderator wired",
+			"run_id", res.RunID, "trigger", in.Trigger)
+	}
+	if debateEngaged {
+		debate := &council.Debate{
+			Editor:    r.Editor,
+			Reviewers: r.Reviewers,
+			Lenses:    lenses,
+			Moderator: r.Moderator,
+			Now:       r.Now,
+		}
+		dres, derr := debate.Run(ctx, council.DebateInput{
+			Brief:              brief,
+			MaxUSD:             policy.Debate.MaxUSD,
+			MaxRounds:          policy.Debate.MaxRounds,
+			EarlyExitThreshold: policy.Debate.EarlyExitThreshold,
 			PerReviewerTimeout: 30 * time.Second,
-			MinQuorum:          (len(lenses) + 1) / 2, // simple majority by default
+			MinQuorum:          (len(lenses) + 1) / 2,
 		})
+		if derr != nil {
+			return res, fmt.Errorf("debate: %w", derr)
+		}
+		out = dres.Editor
+		reviews = dres.Reviews
+		res.CostUSDApprox = dres.TotalCostUSD
+		// Stamp the per-round transcript onto the sidecar so the
+		// artifact writer + audit pool consume the same shape.
+		out.Sidecar.Debate = &council.SidecarDebate{
+			Enabled:         true,
+			Rounds:          dres.Rounds,
+			EarlyExitReason: dres.EarlyExitReason,
+			TotalCostUSD:    dres.TotalCostUSD,
+		}
+		r.logf("debate complete",
+			"run_id", res.RunID,
+			"trigger", in.Trigger,
+			"rounds", len(dres.Rounds),
+			"early_exit_reason", dres.EarlyExitReason,
+			"cost_usd", dres.TotalCostUSD,
+		)
+	} else {
+		if len(lenses) > 0 {
+			reviews, err = r.Reviewers.Dispatch(ctx, brief, lenses, council.DispatchOptions{
+				PerReviewerTimeout: 30 * time.Second,
+				MinQuorum:          (len(lenses) + 1) / 2, // simple majority by default
+			})
+			if err != nil {
+				r.logf("reviewer quorum failure", "run_id", res.RunID, "error", err)
+				// Continue — the editor can still produce
+				// something, but the judge will likely score
+				// this run partial.
+			}
+		}
+		out, err = r.Editor.Edit(ctx, brief, reviews)
 		if err != nil {
-			r.logf("reviewer quorum failure", "run_id", res.RunID, "error", err)
-			// Continue — the editor can still produce something, but the
-			// judge will likely score this run partial.
+			return res, fmt.Errorf("editor: %w", err)
+		}
+		res.CostUSDApprox = out.CostUSD
+		for _, rv := range reviews {
+			res.CostUSDApprox += rv.CostUSD
 		}
 	}
 	res.Reviews = reviews
-
-	// ----- Editor -----
-	out, err := r.Editor.Edit(ctx, brief, reviews)
-	if err != nil {
-		return res, fmt.Errorf("editor: %w", err)
-	}
 	res.Editor = out
-	res.CostUSDApprox = out.CostUSD
-	for _, rv := range reviews {
-		res.CostUSDApprox += rv.CostUSD
-	}
 
 	// ----- Artifacts -----
 	writer := r.Writer

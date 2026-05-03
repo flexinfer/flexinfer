@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,16 @@ import (
 // any live agent calls.
 type Reviewer interface {
 	Review(ctx context.Context, brief *Brief, lens ReviewerLens) (ReviewerOutput, error)
+}
+
+// Refocuser is the optional Hive v2 extension to Reviewer that supports
+// re-running a critique narrowed to specific focus areas (issued by the
+// debate moderator after a non-converged round). Reviewers that don't
+// implement Refocuser cause the debate runner to fall back to a plain
+// Review call, so production wiring can adopt incrementally.
+type Refocuser interface {
+	Reviewer
+	RefocusedReview(ctx context.Context, brief *Brief, lens ReviewerLens, focusAreas []string) (ReviewerOutput, error)
 }
 
 // ReviewerLens names the brief addendum + system prompt the reviewer
@@ -163,6 +174,11 @@ type FakeReviewer struct {
 	CostUSD    float64 // attributed to ReviewerOutput.CostUSD
 	ReturnErr  error   // when non-nil, surfaced via ReviewerOutput.Err
 	SimulateMS int     // optional sleep so timeout tests have a target
+
+	// RefocusedCostUSD is the cost FakeReviewer reports per
+	// RefocusedReview call (debate rounds 2+). Defaults to CostUSD
+	// when zero; override to model cheaper refocused passes in tests.
+	RefocusedCostUSD float64
 }
 
 // Review implements Reviewer.
@@ -181,5 +197,25 @@ func (f *FakeReviewer) Review(ctx context.Context, brief *Brief, lens ReviewerLe
 		Lens:     lens,
 		Markdown: fmt.Sprintf("# %s lens review\n\n%s\n", lens.Name, f.Notes),
 		CostUSD:  f.CostUSD,
+	}, nil
+}
+
+// RefocusedReview implements Refocuser. Echoes the focus areas back in
+// the markdown so debate-mode tests can pin per-round payloads.
+func (f *FakeReviewer) RefocusedReview(ctx context.Context, brief *Brief, lens ReviewerLens, focusAreas []string) (ReviewerOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return ReviewerOutput{Lens: lens}, err
+	}
+	if f.ReturnErr != nil {
+		return ReviewerOutput{Lens: lens}, f.ReturnErr
+	}
+	cost := f.RefocusedCostUSD
+	if cost == 0 {
+		cost = f.CostUSD
+	}
+	return ReviewerOutput{
+		Lens:     lens,
+		Markdown: fmt.Sprintf("# %s lens (refocused: %s)\n\n%s\n", lens.Name, strings.Join(focusAreas, ", "), f.Notes),
+		CostUSD:  cost,
 	}, nil
 }
