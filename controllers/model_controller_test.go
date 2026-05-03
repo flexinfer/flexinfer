@@ -237,7 +237,8 @@ func TestChooseSharedGroupLeader(t *testing.T) {
 		t.Fatalf("expected demanded model to preempt idle ready model, got %v", leaderName(leader))
 	}
 
-	// When both models have recent traffic, the ready model stays.
+	// Higher-priority recent demand can preempt a lower-priority ready model
+	// even when the ready model has recent traffic.
 	readyActive := &aiv1alpha2.Model{
 		ObjectMeta: metav1.ObjectMeta{Name: "ready-active"},
 		Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: shared, Priority: &low}},
@@ -247,8 +248,8 @@ func TestChooseSharedGroupLeader(t *testing.T) {
 		},
 	}
 	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{readyActive, recentHigh}, now)
-	if leader == nil || leader.Name != "ready-active" {
-		t.Fatalf("expected busy ready model to stay over demanded model, got %v", leaderName(leader))
+	if leader == nil || leader.Name != "recent-high" {
+		t.Fatalf("expected higher-priority demand to preempt busy ready model, got %v", leaderName(leader))
 	}
 
 	oldHigh := &aiv1alpha2.Model{

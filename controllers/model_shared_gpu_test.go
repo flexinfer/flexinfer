@@ -134,6 +134,14 @@ func TestChooseSharedGroupLeader_Comprehensive(t *testing.T) {
 			wantName: "demanded",
 		},
 		{
+			name: "higher priority demand preempts recently active ready model",
+			models: []*aiv1alpha2.Model{
+				makeSharedModel("ready-recent", 100, aiv1alpha2.ModelPhaseReady, timePtr(recent), nil),
+				makeSharedModel("demanded-high", 200, aiv1alpha2.ModelPhasePending, timePtr(recent), nil),
+			},
+			wantName: "demanded-high",
+		},
+		{
 			name: "demand preemption blocked when demanded priority less than ready priority",
 			models: []*aiv1alpha2.Model{
 				makeSharedModel("ready-high", 200, aiv1alpha2.ModelPhaseReady, timePtr(past), nil),
