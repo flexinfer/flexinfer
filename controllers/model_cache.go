@@ -103,6 +103,11 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 			ready := false
 			jobPhase := ""
 			message := ""
+			job := &batchv1.Job{}
+			jobErr := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
+			if jobErr != nil && !errors.IsNotFound(jobErr) {
+				return false, jobErr
+			}
 
 			if sourcePVC.Status.Phase != corev1.ClaimBound {
 				jobPhase = "Pending"
@@ -121,14 +126,16 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 						return false, err
 					}
 					if !sourceReadyStatus.Ready {
-						jobPhase = "Pending"
-						message = sourceReadyMessage
-					} else {
-						job := &batchv1.Job{}
-						err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
-						if err != nil && !errors.IsNotFound(err) {
-							return false, err
+						if jobErr == nil && completedCacheCopyMatchesSourceReadyJob(job, model, cachePVC, sourceReadyStatus.JobName) {
+							ready = true
+							jobPhase = "Succeeded"
+							message = "artifact copied to cache PVC"
+						} else {
+							jobPhase = "Pending"
+							message = sourceReadyMessage
 						}
+					} else {
+						err := jobErr
 						if err == nil && job.Annotations != nil && job.Annotations[AnnotationSource] != model.Spec.Source {
 							if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
 								return false, delErr
@@ -746,6 +753,27 @@ func (r *ModelReconciler) cacheSourceReadyJobStatus(ctx context.Context, model *
 		return status, fmt.Sprintf("waiting for source-ready job %s to complete", jobName), nil
 	}
 	return status, fmt.Sprintf("waiting for source-ready job %s to start", jobName), nil
+}
+
+func completedCacheCopyMatchesSourceReadyJob(job *batchv1.Job, model *aiv1alpha2.Model, cachePVC *corev1.PersistentVolumeClaim, sourceReadyJobName string) bool {
+	if job == nil || job.Status.Succeeded == 0 || job.Annotations == nil {
+		return false
+	}
+	if strings.TrimSpace(sourceReadyJobName) == "" {
+		return false
+	}
+	if job.Annotations[AnnotationSource] != model.Spec.Source {
+		return false
+	}
+	if job.Annotations[AnnotationCacheSourceReadyJob] != sourceReadyJobName {
+		return false
+	}
+	if job.Annotations[AnnotationCacheSourceReadyCompletedAt] == "" {
+		return false
+	}
+	recorded := job.Annotations[AnnotationCachePvcUID]
+	current := string(cachePVC.UID)
+	return recorded == "" || current == "" || recorded == current
 }
 
 func cacheCopySourceReadyJobStale(job *batchv1.Job, sourceReady *cacheSourceReadyStatus) bool {
