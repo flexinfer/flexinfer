@@ -35,5 +35,6 @@ resources:
   - gonzalomo-fluxpony-imagegen.yaml # diffusers, SDXL text-to-image, on-demand (priority 200)
   - sdxl-inpainting-radeonvii.yaml   # diffusers, SDXL inpainting, ~12 GiB VRAM
 
-  # === cblevins-gtx980ti (6 GB sm_52) — embeddings ===
+  # === cblevins-gtx980ti (6 GB sm_52) ===
+  - gemma4-e4b-gguf-gtx980ti.yaml   # llama.cpp GGUF, node-local cache for Maxwell cold starts
   - embeddings.yaml                  # ollama, nomic-embed-text, always warm

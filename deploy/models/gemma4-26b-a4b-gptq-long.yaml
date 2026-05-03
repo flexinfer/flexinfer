@@ -53,6 +53,8 @@ spec:
     quantization: gptq
     dtype: "half"
     maxModelLen: 16384
+    maxInputTokens: 12288
+    maxOutputTokens: 4096
     gpuMemoryUtilization: "0.98"
     kvCacheDtype: fp8_e4m3
     maxNumSeqs: 1

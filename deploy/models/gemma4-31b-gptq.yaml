@@ -139,6 +139,11 @@ spec:
     # Real context unlock (8K-32K) requires TurboQuant KV codec canary;
     # tracked separately (see !188 discussion for sequencing).
     maxModelLen: 2048
+    # LiteLLM treats max_output_tokens as reserved generation budget when
+    # checking context. Keep it below the runtime window so normal prompts do
+    # not fail context validation before reaching FlexInfer.
+    maxInputTokens: 1536
+    maxOutputTokens: 512
     gpuMemoryUtilization: "0.95"
     maxNumSeqs: 2
     trustRemoteCode: true

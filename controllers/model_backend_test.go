@@ -222,6 +222,25 @@ func TestResolveBackendStoragePlan(t *testing.T) {
 			},
 		},
 		{
+			name: "llamacpp + HF + Local + ggufFile uses staged root file",
+			model: &aiv1alpha2.Model{
+				ObjectMeta: metav1.ObjectMeta{Name: "llama-local-gguf"},
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "HF://TheBloke/Llama-2-7B-GGUF",
+					Cache:  &aiv1alpha2.CacheSpec{Strategy: "Local"},
+				},
+				Status: aiv1alpha2.ModelStatus{
+					Cache: &aiv1alpha2.CacheStatus{Strategy: "Local", Ready: true},
+				},
+			},
+			backend: &fakeBackend{name: "llamacpp", needsVolume: true},
+			config:  map[string]any{"ggufFile": "llama-2-7b.Q4_K_M.gguf"},
+			wantPlan: backendStoragePlan{
+				ModelPath:       "/models/llama-2-7b.Q4_K_M.gguf",
+				HFCacheBasePath: "/models/.cache/huggingface",
+			},
+		},
+		{
 			name: "quantized output redirect when quantization completed",
 			model: &aiv1alpha2.Model{
 				ObjectMeta: metav1.ObjectMeta{Name: "quant-model"},
