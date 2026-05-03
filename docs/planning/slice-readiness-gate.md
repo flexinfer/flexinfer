@@ -14,7 +14,9 @@ without reading chat history:
 
 - What outcome changes?
 - Which files or modules may change?
+- Which files or modules are explicitly off-limits for nearby parallel work?
 - Which commands prove the slice?
+- What output or signal should those commands produce?
 - Which generated assets must be refreshed?
 - How do we roll back if the slice misbehaves after merge?
 
@@ -38,6 +40,11 @@ without reading chat history:
 - [ ] Acceptance criteria are reviewable and testable.
 - [ ] Target files/modules are named before implementation starts.
 - [ ] Owner boundary is clear, especially when parallel agents may work nearby.
+- [ ] Agent delegation notes are present when the work may be split across more
+      than one person or agent.
+- [ ] Delegation notes name safe-to-edit files/modules, files/modules to avoid,
+      local verification commands, and expected output/signals for each
+      workstream.
 - [ ] Validation commands are explicit and runnable from the repo root.
 - [ ] Generated artifacts are listed when APIs, CRDs, Helm templates, docs indexes,
       or runtime assets change.
@@ -58,6 +65,30 @@ Rules:
 - `Owner boundary` should name the subsystem, not just the person.
 - `Validation` should include the narrowest useful command and any broader command.
 - `Rollback/backout` should name the revert path and any live-cluster action.
+
+## Required Agent Delegation Notes
+
+Add this section when the slice is likely to be split across parallel agents or
+reviewers. Each row should be independently assignable without requiring a chat
+thread to recover the boundaries.
+
+| Workstream | Safe-to-edit files/modules | Do not touch | Local verification | Expected output/signals |
+|------------|----------------------------|--------------|--------------------|-------------------------|
+| Example | `controllers/...` | `charts/`, runtime Dockerfiles | `go test ./controllers/...` | Tests pass; CRD output unchanged |
+
+Rules:
+
+- `Safe-to-edit files/modules` must be narrow enough for separate branches or
+  linked worktrees.
+- `Do not touch` must name nearby shared contracts, generated files, or
+  production manifests that belong to another workstream.
+- `Local verification` must be runnable from the repo root unless the row
+  explicitly says it needs a cluster or CI-only environment.
+- `Expected output/signals` should name the success condition a reviewer can
+  check quickly, such as "tests pass", "only CRD schema changes", "Helm renders
+  without env var drift", or "docs include the rollback command".
+- If two workstreams share an API, CRD, Helm value, image tag, or status field,
+  add coordination notes naming the shared contract and merge order.
 
 ## Surface-Specific Requirements
 
@@ -174,6 +205,7 @@ Status: Ready
 
 - Target files/modules:
 - Owner boundary:
+- Agent delegation notes:
 - Validation commands:
 - Generated artifacts:
 - Rollout/backout:

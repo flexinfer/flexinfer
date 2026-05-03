@@ -10,6 +10,7 @@ Tracking:
 - Roadmap section: `docs/planning/next-roadmap.md`
 - High-level roadmap: `ROADMAP.md`
 - SD-3 issue: https://gitlab.flexinfer.ai/services/flexinfer/-/issues/57
+- SD-4 issue: https://gitlab.flexinfer.ai/services/flexinfer/-/issues/58
 - Canonical runtime evidence: `.loom/60-validation-matrix.md`
 
 This plan keeps multi-agent feature delivery auditable from spec to runtime
@@ -23,9 +24,12 @@ promote or block runtime canaries.
    validation, rollout/backout, and sources.
 2. Pass `docs/planning/slice-readiness-gate.md` before multi-file
    implementation begins.
-3. For runtime, canary, quantization, or GPU-specific work, add or update a row
+3. Add agent delegation notes when work may be split across parallel humans or
+   agents. Notes must name safe-to-edit files/modules, files/modules to avoid,
+   local verification commands, and expected output/signals per workstream.
+4. For runtime, canary, quantization, or GPU-specific work, add or update a row
    in `.loom/60-validation-matrix.md`.
-4. Reconcile `docs/planning/next-roadmap.md`, `ROADMAP.md`, and issue links
+5. Reconcile `docs/planning/next-roadmap.md`, `ROADMAP.md`, and issue links
    after the slice merges.
 
 ## SD-3: Validation Matrix Contract
@@ -75,9 +79,56 @@ Rollout/backout:
 - Backout: revert the docs commit. No live cluster, CRD, Helm, or runtime image
   rollback is required.
 
+## SD-4: Agent-Ready Delegation Contract
+
+Goal: feature plans can be split into parallel workstreams without relying on
+chat history to recover ownership boundaries, validation expectations, or merge
+order.
+
+Owner boundary for SD-4:
+
+- Owned files: `docs/planning/spec-capsule-template.md`,
+  `docs/planning/slice-readiness-gate.md`,
+  `docs/planning/spec-driven-delivery.md`,
+  `docs/planning/next-roadmap.md`, and `ROADMAP.md`.
+- Optional alignment file: `docs/planning/README.md`.
+- Out of scope: product feature implementation, controller code, runtime image
+  builds, CRDs, Helm manifests, live-cluster changes, and issue triage beyond
+  the SD-4 tracking issue.
+
+Acceptance criteria:
+
+- [x] Spec capsules include an `Agent Delegation Notes` section for parallel
+      work.
+- [x] Delegation notes name safe-to-edit files/modules and files/modules to
+      avoid for each workstream.
+- [x] Delegation notes include local verification commands and expected
+      output/signals per workstream.
+- [x] The slice readiness gate requires delegation notes when work is split
+      across more than one human or agent.
+- [x] Examples cover controller/API, runtime image, and operational-docs-only
+      slices.
+- [x] The active ROCm/gfx1100 deploy-swap + tracing plan has an agent delegation
+      table with disjoint workstreams and expected verification signals.
+- [x] `docs/planning/next-roadmap.md` and `ROADMAP.md` mark SD-4 complete and
+      continue to leave SD-5 as the remaining reconciliation discipline item.
+
+Validation commands for SD-4:
+
+```bash
+git diff --check
+rg "Agent Delegation Notes|Safe-to-edit files/modules|Do not touch|Expected output/signals" docs/planning/spec-capsule-template.md docs/planning/slice-readiness-gate.md docs/planning/spec-driven-delivery.md docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md
+rg "SD-4|Issue #58|agent-ready" docs/planning/spec-driven-delivery.md docs/planning/next-roadmap.md ROADMAP.md
+```
+
+Rollout/backout:
+
+- Rollout: merge the docs-only SD-4 contract after diff and targeted `rg`
+  validation pass.
+- Backout: revert the docs commit. No live cluster, CRD, Helm, or runtime image
+  rollback is required.
+
 ## Remaining Spec-Driven Delivery Items
 
-- SD-4: Add agent-ready delegation notes to feature plans so parallel slices have
-  clear ownership boundaries.
 - SD-5: Run roadmap reconciliation after planning changes and keep tracking
   issues linked.
