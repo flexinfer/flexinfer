@@ -91,6 +91,26 @@ func (d *DebateDAO) TotalCost(ctx context.Context, councilRunID string) (float64
 	return total, nil
 }
 
+// SumCostSince returns the total debate spend across all council runs
+// whose rounds were recorded at-or-after the given timestamp. Mirrors
+// CouncilDAO.SumCostSince + PipelineDAO.SumCostSince so the budget
+// enforcer can ask "how much have we spent on debate today" without
+// joining through council_runs (debate cost lives in the per-round
+// rows; council_runs.cost_*_usd already aggregates it via the runner's
+// post-debate stamp, but a direct read is useful for HUD telemetry +
+// future debate-tier daily caps).
+func (d *DebateDAO) SumCostSince(ctx context.Context, since time.Time) (float64, error) {
+	row := d.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(cost_usd), 0) FROM council_debate_rounds
+		WHERE created_at >= ?
+	`, timeRFC3339(since))
+	var total float64
+	if err := row.Scan(&total); err != nil {
+		return 0, fmt.Errorf("debate sum-cost-since: %w", err)
+	}
+	return total, nil
+}
+
 func scanDebateRound(s scanner) (*CouncilDebateRound, error) {
 	var (
 		r         CouncilDebateRound

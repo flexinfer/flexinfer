@@ -15,6 +15,7 @@ type fakeReader struct {
 	councilRuns  int
 	pipelineRuns int
 	pipelineActv int
+	debateCost   float64
 }
 
 func (f *fakeReader) CouncilCostSince(_ context.Context, _ time.Time) (float64, error) {
@@ -31,6 +32,9 @@ func (f *fakeReader) PipelineRunsSince(_ context.Context, _ time.Time) (int, err
 }
 func (f *fakeReader) PipelineActiveRuns(_ context.Context) (int, error) {
 	return f.pipelineActv, nil
+}
+func (f *fakeReader) DebateCostSince(_ context.Context, _ time.Time) (float64, error) {
+	return f.debateCost, nil
 }
 
 // budgetForTest returns a Budget wired to a fixed *Policy and a fake reader.
@@ -174,6 +178,32 @@ func TestBudget_Allow_RejectsNegativeEstimate(t *testing.T) {
 	b := budgetForTest(p, &fakeReader{})
 	if _, err := b.Allow(context.Background(), TierPipeline, -1); err == nil {
 		t.Errorf("expected error on negative estimate")
+	}
+}
+
+// TestBudget_DebateSpentSince proves the Phase 5.2 informational
+// helper passes through to BudgetReader.DebateCostSince. No cap
+// enforcement here — the value is for HUD widgets and future
+// per-debate-tier daily caps.
+func TestBudget_DebateSpentSince(t *testing.T) {
+	p, _ := ParsePolicy([]byte(fixtureV1))
+	r := &fakeReader{debateCost: 4.25}
+	b := budgetForTest(p, r)
+	got, err := b.DebateSpentSince(context.Background())
+	if err != nil {
+		t.Fatalf("DebateSpentSince: %v", err)
+	}
+	if got != 4.25 {
+		t.Errorf("DebateSpentSince: got %v want 4.25", got)
+	}
+}
+
+// TestBudget_DebateSpentSince_NotConfigured surfaces a clean error
+// when the reader is missing instead of returning a silent zero.
+func TestBudget_DebateSpentSince_NotConfigured(t *testing.T) {
+	b := &Budget{Now: func() time.Time { return time.Now() }}
+	if _, err := b.DebateSpentSince(context.Background()); err == nil {
+		t.Errorf("expected error when Reader is nil")
 	}
 }
 

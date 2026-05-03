@@ -41,3 +41,7 @@ func (r *storeBudgetReader) PipelineRunsSince(ctx context.Context, since time.Ti
 func (r *storeBudgetReader) PipelineActiveRuns(ctx context.Context) (int, error) {
 	return r.st.Pipeline.CountActive(ctx)
 }
+
+func (r *storeBudgetReader) DebateCostSince(ctx context.Context, since time.Time) (float64, error) {
+	return r.st.Debate.SumCostSince(ctx, since)
+}

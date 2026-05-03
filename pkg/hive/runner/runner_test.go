@@ -164,6 +164,26 @@ func (e *editorWithProposals) Edit(ctx context.Context, brief *council.Brief, re
 	return out, nil
 }
 
+// Revise delegates to the wrapped editor when it implements Reviser so
+// the debate-mode runner test can drive the same fixture as the
+// single-pass tests. Adds the same canned proposals onto the revised
+// output (matching Edit's behaviour), so the mutator stage downstream
+// sees a non-empty BacklogProposals on the final revise.
+func (e *editorWithProposals) Revise(ctx context.Context, prior *council.EditorOutput, critiques []council.ReviewerOutput, focusAreas []string) (*council.EditorOutput, error) {
+	rv, ok := e.base.(council.Reviser)
+	if !ok {
+		// Fall back to a propose-only impl: reuse Edit so tests
+		// covering not-Reviser editors still resolve.
+		return e.base.Edit(ctx, &council.Brief{Markdown: "(revise)"}, critiques)
+	}
+	out, err := rv.Revise(ctx, prior, critiques, focusAreas)
+	if err != nil {
+		return nil, err
+	}
+	out.BacklogProposals = append(out.BacklogProposals, e.proposals...)
+	return out, nil
+}
+
 // ----- happy path -----
 
 func TestRun_HappyPathPersistsEverything(t *testing.T) {
@@ -319,6 +339,151 @@ func TestRun_MissingDepsErrors(t *testing.T) {
 	if _, err := (&Runner{}).Run(context.Background(), RunInput{}); err == nil {
 		t.Error("expected error with no config")
 	}
+}
+
+// ----- Phase 5.2: debate persistence + cost rollup -----
+
+// TestRun_DebatePersistsTranscriptAndRollsUpCost is the slice-5.2
+// acceptance gate: when policy.Debate.Enabled enables the trigger AND
+// a Moderator is wired, the runner (a) drives Council Debate Mode end
+// to end, (b) stamps the per-round transcript onto the persisted
+// council_debate_rounds table, and (c) rolls the *full* debate spend
+// into council_runs.cost_frontier_usd so CouncilDAO.SumCostSince
+// reflects the daily cap. Single-pass cost tracking is unchanged.
+func TestRun_DebatePersistsTranscriptAndRollsUpCost(t *testing.T) {
+	env := newRunnerEnv(t, sampleProposals(1))
+
+	// Flip debate on for the manual trigger (V2-D5 default).
+	pol := env.policy.Current()
+	pol.Debate = hive.DebatePolicy{
+		Enabled:            hive.DebateTriggers{Manual: true},
+		MaxUSD:             8.0,
+		MaxRounds:          3,
+		EarlyExitThreshold: 0.8,
+	}
+
+	// Wire the moderator: converge after the first decision so the
+	// debate emits Round 0 propose + Round 1 critique + Round 1
+	// moderator_decision (converged=true) and exits without a
+	// follow-up revise. That gives us 3 transcript rows under the
+	// per-run MaxUSD cap.
+	env.runner.Moderator = &council.FakeModerator{
+		ConvergeAfterRound: 0,
+		FocusAreas:         nil,
+		CostUSD:            0.05,
+	}
+
+	res, err := env.runner.Run(context.Background(), RunInput{
+		Trigger: store.CouncilTriggerManual,
+		Reason:  "phase 5.2 persistence test",
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// (1) Sidecar.Debate populated.
+	if res.Editor == nil || res.Editor.Sidecar.Debate == nil {
+		t.Fatalf("sidecar.debate not populated")
+	}
+	sb := res.Editor.Sidecar.Debate
+	if !sb.Enabled {
+		t.Errorf("sidecar.debate.enabled: got %v want true", sb.Enabled)
+	}
+	if sb.EarlyExitReason != "converged" {
+		t.Errorf("early_exit_reason: got %q want %q", sb.EarlyExitReason, "converged")
+	}
+	if len(sb.Rounds) != 3 {
+		t.Fatalf("transcript rows: got %d want 3 (R0 propose, R1 critique, R1 moderator)", len(sb.Rounds))
+	}
+
+	// (2) Persistence: every transcript row should land in
+	// council_debate_rounds.
+	persisted, err := env.store.Debate.ListByRun(context.Background(), res.RunID)
+	if err != nil {
+		t.Fatalf("list-by-run: %v", err)
+	}
+	if len(persisted) != 3 {
+		t.Errorf("persisted rows: got %d want 3", len(persisted))
+	}
+	wantRoles := []store.DebateRole{
+		store.DebateRoleEditorProposes,
+		store.DebateRoleReviewerCritiques,
+		store.DebateRoleModeratorDecision,
+	}
+	for i, want := range wantRoles {
+		if i >= len(persisted) {
+			break
+		}
+		if persisted[i].Role != want {
+			t.Errorf("persisted[%d].Role: got %q want %q", i, persisted[i].Role, want)
+		}
+	}
+
+	// (3) Cost rollup: SumCostSince via DebateDAO must equal the
+	// transcript total, and the persisted council_runs row's
+	// frontier cost must equal the same total.
+	now := env.now
+	debateSpent, err := env.store.Debate.SumCostSince(context.Background(), now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("debate sum-since: %v", err)
+	}
+	if !approxEqual(debateSpent, sb.TotalCostUSD, 0.001) {
+		t.Errorf("DebateDAO.SumCostSince: got %.4f want %.4f", debateSpent, sb.TotalCostUSD)
+	}
+	cRun, err := env.store.Council.Get(context.Background(), res.RunID)
+	if err != nil {
+		t.Fatalf("get council run: %v", err)
+	}
+	if !approxEqual(cRun.CostFrontierUSD, sb.TotalCostUSD, 0.001) {
+		t.Errorf("council_runs.cost_frontier_usd: got %.4f want %.4f (full debate cost should roll up)",
+			cRun.CostFrontierUSD, sb.TotalCostUSD)
+	}
+	if cRun.CostLocalUSD != 0 {
+		t.Errorf("council_runs.cost_local_usd: got %.4f want 0 (debate Local refined in slice 5.3)", cRun.CostLocalUSD)
+	}
+}
+
+// TestRun_DebateDryrunSkipsPersistence pins that the dryrun path does
+// NOT write debate rounds even when debate ran successfully — the
+// scratch-dir invariant of dryrun is "no canonical writes".
+func TestRun_DebateDryrunSkipsPersistence(t *testing.T) {
+	env := newRunnerEnv(t, nil)
+	pol := env.policy.Current()
+	pol.Debate = hive.DebatePolicy{
+		Enabled:   hive.DebateTriggers{Manual: true},
+		MaxUSD:    8.0,
+		MaxRounds: 3,
+	}
+	env.runner.Moderator = &council.FakeModerator{ConvergeAfterRound: 0, CostUSD: 0.05}
+
+	res, err := env.runner.Run(context.Background(), RunInput{
+		Trigger: store.CouncilTriggerManual,
+		Dryrun:  true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if res.Editor == nil || res.Editor.Sidecar.Debate == nil {
+		t.Fatalf("dryrun should still populate Sidecar.Debate (transcript visible to caller)")
+	}
+	persisted, err := env.store.Debate.ListByRun(context.Background(), res.RunID)
+	if err != nil {
+		t.Fatalf("list-by-run: %v", err)
+	}
+	if len(persisted) != 0 {
+		t.Errorf("dryrun should not persist debate rounds; got %d rows", len(persisted))
+	}
+}
+
+func approxEqual(a, b, eps float64) bool {
+	if a == b {
+		return true
+	}
+	d := a - b
+	if d < 0 {
+		d = -d
+	}
+	return d <= eps
 }
 
 // ----- helpers -----
