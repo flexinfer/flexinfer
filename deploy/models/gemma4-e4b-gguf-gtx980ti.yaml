@@ -14,7 +14,10 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: llamacpp
-  source: HF://HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive
+  # The GGUF is staged into the local hostPath cache and mounted at /models.
+  # Point llama.cpp at the mounted file directly so the 980 Ti runtime never
+  # tries to open the Hugging Face repo id as a local path.
+  source: file:///models/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
   cache:
     size: 10Gi
     # Maxwell tensor loading can stall on the Longhorn-backed cache PVC.
