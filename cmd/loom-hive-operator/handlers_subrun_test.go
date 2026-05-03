@@ -133,6 +133,16 @@ func TestSubrunCreate_HappyPath_DepthOne(t *testing.T) {
 	if persisted.Depth != 1 {
 		t.Errorf("persisted Depth: got %d want 1", persisted.Depth)
 	}
+	// Phase 6 slice 6.2 invariant: SubrunCreate claims the target
+	// backlog (transitions to Running) so the parallel reconciler
+	// main loop can't double-start it.
+	claimed, err := op.store.Backlog.Get(context.Background(), "BACK-A-CHILD")
+	if err != nil {
+		t.Fatalf("re-fetch claimed backlog: %v", err)
+	}
+	if claimed.State != store.BacklogRunning {
+		t.Errorf("claimed backlog state: got %q want %q", claimed.State, store.BacklogRunning)
+	}
 }
 
 // TestSubrunCreate_DepthExceeded pins the spec acceptance:

@@ -122,6 +122,34 @@ func (d *PipelineDAO) CreateSubrun(ctx context.Context, run *PipelineRun) error 
 	return nil
 }
 
+// ListQueuedSubruns returns every pipeline run that's still in
+// `queued` state AND has a non-null parent_run_id AND has not yet
+// been picked up by a worker (attempts = 0). The reconciler uses
+// this on each tick (Phase 6 slice 6.2) to start subruns the way it
+// starts queued backlog items. Ordered by started_at so the oldest
+// subrun runs first; the (state, parent_run_id) predicate naturally
+// excludes non-recursive runs.
+func (d *PipelineDAO) ListQueuedSubruns(ctx context.Context) ([]*PipelineRun, error) {
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT `+pipelineColumns+` FROM pipeline_runs
+		WHERE state = ? AND parent_run_id IS NOT NULL AND attempts = 0
+		ORDER BY started_at ASC
+	`, string(PipelineQueued))
+	if err != nil {
+		return nil, fmt.Errorf("pipeline list-queued-subruns: %w", err)
+	}
+	defer rows.Close()
+	var out []*PipelineRun
+	for rows.Next() {
+		r, err := scanPipelineRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // ListSubruns returns every direct child of the given parent pipeline run,
 // ordered by started_at. Empty result is not an error. v2 recursion path.
 func (d *PipelineDAO) ListSubruns(ctx context.Context, parentRunID string) ([]*PipelineRun, error) {
