@@ -1,0 +1,68 @@
+# Qwen3-30B-A3B-GPTQ-Int4 — pre-quantized HF artifact, download-only.
+#
+# Pre-quantized GPTQ INT4 from the official Qwen org. Skips abliteration and
+# quantization (no Abliteration / Quantization blocks) — the controller stops
+# after Download and marks the cache Ready, which the Model CR then mounts via
+# pvc://qwen3-30b-a3b-gptq-int4/qwen3-30b-a3b-gptq-int4.
+#
+# Architecture (verified from HF config.json on 2026-05-03):
+#   - Qwen3MoeForCausalLM, model_type=qwen3_moe
+#   - 48 layers, hidden_size=2048, head_dim=128
+#   - 32 attention heads, 4 KV heads (GQA 8x)
+#   - 128 experts, 8 active per token (3B active / 30.5B total)
+#   - max_position_embeddings=40960 (40K native)
+#   - dtype=float16
+#   - quantization_config: bits=4, group_size=128, sym=true, desc_act=false,
+#     quant_method=gptq, true_sequential=true, damp_percent=0.01
+#
+# Filling the gap left by the deprecated omnicoder-9b lane (corrupted GPTQ
+# artifact on 5930k, deprecated 2026-05-03). MoE 30B/3B-active should give
+# better tokens-per-second on the 7900 XTX than gemma4-31b-gptq (dense 30.7B)
+# while running coherent first-pass GPTQ via the official Qwen quant.
+#
+# vLLM ROCm posture: GPTQ + sym=true + desc_act=false → ExllamaLinearKernel
+# (HIP-compiled), proven 72-73 tok/s decode on gfx1100 for Qwen3-14B-GPTQ-Int4.
+# vLLM warns "4-bit gptq_gemm kernel is buggy, switch to gptq_marlin" — Marlin
+# is CUDA-only on ROCm; ignore the warning, stay on `gptq` quantization.
+#
+# Disk: ~17 GiB on-disk weights (typical for Qwen3-30B-A3B-GPTQ-Int4) + tokenizer
+# + config + safetensors index → keep PVC at 30Gi (matches qwen35-27b-opus-distill-oci).
+# Storage class: local-path on the 7900xtx node (matches gemma4-31b-gptq cache
+# pattern) — RWO, fast, and avoids cross-node Longhorn mmap-stall regressions.
+#
+# Node: cblevins-7900xtx (gfx1100, 24 GiB). Pre-quantized so download is the
+# only pipeline step; no GPU needed for the cache job itself, but pinning to
+# the serving node lets the Model CR mount via cache.strategy=Local without an
+# extra cache-copy hop.
+#
+# Status: PENDING SMOKE on first deploy. Promote alias / raise priority only
+# after a successful single-stream generation + tool-calling smoke on
+# cblevins-7900xtx.
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-30b-a3b-gptq-int4
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/promotion-state: pre-quant-canary-pending-smoke
+    flexinfer.ai/promotion-requires: docs/dev/qwen3-30b-a3b-gptq-rollout.md
+spec:
+  source: "Qwen/Qwen3-30B-A3B-GPTQ-Int4"
+  storageStrategy: SharedPVC
+  storageSize: "30Gi"
+  clusterStorageClassName: local-path
+  secretRef: "hf-token"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  download:
+    # Pre-quantized weights are large; keep memory modest and rely on
+    # huggingface_hub default downloader (xet disabled by default on
+    # constrained WANs per CLAUDE.md memory note). hfTransfer false avoids
+    # the 4-8Gi parallel-connection overhead.
+    maxMemoryGB: 8
+    hfTransfer: false
+    backoffLimit: 3
+  retentionPriority: 70
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85

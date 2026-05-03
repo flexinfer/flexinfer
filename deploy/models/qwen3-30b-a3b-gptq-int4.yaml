@@ -1,0 +1,155 @@
+# Qwen3-30B-A3B-GPTQ-Int4 via vLLM on AMD gfx1100 (cblevins-7900xtx).
+#
+# MoE 30.5B total / 3B active (128 experts, top-8). Pre-quantized GPTQ INT4
+# from the official Qwen org. Native 40K context (we cap at 8K initially —
+# raise after smoke). Fills the gap left by the deprecated omnicoder lane.
+#
+# Why this lane:
+#   - Dense gemma4-31b-gptq runs at maxModelLen=2048 on this card with
+#     enforce_eager (kernel-launch overhead floor). The 26B-A4B MoE long-canary
+#     proves MoE GPTQ INT4 + FP8 KV at 16K. A 30B/3B-active model with native
+#     32K-40K should decode meaningfully faster than 31B-dense and unblock a
+#     coherent coding/general lane on this node while the Qwen3.5 Hessian
+#     work continues elsewhere.
+#   - Pre-quantized: skips the multi-hour abliteration + quantization pipeline
+#     (and the "ablitateLmHead corrupts streaming save" hazard described in
+#     CLAUDE.md — Qwen3.5 GPTQ Root Cause + Fix).
+#
+# vLLM ROCm posture (proven on gfx1100):
+#   - quantization: gptq → ExllamaLinearKernel (HIP-compiled, 72-73 tok/s on
+#     Qwen3-14B-GPTQ-Int4).
+#   - vLLM warns "4-bit gptq_gemm buggy, switch to gptq_marlin" — Marlin is
+#     CUDA-only; stay on `gptq`.
+#   - kvCacheDtype: fp8_e4m3 with calculateKvScales=true (gemma4-26b-a4b-gptq-long
+#     proved this works on gfx1100 at 16K; Qwen3-30B has no native FP8 KV scales).
+#   - attentionBackend: TRITON_ATTN (matches both gemma4 lanes; ROCm flash is
+#     opt-in via env, default-off on this build).
+#   - enforceEager: true (CUDAGraph compile fragile on ROCm GPTQ; consistent
+#     with both gemma4 lanes on this card).
+#
+# GPU plumbing on cblevins-7900xtx (CRITICAL — see CLAUDE.md memory note):
+#   - Node exposes 1 discrete 7900 XTX + 1 Raphael iGPU as 2 amd.com/gpu slots.
+#   - count: 2 claims both slots so the device-plugin index is deterministic.
+#   - hipVisibleDevices: "0" pins the serving process to the discrete dGPU.
+#   - Pair w/ gpu.count=2 — same pattern as gemma4-31b-gptq and -long canary.
+#
+# Co-existence with gemma4-31b-gptq (priority 250, warm primary in
+# 7900xtx-textgen):
+#   - This canary uses priority 200 < 250 — does NOT preempt the warm 31B.
+#   - When 31B is idle (15m), this lane can take the GPU on demand.
+#   - shared: 7900xtx-textgen — same group so the scheduler arbitrates.
+#
+# VRAM budget (estimate, refined post-smoke):
+#   - Weights: ~17 GiB (typical Qwen3-30B-A3B-GPTQ-Int4 on-disk, fp16 quant config)
+#   - KV @ 8192 max_model_len, FP8 e4m3, 48 layers, 4 KV heads, head_dim=128:
+#       per-token KV = 2 * 48 * 4 * 128 * 1 byte = 49 KiB
+#       8192 tokens * 49 KiB ≈ 0.4 GiB per sequence
+#     With maxNumSeqs=4 and FP8 KV that gives ~1.6 GiB KV pool — plenty of
+#     headroom for the 24 GiB card to leave room for activations.
+#   - Activations + plugin overhead: 1-2 GiB (no TurboQuant rotation tensors).
+#   - Total resident estimate: ~19-20 GiB → vramEstimateMB=18000 is a floor for
+#     the shared-group scheduler, not an exact estimate (matches gemma4-31b
+#     pattern on this node).
+#
+# Promotion gate:
+#   - flexinfer.ai/promotion-state: pre-quant-canary-pending-smoke
+#   - Single-stream "Paris" / fibonacci coherence + a tool-calling smoke must
+#     pass before any alias is promoted to ondemand routing weight.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-30b-a3b-gptq-int4
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/promotion-state: pre-quant-canary-pending-smoke
+    flexinfer.ai/promotion-requires: docs/dev/qwen3-30b-a3b-gptq-rollout.md
+spec:
+  backend: vllm
+  source: pvc://qwen3-30b-a3b-gptq-int4/qwen3-30b-a3b-gptq-int4
+  cache:
+    # Source PVC lives on cblevins-7900xtx (local-path, RWO). Stage onto node
+    # via Local strategy — same pattern as omnicoder-9b and qwen35-27b-opus-distill.
+    strategy: Local
+  gpu:
+    vendor: amd
+    # Claim both amd.com/gpu slots; hipVisibleDevices=0 pins inference to the
+    # discrete 7900 XTX. iGPU slot is held but unused (cannot run inference).
+    count: 2
+    vramEstimateMB: 18000
+    shared: 7900xtx-textgen
+    # Below gemma4-31b-gptq (priority=250, warm primary). Co-exists without
+    # preempting the warm 31B; activates on explicit qwen3-30b-a3b/qwen3-coder
+    # demand when 31B is idle.
+    priority: 200
+  serverless:
+    enabled: true
+    # Scale-to-zero canary. Promote to minReplicas=1 only after smoke passes
+    # AND we want to displace gemma4-31b-gptq as warm primary.
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 15m
+  config:
+    quantization: gptq
+    dtype: "half"
+    # Conservative initial cap. Native model supports 40960; raise after smoke
+    # (likely target 16K-32K with FP8 KV, mirroring gemma4-26b-a4b-gptq-long).
+    maxModelLen: 8192
+    maxInputTokens: 6144
+    maxOutputTokens: 2048
+    gpuMemoryUtilization: "0.92"
+    # FP8 KV proven on gfx1100 by gemma4-26b-a4b-gptq-long. The Qwen3-30B
+    # checkpoint ships no precalibrated KV scales — vLLM will dynamically
+    # compute via calculateKvScales (required for fp8 KV on ROCm without
+    # checkpoint-side scales).
+    kvCacheDtype: fp8_e4m3
+    calculateKvScales: true
+    # 4 concurrent sequences keeps batch math healthy for MoE expert routing
+    # without blowing the KV pool at 8K context. Raise during throughput
+    # tuning if VRAM allows.
+    maxNumSeqs: 4
+    trustRemoteCode: true
+    attentionBackend: TRITON_ATTN
+    # 7900xtx exposes iGPU at amd.com/gpu index 1 (cannot serve). Force
+    # discrete dGPU.
+    hipVisibleDevices: "0"
+    servedModelName: qwen3-30b-a3b
+    enableToolCalling: true
+    # Qwen3 chat templates carry their own tool-call format. Leave parser
+    # unset for the first-pass smoke (vLLM falls back to the default
+    # OpenAI-compatible schema). If tool-calling smoke shows malformed
+    # function args, switch to toolCallParser: hermes (matches omnicoder-9b)
+    # or hermes_2 — Qwen3 traces close to the Hermes/Qwen2.5 template.
+    # Disabled initially to mirror the gemma4-26b-a4b-gptq-long posture.
+    enablePrefixCaching: false
+    # ROCm GPTQ + CUDAGraph compile is fragile on this card; both gemma4
+    # primary and 26B-A4B-long pin enforceEager=true. Match.
+    enforceEager: true
+    disableLogStats: false
+    # On-demand canary; do not promote to warm primary until smoke + alias
+    # cutover are both signed off.
+    warmPolicy: ondemand
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 32Gi
+  serviceLabels:
+    - qwen3-30b-a3b
+    - qwen3-moe
+    - code-gen
+  litellm:
+    enabled: true
+    servedModelName: qwen3-30b-a3b
+    aliases:
+      - qwen3-30b-a3b
+      # Replaces the deprecated omnicoder lane as the workspace coding model.
+      # qwen3-coder is intentional naming: Qwen3 family + coder route.
+      - qwen3-coder
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
