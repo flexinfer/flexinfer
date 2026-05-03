@@ -110,11 +110,15 @@ func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, confi
 	// user specifies ggufFile to select a specific variant from multi-GGUF repos.
 	if (backendName == backend.NameLlamaCpp || backendName == backend.NameVLLM) &&
 		strings.HasPrefix(source, "HF://") &&
-		strategy == "SharedPVC" &&
+		(strategy == "SharedPVC" || strategy == "Local") &&
 		model.Status.Cache != nil &&
-		model.Status.Cache.PVCName != "" {
+		(strategy == "Local" || model.Status.Cache.PVCName != "") {
 		if ggufFile := resolveGGUFFile(config); ggufFile != "" {
-			plan.ModelPath = "/models/" + model.Name + "/" + ggufFile
+			if strategy == "Local" {
+				plan.ModelPath = "/models/" + ggufFile
+			} else {
+				plan.ModelPath = "/models/" + model.Name + "/" + ggufFile
+			}
 		}
 	}
 

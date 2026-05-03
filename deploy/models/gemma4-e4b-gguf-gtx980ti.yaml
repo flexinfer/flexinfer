@@ -17,7 +17,13 @@ spec:
   source: HF://HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive
   cache:
     size: 10Gi
-    strategy: SharedPVC
+    # Maxwell tensor loading can stall on the Longhorn-backed cache PVC.
+    # Keep this model on the GTX node's local model store so llama.cpp
+    # faults the GGUF from host-local storage during cold start.
+    strategy: Local
+    hostPath: /var/lib/flexinfer/models
+    flashLoader:
+      enabled: false
   gpu:
     vendor: nvidia
     shared: gtx980ti-models
@@ -32,6 +38,8 @@ spec:
   config:
     ggufFile: Gemma-4-E4B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
     contextSize: 4096
+    maxInputTokens: 3072
+    maxOutputTokens: 1024
     nGPULayers: 999
     batchSize: 512
     ubatchSize: 256
