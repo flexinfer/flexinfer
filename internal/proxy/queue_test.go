@@ -22,6 +22,22 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+type countingActivator struct {
+	touches int
+}
+
+func (a *countingActivator) TriggerScaleUp(context.Context, string) error { return nil }
+
+func (a *countingActivator) TouchLastActiveTime(_ context.Context, _ string) {
+	a.touches++
+}
+
+func (a *countingActivator) GetColdStartTimeout(context.Context, string) time.Duration {
+	return time.Millisecond
+}
+
+func (a *countingActivator) IsNodeTerminating(context.Context, string) bool { return false }
+
 func TestCalculateBackoff(t *testing.T) {
 	p := &Proxy{
 		backoffInitialWait: 1 * time.Second,
@@ -51,6 +67,27 @@ func TestCalculateBackoff(t *testing.T) {
 		d := p.calculateBackoff(10)
 		assert.LessOrEqual(t, d, time.Duration(float64(30*time.Second)*1.5))
 	})
+}
+
+func TestHandleColdStartRefreshesDemandForExistingQueue(t *testing.T) {
+	activator := &countingActivator{}
+	p := &Proxy{
+		activator:    activator,
+		maxQueueSize: 10,
+		queueTimeout: time.Millisecond,
+	}
+	p.queues.Store("test-model", &RequestQueue{
+		model:   "test-model",
+		items:   make(chan *QueuedRequest, 10),
+		created: time.Now(),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	err := p.handleColdStart(req.Context(), rec, req, "test-model", time.Now())
+
+	require.Error(t, err)
+	assert.Equal(t, 1, activator.touches)
 }
 
 func TestDrainQueue(t *testing.T) {

@@ -49,6 +49,12 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	defer coldSpan.End()
 	coldSpan.SetAttributes(attribute.String("flexinfer.model", modelName))
 
+	// Refresh demand for every cold-start request, even when a queue already
+	// exists. A previous queue processor may still be waiting on readiness, so
+	// relying only on queue creation can leave shared-GPU arbitration with stale
+	// demand and prevent priority preemption.
+	p.activator.TouchLastActiveTime(ctx, modelName)
+
 	// Get or create queue for this model
 	queue := p.getOrCreateQueue(modelName)
 
