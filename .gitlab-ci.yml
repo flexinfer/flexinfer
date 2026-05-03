@@ -238,7 +238,13 @@ lint:
         ls -la "$(go env GOPATH)/bin" || true
         exit 1
       fi
-    - $(go env GOPATH)/bin/golangci-lint run --timeout 30m ${GO_APP_PKGS}
+    # 45m, not 30m: golangci-lint completed in 29m47s on pipeline 7923's
+    # retry of job 86562 (right at the wire, after slice 5.1 added ~1.3k
+    # LOC). Earlier the same pipeline failed with `Timeout exceeded` at
+    # exactly 30m and emitted "0 issues" — i.e. partial completion. The
+    # gitlab job timeout is 1h30m, so 45m leaves runway for the next
+    # phase 5 slice's surface area.
+    - $(go env GOPATH)/bin/golangci-lint run --timeout 45m ${GO_APP_PKGS}
 
 vet:
   <<: *go-template
