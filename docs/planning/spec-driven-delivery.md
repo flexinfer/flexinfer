@@ -11,6 +11,7 @@ Tracking:
 - High-level roadmap: `ROADMAP.md`
 - SD-3 issue: https://gitlab.flexinfer.ai/services/flexinfer/-/issues/57
 - SD-4 issue: https://gitlab.flexinfer.ai/services/flexinfer/-/issues/58
+- SD-5 issue: https://gitlab.flexinfer.ai/services/flexinfer/-/issues/59
 - Canonical runtime evidence: `.loom/60-validation-matrix.md`
 
 This plan keeps multi-agent feature delivery auditable from spec to runtime
@@ -31,6 +32,8 @@ promote or block runtime canaries.
    in `.loom/60-validation-matrix.md`.
 5. Reconcile `docs/planning/next-roadmap.md`, `ROADMAP.md`, and issue links
    after the slice merges.
+6. Use `docs/planning/roadmap-reconciliation.md` for the post-merge checklist
+   and issue closing note so planning state is not trapped in commit messages.
 
 ## SD-3: Validation Matrix Contract
 
@@ -110,8 +113,7 @@ Acceptance criteria:
       slices.
 - [x] The active ROCm/gfx1100 deploy-swap + tracing plan has an agent delegation
       table with disjoint workstreams and expected verification signals.
-- [x] `docs/planning/next-roadmap.md` and `ROADMAP.md` mark SD-4 complete and
-      continue to leave SD-5 as the remaining reconciliation discipline item.
+- [x] `docs/planning/next-roadmap.md` and `ROADMAP.md` mark SD-4 complete.
 
 Validation commands for SD-4:
 
@@ -128,7 +130,53 @@ Rollout/backout:
 - Backout: revert the docs commit. No live cluster, CRD, Helm, or runtime image
   rollback is required.
 
+## SD-5: Roadmap Reconciliation Discipline
+
+Goal: roadmap docs, `.loom` context, and GitLab tracking issues stay aligned
+after planning changes, so the next work item can be selected from durable repo
+state instead of chat history.
+
+Owner boundary for SD-5:
+
+- Owned files: `docs/planning/roadmap-reconciliation.md`,
+  `docs/planning/spec-driven-delivery.md`,
+  `docs/planning/next-roadmap.md`, `docs/planning/README.md`,
+  `ROADMAP.md`, and `.loom/00-index.md`.
+- Optional issue updates: GitLab issues `#1` and `#59`.
+- Out of scope: production manifests, controller/runtime code, CRDs, Helm
+  changes, and generated validation evidence.
+
+Acceptance criteria:
+
+- [x] A reusable roadmap reconciliation checklist exists under
+      `docs/planning/`.
+- [x] The checklist names `ROADMAP.md`, `docs/planning/next-roadmap.md`,
+      `docs/planning/spec-driven-delivery.md`, `.loom/00-index.md`, and GitLab
+      issues as required sync surfaces.
+- [x] The checklist includes completion-note guidance for closing issues after
+      MRs merge.
+- [x] `ROADMAP.md`, `docs/planning/next-roadmap.md`, and `.loom/00-index.md`
+      record that SD-1 through SD-5 are complete as tracked planning contracts.
+- [x] GitLab issue `#59` is updated and closed after the MR lands.
+
+Validation commands for SD-5:
+
+```bash
+git diff --check
+rg "roadmap-reconciliation|SD-5|Issue #59|#59" ROADMAP.md docs/planning/next-roadmap.md docs/planning/spec-driven-delivery.md docs/planning/README.md docs/planning/roadmap-reconciliation.md .loom/00-index.md
+rg "ROADMAP.md|docs/planning/next-roadmap.md|.loom/00-index.md|GitLab issues" docs/planning/roadmap-reconciliation.md
+```
+
+Rollout/backout:
+
+- Rollout: merge the docs-only SD-5 contract after diff and targeted `rg`
+  validation pass, then close issue `#59` with the MR and validation summary.
+- Backout: revert the docs commit and reopen `#59` if the reconciliation
+  checklist is wrong or incomplete. No live cluster, CRD, Helm, or runtime image
+  rollback is required.
+
 ## Remaining Spec-Driven Delivery Items
 
-- SD-5: Run roadmap reconciliation after planning changes and keep tracking
-  issues linked.
+All SD-1 through SD-5 delivery-acceleration contracts are now represented in
+tracked planning docs. Future planning changes should use
+`docs/planning/roadmap-reconciliation.md` after each merge.

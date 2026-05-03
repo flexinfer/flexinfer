@@ -158,7 +158,7 @@ Shipped in pipeline #498 across 3 commits.
 - [x] **Slice readiness gate** - Require target modules, validation commands, and rollback notes before multi-file feature implementation ([Issue #56](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/56))
 - [x] **Validation matrix expansion** - Make `.loom/60-validation-matrix.md` the canonical canary and runtime-promotion evidence table, with the SD-3 contract in `docs/planning/spec-driven-delivery.md` ([Issue #57](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/57))
 - [x] **Agent-ready work slices** - Add delegation notes, disjoint ownership boundaries, safe-to-edit modules, local verification commands, and expected output signals to feature plans ([Issue #58](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/58))
-- [ ] **Roadmap reconciliation discipline** - Keep roadmap docs, `.loom` context, and tracking issues aligned after planning cycles ([Issue #59](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/59))
+- [x] **Roadmap reconciliation discipline** - Keep roadmap docs, `.loom` context, and tracking issues aligned after planning cycles through `docs/planning/roadmap-reconciliation.md` ([Issue #59](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/59))
 
 ## Phase 5: Multi-Cluster (Mostly Complete)
 
@@ -190,6 +190,7 @@ See `docs/design/multi-cluster.md` and `docs/planning/phase-5-multi-cluster.md` 
 | [docs/planning/spec-capsule-template.md](docs/planning/spec-capsule-template.md) | Reusable spec capsule template and examples |
 | [docs/planning/slice-readiness-gate.md](docs/planning/slice-readiness-gate.md) | Ready-for-implementation gate for feature slices and agent delegation notes |
 | [docs/planning/spec-driven-delivery.md](docs/planning/spec-driven-delivery.md) | Spec-driven delivery contract plus SD-3 validation matrix and SD-4 delegation acceptance criteria |
+| [docs/planning/roadmap-reconciliation.md](docs/planning/roadmap-reconciliation.md) | Post-merge roadmap, `.loom`, and issue reconciliation checklist |
 | [.loom/60-validation-matrix.md](.loom/60-validation-matrix.md) | Canonical gfx1100 canary and runtime-promotion evidence matrix |
 | [docs/design/multi-cluster.md](docs/design/multi-cluster.md) | Multi-cluster design |
 | [docs/design/model-registry-integration.md](docs/design/model-registry-integration.md) | Model registry design (implemented) |
