@@ -166,7 +166,7 @@ Tracking issue: [#9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9)
 - [ ] Stage major docker updates in a separate rollout: python 3.14, pytorch 2.3, cuda 12.9, rocm 6.4 (mlc) ([#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21))
 - [x] Keep roadmap tracking issue `#1` synchronized with dependency rollout status (updated 2026-02-26)
 
-## Delivery Acceleration: Spec-Driven Development 🚧 PLANNED
+## Delivery Acceleration: Spec-Driven Development ✅ COMPLETE
 
 Objective: make future feature delivery faster by requiring small, source-backed
 specs and explicit validation gates before multi-file implementation begins.
@@ -175,7 +175,7 @@ specs and explicit validation gates before multi-file implementation begins.
 - [x] SD-2: Define a slice-readiness gate with target files/modules, validation commands, and rollback notes ([#56](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/56)).
 - [x] SD-3: Expand `.loom/60-validation-matrix.md` as the canonical canary and runtime-promotion evidence table, with the contract tracked in `docs/planning/spec-driven-delivery.md` ([#57](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/57)).
 - [x] SD-4: Add agent-ready delegation notes to feature plans so parallel slices have clear ownership boundaries, safe-to-edit modules, local verification commands, and expected output signals ([#58](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/58)).
-- [ ] SD-5: Run roadmap reconciliation after planning changes and keep tracking issues linked ([#59](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/59)).
+- [x] SD-5: Run roadmap reconciliation after planning changes and keep tracking issues linked through `docs/planning/roadmap-reconciliation.md` ([#59](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/59)).
 
 Acceptance criteria:
 
@@ -183,6 +183,7 @@ Acceptance criteria:
 - Every multi-file feature plan includes acceptance criteria, validation commands, and rollback/backout notes.
 - Parallel implementation plans include agent delegation notes with disjoint ownership boundaries, files/modules to avoid, local verification, and expected output signals.
 - Runtime canary promotions can be traced from spec to `.loom/60-validation-matrix.md` evidence without relying on chat history.
+- Planning changes are reconciled across `ROADMAP.md`, this file, `.loom/00-index.md`, and tracking issues before closing a slice.
 
 ## Tech Debt (Ongoing)
 

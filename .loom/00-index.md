@@ -14,10 +14,17 @@
 - Gemma4 31B TurboQuant memory fix plan: `gemma4-31b-turboquant-memory-fix-plan.md`
 - gfx1100 quantization validation matrix: `60-validation-matrix.md`
 - PR-2 readiness plan: `../docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md`
+- Roadmap reconciliation checklist: `../docs/planning/roadmap-reconciliation.md`
 
-## Current Goal (2026-05-02)
+## Current Goal (2026-05-03)
 
 Close the remaining Gemma4/Qwen/TurboQuant gfx1100 queue through spec-driven gates. Keep closure evidence in `60-validation-matrix.md`, with runtime posture summarized in `gemma4-26b-31b-gptq-turboquant-plan.md` and `docs/dev/gemma4-rocm-status.md`.
+
+Spec-driven delivery contracts SD-1 through SD-5 are now complete in tracked
+planning docs. Future planning changes should use
+`../docs/planning/roadmap-reconciliation.md` after merge so `ROADMAP.md`,
+`docs/planning/next-roadmap.md`, `.loom/00-index.md`, and GitLab issues remain
+aligned.
 
 - [x] Slice A - 26B guardrails: long-canary dGPU selector is safe; 16K FP8-KV is the validated fallback posture and 22K remains partial/non-primary.
 - [ ] Slice B - `26B-dense-rerun-gate`: dense-validated rebuild reached only harmful prompt 80/128 before the 4h abliteration deadline and still needs a rerun with the longer timeout plus cosine/runtime evidence.
