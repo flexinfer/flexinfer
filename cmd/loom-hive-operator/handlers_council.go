@@ -43,6 +43,39 @@ func (o *operator) handleCouncilRunGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, run)
 }
 
+// handleCouncilRunDebate returns the persisted debate transcript for a
+// council run as an array of round entries ordered by (round_index ASC,
+// id ASC). Returns 200 with [] when the run exists but had no debate
+// (single-pass v1 / v2 non-debate-trigger path), 404 when the council
+// run id itself is unknown.
+func (o *operator) handleCouncilRunDebate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	// Validate the council run exists first so the API surface
+	// distinguishes "no debate ran" (200 + []) from "no such run"
+	// (404). Mirrors handleCouncilRunGet's not-found semantics.
+	if _, err := o.store.Council.Get(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "council run not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rounds, err := o.store.Debate.ListByRun(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if rounds == nil {
+		rounds = []*store.CouncilDebateRound{} // ensure JSON [] not null
+	}
+	writeJSON(w, http.StatusOK, rounds)
+}
+
 // councilRunRequest is the admin POST body shared by /council/run and
 // /council/dryrun. Both fields optional; absent reason logs as the empty
 // string into council_runs.notes.

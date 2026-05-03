@@ -103,6 +103,7 @@ func (o *operator) httpMux() *http.ServeMux {
 	// Council.
 	mux.HandleFunc("GET /api/hive/council/runs", o.handleCouncilRunsList)
 	mux.HandleFunc("GET /api/hive/council/runs/{id}", o.handleCouncilRunGet)
+	mux.HandleFunc("GET /api/hive/council/runs/{id}/debate", o.handleCouncilRunDebate)
 	mux.HandleFunc("POST /api/hive/council/run", requireAdmin(o.handleCouncilRun))
 	mux.HandleFunc("POST /api/hive/council/dryrun", requireAdmin(o.handleCouncilDryrun))
 
