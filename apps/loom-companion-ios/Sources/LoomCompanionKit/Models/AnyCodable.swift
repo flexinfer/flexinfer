@@ -73,7 +73,7 @@ extension AnyCodable {
     }
 
     /// Extract the underlying numeric value as Double, if the case is
-    /// numeric. Used by `HiveKPISnapshot` to coerce the operator's
+    /// numeric. Used by `MillsKPISnapshot` to coerce the operator's
     /// `map[string]any` payload into typed metric numbers.
     public var doubleValue: Double? {
         switch self {

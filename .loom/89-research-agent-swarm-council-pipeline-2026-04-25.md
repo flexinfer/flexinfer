@@ -46,8 +46,8 @@ The platform is mature; the meta-layer is a coordinator on top of existing primi
 | **Pipeline (execution tier)** | A workflow per agent session, with approval gates and `auto_verify` (one stage = the whole feature) | A **per-backlog-item DAG** of stages, each stage a bounded specialized agent, with deterministic gates between stages and the ability to fan out (parallel slices) and fan in (integrate) |
 | **Stage gates** | `step_type: approval` (human) and the new `auto_verify` (devbox quality gate) | A library of **machine-judged gates**: lint, test, coverage, security, diff-size, scope-drift, spec-conformance, regression, public-API check |
 | **Decomposition policy** | One planner, one big plan; no automatic slice splitting | Council emits slices with explicit dependencies; pipeline scheduler runs independent slices in parallel worktrees and integrates |
-| **Cost budget at the hive level** | Per-spawn `MaxCostUSD` + `MaxTurns` (Phase 1 round 4 work landed: `internal/hud/spawn.go:879` `runBudgetWatcher`) | Hive-level **rolling budget** with caps per tier (council vs. pipeline) and per-day; auto-throttle and pause |
-| **Outcome telemetry / feedback** | Spawn telemetry, traces, weaver dispatch counters | Hive-level KPIs (mean cost / merged change, gate pass rate, regression rate, slice-to-merge latency) and a feedback loop into the council's next planning round |
+| **Cost budget at the mills level** | Per-spawn `MaxCostUSD` + `MaxTurns` (Phase 1 round 4 work landed: `internal/hud/spawn.go:879` `runBudgetWatcher`) | Mills-level **rolling budget** with caps per tier (council vs. pipeline) and per-day; auto-throttle and pause |
+| **Outcome telemetry / feedback** | Spawn telemetry, traces, weaver dispatch counters | Mills-level KPIs (mean cost / merged change, gate pass rate, regression rate, slice-to-merge latency) and a feedback loop into the council's next planning round |
 | **Human-in-the-loop scope** | Default: humans drive sessions, optionally accept handoffs | Default: agents drive; humans **interrupt** specific stages they want to gate (e.g., merge-to-main on protected branches, security-sensitive paths). Configurable via policy |
 
 This list is the design surface for §6.
@@ -97,7 +97,7 @@ External patterns to learn from. URLs are stable canonical sources.
 
 ```
                               ┌────────────────────────────────────────────┐
-                              │                  HIVE                      │
+                              │                  MILLS                      │
                               │       (control plane in loomd)             │
                               │                                            │
    roadmap, telemetry,        │  ┌──────────────────────────────────────┐  │
@@ -130,7 +130,7 @@ External patterns to learn from. URLs are stable canonical sources.
                               │  │           OUTCOMES                   │ │
                               │  │  - merged MRs                        │ │
                               │  │  - closed issues                     │ │
-                              │  │  - hive KPIs (cost/merged, latency,  │ │
+                              │  │  - mills KPIs (cost/merged, latency,  │ │
                               │  │     gate pass rate, regression rate) │ │
                               │  │  - feedback into next council round  │ │
                               │  └──────────────────────────────────────┘ │
@@ -152,7 +152,7 @@ Two scheduling models, intentionally different:
 
 | # | Decision | Resolution |
 |---|---|---|
-| D1 | Where does the council run? | **Hybrid (cluster-only).** Frontier editor (Claude / Codex via headless spawn) + FlexInfer reviewers, all running in k3s. The Mac can trigger and watch via REST/MCP but is never the runtime — operator's MacBook Air sleeps; the hive must not. |
+| D1 | Where does the council run? | **Hybrid (cluster-only).** Frontier editor (Claude / Codex via headless spawn) + FlexInfer reviewers, all running in k3s. The Mac can trigger and watch via REST/MCP but is never the runtime — operator's MacBook Air sleeps; the mills must not. |
 | D2 | Council deliverable contract | **Markdown + structured JSON sidecar.** |
 | D3 | Backlog representation | **Three-tier with canonical persistence.** Canonical = internal datastore (SQLite, see §6.5). `.loom/backlog/*.yaml` = git-tracked export for humans + multi-agent visibility. GitLab issues = federated mirror for assignment / cross-tool workflows. Reliable when GitLab is down because canonical store is local-to-cluster. |
 | D4 | Pipeline runtime | **Extend MentatLab.** New flow templates + new gate hooks; if MentatLab proves insufficient (e.g., gate types or fan-out semantics), absorb the missing primitives into MentatLab rather than building a parallel engine. |
@@ -171,22 +171,22 @@ Three tiers, with the **canonical** tier being a real datastore — not YAML. Ra
 
 | Tier | Store | What it holds | Authority |
 |---|---|---|---|
-| **Canonical** | SQLite at `/var/lib/loom-hive/state.db` (k3s PVC) | `backlog_items`, `council_runs`, `pipeline_runs`, `stage_results`, `gate_outcomes`, `kpi_snapshots`, `eval_scores` | Source of truth for the hive |
-| **Exported** | `.loom/backlog/*.yaml`, `.loom/hive/runs/<id>.yaml` | Snapshot of canonical state at last council commit (or on-demand export) | Human/git readable; regenerated from canonical store, never edited directly except via PR (which the reconciler will treat as a desired-state delta) |
+| **Canonical** | SQLite at `/var/lib/loom-mills/state.db` (k3s PVC) | `backlog_items`, `council_runs`, `pipeline_runs`, `stage_results`, `gate_outcomes`, `kpi_snapshots`, `eval_scores` | Source of truth for the mills |
+| **Exported** | `.loom/backlog/*.yaml`, `.loom/mills/runs/<id>.yaml` | Snapshot of canonical state at last council commit (or on-demand export) | Human/git readable; regenerated from canonical store, never edited directly except via PR (which the reconciler will treat as a desired-state delta) |
 | **Federated** | GitLab issues + MR labels | Backlog items mirrored as issues for assignment / discussion; pipeline runs linked to issues via `weaver_query_id`-style metadata | Multi-tool visibility; eventual consistency with canonical |
 
 Why SQLite, not Postgres: zero infra (single PVC), excellent write durability (`PRAGMA journal_mode=WAL`), embeds in the operator pod, scales easily into the 100k-row regime we expect. Migration path to Postgres is straightforward if scale demands.
 
-Why not Neo4j/Qdrant (existing stack): wrong shape. Backlog/runs are relational + transactional; the agent-context graph is for entities and relationships across long-lived agent activity. The hive can *reference* agent-context entities (via session/task ids) but its primary data is tabular.
+Why not Neo4j/Qdrant (existing stack): wrong shape. Backlog/runs are relational + transactional; the agent-context graph is for entities and relationships across long-lived agent activity. The mills can *reference* agent-context entities (via session/task ids) but its primary data is tabular.
 
 ### 6.6 New: deployment topology (D1 elaboration)
 
-The hive runs **only** in k3s. Concretely:
+The mills runs **only** in k3s. Concretely:
 
-- New deployment `loom-hive-operator` in `platform/gitops/k3s/hive/` — single replica (singleton scheduler), PVC for SQLite, RBAC for `cluster-agent-{auth,api-keys}` and the spawn pod namespace.
-- The operator embeds the council scheduler, pipeline reconciler, gate registry, persistence layer, and the hive REST/MCP server.
+- New deployment `loom-mills-operator` in `platform/gitops/k3s/mills/` — single replica (singleton scheduler), PVC for SQLite, RBAC for `cluster-agent-{auth,api-keys}` and the spawn pod namespace.
+- The operator embeds the council scheduler, pipeline reconciler, gate registry, persistence layer, and the mills REST/MCP server.
 - It calls existing primitives over the network: spawns via the existing `mcp-spawn` / spawn controller path (today managed by `loomd`); weaver via `mcp-weaver` (extracted from `loomd` if not already exposed remotely); agent-context via `mcp-agent-context`; GitLab via `mcp-gitlab`. All MCP traffic uses the existing Streamable HTTP transport (`docs/STREAMABLE_HTTP.md`).
-- The Mac-side `loom` CLI is a *client only* — `loom hive ...` commands hit the cluster operator's REST surface. The CLI never runs the reconciler.
+- The Mac-side `loom` CLI is a *client only* — `loom mills ...` commands hit the cluster operator's REST surface. The CLI never runs the reconciler.
 - Failure mode: if the operator pod restarts, SQLite WAL replays in-flight runs; the reconciler picks back up on the next tick.
 
 Implication: phase 1 of the implementation plan must include a deployable operator and the persistence layer before any council/pipeline logic ships.
@@ -227,7 +227,7 @@ Implication: phase 1 of the implementation plan must include a deployable operat
 5. **Fan out / fan in.** When the spec marks slices as parallel, the pipeline allocates per-slice worktrees (existing `agent_worktree_allocate` tool) and runs them concurrently. An integrator stage merges results.
 6. **Surface to operators.** Each DAG instance shows up in the HUD `Spawn` and `Traces` panels, plus a new `Pipelines` panel with stage status, cost so far, and projected completion.
 
-### 7.3 Hive tier — what coordinates them
+### 7.3 Mills tier — what coordinates them
 
 1. **Policy engine** (D8) — labels + path globs decide which gates need humans.
 2. **Budget enforcer** — Prometheus-tracked rolling spend; throttles or pauses tiers.
@@ -242,17 +242,17 @@ Implication: phase 1 of the implementation plan must include a deployable operat
 Extends the existing `loom_spawn_*`, `loom_weaver_*`, and `loom_session_*` namespaces.
 
 ```
-loom_hive_council_runs_total{trigger="cron|roadmap|incident", outcome="success|partial|error"}
-loom_hive_council_cost_usd_total{model, agent_role}            # editor vs reviewer
-loom_hive_council_artifacts_total{kind="research|spec|plan|backlog_issue"}
-loom_hive_pipeline_runs_total{stage, outcome="success|gate_fail|error|escalated"}
-loom_hive_pipeline_stage_duration_seconds{stage}
-loom_hive_pipeline_gate_decisions_total{gate, outcome="pass|fail|skip"}
-loom_hive_pipeline_cost_usd_total{stage}
-loom_hive_backlog_items_total{label, state="queued|running|merged|escalated"}
-loom_hive_merge_to_main_total{auto="true|false", path_class}
-loom_hive_regression_count_total                                # post-merge alert correlation
-loom_hive_budget_remaining_usd{tier="council|pipeline", window="day|week"}
+loom_mills_council_runs_total{trigger="cron|roadmap|incident", outcome="success|partial|error"}
+loom_mills_council_cost_usd_total{model, agent_role}            # editor vs reviewer
+loom_mills_council_artifacts_total{kind="research|spec|plan|backlog_issue"}
+loom_mills_pipeline_runs_total{stage, outcome="success|gate_fail|error|escalated"}
+loom_mills_pipeline_stage_duration_seconds{stage}
+loom_mills_pipeline_gate_decisions_total{gate, outcome="pass|fail|skip"}
+loom_mills_pipeline_cost_usd_total{stage}
+loom_mills_backlog_items_total{label, state="queued|running|merged|escalated"}
+loom_mills_merge_to_main_total{auto="true|false", path_class}
+loom_mills_regression_count_total                                # post-merge alert correlation
+loom_mills_budget_remaining_usd{tier="council|pipeline", window="day|week"}
 ```
 
 Derived KPIs to render in HUD:
@@ -278,7 +278,7 @@ Derived KPIs to render in HUD:
 | R4 | Backlog explosion (council writes too many issues) | Medium | Per-run issue cap (e.g., ≤ 10) + dedup against existing open issues |
 | R5 | Cluster auth or network outage stalls pipeline | Medium | Reconcile loop is resumable; existing `mcp-auth-refresher` (`87-`) handles credentials; Spawn budgets bound blast radius |
 | R6 | Weaver/spawn cost doubles when running 24×7 | Medium | Idle-aware throttle: pipeline pauses if no new backlog after X minutes; FlexInfer scale-to-zero already exists |
-| R7 | Humans lose context (don't know what changed) | Medium | Every council run posts a digest issue/MR; HUD `Pipelines` panel; new `loom hive status` CLI |
+| R7 | Humans lose context (don't know what changed) | Medium | Every council run posts a digest issue/MR; HUD `Pipelines` panel; new `loom mills status` CLI |
 | R8 | Auto-merges to protected paths cause incident | Critical | D8 policy *requires* human review for `platform/gitops/`, `cmd/loomd/`, security-critical paths. Default-deny for new paths. |
 | R9 | Council writes plans that conflict with each other across runs | Medium | Each run reads recent council outputs (last 14 days) and an "active intents" file; editor tracks contradictions and flags |
 | R10 | Loops: pipeline fails → council writes a fix plan → pipeline fails again | Medium | Per-issue retry cap = 3; on cap-exceed, escalate via handoff (D12) + freeze auto-retries on that issue until human edits the plan |
@@ -293,7 +293,7 @@ Derived KPIs to render in HUD:
 4. **Council cadence.** Resolved: start with **daily 0500** + roadmap-change + incident. Tune after we have 30 days of data.
 5. **Roadmap as machine-readable.** Resolved: yes, with explicit persistence. A `roadmap` table in the canonical store (not just `roadmap.yaml`) holds priorities, themes, constraints, and the prose excerpts the council should read. A small extractor seeds the table from `ROADMAP.md` on each council run; humans can edit either side and the next reconcile makes them coherent.
 6. **Stale-issue retirement.** Resolved: **yes.** Council does backlog hygiene each run — closes resolved-but-still-open issues, downgrades stale ones, dedupes near-duplicates against the canonical store.
-7. **Privacy / audit.** Resolved: **reuse** the existing secret-scan gate (`pkg/hive/gates/secret_scan.go`) before any artifact write. No new redaction layer.
+7. **Privacy / audit.** Resolved: **reuse** the existing secret-scan gate (`pkg/mills/gates/secret_scan.go`) before any artifact write. No new redaction layer.
 8. **Pipeline concurrency cap.** Resolved: hard-cap `policy.budgets.pipeline.max_concurrent_runs` (default 4) and `max_runs_per_day` (default 20) — sounds good and keeps GPU+frontier $$ bounded.
 
 ### 10.x Evaluation framework (new)
@@ -306,7 +306,7 @@ A small `eval` subsystem inside the operator answers these questions:
 - **Pipeline outcome eval (asynchronous, per-merge).** When a pipeline run hits `merged`, attribute the merge back to the originating council run. Track: time-to-merge, gate-pass-rate, regression in 24h post-merge. Aggregate per council run → "council ROI" KPI.
 - **Cross-run consistency eval (weekly, scheduled).** A meta-evaluator reads the last 7 days of council outputs and flags contradictions (e.g., one run says "deprecate FooSvc", a later run extends FooSvc). Flagged contradictions become the next council brief's "watch out for" section.
 
-The evaluator persists scores in the `eval_scores` table; HUD `Hive` view exposes them as a separate panel. Concretely the schema and slices appear in `90-product-spec-…md` §"Evaluation framework" and `91-implementation-plan-…md` Phase 5.
+The evaluator persists scores in the `eval_scores` table; HUD `Mills` view exposes them as a separate panel. Concretely the schema and slices appear in `90-product-spec-…md` §"Evaluation framework" and `91-implementation-plan-…md` Phase 5.
 
 ---
 

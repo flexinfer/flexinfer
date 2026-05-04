@@ -94,8 +94,8 @@ export const views: ViewDef[] = [
     ],
   },
   {
-    id: 'hive',
-    label: 'Hive',
+    id: 'mills',
+    label: 'Mills',
     icon: '❖', // BLACK DIAMOND MINUS WHITE X — autonomous-loop control plane
     key: '7',
     default: 'pipelines',

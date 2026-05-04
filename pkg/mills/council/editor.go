@@ -1,0 +1,242 @@
+package council
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// Editor is the synthesis half of the council ensemble. It receives the
+// brief + every reviewer's notes and returns the markdown documents +
+// structured sidecar a single council run produces.
+//
+// The real implementation drives the editor as a multi-turn spawn (Claude
+// Opus by default per policy.council.ensemble.editor); the dryrun path
+// uses FakeEditor to exercise the writer + judge without a live agent.
+type Editor interface {
+	Edit(ctx context.Context, brief *Brief, reviews []ReviewerOutput) (*EditorOutput, error)
+}
+
+// Reviser is the optional Mills v2 extension to Editor that supports
+// revising a prior draft in light of new critiques + moderator focus
+// areas. Editors that don't implement Reviser cause the debate runner
+// to fall back to single-pass mode (Round 0 only); production wiring
+// makes the spawn-backed Claude Opus editor implement both.
+//
+// A revise call is *replacement*, not append: the returned EditorOutput
+// supersedes the prior round's documents wholesale. The debate runner
+// tracks per-round cost via the returned EditorOutput.CostUSD.
+type Reviser interface {
+	Editor
+	Revise(ctx context.Context, prior *EditorOutput, critiques []ReviewerOutput, focusAreas []string) (*EditorOutput, error)
+}
+
+// EditorOutput is what one Editor.Edit call returns. The artifact writer
+// (artifacts.go) consumes this to materialise the council's commit.
+type EditorOutput struct {
+	// Documents are the markdown bodies the writer will persist as
+	// .loom/<NN>-<kind>-...md. At least one (research, product_spec,
+	// implementation_plan) per run; the editor decides the set.
+	Documents []ArtifactDoc
+
+	// Sidecar carries the structured deltas + cost attribution. The
+	// writer fills in CouncilRunID + StartedAt/EndedAt; the editor
+	// supplies Models, BacklogDeltas, SignalsConsumed, Notes.
+	Sidecar Sidecar
+
+	// BacklogProposals are the structured items the council intends to
+	// add to the canonical backlog. The mutator (backlog_mutator.go)
+	// consumes these — it never re-parses the markdown documents. The
+	// editor lifts them out of its own LLM output and into this typed
+	// slice so the mutator's contract stays narrow.
+	BacklogProposals []BacklogProposal
+
+	// Backend / Model identify which agent produced this output, for
+	// audit + cost attribution.
+	Backend string
+	Model   string
+	CostUSD float64
+}
+
+// ArtifactDoc is one markdown document the editor produced. The writer
+// stamps the .loom/ filename based on Kind + the next free index; the
+// editor doesn't choose paths so two parallel council runs can't
+// collide on filenames.
+type ArtifactDoc struct {
+	Kind  ArtifactKind
+	Title string // appears in the H1 of the rendered file
+	Body  string // markdown without the H1 (writer prepends it)
+}
+
+// ArtifactKind enumerates the stable .loom/ document categories. The
+// writer maps each to a filename prefix so the index stays scannable.
+type ArtifactKind string
+
+const (
+	KindResearch       ArtifactKind = "research"
+	KindProductSpec    ArtifactKind = "product_spec"
+	KindImplementation ArtifactKind = "implementation_plan"
+)
+
+// FilenameFragment is the substring used in the generated filename:
+// .loom/<NN>-<fragment>-<slug>.md. Stable strings so old runs grep clean.
+func (k ArtifactKind) FilenameFragment() string {
+	switch k {
+	case KindResearch:
+		return "research"
+	case KindProductSpec:
+		return "product-spec"
+	case KindImplementation:
+		return "implementation-plan"
+	}
+	return string(k)
+}
+
+// FakeEditor is the deterministic test double + dryrun fallback. It
+// echoes the brief + reviewer summaries into a synthetic set of three
+// documents so the writer + judge can be exercised without a live agent.
+type FakeEditor struct {
+	Backend string
+	Model   string
+	CostUSD float64
+	Notes   string
+
+	// BacklogCreated lets dryrun callers preview a deterministic
+	// backlog delta. The writer doesn't act on Sidecar.BacklogDeltas
+	// itself — that's the backlog mutator's job (slice 3.6).
+	BacklogCreated int
+
+	// RevisionCostUSD is the cost FakeEditor reports for each Revise
+	// call (debate rounds 2+). Defaults to CostUSD/2 when zero;
+	// override to assert specific budget caps in debate tests.
+	RevisionCostUSD float64
+}
+
+// Edit returns a three-document synthetic output. The body content is
+// stable for fixed inputs so snapshot-style tests stay green.
+func (f *FakeEditor) Edit(ctx context.Context, brief *Brief, reviews []ReviewerOutput) (*EditorOutput, error) {
+	if brief == nil {
+		return nil, errors.New("council: editor requires a brief")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	models := []string{f.Model}
+	for _, r := range reviews {
+		if r.Lens.Model != "" {
+			models = append(models, r.Lens.Model)
+		}
+	}
+	sort.Strings(models)
+
+	body := func(kind string) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, "_(generated by FakeEditor for %s)_\n\n", kind)
+		fmt.Fprintf(&b, "## Brief excerpt\n\n%s\n", truncateBody(brief.Markdown, 1024))
+		if len(reviews) > 0 {
+			b.WriteString("\n## Reviewer notes\n")
+			for _, r := range reviews {
+				fmt.Fprintf(&b, "\n### %s (%s/%s)\n\n%s\n",
+					r.Lens.Name, r.Lens.Backend, r.Lens.Model,
+					strings.TrimSpace(r.Markdown))
+			}
+		}
+		return b.String()
+	}
+
+	out := &EditorOutput{
+		Backend: f.Backend,
+		Model:   f.Model,
+		CostUSD: f.CostUSD,
+		Documents: []ArtifactDoc{
+			{Kind: KindResearch, Title: "FakeEditor research", Body: body("research")},
+			{Kind: KindProductSpec, Title: "FakeEditor product spec", Body: body("product-spec")},
+			{Kind: KindImplementation, Title: "FakeEditor implementation plan", Body: body("implementation-plan")},
+		},
+		Sidecar: Sidecar{
+			Models: models,
+			CostUSD: SidecarCost{
+				Frontier: f.CostUSD,
+			},
+			BacklogDeltas: SidecarBacklog{Created: f.BacklogCreated},
+			Notes:         f.Notes,
+		},
+	}
+	return out, nil
+}
+
+// Revise lets FakeEditor stand in as a Reviser for debate tests. The
+// returned output documents echo the focus areas + critique count so
+// snapshot-style assertions can pin "round N revised against M
+// critiques" without a live agent. Cost defaults to half of CostUSD
+// (revisions are typically cheaper than initial proposes); callers can
+// tune by setting RevisionCostUSD.
+func (f *FakeEditor) Revise(ctx context.Context, prior *EditorOutput, critiques []ReviewerOutput, focusAreas []string) (*EditorOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if prior == nil {
+		return nil, errors.New("council: editor.revise requires a prior EditorOutput")
+	}
+	cost := f.RevisionCostUSD
+	if cost == 0 {
+		cost = f.CostUSD / 2
+	}
+
+	models := []string{f.Model}
+	for _, c := range critiques {
+		if c.Lens.Model != "" {
+			models = append(models, c.Lens.Model)
+		}
+	}
+	sort.Strings(models)
+
+	body := func(kind string) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, "_(generated by FakeEditor.Revise for %s)_\n\n", kind)
+		fmt.Fprintf(&b, "## Focus areas\n\n%s\n", strings.Join(focusAreas, ", "))
+		fmt.Fprintf(&b, "\n## Round critiques (%d)\n", len(critiques))
+		for _, c := range critiques {
+			fmt.Fprintf(&b, "\n### %s\n\n%s\n",
+				c.Lens.Name,
+				strings.TrimSpace(c.Markdown))
+		}
+		return b.String()
+	}
+
+	// Inherit doc kinds from prior so artifact filenames stay stable.
+	docs := make([]ArtifactDoc, 0, len(prior.Documents))
+	for _, d := range prior.Documents {
+		docs = append(docs, ArtifactDoc{
+			Kind:  d.Kind,
+			Title: d.Title + " (revised)",
+			Body:  body(string(d.Kind)),
+		})
+	}
+
+	return &EditorOutput{
+		Backend:          f.Backend,
+		Model:            f.Model,
+		CostUSD:          cost,
+		Documents:        docs,
+		BacklogProposals: prior.BacklogProposals, // revisions don't churn backlog
+		Sidecar: Sidecar{
+			Models:        models,
+			CostUSD:       SidecarCost{Frontier: cost},
+			BacklogDeltas: prior.Sidecar.BacklogDeltas,
+			Notes:         f.Notes,
+		},
+	}, nil
+}
+
+// truncateBody is for the FakeEditor's preview only — production editors
+// pass the full brief through the LLM context window.
+func truncateBody(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}

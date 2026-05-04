@@ -489,11 +489,12 @@ Agent Tips
 
 - Pre-existing uncommitted/untracked files are baseline context, not an automatic blocker.
 - Continue on the current branch/worktree by default.
+- Before creating another multi-file worktree, inspect existing linked trees with `git worktree list` or `workspace-clean --report --worktrees`.
 - Stage and commit only files intentionally changed for the active task.
 - Escalate only when new unexpected changes appear in files you are editing, or when a branch/worktree switch is explicitly requested.
 - Dirty-worktree mode: `continue_scoped_commits`.
 
 Canonical nudge for CLI hooks:
-> Dirty worktree detected. Treat pre-existing changes as baseline context, continue work, and stage/commit only files for the active task. Escalate only if new unexpected changes appear in files you are editing.
+> Dirty worktree detected. Treat pre-existing changes as baseline context, continue work, and stage/commit only files for the active task. Before creating another multi-file worktree, inspect existing linked trees with git -C <repo> worktree list or workspace-clean --report --worktrees. For multi-file work, create repo-local linked trees under <repo>/.worktrees/<branch>; do not create sibling repos under services/, libs/, labs/, or the workspace root. Escalate only if new unexpected changes appear in files you are editing.
 
 <!-- END LOOM:AGENT-SAFETY -->

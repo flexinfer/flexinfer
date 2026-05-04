@@ -89,8 +89,8 @@ func main() {
 		// HUD
 		newHudCmd(socketPath),
 
-		// Hive (cluster operator client)
-		newHiveCmd(),
+		// Mills (cluster operator client)
+		newMillsCmd(),
 
 		// Shell completion
 		newCompletionCmd(rootCmd),

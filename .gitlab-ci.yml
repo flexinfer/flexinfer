@@ -813,17 +813,17 @@ build:image:custom-server:
       allow_failure: true
     - when: never
 
-# Loom Hive operator image — the always-on cluster control plane (council
-# scheduler + pipeline reconciler). Built from Dockerfile.loom-hive-operator
+# Loom Mills operator image — the always-on cluster control plane (council
+# scheduler + pipeline reconciler). Built from Dockerfile.loom-mills-operator
 # which produces a distroless single-binary image. The platform/gitops
-# k3s/hive deployment pins this image by short-sha; main-branch builds
+# k3s/mills deployment pins this image by short-sha; main-branch builds
 # also tag :latest for flux force-reconcile in dev environments.
-build:image:loom-hive-operator:
+build:image:loom-mills-operator:
   stage: deploy
   interruptible: true
   timeout: 90 minutes
   cache: []
-  resource_group: "buildkit-images-loom-hive-operator-${CI_COMMIT_REF_SLUG}"
+  resource_group: "buildkit-images-loom-mills-operator-${CI_COMMIT_REF_SLUG}"
   retry:
     max: 1
     when:
@@ -837,7 +837,7 @@ build:image:loom-hive-operator:
     DOCKER_HOST: ""
   script:
     - chmod +x scripts/ci/buildkit-build.sh
-    - scripts/ci/buildkit-build.sh mcp/loom-hive-operator Dockerfile.loom-hive-operator loom-hive-operator
+    - scripts/ci/buildkit-build.sh mcp/loom-mills-operator Dockerfile.loom-mills-operator loom-mills-operator
   rules:
     - if: '$CI_COMMIT_TAG'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
@@ -845,12 +845,12 @@ build:image:loom-hive-operator:
       changes:
         - .gitlab-ci.yml
         - .dockerignore
-        - Dockerfile.loom-hive-operator
+        - Dockerfile.loom-mills-operator
         - scripts/ci/buildkit-build.sh
         - go.mod
         - go.sum
-        - cmd/loom-hive-operator/**/*
-        - pkg/hive/**/*
+        - cmd/loom-mills-operator/**/*
+        - pkg/mills/**/*
       allow_failure: true
     - when: never
 

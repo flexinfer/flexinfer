@@ -1,0 +1,94 @@
+# syntax=docker/dockerfile:1.7
+#
+# Image for cmd/loom-mills-operator — the always-on cluster control plane for
+# Loom Mills (council scheduler + pipeline reconciler + canonical SQLite store).
+# Single-binary deployment: a fresh distroless-static layer with one entrypoint.
+#
+# Notes:
+#   - CGO_ENABLED=0 is mandatory: modernc.org/sqlite is pure-Go, and the
+#     runtime image has no libc. Don't switch drivers without rebasing this.
+#   - VERSION is stamped into main.version via -ldflags, surfaced by --version.
+#   - The image is multi-arch capable; the K3s deployment pins linux/amd64.
+#
+ARG RUNTIME_REGISTRY=registry.harbor.lan
+
+# ---------- Build stage ----------
+FROM golang:1.25.9-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates
+ENV GOWORK=off \
+    GOPRIVATE=gitlab.flexinfer.ai/* \
+    GONOSUMDB=gitlab.flexinfer.ai/* \
+    GONOPROXY=gitlab.flexinfer.ai/*
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN --mount=type=secret,id=ci_job_token,required=false \
+    --mount=type=secret,id=gitlab_token,required=false \
+    --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    set -eu; \
+    token=""; \
+    token_user=""; \
+    if [ -s /run/secrets/gitlab_token ]; then \
+      token="$(cat /run/secrets/gitlab_token)"; \
+      token_user="oauth2"; \
+    elif [ -s /run/secrets/ci_job_token ]; then \
+      token="$(cat /run/secrets/ci_job_token)"; \
+      token_user="gitlab-ci-token"; \
+    fi; \
+    if [ -n "$token" ]; then \
+      git config --global url."https://${token_user}:${token}@gitlab.flexinfer.ai/".insteadOf "https://gitlab.flexinfer.ai/"; \
+    fi; \
+    go mod download
+
+COPY . .
+
+# See Dockerfile for why the secret mount + git config is repeated on the build step.
+ARG VERSION=dev
+RUN --mount=type=secret,id=ci_job_token,required=false \
+    --mount=type=secret,id=gitlab_token,required=false \
+    --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    set -eu; \
+    token=""; \
+    token_user=""; \
+    if [ -s /run/secrets/gitlab_token ]; then \
+      token="$(cat /run/secrets/gitlab_token)"; \
+      token_user="oauth2"; \
+    elif [ -s /run/secrets/ci_job_token ]; then \
+      token="$(cat /run/secrets/ci_job_token)"; \
+      token_user="gitlab-ci-token"; \
+    fi; \
+    if [ -n "$token" ]; then \
+      git config --global url."https://${token_user}:${token}@gitlab.flexinfer.ai/".insteadOf "https://gitlab.flexinfer.ai/"; \
+    fi; \
+    CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -trimpath \
+      -ldflags="-s -w -X main.version=${VERSION}" \
+      -o /bin/loom-mills-operator ./cmd/loom-mills-operator
+
+# ---------- Runtime stage ----------
+FROM ${RUNTIME_REGISTRY}/dockerhub-cache/library/alpine:3.21 AS runtime
+
+# ca-certificates: outbound TLS to Anthropic / OpenAI / GitLab.
+# tini: clean signal forwarding for SIGTERM-driven shutdown.
+RUN apk add --no-cache ca-certificates tini
+
+# Non-root user; matches the platform-wide convention (see Dockerfile).
+RUN adduser -D -u 1000 -h /home/mills mills
+USER mills
+WORKDIR /home/mills
+
+COPY --from=builder /bin/loom-mills-operator /usr/local/bin/loom-mills-operator
+
+# /var/lib/loom-mills is mounted from a Longhorn PVC at runtime; the empty dir
+# stays writable inside the image so local `docker run` works without an
+# explicit volume mount.
+USER root
+RUN mkdir -p /var/lib/loom-mills && chown -R mills:mills /var/lib/loom-mills
+USER mills
+
+EXPOSE 8090 9090
+
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/loom-mills-operator"]

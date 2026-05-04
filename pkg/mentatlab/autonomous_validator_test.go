@@ -145,18 +145,18 @@ edges:
 }
 
 // TestIsWriteOpType exercises the exported classifier directly.
-// TestValidateAutonomousFlow_HiveTemplate ensures the dark-factory hive
+// TestValidateAutonomousFlow_MillsTemplate ensures the dark-factory mills
 // pipeline template parses + passes the write-op invariant. It uses
 // auto_gate (machine-judged) instead of human_gate, exercising the gate
 // taxonomy extension landed in this slice.
-func TestValidateAutonomousFlow_HiveTemplate(t *testing.T) {
-	path := findRepoFile(t, "cmd/mcp-mentatlab/templates/hive-default-pipeline.yaml")
+func TestValidateAutonomousFlow_MillsTemplate(t *testing.T) {
+	path := findRepoFile(t, "cmd/mcp-mentatlab/templates/mills-default-pipeline.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read template: %v", err)
 	}
 	if err := ValidateAutonomousFlow(data); err != nil {
-		t.Fatalf("hive-default-pipeline should validate, got: %v", err)
+		t.Fatalf("mills-default-pipeline should validate, got: %v", err)
 	}
 }
 
