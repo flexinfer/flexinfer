@@ -19,7 +19,7 @@ metadata:
     flexinfer.ai/promotion-requires: E4B chat smoke plus TurboQuant plugin/shared-primitive log evidence
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:f9c69576b2681feafe0ba845054ebd5ff0c52a0edddf5c05b08e0fca6ed8817c
+  image: registry.harbor.lan/flexinfer/runtime@sha256:493e02c14f65cbde7b47a5a1ba8e57e8213b751de5528304b06cf4b1de39c53b
   source: pvc://llm-models-nfs/google/gemma-4-E4B-it
   cache:
     strategy: Local
