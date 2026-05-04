@@ -264,7 +264,7 @@ When `.loom/94-implementation-plan-hive-v2-hierarchical-swarm-2026-05-02.md` Pha
 4. `policy.cross_repo.enabled: true` — only after 3 successful loom-core+loom dogfood atomic merges
 5. `policy.adaptive_policy.enabled: true` (manual-apply only)
 
-Detail per slice in `.loom/94-…2026-05-02.md` Phase 8. The rollback playbook for v2 lives in `docs/HIVE_V2_ROLLBACK.md` (created with v2 phase 8).
+Detail per slice in `.loom/94-…2026-05-02.md` Phase 8. The rollback playbook for v2 lives in [HIVE_V2_ROLLBACK.md](HIVE_V2_ROLLBACK.md) — covers feature flag disable, policy proposal revert, and DB restore from MinIO.
 
 ## Useful loops
 
