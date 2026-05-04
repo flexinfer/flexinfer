@@ -1,0 +1,105 @@
+# Qwen3.6-27B (UPSTREAM BASE) → Abliterate → GPTQ INT4 on gfx1100.
+#
+# Critical reframe (verified 2026-05-03): "Qwen3.6" is just Qwen3.5 modeling
+# code with vocab_size=248320 and head_dim=256. config.json says
+# model_type=qwen3_5 and architectures=[Qwen3_5ForConditionalGeneration].
+# Our existing Qwen3.5 patch stack covers this with no code changes (only
+# smoke-time verification).
+#
+# Source: Qwen/Qwen3.6-27B (BF16 safetensors, ~55.6 GB, 15 shards). NOT the
+# HauhauCS GGUF — see .loom/qwen36-27b-hauhaucs-gptq-plan.md for the
+# Path A vs Path B analysis. Path A chosen because Path B requires
+# GGUF→BF16 dequant tooling (not yet built) and HauhauCS's specific
+# abliteration tuning is empirically untested vs our pipeline.
+#
+# Pipeline: Download BF16 → Abliterate (skipGDNLayers=true) → GPTQ INT4 → OCI publish
+#
+# Architecture details (verified against upstream config.json on 2026-05-03):
+#   - 64 layers: 16x [3 linear_attention + 1 full_attention] = 48 GDN + 16 GA
+#   - Full-attention layer indices: 3, 7, 11, ..., 63 (every 4th, 16 total)
+#   - hidden_size=5120, intermediate_size=17408, head_dim=256
+#   - num_attention_heads=24, num_key_value_heads=4 (GQA 6:1)
+#   - vocab_size=248320 (multilingual VLM vocab)
+#   - max_position_embeddings=262144 (raise after smoke; cap initially)
+#   - tie_word_embeddings=false (lm_head = separate 248320 x 5120 tensor)
+#   - rope_theta=10000000 (1e7, vs Qwen3.5-9B's 1e6 — verify vLLM honors)
+#   - VLM with vision_config; we serve text-only (text_config promoted)
+#
+# Storage envelope:
+#   BF16 source ~56 GB + abliterate inplace (modifies in place) +
+#   GPTQ output ~14 GB + checkpoint cache ~2 GB → 90 Gi minimum.
+#   Use 120Gi for safety; matches Qwen3.5-27B opus distill envelope.
+#
+# Node placement: cblevins-5930k chosen so the quantize cycle (8-14 hr)
+# does not preempt gemma4-31b-gptq (priority 250) or qwen3-30b-a3b (200)
+# on cblevins-7900xtx. FluxPony imagegen on 5930k is on-demand and idle
+# most of the time — quant runs cleanly there. After publish to OCI, the
+# Model CR pulls the artifact onto cblevins-7900xtx for serving.
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen36-27b-gptq-gfx1100
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/promotion-state: pending-quant-cycle
+    flexinfer.ai/promotion-requires: ".loom/qwen36-27b-hauhaucs-gptq-plan.md"
+spec:
+  source: "Qwen/Qwen3.6-27B"
+  storageStrategy: SharedPVC
+  storageSize: "120Gi"
+  clusterStorageClassName: nvme-1r-gpu
+  secretRef: "hf-token"
+  nodeSelector:
+    flexinfer.ai/gpu.arch: gfx1100
+    kubernetes.io/hostname: cblevins-5930k
+  download:
+    maxMemoryGB: 8
+    hfTransfer: false
+    backoffLimit: 3
+  abliteration:
+    # 48 GDN layers — skip per the GDN-layer guard added in commit 14c9b88.
+    skipGDNLayers: true
+    numSamples: 256
+    # Middle full-attention layers carry the strongest refusal direction.
+    # Full-attention layer indices for Qwen3.6-27B: 3,7,11,15,19,23,27,31,35,
+    # 39,43,47,51,55,59,63. Picking 27/31/35 (mid-stack of full-attn).
+    targetLayers: "27,31,35"
+    useGPU: true
+    # 56 GiB CPU offload budget on the 64-GiB host.
+    maxMemoryGB: 56
+    timeoutSeconds: 21600  # 6 h upper bound; 27B abliteration on gfx1100 is ~2-4 h
+    nodeSelector:
+      flexinfer.ai/gpu.arch: gfx1100
+      kubernetes.io/hostname: cblevins-5930k
+    normThreshold: "100"
+    # KEEP FALSE: streaming-save corrupts lm_head when accelerate offload is on.
+    # See CLAUDE.md memory: "Qwen3.5 GPTQ Root Cause + Fix" (2026-04-01).
+    ablitateLmHead: false
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true       # ExllamaLinearKernel (HIP-compiled, 72-73 tok/s on gfx1100)
+    descAct: false
+    # Do NOT exclude any modules; Qwen3.5 text loader handles GDN + GA + FFN.
+    dynamicExclusion: "none"
+    useGPU: true
+    maxMemoryGB: 56
+    timeoutSeconds: 28800  # 8 h upper bound; 27B GPTQ on gfx1100 is ~3-6 h
+    nodeSelector:
+      flexinfer.ai/gpu.arch: gfx1100
+      kubernetes.io/hostname: cblevins-5930k
+    calibration:
+      maxSeqLen: 2048
+      maxSamples: 128
+  publish:
+    targets:
+      - oci
+    ociRef: "registry.harbor.lan/flexinfer/qwen36-27b:gptq-w4-g128-gfx1100"
+    secretRef: "harbor-oci-creds"
+    maxMemoryGB: 8
+    timeoutSeconds: 7200
+  retentionPriority: 60
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85
