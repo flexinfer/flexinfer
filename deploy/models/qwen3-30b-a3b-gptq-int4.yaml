@@ -91,10 +91,14 @@ spec:
   config:
     quantization: gptq
     dtype: "half"
-    # Conservative initial cap. Native model supports 40960; raise after smoke
-    # (likely target 16K-32K with FP8 KV, mirroring gemma4-26b-a4b-gptq-long).
-    maxModelLen: 8192
-    maxInputTokens: 6144
+    # 2026-05-04: 8K → 16K. Initial 8K cap was conservative; live VRAM
+    # math after first cold-starts shows plenty of headroom on a 24 GiB
+    # card (17 GiB MoE 3B-active weights + ~3.2 GiB FP8 KV at 16K × 2 seqs
+    # ≈ 20.2 GiB total, leaving ~3.8 GiB for activations). Mirrors the
+    # validated gemma4-26b-a4b-gptq-long 16K + FP8 KV ceiling. Native
+    # model supports 40960; 32K is a future bump after the 16K smoke holds.
+    maxModelLen: 16384
+    maxInputTokens: 14336
     maxOutputTokens: 2048
     gpuMemoryUtilization: "0.92"
     # FP8 KV proven on gfx1100 by gemma4-26b-a4b-gptq-long. The Qwen3-30B
@@ -103,10 +107,10 @@ spec:
     # checkpoint-side scales).
     kvCacheDtype: fp8_e4m3
     calculateKvScales: true
-    # 4 concurrent sequences keeps batch math healthy for MoE expert routing
-    # without blowing the KV pool at 8K context. Raise during throughput
-    # tuning if VRAM allows.
-    maxNumSeqs: 4
+    # 2 concurrent sequences at 16K maintains the same KV pool footprint
+    # (4 × 8K = 2 × 16K). Raise back to 4 if VRAM headroom permits after
+    # 16K smoke holds (decode throughput tuning).
+    maxNumSeqs: 2
     trustRemoteCode: true
     attentionBackend: TRITON_ATTN
     # 7900xtx exposes iGPU at amd.com/gpu index 1 (cannot serve). Force

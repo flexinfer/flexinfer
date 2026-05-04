@@ -133,18 +133,31 @@ spec:
     # vacates, so on gfx1100 for this model eager ≈ no-op memory-wise
     # (but still kills CUDAGraph's decode-speed gain).
     #
-    # Scaled back to 2048 — a modest 6.7% bump over the original 1920
-    # that the vLLM ceiling of 2112 definitely supports. Keeps eager and
-    # maxNumSeqs=2 as they were already validated to boot.
-    # Real context unlock (8K-32K) requires TurboQuant KV codec canary;
-    # tracked separately (see !188 discussion for sequencing).
-    maxModelLen: 2048
+    # 2026-05-04: FP8 KV cache + maxModelLen bump to 4096.
+    # The previous FP16-KV configuration ran out of KV pool: pod log
+    # `GPU KV cache size: 1,952 tokens` at maxModelLen=2048 with maxNumSeqs=2,
+    # which means each in-flight request held ~975 tokens — the warm primary
+    # could not actually serve a full 2K conversation.
+    # FP8 KV halves KV memory per token (proven on gemma4-26b-a4b-gptq-long
+    # at 16K context); same ~1.79 GiB KV budget now holds ~4,224 tokens,
+    # so maxModelLen=4096 with maxNumSeqs=2 gives ~2,100 tokens per seq —
+    # actual two-conversation capacity at 4K each, vs the previous 0.95K.
+    # The Qwen3-30B-A3B canary lane and 26B-A4B long lane both validate this
+    # FP8-e4m3 + calculateKvScales=true posture on the same gfx1100 card.
+    # If smoke fails, revert to maxModelLen=2048 + FP8 KV (still 2x pool
+    # vs current FP16 baseline) before falling all the way back to FP16.
+    maxModelLen: 4096
     # LiteLLM treats max_output_tokens as reserved generation budget when
     # checking context. Keep it below the runtime window so normal prompts do
     # not fail context validation before reaching FlexInfer.
-    maxInputTokens: 1536
+    maxInputTokens: 3584
     maxOutputTokens: 512
     gpuMemoryUtilization: "0.95"
+    # FP8 KV proven on gfx1100 (gemma4-26b-a4b-gptq-long, qwen3-30b-a3b
+    # canary). 31B-keqv artifact ships no precalibrated KV scales — vLLM
+    # computes them dynamically via calculateKvScales=true.
+    kvCacheDtype: fp8_e4m3
+    calculateKvScales: true
     maxNumSeqs: 2
     trustRemoteCode: true
     attentionBackend: TRITON_ATTN
