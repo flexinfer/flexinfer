@@ -15,7 +15,15 @@ When a v2 feature misbehaves in production, the cheapest mitigation is almost al
 
 ## Layer 1 — feature flag disable
 
-All v2 features are gated behind a single `enabled: bool` field in `platform/gitops/k3s/hive/configmap-policy.yaml`. The operator reads policy on every reconcile tick, so a `false` lands on the next tick (≤60s) without restart.
+All v2 features are gated behind a single `enabled: bool` field in `platform/gitops/k3s/hive/configmap-policy.yaml`. The operator's PolicyManager hot-reloads on the next reconcile tick (≤60s) once the ConfigMap symlink swap is observed.
+
+> **Hot-reload caveat (pre-fix):** between 2026-05-04 and the hot-reload fix landing, the PolicyManager fsnotify filter only matched events for the `policy.yaml` symlink directly, missing the K8s ConfigMap `..data` symlink swap. If the operator hasn't picked up the change within ~2 min after `flux reconcile`, do a manual rolling restart:
+>
+> ```bash
+> kubectl rollout restart deploy/loom-hive-operator -n loom-hive
+> ```
+>
+> Verify the new pod's in-memory policy: `kubectl exec ... -- wget -qO- localhost:8090/api/hive/policy | jq '.Squads.Enabled'`. Disruption: ~30s (deployment is `replicas: 1, strategy: Recreate`).
 
 ### Disable squads
 

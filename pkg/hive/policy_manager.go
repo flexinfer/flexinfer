@@ -133,6 +133,7 @@ func (m *PolicyManager) Close() error {
 func (m *PolicyManager) watchLoop(ctx context.Context) {
 	defer m.wg.Done()
 	target := filepath.Clean(m.path)
+	targetDir := filepath.Dir(target)
 	for {
 		select {
 		case <-ctx.Done():
@@ -141,9 +142,21 @@ func (m *PolicyManager) watchLoop(ctx context.Context) {
 			if !ok {
 				return
 			}
-			// Only react to events for our exact target file. Many editors do
-			// rename-write so we look at Create / Write / Rename events.
-			if filepath.Clean(ev.Name) != target {
+			// React to events for our exact target file (editor rename-write
+			// pattern) AND to the K8s ConfigMap "..data" symlink swap pattern:
+			// projected ConfigMaps stage new content into a timestamped dir
+			// under the parent and atomically rename the "..data" symlink to
+			// point at it; the watched policy.yaml symlink is never modified
+			// directly so a strict ev.Name == target match misses every
+			// ConfigMap change. Watching for Create/Rename on "..data" in
+			// the same parent dir closes that gap. See loom-hive-operator
+			// rollout 2026-05-04: squads flip required a manual rolling
+			// restart because the strict match dropped the ConfigMap event.
+			evName := filepath.Clean(ev.Name)
+			matchesTarget := evName == target
+			matchesConfigMapData := filepath.Dir(evName) == targetDir &&
+				filepath.Base(evName) == "..data"
+			if !matchesTarget && !matchesConfigMapData {
 				continue
 			}
 			if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
