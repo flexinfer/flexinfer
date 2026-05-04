@@ -428,6 +428,90 @@ func TestPolicyManager_HotReload(t *testing.T) {
 	}
 }
 
+// TestPolicyManager_HotReload_K8sConfigMapSwap pins the regression behind
+// the 2026-05-04 squads flip incident: K8s projected ConfigMap mounts use
+// a chain of symlinks (`policy.yaml` → `..data/policy.yaml`, `..data` →
+// timestamped subdir). When the data swaps, fsnotify emits Create/Rename
+// events for `..data` (not `policy.yaml`), so a strict ev.Name == target
+// match dropped every ConfigMap update and the operator only picked up
+// new policies on a manual rolling restart. This test simulates the
+// `..data` symlink swap and asserts the watcher reloads.
+func TestPolicyManager_HotReload_K8sConfigMapSwap(t *testing.T) {
+	dir := t.TempDir()
+
+	// Stage v1 inside ..2026_05_04_initial / .
+	dataInitial := filepath.Join(dir, "..2026_05_04_initial")
+	if err := os.MkdirAll(dataInitial, 0o755); err != nil {
+		t.Fatalf("mkdir initial: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataInitial, "policy.yaml"),
+		[]byte(fixtureV1), 0o644); err != nil {
+		t.Fatalf("seed initial: %v", err)
+	}
+	if err := os.Symlink(filepath.Base(dataInitial), filepath.Join(dir, "..data")); err != nil {
+		t.Fatalf("symlink ..data: %v", err)
+	}
+	if err := os.Symlink("..data/policy.yaml", filepath.Join(dir, "policy.yaml")); err != nil {
+		t.Fatalf("symlink policy.yaml: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mgr, err := NewPolicyManager(ctx, filepath.Join(dir, "policy.yaml"), PolicyManagerOptions{
+		OnError: func(e error) { t.Logf("reload error: %v", e) },
+	})
+	if err != nil {
+		t.Fatalf("new mgr: %v", err)
+	}
+	defer mgr.Close()
+
+	if mgr.Current().Budgets.Pipeline.MaxConcurrentRuns != 4 {
+		t.Errorf("initial cap: %d", mgr.Current().Budgets.Pipeline.MaxConcurrentRuns)
+	}
+
+	notified := make(chan struct{}, 1)
+	mgr.Subscribe(func(_, _ *Policy) {
+		select {
+		case notified <- struct{}{}:
+		default:
+		}
+	})
+
+	// Stage v2 in a new timestamped dir + atomic ..data swap. This is the
+	// exact dance kubelet does on a ConfigMap update. The "..data" symlink
+	// is renamed via Rename(2) so it appears as a single fsnotify event.
+	dataNext := filepath.Join(dir, "..2026_05_04_updated")
+	if err := os.MkdirAll(dataNext, 0o755); err != nil {
+		t.Fatalf("mkdir next: %v", err)
+	}
+	updated := strings.Replace(fixtureV1, "max_concurrent_runs: 4", "max_concurrent_runs: 8", 1)
+	if err := os.WriteFile(filepath.Join(dataNext, "policy.yaml"),
+		[]byte(updated), 0o644); err != nil {
+		t.Fatalf("seed next: %v", err)
+	}
+	tmpLink := filepath.Join(dir, "..data_tmp")
+	if err := os.Symlink(filepath.Base(dataNext), tmpLink); err != nil {
+		t.Fatalf("create tmp symlink: %v", err)
+	}
+	if err := os.Rename(tmpLink, filepath.Join(dir, "..data")); err != nil {
+		t.Fatalf("atomic swap ..data: %v", err)
+	}
+
+	// Wait for the watcher to fire. fsnotify can be slightly delayed on
+	// macOS so allow a generous deadline; the watcher is what's under
+	// test, not the OS notification path.
+	deadline := time.After(3 * time.Second)
+	for mgr.Current().Budgets.Pipeline.MaxConcurrentRuns != 8 {
+		select {
+		case <-notified:
+		case <-deadline:
+			t.Fatalf("ConfigMap swap did not trigger reload: cap still %d (regression: fsnotify watch on `..data` symlink swap)",
+				mgr.Current().Budgets.Pipeline.MaxConcurrentRuns)
+		}
+	}
+}
+
 func TestPolicyManager_BadReloadKeepsOld(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "policy.yaml")
