@@ -149,7 +149,7 @@ func (m *PolicyManager) watchLoop(ctx context.Context) {
 			// point at it; the watched policy.yaml symlink is never modified
 			// directly so a strict ev.Name == target match misses every
 			// ConfigMap change. Watching for Create/Rename on "..data" in
-			// the same parent dir closes that gap. See loom-hive-operator
+			// the same parent dir closes that gap. See loom-mills-operator
 			// rollout 2026-05-04: squads flip required a manual rolling
 			// restart because the strict match dropped the ConfigMap event.
 			evName := filepath.Clean(ev.Name)
