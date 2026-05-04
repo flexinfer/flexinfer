@@ -81,6 +81,43 @@ export interface PolicyView {
   raw?: unknown;
 }
 
+// PolicyProposal mirrors the operator's proposals row. Field casing is
+// PascalCase because the proposals handler relies on Go's default JSON
+// marshalling (no explicit json: tags). Phase 7 slice 7.1/7.2 own the
+// emission + apply/reject endpoints; this UI consumes them read-only
+// plus the two POST mutations below.
+export interface PolicyProposal {
+  ID: number;
+  ProposalDate: string; // YYYY-MM-DD
+  Kind: 'relax' | 'tighten' | 'rotate_ensemble';
+  Target: string;
+  Diff: string;
+  Rationale: string;
+  State: 'pending' | 'applied_human' | 'applied_auto' | 'rejected' | 'reverted';
+  AppliedAt?: string;
+  RevertDeadline?: string;
+  CreatedAt: string;
+}
+
+// CostEstimate mirrors the slice 7.3 /api/hive/cost-preview response.
+// Field casing is snake_case because that handler sets explicit
+// json:"…" tags. Confidence + sample_size let the UI render a band
+// pill (low/med/high) so users can read past-data quality at a glance.
+export interface CostEstimate {
+  backlog_id: string;
+  path_class: string;
+  median_historical_usd: number;
+  sidecar_slice_count: number;
+  sidecar_overhead_usd: number;
+  recursion_overhead_usd: number;
+  estimate_usd: number;
+  ensemble_cap_usd: number;
+  capped_by_policy: boolean;
+  confidence: 'low' | 'medium' | 'high';
+  sample_size: number;
+  source: string; // "estimator/v1"
+}
+
 // HiveKPISnapshot mirrors the operator's `kpi_snapshots.metrics_json`
 // rollup. Fields are optional because the recorder only emits keys it has
 // data for; missing keys render as "—" placeholders. Field names here are
@@ -133,6 +170,16 @@ class HiveStore {
   // expander.
   debateByRun = $state<Record<string, DebateLoadState>>({});
 
+  // Pending adaptive policy proposals (Phase 7 slice 7.1/7.2). Refreshed
+  // alongside the rest of fetchAll so the card stays in sync with the
+  // 15s poll cadence used elsewhere.
+  policyProposals = $state<PolicyProposal[]>([]);
+
+  // Cost previews keyed by backlog_id (Phase 7 slice 7.3). Lazily
+  // populated by BacklogPanel rows; never auto-polled because the
+  // estimate is stable for a given backlog item until policy changes.
+  costPreviews = $state<Record<string, CostEstimate>>({});
+
   // Connection state
   loading = $state(false);
   error = $state<string | null>(null);
@@ -179,6 +226,10 @@ class HiveStore {
       this.applyKPISnapshot(kpis);
       this.lastUpdated = new Date();
       this.disabled = false;
+      // Refresh adaptive policy proposals on the same tick (Phase 7
+      // slice 7.4). Awaited but never throws; its own try/catch
+      // silences errors so the rest of the panel stays green.
+      void this.fetchPolicyProposals();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       // Treat 503 from the proxy as "Hive disabled" rather than an error,
@@ -274,6 +325,73 @@ class HiveStore {
         [runID]: { status: 'error', message },
       };
     }
+  }
+
+  // postJSON is the mutation counterpart to getJSON. It surfaces 503 the
+  // same way (so the disabled flag flips) but otherwise treats any
+  // non-2xx as an error to surface in the UI. Body is JSON-encoded; pass
+  // {} when the endpoint takes no payload.
+  private async postJSON<T>(path: string, body: unknown): Promise<T | null> {
+    const res = await globalThis.fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body ?? {}),
+    });
+    if (res.status === 503) {
+      this.disabled = true;
+      throw new Error('hive proxy: 503 (operator not configured)');
+    }
+    if (!res.ok) {
+      throw new Error(`${path}: ${res.status}`);
+    }
+    const text = await res.text();
+    if (!text) return null;
+    return JSON.parse(text) as T;
+  }
+
+  // fetchPolicyProposals refreshes the pending-proposals list. Called
+  // from fetchAll() so the panel piggybacks on the existing 15s poll.
+  async fetchPolicyProposals(state: string = 'pending'): Promise<void> {
+    if (this.disabled) return;
+    try {
+      const list = await this.getJSON<PolicyProposal[]>(
+        `/api/hive/policy/proposals?state=${encodeURIComponent(state)}`,
+      );
+      this.policyProposals = list ?? [];
+    } catch (e) {
+      // Don't pollute store.error; proposals failures shouldn't blank
+      // the rest of the Hive UI. Console is enough for triage.
+      // eslint-disable-next-line no-console
+      console.warn('fetchPolicyProposals failed', e);
+    }
+  }
+
+  // fetchCostPreview is fire-and-store. Returns the estimate for callers
+  // that want it inline; also caches into costPreviews keyed by
+  // backlog_id so derived views can render without their own state.
+  async fetchCostPreview(backlogID: string): Promise<CostEstimate | null> {
+    if (this.disabled || !backlogID) return null;
+    try {
+      const est = await this.getJSON<CostEstimate>(
+        `/api/hive/cost-preview?backlog_id=${encodeURIComponent(backlogID)}`,
+      );
+      if (est) {
+        this.costPreviews = { ...this.costPreviews, [backlogID]: est };
+      }
+      return est ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async applyPolicyProposal(id: number): Promise<void> {
+    await this.postJSON(`/api/hive/policy/proposals/${id}/apply`, {});
+    await this.fetchPolicyProposals();
+  }
+
+  async rejectPolicyProposal(id: number): Promise<void> {
+    await this.postJSON(`/api/hive/policy/proposals/${id}/reject`, {});
+    await this.fetchPolicyProposals();
   }
 
   startPolling(intervalMs = 15000): void {

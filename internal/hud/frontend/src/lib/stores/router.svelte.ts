@@ -107,6 +107,7 @@ export const views: ViewDef[] = [
       { id: 'squads',    label: 'Squads',    key: 'e' },
       { id: 'audit',     label: 'Audit',     key: 'f' },
       { id: 'cross-repo', label: 'Cross-Repo', key: 'g' },
+      { id: 'policy',    label: 'Policy',    key: 'h' },
     ],
   },
 ];

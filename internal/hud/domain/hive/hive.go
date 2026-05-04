@@ -83,6 +83,13 @@ func (d *Domain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFunc) ht
 	mux.HandleFunc("POST /api/hive/squads/{name}/route-test", mw(d.handleProxyAdminPost))
 	mux.HandleFunc("POST /api/hive/audit/run", mw(d.handleProxyAdminPost))
 	mux.HandleFunc("POST /api/hive/cross-repo/runs/{id}/abort", mw(d.handleProxyAdminPost))
+
+	// Adaptive policy proposals (Phase 7 slice 7.2). Read endpoint feeds
+	// the HUD's Adaptive panel; apply/reject double-gate through both
+	// HUD and operator admin tokens.
+	mux.HandleFunc("GET /api/hive/policy/proposals", mw(d.handleProxyGet))
+	mux.HandleFunc("POST /api/hive/policy/proposals/{id}/apply", mw(d.handleProxyAdminPost))
+	mux.HandleFunc("POST /api/hive/policy/proposals/{id}/reject", mw(d.handleProxyAdminPost))
 }
 
 func (d *Domain) handleProxyGet(w http.ResponseWriter, r *http.Request) {

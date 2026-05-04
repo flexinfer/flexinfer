@@ -169,6 +169,11 @@ func (o *operator) httpMux() *http.ServeMux {
 	// gated so a misconfigured external pushes can't bump our metric.
 	mux.HandleFunc("POST /api/hive/alerts/regression", requireAdmin(o.handleRegressionAlert))
 
+	// Adaptive policy proposals (Phase 7 slice 7.2).
+	mux.HandleFunc("GET /api/hive/policy/proposals", o.handlePolicyProposalsList)
+	mux.HandleFunc("POST /api/hive/policy/proposals/{id}/apply", requireAdmin(o.handlePolicyProposalApply))
+	mux.HandleFunc("POST /api/hive/policy/proposals/{id}/reject", requireAdmin(o.handlePolicyProposalReject))
+
 	// Anything else under /api/hive returns 404 with a clear message; the
 	// catch-all "/" stays 501 so unprefixed paths don't get mistaken for
 	// missing API routes.
