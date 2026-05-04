@@ -311,13 +311,57 @@ Every Prometheus metric registered by the operator is in `pkg/hive/metrics.go`. 
 - **Replay a council run with a different ensemble.** Edit `policy.council.ensemble` (e.g., swap editor model), commit, reconcile. Trigger via `loom hive council run` and compare sidecars in HUD `Eval` panel. (Pre-v2.1; v2.1 adds first-class A/B replay UI.)
 - **Investigate eval drift.** HUD `Hive` view → `Eval` panel; sort by score ascending. Cross-reference subjects in `pipeline_runs`/`council_runs` via the link.
 
-## Forward direction (Hive v2)
+## Hive v2 architecture (shipped)
 
-The v2 design promotes Hive from a flat two-tier system to a true hierarchical swarm with persistent **Squads**, an independent **Adversarial Audit** swarm, **Cross-Repo** atomic merges, **Council Debate Mode**, bounded pipeline **Recursion**, an **Adaptive Policy** engine, **Cost Preview**, and **Mobile Hive parity**. See:
+Hive v2 promotes the flat v1 two-tier (council + pipeline) design into a hierarchical swarm. The list below is the as-of state — every feature has shipped code; default-on flips happen sequentially per Phase 8.3 with a one-week soak between flips. Rollback playbook for any flip: [HIVE_V2_ROLLBACK.md](HIVE_V2_ROLLBACK.md).
 
-- `.loom/92-research-hive-v2-hierarchical-swarm-2026-05-02.md`
-- `.loom/93-product-spec-hive-v2-hierarchical-swarm-2026-05-02.md`
-- `.loom/94-implementation-plan-hive-v2-hierarchical-swarm-2026-05-02.md`
+### Components added in v2
+
+| Feature | Code | Default | Phase |
+|---|---|---|---|
+| **Squads** — persistent multi-role pods routed by path-class confidence | `pkg/hive/squads/`, `cmd/loom-hive-operator/handlers_squads*.go` | `policy.squads.enabled = false` (8.3-1) | 2 |
+| **Adversarial Audit** — independent rubric pool emitting findings on artifacts + merges | `pkg/hive/audit/`, `cmd/loom-hive-operator/handlers_audit*.go` | `policy.audit.enabled = false`; will land `enabled: true, advisory_only: true` (8.3-2) | 3 |
+| **Cross-Repo** atomic merges (loom-core + loom etc.) | `pkg/hive/crossrepo/`, `cmd/loom-hive-operator/handlers_crossrepo*.go` | `policy.cross_repo.enabled = false` (8.3-4, gated on 3 dogfood successes) | 4 |
+| **Council Debate Mode** — multi-round editor/reviewer/moderator | `pkg/hive/council/debate*.go` (Phase 5 slices 5.1–5.3) | `policy.council.debate.enabled.{cron,roadmap,incident}: false` (8.3-3 starts with incident-only) | 5 |
+| **Bounded pipeline Recursion** — `SubrunGuard` with depth/budget/cycle guards + `hive_pipeline_recursion_depth` histogram | `pkg/hive/pipeline/recursion.go`, `cmd/loom-hive-operator/handlers_subrun*.go` | `policy.recursion.enabled = false`; opt-in per ensemble | 6 |
+| **Adaptive Policy** Sunday job — relax/tighten/rotate proposals from kpi_snapshots + eval_scores + audit_findings + gate_outcomes | `pkg/hive/adaptive/`, `cmd/loom-hive-operator/handlers_policy_proposals.go` | `policy.adaptive_policy.enabled = false`; manual-apply only (8.3-5) | 7 |
+| **Cost Preview** estimator — pre-spawn `$X.XX` per backlog item with confidence band | `pkg/hive/budget/estimator.go`, `GET /api/hive/cost-preview?backlog_id=` | always on (read-only) | 7 |
+| **Mobile Hive parity** — companion app KPI cards + in-flight pipeline tree | `apps/loom-companion-ios/Sources/LoomCompanion(Kit)/Hive/` | always on (read-only) | 7 |
+
+### KPIs the dashboards track
+
+The v2 success criteria from `.loom/93-…2026-05-02.md` §"Success criteria" are observable on Grafana via these metrics. Anything below alerts on the canonical loom-hive dashboard.
+
+| Metric | What it answers |
+|---|---|
+| `hive_pipeline_runs_total{state}` | Per-terminal-state run counts → drives merge rate, escalation rate. |
+| `hive_council_runs_total{trigger,outcome}` + `hive_council_cost_usd_total{trigger}` | Council cost per outcome class → drives \$/merged-item KPI. |
+| `hive_pipeline_recursion_depth` (histogram) | Subrun depth distribution; alert on .99 quantile creeping toward `policy.recursion.max_depth`. |
+| `hive_pipeline_active{state}` | Live count of non-terminal runs by state — surfaces stuck-in-implementing patterns. |
+| `hive_gate_evaluations_total{gate,outcome}` | Pass-rate per gate; drives "is this gate blocking valid work" review. |
+| `hive_escalations_total{reason}` | Classifies why work falls off automation. Trend up = automation regressing. |
+| `hive_regression_count_total{alert,severity}` | Alertmanager-correlated post-merge regressions. Non-zero on any flip = consider rollback. |
+
+### v2 acceptance criteria (from spec)
+
+Phase 8.1 will run a cluster smoke that exercises all of these against dev k3s; the criteria are durable and apply post-flip in production:
+
+- Squads route ≥ 30% of items end-to-end without escalation rate increase.
+- Audit advisory pass rate ≥ 90% on merged work; one critical finding inside the 24h window opens an issue + agent_handoff automatically.
+- Cross-repo runs achieve atomic merge or full revert within 60s of failure injection. Three consecutive successful loom-core+loom dogfood merges before flipping `policy.cross_repo.enabled = true`.
+- Council debate at incident trigger reduces post-incident regressions vs. single-pass baseline (measured over a 4-week window).
+- Bounded recursion: depth=1 round-trip lands in HUD; depth-cap + budget-share + cycle-detector all reject on the canonical fixture.
+- Adaptive policy: one fixture proposal applies cleanly via `POST /api/hive/policy/proposals/{id}/apply` and reflects in the live ConfigMap diff after a manual gitops edit.
+- Cost preview: estimate within ±30% of realized cost on the median path-class fixture.
+- Mobile Hive: pull-to-refresh works; KPI cards update; depth indicator matches HUD's PipelinesPanel.
+
+### Reference
+
+- Plan with per-slice file lists: `.loom/94-implementation-plan-hive-v2-hierarchical-swarm-2026-05-02.md`
+- Spec with success criteria + failure modes: `.loom/93-product-spec-hive-v2-hierarchical-swarm-2026-05-02.md`
+- Research / prior-art: `.loom/92-research-hive-v2-hierarchical-swarm-2026-05-02.md`
+- Operator runbook (day-2): [HIVE_RUNBOOK.md](HIVE_RUNBOOK.md)
+- Rollback playbook (Phase 8.2): [HIVE_V2_ROLLBACK.md](HIVE_V2_ROLLBACK.md)
 
 ## Sources
 
