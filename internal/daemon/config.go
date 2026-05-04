@@ -96,6 +96,7 @@ type FileConfig struct {
 // EmbeddedHUDConfig controls the embedded HUD application within the daemon.
 type EmbeddedHUDConfig struct {
 	Enabled              bool   `yaml:"enabled"`
+	AdminToken           string `yaml:"admin_token,omitempty"`
 	MobileOperatorToken  string `yaml:"mobile_operator_token,omitempty"`
 	MobileOperatorScopes string `yaml:"mobile_operator_scopes,omitempty"`
 	SpawnEnabled         bool   `yaml:"spawn_enabled"`

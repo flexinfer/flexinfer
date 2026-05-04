@@ -63,6 +63,11 @@ spec:
             # HUD configuration (previously in separate hud container)
             - name: HUD_BIND_ADDRESS
               value: 0.0.0.0
+            - name: HUD_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: loom-secrets
+                  key: HUD_ADMIN_TOKEN
             - name: HUD_MOBILE_OPERATOR_TOKEN
               valueFrom:
                 secretKeyRef:
