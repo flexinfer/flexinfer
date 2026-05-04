@@ -81,7 +81,7 @@ spec:
   # tag carries the plugin install but pins the stable TRITON KV path; we need the
   # gemma4-specific experimental tag with the shared-KV guard, page_size_padded
   # alignment fix, and ROCm SDPA fallback (.loom/10-research.md lines 530-678).
-  image: registry.harbor.lan/flexinfer/runtime@sha256:f9c69576b2681feafe0ba845054ebd5ff0c52a0edddf5c05b08e0fca6ed8817c
+  image: registry.harbor.lan/flexinfer/runtime@sha256:493e02c14f65cbde7b47a5a1ba8e57e8213b751de5528304b06cf4b1de39c53b
   # Same source artifact the primary serves — point at the keqv-patched output
   # so the v_proj duplicates are visible to the plugin's QKV path.
   source: pvc://gemma4-31b-gptq/gemma4-31b-gptq/gptq-w4-g128-keqv
