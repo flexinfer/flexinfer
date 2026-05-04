@@ -74,7 +74,7 @@ profiles:
     vllm_extra_deps_profile: minimal
     install_qwen35_fastpath: false
     vllm_repo: "https://github.com/vllm-project/vllm.git"
-    vllm_ref: "main"
+    vllm_ref: "50cd5674b39c69e60fefd0ec1d61652d693e6a06"  # pinned 2026-05-03: vLLM main drifted past patch_vllm_env_override_torch29.py expected hunks (kernel_block_size→shape_block_size + view refactor); 50cd567 = last commit before our patch was authored
     vllm_source_patch_script: "build/scripts/patch_vllm_env_override_torch29.py"
     transformers_install_mode: source
     transformers_repo: "https://github.com/huggingface/transformers.git"
@@ -126,7 +126,7 @@ profiles:
     vllm_extra_deps_profile: minimal
     install_qwen35_fastpath: false
     vllm_repo: "https://github.com/vllm-project/vllm.git"
-    vllm_ref: "main"
+    vllm_ref: "50cd5674b39c69e60fefd0ec1d61652d693e6a06"  # pinned 2026-05-03: vLLM main drifted past patch_vllm_env_override_torch29.py expected hunks (kernel_block_size→shape_block_size + view refactor); 50cd567 = last commit before our patch was authored
     vllm_source_patch_script: "build/scripts/patch_vllm_env_override_torch29.py"
     transformers_install_mode: source
     transformers_repo: "https://github.com/huggingface/transformers.git"
@@ -180,7 +180,7 @@ profiles:
     vllm_extra_deps_profile: minimal
     install_qwen35_fastpath: false
     vllm_repo: "https://github.com/vllm-project/vllm.git"
-    vllm_ref: "main"
+    vllm_ref: "50cd5674b39c69e60fefd0ec1d61652d693e6a06"  # pinned 2026-05-03: vLLM main drifted past patch_vllm_env_override_torch29.py expected hunks (kernel_block_size→shape_block_size + view refactor); 50cd567 = last commit before our patch was authored
     vllm_source_patch_script: "build/scripts/patch_vllm_env_override_torch29.py"
     transformers_install_mode: source
     transformers_repo: "https://github.com/huggingface/transformers.git"
