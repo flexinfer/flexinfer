@@ -49,12 +49,12 @@ public enum Endpoint: Sendable {
     case handoffs(limit: Int? = nil)
     case namespaces
 
-    // Phase 7 slice 7.5 — Hive screen reads. These hit the HUD's
-    // /api/hive/* proxy directly (different prefix from /api/mobile/v1/*).
+    // Phase 7 slice 7.5 — Mills screen reads. These hit the HUD's
+    // /api/mills/* proxy directly (different prefix from /api/mobile/v1/*).
     // Both are read-only and tolerate the operator-not-configured 503 the
-    // proxy returns when LOOM_HIVE_OPERATOR_URL is unset.
-    case hivePipelineRuns
-    case hiveKPIs(window: String)
+    // proxy returns when LOOM_MILLS_OPERATOR_URL is unset.
+    case millsPipelineRuns
+    case millsKPIs(window: String)
 
     var method: String {
         switch self {
@@ -65,7 +65,7 @@ public enum Endpoint: Sendable {
              .eventsStream, .audit, .sandbox, .spawnList, .spawnConfig, .spawnDetail, .agents,
              .pipelines, .handoffs, .namespaces,
              .spawnTelemetry, .spawnTelemetryTools, .spawnTelemetryFiles, .spawnTelemetryErrors,
-             .hivePipelineRuns, .hiveKPIs:
+             .millsPipelineRuns, .millsKPIs:
             return "GET"
         case .createSession, .endSession, .pushRegister, .pushUnregister,
              .sandboxStart, .sandboxStop, .spawnAgent, .spawnStop,
@@ -169,10 +169,10 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/handoffs"
         case .namespaces:
             return "/api/mobile/v1/namespaces"
-        case .hivePipelineRuns:
-            return "/api/hive/pipeline/runs"
-        case .hiveKPIs:
-            return "/api/hive/kpis"
+        case .millsPipelineRuns:
+            return "/api/mills/pipeline/runs"
+        case .millsKPIs:
+            return "/api/mills/kpis"
         }
     }
 
@@ -327,8 +327,8 @@ public enum Endpoint: Sendable {
                 items.append(URLQueryItem(name: "limit", value: String(limit)))
             }
             if !items.isEmpty { components.queryItems = items }
-        case let .hiveKPIs(window):
-            // The operator's /api/hive/kpis handler requires ?window=, so
+        case let .millsKPIs(window):
+            // The operator's /api/mills/kpis handler requires ?window=, so
             // pass it through verbatim. The HUD's proxy preserves query.
             components.queryItems = [URLQueryItem(name: "window", value: window)]
         default:

@@ -319,66 +319,66 @@
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
                 {:else if router.subView === 'pipelines'}
-                  {#await import('./lib/components/Hive/PipelinesPanel.svelte')}
+                  {#await import('./lib/components/Mills/PipelinesPanel.svelte')}
                     <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
-                  {:then { default: HivePipelinesPanel }}
-                    <HivePipelinesPanel />
+                  {:then { default: MillsPipelinesPanel }}
+                    <MillsPipelinesPanel />
                   {:catch}
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
                 {:else if router.subView === 'backlog'}
-                  {#await import('./lib/components/Hive/BacklogPanel.svelte')}
+                  {#await import('./lib/components/Mills/BacklogPanel.svelte')}
                     <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
-                  {:then { default: HiveBacklogPanel }}
-                    <HiveBacklogPanel />
+                  {:then { default: MillsBacklogPanel }}
+                    <MillsBacklogPanel />
                   {:catch}
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
                 {:else if router.subView === 'council'}
-                  {#await import('./lib/components/Hive/CouncilPanel.svelte')}
+                  {#await import('./lib/components/Mills/CouncilPanel.svelte')}
                     <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
-                  {:then { default: HiveCouncilPanel }}
-                    <HiveCouncilPanel />
+                  {:then { default: MillsCouncilPanel }}
+                    <MillsCouncilPanel />
                   {:catch}
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
                 {:else if router.subView === 'eval'}
-                  {#await import('./lib/components/Hive/EvalPanel.svelte')}
+                  {#await import('./lib/components/Mills/EvalPanel.svelte')}
                     <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
-                  {:then { default: HiveEvalPanel }}
-                    <HiveEvalPanel />
+                  {:then { default: MillsEvalPanel }}
+                    <MillsEvalPanel />
                   {:catch}
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
                 {:else if router.subView === 'squads'}
-                  {#await import('./lib/components/Hive/SquadsPanel.svelte')}
+                  {#await import('./lib/components/Mills/SquadsPanel.svelte')}
                     <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
-                  {:then { default: HiveSquadsPanel }}
-                    <HiveSquadsPanel />
+                  {:then { default: MillsSquadsPanel }}
+                    <MillsSquadsPanel />
                   {:catch}
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
                 {:else if router.subView === 'audit'}
-                  {#await import('./lib/components/Hive/AuditPanel.svelte')}
+                  {#await import('./lib/components/Mills/AuditPanel.svelte')}
                     <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
-                  {:then { default: HiveAuditPanel }}
-                    <HiveAuditPanel />
+                  {:then { default: MillsAuditPanel }}
+                    <MillsAuditPanel />
                   {:catch}
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
                 {:else if router.subView === 'cross-repo'}
-                  {#await import('./lib/components/Hive/CrossRepoCard.svelte')}
+                  {#await import('./lib/components/Mills/CrossRepoCard.svelte')}
                     <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
-                  {:then { default: HiveCrossRepoCard }}
-                    <HiveCrossRepoCard />
+                  {:then { default: MillsCrossRepoCard }}
+                    <MillsCrossRepoCard />
                   {:catch}
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
                 {:else if router.subView === 'policy'}
-                  {#await import('./lib/components/Hive/PolicyProposalsCard.svelte')}
+                  {#await import('./lib/components/Mills/PolicyProposalsCard.svelte')}
                     <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
-                  {:then { default: HivePolicyProposalsCard }}
-                    <HivePolicyProposalsCard />
+                  {:then { default: MillsPolicyProposalsCard }}
+                    <MillsPolicyProposalsCard />
                   {:catch}
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}

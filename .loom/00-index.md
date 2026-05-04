@@ -2,9 +2,9 @@
 
 ## Quick Links
 
-- **Loom Hive v2 — implementation status (2026-05-02)**: `95-implementation-status-hive-v2-2026-05-02.md` ← **current status + spec-driven next steps**
-- **Loom Hive v2 — Hierarchical Swarm + Adversarial Audit + Cross-Repo (2026-05-02)**: `92-research-hive-v2-hierarchical-swarm-2026-05-02.md`, `93-product-spec-hive-v2-hierarchical-swarm-2026-05-02.md`, `94-implementation-plan-hive-v2-hierarchical-swarm-2026-05-02.md` ← **active planning slice**
-- **Loom Hive v1 — Council + Pipeline (agent swarm meta-orchestration, 2026-04-25)**: `89-research-agent-swarm-council-pipeline-2026-04-25.md`, `90-product-spec-agent-swarm-council-pipeline-2026-04-25.md`, `91-implementation-plan-agent-swarm-council-pipeline-2026-04-25.md` (phases 1–6 shipped except 6.5 docs + 6.6 default-on flip; both rolled into v2 phase 0)
+- **Loom Mills v2 — implementation status (2026-05-02)**: `95-implementation-status-mills-v2-2026-05-02.md` ← **current status + spec-driven next steps**
+- **Loom Mills v2 — Hierarchical Swarm + Adversarial Audit + Cross-Repo (2026-05-02)**: `92-research-mills-v2-hierarchical-swarm-2026-05-02.md`, `93-product-spec-mills-v2-hierarchical-swarm-2026-05-02.md`, `94-implementation-plan-mills-v2-hierarchical-swarm-2026-05-02.md` ← **active planning slice**
+- **Loom Mills v1 — Council + Pipeline (agent swarm meta-orchestration, 2026-04-25)**: `89-research-agent-swarm-council-pipeline-2026-04-25.md`, `90-product-spec-agent-swarm-council-pipeline-2026-04-25.md`, `91-implementation-plan-agent-swarm-council-pipeline-2026-04-25.md` (phases 1–6 shipped except 6.5 docs + 6.6 default-on flip; both rolled into v2 phase 0)
 - **Session mgmt + spawn auth + weaver integration (2026-04-19)**: `86-research-session-spawning-weaver-integration-2026-04-19.md`, `87-product-spec-session-spawning-weaver-2026-04-19.md`, `88-implementation-plan-session-spawning-weaver-2026-04-19.md`
 - **Phase 4 plan — Headless agent UX parity (2026-04-07)**: `83-plan-headless-agent-ux-parity-2026-04-07.md`
 - **Phase 3 plan — Headless agent full-stack drive + canonical telemetry (2026-04-07)**: `82-plan-headless-agent-fullstack-2026-04-07.md`
@@ -49,44 +49,44 @@
 
 ## Current Planning Addendum (2026-05-02)
 
-- Active planning slice: **Loom Hive v2 — Hierarchical Swarm.** Promote the v1 flat two-tier system (Council → Pipeline) to a true three-tier hierarchical swarm with persistent domain-owning **Squads**, an independent **Adversarial Audit** ensemble, **Cross-Repo Federation** with atomic merge, **Council Debate Mode** (v1.1 deferral #4), bounded **Pipeline Recursion** ≤ 2 (v1.1 deferral #7), an **Adaptive Policy** engine, **Cost Preview**, and **Mobile Hive parity** (v1.1 deferral #1). V1 phase 6.5 (docs/runbook/skill) and 6.6 (default-on flip) are folded into v2 Phase 0.
-- **Implementation status (2026-05-02)** — see `95-implementation-status-hive-v2-2026-05-02.md`:
-  - Phase 0.1 docs/runbook 🟡 partial (`docs/HIVE.md`, `docs/HIVE_RUNBOOK.md` shipped; `mcp/skills/hive-ops/SKILL.md` empty)
+- Active planning slice: **Loom Mills v2 — Hierarchical Swarm.** Promote the v1 flat two-tier system (Council → Pipeline) to a true three-tier hierarchical swarm with persistent domain-owning **Squads**, an independent **Adversarial Audit** ensemble, **Cross-Repo Federation** with atomic merge, **Council Debate Mode** (v1.1 deferral #4), bounded **Pipeline Recursion** ≤ 2 (v1.1 deferral #7), an **Adaptive Policy** engine, **Cost Preview**, and **Mobile Mills parity** (v1.1 deferral #1). V1 phase 6.5 (docs/runbook/skill) and 6.6 (default-on flip) are folded into v2 Phase 0.
+- **Implementation status (2026-05-02)** — see `95-implementation-status-mills-v2-2026-05-02.md`:
+  - Phase 0.1 docs/runbook 🟡 partial (`docs/MILLS.md`, `docs/MILLS_RUNBOOK.md` shipped; `mcp/skills/mills-ops/SKILL.md` empty)
   - Phase 0.2 default-on 🟡 partial (ConfigMap `enabled: true`; no compile-time default)
   - Phase 1 substrate ✅ shipped (commit `20870464`)
   - Phase 2 squads ✅ shipped (commits `5222a95d`, `c4bd9f72`, `1655d1ac`)
   - Phase 3 audit ✅ shipped (commits `97549c97`, `174e0c14`, `a30d943f`)
   - Phases 4–8 ❌ not started
 - **Open gaps in shipped work** (block Phase 8 flip; address before Phase 4):
-  - G-1: `pkg/hive/policy.go` `Policy` struct missing v2 fields (`Squads`, `Audit`, `CrossRepo`, `Debate`, `Recursion`, `AdaptivePolicy`)
-  - G-2: `platform/gitops/k3s/hive/configmap-policy.yaml` still v1 schema (no v2 sections)
-  - G-3: `mcp/skills/hive-ops/SKILL.md` is empty
+  - G-1: `pkg/mills/policy.go` `Policy` struct missing v2 fields (`Squads`, `Audit`, `CrossRepo`, `Debate`, `Recursion`, `AdaptivePolicy`)
+  - G-2: `platform/gitops/k3s/mills/configmap-policy.yaml` still v1 schema (no v2 sections)
+  - G-3: `mcp/skills/mills-ops/SKILL.md` is empty
   - G-4: policy schema version not bumped to 2
 - **Spec-driven next sequence**: Slice A (G-1+G-2+G-4) ⫽ Slice B (G-3) → Slice C (Phase 4.1 registry) → Slices D/E/F (Phase 4.2–4.5 parallel) → Phase 5 → Phase 6 → Phase 7 → Phase 8.
 - New planning docs:
-  - `92-research-hive-v2-hierarchical-swarm-2026-05-02.md` — V1 ship state inventory, hierarchy thesis, capability gaps, prior-art mapping, v2 architecture, telemetry deltas, risks
-  - `93-product-spec-hive-v2-hierarchical-swarm-2026-05-02.md` — V2-D1..V2-D10 decisions resolved; new SQLite migration `002_v2.sql`; squad manifests; audit rubric; cross-repo state machine; debate flow; recursion guards; adaptive proposal kinds; REST + MCP surface; success criteria
-  - `94-implementation-plan-hive-v2-hierarchical-swarm-2026-05-02.md` — eight phases (0: close v1; 1: substrate; 2: squads; 3: audit; 4: cross-repo; 5: debate; 6: recursion; 7: adaptive + cost preview + mobile; 8: hardening + default-on)
+  - `92-research-mills-v2-hierarchical-swarm-2026-05-02.md` — V1 ship state inventory, hierarchy thesis, capability gaps, prior-art mapping, v2 architecture, telemetry deltas, risks
+  - `93-product-spec-mills-v2-hierarchical-swarm-2026-05-02.md` — V2-D1..V2-D10 decisions resolved; new SQLite migration `002_v2.sql`; squad manifests; audit rubric; cross-repo state machine; debate flow; recursion guards; adaptive proposal kinds; REST + MCP surface; success criteria
+  - `94-implementation-plan-mills-v2-hierarchical-swarm-2026-05-02.md` — eight phases (0: close v1; 1: substrate; 2: squads; 3: audit; 4: cross-repo; 5: debate; 6: recursion; 7: adaptive + cost preview + mobile; 8: hardening + default-on)
 - Locked V2 decisions (V2-D1..V2-D10):
   - **Two squads to start**: `hud-frontend` and `gitops`. Add others empirically.
-  - **Squad memory in canonical store**, not agent-context. Hive remains self-contained.
+  - **Squad memory in canonical store**, not agent-context. Mills remains self-contained.
   - **Hybrid audit pool**: FlexInfer (Llama 4 70B + Qwen 3 32B) bulk; escalate to frontier (Claude Opus + Codex GPT-5) only for ambiguous (0.4–0.7 band).
   - **Cross-repo disabled by default** in v2.0; flip after 4-week loom-core+loom dogfood.
   - **Debate enabled for incident triggers only** in v2.0; disabled for cron/roadmap-change.
   - **Recursion opt-in per squad** via squad manifest; depth cap 2.
   - **Adaptive policy is human-applied** in v2.0; v2.1 will auto-relax with 24h revert window and protected-path denylist (`platform/gitops/`, `pkg/security/`, `cmd/loomd/`).
   - **Audit advisory-only** in v2.0; blocking deferred to v2.1 once survival KPIs prove low-noise.
-  - **Mobile parity in v2.0** (one read-only Hive screen).
+  - **Mobile parity in v2.0** (one read-only Mills screen).
 
 ## Current Planning Addendum (2026-04-25)
 
-- Active planning slice (closed; folded into v2): **Loom Hive — Council + Pipeline.** Phases 1–6 shipped except 6.5 (docs) + 6.6 (default-on flip).
+- Active planning slice (closed; folded into v2): **Loom Mills — Council + Pipeline.** Phases 1–6 shipped except 6.5 (docs) + 6.6 (default-on flip).
 - New planning docs:
   - `89-research-agent-swarm-council-pipeline-2026-04-25.md` — current-state inventory, gap analysis, decisions (resolved 2026-04-25), persistence + cluster topology rationale, evaluation framework, risks
-  - `90-product-spec-agent-swarm-council-pipeline-2026-04-25.md` — `cmd/loom-hive-operator/`, SQLite schema (canonical), policy file, MentatLab `hive-default-pipeline` template, REST + MCP surface, gates, eval framework, KPIs
-  - `91-implementation-plan-agent-swarm-council-pipeline-2026-04-25.md` — six phases: (0) prerequisites, (1) cluster substrate (persistence + operator), (2) hive primitives, (3) council MVP + Eval Loop A, (4) pipeline MVP + Eval Loop B, (5) HUD + telemetry, (6) hardening + Eval Loop C + docs + default-on
+  - `90-product-spec-agent-swarm-council-pipeline-2026-04-25.md` — `cmd/loom-mills-operator/`, SQLite schema (canonical), policy file, MentatLab `mills-default-pipeline` template, REST + MCP surface, gates, eval framework, KPIs
+  - `91-implementation-plan-agent-swarm-council-pipeline-2026-04-25.md` — six phases: (0) prerequisites, (1) cluster substrate (persistence + operator), (2) mills primitives, (3) council MVP + Eval Loop A, (4) pipeline MVP + Eval Loop B, (5) HUD + telemetry, (6) hardening + Eval Loop C + docs + default-on
 - Locked decisions (D1–D12 resolved):
-  - **Cluster-only.** Operator runs in k3s as `loom-hive-operator` deployment with PVC; Mac CLI is client only (laptop sleeps; hive doesn't).
+  - **Cluster-only.** Operator runs in k3s as `loom-mills-operator` deployment with PVC; Mac CLI is client only (laptop sleeps; mills doesn't).
   - **Persistence is canonical SQLite**, not YAML. `.loom/backlog/*.yaml` is a derived export; GitLab issues are a federated mirror; resilient to GitLab outages.
   - **Hybrid council ensemble**: frontier editor (Claude/Codex via spawn) + FlexInfer reviewers (heterogeneous models), editor pattern.
   - **Pipeline runs on MentatLab** (extend, not replace); per-DAG worktrees; reconcile-loop pickup; cap+queue budget.

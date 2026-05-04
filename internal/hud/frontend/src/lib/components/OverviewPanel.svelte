@@ -13,9 +13,9 @@
   import { coordinationStore } from '../stores/coordination.svelte.ts';
   import { mergeQueueStore } from '../stores/mergeQueue.svelte.ts';
   import { shuttleStore } from '../stores/shuttle.svelte.ts';
-  import { hiveStore } from '../stores/hive.svelte.ts';
+  import { millsStore } from '../stores/mills.svelte.ts';
   import { otelStore } from '../stores/otel.svelte.ts';
-  import HiveKPIRow from './Hive/HiveKPIRow.svelte';
+  import MillsKPIRow from './Mills/MillsKPIRow.svelte';
   import { navigateToAgentSessionOrTraces } from '../utils/drilldown.ts';
 
   const fleetPollingOwner = Symbol('OverviewPanel');
@@ -126,7 +126,7 @@
     coordinationStore.startPolling(30000);
     mergeQueueStore.startPolling(30000);
     shuttleStore.startPolling(30000);
-    hiveStore.startPolling(30000);
+    millsStore.startPolling(30000);
     otelStore.startPolling(30000, otelPollingOwner);
     return () => {
       fleetStore.stopPolling(fleetPollingOwner);
@@ -139,7 +139,7 @@
       coordinationStore.stopPolling();
       mergeQueueStore.stopPolling();
       shuttleStore.stopPolling();
-      hiveStore.stopPolling();
+      millsStore.stopPolling();
       otelStore.stopPolling(otelPollingOwner);
     };
   });
@@ -646,8 +646,8 @@
       </div>
     </section>
 
-    <!-- ═══ Hive KPIs ═══ -->
-    <HiveKPIRow />
+    <!-- ═══ Mills KPIs ═══ -->
+    <MillsKPIRow />
 
     <!-- ═══ Supporting Surfaces ═══ -->
     <section class="support-section">

@@ -21,7 +21,7 @@ struct ContentView: View {
         case people
         case spawn
         case work
-        case hive
+        case mills
         case connection
     }
 
@@ -250,10 +250,10 @@ struct ContentView: View {
             .tag(AppTab.work)
 
             NavigationStack {
-                HiveScreen(apiClient: connectionVM.buildAPIClient())
+                MillsScreen(apiClient: connectionVM.buildAPIClient())
             }
-            .tabItem { Label("Hive", systemImage: "hexagon") }
-            .tag(AppTab.hive)
+            .tabItem { Label("Mills", systemImage: "hexagon") }
+            .tag(AppTab.mills)
 
             NavigationStack {
                 ConnectionDiagnosticsView(
@@ -281,9 +281,9 @@ struct ContentView: View {
                 Label("Work", systemImage: "square.grid.2x2")
                     .contentShape(Rectangle())
                     .onTapGesture { selectedTab = .work }
-                Label("Hive", systemImage: "hexagon")
+                Label("Mills", systemImage: "hexagon")
                     .contentShape(Rectangle())
-                    .onTapGesture { selectedTab = .hive }
+                    .onTapGesture { selectedTab = .mills }
                 Label("Connection", systemImage: "network")
                     .contentShape(Rectangle())
                     .onTapGesture { selectedTab = .connection }
@@ -322,8 +322,8 @@ struct ContentView: View {
                     deepLinkWorkflowID: $pendingWorkflowDeepLinkID,
                     prefillEndSessionID: $pendingEndSessionPrefillID
                 )
-            case .hive:
-                HiveScreen(apiClient: connectionVM.buildAPIClient())
+            case .mills:
+                MillsScreen(apiClient: connectionVM.buildAPIClient())
             case .connection:
                 ConnectionDiagnosticsView(
                     connectionVM: connectionVM,

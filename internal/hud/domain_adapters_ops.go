@@ -10,8 +10,8 @@ import (
 	"github.com/crb2nu/loom/internal/hud/coordination"
 	domainalerting "github.com/crb2nu/loom/internal/hud/domain/alerting"
 	domainctx "github.com/crb2nu/loom/internal/hud/domain/context"
-	domainhive "github.com/crb2nu/loom/internal/hud/domain/hive"
 	"github.com/crb2nu/loom/internal/hud/domain/memory"
+	domainmills "github.com/crb2nu/loom/internal/hud/domain/mills"
 	domainweaver "github.com/crb2nu/loom/internal/hud/domain/weaver"
 	"github.com/crb2nu/loom/internal/hud/monitor"
 	"github.com/crb2nu/loom/internal/hud/shuttle"
@@ -90,30 +90,30 @@ func (h *handoffDepsAdapter) BroadcastAgentEvent(eventType string, payload any) 
 	h.app.BroadcastAgentEvent(eventType, payload)
 }
 
-// --- Hive domain Deps adapter ---
+// --- Mills domain Deps adapter ---
 
-type hiveDepsAdapter struct {
+type millsDepsAdapter struct {
 	app *App
 }
 
-func (h *hiveDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+func (h *millsDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
 	h.app.WriteJSON(w, status, v)
 }
 
-func (h *hiveDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+func (h *millsDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
 	h.app.WriteError(w, status, msg, err)
 }
 
-func (h *hiveDepsAdapter) RequireAdminToken(w http.ResponseWriter, r *http.Request) bool {
+func (h *millsDepsAdapter) RequireAdminToken(w http.ResponseWriter, r *http.Request) bool {
 	return h.app.RequireAdminToken(w, r)
 }
 
-func (h *hiveDepsAdapter) Logger() *slog.Logger { return h.app.Logger() }
+func (h *millsDepsAdapter) Logger() *slog.Logger { return h.app.Logger() }
 
-func (h *hiveDepsAdapter) HiveConfig() domainhive.Config {
-	return domainhive.Config{
-		BaseURL:    h.app.config.HiveOperatorURL,
-		AdminToken: h.app.config.HiveOperatorToken,
+func (h *millsDepsAdapter) MillsConfig() domainmills.Config {
+	return domainmills.Config{
+		BaseURL:    h.app.config.MillsOperatorURL,
+		AdminToken: h.app.config.MillsOperatorToken,
 	}
 }
 

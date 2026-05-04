@@ -1,12 +1,12 @@
-// Hive recursion helpers — Phase 6 slice 6.2.
+// Mills recursion helpers — Phase 6 slice 6.2.
 //
-// When a worker is running under a Hive pipeline run (i.e. the spawn
-// orchestrator set LOOM_HIVE_RUN_ID + the operator URL + admin token
+// When a worker is running under a Mills pipeline run (i.e. the spawn
+// orchestrator set LOOM_MILLS_RUN_ID + the operator URL + admin token
 // on the agent's environment), it can fan out into a child run via
 // the recursion endpoint shipped in slice 6.1:
 //
-//   POST {LOOM_HIVE_OPERATOR_URL}/api/hive/pipeline/runs/{parent}/subrun
-//   Authorization: Bearer {LOOM_HIVE_ADMIN_TOKEN}
+//   POST {LOOM_MILLS_OPERATOR_URL}/api/mills/pipeline/runs/{parent}/subrun
+//   Authorization: Bearer {LOOM_MILLS_ADMIN_TOKEN}
 //   Content-Type: application/json
 //   Body: {backlog_id, template, estimate_usd?, slice_spec?}
 //
@@ -46,7 +46,7 @@ export type SubrunGuardCode =
 
 /**
  * Error thrown when the operator rejects the subrun request. `code` is
- * the stable string from pkg/hive/pipeline/recursion.go's GuardCode
+ * the stable string from pkg/mills/pipeline/recursion.go's GuardCode
  * enum; the operator's HTTP body always begins with `<code>:` for
  * 4xx responses, which is what we parse here.
  */
@@ -83,30 +83,30 @@ function parseGuardCode(body: string): SubrunGuardCode | "unknown_guard" {
 }
 
 /**
- * Returns true when the worker is running under a Hive pipeline run
+ * Returns true when the worker is running under a Mills pipeline run
  * with a reachable operator + admin token. Slice 6.2 surface predicate
  * — drivers should advertise the subrun tool to their agent only when
  * this returns true.
  */
-export function hiveRecursionAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+export function millsRecursionAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
   return Boolean(
-    env.LOOM_HIVE_RUN_ID &&
-      env.LOOM_HIVE_OPERATOR_URL &&
-      env.LOOM_HIVE_ADMIN_TOKEN,
+    env.LOOM_MILLS_RUN_ID &&
+      env.LOOM_MILLS_OPERATOR_URL &&
+      env.LOOM_MILLS_ADMIN_TOKEN,
   );
 }
 
 /**
- * Creates a child pipeline run under the current Hive parent. Reads
- * `LOOM_HIVE_RUN_ID`, `LOOM_HIVE_OPERATOR_URL`, and
- * `LOOM_HIVE_ADMIN_TOKEN` from the environment by default; tests can
+ * Creates a child pipeline run under the current Mills parent. Reads
+ * `LOOM_MILLS_RUN_ID`, `LOOM_MILLS_OPERATOR_URL`, and
+ * `LOOM_MILLS_ADMIN_TOKEN` from the environment by default; tests can
  * override via the second arg.
  *
  * Throws SubrunGuardError on 4xx (so callers can branch on
  * .code === "recursion_depth_exceeded"), and a plain Error on network /
  * 5xx failures.
  */
-export async function createHiveSubrun(
+export async function createMillsSubrun(
   req: SubrunRequest,
   opts: {
     env?: NodeJS.ProcessEnv;
@@ -115,19 +115,19 @@ export async function createHiveSubrun(
   } = {},
 ): Promise<SubrunResponse> {
   const env = opts.env ?? process.env;
-  const parent = env.LOOM_HIVE_RUN_ID;
-  const base = env.LOOM_HIVE_OPERATOR_URL;
-  const token = env.LOOM_HIVE_ADMIN_TOKEN;
+  const parent = env.LOOM_MILLS_RUN_ID;
+  const base = env.LOOM_MILLS_OPERATOR_URL;
+  const token = env.LOOM_MILLS_ADMIN_TOKEN;
   if (!parent || !base || !token) {
     throw new Error(
-      "createHiveSubrun: LOOM_HIVE_RUN_ID, LOOM_HIVE_OPERATOR_URL, and LOOM_HIVE_ADMIN_TOKEN must all be set",
+      "createMillsSubrun: LOOM_MILLS_RUN_ID, LOOM_MILLS_OPERATOR_URL, and LOOM_MILLS_ADMIN_TOKEN must all be set",
     );
   }
   if (!req.backlog_id || !req.template) {
-    throw new Error("createHiveSubrun: backlog_id and template are required");
+    throw new Error("createMillsSubrun: backlog_id and template are required");
   }
 
-  const url = `${base.replace(/\/$/, "")}/api/hive/pipeline/runs/${encodeURIComponent(parent)}/subrun`;
+  const url = `${base.replace(/\/$/, "")}/api/mills/pipeline/runs/${encodeURIComponent(parent)}/subrun`;
   const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
   const ctrl = opts.timeoutMs ? new AbortController() : undefined;
   const timer = ctrl
@@ -154,14 +154,14 @@ export async function createHiveSubrun(
     throw new SubrunGuardError(res.status, text);
   }
   if (!res.ok) {
-    throw new Error(`createHiveSubrun: operator returned ${res.status}: ${text.trim()}`);
+    throw new Error(`createMillsSubrun: operator returned ${res.status}: ${text.trim()}`);
   }
   // Body is JSON on success; parse defensively.
   try {
     return JSON.parse(text) as SubrunResponse;
   } catch (e) {
     throw new Error(
-      `createHiveSubrun: failed to parse 201 response body (${(e as Error).message}): ${text.slice(0, 200)}`,
+      `createMillsSubrun: failed to parse 201 response body (${(e as Error).message}): ${text.slice(0, 200)}`,
     );
   }
 }

@@ -98,11 +98,11 @@ type Config struct {
 	WebhookGitLabSecret   string // X-Gitlab-Token secret for verifying GitLab webhooks.
 	WebhookGitHubSecret   string // HMAC secret for verifying GitHub X-Hub-Signature-256.
 
-	// Loom Hive operator (cluster-side autonomy loop). When unset the
-	// HUD's /api/hive/* proxy returns 503 and the Hive view shows an
+	// Loom Mills operator (cluster-side autonomy loop). When unset the
+	// HUD's /api/mills/* proxy returns 503 and the Mills view shows an
 	// empty-state instead of crashing.
-	HiveOperatorURL   string // base URL, e.g. http://loom-hive-operator.loom-hive.svc.cluster.local:8090
-	HiveOperatorToken string // admin bearer for mutation routes (LOOM_HIVE_ADMIN_TOKEN on the operator)
+	MillsOperatorURL   string // base URL, e.g. http://loom-mills-operator.loom-mills.svc.cluster.local:8090
+	MillsOperatorToken string // admin bearer for mutation routes (LOOM_MILLS_ADMIN_TOKEN on the operator)
 }
 
 // App is the HUD application. It holds the daemon client, agent bridge,

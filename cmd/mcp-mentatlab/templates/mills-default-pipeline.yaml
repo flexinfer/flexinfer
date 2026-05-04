@@ -1,0 +1,134 @@
+# Loom Mills default pipeline DAG.
+#
+# One per backlog item. The reconciler in pkg/mills instantiates this template
+# with the item's sidecar (slices, success criteria, budget, policy) and
+# advances stage-by-stage, evaluating an auto_gate after every write-op.
+#
+# Failure of any auto_gate retries the prior stage up to policy.pipeline.retry
+# .max_attempts; on cap-exceed the runner escalates: opens a follow-up issue
+# with the failure record and creates an agent_handoff via the human-handoff
+# policy. The static template is therefore unblocked by auto_gates alone — the
+# escalation path is a runtime concern, not a DAG one.
+#
+# Refs: .loom/89-… §6 (gates), .loom/90-… §"Pipeline flow template" + §"Stage
+# gates — required v1 set", .loom/91-… Phase 2 Slice 2.1.
+id: mills-default-pipeline
+version: 1
+description: >-
+  Loom Mills default per-backlog DAG. Plan-slice → research → implement →
+  tests → pr-self-review → mr → ci-watch → merge → cleanup, with an
+  auto_gate after every write-op stage. Failures escalate via runtime
+  policy, not the static graph.
+nodes:
+  # ----- Planning + research (no writes yet) -----
+  - id: plan_slice
+    type: llm
+    agent: claude-code
+    output: slice_list
+
+  - id: research
+    type: llm
+    agent: weaver-codebase   # FlexInfer subagent with the codebase tool subset
+    input: slice_list
+    output: research_notes
+
+  # ----- Implement -----
+  # First write-op: agent spawns into a per-DAG worktree and applies the
+  # change set scoped by slice_list.
+  - id: implement
+    type: agent_spawn
+    input: { slice_list, research_notes }
+    output: diff
+
+  - id: post_implement_gate
+    type: auto_gate
+    input: diff
+    # Bundles diff_size + scope + path_policy + secret_scan + commit_format
+    # gates from pkg/mills/gates. Failure → retry implement (≤ retry.max_attempts).
+
+  # ----- Tests + lint -----
+  - id: tests
+    type: shell
+    command: devbox_quality_gate
+    after: post_implement_gate
+    input: diff
+    output: test_results
+
+  - id: post_tests_gate
+    type: auto_gate
+    input: test_results
+
+  # ----- Pre-MR self-review -----
+  - id: pr_self_review
+    type: agent_spawn
+    after: post_tests_gate
+    input: { diff, test_results }
+    output: review_notes
+
+  - id: post_review_gate
+    type: auto_gate
+    input: { review_notes, diff }
+    # FlexInfer-judged spec_conformance + pr_self_review gates here.
+
+  # ----- Open MR -----
+  - id: mr
+    type: shell
+    command: gitlab.create_merge_request
+    after: post_review_gate
+    input: diff
+    output: mr_iid
+
+  - id: post_mr_gate
+    type: auto_gate
+    input: mr_iid
+
+  # ----- CI watch -----
+  - id: ci_watch
+    type: shell
+    command: gitlab.poll_pipeline
+    after: post_mr_gate
+    input: mr_iid
+    output: ci_result
+
+  - id: post_ci_gate
+    type: auto_gate
+    input: ci_result
+
+  # ----- Merge -----
+  # The runtime swaps post_ci_gate for a human_gate when policy demands a
+  # human review (per_label_overrides[*].human_review = true OR a
+  # protected_paths_touched hit). The static template assumes the
+  # autonomous path; deviation is a runtime decision.
+  - id: merge
+    type: shell
+    command: gitlab.merge_merge_request
+    after: post_ci_gate
+    input: mr_iid
+    output: merged_sha
+
+  - id: post_merge_gate
+    type: auto_gate
+    input: merged_sha
+
+  # ----- Cleanup -----
+  - id: cleanup
+    type: shell
+    command: mills.release_worktree_and_branch
+    after: post_merge_gate
+    input: { mr_iid, merged_sha }
+
+edges:
+  - { from: plan_slice,         to: research }
+  - { from: research,           to: implement }
+  - { from: implement,          to: post_implement_gate }
+  - { from: post_implement_gate, to: tests }
+  - { from: tests,              to: post_tests_gate }
+  - { from: post_tests_gate,    to: pr_self_review }
+  - { from: pr_self_review,     to: post_review_gate }
+  - { from: post_review_gate,   to: mr }
+  - { from: mr,                 to: post_mr_gate }
+  - { from: post_mr_gate,       to: ci_watch }
+  - { from: ci_watch,           to: post_ci_gate }
+  - { from: post_ci_gate,       to: merge }
+  - { from: merge,              to: post_merge_gate }
+  - { from: post_merge_gate,    to: cleanup }
