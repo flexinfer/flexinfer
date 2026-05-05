@@ -96,6 +96,24 @@ func (a *App) startStandaloneEventConsumer(cfg Config, logger *slog.Logger) func
 	ec.On("decomp.hint", func(e bridge.SSEEvent) {
 		a.handleStandaloneDecompHint(logger, e)
 	})
+	// Phase 1 slice 1.2 — agent telemetry event bus. Once a Publisher
+	// adapter wires pkg/agentcontext into the daemon EventBus (separate
+	// slice), session and presence events will arrive here and trigger a
+	// fleet refresh + timeline append. The OnAny hook above already fans
+	// these out to browser clients, so the bridge is forward-compatible:
+	// these per-type handlers add the targeted refreshes the static UI needs.
+	ec.On("session.start", func(e bridge.SSEEvent) {
+		a.eventLog.Append(TimelineEntry{Timestamp: e.Timestamp, EventType: "session.start", Data: e.Data})
+		a.fleetMonitor.Refresh()
+	})
+	ec.On("session.end", func(e bridge.SSEEvent) {
+		a.eventLog.Append(TimelineEntry{Timestamp: e.Timestamp, EventType: "session.end", Data: e.Data})
+		a.fleetMonitor.Refresh()
+	})
+	ec.On("agent.status.change", func(e bridge.SSEEvent) {
+		a.eventLog.Append(TimelineEntry{Timestamp: e.Timestamp, EventType: "agent.status.change", Data: e.Data})
+		a.fleetMonitor.Refresh()
+	})
 	// Only broadcast to SSE hub when browser clients may be connected.
 	// In TUI mode no browser connects, so skip the fan-out overhead.
 	if !cfg.TUI {
