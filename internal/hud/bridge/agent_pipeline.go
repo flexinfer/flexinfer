@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"slices"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 
 const (
 	pipelineListToolTimeout   = 5 * time.Second
+	pipelineBatchToolTimeout  = 30 * time.Second // batched form fans out internally
 	pipelineDetailToolTimeout = 20 * time.Second
 	projectListToolTimeout    = 15 * time.Second
 )
@@ -86,10 +88,63 @@ func PipelineRefFromInfo(p PipelineInfo) *PipelineRef {
 
 // --- Pipeline bridge methods ---
 
-// ListActivePipelines fetches active pipelines from the mcp-gitlab server
-// for the given project paths concurrently. Returns pipelines with status
-// running or pending. Concurrency is capped at 4 to avoid overwhelming GitLab.
+// ListActivePipelines fetches active (running/pending) pipelines from the
+// mcp-gitlab server for the given project paths.
+//
+// Prefers the batched form (gitlab__list_active_pipelines) which acquires
+// the daemon's per-server call lock once instead of N×M times for N projects
+// × M statuses; that path was a real source of "1 degraded" flapping in the
+// HUD under typical fleets. Falls back to the legacy per-project loop when
+// the batched tool is unavailable (mcp-gitlab predates the new tool) so the
+// HUD keeps working through a staged rollout.
 func (a *AgentBridge) ListActivePipelines(projects []string) ([]PipelineInfo, error) {
+	if len(projects) == 0 {
+		return nil, nil
+	}
+	pipelines, err := a.listActivePipelinesBatched(projects)
+	if err == nil {
+		return pipelines, nil
+	}
+	slog.Default().Warn("batched list_active_pipelines failed; falling back to per-project loop",
+		"error", err, "projects", len(projects))
+	return a.listActivePipelinesPerProject(projects)
+}
+
+// listActivePipelinesBatched calls the batched gitlab__list_active_pipelines
+// tool. Returns an error if the call fails or the result cannot be decoded;
+// callers should treat that as a signal to fall back.
+func (a *AgentBridge) listActivePipelinesBatched(projects []string) ([]PipelineInfo, error) {
+	projAny := make([]any, len(projects))
+	for i, p := range projects {
+		projAny[i] = p
+	}
+	raw, err := a.client.CallToolWithTimeout("gitlab__list_active_pipelines", map[string]any{
+		"projects": projAny,
+		"statuses": []any{"running", "pending"},
+	}, pipelineBatchToolTimeout)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Pipelines []PipelineInfo    `json:"pipelines"`
+		Errors    map[string]string `json:"errors"`
+	}
+	if err := unmarshalGitLabResult(raw, &resp); err != nil {
+		return nil, fmt.Errorf("decode batched pipelines result: %w", err)
+	}
+	// Per-project errors are tolerated (matches prior partial-success behavior):
+	// the HUD prefers a partial answer over no answer. Logged for visibility.
+	if len(resp.Errors) > 0 {
+		slog.Default().Debug("batched list_active_pipelines: partial errors",
+			"failed_projects", len(resp.Errors), "ok_pipelines", len(resp.Pipelines))
+	}
+	return resp.Pipelines, nil
+}
+
+// listActivePipelinesPerProject is the legacy per-project fan-out. Kept as a
+// fallback for the rollout window; remove after one cycle once mcp-gitlab is
+// confirmed to expose gitlab__list_active_pipelines everywhere.
+func (a *AgentBridge) listActivePipelinesPerProject(projects []string) ([]PipelineInfo, error) {
 	g, _ := errgroup.WithContext(context.Background())
 	g.SetLimit(4) // cap concurrency to avoid overwhelming GitLab
 	var mu sync.Mutex

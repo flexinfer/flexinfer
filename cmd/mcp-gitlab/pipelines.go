@@ -6,12 +6,23 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/crb2nu/loom/pkg/mcpscaffold"
 	"github.com/crb2nu/loom/pkg/validate"
 )
+
+// listActivePipelinesMaxProjects caps the projects list to keep one batched
+// call bounded; HUD callers cap at 20, so 100 leaves headroom for ad-hoc use.
+const listActivePipelinesMaxProjects = 100
+
+// listActivePipelinesConcurrency caps in-flight per-project HTTP requests
+// inside one batched tool call. Replaces the prior client-side cap of 4 with
+// a server-side cap of 8 (now serving all projects in one daemon lock).
+const listActivePipelinesConcurrency = 8
 
 func registerPipelineTools(srv *mcpscaffold.Server, gl *gitlabServer) {
 	// list_pipelines
@@ -45,6 +56,36 @@ func registerPipelineTools(srv *mcpscaffold.Server, gl *gitlabServer) {
 			Required: []string{"project"},
 		},
 	}, gl.handleListPipelines)
+	// list_active_pipelines (batched across N projects in a single tool call so
+	// callers like the HUD pipeline monitor only acquire the daemon's per-server
+	// call-lock once instead of N times)
+	srv.AddTracedTool(mcp.Tool{
+		Name: "list_active_pipelines",
+		Description: "Batch-list active (running/pending by default) pipelines " +
+			"across multiple projects in a single tool call. Each result is " +
+			"tagged with its source project. Errors are returned per-project so " +
+			"a slow or failing project does not abort the whole batch.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"projects": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Project IDs or URL-encoded paths (max 100).",
+				},
+				"statuses": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Pipeline statuses to fetch. Defaults to [\"running\",\"pending\"].",
+				},
+				"per_page": map[string]any{
+					"type":        "integer",
+					"description": "Results per (project,status) page (max 100). Defaults to 20.",
+				},
+			},
+			Required: []string{"projects"},
+		},
+	}, gl.handleListActivePipelines)
 	// get_pipeline
 	srv.AddTracedTool(mcp.Tool{
 		Name:        "get_pipeline",
@@ -392,6 +433,119 @@ func registerPipelineTools(srv *mcpscaffold.Server, gl *gitlabServer) {
 		},
 	}, gl.handlePollPipeline)
 }
+
+// handleListActivePipelines fans out per-project list_pipelines requests
+// inside a single tool invocation. The HUD pipeline monitor previously made
+// N×M calls (N projects × M statuses) which serialized through the daemon's
+// per-server call lock and saturated it under typical fleets (20×2 = 40
+// calls / 10s window vs ~2s/call → 80s of work in 10s, deadline-exceeded
+// flap at 5s wait). This batched form replaces N×M lock acquisitions with 1.
+func (g *gitlabServer) handleListActivePipelines(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	rawProjects, _ := args["projects"].([]any)
+	if len(rawProjects) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("projects required (non-empty array)")), nil
+	}
+	if len(rawProjects) > listActivePipelinesMaxProjects {
+		return mcp.ErrorResult(fmt.Errorf("projects cannot exceed %d entries (got %d)", listActivePipelinesMaxProjects, len(rawProjects))), nil
+	}
+	projects := make([]string, 0, len(rawProjects))
+	seen := make(map[string]struct{}, len(rawProjects))
+	for _, p := range rawProjects {
+		s, ok := p.(string)
+		if !ok {
+			continue
+		}
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		projects = append(projects, s)
+	}
+	if len(projects) == 0 {
+		return mcp.ErrorResult(fmt.Errorf("projects must contain at least one non-empty string")), nil
+	}
+
+	statuses := []string{"running", "pending"}
+	if rawStatuses, ok := args["statuses"].([]any); ok && len(rawStatuses) > 0 {
+		statuses = statuses[:0]
+		for _, s := range rawStatuses {
+			if str, ok := s.(string); ok {
+				str = strings.TrimSpace(str)
+				if str != "" {
+					statuses = append(statuses, str)
+				}
+			}
+		}
+		if len(statuses) == 0 {
+			return mcp.ErrorResult(fmt.Errorf("statuses must contain at least one non-empty string when provided")), nil
+		}
+	}
+
+	perPage := 20
+	if rp, ok := args["per_page"].(float64); ok && rp > 0 {
+		perPage = int(rp)
+	}
+	perPage = normalizePerPage(perPage, 20)
+
+	g_, gctx := errgroup.WithContext(ctx)
+	g_.SetLimit(listActivePipelinesConcurrency)
+
+	var (
+		mu        sync.Mutex
+		pipelines = make([]any, 0, len(projects)*len(statuses)*perPage)
+		errs      = make(map[string]string)
+	)
+
+	for _, project := range projects {
+		for _, status := range statuses {
+			project, status := project, status
+			g_.Go(func() error {
+				q := url.Values{}
+				q.Set("per_page", fmt.Sprintf("%d", perPage))
+				q.Set("status", status)
+				path := fmt.Sprintf("/projects/%s/pipelines?%s", encodeProject(project), q.Encode())
+				items, _, err := g.requestListWithMeta(gctx, path)
+				if err != nil {
+					mu.Lock()
+					// Keep first error per project; downstream may want richer
+					// detail later, but a single line is enough for triage.
+					if _, exists := errs[project]; !exists {
+						errs[project] = err.Error()
+					}
+					mu.Unlock()
+					return nil
+				}
+				tagged := make([]any, 0, len(items))
+				for _, item := range items {
+					m, ok := item.(map[string]any)
+					if !ok {
+						continue
+					}
+					m["project"] = project
+					tagged = append(tagged, m)
+				}
+				mu.Lock()
+				pipelines = append(pipelines, tagged...)
+				mu.Unlock()
+				return nil
+			})
+		}
+	}
+	_ = g_.Wait()
+
+	return mcp.JSONResult(map[string]any{
+		"pipelines": pipelines,
+		"count":     len(pipelines),
+		"projects":  len(projects),
+		"statuses":  statuses,
+		"errors":    errs,
+	})
+}
+
 func (g *gitlabServer) handleListPipelines(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
