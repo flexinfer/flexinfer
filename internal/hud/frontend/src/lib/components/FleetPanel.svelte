@@ -215,7 +215,7 @@
   }
 
   const fleetColumns = [
-    { key: 'agent', label: 'Agent', sortable: true, width: '130px' },
+    { key: 'agent', label: 'Agent', sortable: true, width: '200px' },
     { key: 'status', label: 'Status', sortable: true, width: '70px' },
     { key: 'evidence', label: 'Evidence', sortable: true, width: '110px' },
     { key: 'namespace', label: 'Namespace', sortable: true, width: '180px' },
@@ -576,8 +576,8 @@
         <div class="metric-label">Tasks</div>
         {#if tasks.length > 0}
           <div class="metric-sub">
-            {#if taskPriorityDist.critical > 0}<span class="priority-crit">{taskPriorityDist.critical}c</span>{/if}
-            {#if taskPriorityDist.high > 0}<span class="priority-high">{taskPriorityDist.high}h</span>{/if}
+            {#if taskPriorityDist.critical > 0}<span class="priority-crit">{taskPriorityDist.critical} crit</span>{/if}
+            {#if taskPriorityDist.high > 0}<span class="priority-high">{taskPriorityDist.high} high</span>{/if}
             {#if taskPriorityDist.blocked > 0}<span class="priority-blocked">{taskPriorityDist.blocked} blocked</span>{/if}
           </div>
         {/if}
@@ -619,7 +619,9 @@
     <div class="card activity-card">
       <div class="card-header">
         <span class="card-title">Recent Activity</span>
-        <span class="count-badge">{recentActivity.length}</span>
+        {#if recentActivity.length > 0}
+          <span class="count-badge">{recentActivity.length}</span>
+        {/if}
       </div>
       {#if recentActivity.length === 0}
         <EmptyState icon={'\u25CB'} heading="No recent activity" compact />
