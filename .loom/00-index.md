@@ -2,8 +2,8 @@
 
 ## Quick Links
 
-- **Loom Mills v2 — implementation status (2026-05-02)**: `95-implementation-status-mills-v2-2026-05-02.md` ← **current status + spec-driven next steps**
-- **Loom Mills v2 — Hierarchical Swarm + Adversarial Audit + Cross-Repo (2026-05-02)**: `92-research-mills-v2-hierarchical-swarm-2026-05-02.md`, `93-product-spec-mills-v2-hierarchical-swarm-2026-05-02.md`, `94-implementation-plan-mills-v2-hierarchical-swarm-2026-05-02.md` ← **active planning slice**
+- **Agent telemetry event bus + live spectator (2026-05-04)**: `97-research-agent-telemetry-spectator-2026-05-04.md`, `98-product-spec-agent-telemetry-spectator-2026-05-04.md`, `99-implementation-plan-agent-telemetry-spectator-2026-05-04.md` ← **active planning slice**
+- **Loom Mills v2 — Hierarchical Swarm + Adversarial Audit + Cross-Repo (2026-05-02)**: `92-research-mills-v2-hierarchical-swarm-2026-05-02.md`, `93-product-spec-mills-v2-hierarchical-swarm-2026-05-02.md`, `94-implementation-plan-mills-v2-hierarchical-swarm-2026-05-02.md` (✅ phases 1–8 shipped 2026-05-02 → 2026-05-04 + hive→mills rename; status snapshot archived as `.loom/archive/95-implementation-status-mills-v2-2026-05-02.md`)
 - **Loom Mills v1 — Council + Pipeline (agent swarm meta-orchestration, 2026-04-25)**: `89-research-agent-swarm-council-pipeline-2026-04-25.md`, `90-product-spec-agent-swarm-council-pipeline-2026-04-25.md`, `91-implementation-plan-agent-swarm-council-pipeline-2026-04-25.md` (phases 1–6 shipped except 6.5 docs + 6.6 default-on flip; both rolled into v2 phase 0)
 - **Session mgmt + spawn auth + weaver integration (2026-04-19)**: `86-research-session-spawning-weaver-integration-2026-04-19.md`, `87-product-spec-session-spawning-weaver-2026-04-19.md`, `88-implementation-plan-session-spawning-weaver-2026-04-19.md`
 - **Phase 4 plan — Headless agent UX parity (2026-04-07)**: `83-plan-headless-agent-ux-parity-2026-04-07.md`
@@ -47,17 +47,15 @@
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
 
-## Current Planning Addendum (2026-05-02)
+## Current Planning Addendum (2026-05-04)
 
-- Active planning slice: **Loom Mills v2 — Hierarchical Swarm.** Promote the v1 flat two-tier system (Council → Pipeline) to a true three-tier hierarchical swarm with persistent domain-owning **Squads**, an independent **Adversarial Audit** ensemble, **Cross-Repo Federation** with atomic merge, **Council Debate Mode** (v1.1 deferral #4), bounded **Pipeline Recursion** ≤ 2 (v1.1 deferral #7), an **Adaptive Policy** engine, **Cost Preview**, and **Mobile Mills parity** (v1.1 deferral #1). V1 phase 6.5 (docs/runbook/skill) and 6.6 (default-on flip) are folded into v2 Phase 0.
-- **Implementation status (2026-05-02)** — see `95-implementation-status-mills-v2-2026-05-02.md`:
-  - Phase 0.1 docs/runbook 🟡 partial (`docs/MILLS.md`, `docs/MILLS_RUNBOOK.md` shipped; `mcp/skills/mills-ops/SKILL.md` empty)
-  - Phase 0.2 default-on 🟡 partial (ConfigMap `enabled: true`; no compile-time default)
-  - Phase 1 substrate ✅ shipped (commit `20870464`)
-  - Phase 2 squads ✅ shipped (commits `5222a95d`, `c4bd9f72`, `1655d1ac`)
-  - Phase 3 audit ✅ shipped (commits `97549c97`, `174e0c14`, `a30d943f`)
-  - Phases 4–8 ❌ not started
-- **Open gaps in shipped work** (block Phase 8 flip; address before Phase 4):
+- **Active planning slice:** Agent telemetry event bus + live spectator (`97`/`98`/`99`). Foundation that future backchannel between sessions, adversarial-pair workflow, and skill-effectiveness leaderboard subscribe to. Reuses existing daemon EventBus + HUD SSE Hub + iOS SSE client; net new work is event schema additions, redaction primitive, hook wiring across Claude Code/Codex/Gemini, and a HUD `LiveSessionsCard`.
+- **Just shipped (2026-05-02 → 2026-05-04):** Loom Mills v2 phases 1–8 + hive→mills rename. Plan was `92`/`93`/`94`; per-phase status snapshot archived at `.loom/archive/95-implementation-status-mills-v2-2026-05-02.md`. Closed gaps G-1..G-4 in [`7190754f`](https://gitlab.flexinfer.ai/services/loom-core/-/commit/7190754f) + subsequent slices.
+
+### Prior Mills v2 planning addendum (historical, kept for reference)
+
+- Active planning slice was: **Loom Mills v2 — Hierarchical Swarm.** Promote the v1 flat two-tier system (Council → Pipeline) to a true three-tier hierarchical swarm with persistent domain-owning **Squads**, an independent **Adversarial Audit** ensemble, **Cross-Repo Federation** with atomic merge, **Council Debate Mode** (v1.1 deferral #4), bounded **Pipeline Recursion** ≤ 2 (v1.1 deferral #7), an **Adaptive Policy** engine, **Cost Preview**, and **Mobile Mills parity** (v1.1 deferral #1). V1 phase 6.5 (docs/runbook/skill) and 6.6 (default-on flip) folded into v2 Phase 0. **All 8 phases shipped.**
+- **Open gaps in shipped work** (resolved 2026-05-02 → 2026-05-04):
   - G-1: `pkg/mills/policy.go` `Policy` struct missing v2 fields (`Squads`, `Audit`, `CrossRepo`, `Debate`, `Recursion`, `AdaptivePolicy`)
   - G-2: `platform/gitops/k3s/mills/configmap-policy.yaml` still v1 schema (no v2 sections)
   - G-3: `mcp/skills/mills-ops/SKILL.md` is empty
