@@ -11,7 +11,14 @@ import (
 )
 
 // mockDeps provides stub implementations for the fleet Deps interface.
-type mockDeps struct{}
+// Tests that need to exercise the F8 token-economics path can populate
+// spawnSnapshots and weaverMetrics; default zero values mirror the
+// "nothing wired yet" production state.
+type mockDeps struct {
+	spawnSnapshots    []SpawnEconomicsSnapshot
+	weaverMetrics     WeaverMetricsView
+	weaverIsReachable bool
+}
 
 func (m *mockDeps) WriteJSON(w http.ResponseWriter, _ int, _ any) { w.WriteHeader(http.StatusOK) }
 func (m *mockDeps) WriteError(w http.ResponseWriter, status int, _ string, _ error) {
@@ -31,6 +38,10 @@ func (m *mockDeps) CacheGet(_ string) (any, bool)                               
 func (m *mockDeps) CacheSet(_ string, _ any, _ time.Duration)                     {}
 func (m *mockDeps) PlanSessionEndSummary(params bridge.SessionEndParams) (bridge.SessionEndParams, bool) {
 	return params, false
+}
+func (m *mockDeps) SpawnSnapshots() []SpawnEconomicsSnapshot { return m.spawnSnapshots }
+func (m *mockDeps) WeaverMetrics() (WeaverMetricsView, bool) {
+	return m.weaverMetrics, m.weaverIsReachable
 }
 
 type mockNudgeQueue struct{}
