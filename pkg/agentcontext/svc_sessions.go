@@ -46,17 +46,32 @@ type SessionSvc struct {
 	// collection for a given session ID. Used to recompute stats at list time
 	// when persisted values are stale (e.g. after HUD restart).
 	countContextEntries func(ctx context.Context, sessionID string) (entries int, tokens int)
+
+	// publisher receives session lifecycle events. Defaults to noopPublisher
+	// so emit sites can call unconditionally; replace via SetPublisher.
+	publisher Publisher
 }
 
 // NewSessionSvc creates a new SessionSvc.
 func NewSessionSvc(qdrant *QdrantClient, cfg Config, logger *slog.Logger, metrics *Metrics) *SessionSvc {
 	return &SessionSvc{
-		sessions: make(map[string]*Session),
-		qdrant:   qdrant,
-		cfg:      cfg,
-		logger:   logger,
-		metrics:  metrics,
+		sessions:  make(map[string]*Session),
+		qdrant:    qdrant,
+		cfg:       cfg,
+		logger:    logger,
+		metrics:   metrics,
+		publisher: noopPublisher{},
 	}
+}
+
+// SetPublisher installs a Publisher for session lifecycle events. Pass nil to
+// reset to the no-op default.
+func (ss *SessionSvc) SetPublisher(p Publisher) {
+	if p == nil {
+		ss.publisher = noopPublisher{}
+		return
+	}
+	ss.publisher = p
 }
 
 // Get retrieves a session by ID, checking in-memory cache first then Qdrant.

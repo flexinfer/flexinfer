@@ -166,6 +166,19 @@ func (ss *SessionSvc) Start(ctx context.Context, args map[string]any) (*mcp.Call
 	if ss.enrichResult != nil {
 		ss.enrichResult(ctx, result, agentID, namespace)
 	}
+
+	ss.publisher.Publish(EventTypeSessionStart, SessionStartEvent{
+		SessionID:   sessionID,
+		AgentID:     agentID,
+		Namespace:   namespace,
+		Project:     project,
+		Description: description,
+		WorkingDir:  workingDir,
+		StartedAt:   session.StartedAt,
+		ParentID:    session.ParentSessionID,
+		RootID:      session.RootSessionID,
+	})
+
 	return mcp.JSONResult(result)
 }
 
