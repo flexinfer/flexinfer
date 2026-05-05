@@ -216,6 +216,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"skip vision", "SKIP_VISION", "true"},
 		{"device map auto", "DEVICE_MAP", "auto"},
 		{"progress interval", "ABLITERATION_PROGRESS_INTERVAL", "10"},
+		{"heartbeat interval", "ABLITERATION_HEARTBEAT_INTERVAL", "30"},
 		{"prompt max length", "ABLITERATION_PROMPT_MAX_LENGTH", "256"},
 		{"save format", "ABLITERATION_SAVE_FORMAT", "auto"},
 		{"activation capture mode", "ABLITERATION_ACTIVATION_CAPTURE_MODE", "hooks"},
@@ -261,6 +262,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 
 func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 	t.Setenv("FLEXINFER_ABLITERATION_PROGRESS_INTERVAL", "5")
+	t.Setenv("FLEXINFER_ABLITERATION_HEARTBEAT_INTERVAL", "15")
 	t.Setenv("FLEXINFER_ABLITERATION_PROMPT_MAX_LENGTH", "384")
 	t.Setenv("FLEXINFER_ABLITERATION_SAVE_FORMAT", "safetensors")
 	t.Setenv("FLEXINFER_ABLITERATION_DEVICE_MAP", "sequential")
@@ -289,6 +291,9 @@ func TestAbliterationEnv_OperatorOverrides(t *testing.T) {
 
 	if got := envMap["ABLITERATION_PROGRESS_INTERVAL"]; got != "5" {
 		t.Errorf("ABLITERATION_PROGRESS_INTERVAL = %q, want 5", got)
+	}
+	if got := envMap["ABLITERATION_HEARTBEAT_INTERVAL"]; got != "15" {
+		t.Errorf("ABLITERATION_HEARTBEAT_INTERVAL = %q, want 15", got)
 	}
 	if got := envMap["ABLITERATION_PROMPT_MAX_LENGTH"]; got != "384" {
 		t.Errorf("ABLITERATION_PROMPT_MAX_LENGTH = %q, want 384", got)
