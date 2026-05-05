@@ -55,6 +55,20 @@ const (
 	// transitions (active/idle/offline/expired). Payload:
 	// agentcontext.AgentStatusChangeEvent.
 	EventAgentStatusChange EventType = "agent.status.change"
+	// EventBusBackpressure is emitted when an EventBus subscriber drops more
+	// than backpressureWindowDropThreshold events in a sliding window. Payload:
+	// BusBackpressureEvent. Operators see this in the HUD as a "spectator
+	// stream may be incomplete" banner; debounced per-subscriber so a slow
+	// client does not flood the bus with backpressure events about itself.
+	EventBusBackpressure EventType = "bus.backpressure"
+)
+
+// Backpressure tunables. Exposed (private) for tests; not config-driven yet —
+// real-world values can be promoted to flags once we have load data from prod.
+const (
+	defaultSubscriberBuffer         = 256
+	backpressureWindow              = 60 * time.Second
+	backpressureWindowDropThreshold = 10
 )
 
 // Event is a daemon event that can be broadcast to subscribers.
@@ -65,14 +79,43 @@ type Event struct {
 	Data      any       `json:"data"`
 }
 
+// BusBackpressureEvent is the payload published with EventBusBackpressure.
+// Carries enough context for an operator to identify the slow subscriber
+// without having to correlate against subscriber IDs in logs.
+type BusBackpressureEvent struct {
+	SubscriberID  string    `json:"subscriber_id"`
+	DropsInWindow int64     `json:"drops_in_window"`
+	WindowStart   time.Time `json:"window_start"`
+	WindowEnd     time.Time `json:"window_end"`
+	BufferSize    int       `json:"buffer_size"`
+}
+
+// subscriber tracks per-client state for the EventBus. Fields are split
+// between atomics (lock-free hot path) and a small mutex (window bookkeeping
+// — only touched on drops + on the once-per-window backpressure fire).
+type subscriber struct {
+	id           string
+	ch           chan Event
+	bufferSize   int
+	droppedTotal atomic.Int64
+
+	winMu       sync.Mutex
+	windowStart time.Time
+	windowDrops int64
+	// suppressBackpressureUntil silences repeated bus.backpressure events
+	// from the same slow subscriber while the window is still hot.
+	suppressBackpressureUntil time.Time
+}
+
 // EventBus manages event subscriptions and broadcasting.
 // All methods are safe for concurrent use.
 type EventBus struct {
 	mu           sync.RWMutex
-	subscribers  map[string]chan Event
+	subscribers  map[string]*subscriber
 	nextID       atomic.Int64
 	eventSeq     atomic.Int64
 	droppedCount atomic.Int64
+	publishedTot atomic.Int64
 	logger       *slog.Logger
 }
 
@@ -82,34 +125,49 @@ func NewEventBus(logger *slog.Logger) *EventBus {
 		logger = slog.Default()
 	}
 	return &EventBus{
-		subscribers: make(map[string]chan Event),
+		subscribers: make(map[string]*subscriber),
 		logger:      logger,
 	}
 }
 
-// Subscribe creates a new subscription and returns a subscriber ID and a
-// read-only channel on which events will be delivered. The channel is
-// buffered (256 slots). If the subscriber falls behind and the buffer is
-// full, events will be dropped for that subscriber.
+// Subscribe creates a new subscription with the default buffer (256 slots)
+// and returns a subscriber ID and a read-only channel. If the subscriber
+// falls behind and the buffer is full, events are dropped for that
+// subscriber and counted (per-subscriber + global).
 func (eb *EventBus) Subscribe() (string, <-chan Event) {
+	return eb.SubscribeWithBuffer(defaultSubscriberBuffer)
+}
+
+// SubscribeWithBuffer is like Subscribe but lets the caller choose the buffer
+// size. Use a larger buffer (e.g. 1024) for high-volume subscribers like the
+// HUD spectator card; the 256 default stays safe for low-volume admin tools.
+func (eb *EventBus) SubscribeWithBuffer(bufferSize int) (string, <-chan Event) {
+	if bufferSize < 1 {
+		bufferSize = defaultSubscriberBuffer
+	}
 	id := fmt.Sprintf("sub-%d", eb.nextID.Add(1))
-	ch := make(chan Event, 256)
+	sub := &subscriber{
+		id:          id,
+		ch:          make(chan Event, bufferSize),
+		bufferSize:  bufferSize,
+		windowStart: time.Now(),
+	}
 
 	eb.mu.Lock()
-	eb.subscribers[id] = ch
+	eb.subscribers[id] = sub
 	eb.mu.Unlock()
 
-	eb.logger.Debug("subscriber added", "id", id, "total", eb.SubscriberCount())
-	return id, ch
+	eb.logger.Debug("subscriber added", "id", id, "buffer", bufferSize, "total", eb.SubscriberCount())
+	return id, sub.ch
 }
 
 // Unsubscribe removes a subscriber and closes its channel.
 func (eb *EventBus) Unsubscribe(id string) {
 	eb.mu.Lock()
-	ch, ok := eb.subscribers[id]
+	sub, ok := eb.subscribers[id]
 	if ok {
 		delete(eb.subscribers, id)
-		close(ch)
+		close(sub.ch)
 	}
 	eb.mu.Unlock()
 
@@ -119,8 +177,10 @@ func (eb *EventBus) Unsubscribe(id string) {
 }
 
 // Publish sends an event to all current subscribers. Delivery is
-// non-blocking: if a subscriber's buffer is full the event is dropped
-// for that subscriber.
+// non-blocking: if a subscriber's buffer is full the event is dropped for
+// that subscriber. When a subscriber's drops in the last `backpressureWindow`
+// exceed `backpressureWindowDropThreshold`, a single bus.backpressure event
+// fires (debounced per-subscriber for the rest of that window).
 func (eb *EventBus) Publish(eventType EventType, data any) {
 	seq := eb.eventSeq.Add(1)
 	event := Event{
@@ -129,18 +189,82 @@ func (eb *EventBus) Publish(eventType EventType, data any) {
 		Timestamp: time.Now().UTC(),
 		Data:      data,
 	}
+	eb.publishedTot.Add(1)
 
+	// Snapshot subscribers under read lock; drops + backpressure logic
+	// happen below without holding eb.mu so a slow subscriber doesn't block
+	// new subscribers from registering.
 	eb.mu.RLock()
-	defer eb.mu.RUnlock()
+	subs := make([]*subscriber, 0, len(eb.subscribers))
+	for _, s := range eb.subscribers {
+		subs = append(subs, s)
+	}
+	eb.mu.RUnlock()
 
-	for id, ch := range eb.subscribers {
+	var backpressured []*subscriber
+	for _, sub := range subs {
 		select {
-		case ch <- event:
+		case sub.ch <- event:
 		default:
 			eb.droppedCount.Add(1)
-			eb.logger.Debug("event dropped for slow subscriber", "subscriber", id, "event", event.ID)
+			sub.droppedTotal.Add(1)
+			if eb.recordDropAndCheckBackpressure(sub) {
+				backpressured = append(backpressured, sub)
+			}
+			eb.logger.Debug("event dropped for slow subscriber",
+				"subscriber", sub.id, "event", event.ID)
 		}
 	}
+
+	// Re-publish backpressure events outside the snapshot loop so we never
+	// recurse into Publish while still iterating the subscriber set.
+	for _, sub := range backpressured {
+		eb.publishBackpressure(sub)
+	}
+}
+
+// recordDropAndCheckBackpressure increments the per-window drop counter and
+// returns true when this drop pushes the subscriber over the threshold AND
+// no backpressure event has fired for it yet in the current window.
+func (eb *EventBus) recordDropAndCheckBackpressure(sub *subscriber) bool {
+	now := time.Now()
+	sub.winMu.Lock()
+	defer sub.winMu.Unlock()
+	if now.Sub(sub.windowStart) >= backpressureWindow {
+		sub.windowStart = now
+		sub.windowDrops = 0
+		sub.suppressBackpressureUntil = time.Time{}
+	}
+	sub.windowDrops++
+	if sub.windowDrops < int64(backpressureWindowDropThreshold) {
+		return false
+	}
+	if now.Before(sub.suppressBackpressureUntil) {
+		return false
+	}
+	sub.suppressBackpressureUntil = sub.windowStart.Add(backpressureWindow)
+	return true
+}
+
+// publishBackpressure emits a bus.backpressure event describing a slow
+// subscriber. Called from Publish after the subscriber loop completes so
+// the new event reaches all OTHER subscribers without recursing.
+func (eb *EventBus) publishBackpressure(sub *subscriber) {
+	sub.winMu.Lock()
+	payload := BusBackpressureEvent{
+		SubscriberID:  sub.id,
+		DropsInWindow: sub.windowDrops,
+		WindowStart:   sub.windowStart,
+		WindowEnd:     sub.windowStart.Add(backpressureWindow),
+		BufferSize:    sub.bufferSize,
+	}
+	sub.winMu.Unlock()
+
+	eb.logger.Warn("event bus backpressure",
+		"subscriber", payload.SubscriberID,
+		"drops_in_window", payload.DropsInWindow,
+		"buffer", payload.BufferSize)
+	eb.Publish(EventBusBackpressure, payload)
 }
 
 // SubscriberCount returns the current number of subscribers.
@@ -153,6 +277,25 @@ func (eb *EventBus) SubscriberCount() int {
 // DroppedCount returns the total number of events dropped across all subscribers.
 func (eb *EventBus) DroppedCount() int64 {
 	return eb.droppedCount.Load()
+}
+
+// PublishedCount returns the total number of events published since startup.
+// Used by the metrics scrape and load test.
+func (eb *EventBus) PublishedCount() int64 {
+	return eb.publishedTot.Load()
+}
+
+// SubscriberDrops returns the per-subscriber drop totals as a map. Order
+// is unspecified; the caller is expected to format for display. Cheap to
+// call (read-locks once, copies counters).
+func (eb *EventBus) SubscriberDrops() map[string]int64 {
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	out := make(map[string]int64, len(eb.subscribers))
+	for id, sub := range eb.subscribers {
+		out[id] = sub.droppedTotal.Load()
+	}
+	return out
 }
 
 // ServeSSE is an http.HandlerFunc that streams daemon events to the client
