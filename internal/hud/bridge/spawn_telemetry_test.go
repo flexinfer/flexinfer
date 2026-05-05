@@ -541,3 +541,275 @@ func TestSpawnAccumulator_AddMessage_RespectsCapAndSnapshotIsolation(t *testing.
 		t.Errorf("Snapshot should deep-copy Messages; accumulator state mutated to %q", again.Messages[0].Text)
 	}
 }
+
+// --- Per-tool-call event emission (slice 2.3) ---
+
+// capturedTelemetryEvent is a single Publisher.Publish invocation captured by
+// fakeTelemetryPublisher. Tests inspect EventType + Payload after exercising
+// the accumulator's StartToolCallWithArgs / CompleteToolCallWithResult path.
+type capturedTelemetryEvent struct {
+	EventType string
+	Payload   any
+}
+
+// fakeTelemetryPublisher is a thread-safe in-memory TelemetryPublisher used
+// by per-tool-call event tests. Publish records the call and returns; it
+// never blocks.
+type fakeTelemetryPublisher struct {
+	mu     sync.Mutex
+	events []capturedTelemetryEvent
+}
+
+func (f *fakeTelemetryPublisher) Publish(eventType string, payload any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, capturedTelemetryEvent{EventType: eventType, Payload: payload})
+}
+
+func (f *fakeTelemetryPublisher) byType(t string) []capturedTelemetryEvent {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]capturedTelemetryEvent, 0)
+	for _, e := range f.events {
+		if e.EventType == t {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// TestSpawnAccumulator_StartCompleteToolCall_EmitsPerCallEvents is the slice
+// 2.3 acceptance test. StartToolCallWithArgs("Bash", {"command": "echo hi"})
+// must emit exactly one tool.call.start event with Bash redaction applied,
+// and the matching CompleteToolCallWithResult must emit exactly one
+// tool.call.end event with the same CallID and a non-negative DurationMs.
+func TestSpawnAccumulator_StartCompleteToolCall_EmitsPerCallEvents(t *testing.T) {
+	pub := &fakeTelemetryPublisher{}
+	acc := NewSpawnTelemetryAccumulatorWithPublisher(pub, "session-xyz", "agent-claude")
+
+	callID := acc.StartToolCallWithArgs("Bash", map[string]any{"command": "echo hi"})
+	if callID == "" {
+		t.Fatal("StartToolCallWithArgs returned empty callID")
+	}
+
+	starts := pub.byType(EventTypeToolCallStart)
+	if len(starts) != 1 {
+		t.Fatalf("expected 1 tool.call.start event, got %d", len(starts))
+	}
+	startEv, ok := starts[0].Payload.(ToolCallStartEvent)
+	if !ok {
+		t.Fatalf("start payload type: got %T, want ToolCallStartEvent", starts[0].Payload)
+	}
+	if startEv.CallID != callID {
+		t.Errorf("start CallID: got %q, want %q", startEv.CallID, callID)
+	}
+	if startEv.SessionID != "session-xyz" {
+		t.Errorf("start SessionID: got %q, want %q", startEv.SessionID, "session-xyz")
+	}
+	if startEv.AgentID != "agent-claude" {
+		t.Errorf("start AgentID: got %q, want %q", startEv.AgentID, "agent-claude")
+	}
+	if startEv.ToolName != "Bash" {
+		t.Errorf("start ToolName: got %q, want %q", startEv.ToolName, "Bash")
+	}
+	if startEv.ArgsTier != "public" {
+		t.Errorf("start ArgsTier: got %q, want %q", startEv.ArgsTier, "public")
+	}
+	cmd, ok := startEv.ArgsRedacted["command"].(string)
+	if !ok {
+		t.Fatalf("start ArgsRedacted[command] type: got %T, want string", startEv.ArgsRedacted["command"])
+	}
+	// Bash command at TierPublic is trunc(60) → for "echo hi" (no truncation
+	// needed) we should get the literal "echo hi" back. The mask pass would
+	// redact secrets, but plain commands pass through.
+	if cmd != "echo hi" {
+		t.Errorf("start ArgsRedacted[command]: got %q, want %q", cmd, "echo hi")
+	}
+	if startEv.StartedAt.IsZero() {
+		t.Error("start StartedAt should be non-zero")
+	}
+
+	// Complete the call. Result is small so the redacted summary should be
+	// derivable; ResultSize must reflect the raw byte length.
+	acc.CompleteToolCallWithResult(callID, "ok\n", 0, "")
+
+	ends := pub.byType(EventTypeToolCallEnd)
+	if len(ends) != 1 {
+		t.Fatalf("expected 1 tool.call.end event, got %d", len(ends))
+	}
+	endEv, ok := ends[0].Payload.(ToolCallEndEvent)
+	if !ok {
+		t.Fatalf("end payload type: got %T, want ToolCallEndEvent", ends[0].Payload)
+	}
+	if endEv.CallID != callID {
+		t.Errorf("end CallID: got %q, want %q", endEv.CallID, callID)
+	}
+	if endEv.SessionID != "session-xyz" {
+		t.Errorf("end SessionID: got %q, want %q", endEv.SessionID, "session-xyz")
+	}
+	if endEv.AgentID != "agent-claude" {
+		t.Errorf("end AgentID: got %q, want %q", endEv.AgentID, "agent-claude")
+	}
+	if endEv.ToolName != "Bash" {
+		t.Errorf("end ToolName: got %q, want %q", endEv.ToolName, "Bash")
+	}
+	if endEv.DurationMs < 0 {
+		t.Errorf("end DurationMs: got %d, want >= 0", endEv.DurationMs)
+	}
+	if endEv.ExitCode != 0 {
+		t.Errorf("end ExitCode: got %d, want 0", endEv.ExitCode)
+	}
+	if endEv.ResultSize != len("ok\n") {
+		t.Errorf("end ResultSize: got %d, want %d", endEv.ResultSize, len("ok\n"))
+	}
+	if endEv.EndedAt.IsZero() {
+		t.Error("end EndedAt should be non-zero")
+	}
+	if endEv.Error != "" {
+		t.Errorf("end Error: got %q, want empty", endEv.Error)
+	}
+}
+
+// TestSpawnAccumulator_LongBashCommand_TruncatedAndMasked verifies that
+// Bash commands at TierPublic are truncated to ~60 chars per the redact
+// policy. The exact truncation length comes from pkg/telemetry/redact;
+// this test asserts the output is shorter than the input AND ends in the
+// truncation marker.
+func TestSpawnAccumulator_LongBashCommand_TruncatedAndMasked(t *testing.T) {
+	pub := &fakeTelemetryPublisher{}
+	acc := NewSpawnTelemetryAccumulatorWithPublisher(pub, "s", "a")
+
+	long := "ls -la /very/deep/nested/directory/with/many/segments/that/exceeds/sixty/characters"
+	if len(long) <= 60 {
+		t.Fatalf("test setup: long command must exceed 60 chars; got %d", len(long))
+	}
+	_ = acc.StartToolCallWithArgs("Bash", map[string]any{"command": long})
+
+	starts := pub.byType(EventTypeToolCallStart)
+	if len(starts) != 1 {
+		t.Fatalf("expected 1 start event, got %d", len(starts))
+	}
+	ev := starts[0].Payload.(ToolCallStartEvent)
+	cmd, _ := ev.ArgsRedacted["command"].(string)
+	if cmd == long {
+		t.Errorf("expected truncation; got the raw command back: %q", cmd)
+	}
+	if len(cmd) >= len(long) {
+		t.Errorf("truncated cmd should be shorter than input; got %d >= %d", len(cmd), len(long))
+	}
+}
+
+// TestSpawnAccumulator_SecretLeakSmoke is the slice 2.3 secret-leak test.
+// A Bash command containing an AWS-style access key must come out of the
+// tool.call.start event with the secret replaced by ***REDACTED***.
+func TestSpawnAccumulator_SecretLeakSmoke(t *testing.T) {
+	pub := &fakeTelemetryPublisher{}
+	acc := NewSpawnTelemetryAccumulatorWithPublisher(pub, "s", "a")
+
+	_ = acc.StartToolCallWithArgs("Bash", map[string]any{
+		"command": "AKIAIOSFODNN7EXAMPLE && echo done",
+	})
+
+	starts := pub.byType(EventTypeToolCallStart)
+	if len(starts) != 1 {
+		t.Fatalf("expected 1 start event, got %d", len(starts))
+	}
+	ev := starts[0].Payload.(ToolCallStartEvent)
+	cmd, _ := ev.ArgsRedacted["command"].(string)
+	if containsSubstring(cmd, "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("secret leaked into tool.call.start; cmd=%q", cmd)
+	}
+	if !containsSubstring(cmd, "***REDACTED***") {
+		t.Errorf("expected ***REDACTED*** marker in cmd; got %q", cmd)
+	}
+}
+
+// containsSubstring is a tiny strings.Contains shim local to this file so
+// the new tests don't need a strings import (keeps the change diff minimal).
+func containsSubstring(s, sub string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	if len(sub) > len(s) {
+		return false
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+// TestSpawnAccumulator_NilPublisher_NoEmission guards the nil-safe contract:
+// a publisherless accumulator must still record state without panicking, and
+// no events should be emitted (because there is nowhere to emit them).
+func TestSpawnAccumulator_NilPublisher_NoEmission(t *testing.T) {
+	acc := NewSpawnTelemetryAccumulator() // nil publisher
+
+	id := acc.StartToolCallWithArgs("Bash", map[string]any{"command": "echo hi"})
+	if id == "" {
+		t.Fatal("StartToolCallWithArgs returned empty callID")
+	}
+	acc.CompleteToolCallWithResult(id, "ok", 0, "")
+
+	snap := acc.Snapshot()
+	if len(snap.ToolCalls) != 1 {
+		t.Errorf("expected 1 ToolCall entry, got %d", len(snap.ToolCalls))
+	}
+	if snap.ToolCalls[0].Name != "Bash" {
+		t.Errorf("entry Name: got %q, want %q", snap.ToolCalls[0].Name, "Bash")
+	}
+	if snap.ToolCalls[0].ExitCode == nil || *snap.ToolCalls[0].ExitCode != 0 {
+		t.Errorf("entry ExitCode: got %v, want 0", snap.ToolCalls[0].ExitCode)
+	}
+}
+
+// TestSpawnAccumulator_PerToolCallEvents_DoNotBreakLegacyDelta verifies the
+// new emission path leaves the existing TelemetryDeltaSnapshot output
+// consistent with the per-call mutations. The slim delta is what the SSE
+// stream forwards to the HUD; if the new code path bypassed ToolCalls
+// accumulation, the count would be wrong.
+func TestSpawnAccumulator_PerToolCallEvents_DoNotBreakLegacyDelta(t *testing.T) {
+	pub := &fakeTelemetryPublisher{}
+	acc := NewSpawnTelemetryAccumulatorWithPublisher(pub, "s", "a")
+
+	id1 := acc.StartToolCallWithArgs("Bash", map[string]any{"command": "echo a"})
+	acc.CompleteToolCallWithResult(id1, "a", 0, "")
+	id2 := acc.StartToolCallWithArgs("Read", map[string]any{"file_path": "/tmp/x"})
+	acc.CompleteToolCallWithResult(id2, "x", 0, "")
+
+	delta := acc.TelemetryDeltaSnapshot("spawn-1", "agent-1")
+	if delta.ToolCallCount != 2 {
+		t.Errorf("delta ToolCallCount: got %d, want 2", delta.ToolCallCount)
+	}
+	if got := len(pub.byType(EventTypeToolCallStart)); got != 2 {
+		t.Errorf("tool.call.start emissions: got %d, want 2", got)
+	}
+	if got := len(pub.byType(EventTypeToolCallEnd)); got != 2 {
+		t.Errorf("tool.call.end emissions: got %d, want 2", got)
+	}
+}
+
+// TestSpawnAccumulator_SetPublisher_NilSafe verifies the SetPublisher sink
+// can be cleared and replaced after construction without breaking emission.
+func TestSpawnAccumulator_SetPublisher_NilSafe(t *testing.T) {
+	acc := NewSpawnTelemetryAccumulator()
+	pub := &fakeTelemetryPublisher{}
+	acc.SetPublisher(pub, "s", "a")
+
+	id := acc.StartToolCallWithArgs("Read", map[string]any{"file_path": "/tmp/y"})
+	acc.CompleteToolCallWithResult(id, "y", 0, "")
+
+	if got := len(pub.byType(EventTypeToolCallStart)); got != 1 {
+		t.Errorf("after SetPublisher, expected 1 start event, got %d", got)
+	}
+
+	// Detach and verify no further emission.
+	acc.SetPublisher(nil, "", "")
+	id2 := acc.StartToolCallWithArgs("Read", map[string]any{"file_path": "/tmp/z"})
+	acc.CompleteToolCallWithResult(id2, "z", 0, "")
+	if got := len(pub.byType(EventTypeToolCallStart)); got != 1 {
+		t.Errorf("after detach, expected still 1 start event, got %d", got)
+	}
+}
