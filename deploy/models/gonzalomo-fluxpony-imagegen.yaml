@@ -8,7 +8,15 @@
 #   - gfx1100 needs the ROCm/PyTorch env injected by the GPUProfile.
 #   - 24GB VRAM — SDXL + cpuOffload fits with room for compile caches.
 #
-# Keep minReplicas=1 so the image-gen runtime remains warm.
+# MAINTENANCE WINDOW — 2026-05-05
+#
+# Temporarily stop keeping this imagegen runtime warm while
+# qwen36-27b-gptq-gfx1100 finishes its abliterate → GPTQ recovery cycle on
+# cblevins-5930k. Both workloads target the same single gfx1100 GPU; keeping
+# FluxPony warm holds amd.com/gpu=1 and blocks the Qwen pipeline pod.
+#
+# Restore minReplicas: 1 after qwen36-27b-gptq-gfx1100 publishes or moves off
+# the 5930k build lane.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -29,7 +37,7 @@ spec:
     vramEstimateMB: 12000
   serverless:
     enabled: true
-    minReplicas: 1
+    minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 30m
   config:
