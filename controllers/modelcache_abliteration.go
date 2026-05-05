@@ -646,6 +646,7 @@ func scanLatestAbliterationTelemetry(r io.Reader) *abliterationTelemetryEvent {
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	var latest *abliterationTelemetryEvent
+	var latestSnapshot *abliterationTelemetryEvent
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || !strings.HasPrefix(line, "{") {
@@ -659,10 +660,22 @@ func scanLatestAbliterationTelemetry(r io.Reader) *abliterationTelemetryEvent {
 		if evt.Event == "" {
 			continue
 		}
+		if evt.Event == "snapshot" {
+			snapshot := evt
+			if snapshot.Detail == "" && snapshot.Phase != "" {
+				snapshot.Detail = snapshot.Phase
+			}
+			latestSnapshot = &snapshot
+			continue
+		}
 		latest = &evt
 	}
 
-	return latest
+	if latest != nil {
+		return latest
+	}
+
+	return latestSnapshot
 }
 
 // abliterationJobMetadata is parsed from the abliterator container's termination log.

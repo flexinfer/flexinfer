@@ -15,6 +15,7 @@ Environment variables:
   ABLITERATION_GPU_MAX_MEMORY_GB, ABLITERATION_OFFLOAD_DIR,
   ABLITERATION_MEMORY_TRIM_INTERVAL, ABLITERATION_FORWARD_USE_CACHE,
   ABLITERATION_SAVE_IMPL, ABLITERATION_DISK_OFFLOAD_SAVE_IMPL,
+  ABLITERATION_HEARTBEAT_INTERVAL,
   ABLITERATION_RESUME, ABLITERATION_MODEL_POLICIES (optional)
 
 Safety features:
@@ -41,6 +42,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import ctypes
 from pathlib import Path
@@ -338,6 +340,46 @@ def emit_snapshot(stage, **kwargs):
     }
     payload.update(kwargs)
     emit_progress("snapshot", **payload)
+
+
+class TelemetryHeartbeat:
+    def __init__(self, stage, detail, percent=None, interval=30, **snapshot_fields):
+        self.stage = stage
+        self.detail = detail
+        self.percent = percent
+        self.interval = max(0, int(interval))
+        self.snapshot_fields = snapshot_fields
+        self.stop = threading.Event()
+        self.thread = None
+
+    def __enter__(self):
+        if self.interval <= 0 or os.environ.get("FLEXINFER_TELEMETRY") != "true":
+            return self
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.stop.set()
+        if self.thread is not None:
+            self.thread.join(timeout=0.2)
+        return False
+
+    def _run(self):
+        while not self.stop.wait(self.interval):
+            payload = {
+                "phase": "abliterating",
+                "detail": f"{self.detail} still running",
+            }
+            if self.percent is not None:
+                payload["percent"] = round(self.percent, 1)
+            emit_progress("progress", **payload)
+            emit_snapshot(
+                self.stage,
+                heartbeat=True,
+                detail=self.detail,
+                **self.snapshot_fields,
+            )
 
 
 def apply_mistral_regex_patch(tokenizer, model_dir):
@@ -1165,6 +1207,7 @@ skip_vision = os.environ["SKIP_VISION"] == "true"
 skip_gdn = os.environ.get("SKIP_GDN_LAYERS", "true") == "true"
 device_map = os.environ["DEVICE_MAP"]
 progress_interval = max(1, env_int("ABLITERATION_PROGRESS_INTERVAL", 10))
+heartbeat_interval = max(0, env_int("ABLITERATION_HEARTBEAT_INTERVAL", 30))
 prompt_max_length = max(32, env_int("ABLITERATION_PROMPT_MAX_LENGTH", 256))
 configured_save_format = env_str("ABLITERATION_SAVE_FORMAT", "auto").lower()
 configured_save_max_shard_size = env_str("ABLITERATION_SAVE_MAX_SHARD_SIZE", "1GB")
@@ -1213,6 +1256,12 @@ emit_snapshot("starting", resumed_from_stage=prior_stage or None)
 emit_runtime_capabilities()
 
 print(f"Loading config from {model_dir}...")
+emit_progress(
+    "progress",
+    phase="loading",
+    percent=2.0,
+    detail="loading model config",
+)
 cfg_path = os.path.join(model_dir, "config.json")
 with open(cfg_path) as f:
     cfg = json.load(f)
@@ -1233,6 +1282,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 print(f"Loading model with device_map={device_map}...")
 load_start = time.time()
+emit_progress(
+    "progress",
+    phase="loading",
+    percent=5.0,
+    detail=f"loading model weights with device_map={device_map}",
+)
 load_kwargs = {
     "torch_dtype": torch.bfloat16,
     "device_map": device_map,
@@ -1277,6 +1332,12 @@ if active_policy and active_policy.get("tokenizer_fix_mistral_regex") is not Non
     tokenizer_kwargs["fix_mistral_regex"] = bool(
         active_policy["tokenizer_fix_mistral_regex"]
     )
+emit_progress(
+    "progress",
+    phase="loading",
+    percent=9.0,
+    detail="loading tokenizer",
+)
 try:
     tokenizer = AutoTokenizer.from_pretrained(model_dir, **tokenizer_kwargs)
 except (TypeError, AttributeError) as exc:
@@ -1665,9 +1726,9 @@ def maybe_trim_prompt_memory(i):
 def collect_activation_means_from_hidden_states(prompts, stage, base_percent):
     per_layer_sum = [None for _ in range(total_layers)]
     for i, prompt in enumerate(prompts):
+        pct = base_percent + (i / len(prompts)) * 30.0
         if i % progress_interval == 0:
             print(f"  Collecting activations: {i}/{len(prompts)}", flush=True)
-            pct = base_percent + (i / len(prompts)) * 30.0
             emit_progress(
                 "progress",
                 phase="abliterating",
@@ -1692,12 +1753,20 @@ def collect_activation_means_from_hidden_states(prompts, stage, base_percent):
         )
         input_device = model_input_device(model)
         inputs = {k: v.to(input_device) for k, v in inputs.items()}
-        with torch.inference_mode():
-            out = model(
-                **inputs,
-                output_hidden_states=True,
-                use_cache=forward_use_cache,
-            )
+        with TelemetryHeartbeat(
+            f"{stage}_activations",
+            f"{stage} activations {i}/{len(prompts)}",
+            percent=pct,
+            interval=heartbeat_interval,
+            prompt_index=i,
+            prompt_count=len(prompts),
+        ):
+            with torch.inference_mode():
+                out = model(
+                    **inputs,
+                    output_hidden_states=True,
+                    use_cache=forward_use_cache,
+                )
         for layer_idx in range(total_layers):
             h = (
                 out.hidden_states[layer_idx + 1][0, -1, :]
@@ -1733,9 +1802,9 @@ def collect_activation_means_with_hooks(prompts, stage, base_percent):
     ]
     try:
         for i, prompt in enumerate(prompts):
+            pct = base_percent + (i / len(prompts)) * 30.0
             if i % progress_interval == 0:
                 print(f"  Collecting activations: {i}/{len(prompts)}", flush=True)
-                pct = base_percent + (i / len(prompts)) * 30.0
                 emit_progress(
                     "progress",
                     phase="abliterating",
@@ -1761,12 +1830,20 @@ def collect_activation_means_with_hooks(prompts, stage, base_percent):
             input_device = model_input_device(model)
             inputs = {k: v.to(input_device) for k, v in inputs.items()}
             captured.clear()
-            with torch.inference_mode():
-                outputs = model(
-                    **inputs,
-                    use_cache=forward_use_cache,
-                    return_dict=False,
-                )
+            with TelemetryHeartbeat(
+                f"{stage}_activations",
+                f"{stage} activations {i}/{len(prompts)}",
+                percent=pct,
+                interval=heartbeat_interval,
+                prompt_index=i,
+                prompt_count=len(prompts),
+            ):
+                with torch.inference_mode():
+                    outputs = model(
+                        **inputs,
+                        use_cache=forward_use_cache,
+                        return_dict=False,
+                    )
             if len(captured) != total_layers:
                 missing = sorted(set(range(total_layers)) - set(captured))
                 raise RuntimeError(

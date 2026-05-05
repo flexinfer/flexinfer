@@ -272,6 +272,10 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 	if progressInterval == "" {
 		progressInterval = "10"
 	}
+	heartbeatInterval := os.Getenv("FLEXINFER_ABLITERATION_HEARTBEAT_INTERVAL")
+	if heartbeatInterval == "" {
+		heartbeatInterval = "30"
+	}
 	promptMaxLength := os.Getenv("FLEXINFER_ABLITERATION_PROMPT_MAX_LENGTH")
 	if promptMaxLength == "" {
 		promptMaxLength = "256"
@@ -393,6 +397,7 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		{Name: "SKIP_GDN_LAYERS", Value: skipGDN},
 		{Name: "DEVICE_MAP", Value: deviceMap},
 		{Name: "ABLITERATION_PROGRESS_INTERVAL", Value: progressInterval},
+		{Name: "ABLITERATION_HEARTBEAT_INTERVAL", Value: heartbeatInterval},
 		{Name: "ABLITERATION_PROMPT_MAX_LENGTH", Value: promptMaxLength},
 		{Name: "ABLITERATION_SAVE_FORMAT", Value: saveFormat},
 		{Name: "ABLITERATION_ACTIVATION_CAPTURE_MODE", Value: activationCaptureMode},
