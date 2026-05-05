@@ -2,6 +2,7 @@
   // F8 (D2): Token-economics dashboard. Fetches /api/fleet/economics?window=7d
   // on mount and renders six ratio cards plus a stacked bar of frontier vs
   // local tokens. Null ratios render as "—".
+  import { labsAuthStore } from '../../stores/labsAuth.svelte.ts';
 
   let snapshot = $state(/** @type {any} */ (null));
   let loading = $state(true);
@@ -12,7 +13,12 @@
     loading = true;
     error = null;
     try {
-      const res = await fetch(`/api/fleet/economics?window=${WINDOW}`, { credentials: 'same-origin' });
+      // Endpoint is admin-gated — forward the token from LabsAccessBar.
+      /** @type {Record<string, string>} */
+      const headers = {};
+      const token = labsAuthStore.adminToken.trim();
+      if (token) headers['X-Admin-Token'] = token;
+      const res = await fetch(`/api/fleet/economics?window=${WINDOW}`, { credentials: 'same-origin', headers });
       if (!res.ok) {
         // Surface the daemon's error message (e.g. admin-token not configured)
         // instead of a bare "HTTP 403". Falls back to status code if the body
