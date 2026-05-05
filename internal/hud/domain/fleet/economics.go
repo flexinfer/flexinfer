@@ -93,15 +93,17 @@ func parseWindow(raw string) (time.Duration, string) {
 
 // handleEconomics serves GET /api/fleet/economics?window=7d.
 //
+// Read-only aggregate telemetry — no admin gate. The endpoint returns
+// derived ratios (token savings, cost ratio, context waste, etc.) that
+// are intentionally surfaced on the default Operations panel; gating
+// it would require every viewer to configure a token, which is wrong
+// for what is effectively a public dashboard widget.
+//
 // The handler is deliberately thin: it extracts the window, assembles a
 // (currently zero-valued) EconomicsInputs from bridged telemetry if available,
 // runs ComputeEconomicsSnapshot, and writes JSON. The pure-function split
 // makes unit testing trivial -- see economics_test.go.
 func (d *FleetDomain) handleEconomics(w http.ResponseWriter, r *http.Request) {
-	if !d.deps.RequireAdminToken(w, r) {
-		return
-	}
-
 	_, label := parseWindow(r.URL.Query().Get("window"))
 
 	// NOTE: the fleet.Deps interface does not currently expose the spawn
