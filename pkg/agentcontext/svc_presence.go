@@ -30,22 +30,37 @@ type PresenceSvc struct {
 	orphanWorktrees       func(agentID string)
 	endSessionsForAgent   func(ctx context.Context, agentID string)
 	detectConflicts       func(agentID string, files []string) []map[string]any
+
+	// publisher receives agent.status.change events on transitions. Defaults to
+	// noopPublisher; replace via SetPublisher.
+	publisher Publisher
 }
 
 // NewPresenceSvc creates a new PresenceSvc.
 func NewPresenceSvc(qdrant *QdrantClient, cfg Config, logger *slog.Logger, metrics *Metrics) *PresenceSvc {
 	return &PresenceSvc{
-		reg:     make(map[string]*AgentPresence),
-		qdrant:  qdrant,
-		cfg:     cfg,
-		logger:  logger,
-		metrics: metrics,
+		reg:       make(map[string]*AgentPresence),
+		qdrant:    qdrant,
+		cfg:       cfg,
+		logger:    logger,
+		metrics:   metrics,
+		publisher: noopPublisher{},
 	}
 }
 
 // SetOnEvent registers a callback for presence state transitions.
 func (p *PresenceSvc) SetOnEvent(fn func(eventType string, agentID string, oldStatus, newStatus PresenceStatus)) {
 	p.onEvent = fn
+}
+
+// SetPublisher installs a Publisher for agent.status.change events. Pass nil
+// to reset to the no-op default.
+func (p *PresenceSvc) SetPublisher(pub Publisher) {
+	if pub == nil {
+		p.publisher = noopPublisher{}
+		return
+	}
+	p.publisher = pub
 }
 
 // Register announces an agent is active.
@@ -379,6 +394,12 @@ func (p *PresenceSvc) cleanupExpired(ctx context.Context) {
 		if p.onEvent != nil {
 			p.onEvent(eventType, t.agentID, t.oldStatus, t.newStatus)
 		}
+		p.publisher.Publish(EventTypeAgentStatusChange, AgentStatusChangeEvent{
+			AgentID:   t.agentID,
+			OldStatus: string(t.oldStatus),
+			NewStatus: string(t.newStatus),
+			ChangedAt: now,
+		})
 	}
 
 	for _, agentID := range expired {

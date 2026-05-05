@@ -45,6 +45,16 @@ const (
 	EventHubConnected EventType = "hub.connected"
 	// EventHubDisconnected is emitted when the hub WebSocket connection is lost.
 	EventHubDisconnected EventType = "hub.disconnected"
+	// EventSessionStart is emitted when an agent session starts (from the
+	// agentcontext Publisher contract). Payload: agentcontext.SessionStartEvent.
+	EventSessionStart EventType = "session.start"
+	// EventSessionEnd is emitted when an agent session ends. Payload:
+	// agentcontext.SessionEndEvent.
+	EventSessionEnd EventType = "session.end"
+	// EventAgentStatusChange is emitted when an agent's presence status
+	// transitions (active/idle/offline/expired). Payload:
+	// agentcontext.AgentStatusChangeEvent.
+	EventAgentStatusChange EventType = "agent.status.change"
 )
 
 // Event is a daemon event that can be broadcast to subscribers.

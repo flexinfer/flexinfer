@@ -105,6 +105,17 @@ func (ss *SessionSvc) End(ctx context.Context, args map[string]any) (*mcp.CallTo
 		result["cleanup"] = cleanedUp
 	}
 
+	summarized, _ := result["summarized"].(bool)
+	ss.publisher.Publish(EventTypeSessionEnd, SessionEndEvent{
+		SessionID:  sessionID,
+		AgentID:    session.AgentID,
+		Namespace:  session.Namespace,
+		EndedAt:    now,
+		DurationMs: now.Sub(session.StartedAt).Milliseconds(),
+		EntryCount: session.EntryCount,
+		Summarized: summarized,
+	})
+
 	return mcp.JSONResult(result)
 }
 
