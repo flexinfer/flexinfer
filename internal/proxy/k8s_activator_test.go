@@ -88,6 +88,19 @@ func newConflictRetryActivatorClient(t *testing.T, objs ...client.Object) client
 	}
 }
 
+func newAlwaysConflictActivatorClient(t *testing.T, objs ...client.Object) client.Client {
+	t.Helper()
+
+	base := newActivatorTestClient(t, objs...)
+	return &statusConflictClient{
+		Client: base,
+		status: &conflictOnceStatusWriter{
+			delegate:  base.Status(),
+			remaining: 100,
+		},
+	}
+}
+
 func TestK8sModelActivatorTriggerScaleUp(t *testing.T) {
 	RegisterMetrics()
 
@@ -113,6 +126,50 @@ func TestK8sModelActivatorTriggerScaleUp(t *testing.T) {
 		updated := &aiv1alpha2.Model{}
 		require.NoError(t, cl.Get(ctx, client.ObjectKey{Name: "alpha2-model", Namespace: "default"}, updated))
 		require.NotNil(t, updated.Status.LastActiveTime)
+	})
+
+	t.Run("v1alpha2 conflict exhaustion succeeds when demand is already fresh", func(t *testing.T) {
+		now := metav1.Now()
+		model := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "fresh-demand-model",
+				Namespace: "default",
+			},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "vllm",
+				Source:  "HF://test/model",
+			},
+			Status: aiv1alpha2.ModelStatus{
+				LastActiveTime: &now,
+			},
+		}
+
+		cl := newAlwaysConflictActivatorClient(t, model)
+		activator := NewK8sModelActivator(cl, "default", 60*time.Second)
+
+		require.NoError(t, activator.TriggerScaleUp(ctx, "fresh-demand-model"))
+	})
+
+	t.Run("v1alpha2 conflict exhaustion fails when demand is stale", func(t *testing.T) {
+		stale := metav1.NewTime(time.Now().Add(-time.Hour))
+		model := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "stale-demand-model",
+				Namespace: "default",
+			},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "vllm",
+				Source:  "HF://test/model",
+			},
+			Status: aiv1alpha2.ModelStatus{
+				LastActiveTime: &stale,
+			},
+		}
+
+		cl := newAlwaysConflictActivatorClient(t, model)
+		activator := NewK8sModelActivator(cl, "default", 60*time.Second)
+
+		require.Error(t, activator.TriggerScaleUp(ctx, "stale-demand-model"))
 	})
 
 	t.Run("v1alpha1 fallback scales from zero", func(t *testing.T) {

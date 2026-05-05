@@ -59,6 +59,10 @@ func (a *K8sModelActivator) TriggerScaleUp(ctx context.Context, modelName string
 			}
 			return nil
 		}
+		if a.modelHasFreshDemand(ctx, modelName, 30*time.Second) {
+			slog.Debug("lastActiveTime already fresh after status conflicts", "model", modelName)
+			return nil
+		}
 		return fmt.Errorf("failed to update Model lastActiveTime after 3 retries (conflict)")
 	}
 	if !errors.IsNotFound(err) {
@@ -111,6 +115,14 @@ func (a *K8sModelActivator) TriggerScaleUp(ctx context.Context, modelName string
 	}
 
 	return nil
+}
+
+func (a *K8sModelActivator) modelHasFreshDemand(ctx context.Context, modelName string, maxAge time.Duration) bool {
+	m, err := a.getModel(ctx, modelName)
+	if err != nil || m.Status.LastActiveTime == nil {
+		return false
+	}
+	return time.Since(m.Status.LastActiveTime.Time) <= maxAge
 }
 
 // TouchLastActiveTime updates the model's LastActiveTime so the controller
