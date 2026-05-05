@@ -71,6 +71,43 @@ func (f *fleetDepsAdapter) CacheSet(key string, value any, ttl time.Duration) {
 	f.app.CacheSet(key, value, ttl)
 }
 
+// SpawnSnapshots returns a fleet-domain-local view of every spawn the
+// orchestrator currently tracks (active + recently-completed). Returns nil
+// when no orchestrator is configured (e.g. dev environments without the
+// spawn loop) so the F8 economics handler can surface the
+// "insufficient_data" status instead of bogus zeros.
+func (f *fleetDepsAdapter) SpawnSnapshots() []fleet.SpawnEconomicsSnapshot {
+	if f.app.spawner == nil {
+		return nil
+	}
+	spawns := f.app.spawner.ListSpawns()
+	out := make([]fleet.SpawnEconomicsSnapshot, 0, len(spawns))
+	for _, s := range spawns {
+		if s == nil {
+			continue
+		}
+		snap := fleet.SpawnEconomicsSnapshot{StartedAt: s.StartedAt}
+		if s.Telemetry != nil {
+			snap.InputTokens = s.Telemetry.TokenUsage.InputTokens
+			snap.OutputTokens = s.Telemetry.TokenUsage.OutputTokens
+			snap.TotalCostUSD = s.Telemetry.TotalCostUSD
+			snap.ToolCallCount = len(s.Telemetry.ToolCalls)
+			snap.FileChangeCount = len(s.Telemetry.FileChanges)
+		}
+		out = append(out, snap)
+	}
+	return out
+}
+
+// WeaverMetrics reports weaver counter aggregates plus a reachability flag.
+// The HUD App does not currently hold a weaver client (weaver lives in the
+// daemon), so this returns (zero, false) and the F8 local-utilization ratio
+// renders "weaver_metrics_unreachable" rather than fake data. Threading a
+// weaver fetcher through here is a follow-up slice.
+func (f *fleetDepsAdapter) WeaverMetrics() (fleet.WeaverMetricsView, bool) {
+	return fleet.WeaverMetricsView{}, false
+}
+
 // fleetNudgeAdapter wraps *NudgeQueue to satisfy fleet.NudgeQueueOps,
 // converting between hud-local types and bridge DTOs.
 type fleetNudgeAdapter struct {

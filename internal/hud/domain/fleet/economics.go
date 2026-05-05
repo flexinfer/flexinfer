@@ -99,27 +99,50 @@ func parseWindow(raw string) (time.Duration, string) {
 // it would require every viewer to configure a token, which is wrong
 // for what is effectively a public dashboard widget.
 //
-// The handler is deliberately thin: it extracts the window, assembles a
-// (currently zero-valued) EconomicsInputs from bridged telemetry if available,
-// runs ComputeEconomicsSnapshot, and writes JSON. The pure-function split
-// makes unit testing trivial -- see economics_test.go.
+// The handler is deliberately thin: it extracts the window, aggregates the
+// frontier-side counters from the spawn orchestrator and the local-side
+// counters from the weaver metrics bridge, runs ComputeEconomicsSnapshot,
+// and writes JSON. The pure-function split keeps the ratio math testable
+// without a real orchestrator/weaver wired in -- see economics_test.go.
 func (d *FleetDomain) handleEconomics(w http.ResponseWriter, r *http.Request) {
-	_, label := parseWindow(r.URL.Query().Get("window"))
+	dur, label := parseWindow(r.URL.Query().Get("window"))
+	now := time.Now().UTC()
 
-	// NOTE: the fleet.Deps interface does not currently expose the spawn
-	// orchestrator nor the weaver metrics client. Rather than expand Deps in
-	// this slice (which would ripple through every adapter + mock), we accept
-	// the degraded-but-honest behaviour: inputs are zero, ratios report
-	// status="insufficient_data", and the UI renders "-" for every card.
-	//
-	// Follow-up D2.1 should thread a narrow SpawnSnapshotLister into Deps so
-	// this endpoint can aggregate real frontier costs/tokens.
-	inputs := EconomicsInputs{
-		WeaverMetricsReachable: false,
+	inputs := buildEconomicsInputs(d.deps, now, dur)
+	snap := ComputeEconomicsSnapshot(inputs, label, now)
+	d.deps.WriteJSON(w, http.StatusOK, snap)
+}
+
+// buildEconomicsInputs assembles an EconomicsInputs by aggregating spawn
+// telemetry within the rolling window and (when reachable) the weaver
+// counters. Pure aggregation -- no I/O beyond what Deps already exposes --
+// so it is safe to call on every request.
+//
+// Spawns are included when their StartedAt falls inside [now-window, now].
+// Spawns with a zero StartedAt are skipped defensively; they should not
+// occur in production but the SpawnSnapshots adapter does not enforce it.
+func buildEconomicsInputs(deps Deps, now time.Time, window time.Duration) EconomicsInputs {
+	cutoff := now.Add(-window)
+	in := EconomicsInputs{}
+
+	for _, s := range deps.SpawnSnapshots() {
+		if s.StartedAt.IsZero() || s.StartedAt.Before(cutoff) {
+			continue
+		}
+		in.SpawnCount++
+		in.FrontierInputTokens += s.InputTokens
+		in.FrontierOutputTokens += s.OutputTokens
+		in.FrontierCostUSD += s.TotalCostUSD
+		in.FrontierToolCalls += s.ToolCallCount
 	}
 
-	snap := ComputeEconomicsSnapshot(inputs, label, time.Now().UTC())
-	d.deps.WriteJSON(w, http.StatusOK, snap)
+	weaver, reachable := deps.WeaverMetrics()
+	in.WeaverMetricsReachable = reachable
+	if reachable {
+		in.WeaverToolCalls = weaver.TotalQueries
+		in.WeaverTokensTotal = weaver.TotalTokens
+	}
+	return in
 }
 
 // EconomicsInputs is the pure-data bundle fed to ComputeEconomicsSnapshot.
