@@ -56,13 +56,11 @@ spec:
     maxInputTokens: 6144
     maxOutputTokens: 2048
     gpuMemoryUtilization: "0.92"
-    # FP8 KV proven on gfx1100 (gemma4-26b-a4b-gptq-long). Qwen3.6 has no
-    # precalibrated KV scales — vLLM computes dynamically.
-    kvCacheDtype: fp8_e4m3
-    calculateKvScales: true
-    # 4 concurrent sequences keeps batch math healthy at 8K context without
-    # blowing the KV pool.
-    maxNumSeqs: 4
+    # FP8 KV cache currently trips the Triton cache-update path on gfx1100 for
+    # Qwen3.6, so use the runtime default and keep concurrency modest at 8K.
+    kvCacheDtype: auto
+    calculateKvScales: false
+    maxNumSeqs: 2
     trustRemoteCode: true
     attentionBackend: TRITON_ATTN
     hipVisibleDevices: "0"
