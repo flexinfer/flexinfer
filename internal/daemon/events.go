@@ -61,6 +61,15 @@ const (
 	// stream may be incomplete" banner; debounced per-subscriber so a slow
 	// client does not flood the bus with backpressure events about itself.
 	EventBusBackpressure EventType = "bus.backpressure"
+	// EventToolCallStart is emitted when a tool invocation begins inside a
+	// tracked spawn. Payload: ToolCallStartEvent (defined in
+	// internal/hud/bridge/spawn_telemetry.go because that's the publish site;
+	// the daemon doesn't need the type, only the constant).
+	EventToolCallStart EventType = "tool.call.start"
+	// EventToolCallEnd is emitted when a tool invocation completes. Payload:
+	// ToolCallEndEvent. Correlates to its EventToolCallStart via the CallID
+	// field.
+	EventToolCallEnd EventType = "tool.call.end"
 )
 
 // Backpressure tunables. Exposed (private) for tests; not config-driven yet —
