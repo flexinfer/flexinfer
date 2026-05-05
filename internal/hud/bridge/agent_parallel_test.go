@@ -193,9 +193,10 @@ func TestAgentBridge_HandoffList_ConcurrentQueries(t *testing.T) {
 	}
 }
 
-// TestAgentBridge_ListActivePipelines_ConcurrentProjects verifies that
-// ListActivePipelines queries multiple projects concurrently.
-func TestAgentBridge_ListActivePipelines_ConcurrentProjects(t *testing.T) {
+// TestAgentBridge_ListActivePipelines_BatchedSingleCall verifies that
+// ListActivePipelines now collapses N×M per-project requests into one
+// batched call (the fix that relieved the daemon's per-server call lock).
+func TestAgentBridge_ListActivePipelines_BatchedSingleCall(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 
 	var callCount atomic.Int32
@@ -211,27 +212,22 @@ func TestAgentBridge_ListActivePipelines_ConcurrentProjects(t *testing.T) {
 			return nil, err
 		}
 
-		if req.Name != "gitlab__list_pipelines" {
-			t.Errorf("unexpected tool: %s", req.Name)
+		if req.Name != "gitlab__list_active_pipelines" {
+			t.Errorf("expected batched tool, got: %s", req.Name)
 			return nil, nil
 		}
 
-		project, _ := req.Arguments["project"].(string)
-		status, _ := req.Arguments["status"].(string)
-
-		var payload string
-		switch {
-		case project == "proj-a" && status == "running":
-			payload = `{"pipelines":[{"id":1,"ref":"main","status":"running","created_at":"2026-03-19T12:00:00Z"}]}`
-		case project == "proj-a" && status == "pending":
-			payload = `{"pipelines":[]}`
-		case project == "proj-b" && status == "running":
-			payload = `{"pipelines":[]}`
-		case project == "proj-b" && status == "pending":
-			payload = `{"pipelines":[{"id":2,"ref":"feat","status":"pending","created_at":"2026-03-19T12:01:00Z"}]}`
-		default:
-			payload = `{"pipelines":[]}`
+		projects, _ := req.Arguments["projects"].([]any)
+		if len(projects) != 2 {
+			t.Errorf("expected 2 projects in batched arg, got %#v", projects)
 		}
+
+		// One mocked batched response carrying both projects' pipelines,
+		// each tagged with its source project.
+		payload := `{"pipelines":[` +
+			`{"id":1,"ref":"main","status":"running","created_at":"2026-03-19T12:00:00Z","project":"proj-a"},` +
+			`{"id":2,"ref":"feat","status":"pending","created_at":"2026-03-19T12:01:00Z","project":"proj-b"}` +
+			`],"errors":{}}`
 
 		return map[string]any{
 			"content": []map[string]any{{"type": "text", "text": payload}},
@@ -250,22 +246,22 @@ func TestAgentBridge_ListActivePipelines_ConcurrentProjects(t *testing.T) {
 		t.Fatalf("ListActivePipelines: %v", err)
 	}
 
-	// 2 projects x 2 statuses = 4 calls.
-	if got := callCount.Load(); got != 4 {
-		t.Fatalf("expected 4 gitlab calls, got %d", got)
+	// One batched call replaces the prior 2×2 = 4 per-project calls. This
+	// is the whole point of the fix: collapse N×M lock acquisitions to 1.
+	if got := callCount.Load(); got != 1 {
+		t.Fatalf("expected 1 batched call, got %d", got)
 	}
 
 	if len(pipelines) != 2 {
 		t.Fatalf("expected 2 pipelines, got %d: %+v", len(pipelines), pipelines)
 	}
 
-	// Verify projects are backfilled.
 	projMap := map[string]bool{}
 	for _, p := range pipelines {
 		projMap[p.Project] = true
 	}
 	if !projMap["proj-a"] || !projMap["proj-b"] {
-		t.Fatalf("expected both projects backfilled, got %v", projMap)
+		t.Fatalf("expected both projects in batched payload, got %v", projMap)
 	}
 }
 

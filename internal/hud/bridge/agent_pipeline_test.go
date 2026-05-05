@@ -3,12 +3,13 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 )
 
-func TestAgentBridge_ListActivePipelines_UsesProjectArgAndParsesWrappedResults(t *testing.T) {
+func TestAgentBridge_ListActivePipelines_UsesBatchedToolAndParsesWrappedResults(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 
 	callCount := 0
@@ -20,27 +21,24 @@ func TestAgentBridge_ListActivePipelines_UsesProjectArgAndParsesWrappedResults(t
 		if err := json.Unmarshal(params, &req); err != nil {
 			t.Fatalf("unmarshal params: %v", err)
 		}
-		if req.Name != "gitlab__list_pipelines" {
-			t.Fatalf("unexpected tool name: %s", req.Name)
+		if req.Name != "gitlab__list_active_pipelines" {
+			t.Fatalf("expected batched tool, got: %s", req.Name)
 		}
-		if _, ok := req.Arguments["project_id"]; ok {
-			t.Fatalf("unexpected legacy project_id arg: %#v", req.Arguments)
+		projects, _ := req.Arguments["projects"].([]any)
+		if len(projects) != 1 {
+			t.Fatalf("expected 1 project in batched arg, got %#v", projects)
 		}
-		if got, _ := req.Arguments["project"].(string); got != "services/loom-core" {
-			t.Fatalf("expected project arg to be services/loom-core, got %#v", req.Arguments["project"])
+		if got, _ := projects[0].(string); got != "services/loom-core" {
+			t.Fatalf("expected project services/loom-core, got %#v", projects[0])
 		}
-		status, _ := req.Arguments["status"].(string)
 		callCount++
 
-		var payload string
-		switch status {
-		case "running":
-			payload = `{"pipelines":[{"id":101,"ref":"main","status":"running","created_at":"2026-03-19T12:00:00Z"}],"count":1}`
-		case "pending":
-			payload = `{"pipelines":[{"id":102,"ref":"feature","status":"pending","created_at":"2026-03-19T12:01:00Z"}],"count":1}`
-		default:
-			t.Fatalf("unexpected status arg: %q", status)
-		}
+		// Batched tool returns a flattened list; each pipeline carries its
+		// originating project so the bridge needs no per-call backfill.
+		payload := `{"pipelines":[` +
+			`{"id":101,"ref":"main","status":"running","created_at":"2026-03-19T12:00:00Z","project":"services/loom-core"},` +
+			`{"id":102,"ref":"feature","status":"pending","created_at":"2026-03-19T12:01:00Z","project":"services/loom-core"}` +
+			`],"count":2,"errors":{}}`
 
 		return map[string]any{
 			"content": []map[string]any{{"type": "text", "text": payload}},
@@ -58,14 +56,14 @@ func TestAgentBridge_ListActivePipelines_UsesProjectArgAndParsesWrappedResults(t
 	if err != nil {
 		t.Fatalf("ListActivePipelines: %v", err)
 	}
-	if callCount != 2 {
-		t.Fatalf("expected 2 gitlab__list_pipelines calls, got %d", callCount)
+	if callCount != 1 {
+		t.Fatalf("expected 1 batched call, got %d", callCount)
 	}
 	if len(pipelines) != 2 {
 		t.Fatalf("expected 2 pipelines, got %#v", pipelines)
 	}
 	if pipelines[0].Project != "services/loom-core" || pipelines[1].Project != "services/loom-core" {
-		t.Fatalf("expected project field to be backfilled, got %#v", pipelines)
+		t.Fatalf("expected project field to come from batched payload, got %#v", pipelines)
 	}
 	if pipelines[0].ID != 101 || pipelines[1].ID != 102 {
 		t.Fatalf("unexpected pipelines: %#v", pipelines)
@@ -136,23 +134,20 @@ func TestAgentBridge_GetPipelineDetail_UsesProjectArgAndParsesWrappedJobs(t *tes
 	}
 }
 
-func TestAgentBridge_ListActivePipelines_UsesTimeoutPath(t *testing.T) {
+func TestAgentBridge_ListActivePipelines_UsesBatchTimeoutPath(t *testing.T) {
 	caller := &recordingCaller{
 		t: t,
 		callToolWithTimeoutFn: func(name string, args map[string]any, timeout time.Duration) (json.RawMessage, error) {
-			if timeout != pipelineListToolTimeout {
-				t.Fatalf("unexpected timeout %v", timeout)
+			if name != "gitlab__list_active_pipelines" {
+				t.Fatalf("expected batched tool, got %q", name)
 			}
-			status, _ := args["status"].(string)
-			switch status {
-			case "running":
-				return toolTextResult(`{"pipelines":[{"id":101,"ref":"main","status":"running","created_at":"2026-03-19T12:00:00Z"}]}`), nil
-			case "pending":
-				return toolTextResult(`{"pipelines":[{"id":102,"ref":"feature","status":"pending","created_at":"2026-03-19T12:01:00Z"}]}`), nil
-			default:
-				t.Fatalf("unexpected status %q", status)
-				return nil, nil
+			if timeout != pipelineBatchToolTimeout {
+				t.Fatalf("expected batched timeout %v, got %v", pipelineBatchToolTimeout, timeout)
 			}
+			return toolTextResult(`{"pipelines":[` +
+				`{"id":101,"ref":"main","status":"running","created_at":"2026-03-19T12:00:00Z","project":"services/loom-core"},` +
+				`{"id":102,"ref":"feature","status":"pending","created_at":"2026-03-19T12:01:00Z","project":"services/loom-core"}` +
+				`],"errors":{}}`), nil
 		},
 	}
 
@@ -164,38 +159,31 @@ func TestAgentBridge_ListActivePipelines_UsesTimeoutPath(t *testing.T) {
 	if caller.callToolCount != 0 {
 		t.Fatalf("expected CallTool to be unused, got %d calls", caller.callToolCount)
 	}
-	if caller.callToolWithTimeoutCount != 2 {
-		t.Fatalf("expected 2 CallToolWithTimeout calls, got %d", caller.callToolWithTimeoutCount)
+	if caller.callToolWithTimeoutCount != 1 {
+		t.Fatalf("expected 1 batched CallToolWithTimeout call, got %d", caller.callToolWithTimeoutCount)
 	}
 	if len(pipelines) != 2 {
 		t.Fatalf("expected 2 pipelines, got %d", len(pipelines))
 	}
 }
 
-func TestAgentBridge_ListActivePipelines_PreservesProjectPerCall(t *testing.T) {
+func TestAgentBridge_ListActivePipelines_BatchedPreservesProjectsAcrossEntries(t *testing.T) {
 	caller := &recordingCaller{
 		t: t,
 		callToolWithTimeoutFn: func(name string, args map[string]any, timeout time.Duration) (json.RawMessage, error) {
-			if timeout != pipelineListToolTimeout {
-				t.Fatalf("unexpected timeout %v", timeout)
+			if name != "gitlab__list_active_pipelines" {
+				t.Fatalf("expected batched tool, got %q", name)
 			}
-			project, _ := args["project"].(string)
-			status, _ := args["status"].(string)
-			switch project {
-			case "services/loom-core":
-				if status == "running" {
-					return toolTextResult(`{"pipelines":[{"id":11,"ref":"main","status":"running","created_at":"2026-03-19T12:00:00Z"}]}`), nil
-				}
-				return toolTextResult(`{"pipelines":[]}`), nil
-			case "services/loom-core-hud":
-				if status == "pending" {
-					return toolTextResult(`{"pipelines":[{"id":22,"ref":"feature","status":"pending","created_at":"2026-03-19T12:01:00Z"}]}`), nil
-				}
-				return toolTextResult(`{"pipelines":[]}`), nil
-			default:
-				t.Fatalf("unexpected project arg %q", project)
+			projects, _ := args["projects"].([]any)
+			if len(projects) != 2 {
+				t.Fatalf("expected 2 projects in batched arg, got %#v", projects)
 			}
-			return nil, nil
+			// The batched server-side tool returns a flattened payload tagged
+			// per pipeline; the bridge must preserve the per-entry project.
+			return toolTextResult(`{"pipelines":[` +
+				`{"id":11,"ref":"main","status":"running","created_at":"2026-03-19T12:00:00Z","project":"services/loom-core"},` +
+				`{"id":22,"ref":"feature","status":"pending","created_at":"2026-03-19T12:01:00Z","project":"services/loom-core-hud"}` +
+				`]}`), nil
 		},
 	}
 
@@ -214,6 +202,51 @@ func TestAgentBridge_ListActivePipelines_PreservesProjectPerCall(t *testing.T) {
 	}
 	if !seen["services/loom-core"] || !seen["services/loom-core-hud"] {
 		t.Fatalf("expected both projects to be preserved, got %#v", pipelines)
+	}
+}
+
+// TestAgentBridge_ListActivePipelines_FallsBackToPerProjectOnBatchedError
+// covers the rollout-window safety net: when mcp-gitlab predates the batched
+// tool the call returns an error and the bridge transparently fans out per
+// project via the legacy path.
+func TestAgentBridge_ListActivePipelines_FallsBackToPerProjectOnBatchedError(t *testing.T) {
+	caller := &recordingCaller{
+		t: t,
+		callToolWithTimeoutFn: func(name string, args map[string]any, timeout time.Duration) (json.RawMessage, error) {
+			if name == "gitlab__list_active_pipelines" {
+				return nil, errors.New("tool not found: list_active_pipelines")
+			}
+			if name != "gitlab__list_pipelines" {
+				t.Fatalf("expected legacy fallback to use gitlab__list_pipelines, got %q", name)
+			}
+			project, _ := args["project"].(string)
+			status, _ := args["status"].(string)
+			if project != "services/loom-core" {
+				t.Fatalf("unexpected project %q", project)
+			}
+			switch status {
+			case "running":
+				return toolTextResult(`{"pipelines":[{"id":201,"ref":"main","status":"running","created_at":"2026-03-19T12:00:00Z"}]}`), nil
+			case "pending":
+				return toolTextResult(`{"pipelines":[]}`), nil
+			default:
+				t.Fatalf("unexpected status %q", status)
+				return nil, nil
+			}
+		},
+	}
+
+	bridge := NewAgentBridge(caller)
+	pipelines, err := bridge.ListActivePipelines([]string{"services/loom-core"})
+	if err != nil {
+		t.Fatalf("ListActivePipelines fallback: %v", err)
+	}
+	if len(pipelines) != 1 || pipelines[0].ID != 201 {
+		t.Fatalf("unexpected pipelines after fallback: %#v", pipelines)
+	}
+	// 1 batched attempt + 2 per-project legacy calls (running + pending).
+	if caller.callToolWithTimeoutCount != 3 {
+		t.Fatalf("expected 3 CallToolWithTimeout calls (1 batched + 2 fallback), got %d", caller.callToolWithTimeoutCount)
 	}
 }
 
