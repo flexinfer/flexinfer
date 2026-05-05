@@ -22,9 +22,13 @@ func TestEventBus_DroppedCount(t *testing.T) {
 		eb.Publish(EventToolCall, map[string]any{"overflow": i})
 	}
 
+	// 10 user-published events overflow + 1 self-published bus.backpressure
+	// event that also gets dropped because the slow subscriber's buffer is
+	// still full when the backpressure threshold fires. Pre-backpressure
+	// behaviour was 10; the +1 is intentional in the new design.
 	dropped := eb.DroppedCount()
-	if dropped != 10 {
-		t.Errorf("DroppedCount() = %d, want 10", dropped)
+	if dropped != 11 {
+		t.Errorf("DroppedCount() = %d, want 11 (10 overflow + 1 bus.backpressure self-drop)", dropped)
 	}
 
 	// Drain the channel
