@@ -22,8 +22,10 @@ resources:
   - gemma4-31b-gptq.yaml            # gemma4-31b-gptq (radeonvii)
 
   # === Pre-quantized HF artifacts (download-only, no Abliteration/Quantization) ===
-  # 2026-05-03: official Qwen GPTQ INT4 MoE — fills omnicoder gap on 7900xtx.
-  - qwen3-30b-a3b-gptq-int4.yaml    # qwen3-30b-a3b-gptq-int4 (cblevins-7900xtx, download-only)
+  # 2026-05-05: replaced by qwen36-27b-oci. The old canary requested
+  # gpu.count=2 and is unschedulable now that gfx1100 nodes advertise one
+  # discrete GPU slot.
+  # - qwen3-30b-a3b-gptq-int4.yaml  # disabled; busted old Qwen canary
 
   # 2026-05-03: Qwen3.6-27B (UPSTREAM) → abliterate → GPTQ INT4. Quant on
   # cblevins-5930k (avoids preempting 7900xtx textgen lanes); artifact
@@ -40,3 +42,6 @@ resources:
   # Deprecated 2026-05-03 with omnicoder-9b Model: staged GPTQ artifact serves
   # corrupted text. Keep the pull-cache manifest for forensic rebuilds only.
   # - omnicoder-9b-oci.yaml
+
+  # === Active OCI pull caches (Harbor → local PVC → Model CRs) ===
+  - qwen36-27b-oci.yaml             # qwen36-27b (cblevins-5930k, artifact-only serving cache)

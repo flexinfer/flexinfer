@@ -3,7 +3,7 @@
 # Note: GPUGroup CRD is v1alpha1 and NOT required by v1alpha2 Model scheduling
 # (gpu.shared field works independently). These are documentation/future-proofing.
 ---
-# cblevins-5930k: imagegen (primary) + opus-distill text (fast swap secondary)
+# cblevins-5930k: imagegen + Qwen3.6 text (fast swap replacement)
 # When idle, imagegen stays loaded. Text requests preempt imagegen,
 # then imagegen reclaims GPU after text idle timeout (5m).
 apiVersion: ai.flexinfer/v1alpha1
@@ -15,8 +15,8 @@ spec:
   models:
     - name: gonzalomo-fluxpony-imagegen
       priority: 200
-    - name: qwen35-27b-opus-distill-5930k
-      priority: 150
+    - name: qwen36-27b-gptq
+      priority: 250
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
   scalingPolicy:

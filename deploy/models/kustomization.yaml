@@ -12,16 +12,11 @@ resources:
   # ambiguity without improving the serving surface.
   # - gemma4-26b-a4b-gptq.yaml      # superseded by gemma4-26b-a4b-gptq-long
   - gemma4-26b-a4b-gptq-long.yaml   # vLLM GPTQ INT4, 16K FP8-KV on-demand (priority 255)
-  # 2026-05-03: pre-quantized MoE canary filling the omnicoder gap. Co-exists
-  # with gemma4-31b-gptq in 7900xtx-textgen (priority 200 < 250). Pending
-  # first-deploy smoke before alias promotion.
-  - qwen3-30b-a3b-gptq-int4.yaml    # vLLM GPTQ INT4, MoE 30B/3B-active, on-demand canary (priority 200)
-  # 2026-05-03: Qwen3.6-27B abliterated GPTQ — Model CR is in-tree but NOT
-  # reconciled until the qwen36-27b-gptq-gfx1100 ModelCache cycle completes
-  # and publishes the OCI artifact. Uncomment after the cache reaches Ready
-  # and the artifact is pulled onto cblevins-7900xtx. Priority 180 (below
-  # qwen3-30b-a3b at 200; co-exists, never preempts).
-  # - qwen36-27b-gptq.yaml          # vLLM GPTQ INT4, dense 27B abliterated, on-demand canary (priority 180)
+  # 2026-05-05: replaced by Qwen3.6. The old qwen3-30b-a3b canary requested
+  # gpu.count=2 and stayed unschedulable after gfx1100 nodes were normalized
+  # to one discrete GPU slot.
+  # - qwen3-30b-a3b-gptq-int4.yaml  # disabled; busted old Qwen canary
+  - qwen36-27b-gptq.yaml            # vLLM GPTQ INT4, dense 27B abliterated, on-demand replacement
   # - gemma4-26b-a4b-gptq-22k.yaml  # superseded until 18K-22K is re-qualified
   # gemma4-31b-gptq-long.yaml: SUPERSEDED on 2026-04-25. Canary boot OOM'd at
   # 23.59/24 GiB during weight load — plugin rotation-matrix allocations
