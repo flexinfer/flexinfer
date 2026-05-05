@@ -106,6 +106,16 @@ func run(cfg daemon.Config, metricsAddr string, hudPort int) error {
 	// dial back to the daemon for tool execution (workflow loopback).
 	os.Setenv("LOOM_SOCKET", cfg.SocketPath)
 
+	// Export the daemon HTTP URL so child MCP servers can post lifecycle
+	// events into the daemon EventBus (cross-process Publisher; see
+	// pkg/eventpub + internal/daemon/api_events.go). Uses defaultMetricsAddr
+	// because that listener is always brought up when metricsAddr is set;
+	// a child process inherits this env and can build the /events/publish
+	// URL deterministically without flag plumbing.
+	if os.Getenv("LOOM_DAEMON_HTTP_URL") == "" {
+		os.Setenv("LOOM_DAEMON_HTTP_URL", "http://"+defaultMetricsAddr)
+	}
+
 	d, err := daemon.New(cfg)
 	if err != nil {
 		return fmt.Errorf("create daemon: %w", err)
@@ -131,6 +141,10 @@ func run(cfg daemon.Config, metricsAddr string, hudPort int) error {
 		mux.Handle("/metrics", d.MetricsHandler())
 		mux.HandleFunc("/health", d.HealthHandler())
 		mux.HandleFunc("/events", d.EventBus().ServeSSE)
+		// Inbound: out-of-process MCP servers POST lifecycle events here so
+		// they reach the EventBus + the /events SSE fan-out (cross-process
+		// Publisher). See pkg/eventpub for the client side.
+		mux.HandleFunc("/events/publish", d.HandleEventsPublish)
 
 		addrs := []string{metricsAddr}
 		if metricsAddr != defaultMetricsAddr {

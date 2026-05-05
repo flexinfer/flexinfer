@@ -8,6 +8,7 @@ import (
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
 	"github.com/crb2nu/loom/pkg/agentcontext"
+	"github.com/crb2nu/loom/pkg/eventpub"
 	"github.com/crb2nu/loom/pkg/lifecycle"
 	"github.com/crb2nu/loom/pkg/mcplog"
 	"github.com/crb2nu/loom/pkg/mcpotel"
@@ -50,6 +51,20 @@ func run(ctx context.Context) error {
 			defer toolClient.Close()
 			logger.Info("workflow tool executor configured", "socket", socketPath)
 		}
+	}
+
+	// Wire cross-process event publisher so session lifecycle and presence
+	// transition events reach the daemon EventBus and the /events SSE
+	// fan-out. Best-effort: if the daemon is unreachable, Publish degrades
+	// to a no-op (logged at debug). Falls back to no-op when no URL is set.
+	if daemonURL := os.Getenv("LOOM_DAEMON_HTTP_URL"); daemonURL != "" {
+		adminToken := os.Getenv("LOOM_ADMIN_TOKEN")
+		if adminToken == "" {
+			adminToken = os.Getenv("LOOM_HUD_ADMIN_TOKEN")
+		}
+		pub := eventpub.NewHTTPPublisher(daemonURL, adminToken, logger)
+		svc.SetPublisher(pub)
+		logger.Info("event publisher wired", "url", daemonURL)
 	}
 
 	// Start background services (compaction scheduler, presence cleanup)
