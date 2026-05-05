@@ -66,8 +66,9 @@ spec:
     # 39,43,47,51,55,59,63. Picking 27/31/35 (mid-stack of full-attn).
     targetLayers: "27,31,35"
     useGPU: true
-    # 56 GiB CPU offload budget on the 64-GiB host.
-    maxMemoryGB: 56
+    # 40 GiB job budget + 12 GiB gfx1100 driver reservation keeps the pod
+    # within the 5930k's ~56 GiB allocatable memory.
+    maxMemoryGB: 40
     timeoutSeconds: 21600  # 6 h upper bound; 27B abliteration on gfx1100 is ~2-4 h
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
@@ -85,7 +86,8 @@ spec:
     # Do NOT exclude any modules; Qwen3.5 text loader handles GDN + GA + FFN.
     dynamicExclusion: "none"
     useGPU: true
-    maxMemoryGB: 56
+    # GPTQ uses the same gfx1100 driver reservation path as abliteration.
+    maxMemoryGB: 40
     timeoutSeconds: 28800  # 8 h upper bound; 27B GPTQ on gfx1100 is ~3-6 h
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
