@@ -15,8 +15,8 @@
 # cblevins-5930k. Both workloads target the same single gfx1100 GPU; keeping
 # FluxPony warm holds amd.com/gpu=1 and blocks the Qwen pipeline pod.
 #
-# Restore minReplicas: 1 after qwen36-27b-gptq-gfx1100 publishes or moves off
-# the 5930k build lane.
+# Keep minReplicas at 0 now that Qwen3.6 serves on this node. Both models share
+# the 5930k-imagegen-textgen lane so Qwen can preempt imagegen on text demand.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -32,7 +32,7 @@ spec:
   gpu:
     vendor: amd
     count: 1
-    shared: 5930k-imagegen
+    shared: 5930k-imagegen-textgen
     priority: 200
     vramEstimateMB: 12000
   serverless:

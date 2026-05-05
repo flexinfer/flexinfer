@@ -1,4 +1,4 @@
-# Qwen3.6-27B GPTQ INT4 serving on cblevins-7900xtx (gfx1100, 24 GiB).
+# Qwen3.6-27B GPTQ INT4 serving on cblevins-5930k (gfx1100, 24 GiB).
 #
 # Path A artifact: produced by qwen36-27b-gptq-gfx1100 ModelCache (upstream
 # Qwen/Qwen3.6-27B BF16 → abliterate → GPTQ INT4). See ModelCache header
@@ -7,17 +7,17 @@
 # Qwen3.6 IS Qwen3.5 modeling code (verified upstream config.json) — our
 # existing Qwen3.5 vLLM patch stack covers this with no new ports needed.
 #
-# Mirrors the qwen3-30b-a3b-gptq-int4.yaml posture (canary, scale-to-zero)
-# with adjustments for Qwen3.6-27B (dense, not MoE):
+# Replaces the busted qwen3-30b-a3b-gptq-int4 canary with adjustments for
+# Qwen3.6-27B (dense, abliterated, not MoE):
 #   - vramEstimateMB raised to 18000 (weights ~14 GB GPTQ + KV pool)
 #   - quantization=gptq, ExllamaLinearKernel via sym=true
 #   - kvCacheDtype=fp8_e4m3 (proven on gfx1100; gemma4-26b-a4b-gptq-long lane)
 #   - maxModelLen=8192 starting cap (native is 262144); raise after smoke
 #   - enforceEager=true (ROCm GPTQ + CUDAGraph fragility)
 #
-# Co-existence: priority=180 (below qwen3-30b-a3b canary at 200, well below
-# gemma4-31b-gptq warm primary at 250). Scale-to-zero with 30m idle. Will not
-# preempt either warm lane.
+# Co-existence: cblevins-5930k is the recovered Qwen3.6 build node and the
+# FluxPony imagegen lane remains scale-to-zero. Qwen3.6 uses the shared
+# 5930k-imagegen-textgen lane and activates on demand.
 #
 # Tool calling: Qwen3 family ships a Hermes-shaped chat template. For the
 # first smoke we leave toolCallParser unset (vLLM falls back to OpenAI
@@ -29,20 +29,19 @@ metadata:
   name: qwen36-27b-gptq
   namespace: flexinfer-system
   annotations:
-    flexinfer.ai/promotion-state: pending-quant-cycle
-    flexinfer.ai/promotion-requires: ".loom/qwen36-27b-hauhaucs-gptq-plan.md"
+    flexinfer.ai/promotion-state: qwen36-ready-replaces-busted-qwen-canary
+    flexinfer.ai/promotion-evidence: "ModelCache qwen36-27b-gptq-gfx1100 Ready; OCI digest sha256:fe3a6bea0cd2cdf254a5db6194e01402f1f7f93c4b86d8c717695470fdd3849d"
 spec:
   backend: vllm
-  source: pvc://qwen36-27b-gptq-gfx1100/qwen36-27b-gptq-gfx1100
+  source: pvc://qwen36-27b-oci/qwen36-27b
   cache:
     strategy: Local
   gpu:
     vendor: amd
-    # Same dGPU+iGPU pinning pattern as gemma4-31b and qwen3-30b-a3b on this node.
-    count: 2
+    count: 1
     vramEstimateMB: 18000
-    shared: 7900xtx-textgen
-    priority: 180
+    shared: 5930k-imagegen-textgen
+    priority: 250
   serverless:
     enabled: true
     minReplicas: 0
@@ -74,7 +73,7 @@ spec:
     disableLogStats: false
     warmPolicy: ondemand
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-5930k
   resources:
     requests:
       cpu: "4"
@@ -84,6 +83,8 @@ spec:
       memory: 32Gi
   serviceLabels:
     - qwen36-27b
+    - qwen3-coder
+    - qwen3-30b-a3b
     - qwen3-uncensored
   litellm:
     enabled: true
@@ -91,9 +92,8 @@ spec:
     aliases:
       - qwen36-27b
       - qwen3-6-27b
-      # Reserved for promotion gate; do NOT route generic "qwen-uncensored"
-      # traffic until smoke + a behavior diff vs HauhauCS Aggressive lane is
-      # signed off.
+      - qwen3-coder
+      - qwen3-30b-a3b
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"
