@@ -14,11 +14,13 @@ mkdir -p \
 
 cp "${REPO_ROOT}/build/runtime.yaml" "${TMP_ROOT}/build/runtime.yaml"
 cp "${REPO_ROOT}/deploy/gpuprofiles/gfx1100.yaml" "${TMP_ROOT}/deploy/gpuprofiles/gfx1100.yaml"
+cp "${REPO_ROOT}/deploy/gpuprofiles/gfx906.yaml" "${TMP_ROOT}/deploy/gpuprofiles/gfx906.yaml"
 cp "${REPO_ROOT}/deploy/system/values-k3s.yaml" "${TMP_ROOT}/deploy/system/values-k3s.yaml"
 mkdir -p "${TMP_ROOT}/deploy/models"
 cp "${REPO_ROOT}/deploy/models/gemma4-e4b-turboquant.yaml" "${TMP_ROOT}/deploy/models/gemma4-e4b-turboquant.yaml"
 cp "${REPO_ROOT}/deploy/models/gemma4-31b-gptq-long.yaml" "${TMP_ROOT}/deploy/models/gemma4-31b-gptq-long.yaml"
 cp "${REPO_ROOT}/scripts/promote-runtime-digest.sh" "${TMP_ROOT}/scripts/promote-runtime-digest.sh"
+cp "${REPO_ROOT}/scripts/check-runtime-profile-consistency.sh" "${TMP_ROOT}/scripts/check-runtime-profile-consistency.sh"
 
 digest="sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 target="registry.harbor.lan/flexinfer/runtime@${digest}"
@@ -75,5 +77,7 @@ for model_file in \
     exit 1
   fi
 done
+
+"${TMP_ROOT}/scripts/check-runtime-profile-consistency.sh" --repo-root "${TMP_ROOT}"
 
 echo "promote-runtime-digest tests passed"
