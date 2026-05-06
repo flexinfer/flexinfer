@@ -4328,6 +4328,7 @@ skills:
         - Treat a dirty worktree as baseline context unless the current files conflict directly with your change.
         - Stage and commit only the files for the active feature slice.
         - Before allocating another multi-file worktree, inspect existing linked trees with `git worktree list` or `workspace-clean --report --worktrees --repo <repo>`.
+        - When `workspace-clean` flags a worktree with `commits_at_risk=true` (or prints `⚠ STRAND` to stderr), push the branch first (`git push -u origin <branch>`) before removing — the cleanup will refuse to delete worktrees that hold unsalvaged commits.
         - Keep the canonical repo at its normal workspace path (`services/<repo>`, `libs/<repo>`, `labs/<repo>`, etc.) and create new linked trees only under `<repo>/.worktrees/<branch>`.
         - Do not create sibling feature repos under `services/`, `libs/`, `labs/`, or the workspace root; treat any existing copies there as legacy cleanup candidates.
         - Prefer non-interactive git commands and keep the branch/worktree naming aligned with the feature scope.
@@ -4336,7 +4337,7 @@ skills:
         ## Workflow Steps
 
         1. **Initialize session** — `agent_session_start(namespace="<repo>/feat/<name>", description="...")`; recall prior context with `agent_recall`
-        2. **Preflight worktree review** — inspect `git worktree list` or `workspace-clean --report --worktrees --repo <repo>`; reuse or clean an existing candidate before creating another linked tree
+        2. **Preflight worktree review** — inspect `git worktree list` or `workspace-clean --report --worktrees --repo <repo>`; salvage any `commits_at_risk=true` branches with `git push -u origin <branch>`, then reuse or clean an existing candidate before creating another linked tree
         3. **Allocate worktree** — `agent_worktree_allocate(branch_name="feat/<name>", base_branch="main", purpose="...")`
         4. **Implement** — write code in the worktree (approval gate)
         5. **Sandbox test** — run tests via devbox
@@ -4447,13 +4448,13 @@ skills:
         - add or identify a failing characterization/regression test when feasible
         - confirm root cause before implementing the fix; avoid “speculative patch” loops
         - keep the fix scoped to the defect unless adjacent cleanup is required for correctness
-        - inspect `git worktree list` or `workspace-clean --report --worktrees --repo <repo>` before allocating another multi-file worktree
+        - inspect `git worktree list` or `workspace-clean --report --worktrees --repo <repo>` before allocating another multi-file worktree; salvage any `commits_at_risk=true` branches with `git push -u origin <branch>` before cleanup
         - create new linked trees only under `<repo>/.worktrees/<branch>`; do not create sibling fix repos under workspace buckets or the workspace root
 
         ## Workflow Steps
 
         1. **Initialize session** — `agent_session_start(namespace="<repo>/fix/<name>", description="...")`; recall prior context and similar bugs with `agent_recall`
-        2. **Preflight worktree review** — inspect `git worktree list` or `workspace-clean --report --worktrees --repo <repo>`; reuse or clean an existing candidate before creating another linked tree
+        2. **Preflight worktree review** — inspect `git worktree list` or `workspace-clean --report --worktrees --repo <repo>`; salvage any `commits_at_risk=true` branches first, then reuse or clean an existing candidate before creating another linked tree
         3. **Allocate worktree** — `agent_worktree_allocate(branch_name="fix/<name>", base_branch="main", purpose="...")`
         4. **Investigate** — identify root cause; capture symptom, expected behavior, and repro conditions (approval gate)
         5. **Implement fix** — write the fix with a regression test (approval gate)
@@ -4775,7 +4776,7 @@ skills:
         2. **Check repo state**
            - `git status`
            - `git worktree list`
-           - `workspace-clean --report --worktrees --repo <repo>` when the repo already has many linked trees or noncanonical siblings
+           - `workspace-clean --report --worktrees --repo <repo>` when the repo already has many linked trees or noncanonical siblings; the JSON record's `commits_at_risk` flag (and `⚠ STRAND` stderr lines) tell you which worktrees hold unsalvaged commits — push those branches before any cleanup
            - active branch / worktree
            - note pre-existing changes as baseline context, not an automatic blocker
            - if linked trees already exist outside `<repo>/.worktrees/`, treat them as cleanup pressure and do not add another noncanonical copy
