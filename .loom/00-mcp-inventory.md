@@ -6,6 +6,41 @@ Capture current MCP/runtime capabilities and constraints for FlexInfer planning 
 
 ## Runtime Mode Detection
 
+### Update (2026-05-06): Loom full profile and codebase index ready
+
+- `functions.list_mcp_resources({})` exposes `loom://config`, `loom://servers`, `loom://tools`, `loom://tools/index`, and `loom://health`.
+- `functions.list_mcp_resource_templates({})` exposes paged tool inventory templates, including `loom://tools/page/{page}` and `loom://tools/server/{server}/page/{page}`.
+- `functions.read_mcp_resource(server="loom", uri="loom://config")` reports active profile `full`, `48` servers, and `510` tools.
+- `functions.read_mcp_resource(server="loom", uri="loom://tools/index")` reports `510` tools across `6` pages.
+- `mcp__loom__.codebase_memory__codebase_stats({"repo_id":"flexinfer"})` reports collection `codebase_memory_v1` with `2831` total chunks.
+- Planning implication:
+  - Loom-mode inventory is available for planning refreshes.
+  - `codebase_memory` is healthy enough for targeted semantic search, while `rg` remains the fastest source of local truth.
+  - Relevant implementation tools for this plan include `codebase_memory`, `gitlab`, `k8s_apps_k3s`, `flux`, `prometheus`, `grafana`, `quality`, `devbox`, and the FlexInfer MCP server.
+
+### Update (2026-05-02): Loom resource mode and codebase index are healthy
+
+- `functions.list_mcp_resources({})` exposes `loom://config`, `loom://servers`, `loom://tools`, `loom://tools/index`, and `loom://health`.
+- `functions.list_mcp_resource_templates({})` exposes paged tool inventory templates, including `loom://tools/page/{page}` and `loom://tools/server/{server}/page/{page}`.
+- `functions.read_mcp_resource(server="loom", uri="loom://config")` reports:
+  - active profile: `full`
+  - server count: `48`
+  - tool count: `504`
+- `functions.read_mcp_resource(server="loom", uri="loom://tools/index")` reports:
+  - page size: `100`
+  - total tools: `504`
+  - total pages: `6`
+- `functions.read_mcp_resource(server="loom", uri="loom://health")` reports `codebase_memory` healthy with `consecFails: 0`.
+- `loom tools call codebase_memory__codebase_stats --args '{"repo_id":"flexinfer"}' --json` reports:
+  - collection: `codebase_memory_v1`
+  - `total_chunks: 2831`
+- Planning implication:
+  - Prefer Loom resource inventory for planning refreshes.
+  - Use `loom tools call` for direct codebase-memory checks when a callable MCP tool is not exposed in the chat.
+  - Keep `rg` and direct file reads as the fastest source of code truth.
+
+### Historical Baseline
+
 - `functions.list_mcp_resources({})` returned `[]`.
 - `functions.list_mcp_resource_templates({})` returned `[]`.
 - Result: loom resource-proxy mode (`loom://config`, `loom://servers`, `loom://tools/index`) was not discoverable via MCP resource APIs in this session.
@@ -127,9 +162,10 @@ Top groups:
 
 ## Constraints and Permissions
 
-- MCP resource/template discovery is empty in-session; inventory depends on CLI fallback.
-- `loom` CLI uses local socket `/Users/cblevins/.config/loom/loom.sock` (default from CLI help).
-- Direct MCP bridge for this chat session remains unstable (`Transport closed`) despite daemon-side recovery.
+- MCP resource/template discovery is available in this session through Loom resource mode.
+- The `brand-kit` and `godot_mcp` local server health entries are degraded in `loom://health`; they are unrelated to this planning task.
+- The `time` hub path shows transient websocket failures, but local target health is green.
+- `loom tools call` remains a useful fallback when individual MCP tools are not directly exposed in the chat.
 
 ## Sources
 
@@ -151,6 +187,12 @@ Top groups:
 - [C16] `loom tools call codebase_memory__codebase_index_poll --args '{"job_id":"1869e8aca6a0ab14"}' --json` -> `status: done, chunks_total: 1877`
 - [C17] `loom tools call codebase_memory__codebase_stats --args '{"repo_id":"flexinfer"}' --json` -> `total_chunks: 1877`
 - [C18] `loom tools call codebase_memory__codebase_get_definition --args '{"repo_id":"flexinfer","symbol":"ModelReconciler","limit":5}' --json` -> `found: true`
+- [C27] `functions.list_mcp_resources({})` -> `loom://config`, `loom://servers`, `loom://tools`, `loom://tools/index`, `loom://health`
+- [C28] `functions.list_mcp_resource_templates({})` -> paged Loom tool inventory templates
+- [C29] `functions.read_mcp_resource(server="loom", uri="loom://config")` -> `serverCount: 48`, `toolCount: 510`, active profile `full`
+- [C30] `functions.read_mcp_resource(server="loom", uri="loom://tools/index")` -> `totalTools: 510`, `totalPages: 6`
+- [C31] `functions.read_mcp_resource(server="loom", uri="loom://health")` -> `codebase_memory` healthy, `consecFails: 0`
+- [C32] `mcp__loom__.codebase_memory__codebase_stats({"repo_id":"flexinfer"})` -> `total_chunks: 2831`
 
 ## Update (2026-04-09): Research / Planning Reset
 

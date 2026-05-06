@@ -422,6 +422,7 @@ observability:
 
 grafanaDashboard:
   enabled: true
+  runtimeEnabled: true
 
 # PrometheusRule alerting configuration
 # Requires Prometheus Operator (monitoring.coreos.com/v1 CRD)

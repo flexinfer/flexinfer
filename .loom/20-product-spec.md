@@ -93,3 +93,30 @@ Acceptance criteria:
 Reference plan:
 
 - `.loom/gemma4-26b-31b-gptq-turboquant-plan.md`
+
+## Scope Extension (2026-05-02): Spec-Driven Delivery Acceleration
+
+Product objective:
+
+- Make FlexInfer feature delivery faster and easier to resume by turning roadmap intent into source-backed spec capsules, PR-sized implementation slices, and explicit validation gates.
+
+Requirements:
+
+- Add a public planning guide for spec-driven delivery under `docs/planning/`.
+- Update roadmap surfaces so delivery acceleration is visible as active planned work.
+- Keep `.loom` working context aligned with current runtime/tool inventory.
+- Require future multi-file feature plans to name acceptance criteria, validation commands, rollback/backout notes, and source evidence.
+
+Acceptance criteria:
+
+- `docs/planning/spec-driven-delivery.md` defines the workflow, artifacts, template, roadmap lane, and acceptance gates.
+- `ROADMAP.md` and `docs/planning/next-roadmap.md` link to the delivery acceleration lane.
+- `.loom/00-mcp-inventory.md` records that Loom resource mode and `codebase_memory` are currently available.
+- The next roadmap reconciliation can update tracking issues from the new open checklist items.
+
+Sources:
+
+- `docs/planning/spec-driven-delivery.md`
+- `ROADMAP.md`
+- `docs/planning/next-roadmap.md`
+- `.loom/00-mcp-inventory.md`

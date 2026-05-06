@@ -1,5 +1,25 @@
 # Implementation Plan
 
+## Update (2026-05-02): Spec-Driven Delivery Acceleration
+
+Focused plan: `docs/planning/spec-driven-delivery.md`.
+
+Primary sequencing:
+
+1. Refresh the workspace snapshot and confirm current Loom inventory.
+2. Add a public planning guide that defines the spec capsule, slice readiness gate, validation matrix, agent-ready work slices, and roadmap reconciliation loop.
+3. Update roadmap surfaces so this becomes an explicit planned lane rather than an implicit working habit.
+4. Update `.loom` context files with the current objective, MCP/index readiness, and product acceptance criteria.
+5. Leave issue mutation for a follow-up reconciliation pass so tracking links can be created or updated deliberately.
+
+Acceptance ladder:
+
+1. `.loom/00-workspace-snapshot.md` is refreshed.
+2. `codebase_memory` readiness is checked and records `total_chunks: 2831`.
+3. `docs/planning/spec-driven-delivery.md` exists and includes goals, non-goals, workflow, template, planned items, and sources.
+4. `ROADMAP.md` and `docs/planning/next-roadmap.md` include the spec-driven delivery lane.
+5. A future reconciliation pass can link SD-1 through SD-5 to GitLab tracking issues.
+
 ## Update (2026-04-25): Gemma4 26B/31B GPTQ + TurboQuant Plan
 
 Focused plan: `.loom/gemma4-26b-31b-gptq-turboquant-plan.md`.
