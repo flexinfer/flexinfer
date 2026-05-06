@@ -1396,6 +1396,36 @@ publish_vllm_rocm_gfx1100:
       when: manual
     - when: never
 
+publish_vllm_rocm_gfx1100_qwen35_patched:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 1h
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building Qwen3.5-patched vLLM ROCm image for gfx1100..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.vllm-gfx1100-qwen35-patched-nodiag" \
+        --opt platform=linux/amd64 \
+        --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg" \
+        --export-cache "type=inline" \
+        --output "type=image,\"name=${REGISTRY}/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg,${REGISTRY}/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
 # vLLM with flash attention ENABLED for gfx1100 (experimental)
 publish_vllm_rocm_gfx1100_fa:
   stage: publish
