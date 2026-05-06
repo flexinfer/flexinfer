@@ -12,6 +12,7 @@ FlexInfer components expose Prometheus metrics. The exact set depends on which b
 - **Controller manager (`flexinfer-manager`)**: exposes `/metrics` on `--metrics-bind-address` (default `:8080`) via controller-runtime.
 - **Proxy (`flexinfer-proxy`)**: exposes `/metrics` on the proxy HTTP port (default `:8080`).
 - **Node agent (`flexinfer-agent`)**: exposes `/metrics` on `--metrics-port` (default `:9100`).
+- **Unified runtime (`flexinfer-runtime`)**: exposes `/metrics` on the runtime API port (default `:8080`).
 
 Note: backend containers (e.g. diffusers-api, llama.cpp servers) are not required to expose Prometheus metrics. In the homelab, `diffusers-api` returns `404` for `/metrics` (expected).
 
@@ -71,6 +72,23 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
 - `flexinfer_proxy_rate_limited_total{model,scope}`
 - `flexinfer_proxy_activation_retries_total{model}`
 - `flexinfer_proxy_activation_retry_wait_duration_seconds{model}` (histogram)
+
+## Runtime Metrics (`flexinfer-runtime`)
+
+Defined in `services/flexinfer/internal/runtime/metrics.go`:
+
+- `flexinfer_runtime_info{node,gpu_vendor,gpu_arch,runtime_profile,runtime_digest}` (gauge; always `1`; metadata labels identify the DaemonSet profile and immutable image digest, or `unresolved` for mutable tags)
+- `flexinfer_runtime_uptime_seconds`
+- `flexinfer_runtime_model_loads_total{backend,result}`
+- `flexinfer_runtime_model_unloads_total{backend,reason}`
+- `flexinfer_runtime_model_load_duration_seconds{model,backend}` (histogram)
+- `flexinfer_runtime_model_state{model,backend,state}`
+- `flexinfer_runtime_backend_crashes_total{model,backend}`
+- `flexinfer_runtime_health_check_failures_total{model,backend}`
+- `flexinfer_runtime_gpu_vram_total_bytes{gpu_vendor,gpu_arch}`
+- `flexinfer_runtime_gpu_vram_used_bytes{gpu_vendor,gpu_arch}`
+- `flexinfer_runtime_gpu_vram_free_bytes{gpu_vendor,gpu_arch}`
+- `flexinfer_runtime_gpu_temperature_celsius{gpu_vendor,gpu_arch}`
 
 ## GPUGroup Controller Metrics (v1alpha1)
 

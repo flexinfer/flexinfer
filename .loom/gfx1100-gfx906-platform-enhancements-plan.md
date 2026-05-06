@@ -145,6 +145,8 @@ Rollback:
 
 ## Slice 6: Validation Matrix + Observability
 
+Status: partial; runtime profile/digest labels landed in the runtime info metric.
+
 Goal: make runtime promotion decisions auditable.
 
 Target files:
@@ -155,7 +157,8 @@ Target files:
 
 Work:
 - Add columns for `gpu_arch`, `runtime_digest`, `backend`, `support_level`, `canary_command`, `ready_seconds`, `cold_load_seconds`, `decode_tps`, `imagegen_seconds`, `gate`, and `rollback_digest`.
-- Surface runtime digest/profile labels in metrics where available.
+- [x] Surface runtime digest/profile labels in metrics where available.
+- [ ] Expand the validation matrix schema with explicit promotion audit fields.
 - Link validation rows back to spec slices and runtime promotion commands.
 
 Validation:

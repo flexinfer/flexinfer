@@ -50,6 +50,10 @@ spec:
               value: {{ .gpuVendor | quote }}
             - name: GPU_ARCH
               value: {{ .gpuArch | quote }}
+            - name: RUNTIME_PROFILE
+              value: {{ .name | quote }}
+            - name: RUNTIME_IMAGE
+              value: {{ .image | quote }}
             - name: NODE_NAME
               valueFrom:
                 fieldRef:

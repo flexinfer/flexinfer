@@ -36,7 +36,7 @@ data:
         },
         {
           "title": "Runtime Nodes",
-          "description": "Active runtime instances with GPU info",
+          "description": "Active runtime instances with GPU and runtime image info",
           "type": "table",
           "gridPos": { "x": 0, "y": 1, "w": 12, "h": 6 },
           "targets": [
@@ -53,7 +53,7 @@ data:
               "id": "organize",
               "options": {
                 "excludeByName": { "Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "container": true, "endpoint": true, "namespace": true, "service": true, "pod": true },
-                "renameByName": { "node": "Node", "gpu_vendor": "Vendor", "gpu_arch": "Architecture" }
+                "renameByName": { "node": "Node", "gpu_vendor": "Vendor", "gpu_arch": "Architecture", "runtime_profile": "Runtime Profile", "runtime_digest": "Runtime Digest" }
               }
             }
           ],
