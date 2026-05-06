@@ -528,17 +528,8 @@ import torch.nn.functional as F
 _diag_counter = [0]
 
 def _stat(name, t, call_num):
-    """Print tensor statistics."""
-    if t is None:
-        print(f"  DIAG [{call_num}] {name}: None", file=sys.stderr, flush=True)
-        return
-    t_f = t.float()
-    print(
-        f"  DIAG [{call_num}] {name}: shape={list(t.shape)} dtype={t.dtype} "
-        f"mean={t_f.mean().item():.6f} std={t_f.std().item():.6f} "
-        f"absmax={t_f.abs().max().item():.6f}",
-        file=sys.stderr, flush=True,
-    )
+    """Reserved hook for temporary tensor diagnostics."""
+    return
 
 
 def naive_chunk_gated_delta_rule(
@@ -556,7 +547,7 @@ def naive_chunk_gated_delta_rule(
     """Pure PyTorch sequential recurrence replacing FLA Triton chunk kernel."""
     _diag_counter[0] += 1
     call_num = _diag_counter[0]
-    do_log = call_num <= 4
+    do_log = False
 
     if use_qk_l2norm_in_kernel:
         q = F.normalize(q.float(), p=2, dim=-1).to(q.dtype)
@@ -565,14 +556,6 @@ def naive_chunk_gated_delta_rule(
     B, T_total, H, K = q.shape
     HV, V = v.shape[2], v.shape[3]
     scale = scale or K**-0.5
-
-    if do_log:
-        print(f"  DIAG [{call_num}] naive_chunk_gated_delta_rule: B={B} T={T_total} H={H} K={K} HV={HV} V={V} scale={scale:.6f}", file=sys.stderr, flush=True)
-        _stat("q", q, call_num)
-        _stat("k", k, call_num)
-        _stat("v", v, call_num)
-        _stat("g", g, call_num)
-        _stat("beta", beta, call_num)
 
     if cu_seqlens is not None:
         # Variable-length mode: B=1, tokens flattened
@@ -626,9 +609,6 @@ def naive_chunk_gated_delta_rule(
             out_list.append(ot.to(q.dtype))
         outputs = torch.stack(out_list, dim=1)
 
-    if do_log:
-        _stat("chunk output", outputs, call_num)
-
     final_state = state if output_final_state else None
     return outputs, final_state
 
@@ -650,7 +630,7 @@ def naive_fused_recurrent_gated_delta_rule(
     """Pure PyTorch single-step recurrence replacing FLA Triton fused_recurrent kernel."""
     _diag_counter[0] += 1
     call_num = _diag_counter[0]
-    do_log = call_num <= 4
+    do_log = False
 
     if use_qk_l2norm_in_kernel:
         q = F.normalize(q.float(), p=2, dim=-1).to(q.dtype)
@@ -661,12 +641,6 @@ def naive_fused_recurrent_gated_delta_rule(
     scale = scale or K**-0.5
     if beta is None:
         beta = torch.ones(B, T, HV, dtype=q.dtype, device=q.device)
-
-    if do_log:
-        print(f"  DIAG [{call_num}] naive_fused_recurrent: B={B} T={T} H={H} K={K} HV={HV} V={V}", file=sys.stderr, flush=True)
-        _stat("q", q, call_num)
-        _stat("k", k, call_num)
-        _stat("v", v, call_num)
 
     final_state = initial_state if inplace_final_state else initial_state.clone()
     N = B if cu_seqlens is None else len(cu_seqlens) - 1
