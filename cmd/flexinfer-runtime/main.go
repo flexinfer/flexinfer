@@ -72,12 +72,16 @@ func main() {
 	if nodeName == "" {
 		nodeName, _ = os.Hostname()
 	}
-	runtime.RuntimeInfo.WithLabelValues(nodeName, gpuVendor, gpuArch).Set(1)
+	runtimeProfile := runtime.RuntimeProfileLabel(envutil.StringOrDefault("RUNTIME_PROFILE", ""))
+	runtimeDigest := runtime.RuntimeDigestLabel(envutil.StringOrDefault("RUNTIME_IMAGE", ""))
+	runtime.RuntimeInfo.WithLabelValues(nodeName, gpuVendor, gpuArch, runtimeProfile, runtimeDigest).Set(1)
 
 	logger.Info("Starting flexinfer-runtime",
 		"listenAddr", listenAddr,
 		"gpuVendor", gpuVendor,
 		"gpuArch", gpuArch,
+		"runtimeProfile", runtimeProfile,
+		"runtimeDigest", runtimeDigest,
 		"modelBasePath", modelBasePath,
 		"backends", backend.List(),
 	)

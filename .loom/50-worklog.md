@@ -4,6 +4,24 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
 
 ## 2026-05-06
 
+### RALPH Slice 6-lite — runtime digest/profile observability
+
+- What changed:
+  - Added `runtime_profile` and `runtime_digest` labels to
+    `flexinfer_runtime_info`.
+  - Wired Helm runtime DaemonSets to pass `RUNTIME_PROFILE` and `RUNTIME_IMAGE`
+    into `flexinfer-runtime`.
+  - Updated the runtime Grafana dashboard table and metrics spec so digest-pinned
+    runtime promotions are visible without shelling into pods.
+- Why:
+  - Runtime promotion decisions now depend on digest-pinned evidence across
+    `gfx1100` and `gfx906`. The existing runtime info metric had node/vendor/arch
+    but not the exact promoted profile or digest.
+- Validation:
+  - `go test ./cmd/flexinfer-runtime ./internal/runtime` passed.
+  - `helm template flexinfer charts/flexinfer -f deploy/system/values-k3s.yaml --set grafanaDashboard.enabled=true --set grafanaDashboard.runtimeEnabled=true` rendered the runtime env and dashboard labels.
+  - `git diff --check` passed.
+
 ### RALPH Slice RG-2 — runtime profile consistency check
 
 - What changed:

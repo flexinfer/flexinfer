@@ -1,8 +1,18 @@
 package runtime
 
 import (
+	"regexp"
+	"strings"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+const (
+	RuntimeProfileUnknown = "unknown"
+	RuntimeDigestUnknown  = "unresolved"
+)
+
+var runtimeDigestPattern = regexp.MustCompile(`^sha256:[0-9a-fA-F]{64}$`)
 
 var (
 	// RuntimeInfo is a constant gauge with runtime metadata labels.
@@ -11,7 +21,7 @@ var (
 			Name: "flexinfer_runtime_info",
 			Help: "Runtime instance info (always 1). Labels carry metadata.",
 		},
-		[]string{"node", "gpu_vendor", "gpu_arch"},
+		[]string{"node", "gpu_vendor", "gpu_arch", "runtime_profile", "runtime_digest"},
 	)
 
 	// RuntimeUptimeSeconds tracks how long the runtime has been running.
@@ -130,4 +140,23 @@ func RegisterMetrics() {
 		GPUVRAMFreeBytesRT,
 		GPUTemperatureCelsiusRT,
 	)
+}
+
+func RuntimeProfileLabel(profile string) string {
+	profile = strings.TrimSpace(profile)
+	if profile == "" {
+		return RuntimeProfileUnknown
+	}
+	return profile
+}
+
+func RuntimeDigestLabel(imageRef string) string {
+	_, digest, ok := strings.Cut(strings.TrimSpace(imageRef), "@")
+	if !ok || digest == "" {
+		return RuntimeDigestUnknown
+	}
+	if !runtimeDigestPattern.MatchString(digest) {
+		return RuntimeDigestUnknown
+	}
+	return digest
 }
