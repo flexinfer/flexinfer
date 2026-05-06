@@ -4777,6 +4777,7 @@ skills:
            - `git status`
            - `git worktree list`
            - `workspace-clean --report --worktrees --repo <repo>` when the repo already has many linked trees or noncanonical siblings; the JSON record's `commits_at_risk` flag (and `⚠ STRAND` stderr lines) tell you which worktrees hold unsalvaged commits — push those branches before any cleanup
+           - for worktrees with substantial dirty WIP you want to back up before removal, `workspace-salvage <wt>` (or `--all-strand` to sweep) creates a `wip(<branch>): salvage uncommitted work [auto]` commit of real source changes only (filters drift, autogen, cache, lockfiles) and pushes the branch
            - active branch / worktree
            - note pre-existing changes as baseline context, not an automatic blocker
            - if linked trees already exist outside `<repo>/.worktrees/`, treat them as cleanup pressure and do not add another noncanonical copy
