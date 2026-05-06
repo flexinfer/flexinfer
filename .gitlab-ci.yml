@@ -1422,9 +1422,8 @@ publish_vllm_rocm_gfx1100_qwen35_patched:
         --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg,${REGISTRY}/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
-    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
-      when: manual
-    - when: never
+    - when: manual
+      allow_failure: true
 
 # vLLM with flash attention ENABLED for gfx1100 (experimental)
 publish_vllm_rocm_gfx1100_fa:
