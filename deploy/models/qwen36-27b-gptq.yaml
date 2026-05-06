@@ -7,8 +7,11 @@
 # Qwen3.6 IS Qwen3.5 modeling code (verified upstream config.json) — our
 # existing Qwen3.5 vLLM patch stack covers this with no new ports needed.
 #
-# Replaces the busted qwen3-30b-a3b-gptq-int4 canary with adjustments for
-# Qwen3.6-27B (dense, abliterated, not MoE):
+# Direct canary for the Qwen3.6-27B recovery lane. It booted and served HTTP
+# 200, but deterministic probes collapse to uniform punctuation logits, so do
+# not advertise replacement aliases until a coherent smoke passes.
+#
+# Qwen3.6-27B adjustments (dense, abliterated, not MoE):
 #   - vramEstimateMB raised to 18000 (weights ~14 GB GPTQ + KV pool)
 #   - quantization=gptq, ExllamaLinearKernel via sym=true
 #   - kvCacheDtype=fp8_e4m3 (proven on gfx1100; gemma4-26b-a4b-gptq-long lane)
@@ -29,8 +32,8 @@ metadata:
   name: qwen36-27b-gptq
   namespace: flexinfer-system
   annotations:
-    flexinfer.ai/promotion-state: qwen36-ready-replaces-busted-qwen-canary
-    flexinfer.ai/promotion-evidence: "ModelCache qwen36-27b-gptq-gfx1100 Ready; OCI digest sha256:fe3a6bea0cd2cdf254a5db6194e01402f1f7f93c4b86d8c717695470fdd3849d"
+    flexinfer.ai/promotion-state: qwen36-quality-blocked-direct-canary
+    flexinfer.ai/promotion-evidence: "ModelCache qwen36-27b-gptq-gfx1100 Ready; OCI digest sha256:fe3a6bea0cd2cdf254a5db6194e01402f1f7f93c4b86d8c717695470fdd3849d; 2026-05-06 greedy smoke returned uniform exclamation output"
 spec:
   backend: vllm
   source: pvc://qwen36-27b-oci/qwen36-27b
@@ -81,16 +84,11 @@ spec:
       memory: 32Gi
   serviceLabels:
     - qwen36-27b
-    - qwen3-coder
-    - qwen3-30b-a3b
-    - qwen3-uncensored
   litellm:
     enabled: true
     servedModelName: qwen36-27b
     aliases:
-      - qwen3-6-27b
-      - qwen3-coder
-      - qwen3-30b-a3b
+      - qwen36-canary
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"

@@ -128,7 +128,7 @@ func TestModelResolverResolveModelAlias_DedupesSameModelClaim(t *testing.T) {
 			Source:  "pvc://qwen36-27b-oci/qwen36-27b",
 			LiteLLM: &aiv1alpha2.LiteLLMSpec{
 				ServedModelName: "qwen36-27b",
-				Aliases:         []string{"qwen36-27b", "qwen3-coder"},
+				Aliases:         []string{"qwen36-27b", "qwen36-canary"},
 			},
 		},
 	}
@@ -136,5 +136,5 @@ func TestModelResolverResolveModelAlias_DedupesSameModelClaim(t *testing.T) {
 	resolver := NewModelResolver(newModelResolverTestClient(t, model), "default")
 
 	assert.Equal(t, "qwen36-27b-gptq", resolver.ResolveModelAlias(ctx, "qwen36-27b"))
-	assert.Equal(t, "qwen36-27b-gptq", resolver.ResolveModelAlias(ctx, "qwen3-coder"))
+	assert.Equal(t, "qwen36-27b-gptq", resolver.ResolveModelAlias(ctx, "qwen36-canary"))
 }
