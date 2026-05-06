@@ -2,6 +2,40 @@
 
 Record decisions as they are made, with date, rationale, and sources.
 
+### 2026-05-06: Demote gfx906 vLLM to experimental until canary promotion
+
+- Decision:
+  - Treat `gfx906` vLLM as experimental/canary-only, not full default support, until a dedicated image digest is validated on Radeon VII and promoted.
+- Rationale:
+  - The current unified `gfx906` runtime profile disables vLLM because its PyTorch 2.3 base is too old for that lane.
+  - The deployed GPUProfile and gfx906 README previously described vLLM as full support, creating conflicting operator guidance.
+- Consequences:
+  - `deploy/gpuprofiles/gfx906.yaml` now marks vLLM support as `experimental`.
+  - `build/README-gfx906.md` and the vLLM example now frame that path as canary-only.
+  - The next slice can add automated consistency checks between `build/runtime.yaml`, GPUProfiles, Helm values, and docs.
+- Sources:
+  - `build/runtime.yaml`.
+  - `deploy/gpuprofiles/gfx906.yaml`.
+  - `build/README-gfx906.md`.
+  - `docs/planning/rocm-gfx1100-gfx906-platform-slice.md`.
+
+### 2026-05-02: Make spec capsules the default for multi-file feature delivery
+
+- Decision:
+  - Add a spec-driven delivery lane to the roadmap and make spec capsules the default planning unit for future multi-file features and operational workflow changes.
+- Rationale:
+  - FlexInfer's major product phases are already marked complete, and the current bottleneck is keeping feature intent, implementation slices, runtime canaries, and roadmap tracking synchronized.
+  - A small sourced spec before implementation should reduce rediscovery and make parallel agent work easier to split safely.
+- Consequences:
+  - `docs/planning/spec-driven-delivery.md` becomes the public pattern for future roadmap slices.
+  - `ROADMAP.md` and `docs/planning/next-roadmap.md` now track delivery acceleration as planned work.
+  - Future reconciliation should create or update tracking issues for SD-1 through SD-5.
+- Sources:
+  - `docs/planning/spec-driven-delivery.md`.
+  - `ROADMAP.md`.
+  - `docs/planning/next-roadmap.md`.
+  - `.loom/30-implementation-plan.md`.
+
 ### 2026-04-26: Block 26B fp16-KV long-context promotion above 8K
 
 - Decision:

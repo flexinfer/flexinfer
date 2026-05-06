@@ -5,7 +5,7 @@ description: Near-term roadmap (next series of features/enhancements).
 
 # Next Roadmap
 
-> Last updated: 2026-03-05
+> Last updated: 2026-05-02
 
 This document tracks the implementation phases for FlexInfer. **Phases 1-4 plus Advanced Features are complete.** The project is now at 95%+ production readiness.
 
@@ -184,6 +184,22 @@ Acceptance criteria:
 - Parallel implementation plans include agent delegation notes with disjoint ownership boundaries, files/modules to avoid, local verification, and expected output signals.
 - Runtime canary promotions can be traced from spec to `.loom/60-validation-matrix.md` evidence without relying on chat history.
 - Planning changes are reconciled across `ROADMAP.md`, this file, `.loom/00-index.md`, and tracking issues before closing a slice.
+
+## ROCm gfx1100/gfx906 Platform Enhancements 🚧 PLANNED
+
+Planning docs: `docs/planning/rocm-gfx1100-gfx906-platform-slice.md`,
+`.loom/gfx1100-gfx906-platform-enhancements-spec.md`,
+`.loom/gfx1100-gfx906-platform-enhancements-plan.md`
+
+Objective: make AMD `gfx1100` and `gfx906` first-class platform lanes with
+consistent backend support truth, digest-pinned runtime promotion, and canary
+evidence that survives beyond chat history.
+
+- [x] RG-1: Reconcile the initial capability matrix and demote unvalidated `gfx906` vLLM from full default support.
+- [ ] RG-2: Add runtime promotion consistency checks for `build/runtime.yaml`, GPUProfiles, and Helm runtime profiles.
+- [ ] RG-3: Expand `.loom/60-validation-matrix.md` for runtime digest and canary evidence across both arches.
+- [ ] RG-4: Run `gfx906` conservative-lane canaries for llama.cpp/Ollama, GPTQ/abliteration, and 512px diffusers offload.
+- [ ] RG-5: Run `gfx1100` textgen/imagegen canaries for Navi vLLM, FLUX/Fill, and any Gemma4/TurboQuant runtime candidates.
 
 ## Tech Debt (Ongoing)
 

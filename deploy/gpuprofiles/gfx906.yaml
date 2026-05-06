@@ -28,7 +28,9 @@ spec:
     int8: true
   backends:
     vllm:
-      support: full
+      # The current unified gfx906 runtime does not ship vLLM; keep this
+      # experimental until a dedicated canary image is validated and promoted.
+      support: experimental
     llamacpp:
       support: full
     diffusers:
