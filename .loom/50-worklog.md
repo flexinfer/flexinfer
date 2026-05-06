@@ -4,6 +4,21 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
 
 ## 2026-05-06
 
+### RALPH Slice RG-2 — runtime profile consistency check
+
+- What changed:
+  - Added `scripts/check-runtime-profile-consistency.sh`.
+  - Wired the check into `scripts/test-promote-runtime-digest.sh`.
+  - Updated `docs/planning/rocm-gfx1100-gfx906-platform-slice.md` with RG-2 scope, acceptance criteria, and validation commands.
+  - Marked the runtime-build/promotion plan as partially complete in `.loom/gfx1100-gfx906-platform-enhancements-plan.md`.
+- Why:
+  - Slice 1 found support-truth drift. RG-2 adds a cheap local guard for the stable contract before touching CRDs or runtime images.
+  - The current repo has digest drift between GPUProfile manifests and Helm runtime profiles, so this check intentionally validates digest pinning and arch/vendor identity rather than forcing all digests to match.
+- Validation:
+  - `scripts/check-runtime-profile-consistency.sh` passed.
+  - `scripts/test-promote-runtime-digest.sh` passed.
+  - `git diff --check` passed.
+
 ### RALPH Slice 1 — gfx1100/gfx906 capability matrix reconciliation
 
 - What changed:

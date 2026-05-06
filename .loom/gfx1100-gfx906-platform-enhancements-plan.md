@@ -67,6 +67,8 @@ Rollback:
 
 ## Slice 3: Runtime Build + Promotion Loop
 
+Status: partial; RG-2 consistency checks landed in the second RALPH pass.
+
 Goal: make the runtime build matrix, digest promotion, and model-manifest promotion repeatable for both arches.
 
 Target files:
@@ -78,11 +80,12 @@ Target files:
 - `deploy/gpuprofiles/*.yaml`
 
 Work:
-- Extend dry-run output to include validation reminders and profile-specific model manifests.
-- Add consistency tests that fail if `build/runtime.yaml` and `deploy/gpuprofiles/*.yaml` disagree on arch/vendor/runtime-profile basics.
-- Preserve digest-pinned cluster consumption; mutable tags remain build inputs only.
+- [ ] Extend dry-run output to include validation reminders and profile-specific model manifests.
+- [x] Add consistency tests that fail if `build/runtime.yaml`, `deploy/gpuprofiles/*.yaml`, and Helm runtime profiles disagree on arch/vendor/runtime-profile basics.
+- [x] Preserve digest-pinned cluster consumption; mutable tags remain build inputs only.
 
 Validation:
+- `scripts/check-runtime-profile-consistency.sh`
 - `scripts/test-promote-runtime-digest.sh`
 - `scripts/promote-runtime-digest.sh gfx1100 --digest sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`
 - `scripts/promote-runtime-digest.sh gfx906 --digest sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`

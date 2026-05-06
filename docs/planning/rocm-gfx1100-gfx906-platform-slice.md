@@ -78,6 +78,36 @@ support truth consistent before changing APIs or building new runtime images.
   - Validation matrix expansion for runtime canary evidence.
   - `gfx906` textgen/offload canary jobs.
 
+## RG-2 Runtime Profile Consistency
+
+Status: complete in the second RALPH pass.
+
+Scope:
+
+- Add a local check for the runtime profile identity contract across
+  `build/runtime.yaml`, `deploy/gpuprofiles/*.yaml`, and
+  `deploy/system/values-k3s.yaml`.
+- Include the check in the existing runtime promotion test script.
+- Keep digest equality out of scope for now because live Helm runtime profiles
+  may be promoted independently per node. The check verifies that all runtime
+  consumer images are digest-pinned, not that they all point at the same digest.
+
+Acceptance criteria:
+
+- GPUProfile `architecture` and `vendor` must match the same-named
+  `build/runtime.yaml` profile.
+- Helm runtime profile `gpuArch` and `gpuVendor` must match a known GPUProfile
+  and build profile, falling back from a node-specific Helm profile name to the
+  canonical architecture profile.
+- GPUProfile and Helm runtime profile images must use immutable `@sha256:`
+  references.
+- Every Helm-managed runtime architecture must have a matching GPUProfile.
+
+Validation:
+
+- `scripts/check-runtime-profile-consistency.sh`
+- `scripts/test-promote-runtime-digest.sh`
+
 ## Capability Matrix
 
 | GPU lane | Runtime profile | Full/default lanes | Experimental or canary lanes | Required guardrails |

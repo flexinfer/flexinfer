@@ -196,7 +196,7 @@ consistent backend support truth, digest-pinned runtime promotion, and canary
 evidence that survives beyond chat history.
 
 - [x] RG-1: Reconcile the initial capability matrix and demote unvalidated `gfx906` vLLM from full default support.
-- [ ] RG-2: Add runtime promotion consistency checks for `build/runtime.yaml`, GPUProfiles, and Helm runtime profiles.
+- [x] RG-2: Add runtime promotion consistency checks for `build/runtime.yaml`, GPUProfiles, and Helm runtime profiles.
 - [ ] RG-3: Expand `.loom/60-validation-matrix.md` for runtime digest and canary evidence across both arches.
 - [ ] RG-4: Run `gfx906` conservative-lane canaries for llama.cpp/Ollama, GPTQ/abliteration, and 512px diffusers offload.
 - [ ] RG-5: Run `gfx1100` textgen/imagegen canaries for Navi vLLM, FLUX/Fill, and any Gemma4/TurboQuant runtime candidates.
