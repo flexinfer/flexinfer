@@ -109,7 +109,7 @@ the row notes:
 | `gemma4-e4b-gptq` | TBD | `gfx1100/7900xtx` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
 | `omnicoder-9b-gptq` | TBD | `gfx1100/7900xtx` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
 | `qwen35-9b-gptq-gfx1100` | TBD | `gfx1100/7900xtx` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
-| `qwen36-27b-gptq` abliterated GPTQ W4_G128 canary | 8192 | `gfx1100/5930k` | `registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg` | `registry.harbor.lan/flexinfer/qwen36-27b:gptq-w4-g128-gfx1100@sha256:fe3a6bea0cd2cdf254a5db6194e01402f1f7f93c4b86d8c717695470fdd3849d` | Cache Ready; vLLM reached Ready with `quantization=gptq`, `kvCacheDtype=auto`, `maxNumSeqs=2`; direct proxy and service smoke returned HTTP 200 | First activation exposed proxy `lastActiveTime` conflict; cold start was dominated by 17.6GB image pull; `fp8_e4m3` KV crashed Triton cache update; `gptq_marlin` rejected because artifact config declares `gptq`; current `gptq` runtime serves incoherent output (`!!!!!!!!!!!!` / multilingual junk) | MR !247 replacement; MR !248 runtime hardening; 2026-05-05 smoke evidence below | `fail` |
+| `qwen36-27b-gptq` abliterated GPTQ W4_G128 canary | 8192 | `gfx1100/5930k` | `registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg` | `registry.harbor.lan/flexinfer/qwen36-27b:gptq-w4-g128-gfx1100@sha256:fe3a6bea0cd2cdf254a5db6194e01402f1f7f93c4b86d8c717695470fdd3849d` | Cache Ready; vLLM reached Ready with `quantization=gptq`, `kvCacheDtype=auto`, `maxNumSeqs=2`; direct proxy and service smoke returned HTTP 200 | First activation exposed proxy `lastActiveTime` conflict; cold start was dominated by 17.6GB image pull; `fp8_e4m3` KV crashed Triton cache update; `gptq_marlin` rejected because artifact config declares `gptq`; current `gptq` runtime serves incoherent output (`!!!!!!!!!!!!` / multilingual junk) and flat punctuation logprobs even with the ROCm reference GPTQ fallback patched in | MR !247 replacement; MR !248 runtime hardening; MR !253/!254 quiet runtime; 2026-05-05 and 2026-05-06 smoke evidence below | `fail` |
 | `qwen3-14b-gptq` | TBD | `gfx1100/5930k` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
 | `gemma4-31b-gptq` Radeon VII comparison | n/a | `gfx906/radeonvii` | n/a | n/a | n/a | Off-gfx1100 comparison row; VRAM ceiling for this promotion lane | SD-3 / Issue #57 | `skip` |
 
@@ -193,6 +193,26 @@ Raw outputs:
   fallback already proven necessary for Gemma4. The Qwen patch stack now adds a
   `GPTQLinearMethod.apply` ROCm/4-bit slow path so the next rebuilt runtime can
   test coherence without the fused `gptq_gemm` kernel.
+
+### 2026-05-06 qwen36-27b-gptq quality recheck
+
+- Runtime image was quiet and digest-pinned:
+  `registry.harbor.lan/flexinfer/vllm@sha256:cb6d92c956ee150b4b8210e625586140e1b5da4c204caa422b1965e953de78e8`.
+- Greedy chat smoke through `flexinfer-proxy`:
+  `{"model":"qwen36-27b","messages":[{"role":"user","content":"Answer with exactly one word: blue"}],"max_tokens":24,"temperature":0,"top_p":1}`
+  returned HTTP 200 with `!!!!!!!!!!!!!!!!!!!!!!!!`.
+- Direct `/v1/completions` smoke against `qwen36-27b-gptq:8000` for prompt
+  `The color of the sky is` returned `!!!!!!!!!!!!!!!!` with identical
+  top-logprobs for punctuation tokens (`!`, `"`, `#`, `$`, `%`) at each
+  generated position (`-12.422473907470703`), indicating a flat/collapsed
+  logits distribution rather than a sampling or chat-template problem.
+- Pod logs confirmed the quiet patch applied the ROCm GPTQ reference fallback,
+  naive FLA kernels, RMSNorm native path, and direct `gdn_attention_core`
+  bypass, so the remaining blocker is deeper artifact/runtime math or
+  quantized-weight interpretation.
+- Serving posture: keep `qwen36-27b-gptq` as a direct canary only. Do not expose
+  replacement labels such as `qwen3-coder` or `qwen3-30b-a3b` until a coherent
+  deterministic smoke passes.
 
 ### 2026-04-26 gemma4 26B/31B execution findings
 
