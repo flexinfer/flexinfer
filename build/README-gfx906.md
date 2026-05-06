@@ -15,19 +15,25 @@ This document covers deploying inference backends on AMD gfx906 (Vega20) GPUs wi
 | Backend | Support Level | Image | Notes |
 |---------|-------------|-------|-------|
 | llama.cpp | Full | `registry.harbor.lan/flexinfer/llamacpp:rocm-gfx906` | GGUF format, built with GGML_HIPBLAS |
-| vLLM | Full | `registry.harbor.lan/flexinfer/vllm:rocm-gfx906` | Built with BUILD_FA=0 |
-| MLC-LLM | Full | `registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx906` | Pre-compiled libs recommended |
+| vLLM | Experimental | `registry.harbor.lan/flexinfer/vllm:rocm-gfx906` | Dedicated image path only; not included in the current unified `runtime:rocm-gfx906` profile |
+| MLC-LLM | Experimental | `registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx906` | Pre-compiled libs recommended; canary before promotion |
 | Ollama | Full | `ollama/ollama:rocm` (generic) | Works with runtime env overrides |
-| Diffusers | Experimental | Generic ROCm image | Image bakes gfx1100 env; runtime ROCmEnvVars overrides |
-| ComfyUI | Experimental | Generic ROCm image | Image bakes gfx1100 env; runtime ROCmEnvVars overrides |
+| Diffusers | Experimental | `registry.harbor.lan/flexinfer/runtime:rocm-gfx906` or dedicated ROCm image | Requires CPU offload and conservative 512px warmups |
+| ComfyUI | Experimental | Dedicated ROCm image | Requires gfx906-specific env and canary validation |
 
 ## Key Environment Variables
 
 FlexInfer automatically injects these via `backend/interface.go:ROCmEnvVars()`:
 
 ```bash
+# Radeon VII reports as gfx900; override to target gfx906 kernels.
+HSA_OVERRIDE_GFX_VERSION=9.0.6
+
 # Critical: Disable SDMA engine on Vega20 (prevents memory access faults)
 HSA_ENABLE_SDMA=0
+
+# Disable SVM to avoid Vega20 VMM/hipMemGetInfo failures.
+HSA_USE_SVM=0
 
 # Target architecture
 PYTORCH_ROCM_ARCH=gfx906
@@ -36,7 +42,6 @@ PYTORCH_ROCM_ARCH=gfx906
 ### What NOT to Set
 
 Unlike gfx1100, do **not** set these for gfx906:
-- `HSA_OVERRIDE_GFX_VERSION` — Vega20 does not need a version override
 - `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL` — AOTriton is gfx1100-specific
 
 ## Quantization Guidance
@@ -46,7 +51,7 @@ With 16GB HBM2 VRAM:
 | Model Size | Recommended Quant | VRAM Usage | Notes |
 |------------|-------------------|------------|-------|
 | 7B | Q4_K_M (GGUF) | ~5GB | Comfortable fit |
-| 7B | AWQ/GPTQ (vLLM) | ~5GB | Good throughput |
+| 7B | AWQ/GPTQ (vLLM) | ~5GB | Experimental until the vLLM gfx906 image is canary-promoted |
 | 13B | Q4_K_M (GGUF) | ~8GB | Good fit |
 | 30B MoE | Q4_K_M (GGUF) | ~14GB | Tight fit, reduce context |
 | 70B | Q2_K (GGUF) | ~15GB | Minimal context only |
@@ -70,6 +75,10 @@ This image is a FlexInfer-owned source build. It uses the official
 `rocm/vllm-dev:base` image, pinned by digest, only as the build environment so
 HIP, CMake, and PyTorch are from a coherent ROCm stack. It then clones the
 pinned vLLM tag and builds the wheel with `BUILD_FA=0` for gfx906.
+
+The vLLM gfx906 image is a canary path, not part of the default unified runtime.
+Validate it on hardware and update the GPUProfile support level before using it
+as an operator-default backend.
 
 ```bash
 docker build \
@@ -103,6 +112,9 @@ spec:
 ```
 
 ### vLLM
+
+Use this manifest only for canary validation. The default `gfx906` GPUProfile
+keeps vLLM experimental until a runtime/image digest has passed smoke tests.
 
 ```yaml
 apiVersion: ai.flexinfer/v1alpha2

@@ -1,5 +1,7 @@
 # vLLM inference on AMD Radeon VII (gfx906)
 # Uses AWQ quantization for efficient VRAM usage on 16GB HBM2
+# Canary only: the default unified gfx906 runtime does not ship vLLM today.
+# Promote a validated vLLM image digest before treating this as full support.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:

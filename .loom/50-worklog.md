@@ -2,6 +2,38 @@
 
 Chronological notes while executing the plan (useful for handoffs and debugging).
 
+## 2026-05-06
+
+### RALPH Slice 1 — gfx1100/gfx906 capability matrix reconciliation
+
+- What changed:
+  - Ran the roadmap/spec RALPH loop against the new `gfx1100/gfx906` platform spec and selected Slice 1 as the smallest reversible increment.
+  - Added `docs/planning/rocm-gfx1100-gfx906-platform-slice.md` with the iteration plan, support matrix, acceptance criteria, validation plan, and rollback path.
+  - Demoted `gfx906` vLLM support in `deploy/gpuprofiles/gfx906.yaml` from `full` to `experimental`.
+  - Updated `build/README-gfx906.md` so vLLM and MLC-LLM are canary/experimental, not full default lanes, and corrected the Vega20 env guidance to include `HSA_OVERRIDE_GFX_VERSION=9.0.6`, `HSA_ENABLE_SDMA=0`, `HSA_USE_SVM=0`, and `PYTORCH_ROCM_ARCH=gfx906`.
+  - Added a canary warning to `examples/v1alpha2/model-vllm-gfx906.yaml`.
+  - Linked the new platform lane from `docs/planning/next-roadmap.md` and marked RG-1 complete.
+- Why:
+  - `build/runtime.yaml` disables vLLM in the current unified `gfx906` runtime, while the GPUProfile and README called it full support. The first slice removes that contradictory truth before API or runtime-image work.
+- Validation:
+  - `git diff --check -- deploy/gpuprofiles/gfx906.yaml build/README-gfx906.md examples/v1alpha2/model-vllm-gfx906.yaml docs/planning/rocm-gfx1100-gfx906-platform-slice.md docs/planning/next-roadmap.md .loom/gfx1100-gfx906-platform-enhancements-plan.md .loom/40-decisions.md .loom/50-worklog.md` passed.
+  - `rg -n "gfx906|vLLM|runtime:rocm-gfx906|support:|HSA_OVERRIDE_GFX_VERSION|HSA_ENABLE_SDMA|HSA_USE_SVM" ...` confirmed the reconciled support/env statements are present.
+  - `yq e '.' deploy/gpuprofiles/gfx906.yaml` and `yq e '.' examples/v1alpha2/model-vllm-gfx906.yaml` passed.
+- Blockers:
+  - `agent_context__agent_session_start` failed with `Transport closed`; handoff is captured in `.loom` docs for this pass.
+- Next:
+  - Add a consistency check for `build/runtime.yaml` vs GPUProfiles/Helm runtime profiles.
+  - Expand `.loom/60-validation-matrix.md` for runtime digest canary rows.
+
+## 2026-05-02
+
+- Refreshed `.loom/00-workspace-snapshot.md` with the plan-loom-core snapshot script.
+- Confirmed Loom resource mode is available through `loom://config`, `loom://servers`, `loom://tools/index`, and `loom://health`.
+- Confirmed `codebase_memory` health via `loom tools call codebase_memory__codebase_stats --args '{"repo_id":"flexinfer"}' --json` with `total_chunks: 2831`.
+- Added `docs/planning/spec-driven-delivery.md`.
+- Updated `ROADMAP.md`, `docs/planning/next-roadmap.md`, and `docs/planning/README.md` to expose the spec-driven delivery lane.
+- Updated `.loom/00-index.md`, `.loom/00-mcp-inventory.md`, `.loom/20-product-spec.md`, `.loom/30-implementation-plan.md`, and `.loom/40-decisions.md` with current planning context.
+
 ## 2026-04-25
 
 ### Planned 31B TurboQuant memory fix
