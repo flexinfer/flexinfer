@@ -6,7 +6,11 @@
 // wire format.
 package bridge
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	presencepkg "github.com/crb2nu/loom/internal/visibility/contracts/presence"
+)
 
 // --- Session DTOs ---
 
@@ -368,30 +372,10 @@ type ContextInspectResult struct {
 // active session — the typical signature of a vendor CLI that registered
 // presence (or got auto-registered on heartbeat) but never successfully
 // called agent_session_start.
-type PresenceInfo struct {
-	AgentID             string   `json:"agent_id"`
-	SessionID           string   `json:"session_id,omitempty"`
-	Status              string   `json:"status"`
-	AgentType           string   `json:"agent_type"`
-	Description         string   `json:"description"`
-	CurrentTask         string   `json:"current_task"`
-	ActiveFiles         []string `json:"active_files"`
-	Branch              string   `json:"branch"`
-	PRUrl               string   `json:"pr_url,omitempty"`
-	WorktreeID          string   `json:"worktree_id"`
-	LastHeartbeat       string   `json:"last_heartbeat"`
-	RegisteredAt        string   `json:"registered_at"`
-	Source              string   `json:"source,omitempty"`
-	HasPresence         bool     `json:"has_presence,omitempty"`
-	HasSession          bool     `json:"has_session,omitempty"`
-	SessionStatus       string   `json:"session_status,omitempty"`
-	SessionStartedAt    string   `json:"session_started_at,omitempty"`
-	HeartbeatAgeSeconds int      `json:"heartbeat_age_seconds,omitempty"`
-	SessionAgeSeconds   int      `json:"session_age_seconds,omitempty"`
-	TelemetryStatus     string   `json:"telemetry_status,omitempty"`
-	IsOrphan            bool     `json:"is_orphan,omitempty"`
-	OrphanAgeSeconds    int      `json:"orphan_age_seconds,omitempty"`
-}
+//
+// Deprecated: use internal/visibility/contracts/presence.PresenceInfo.
+// Retained as an alias for backward compatibility during EPIC 2 (#66).
+type PresenceInfo = presencepkg.PresenceInfo
 
 // PresenceHeartbeatResult is the response from agent_presence_heartbeat.
 type PresenceHeartbeatResult struct {

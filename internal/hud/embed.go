@@ -1,3 +1,18 @@
+// This file holds the embedding surface used when the HUD is co-hosted in
+// the same process as the loom daemon. The constructors here (NewApp,
+// StartMonitors, RegisterRoutes, RefreshMonitors, StopMonitors) form the
+// public library API that downstream Go consumers — including the loom
+// daemon's own startEmbeddedHUD path — depend on. Background, lifecycle
+// rules, and a worked example live in docs/HUD_EMBEDDING.md.
+//
+// Embedded mode pairs hud.NewApp with bridge.NewLocalCaller so JSON-RPC
+// calls dispatch directly to the daemon's handleMessage in-process; no
+// Unix socket, no transport layer, no circuit breaker. The standalone
+// "loom hud" CLI by contrast uses bridge.NewDaemonClient over a socket.
+//
+// Stability: this surface is pre-1.0 and may change in minor versions.
+// Pin to a tagged Loom Core release if downstream stability matters.
+
 package hud
 
 import (
@@ -27,10 +42,29 @@ const (
 	embeddedSnapshotCacheTTL         = 10 * time.Minute
 )
 
-// NewApp creates a HUD App with the given caller and configuration.
-// The caller can be a bridge.DaemonClient (standalone mode) or
-// bridge.LocalCaller (embedded in daemon). Call StartMonitors to begin
-// background polling, and RegisterRoutes to mount HTTP handlers.
+// NewApp constructs a HUD App with the given caller and configuration.
+// It does NOT start any background work — caller responsibilities are:
+//
+//  1. Pass a bridge.Caller. Two implementations ship with Loom Core:
+//     bridge.NewDaemonClient(socketPath, logger) for standalone mode, and
+//     bridge.NewLocalCaller(dispatch) for in-process / embedded mode.
+//     Both satisfy the Caller interface; embedded mode skips the socket
+//     and the circuit breaker by dispatching directly to the daemon's
+//     MCP message handler.
+//  2. Call (*App).StartMonitors(ctx) once to begin background polling.
+//     StartMonitors is NOT idempotent — calling it twice double-starts
+//     each monitor goroutine.
+//  3. Call (*App).RegisterRoutes(mux) to mount HTTP handlers, OR rely on
+//     the standalone Run() function which builds its own mux and listener.
+//  4. Defer (*App).StopMonitors() so monitors, the coordinator, the cache,
+//     and the OTel tracer get torn down on shutdown.
+//
+// If logger is nil, slog.Default() with component="hud" is used. The
+// returned App is safe to use from multiple goroutines after StartMonitors
+// has returned; concurrent calls to NewApp itself are not supported.
+//
+// See docs/HUD_EMBEDDING.md for embedding patterns, lifecycle rules, and
+// a worked in-process example.
 func NewApp(cfg Config, caller bridge.Caller, logger *slog.Logger) (*App, error) {
 	if logger == nil {
 		logger = slog.Default().With("component", "hud")
@@ -73,8 +107,26 @@ func NewApp(cfg Config, caller bridge.Caller, logger *slog.Logger) (*App, error)
 	return app, nil
 }
 
-// StartMonitors initializes and starts all background monitors and optional
-// components (coordinator, spawn orchestrator, SSE hub, etc.).
+// StartMonitors initializes and starts all background monitors and the
+// optional components (SSE hub, event log, coordinator, spawn orchestrator,
+// alert engine, push bridge, session reaper). Each monitor runs on its own
+// fixed cadence:
+//
+//	fleet         15s   memory     10s   sandbox       10s
+//	health         5s   workflow    5s   cost          10s
+//	stream         5s   pipeline   10s   context-health 5s
+//	codebase      30s   shuttle     3s
+//
+// The supplied ctx governs lifecycle for the spawn orchestrator's reconcile
+// loop, the session reaper, and the push token reaper. Cancelling ctx does
+// NOT stop the monitor polling loops — call (*App).StopMonitors() for that.
+//
+// StartMonitors is NOT idempotent. Call it exactly once per App.
+//
+// In embedded mode the daemon's external SSE event consumer is bypassed,
+// so monitors will only observe daemon-side state changes via their
+// polling cadence. Use (*App).RefreshMonitors() to force an immediate
+// refresh after startup or after the daemon reloads.
 func (a *App) StartMonitors(ctx context.Context) error {
 	// Shared runtime wiring must exist before the first monitor refresh so the
 	// embedded HUD can broadcast the initial snapshots instead of missing them.
@@ -206,10 +258,29 @@ func (a *App) StartMonitors(ctx context.Context) error {
 	return nil
 }
 
-// RefreshMonitors forces a best-effort refresh of the embedded HUD snapshots.
-// Embedded daemon mode does not have the standalone HUD's SSE event consumer,
-// so explicit refreshes are needed after startup and daemon reloads to avoid
-// serving stale or empty cached state until the next polling tick.
+// RefreshMonitors forces a best-effort one-shot refresh of every embedded
+// HUD snapshot. Standalone HUD subscribes to the daemon's SSE event endpoint
+// and refreshes monitors on event arrival; embedded mode bypasses that
+// endpoint (both sides share a process) so explicit refreshes are needed
+// to avoid serving stale or empty state.
+//
+// Behaviour:
+//   - Each monitor's Refresh() is called sequentially. Failures are logged
+//     and skipped; one bad monitor does not block the others.
+//   - The fleet refresh retries once after a 500ms backoff if the first
+//     refresh produced an empty snapshot, to absorb daemon startup races.
+//   - When a refresh produces an empty snapshot but a cached snapshot
+//     exists in loomcache (key embeddedFleetSnapshotCacheKey or
+//     embeddedPipelineSnapshotCacheKey, TTL embeddedSnapshotCacheTTL = 10m)
+//     the cached value is restored to the monitor.
+//
+// Call sites:
+//   - Once shortly after StartMonitors returns. The daemon's
+//     startEmbeddedHUD launches it via "go app.RefreshMonitors()" so the
+//     refresh does not block route registration.
+//   - After the daemon hot-reloads its config or rebuilds its tool registry.
+//
+// Safe to call concurrently with monitor polling; safe to call repeatedly.
 func (a *App) RefreshMonitors() {
 	if a.fleetMonitor != nil && a.fleetMonitor.Ready() {
 		if err := a.fleetMonitor.RefreshForce(); err != nil {
@@ -366,7 +437,21 @@ func (a *App) storeCachedSnapshot(key string, value any, ttl time.Duration) {
 	a.cache.Set(key, value, ttl)
 }
 
-// StopMonitors stops all background monitors and releases resources.
+// StopMonitors stops every background monitor, the optional coordinator,
+// closes the loomcache backend, and shuts down the OTel tracer. It is
+// safe to call when StartMonitors has not been called (each component
+// is nil-checked) and safe to call multiple times.
+//
+// Embedders should defer StopMonitors immediately after a successful
+// StartMonitors so cleanup runs on shutdown regardless of the exit path:
+//
+//	if err := app.StartMonitors(ctx); err != nil {
+//	    return err
+//	}
+//	defer app.StopMonitors()
+//
+// StopMonitors does NOT shut down any HTTP server the embedder mounted
+// the HUD on — that lifecycle belongs to the host process.
 func (a *App) StopMonitors() {
 	if a.fleetMonitor != nil {
 		a.fleetMonitor.Stop()
@@ -412,8 +497,21 @@ func (a *App) StopMonitors() {
 	}
 }
 
-// RegisterRoutes mounts all HUD HTTP routes on the given ServeMux.
-// This is the same set of routes used in standalone mode.
+// RegisterRoutes mounts all HUD HTTP routes on the supplied ServeMux.
+// This is the same route set the standalone "loom hud" command installs:
+// the static frontend (served from the embedded frontend/dist FS),
+// the JSON API under /api/, the SSE event hub under /api/events,
+// pprof under /debug/pprof/ when enabled, and the mobile operator API
+// under /api/mobile/v1 when MobileOperatorToken is configured.
+//
+// Call this AFTER StartMonitors so the SSE hub and event log are ready
+// to receive broadcasts from monitor refresh callbacks.
+//
+// The embedder owns the ServeMux and the http.Server / listener; the
+// HUD only registers handlers. The standalone runtime at
+// internal/hud/runtime.go shows the full server-construction pattern
+// (TLS, port file, signal handling, browser-open) for cases where the
+// embedder wants the same defaults.
 func (a *App) RegisterRoutes(mux *http.ServeMux) {
 	a.registerRoutes(mux)
 }
