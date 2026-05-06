@@ -191,7 +191,7 @@ llamacpp:
 
 vllm:
   rocmImage: registry.harbor.lan/library/vllm-api:rocm-navi-fp8e5-v2
-  gfx1100Image: registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg
+  gfx1100Image: registry.harbor.lan/flexinfer/vllm@sha256:9d203a6ae956abc2e7dc24a98b8afd0d29c6336c742c2da174862f07aacb60da
 
 diffusers:
   rocmImage: registry.harbor.lan/library/diffusers-api:rocm-0cbf9b7
