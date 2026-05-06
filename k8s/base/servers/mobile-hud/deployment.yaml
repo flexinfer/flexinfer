@@ -21,8 +21,15 @@ spec:
         kubernetes.io/arch: amd64
       containers:
         - name: loomd
+          # Concrete SHA tag is set via the platform/gitops Kustomization
+          # `images:` override (kustomization-loom-hub-servers.yaml). The
+          # `:latest` placeholder here only matches the override key.
           image: registry.harbor.lan/mcp/loom-core:latest
-          imagePullPolicy: IfNotPresent
+          # Always pull on rollout so a SHA bump in the gitops Kustomization
+          # picks up the new image even when the previous SHA was already
+          # cached on the node. Without this, IfNotPresent kept pods on
+          # whatever was first pulled, and SHA bumps silently no-op'd.
+          imagePullPolicy: Always
           command:
             - /usr/local/bin/loomd
           args:
