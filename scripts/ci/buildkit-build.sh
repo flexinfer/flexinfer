@@ -77,6 +77,14 @@ if [ -n "${GITLAB_TOKEN:-}" ]; then
   GITLAB_TOKEN_SECRET="--secret id=gitlab_token,env=GITLAB_TOKEN"
 fi
 
+# Same timestamp across the failover loop so retries against a fallback registry
+# don't end up with a different `:YYYYMMDD-HHMMSS` tag than the primary push.
+# This tag enables Flux Image Automation: ImagePolicy filters
+# `^[0-9]{8}-[0-9]{6}$` and sorts alphabetically-descending to select the
+# latest image. See platform/gitops/k3s/flux/image-automation/PLAN.md and the
+# flexinfer-site/streamslate-site/fi-fhir policies for the pattern this enables.
+TIMESTAMP_TAG="$(date -u +%Y%m%d-%H%M%S)"
+
 for REGISTRY in $REGISTRY_CANDIDATES; do
   PROBE_LOG="$CI_PROJECT_DIR/.probe-${REGISTRY//[^a-zA-Z0-9_.-]/_}.log"
   rm -f "$PROBE_LOG"
@@ -96,7 +104,7 @@ for REGISTRY in $REGISTRY_CANDIDATES; do
 
   IMAGE="$REGISTRY/$IMAGE_REPO"
   CACHE_REF="$REGISTRY/library/build-cache/$CACHE_NAME"
-  IMAGE_NAMES="$IMAGE:$CI_COMMIT_SHORT_SHA"
+  IMAGE_NAMES="$IMAGE:$CI_COMMIT_SHORT_SHA,$IMAGE:$TIMESTAMP_TAG"
   if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
     IMAGE_NAMES="$IMAGE_NAMES,$IMAGE:latest"
   fi
