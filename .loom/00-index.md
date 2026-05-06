@@ -2,8 +2,8 @@
 
 ## Quick Links
 
-- **Incident: Harbor 401 blocks loom-core image builds + silent stale rollouts (2026-05-05)**: `100-incident-harbor-401-deployment-chain-2026-05-05.md` ← **runbook for ops; partial mitigation in [!293](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/293), Harbor side still pending**
-- **Agent telemetry event bus + live spectator (2026-05-04)**: `97-research-agent-telemetry-spectator-2026-05-04.md`, `98-product-spec-agent-telemetry-spectator-2026-05-04.md`, `99-implementation-plan-agent-telemetry-spectator-2026-05-04.md` (Phase 0+1+2.3+4 shipped via [!284](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/284), [!286](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/286), [!288](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/288), [!290](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/290), [!291](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/291), [!292](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/292) — **deploy blocked on Harbor; see incident 100**)
+- **✅ Incident: Harbor 401 + ops hygiene arc (2026-05-05 → 2026-05-06)**: original incident runbook in `100-incident-harbor-401-deployment-chain-2026-05-05.md`; followup plan + status in `101-harbor-incident-followup-plan.md`. **Followups #2/#3/#4 LIVE; #1 CI prereq landed; remaining loom-core Image* CRDs await design choice (see .loom/101).** Bonus arcs in same window: workspace-clean v2 + new `workspace-salvage` tool ([services/workspace-tooling](https://gitlab.flexinfer.ai/services/workspace-tooling) — new repo) and 27 stranded codex branches salvaged across the workspace.
+- **Agent telemetry event bus + live spectator (2026-05-04)**: `97-research-agent-telemetry-spectator-2026-05-04.md`, `98-product-spec-agent-telemetry-spectator-2026-05-04.md`, `99-implementation-plan-agent-telemetry-spectator-2026-05-04.md` (Phase 0+1+2.3+4 shipped via [!284](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/284), [!286](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/286), [!288](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/288), [!290](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/290), [!291](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/291), [!292](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/292) — deployed to mobile-hud at `loom-core:28b64b65` after Harbor incident cleared)
 - **Loom Mills v2 — Hierarchical Swarm + Adversarial Audit + Cross-Repo (2026-05-02)**: `92-research-mills-v2-hierarchical-swarm-2026-05-02.md`, `93-product-spec-mills-v2-hierarchical-swarm-2026-05-02.md`, `94-implementation-plan-mills-v2-hierarchical-swarm-2026-05-02.md` (✅ phases 1–8 shipped 2026-05-02 → 2026-05-04 + hive→mills rename; status snapshot archived as `.loom/archive/95-implementation-status-mills-v2-2026-05-02.md`)
 - **Loom Mills v1 — Council + Pipeline (agent swarm meta-orchestration, 2026-04-25)**: `89-research-agent-swarm-council-pipeline-2026-04-25.md`, `90-product-spec-agent-swarm-council-pipeline-2026-04-25.md`, `91-implementation-plan-agent-swarm-council-pipeline-2026-04-25.md` (phases 1–6 shipped except 6.5 docs + 6.6 default-on flip; both rolled into v2 phase 0)
 - **Session mgmt + spawn auth + weaver integration (2026-04-19)**: `86-research-session-spawning-weaver-integration-2026-04-19.md`, `87-product-spec-session-spawning-weaver-2026-04-19.md`, `88-implementation-plan-session-spawning-weaver-2026-04-19.md`
@@ -48,7 +48,28 @@
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
 
-## Current Planning Addendum (2026-05-04)
+## Current Planning Addendum (2026-05-06)
+
+- **Open backlog (next-session candidates)** — pick from:
+  - **Followup #1 of Harbor incident** (`.loom/101`): add loom-core `ImageRepository`/`ImagePolicy`/`ImageUpdateAutomation` to `platform/gitops/k3s/flux/image-automation/`. CI prereq (timestamp tag) shipped in [!299](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/299). One design choice (writeback target) blocks; recommendation in `.loom/101`. ~30 min.
+  - **EPIC 1 — Simplify Agent Context** ([Issue #65](https://gitlab.flexinfer.ai/services/loom-core/-/issues/65)). 80 → ~45 MCP tools across 12 SIMP-N issues. Largest tool-surface debt cleanup.
+  - **EPIC 2 — Unify Visibility** ([Issue #66](https://gitlab.flexinfer.ai/services/loom-core/-/issues/66)). Shared API contracts + embedded HUD across HUD/CLI/TUI. 5 UNIFY-N issues.
+  - **OTel trace export from daemon** ([Issue #12](https://gitlab.flexinfer.ai/services/loom-core/-/issues/12)). Audit-backed summaries shipped 2026-04-14; next slice extends to OTel-compatible export + HUD percentile/waterfall views.
+  - **Fleet orchestration UX** ([Issue #13](https://gitlab.flexinfer.ai/services/loom-core/-/issues/13)). Dispatch panel, file-claim conflict surfacing, merge orchestration assistance.
+  - **Tier-3 / next-gen agentic** features from Mills v2 (audit-blocking promotion, default-on cross-repo, mobile Mills parity).
+- **Just shipped (2026-05-05 → 2026-05-06): Harbor incident response + ops hygiene arc:**
+  - Incident runbook + followup plan (`.loom/100`, `.loom/101`)
+  - Followup #2 stale-pin alert ([gitops!89](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/89))
+  - Followup #3 robot expiry monitor ([gitops!88](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/88) + [gitops!90](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/90))
+  - Followup #4 runner buildkit fallback ([gitops!87](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/87))
+  - Followup #1 CI timestamp tag prereq ([!299](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/299))
+  - workspace-clean v2 (drift filter, unpushed-commit detection, noise-path skip, JSON `commits_at_risk`) + new `workspace-salvage` companion script
+  - 27 stranded codex branches across the workspace pushed to origin (no work lost)
+  - 52 dead worktrees swept (~1.3 GB reclaimed)
+  - Skill registry updates ([!295](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/295), [!296](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/296)) — feature-dev/bugfix/repo-intake teach about `commits_at_risk`
+  - New repo: [services/workspace-tooling](https://gitlab.flexinfer.ai/services/workspace-tooling) (workspace-clean + workspace-salvage + sundries, no longer laptop-bound)
+
+## Prior Planning Addendum (2026-05-04, historical)
 
 - **Active planning slice:** Agent telemetry event bus + live spectator (`97`/`98`/`99`). Foundation that future backchannel between sessions, adversarial-pair workflow, and skill-effectiveness leaderboard subscribe to. Reuses existing daemon EventBus + HUD SSE Hub + iOS SSE client; net new work is event schema additions, redaction primitive, hook wiring across Claude Code/Codex/Gemini, and a HUD `LiveSessionsCard`.
 - **Just shipped (2026-05-02 → 2026-05-04):** Loom Mills v2 phases 1–8 + hive→mills rename. Plan was `92`/`93`/`94`; per-phase status snapshot archived at `.loom/archive/95-implementation-status-mills-v2-2026-05-02.md`. Closed gaps G-1..G-4 in [`7190754f`](https://gitlab.flexinfer.ai/services/loom-core/-/commit/7190754f) + subsequent slices.

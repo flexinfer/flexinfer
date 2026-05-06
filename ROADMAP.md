@@ -1,6 +1,6 @@
 # Project Roadmap
 
-> Last Updated: April 14, 2026
+> Last Updated: May 6, 2026
 
 ## Current Status
 
@@ -32,6 +32,22 @@ MCP is now the de facto standard for AI-tool integration (8M+ downloads, 5,800+ 
 - Cost tracking and audit trails (compliance and visibility)
 
 ## Recently Shipped (post `v0.9.7`)
+
+- ✅ **Harbor 401 incident response + ops hygiene arc (2026-05-05 → 2026-05-06)**
+  - Incident runbook: `.loom/100-incident-harbor-401-deployment-chain-2026-05-05.md` — 2-day silent stale-rollout caused by Harbor pull-through cache 401s + `imagePullPolicy: IfNotPresent` + manual SHA-bump dance.
+  - Followup plan + status: `.loom/101-harbor-incident-followup-plan.md`.
+  - Followup #2 stale-pin alert ([gitops!89](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/89)) — daily CronJob compares loom-hub Deployment image SHAs against Flux GitRepository HEAD, alerts on drift > 24h.
+  - Followup #3 robot expiry monitor ([gitops!88](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/88) + [gitops!90](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/90)) — daily CronJob queries Harbor `/api/v2.0/robots`, alerts on robots within 14 days of expiry.
+  - Followup #4 runner buildkit fallback ([gitops!87](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/87)) — mirrored `library/buildkit:v0.12.5`, switched gitlab-runner HelmRelease off the dockerhub-cache critical path.
+  - Followup #1 CI prereq ([!299](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/299)) — added `YYYYMMDD-HHMMSS` timestamp tag to CI image pushes so Flux ImagePolicy can sort. Remaining CRDs deferred (design choice — see `.loom/101`).
+  - `imagePullPolicy: Always` on mobile-hud ([!293](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/293)) eliminates the silent-stale-pull failure mode.
+
+- ✅ **Workspace tooling + cleanup arc (2026-05-06)**
+  - New repo: [services/workspace-tooling](https://gitlab.flexinfer.ai/services/workspace-tooling) — `~/workspace/bin/` git-tracked across machines, includes `workspace-clean`, `workspace-salvage`, and 7 sundries.
+  - `workspace-clean` v2: agent-config drift filter, unpushed-commit detection (`commits_at_risk` JSON field + `⚠ STRAND` stderr warning), noise-path skip (`.next/`, `node_modules/`, `tmp/pre-commit-cache/`), auto-remove safety guard.
+  - `workspace-salvage` (new): `wip(<branch>): salvage uncommitted work [auto]` flow that stages real source changes only (filters drift/cache/autogen/lockfiles) before letting a worktree be removed.
+  - Skill registry updates ([!295](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/295), [!296](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/296)) teach feature-dev/bugfix/repo-intake skills to consume the new signals.
+  - 27 stranded codex branches across the workspace pushed to origin (no work lost). 52 dead worktrees swept (~1.3 GB reclaimed).
 
 - ✅ **HUD UI/UX overhaul (M1-M4 complete)**
   - Shipped design system foundation: tokens, type scale, spacing scale, elevation (`tokens.ts`, `theme.css`).
