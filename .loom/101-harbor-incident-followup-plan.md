@@ -1,15 +1,15 @@
 # Harbor 401 incident — long-term followup plan
 
 **Source:** [`.loom/100-incident-harbor-401-deployment-chain-2026-05-05.md`](100-incident-harbor-401-deployment-chain-2026-05-05.md)
-**Status (2026-05-06 EOD):** #2 + #3 shipped to main. #4 drafted as MR (gated on manual mirror). #1 partially planned — blocked on a CI tag-scheme change.
+**Status (2026-05-06 EOD update 2):** #2, #3, #4 fully landed. CI tag-scheme change for #1 also landed. The remaining loom-core `ImageRepository`/`ImagePolicy`/`ImageUpdateAutomation` set is a design decision (where to write back) for the user's next session.
 **Date:** 2026-05-06
 
 | # | Followup | Status | Reference |
 |---|---|---|---|
-| 1 | Flux Image Automation | **planned, blocked on CI tag scheme** — see updated section below | (this doc) |
-| 2 | Stale-pin alert | **shipped** | [platform/gitops!89](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/89) — `loom-hub-image-drift` daily CronJob + `LoomHubImageDriftStale` alert |
-| 3 | Robot expiry monitor | **shipped** | [platform/gitops!88](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/88) — `harbor-robot-expiry-check` daily CronJob + `HarborRobotAccountExpiringSoon` alert. **Prereq:** create `harbor-admin-creds` secret. |
-| 4 | Runner image fallback | **drafted, gated** | [platform/gitops!87](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/87) (DRAFT) — gated on `crane copy` mirror to Harbor `library/buildkit`. |
+| 1 | Flux Image Automation | **CI prereq landed; CRDs pending design choice** | [services/loom-core!299](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/299) (CI timestamp tag). CRDs deferred — see "Followup 1" section below for the choice. |
+| 2 | Stale-pin alert | **SHIPPED + LIVE** | [platform/gitops!89](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/89). Daily `loom-hub-image-drift` CronJob + `LoomHubImageDriftStale` alert. First scheduled run: 10:00 UTC. |
+| 3 | Robot expiry monitor | **SHIPPED + WIRED** | [platform/gitops!88](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/88) (CronJob/alert) + [platform/gitops!90](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/90) (`harbor-admin-creds` Secret using `robot$ai`). First scheduled run: 09:00 UTC. |
+| 4 | Runner image fallback | **SHIPPED** | [platform/gitops!87](https://gitlab.flexinfer.ai/platform/gitops/-/merge_requests/87). `crane copy` mirror landed `registry.harbor.lan/library/buildkit:v0.12.5` (amd64); HelmRelease `gitlab-runner` ConfigMap now reflects new image path. **One manual step remains:** `kubectl rollout restart deploy/gitlab-runner -n ci` (and `gitlab-runner-overflow`) to make the running daemon re-read the ConfigMap before next CI job. |
 
 ## Followup 1 — Flux Image Automation (BIGGEST WIN, also biggest scope)
 
@@ -327,14 +327,35 @@ KUBECONFIG=~/workspace/platform/gitops/.kube/k3s.yaml \
 | `flux-system` namespace `harbor-creds-flux` secret | #1 | Needs creation |
 | Alertmanager webhook receiver for incidental alerts | #2, #3 | Already configured (existing rules use it) |
 
-## Updated sequencing (2026-05-06 EOD)
+## Updated sequencing (2026-05-06 EOD update 2)
 
 | # | State | Next action |
 |---|---|---|
-| 4 | DRAFT MR | User: run `crane copy` to mirror buildkit, mark MR !87 ready, merge, restart runners |
-| 3 | SHIPPED | User: create `harbor-admin-creds` secret in `monitoring` namespace |
-| 2 | SHIPPED | None (defense-in-depth, will activate within 24h of any drift) |
-| 1 | PARTIAL PLAN | Add timestamp tag to loom-core CI (1-line change in `scripts/ci/buildkit-build.sh`), then copy flexinfer-site Image* CRDs across to loom-core. Or skip if #2 + manual bumps are sufficient ongoing. |
+| 4 | LIVE | One manual step: `kubectl rollout restart deploy/gitlab-runner -n ci && kubectl rollout restart deploy/gitlab-runner-overflow -n ci` so existing runner pods re-read the ConfigMap. New jobs will pull from `library/buildkit` instead of `dockerhub-cache/moby/buildkit`. |
+| 3 | LIVE | Wait for first scheduled run at 09:00 UTC. Should report "healthy: 6, expiring within window: 0". If everything's clean the alert never fires. |
+| 2 | LIVE | Defense-in-depth, will fire within 24h of any actual drift. |
+| 1 | PARTIAL | CI now produces timestamp tags. The remaining work is to add `loom-core` `ImageRepository`/`ImagePolicy`/`ImageUpdateAutomation` to `platform/gitops/k3s/flux/image-automation/`. **One design decision blocks this** — see "Followup 1 design decision" below. |
+
+## Followup 1 — design decision needed
+
+The existing `flexinfer-site` and `streamslate-site` setups use a pattern where `ImageUpdateAutomation` writes back to the **source repo** (`flexinfer-site` GitRepository) and updates the deployment manifest's `image:` line directly. The loom-hub image overrides today live in the **gitops repo** (`platform/gitops/clusters/k3s/flux-system/kustomization-loom-hub-servers.yaml` `images:` section). Two ways to resolve:
+
+**Option A — Migrate loom-core to direct deployment.yaml tags (matches existing pattern)**
+- Each loom-hub deployment.yaml in `services/loom-core/k8s/base/servers/<name>/deployment.yaml` gets its `image: …:latest` swapped to `image: …:YYYYMMDD-HHMMSS  # {"$imagepolicy": "flux-system:loom-core"}`
+- Remove the `images:` override block from the gitops Kustomization
+- ImageUpdateAutomation writes to `loom-core` GitRepository, path `./k8s/base/servers`
+- Pro: reuses 100% of existing image-automation pattern; one consistent setup across all sites
+- Con: writeback target = loom-core repo; needs deploy key with write_repository scope; coordinated change across loom-core + gitops
+
+**Option B — Keep gitops Kustomization as the override, target it for writeback**
+- Add `# {"$imagepolicy": "flux-system:loom-core:tag"}` to the `newTag:` line in `kustomization-loom-hub-servers.yaml`
+- ImageUpdateAutomation writes to `gitops-gitlab` GitRepository, path `./clusters/k3s/flux-system`
+- Pro: no change to loom-core repo; gitops stays the single source of truth for production image pins
+- Con: introduces a second image-automation pattern alongside the existing flexinfer-site one
+
+**Recommendation:** Option B — minimum disruption, keeps the deployment manifest cleanly templated, and the gitops Kustomization image override is the right architectural place for "what we deploy" pins. The new pattern can later be retrofit onto flexinfer-site if consistency matters more than the cost of migration.
+
+Either path is ~30 min of work once chosen. The `harbor-registry-creds` secret (in `flux-system`) and `harbor-registry-ca` config already exist and are reused.
 
 ## Sources
 
