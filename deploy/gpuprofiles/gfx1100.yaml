@@ -32,7 +32,7 @@ spec:
   backends:
     vllm:
       support: full
-      image: registry.harbor.lan/flexinfer/vllm@sha256:9d203a6ae956abc2e7dc24a98b8afd0d29c6336c742c2da174862f07aacb60da
+      image: registry.harbor.lan/flexinfer/vllm@sha256:c627593948c3180de05ad636e9fc709b3b8bbfa45f8822befa0fb753e10dda12
     llamacpp:
       support: full
     diffusers:
