@@ -134,6 +134,56 @@ func TestDesiredReplicasServerless(t *testing.T) {
 	}
 }
 
+func TestDeploymentExists(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "idle-model",
+			Namespace: "default",
+		},
+	}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      model.Name,
+			Namespace: model.Namespace,
+		},
+	}
+
+	tests := []struct {
+		name    string
+		objects []client.Object
+		want    bool
+	}{
+		{name: "missing", want: false},
+		{name: "existing", objects: []client.Object{deployment}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(s).
+				WithObjects(tt.objects...).
+				Build()
+			r := &ModelReconciler{Client: fakeClient}
+
+			got, err := r.deploymentExists(context.Background(), model)
+			if err != nil {
+				t.Fatalf("deploymentExists() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("deploymentExists() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDesiredReplicasWarmPrimaryPolicy(t *testing.T) {
 	vllmBackend, _ := backend.Get("vllm")
 	s := runtime.NewScheme()
