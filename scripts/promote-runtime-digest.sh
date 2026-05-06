@@ -315,6 +315,43 @@ print_current_consumers() {
   done
 }
 
+print_promotion_targets() {
+  local profile_file="$1" values_file="$2" update_gpuprofile="$3" update_values="$4"
+  shift 4
+  echo "Promotion targets:"
+  if [[ "${update_gpuprofile}" == "true" ]]; then
+    echo "  - GPUProfile runtime image: ${profile_file}"
+  fi
+  if [[ "${update_values}" == "true" ]]; then
+    echo "  - Helm runtime profiles: ${values_file}"
+  fi
+  local model_file
+  for model_file in "$@"; do
+    echo "  - Model manifest image: ${model_file}"
+  done
+}
+
+print_validation_reminders() {
+  local profile="$1" arch="$2" apply="$3"
+  echo "Validation reminders:"
+  echo "  - Run scripts/check-runtime-profile-consistency.sh after promotion."
+  echo "  - Record profile=${profile}, arch=${arch}, digest, canary command, result, and rollback digest in .loom/60-validation-matrix.md."
+  case "${arch}" in
+    gfx1100)
+      echo "  - Smoke gfx1100 textgen and imagegen lanes before Flux reconciliation."
+      ;;
+    gfx906)
+      echo "  - Smoke gfx906 conservative lanes: llama.cpp or Ollama, GPTQ/abliteration, and 512px diffusers offload."
+      ;;
+    *)
+      echo "  - Smoke at least one backend served by this runtime profile before Flux reconciliation."
+      ;;
+  esac
+  if [[ "${apply}" != "true" ]]; then
+    echo "  - Dry-run only: re-run with --apply after the digest and canary plan are validated."
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --digest)
@@ -402,6 +439,10 @@ echo "  target:  ${TARGET_IMAGE}"
 echo "  mode:    $([[ "${APPLY}" == "true" ]] && echo apply || echo dry-run)"
 echo ""
 print_current_consumers "${PROFILE_FILE}" "${VALUES_FILE}" "${PROFILE}" "${ARCH}" "${UPDATE_GPUPROFILE}" "${UPDATE_VALUES}" "${MODEL_MANIFESTS[@]}"
+echo ""
+print_promotion_targets "${PROFILE_FILE}" "${VALUES_FILE}" "${UPDATE_GPUPROFILE}" "${UPDATE_VALUES}" "${MODEL_MANIFESTS[@]}"
+echo ""
+print_validation_reminders "${PROFILE}" "${ARCH}" "${APPLY}"
 echo ""
 
 if [[ "${APPLY}" == "true" ]]; then
