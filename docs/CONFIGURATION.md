@@ -282,6 +282,27 @@ If you need to update a mutable tag cluster-wide, either:
 2. Delete the cached image on each node (`crictl rmi <image>`)
 3. Use a different tag and update the Model spec
 
+#### Prewarming large serving images
+
+For heavyweight runtime images, configure Helm `imagePrewarm` profiles so
+kubelet pulls the image before the first user request:
+
+```yaml
+imagePrewarm:
+  enabled: true
+  profiles:
+    - name: gfx1100-serving
+      nodeSelector:
+        kubernetes.io/hostname: gpu-node-1
+      images:
+        - registry.example.com/flexinfer/vllm@sha256:...
+        - registry.example.com/flexinfer/diffusers:rocm-gfx1100
+```
+
+Each profile creates a low-priority DaemonSet whose containers sleep after the
+image is pulled. This keeps the image in use on the selected node, reducing the
+first activation path to scheduling, cache staging, and backend/model loading.
+
 #### Configuring default images
 
 Override default backend images via controller environment variables:

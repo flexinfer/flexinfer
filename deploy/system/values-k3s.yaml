@@ -198,6 +198,23 @@ diffusers:
   gfx1100Image: registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
   cudaImage: registry.harbor.lan/library/diffusers-api@sha256:a2f768a4205870422929fbba0da2dc5cb195033ccb16275fb63d888ce271cd40
 
+imagePrewarm:
+  enabled: true
+  imagePullPolicy: IfNotPresent
+  profiles:
+    - name: 5930k-gfx1100-serving
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-5930k
+      images:
+        - registry.harbor.lan/flexinfer/vllm@sha256:cb6d92c956ee150b4b8210e625586140e1b5da4c204caa422b1965e953de78e8
+        - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
+    - name: 7900xtx-gfx1100-serving
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-7900xtx
+      images:
+        - registry.harbor.lan/flexinfer/vllm@sha256:cb6d92c956ee150b4b8210e625586140e1b5da4c204caa422b1965e953de78e8
+        - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
+
 quantization:
   useRuntimeForQuantize: false
   runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:5bdb065f3e143951086056f4a81378e0cb02cb6d5549114913e56a031c028109"

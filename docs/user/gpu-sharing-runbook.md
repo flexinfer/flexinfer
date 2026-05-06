@@ -285,7 +285,7 @@ sequenceDiagram
 | Priority + cooldown check | <1ms | In-memory computation |
 | Preemption (scale down) | 2-5s | Graceful shutdown of active pod |
 | Pod scheduling | 1-3s | Kubernetes scheduler assigns node |
-| Image pull | 0s (cached) / 20-30min (first pull) | Container image pull from registry |
+| Image pull | 0s (cached) / 5-30min (first pull) | Container image pull from registry |
 | Flash-loader init | 2-6s | Parallel copy from PVC/hostPath to tmpfs (if enabled) |
 | Model weight loading | 5-25s | Backend loads weights into GPU VRAM |
 | Health check pass | 1-2s | Readiness probe passes |
@@ -293,7 +293,7 @@ sequenceDiagram
 | **Total (warm cache)** | **~10-35s** | All images cached, weights on PVC |
 | **Total (direct load)** | **~4-5s** | Direct runtime fast path (ollama/llamacpp) |
 
-These numbers are from production observations on AMD gfx1100 (7900 XTX). NVIDIA GPUs may differ. Large diffusers models (FLUX, SDXL) take 20-30s for weight loading. Smaller LLMs (ollama, llamacpp) load in 3-8s.
+These numbers are from production observations on AMD gfx1100 (7900 XTX). NVIDIA GPUs may differ. Large ROCm serving images can take several minutes to pull before backend startup even begins. Enable Helm `imagePrewarm` profiles for heavyweight vLLM/diffusers images on GPU nodes where first-request latency matters. Large diffusers models (FLUX, SDXL) take 20-30s for weight loading once the image is already cached. Smaller LLMs (ollama, llamacpp) load in 3-8s.
 
 ## 7. Operational Procedures
 
