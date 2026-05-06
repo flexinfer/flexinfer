@@ -361,7 +361,14 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// intermittent (cache timing). Creating a 0-replica deployment only causes
 	// a flip-flop: the runtime path deletes it on the next reconcile.
 	if desiredReplicas == 0 && model.Status.Phase == aiv1alpha2.ModelPhaseIdle {
-		return ctrl.Result{RequeueAfter: requeueMedium}, nil
+		exists, err := r.deploymentExists(ctx, model)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !exists {
+			return ctrl.Result{RequeueAfter: requeueMedium}, nil
+		}
+		log.V(1).Info("Reconciling idle Deployment template", "model", model.Name)
 	}
 
 	// Restore Service selector if it was cleared during runtime management.
@@ -392,6 +399,17 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
+}
+
+func (r *ModelReconciler) deploymentExists(ctx context.Context, model *aiv1alpha2.Model) (bool, error) {
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Name: model.Name, Namespace: model.Namespace}, deployment); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // pruneFailedModelPods removes old failed pods for this model to keep
