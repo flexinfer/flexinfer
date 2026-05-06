@@ -19,6 +19,9 @@ import (
 	"syscall"
 	"time"
 
+	costpkg "github.com/crb2nu/loom/internal/visibility/contracts/cost"
+	healthpkg "github.com/crb2nu/loom/internal/visibility/contracts/health"
+	statuspkg "github.com/crb2nu/loom/internal/visibility/contracts/status"
 	"github.com/crb2nu/loom/pkg/launchctl"
 	"gitlab.flexinfer.ai/libs/mcp-go"
 )
@@ -390,50 +393,35 @@ func (c *DaemonClient) callLocked(method string, params any) (json.RawMessage, e
 // --- Typed RPC result structs ---
 
 // StatusResult holds the response from loom/status.
-type StatusResult struct {
-	Running     bool     `json:"running"`
-	Servers     int      `json:"servers"`
-	ActiveConns int      `json:"activeConns"`
-	IdleConns   int      `json:"idleConns"`
-	Processes   []string `json:"processes"`
-}
+//
+// Deprecated: use internal/visibility/contracts/status.DaemonRPCStatus.
+// Retained as an alias for backward compatibility during EPIC 2 (#66).
+type StatusResult = statuspkg.DaemonRPCStatus
 
 // HealthEntry describes the health of one endpoint (local or hub).
-type HealthEntry struct {
-	Healthy      bool    `json:"healthy"`
-	ConsecFails  int     `json:"consecFails"`
-	AvgLatencyMs float64 `json:"avgLatencyMs"`
-	ErrorMessage string  `json:"errorMessage,omitempty"`
-}
+//
+// Deprecated: use internal/visibility/contracts/health.HealthEntry.
+type HealthEntry = healthpkg.HealthEntry
 
 // HealthDivergence represents a disagreement between the health monitor and the router.
-type HealthDivergence struct {
-	MonitorHealthy  bool   `json:"monitor_healthy"`
-	RouterAvailable bool   `json:"router_available"`
-	Reason          string `json:"reason"`
-}
+//
+// Deprecated: use internal/visibility/contracts/health.HealthDivergence.
+type HealthDivergence = healthpkg.HealthDivergence
 
 // HealthDivergenceEntry is a top-level divergence summary entry.
-type HealthDivergenceEntry struct {
-	Server string `json:"server"`
-	Reason string `json:"reason"`
-}
+//
+// Deprecated: use internal/visibility/contracts/health.HealthDivergenceEntry.
+type HealthDivergenceEntry = healthpkg.HealthDivergenceEntry
 
 // ServerHealth contains local and hub health plus the target.
-type ServerHealth struct {
-	Local      HealthEntry       `json:"local"`
-	Hub        HealthEntry       `json:"hub"`
-	Monitor    *HealthEntry      `json:"monitor,omitempty"`
-	Target     string            `json:"target"`
-	Transport  string            `json:"transport,omitempty"` // ws, stdio, sse, ssh, or unavailable
-	Divergence *HealthDivergence `json:"divergence,omitempty"`
-}
+//
+// Deprecated: use internal/visibility/contracts/health.ServerHealth.
+type ServerHealth = healthpkg.ServerHealth
 
 // HealthResult holds the response from loom/health.
-type HealthResult struct {
-	Servers    map[string]ServerHealth `json:"servers"`
-	Divergence []HealthDivergenceEntry `json:"divergence,omitempty"`
-}
+//
+// Deprecated: use internal/visibility/contracts/health.HealthResult.
+type HealthResult = healthpkg.HealthResult
 
 // ServerInfo describes a registered MCP server.
 type ServerInfo struct {
@@ -561,41 +549,24 @@ func (c *DaemonClient) CacheStats() (*CacheStatsResult, error) {
 }
 
 // CostStatsResult holds the response from loom/cost-stats.
-type CostStatsResult struct {
-	Enabled   bool              `json:"enabled"`
-	Reason    string            `json:"reason,omitempty"`
-	Timestamp string            `json:"timestamp,omitempty"`
-	ByAgent   []CostAgentUsage  `json:"by_agent,omitempty"`
-	ByServer  []CostServerUsage `json:"by_server,omitempty"`
-	Totals    CostTotals        `json:"totals"`
-}
+//
+// Deprecated: use internal/visibility/contracts/cost.CostStatsResult.
+type CostStatsResult = costpkg.CostStatsResult
 
 // CostAgentUsage summarizes per-agent cost data.
-type CostAgentUsage struct {
-	AgentID       string `json:"agent_id"`
-	CallCount     int64  `json:"call_count"`
-	ErrorCount    int64  `json:"error_count"`
-	DeniedCount   int64  `json:"denied_count"`
-	CachedCount   int64  `json:"cached_count"`
-	TotalDuration int64  `json:"total_duration_ms"`
-}
+//
+// Deprecated: use internal/visibility/contracts/cost.CostAgentUsage.
+type CostAgentUsage = costpkg.CostAgentUsage
 
 // CostServerUsage summarizes per-server cost data.
-type CostServerUsage struct {
-	Server        string `json:"server"`
-	CallCount     int64  `json:"call_count"`
-	ErrorCount    int64  `json:"error_count"`
-	TotalDuration int64  `json:"total_duration_ms"`
-}
+//
+// Deprecated: use internal/visibility/contracts/cost.CostServerUsage.
+type CostServerUsage = costpkg.CostServerUsage
 
 // CostTotals summarizes aggregate cost data.
-type CostTotals struct {
-	CallCount     int64 `json:"call_count"`
-	ErrorCount    int64 `json:"error_count"`
-	DeniedCount   int64 `json:"denied_count"`
-	CachedCount   int64 `json:"cached_count"`
-	TotalDuration int64 `json:"total_duration_ms"`
-}
+//
+// Deprecated: use internal/visibility/contracts/cost.CostTotals.
+type CostTotals = costpkg.CostTotals
 
 // CostStats returns cost/usage tracking statistics.
 func (c *DaemonClient) CostStats() (*CostStatsResult, error) {
