@@ -109,6 +109,31 @@ runtime:
   #   nodeSelector:
   #     kubernetes.io/hostname: cblevins-5930k
 
+# Optional image prewarming DaemonSets. Use this for large serving images that
+# are not otherwise kept warm by the persistent runtime DaemonSet on every GPU
+# node. Containers sleep after kubelet pulls the image, keeping the image in-use
+# so node image GC does not immediately reclaim it.
+imagePrewarm:
+  enabled: false
+  imagePullPolicy: IfNotPresent
+  priorityClassName: flexinfer-modelcache-warmup
+  terminationGracePeriodSeconds: 5
+  maxUnavailable: 1
+  resources:
+    requests:
+      cpu: 5m
+      memory: 16Mi
+    limits:
+      memory: 64Mi
+  tolerations: []
+  profiles: []
+  # Example:
+  # - name: gfx1100-textgen
+  #   nodeSelector:
+  #     kubernetes.io/hostname: cblevins-5930k
+  #   images:
+  #     - registry.harbor.lan/flexinfer/vllm@sha256:...
+
 agent:
   enabled: true
   image:

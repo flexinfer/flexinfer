@@ -1,0 +1,78 @@
+{{- $prewarm := default (dict) .Values.imagePrewarm -}}
+{{- if default false $prewarm.enabled }}
+{{- range $profile := default (list) $prewarm.profiles }}
+{{- $images := default (list) $profile.images }}
+{{- if gt (len $images) 0 }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "flexinfer.fullname" $ }}-image-prewarm-{{ $profile.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "flexinfer.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: flexinfer-image-prewarm
+    flexinfer.ai/prewarm-profile: {{ $profile.name | quote }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "flexinfer.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: flexinfer-image-prewarm
+      flexinfer.ai/prewarm-profile: {{ $profile.name | quote }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ default 1 $prewarm.maxUnavailable }}
+  template:
+    metadata:
+      annotations:
+        flexinfer.ai/chart-version: {{ $.Chart.Version | quote }}
+      labels:
+        {{- include "flexinfer.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: flexinfer-image-prewarm
+        flexinfer.ai/prewarm-profile: {{ $profile.name | quote }}
+    spec:
+      serviceAccountName: {{ include "flexinfer.agentServiceAccountName" $ }}
+      terminationGracePeriodSeconds: {{ default 5 $prewarm.terminationGracePeriodSeconds }}
+      {{- with (default $prewarm.priorityClassName $profile.priorityClassName) }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      containers:
+        {{- range $idx, $image := $images }}
+        - name: image-{{ $idx }}
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ default "IfNotPresent" $prewarm.imagePullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - trap : TERM INT; sleep infinity & wait
+          resources:
+            {{- if $profile.resources }}
+            {{- toYaml $profile.resources | nindent 12 }}
+            {{- else if $prewarm.resources }}
+            {{- toYaml $prewarm.resources | nindent 12 }}
+            {{- else }}
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+            {{- end }}
+        {{- end }}
+      tolerations:
+        - key: dedicated
+          value: gpu
+          effect: NoSchedule
+        {{- with $prewarm.tolerations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with $profile.tolerations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $profile.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
