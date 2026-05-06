@@ -218,20 +218,30 @@ for cfg_path in _glob.glob(f"{configs_dir}/*.py"):
             f.write(content)
         print(f"0d. Polyfilled layer_type_validation import in {cfg_name}")
 
-# 0e. Fix ignore_keys_at_rope_validation: list → set in all config files.
-# vLLM 0.17.0 passes a list but transformers 5.3.0.dev0 _check_received_keys does
-# `received_keys -= ignore_keys` which requires a set (TypeError on list).
-old_rope_keys = 'kwargs["ignore_keys_at_rope_validation"] = [\n            "mrope_section",\n            "mrope_interleaved",\n        ]'
-new_rope_keys = 'kwargs["ignore_keys_at_rope_validation"] = {\n            "mrope_section",\n            "mrope_interleaved",\n        }'
-for cfg_path in _glob.glob(f"{configs_dir}/*.py"):
-    cfg_name = os.path.basename(cfg_path)
-    with open(cfg_path) as f:
+# 0e. Fix ignore_keys_at_rope_validation handling without mutating config values
+# into sets. Transformers config __repr__ JSON-serializes config attributes, so
+# storing a set crashes at startup. Instead, keep model config values as lists
+# and coerce the ignore list at the subtraction site in configuration_utils.py.
+configuration_utils_path = None
+for cfg_utils in _glob.glob("/opt/venv/lib/python*/site-packages/transformers/configuration_utils.py"):
+    configuration_utils_path = cfg_utils
+    break
+if configuration_utils_path:
+    with open(configuration_utils_path) as f:
         content = f.read()
-    if old_rope_keys in content:
-        content = content.replace(old_rope_keys, new_rope_keys)
-        with open(cfg_path, "w") as f:
+    old_received_keys = "received_keys -= ignore_keys"
+    new_received_keys = "received_keys -= set(ignore_keys)"
+    if new_received_keys in content:
+        print("0e. configuration_utils.py already coerces ignore_keys")
+    elif old_received_keys in content:
+        content = content.replace(old_received_keys, new_received_keys)
+        with open(configuration_utils_path, "w") as f:
             f.write(content)
-        print(f"0e. Fixed ignore_keys_at_rope_validation: list → set in {cfg_name}")
+        print("0e. PATCHED: configuration_utils.py coerces ignore_keys_at_rope_validation")
+    else:
+        print("0e. WARNING: Could not find received_keys ignore_keys subtraction")
+else:
+    print("0e. WARNING: transformers/configuration_utils.py not found")
 
 # 1. Register qwen3_5_text config type
 config_path = f"{BASE}/transformers_utils/config.py"
