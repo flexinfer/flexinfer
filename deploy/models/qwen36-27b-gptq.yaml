@@ -88,7 +88,6 @@ spec:
     enabled: true
     servedModelName: qwen36-27b
     aliases:
-      - qwen36-27b
       - qwen3-6-27b
       - qwen3-coder
       - qwen3-30b-a3b

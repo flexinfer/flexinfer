@@ -192,6 +192,14 @@ func (r *ModelResolver) refreshModelAliasCache(ctx context.Context) {
 
 	// Collect all alias claims to detect conflicts
 	aliasClaims := make(map[string][]string) // alias -> []resourceName
+	addClaim := func(alias, resourceName string) {
+		for _, existing := range aliasClaims[alias] {
+			if existing == resourceName {
+				return
+			}
+		}
+		aliasClaims[alias] = append(aliasClaims[alias], resourceName)
+	}
 
 	for _, m := range models.Items {
 		resourceName := m.Name
@@ -199,12 +207,12 @@ func (r *ModelResolver) refreshModelAliasCache(ctx context.Context) {
 			continue
 		}
 		if served := m.Spec.LiteLLM.ServedModelName; served != "" && served != resourceName {
-			aliasClaims[served] = append(aliasClaims[served], resourceName)
+			addClaim(served, resourceName)
 		}
 		for _, alias := range m.Spec.LiteLLM.Aliases {
 			alias = strings.TrimSpace(alias)
 			if alias != "" && alias != resourceName {
-				aliasClaims[alias] = append(aliasClaims[alias], resourceName)
+				addClaim(alias, resourceName)
 			}
 		}
 	}

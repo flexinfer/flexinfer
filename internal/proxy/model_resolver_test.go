@@ -113,3 +113,28 @@ func TestModelResolverResolveModelAlias_RefreshesStaleCache(t *testing.T) {
 	assert.Equal(t, "cached-model", resolver.ResolveModelAlias(ctx, "new-alias"))
 	assert.Equal(t, "old-alias", resolver.ResolveModelAlias(ctx, "old-alias"))
 }
+
+func TestModelResolverResolveModelAlias_DedupesSameModelClaim(t *testing.T) {
+	t.Helper()
+
+	ctx := context.Background()
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "qwen36-27b-gptq",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "pvc://qwen36-27b-oci/qwen36-27b",
+			LiteLLM: &aiv1alpha2.LiteLLMSpec{
+				ServedModelName: "qwen36-27b",
+				Aliases:         []string{"qwen36-27b", "qwen3-coder"},
+			},
+		},
+	}
+
+	resolver := NewModelResolver(newModelResolverTestClient(t, model), "default")
+
+	assert.Equal(t, "qwen36-27b-gptq", resolver.ResolveModelAlias(ctx, "qwen36-27b"))
+	assert.Equal(t, "qwen36-27b-gptq", resolver.ResolveModelAlias(ctx, "qwen3-coder"))
+}
