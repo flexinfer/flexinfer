@@ -15,8 +15,20 @@
 - gfx1100 quantization validation matrix: `60-validation-matrix.md`
 - PR-2 readiness plan: `../docs/planning/rocm-gfx1100-deploy-swap-tracing-slice.md`
 - Roadmap reconciliation checklist: `../docs/planning/roadmap-reconciliation.md`
+- gfx1100/gfx906 platform enhancement spec: `gfx1100-gfx906-platform-enhancements-spec.md`
+- gfx1100/gfx906 platform enhancement plan: `gfx1100-gfx906-platform-enhancements-plan.md`
 
-## Current Goal (2026-05-03)
+## Current Goal (2026-05-06)
+
+Plan the next full-platform feature round for AMD ROCm `gfx1100` and `gfx906`, spanning GPUProfile contracts, runtime image promotion, backend capability gates, validation evidence, and operator workflows.
+
+- [x] Refresh `.loom/00-workspace-snapshot.md`.
+- [x] Re-check Loom resource inventory and codebase index readiness.
+- [x] Capture source-backed facts for `gfx1100` and `gfx906` runtime/profile behavior.
+- [x] Add focused spec and implementation-plan artifacts for the next round.
+- [ ] Convert accepted slices into tracking issues/MRs.
+
+## Previous Goal (2026-05-03)
 
 Close the remaining Gemma4/Qwen/TurboQuant gfx1100 queue through spec-driven gates. Keep closure evidence in `60-validation-matrix.md`, with runtime posture summarized in `gemma4-26b-31b-gptq-turboquant-plan.md` and `docs/dev/gemma4-rocm-status.md`.
 
