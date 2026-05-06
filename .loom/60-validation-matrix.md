@@ -184,6 +184,15 @@ Raw outputs:
   output was incoherent: exact-answer prompts produced repeated exclamation
   marks and multilingual junk. Treat this as a model artifact/runtime blocker,
   not a routing success.
+- Follow-up direct safetensor check on `cblevins-5930k` mounted
+  `qwen36-27b-gptq-gfx1100` and dequantized representative GPTQ attention
+  tensors against the post-abliteration FP16 parent. Layers 11 and 15
+  `q/k/v/o` had no NaNs/Infs, sane weight stats, cosine about `0.99`, and
+  relative L2 about `0.13-0.16`, so the cache is not broadly corrupt.
+- Next runtime fix: Qwen3.5-patched vLLM must use the ROCm GPTQ reference
+  fallback already proven necessary for Gemma4. The Qwen patch stack now adds a
+  `GPTQLinearMethod.apply` ROCm/4-bit slow path so the next rebuilt runtime can
+  test coherence without the fused `gptq_gemm` kernel.
 
 ### 2026-04-26 gemma4 26B/31B execution findings
 
