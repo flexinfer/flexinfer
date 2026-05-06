@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Register qwen3_5_text config + model + fix weight loading + add IsHybrid + mamba state methods + FLA fix.
+"""Register qwen3_5_text config + model + ROCm-safe runtime patches.
 
 ALL patches are FILE-LEVEL (modify .py on disk) so they persist to the EngineCore subprocess.
 """
@@ -64,6 +64,127 @@ elif "@triton.jit\ndef exp(x):" in op_content:
     print("0b. FLA ops/op.py already patched")
 else:
     print("0b. WARNING: Could not find expected pattern in FLA ops/op.py")
+
+# 0c. Patch GPTQ matmul on ROCm to use a correctness-first torch path.
+# The fused 4-bit GPTQ GEMM can load cleanly on gfx1100 while producing
+# semantically collapsed output. Keep the slow path scoped to ROCm + 4-bit GPTQ.
+gptq_path = f"{BASE}/model_executor/layers/quantization/gptq.py"
+if os.path.exists(gptq_path):
+    with open(gptq_path) as f:
+        gptq_content = f.read()
+
+    if "FLEXINFER_QWEN35_GPTQ_ROCM_REFERENCE_PATCH" in gptq_content:
+        print("0c. GPTQ ROCm reference fallback already patched")
+    else:
+        old_apply = (
+            "    def apply(\n"
+            "        self,\n"
+            "        layer: torch.nn.Module,\n"
+            "        x: torch.Tensor,\n"
+            "        bias: torch.Tensor | None = None,\n"
+            "    ) -> torch.Tensor:\n"
+            "        out_shape = x.shape[:-1] + (layer.qweight.shape[-1],)\n"
+            "        reshaped_x = x.reshape(-1, x.shape[-1])\n"
+            "\n"
+            "        # GPTQ v1 and v2 format checkpoints deals with zero points differently,\n"
+            "        # and require different gemm kernels.\n"
+            "        output = ops.gptq_gemm(\n"
+            "            reshaped_x,\n"
+            "            layer.qweight,\n"
+            "            layer.qzeros,\n"
+            "            layer.scales,\n"
+            "            layer.g_idx,\n"
+            "            layer.exllama_state == ExllamaState.READY,\n"
+            "            self.use_v2_format,\n"
+            "            self.quant_config.weight_bits,\n"
+            "        )\n"
+            "        if bias is not None:\n"
+            "            output.add_(bias)\n"
+            "        return output.reshape(out_shape)\n"
+        )
+        new_apply = (
+            "    def apply(\n"
+            "        self,\n"
+            "        layer: torch.nn.Module,\n"
+            "        x: torch.Tensor,\n"
+            "        bias: torch.Tensor | None = None,\n"
+            "    ) -> torch.Tensor:\n"
+            "        out_shape = x.shape[:-1] + (layer.qweight.shape[-1],)\n"
+            "        reshaped_x = x.reshape(-1, x.shape[-1])\n"
+            "\n"
+            "        if torch.version.hip is not None and self.quant_config.weight_bits == 4:\n"
+            "            # FLEXINFER_QWEN35_GPTQ_ROCM_REFERENCE_PATCH: avoid the\n"
+            "            # fused ROCm GPTQ GEMM for correctness-sensitive canaries.\n"
+            "            pack_factor = int(self.quant_config.pack_factor)\n"
+            "            qweight_i32 = layer.qweight.to(torch.int32)\n"
+            "            input_size = layer.input_size_per_partition\n"
+            "            output_size = layer.qweight.shape[-1]\n"
+            "\n"
+            "            unpacked_qweight = torch.empty(\n"
+            "                (input_size, output_size),\n"
+            "                dtype=torch.int16,\n"
+            "                device=qweight_i32.device,\n"
+            "            )\n"
+            "            for i in range(pack_factor):\n"
+            "                unpacked_qweight[i::pack_factor, :] = ((qweight_i32 >> (4 * i)) & 0xF).to(torch.int16)\n"
+            "\n"
+            "            if layer.qzeros.numel() > 0:\n"
+            "                qzeros_i32 = layer.qzeros.to(torch.int32)\n"
+            "                zero_points = torch.empty(\n"
+            "                    (qzeros_i32.shape[0], output_size),\n"
+            "                    dtype=torch.int16,\n"
+            "                    device=qzeros_i32.device,\n"
+            "                )\n"
+            "                for i in range(pack_factor):\n"
+            "                    zero_points[:, i::pack_factor] = (((qzeros_i32 >> (4 * i)) & 0xF).to(torch.int16) + 1)\n"
+            "            else:\n"
+            "                zero_points = None\n"
+            "\n"
+            "            if layer.g_idx.numel() > 0:\n"
+            "                group_idx = layer.g_idx.to(torch.long)\n"
+            "            else:\n"
+            "                group_size = self.quant_config.group_size\n"
+            "                if group_size == -1:\n"
+            "                    group_size = input_size\n"
+            "                group_idx = torch.arange(input_size, device=qweight_i32.device, dtype=torch.long) // group_size\n"
+            "\n"
+            "            signed_qweight = unpacked_qweight.to(torch.float16)\n"
+            "            if zero_points is not None:\n"
+            "                signed_qweight = signed_qweight - zero_points[group_idx].to(torch.float16)\n"
+            "            else:\n"
+            "                signed_qweight = signed_qweight - 8.0\n"
+            "\n"
+            "            dequant_weight = signed_qweight * layer.scales[group_idx].to(torch.float16)\n"
+            "            output = reshaped_x.to(torch.float16) @ dequant_weight\n"
+            "            if bias is not None:\n"
+            "                output.add_(bias.to(output.dtype))\n"
+            "            return output.reshape(out_shape)\n"
+            "\n"
+            "        # GPTQ v1 and v2 format checkpoints deals with zero points differently,\n"
+            "        # and require different gemm kernels.\n"
+            "        output = ops.gptq_gemm(\n"
+            "            reshaped_x,\n"
+            "            layer.qweight,\n"
+            "            layer.qzeros,\n"
+            "            layer.scales,\n"
+            "            layer.g_idx,\n"
+            "            layer.exllama_state == ExllamaState.READY,\n"
+            "            self.use_v2_format,\n"
+            "            self.quant_config.weight_bits,\n"
+            "        )\n"
+            "        if bias is not None:\n"
+            "            output.add_(bias)\n"
+            "        return output.reshape(out_shape)\n"
+        )
+        if old_apply in gptq_content:
+            gptq_content = gptq_content.replace(old_apply, new_apply, 1)
+            with open(gptq_path, "w") as f:
+                f.write(gptq_content)
+            print("0c. PATCHED: GPTQLinearMethod.apply uses ROCm reference fallback")
+        else:
+            print("0c. WARNING: Could not find GPTQLinearMethod.apply pattern")
+else:
+    print(f"0c. WARNING: {gptq_path} not found")
 
 # Clear Triton cache to force recompilation with new wrappers
 import shutil

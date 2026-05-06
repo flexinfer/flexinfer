@@ -32,7 +32,7 @@ spec:
   backends:
     vllm:
       support: full
-      image: registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg
+      image: registry.harbor.lan/flexinfer/vllm@sha256:9d203a6ae956abc2e7dc24a98b8afd0d29c6336c742c2da174862f07aacb60da
     llamacpp:
       support: full
     diffusers:

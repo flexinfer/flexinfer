@@ -109,6 +109,7 @@ the row notes:
 | `gemma4-e4b-gptq` | TBD | `gfx1100/7900xtx` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
 | `omnicoder-9b-gptq` | TBD | `gfx1100/7900xtx` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
 | `qwen35-9b-gptq-gfx1100` | TBD | `gfx1100/7900xtx` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
+| `qwen36-27b-gptq` abliterated GPTQ W4_G128 canary | 8192 | `gfx1100/5930k` | `registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg` | `registry.harbor.lan/flexinfer/qwen36-27b:gptq-w4-g128-gfx1100@sha256:fe3a6bea0cd2cdf254a5db6194e01402f1f7f93c4b86d8c717695470fdd3849d` | Cache Ready; vLLM reached Ready with `quantization=gptq`, `kvCacheDtype=auto`, `maxNumSeqs=2`; direct proxy and service smoke returned HTTP 200 | First activation exposed proxy `lastActiveTime` conflict; cold start was dominated by 17.6GB image pull; `fp8_e4m3` KV crashed Triton cache update; `gptq_marlin` rejected because artifact config declares `gptq`; current `gptq` runtime serves incoherent output (`!!!!!!!!!!!!` / multilingual junk) | MR !247 replacement; MR !248 runtime hardening; 2026-05-05 smoke evidence below | `fail` |
 | `qwen3-14b-gptq` | TBD | `gfx1100/5930k` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
 | `gemma4-31b-gptq` Radeon VII comparison | n/a | `gfx906/radeonvii` | n/a | n/a | n/a | Off-gfx1100 comparison row; VRAM ceiling for this promotion lane | SD-3 / Issue #57 | `skip` |
 
@@ -160,6 +161,38 @@ runtime image digest or OCI ref when available, and smoke response transcript.
 Raw outputs:
 `.loom/local/validation/gemma4-26b-a4b-gptq/20260418-085841/{clean.json,clean.txt,hybrid-v10.json}`
 (gitignored).
+
+### 2026-05-05 qwen36-27b-gptq smoke findings
+
+- Artifact pipeline completed: ModelCache `qwen36-27b-gptq-gfx1100`
+  abliterated 3 layers in `1h53m20s`, quantized GPTQ `W4_G128` in `1h19m30s`,
+  and published
+  `registry.harbor.lan/flexinfer/qwen36-27b:gptq-w4-g128-gfx1100@sha256:fe3a6bea0cd2cdf254a5db6194e01402f1f7f93c4b86d8c717695470fdd3849d`.
+- Replacement Model `qwen36-27b-gptq` activated on `cblevins-5930k`. Initial
+  proxy activation returned 503 because `LastActiveTime` status updates hit a
+  conflict after scale-up had already started.
+- Cold activation reached the pod quickly, but kubelet spent `12m33s` pulling
+  the 17.6GB ROCm vLLM image. Cache flash from hostPath to `/dev/shm` took
+  about 9 seconds.
+- Runtime config `kvCacheDtype: fp8_e4m3` failed during vLLM KV warm-up:
+  Triton reported `type fp8e4nv not supported in this architecture`. Live
+  canary with `kvCacheDtype: auto`, `calculateKvScales: false`, and
+  `maxNumSeqs: 2` reached Ready.
+- `gptq_marlin` was tested as a coherence fix but vLLM rejected it because the
+  model config declares quantization method `gptq`.
+- Direct FlexInfer proxy and direct service requests returned HTTP 200, but
+  output was incoherent: exact-answer prompts produced repeated exclamation
+  marks and multilingual junk. Treat this as a model artifact/runtime blocker,
+  not a routing success.
+- Follow-up direct safetensor check on `cblevins-5930k` mounted
+  `qwen36-27b-gptq-gfx1100` and dequantized representative GPTQ attention
+  tensors against the post-abliteration FP16 parent. Layers 11 and 15
+  `q/k/v/o` had no NaNs/Infs, sane weight stats, cosine about `0.99`, and
+  relative L2 about `0.13-0.16`, so the cache is not broadly corrupt.
+- Next runtime fix: Qwen3.5-patched vLLM must use the ROCm GPTQ reference
+  fallback already proven necessary for Gemma4. The Qwen patch stack now adds a
+  `GPTQLinearMethod.apply` ROCm/4-bit slow path so the next rebuilt runtime can
+  test coherence without the fused `gptq_gemm` kernel.
 
 ### 2026-04-26 gemma4 26B/31B execution findings
 
