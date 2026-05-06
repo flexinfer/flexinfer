@@ -1,6 +1,6 @@
-# gfx1100 Runtime Promotion Validation Matrix
+# Runtime Promotion Validation Matrix
 
-This is the canonical canary and runtime-promotion evidence table for gfx1100
+This is the canonical canary and runtime-promotion evidence table for GPU
 model/runtime work. It connects planning specs, roadmap items, build artifacts,
 runtime canaries, observed failure modes, and promotion decisions so a reviewer
 can audit a promotion without reading chat history.
@@ -8,6 +8,8 @@ can audit a promotion without reading chat history.
 Scope:
 
 - Primary GPU class: AMD Radeon RX 7900 XTX / ROCm `gfx1100`.
+- Secondary validation class: AMD Radeon VII / ROCm `gfx906` for runtime
+  compatibility canaries and comparison rows.
 - Primary roadmap/spec link: SD-3 in
   `docs/planning/spec-driven-delivery.md` and
   `docs/planning/next-roadmap.md`.
@@ -112,6 +114,7 @@ the row notes:
 | `qwen36-27b-gptq` abliterated GPTQ W4_G128 canary | 8192 | `gfx1100/5930k` | `registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg` | `registry.harbor.lan/flexinfer/qwen36-27b:gptq-w4-g128-gfx1100@sha256:fe3a6bea0cd2cdf254a5db6194e01402f1f7f93c4b86d8c717695470fdd3849d` | Cache Ready; vLLM reached Ready with `quantization=gptq`, `kvCacheDtype=auto`, `maxNumSeqs=2`; direct proxy and service smoke returned HTTP 200 | First activation exposed proxy `lastActiveTime` conflict; cold start was dominated by 17.6GB image pull; `fp8_e4m3` KV crashed Triton cache update; `gptq_marlin` rejected because artifact config declares `gptq`; current `gptq` runtime serves incoherent output (`!!!!!!!!!!!!` / multilingual junk) and flat punctuation logprobs even with the ROCm reference GPTQ fallback patched in | MR !247 replacement; MR !248 runtime hardening; MR !253/!254 quiet runtime; 2026-05-05 and 2026-05-06 smoke evidence below | `fail` |
 | `qwen3-14b-gptq` | TBD | `gfx1100/5930k` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
 | `gemma4-31b-gptq` Radeon VII comparison | n/a | `gfx906/radeonvii` | n/a | n/a | n/a | Off-gfx1100 comparison row; VRAM ceiling for this promotion lane | SD-3 / Issue #57 | `skip` |
+| `sdxl-inpainting-radeonvii` Diffusers inpaint canary | n/a, 512x512 image edit | `gfx906/radeonvii` | `registry.harbor.lan/flexinfer/runtime@sha256:7c05960614517dbd5d6453944125a01e78f0451f6695467a8eaf6a6859d461dd` | `local:///models/flexinfer-system/sdxl-inpainting-radeonvii` | Direct runtime path selected `flexinfer-runtime-gfx906-dh8st`; Model Ready via runtime; 512x512 multipart `/v1/images/edits` returned HTTP 200 in 48.35s with one 1024x1024 PNG result, `b64_len=24152`; runtime logged 22 denoise steps in 40s and POST 200 | `/v1/images/generations` is the wrong endpoint for SDXL inpaint and returned HTTP 500 with a Diffusers input-format error; corrected `/v1/images/edits` canary succeeded. Runtime uses CPU offload and detected Radeon VII as `gfx900` under the gfx906 lane | RG-4 / `.loom/gfx1100-gfx906-platform-enhancements-plan.md`; 2026-05-06 Radeon VII evidence below | `conditional` |
 
 ## Artifact Layout Notes
 
@@ -213,6 +216,29 @@ Raw outputs:
 - Serving posture: keep `qwen36-27b-gptq` as a direct canary only. Do not expose
   replacement labels such as `qwen3-coder` or `qwen3-30b-a3b` until a coherent
   deterministic smoke passes.
+
+### 2026-05-06 sdxl-inpainting-radeonvii runtime smoke
+
+- Model `sdxl-inpainting-radeonvii` was Ready through the direct runtime path:
+  `phase=Ready`, Ready reason `RuntimeReady`, message `Model ready via runtime`.
+- Runtime pod `flexinfer-runtime-gfx906-dh8st` ran digest-pinned image
+  `registry.harbor.lan/flexinfer/runtime@sha256:7c05960614517dbd5d6453944125a01e78f0451f6695467a8eaf6a6859d461dd`.
+- Runtime load selected local model path
+  `/models/flexinfer-system/sdxl-inpainting-radeonvii`,
+  `StableDiffusionXLInpaintPipeline`, dtype `float32`, fixed VAE, CPU offload,
+  and attention slicing. Warmup completed in 60.7s.
+- The initial request to `/v1/images/generations` returned HTTP 500 because an
+  SDXL inpaint pipeline requires an input image and mask. The runtime remained
+  healthy and the failure was not a GPU crash.
+- Correct multipart smoke through `flexinfer-proxy`:
+  `/model/sdxl-inpainting-radeonvii/v1/images/edits` with 512x512 PNG image
+  and mask returned HTTP 200 in 48.35s, one image, `b64_len=24152`.
+- Runtime logs recorded 22 denoise steps in 40s and
+  `POST /v1/images/edits HTTP/1.1` 200 OK. Decoded response artifact:
+  `/private/tmp/sdxl-radeonvii-edits-output.png`, PNG, 1024x1024 RGB.
+- Promotion posture: conditional pass for the gfx906 runtime lane. Keep the row
+  conditional because this canary depends on CPU offload and uses the image-edit
+  endpoint only; text/image-generation endpoint parity is not implied.
 
 ### 2026-04-26 gemma4 26B/31B execution findings
 
