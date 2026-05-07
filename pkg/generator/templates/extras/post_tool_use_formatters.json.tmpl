@@ -1,0 +1,19 @@
+[
+  {
+    "matcher": "Write|Edit",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "jq -r '.tool_input.file_path // \"\"' | { read f; [[ \"$f\" == *.py ]] && black \"$f\" 2>/dev/null; exit 0; }"
+      },
+      {
+        "type": "command",
+        "command": "jq -r '.tool_input.file_path // \"\"' | { read f; [[ \"$f\" == *.go ]] && gofmt -w \"$f\" 2>/dev/null && goimports -w \"$f\" 2>/dev/null; exit 0; }"
+      },
+      {
+        "type": "command",
+        "command": "jq -r '.tool_input.new_string // .tool_input.content // \"\"' | { read content; if echo \"$content\" | grep -qE 'image:.*:latest'; then echo '{\"systemMessage\":\"Noticed :latest tag - consider pinning to a specific version for reproducibility.\"}'; fi; exit 0; }"
+      }
+    ]
+  }
+]

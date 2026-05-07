@@ -37,49 +37,12 @@ func claudeHooks(reg *registry.Registry, profile *PlatformProfile, loomBinary st
 	return hooks
 }
 
-// claudePostToolUseExtras returns the Write/Edit formatter hooks specific to
-// Claude Code, appended to the shared heartbeat PostToolUse hooks.
-func claudePostToolUseExtras() []map[string]any {
-	return []map[string]any{
-		{
-			"matcher": "Write|Edit",
-			"hooks": []map[string]any{
-				{
-					"type":    "command",
-					"command": `jq -r '.tool_input.file_path // ""' | { read f; [[ "$f" == *.py ]] && black "$f" 2>/dev/null; exit 0; }`,
-				},
-				{
-					"type":    "command",
-					"command": `jq -r '.tool_input.file_path // ""' | { read f; [[ "$f" == *.go ]] && gofmt -w "$f" 2>/dev/null && goimports -w "$f" 2>/dev/null; exit 0; }`,
-				},
-				{
-					"type":    "command",
-					"command": `jq -r '.tool_input.new_string // .tool_input.content // ""' | { read content; if echo "$content" | grep -qE 'image:.*:latest'; then echo '{"systemMessage":"Noticed :latest tag - consider pinning to a specific version for reproducibility."}'; fi; exit 0; }`,
-				},
-			},
-		},
-	}
-}
-
-// claudePostToolUseTaskSyncHook returns the PostToolUse hook that syncs native
-// Claude Code task tools (TaskCreate, TaskUpdate, TodoWrite) to the loom
-// agent-context task system via `loom agent task-sync`.
-func claudePostToolUseTaskSyncHook(loomBinary string) []map[string]any {
-	loomCmd := shellQuote(normalizeLoomBinary(loomBinary))
-	return []map[string]any{
-		{
-			"matcher": "TaskCreate|TaskUpdate|TodoWrite",
-			"hooks": []map[string]any{
-				{
-					"type": "command",
-					"command": fmt.Sprintf(
-						`INPUT=$(cat); %s; echo "$INPUT" | %s agent task-sync --agent-id "$AGENT_ID" --quiet 2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log" || true`,
-						hookAgentIDBootstrap("claude-code"), loomCmd),
-				},
-			},
-		},
-	}
-}
+// claudePostToolUseExtras and claudePostToolUseTaskSyncHook were removed
+// in EPIC 3 / CONFIG-2 (.loom/108). Their content moved to embedded
+// templates under pkg/generator/templates/extras/, dispatched via
+// extraDescriptors in pkg/generator/extras.go. Adding a new
+// "post-tool-use" extra now requires only a template file + descriptor
+// entry.
 
 // Policy guardrail helpers were generalized in EPIC 3 / CONFIG-3 (.loom/108).
 // The previous gitopsFluxGuardrail* functions were name-coupled to a single

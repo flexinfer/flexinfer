@@ -50,10 +50,11 @@ func TestTemplatesParseValidity(t *testing.T) {
 				return nil
 			}
 			// Templates may reference custom funcs (e.g. buildHooks, json,
-			// shellQuote). text/template binds funcs at parse time, so we
-			// have to provide them as stubs. Real renders use the
-			// closure-bound funcs from hookTemplateFuncs.
-			tmpl := template.New(base).Funcs(hookTemplateFuncs(nil, nil, ""))
+			// shellQuote, jsonString, hookAgentIDBootstrap). text/template
+			// binds funcs at parse time, so we have to provide them as
+			// stubs. Real renders use the closure-bound funcs from
+			// hookTemplateFuncs / extraTemplateFuncs.
+			tmpl := template.New(base).Funcs(hookTemplateFuncs(nil, nil, "")).Funcs(extraTemplateFuncs())
 			if _, parseErr := tmpl.Parse(string(data)); parseErr != nil {
 				t.Errorf("template %s parse error: %v", path, parseErr)
 				return nil

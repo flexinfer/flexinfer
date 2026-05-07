@@ -1,0 +1,11 @@
+[
+  {
+    "matcher": "Write|Edit",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "jq -r '.tool_input.file_path // \"\"' | { read f; case \"$f\" in *.go) gofmt -l \"$f\" 2>/dev/null;; *.py) black --check \"$f\" 2>/dev/null;; *.ts|*.tsx) tsc --noEmit \"$f\" 2>/dev/null;; esac; exit 0; }"
+      }
+    ]
+  }
+]
