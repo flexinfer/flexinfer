@@ -79,6 +79,7 @@ func main() {
 		// Operational
 		newTunnelCmd(socketPath),
 		newCacheCmd(socketPath),
+		newCostCmd(socketPath),
 
 		// Agent
 		newAgentCmd(),

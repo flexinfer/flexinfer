@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	presencectr "github.com/crb2nu/loom/internal/visibility/contracts/presence"
+	statusctr "github.com/crb2nu/loom/internal/visibility/contracts/status"
 )
 
 func TestCollectPlatformStatus_DaemonDown(t *testing.T) {
@@ -99,13 +101,13 @@ func TestCollectPlatformStatus_HUDPresenceAndSessions(t *testing.T) {
 
 func TestPlatformStatus_JSONOutput(t *testing.T) {
 	t.Parallel()
-	ps := platformStatus{
-		Daemon:    daemonStatus{Running: true, Servers: 5, DrainReady: true},
-		Agents:    agentStatus{Active: 2, Idle: 1, Total: 3},
-		Pipelines: pipelineStatus{Available: true, Running: 1, Pending: 2, Passed: 3, Failed: 4, LastActivity: "5m ago"},
-		HUD:       hudStatus{Reachable: true},
-		Health: &daemonHealthSnapshot{
-			Servers: map[string]daemonHealthServer{
+	ps := statusctr.PlatformStatus{
+		Daemon:    statusctr.DaemonStatus{Running: true, Servers: 5, DrainReady: true},
+		Agents:    statusctr.AgentStatus{Active: 2, Idle: 1, Total: 3},
+		Pipelines: statusctr.PipelineStatus{Available: true, Running: 1, Pending: 2, Passed: 3, Failed: 4, LastActivity: "5m ago"},
+		HUD:       statusctr.HUDStatus{Reachable: true},
+		Health: &statusctr.DaemonHealthSnapshot{
+			Servers: map[string]statusctr.DaemonHealthServer{
 				"alpha": {
 					Healthy:          false,
 					Ready:            false,
@@ -117,7 +119,7 @@ func TestPlatformStatus_JSONOutput(t *testing.T) {
 			},
 			DegradedServers: []string{"alpha"},
 		},
-		Observability: &daemonObservabilityStatus{
+		Observability: &statusctr.DaemonObservabilityStatus{
 			OTLPEndpoint: "",
 			LogFormat:    "text",
 			Warnings:     []string{"otlp endpoint not configured", "json logging disabled"},
@@ -194,12 +196,12 @@ func TestPlatformStatus_JSONOutput(t *testing.T) {
 }
 
 func TestPrintPlatformStatus_IncludesPipelineSummary(t *testing.T) {
-	ps := platformStatus{
-		Daemon:    daemonStatus{Running: true, Servers: 5, DrainReady: true},
-		Agents:    agentStatus{Active: 2, Idle: 1, Offline: 0, Total: 3},
-		Sessions:  sessionCount{Active: 1, Total: 4},
-		Pipelines: pipelineStatus{Available: true, Running: 1, Pending: 2, Passed: 3, Failed: 4, LastActivity: "5m ago"},
-		HUD:       hudStatus{Reachable: true},
+	ps := statusctr.PlatformStatus{
+		Daemon:    statusctr.DaemonStatus{Running: true, Servers: 5, DrainReady: true},
+		Agents:    statusctr.AgentStatus{Active: 2, Idle: 1, Offline: 0, Total: 3},
+		Sessions:  statusctr.SessionCount{Active: 1, Total: 4},
+		Pipelines: statusctr.PipelineStatus{Available: true, Running: 1, Pending: 2, Passed: 3, Failed: 4, LastActivity: "5m ago"},
+		HUD:       statusctr.HUDStatus{Reachable: true},
 		Healthy:   true,
 	}
 
@@ -219,10 +221,10 @@ func TestPrintPlatformStatus_IncludesPipelineSummary(t *testing.T) {
 }
 
 func TestPrintPlatformStatus_HighlightsHealthAndObservabilityWarnings(t *testing.T) {
-	ps := platformStatus{
-		Daemon: daemonStatus{Running: true, Servers: 2, DrainReady: false, Draining: true},
-		Health: &daemonHealthSnapshot{
-			Servers: map[string]daemonHealthServer{
+	ps := statusctr.PlatformStatus{
+		Daemon: statusctr.DaemonStatus{Running: true, Servers: 2, DrainReady: false, Draining: true},
+		Health: &statusctr.DaemonHealthSnapshot{
+			Servers: map[string]statusctr.DaemonHealthServer{
 				"alpha": {
 					Healthy:          false,
 					ConsecutiveFails: 4,
@@ -238,7 +240,7 @@ func TestPrintPlatformStatus_HighlightsHealthAndObservabilityWarnings(t *testing
 			},
 			DegradedServers: []string{"alpha"},
 		},
-		Observability: &daemonObservabilityStatus{
+		Observability: &statusctr.DaemonObservabilityStatus{
 			Warnings: []string{"otlp endpoint not configured", "json logging disabled"},
 		},
 	}
@@ -274,7 +276,7 @@ func TestShowStatus_DaemonDown_ReturnsError(t *testing.T) {
 func TestCountPresenceStatuses(t *testing.T) {
 	t.Parallel()
 
-	got := countPresenceStatuses([]bridge.PresenceInfo{
+	got := countPresenceStatuses([]presencectr.PresenceInfo{
 		{Status: "active"},
 		{Status: "idle"},
 		{Status: "offline"},

@@ -79,6 +79,7 @@ Modes:
 	simulateCmd.Flags().BoolVar(&outputJSON, "json", false, "Print JSON output")
 
 	rbacCmd.AddCommand(simulateCmd)
+	rbacCmd.AddCommand(newRBACStatusCmd())
 	return rbacCmd
 }
 
