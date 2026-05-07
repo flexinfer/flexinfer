@@ -85,19 +85,50 @@ Files migrated:
 - `backend/vllm.go:14-22` — gfx110+gfx906 env-only
 - `backend/vllm_omni.go:11-19` — gfx110 env-only
 
-## Priority 3 — Move `pkg/quantization/image.go:92` `gfx906` branch to GPUProfile lookup
+## Priority 3 — Move `pkg/quantization/image.go:92` `gfx906` branch to GPUProfile lookup — COMPLETED
 
-`resolveGPTQROCmImage` (`pkg/quantization/image.go:84-100`) still has a
-hardcoded `if gpuArch == "gfx906"` returning `DefaultGPTQROCmGFX906Image`.
-The `ResolveImage(format, profileImage, ...)` entry point already accepts
-`profileImage` from the GPUProfile, so the `gfx906` fallback only fires when
-the profile is missing. Remove the hardcoded branch once `deploy/gpuprofiles/gfx906.yaml`
-declares `quantization.images.gptq` (and the radeonvii cluster has had time
-to reconcile).
+Shipped in `refactor/gpuprofile-quantizer-image-helper` (slice 4 of Track A).
 
-Files to touch:
-- `pkg/quantization/image.go:84-100`
-- `deploy/gpuprofiles/gfx906.yaml`
+- Added `ResolveImageFromProfile(format, *aiv1alpha2.GPUProfileSpec, vendor, arch)`
+  in `pkg/quantization/image.go`, mirroring the
+  `backend.ResolveBackendImage(b, profile, vendor, arch)` helper from slice 1.
+  Precedence: `profile.Quantization.Images[format]` (when non-empty) wins;
+  otherwise it falls through to the existing
+  `ResolveImage(format, "", vendor, arch)` cascade (runtime override → arch env
+  → generic env → hardcoded default).
+- Removed the hardcoded `if gpuArch == "gfx906"` branch from
+  `resolveGPTQROCmImage`. `deploy/gpuprofiles/gfx906.yaml:89` already declares
+  `quantization.images.gptq`, and the controller-side path in
+  `controllers/modelcache_quantization.go` populates `ProfileQuantizerImage`
+  from that field via `backend.QuantizerImageFromProfile` before
+  `ResolveImage` is consulted.
+- The arch-specific env var (`FLEXINFER_QUANTIZER_GPTQ_ROCM_<ARCH>_IMAGE`) is
+  preserved as the documented backstop for clusters running ahead of a
+  GPUProfile reconcile.
+- The new `ResolveImageFromProfile` helper is callsite-compatible — existing
+  controllers continue to use `ResolveImage(format, params.ProfileQuantizerImage, ...)`
+  via `JobParams.ProfileQuantizerImage`. Future refactors can adopt the
+  profile-spec variant directly when convenient.
+
+Tests:
+- `pkg/quantization/image_test.go::TestResolveImageFromProfile_GPUProfileFirst`
+  covers six cases: profile wins on gfx906, profile nil falls through to
+  default on gfx906, profile-without-entry falls through on gfx1100, profile
+  declares abliteration on gfx906, profile beats env override on gfx1100,
+  profile-with-empty-string falls through on gfx1100.
+- Updated `pkg/quantization/image_test.go::TestResolveImage_GPUArchMatrix` and
+  `pkg/quantization/gptq_test.go::TestResolveImage_GPTQ_ROCm` to reflect the
+  new fallback (no hardcoded gfx906 default).
+- Updated `pkg/quantization/quantization_test.go::TestGPTQJobBuilder_BuildJob_AMDVendor_GFX906`
+  to inject the gfx906 image via `ProfileQuantizerImage`, matching the
+  production controller path.
+- Updated `controllers/modelcache_quantization_reconcile_test.go::TestReconcileQuantizationWarmsRuntimeImageBeforeWorkerJob`
+  to register a fake gfx906 GPUProfile with a `flexinfer/runtime` image so the
+  warmup path still triggers under the new contract.
+
+Files migrated:
+- `pkg/quantization/image.go:84-100` — `gfx906` hardcoded branch removed,
+  `ResolveImageFromProfile` added at top of file (~33 LOC).
 
 ## Priority 4 — `BackendCanary` status annotation contract (deferred)
 

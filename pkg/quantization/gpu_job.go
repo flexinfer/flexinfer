@@ -104,6 +104,13 @@ const (
 	// DefaultGPTQROCmGFX906Image is the unified runtime image for Radeon VII (gfx906).
 	// Based on mixa3607/pytorch-gfx906 (ROCm 6.3.3 + PyTorch 2.9), which restores
 	// GPU compute broken in ROCm 6.4+. Includes GPTQModel, bitsandbytes, diffusers.
+	//
+	// This constant is the canonical reference value for tests and operators —
+	// the production controller path resolves the gfx906 image via
+	// `deploy/gpuprofiles/gfx906.yaml::quantization.images.gptq` (see
+	// ResolveImageFromProfile / backend.QuantizerImageFromProfile). The
+	// `FLEXINFER_QUANTIZER_GPTQ_ROCM_GFX906_IMAGE` env var remains a backstop
+	// for clusters running ahead of a GPUProfile reconcile.
 	DefaultGPTQROCmGFX906Image = "registry.harbor.lan/flexinfer/runtime:unified-gfx906-v3"
 
 	// DefaultGPUQuantizationMemoryGB is the default memory limit for AWQ/GPTQ jobs.

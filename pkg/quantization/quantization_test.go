@@ -668,13 +668,17 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX906(t *testing.T) {
 	builder := &GPTQJobBuilder{}
 	bits := int32(4)
 	groupSize := int32(128)
+	// gfx906 no longer has a hardcoded image fallback in image.go — the
+	// GPUProfile CR (deploy/gpuprofiles/gfx906.yaml) is the source of truth
+	// and the controller propagates the image via ProfileQuantizerImage.
 	params := JobParams{
-		Name:      "qwen35-27b-gptq-gfx906",
-		Namespace: "flexinfer-system",
-		PVCName:   "qwen35-27b-gptq-gfx906",
-		ModelPath: "qwen35-27b-gptq-gfx906",
-		GPUVendor: "amd",
-		GPUArch:   "gfx906",
+		Name:                  "qwen35-27b-gptq-gfx906",
+		Namespace:             "flexinfer-system",
+		PVCName:               "qwen35-27b-gptq-gfx906",
+		ModelPath:             "qwen35-27b-gptq-gfx906",
+		GPUVendor:             "amd",
+		GPUArch:               "gfx906",
+		ProfileQuantizerImage: DefaultGPTQROCmGFX906Image,
 		NodeSelector: map[string]string{
 			"kubernetes.io/hostname": "cblevins-radeonvii",
 		},
@@ -693,7 +697,7 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX906(t *testing.T) {
 
 	container := job.Spec.Template.Spec.Containers[0]
 
-	// gfx906 image should be selected
+	// gfx906 image (from GPUProfile-style ProfileQuantizerImage) should be selected.
 	if container.Image != DefaultGPTQROCmGFX906Image {
 		t.Fatalf("container.Image = %q, want %q", container.Image, DefaultGPTQROCmGFX906Image)
 	}

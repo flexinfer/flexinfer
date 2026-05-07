@@ -147,6 +147,21 @@ func TestReconcileQuantizationWarmsRuntimeImageBeforeWorkerJob(t *testing.T) {
 	cache.Spec.NodeSelector["flexinfer.ai/gpu.arch"] = "gfx906"
 	r, cl := newQuantizationTestReconciler(t, nil, cache)
 
+	// gfx906 no longer has a hardcoded runtime image fallback in
+	// pkg/quantization/image.go — the GPUProfile CR is the source of truth.
+	// Register a fake gfx906 profile so the resolved image points at the
+	// unified runtime, which triggers the warmup path tested below.
+	r.GPUProfiles = &GPUProfileReconciler{}
+	r.GPUProfiles.profiles.Store("gfx906", &aiv1alpha2.GPUProfileSpec{
+		Architecture: "gfx906",
+		Vendor:       "amd",
+		Quantization: &aiv1alpha2.QuantizationProfile{
+			Images: map[string]string{
+				"gptq": "registry.harbor.lan/flexinfer/runtime:unified-gfx906-test",
+			},
+		},
+	})
+
 	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
 	require.NoError(t, err)
 	assert.Equal(t, requeueShort, result.RequeueAfter)

@@ -367,9 +367,12 @@ func TestResolveImage_GPTQ_ROCm(t *testing.T) {
 			wantImg: DefaultGPTQROCmImage,
 		},
 		{
-			name:    "gfx906 default",
+			// gfx906 no longer hardcodes a separate default — the GPUProfile CR
+			// is the source of truth. Without a profile or env override, the
+			// generic ROCm default is returned.
+			name:    "gfx906 falls back to generic rocm default without profile",
 			gpuArch: "gfx906",
-			wantImg: DefaultGPTQROCmGFX906Image,
+			wantImg: DefaultGPTQROCmImage,
 		},
 		{
 			name:    "empty arch falls to generic",
