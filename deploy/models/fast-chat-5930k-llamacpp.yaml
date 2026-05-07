@@ -1,0 +1,62 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-8b-fast-fallback-5930k
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  source: HF://Qwen/Qwen3-8B-GGUF
+  cache:
+    size: 8Gi
+    storageClass: nvme-1r
+    strategy: SharedPVC
+  gpu:
+    vendor: amd
+    shared: 5930k-imagegen-textgen
+    # Above imagegen so text demand can preempt; below 26B/31B canaries when
+    # those re-enter the shared pool. Mirrors the disabled MLC manifest's
+    # posture (priority 220) so LiteLLM pool routing reaches the same
+    # qualitative ranking.
+    priority: 220
+    count: 1
+    vramEstimateMB: 6000
+  serverless:
+    enabled: true
+    # Cold-warm fallback. Only spins up when the 7900xtx primary is
+    # unavailable or saturated. Idle timeout matches the prior MLC manifest.
+    minReplicas: 0
+    idleTimeout: 5m
+    coldStartTimeout: 10m
+  config:
+    ggufFile: Qwen3-8B-Q4_K_M.gguf
+    contextSize: 16384
+    nGPULayers: 999
+    batchSize: 2048
+    ubatchSize: 512
+    parallel: 2
+    threads: 12
+    flashAttention: true
+    cacheTypeK: q4_0
+    cacheTypeV: q4_0
+    jinja: true
+    metrics: true
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 12Gi
+    limits:
+      cpu: "8"
+      memory: 24Gi
+  serviceLabels:
+    - fast-chat-5930k
+    - fast-chat-fallback
+    - fast-text-5930k
+  litellm:
+    enabled: true
+    servedModelName: qwen3-8b-fast-fallback-5930k
+    aliases:
+      - fast-chat-5930k
+      - fast-chat-fallback
+      - fast-text-5930k

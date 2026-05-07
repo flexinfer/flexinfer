@@ -42,11 +42,13 @@ resources:
   # - gemma4-e4b-multimodal.yaml
 
   # === cblevins-5930k (24 GB gfx1100) ===
-  # 2026-05-07: disabled after live activation proved the available 5930k/NFS
-  # MLC artifacts are not runnable by this backend layout. The node-local PVC
-  # lacks the model directory, and the shared NFS copy lacks
-  # `mlc-chat-config.json`.
-  # - fast-chat.yaml                  # disabled; missing runnable MLC layout
+  # 2026-05-07: the prior MLC fast-chat.yaml was disabled because the
+  # 5930k local-path PVC lacks the model directory and the shared NFS copy
+  # lacks `mlc-chat-config.json`. fast-chat-5930k-llamacpp.yaml is the
+  # llama.cpp + GGUF replacement (HF source, no PVC distribution problem).
+  # See docs/planning/fast-chat-resilience.md for the full decision record.
+  - fast-chat-5930k-llamacpp.yaml   # llama.cpp Qwen3-8B Q4_K_M, fast-chat fallback
+  # - fast-chat.yaml                  # disabled MLC variant, kept on disk for one cycle as rollback
   # qwen3-14b-abliterated-v2-5930k.yaml references a GPTQ PVC that is not
   # present in the live cluster; keep disabled until that cache is rebuilt or
   # repointed to an OCI-backed artifact.
