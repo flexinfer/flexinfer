@@ -1,0 +1,22 @@
+{
+  "servers": [
+    {
+      "name": "agent-context",
+      "enabled": true,
+      "description": "Agent context, sessions, tasks, and memory"
+    },
+    {
+      "name": "github",
+      "enabled": true,
+      "last_error": "rate limit exceeded",
+      "description": "GitHub repos, issues, and PRs"
+    },
+    {
+      "name": "deprecated-server",
+      "enabled": false,
+      "last_error": "missing config",
+      "description": "Disabled until config restored"
+    }
+  ],
+  "last_sync_time": "2026-05-06T14:30:00Z"
+}

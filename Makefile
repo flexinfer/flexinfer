@@ -1,7 +1,7 @@
 .PHONY: all build clean test install servers lint fmt vet check setup hooks git-setup dev help \
 		loom loomd loom-mills-operator \
 		install-core install-all bootstrap-local dev-sync dev-sync-repo dev-upgrade dev-reload \
-	ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-enterprise-smoke ci-test-race ci-benchmark ci-security ci-baseline ci-contracts \
+	ci ci-lint ci-guardrails ci-lint-soft ci-lint-strict ci-build ci-test ci-test-unit ci-test-integration ci-test-enterprise-smoke ci-test-race ci-benchmark ci-security ci-baseline ci-contracts ci-openapi \
 	codebase-bench-baseline codebase-bench-full codebase-bench-incremental codebase-bench-watch \
 		security security-gosec security-vuln \
 		changelog changelog-html changelog-json \
@@ -715,6 +715,14 @@ ci-contracts:
 	@echo "Golden files verified:"
 	@ls internal/contracts/testdata/*.golden | wc -l | xargs -I{} echo "  {} golden files checked"
 	@echo "✓ Contract tests passed — no drift detected"
+
+# OpenAPI spec conformance — verifies docs/api/openapi.yaml stays in sync
+# with the Go contracts in internal/visibility/contracts (UNIFY-2c, EPIC 2 / #66).
+# Fixture-vs-spec only; does not exercise live HUD handlers.
+ci-openapi:
+	@echo "Running OpenAPI conformance tests..."
+	@go test -v -count=1 -run 'OpenAPI' ./internal/contracts/...
+	@echo "✓ OpenAPI conformance passed"
 
 # Enterprise smoke suite (mirrors GitLab CI test:enterprise-smoke)
 ci-test-enterprise-smoke:

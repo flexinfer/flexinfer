@@ -1,0 +1,97 @@
+{
+  "daemon": {
+    "running": true,
+    "servers": 12,
+    "active_conns": 8,
+    "idle_conns": 3,
+    "active_rpcs": 27,
+    "active_proxy_sessions": 4,
+    "daemon_epoch": 1746535800,
+    "drain_ready": false,
+    "draining": false,
+    "processes": [
+      "loom-daemon",
+      "loom-hud"
+    ]
+  },
+  "agents": {
+    "active": 5,
+    "idle": 2,
+    "offline": 1,
+    "total": 8
+  },
+  "sessions": {
+    "active": 3,
+    "total": 142
+  },
+  "pipelines": {
+    "available": true,
+    "running": 2,
+    "passed": 18,
+    "failed": 1,
+    "pending": 0,
+    "last_activity": "2026-05-06T14:25:12Z"
+  },
+  "hud": {
+    "reachable": true
+  },
+  "health": {
+    "servers": {
+      "git": {
+        "healthy": true,
+        "ready": true,
+        "consecutive_fails": 0,
+        "total_checks": 1024,
+        "total_failures": 2,
+        "avg_latency_ms": 18.5,
+        "restart_count": 0,
+        "last_check": "2026-05-06T14:29:55Z",
+        "last_healthy": "2026-05-06T14:29:55Z",
+        "last_deep_probe": "2026-05-06T14:00:00Z"
+      },
+      "github": {
+        "healthy": false,
+        "ready": false,
+        "consecutive_fails": 3,
+        "total_checks": 512,
+        "total_failures": 11,
+        "avg_latency_ms": 245.7,
+        "last_error": "rate limit exceeded",
+        "restart_count": 1,
+        "last_check": "2026-05-06T14:29:50Z",
+        "last_healthy": "2026-05-06T14:15:00Z",
+        "last_restart": "2026-05-06T14:20:00Z",
+        "last_deep_probe": "2026-05-06T14:00:00Z"
+      }
+    },
+    "degraded_servers": [
+      "github"
+    ]
+  },
+  "observability": {
+    "otlp_endpoint": "http://otel-collector:4317",
+    "otlp_configured": true,
+    "log_format": "json",
+    "json_logs_enabled": true,
+    "traced_servers": 10,
+    "total_servers": 12,
+    "trace_coverage": "83%",
+    "runtime_otlp_configured": true,
+    "runtime_otlp_enabled": true,
+    "runtime_otlp_endpoint": "http://otel-collector:4318",
+    "runtime_otlp_protocol": "grpc",
+    "runtime_otlp_service_name": "loom-daemon",
+    "runtime_otlp_sample_rate": 0.25,
+    "runtime_meter_enabled": true,
+    "runtime_trace_surfaces": {
+      "daemon": true,
+      "hud": true,
+      "router": false
+    },
+    "runtime_trace_coverage": "67%",
+    "warnings": [
+      "sampling below 50%"
+    ]
+  },
+  "healthy": false
+}

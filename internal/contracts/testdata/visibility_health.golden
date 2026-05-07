@@ -1,0 +1,50 @@
+{
+  "servers": {
+    "git": {
+      "local": {
+        "healthy": true,
+        "consecFails": 0,
+        "avgLatencyMs": 18.5
+      },
+      "hub": {
+        "healthy": true,
+        "consecFails": 0,
+        "avgLatencyMs": 21.4
+      },
+      "monitor": {
+        "healthy": true,
+        "consecFails": 0,
+        "avgLatencyMs": 12.3
+      },
+      "target": "ws://hub.lan:9090/git",
+      "transport": "ws",
+      "divergence": {
+        "monitor_healthy": true,
+        "router_available": false,
+        "reason": "router circuit open"
+      }
+    },
+    "github": {
+      "local": {
+        "healthy": false,
+        "consecFails": 3,
+        "avgLatencyMs": 245.7,
+        "errorMessage": "rate limit exceeded"
+      },
+      "hub": {
+        "healthy": false,
+        "consecFails": 3,
+        "avgLatencyMs": 250.1,
+        "errorMessage": "rate limit exceeded"
+      },
+      "target": "ws://hub.lan:9090/github",
+      "transport": "ws"
+    }
+  },
+  "divergence": [
+    {
+      "server": "git",
+      "reason": "router circuit open"
+    }
+  ]
+}
