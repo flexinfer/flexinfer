@@ -70,8 +70,15 @@ type FeatureProfile struct {
 	RequiresPreamble    bool   `yaml:"requires_preamble"`
 }
 
+// supportedProfileVersion is the highest schema version this loader understands.
+// Bumped from 1 → 2 in 2026-05-07 to gate template-driven hooks/policies/extras
+// (EPIC 3, .loom/107). When the loader sees a higher version, it returns an
+// explicit error rather than silently ignoring unknown fields.
+const supportedProfileVersion = 2
+
 // profilesFile is the top-level YAML structure.
 type profilesFile struct {
+	Version   int                         `yaml:"version"`
 	Platforms map[string]*PlatformProfile `yaml:"platforms"`
 }
 
@@ -86,6 +93,13 @@ func loadProfiles() (map[string]*PlatformProfile, error) {
 		var pf profilesFile
 		if err := yaml.Unmarshal(embeddedProfiles, &pf); err != nil {
 			profileErr = fmt.Errorf("parse platform profiles: %w", err)
+			return
+		}
+		// version: 0 (missing) is tolerated for backward compat with v1 schemas
+		// that pre-date the version field. Anything > supportedProfileVersion
+		// indicates a YAML written for a newer loader and is rejected.
+		if pf.Version > supportedProfileVersion {
+			profileErr = fmt.Errorf("platform profiles version %d unsupported (this loader supports up to %d)", pf.Version, supportedProfileVersion)
 			return
 		}
 		profileRegistry = pf.Platforms

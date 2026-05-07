@@ -2,6 +2,13 @@
 # Each platform defines its config format, file paths, hook support,
 # capabilities, and serialization features. Adding a new platform
 # requires only a new entry here — no Go code changes.
+#
+# Schema versioning: bumped to v2 on 2026-05-07 to gate forthcoming
+# template-driven fields (hooks.template, policy_refs → templates/policies/,
+# extras → templates/extras/). v1 readers cannot reliably consume v2 YAML
+# once those fields are populated. See .loom/107 (EPIC 3 product spec).
+
+version: 2
 
 platforms:
   claude:
