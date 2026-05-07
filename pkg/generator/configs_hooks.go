@@ -153,28 +153,49 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 	return hooks
 }
 
-// appendHookPolicies dispatches shared policy refs to their hook implementations.
-// For native enforcement platforms that explicitly support preToolUse, it
-// generates PreToolUse guard hooks. For proxy/plugin enforcement, or for native
-// platforms that lack preToolUse (e.g. Gemini), policies are enforced at the
-// loom proxy layer, so no PreToolUse hooks are needed.
+// appendHookPolicies emits PreToolUse hooks for each declared policy ref.
+// EPIC 3 / CONFIG-3 (.loom/108): dispatch is now name-agnostic — adding a
+// new policy requires only a YAML file under
+// pkg/generator/templates/policies/ (with optional registry override),
+// not a Go switch case.
+//
+// For native enforcement platforms that explicitly support preToolUse,
+// each policy contributes its own deny block. A single git-commit quality
+// reminder hook is appended once per platform regardless of the number
+// of policies. For proxy/plugin enforcement, or native platforms that
+// lack preToolUse (e.g. Gemini), policies are enforced at the loom proxy
+// layer and no PreToolUse hooks are generated here.
 func appendHookPolicies(hooks map[string]any, reg *registry.Registry, hp HookProfile) {
+	if len(hp.PolicyRefs) == 0 {
+		return
+	}
+	if hp.Enforcement != "native" || !hookProfileHasEvent(hp, "preToolUse") {
+		// Proxy/plugin enforcement: nothing to emit. The git-commit reminder
+		// is also gated here — it's a PreToolUse hook itself.
+		return
+	}
+
+	emittedAny := false
 	for _, ref := range hp.PolicyRefs {
-		switch ref {
-		case "gitops_flux":
-			// Only emit PreToolUse hooks when the platform both uses native
-			// enforcement AND declares preToolUse in its Events list. Gemini
-			// uses native enforcement but does not understand PreToolUse and
-			// will reject the entire hooks block if it appears.
-			if hp.Enforcement == "native" && hookProfileHasEvent(hp, "preToolUse") {
-				if policyHooks := gitopsFluxGuardrailHooks(reg); len(policyHooks) > 0 {
-					hooks["PreToolUse"] = appendHookBlocks(hooks["PreToolUse"], policyHooks...)
-				}
-			}
-			// For "proxy" and "plugin" enforcement, policies are enforced at the
-			// loom proxy layer. No PreToolUse hooks are generated; the proxy
-			// intercepts blocked commands before they reach the platform.
+		policy, err := LoadPolicy(reg, ref)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARN  policy %q load error: %v\n", ref, err)
+			continue
 		}
+		if policy == nil {
+			continue
+		}
+		policyHooks := policyGuardrailHooks(policy)
+		if len(policyHooks) == 0 {
+			continue
+		}
+		hooks["PreToolUse"] = appendHookBlocks(hooks["PreToolUse"], policyHooks...)
+		emittedAny = true
+	}
+	if emittedAny {
+		// Append the policy-agnostic git-commit quality reminder once per
+		// platform regardless of how many policies emitted hooks above.
+		hooks["PreToolUse"] = appendHookBlocks(hooks["PreToolUse"], gitCommitQualityReminderHook())
 	}
 }
 
