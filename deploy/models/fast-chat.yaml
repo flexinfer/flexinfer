@@ -5,7 +5,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: mlc-llm
-  source: pvc://mlc-8b-abliterated-nvme-5930k/Qwen3-8B-abliterated-q4f32_1-MLC
+  source: pvc://mlc-models-nfs/Qwen3-8B-abliterated-q4f32_1-MLC
   gpu:
     vendor: amd
     shared: 5930k-imagegen-textgen
