@@ -93,7 +93,7 @@ func TestAppendHookExtras_Retrospective_AppendsToStop(t *testing.T) {
 
 	stopBefore := len(hooks["Stop"].([]map[string]any))
 
-	appendHookExtras(hooks, []string{"postSessionEnd_retrospective"}, "")
+	appendHookExtras(hooks, HookProfile{Extras: []string{"postSessionEnd_retrospective"}}, "")
 
 	stopAfter := len(hooks["Stop"].([]map[string]any))
 	if stopAfter <= stopBefore {
@@ -115,7 +115,7 @@ func TestAppendHookExtras_Retrospective_AppendsToSessionEnd(t *testing.T) {
 
 	endBefore := len(hooks["SessionEnd"].([]map[string]any))
 
-	appendHookExtras(hooks, []string{"postSessionEnd_retrospective"}, "")
+	appendHookExtras(hooks, HookProfile{Extras: []string{"postSessionEnd_retrospective"}}, "")
 
 	endAfter := len(hooks["SessionEnd"].([]map[string]any))
 	if endAfter <= endBefore {
@@ -135,7 +135,7 @@ func TestAppendHookExtras_Retrospective_DoesNotAffectMissingEvent(t *testing.T) 
 		HeartbeatMatcher: "Bash|Task",
 	}, "")
 
-	appendHookExtras(hooks, []string{"postSessionEnd_retrospective"}, "")
+	appendHookExtras(hooks, HookProfile{Extras: []string{"postSessionEnd_retrospective"}}, "")
 
 	// SessionEnd should not exist because Claude uses Stop.
 	if _, ok := hooks["SessionEnd"]; ok {
@@ -175,7 +175,7 @@ func TestAppendHookExtras_SessionStartTestHealth(t *testing.T) {
 		},
 	}
 
-	appendHookExtras(hooks, []string{"sessionStart_testHealth"}, "/usr/local/bin/loom")
+	appendHookExtras(hooks, HookProfile{Extras: []string{"sessionStart_testHealth"}}, "/usr/local/bin/loom")
 
 	sessionStart, ok := hooks["SessionStart"].([]map[string]any)
 	if !ok {
@@ -206,7 +206,7 @@ func TestAppendHookExtras_SessionStartTestHealth_NoExisting(t *testing.T) {
 	// If SessionStart is not present or empty, the hook should not be added
 	hooks := map[string]any{}
 
-	appendHookExtras(hooks, []string{"sessionStart_testHealth"}, "/usr/local/bin/loom")
+	appendHookExtras(hooks, HookProfile{Extras: []string{"sessionStart_testHealth"}}, "/usr/local/bin/loom")
 
 	// SessionStart key should not exist since there was nothing to append to
 	if _, ok := hooks["SessionStart"]; ok {
@@ -416,7 +416,7 @@ func TestAppendHookExtras_UnknownExtra(t *testing.T) {
 	}
 
 	// Unknown extras should be silently ignored
-	appendHookExtras(hooks, []string{"unknown_extra"}, "/usr/local/bin/loom")
+	appendHookExtras(hooks, HookProfile{Extras: []string{"unknown_extra"}}, "/usr/local/bin/loom")
 
 	sessionStart := hooks["SessionStart"].([]map[string]any)
 	if len(sessionStart) != 1 {
@@ -529,5 +529,265 @@ func TestHooksConfigFromProfile_RetroOptIn_Gemini(t *testing.T) {
 	}
 	if !foundRetroOnSessionEnd {
 		t.Error("retro hook did not attach to Gemini SessionEnd event")
+	}
+}
+
+// --- Phase 2.2: telemetry_eventEmit hook wiring ---
+//
+// These tests cover the new "telemetry_eventEmit" extras case that wires each
+// platform's native lifecycle hooks into `loom agent event-emit` (Phase 2.1's
+// CLI). Spec: `.loom/99-implementation-plan-agent-telemetry-spectator-2026-05-04.md`.
+
+func TestCanonicalTelemetryHookForEvent(t *testing.T) {
+	cases := map[string]string{
+		"SessionStart":  "session-start",
+		"SessionEnd":    "session-end",
+		"Stop":          "session-end", // Claude Code uses Stop for the same lifecycle moment.
+		"PreToolUse":    "pre-tool-use",
+		"PostToolUse":   "post-tool-use",
+		"SubagentStart": "", // Subagent events are not canonical telemetry hooks.
+		"AfterTool":     "", // Gemini-native name; mapped via platform-specific normalizer when wired.
+		"":              "",
+	}
+	for event, want := range cases {
+		if got := canonicalTelemetryHookForEvent(event); got != want {
+			t.Errorf("canonicalTelemetryHookForEvent(%q) = %q, want %q", event, got, want)
+		}
+	}
+}
+
+func TestTelemetryEventEmitPlatform_ClaudeCode(t *testing.T) {
+	if got := telemetryEventEmitPlatform(HookProfile{AgentID: "claude-code"}); got != "claude-code" {
+		t.Errorf("claude-code platform: got %q, want %q", got, "claude-code")
+	}
+}
+
+func TestTelemetryEventEmitPlatform_UnsupportedReturnsEmpty(t *testing.T) {
+	// Gemini and Codex normalizers slot in via follow-up slices; until then,
+	// telemetryEventEmitPlatform returns "" so the extras case is a no-op
+	// rather than emitting hooks that publish broken payloads.
+	for _, agentID := range []string{"gemini-cli", "codex", "kilocode", "", "unknown"} {
+		if got := telemetryEventEmitPlatform(HookProfile{AgentID: agentID}); got != "" {
+			t.Errorf("AgentID=%q: got %q, want empty", agentID, got)
+		}
+	}
+}
+
+func TestAppendHookExtras_TelemetryEventEmit_ClaudeCodeWiresAllFourEvents(t *testing.T) {
+	// Build Claude Code base hooks (Stop + PostToolUse populated by buildPlatformHooks).
+	hp := HookProfile{
+		Enabled:          true,
+		AgentID:          "claude-code",
+		AgentType:        "claude-code",
+		Description:      "Claude Code session",
+		SessionEndEvent:  "Stop",
+		HeartbeatEvent:   "PostToolUse",
+		HeartbeatMatcher: "Bash|Task",
+		Events:           []string{"sessionStart", "sessionEnd", "preToolUse", "postToolUse"},
+		Extras:           []string{"telemetry_eventEmit"},
+	}
+	hooks := buildPlatformHooks(testRegistry(), hp, "/usr/local/bin/loom")
+
+	// PreToolUse is not populated by buildPlatformHooks alone; Claude's
+	// PreToolUse blocks come from policy refs (gitops_flux). Inject a minimal
+	// existing block so the extras case has a slot to append to. This mirrors
+	// production where appendHookPolicies runs before appendHookExtras.
+	hooks["PreToolUse"] = []map[string]any{
+		{"hooks": []map[string]any{{"type": "command", "command": "true"}}},
+	}
+
+	appendHookExtras(hooks, hp, "/usr/local/bin/loom")
+
+	for _, event := range []string{"SessionStart", "Stop", "PreToolUse", "PostToolUse"} {
+		blocks, ok := hooks[event].([]map[string]any)
+		if !ok {
+			t.Errorf("event=%s: hooks slot missing or wrong type", event)
+			continue
+		}
+		var found bool
+		for _, b := range blocks {
+			inner, ok := b["hooks"].([]map[string]any)
+			if !ok {
+				continue
+			}
+			for _, h := range inner {
+				cmd, _ := h["command"].(string)
+				if strings.Contains(cmd, "agent event-emit") && strings.Contains(cmd, "--platform claude-code") {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			t.Errorf("event=%s: telemetry_eventEmit did not inject a `loom agent event-emit --platform claude-code` hook", event)
+		}
+	}
+}
+
+func TestAppendHookExtras_TelemetryEventEmit_UsesCanonicalHookNames(t *testing.T) {
+	hp := HookProfile{
+		Enabled:          true,
+		AgentID:          "claude-code",
+		AgentType:        "claude-code",
+		Description:      "Claude Code session",
+		SessionEndEvent:  "Stop",
+		HeartbeatEvent:   "PostToolUse",
+		HeartbeatMatcher: "Bash|Task",
+		Events:           []string{"sessionStart", "sessionEnd", "preToolUse", "postToolUse"},
+		Extras:           []string{"telemetry_eventEmit"},
+	}
+	hooks := buildPlatformHooks(testRegistry(), hp, "/usr/local/bin/loom")
+	hooks["PreToolUse"] = []map[string]any{
+		{"hooks": []map[string]any{{"type": "command", "command": "true"}}},
+	}
+	appendHookExtras(hooks, hp, "/usr/local/bin/loom")
+
+	expectedHookForEvent := map[string]string{
+		"SessionStart": "--hook session-start",
+		"Stop":         "--hook session-end",
+		"PreToolUse":   "--hook pre-tool-use",
+		"PostToolUse":  "--hook post-tool-use",
+	}
+	for event, expectedFlag := range expectedHookForEvent {
+		blocks, _ := hooks[event].([]map[string]any)
+		var ok bool
+		for _, b := range blocks {
+			inner, _ := b["hooks"].([]map[string]any)
+			for _, h := range inner {
+				cmd, _ := h["command"].(string)
+				if strings.Contains(cmd, "agent event-emit") && strings.Contains(cmd, expectedFlag) {
+					ok = true
+					break
+				}
+			}
+			if ok {
+				break
+			}
+		}
+		if !ok {
+			t.Errorf("event=%s: did not find event-emit hook with flag %q", event, expectedFlag)
+		}
+	}
+}
+
+func TestAppendHookExtras_TelemetryEventEmit_NoOpForUnsupportedPlatform(t *testing.T) {
+	// Gemini doesn't have a CLI normalizer yet; the extras case must skip
+	// silently rather than emit broken hooks pointing at --platform gemini-cli.
+	hp := HookProfile{
+		Enabled:          true,
+		AgentID:          "gemini-cli",
+		AgentType:        "gemini-cli",
+		Description:      "Gemini CLI session",
+		SessionEndEvent:  "SessionEnd",
+		HeartbeatEvent:   "AfterTool",
+		HeartbeatMatcher: "",
+		Events:           []string{"sessionStart", "sessionEnd", "postToolUse"},
+		Extras:           []string{"telemetry_eventEmit"},
+	}
+	hooks := buildPlatformHooks(testRegistry(), hp, "/usr/local/bin/loom")
+	startBefore := len(hooks["SessionStart"].([]map[string]any))
+	endBefore := len(hooks["SessionEnd"].([]map[string]any))
+
+	appendHookExtras(hooks, hp, "/usr/local/bin/loom")
+
+	startAfter := len(hooks["SessionStart"].([]map[string]any))
+	endAfter := len(hooks["SessionEnd"].([]map[string]any))
+	if startAfter != startBefore {
+		t.Errorf("SessionStart grew for unsupported platform: before=%d after=%d", startBefore, startAfter)
+	}
+	if endAfter != endBefore {
+		t.Errorf("SessionEnd grew for unsupported platform: before=%d after=%d", endBefore, endAfter)
+	}
+}
+
+func TestAppendHookExtras_TelemetryEventEmit_NoOpWhenExtraAbsent(t *testing.T) {
+	hp := HookProfile{
+		Enabled:          true,
+		AgentID:          "claude-code",
+		AgentType:        "claude-code",
+		Description:      "Claude Code session",
+		SessionEndEvent:  "Stop",
+		HeartbeatEvent:   "PostToolUse",
+		HeartbeatMatcher: "Bash|Task",
+		Events:           []string{"sessionStart", "sessionEnd", "preToolUse", "postToolUse"},
+		// No Extras; baseline should be untouched by the case.
+	}
+	hooks := buildPlatformHooks(testRegistry(), hp, "/usr/local/bin/loom")
+	startBefore := len(hooks["SessionStart"].([]map[string]any))
+	stopBefore := len(hooks["Stop"].([]map[string]any))
+	postBefore := len(hooks["PostToolUse"].([]map[string]any))
+
+	appendHookExtras(hooks, hp, "/usr/local/bin/loom")
+
+	if got := len(hooks["SessionStart"].([]map[string]any)); got != startBefore {
+		t.Errorf("SessionStart grew without telemetry_eventEmit extra: before=%d after=%d", startBefore, got)
+	}
+	if got := len(hooks["Stop"].([]map[string]any)); got != stopBefore {
+		t.Errorf("Stop grew without telemetry_eventEmit extra: before=%d after=%d", stopBefore, got)
+	}
+	if got := len(hooks["PostToolUse"].([]map[string]any)); got != postBefore {
+		t.Errorf("PostToolUse grew without telemetry_eventEmit extra: before=%d after=%d", postBefore, got)
+	}
+}
+
+func TestAppendHookExtras_TelemetryEventEmit_BestEffortOrTrue(t *testing.T) {
+	// The injected event-emit hook must end with `|| true` so a slow or down
+	// daemon never causes the platform's hook chain to fail (which could break
+	// a user's CLI session). Mirrors the existing extras' best-effort posture.
+	hp := HookProfile{
+		Enabled:          true,
+		AgentID:          "claude-code",
+		AgentType:        "claude-code",
+		Description:      "Claude Code session",
+		SessionEndEvent:  "Stop",
+		HeartbeatEvent:   "PostToolUse",
+		HeartbeatMatcher: "Bash|Task",
+		Events:           []string{"sessionStart", "sessionEnd", "preToolUse", "postToolUse"},
+		Extras:           []string{"telemetry_eventEmit"},
+	}
+	hooks := buildPlatformHooks(testRegistry(), hp, "/usr/local/bin/loom")
+	appendHookExtras(hooks, hp, "/usr/local/bin/loom")
+
+	blocks, _ := hooks["SessionStart"].([]map[string]any)
+	for _, b := range blocks {
+		inner, _ := b["hooks"].([]map[string]any)
+		for _, h := range inner {
+			cmd, _ := h["command"].(string)
+			if strings.Contains(cmd, "agent event-emit") {
+				if !strings.Contains(cmd, "|| true") {
+					t.Errorf("event-emit hook is not best-effort (missing `|| true`): %s", cmd)
+				}
+				if !strings.Contains(cmd, "--quiet") {
+					t.Errorf("event-emit hook missing --quiet flag (required for hook context): %s", cmd)
+				}
+			}
+		}
+	}
+}
+
+func TestClaudeProfile_OptedIntoTelemetryEventEmit(t *testing.T) {
+	// Lock in the YAML wiring: Claude Code's profile must carry
+	// "telemetry_eventEmit" in its extras so `loom sync claude --regen`
+	// generates the new hooks.
+	profiles, err := loadProfiles()
+	if err != nil {
+		t.Fatalf("loadProfiles: %v", err)
+	}
+	profile, ok := profiles["claude"]
+	if !ok {
+		t.Fatal("claude profile missing from registry")
+	}
+	var found bool
+	for _, e := range profile.Hooks.Extras {
+		if e == "telemetry_eventEmit" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("claude profile extras missing telemetry_eventEmit: got %v", profile.Hooks.Extras)
 	}
 }

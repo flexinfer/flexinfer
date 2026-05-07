@@ -227,8 +227,12 @@ func FormatPolicyComment(hp HookProfile, prefix string) string {
 }
 
 // appendHookExtras dispatches profile-defined extras to their hook implementations.
-func appendHookExtras(hooks map[string]any, extras []string, loomBinary string) {
-	for _, extra := range extras {
+//
+// The HookProfile is needed (rather than just hp.Extras) so platform-aware
+// extras like "telemetry_eventEmit" can read AgentID to decide the correct
+// `loom agent event-emit --platform` flag.
+func appendHookExtras(hooks map[string]any, hp HookProfile, loomBinary string) {
+	for _, extra := range hp.Extras {
 		switch extra {
 		case "postToolUse_formatters":
 			event := "PostToolUse"
@@ -254,8 +258,95 @@ func appendHookExtras(hooks map[string]any, extras []string, loomBinary string) 
 			if existing, ok := hooks["SessionStart"].([]map[string]any); ok && len(existing) > 0 {
 				hooks["SessionStart"] = append(existing, testHealthHooks...)
 			}
+		case "telemetry_eventEmit":
+			// Wire each canonical telemetry hook (session-start/end,
+			// pre-/post-tool-use) into `loom agent event-emit`. Best-effort:
+			// silently skipped for platforms whose AgentID lacks a CLI
+			// normalizer (Gemini/Codex slot in via follow-up slices).
+			appendTelemetryEventEmitHooks(hooks, hp, loomBinary)
 		}
 	}
+}
+
+// appendTelemetryEventEmitHooks walks the platform's existing hook event slots
+// and, for each canonical telemetry hook the platform supports, appends a hook
+// block that pipes the platform-native hook payload into
+// `loom agent event-emit --hook <name> --platform <p>`.
+//
+// Skipped silently when the AgentID does not yet have an event-emit CLI
+// normalizer (`telemetryEventEmitPlatform` returns ""). The injected hook is
+// best-effort (`|| true`) so a slow or down daemon never fails the user's
+// CLI session.
+//
+// Phase 2.1's `cmd/loom/cmd_agent_event_emit.go` is the consumer of these
+// hooks; see `.loom/99-implementation-plan-agent-telemetry-spectator-2026-05-04.md`
+// for the broader spectator plan.
+func appendTelemetryEventEmitHooks(hooks map[string]any, hp HookProfile, loomBinary string) {
+	platform := telemetryEventEmitPlatform(hp)
+	if platform == "" {
+		return
+	}
+
+	loomCmd := shellQuote(normalizeLoomBinary(loomBinary))
+	log := `2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log"`
+	bootstrap := hookAgentIDBootstrap(hp.AgentID)
+
+	// Walk known event slots; only inject when the slot is non-empty (mirrors
+	// the existing extras' behavior of acting only on already-built events).
+	for _, event := range []string{"SessionStart", "Stop", "SessionEnd", "PreToolUse", "PostToolUse"} {
+		canonical := canonicalTelemetryHookForEvent(event)
+		if canonical == "" {
+			continue
+		}
+		existing, ok := hooks[event].([]map[string]any)
+		if !ok || len(existing) == 0 {
+			continue
+		}
+		block := map[string]any{
+			"hooks": []map[string]any{
+				{
+					"type": "command",
+					"command": fmt.Sprintf(
+						`INPUT=$(cat); %s; printf '%%s' "$INPUT" | %s agent event-emit --hook %s --platform %s --agent-id "$AGENT_ID" --quiet %s || true`,
+						bootstrap, loomCmd, canonical, platform, log),
+				},
+			},
+		}
+		hooks[event] = append(existing, block)
+	}
+}
+
+// telemetryEventEmitPlatform returns the value to pass as `--platform` to
+// `loom agent event-emit` for the given HookProfile, or "" if the platform
+// is not yet wired in cmd/loom/cmd_agent_event_emit.go. Gemini and Codex
+// normalizers slot in via follow-up slices (Phase 2.1b/2.1c).
+func telemetryEventEmitPlatform(hp HookProfile) string {
+	switch hp.AgentID {
+	case "claude-code":
+		return "claude-code"
+	}
+	return ""
+}
+
+// canonicalTelemetryHookForEvent maps a platform-native hook event name to the
+// canonical hook string consumed by `loom agent event-emit --hook`. Returns ""
+// for events that do not correspond to a canonical telemetry hook (e.g.
+// SubagentStart, the heartbeat-only Bash|Task PostToolUse matcher, etc.).
+//
+// Stop and SessionEnd both map to "session-end" because Claude Code uses
+// "Stop" while Gemini uses "SessionEnd" for the same lifecycle moment.
+func canonicalTelemetryHookForEvent(event string) string {
+	switch event {
+	case "SessionStart":
+		return "session-start"
+	case "SessionEnd", "Stop":
+		return "session-end"
+	case "PreToolUse":
+		return "pre-tool-use"
+	case "PostToolUse":
+		return "post-tool-use"
+	}
+	return ""
 }
 
 func appendHookBlocks(existing any, hooks ...map[string]any) []map[string]any {
@@ -315,7 +406,7 @@ func hookStaleCleanup() string {
 // Used for platforms that have hooks.enabled but no platform-specific wrapper.
 func hooksConfigFromProfile(reg *registry.Registry, profile *PlatformProfile, loomBinary string) map[string]any {
 	hooks := buildPlatformHooks(reg, profile.Hooks, loomBinary)
-	appendHookExtras(hooks, profile.Hooks.Extras, loomBinary)
+	appendHookExtras(hooks, profile.Hooks, loomBinary)
 	return map[string]any{"hooks": hooks}
 }
 

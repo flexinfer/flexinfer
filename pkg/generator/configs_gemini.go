@@ -82,6 +82,6 @@ func geminiHooks(reg *registry.Registry, profile *PlatformProfile, loomBinary st
 	// Append shared policy hooks (Gemini now has native enforcement via policy_refs).
 	appendHookPolicies(hooks, reg, profile.Hooks)
 
-	appendHookExtras(hooks, profile.Hooks.Extras, loomBinary)
+	appendHookExtras(hooks, profile.Hooks, loomBinary)
 	return hooks
 }
