@@ -11,6 +11,8 @@ type KeyMap struct {
 	Memory   key.Binding
 	Stream   key.Binding
 	Presence key.Binding
+	Cost     key.Binding
+	RBAC     key.Binding
 	Refresh  key.Binding
 	Help     key.Binding
 	Quit     key.Binding
@@ -51,6 +53,14 @@ var Keys = KeyMap{
 		key.WithKeys("7"),
 		key.WithHelp("7", "presence"),
 	),
+	Cost: key.NewBinding(
+		key.WithKeys("8"),
+		key.WithHelp("8", "cost"),
+	),
+	RBAC: key.NewBinding(
+		key.WithKeys("9"),
+		key.WithHelp("9", "rbac"),
+	),
 	Refresh: key.NewBinding(
 		key.WithKeys("r"),
 		key.WithHelp("r", "refresh"),
@@ -85,7 +95,7 @@ func (k KeyMap) ShortHelp() []key.Binding {
 // FullHelp returns key bindings shown in the expanded help view.
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Overview, k.Fleet, k.Health, k.Tasks, k.Memory, k.Stream, k.Presence},
+		{k.Overview, k.Fleet, k.Health, k.Tasks, k.Memory, k.Stream, k.Presence, k.Cost, k.RBAC},
 		{k.Refresh, k.Enter, k.Escape, k.Filter},
 		{k.Help, k.Quit},
 	}

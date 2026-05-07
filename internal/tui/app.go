@@ -29,9 +29,11 @@ const (
 	PanelMemory
 	PanelStream
 	PanelPresence
+	PanelCost
+	PanelRBAC
 )
 
-var panelNames = []string{"Overview", "Fleet", "Health", "Tasks", "Memory", "Stream", "Presence"}
+var panelNames = []string{"Overview", "Fleet", "Health", "Tasks", "Memory", "Stream", "Presence", "Cost", "RBAC"}
 
 // msgTick is sent on each refresh interval to trigger data fetches.
 type msgTick time.Time
@@ -57,6 +59,8 @@ type Model struct {
 	memory   panels.MemoryPanel
 	stream   panels.StreamPanel
 	presence panels.PresencePanel
+	cost     panels.CostPanel
+	rbac     panels.RBACPanel
 
 	// UI components
 	spinner spinner.Model
@@ -88,6 +92,8 @@ func New(client *Client) Model {
 		memory:   panels.NewMemoryPanel(),
 		stream:   panels.NewStreamPanel(),
 		presence: panels.NewPresencePanel(),
+		cost:     panels.NewCostPanel(),
+		rbac:     panels.NewRBACPanel(),
 		spinner:  s,
 		help:     h,
 	}
@@ -125,6 +131,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.active = PanelStream
 		case key.Matches(msg, Keys.Presence):
 			m.active = PanelPresence
+		case key.Matches(msg, Keys.Cost):
+			m.active = PanelCost
+		case key.Matches(msg, Keys.RBAC):
+			m.active = PanelRBAC
 
 		case key.Matches(msg, Keys.Refresh):
 			m.refreshing = true
@@ -152,6 +162,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.memory, _ = m.memory.Update(sizeMsg)
 		m.stream, _ = m.stream.Update(sizeMsg)
 		m.presence, _ = m.presence.Update(sizeMsg)
+		m.cost, _ = m.cost.Update(sizeMsg)
+		m.rbac, _ = m.rbac.Update(sizeMsg)
 
 	case msgTick:
 		cmds = append(cmds, m.fetchAll(), m.tickCmd())
@@ -169,6 +181,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stream, _ = m.stream.Update(msg.stream)
 		m.presence, _ = m.presence.Update(msg.presence)
 		m.overview, _ = m.overview.Update(msg.overview)
+		m.cost, _ = m.cost.Update(msg.cost)
+		m.rbac, _ = m.rbac.Update(msg.rbac)
 		m.refreshing = false
 		m.lastRefresh = time.Now()
 
@@ -187,6 +201,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stream, _ = m.stream.Update(msg)
 	case panels.MsgPresenceData:
 		m.presence, _ = m.presence.Update(msg)
+	case panels.MsgCostData:
+		m.cost, _ = m.cost.Update(msg)
+	case panels.MsgRBACData:
+		m.rbac, _ = m.rbac.Update(msg)
 
 	case tea.MouseMsg:
 		// Handle mouse clicks on the tab bar (row 1, after header).
@@ -225,6 +243,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stream, _ = m.stream.Update(keyMsg)
 		case PanelPresence:
 			m.presence, _ = m.presence.Update(keyMsg)
+		case PanelCost:
+			m.cost, _ = m.cost.Update(keyMsg)
+		case PanelRBAC:
+			m.rbac, _ = m.rbac.Update(keyMsg)
 		}
 	}
 
@@ -302,12 +324,16 @@ func (m Model) activeView() string {
 		return m.stream.View()
 	case PanelPresence:
 		return m.presence.View()
+	case PanelCost:
+		return m.cost.View()
+	case PanelRBAC:
+		return m.rbac.View()
 	default:
 		return ""
 	}
 }
 
-var compactPanelNames = []string{"O", "F", "H", "T", "M", "S", "P"}
+var compactPanelNames = []string{"O", "F", "H", "T", "M", "S", "P", "$", "R"}
 
 func (m Model) renderTabs() string {
 	compact := m.width < 60

@@ -81,6 +81,9 @@ func main() {
 		newCacheCmd(socketPath),
 		newCostCmd(socketPath),
 		newHealthCmd(socketPath),
+		newPresenceCmd(socketPath),
+		newSessionsCmd(socketPath),
+		newTasksCmd(socketPath),
 
 		// Agent
 		newAgentCmd(),

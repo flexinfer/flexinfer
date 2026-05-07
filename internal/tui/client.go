@@ -18,6 +18,7 @@ type Deps struct {
 	Health *monitor.HealthMonitor
 	Memory *monitor.MemoryMonitor
 	Stream *monitor.StreamMonitor
+	Cost   *monitor.CostMonitor
 }
 
 // Client provides data access for the TUI, backed by the same monitors
@@ -29,6 +30,7 @@ type Client struct {
 	health *monitor.HealthMonitor
 	memory *monitor.MemoryMonitor
 	stream *monitor.StreamMonitor
+	cost   *monitor.CostMonitor
 	logger *slog.Logger
 	owned  bool // true = we created monitors and must stop them
 }
@@ -54,6 +56,7 @@ func NewClient(socketPath string, logger *slog.Logger) (*Client, error) {
 	c.health = monitor.NewHealthMonitor(d, logger)
 	c.memory = monitor.NewMemoryMonitor(a, logger)
 	c.stream = monitor.NewStreamMonitor(a, logger)
+	c.cost = monitor.NewCostMonitor(d, logger)
 	return c, nil
 }
 
@@ -66,6 +69,7 @@ func NewClientFromDeps(deps Deps, logger *slog.Logger) *Client {
 		health: deps.Health,
 		memory: deps.Memory,
 		stream: deps.Stream,
+		cost:   deps.Cost,
 		logger: logger,
 		owned:  false,
 	}
@@ -81,6 +85,9 @@ func (c *Client) Start() {
 	c.health.Start(5 * time.Second)
 	c.memory.Start(10 * time.Second)
 	c.stream.Start(5 * time.Second)
+	if c.cost != nil {
+		c.cost.Start(30 * time.Second)
+	}
 }
 
 // Stop halts all monitors and closes the daemon connection.
@@ -93,6 +100,9 @@ func (c *Client) Stop() {
 	c.health.Stop()
 	c.memory.Stop()
 	c.stream.Stop()
+	if c.cost != nil {
+		c.cost.Stop()
+	}
 	c.daemon.Close()
 }
 
@@ -127,6 +137,33 @@ func (c *Client) Refresh() {
 	c.health.Refresh()
 	c.memory.Refresh()
 	c.stream.Refresh()
+	if c.cost != nil {
+		c.cost.Refresh()
+	}
+}
+
+// CostSnapshot returns the current cost snapshot, or a zero-valued one when
+// the cost monitor is unavailable (e.g., bridge-mode without Cost dep).
+func (c *Client) CostSnapshot() monitor.CostSnapshot {
+	if c.cost == nil {
+		return monitor.CostSnapshot{}
+	}
+	return c.cost.Snapshot()
+}
+
+// RBACConfig returns the current RBAC config snapshot directly via daemon RPC.
+// Unlike CostSnapshot, RBAC has no dedicated monitor; the TUI fetches on each
+// refresh tick. Returns a nil result when the daemon is unreachable.
+func (c *Client) RBACConfig() *bridge.RBACConfigResult {
+	if c.daemon == nil {
+		return nil
+	}
+	res, err := c.daemon.RBACConfig()
+	if err != nil {
+		c.logger.Debug("rbac config fetch failed", "error", err)
+		return nil
+	}
+	return res
 }
 
 // UpdateTaskStatus updates a task's status via the agent bridge.
