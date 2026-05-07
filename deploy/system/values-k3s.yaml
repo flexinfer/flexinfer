@@ -347,6 +347,11 @@ runtime:
       memoryRequest: "4Gi"
       nodeSelector:
         kubernetes.io/hostname: cblevins-radeonvii
+        # 2026-05-07: paused after repeated digest pulls drove the Radeon VII
+        # root filesystem to 100% and triggered kubelet DiskPressure evictions.
+        # Remove this selector only after the runtime image is slimmed, moved
+        # off root-backed containerd storage, or the node root LV is expanded.
+        flexinfer.ai/runtime-paused: "true"
 
 grafanaDashboard:
   enabled: true

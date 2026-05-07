@@ -271,6 +271,12 @@ Raw outputs:
 - Validation before merge: `scripts/check-runtime-profile-consistency.sh`,
   `scripts/test-promote-runtime-digest.sh`, `git diff --check`, and targeted
   runtime image digest resolution with `crane digest`.
+- Follow-up during fast-chat recovery: applying the digest-pinned gfx906 runtime
+  to `cblevins-radeonvii` repeatedly filled root-backed containerd storage to
+  100% and triggered kubelet `DiskPressure` evictions. The live DaemonSet was
+  paused and `deploy/system/values-k3s.yaml` now mirrors that pause with
+  `flexinfer.ai/runtime-paused=true` on the gfx906 runtime profile until the
+  image/storage issue is fixed.
 
 ### 2026-04-26 gemma4 26B/31B execution findings
 
