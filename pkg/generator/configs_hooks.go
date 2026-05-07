@@ -247,43 +247,47 @@ func FormatPolicyComment(hp HookProfile, prefix string) string {
 	return sb.String()
 }
 
-// appendHookExtras dispatches profile-defined extras to their hook implementations.
+// appendHookExtras dispatches profile-defined extras to their hook
+// implementations. EPIC 3 / CONFIG-2 (.loom/108): the simple cases
+// (formatters, taskSync, retrospective, testHealth, lint) flow through
+// the data-driven extraDescriptors map + extras templates. The
+// platform-aware multi-event walker telemetry_eventEmit stays in Go
+// because its dispatch logic doesn't fit the single-template / single-
+// event-set descriptor model.
 //
-// The HookProfile is needed (rather than just hp.Extras) so platform-aware
-// extras like "telemetry_eventEmit" can read AgentID to decide the correct
-// `loom agent event-emit --platform` flag.
+// The HookProfile is needed (rather than just hp.Extras) so platform-
+// aware extras like "telemetry_eventEmit" can read AgentID to decide
+// the correct `loom agent event-emit --platform` flag.
 func appendHookExtras(hooks map[string]any, hp HookProfile, loomBinary string) {
 	for _, extra := range hp.Extras {
-		switch extra {
-		case "postToolUse_formatters":
-			event := "PostToolUse"
-			if existing, ok := hooks[event].([]map[string]any); ok {
-				hooks[event] = append(existing, claudePostToolUseExtras()...)
+		if descriptor, ok := extraDescriptors[extra]; ok {
+			rendered, err := renderExtraTemplate(descriptor.templatePath, newExtraContext(loomBinary, hp.AgentID))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "WARN  extra %q render failed: %v\n", extra, err)
+				continue
 			}
-		case "postToolUse_taskSync":
-			event := "PostToolUse"
-			if existing, ok := hooks[event].([]map[string]any); ok {
-				hooks[event] = append(existing, claudePostToolUseTaskSyncHook(loomBinary)...)
+			if len(rendered) == 0 {
+				continue
 			}
-		case "postSessionEnd_retrospective":
-			// Append retrospective hook to whichever session-end event exists.
-			retroHooks := sessionEndRetroHooks(loomBinary)
-			for _, evt := range []string{"Stop", "SessionEnd"} {
-				if existing, ok := hooks[evt].([]map[string]any); ok && len(existing) > 0 {
-					hooks[evt] = append(existing, retroHooks...)
+			for _, evt := range descriptor.targetEvents {
+				existing, ok := hooks[evt].([]map[string]any)
+				if !ok || len(existing) == 0 {
+					// Extras only enrich already-built event slots — they
+					// don't bootstrap empty slots. Matches legacy behavior.
+					continue
 				}
+				hooks[evt] = append(existing, rendered...)
 			}
-		case "sessionStart_testHealth":
-			// Inject test suite health snapshot at session start.
-			testHealthHooks := testHealthSessionStartHooks(loomBinary)
-			if existing, ok := hooks["SessionStart"].([]map[string]any); ok && len(existing) > 0 {
-				hooks["SessionStart"] = append(existing, testHealthHooks...)
-			}
+			continue
+		}
+
+		// Special-case branches for extras whose dispatch doesn't fit the
+		// descriptor-driven model.
+		switch extra {
 		case "telemetry_eventEmit":
-			// Wire each canonical telemetry hook (session-start/end,
-			// pre-/post-tool-use) into `loom agent event-emit`. Best-effort:
-			// silently skipped for platforms whose AgentID lacks a CLI
-			// normalizer (Gemini/Codex slot in via follow-up slices).
+			// Walks each existing event slot, injecting an event-emit hook
+			// per canonical event. The multi-event walk + platform
+			// normalization is genuine Go logic, not a template concern.
 			appendTelemetryEventEmitHooks(hooks, hp, loomBinary)
 		}
 	}
@@ -510,39 +514,30 @@ func mainBranchWorktreeNudgeCommand() string {
 	return fmt.Sprintf(`if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then BRANCH="$(git branch --show-current 2>/dev/null)"; if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then printf '%%s\n' %q; fi; fi; exit 0`, payload)
 }
 
-// sessionEndRetroHooks returns hook blocks that run the session retrospective
-// script after the session-end hook completes.
+// sessionEndRetroHooks renders the post_session_end_retrospective extras
+// template. EPIC 3 / CONFIG-2 (.loom/108): the source of truth for this
+// hook is now templates/extras/post_session_end_retrospective.json.tmpl;
+// this Go wrapper exists for backward compatibility with unit tests in
+// configs_hooks_test.go that call it directly. New consumers should
+// declare "postSessionEnd_retrospective" in HookProfile.Extras and let
+// appendHookExtras dispatch via the descriptor.
 func sessionEndRetroHooks(loomBinary string) []map[string]any {
-	loomCmd := shellQuote(normalizeLoomBinary(loomBinary))
-	log := `2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log"`
-	return []map[string]any{
-		{
-			"hooks": []map[string]any{
-				{
-					"type": "command",
-					"command": fmt.Sprintf(
-						`INPUT=$(cat); AGENT_CACHE_DIR="${HOME:-${TMPDIR:-/tmp}}/.cache/loom"; WS_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"; WS_HASH="$(printf '%%s' "$WS_ROOT" | cksum | cut -d' ' -f1)"; for f in "$AGENT_CACHE_DIR"/agent-id-*-"${WS_HASH}"*; do [ -s "$f" ] && AGENT_ID="$(cat "$f")" && break; done; SCRIPT="${WS_ROOT}/mcp/skills/session-retro/scripts/session-retro.sh"; if [ -x "$SCRIPT" ]; then LOOM_BINARY=%s AGENT_ID="${AGENT_ID:-unknown}" "$SCRIPT" %s || true; fi; exit 0`,
-						loomCmd, log),
-				},
-			},
-		},
+	blocks, err := renderExtraTemplate("extras/post_session_end_retrospective.json.tmpl", newExtraContext(loomBinary, ""))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN  sessionEndRetroHooks render failed: %v\n", err)
+		return nil
 	}
+	return blocks
 }
 
-// testHealthSessionStartHooks returns hook blocks that run a test health snapshot
-// on session start. Emits a systemMessage with test pass/fail counts and build status.
-func testHealthSessionStartHooks(_ string) []map[string]any {
-	log := `2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log"`
-	return []map[string]any{
-		{
-			"hooks": []map[string]any{
-				{
-					"type": "command",
-					"command": fmt.Sprintf(
-						`INPUT=$(cat); REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"; SCRIPT="${REPO_ROOT}/mcp/skills/test-health-inject/scripts/test-health-snapshot.sh"; if [ -x "$SCRIPT" ]; then "$SCRIPT" %s || true; fi; exit 0`,
-						log),
-				},
-			},
-		},
+// testHealthSessionStartHooks renders the session_start_test_health
+// extras template. See sessionEndRetroHooks for the wrapper-rationale
+// docstring (same backward-compat reason).
+func testHealthSessionStartHooks(loomBinary string) []map[string]any {
+	blocks, err := renderExtraTemplate("extras/session_start_test_health.json.tmpl", newExtraContext(loomBinary, ""))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN  testHealthSessionStartHooks render failed: %v\n", err)
+		return nil
 	}
+	return blocks
 }

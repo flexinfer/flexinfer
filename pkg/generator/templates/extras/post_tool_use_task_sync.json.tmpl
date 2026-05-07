@@ -1,0 +1,11 @@
+[
+  {
+    "matcher": "TaskCreate|TaskUpdate|TodoWrite",
+    "hooks": [
+      {
+        "type": "command",
+        "command": {{ printf `INPUT=$(cat); %s; echo "$INPUT" | %s agent task-sync --agent-id "$AGENT_ID" --quiet 2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log" || true` (hookAgentIDBootstrap .AgentID) .LoomCmd | jsonString }}
+      }
+    ]
+  }
+]

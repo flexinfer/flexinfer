@@ -1,0 +1,10 @@
+[
+  {
+    "hooks": [
+      {
+        "type": "command",
+        "command": {{ printf `INPUT=$(cat); REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"; SCRIPT="${REPO_ROOT}/mcp/skills/test-health-inject/scripts/test-health-snapshot.sh"; if [ -x "$SCRIPT" ]; then "$SCRIPT" 2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log" || true; fi; exit 0` | jsonString }}
+      }
+    ]
+  }
+]
