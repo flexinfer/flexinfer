@@ -2,7 +2,9 @@
 
 ## Quick Links
 
-- **EPIC 2 — Unify Visibility planning trio (2026-05-06)**: `102-research-unify-visibility-2026-05-06.md`, `103-product-spec-unify-visibility-2026-05-06.md`, `104-implementation-plan-unify-visibility-2026-05-06.md` ([Issue #66](https://gitlab.flexinfer.ai/services/loom-core/-/issues/66) — UNIFY-3 already shipped `d0d1518`; remaining 4 children scoped: UNIFY-1 contracts package, UNIFY-2 embedded HUD + OpenAPI, UNIFY-4 CLI parity, UNIFY-5 TUI parity)
+- **EPIC 3 — Reduce Config Complexity planning trio (2026-05-07)**: `106-research-reduce-config-complexity-2026-05-07.md`, `107-product-spec-reduce-config-complexity-2026-05-07.md`, `108-implementation-plan-reduce-config-complexity-2026-05-07.md` ([Issue #67](https://gitlab.flexinfer.ai/services/loom-core/-/issues/67) — chassis already 70% data-driven via `pkg/generator/platform_profiles.yaml`; ~1,050 LOC residual hand-written tail across 4 slices: CONFIG-1 hooks templates / CONFIG-2 extras / CONFIG-3 policies YAML / CONFIG-4 Codex preamble template).
+- **Roadmap reconciliation + next-epic plan (2026-05-07)**: `105-planning-roadmap-reconciliation-and-next-epics-2026-05-07.md` — confirms Spectator Phases 0–5 + EPIC 2 Batches A–D shipped (13/14 UNIFY slices); identifies S4 (UNIFY-1d HUD handler migration) + Spectator Phase 6 + Harbor #1 final as close-out slices. **Correction**: SIMP-1..SIMP-12 actually shipped 2026-03-01..03 (commits `6bd95261`..`e050516f`); EPIC 1 #65 is a stale tracker, not a fresh planning target. Pivoted next-epic recommendation to **EPIC 3 (#67)**.
+- **EPIC 2 — Unify Visibility planning trio (2026-05-06)**: `102-research-unify-visibility-2026-05-06.md`, `103-product-spec-unify-visibility-2026-05-06.md`, `104-implementation-plan-unify-visibility-2026-05-06.md` ([Issue #66](https://gitlab.flexinfer.ai/services/loom-core/-/issues/66) — UNIFY-3 shipped `d0d1518`; Batches A–D shipped via [!304](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/304), [!305](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/305), [!308](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/308), [!312](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/312); only **S4 (UNIFY-1d HUD handler migration)** remains)
 - **✅ Incident: Harbor 401 + ops hygiene arc (2026-05-05 → 2026-05-06)**: original incident runbook in `100-incident-harbor-401-deployment-chain-2026-05-05.md`; followup plan + status in `101-harbor-incident-followup-plan.md`. **Followups #2/#3/#4 LIVE; #1 CI prereq landed; remaining loom-core Image* CRDs await design choice (see .loom/101).** Bonus arcs in same window: workspace-clean v2 + new `workspace-salvage` tool ([services/workspace-tooling](https://gitlab.flexinfer.ai/services/workspace-tooling) — new repo) and 27 stranded codex branches salvaged across the workspace.
 - **Agent telemetry event bus + live spectator (2026-05-04)**: `97-research-agent-telemetry-spectator-2026-05-04.md`, `98-product-spec-agent-telemetry-spectator-2026-05-04.md`, `99-implementation-plan-agent-telemetry-spectator-2026-05-04.md` (Phase 0+1+2.3+4 shipped via [!284](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/284), [!286](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/286), [!288](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/288), [!290](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/290), [!291](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/291), [!292](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/292) — deployed to mobile-hud at `loom-core:28b64b65` after Harbor incident cleared)
 - **Loom Mills v2 — Hierarchical Swarm + Adversarial Audit + Cross-Repo (2026-05-02)**: `92-research-mills-v2-hierarchical-swarm-2026-05-02.md`, `93-product-spec-mills-v2-hierarchical-swarm-2026-05-02.md`, `94-implementation-plan-mills-v2-hierarchical-swarm-2026-05-02.md` (✅ phases 1–8 shipped 2026-05-02 → 2026-05-04 + hive→mills rename; status snapshot archived as `.loom/archive/95-implementation-status-mills-v2-2026-05-02.md`)
@@ -49,8 +51,21 @@
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
 
-## Current Planning Addendum (2026-05-06)
+## Current Planning Addendum (2026-05-07)
 
+- **Just shipped (2026-05-06 → 2026-05-07): Spectator + EPIC 2 Unify closeout arc:**
+  - Spectator Phase 2.2 ([!307](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/307)) Claude Code hooks → `loom agent event-emit`
+  - Spectator Phase 2.2b/c ([!309](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/309)) Gemini + Codex event-emit
+  - Spectator Phase 3 ([!310](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/310)) HUD `LiveSessionsCard`
+  - Spectator Phase 5 ([!311](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/311)) iOS `LiveSessionsView`
+  - EPIC 2 Batch C ([!308](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/308)) UNIFY-1b golden + UNIFY-2c OpenAPI + UNIFY-4c health
+  - EPIC 2 Batch D ([!312](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/312)) UNIFY-4c list cmds + UNIFY-5 TUI panels + S14 runbook
+  - HUD Operations Fleet polish ([!306](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/306))
+  - bridge.* deprecated alias migration ([d97cf28b](https://gitlab.flexinfer.ai/services/loom-core/-/commit/d97cf28b)) — unblocked CI
+- **Close-out slices (< 2 sessions total)** — recommended **before** the next epic:
+  - **UNIFY-1d (S4)**: migrate `internal/hud/handlers/*.go` to `internal/visibility/contracts/{health,status,cost,presence}` packages. CI already green via the `d97cf28b` alias migration; this is the deeper handler walk. ~1 short session.
+  - **Spectator Phase 6**: `loom spectate <session>` CLI streaming + multi-platform parity tests. ~1 day.
+  - **Harbor incident followup #1 (final)**: loom-core `ImageRepository`/`ImagePolicy`/`ImageUpdateAutomation` CRDs in `platform/gitops/k3s/flux/image-automation/`. CI prereq shipped !299 — **one design choice (writeback target) blocks**; recommendation in `.loom/101`. ~30 min.
 - **Open backlog (next-session candidates)** — pick from:
   - **Followup #1 of Harbor incident** (`.loom/101`): add loom-core `ImageRepository`/`ImagePolicy`/`ImageUpdateAutomation` to `platform/gitops/k3s/flux/image-automation/`. CI prereq (timestamp tag) shipped in [!299](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/299). One design choice (writeback target) blocks; recommendation in `.loom/101`. ~30 min.
   - **EPIC 1 — Simplify Agent Context** ([Issue #65](https://gitlab.flexinfer.ai/services/loom-core/-/issues/65)). 80 → ~45 MCP tools across 12 SIMP-N issues. Largest tool-surface debt cleanup.
