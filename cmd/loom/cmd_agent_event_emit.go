@@ -29,11 +29,13 @@ const (
 )
 
 // Source platforms recognized by --platform. claude-code is the dogfood
-// target; gemini and codex slot in via slices 2.1b/2.1c. generic assumes
+// target; gemini-cli and codex were added in Phase 2.2b/c. generic assumes
 // stdin is already a canonical {type, payload} envelope and bypasses
 // platform-specific normalization.
 const (
 	platformClaudeCode = "claude-code"
+	platformGemini     = "gemini-cli"
+	platformCodex      = "codex"
 	platformGeneric    = "generic"
 )
 
@@ -62,19 +64,26 @@ type emittedEvent struct {
 func hookToEvent(hook, platform, agentID string, raw map[string]any) (emittedEvent, error) {
 	switch platform {
 	case "", platformClaudeCode:
-		return claudeHookToEvent(hook, agentID, raw)
+		return nativeHookToEvent(hook, agentID, raw)
+	case platformGemini:
+		// Gemini's hook stdin schema converged on Claude's keys (tool_name,
+		// tool_input, session_id, tool_response). Reuse the native normalizer.
+		return nativeHookToEvent(hook, agentID, raw)
+	case platformCodex:
+		return codexHookToEvent(hook, agentID, raw)
 	case platformGeneric:
 		return genericHookToEvent(hook, agentID, raw)
 	default:
-		return emittedEvent{}, fmt.Errorf("unsupported platform %q (supported: %s, %s)", platform, platformClaudeCode, platformGeneric)
+		return emittedEvent{}, fmt.Errorf("unsupported platform %q (supported: %s, %s, %s, %s)", platform, platformClaudeCode, platformGemini, platformCodex, platformGeneric)
 	}
 }
 
-// claudeHookToEvent maps Claude Code's stdin hook schema (tool_name +
+// nativeHookToEvent maps a Claude-style hook stdin schema (tool_name +
 // tool_input + session_id, etc.) to the canonical event payload. Args go
 // through redact.Redact at TierPublic so secrets in tool inputs never reach
-// the event bus.
-func claudeHookToEvent(hook, agentID string, raw map[string]any) (emittedEvent, error) {
+// the event bus. Used for both claude-code (originator) and gemini-cli
+// (whose hook schema converged on the same shape).
+func nativeHookToEvent(hook, agentID string, raw map[string]any) (emittedEvent, error) {
 	sessionID := stringField(raw, "session_id")
 	if agentID == "" {
 		agentID = stringField(raw, "agent_id")
@@ -159,6 +168,54 @@ func claudeHookToEvent(hook, agentID string, raw map[string]any) (emittedEvent, 
 		return emittedEvent{}, fmt.Errorf("unknown hook %q (expected: %s, %s, %s, %s)",
 			hook, hookSessionStart, hookSessionEnd, hookPreToolUse, hookPostToolUse)
 	}
+}
+
+// codexHookToEvent maps the Codex `notify` payload (the only hook surface
+// Codex exposes) to a canonical event. Codex notify fires once per agent
+// turn-end with a flat payload — no `tool_name`/`tool_input` granularity,
+// no separate start/end, no per-call IDs. Best we can do is emit a coarse
+// `tool.call.end` with `tool_name="codex.turn"` per the spectator plan
+// (`.loom/98-…2026-05-04.md` — "best-effort via notify hook only").
+//
+// hook is expected to be hookPostToolUse (the only canonical hook codex
+// supports); other hooks are explicitly rejected so callers don't silently
+// publish wrong types.
+func codexHookToEvent(hook, agentID string, raw map[string]any) (emittedEvent, error) {
+	if hook != hookPostToolUse {
+		return emittedEvent{}, fmt.Errorf("codex platform only supports --hook=%s (got %q); codex notify has no start/session-lifecycle granularity", hookPostToolUse, hook)
+	}
+	sessionID := stringField(raw, "session_id")
+	if agentID == "" {
+		agentID = stringField(raw, "agent_id")
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// Codex notify carries minimal turn metadata. Pull what's commonly there
+	// (status, model, usage) and surface it as a coarse end event. Anything
+	// missing is omitted rather than zero-filled so consumers can distinguish
+	// "absent" from "zero".
+	payload := map[string]any{
+		"call_id":    generateEventEmitCallID(),
+		"session_id": sessionID,
+		"agent_id":   agentID,
+		"tool_name":  "codex.turn",
+		"ended_at":   now,
+	}
+	if v := intField(raw, "duration_ms"); v != 0 {
+		payload["duration_ms"] = v
+	}
+	if v := intField(raw, "exit_code"); v != 0 {
+		payload["exit_code"] = v
+	}
+	if status := stringField(raw, "status"); status != "" {
+		// Codex statuses ("completed", "failed", …) — emit verbatim; consumers
+		// can branch without us guessing exit codes.
+		payload["status"] = status
+	}
+	if errMsg := stringField(raw, "error"); errMsg != "" {
+		payload["error"] = errMsg
+	}
+	return emittedEvent{Type: eventToolCallEnd, Payload: payload}, nil
 }
 
 // genericHookToEvent passes through a pre-normalized {type, payload}
@@ -334,7 +391,7 @@ http://127.0.0.1:9876 (the loomd metrics/events port).`,
 	}
 
 	cmd.Flags().StringVar(&hook, "hook", "", "Hook name: session-start, session-end, pre-tool-use, post-tool-use")
-	cmd.Flags().StringVar(&platform, "platform", platformClaudeCode, "Source platform: claude-code, generic")
+	cmd.Flags().StringVar(&platform, "platform", platformClaudeCode, "Source platform: claude-code, gemini-cli, codex, generic")
 	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent identifier (overrides payload agent_id)")
 	cmd.Flags().StringVar(&daemonURL, "daemon-url", "", "Daemon HTTP URL (default: $LOOM_DAEMON_HTTP_URL or http://127.0.0.1:9876)")
 	cmd.Flags().BoolVar(&quiet, "quiet", false, "Suppress output and errors (recommended for hook context)")

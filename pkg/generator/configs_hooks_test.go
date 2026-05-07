@@ -542,11 +542,12 @@ func TestCanonicalTelemetryHookForEvent(t *testing.T) {
 	cases := map[string]string{
 		"SessionStart":  "session-start",
 		"SessionEnd":    "session-end",
-		"Stop":          "session-end", // Claude Code uses Stop for the same lifecycle moment.
-		"PreToolUse":    "pre-tool-use",
+		"Stop":          "session-end",  // Claude Code uses Stop for the same lifecycle moment.
+		"PreToolUse":    "pre-tool-use", // Claude
 		"PostToolUse":   "post-tool-use",
-		"SubagentStart": "", // Subagent events are not canonical telemetry hooks.
-		"AfterTool":     "", // Gemini-native name; mapped via platform-specific normalizer when wired.
+		"BeforeTool":    "pre-tool-use",  // Gemini-native name (Phase 2.2b).
+		"AfterTool":     "post-tool-use", // Gemini-native name.
+		"SubagentStart": "",              // Subagent events are not canonical telemetry hooks.
 		"":              "",
 	}
 	for event, want := range cases {
@@ -562,11 +563,18 @@ func TestTelemetryEventEmitPlatform_ClaudeCode(t *testing.T) {
 	}
 }
 
+func TestTelemetryEventEmitPlatform_GeminiCLI(t *testing.T) {
+	if got := telemetryEventEmitPlatform(HookProfile{AgentID: "gemini-cli"}); got != "gemini-cli" {
+		t.Errorf("gemini-cli platform: got %q, want %q", got, "gemini-cli")
+	}
+}
+
 func TestTelemetryEventEmitPlatform_UnsupportedReturnsEmpty(t *testing.T) {
-	// Gemini and Codex normalizers slot in via follow-up slices; until then,
-	// telemetryEventEmitPlatform returns "" so the extras case is a no-op
-	// rather than emitting hooks that publish broken payloads.
-	for _, agentID := range []string{"gemini-cli", "codex", "kilocode", "", "unknown"} {
+	// Codex is wired separately via codexNotifyCommand (not the extras
+	// case), so it stays empty here. Other agents without a normalizer
+	// also stay empty so the case is a no-op rather than emitting hooks
+	// that publish broken payloads.
+	for _, agentID := range []string{"codex", "kilocode", "", "unknown"} {
 		if got := telemetryEventEmitPlatform(HookProfile{AgentID: agentID}); got != "" {
 			t.Errorf("AgentID=%q: got %q, want empty", agentID, got)
 		}
@@ -674,17 +682,19 @@ func TestAppendHookExtras_TelemetryEventEmit_UsesCanonicalHookNames(t *testing.T
 }
 
 func TestAppendHookExtras_TelemetryEventEmit_NoOpForUnsupportedPlatform(t *testing.T) {
-	// Gemini doesn't have a CLI normalizer yet; the extras case must skip
-	// silently rather than emit broken hooks pointing at --platform gemini-cli.
+	// Codex is wired separately via codexNotifyCommand (Phase 2.2c), and
+	// kilocode has no native hook surface — both must skip the extras case
+	// silently rather than emit hooks pointing at a --platform the CLI
+	// would reject.
 	hp := HookProfile{
 		Enabled:          true,
-		AgentID:          "gemini-cli",
-		AgentType:        "gemini-cli",
-		Description:      "Gemini CLI session",
+		AgentID:          "kilocode",
+		AgentType:        "kilocode",
+		Description:      "Kilocode session",
 		SessionEndEvent:  "SessionEnd",
-		HeartbeatEvent:   "AfterTool",
+		HeartbeatEvent:   "PostToolUse",
 		HeartbeatMatcher: "",
-		Events:           []string{"sessionStart", "sessionEnd", "postToolUse"},
+		Events:           []string{"sessionStart", "sessionEnd"},
 		Extras:           []string{"telemetry_eventEmit"},
 	}
 	hooks := buildPlatformHooks(testRegistry(), hp, "/usr/local/bin/loom")
@@ -700,6 +710,135 @@ func TestAppendHookExtras_TelemetryEventEmit_NoOpForUnsupportedPlatform(t *testi
 	}
 	if endAfter != endBefore {
 		t.Errorf("SessionEnd grew for unsupported platform: before=%d after=%d", endBefore, endAfter)
+	}
+}
+
+// --- Phase 2.2b/c: Gemini and Codex generator wiring ---
+
+func TestAppendHookExtras_TelemetryEventEmit_GeminiWiresThreeEvents(t *testing.T) {
+	// Gemini emits SessionStart + SessionEnd (via session_end_event) +
+	// AfterTool (via heartbeat_event) — no PreToolUse. The extras case
+	// should inject event-emit on each of those three slots.
+	hp := HookProfile{
+		Enabled:          true,
+		AgentID:          "gemini-cli",
+		AgentType:        "gemini-cli",
+		Description:      "Gemini CLI session",
+		SessionEndEvent:  "SessionEnd",
+		HeartbeatEvent:   "AfterTool",
+		HeartbeatMatcher: "run_shell_command",
+		Events:           []string{"sessionStart", "sessionEnd", "postToolUse"},
+		Extras:           []string{"telemetry_eventEmit"},
+	}
+	hooks := buildPlatformHooks(testRegistry(), hp, "/usr/local/bin/loom")
+	appendHookExtras(hooks, hp, "/usr/local/bin/loom")
+
+	for _, event := range []string{"SessionStart", "SessionEnd", "AfterTool"} {
+		blocks, _ := hooks[event].([]map[string]any)
+		var found bool
+		for _, b := range blocks {
+			inner, _ := b["hooks"].([]map[string]any)
+			for _, h := range inner {
+				cmd, _ := h["command"].(string)
+				if strings.Contains(cmd, "agent event-emit") && strings.Contains(cmd, "--platform gemini-cli") {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			t.Errorf("event=%s: gemini telemetry_eventEmit did not inject `--platform gemini-cli` hook", event)
+		}
+	}
+}
+
+func TestAppendHookExtras_TelemetryEventEmit_GeminiAfterToolMapsToPostToolUse(t *testing.T) {
+	// AfterTool is Gemini-native; the canonical hook flag passed to the
+	// CLI must be --hook post-tool-use so the event-emit normalizer
+	// produces tool.call.end.
+	hp := HookProfile{
+		Enabled:          true,
+		AgentID:          "gemini-cli",
+		AgentType:        "gemini-cli",
+		Description:      "Gemini CLI session",
+		SessionEndEvent:  "SessionEnd",
+		HeartbeatEvent:   "AfterTool",
+		HeartbeatMatcher: "run_shell_command",
+		Events:           []string{"sessionStart", "sessionEnd", "postToolUse"},
+		Extras:           []string{"telemetry_eventEmit"},
+	}
+	hooks := buildPlatformHooks(testRegistry(), hp, "/usr/local/bin/loom")
+	appendHookExtras(hooks, hp, "/usr/local/bin/loom")
+
+	blocks, _ := hooks["AfterTool"].([]map[string]any)
+	var afterToolEmitsPost bool
+	for _, b := range blocks {
+		inner, _ := b["hooks"].([]map[string]any)
+		for _, h := range inner {
+			cmd, _ := h["command"].(string)
+			if strings.Contains(cmd, "agent event-emit") && strings.Contains(cmd, "--hook post-tool-use") && strings.Contains(cmd, "--platform gemini-cli") {
+				afterToolEmitsPost = true
+				break
+			}
+		}
+		if afterToolEmitsPost {
+			break
+		}
+	}
+	if !afterToolEmitsPost {
+		t.Error("AfterTool slot must inject --hook post-tool-use --platform gemini-cli")
+	}
+}
+
+func TestGeminiProfile_OptedIntoTelemetryEventEmit(t *testing.T) {
+	profiles, err := loadProfiles()
+	if err != nil {
+		t.Fatalf("loadProfiles: %v", err)
+	}
+	profile, ok := profiles["gemini"]
+	if !ok {
+		t.Fatal("gemini profile missing from registry")
+	}
+	if !containsString(profile.Hooks.Extras, "telemetry_eventEmit") {
+		t.Errorf("gemini profile extras missing telemetry_eventEmit: got %v", profile.Hooks.Extras)
+	}
+}
+
+func TestCodexNotifyCommand_TelemetryEmitDisabledByDefault(t *testing.T) {
+	// telemetryEmit=false: command is unchanged from Phase 2.1 baseline.
+	cmd := codexNotifyCommand("loom", false)
+	if strings.Contains(cmd, "agent event-emit") {
+		t.Error("codex notify must not contain event-emit when telemetryEmit=false")
+	}
+}
+
+func TestCodexNotifyCommand_TelemetryEmitWiresPostToolUse(t *testing.T) {
+	cmd := codexNotifyCommand("loom", true)
+	if !strings.Contains(cmd, "agent event-emit --hook post-tool-use --platform codex") {
+		t.Errorf("codex notify with telemetryEmit=true must pipe to event-emit --hook post-tool-use --platform codex; got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "|| true") {
+		t.Errorf("codex notify event-emit must be best-effort (|| true); got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "--quiet") {
+		t.Errorf("codex notify event-emit must use --quiet (hook context); got: %s", cmd)
+	}
+}
+
+func TestCodexProfile_OptedIntoTelemetryEventEmit(t *testing.T) {
+	profiles, err := loadProfiles()
+	if err != nil {
+		t.Fatalf("loadProfiles: %v", err)
+	}
+	profile, ok := profiles["codex"]
+	if !ok {
+		t.Fatal("codex profile missing from registry")
+	}
+	if !containsString(profile.Hooks.Extras, "telemetry_eventEmit") {
+		t.Errorf("codex profile extras missing telemetry_eventEmit: got %v", profile.Hooks.Extras)
 	}
 }
 

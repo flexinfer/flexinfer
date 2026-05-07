@@ -293,7 +293,11 @@ func appendTelemetryEventEmitHooks(hooks map[string]any, hp HookProfile, loomBin
 
 	// Walk known event slots; only inject when the slot is non-empty (mirrors
 	// the existing extras' behavior of acting only on already-built events).
-	for _, event := range []string{"SessionStart", "Stop", "SessionEnd", "PreToolUse", "PostToolUse"} {
+	// Gemini emits SessionStart/SessionEnd/AfterTool (no PreToolUse), so
+	// AfterTool/BeforeTool are included alongside Claude's PreToolUse/
+	// PostToolUse — canonicalTelemetryHookForEvent collapses them to the
+	// platform-agnostic canonical hook name.
+	for _, event := range []string{"SessionStart", "Stop", "SessionEnd", "PreToolUse", "PostToolUse", "BeforeTool", "AfterTool"} {
 		canonical := canonicalTelemetryHookForEvent(event)
 		if canonical == "" {
 			continue
@@ -318,12 +322,15 @@ func appendTelemetryEventEmitHooks(hooks map[string]any, hp HookProfile, loomBin
 
 // telemetryEventEmitPlatform returns the value to pass as `--platform` to
 // `loom agent event-emit` for the given HookProfile, or "" if the platform
-// is not yet wired in cmd/loom/cmd_agent_event_emit.go. Gemini and Codex
-// normalizers slot in via follow-up slices (Phase 2.1b/2.1c).
+// is not yet wired in cmd/loom/cmd_agent_event_emit.go. Codex is wired
+// separately via codexNotifyCommand, not via this extras case (codex has no
+// SessionStart/PreToolUse/PostToolUse — only `notify`).
 func telemetryEventEmitPlatform(hp HookProfile) string {
 	switch hp.AgentID {
 	case "claude-code":
 		return "claude-code"
+	case "gemini-cli":
+		return "gemini-cli"
 	}
 	return ""
 }
@@ -335,15 +342,17 @@ func telemetryEventEmitPlatform(hp HookProfile) string {
 //
 // Stop and SessionEnd both map to "session-end" because Claude Code uses
 // "Stop" while Gemini uses "SessionEnd" for the same lifecycle moment.
+// AfterTool is Gemini's name for the post-tool-use hook; BeforeTool is its
+// pre-tool-use counterpart.
 func canonicalTelemetryHookForEvent(event string) string {
 	switch event {
 	case "SessionStart":
 		return "session-start"
 	case "SessionEnd", "Stop":
 		return "session-end"
-	case "PreToolUse":
+	case "PreToolUse", "BeforeTool":
 		return "pre-tool-use"
-	case "PostToolUse":
+	case "PostToolUse", "AfterTool":
 		return "post-tool-use"
 	}
 	return ""

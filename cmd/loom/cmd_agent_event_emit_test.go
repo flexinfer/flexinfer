@@ -213,6 +213,136 @@ func TestHookToEvent_UnknownPlatformRejected(t *testing.T) {
 	}
 }
 
+// --- Phase 2.2b: gemini-cli platform ---
+//
+// Gemini's hook stdin schema converged on Claude's keys (`tool_name`,
+// `tool_input`, `session_id`, `tool_response`). The CLI delegates to the
+// shared `nativeHookToEvent` for both, but we lock in the platform dispatch
+// + canonical events here so a future divergence fails loudly.
+
+func TestHookToEvent_GeminiSessionStart(t *testing.T) {
+	raw := mustParse(t, `{"session_id":"gem-1"}`)
+	ev, err := hookToEvent("session-start", "gemini-cli", "gemini-cli-1", raw)
+	if err != nil {
+		t.Fatalf("hookToEvent: %v", err)
+	}
+	if ev.Type != eventSessionStart {
+		t.Errorf("Type = %q, want %q", ev.Type, eventSessionStart)
+	}
+	if ev.Payload["session_id"] != "gem-1" {
+		t.Errorf("session_id = %v", ev.Payload["session_id"])
+	}
+	if ev.Payload["agent_id"] != "gemini-cli-1" {
+		t.Errorf("agent_id = %v", ev.Payload["agent_id"])
+	}
+}
+
+func TestHookToEvent_GeminiPostToolUseRedactsArgs(t *testing.T) {
+	// Gemini's run_shell_command tool with an inline AWS key — redaction
+	// must mask it. Tests that the shared normalizer does its job for
+	// gemini-cli too, not just claude-code.
+	raw := mustParse(t, `{
+		"session_id": "gem-2",
+		"tool_name": "run_shell_command",
+		"tool_input": {"command": "aws s3 ls --secret AKIAIOSFODNN7EXAMPLE"},
+		"exit_code": 0,
+		"duration_ms": 200
+	}`)
+	ev, err := hookToEvent("post-tool-use", "gemini-cli", "gemini-cli-2", raw)
+	if err != nil {
+		t.Fatalf("hookToEvent: %v", err)
+	}
+	if ev.Type != eventToolCallEnd {
+		t.Errorf("Type = %q, want %q", ev.Type, eventToolCallEnd)
+	}
+	if ev.Payload["tool_name"] != "run_shell_command" {
+		t.Errorf("tool_name = %v", ev.Payload["tool_name"])
+	}
+	if ev.Payload["duration_ms"] != int64(200) {
+		t.Errorf("duration_ms = %v (%T)", ev.Payload["duration_ms"], ev.Payload["duration_ms"])
+	}
+}
+
+func TestHookToEvent_GeminiPreToolUseRedactsArgs(t *testing.T) {
+	raw := mustParse(t, `{
+		"session_id": "gem-3",
+		"tool_name": "run_shell_command",
+		"tool_input": {"command": "echo hi"}
+	}`)
+	ev, err := hookToEvent("pre-tool-use", "gemini-cli", "gemini-cli-3", raw)
+	if err != nil {
+		t.Fatalf("hookToEvent: %v", err)
+	}
+	if ev.Type != eventToolCallStart {
+		t.Errorf("Type = %q, want %q", ev.Type, eventToolCallStart)
+	}
+	if ev.Payload["args_tier"] != "public" {
+		t.Errorf("args_tier = %v, want public", ev.Payload["args_tier"])
+	}
+}
+
+// --- Phase 2.2c: codex platform ---
+//
+// Codex notify is a single hook firing once per turn-end with no per-tool
+// granularity. Maps to a coarse tool.call.end with tool_name="codex.turn".
+
+func TestHookToEvent_CodexNotifyMapsToToolCallEnd(t *testing.T) {
+	raw := mustParse(t, `{
+		"session_id": "codex-sess-1",
+		"status": "completed",
+		"duration_ms": 4500
+	}`)
+	ev, err := hookToEvent("post-tool-use", "codex", "codex-1", raw)
+	if err != nil {
+		t.Fatalf("hookToEvent: %v", err)
+	}
+	if ev.Type != eventToolCallEnd {
+		t.Errorf("Type = %q, want %q", ev.Type, eventToolCallEnd)
+	}
+	if ev.Payload["tool_name"] != "codex.turn" {
+		t.Errorf("tool_name = %v, want codex.turn", ev.Payload["tool_name"])
+	}
+	if ev.Payload["status"] != "completed" {
+		t.Errorf("status = %v, want completed", ev.Payload["status"])
+	}
+	if ev.Payload["duration_ms"] != int64(4500) {
+		t.Errorf("duration_ms = %v", ev.Payload["duration_ms"])
+	}
+	if ev.Payload["session_id"] != "codex-sess-1" {
+		t.Errorf("session_id = %v", ev.Payload["session_id"])
+	}
+	if cid, ok := ev.Payload["call_id"].(string); !ok || cid == "" {
+		t.Errorf("call_id missing or wrong type: %v", ev.Payload["call_id"])
+	}
+}
+
+func TestHookToEvent_CodexRejectsNonPostToolUseHooks(t *testing.T) {
+	// Codex notify can only synthesize tool.call.end. Asking for any other
+	// canonical hook is an error so callers don't silently publish wrong
+	// types from a misconfigured generator.
+	for _, hook := range []string{"session-start", "session-end", "pre-tool-use", ""} {
+		_, err := hookToEvent(hook, "codex", "codex-1", map[string]any{"session_id": "s"})
+		if err == nil {
+			t.Errorf("hook=%q: expected error, got nil", hook)
+		}
+	}
+}
+
+func TestHookToEvent_CodexOmitsZeroFieldsForAbsentMetadata(t *testing.T) {
+	// status/duration_ms/exit_code/error are only emitted when present so
+	// consumers can distinguish "absent" from "zero".
+	raw := mustParse(t, `{"session_id":"s"}`)
+	ev, err := hookToEvent("post-tool-use", "codex", "a", raw)
+	if err != nil {
+		t.Fatalf("hookToEvent: %v", err)
+	}
+	for _, k := range []string{"duration_ms", "exit_code", "status", "error"} {
+		if _, present := ev.Payload[k]; present {
+			t.Errorf("payload[%q] should be absent for empty notify, got %v", k, ev.Payload[k])
+		}
+	}
+}
+
 func TestIsAllowedEmittedType(t *testing.T) {
 	allowed := []string{
 		eventSessionStart, eventSessionEnd, eventAgentStatusChange,
