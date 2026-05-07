@@ -185,7 +185,7 @@ Rollback:
 ## Open Decisions
 
 - `canary` as a support enum vs status annotation.
-- Generated GPUProfile manifests from `build/runtime.yaml` vs consistency test.
+- ~~Generated GPUProfile manifests from `build/runtime.yaml` vs consistency test.~~ Resolved 2026-05-06: stay consistency-test-only. See [docs/planning/runtime-profile-generation-decision.md](../docs/planning/runtime-profile-generation-decision.md).
 - Whether to invest in `gfx906` vLLM or formally steer that node to llama.cpp/Ollama/GPTQ/diffusers-offload.
 
 ## Sources
