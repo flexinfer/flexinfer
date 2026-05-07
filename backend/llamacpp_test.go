@@ -167,10 +167,13 @@ func TestLlamaCppBackendImage(t *testing.T) {
 			wantImage: "custom-registry/llamacpp:gfx1100-custom",
 		},
 		{
-			name:      "AMD gfx906 returns hardcoded default",
+			// Per-arch image now lives in deploy/gpuprofiles/gfx906.yaml; the
+			// rule slice is env-only and falls through to the AMD-generic
+			// default when neither env nor profile applies.
+			name:      "AMD gfx906 falls through to AMD generic",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx906",
-			wantImage: "registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3",
+			wantImage: "ghcr.io/ggerganov/llama.cpp:server-rocm",
 		},
 		{
 			name:      "AMD gfx906 with env override",

@@ -1388,6 +1388,59 @@ func TestValidateBackendGPUCompatibility_DiffusersOnGFX906(t *testing.T) {
 
 func TestValidateBackendGPUCompatibility_ComfyUIOnGFX906(t *testing.T) {
 	rec := record.NewFakeRecorder(5)
+
+	// Slice 3 of the GPUProfile contract moved per-arch image defaults out of
+	// the backend rule slice and into deploy/gpuprofiles/*.yaml. The
+	// ExperimentalGPUSupport warning is suppressed when the resolved image is
+	// arch-specific — that signal now lives on the profile, so the test
+	// injects a GPUProfile with the gfx906 image override to mirror the
+	// production contract on a Radeon VII node.
+	profileR := &GPUProfileReconciler{}
+	profileR.profiles.Store("gfx906", &aiv1alpha2.GPUProfileSpec{
+		Architecture: "gfx906",
+		Vendor:       "amd",
+		Backends: map[string]aiv1alpha2.BackendProfile{
+			"comfyui": {
+				Support: "experimental",
+				Image:   "registry.harbor.lan/flexinfer/comfyui:rocm-gfx906",
+			},
+		},
+	})
+	r := &ModelReconciler{Recorder: rec, GPUProfiles: profileR}
+
+	comfyBackend, _ := backend.Get("comfyui")
+	model := &aiv1alpha2.Model{
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "comfyui",
+			Source:  "HF://stabilityai/stable-diffusion-xl-base-1.0",
+		},
+	}
+
+	// Should pass with no error. The profile-declared arch-specific image
+	// suppresses the ExperimentalGPUSupport warning.
+	err := r.validateBackendGPUCompatibility(model, comfyBackend, backend.GPUVendorAMD, "gfx906")
+	if err != nil {
+		t.Fatalf("expected comfyui on gfx906 to pass, got: %v", err)
+	}
+
+	// No warning event expected — arch-specific image (from profile) suppresses
+	// the warning.
+	select {
+	case event := <-rec.Events:
+		t.Fatalf("expected no warning event for comfyui on gfx906 (profile arch-specific image), got: %s", event)
+	default:
+		// OK — no event emitted
+	}
+}
+
+// TestValidateBackendGPUCompatibility_ComfyUIOnGFX906_NoProfile asserts that
+// when a node is not yet onboarded to a GPUProfile, the experimental warning
+// fires because the in-code rule slice no longer carries a per-arch default.
+// This documents the slice-3 fallback contract: nodes without a profile see
+// the AMD-generic image and get a warning, which is the expected operator
+// signal to either onboard the node or set the env override.
+func TestValidateBackendGPUCompatibility_ComfyUIOnGFX906_NoProfile(t *testing.T) {
+	rec := record.NewFakeRecorder(5)
 	r := &ModelReconciler{Recorder: rec}
 
 	comfyBackend, _ := backend.Get("comfyui")
@@ -1398,19 +1451,20 @@ func TestValidateBackendGPUCompatibility_ComfyUIOnGFX906(t *testing.T) {
 		},
 	}
 
-	// Should pass with no error. With arch-specific images (PR 1.3),
-	// no warning is emitted because the image is gfx906-specific.
 	err := r.validateBackendGPUCompatibility(model, comfyBackend, backend.GPUVendorAMD, "gfx906")
 	if err != nil {
-		t.Fatalf("expected comfyui on gfx906 to pass, got: %v", err)
+		t.Fatalf("expected comfyui on gfx906 to pass with warning, got error: %v", err)
 	}
 
-	// No warning event expected — arch-specific image suppresses the warning.
+	// Warning event expected — without a profile the rule slice falls through
+	// to the AMD-generic image, which is treated as generic by the validator.
 	select {
 	case event := <-rec.Events:
-		t.Fatalf("expected no warning event for comfyui on gfx906 (arch-specific image), got: %s", event)
+		if !strings.Contains(event, "ExperimentalGPUSupport") {
+			t.Fatalf("expected ExperimentalGPUSupport warning, got: %s", event)
+		}
 	default:
-		// OK — no event emitted
+		t.Fatal("expected ExperimentalGPUSupport warning when no GPUProfile is in scope")
 	}
 }
 

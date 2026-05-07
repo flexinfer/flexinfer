@@ -8,10 +8,16 @@ import (
 )
 
 // comfyUIImageRules defines the image resolution precedence for ComfyUI.
+//
+// Arch-specific rules are env-only (no built-in default) so they fall through
+// to the AMD-generic image when no env override is set. The arch defaults now
+// live in deploy/gpuprofiles/gfx1100.yaml and gfx906.yaml — callers that pass
+// a GPUProfile through backend.ResolveBackendImage get the per-arch image
+// from the profile, and only nodes without a profile fall back to this slice.
 var comfyUIImageRules = []ImageRule{
-	// AMD arch-specific
-	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_COMFYUI_IMAGE_GFX1100", Default: "registry.harbor.lan/flexinfer/comfyui:rocm-gfx1100"},
-	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_COMFYUI_IMAGE_GFX906", Default: "registry.harbor.lan/flexinfer/comfyui:rocm-gfx906"},
+	// AMD arch-specific (env-only; profile owns the default)
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_COMFYUI_IMAGE_GFX1100"},
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_COMFYUI_IMAGE_GFX906"},
 	// AMD generic
 	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_COMFYUI_IMAGE_AMD", Default: "registry.harbor.lan/library/comfyui:rocm6.2.3-v8"},
 	// Global default

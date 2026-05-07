@@ -33,6 +33,12 @@ spec:
     vllm:
       support: full
       image: registry.harbor.lan/flexinfer/vllm@sha256:cb6d92c956ee150b4b8210e625586140e1b5da4c204caa422b1965e953de78e8
+    vllm-omni:
+      # vLLM-Omni shares the gfx1100 vLLM build but ships multimodal endpoints.
+      # Owns its own per-arch image so the backend rule slice can drop the
+      # hardcoded default (slice 3 of the GPUProfile-first contract).
+      support: full
+      image: registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100
     llamacpp:
       support: full
     diffusers:
@@ -48,8 +54,10 @@ spec:
       # ComfyUI is a separate backend image; this profile only says the GPU is
       # capable when that image is present in the runtime matrix.
       support: full
+      image: registry.harbor.lan/flexinfer/comfyui:rocm-gfx1100
     mlc-llm:
       support: full
+      image: registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100
   env:
     - name: HSA_OVERRIDE_GFX_VERSION
       value: "11.0.0"

@@ -14,22 +14,25 @@ func TestVLLMBackendImage_GFX1100(t *testing.T) {
 		wantImage string
 	}{
 		{
-			name:      "AMD gfx1100 returns gfx1100-specific image",
+			// Per-arch image now lives in deploy/gpuprofiles/gfx1100.yaml; the
+			// rule slice is env-only and falls through to the AMD-generic
+			// default when neither env nor profile applies.
+			name:      "AMD gfx1100 falls through to AMD generic ROCm image",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx1100",
-			wantImage: "registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-fa",
+			wantImage: "rocm/vllm:latest",
 		},
 		{
-			name:      "AMD gfx1101 returns gfx1100-specific image",
+			name:      "AMD gfx1101 falls through to AMD generic ROCm image",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx1101",
-			wantImage: "registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-fa",
+			wantImage: "rocm/vllm:latest",
 		},
 		{
-			name:      "AMD gfx1102 returns gfx1100-specific image",
+			name:      "AMD gfx1102 falls through to AMD generic ROCm image",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx1102",
-			wantImage: "registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-fa",
+			wantImage: "rocm/vllm:latest",
 		},
 		{
 			name:      "AMD gfx942 returns generic ROCm image",

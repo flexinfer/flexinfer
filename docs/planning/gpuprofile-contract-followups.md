@@ -42,30 +42,48 @@ Tests in `backend/gpu_compat_test.go` cover the four precedence states
 (profile wins, explicit nil, profile-without-env, profile-with-empty-env),
 plus a non-AMD-without-profile guard and two `EnvFromProfile` accessor cases.
 
-## Priority 2 — Replace per-backend `Image()` rules with profile-first inside the backend
+## Priority 2 — Replace per-backend `Image()` rules with profile-first inside the backend — COMPLETED
 
-The `backend/comfyui.go:11-15`, `backend/diffusers.go:11-15`,
-`backend/llamacpp.go:13-17`, `backend/mlc_llm.go:12-15`,
-`backend/ollama.go:12-15`, `backend/vllm.go:14-19`, `backend/vllm_omni.go:11-17`
-files all declare an `imageRules` slice that hardcodes `gfx110` and `gfx906`.
-After this MR, every controller call already does GPUProfile-first via
-`ResolveBackendImage`, so the in-backend tables only matter when no profile
-exists. That is the correct fallback shape, but the hardcoded `Default`
-strings still drift from `build/runtime.yaml`. Move the defaults into the
-GPUProfile manifests under `deploy/gpuprofiles/*.yaml` and shrink each
-backend's rule slice to env-var-only entries (no `Default`).
+Shipped in `refactor/backend-imagerules-cleanup` (slice 3).
 
-Files to touch (rule slices only):
-- `backend/comfyui.go:11`
-- `backend/diffusers.go:11`
-- `backend/llamacpp.go:13`
-- `backend/mlc_llm.go:12`
-- `backend/ollama.go:12`
-- `backend/vllm.go:14`
-- `backend/vllm_omni.go:11`
+All seven backend rule slices now declare `gfx110` and `gfx906` entries as
+env-only — the `Default:` field was deleted on those rows. Per-arch images
+moved to `deploy/gpuprofiles/gfx1100.yaml` and `gfx906.yaml` under
+`backends.<name>.image`, where `ResolveBackendImage` reads them via the
+profile-first contract introduced in slice 1. Nodes without a GPUProfile
+fall through the rule chain to the AMD-generic image (or to the env override
+when set), which is the documented backstop and matches the existing
+`ResolveImage` cascade.
 
-Validation: ensure `deploy/gpuprofiles/gfx1100.yaml` and `gfx906.yaml` declare
-a `backends.<name>.image` for every backend that previously had a `Default`.
+Validation:
+- `deploy/gpuprofiles/gfx1100.yaml` declares images for `vllm`, `vllm-omni`,
+  `diffusers`, `comfyui`, and `mlc-llm`. `llamacpp` and `ollama` had env-only
+  arch rules already; the AMD-generic rule preserves prior behavior.
+- `deploy/gpuprofiles/gfx906.yaml` declares images for `vllm`, `llamacpp`,
+  `diffusers`, `comfyui`, and `mlc-llm`. `ollama` had an env-only arch rule
+  already.
+- `backend/gpu_compat_test.go::TestResolveBackendImage_RealBackendsArchEnvOnly`
+  asserts the slice-3 contract end-to-end across all seven backends:
+  profile.Image wins, env override fires when profile is nil, and the
+  vendor-generic fallback is the documented backstop.
+- `controllers/model_controller_test.go` adds
+  `TestValidateBackendGPUCompatibility_ComfyUIOnGFX906_NoProfile` to document
+  the new fallback signal: no profile → ExperimentalGPUSupport warning fires,
+  which is the operator cue to onboard the node.
+
+NVIDIA `sm_5` (Maxwell) and CPU rules retained their `Default:` fields. The
+sm-52 GPUProfile already declares `ollama` and `llamacpp` images; folding the
+remaining Maxwell entries (`mlc-llm`, `llamacpp` Maxwell) into a follow-up
+keeps this slice scoped to the documented `gfx110/gfx906` cleanup.
+
+Files migrated:
+- `backend/comfyui.go:11-19` — gfx110+gfx906 env-only
+- `backend/diffusers.go:11-19` — gfx110+gfx906 env-only
+- `backend/llamacpp.go:13-25` — gfx906 env-only (gfx110 was already env-only)
+- `backend/mlc_llm.go:12-24` — gfx110+gfx906 env-only
+- `backend/ollama.go:9-27` — comment refresh only (gfx110+gfx906 were already env-only)
+- `backend/vllm.go:14-22` — gfx110+gfx906 env-only
+- `backend/vllm_omni.go:11-19` — gfx110 env-only
 
 ## Priority 3 — Move `pkg/quantization/image.go:92` `gfx906` branch to GPUProfile lookup
 
@@ -109,3 +127,20 @@ Files to touch:
 
 Validation: confirm `scripts/check-runtime-profile-consistency.sh` covers all
 backends after the map is removed; extend the check if it does not.
+
+## Priority 6 — Strip `Default` from NVIDIA Maxwell (`sm_5`) rule entries
+
+Slice 3 left the `Vendor: GPUVendorNVIDIA, ArchPrefix: "sm_5"` rule entries in
+`backend/llamacpp.go` and `backend/mlc_llm.go` with their hardcoded `Default:`
+images intact, because the `sm-52` GPUProfile only declares `ollama` and
+`llamacpp` overrides. Once `mlc-llm` is added to `deploy/gpuprofiles/sm_52.yaml`
+(and any Maxwell test on the GTX 980 Ti node has a chance to reconcile), the
+Maxwell `Default:` strings can be dropped using the slice-3 pattern:
+
+- `backend/llamacpp.go` — drop `registry.harbor.lan/flexinfer/llamacpp:cuda-maxwell`
+  (already redundant with `sm_52.yaml::backends.llamacpp.image`).
+- `backend/mlc_llm.go` — declare the Maxwell image in `sm_52.yaml`, then drop
+  `registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7` from the rule slice.
+
+Validation: extend `TestResolveBackendImage_RealBackendsArchEnvOnly` to cover
+the Maxwell profile path and the no-profile fallback.

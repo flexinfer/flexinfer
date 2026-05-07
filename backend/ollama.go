@@ -7,8 +7,12 @@ import (
 )
 
 // ollamaImageRules defines the image resolution precedence for Ollama.
-// Arch-specific rules have env-only overrides (no built-in default) so they
-// fall through to the vendor-level default when unset.
+//
+// Arch-specific rules are env-only (no built-in default) so they fall through
+// to the vendor-level default when no env override is set. Per-arch images
+// live in deploy/gpuprofiles/*.yaml — callers that pass a GPUProfile through
+// backend.ResolveBackendImage get the per-arch image from the profile, and
+// only nodes without a profile fall back to this slice.
 var ollamaImageRules = []ImageRule{
 	// AMD arch-specific (env-only, fall through to AMD generic)
 	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_OLLAMA_IMAGE_GFX1100"},
