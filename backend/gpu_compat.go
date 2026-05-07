@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // GPUArchSupportLevel indicates how well a backend supports a GPU architecture.
@@ -174,6 +175,44 @@ func ResolveBackendImage(b Backend, profile *aiv1alpha2.GPUProfileSpec, vendor G
 		}
 	}
 	return b.Image(vendor, arch)
+}
+
+// EnvFromProfile returns the env vars declared by a GPUProfile, or nil if the
+// profile is nil or has no env entries. Callers use the boolean to decide
+// whether to fall back to a hardcoded source.
+func EnvFromProfile(profile *aiv1alpha2.GPUProfileSpec) ([]corev1.EnvVar, bool) {
+	if profile == nil || len(profile.Env) == 0 {
+		return nil, false
+	}
+	return profile.Env, true
+}
+
+// ResolveBackendROCmEnv returns the AMD GPU environment variables for the
+// runtime/Job paths, preferring a GPUProfile-declared env list before falling
+// back to the in-code ROCmEnvVars switch.
+//
+// Precedence (highest to lowest):
+//  1. profile.Env (when profile is non-nil and has at least one entry)
+//  2. ROCmEnvVars(arch) (existing gfx110*/gfx90a/gfx942/gfx906 switch)
+//
+// The vendor argument is accepted for symmetry with ResolveBackendImage and to
+// allow future per-vendor branching (e.g., NVIDIA-specific defaults). Today the
+// fallback only fires for AMD vendors because ROCmEnvVars is ROCm-specific; for
+// non-AMD vendors with no profile env, the helper returns an empty slice.
+//
+// The fallback chain is only consulted when the profile is explicitly nil or
+// declares an empty env list. This matches the GPUProfile contract that an
+// architecture's CR is the source of truth for env injection, and that the
+// in-code arch tables are a backstop for nodes that have not yet been
+// onboarded to a profile.
+func ResolveBackendROCmEnv(profile *aiv1alpha2.GPUProfileSpec, vendor GPUVendor, arch string) []corev1.EnvVar {
+	if env, ok := EnvFromProfile(profile); ok {
+		return env
+	}
+	if vendor != GPUVendorAMD {
+		return nil
+	}
+	return ROCmEnvVars(arch)
 }
 
 // QuantizerImageFromProfile returns the quantizer container image for a format from a GPUProfile.
