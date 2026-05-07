@@ -114,7 +114,7 @@ the row notes:
 | `qwen36-27b-gptq` abliterated GPTQ W4_G128 canary | 8192 | `gfx1100/5930k` | `registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg` | `registry.harbor.lan/flexinfer/qwen36-27b:gptq-w4-g128-gfx1100@sha256:fe3a6bea0cd2cdf254a5db6194e01402f1f7f93c4b86d8c717695470fdd3849d` | Cache Ready; vLLM reached Ready with `quantization=gptq`, `kvCacheDtype=auto`, `maxNumSeqs=2`; direct proxy and service smoke returned HTTP 200 | First activation exposed proxy `lastActiveTime` conflict; cold start was dominated by 17.6GB image pull; `fp8_e4m3` KV crashed Triton cache update; `gptq_marlin` rejected because artifact config declares `gptq`; current `gptq` runtime serves incoherent output (`!!!!!!!!!!!!` / multilingual junk) and flat punctuation logprobs even with the ROCm reference GPTQ fallback patched in | MR !247 replacement; MR !248 runtime hardening; MR !253/!254 quiet runtime; 2026-05-05 and 2026-05-06 smoke evidence below | `fail` |
 | `qwen3-14b-gptq` | TBD | `gfx1100/5930k` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
 | `gemma4-31b-gptq` Radeon VII comparison | n/a | `gfx906/radeonvii` | n/a | n/a | n/a | Off-gfx1100 comparison row; VRAM ceiling for this promotion lane | SD-3 / Issue #57 | `skip` |
-| `sdxl-inpainting-radeonvii` Diffusers inpaint canary | n/a, 512x512 image edit | `gfx906/radeonvii` | `registry.harbor.lan/flexinfer/runtime@sha256:7c05960614517dbd5d6453944125a01e78f0451f6695467a8eaf6a6859d461dd` | `local:///models/flexinfer-system/sdxl-inpainting-radeonvii` | Direct runtime path selected `flexinfer-runtime-gfx906-dh8st`; Model Ready via runtime; 512x512 multipart `/v1/images/edits` returned HTTP 200 in 48.35s with one 1024x1024 PNG result, `b64_len=24152`; runtime logged 22 denoise steps in 40s and POST 200 | `/v1/images/generations` is the wrong endpoint for SDXL inpaint and returned HTTP 500 with a Diffusers input-format error; corrected `/v1/images/edits` canary succeeded. Runtime uses CPU offload and detected Radeon VII as `gfx900` under the gfx906 lane | RG-4 / `.loom/gfx1100-gfx906-platform-enhancements-plan.md`; 2026-05-06 Radeon VII evidence below | `conditional` |
+| `sdxl-inpainting-radeonvii` Diffusers inpaint canary | n/a, 512x512 image edit | `gfx906/radeonvii` | `registry.harbor.lan/flexinfer/runtime@sha256:dd0a1936f350ec117da1ab6a589618a571074d6828c2ccb5e273f2f6eb195b97` | `local:///models/flexinfer-system/sdxl-inpainting-radeonvii` | Direct runtime path selected `flexinfer-runtime-gfx906-dh8st`; Model Ready via runtime; 512x512 multipart `/v1/images/edits` returned HTTP 200 in 48.35s with one 1024x1024 PNG result, `b64_len=24152`; runtime logged 22 denoise steps in 40s and POST 200; rebuilt/pushed `gfx906` runtime digest `dd0a1936...` from `d8c75658` and promoted GPUProfile/Helm consumers | `/v1/images/generations` is the wrong endpoint for SDXL inpaint and returned HTTP 500 with a Diffusers input-format error; corrected `/v1/images/edits` canary succeeded. Runtime uses CPU offload and detected Radeon VII as `gfx900` under the gfx906 lane | RG-4 / `.loom/gfx1100-gfx906-platform-enhancements-plan.md`; 2026-05-06 Radeon VII evidence below | `conditional` |
 
 ## Artifact Layout Notes
 
@@ -239,6 +239,23 @@ Raw outputs:
 - Promotion posture: conditional pass for the gfx906 runtime lane. Keep the row
   conditional because this canary depends on CPU offload and uses the image-edit
   endpoint only; text/image-generation endpoint parity is not implied.
+
+### 2026-05-07 gfx906 runtime digest promotion
+
+- Built and pushed `registry.harbor.lan/flexinfer/runtime:rocm-gfx906` from
+  `master@d8c75658`, producing digest
+  `sha256:dd0a1936f350ec117da1ab6a589618a571074d6828c2ccb5e273f2f6eb195b97`.
+- Smoke checked the image entrypoint with:
+  `docker --context 7900xtx run --rm --entrypoint /usr/local/bin/flexinfer-runtime registry.harbor.lan/flexinfer/runtime:rocm-gfx906 --help`.
+  The binary reported default `-gpu-vendor amd` and `-gpu-arch gfx906`.
+- Promoted the digest with
+  `scripts/promote-runtime-digest.sh gfx906 --digest sha256:dd0a1936f350ec117da1ab6a589618a571074d6828c2ccb5e273f2f6eb195b97 --apply`.
+- Promotion corrected existing drift: `deploy/gpuprofiles/gfx906.yaml` had
+  `sha256:ba4570f5...`, while `deploy/system/values-k3s.yaml` had
+  `sha256:7c059606...`; both now point at `sha256:dd0a1936...`.
+- Validation before merge: `scripts/check-runtime-profile-consistency.sh`,
+  `scripts/test-promote-runtime-digest.sh`, `git diff --check`, and targeted
+  runtime image digest resolution with `crane digest`.
 
 ### 2026-04-26 gemma4 26B/31B execution findings
 

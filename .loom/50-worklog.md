@@ -2,6 +2,33 @@
 
 Chronological notes while executing the plan (useful for handoffs and debugging).
 
+## 2026-05-07
+
+### RALPH Slice 3/RG-4 bridge — gfx906 runtime digest promotion
+
+- What changed:
+  - Built and pushed `registry.harbor.lan/flexinfer/runtime:rocm-gfx906` from
+    `master@d8c75658`.
+  - Resolved the new image digest:
+    `sha256:dd0a1936f350ec117da1ab6a589618a571074d6828c2ccb5e273f2f6eb195b97`.
+  - Promoted that digest into `deploy/gpuprofiles/gfx906.yaml` and
+    `deploy/system/values-k3s.yaml` with `scripts/promote-runtime-digest.sh`.
+  - Updated `.loom/60-validation-matrix.md` so the Radeon VII SDXL row points
+    at the promoted runtime digest.
+- Why:
+  - MR !263 deployed Helm env for runtime profile/image metadata, but live pods
+    still used an older runtime binary that could not emit the new
+    `runtime_profile` and `runtime_digest` metric labels.
+  - The promotion also removed drift between GPUProfile and Helm runtime
+    consumers for the `gfx906` lane.
+- Validation:
+  - `crane digest registry.harbor.lan/flexinfer/runtime:rocm-gfx906` returned
+    the promoted digest.
+  - `docker --context 7900xtx run --rm --entrypoint /usr/local/bin/flexinfer-runtime registry.harbor.lan/flexinfer/runtime:rocm-gfx906 --help` showed the runtime binary defaulting to `gpu-vendor=amd` and `gpu-arch=gfx906`.
+  - `scripts/check-runtime-profile-consistency.sh` passed.
+  - `scripts/test-promote-runtime-digest.sh` passed.
+  - Pending after merge: Flux reconcile and live metric scrape.
+
 ## 2026-05-06
 
 ### RALPH Slice 6-lite — runtime digest/profile observability

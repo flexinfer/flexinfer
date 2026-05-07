@@ -67,7 +67,9 @@ Rollback:
 
 ## Slice 3: Runtime Build + Promotion Loop
 
-Status: partial; RG-2 consistency checks landed in the second RALPH pass.
+Status: partial; RG-2 consistency checks landed in the second RALPH pass, and
+the `gfx906` runtime digest was rebuilt/promoted after the runtime info metric
+change.
 
 Goal: make the runtime build matrix, digest promotion, and model-manifest promotion repeatable for both arches.
 
@@ -80,9 +82,11 @@ Target files:
 - `deploy/gpuprofiles/*.yaml`
 
 Work:
-- [ ] Extend dry-run output to include validation reminders and profile-specific model manifests.
+- [x] Extend dry-run output to include validation reminders and profile-specific model manifests.
 - [x] Add consistency tests that fail if `build/runtime.yaml`, `deploy/gpuprofiles/*.yaml`, and Helm runtime profiles disagree on arch/vendor/runtime-profile basics.
 - [x] Preserve digest-pinned cluster consumption; mutable tags remain build inputs only.
+- [x] Promote a rebuilt `gfx906` runtime digest so Radeon VII can emit runtime
+      profile/digest metric labels.
 
 Validation:
 - `scripts/check-runtime-profile-consistency.sh`
