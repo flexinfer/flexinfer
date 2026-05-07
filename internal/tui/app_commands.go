@@ -5,6 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/hud/monitor"
 	"github.com/crb2nu/loom/internal/tui/panels"
 )
 
@@ -18,6 +20,8 @@ type batchDataMsg struct {
 	memory   panels.MsgMemoryData
 	stream   panels.MsgStreamData
 	presence panels.MsgPresenceData
+	cost     panels.MsgCostData
+	rbac     panels.MsgRBACData
 }
 
 // tickCmd returns a command that sends a tick after the refresh interval.
@@ -288,8 +292,66 @@ func (m Model) fetchAll() tea.Cmd {
 				SharedBranches:    snap.Coordination.Summary.SharedBranches,
 				IdleClaimHolders:  snap.Coordination.Summary.IdleClaimHolders,
 			},
+			cost: buildCostMsg(m.client.CostSnapshot()),
+			rbac: buildRBACMsg(m.client.RBACConfig()),
 		}
 	}
+}
+
+// buildCostMsg adapts a monitor.CostSnapshot into a panel-facing MsgCostData.
+func buildCostMsg(snap monitor.CostSnapshot) panels.MsgCostData {
+	out := panels.MsgCostData{
+		Enabled:     snap.Enabled,
+		TotalCalls:  snap.TotalCalls,
+		TotalErrors: snap.TotalErrors,
+		TotalDenied: snap.TotalDenied,
+		TotalCached: snap.TotalCached,
+	}
+	for _, a := range snap.ByAgent {
+		out.ByAgent = append(out.ByAgent, panels.CostAgentRow{
+			AgentID:   a.AgentID,
+			CallCount: a.CallCount,
+			Errors:    a.Errors,
+			Denied:    a.Denied,
+			Cached:    a.Cached,
+		})
+	}
+	for _, s := range snap.ByServer {
+		out.ByServer = append(out.ByServer, panels.CostServerRow{
+			Server:    s.Server,
+			CallCount: s.CallCount,
+			Errors:    s.Errors,
+		})
+	}
+	return out
+}
+
+// buildRBACMsg adapts a bridge.RBACConfigResult into MsgRBACData.
+// A nil result yields a disabled message so the panel renders the
+// "RBAC is disabled" notice rather than blank.
+func buildRBACMsg(cfg *bridge.RBACConfigResult) panels.MsgRBACData {
+	if cfg == nil {
+		return panels.MsgRBACData{Enabled: false}
+	}
+	out := panels.MsgRBACData{
+		Enabled:        cfg.Enabled,
+		AuditEnabled:   cfg.AuditEnabled,
+		DefaultPolicy:  cfg.DefaultPolicy,
+		RoleCount:      len(cfg.Roles),
+		BindingCount:   len(cfg.Bindings),
+		GlobalDenyN:    len(cfg.GlobalDeny),
+		DeniedCount24h: cfg.DeniedCount,
+	}
+	for _, d := range cfg.RecentDenied {
+		out.RecentDenied = append(out.RecentDenied, panels.RBACDeniedRow{
+			AgentID:   d.AgentID,
+			Server:    d.Server,
+			Tool:      d.Tool,
+			Reason:    d.Reason,
+			Timestamp: d.Timestamp,
+		})
+	}
+	return out
 }
 
 // fetchMemoryItems fetches items for a memory tier and dispatches them as a panel message.
