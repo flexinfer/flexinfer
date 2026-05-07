@@ -42,7 +42,11 @@ resources:
   # - gemma4-e4b-multimodal.yaml
 
   # === cblevins-5930k (24 GB gfx1100) ===
-  - fast-chat.yaml                    # MLC Qwen3 8B fallback on 5930k, shares with imagegen
+  # 2026-05-07: disabled after live activation proved the available 5930k/NFS
+  # MLC artifacts are not runnable by this backend layout. The node-local PVC
+  # lacks the model directory, and the shared NFS copy lacks
+  # `mlc-chat-config.json`.
+  # - fast-chat.yaml                  # disabled; missing runnable MLC layout
   # qwen3-14b-abliterated-v2-5930k.yaml references a GPTQ PVC that is not
   # present in the live cluster; keep disabled until that cache is rebuilt or
   # repointed to an OCI-backed artifact.
