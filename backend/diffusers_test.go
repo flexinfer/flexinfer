@@ -485,10 +485,13 @@ func TestDiffusersBackendImage(t *testing.T) {
 		wantImage string
 	}{
 		{
-			name:      "AMD gfx1100 without env returns arch-specific image",
+			// Per-arch image now lives in deploy/gpuprofiles/gfx1100.yaml; the
+			// rule slice is env-only and falls through to the AMD-generic
+			// default when neither env nor profile applies.
+			name:      "AMD gfx1100 without env falls through to AMD generic",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx1100",
-			wantImage: "registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100",
+			wantImage: "registry.harbor.lan/library/diffusers-api:rocm-latest",
 		},
 		{
 			name:      "AMD gfx1100 with env override",
@@ -499,10 +502,13 @@ func TestDiffusersBackendImage(t *testing.T) {
 			wantImage: "registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100",
 		},
 		{
-			name:      "AMD gfx906 without env returns arch-specific image",
+			// Per-arch image now lives in deploy/gpuprofiles/gfx906.yaml; the
+			// rule slice is env-only and falls through to the AMD-generic
+			// default when neither env nor profile applies.
+			name:      "AMD gfx906 without env falls through to AMD generic",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx906",
-			wantImage: "registry.harbor.lan/flexinfer/diffusers:rocm-gfx906",
+			wantImage: "registry.harbor.lan/library/diffusers-api:rocm-latest",
 		},
 		{
 			name:      "AMD gfx906 with env override",

@@ -30,17 +30,25 @@ spec:
     vllm:
       # The current unified gfx906 runtime does not ship vLLM; keep this
       # experimental until a dedicated canary image is validated and promoted.
+      # Image is recorded for the profile-first contract: when a Maxwell-style
+      # experimental canary launches it must override via the env var or a
+      # profile patch rather than relying on the in-code rule slice.
       support: experimental
+      image: registry.harbor.lan/flexinfer/vllm:rocm-gfx906
     llamacpp:
       support: full
+      image: registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3
     diffusers:
       support: experimental
+      image: registry.harbor.lan/flexinfer/diffusers:rocm-gfx906
     ollama:
       support: full
     comfyui:
       support: experimental
+      image: registry.harbor.lan/flexinfer/comfyui:rocm-gfx906
     mlc-llm:
       support: experimental
+      image: registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx906
   env:
     - name: HSA_OVERRIDE_GFX_VERSION
       value: "9.0.6"

@@ -269,6 +269,166 @@ func TestResolveBackendImage_ProfileEntryWithEmptyImageFallsThrough(t *testing.T
 	}
 }
 
+// TestResolveBackendImage_RealBackendsArchEnvOnly asserts the slice-3 contract:
+// per-arch defaults moved to deploy/gpuprofiles/*.yaml, so each backend's rule
+// slice is env-only on gfx110/gfx906 and falls through to the vendor-generic
+// default. A GPUProfile.Image override still wins, matching ResolveBackendImage
+// precedence.
+func TestResolveBackendImage_RealBackendsArchEnvOnly(t *testing.T) {
+	tests := []struct {
+		name              string
+		backend           Backend
+		arch              string
+		envKey            string
+		envVal            string
+		profile           *aiv1alpha2.GPUProfileSpec
+		wantImage         string
+		wantContractCheck string // human-readable assertion of which precedence rule is exercised
+	}{
+		// vLLM ----------------------------------------------------------------
+		{
+			name:              "vllm gfx1100 no profile no env -> AMD generic fallback",
+			backend:           &VLLMBackend{},
+			arch:              "gfx1100",
+			wantImage:         "rocm/vllm:latest",
+			wantContractCheck: "arch rule env-only; falls through to vendor generic",
+		},
+		{
+			name:    "vllm gfx1100 profile image wins",
+			backend: &VLLMBackend{},
+			arch:    "gfx1100",
+			profile: &aiv1alpha2.GPUProfileSpec{
+				Architecture: "gfx1100",
+				Vendor:       "amd",
+				Backends: map[string]aiv1alpha2.BackendProfile{
+					"vllm": {Support: "full", Image: "registry.example.com/vllm:profile"},
+				},
+			},
+			wantImage:         "registry.example.com/vllm:profile",
+			wantContractCheck: "profile.Image takes precedence over rule slice",
+		},
+		{
+			name:              "vllm gfx906 no profile no env -> AMD generic fallback",
+			backend:           &VLLMBackend{},
+			arch:              "gfx906",
+			wantImage:         "rocm/vllm:latest",
+			wantContractCheck: "arch rule env-only; falls through to vendor generic",
+		},
+		{
+			name:              "vllm gfx1100 env override still wired",
+			backend:           &VLLMBackend{},
+			arch:              "gfx1100",
+			envKey:            "DEFAULT_VLLM_IMAGE_GFX1100",
+			envVal:            "registry.example.com/vllm:env-override",
+			wantImage:         "registry.example.com/vllm:env-override",
+			wantContractCheck: "arch env override fires when profile is nil",
+		},
+		// Diffusers ----------------------------------------------------------
+		{
+			name:              "diffusers gfx1100 no profile no env -> AMD generic",
+			backend:           &DiffusersBackend{},
+			arch:              "gfx1100",
+			wantImage:         "registry.harbor.lan/library/diffusers-api:rocm-latest",
+			wantContractCheck: "arch rule env-only; falls through to vendor generic",
+		},
+		{
+			name:              "diffusers gfx906 no profile no env -> AMD generic",
+			backend:           &DiffusersBackend{},
+			arch:              "gfx906",
+			wantImage:         "registry.harbor.lan/library/diffusers-api:rocm-latest",
+			wantContractCheck: "arch rule env-only; falls through to vendor generic",
+		},
+		// ComfyUI ------------------------------------------------------------
+		{
+			name:              "comfyui gfx1100 no profile no env -> AMD generic",
+			backend:           &ComfyUIBackend{},
+			arch:              "gfx1100",
+			wantImage:         "registry.harbor.lan/library/comfyui:rocm6.2.3-v8",
+			wantContractCheck: "arch rule env-only; falls through to vendor generic",
+		},
+		{
+			name:              "comfyui gfx906 no profile no env -> AMD generic",
+			backend:           &ComfyUIBackend{},
+			arch:              "gfx906",
+			wantImage:         "registry.harbor.lan/library/comfyui:rocm6.2.3-v8",
+			wantContractCheck: "arch rule env-only; falls through to vendor generic",
+		},
+		// llama.cpp ----------------------------------------------------------
+		{
+			name:              "llamacpp gfx906 no profile no env -> AMD generic (was hardcoded)",
+			backend:           &LlamaCppBackend{},
+			arch:              "gfx906",
+			wantImage:         "ghcr.io/ggerganov/llama.cpp:server-rocm",
+			wantContractCheck: "previously hardcoded gfx906 default removed; now profile-owned",
+		},
+		{
+			name:    "llamacpp gfx906 profile image wins",
+			backend: &LlamaCppBackend{},
+			arch:    "gfx906",
+			profile: &aiv1alpha2.GPUProfileSpec{
+				Architecture: "gfx906",
+				Vendor:       "amd",
+				Backends: map[string]aiv1alpha2.BackendProfile{
+					"llamacpp": {Support: "full", Image: "registry.example.com/llamacpp:gfx906-profile"},
+				},
+			},
+			wantImage:         "registry.example.com/llamacpp:gfx906-profile",
+			wantContractCheck: "profile.Image restores per-arch override",
+		},
+		// MLC-LLM ------------------------------------------------------------
+		{
+			name:              "mlc-llm gfx1100 no profile no env -> AMD generic",
+			backend:           &MLCLLMBackend{},
+			arch:              "gfx1100",
+			wantImage:         "ghcr.io/mlc-ai/mlc-llm:rocm",
+			wantContractCheck: "arch rule env-only; falls through to vendor generic",
+		},
+		{
+			name:              "mlc-llm gfx906 no profile no env -> AMD generic",
+			backend:           &MLCLLMBackend{},
+			arch:              "gfx906",
+			wantImage:         "ghcr.io/mlc-ai/mlc-llm:rocm",
+			wantContractCheck: "arch rule env-only; falls through to vendor generic",
+		},
+		// vLLM-Omni ----------------------------------------------------------
+		{
+			name:              "vllm-omni gfx1100 no profile no env -> AMD generic (which is also gfx1100)",
+			backend:           &VLLMOmniBackend{},
+			arch:              "gfx1100",
+			wantImage:         "registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100",
+			wantContractCheck: "arch rule env-only; vendor generic happens to ship the gfx1100 image",
+		},
+		// Profile-without-backend-entry fallback -----------------------------
+		{
+			name:    "vllm gfx1100 profile lacks vllm entry -> falls through to backend rules",
+			backend: &VLLMBackend{},
+			arch:    "gfx1100",
+			profile: &aiv1alpha2.GPUProfileSpec{
+				Architecture: "gfx1100",
+				Vendor:       "amd",
+				Backends: map[string]aiv1alpha2.BackendProfile{
+					"diffusers": {Support: "full", Image: "registry.example.com/diffusers:profile"},
+				},
+			},
+			wantImage:         "rocm/vllm:latest",
+			wantContractCheck: "profile-without-backend-entry falls through to vendor generic",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envKey != "" {
+				t.Setenv(tt.envKey, tt.envVal)
+			}
+			got := ResolveBackendImage(tt.backend, tt.profile, GPUVendorAMD, tt.arch)
+			if got != tt.wantImage {
+				t.Errorf("ResolveBackendImage(%s, %s) = %q, want %q (%s)",
+					tt.backend.Name(), tt.arch, got, tt.wantImage, tt.wantContractCheck)
+			}
+		})
+	}
+}
+
 // envVarSliceEqual reports whether two []corev1.EnvVar slices contain the same
 // (Name, Value) pairs in the same order.
 func envVarSliceEqual(a, b []corev1.EnvVar) bool {

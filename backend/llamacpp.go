@@ -8,12 +8,18 @@ import (
 )
 
 // llamaCppImageRules defines the image resolution precedence for llama.cpp.
-// Note: gfx110 has env-only override (no built-in default), falling through
-// to the generic AMD image when unset.
+//
+// AMD arch-specific rules are env-only (no built-in default) so they fall
+// through to the AMD-generic image when no env override is set. The arch
+// defaults now live in deploy/gpuprofiles/gfx1100.yaml and gfx906.yaml —
+// callers that pass a GPUProfile through backend.ResolveBackendImage get the
+// per-arch image from the profile, and only nodes without a profile fall back
+// to this slice. The NVIDIA Maxwell entry keeps its hardcoded default until
+// the sm-52 profile follow-up lands.
 var llamaCppImageRules = []ImageRule{
-	// AMD arch-specific
+	// AMD arch-specific (env-only; profile owns the default)
 	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_GFX1100"},
-	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_GFX906", Default: "registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3"},
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_GFX906"},
 	// AMD generic
 	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_AMD", Default: "ghcr.io/ggerganov/llama.cpp:server-rocm"},
 	// CPU-only

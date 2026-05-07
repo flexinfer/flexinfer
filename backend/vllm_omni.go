@@ -9,9 +9,15 @@ import (
 )
 
 // vllmOmniImageRules defines the image resolution precedence for vLLM-Omni.
+//
+// The gfx1100 arch entry is env-only (no built-in default) so it falls through
+// to the AMD-generic image when no env override is set. The arch default now
+// lives in deploy/gpuprofiles/gfx1100.yaml — callers that pass a GPUProfile
+// through backend.ResolveBackendImage get the per-arch image from the profile,
+// and only nodes without a profile fall back to this slice.
 var vllmOmniImageRules = []ImageRule{
-	// AMD gfx1100 arch-specific
-	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_VLLM_OMNI_IMAGE_GFX1100", Default: "registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100"},
+	// AMD gfx1100 arch-specific (env-only; profile owns the default)
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_VLLM_OMNI_IMAGE_GFX1100"},
 	// AMD generic
 	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_VLLM_OMNI_IMAGE_AMD", Default: "registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100"},
 	// Global default

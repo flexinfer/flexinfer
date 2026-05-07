@@ -10,11 +10,18 @@ import (
 )
 
 // vllmImageRules defines the image resolution precedence for vLLM.
-// Order: arch-specific (env → default) → vendor (env → default) → global.
+//
+// Arch-specific rules are env-only (no built-in default) so they fall through
+// to the AMD-generic image when no env override is set. The arch defaults now
+// live in deploy/gpuprofiles/gfx1100.yaml and gfx906.yaml — callers that pass
+// a GPUProfile through backend.ResolveBackendImage get the per-arch image
+// from the profile, and only nodes without a profile fall back to this slice.
+//
+// Order: arch-specific (env-only) → vendor (env → default) → global.
 var vllmImageRules = []ImageRule{
-	// AMD arch-specific
-	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_VLLM_IMAGE_GFX1100", Default: "registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-fa"},
-	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_VLLM_IMAGE_GFX906", Default: "registry.harbor.lan/flexinfer/vllm:rocm-gfx906"},
+	// AMD arch-specific (env-only; profile owns the default)
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_VLLM_IMAGE_GFX1100"},
+	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_VLLM_IMAGE_GFX906"},
 	// AMD generic
 	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_VLLM_IMAGE_AMD", Default: "rocm/vllm:latest"},
 	// Global default (NVIDIA, unknown, etc.)
