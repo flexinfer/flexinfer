@@ -21,7 +21,7 @@ platforms:
       session_end_event: "Stop"
       heartbeat_event: "PostToolUse"
       heartbeat_matcher: "Bash|Task"
-      extras: ["postToolUse_formatters", "postToolUse_taskSync"]
+      extras: ["postToolUse_formatters", "postToolUse_taskSync", "telemetry_eventEmit"]
     loom_proxy:
       agent_hint: "claude-code"
       tool_profile: "llm-core"

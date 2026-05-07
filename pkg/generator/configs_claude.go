@@ -32,7 +32,7 @@ func claudeHooks(reg *registry.Registry, profile *PlatformProfile, loomBinary st
 	appendHookPolicies(hooks, reg, profile.Hooks)
 
 	// Append extras defined in the profile (e.g. postToolUse_formatters, postToolUse_taskSync).
-	appendHookExtras(hooks, profile.Hooks.Extras, loomBinary)
+	appendHookExtras(hooks, profile.Hooks, loomBinary)
 
 	return hooks
 }
