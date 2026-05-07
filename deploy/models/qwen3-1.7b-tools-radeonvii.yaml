@@ -37,6 +37,8 @@ spec:
     flashAttention: false
     fitOff: true
     jinja: true
+    reasoningFormat: none
+    reasoningBudget: 0
     metrics: true
     cacheTypeK: q4_0
     cacheTypeV: q4_0

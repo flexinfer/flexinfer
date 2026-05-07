@@ -300,7 +300,10 @@ Raw outputs:
   The live Kubernetes object avoids dots in the name so generated Services pass
   DNS-1035 validation. The original upstream `Qwen/Qwen3-1.7B-GGUF` source was
   not a valid Q4_K_M cache source for this manifest; the prefetcher matched
-  zero files before this correction.
+  zero files before this correction. Chat serving also disables Qwen3 thinking
+  output with `reasoningFormat: none` and `reasoningBudget: 0` so LiteLLM
+  aliases behave like low-latency utility routes instead of returning hidden
+  reasoning markers.
 
 ### 2026-04-26 gemma4 26B/31B execution findings
 
