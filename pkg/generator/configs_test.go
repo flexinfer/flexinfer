@@ -654,6 +654,14 @@ func TestClaudePermissions_AskAndDisableBypass(t *testing.T) {
 func TestClaudePermissions_FiltersInvalidRules(t *testing.T) {
 	reg := &registry.Registry{
 		PlatformPermissions: map[string]*registry.PlatformPermission{
+			// Explicit empty agents entry signals that the test has the
+			// authoritative policy view: no shared guardrails apply. Without
+			// this, EPIC 3 / CONFIG-3 (.loom/108) embedded fallback would
+			// load the gitops_flux policy from
+			// pkg/generator/templates/policies/gitops_flux.yaml and add
+			// ~10 extra deny rules, breaking the assertion below. See
+			// LoadPolicy in pkg/generator/policies.go for the precedence rules.
+			"agents": {},
 			"claude": {
 				Allow: []string{"Bash(go *)", "invalid_tool", "mcp__loom"},
 				Deny:  []string{"Bash(rm *)", "also_invalid"},

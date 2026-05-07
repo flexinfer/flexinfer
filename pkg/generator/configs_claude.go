@@ -81,116 +81,13 @@ func claudePostToolUseTaskSyncHook(loomBinary string) []map[string]any {
 	}
 }
 
-type gitopsFluxGuardrailPolicy struct {
-	BlockedCommands []string
-	Message         string
-}
-
-func gitopsFluxGuardrailPolicyFromRegistry(reg *registry.Registry) *gitopsFluxGuardrailPolicy {
-	pp := registryPlatformPerms(reg, "agents")
-	if pp == nil || pp.Settings == nil {
-		return nil
-	}
-
-	guardrails, ok := pp.Settings["guardrails"].(map[string]any)
-	if !ok || len(guardrails) == 0 {
-		return nil
-	}
-	raw, ok := guardrails["gitops_flux"].(map[string]any)
-	if !ok || len(raw) == 0 {
-		return nil
-	}
-
-	policy := &gitopsFluxGuardrailPolicy{}
-	if cmds := coerceStringSlice(raw["blocked_commands"]); len(cmds) > 0 {
-		policy.BlockedCommands = cmds
-	} else if cmds := coerceStringSlice(raw["deny"]); len(cmds) > 0 {
-		policy.BlockedCommands = cmds
-	}
-	if msg, ok := raw["message"].(string); ok && strings.TrimSpace(msg) != "" {
-		policy.Message = strings.TrimSpace(msg)
-	}
-	return policy
-}
-
-func gitopsFluxGuardrailDenyRules(policy *gitopsFluxGuardrailPolicy) []string {
-	if policy == nil {
-		return nil
-	}
-	rules := make([]string, 0, len(policy.BlockedCommands))
-	for _, cmd := range policy.BlockedCommands {
-		cmd = strings.TrimSpace(cmd)
-		if cmd == "" {
-			continue
-		}
-		rules = append(rules, fmt.Sprintf("Bash(%s *)", cmd))
-	}
-	return rules
-}
-
-func gitopsFluxGuardrailRegex(policy *gitopsFluxGuardrailPolicy) string {
-	if policy == nil || len(policy.BlockedCommands) == 0 {
-		return ""
-	}
-
-	parts := make([]string, 0, len(policy.BlockedCommands))
-	for _, cmd := range policy.BlockedCommands {
-		cmd = strings.TrimSpace(cmd)
-		if cmd == "" {
-			continue
-		}
-		quoted := regexp.QuoteMeta(cmd)
-		quoted = strings.ReplaceAll(quoted, `\ `, " ")
-		parts = append(parts, quoted)
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return `^[[:space:]]*(` + strings.Join(parts, "|") + `)([[:space:]]|$)`
-}
-
-// gitopsFluxGuardrailHooks returns the PreToolUse hooks backed by shared
-// GitOps/Flux policy data from platform_permissions.agents. Used by any
-// platform with native enforcement (preToolUse support).
-func gitopsFluxGuardrailHooks(reg *registry.Registry) []map[string]any {
-	policy := gitopsFluxGuardrailPolicyFromRegistry(reg)
-	if policy == nil {
-		return nil
-	}
-
-	message := policy.Message
-	if message == "" {
-		message = "GitOps policy: kubectl edit/set env bypasses git history. Edit manifests and use flux reconcile."
-	}
-	pattern := gitopsFluxGuardrailRegex(policy)
-	if pattern == "" {
-		return nil
-	}
-
-	return []map[string]any{
-		{
-			"matcher": "Bash",
-			"hooks": []map[string]any{
-				{
-					"type": "command",
-					"command": fmt.Sprintf(
-						`INPUT=$(cat); CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""'); if echo "$CMD" | grep -qE %q; then printf '%%s\n' %q >&2; exit 2; fi; exit 0`,
-						pattern, message,
-					),
-				},
-			},
-		},
-		{
-			"matcher": "Bash",
-			"hooks": []map[string]any{
-				{
-					"type":    "command",
-					"command": `INPUT=$(cat); CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""'); if echo "$CMD" | grep -qE '^[[:space:]]*git[[:space:]]+commit([[:space:]]|$)'; then echo '{"systemMessage":"Pre-commit quality reminder: consider running quality_check (or quality_lint / quality_test) before committing to catch issues early."}'; fi; exit 0`,
-				},
-			},
-		},
-	}
-}
+// Policy guardrail helpers were generalized in EPIC 3 / CONFIG-3 (.loom/108).
+// The previous gitopsFluxGuardrail* functions were name-coupled to a single
+// policy. They now live in pkg/generator/policies.go as Policy + LoadPolicy
+// + policyDenyRules + policyRegex + policyGuardrailHooks +
+// gitCommitQualityReminderHook, and dispatch is name-agnostic so adding a
+// new policy ref requires only a YAML file under
+// pkg/generator/templates/policies/.
 
 // claudePermissions builds the permissions block for Claude Code settings.json.
 // It reads from the registry's platform_permissions.claude section so the allow/deny
@@ -200,13 +97,16 @@ func claudePermissions(reg *registry.Registry) map[string]any {
 	perms := map[string]any{}
 
 	pp := registryPlatformPerms(reg, "claude")
-	sharedPolicy := gitopsFluxGuardrailPolicyFromRegistry(reg)
+	// EPIC 3 / CONFIG-3: deny rules are derived from the gitops_flux policy
+	// (registry-first, embedded fallback). Other policy refs declared on the
+	// claude profile contribute their own deny rules below.
+	sharedPolicy, _ := LoadPolicy(reg, "gitops_flux")
 	if pp == nil {
 		// Minimal fallback: allow loom proxy tools only.
 		fallback := map[string]any{
 			"allow": []string{"mcp__loom"},
 		}
-		if deny := gitopsFluxGuardrailDenyRules(sharedPolicy); len(deny) > 0 {
+		if deny := policyDenyRules(sharedPolicy); len(deny) > 0 {
 			fallback["deny"] = deny
 		}
 		return fallback
@@ -250,7 +150,7 @@ func claudePermissions(reg *registry.Registry) map[string]any {
 			perms["deny"] = deny
 		}
 	}
-	if deny := gitopsFluxGuardrailDenyRules(sharedPolicy); len(deny) > 0 {
+	if deny := policyDenyRules(sharedPolicy); len(deny) > 0 {
 		if existing, ok := perms["deny"].([]string); ok {
 			perms["deny"] = append(existing, deny...)
 		} else {
