@@ -39,6 +39,12 @@ type HookProfile struct {
 	HeartbeatEvent   string   `yaml:"heartbeat_event"`
 	HeartbeatMatcher string   `yaml:"heartbeat_matcher"`
 	Extras           []string `yaml:"extras"` // e.g. ["postToolUse_formatters", "postToolUse_taskSync"]
+	// Template is the optional path under pkg/generator/templates/ used to
+	// render this platform's hooks settings file. When set, the template
+	// drives output instead of any hand-written Go builder. Empty value
+	// preserves legacy Go-builder behavior (Claude, Gemini, generic stub).
+	// EPIC 3 / CONFIG-1 (.loom/108).
+	Template string `yaml:"template"`
 }
 
 // LoomProxyProfile configures the loom proxy command arguments for a platform.

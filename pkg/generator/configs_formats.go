@@ -310,11 +310,24 @@ func generateHooksConfig(reg *registry.Registry, outputDir, target string, profi
 		return nil
 	}
 
+	// Template-driven path: if the profile declares hooks.template, render
+	// the embedded template under pkg/generator/templates/. EPIC 3 / CONFIG-1
+	// (.loom/108). Falls back to the legacy Go-builder switch when
+	// hooks.template is unset, so existing platforms (Claude, Gemini, OpenCode
+	// stub) keep their byte-identical output until a follow-up slice migrates
+	// each one to a template.
+	rendered, ok, renderErr := renderHookTemplate(reg, profile, loomBinary)
+	if renderErr != nil {
+		return fmt.Errorf("render hook template for %s: %w", target, renderErr)
+	}
+
 	var config map[string]any
-	switch target {
-	case "claude":
+	switch {
+	case ok:
+		config = rendered
+	case target == "claude":
 		config = claudeHooksConfig(reg, profile, loomBinary)
-	case "gemini":
+	case target == "gemini":
 		config = geminiHooksConfigFromRegistry(reg, profile, loomBinary)
 	default:
 		// Generic JSON hooks stub for platforms with hooks.enabled but no
