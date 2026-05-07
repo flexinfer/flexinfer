@@ -42,7 +42,11 @@ resources:
   # - gemma4-e4b-multimodal.yaml
 
   # === cblevins-5930k (24 GB gfx1100) ===
-  - qwen3-14b-abliterated-v2-5930k.yaml # on-demand text lane, shares with imagegen
+  - fast-chat.yaml                    # MLC Qwen3 8B fallback on 5930k, shares with imagegen
+  # qwen3-14b-abliterated-v2-5930k.yaml references a GPTQ PVC that is not
+  # present in the live cluster; keep disabled until that cache is rebuilt or
+  # repointed to an OCI-backed artifact.
+  # - qwen3-14b-abliterated-v2-5930k.yaml
   # Deprecated 2026-05-03: Omnicoder returned HTTP 200 but produced corrupted
   # direct-backend output from the staged GPTQ artifact. Keep the manifest on
   # disk for forensic rebuilds, but do not advertise or reconcile it.
