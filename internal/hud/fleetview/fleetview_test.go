@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
 )
 
 func mustTime(t *testing.T, s string) string {
@@ -17,7 +18,7 @@ func mustTime(t *testing.T, s string) string {
 
 func TestJoin_PresenceWithoutSession_HasSessionFalse(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "claude-code-1", Status: "active", AgentType: "claude-code", LastHeartbeat: mustTime(t, "2026-04-21T11:59:30Z")},
 	}
 	rows := Join(presences, nil, now)
@@ -41,7 +42,7 @@ func TestJoin_StaleHasSessionFlagIsCleared(t *testing.T) {
 	// HasSession=true. The new join must reset it if no active session
 	// matches now.
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{
 			AgentID:          "claude-code-ghost",
 			Status:           "active",
@@ -68,7 +69,7 @@ func TestJoin_StaleHasSessionFlagIsCleared(t *testing.T) {
 
 func TestJoin_EndedSessionDoesNotSatisfyHasSession(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "claude-code-1", Status: "active", SessionID: "sess-ended", LastHeartbeat: mustTime(t, "2026-04-21T11:59:30Z")},
 	}
 	sessions := []bridge.SessionInfo{
@@ -82,7 +83,7 @@ func TestJoin_EndedSessionDoesNotSatisfyHasSession(t *testing.T) {
 
 func TestJoin_ActiveSessionMatchedBySessionID(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "claude-code-1", Status: "active", SessionID: "sess-live", LastHeartbeat: mustTime(t, "2026-04-21T11:59:30Z")},
 	}
 	sessions := []bridge.SessionInfo{
@@ -103,7 +104,7 @@ func TestJoin_ActiveSessionMatchedBySessionID(t *testing.T) {
 
 func TestJoin_ActiveSessionMatchedByAgentIDWhenSessionIDMissing(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "claude-code-1", Status: "active", LastHeartbeat: mustTime(t, "2026-04-21T11:59:30Z")},
 	}
 	sessions := []bridge.SessionInfo{
@@ -141,7 +142,7 @@ func TestJoin_MultipleAgents_CounterMatchesBadges(t *testing.T) {
 	// equal the number of active sessions that joined. This is the UI
 	// contract — badge count must equal counter count.
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "claude-code-1", Status: "active"},
 		{AgentID: "claude-code-2", Status: "active"},
 		{AgentID: "claude-code-3", Status: "active"},
@@ -169,7 +170,7 @@ func TestJoin_MultipleAgents_CounterMatchesBadges(t *testing.T) {
 
 func TestJoin_PrefersMostRecentActiveSessionPerAgent(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "claude-code-1", Status: "active"},
 	}
 	sessions := []bridge.SessionInfo{
@@ -184,7 +185,7 @@ func TestJoin_PrefersMostRecentActiveSessionPerAgent(t *testing.T) {
 
 func TestJoin_SkipsEmptyAgentIDs(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "", Status: "active"},
 		{AgentID: "claude-code-1", Status: "active"},
 	}
@@ -200,7 +201,7 @@ func TestJoin_SkipsEmptyAgentIDs(t *testing.T) {
 func TestJoin_ComputesHeartbeatAgeAndTelemetryStatus(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
 	// heartbeat 1200s ago -> stale
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "claude-code-1", Status: "active", LastHeartbeat: mustTime(t, "2026-04-21T11:40:00Z")},
 	}
 	rows := Join(presences, nil, now)
@@ -215,7 +216,7 @@ func TestJoin_ComputesHeartbeatAgeAndTelemetryStatus(t *testing.T) {
 
 func TestJoin_DoesNotMutateInput(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "claude-code-1", Status: "active", HasSession: true, SessionID: "old"},
 	}
 	sessions := []bridge.SessionInfo{
@@ -237,7 +238,7 @@ func TestOrphan_YoungPresenceWithoutSessionIsNotOrphan(t *testing.T) {
 	// Agent registered 30s ago, no session yet — still within the grace
 	// window for session bootstrap. Should NOT be flagged.
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "claude-code-1", Status: "active", RegisteredAt: mustTime(t, "2026-04-21T11:59:30Z"), LastHeartbeat: mustTime(t, "2026-04-21T11:59:55Z")},
 	}
 	rows := Join(presences, nil, now)
@@ -253,7 +254,7 @@ func TestOrphan_StalePresenceWithoutSessionIsOrphan(t *testing.T) {
 	// Agent registered 5min ago, still heartbeating, but never obtained a
 	// session. This is the screenshot's 9-orphans case.
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "claude-code-ghost", Status: "active", RegisteredAt: mustTime(t, "2026-04-21T11:55:00Z"), LastHeartbeat: mustTime(t, "2026-04-21T11:59:50Z")},
 	}
 	rows := Join(presences, nil, now)
@@ -267,7 +268,7 @@ func TestOrphan_StalePresenceWithoutSessionIsOrphan(t *testing.T) {
 
 func TestOrphan_PresenceWithActiveSessionIsNotOrphan(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "claude-code-1", Status: "active", SessionID: "s1", RegisteredAt: mustTime(t, "2026-04-21T11:00:00Z")},
 	}
 	sessions := []bridge.SessionInfo{
@@ -297,7 +298,7 @@ func TestOrphan_EndedSessionProducesOrphan(t *testing.T) {
 	// window, the row should be flagged — this catches sessions that
 	// terminate silently without deregistering presence.
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "claude-code-ghost", Status: "active", SessionID: "s-ended", RegisteredAt: mustTime(t, "2026-04-21T11:00:00Z"), LastHeartbeat: mustTime(t, "2026-04-21T11:59:50Z")},
 	}
 	sessions := []bridge.SessionInfo{
@@ -314,7 +315,7 @@ func TestOrphan_StaleFlagIsReset(t *testing.T) {
 	// upstream must have that reset before the new computation runs,
 	// otherwise Join would compound stale state.
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{
 			AgentID:          "claude-code-1",
 			Status:           "active",
@@ -338,7 +339,7 @@ func TestOrphan_StaleFlagIsReset(t *testing.T) {
 
 func TestOrphan_FallsBackToLastHeartbeatWhenRegisteredAtMissing(t *testing.T) {
 	now, _ := time.Parse(time.RFC3339, "2026-04-21T12:00:00Z")
-	presences := []bridge.PresenceInfo{
+	presences := []presence.PresenceInfo{
 		{AgentID: "claude-code-1", Status: "active", LastHeartbeat: mustTime(t, "2026-04-21T11:55:00Z")},
 	}
 	rows := Join(presences, nil, now)

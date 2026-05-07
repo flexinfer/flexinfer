@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/visibility/contracts/cost"
 )
 
 // CostSnapshot is a point-in-time view of cost/usage data from the daemon.
@@ -63,7 +64,7 @@ func (m *CostMonitor) refresh(_ context.Context) (CostSnapshot, error) {
 	if err != nil {
 		return CostSnapshot{}, err
 	}
-	var result bridge.CostStatsResult
+	var result cost.CostStatsResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return CostSnapshot{}, fmt.Errorf("unmarshal cost-stats: %w", err)
 	}

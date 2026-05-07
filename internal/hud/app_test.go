@@ -24,6 +24,9 @@ import (
 	"github.com/crb2nu/loom/internal/hud/domain/memory"
 	"github.com/crb2nu/loom/internal/hud/domain/mobile"
 	"github.com/crb2nu/loom/internal/hud/monitor"
+	"github.com/crb2nu/loom/internal/visibility/contracts/health"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
+	"github.com/crb2nu/loom/internal/visibility/contracts/status"
 )
 
 // newTestApp creates an App with mock monitors for handler testing.
@@ -55,7 +58,7 @@ func newTestAppWithHandlers(t *testing.T) (*App, *http.ServeMux, *appMockHandler
 
 	// Register mock responses for the daemon RPC methods.
 	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
-		return &bridge.StatusResult{
+		return &status.DaemonRPCStatus{
 			Running:     true,
 			Servers:     3,
 			ActiveConns: 1,
@@ -64,14 +67,14 @@ func newTestAppWithHandlers(t *testing.T) (*App, *http.ServeMux, *appMockHandler
 	})
 
 	handlers.handle("loom/health", func(_ json.RawMessage) (any, error) {
-		return &bridge.HealthResult{
-			Servers: map[string]bridge.ServerHealth{
+		return &health.HealthResult{
+			Servers: map[string]health.ServerHealth{
 				"git": {
-					Local:  bridge.HealthEntry{Healthy: true, AvgLatencyMs: 5.2},
+					Local:  health.HealthEntry{Healthy: true, AvgLatencyMs: 5.2},
 					Target: "local",
 				},
 				"time": {
-					Local:  bridge.HealthEntry{Healthy: true, AvgLatencyMs: 3.1},
+					Local:  health.HealthEntry{Healthy: true, AvgLatencyMs: 3.1},
 					Target: "local",
 				},
 			},
@@ -208,7 +211,7 @@ func TestHandler_Status(t *testing.T) {
 		t.Fatalf("expected application/json, got %s", ct)
 	}
 
-	var result bridge.StatusResult
+	var result status.DaemonRPCStatus
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -232,7 +235,7 @@ func TestHandler_Health(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var result bridge.HealthResult
+	var result health.HealthResult
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -4242,12 +4245,12 @@ func setFleetSnapshotForTest(t *testing.T, fm *monitor.FleetMonitor, snap monito
 func TestIsMobileManagedPresence(t *testing.T) {
 	cases := []struct {
 		name  string
-		agent bridge.PresenceInfo
+		agent presence.PresenceInfo
 		want  bool
 	}{
-		{name: "agent type mobile", agent: bridge.PresenceInfo{AgentType: "mobile"}, want: true},
-		{name: "mobile session description", agent: bridge.PresenceInfo{Description: "Mobile session"}, want: true},
-		{name: "non mobile", agent: bridge.PresenceInfo{AgentType: "claude-code", Description: "Claude session"}, want: false},
+		{name: "agent type mobile", agent: presence.PresenceInfo{AgentType: "mobile"}, want: true},
+		{name: "mobile session description", agent: presence.PresenceInfo{Description: "Mobile session"}, want: true},
+		{name: "non mobile", agent: presence.PresenceInfo{AgentType: "claude-code", Description: "Claude session"}, want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

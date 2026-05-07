@@ -8,6 +8,7 @@ import (
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/notify"
+	"github.com/crb2nu/loom/internal/visibility/contracts/health"
 )
 
 const (
@@ -93,7 +94,7 @@ type ServerHealthEntry struct {
 	LatencyHistory []float64 `json:"latency_history"`
 
 	// Divergence between health monitor and router (nil when they agree).
-	Divergence *bridge.HealthDivergence `json:"divergence,omitempty"`
+	Divergence *health.HealthDivergence `json:"divergence,omitempty"`
 
 	// Derived stats
 	ToolCount int `json:"tool_count"`
@@ -176,12 +177,12 @@ func (m *HealthMonitor) Summary() HealthSummary {
 // history, and recomputes the summary.
 func (m *HealthMonitor) Refresh() error {
 	// Fetch health data.
-	var healthResult *bridge.HealthResult
+	var healthResult *health.HealthResult
 	rawHealth, healthErr := m.client.Call("loom/health", nil)
 	if healthErr != nil {
 		m.Logger.Warn("health: failed to fetch health", "error", healthErr)
 	} else {
-		var hr bridge.HealthResult
+		var hr health.HealthResult
 		if err := json.Unmarshal(rawHealth, &hr); err != nil {
 			m.Logger.Warn("health: failed to unmarshal health", "error", err)
 			healthErr = err
@@ -238,7 +239,7 @@ func (m *HealthMonitor) Refresh() error {
 	}
 
 	// Build a map of health by name for merging.
-	healthMap := make(map[string]bridge.ServerHealth)
+	healthMap := make(map[string]health.ServerHealth)
 	if healthResult != nil {
 		for name, h := range healthResult.Servers {
 			healthMap[name] = h
@@ -276,22 +277,22 @@ func (m *HealthMonitor) Refresh() error {
 		}
 
 		// Merge health info if available. Prefer the active target endpoint.
-		if health, ok := healthMap[name]; ok {
-			entry.Target = health.Target
-			entry.Transport = health.Transport
-			var active bridge.HealthEntry
-			switch health.Target {
+		if sh, ok := healthMap[name]; ok {
+			entry.Target = sh.Target
+			entry.Transport = sh.Transport
+			var active health.HealthEntry
+			switch sh.Target {
 			case "local":
-				active = health.Local
+				active = sh.Local
 			case "hub":
-				active = health.Hub
+				active = sh.Hub
 			default:
 				// If target is something else, try local first, then hub.
-				if health.Local.Healthy {
-					active = health.Local
+				if sh.Local.Healthy {
+					active = sh.Local
 					entry.Target = "local"
 				} else {
-					active = health.Hub
+					active = sh.Hub
 					entry.Target = "hub"
 				}
 			}
@@ -299,7 +300,7 @@ func (m *HealthMonitor) Refresh() error {
 			entry.ConsecFails = active.ConsecFails
 			entry.AvgLatencyMs = active.AvgLatencyMs
 			entry.ErrorMessage = active.ErrorMessage
-			entry.Divergence = health.Divergence
+			entry.Divergence = sh.Divergence
 		}
 
 		// Set tool count from the parsed tool namespace.

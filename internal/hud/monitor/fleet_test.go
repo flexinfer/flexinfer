@@ -10,6 +10,8 @@ import (
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/fleetview"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
+	"github.com/crb2nu/loom/internal/visibility/contracts/status"
 )
 
 func TestDetectConflicts_NoConflicts(t *testing.T) {
@@ -168,7 +170,7 @@ func TestFleetSnapshot_DefaultValues(t *testing.T) {
 
 func TestEnrichFleetAgentsWithSessionsSynthesizesSessionOnlyAgents(t *testing.T) {
 	now := time.Date(2026, 4, 16, 9, 30, 0, 0, time.UTC)
-	agents := []bridge.PresenceInfo{
+	agents := []presence.PresenceInfo{
 		{
 			AgentID:       "claude-code-live",
 			Status:        "active",
@@ -196,7 +198,7 @@ func TestEnrichFleetAgentsWithSessionsSynthesizesSessionOnlyAgents(t *testing.T)
 	}
 
 	enriched := fleetview.Join(agents, sessions, now)
-	byAgent := make(map[string]bridge.PresenceInfo)
+	byAgent := make(map[string]presence.PresenceInfo)
 	for _, agent := range enriched {
 		byAgent[agent.AgentID] = agent
 	}
@@ -237,7 +239,7 @@ func TestFleetMonitor_RefreshForceBypassesDebounce(t *testing.T) {
 	var statusCalls int
 	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
 		statusCalls++
-		return bridge.StatusResult{
+		return status.DaemonRPCStatus{
 			Running:     true,
 			Servers:     1,
 			ActiveConns: 1,
@@ -311,7 +313,7 @@ func TestFleetMonitor_ConcurrentRefreshesCollapse(t *testing.T) {
 			close(started)
 			<-release
 		}
-		return bridge.StatusResult{
+		return status.DaemonRPCStatus{
 			Running:     true,
 			Servers:     1,
 			ActiveConns: 1,

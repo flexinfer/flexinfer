@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
 )
 
 func TestEvaluateDispatch_SelectsIdleAgent(t *testing.T) {
@@ -86,7 +87,7 @@ func TestBuildCapacities_ComputesFromBridgeData(t *testing.T) {
 		{ID: "t2", SessionID: "sess-1", AgentID: "agent-a", Status: "pending"},
 		{ID: "t3", SessionID: "sess-2", AgentID: "agent-b", Status: "completed"},
 	}
-	presence := []bridge.PresenceInfo{
+	presence := []presence.PresenceInfo{
 		{AgentID: "agent-a", Status: "active"},
 		{AgentID: "agent-b", Status: "idle", LastHeartbeat: "2026-03-24T10:00:00Z"},
 	}

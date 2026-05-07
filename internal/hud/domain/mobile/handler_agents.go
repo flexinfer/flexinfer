@@ -9,6 +9,7 @@ import (
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/fleetview"
 	"github.com/crb2nu/loom/internal/hud/monitor"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
 	"github.com/crb2nu/loom/pkg/projectmeta"
 )
 
@@ -25,7 +26,7 @@ func (d *MobileDomain) handleMobilePresence(w http.ResponseWriter, r *http.Reque
 	statusFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
 	agentFilter := strings.TrimSpace(r.URL.Query().Get("agent_id"))
 
-	agents := make([]bridge.PresenceInfo, 0, len(snap.Agents))
+	agents := make([]presence.PresenceInfo, 0, len(snap.Agents))
 	for _, agent := range snap.Agents {
 		status := normalizeMobilePresenceStatus(agent.Status)
 		if statusFilter != "" && status != statusFilter {

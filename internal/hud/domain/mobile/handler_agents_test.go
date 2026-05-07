@@ -10,6 +10,7 @@ import (
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/monitor"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
 )
 
 // --- Minimal mock Deps for handler testing ---
@@ -283,7 +284,7 @@ func TestHandleMobileDashboard_UsesUnifiedLiveAgentCounts(t *testing.T) {
 			{ID: "sess-2", AgentID: "codex-feature-dev", Namespace: "proj/b", Status: "active"},
 			{ID: "sess-old", AgentID: "old-agent", Namespace: "proj/old", Status: "ended"},
 		},
-		Agents: []bridge.PresenceInfo{
+		Agents: []presence.PresenceInfo{
 			{AgentID: "offline-proxy", Status: "offline"},
 		},
 	})
@@ -368,7 +369,7 @@ func TestHandleMobileAgents_CodexInclusion(t *testing.T) {
 
 	// Case 2: Codex in presence but with no session.
 	deps.monitors.Fleet.Update(monitor.FleetSnapshot{
-		Agents: []bridge.PresenceInfo{
+		Agents: []presence.PresenceInfo{
 			{AgentID: "codex-456", Status: "active", AgentType: "codex"},
 		},
 	})
@@ -397,7 +398,7 @@ func TestHandleMobileAgents_CodexInclusion(t *testing.T) {
 
 	// Case 3: Proxy and Zed mapped to Codex.
 	deps.monitors.Fleet.Update(monitor.FleetSnapshot{
-		Agents: []bridge.PresenceInfo{
+		Agents: []presence.PresenceInfo{
 			{AgentID: "proxy-local-123", Status: "active"},
 			{AgentID: "zed-editor-456", Status: "active"},
 		},

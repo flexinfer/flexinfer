@@ -7,13 +7,14 @@ import (
 	"sync"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
 )
 
 // Bridge defines the subset of AgentBridge methods the engine needs.
 type Bridge interface {
 	Sessions() ([]bridge.SessionInfo, error)
 	AllTasks() ([]bridge.TaskInfo, error)
-	PresenceList(includeOffline bool) ([]bridge.PresenceInfo, error)
+	PresenceList(includeOffline bool) ([]presence.PresenceInfo, error)
 	FileClaimList(agentID string) ([]bridge.FileClaimInfo, error)
 }
 
@@ -137,7 +138,7 @@ func isAvailable(agent CapacityInfo) bool {
 func (e *Engine) BuildCapacities(
 	sessions []bridge.SessionInfo,
 	tasks []bridge.TaskInfo,
-	presence []bridge.PresenceInfo,
+	presence []presence.PresenceInfo,
 ) []CapacityInfo {
 	e.mu.RLock()
 	policy := e.policy

@@ -12,6 +12,8 @@ import (
 	"github.com/crb2nu/loom/internal/hud/coordination"
 	"github.com/crb2nu/loom/internal/hud/fleetview"
 	"github.com/crb2nu/loom/internal/hud/notify"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
+	"github.com/crb2nu/loom/internal/visibility/contracts/status"
 )
 
 // FleetSnapshot is the aggregated fleet state served to the frontend.
@@ -52,15 +54,15 @@ type FleetSnapshot struct {
 	PendingApprovals int `json:"pending_approvals"`
 
 	// Agent presence
-	ActiveAgents    int                    `json:"active_agents"`
-	IdleAgents      int                    `json:"idle_agents"`
-	OfflineAgents   int                    `json:"offline_agents"`
-	OrphanAgents    int                    `json:"orphan_agents"`
-	Agents          []bridge.PresenceInfo  `json:"agents"`
-	FileClaims      []bridge.FileClaimInfo `json:"file_claims"`
-	ActiveWorktrees int                    `json:"active_worktrees"`
-	Worktrees       []bridge.WorktreeInfo  `json:"worktrees"`
-	Coordination    coordination.Snapshot  `json:"coordination"`
+	ActiveAgents    int                     `json:"active_agents"`
+	IdleAgents      int                     `json:"idle_agents"`
+	OfflineAgents   int                     `json:"offline_agents"`
+	OrphanAgents    int                     `json:"orphan_agents"`
+	Agents          []presence.PresenceInfo `json:"agents"`
+	FileClaims      []bridge.FileClaimInfo  `json:"file_claims"`
+	ActiveWorktrees int                     `json:"active_worktrees"`
+	Worktrees       []bridge.WorktreeInfo   `json:"worktrees"`
+	Coordination    coordination.Snapshot   `json:"coordination"`
 
 	// Spawned agents (K8s pods)
 	Spawns []SpawnInfo `json:"spawns"`
@@ -251,7 +253,7 @@ func (m *FleetMonitor) IncrementKPI(field string, delta int) {
 
 // OfflineAgentsWithActiveSessions returns agents that are offline but still
 // have active sessions -- candidates for session reaping.
-func (m *FleetMonitor) OfflineAgentsWithActiveSessions() []bridge.PresenceInfo {
+func (m *FleetMonitor) OfflineAgentsWithActiveSessions() []presence.PresenceInfo {
 	m.RLock()
 	snap := m.GetSnapshot()
 	m.RUnlock()
@@ -264,7 +266,7 @@ func (m *FleetMonitor) OfflineAgentsWithActiveSessions() []bridge.PresenceInfo {
 		}
 	}
 
-	var result []bridge.PresenceInfo
+	var result []presence.PresenceInfo
 	for _, a := range snap.Agents {
 		if a.Status == "offline" && activeSessionAgents[a.AgentID] {
 			result = append(result, a)
@@ -322,14 +324,14 @@ func (m *FleetMonitor) refresh(force bool) error {
 	if raw, err := m.client.Call("loom/status", nil); err != nil {
 		m.Logger.Warn("fleet: failed to fetch daemon status", "error", err)
 	} else {
-		var status bridge.StatusResult
-		if err := json.Unmarshal(raw, &status); err != nil {
+		var daemonStatus status.DaemonRPCStatus
+		if err := json.Unmarshal(raw, &daemonStatus); err != nil {
 			m.Logger.Warn("fleet: failed to unmarshal daemon status", "error", err)
 		} else {
-			snap.DaemonRunning = status.Running
-			snap.ServerCount = status.Servers
-			snap.ActiveConns = status.ActiveConns
-			snap.Processes = status.Processes
+			snap.DaemonRunning = daemonStatus.Running
+			snap.ServerCount = daemonStatus.Servers
+			snap.ActiveConns = daemonStatus.ActiveConns
+			snap.Processes = daemonStatus.Processes
 		}
 	}
 
