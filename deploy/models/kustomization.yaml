@@ -6,17 +6,28 @@ resources:
   # qwen35-27b-opus-distill.yaml and qwen35-9b.yaml are intentionally disabled
   # for the Gemma4 rollout. Keep the manifests on disk for rollback/reference,
   # but do not reconcile them here.
-  - gemma4-31b-gptq.yaml            # vLLM GPTQ INT4, Dense 31B, primary (priority 250)
+  # 2026-05-07 fast-chat recovery: the 31B/26B long-context lanes are valid
+  # canaries, but they are the wrong default for interactive traffic. Keep them
+  # off the reconciled path while `qwen3-8b-fast-7900xtx` owns the warm
+  # low-latency route on the discrete 7900 XTX.
+  # - gemma4-31b-gptq.yaml          # disabled; quality lane, not fast default
+  - fast-chat-7900xtx.yaml          # MLC Qwen3 8B, ~106 tok/s fast-chat primary
   # 2026-05-03 dedupe: keep one 26B profile. The base 26B and 22K canary use
   # the same artifact as the validated 16K long profile and add routing/status
   # ambiguity without improving the serving surface.
   # - gemma4-26b-a4b-gptq.yaml      # superseded by gemma4-26b-a4b-gptq-long
-  - gemma4-26b-a4b-gptq-long.yaml   # vLLM GPTQ INT4, 16K FP8-KV on-demand (priority 255)
+  # - gemma4-26b-a4b-gptq-long.yaml # disabled; slow long-context canary
   # 2026-05-05: replaced by Qwen3.6. The old qwen3-30b-a3b canary requested
   # gpu.count=2 and stayed unschedulable after gfx1100 nodes were normalized
   # to one discrete GPU slot.
   # - qwen3-30b-a3b-gptq-int4.yaml  # disabled; busted old Qwen canary
-  - qwen36-27b-gptq.yaml            # vLLM GPTQ INT4, dense 27B abliterated, on-demand replacement
+  # 2026-05-07: qwen36 reached Ready but is not usable. Greedy smoke and live
+  # profile traffic produce token soup / multilingual junk, and activation is
+  # slow enough to block the 5930k shared GPU lane. Keep the manifest on disk
+  # for forensic rebuilds only; do not reconcile or advertise it until a
+  # coherent deterministic smoke passes and .loom/60-validation-matrix.md is
+  # moved out of fail.
+  # - qwen36-27b-gptq.yaml            # disabled; broken + slow canary
   # - gemma4-26b-a4b-gptq-22k.yaml  # superseded until 18K-22K is re-qualified
   # gemma4-31b-gptq-long.yaml: SUPERSEDED on 2026-04-25. Canary boot OOM'd at
   # 23.59/24 GiB during weight load — plugin rotation-matrix allocations
@@ -31,6 +42,7 @@ resources:
   # - gemma4-e4b-multimodal.yaml
 
   # === cblevins-5930k (24 GB gfx1100) ===
+  - qwen3-14b-abliterated-v2-5930k.yaml # on-demand text lane, shares with imagegen
   # Deprecated 2026-05-03: Omnicoder returned HTTP 200 but produced corrupted
   # direct-backend output from the staged GPTQ artifact. Keep the manifest on
   # disk for forensic rebuilds, but do not advertise or reconcile it.

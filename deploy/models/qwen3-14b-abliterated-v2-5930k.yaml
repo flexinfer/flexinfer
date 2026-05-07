@@ -20,6 +20,8 @@ spec:
   source: pvc://qwen3-14b-abliterated-v2-gptq/qwen3-14b-abliterated-v2-gptq/gptq-w4-g128
   gpu:
     vendor: amd
+    shared: 5930k-imagegen-textgen
+    priority: 220
     count: 1
     vramEstimateMB: 10000
   serverless:
@@ -41,6 +43,7 @@ spec:
     reasoningParser: qwen3
     maxNumBatchedTokens: 8192
     disableLogStats: false
+    hipVisibleDevices: "0"
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
   resources:
@@ -52,7 +55,12 @@ spec:
       memory: 48Gi
   serviceLabels:
     - qwen3-14b-abliterated-v2
+    - qwen3-14b-5930k
     - abliterated
     - uncensored
   litellm:
-    enabled: false
+    enabled: true
+    servedModelName: qwen3-14b-abliterated-v2-5930k
+    aliases:
+      - qwen3-14b-5930k
+      - qwen3-14b-abl-v2-5930k
