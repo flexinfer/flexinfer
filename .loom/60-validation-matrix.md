@@ -246,6 +246,25 @@ Raw outputs:
   shared NFS copy lacks `mlc-chat-config.json`, so MLC exits before serving.
   The attempted `qwen3-14b-abliterated-v2-5930k` fallback stayed disabled
   because its GPTQ source PVC is absent in the live cluster.
+- 2026-05-06 Track H static triage (`.loom/local/qwen36-coherence-triage.md`):
+  ranked three hypotheses against the published `model.safetensors.index.json`
+  and live ModelCache spec. Most likely: GDN linear-attention sub-modules
+  (`in_proj_qkvz`, `in_proj_ba`, `conv1d`) were int4-quantized because
+  `spec.quantization.dynamicExclusion: "none"` on `qwen36-27b-gptq-gfx1100`.
+  Earlier dequant cosine sanity at layers 11/15 only covered q/k/v/o
+  (full-attention modules), so GDN weight quality was never measured. Section
+  16 fixup in `build/scripts/vllm_qwen35_patches.py` only reverts to
+  `nn.Linear` when `.qweight` is missing from the index, so degraded but
+  present GDN qweights bypass the safety net. Confirming experiment: dump
+  `model.safetensors.index.json` from PVC `qwen36-27b-oci`, grep for
+  `model.layers.0.linear_attn.in_proj_ba.qweight`; if present, dequant vs FP16
+  parent and check cosine threshold 0.98. Re-quant fix is one line at
+  `deploy/modelcaches/qwen36-27b-gptq-gfx1100.yaml:87`:
+  `dynamicExclusion: "gdn"`. Hypothesis 1 (`text_config`/vocab corruption) and
+  hypothesis 3 (lm_head abliteration) eliminated: published config has
+  `model_type=qwen3_5_text` + `vocab_size=248320` + `tie_word_embeddings=false`,
+  and ModelCache spec has `ablitateLmHead=false` with `refusalDirNorm=41`
+  (under the 100 abort threshold).
 
 ### 2026-05-06 sdxl-inpainting-radeonvii runtime smoke
 

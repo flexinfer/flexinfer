@@ -17,8 +17,27 @@
 - Roadmap reconciliation checklist: `../docs/planning/roadmap-reconciliation.md`
 - gfx1100/gfx906 platform enhancement spec: `gfx1100-gfx906-platform-enhancements-spec.md`
 - gfx1100/gfx906 platform enhancement plan: `gfx1100-gfx906-platform-enhancements-plan.md`
+- gfx1100/gfx906 next-round parallel plan: `gfx1100-gfx906-next-round-plan.md`
 
-## Current Goal (2026-05-06)
+## Current Goal (2026-05-06, round 1 closed)
+
+Decompose the remaining `gfx1100`/`gfx906` work into eight tracks (A-H) sized for parallel sub-agent execution.
+
+Round 1 status (first wave: A, E, F, H):
+
+- [x] **Track F** — runtime profile generation decision (consistency-test-only). MR !273 merged.
+- [x] **Track E** — validation matrix schema rotation. MR !274 merged.
+- [x] **Track A** — GPUProfile contract slice (`ResolveBackendImage` helper). MR (`feat/gpuprofile-contract-slice`) merged via `6ba66e06`.
+- [x] **Track H** — qwen36-27b-gptq coherence triage. Investigation report at `.loom/local/qwen36-coherence-triage.md`; matrix pointer added; concrete one-line fix queued at `deploy/modelcaches/qwen36-27b-gptq-gfx1100.yaml:87`.
+
+Held for round 2:
+
+- [ ] **Track B** — gfx906 disk-pressure unblock (operator pairs).
+- [ ] **Track C** — gfx906 vLLM revive-or-retire (coordinate with `backlog/31-vllm-gfx906-build`).
+- [ ] **Track D** — gfx1100 capability push (qwen36 dynamic-exclusion fix from H, 26B-long KV ceiling, FLUX warmups).
+- [ ] **Track G** — fast-chat resilience after 5930k MLC fallback removal.
+
+## Previous Goal (2026-05-06)
 
 Plan the next full-platform feature round for AMD ROCm `gfx1100` and `gfx906`, spanning GPUProfile contracts, runtime image promotion, backend capability gates, validation evidence, and operator workflows.
 
@@ -26,7 +45,7 @@ Plan the next full-platform feature round for AMD ROCm `gfx1100` and `gfx906`, s
 - [x] Re-check Loom resource inventory and codebase index readiness.
 - [x] Capture source-backed facts for `gfx1100` and `gfx906` runtime/profile behavior.
 - [x] Add focused spec and implementation-plan artifacts for the next round.
-- [ ] Convert accepted slices into tracking issues/MRs.
+- [x] Convert accepted slices into tracking issues/MRs (Tracks A, E, F, H first-wave shipped).
 
 ## Previous Goal (2026-05-03)
 
