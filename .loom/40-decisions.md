@@ -2,6 +2,15 @@
 
 Record decisions as they are made, with date, rationale, and sources.
 
+### 2026-05-06: Keep runtime profile sync as consistency-test-only
+
+- Decision:
+  - Do not generate `GPUProfile` manifests from `build/runtime.yaml`. Continue relying on `scripts/check-runtime-profile-consistency.sh` (RG-2) until a third managed profile lands or a drift incident proves the test insufficient.
+- Rationale:
+  - Only two managed profiles exist (`gfx1100`, `gfx906`), and operational `GPUProfile` fields (memory budgets, backend support, quantization images, env) are tuned from cluster evidence, not build inputs.
+- Sources:
+  - `docs/planning/runtime-profile-generation-decision.md`.
+
 ### 2026-05-06: Demote gfx906 vLLM to experimental until canary promotion
 
 - Decision:
