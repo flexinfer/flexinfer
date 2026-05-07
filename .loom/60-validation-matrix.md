@@ -225,9 +225,10 @@ Raw outputs:
   `gemma4-31b-gptq`, and `gemma4-26b-a4b-gptq-long` from the reconciled model
   set so slow or incoherent canaries stop owning user-facing aliases. Promote
   `qwen3-8b-fast-7900xtx` as the warm `fast-chat` / `gpt-3.5-turbo` MLC route
-  on `7900xtx-textgen`, and add the existing `qwen3-8b-fast` MLC cache as an
-  on-demand 5930k fallback with non-default aliases (`fast-chat-5930k`,
-  `fast-chat-fallback`) sharing with imagegen via `5930k-imagegen-textgen`.
+  on `7900xtx-textgen`, and add the existing shared `mlc-models-nfs`
+  `qwen3-8b-fast` MLC cache as an on-demand 5930k fallback with non-default
+  aliases (`fast-chat-5930k`, `fast-chat-fallback`) sharing with imagegen via
+  `5930k-imagegen-textgen`.
   The attempted `qwen3-14b-abliterated-v2-5930k` fallback stayed disabled
   because its GPTQ source PVC is absent in the live cluster.
 
