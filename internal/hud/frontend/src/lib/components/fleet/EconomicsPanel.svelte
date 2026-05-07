@@ -74,6 +74,15 @@
   let total = $derived(Math.max(1, tokens.frontier_tokens + tokens.local_tokens));
   let frontierPct = $derived((tokens.frontier_tokens / total) * 100);
   let localPct = $derived((tokens.local_tokens / total) * 100);
+  // When every ratio is a stub (no value, non-ok status), the six cards are
+  // dead real estate. Collapse to a single banner instead.
+  let allStubs = $derived.by(() => {
+    if (!snapshot) return false;
+    return CARDS.every(({ key }) => {
+      const r = ratios[key];
+      return !r || r.value == null || (r.status && r.status !== 'ok');
+    });
+  });
 </script>
 
 <div class="economics-card">
@@ -88,19 +97,29 @@
     {/if}
   </div>
 
-  <div class="ratio-grid">
-    {#each CARDS as card (card.key)}
-      {@const r = ratios[card.key]}
-      <div class="ratio-card" class:ratio-stub={r?.status && r.status !== 'ok'}>
-        <div class="ratio-value">{formatRatio(r)}</div>
-        <div class="ratio-label">{card.label}</div>
-        <div class="ratio-hint">{card.hint}</div>
-        {#if statusLabel(r)}
-          <div class="ratio-status">{statusLabel(r)}</div>
-        {/if}
+  {#if allStubs}
+    <div class="econ-empty">
+      <span class="econ-empty-icon" aria-hidden="true">{'○'}</span>
+      <div class="econ-empty-text">
+        <div class="econ-empty-heading">No economics data yet</div>
+        <div class="econ-empty-hint">Ratios populate once weaver telemetry accumulates over the {WINDOW} window.</div>
       </div>
-    {/each}
-  </div>
+    </div>
+  {:else}
+    <div class="ratio-grid">
+      {#each CARDS as card (card.key)}
+        {@const r = ratios[card.key]}
+        <div class="ratio-card" class:ratio-stub={r?.status && r.status !== 'ok'}>
+          <div class="ratio-value">{formatRatio(r)}</div>
+          <div class="ratio-label">{card.label}</div>
+          <div class="ratio-hint">{card.hint}</div>
+          {#if statusLabel(r)}
+            <div class="ratio-status">{statusLabel(r)}</div>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   <div class="bar-wrapper">
     <div class="bar-legend">
@@ -135,6 +154,23 @@
   .ratio-grid {
     display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: var(--space-2); margin-bottom: var(--space-3);
+  }
+  .econ-empty {
+    display: flex; align-items: center; gap: var(--space-3);
+    padding: var(--space-2) var(--space-3); margin-bottom: var(--space-3);
+    background: var(--bg-primary); border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm); color: var(--fg-secondary);
+  }
+  .econ-empty-icon {
+    font-size: 18px; opacity: 0.7; color: var(--fg-dim);
+    flex: 0 0 auto;
+  }
+  .econ-empty-text { display: flex; flex-direction: column; gap: 2px; }
+  .econ-empty-heading {
+    font-size: var(--text-sm); font-weight: 600; color: var(--fg-primary);
+  }
+  .econ-empty-hint {
+    font-size: var(--text-xs); color: var(--fg-muted); font-family: var(--font-mono);
   }
   .ratio-card {
     background: var(--bg-primary); border: 1px solid var(--border-subtle);

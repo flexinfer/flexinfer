@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
 )
 
 // Join correlates the given presence and session records into a single
@@ -35,7 +36,7 @@ import (
 // The input slices are not mutated. The returned slice contains enriched
 // copies of each presence row, plus synthetic rows for sessions that have no
 // matching presence.
-func Join(presences []bridge.PresenceInfo, sessions []bridge.SessionInfo, now time.Time) []bridge.PresenceInfo {
+func Join(presences []presence.PresenceInfo, sessions []bridge.SessionInfo, now time.Time) []presence.PresenceInfo {
 	if now.IsZero() {
 		now = time.Now()
 	}
@@ -52,7 +53,7 @@ func Join(presences []bridge.PresenceInfo, sessions []bridge.SessionInfo, now ti
 		}
 	}
 
-	result := make([]bridge.PresenceInfo, 0, len(presences)+len(liveByAgent))
+	result := make([]presence.PresenceInfo, 0, len(presences)+len(liveByAgent))
 	seen := make(map[string]struct{}, len(presences))
 	for _, agent := range presences {
 		agentID := strings.TrimSpace(agent.AgentID)
@@ -91,7 +92,7 @@ func Join(presences []bridge.PresenceInfo, sessions []bridge.SessionInfo, now ti
 		if _, ok := seen[agentID]; ok {
 			continue
 		}
-		row := bridge.PresenceInfo{
+		row := presence.PresenceInfo{
 			AgentID:       agentID,
 			Status:        "active",
 			AgentType:     InferAgentType(agentID),
@@ -120,7 +121,7 @@ const OrphanStaleAfter = 120 * time.Second
 // enriched presence row. An orphan is a row with presence evidence but no
 // joined active session that has persisted past OrphanStaleAfter. Synthetic
 // session-only rows (Source="session") can never be orphans by definition.
-func markOrphan(row *bridge.PresenceInfo, now time.Time) {
+func markOrphan(row *presence.PresenceInfo, now time.Time) {
 	if row == nil {
 		return
 	}
@@ -149,7 +150,7 @@ func markOrphan(row *bridge.PresenceInfo, now time.Time) {
 
 // applySession writes session-derived fields onto an enriched presence row.
 // Must be called only when the session is active; callers filter first.
-func applySession(row *bridge.PresenceInfo, s bridge.SessionInfo, now time.Time) {
+func applySession(row *presence.PresenceInfo, s bridge.SessionInfo, now time.Time) {
 	if row == nil {
 		return
 	}
@@ -168,7 +169,7 @@ func applySession(row *bridge.PresenceInfo, s bridge.SessionInfo, now time.Time)
 
 // resetSessionFields clears all session-derived state on a presence row so a
 // fresh join cannot inherit stale flags from a prior computation.
-func resetSessionFields(row *bridge.PresenceInfo) {
+func resetSessionFields(row *presence.PresenceInfo) {
 	if row == nil {
 		return
 	}
@@ -232,7 +233,7 @@ func AgeSeconds(raw string, now time.Time) int {
 // TelemetryStatus derives a rollup label from the enriched presence row. It
 // is intentionally derived so two callers computing it over the same row
 // always agree.
-func TelemetryStatus(row bridge.PresenceInfo) string {
+func TelemetryStatus(row presence.PresenceInfo) string {
 	status := strings.ToLower(strings.TrimSpace(row.Status))
 	switch {
 	case row.HasSession && !row.HasPresence:

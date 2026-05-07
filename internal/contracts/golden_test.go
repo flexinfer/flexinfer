@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
 )
 
 var updateGolden = flag.Bool("update-golden", false, "update golden files with actual output")
@@ -553,7 +554,7 @@ func TestTaskInfoContract(t *testing.T) {
 }
 
 func TestPresenceInfoContract(t *testing.T) {
-	p := bridge.PresenceInfo{
+	p := presence.PresenceInfo{
 		AgentID:       "claude-code-1",
 		SessionID:     "sess_abc123",
 		Status:        "active",

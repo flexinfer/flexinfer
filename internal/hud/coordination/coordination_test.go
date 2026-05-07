@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
 )
 
 func TestBuildSummarizesCrossAgentCoordination(t *testing.T) {
@@ -17,7 +18,7 @@ func TestBuildSummarizesCrossAgentCoordination(t *testing.T) {
 		{ID: "task-b", SessionID: "sess-b", AgentID: "agent-b", Namespace: "proj/b", Title: "Dependency", Status: "in_progress"},
 		{ID: "task-orphan", Namespace: "proj/a", Title: "Detached", Status: "pending"},
 	}
-	agents := []bridge.PresenceInfo{
+	agents := []presence.PresenceInfo{
 		{AgentID: "agent-a", SessionID: "sess-a", Status: "active", Branch: "feature/shared"},
 		{AgentID: "agent-b", SessionID: "sess-b", Status: "idle", Branch: "feature/shared"},
 		{AgentID: "agent-c", SessionID: "sess-c", Status: "active", Branch: "feature/solo"},
@@ -78,7 +79,7 @@ func TestBuildMergeReadiness(t *testing.T) {
 	tasks := []bridge.TaskInfo{
 		{ID: "task-1", SessionID: "sess-b", AgentID: "blocked-agent", Title: "Stuck", Status: "blocked", BlockedBy: []string{"task-ext"}},
 	}
-	agents := []bridge.PresenceInfo{
+	agents := []presence.PresenceInfo{
 		{AgentID: "ready-agent", SessionID: "sess-a", Status: "active", Branch: "feat/ready"},
 		{AgentID: "blocked-agent", SessionID: "sess-b", Status: "active", Branch: "feat/blocked"},
 		{AgentID: "main-agent", SessionID: "sess-c", Status: "active", Branch: "main"},
@@ -129,7 +130,7 @@ func TestBuildMergeReadiness_FileConflictsBlock(t *testing.T) {
 		{ID: "sess-a", AgentID: "agent-x", Namespace: "proj/x", Status: "active"},
 		{ID: "sess-b", AgentID: "agent-y", Namespace: "proj/x", Status: "active"},
 	}
-	agents := []bridge.PresenceInfo{
+	agents := []presence.PresenceInfo{
 		{AgentID: "agent-x", SessionID: "sess-a", Status: "active", Branch: "feat/x"},
 		{AgentID: "agent-y", SessionID: "sess-b", Status: "active", Branch: "feat/y"},
 	}
@@ -162,7 +163,7 @@ func TestBuildMergeReadiness_SharedBranchBlocks(t *testing.T) {
 		{ID: "sess-a", AgentID: "agent-a", Namespace: "proj/x", Status: "active"},
 		{ID: "sess-b", AgentID: "agent-b", Namespace: "proj/x", Status: "active"},
 	}
-	agents := []bridge.PresenceInfo{
+	agents := []presence.PresenceInfo{
 		{AgentID: "agent-a", SessionID: "sess-a", Status: "active", Branch: "feat/shared-work"},
 		{AgentID: "agent-b", SessionID: "sess-b", Status: "active", Branch: "feat/shared-work"},
 	}
@@ -188,7 +189,7 @@ func TestBuildIgnoresHistoricalSessionsForNamespaceCounts(t *testing.T) {
 		{ID: "sess-live", AgentID: "agent-live", Namespace: "proj/live", Status: "active"},
 		{ID: "sess-ended", AgentID: "agent-ended", Namespace: "proj/legacy", Status: "ended"},
 	}
-	agents := []bridge.PresenceInfo{
+	agents := []presence.PresenceInfo{
 		{AgentID: "agent-live", SessionID: "sess-live", Status: "active"},
 		{AgentID: "agent-ended", SessionID: "sess-ended", Status: "offline"},
 	}
@@ -218,7 +219,7 @@ func TestBuildIgnoresHistoricalSessionsForNamespaceCounts(t *testing.T) {
 func TestBuild_OrphanAgentsAppearInAttention(t *testing.T) {
 	// An agent flagged IsOrphan by fleetview.Join should surface in the
 	// coordination attention list so HUD consumers can direct users to it.
-	agents := []bridge.PresenceInfo{
+	agents := []presence.PresenceInfo{
 		{AgentID: "ghost-agent", Status: "active", IsOrphan: true, OrphanAgeSeconds: 300},
 		{AgentID: "healthy-agent", Status: "active", SessionID: "s1"},
 	}

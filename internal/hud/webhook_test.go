@@ -13,6 +13,7 @@ import (
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/monitor"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
 )
 
 func TestFleetWebhook_Push(t *testing.T) {
@@ -31,7 +32,7 @@ func TestFleetWebhook_Push(t *testing.T) {
 	wh := NewFleetWebhook(srv.URL, "secret-token", "", logger)
 
 	snap := monitor.FleetSnapshot{
-		Agents: []bridge.PresenceInfo{
+		Agents: []presence.PresenceInfo{
 			{AgentID: "claude-code", Status: "active", AgentType: "claude-code", Branch: "main"},
 			{AgentID: "gemini", Status: "idle", AgentType: "gemini"},
 		},
@@ -78,7 +79,7 @@ func TestFleetWebhook_Backoff(t *testing.T) {
 	wh := NewFleetWebhook(srv.URL, "", "", logger)
 
 	snap := monitor.FleetSnapshot{
-		Agents: []bridge.PresenceInfo{{AgentID: "test"}},
+		Agents: []presence.PresenceInfo{{AgentID: "test"}},
 	}
 
 	// First push should go through (and fail).
@@ -184,7 +185,7 @@ func TestFleetWebhook_ResolveOverride(t *testing.T) {
 	}
 
 	wh.Push(monitor.FleetSnapshot{
-		Agents: []bridge.PresenceInfo{
+		Agents: []presence.PresenceInfo{
 			{AgentID: "test", Status: "active"},
 		},
 	})

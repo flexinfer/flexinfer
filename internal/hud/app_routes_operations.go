@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
 )
 
 // --- API handlers: Direct bridge calls (parameterized queries) ---
@@ -638,7 +639,7 @@ func (a *App) doSandboxStatus(project string) ([]map[string]any, error) {
 // sessionReaper periodically checks for offline agents with active sessions
 // and auto-ends them. This ensures heartbeat-only agents (like Codex) get
 // reliable session cleanup without native session-end hooks.
-func isMobileManagedPresence(agent bridge.PresenceInfo) bool {
+func isMobileManagedPresence(agent presence.PresenceInfo) bool {
 	if strings.EqualFold(strings.TrimSpace(agent.AgentType), "mobile") {
 		return true
 	}

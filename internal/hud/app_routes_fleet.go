@@ -9,13 +9,15 @@ import (
 	"net/http"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/visibility/contracts/health"
+	"github.com/crb2nu/loom/internal/visibility/contracts/status"
 )
 
 // handleStatus returns daemon status from the fleet monitor snapshot.
 // JSON contract: {"running": bool, "servers": int, "activeConns": int, "idleConns": int, "processes": []}
 func (a *App) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	snap := a.fleetMonitor.Snapshot()
-	a.writeJSON(w, http.StatusOK, &bridge.StatusResult{
+	a.writeJSON(w, http.StatusOK, &status.DaemonRPCStatus{
 		Running:     snap.DaemonRunning,
 		Servers:     snap.ServerCount,
 		ActiveConns: snap.ActiveConns,
@@ -29,24 +31,24 @@ func (a *App) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	servers := a.healthMonitor.Servers()
 
 	// Reshape into the existing HealthResult JSON contract.
-	healthServers := make(map[string]bridge.ServerHealth, len(servers))
-	var divergences []bridge.HealthDivergenceEntry
+	healthServers := make(map[string]health.ServerHealth, len(servers))
+	var divergences []health.HealthDivergenceEntry
 	for _, s := range servers {
-		sh := bridge.ServerHealth{
+		sh := health.ServerHealth{
 			Target:     s.Target,
 			Transport:  s.Transport,
 			Divergence: s.Divergence,
 		}
 		// Map the consolidated entry back to the local/hub shape.
 		if s.Target == "hub" {
-			sh.Hub = bridge.HealthEntry{
+			sh.Hub = health.HealthEntry{
 				Healthy:      s.Healthy,
 				ConsecFails:  s.ConsecFails,
 				AvgLatencyMs: s.AvgLatencyMs,
 				ErrorMessage: s.ErrorMessage,
 			}
 		} else {
-			sh.Local = bridge.HealthEntry{
+			sh.Local = health.HealthEntry{
 				Healthy:      s.Healthy,
 				ConsecFails:  s.ConsecFails,
 				AvgLatencyMs: s.AvgLatencyMs,
@@ -54,7 +56,7 @@ func (a *App) handleHealth(w http.ResponseWriter, _ *http.Request) {
 			}
 		}
 		if s.Divergence != nil {
-			divergences = append(divergences, bridge.HealthDivergenceEntry{
+			divergences = append(divergences, health.HealthDivergenceEntry{
 				Server: s.Name,
 				Reason: s.Divergence.Reason,
 			})
@@ -62,8 +64,8 @@ func (a *App) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		healthServers[s.Name] = sh
 	}
 	a.writeJSON(w, http.StatusOK, struct {
-		Servers      map[string]bridge.ServerHealth `json:"servers"`
-		Divergence   []bridge.HealthDivergenceEntry `json:"divergence,omitempty"`
+		Servers      map[string]health.ServerHealth `json:"servers"`
+		Divergence   []health.HealthDivergenceEntry `json:"divergence,omitempty"`
 		CacheBackend string                         `json:"cache_backend"`
 	}{
 		Servers:      healthServers,

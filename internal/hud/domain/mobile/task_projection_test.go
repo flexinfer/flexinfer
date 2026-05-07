@@ -10,6 +10,7 @@ import (
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/monitor"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
 )
 
 type taskFeedCaller struct {
@@ -104,7 +105,7 @@ func testMobileTaskFeedSnapshot() monitor.FleetSnapshot {
 				Description: "Codex session",
 			},
 		},
-		Agents: []bridge.PresenceInfo{
+		Agents: []presence.PresenceInfo{
 			{
 				AgentID:       "agent-1",
 				SessionID:     "sess-1",
@@ -369,7 +370,7 @@ func TestHandleMobileAgents_IgnoresHistoricalSessionOnlyEntries(t *testing.T) {
 				Description: "summary session",
 			},
 		},
-		Agents: []bridge.PresenceInfo{
+		Agents: []presence.PresenceInfo{
 			{
 				AgentID:       "agent-1",
 				SessionID:     "sess-ended",
@@ -446,7 +447,7 @@ func TestHandleMobileAgents_IgnoresHistoricalSessionOnlyEntries(t *testing.T) {
 
 func TestHandleMobileAgents_BackfillsProjectFromWorktreeAndClaims(t *testing.T) {
 	snap := monitor.FleetSnapshot{
-		Agents: []bridge.PresenceInfo{
+		Agents: []presence.PresenceInfo{
 			{
 				AgentID:       "claude-code-1",
 				Status:        "active",

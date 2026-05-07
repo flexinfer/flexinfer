@@ -203,6 +203,9 @@
   let longItems = $derived(memStats.long_term_memory?.items ?? 0);
   let longTokens = $derived(memStats.long_term_memory?.tokens ?? 0);
   let longMax = $derived(memStats.long_term_memory?.max_items ?? 2000);
+  let memoryEmpty = $derived(workingItems === 0 && shortItems === 0 && longItems === 0);
+  let totalMemItems = $derived(workingItems + shortItems + longItems);
+  let graphTotal = $derived(graphStats.total_entities ?? 0);
 
   // Sort state for fleet DataTable
   let fleetSortKey = $state('agent');
@@ -474,7 +477,7 @@
           {#snippet row({ row, index })}
             {@const agent = row.agent}
             {@const linkedSpawn = spawnByAgentId.get(agent.agent_id)}
-            {@const showUngroupedDivider = groupByRootSession && row.ungrouped && index === ungroupedStartIndex}
+            {@const showUngroupedDivider = groupByRootSession && row.ungrouped && index === ungroupedStartIndex && ungroupedStartIndex > 0}
             <td class="text-mono agent-cell" class:subagent-row={row.depth > 0} class:ungrouped-divider={showUngroupedDivider} title={sanitizeText(agent.agent_id ?? '---')}>
               {#if showUngroupedDivider}
                 <span class="ungrouped-label" aria-hidden="true">No active session match{ungroupedCount > 1 ? ` · ${ungroupedCount}` : ''}</span>
@@ -583,7 +586,11 @@
         {/if}
       </div>
       <div class="stat-card" style="--accent-color: var(--accent)">
-        {#key totalTokens}<div class="metric-value data-updated">{formatNumber(totalTokens)}</div>{/key}
+        {#key totalTokens}
+          <div class="metric-value data-updated" class:metric-empty={totalTokens === 0}>
+            {totalTokens === 0 ? '—' : formatNumber(totalTokens)}
+          </div>
+        {/key}
         <div class="metric-label">Tokens</div>
       </div>
       <div class="stat-card" style="--accent-color: var(--success)">
@@ -591,11 +598,19 @@
         <div class="metric-label">Workflows</div>
       </div>
       <div class="stat-card" style="--accent-color: var(--tier-short)">
-        {#key workingItems + shortItems + longItems}<div class="metric-value data-updated">{formatNumber(workingItems + shortItems + longItems)}</div>{/key}
+        {#key totalMemItems}
+          <div class="metric-value data-updated" class:metric-empty={totalMemItems === 0}>
+            {totalMemItems === 0 ? '—' : formatNumber(totalMemItems)}
+          </div>
+        {/key}
         <div class="metric-label">Memory Items</div>
       </div>
       <div class="stat-card" style="--accent-color: var(--tier-long)">
-        {#key graphStats.total_entities}<div class="metric-value data-updated">{formatNumber(graphStats.total_entities ?? 0)}</div>{/key}
+        {#key graphTotal}
+          <div class="metric-value data-updated" class:metric-empty={graphTotal === 0}>
+            {graphTotal === 0 ? '—' : formatNumber(graphTotal)}
+          </div>
+        {/key}
         <div class="metric-label">Graph Entities</div>
         {#if graphTopTypes.length > 0}
           <div class="metric-sub">{graphTopTypes.map(([t, c]) => `${t}:${c}`).join(' · ')}</div>
@@ -603,15 +618,18 @@
       </div>
       <div class="stat-card" style="--accent-color: var(--fg-muted)">
         {#key tunnelCount + cacheHitRate}
-          <div class="metric-value data-updated">
+          <div class="metric-value data-updated" class:metric-empty={tunnelCount === 0 && cacheHitRate === 0}>
             {#if tunnelCount > 0 || cacheHitRate > 0}
               {tunnelCount} <span class="metric-unit">tunnels</span> · {(cacheHitRate * 100).toFixed(0)}%
             {:else}
-              <span class="metric-unit">no data</span>
+              {'—'}
             {/if}
           </div>
         {/key}
         <div class="metric-label">Infrastructure</div>
+        {#if tunnelCount === 0 && cacheHitRate === 0}
+          <div class="metric-sub">no tunnels · no cache stats</div>
+        {/if}
       </div>
     </div>
 
@@ -649,44 +667,48 @@
       <div class="card-header">
         <span class="card-title">Memory Tiers</span>
       </div>
-      <div class="gauges-container">
-        <div class="gauge-item">
-          <Gauge
-            value={workingItems}
-            max={workingMax}
-            label="Working"
-            color="var(--tier-working)"
-            showPercentage={true}
-          />
-          <div class="gauge-detail text-mono text-xs">
-            {formatNumber(workingTokens)} tokens
+      {#if memoryEmpty}
+        <EmptyState icon={'○'} heading="No memory items yet" description="Tiers populate as agents record decisions, findings, and recall context." compact />
+      {:else}
+        <div class="gauges-container">
+          <div class="gauge-item">
+            <Gauge
+              value={workingItems}
+              max={workingMax}
+              label="Working"
+              color="var(--tier-working)"
+              showPercentage={true}
+            />
+            <div class="gauge-detail text-mono text-xs">
+              {formatNumber(workingTokens)} tokens
+            </div>
+          </div>
+          <div class="gauge-item">
+            <Gauge
+              value={shortItems}
+              max={shortMax}
+              label="Short-Term"
+              color="var(--tier-short)"
+              showPercentage={true}
+            />
+            <div class="gauge-detail text-mono text-xs">
+              {formatNumber(shortTokens)} tokens
+            </div>
+          </div>
+          <div class="gauge-item">
+            <Gauge
+              value={longItems}
+              max={longMax}
+              label="Long-Term"
+              color="var(--tier-long)"
+              showPercentage={true}
+            />
+            <div class="gauge-detail text-mono text-xs">
+              {formatNumber(longTokens)} tokens
+            </div>
           </div>
         </div>
-        <div class="gauge-item">
-          <Gauge
-            value={shortItems}
-            max={shortMax}
-            label="Short-Term"
-            color="var(--tier-short)"
-            showPercentage={true}
-          />
-          <div class="gauge-detail text-mono text-xs">
-            {formatNumber(shortTokens)} tokens
-          </div>
-        </div>
-        <div class="gauge-item">
-          <Gauge
-            value={longItems}
-            max={longMax}
-            label="Long-Term"
-            color="var(--tier-long)"
-            showPercentage={true}
-          />
-          <div class="gauge-detail text-mono text-xs">
-            {formatNumber(longTokens)} tokens
-          </div>
-        </div>
-      </div>
+      {/if}
     </div>
   </div>
 
@@ -1538,6 +1560,7 @@
     padding: 0 6px;
     border-radius: var(--radius-sm);
     z-index: 1;
+    white-space: nowrap;
   }
 
   .evidence-cell {
@@ -1620,6 +1643,10 @@
   .metric-unit {
     font-size: var(--text-xs);
     font-weight: 400;
+    color: var(--fg-dim);
+  }
+
+  .metric-value.metric-empty {
     color: var(--fg-dim);
   }
 

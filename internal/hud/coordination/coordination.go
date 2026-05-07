@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	"github.com/crb2nu/loom/internal/visibility/contracts/presence"
 )
 
 // Snapshot is the shared coordination view consumed by HUD web/mobile/TUI.
@@ -132,7 +133,7 @@ type agentState struct {
 func Build(
 	sessions []bridge.SessionInfo,
 	tasks []bridge.TaskInfo,
-	agents []bridge.PresenceInfo,
+	agents []presence.PresenceInfo,
 	claims []bridge.FileClaimInfo,
 	worktrees []bridge.WorktreeInfo,
 ) Snapshot {
