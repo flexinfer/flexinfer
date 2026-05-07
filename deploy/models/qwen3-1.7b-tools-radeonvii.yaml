@@ -7,7 +7,7 @@
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
-  name: qwen3-1.7b-tools-radeonvii
+  name: qwen3-1p7b-tools-radeonvii
   namespace: flexinfer-system
 spec:
   backend: llamacpp

@@ -115,7 +115,7 @@ the row notes:
 | `qwen3-14b-gptq` | TBD | `gfx1100/5930k` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
 | `gemma4-31b-gptq` Radeon VII comparison | n/a | `gfx906/radeonvii` | n/a | n/a | n/a | Off-gfx1100 comparison row; VRAM ceiling for this promotion lane | SD-3 / Issue #57 | `skip` |
 | `sdxl-inpainting-radeonvii` Diffusers inpaint canary | n/a, 512x512 image edit | `gfx906/radeonvii` | `registry.harbor.lan/flexinfer/runtime@sha256:dd0a1936f350ec117da1ab6a589618a571074d6828c2ccb5e273f2f6eb195b97` | `local:///models/flexinfer-system/sdxl-inpainting-radeonvii` | Direct runtime path selected `flexinfer-runtime-gfx906-dh8st`; Model Ready via runtime; 512x512 multipart `/v1/images/edits` returned HTTP 200 in 48.35s with one 1024x1024 PNG result, `b64_len=24152`; runtime logged 22 denoise steps in 40s and POST 200; rebuilt/pushed `gfx906` runtime digest `dd0a1936...` from `d8c75658` and promoted GPUProfile/Helm consumers | `/v1/images/generations` is the wrong endpoint for SDXL inpaint and returned HTTP 500 with a Diffusers input-format error; corrected `/v1/images/edits` canary succeeded. Runtime uses CPU offload and detected Radeon VII as `gfx900` under the gfx906 lane | RG-4 / `.loom/gfx1100-gfx906-platform-enhancements-plan.md`; 2026-05-06 Radeon VII evidence below | `conditional` |
-| `qwen3-1.7b-tools-radeonvii` GGUF tool-router | 8192 | `gfx906/radeonvii` | `registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3` | `HF://Qwen/Qwen3-1.7B-GGUF` / `Qwen3-1.7B-Q4_K_M.gguf` | Manifest enabled 2026-05-07 as the safe Radeon VII utilization lane after gfx906 runtime image pulls filled root-backed containerd storage. Expected image is about 2.5 GiB compressed versus about 17 GiB for diffusers/runtime. | Runtime smoke pending after Flux applies cache/PVC and activation. Keep `tool-router` aliases only; do not make this the default chat route unless coherence and latency pass. | 2026-05-07 fast-chat recovery and gfx906 disk-pressure follow-up | `pending` |
+| `qwen3-1p7b-tools-radeonvii` GGUF tool-router | 8192 | `gfx906/radeonvii` | `registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3` | `HF://Qwen/Qwen3-1.7B-GGUF` / `Qwen3-1.7B-Q4_K_M.gguf` | Manifest enabled 2026-05-07 as the safe Radeon VII utilization lane after gfx906 runtime image pulls filled root-backed containerd storage. Expected image is about 2.5 GiB compressed versus about 17 GiB for diffusers/runtime. | Runtime smoke pending after Flux applies cache/PVC and activation. Keep `tool-router` and `qwen3-1.7b` aliases only; do not make this the default chat route unless coherence and latency pass. The Kubernetes object uses `1p7b` because Service names cannot contain dots. | 2026-05-07 fast-chat recovery and gfx906 disk-pressure follow-up | `pending` |
 
 ## Artifact Layout Notes
 
@@ -278,9 +278,11 @@ Raw outputs:
   `flexinfer.ai/runtime-paused=true` on the gfx906 runtime profile until the
   image/storage issue is fixed.
 - To keep Radeon VII useful without repeating the pull failure, the next
-  reconciled workload is `qwen3-1.7b-tools-radeonvii`: llama.cpp GGUF,
+  reconciled workload is `qwen3-1p7b-tools-radeonvii`: llama.cpp GGUF,
   `Qwen3-1.7B-Q4_K_M.gguf`, `tool-router` aliases only, and the much smaller
   `registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3` runtime path.
+  The live Kubernetes object avoids dots in the name so generated Services pass
+  DNS-1035 validation.
 
 ### 2026-04-26 gemma4 26B/31B execution findings
 
