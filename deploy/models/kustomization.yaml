@@ -56,9 +56,13 @@ resources:
   # disk for forensic rebuilds, but do not advertise or reconcile it.
   # - omnicoder-9b.yaml
 
-  # === cblevins-radeonvii (16 GB gfx906) — image editing / inpainting ===
+  # === cblevins-radeonvii (16 GB gfx906) ===
+  # Keep the heavy gfx906 diffusers/runtime path paused until the node has more
+  # image-storage headroom. The llama.cpp GGUF lane pulls a much smaller image
+  # and gives the Radeon VII a useful low-latency routing workload.
+  - qwen3-1.7b-tools-radeonvii.yaml # llama.cpp GGUF, fast tool-router lane
   - gonzalomo-fluxpony-imagegen.yaml # diffusers, SDXL text-to-image, on-demand (priority 200)
-  - sdxl-inpainting-radeonvii.yaml   # diffusers, SDXL inpainting, ~12 GiB VRAM
+  - sdxl-inpainting-radeonvii.yaml   # diffusers, SDXL inpainting, cache-ready; runtime/image path paused
 
   # === cblevins-gtx980ti (6 GB sm_52) ===
   - gemma4-e4b-gguf-gtx980ti.yaml   # llama.cpp GGUF, node-local cache for Maxwell cold starts
