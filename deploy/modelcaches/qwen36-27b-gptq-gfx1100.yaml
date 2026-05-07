@@ -83,8 +83,17 @@ spec:
     groupSize: 128
     sym: true       # ExllamaLinearKernel (HIP-compiled, 72-73 tok/s on gfx1100)
     descAct: false
-    # Do NOT exclude any modules; Qwen3.5 text loader handles GDN + GA + FFN.
-    dynamicExclusion: "none"
+    # Exclude GDN linear-attention sub-modules from int4 quantization. The
+    # 2026-05-03 cycle ran with `dynamicExclusion: "none"`, which produced an
+    # artifact with int4 `linear_attn.in_proj_qkv`, `in_proj_z`, and
+    # `out_proj` on all 48 GDN layers (Track D-1 evidence in
+    # `.loom/60-validation-matrix.md`). At runtime, vLLM's GDN
+    # `gdn_attention_core` and FLA chunk/recurrent kernels expect FP weights
+    # for these projections; serving the int4-quantized variant collapsed
+    # logits to flat punctuation. Switching to `gdn` keeps full-attention
+    # q/k/v/o + FFN under GPTQ INT4 while leaving the GDN linear projections
+    # in their FP source dtype.
+    dynamicExclusion: "gdn"
     useGPU: true
     # GPTQ uses the same gfx1100 driver reservation path as abliteration.
     maxMemoryGB: 40
