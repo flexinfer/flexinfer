@@ -50,6 +50,7 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var ghosttyConfig bool
 	var installShader bool
 	var tui bool
+	var embed bool
 
 	// Pipeline monitor flags.
 	var pipelineProjects string
@@ -194,7 +195,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 				return hud.InstallShader()
 			}
 
-			return hud.Run(hud.Config{
+			cfg := hud.Config{
 				SocketPath:              socketPath,
 				Dev:                     dev,
 				Port:                    port,
@@ -228,7 +229,12 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 				SpawnGitBaseURL:         spawnGitBaseURL,
 				SpawnGitSecret:          spawnGitSecret,
 				SpawnProjects:           spawnProjects,
-			})
+			}
+
+			if embed {
+				return runEmbeddedHUDFromCLI(cfg, tui)
+			}
+			return hud.Run(cfg)
 		},
 	}
 
@@ -272,6 +278,12 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 
 	// TUI mode.
 	cmd.Flags().BoolVar(&tui, "tui", false, "Launch terminal UI dashboard (bubbletea)")
+
+	// Embed mode (UNIFY-2b): run HUD in-process via LocalCaller (no separate
+	// daemon). Lifetime bound to the CLI process; SIGINT/SIGTERM tears it down.
+	// Combine with --tui to co-host both surfaces in one process. See
+	// docs/HUD_EMBEDDING.md.
+	cmd.Flags().BoolVar(&embed, "embed", false, "Run HUD in-process (LocalCaller, no separate daemon). Lifetime tied to this CLI process.")
 
 	// Spawn orchestrator (headless agent spawning via devbox K8s pods).
 	// Pipeline monitoring (GitLab CI via mcp-gitlab).

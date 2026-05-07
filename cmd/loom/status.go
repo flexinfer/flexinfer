@@ -9,99 +9,9 @@ import (
 	"strings"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	presencectr "github.com/crb2nu/loom/internal/visibility/contracts/presence"
+	statusctr "github.com/crb2nu/loom/internal/visibility/contracts/status"
 )
-
-// platformStatus aggregates daemon, agent, and HUD status into one struct.
-type platformStatus struct {
-	Daemon        daemonStatus               `json:"daemon"`
-	Agents        agentStatus                `json:"agents"`
-	Sessions      sessionCount               `json:"sessions"`
-	Pipelines     pipelineStatus             `json:"pipelines"`
-	HUD           hudStatus                  `json:"hud"`
-	Health        *daemonHealthSnapshot      `json:"health,omitempty"`
-	Observability *daemonObservabilityStatus `json:"observability,omitempty"`
-	Healthy       bool                       `json:"healthy"`
-}
-
-type daemonStatus struct {
-	Running             bool     `json:"running"`
-	Servers             int      `json:"servers"`
-	ActiveConns         int      `json:"active_conns"`
-	IdleConns           int      `json:"idle_conns"`
-	ActiveRPCs          int64    `json:"active_rpcs"`
-	ActiveProxySessions int      `json:"active_proxy_sessions"`
-	DaemonEpoch         int64    `json:"daemon_epoch"`
-	DrainReady          bool     `json:"drain_ready"`
-	Draining            bool     `json:"draining"`
-	Processes           []string `json:"processes,omitempty"`
-}
-
-type agentStatus struct {
-	Active  int `json:"active"`
-	Idle    int `json:"idle"`
-	Offline int `json:"offline"`
-	Total   int `json:"total"`
-}
-
-type sessionCount struct {
-	Active int `json:"active"`
-	Total  int `json:"total"`
-}
-
-type pipelineStatus struct {
-	Available    bool   `json:"available"`
-	Running      int    `json:"running"`
-	Passed       int    `json:"passed"`
-	Failed       int    `json:"failed"`
-	Pending      int    `json:"pending"`
-	LastActivity string `json:"last_activity,omitempty"`
-}
-
-type hudStatus struct {
-	Reachable bool `json:"reachable"`
-}
-
-type daemonHealthSnapshot struct {
-	Servers         map[string]daemonHealthServer `json:"servers,omitempty"`
-	DegradedServers []string                      `json:"degraded_servers,omitempty"`
-}
-
-type daemonHealthServer struct {
-	Healthy           bool    `json:"healthy"`
-	Ready             bool    `json:"ready"`
-	ConsecutiveFails  int     `json:"consecutive_fails"`
-	TotalChecks       int     `json:"total_checks"`
-	TotalFailures     int     `json:"total_failures"`
-	AvgLatencyMs      float64 `json:"avg_latency_ms"`
-	LastError         string  `json:"last_error,omitempty"`
-	RestartCount      int     `json:"restart_count"`
-	LastCheck         string  `json:"last_check,omitempty"`
-	LastHealthy       string  `json:"last_healthy,omitempty"`
-	LastRestart       string  `json:"last_restart,omitempty"`
-	AutoRestartFailed bool    `json:"auto_restart_failed,omitempty"`
-	LastDeepProbe     string  `json:"last_deep_probe,omitempty"`
-}
-
-type daemonObservabilityStatus struct {
-	OTLPEndpoint           string          `json:"otlp_endpoint"`
-	OTLPConfigured         bool            `json:"otlp_configured"`
-	LogFormat              string          `json:"log_format"`
-	JSONLogsEnabled        bool            `json:"json_logs_enabled"`
-	TracedServers          int             `json:"traced_servers"`
-	TotalServers           int             `json:"total_servers"`
-	TraceCoverage          string          `json:"trace_coverage"`
-	RuntimeOTLPConfigured  bool            `json:"runtime_otlp_configured"`
-	RuntimeOTLPEnabled     bool            `json:"runtime_otlp_enabled"`
-	RuntimeOTLPEndpoint    string          `json:"runtime_otlp_endpoint"`
-	RuntimeOTLPProtocol    string          `json:"runtime_otlp_protocol"`
-	RuntimeOTLPServiceName string          `json:"runtime_otlp_service_name"`
-	RuntimeOTLPSampleRate  float64         `json:"runtime_otlp_sample_rate"`
-	RuntimeOTLPError       string          `json:"runtime_otlp_error,omitempty"`
-	RuntimeMeterEnabled    bool            `json:"runtime_meter_enabled"`
-	RuntimeTraceSurfaces   map[string]bool `json:"runtime_trace_surfaces"`
-	RuntimeTraceCoverage   string          `json:"runtime_trace_coverage"`
-	Warnings               []string        `json:"warnings,omitempty"`
-}
 
 func showStatus(socketPath, hudPort string, jsonOutput bool) error {
 	ps := collectPlatformStatus(socketPath, hudPort)
@@ -120,8 +30,8 @@ func showStatus(socketPath, hudPort string, jsonOutput bool) error {
 	return nil
 }
 
-func collectPlatformStatus(socketPath, hudPort string) platformStatus {
-	ps := platformStatus{}
+func collectPlatformStatus(socketPath, hudPort string) statusctr.PlatformStatus {
+	ps := statusctr.PlatformStatus{}
 
 	// 1. Daemon status via socket RPC.
 	result, err := call(socketPath, "loom/status", nil)
@@ -141,16 +51,16 @@ func collectPlatformStatus(socketPath, hudPort string) platformStatus {
 		DaemonEpoch         int64    `json:"daemonEpoch"`
 		ActiveProxySessions int      `json:"activeProxySessions"`
 		Health              *struct {
-			Servers         map[string]daemonHealthServer `json:"servers"`
-			DegradedServers []string                      `json:"degraded_servers"`
+			Servers         map[string]statusctr.DaemonHealthServer `json:"servers"`
+			DegradedServers []string                                `json:"degraded_servers"`
 		} `json:"health"`
-		Observability *daemonObservabilityStatus `json:"observability"`
+		Observability *statusctr.DaemonObservabilityStatus `json:"observability"`
 	}
 	if err := json.Unmarshal(result, &raw); err != nil {
 		return ps
 	}
 
-	ps.Daemon = daemonStatus{
+	ps.Daemon = statusctr.DaemonStatus{
 		Running:             true,
 		Servers:             raw.Servers,
 		ActiveConns:         raw.ActiveConns,
@@ -163,7 +73,7 @@ func collectPlatformStatus(socketPath, hudPort string) platformStatus {
 		Processes:           raw.Processes,
 	}
 	if raw.Health != nil && (len(raw.Health.Servers) > 0 || len(raw.Health.DegradedServers) > 0) {
-		ps.Health = &daemonHealthSnapshot{
+		ps.Health = &statusctr.DaemonHealthSnapshot{
 			Servers:         raw.Health.Servers,
 			DegradedServers: append([]string(nil), raw.Health.DegradedServers...),
 		}
@@ -186,7 +96,7 @@ func collectPlatformStatus(socketPath, hudPort string) platformStatus {
 			Total         int `json:"total"`
 		}
 		if json.Unmarshal(presenceData, &presence) == nil {
-			ps.Agents = agentStatus{
+			ps.Agents = statusctr.AgentStatus{
 				Active:  presence.ActiveAgents,
 				Idle:    presence.IdleAgents,
 				Offline: presence.OfflineAgents,
@@ -218,8 +128,8 @@ func collectPlatformStatus(socketPath, hudPort string) platformStatus {
 		pipeData, err := hudGetFast(hudPort, "/api/mobile/v1/pipelines", 2*defaultHUDTimeout/5)
 		if err == nil {
 			var pipeResp struct {
-				Available bool           `json:"available"`
-				Summary   pipelineStatus `json:"summary"`
+				Available bool                     `json:"available"`
+				Summary   statusctr.PipelineStatus `json:"summary"`
 			}
 			if json.Unmarshal(pipeData, &pipeResp) == nil && pipeResp.Available {
 				pipeResp.Summary.Available = true
@@ -244,10 +154,10 @@ func collectPlatformStatus(socketPath, hudPort string) platformStatus {
 	return ps
 }
 
-func collectPlatformStatusFromDaemon(socketPath string) (agentStatus, sessionCount, error) {
+func collectPlatformStatusFromDaemon(socketPath string) (statusctr.AgentStatus, statusctr.SessionCount, error) {
 	client := bridge.NewDaemonClient(socketPath, nil)
 	if err := client.Connect(); err != nil {
-		return agentStatus{}, sessionCount{}, err
+		return statusctr.AgentStatus{}, statusctr.SessionCount{}, err
 	}
 	defer client.Close()
 
@@ -255,26 +165,26 @@ func collectPlatformStatusFromDaemon(socketPath string) (agentStatus, sessionCou
 
 	agents, err := agentBridge.PresenceList(true)
 	if err != nil {
-		return agentStatus{}, sessionCount{}, err
+		return statusctr.AgentStatus{}, statusctr.SessionCount{}, err
 	}
 
 	sessionsRaw, err := agentBridge.ListSessions(map[string]any{"limit": 1000})
 	if err != nil {
-		return agentStatus{}, sessionCount{}, err
+		return statusctr.AgentStatus{}, statusctr.SessionCount{}, err
 	}
 
 	var sessionEnvelope struct {
 		Sessions []bridge.SessionInfo `json:"sessions"`
 	}
 	if err := json.Unmarshal(sessionsRaw, &sessionEnvelope); err != nil {
-		return agentStatus{}, sessionCount{}, err
+		return statusctr.AgentStatus{}, statusctr.SessionCount{}, err
 	}
 
 	return countPresenceStatuses(agents), countSessionStatuses(sessionEnvelope.Sessions), nil
 }
 
-func countPresenceStatuses(agents []bridge.PresenceInfo) agentStatus {
-	counts := agentStatus{Total: len(agents)}
+func countPresenceStatuses(agents []presencectr.PresenceInfo) statusctr.AgentStatus {
+	counts := statusctr.AgentStatus{Total: len(agents)}
 	for _, agent := range agents {
 		switch agent.Status {
 		case "active":
@@ -288,8 +198,8 @@ func countPresenceStatuses(agents []bridge.PresenceInfo) agentStatus {
 	return counts
 }
 
-func countSessionStatuses(sessions []bridge.SessionInfo) sessionCount {
-	counts := sessionCount{Total: len(sessions)}
+func countSessionStatuses(sessions []bridge.SessionInfo) statusctr.SessionCount {
+	counts := statusctr.SessionCount{Total: len(sessions)}
 	seen := make(map[string]struct{})
 	for _, session := range sessions {
 		if !isActiveSession(session) {
@@ -321,7 +231,7 @@ func sessionIdentityKey(agentID, namespace string) string {
 	return strings.TrimSpace(agentID) + "\x00" + strings.TrimSpace(namespace)
 }
 
-func printPlatformStatus(ps platformStatus, socketPath string) {
+func printPlatformStatus(ps statusctr.PlatformStatus, socketPath string) {
 	if !ps.Daemon.Running {
 		fmt.Println("Daemon:   not running")
 		fmt.Printf("Socket:   %s\n", socketPath)
@@ -384,7 +294,7 @@ func printPlatformStatus(ps platformStatus, socketPath string) {
 	fmt.Printf("HUD:      %s\n", hudLabel)
 }
 
-func degradedHealthServers(servers map[string]daemonHealthServer) []string {
+func degradedHealthServers(servers map[string]statusctr.DaemonHealthServer) []string {
 	if len(servers) == 0 {
 		return nil
 	}

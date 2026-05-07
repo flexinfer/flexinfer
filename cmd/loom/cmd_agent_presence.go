@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
+	presencectr "github.com/crb2nu/loom/internal/visibility/contracts/presence"
 )
 
 // heartbeatResponse holds the parsed heartbeat response.
@@ -466,13 +467,13 @@ func hookStatusWithHUD(cmd *cobra.Command, port, agentID string, window time.Dur
 		return nil, err
 	}
 	var presenceEnvelope struct {
-		Agents []bridge.PresenceInfo `json:"agents"`
+		Agents []presencectr.PresenceInfo `json:"agents"`
 	}
 	if err := json.Unmarshal(presenceRaw, &presenceEnvelope); err != nil {
 		return nil, fmt.Errorf("parse presence response: %w", err)
 	}
 
-	var presence *bridge.PresenceInfo
+	var presence *presencectr.PresenceInfo
 	for i := range presenceEnvelope.Agents {
 		if presenceEnvelope.Agents[i].AgentID == agentID {
 			presence = &presenceEnvelope.Agents[i]
