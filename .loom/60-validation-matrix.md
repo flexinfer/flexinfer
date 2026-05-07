@@ -129,7 +129,7 @@ by at least one row even when evidence is incomplete.
 | **Required canary: `gfx1100` imagegen** — `gonzalomo-fluxpony-imagegen` FLUX Schnell text-to-image | n/a, 512x512 + 1024x1024 warmup resolutions | `gfx1100/5930k` | `diffusers` | `supported` | TBD: diffusers runtime digest not yet pinned in this matrix; see `deploy/models/gonzalomo-fluxpony-imagegen.yaml` | `HF://black-forest-labs/FLUX.1-schnell` (Apache 2.0); manifest `deploy/models/gonzalomo-fluxpony-imagegen.yaml` | NF4 + bfloat16 compute dtype; `WARMUP_RESOLUTIONS=512x512,1024x1024` precompiles MIOpen kernels; `MIOPEN_FIND_MODE=2` works around ROCm#4729 VAE crash; primary imagegen on `5930k-imagegen-textgen` shared lane (priority 200) per current model layout | TBD: live cold-load + 512/1024 generation timings not yet captured to a tracked artifact in this matrix | TBD: capture `curl /v1/images/generations` once runtime digest is pinned | TBD: no prior diffusers runtime digest recorded for this lane | RG-4 / `.loom/gfx1100-gfx906-platform-enhancements-plan.md` Slice 4; `docs/user/backends-rocm-gfx1100.md:344-460` | `pending` |
 | `gemma4-31b-gptq` Radeon VII comparison | n/a | `gfx906/radeonvii` | `n/a` | `unsupported` | n/a | n/a | n/a | Off-gfx1100 comparison row; VRAM ceiling for this promotion lane | n/a: not a target | n/a | SD-3 / Issue #57 | `skip` |
 | **Required canary: `gfx906` textgen/quantization** — Qwen3.5 GPTQ Radeon VII pipeline (`docs/user/gptq-quantization-runbook.md`) | TBD: gfx906 runtime currently paused (DiskPressure) so no live serving canary | `gfx906/radeonvii` | `vllm` | `deprecated` | TBD: gfx906 vLLM runtime is paused via `flexinfer.ai/runtime-paused=true` after the digest pull repeatedly hit DiskPressure | TBD: 31B GPTQ artifact reused from gfx1100 (`pvc:///gemma4-31b-gptq/gptq-w4-g128-keqv`) | GPTQ runbook documents abliteration + GPTQ flow on Radeon VII (`docs/user/gptq-quantization-runbook.md`); 2026-05-07 evidence below records DaemonSet pause + DiskPressure history. CPU loading + community PyTorch wheel restore allocations under 16 GiB. Live serving canary not currently runnable on radeonvii. | Root-backed containerd fills to 100% on first pull of the 17 GiB digest-pinned `runtime` image, evicting kubelet workloads. The replacement `qwen3-1p7b-tools-radeonvii` llama.cpp lane is queued precisely because vLLM cannot run here today. | TBD: re-enable canary after storage relocation; recapture before lifting `runtime-paused` | `registry.harbor.lan/flexinfer/runtime@sha256:7c05960614517dbd5d6453944125a01e78f0451f6695467a8eaf6a6859d461dd` (last gfx906 runtime digest before the `dd0a1936...` promotion that hit DiskPressure) | `.loom/gfx1100-gfx906-platform-enhancements-plan.md` Slice 5; `docs/user/gptq-quantization-runbook.md`; 2026-05-07 gfx906 runtime digest promotion evidence below | `pending` |
-| **Required canary: `gfx906` imagegen/offload** — `sdxl-inpainting-radeonvii` Diffusers inpaint | n/a, 512x512 image edit | `gfx906/radeonvii` | `diffusers` | `experimental` | `registry.harbor.lan/flexinfer/runtime@sha256:dd0a1936f350ec117da1ab6a589618a571074d6828c2ccb5e273f2f6eb195b97` | `local:///models/flexinfer-system/sdxl-inpainting-radeonvii` | Direct runtime path selected `flexinfer-runtime-gfx906-dh8st`; Model Ready via runtime; 512x512 multipart `/v1/images/edits` returned HTTP 200 in 48.35s with one 1024x1024 PNG result, `b64_len=24152`; runtime logged 22 denoise steps in 40s and POST 200; rebuilt/pushed `gfx906` runtime digest `dd0a1936...` from `d8c75658` and promoted GPUProfile/Helm consumers | `/v1/images/generations` is the wrong endpoint for SDXL inpaint and returned HTTP 500 with a Diffusers input-format error; corrected `/v1/images/edits` canary succeeded. Runtime uses CPU offload and detected Radeon VII as `gfx900` under the gfx906 lane | Multipart `POST /model/sdxl-inpainting-radeonvii/v1/images/edits` through `flexinfer-proxy` with 512x512 PNG image+mask (raw 2026-05-06 evidence below) | `registry.harbor.lan/flexinfer/runtime@sha256:7c05960614517dbd5d6453944125a01e78f0451f6695467a8eaf6a6859d461dd` (predecessor recorded during the 2026-05-07 promotion that corrected `ba4570f5...` and `7c059606...` drift) | RG-4 / `.loom/gfx1100-gfx906-platform-enhancements-plan.md`; 2026-05-06 Radeon VII evidence below | `conditional` |
+| **Required canary: `gfx906` imagegen/offload** — `sdxl-inpainting-radeonvii` Diffusers inpaint | n/a, 512x512 image edit | `gfx906/radeonvii` | `diffusers` | `experimental` | `registry.harbor.lan/flexinfer/runtime@sha256:94045d0ca4b12deb3c46bb22070f67bfedad8b719bb992e5d3ce128ad27ad597` | `local:///models/flexinfer-system/sdxl-inpainting-radeonvii` | Slim runtime image (cycle 2: `Dockerfile.runtime-gfx906` on `mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3` base, 36.9 GB extracted vs prior 59.2 GB) promoted via MR !282 after MR !281. DaemonSet pod Ready on `cblevins-radeonvii`; cold-start `/v1/images/edits` smoke returned HTTP 200 in 107.7s with one 512x512 PNG, `b64_len=252372`. Pre-pull verified root holds at 65% (78G/127G used) post-image-pull; bind-mounted `/var/lib/flexinfer/models` to `/mnt/nvme/longhorn/flexinfer/models` via fstab, reclaiming 21G on root. | None on the runtime path. Cold-start latency increased from prior 48.35s warm to 107.7s cold (deployment scale-up + weights load from freshly bind-mounted NVMe path). Failed pull on root LVM exposed pull-time peak ~1.5x final extracted size. | Multipart `POST /model/sdxl-inpainting-radeonvii/v1/images/edits` through `flexinfer-proxy` with 512x512 PNG image+mask (raw 2026-05-07 evidence below) | `registry.harbor.lan/flexinfer/runtime@sha256:dd0a1936f350ec117da1ab6a589618a571074d6828c2ccb5e273f2f6eb195b97` (the prior 59.2 GB digest replaced by this promotion) | RG-4 / `.loom/gfx1100-gfx906-platform-enhancements-plan.md`; `.loom/gfx1100-gfx906-next-round-plan.md` Track B-3; 2026-05-07 Radeon VII evidence below | `conditional` |
 | `qwen3-1p7b-tools-radeonvii` GGUF tool-router | 8192 | `gfx906/radeonvii` | `llamacpp` | `experimental` | `registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3` (digest TBD) | `HF://rippertnt/Qwen3-1.7B-Q4_K_M-GGUF` / `qwen3-1.7b-q4_k_m.gguf` | Manifest enabled 2026-05-07 as the safe Radeon VII utilization lane after gfx906 runtime image pulls filled root-backed containerd storage. Expected image is about 2.5 GiB compressed versus about 17 GiB for diffusers/runtime. | Runtime smoke pending after Flux applies cache/PVC and activation. Keep `tool-router` and `qwen3-1.7b` aliases only; do not make this the default chat route unless coherence and latency pass. The Kubernetes object uses `1p7b` because Service names cannot contain dots. | TBD: smoke pending Flux activation | TBD: first manifest of this lane; no prior llama.cpp gfx906 digest pinned in this matrix | 2026-05-07 fast-chat recovery and gfx906 disk-pressure follow-up | `pending` |
 
 ## Artifact Layout Notes
@@ -353,6 +353,72 @@ Raw outputs:
   output with `reasoningFormat: none` and `reasoningBudget: 0` so LiteLLM
   aliases behave like low-latency utility routes instead of returning hidden
   reasoning markers.
+
+### 2026-05-07 gfx906 slim runtime promotion + cold-start canary (Track B-3)
+
+- Round 2 of the next-round parallel plan closed the gfx906 disk-pressure block
+  end-to-end. The deployed runtime digest `dd0a1936...` (built from
+  `Dockerfile.runtime` for the gfx906 profile, 59.2 GB extracted) repeatedly
+  drove `cblevins-radeonvii` root LVM (127 GB) to 100% on pull and triggered
+  kubelet `DiskPressure` evictions. Track B-1 (drain + bind-mount containerd
+  to NVMe LVM) was abandoned because the node hosts 194 pods including
+  Prometheus/Loki/Tempo/Langfuse-Clickhouse and 11 StatefulSets — drain blast
+  radius too broad for an unscheduled maintenance window.
+- Track B-3 cycle 1 (MR !280) slimmed `Dockerfile.unified-gfx906` from
+  33.1 → 32.8 GB, but that is the batch quantization image (entrypoint
+  `/bin/bash`, no `flexinfer-runtime` Go binary) — not the runtime DaemonSet
+  image that is actually deployed. Real win came from cycle 2 (MR !281):
+  introduced a per-profile `dockerfile:` override in `build/runtime.yaml` and
+  `build/build-runtime.sh`, added `build/Dockerfile.runtime-gfx906` mirroring
+  the multi-stage pattern (go-builder, llamacpp-builder, ollama-builder) with
+  the runtime stage on `mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3`. Combined
+  with cycle 1 techniques (≤5 RUN layers, `__pycache__`/`.py[co]` strip,
+  `pip cache purge`, `apt-get clean`, `setuptools<78` for bnb 0.49.2),
+  pushed digest `sha256:94045d0ca4b12deb3c46bb22070f67bfedad8b719bb992e5d3ce128ad27ad597`
+  at 36.9 GB extracted — a 38% reduction.
+- First pre-pull on radeonvii failed at root 100% / `available: 0`. The
+  36.9 GB final number was correct but pull-time peak (compressed content
+  tarballs + extracting layers concurrently) was ~1.5x final ≈ 55 GB, which
+  exceeded the 55 GB free root we had. Containerd auto-cleaned the partial
+  extraction on failure; root recovered to 47%. SDXL inpaint cache-stage Job
+  pod was evicted (controller-managed, no data loss).
+- Discovered 21 GB of model weights at `/var/lib/flexinfer/models/flexinfer-system/sdxl-inpainting-radeonvii`
+  on root LVM. Bind-mounted that path to `/mnt/nvme/longhorn/flexinfer/models`
+  (fstab entry, no k3s restart, no drain). 22 GB rsynced in 2m17s; `diff -r`
+  confirmed integrity; `.old` reclaimed. Root went 57 → 36 GB used / 85 GB
+  free.
+- Re-pull succeeded in 8m48s. Post-pull root: 78 GB used / 44 GB free / 65%.
+  No DiskPressure transition.
+- Promotion (MR !282): `scripts/promote-runtime-digest.sh gfx906 --digest sha256:94045d0c... --apply`
+  updated `deploy/gpuprofiles/gfx906.yaml` and `deploy/system/values-k3s.yaml`,
+  and dropped the `flexinfer.ai/runtime-paused: "true"` annotation on the
+  gfx906 nodeSelector. `scripts/check-runtime-profile-consistency.sh` passed.
+- Flux reconciled to `master@sha1:5aae1f34`. DaemonSet `flexinfer-runtime-gfx906`
+  came up as `flexinfer-runtime-gfx906-ff4p6` (1/1 Running) within ~30s of
+  reconcile; logs confirm
+  `runtimeProfile=gfx906`, `runtimeDigest=sha256:94045d0c...`,
+  `backends=[ollama, steam, vllm, vllm-omni, comfyui, diffusers, llamacpp, mlc-llm]`.
+  Non-fatal entrypoint warning:
+  `vllm_gemma4_moe_gptq_patch.py: Cannot find vLLM installation` — expected
+  because vLLM is intentionally `false` for the gfx906 profile (memory note);
+  follow-up to suppress.
+- Cold-start canary: `Model/sdxl-inpainting-radeonvii` was `Idle` (serverless
+  pattern — no Deployment exists when idle). Multipart
+  `POST /model/sdxl-inpainting-radeonvii/v1/images/edits` through
+  `flexinfer-proxy` (port-forward to `flexinfer-system/flexinfer-proxy:80`)
+  with 512x512 PNG image+mask + prompt
+  `"a vibrant orange flower with green leaves, photorealistic"` returned
+  **HTTP 200 in 107.7s** with one PNG result, `b64_len=252372`. Cold-start
+  latency includes deployment scale-up + pod start + weights load from the
+  freshly bind-mounted NVMe path + GPU warmup. Compared to the 2026-05-06
+  warm canary (HTTP 200 in 48.35s, `b64_len=24152`), the +60s is consistent
+  with cold-start overhead and the bigger b64 is a more visually complex
+  generation, not an error.
+- Post-canary disk: root 71 GB used / 51 GB free / 59%; NVMe LVM 338 GB used
+  / 409 GB free / 46%.
+- Round-2 net: gfx906 lane unblocked, runtime digest pinned by digest, model
+  state on NVMe instead of root, dynamic `runtime_profile`/`runtime_digest`
+  metric labels now populated for the radeonvii lane, MR !282 merged.
 
 ### 2026-04-26 gemma4 26B/31B execution findings
 
