@@ -266,6 +266,36 @@ Raw outputs:
   and ModelCache spec has `ablitateLmHead=false` with `refusalDirNorm=41`
   (under the 100 abort threshold).
 
+### 2026-05-06 qwen36-27b-gptq Track D-1 root cause confirmed
+
+- PVC `qwen36-27b-oci` was inspected directly on `cblevins-5930k` via a
+  busybox debug pod mounting `/models/qwen36-27b/` (the published GPTQ
+  artifact at digest `sha256:fe3a6bea...`).
+- `model.safetensors.index.json` contains `.qweight` tensors for all 48
+  GDN linear-attention layers. Three modules per layer were quantized:
+  `linear_attn.in_proj_qkv.qweight`, `linear_attn.in_proj_z.qweight`, and
+  `linear_attn.out_proj.qweight`. Counts: 48 each (one per GDN layer).
+- `linear_attn.conv1d` kept `.weight` (1D conv, not a `nn.Linear`, so
+  GPTQ skipped it as expected).
+- `quant_log.csv` confirms layer 0 (a GDN layer per the `layer_types`
+  schedule) recorded GPTQ losses for `linear_attn.in_proj_qkv` (loss
+  0.00524), `linear_attn.in_proj_z` (loss 0.00343), and
+  `linear_attn.out_proj` (loss ~3.9e-6).
+- Earlier dequant cosine sanity (2026-05-05) only covered q/k/v/o on
+  layers 11/15, both *full*-attention layers. The GDN sub-modules were
+  never measured; their weight quality is unknown by this experiment but
+  the quantization-then-GDN-runtime path is architecturally wrong (GDN
+  GatedDeltaNet expects FP weights for in_proj_qkv/in_proj_z/out_proj).
+- Module names differ from Track H's hypothesized
+  `in_proj_qkvz`/`in_proj_ba`: this artifact uses the defused
+  `in_proj_qkv`/`in_proj_z` split. The fix still applies — switch
+  `dynamicExclusion` from `none` to `gdn` so GPTQModel skips
+  `linear_attn.*` patterns on the next quantization run.
+- ModelCache CRD updated in MR (Track D-1) to set
+  `quantization.dynamicExclusion: "gdn"`. Re-quant has not been run yet;
+  serve coherence smoke and dequant cosine on a non-GDN layer remain
+  required before the matrix row flips.
+
 ### 2026-05-06 sdxl-inpainting-radeonvii runtime smoke
 
 - Model `sdxl-inpainting-radeonvii` was Ready through the direct runtime path:
