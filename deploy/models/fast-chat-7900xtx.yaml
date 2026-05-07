@@ -8,14 +8,14 @@ spec:
   source: pvc://mlc-8b-abliterated-nvme-7900xtx/Qwen3-8B-abliterated-q4f32_1-MLC
   gpu:
     vendor: amd
-    shared: 7900xtx-quality
-    priority: 140
+    shared: 7900xtx-textgen
+    priority: 300
     vramEstimateMB: 12000
   serverless:
     enabled: true
-    # Scaled to 0 -- sdxl holds the only amd.com/gpu device on 7900xtx.
-    # Text routing handled by qwen3-30b on 5930k.
-    minReplicas: 0
+    # Warm primary for interactive chat. The heavier Gemma canaries remain on
+    # disk for explicit validation but no longer own the default route.
+    minReplicas: 1
     idleTimeout: 5m
     coldStartTimeout: 10m
   config:
@@ -38,11 +38,16 @@ spec:
       cpu: "8"
       memory: 24Gi
   serviceLabels:
+    - fast-chat
     - fast-chat-7900
     - fast-text
     - gpt-3.5-turbo
+    - copilot
   litellm:
     enabled: true
     servedModelName: qwen3-8b-fast-7900xtx
     aliases:
+      - fast-chat
       - fast-chat-7900
+      - fast-text
+      - gpt-3.5-turbo

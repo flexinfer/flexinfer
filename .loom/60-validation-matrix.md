@@ -111,7 +111,7 @@ the row notes:
 | `gemma4-e4b-gptq` | TBD | `gfx1100/7900xtx` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
 | `omnicoder-9b-gptq` | TBD | `gfx1100/7900xtx` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
 | `qwen35-9b-gptq-gfx1100` | TBD | `gfx1100/7900xtx` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
-| `qwen36-27b-gptq` abliterated GPTQ W4_G128 canary | 8192 | `gfx1100/5930k` | `registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg` | `registry.harbor.lan/flexinfer/qwen36-27b:gptq-w4-g128-gfx1100@sha256:fe3a6bea0cd2cdf254a5db6194e01402f1f7f93c4b86d8c717695470fdd3849d` | Cache Ready; vLLM reached Ready with `quantization=gptq`, `kvCacheDtype=auto`, `maxNumSeqs=2`; direct proxy and service smoke returned HTTP 200 | First activation exposed proxy `lastActiveTime` conflict; cold start was dominated by 17.6GB image pull; `fp8_e4m3` KV crashed Triton cache update; `gptq_marlin` rejected because artifact config declares `gptq`; current `gptq` runtime serves incoherent output (`!!!!!!!!!!!!` / multilingual junk) and flat punctuation logprobs even with the ROCm reference GPTQ fallback patched in | MR !247 replacement; MR !248 runtime hardening; MR !253/!254 quiet runtime; 2026-05-05 and 2026-05-06 smoke evidence below | `fail` |
+| `qwen36-27b-gptq` abliterated GPTQ W4_G128 canary | 8192 | `gfx1100/5930k` | `registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg` | `registry.harbor.lan/flexinfer/qwen36-27b:gptq-w4-g128-gfx1100@sha256:fe3a6bea0cd2cdf254a5db6194e01402f1f7f93c4b86d8c717695470fdd3849d` | Cache Ready; vLLM reached Ready with `quantization=gptq`, `kvCacheDtype=auto`, `maxNumSeqs=2`; direct proxy and service smoke returned HTTP 200; quarantined from reconciled serving manifests on 2026-05-07 | First activation exposed proxy `lastActiveTime` conflict; cold start was dominated by 17.6GB image pull; `fp8_e4m3` KV crashed Triton cache update; `gptq_marlin` rejected because artifact config declares `gptq`; current `gptq` runtime serves incoherent output (`!!!!!!!!!!!!` / multilingual junk), flat punctuation logprobs, and live profile traffic like `-current Lockheedпуст劳逸...`; too slow for the 5930k shared lane | MR !247 replacement; MR !248 runtime hardening; MR !253/!254 quiet runtime; 2026-05-05, 2026-05-06, and 2026-05-07 smoke evidence below | `fail` |
 | `qwen3-14b-gptq` | TBD | `gfx1100/5930k` | TBD | TBD | TBD | Evidence not captured | SD-3 / Issue #57 | `pending` |
 | `gemma4-31b-gptq` Radeon VII comparison | n/a | `gfx906/radeonvii` | n/a | n/a | n/a | Off-gfx1100 comparison row; VRAM ceiling for this promotion lane | SD-3 / Issue #57 | `skip` |
 | `sdxl-inpainting-radeonvii` Diffusers inpaint canary | n/a, 512x512 image edit | `gfx906/radeonvii` | `registry.harbor.lan/flexinfer/runtime@sha256:dd0a1936f350ec117da1ab6a589618a571074d6828c2ccb5e273f2f6eb195b97` | `local:///models/flexinfer-system/sdxl-inpainting-radeonvii` | Direct runtime path selected `flexinfer-runtime-gfx906-dh8st`; Model Ready via runtime; 512x512 multipart `/v1/images/edits` returned HTTP 200 in 48.35s with one 1024x1024 PNG result, `b64_len=24152`; runtime logged 22 denoise steps in 40s and POST 200; rebuilt/pushed `gfx906` runtime digest `dd0a1936...` from `d8c75658` and promoted GPUProfile/Helm consumers | `/v1/images/generations` is the wrong endpoint for SDXL inpaint and returned HTTP 500 with a Diffusers input-format error; corrected `/v1/images/edits` canary succeeded. Runtime uses CPU offload and detected Radeon VII as `gfx900` under the gfx906 lane | RG-4 / `.loom/gfx1100-gfx906-platform-enhancements-plan.md`; 2026-05-06 Radeon VII evidence below | `conditional` |
@@ -216,6 +216,18 @@ Raw outputs:
 - Serving posture: keep `qwen36-27b-gptq` as a direct canary only. Do not expose
   replacement labels such as `qwen3-coder` or `qwen3-30b-a3b` until a coherent
   deterministic smoke passes.
+- 2026-05-07 operator traffic confirmed the failure is user-visible, not just a
+  synthetic prompt problem: the `qwen36-27b` profile returned mixed token soup
+  beginning `-current Lockheedпуст...`. The model was manually scaled to zero
+  and removed from reconciled `deploy/models/kustomization.yaml` because it is
+  both incoherent and slow on the `5930k-imagegen-textgen` shared lane.
+- 2026-05-07 fast-chat recovery posture: remove `qwen36-27b-gptq`,
+  `gemma4-31b-gptq`, and `gemma4-26b-a4b-gptq-long` from the reconciled model
+  set so slow or incoherent canaries stop owning user-facing aliases. Promote
+  `qwen3-8b-fast-7900xtx` as the warm `fast-chat` / `gpt-3.5-turbo` MLC route
+  on `7900xtx-textgen`, and add `qwen3-14b-abliterated-v2-5930k` as an
+  on-demand 5930k text lane that shares with imagegen via
+  `5930k-imagegen-textgen`.
 
 ### 2026-05-06 sdxl-inpainting-radeonvii runtime smoke
 
