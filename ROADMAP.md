@@ -1,6 +1,6 @@
 # Project Roadmap
 
-> Last Updated: May 6, 2026
+> Last Updated: May 7, 2026
 
 ## Current Status
 
@@ -32,6 +32,18 @@ MCP is now the de facto standard for AI-tool integration (8M+ downloads, 5,800+ 
 - Cost tracking and audit trails (compliance and visibility)
 
 ## Recently Shipped (post `v0.9.7`)
+
+- ✅ **Spectator + EPIC 2 Unify closeout arc (2026-05-06 → 2026-05-07)**
+  - Spectator Phase 2.2 ([!307](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/307)) — Claude Code hooks → `loom agent event-emit`.
+  - Spectator Phase 2.2b/c ([!309](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/309)) — Gemini + Codex event-emit.
+  - Spectator Phase 3 ([!310](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/310)) — HUD `LiveSessionsCard`.
+  - Spectator Phase 5 ([!311](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/311)) — iOS `LiveSessionsView`.
+  - EPIC 2 Batch C ([!308](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/308)) — UNIFY-1b golden coverage + UNIFY-2c OpenAPI + UNIFY-4c `loom health`.
+  - EPIC 2 Batch D ([!312](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/312)) — UNIFY-4c list cmds (`presence`/`sessions`/`tasks`/`catalog status`) + UNIFY-5 TUI panels (Cost/Catalog/Servers/RBAC + SSE wiring) + S14 cross-surface diagnostics runbook.
+  - HUD Operations Fleet polish ([!306](https://gitlab.flexinfer.ai/services/loom-core/-/merge_requests/306)) and `bridge.*` deprecated alias migration ([d97cf28b](https://gitlab.flexinfer.ai/services/loom-core/-/commit/d97cf28b)) — unblocked CI on staticcheck.
+  - **Spectator status**: Phases 0/1/2.1/2.2/2.2b/2.2c/2.3/3/4/5 ✅; Phase 6 (multi-platform CLI `loom spectate` + hardening) is the only remaining piece.
+  - **EPIC 2 status**: 13 of 14 slices ✅; only S4 (UNIFY-1d HUD handler migration) remains.
+  - Reconciliation + next-epic plan: `.loom/105-planning-roadmap-reconciliation-and-next-epics-2026-05-07.md`.
 
 - ✅ **Harbor 401 incident response + ops hygiene arc (2026-05-05 → 2026-05-06)**
   - Incident runbook: `.loom/100-incident-harbor-401-deployment-chain-2026-05-05.md` — 2-day silent stale-rollout caused by Harbor pull-through cache 401s + `imagePullPolicy: IfNotPresent` + manual SHA-bump dance.
