@@ -255,7 +255,13 @@ if command -v python3 >/dev/null 2>&1; then
     # Apply vLLM Gemma4 MoE GPTQ patch at runtime if not already applied
     # at build time. This patches GPTQConfig.get_quant_method to skip MoE
     # quantization when experts are excluded from GPTQ.
-    if [ -f /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py ]; then
+    #
+    # Skip entirely on runtime profiles that exclude vLLM (e.g. gfx906) —
+    # the patch script silently no-ops in that case, but gating here also
+    # avoids spawning a python3 process unnecessarily and keeps the warning
+    # meaningful: if it fires, vLLM IS present and the patch genuinely failed.
+    if [ -f /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py ] && \
+       python3 -c 'import vllm' >/dev/null 2>&1; then
         python3 /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py || \
             echo "[entrypoint] WARNING: Gemma4 MoE GPTQ patch failed (may already be applied at build time)"
     fi

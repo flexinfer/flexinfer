@@ -35,8 +35,13 @@ import re
 import sys
 
 
-def find_vllm_root() -> pathlib.Path:
-    """Find the vLLM package root directory."""
+def find_vllm_root() -> pathlib.Path | None:
+    """Find the vLLM package root directory.
+
+    Returns None when vLLM is not installed (e.g. gfx906 runtime profile
+    that excludes vLLM). Callers should treat None as a silent no-op:
+    the patches only apply to vLLM, so absent installs need no action.
+    """
     if len(sys.argv) > 1:
         return pathlib.Path(sys.argv[1])
     try:
@@ -52,7 +57,7 @@ def find_vllm_root() -> pathlib.Path:
             p = pathlib.Path(candidate)
             if p.is_dir():
                 return p
-        raise FileNotFoundError("Cannot find vLLM installation")
+        return None
 
 
 def patch_gptq_config(vllm_root: pathlib.Path) -> bool:
@@ -297,9 +302,7 @@ def patch_moe_wna16_rocm_reference_fallback(vllm_root: pathlib.Path) -> bool:
     implementation that dequantizes the selected experts on demand and runs the
     gate/up/down matmuls directly in torch.
     """
-    moe_py = (
-        vllm_root / "model_executor" / "layers" / "quantization" / "moe_wna16.py"
-    )
+    moe_py = vllm_root / "model_executor" / "layers" / "quantization" / "moe_wna16.py"
     if not moe_py.exists():
         print(f"[gemma4-moe-patch] SKIP: {moe_py} not found")
         return False
@@ -463,7 +466,7 @@ def patch_moe_wna16_rocm_reference_fallback(vllm_root: pathlib.Path) -> bool:
 
     if old_block not in src:
         print(
-            '[gemma4-moe-patch] WARNING: Could not find MoeWNA16.apply fused_experts block'
+            "[gemma4-moe-patch] WARNING: Could not find MoeWNA16.apply fused_experts block"
         )
         return False
 
@@ -1347,6 +1350,10 @@ def patch_gemma4_decoder_layer_debug(vllm_root: pathlib.Path) -> bool:
 
 def main():
     vllm_root = find_vllm_root()
+    if vllm_root is None:
+        # vLLM is not installed in this image (e.g. gfx906 runtime profile
+        # that intentionally excludes vLLM). Nothing to patch — exit silently.
+        return
     print(f"[gemma4-moe-patch] vLLM root: {vllm_root}")
 
     ok1 = patch_gptq_config(vllm_root)
@@ -1368,7 +1375,9 @@ def main():
         print("[gemma4-moe-patch] FAILED — GPTQ ROCm reference fallback patch failed")
         sys.exit(1)
     if not ok1c:
-        print("[gemma4-moe-patch] FAILED — MoeWNA16 ROCm reference fallback patch failed")
+        print(
+            "[gemma4-moe-patch] FAILED — MoeWNA16 ROCm reference fallback patch failed"
+        )
         sys.exit(1)
     if not ok2:
         print(
