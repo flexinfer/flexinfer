@@ -49,7 +49,12 @@ func TestTemplatesParseValidity(t *testing.T) {
 				t.Errorf("read %s: %v", path, readErr)
 				return nil
 			}
-			if _, parseErr := template.New(base).Parse(string(data)); parseErr != nil {
+			// Templates may reference custom funcs (e.g. buildHooks, json,
+			// shellQuote). text/template binds funcs at parse time, so we
+			// have to provide them as stubs. Real renders use the
+			// closure-bound funcs from hookTemplateFuncs.
+			tmpl := template.New(base).Funcs(hookTemplateFuncs(nil, nil, ""))
+			if _, parseErr := tmpl.Parse(string(data)); parseErr != nil {
 				t.Errorf("template %s parse error: %v", path, parseErr)
 				return nil
 			}

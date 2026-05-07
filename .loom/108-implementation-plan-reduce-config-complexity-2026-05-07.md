@@ -40,29 +40,50 @@ Estimated: 1 short session. **Branch**: `chore/generator-template-scaffold`.
 
 ---
 
-## Slice CONFIG-1 — Template infrastructure + hook migration
+## Slice CONFIG-1 — Template infrastructure (REVISED 2026-05-07)
 
-### Goal
-Replace `claudeHooksConfig` and `geminiHooksConfigFromRegistry` with
-template-driven `renderHooksConfig`. Eliminate the platform switch in
-`generateHooksConfig`.
+> **Scope-narrowing note (2026-05-07)**: original CONFIG-1 plan called for
+> deleting `claudeHooksConfig` and `geminiHooksConfigFromRegistry` outright.
+> Inspection showed those functions are called from 11 sites in
+> `configs_test.go` (~3,100 LOC of tests). Migrating in one MR would force
+> a massive concurrent test rewrite. Narrowed CONFIG-1 to **infrastructure
+> only**: ship the template loader, custom funcs, and a generic example
+> template that future platforms can adopt. Per-platform migration of
+> Claude / Gemini moves to **CONFIG-1.5** (see below). Per-platform
+> migration of Codex preamble stays in CONFIG-4 unchanged.
 
-### Scope
-- New: `pkg/generator/template_loader.go` — loads embedded templates,
-  exposes `RenderTemplate(name, ctx)` with custom funcs.
-- New: `pkg/generator/templates/hooks/claude.json.tmpl` — full Claude
-  hooks JSON shape.
-- New: `pkg/generator/templates/hooks/gemini.json.tmpl` — full Gemini
-  hooks JSON shape.
-- Modify: `pkg/generator/configs_formats.go:generateHooksConfig` — drop
-  the switch, dispatch via `profile.Hooks.Template`.
-- Modify: `platform_profiles.yaml` — add `template:` field under each
-  platform's `hooks:`.
-- Delete: `pkg/generator/configs_claude.go:claudeHooksConfig`,
-  `claudeHooks`, `claudePostToolUseExtras`,
-  `claudePostToolUseTaskSyncHook` (move to template).
-- Delete: `pkg/generator/configs_gemini.go:geminiHooksConfig`,
-  `geminiHooksConfigFromRegistry`, `geminiHooks`.
+### Goal (revised)
+Lay the template-rendering infrastructure that future platforms (and
+CONFIG-1.5/2/3/4 follow-ups) consume. Keep all current platforms on the
+existing Go-builder paths so output stays byte-identical.
+
+### Scope (revised — infrastructure only)
+- New: `pkg/generator/template_loader.go` — embedded `templates/` FS,
+  `renderHookTemplate(reg, profile, loomBinary)` returning
+  `(map[string]any, ok bool, err)`. Closure-bound `template.FuncMap` with
+  `json`, `jsonIndent`, `shellQuote`, `regexEscape`, `trim`, `buildHooks`,
+  `registrySettings`, `hasField`.
+- New: `pkg/generator/templates/hooks/generic.json.tmpl` — minimal
+  hooks-only example template (`{"hooks": {{ buildHooks | json }}}`)
+  proving the path is wired end-to-end.
+- New: `pkg/generator/template_loader_test.go` — exercises
+  no-op/empty/render/missing-template paths and the json funcmap helper.
+- Modify: `pkg/generator/platform_profile.go` — add `Template string`
+  field on `HookProfile`.
+- Modify: `pkg/generator/configs_formats.go:generateHooksConfig` —
+  call `renderHookTemplate` first; if `ok=true`, use that map; otherwise
+  fall through to existing switch (`claude`/`gemini`/generic stub).
+- Modify: `pkg/generator/templates_test.go` — register hook template
+  funcs as stubs so the parse-validity walker can parse files that use
+  `buildHooks`, `json`, etc.
+
+### What CONFIG-1 deliberately does NOT do
+- Does **not** add `template:` to any platform's profile yaml. All 9
+  existing platforms still use Go builders for byte-identical output.
+- Does **not** delete `claudeHooksConfig`, `geminiHooksConfigFromRegistry`,
+  or any other Go builder. Those land in CONFIG-1.5.
+- Does **not** migrate hook extras (CONFIG-2), policies (CONFIG-3), or
+  Codex preamble (CONFIG-4) — those slices remain unchanged in scope.
 
 ### Steps
 
@@ -94,16 +115,75 @@ template-driven `renderHooksConfig`. Eliminate the platform switch in
 9. If goldens diff: review template output, adjust template, repeat.
    Do **not** touch `*.golden` files unless intentional shape change.
 
-### Acceptance gates
-- `go test ./pkg/generator/...` passes (all goldens unchanged).
+### Acceptance gates (revised)
+- `go test ./pkg/generator/...` passes (all goldens unchanged — Claude/
+  Gemini Go builders still in play).
 - `golangci-lint run ./pkg/generator/...` clean.
-- `pkg/generator/configs_claude.go` is < 100 LOC (was 325).
-- `pkg/generator/configs_gemini.go` is < 50 LOC (was 87).
-- Manual smoke: `loom sync claude --regen` produces valid Claude
-  hooks; `loom sync gemini --regen` produces valid Gemini hooks.
+- `templates/hooks/generic.json.tmpl` renders successfully against a
+  cloned Claude profile in `TestRenderHookTemplate_GenericTemplate`.
+- All 4 new template-renderer tests + 1 funcmap test pass.
+- `pkg/generator/configs_claude.go` and `configs_gemini.go` LOC unchanged
+  (deferred to CONFIG-1.5).
 
 ### Estimated effort
-2 sessions. **Branch**: `feat/config-1-template-hooks`.
+1 session (was 2). **Branch**: `feat/config-1-template-hooks`.
+
+---
+
+## Slice CONFIG-1.5 — Migrate Claude + Gemini hook builders to templates (NEW 2026-05-07)
+
+### Goal
+Replace `claudeHooksConfig` and `geminiHooksConfigFromRegistry` with
+template-driven equivalents using the infrastructure shipped in CONFIG-1.
+Migrate the 11 test sites in `configs_test.go` accordingly.
+
+### Scope
+- New: `templates/hooks/claude.json.tmpl` — full Claude settings.json
+  shape ($schema + permissions + hooks).
+- New: `templates/hooks/gemini.json.tmpl` — full Gemini settings.json
+  shape (agentConfig + hooks + hooksConfig + optional general/tools/
+  security from registry settings).
+- Modify: `platform_profiles.yaml` — add `template: hooks/claude.json.tmpl`
+  and `template: hooks/gemini.json.tmpl` to claude/gemini profiles.
+- Modify: `configs_test.go` — 11 sites: replace
+  `claudeHooksConfig(reg, profile, "")` /
+  `geminiHooksConfigFromRegistry(reg, profile, "")` calls with a single
+  helper `renderHookConfigForTest(t, reg, profile, loomBinary)` that
+  exercises the same code path as `generateHooksConfig`.
+- Delete: `pkg/generator/configs_claude.go:claudeHooksConfig`,
+  `claudeHooks`. Keep `claudePermissions`, `claudePermissionRuleRegexp`,
+  `filterClaudePermissionRules` (used by templates via custom func or
+  inlined).
+- Delete: `pkg/generator/configs_gemini.go:geminiHooksConfig`,
+  `geminiHooksConfigFromRegistry`, `geminiHooks` entirely. The whole file
+  shrinks to <30 LOC or disappears.
+- Modify: `configs_formats.go:generateHooksConfig` — drop the
+  `case "claude"` / `case "gemini"` legs of the switch. Template path
+  becomes the only path for those platforms.
+
+### Strategy for the 11 test sites
+1. Add `renderHookConfigForTest(t, reg, profile, loomBinary)` helper in
+   `configs_test.go` that wraps `renderHookTemplate` + Unmarshal+Marshal
+   round trip.
+2. Mechanical sed for the 11 callers — same arguments, new function name.
+3. Confirm assertion shapes still hold (each test asserts on
+   `config["hooks"]`, `config["permissions"]`, etc. — all still present).
+4. Run goldens — diff scope should be **zero bytes** because the template
+   produces the same map shape that the encoder already canonicalizes.
+
+### Acceptance gates
+- All goldens pass byte-identical.
+- `pkg/generator/configs_claude.go` < 200 LOC (was 325).
+- `pkg/generator/configs_gemini.go` deleted or < 30 LOC.
+- 11 test sites migrated with no assertion changes.
+
+### Estimated effort
+1–2 sessions. **Branch**: `feat/config-1-5-claude-gemini-templates`.
+
+### Why split CONFIG-1.5 from CONFIG-1
+A single MR mixing infrastructure + 11-call-site migration + test rewrite
+is hard to review. Splitting lets reviewers verify the template loader
+in isolation before judging the migration shape.
 
 ---
 
@@ -229,13 +309,14 @@ Go into one template at `templates/hooks/codex.toml.tmpl`.
 | Slice | Sessions | Depends on | Parallel-with |
 |---|---|---|---|
 | Pre-flight scaffold | 1 short | — | — |
-| CONFIG-1 hooks | 2 | Pre-flight | — |
-| CONFIG-2 extras | 1 | CONFIG-1 | CONFIG-3, CONFIG-4 |
-| CONFIG-3 policies | 1 | CONFIG-1 | CONFIG-2, CONFIG-4 |
-| CONFIG-4 Codex preamble | 1 | CONFIG-1 | CONFIG-2, CONFIG-3 |
+| CONFIG-1 template infra | 1 | Pre-flight | — |
+| CONFIG-1.5 Claude+Gemini migration | 1–2 | CONFIG-1 | CONFIG-2/3/4 (after CONFIG-1) |
+| CONFIG-2 extras | 1 | CONFIG-1 | CONFIG-1.5, CONFIG-3, CONFIG-4 |
+| CONFIG-3 policies | 1 | CONFIG-1 | CONFIG-1.5, CONFIG-2, CONFIG-4 |
+| CONFIG-4 Codex preamble | 1 | CONFIG-1 | CONFIG-1.5, CONFIG-2, CONFIG-3 |
 
-**Total**: 6 sessions worth of focused work. Realistic calendar: 1 week
-if shipped in batches like EPIC 2.
+**Total**: 6–7 sessions of focused work (was 6). The CONFIG-1.5 split
+adds a session for clean review surface but no new functional scope.
 
 ## Cross-cutting concerns
 
