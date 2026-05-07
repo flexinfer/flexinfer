@@ -168,14 +168,18 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	storagePlan := resolveBackendStoragePlan(model, b, spec.Config)
 
 	// Get container configuration from backend.
-	// Try GPUProfile image override first, fall back to backend default.
-	image := b.Image(gpuVendor, gpuArch)
+	// GPUProfile image override wins over the backend's hardcoded arch rules;
+	// see backend.ResolveBackendImage for the precedence contract.
+	var profileSpec *aiv1alpha2.GPUProfileSpec
 	if r.GPUProfiles != nil {
 		if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok {
-			if profileImage, ok := backend.ImageFromProfile(profile, b.Name()); ok {
-				log.V(1).Info("Using GPUProfile image override", "backend", b.Name(), "arch", gpuArch, "image", profileImage)
-				image = profileImage
-			}
+			profileSpec = profile
+		}
+	}
+	image := backend.ResolveBackendImage(b, profileSpec, gpuVendor, gpuArch)
+	if profileSpec != nil {
+		if profileImage, ok := backend.ImageFromProfile(profileSpec, b.Name()); ok && image == profileImage {
+			log.V(1).Info("Using GPUProfile image override", "backend", b.Name(), "arch", gpuArch, "image", profileImage)
 		}
 	}
 	// Per-model image override takes highest precedence.

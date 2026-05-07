@@ -82,10 +82,12 @@ func (r *ModelReconciler) validateVRAMFit(model *aiv1alpha2.Model, b backend.Bac
 // Uses the GPU compatibility matrix for data-driven validation with fallback to architecture-specific checks.
 func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, gpuArch string) error {
 	// Try GPUProfile first, then fall back to hardcoded compatibility matrix.
+	var profileSpec *aiv1alpha2.GPUProfileSpec
 	var support backend.GPUArchSupport
 	var found bool
 	if r.GPUProfiles != nil {
 		if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok {
+			profileSpec = profile
 			support, found = backend.LookupGPUArchSupportFromProfile(profile, b.Name())
 		}
 	}
@@ -97,8 +99,11 @@ func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Mode
 		case backend.SupportUnsupported:
 			return fmt.Errorf("%s backend is not supported on %s GPUs. Use a compatible backend instead", b.Name(), gpuArch)
 		case backend.SupportExperimental:
-			// Only warn if the resolved image is generic (not arch-specific)
-			img := b.Image(gpuVendor, gpuArch)
+			// Only warn if the resolved image is generic (not arch-specific).
+			// Resolve via GPUProfile-first so a profile-declared image is
+			// recognized as arch-specific even when the in-code rules would
+			// fall back to a generic tag.
+			img := backend.ResolveBackendImage(b, profileSpec, gpuVendor, gpuArch)
 			isGenericImage := !strings.Contains(img, "gfx906") && !strings.Contains(img, "gfx110")
 			if isGenericImage {
 				r.Recorder.Event(model, corev1.EventTypeWarning, "ExperimentalGPUSupport",

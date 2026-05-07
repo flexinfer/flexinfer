@@ -154,6 +154,28 @@ func ImageFromProfile(profile *aiv1alpha2.GPUProfileSpec, backendName string) (s
 	return bp.Image, true
 }
 
+// ResolveBackendImage returns the container image for a backend, preferring a
+// GPUProfile-declared override before falling back to the backend's hardcoded
+// arch rules.
+//
+// Precedence (highest to lowest):
+//  1. profile.Backends[backendName].Image (when profile is non-nil and has the entry)
+//  2. b.Image(vendor, arch) (existing arch-prefix rule chain)
+//
+// The fallback chain is only consulted when the profile is explicitly nil or
+// does not declare an override for this backend. This matches the GPUProfile
+// contract that an architecture's CR is the source of truth for image
+// selection, and that the in-code arch tables are a backstop for nodes that
+// have not yet been onboarded to a profile.
+func ResolveBackendImage(b Backend, profile *aiv1alpha2.GPUProfileSpec, vendor GPUVendor, arch string) string {
+	if profile != nil {
+		if img, ok := ImageFromProfile(profile, b.Name()); ok {
+			return img
+		}
+	}
+	return b.Image(vendor, arch)
+}
+
 // QuantizerImageFromProfile returns the quantizer container image for a format from a GPUProfile.
 // Returns ("", false) if no image is configured.
 func QuantizerImageFromProfile(profile *aiv1alpha2.GPUProfileSpec, format string) (string, bool) {

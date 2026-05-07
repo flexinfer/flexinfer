@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestLookupGPUArchSupport_PrefixMatching(t *testing.T) {
@@ -171,6 +172,100 @@ func TestLookupGPUArchSupport_PrefixMatching(t *testing.T) {
 				t.Errorf("MaxVRAMMB = %d, want %d", got.MaxVRAMMB, tt.wantVRAM)
 			}
 		})
+	}
+}
+
+// imageBackend is a minimal Backend used to assert ResolveBackendImage
+// precedence without standing up the full registry.
+type imageBackend struct {
+	BaseBackend
+	name string
+	// image is what b.Image() returns regardless of vendor/arch.
+	image string
+	// imageCalls counts how many times Image() was invoked. Tests use this
+	// to prove the GPUProfile-first path short-circuits the fallback.
+	imageCalls int
+}
+
+func (b *imageBackend) Name() string                   { return b.name }
+func (b *imageBackend) Image(GPUVendor, string) string { b.imageCalls++; return b.image }
+func (b *imageBackend) Port() int32                    { return 8080 }
+func (b *imageBackend) Args(*ModelSpec) []string       { return nil }
+func (b *imageBackend) Env(*ModelSpec) []corev1.EnvVar { return nil }
+func (b *imageBackend) ReadinessProbe() *corev1.Probe  { return nil }
+
+func TestResolveBackendImage_GPUProfileWins(t *testing.T) {
+	b := &imageBackend{name: "vllm", image: "registry.example.com/vllm:fallback"}
+	profile := &aiv1alpha2.GPUProfileSpec{
+		Architecture: "gfx1100",
+		Vendor:       "amd",
+		Backends: map[string]aiv1alpha2.BackendProfile{
+			"vllm": {
+				Support: "full",
+				Image:   "registry.harbor.lan/flexinfer/runtime@sha256:profile",
+			},
+		},
+	}
+
+	got := ResolveBackendImage(b, profile, GPUVendorAMD, "gfx1100")
+	if want := "registry.harbor.lan/flexinfer/runtime@sha256:profile"; got != want {
+		t.Fatalf("ResolveBackendImage = %q, want profile image %q", got, want)
+	}
+	if b.imageCalls != 0 {
+		t.Errorf("expected backend Image() to be skipped when profile declares override; got %d calls", b.imageCalls)
+	}
+}
+
+func TestResolveBackendImage_ExplicitNilFallsThroughToBackend(t *testing.T) {
+	b := &imageBackend{name: "vllm", image: "registry.example.com/vllm:fallback"}
+
+	got := ResolveBackendImage(b, nil, GPUVendorAMD, "gfx1100")
+	if want := "registry.example.com/vllm:fallback"; got != want {
+		t.Fatalf("ResolveBackendImage(nil profile) = %q, want fallback %q", got, want)
+	}
+	if b.imageCalls != 1 {
+		t.Errorf("expected backend Image() to be invoked exactly once for nil profile; got %d calls", b.imageCalls)
+	}
+}
+
+func TestResolveBackendImage_ProfileWithoutBackendEntryFallsThrough(t *testing.T) {
+	b := &imageBackend{name: "vllm", image: "registry.example.com/vllm:fallback"}
+	profile := &aiv1alpha2.GPUProfileSpec{
+		Architecture: "gfx1100",
+		Vendor:       "amd",
+		// Profile declares diffusers but not vllm — vllm must fall back.
+		Backends: map[string]aiv1alpha2.BackendProfile{
+			"diffusers": {Support: "full", Image: "registry.harbor.lan/flexinfer/diffusers:profile"},
+		},
+	}
+
+	got := ResolveBackendImage(b, profile, GPUVendorAMD, "gfx1100")
+	if want := "registry.example.com/vllm:fallback"; got != want {
+		t.Fatalf("ResolveBackendImage = %q, want fallback %q (profile has no vllm entry)", got, want)
+	}
+	if b.imageCalls != 1 {
+		t.Errorf("expected backend Image() fallback to fire when profile lacks entry; got %d calls", b.imageCalls)
+	}
+}
+
+func TestResolveBackendImage_ProfileEntryWithEmptyImageFallsThrough(t *testing.T) {
+	b := &imageBackend{name: "vllm", image: "registry.example.com/vllm:fallback"}
+	profile := &aiv1alpha2.GPUProfileSpec{
+		Architecture: "gfx1100",
+		Vendor:       "amd",
+		Backends: map[string]aiv1alpha2.BackendProfile{
+			// Support declared but no image override — fall through to the
+			// backend's arch-rule resolution.
+			"vllm": {Support: "full"},
+		},
+	}
+
+	got := ResolveBackendImage(b, profile, GPUVendorAMD, "gfx1100")
+	if want := "registry.example.com/vllm:fallback"; got != want {
+		t.Fatalf("ResolveBackendImage = %q, want fallback %q (profile entry has empty image)", got, want)
+	}
+	if b.imageCalls != 1 {
+		t.Errorf("expected backend Image() fallback to fire when profile entry has empty image; got %d calls", b.imageCalls)
 	}
 }
 
