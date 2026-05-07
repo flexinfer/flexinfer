@@ -1,0 +1,25 @@
+{
+  "agent_id": "claude-code-1",
+  "session_id": "sess_unify_001",
+  "status": "active",
+  "agent_type": "claude-code",
+  "description": "Implementing UNIFY-1b golden coverage",
+  "current_task": "Seed visibility golden files",
+  "active_files": [
+    "internal/contracts/golden_visibility_test.go",
+    "internal/contracts/testdata/visibility_status.golden"
+  ],
+  "branch": "feat/unify-1b-contracts-golden",
+  "pr_url": "https://gitlab.example.com/services/loom-core/-/merge_requests/12345",
+  "worktree_id": "wt_unify_1b_001",
+  "last_heartbeat": "2026-05-06T14:29:55Z",
+  "registered_at": "2026-05-06T13:00:00Z",
+  "source": "presence",
+  "has_presence": true,
+  "has_session": true,
+  "session_status": "active",
+  "session_started_at": "2026-05-06T13:00:00Z",
+  "heartbeat_age_seconds": 5,
+  "session_age_seconds": 5400,
+  "telemetry_status": "healthy"
+}

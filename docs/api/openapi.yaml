@@ -1,0 +1,700 @@
+openapi: 3.0.3
+info:
+  title: Loom HUD HTTP API
+  version: "1.0.0"
+  description: |
+    Visibility surfaces for Loom HUD (status / health / cost / rbac / catalog /
+    sessions / tasks / presence / events). Mobile v1 is a separate frozen
+    contract; see docs/MOBILE_COMPANION_API.md.
+
+    Schema definitions are derived directly from
+    `internal/visibility/contracts/{status,health,cost,rbac,catalog,presence}`
+    Go types. The `sessions` and `tasks` sub-packages are scaffold-only in S1
+    (see EPIC 2 / #66) and their canonical types still live in
+    `internal/hud/bridge`; this spec describes the JSON shape returned by the
+    HUD endpoints regardless of which package owns the Go types.
+servers:
+  - url: http://localhost:5052/api
+    description: Default HUD listener (see internal/hud/api.go).
+paths:
+  /status:
+    get:
+      summary: Aggregate platform status (daemon, agents, sessions, pipelines, HUD).
+      operationId: getStatus
+      responses:
+        "200":
+          description: Aggregate status snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformStatus"
+  /health:
+    get:
+      summary: Per-server health (local + hub) plus router/monitor divergence.
+      operationId: getHealth
+      responses:
+        "200":
+          description: Health snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResult"
+  /cost:
+    get:
+      summary: Cost / usage telemetry by agent and server.
+      operationId: getCost
+      responses:
+        "200":
+          description: Cost stats snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CostStatsResult"
+  /rbac:
+    get:
+      summary: RBAC posture snapshot (policy version, recent denials, audit/sim flags).
+      operationId: getRBAC
+      responses:
+        "200":
+          description: RBAC snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RBACSnapshot"
+  /catalog:
+    get:
+      summary: MCP server catalog summary.
+      operationId: getCatalog
+      responses:
+        "200":
+          description: Catalog summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CatalogStatus"
+  /sessions:
+    get:
+      summary: Active agent sessions.
+      operationId: getSessions
+      description: |
+        Session shape is owned by `internal/hud/bridge.SessionInfo` until the
+        type is lifted into `internal/visibility/contracts/sessions` in a later
+        EPIC 2 (#66) slice. The conformance test in `internal/contracts` skips
+        this path until the lift completes.
+      responses:
+        "200":
+          description: Session list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SessionInfo"
+  /tasks:
+    get:
+      summary: Agent task queue / dispatch state.
+      operationId: getTasks
+      description: |
+        Task shape is owned by `internal/hud/bridge.TaskInfo` until the type
+        is lifted into `internal/visibility/contracts/tasks` in a later EPIC 2
+        (#66) slice. The conformance test in `internal/contracts` skips this
+        path until the lift completes.
+      responses:
+        "200":
+          description: Task list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskInfo"
+  /presence:
+    get:
+      summary: Agent presence registry (heartbeats, fleet view).
+      operationId: getPresence
+      responses:
+        "200":
+          description: Presence list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PresenceInfo"
+  /events:
+    get:
+      summary: HUD Server-Sent Events stream.
+      operationId: getEvents
+      description: |
+        Long-lived SSE connection that emits HUD events. See `x-sse-events`
+        for the catalog of event names. Payload schemas mirror the relevant
+        snapshot type (e.g. hud.health = HealthResult).
+      responses:
+        "200":
+          description: Open SSE stream.
+          content:
+            text/event-stream: {}
+components:
+  schemas:
+    PlatformStatus:
+      type: object
+      required:
+        - daemon
+        - agents
+        - sessions
+        - pipelines
+        - hud
+        - healthy
+      properties:
+        daemon:
+          $ref: "#/components/schemas/DaemonStatus"
+        agents:
+          $ref: "#/components/schemas/AgentStatus"
+        sessions:
+          $ref: "#/components/schemas/SessionCount"
+        pipelines:
+          $ref: "#/components/schemas/PipelineStatus"
+        hud:
+          $ref: "#/components/schemas/HUDStatus"
+        health:
+          allOf:
+            - $ref: "#/components/schemas/DaemonHealthSnapshot"
+          nullable: true
+        observability:
+          allOf:
+            - $ref: "#/components/schemas/DaemonObservabilityStatus"
+          nullable: true
+        healthy:
+          type: boolean
+    DaemonStatus:
+      type: object
+      required:
+        - running
+        - servers
+        - active_conns
+        - idle_conns
+        - active_rpcs
+        - active_proxy_sessions
+        - daemon_epoch
+        - drain_ready
+        - draining
+      properties:
+        running:
+          type: boolean
+        servers:
+          type: integer
+        active_conns:
+          type: integer
+        idle_conns:
+          type: integer
+        active_rpcs:
+          type: integer
+          format: int64
+        active_proxy_sessions:
+          type: integer
+        daemon_epoch:
+          type: integer
+          format: int64
+        drain_ready:
+          type: boolean
+        draining:
+          type: boolean
+        processes:
+          type: array
+          items:
+            type: string
+    AgentStatus:
+      type: object
+      required:
+        - active
+        - idle
+        - offline
+        - total
+      properties:
+        active:
+          type: integer
+        idle:
+          type: integer
+        offline:
+          type: integer
+        total:
+          type: integer
+    SessionCount:
+      type: object
+      required:
+        - active
+        - total
+      properties:
+        active:
+          type: integer
+        total:
+          type: integer
+    PipelineStatus:
+      type: object
+      required:
+        - available
+        - running
+        - passed
+        - failed
+        - pending
+      properties:
+        available:
+          type: boolean
+        running:
+          type: integer
+        passed:
+          type: integer
+        failed:
+          type: integer
+        pending:
+          type: integer
+        last_activity:
+          type: string
+    HUDStatus:
+      type: object
+      required:
+        - reachable
+      properties:
+        reachable:
+          type: boolean
+    DaemonHealthSnapshot:
+      type: object
+      properties:
+        servers:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/DaemonHealthServer"
+        degraded_servers:
+          type: array
+          items:
+            type: string
+    DaemonHealthServer:
+      type: object
+      required:
+        - healthy
+        - ready
+        - consecutive_fails
+        - total_checks
+        - total_failures
+        - avg_latency_ms
+        - restart_count
+      properties:
+        healthy:
+          type: boolean
+        ready:
+          type: boolean
+        consecutive_fails:
+          type: integer
+        total_checks:
+          type: integer
+        total_failures:
+          type: integer
+        avg_latency_ms:
+          type: number
+          format: double
+        last_error:
+          type: string
+        restart_count:
+          type: integer
+        last_check:
+          type: string
+        last_healthy:
+          type: string
+        last_restart:
+          type: string
+        auto_restart_failed:
+          type: boolean
+        last_deep_probe:
+          type: string
+    DaemonObservabilityStatus:
+      type: object
+      required:
+        - otlp_endpoint
+        - otlp_configured
+        - log_format
+        - json_logs_enabled
+        - traced_servers
+        - total_servers
+        - trace_coverage
+        - runtime_otlp_configured
+        - runtime_otlp_enabled
+        - runtime_otlp_endpoint
+        - runtime_otlp_protocol
+        - runtime_otlp_service_name
+        - runtime_otlp_sample_rate
+        - runtime_meter_enabled
+        - runtime_trace_surfaces
+        - runtime_trace_coverage
+      properties:
+        otlp_endpoint:
+          type: string
+        otlp_configured:
+          type: boolean
+        log_format:
+          type: string
+        json_logs_enabled:
+          type: boolean
+        traced_servers:
+          type: integer
+        total_servers:
+          type: integer
+        trace_coverage:
+          type: string
+        runtime_otlp_configured:
+          type: boolean
+        runtime_otlp_enabled:
+          type: boolean
+        runtime_otlp_endpoint:
+          type: string
+        runtime_otlp_protocol:
+          type: string
+        runtime_otlp_service_name:
+          type: string
+        runtime_otlp_sample_rate:
+          type: number
+          format: double
+        runtime_otlp_error:
+          type: string
+        runtime_meter_enabled:
+          type: boolean
+        runtime_trace_surfaces:
+          type: object
+          additionalProperties:
+            type: boolean
+        runtime_trace_coverage:
+          type: string
+        warnings:
+          type: array
+          items:
+            type: string
+    HealthResult:
+      type: object
+      required:
+        - servers
+      properties:
+        servers:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ServerHealth"
+        divergence:
+          type: array
+          items:
+            $ref: "#/components/schemas/HealthDivergenceEntry"
+    ServerHealth:
+      type: object
+      required:
+        - local
+        - hub
+        - target
+      properties:
+        local:
+          $ref: "#/components/schemas/HealthEntry"
+        hub:
+          $ref: "#/components/schemas/HealthEntry"
+        monitor:
+          allOf:
+            - $ref: "#/components/schemas/HealthEntry"
+          nullable: true
+        target:
+          type: string
+        transport:
+          type: string
+          description: ws, stdio, sse, ssh, or unavailable
+        divergence:
+          allOf:
+            - $ref: "#/components/schemas/HealthDivergence"
+          nullable: true
+    HealthEntry:
+      type: object
+      required:
+        - healthy
+        - consecFails
+        - avgLatencyMs
+      properties:
+        healthy:
+          type: boolean
+        consecFails:
+          type: integer
+        avgLatencyMs:
+          type: number
+          format: double
+        errorMessage:
+          type: string
+    HealthDivergence:
+      type: object
+      required:
+        - monitor_healthy
+        - router_available
+        - reason
+      properties:
+        monitor_healthy:
+          type: boolean
+        router_available:
+          type: boolean
+        reason:
+          type: string
+    HealthDivergenceEntry:
+      type: object
+      required:
+        - server
+        - reason
+      properties:
+        server:
+          type: string
+        reason:
+          type: string
+    CostStatsResult:
+      type: object
+      required:
+        - enabled
+        - totals
+      properties:
+        enabled:
+          type: boolean
+        reason:
+          type: string
+        timestamp:
+          type: string
+        by_agent:
+          type: array
+          items:
+            $ref: "#/components/schemas/CostAgentUsage"
+        by_server:
+          type: array
+          items:
+            $ref: "#/components/schemas/CostServerUsage"
+        totals:
+          $ref: "#/components/schemas/CostTotals"
+    CostAgentUsage:
+      type: object
+      required:
+        - agent_id
+        - call_count
+        - error_count
+        - denied_count
+        - cached_count
+        - total_duration_ms
+      properties:
+        agent_id:
+          type: string
+        call_count:
+          type: integer
+          format: int64
+        error_count:
+          type: integer
+          format: int64
+        denied_count:
+          type: integer
+          format: int64
+        cached_count:
+          type: integer
+          format: int64
+        total_duration_ms:
+          type: integer
+          format: int64
+    CostServerUsage:
+      type: object
+      required:
+        - server
+        - call_count
+        - error_count
+        - total_duration_ms
+      properties:
+        server:
+          type: string
+        call_count:
+          type: integer
+          format: int64
+        error_count:
+          type: integer
+          format: int64
+        total_duration_ms:
+          type: integer
+          format: int64
+    CostTotals:
+      type: object
+      required:
+        - call_count
+        - error_count
+        - denied_count
+        - cached_count
+        - total_duration_ms
+      properties:
+        call_count:
+          type: integer
+          format: int64
+        error_count:
+          type: integer
+          format: int64
+        denied_count:
+          type: integer
+          format: int64
+        cached_count:
+          type: integer
+          format: int64
+        total_duration_ms:
+          type: integer
+          format: int64
+    RBACSnapshot:
+      type: object
+      required:
+        - denied_count_24h
+        - audit_enabled
+        - simulation_mode
+      properties:
+        policy_version:
+          type: string
+        denied_count_24h:
+          type: integer
+        audit_enabled:
+          type: boolean
+        simulation_mode:
+          type: boolean
+        recent_denials:
+          type: array
+          items:
+            $ref: "#/components/schemas/RBACDenial"
+    RBACDenial:
+      type: object
+      required:
+        - time
+        - actor
+        - resource
+        - reason
+      properties:
+        time:
+          type: string
+          format: date-time
+        actor:
+          type: string
+        resource:
+          type: string
+        reason:
+          type: string
+    CatalogStatus:
+      type: object
+      required:
+        - servers
+        - last_sync_time
+      properties:
+        servers:
+          type: array
+          items:
+            $ref: "#/components/schemas/CatalogEntry"
+        last_sync_time:
+          type: string
+          format: date-time
+    CatalogEntry:
+      type: object
+      required:
+        - name
+        - enabled
+      properties:
+        name:
+          type: string
+        enabled:
+          type: boolean
+        last_error:
+          type: string
+        description:
+          type: string
+    SessionInfo:
+      type: object
+      description: |
+        Scaffold-only in S1. Canonical type lives in `internal/hud/bridge.SessionInfo`
+        and will move to `internal/visibility/contracts/sessions` in a later
+        EPIC 2 (#66) slice. Properties listed here mirror the bridge type's
+        JSON tags as of S7 but are not exhaustively validated.
+      additionalProperties: true
+    TaskInfo:
+      type: object
+      description: |
+        Scaffold-only in S1. Canonical type lives in `internal/hud/bridge.TaskInfo`
+        and will move to `internal/visibility/contracts/tasks` in a later
+        EPIC 2 (#66) slice. Properties listed here mirror the bridge type's
+        JSON tags as of S7 but are not exhaustively validated.
+      additionalProperties: true
+    PresenceInfo:
+      type: object
+      required:
+        - agent_id
+        - status
+        - agent_type
+        - description
+        - current_task
+        - active_files
+        - branch
+        - worktree_id
+        - last_heartbeat
+        - registered_at
+      properties:
+        agent_id:
+          type: string
+        session_id:
+          type: string
+        status:
+          type: string
+        agent_type:
+          type: string
+        description:
+          type: string
+        current_task:
+          type: string
+        active_files:
+          type: array
+          items:
+            type: string
+        branch:
+          type: string
+        pr_url:
+          type: string
+        worktree_id:
+          type: string
+        last_heartbeat:
+          type: string
+        registered_at:
+          type: string
+        source:
+          type: string
+        has_presence:
+          type: boolean
+        has_session:
+          type: boolean
+        session_status:
+          type: string
+        session_started_at:
+          type: string
+        heartbeat_age_seconds:
+          type: integer
+        session_age_seconds:
+          type: integer
+        telemetry_status:
+          type: string
+        is_orphan:
+          type: boolean
+        orphan_age_seconds:
+          type: integer
+x-sse-events:
+  hud.fleet:
+    description: Fleet-wide presence snapshot. Payload mirrors an array of PresenceInfo.
+    payload: PresenceInfo[]
+  hud.health:
+    description: Per-server health snapshot. Payload mirrors HealthResult.
+    payload: HealthResult
+  hud.cost:
+    description: Cost stats snapshot. Payload mirrors CostStatsResult.
+    payload: CostStatsResult
+  hud.heartbeat:
+    description: Lightweight liveness ping from HUD. No structured payload.
+  hud.session.start:
+    description: A new agent session started. Payload mirrors SessionInfo.
+    payload: SessionInfo
+  hud.session.end:
+    description: An agent session ended. Payload mirrors SessionInfo.
+    payload: SessionInfo
+  hud.rbac:
+    status: planned
+    description: Reserved for an RBAC posture-changed event. Not emitted in S7.
+  hud.catalog:
+    status: planned
+    description: Reserved for a catalog drift event. Not emitted in S7.

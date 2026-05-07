@@ -1,0 +1,11 @@
+{
+  "running": true,
+  "servers": 12,
+  "activeConns": 8,
+  "idleConns": 3,
+  "processes": [
+    "loom-daemon",
+    "loom-hud",
+    "mcp-agent-context"
+  ]
+}

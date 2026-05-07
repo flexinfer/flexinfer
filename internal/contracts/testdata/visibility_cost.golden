@@ -1,0 +1,44 @@
+{
+  "enabled": true,
+  "reason": "telemetry collection enabled",
+  "timestamp": "2026-05-06T14:30:00Z",
+  "by_agent": [
+    {
+      "agent_id": "claude-code-1",
+      "call_count": 1240,
+      "error_count": 8,
+      "denied_count": 2,
+      "cached_count": 312,
+      "total_duration_ms": 18450
+    },
+    {
+      "agent_id": "gemini-1",
+      "call_count": 420,
+      "error_count": 3,
+      "denied_count": 1,
+      "cached_count": 98,
+      "total_duration_ms": 6210
+    }
+  ],
+  "by_server": [
+    {
+      "server": "agent-context",
+      "call_count": 1100,
+      "error_count": 5,
+      "total_duration_ms": 12340
+    },
+    {
+      "server": "git",
+      "call_count": 560,
+      "error_count": 6,
+      "total_duration_ms": 12320
+    }
+  ],
+  "totals": {
+    "call_count": 1660,
+    "error_count": 11,
+    "denied_count": 3,
+    "cached_count": 410,
+    "total_duration_ms": 24660
+  }
+}

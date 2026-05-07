@@ -80,6 +80,7 @@ func main() {
 		newTunnelCmd(socketPath),
 		newCacheCmd(socketPath),
 		newCostCmd(socketPath),
+		newHealthCmd(socketPath),
 
 		// Agent
 		newAgentCmd(),

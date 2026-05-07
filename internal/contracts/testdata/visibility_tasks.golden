@@ -1,0 +1,29 @@
+{
+  "id": "task_unify_1b_001",
+  "session_id": "sess_unify_001",
+  "agent_id": "claude-code-1",
+  "namespace": "services/loom-core/unify",
+  "project": "services/loom-core",
+  "title": "Add visibility/contracts golden coverage",
+  "context": "Mirror existing contracts/golden_test.go pattern; 9 surfaces.",
+  "priority": "high",
+  "status": "in_progress",
+  "tags": [
+    "epic-2",
+    "unify",
+    "contracts",
+    "golden"
+  ],
+  "blocked_by": [
+    "task_unify_1a_scaffold"
+  ],
+  "pipeline_ref": {
+    "id": 98765,
+    "project": "services/loom-core",
+    "ref": "feat/unify-1b-contracts-golden",
+    "web_url": "https://gitlab.example.com/services/loom-core/-/pipelines/98765"
+  },
+  "workflow_id": "wf_unify_1b_2026_05_06",
+  "created_at": "2026-05-06T13:05:00Z",
+  "updated_at": "2026-05-06T14:25:00Z"
+}

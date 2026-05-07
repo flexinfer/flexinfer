@@ -1,0 +1,20 @@
+{
+  "id": "sess_unify_001",
+  "agent_id": "claude-code-1",
+  "namespace": "services/loom-core/unify",
+  "project": "services/loom-core",
+  "started_at": "2026-05-06T13:00:00Z",
+  "ended_at": "2026-05-06T14:25:00Z",
+  "status": "ended",
+  "description": "Implementing UNIFY-1b golden coverage",
+  "pipeline_ref": {
+    "id": 98765,
+    "project": "services/loom-core",
+    "ref": "feat/unify-1b-contracts-golden",
+    "web_url": "https://gitlab.example.com/services/loom-core/-/pipelines/98765"
+  },
+  "entry_count": 57,
+  "total_tokens": 12480,
+  "parent_session_id": "sess_unify_root",
+  "root_session_id": "sess_unify_root"
+}

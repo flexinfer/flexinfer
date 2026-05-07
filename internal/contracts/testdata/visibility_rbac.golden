@@ -1,0 +1,20 @@
+{
+  "policy_version": "policy-2026-05-06-r1",
+  "denied_count_24h": 7,
+  "audit_enabled": true,
+  "simulation_mode": false,
+  "recent_denials": [
+    {
+      "time": "2026-05-06T14:15:00Z",
+      "actor": "claude-code-1",
+      "resource": "k8s_apply",
+      "reason": "namespace not in allowlist"
+    },
+    {
+      "time": "2026-05-06T12:30:00Z",
+      "actor": "gemini-1",
+      "resource": "shell.exec",
+      "reason": "command pattern blocked"
+    }
+  ]
+}
