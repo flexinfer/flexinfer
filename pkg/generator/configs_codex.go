@@ -1,177 +1,283 @@
 package generator
 
 import (
+	"bytes"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
+	"text/template"
 
 	"github.com/crb2nu/loom/pkg/registry"
 )
 
-// emitCodexPreamble writes Codex-specific top-level TOML settings.
-// Settings are read from the registry's platform_permissions.codex section.
+// codexTemplateContext is the dot value for templates/hooks/codex.toml.tmpl.
+// EPIC 3 / CONFIG-4 (.loom/108): all conditional resolution (registry
+// overrides, agent-safety policy, profile policy comment, notify command
+// shape) happens in Go via buildCodexContext; the template is a thin
+// stitcher that lays out TOML keys.
+type codexTemplateContext struct {
+	// approval_policy renders as one of:
+	//   approval_policy = "<str>"
+	// or
+	//   approval_policy = { granular = { <kv pairs> } }
+	// ApprovalPolicyGranular is non-empty when the granular form is in use;
+	// otherwise ApprovalPolicyStr is set.
+	ApprovalPolicyStr      string
+	ApprovalPolicyGranular string
+
+	SuppressWarning bool
+	Features        string // pre-rendered "k1 = v1, k2 = v2"
+
+	SandboxMode   string
+	WorkspaceRoot string
+	WebSearchMode string
+
+	Model                string
+	ModelReasoningEffort string
+
+	PolicyComment string // multi-line, ends in trailing newline if non-empty
+
+	DirtyWorktreeMode     string
+	DirtyWorktreeIsScoped bool
+
+	NotifyCommand string // shell command, raw (template applies %q)
+
+	Agents *codexAgentsBlock // nil when [agents] section is absent
+}
+
+// codexAgentsBlock holds the resolved [agents] section data. nil when the
+// registry has no agents settings.
+type codexAgentsBlock struct {
+	TopLevelLines []string             // pre-formatted "k = v" lines
+	Definitions   []codexAgentDefBlock // sorted by Name
+}
+
+type codexAgentDefBlock struct {
+	Name        string
+	Description string
+}
+
+// emitCodexPreamble writes Codex-specific top-level TOML settings to sb.
+// Settings are pulled from the registry's platform_permissions.codex section
+// with sensible defaults. EPIC 3 / CONFIG-4 (.loom/108): the output shape
+// lives in templates/hooks/codex.toml.tmpl; this function builds the
+// template context and renders.
 func emitCodexPreamble(sb *strings.Builder, reg *registry.Registry, workspaceRoot string, loomBinary string) {
+	ctx := buildCodexContext(reg, workspaceRoot, loomBinary)
+	rendered, err := renderCodexTemplate(ctx)
+	if err != nil {
+		// The legacy emitCodexPreamble had no error path (everything was
+		// Fprintf into a strings.Builder, which can't fail). With the
+		// template render path we now have a possible failure mode, so
+		// surface it inline as a TOML comment rather than silently
+		// producing nothing. This both keeps the output file syntactically
+		// valid TOML and makes the failure visible to operators running
+		// `loom sync`.
+		fmt.Fprintf(sb, "# codex preamble template error: %v\n", err)
+		return
+	}
+	sb.WriteString(rendered)
+}
+
+// renderCodexTemplate executes templates/hooks/codex.toml.tmpl with the
+// given context and returns the rendered string. Output is the raw TOML
+// preamble text; no JSON round-trip is involved (Codex output is
+// text-only, not parsed back into a map).
+func renderCodexTemplate(ctx *codexTemplateContext) (string, error) {
+	const relPath = "hooks/codex.toml.tmpl"
+	path := filepath.Join("templates", relPath)
+	data, err := templatesFS.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read embedded codex template %s: %w", path, err)
+	}
+	tmpl, err := template.New(filepath.Base(relPath)).Parse(string(data))
+	if err != nil {
+		return "", fmt.Errorf("parse codex template %s: %w", path, err)
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, ctx); err != nil {
+		return "", fmt.Errorf("execute codex template %s: %w", path, err)
+	}
+	return buf.String(), nil
+}
+
+// buildCodexContext resolves all registry overrides and policy comments
+// into a flat struct suitable for the codex.toml.tmpl template.
+func buildCodexContext(reg *registry.Registry, workspaceRoot string, loomBinary string) *codexTemplateContext {
 	pp := registryPlatformPerms(reg, "codex")
 	policy := agentSafetyPolicyFromRegistry(reg)
 	loomCmd := shellQuote(normalizeLoomBinary(loomBinary))
 
-	// Defaults when registry has no codex entry.
-	suppressWarning := true
-	sandboxMode := "workspace-write"
-	webSearchMode := "live"
-	features := map[string]any{
-		"apply_patch_freeform": true,
-		"unified_exec":         true,
-		"collaboration_modes":  true,
+	ctx := &codexTemplateContext{
+		SuppressWarning:   true,
+		SandboxMode:       "workspace-write",
+		WorkspaceRoot:     workspaceRoot,
+		WebSearchMode:     "live",
+		ApprovalPolicyStr: "never",
+		Features: codexFeaturesString(map[string]any{
+			"apply_patch_freeform": true,
+			"unified_exec":         true,
+			"collaboration_modes":  true,
+		}),
+		DirtyWorktreeMode:     policy.DirtyWorktreeMode,
+		DirtyWorktreeIsScoped: policy.DirtyWorktreeMode == "continue_scoped_commits",
 	}
 
-	// approval_policy supports two forms:
-	//   string: approval_policy = "never"
-	//   granular: approval_policy = { granular = { mcp_elicitations = false, ... } }
-	// The granular form is preferred because "never" doesn't reliably suppress
-	// MCP tool prompts in Codex >=4.x.
-	var approvalPolicyStr string
-	var approvalPolicyGranular map[string]any
-
-	// Override from registry settings if present.
+	// Override defaults from registry settings if present.
 	if pp != nil && pp.Settings != nil {
 		switch v := pp.Settings["approval_policy"].(type) {
 		case string:
-			approvalPolicyStr = v
+			if v != "" {
+				ctx.ApprovalPolicyStr = v
+			}
 		case map[string]any:
 			if granular, ok := v["granular"].(map[string]any); ok {
-				approvalPolicyGranular = granular
+				ctx.ApprovalPolicyGranular = codexGranularApprovalString(granular)
+				ctx.ApprovalPolicyStr = "" // granular form wins
 			}
 		}
 		if v, ok := pp.Settings["suppress_unstable_features_warning"].(bool); ok {
-			suppressWarning = v
+			ctx.SuppressWarning = v
 		}
 		if v, ok := pp.Settings["sandbox_mode"].(string); ok {
-			sandboxMode = v
+			ctx.SandboxMode = v
 		}
-		if v, ok := pp.Settings["web_search"].(string); ok && v != "" {
-			webSearchMode = v
+		if v, ok := pp.Settings["web_search"].(string); ok {
+			// Empty string here disables the line entirely (matches legacy behavior).
+			ctx.WebSearchMode = v
 		}
 		if v, ok := pp.Settings["features"].(map[string]any); ok {
-			features = v
+			ctx.Features = codexFeaturesString(v)
+		}
+		if v, ok := pp.Settings["model"].(string); ok && v != "" {
+			ctx.Model = v
+		}
+		if v, ok := pp.Settings["model_reasoning_effort"].(string); ok && v != "" {
+			ctx.ModelReasoningEffort = v
 		}
 	}
 
-	// Emit approval_policy in the appropriate form.
-	if len(approvalPolicyGranular) > 0 {
-		var parts []string
-		for _, key := range []string{"sandbox_approval", "rules", "mcp_elicitations", "request_permissions", "skill_approval"} {
-			if v, ok := approvalPolicyGranular[key]; ok {
-				switch val := v.(type) {
-				case bool:
-					parts = append(parts, fmt.Sprintf("%s = %t", key, val))
-				}
-			}
-		}
-		sort.Strings(parts)
-		fmt.Fprintf(sb, "approval_policy = { granular = { %s } }\n\n", strings.Join(parts, ", "))
-	} else {
-		if approvalPolicyStr == "" {
-			approvalPolicyStr = "never"
-		}
-		fmt.Fprintf(sb, "approval_policy = %q\n\n", approvalPolicyStr)
+	// Policy enforcement annotations from the platform profile.
+	if codexProfile, _ := GetPlatformProfile("codex"); codexProfile != nil {
+		ctx.PolicyComment = FormatPolicyComment(codexProfile.Hooks, "# ")
 	}
 
-	if suppressWarning {
-		sb.WriteString("suppress_unstable_features_warning = true\n")
+	// Notify command. telemetry_eventEmit opts in to the post-tool-use
+	// event-emit pipe; codex has no per-tool granularity so this is the
+	// best-effort signal (Phase 2.2c of spectator plan).
+	telemetryEmit := false
+	if codexProfile, _ := GetPlatformProfile("codex"); codexProfile != nil {
+		telemetryEmit = containsString(codexProfile.Hooks.Extras, "telemetry_eventEmit")
 	}
+	ctx.NotifyCommand = codexNotifyCommand(loomCmd, telemetryEmit)
 
-	// Emit features as inline TOML table.
-	var featureParts []string
+	// [agents] section if registry declares one.
+	ctx.Agents = buildCodexAgentsBlock(pp)
+
+	return ctx
+}
+
+// codexFeaturesString formats a features map as the inline TOML body
+// `k1 = v1, k2 = v2` with sorted keys for deterministic output.
+func codexFeaturesString(features map[string]any) string {
+	parts := make([]string, 0, len(features))
 	for k, v := range features {
 		switch val := v.(type) {
 		case bool:
-			featureParts = append(featureParts, fmt.Sprintf("%s = %t", k, val))
+			parts = append(parts, fmt.Sprintf("%s = %t", k, val))
 		case string:
-			featureParts = append(featureParts, fmt.Sprintf("%s = %q", k, val))
+			parts = append(parts, fmt.Sprintf("%s = %q", k, val))
 		}
 	}
-	sort.Strings(featureParts)
-	fmt.Fprintf(sb, "features = { %s }\n\n", strings.Join(featureParts, ", "))
-
-	fmt.Fprintf(sb, "sandbox_mode = %q\n", sandboxMode)
-	fmt.Fprintf(sb, "sandbox_workspace_write = { network_access = true, writable_roots = [%q] }\n\n", workspaceRoot)
-
-	// Enable Codex builtin web search tool (controls internet access for web.run/web_search).
-	// Values: disabled, cached, live.
-	if webSearchMode != "" {
-		fmt.Fprintf(sb, "web_search = %q\n\n", webSearchMode)
-	}
-
-	// Emit optional model overrides.
-	if pp != nil && pp.Settings != nil {
-		if v, ok := pp.Settings["model"].(string); ok && v != "" {
-			fmt.Fprintf(sb, "model = %q\n", v)
-		}
-		if v, ok := pp.Settings["model_reasoning_effort"].(string); ok && v != "" {
-			fmt.Fprintf(sb, "model_reasoning_effort = %q\n", v)
-		}
-		sb.WriteString("\n")
-	}
-
-	// Emit policy enforcement annotations from platform profile.
-	codexProfile, _ := GetPlatformProfile("codex")
-	if codexProfile != nil {
-		if comment := FormatPolicyComment(codexProfile.Hooks, "# "); comment != "" {
-			sb.WriteString(comment)
-			sb.WriteString("\n")
-		}
-	}
-
-	sb.WriteString("# Git safety policy: treat pre-existing dirty worktrees as baseline context.\n")
-	if policy.DirtyWorktreeMode == "continue_scoped_commits" {
-		sb.WriteString("# Continue on current branch/worktree; stage+commit only files changed for the active task.\n")
-		sb.WriteString("# Before creating another multi-file worktree, inspect existing linked trees with git worktree list or workspace-clean --report --worktrees.\n")
-		sb.WriteString("# For multi-file work, create repo-local linked trees under <repo>/.worktrees/<branch>.\n")
-		sb.WriteString("# Do not create sibling repos under services/, libs/, labs/, or the workspace root.\n")
-		sb.WriteString("# Escalate only when new unexpected changes appear in files you are editing.\n\n")
-	} else {
-		fmt.Fprintf(sb, "# Dirty-worktree mode: %s\n\n", policy.DirtyWorktreeMode)
-	}
-
-	// Codex notify runs on every turn, so use a workspace-scoped persistent
-	// AGENT_ID_FILE to avoid per-hook process-ID churn that fragments identity.
-	// The wrapper is launched in the background and keeps sending heartbeats
-	// until the child process exits or max-lifetime elapses.
-	// Emit notify before any [agents.*] tables so TOML keeps it at top level.
-	sb.WriteString("# Agent lifecycle: background keepalive wrapper on turn completion (rate-limited to avoid notify storms)\n")
-	telemetryEmit := codexProfile != nil && containsString(codexProfile.Hooks.Extras, "telemetry_eventEmit")
-	fmt.Fprintf(sb, `notify = ["sh", "-c", %q, "--"]`, codexNotifyCommand(loomCmd, telemetryEmit))
-	sb.WriteString("\n\n")
-
-	// Emit [agents] section for multi-agent support if configured in registry.
-	emitCodexAgents(sb, pp)
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
 }
 
-// codexNotifyCommand renders the shell snippet codex spawns on every turn-end
-// via its `notify` config.toml key. When telemetryEmit is true, the snippet
-// also pipes the notify payload into `loom agent event-emit --platform codex`
-// so the daemon EventBus sees a coarse `tool.call.end` per turn (Phase 2.2c
-// of the spectator plan; codex has no per-tool granularity, so this is the
-// best-effort surface).
+// codexGranularApprovalString renders the granular form as
+// `key1 = bool1, key2 = bool2` with the legacy key order:
+// sandbox_approval, rules, mcp_elicitations, request_permissions,
+// skill_approval. Keys not present are omitted; unknown keys are dropped.
+func codexGranularApprovalString(granular map[string]any) string {
+	var parts []string
+	for _, key := range []string{"sandbox_approval", "rules", "mcp_elicitations", "request_permissions", "skill_approval"} {
+		if v, ok := granular[key]; ok {
+			if b, ok := v.(bool); ok {
+				parts = append(parts, fmt.Sprintf("%s = %t", key, b))
+			}
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
+}
+
+// buildCodexAgentsBlock resolves the [agents] section from the registry's
+// codex platform settings. Returns nil when no agents section is declared
+// so the template can skip the entire [agents] block.
+func buildCodexAgentsBlock(pp *registry.PlatformPermission) *codexAgentsBlock {
+	if pp == nil || pp.Settings == nil {
+		return nil
+	}
+	agents, ok := pp.Settings["agents"].(map[string]any)
+	if !ok || len(agents) == 0 {
+		return nil
+	}
+	block := &codexAgentsBlock{}
+
+	for _, key := range []string{"max_threads", "max_depth", "job_max_runtime_seconds"} {
+		if v, exists := agents[key]; exists {
+			switch val := v.(type) {
+			case int:
+				block.TopLevelLines = append(block.TopLevelLines, fmt.Sprintf("%s = %d", key, val))
+			case float64:
+				block.TopLevelLines = append(block.TopLevelLines, fmt.Sprintf("%s = %d", key, int(val)))
+			}
+		}
+	}
+
+	if defs, ok := agents["definitions"].(map[string]any); ok {
+		names := make([]string, 0, len(defs))
+		for name := range defs {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			def, ok := defs[name].(map[string]any)
+			if !ok {
+				continue
+			}
+			d := codexAgentDefBlock{Name: name}
+			if desc, ok := def["description"].(string); ok {
+				d.Description = desc
+			}
+			block.Definitions = append(block.Definitions, d)
+		}
+	}
+
+	return block
+}
+
+// codexNotifyCommand renders the shell snippet codex spawns on every
+// turn-end via its `notify` config.toml key. When telemetryEmit is true,
+// the snippet also pipes the notify payload into
+// `loom agent event-emit --platform codex` so the daemon EventBus sees
+// a coarse `tool.call.end` per turn (Phase 2.2c of the spectator plan;
+// codex has no per-tool granularity, so this is the best-effort surface).
 //
-// Codex passes the notify JSON as positional arg `$1` (per the codex notify
-// contract — `notify = [shell, args..., "--"]` means $0="--", $1=payload).
-// We pipe `${1:-}` into stdin for both the existing keepalive-wrap session
-// extraction and the new event-emit publish.
+// Codex passes the notify JSON as positional arg `$1` (per the codex
+// notify contract — `notify = [shell, args..., "--"]` means $0="--",
+// $1=payload). We pipe `${1:-}` into stdin for both the existing
+// keepalive-wrap session extraction and the new event-emit publish.
 func codexNotifyCommand(loomCmd string, telemetryEmit bool) string {
 	base := fmt.Sprintf(`WS_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || printf '%%s' "$PWD")"; WS_HASH="$(printf '%%s' "$WS_ROOT" | cksum | cut -d' ' -f1)"; CACHE_DIR="${HOME}/.cache/loom"; AGENT_ID_FILE="${CACHE_DIR}/agent-id-codex-${WS_HASH}"; KEEPALIVE_STAMP_FILE="${CACHE_DIR}/keepalive-wrap-codex-${WS_HASH}.stamp"; mkdir -p "$CACHE_DIR"; if [ -s "$AGENT_ID_FILE" ]; then AGENT_ID="$(cat "$AGENT_ID_FILE")"; else AGENT_ID="codex-${WS_HASH}"; printf '%%s' "$AGENT_ID" > "$AGENT_ID_FILE"; fi; NOTIFY_PAYLOAD="${INPUT:-${1:-}}"; NOW="$(date +%%s)"; LAST="$(cat "$KEEPALIVE_STAMP_FILE" 2>/dev/null || true)"; case "$LAST" in ''|*[!0-9]*) ;; *) if [ $((NOW - LAST)) -lt 15 ]; then exit 0; fi ;; esac; printf '%%s' "$NOW" > "$KEEPALIVE_STAMP_FILE"; HOOK_SESSION_ID="$(printf '%%s' "$NOTIFY_PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null || true)"; nohup %s agent keepalive-wrap --agent-id "$AGENT_ID" --session-id "$HOOK_SESSION_ID" --status active --ensure-session --infer-namespace --agent-type codex --description "Codex keepalive wrapper session" --quiet </dev/null >/dev/null 2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log" &`, loomCmd)
 	if !telemetryEmit {
 		return base
 	}
-	// Append a best-effort event-emit pipe. `|| true` keeps codex from
-	// failing the turn if the daemon is unreachable; --quiet swallows the
-	// CLI's own error output.
 	return base + fmt.Sprintf(` printf '%%s' "$NOTIFY_PAYLOAD" | %s agent event-emit --hook post-tool-use --platform codex --agent-id "$AGENT_ID" --quiet 2>>"${TMPDIR:-/tmp}/loom-agent-hooks.log" || true`, loomCmd)
 }
 
-// containsString reports whether haystack contains needle. Inlined here to
-// avoid pulling in a generic slices helper for one call site.
+// containsString reports whether haystack contains needle. Inlined here
+// to avoid pulling in a generic slices helper for a single call site.
 func containsString(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if s == needle {
@@ -179,52 +285,4 @@ func containsString(haystack []string, needle string) bool {
 		}
 	}
 	return false
-}
-
-// emitCodexAgents writes the [agents] TOML section for Codex multi-agent support.
-func emitCodexAgents(sb *strings.Builder, pp *registry.PlatformPermission) {
-	if pp == nil || pp.Settings == nil {
-		return
-	}
-	agents, ok := pp.Settings["agents"].(map[string]any)
-	if !ok || len(agents) == 0 {
-		return
-	}
-
-	sb.WriteString("[agents]\n")
-
-	// Emit top-level agent settings.
-	for _, key := range []string{"max_threads", "max_depth", "job_max_runtime_seconds"} {
-		if v, exists := agents[key]; exists {
-			switch val := v.(type) {
-			case int:
-				fmt.Fprintf(sb, "%s = %d\n", key, val)
-			case float64:
-				fmt.Fprintf(sb, "%s = %d\n", key, int(val))
-			}
-		}
-	}
-	sb.WriteString("\n")
-
-	// Emit named agent definitions as [agents.<name>] sections.
-	if defs, ok := agents["definitions"].(map[string]any); ok {
-		// Sort keys for deterministic output.
-		names := make([]string, 0, len(defs))
-		for name := range defs {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-
-		for _, name := range names {
-			def, ok := defs[name].(map[string]any)
-			if !ok {
-				continue
-			}
-			fmt.Fprintf(sb, "[agents.%s]\n", name)
-			if desc, ok := def["description"].(string); ok {
-				fmt.Fprintf(sb, "description = %q\n", desc)
-			}
-			sb.WriteString("\n")
-		}
-	}
 }

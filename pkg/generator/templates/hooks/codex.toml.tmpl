@@ -1,0 +1,65 @@
+{{- /*
+Codex CLI config.toml preamble. EPIC 3 / CONFIG-4 (.loom/108).
+
+The dot value is a *codexTemplateContext (see configs_codex.go) with all
+registry overrides and agent-safety policy already resolved. Output goes
+straight to the StringBuilder used by GenerateConfigsWithPath.
+*/ -}}
+{{- if .ApprovalPolicyGranular }}
+approval_policy = { granular = { {{ .ApprovalPolicyGranular }} } }
+
+{{- else }}
+approval_policy = {{ printf "%q" .ApprovalPolicyStr }}
+
+{{- end }}
+
+{{ if .SuppressWarning -}}
+suppress_unstable_features_warning = true
+{{ end -}}
+features = { {{ .Features }} }
+
+sandbox_mode = {{ printf "%q" .SandboxMode }}
+sandbox_workspace_write = { network_access = true, writable_roots = [{{ printf "%q" .WorkspaceRoot }}] }
+
+{{ if .WebSearchMode -}}
+web_search = {{ printf "%q" .WebSearchMode }}
+
+{{ end -}}
+{{- if or .Model .ModelReasoningEffort -}}
+{{- if .Model }}
+model = {{ printf "%q" .Model }}
+{{- end }}
+{{- if .ModelReasoningEffort }}
+model_reasoning_effort = {{ printf "%q" .ModelReasoningEffort }}
+{{- end }}
+
+{{ end -}}
+{{- if .PolicyComment }}{{ .PolicyComment }}
+{{ end -}}
+# Git safety policy: treat pre-existing dirty worktrees as baseline context.
+{{ if .DirtyWorktreeIsScoped -}}
+# Continue on current branch/worktree; stage+commit only files changed for the active task.
+# Before creating another multi-file worktree, inspect existing linked trees with git worktree list or workspace-clean --report --worktrees.
+# For multi-file work, create repo-local linked trees under <repo>/.worktrees/<branch>.
+# Do not create sibling repos under services/, libs/, labs/, or the workspace root.
+# Escalate only when new unexpected changes appear in files you are editing.
+
+{{ else -}}
+# Dirty-worktree mode: {{ .DirtyWorktreeMode }}
+
+{{ end -}}
+# Agent lifecycle: background keepalive wrapper on turn completion (rate-limited to avoid notify storms)
+notify = ["sh", "-c", {{ printf "%q" .NotifyCommand }}, "--"]
+
+{{ if .Agents -}}
+[agents]
+{{ range .Agents.TopLevelLines }}{{ . }}
+{{ end }}
+
+{{ range .Agents.Definitions -}}
+[agents.{{ .Name }}]
+{{ if .Description -}}
+description = {{ printf "%q" .Description }}
+{{ end }}
+{{ end -}}
+{{ end -}}
