@@ -474,7 +474,7 @@
           {#snippet row({ row, index })}
             {@const agent = row.agent}
             {@const linkedSpawn = spawnByAgentId.get(agent.agent_id)}
-            {@const showUngroupedDivider = groupByRootSession && row.ungrouped && index === ungroupedStartIndex}
+            {@const showUngroupedDivider = groupByRootSession && row.ungrouped && index === ungroupedStartIndex && ungroupedStartIndex > 0}
             <td class="text-mono agent-cell" class:subagent-row={row.depth > 0} class:ungrouped-divider={showUngroupedDivider} title={sanitizeText(agent.agent_id ?? '---')}>
               {#if showUngroupedDivider}
                 <span class="ungrouped-label" aria-hidden="true">No active session match{ungroupedCount > 1 ? ` · ${ungroupedCount}` : ''}</span>
@@ -1538,6 +1538,7 @@
     padding: 0 6px;
     border-radius: var(--radius-sm);
     z-index: 1;
+    white-space: nowrap;
   }
 
   .evidence-cell {
