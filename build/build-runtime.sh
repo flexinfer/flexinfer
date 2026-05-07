@@ -18,7 +18,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CONFIG="${SCRIPT_DIR}/runtime.yaml"
-DOCKERFILE="${SCRIPT_DIR}/Dockerfile.runtime"
+DEFAULT_DOCKERFILE="${SCRIPT_DIR}/Dockerfile.runtime"
 
 # ── Validate prerequisites ───────────────────────────────────────────
 if ! command -v yq &>/dev/null; then
@@ -95,13 +95,31 @@ build_profile() {
     ollama_go_version=$(cfg '.ollama_go_version')
 
     # Read profile config
-    local tag base_image gpu_vendor gpu_arch amdgpu_targets build_context
+    local tag base_image gpu_vendor gpu_arch amdgpu_targets build_context dockerfile_override dockerfile
     tag=$(pcfg "${profile}" "tag")
     base_image=$(pcfg "${profile}" "base_image")
     gpu_vendor=$(pcfg "${profile}" "gpu_vendor")
     gpu_arch=$(pcfg "${profile}" "gpu_arch")
     amdgpu_targets=$(pcfg "${profile}" "amdgpu_targets" "${gpu_arch}")
     build_context=$(pcfg "${profile}" "build_context" "default")
+
+    # Per-profile Dockerfile override. Profiles may set `dockerfile:` to a
+    # repo-relative path to use a custom Dockerfile (e.g. gfx906 uses a slim
+    # image based on a different runtime base). Default: Dockerfile.runtime.
+    dockerfile_override=$(pcfg "${profile}" "dockerfile" "")
+    if [ -n "${dockerfile_override}" ]; then
+        if [[ "${dockerfile_override}" = /* ]]; then
+            dockerfile="${dockerfile_override}"
+        else
+            dockerfile="${REPO_ROOT}/${dockerfile_override}"
+        fi
+        if [ ! -f "${dockerfile}" ]; then
+            echo "ERROR: profile '${profile}' references missing dockerfile: ${dockerfile}" >&2
+            exit 1
+        fi
+    else
+        dockerfile="${DEFAULT_DOCKERFILE}"
+    fi
 
     # Backend flags
     local include_vllm include_llamacpp include_ollama include_diffusers include_steam include_quantizer
@@ -205,7 +223,7 @@ build_profile() {
     fi
     cmd+=(
         "build"
-        "-f" "${DOCKERFILE}"
+        "-f" "${dockerfile}"
         "--build-arg" "BASE_IMAGE=${base_image}"
         "--build-arg" "GO_VERSION=${go_version}"
         "--build-arg" "LLAMACPP_VERSION=${llamacpp_version}"
@@ -254,6 +272,7 @@ build_profile() {
 
     echo "=== Building profile: ${profile} ==="
     echo "  Tag:    ${full_tag}"
+    echo "  Dockerfile: ${dockerfile}"
     echo "  Base:   ${base_image}"
     echo "  Vendor: ${gpu_vendor} / ${gpu_arch}"
     echo "  Backends: vllm=${include_vllm} llamacpp=${include_llamacpp} ollama=${include_ollama} diffusers=${include_diffusers} steam=${include_steam} quantizer=${include_quantizer} turboquant=${include_turboquant}"

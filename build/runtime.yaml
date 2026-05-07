@@ -214,27 +214,42 @@ profiles:
 
   gfx906:
     tag: "runtime:rocm-gfx906"
+    # Dedicated Dockerfile: swaps the runtime base to mixa3607/pytorch-gfx906
+    # (community-maintained PyTorch with rebuilt rocBLAS+Tensile for gfx906)
+    # and applies cycle-1 cleanup techniques (pycache purge, single-layer pip,
+    # apt cache strip). Cuts the deployed runtime from 59.2GB → target <40GB
+    # so it fits on the radeonvii node's 56GB free root LVM without tripping
+    # kubelet DiskPressure.
+    dockerfile: build/Dockerfile.runtime-gfx906
     gpu_vendor: amd
     gpu_arch: gfx906
-    base_image: "rocm/pytorch:rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0"
+    base_image: "docker.io/mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3"
     rocm_dev_image: "rocm/dev-ubuntu-22.04:6.2"
     amdgpu_targets: gfx906
     backends:
-      vllm: false        # PyTorch 2.3 too old
+      vllm: false        # no compiled vLLM wheels for gfx906
       llamacpp: true
       ollama: true
       diffusers: true
-    # bitsandbytes pip wheel lacks gfx906 HIP kernels — must build from source separately
-    include_bitsandbytes: false
-    # PyTorch 2.3 constraint: transformers 5.x requires PyTorch 2.4+
-    transformers_constraint: ">=4.57,<5"
+    # bitsandbytes pip wheel lacks gfx906 HIP kernels — Dockerfile builds
+    # from source (COMPUTE_BACKEND=hip) in a dedicated stage and copies the
+    # wheel into the runtime image when this is true.
+    include_bitsandbytes: true
+    # mixa3607 ships PyTorch 2.9 → modern transformers stack works.
+    transformers_constraint: ">=5.0"
+    install_qwen35_fastpath: false
     env:
       ROCM_PATH: /opt/rocm
-      HIP_PATH: /opt/rocm/hip
+      HIP_PATH: /opt/rocm
       HSA_OVERRIDE_GFX_VERSION: "9.0.6"
       HSA_ENABLE_SDMA: "0"
       HSA_USE_SVM: "0"
       PYTORCH_ROCM_ARCH: gfx906
+      # mixa3607 base lacks hipBLASLt; force-disable so PyTorch picks
+      # rocBLAS instead (matches build/Dockerfile.unified-gfx906).
+      TORCH_BLAS_PREFER_HIPBLASLT: "0"
+      MIOPEN_FIND_MODE: "2"
+      HF_HUB_DISABLE_XET: "1"
     build_context: 7900xtx
 
   cuda-maxwell:

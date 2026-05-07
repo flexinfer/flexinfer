@@ -1,0 +1,328 @@
+# gfx906-specific flexinfer-runtime Dockerfile.
+#
+# Why a separate file:
+#   The default Dockerfile.runtime starts from the rocm/pytorch dev image
+#   (~25GB) and accumulates further bloat from package metadata, pip caches,
+#   __pycache__, and the apt index. The deployed gfx906 runtime measured at
+#   59.2GB extracted, which trips kubelet DiskPressure on the radeonvii node
+#   (56GB free root LVM).
+#
+#   Track B-3 cycle 2 swaps the runtime base to the community-maintained
+#   mixa3607/pytorch-gfx906 image (smaller surface, rebuilt rocBLAS+Tensile
+#   for gfx906 — strategically aligned with the gfx906 lane regardless of
+#   the size win). The same multi-stage cleanup techniques used in cycle 1
+#   for build/Dockerfile.unified-gfx906 are layered on top.
+#
+# Backend matrix for gfx906:
+#   - vLLM:      false (PyTorch ROCm + transformers >=5 stack lacks the
+#                       compiled vLLM wheels for gfx906)
+#   - llamacpp:  true  (HIP build via llama.cpp, gfx906 ISA)
+#   - ollama:    true  (CGO build, links rocBLAS/hipBLAS at runtime)
+#   - diffusers: true  (SDXL/FLUX inference, bitsandbytes from source)
+#
+# Build args injected by build/build-runtime.sh from build/runtime.yaml.
+# Do NOT build this file directly — use the build script.
+#
+# Usage:
+#   ./build/build-runtime.sh gfx906 --push
+
+# ── Global ARGs (before first FROM) ──────────────────────────────────
+ARG GO_VERSION=1.26.0
+ARG LLAMACPP_VERSION=b8173
+ARG OLLAMA_VERSION=v0.17.4
+ARG OLLAMA_GO_VERSION=1.25.7
+ARG AMDGPU_TARGETS=gfx906
+ARG GPU_VENDOR=amd
+ARG GPU_ARCH=gfx906
+ARG INCLUDE_VLLM=false
+ARG INCLUDE_LLAMACPP=true
+ARG INCLUDE_OLLAMA=true
+ARG INCLUDE_DIFFUSERS=true
+ARG INCLUDE_BITSANDBYTES=false
+ARG INCLUDE_STEAM=false
+ARG INCLUDE_QUANTIZER=false
+ARG TRANSFORMERS_CONSTRAINT=">=5.0"
+ARG TRANSFORMERS_INSTALL_MODE=constraint
+ARG TRANSFORMERS_REPO=https://github.com/huggingface/transformers.git
+ARG TRANSFORMERS_REF=main
+ARG TRANSFORMERS_PACKAGE=""
+ARG TRANSFORMERS_RUNTIME_INSTALL=disabled
+# Runtime-base override — the gfx906 runtime stage hard-codes mixa3607
+# as its base. The build script still passes BASE_IMAGE (used by other
+# profiles); we accept and ignore it here so the script stays uniform.
+ARG BASE_IMAGE=docker.io/mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3
+ARG PYTORCH_GFX906_TAG=v2.9.0-rocm-6.3.3
+ARG LLAMACPP_BUILD_IMAGE=rocm/dev-ubuntu-22.04:6.2
+# CUDA-only args — accepted but unused; keeps build script call-site uniform.
+ARG CUDA_ARCHITECTURES=52
+ARG VLLM_INSTALL_MODE=wheel
+ARG VLLM_VERSION=0.17.0+rocm700
+ARG VLLM_EXTRA_INDEX_URL=https://wheels.vllm.ai/rocm/0.17.0/rocm700
+ARG VLLM_REPO=https://github.com/vllm-project/vllm.git
+ARG VLLM_REF=main
+ARG VLLM_SOURCE_PATCH_SCRIPT=
+ARG VLLM_EXTRA_DEPS_PROFILE=full
+ARG INSTALL_QWEN35_FASTPATH=false
+ARG INCLUDE_TURBOQUANT=false
+ARG TURBOQUANT_INSTALL_MODE=none
+ARG TURBOQUANT_VERSION=1.4.0
+ARG TURBOQUANT_REPO=https://github.com/Alberto-Codes/turboquant-vllm.git
+ARG TURBOQUANT_REF=main
+ARG TURBOQUANT_SOURCE_PATCH_SCRIPT=
+
+# ── Stage 1: Build flexinfer-runtime Go binary ──────────────────────
+# Identical to Dockerfile.runtime — produces the same /usr/local/bin/flexinfer-runtime.
+FROM golang:${GO_VERSION} AS go-builder
+
+WORKDIR /workspace
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd/ cmd/
+COPY api/ api/
+COPY backend/ backend/
+COPY internal/ internal/
+COPY controllers/ controllers/
+COPY pkg/ pkg/
+COPY scheduler/ scheduler/
+COPY agents/ agents/
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o /runtime cmd/flexinfer-runtime/main.go
+
+# ── Stage 2: Build llama.cpp (HIP build for gfx906) ─────────────────
+# Identical to Dockerfile.runtime, AMD path only.
+FROM ${LLAMACPP_BUILD_IMAGE} AS llamacpp-builder
+
+ARG LLAMACPP_VERSION
+ARG AMDGPU_TARGETS
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake ninja-build build-essential curl \
+    hipblas-dev rocblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/src
+RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
+
+WORKDIR /opt/src/llama.cpp
+RUN cmake -B build -G Ninja \
+    -DGGML_HIP=ON -DGGML_NATIVE=OFF \
+    -DAMDGPU_TARGETS=${AMDGPU_TARGETS} \
+    -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release -j$(nproc)
+
+# ── Stage 3: Build ollama (CGO + HIP/rocBLAS) ────────────────────────
+# Identical to Dockerfile.runtime, AMD path only.
+FROM ${LLAMACPP_BUILD_IMAGE} AS ollama-builder
+
+ARG OLLAMA_VERSION
+ARG OLLAMA_GO_VERSION
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake make gcc g++ curl ca-certificates \
+    hipblas-dev rocblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL "https://go.dev/dl/go${OLLAMA_GO_VERSION}.linux-amd64.tar.gz" \
+    | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+WORKDIR /build
+RUN git clone --depth 1 --branch "${OLLAMA_VERSION}" https://github.com/ollama/ollama.git .
+
+ENV CGO_ENABLED=1
+RUN go generate ./... && go build -trimpath -o /build/ollama .
+
+# ── Stage 4: Build bitsandbytes from source (gfx906 HIP kernels) ────
+# pip wheel ships HIP kernels for gfx90a/gfx942/gfx1100 but not gfx906;
+# build with COMPUTE_BACKEND=hip. Mirrors the proven cycle 1 recipe in
+# build/Dockerfile.unified-gfx906.
+FROM docker.io/mixa3607/pytorch-gfx906:${PYTORCH_GFX906_TAG} AS bnb-builder
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git cmake ninja-build build-essential \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# setuptools<78 — bitsandbytes 0.49.2's pyproject.toml uses the legacy
+# `project.license` shape that newer setuptools rejects in metadata gen.
+# scikit-build-core is bnb's PEP 517 backend (still required by metadata
+# gen even when BNB_SKIP_CMAKE=1 disables the cmake hook below).
+RUN COMPILER_COMPAT=$(find / -path "*/compiler_compat" -type d 2>/dev/null | head -1) && \
+    if [ -n "$COMPILER_COMPAT" ]; then mv "$COMPILER_COMPAT" "${COMPILER_COMPAT}.bak"; fi && \
+    python3 -m pip install --ignore-installed "setuptools>=70,<78" wheel && \
+    python3 -m pip install scikit-build-core && \
+    git clone --depth 1 --branch 0.49.2 \
+        https://github.com/bitsandbytes-foundation/bitsandbytes.git /tmp/bnb && \
+    cd /tmp/bnb && \
+    cmake -DCOMPUTE_BACKEND=hip -S . -B build && \
+    cmake --build build -j"$(nproc)" && \
+    mkdir -p /out && \
+    BNB_SKIP_CMAKE=1 python3 -m pip wheel --no-deps --no-build-isolation -w /out . && \
+    if [ -n "$COMPILER_COMPAT" ] && [ -d "${COMPILER_COMPAT}.bak" ]; then \
+        mv "${COMPILER_COMPAT}.bak" "$COMPILER_COMPAT"; \
+    fi && \
+    ls -la /out/ && \
+    python3 -c "import zipfile, glob, sys; \
+        whl=glob.glob('/out/bitsandbytes-*.whl')[0]; \
+        names=zipfile.ZipFile(whl).namelist(); \
+        sos=[n for n in names if n.endswith('.so')]; \
+        print('SO files in wheel:', sos); \
+        sys.exit(0 if any('rocm' in s or 'hip' in s for s in sos) else 1)"
+
+# ── Stage 5: Runtime ─────────────────────────────────────────────────
+FROM docker.io/mixa3607/pytorch-gfx906:${PYTORCH_GFX906_TAG} AS runtime
+
+ARG GPU_VENDOR
+ARG GPU_ARCH
+ARG INCLUDE_DIFFUSERS
+ARG INCLUDE_BITSANDBYTES
+ARG TRANSFORMERS_CONSTRAINT
+ARG TRANSFORMERS_INSTALL_MODE
+ARG TRANSFORMERS_PACKAGE
+ARG TRANSFORMERS_RUNTIME_INSTALL
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    GPU_VENDOR=${GPU_VENDOR} \
+    GPU_ARCH=${GPU_ARCH} \
+    FLEXINFER_TRANSFORMERS_PACKAGE=${TRANSFORMERS_PACKAGE} \
+    FLEXINFER_TRANSFORMERS_RUNTIME_INSTALL=${TRANSFORMERS_RUNTIME_INSTALL}
+
+# ── Layer 1: System deps + pip tooling, single layer ────────────────
+# tini for PID 1 init, curl/jq/lsof/procps/psmisc for healthchecks and
+# operational diagnostics. git is needed for any runtime fallback that
+# pip-installs from a git+ URL. cmake/build-essential intentionally NOT
+# installed — bnb is prebuilt in stage 4.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl tini jq lsof procps psmisc git \
+        hipblas rocblas \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m pip install --ignore-installed \
+        "setuptools>=77" wheel "packaging>=24.2" "urllib3<2" \
+    && (python3 -m pip cache purge 2>/dev/null || true) \
+    && find / -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find / -name "*.py[co]" -delete 2>/dev/null || true \
+    && rm -rf /root/.cache /tmp/* /var/tmp/* 2>/dev/null || true
+
+# ── Layer 2: scripts + steam-headless stub ───────────────────────────
+# Copied early so they're available regardless of which Python deps land.
+COPY build/scripts/ /opt/flexinfer/scripts/
+COPY build/steam-headless.sh /opt/flexinfer/steam-headless.sh
+RUN chmod +x /opt/flexinfer/scripts/*.sh /opt/flexinfer/scripts/*.py /opt/flexinfer/steam-headless.sh 2>/dev/null || true
+
+# ── Layer 3: Python deps for diffusers + transformers ────────────────
+# Single consolidated layer, then aggressive cleanup. Triton replaced with
+# the PyPI wheel because the ROCm/PyTorch image families ship a broken
+# editable install at /var/lib/jenkins/triton/python lacking the jit API.
+#
+# Mirrors build/Dockerfile.unified-gfx906 (cycle 1, proven working).
+# Crucially this does NOT use --no-deps for the bundle so diffusers picks
+# up importlib_metadata + requests at install time. The mixa3607 base
+# already ships a HIP-compiled PyTorch 2.9 — pip's resolver will treat it
+# as the satisfying version and not pull a CUDA wheel over the top.
+#
+# transformers >=5.0 — mixa3607's PyTorch 2.9 supports modern transformers
+# (matches the unified-gfx906 image). torchao excluded (SIGILL on
+# Broadwell-class hosts that back gfx906 nodes).
+#
+# numpy ABI fix: ROCm PyTorch 2.6 was compiled against numpy 1.x; force a
+# matching numpy and reinstall pandas/scipy/sklearn so transitive imports
+# don't break. numba/llvmlite removed (ABI-incompatible, unused).
+RUN if [ "${INCLUDE_DIFFUSERS}" = "true" ]; then \
+      python3 -m pip install --force-reinstall triton==3.2.0 \
+      && python3 -m pip install pypcre \
+      && python3 -m pip install \
+          "transformers${TRANSFORMERS_CONSTRAINT}" \
+          "diffusers>=0.30.0" \
+          "accelerate>=1.0" \
+          safetensors \
+          sentencepiece \
+          huggingface_hub \
+          hf_transfer \
+          protobuf \
+          pillow \
+          regex \
+          pyyaml \
+          psutil \
+          packaging \
+          requests \
+          importlib_metadata \
+          "fastapi>=0.115" \
+          "uvicorn[standard]>=0.34" \
+          pydantic \
+          python-multipart \
+          aiofiles \
+      && python3 -m pip uninstall -y numba llvmlite 2>/dev/null || true \
+      && python3 -m pip install --force-reinstall \
+          "numpy>=1.26,<2" pandas scipy scikit-learn \
+      && (python3 -m pip cache purge 2>/dev/null || true) \
+      && find / -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true \
+      && find / -name "*.py[co]" -delete 2>/dev/null || true \
+      && rm -rf /root/.cache /tmp/* /var/tmp/* 2>/dev/null || true; \
+    fi
+
+# ── Layer 4: bitsandbytes from builder stage (conditional) ──────────
+# Only installed if the profile requested it. The runtime image keeps
+# the wheel out of /tmp after install.
+COPY --from=bnb-builder /out/*.whl /tmp/
+RUN if [ "${INCLUDE_BITSANDBYTES}" = "true" ]; then \
+      python3 -m pip install --no-cache-dir --no-deps /tmp/bitsandbytes-*.whl; \
+    fi \
+    && rm -f /tmp/bitsandbytes-*.whl \
+    && (python3 -m pip cache purge 2>/dev/null || true) \
+    && find / -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find / -name "*.py[co]" -delete 2>/dev/null || true
+
+# ── Layer 5: Profiling/diagnostic tooling + ROCm PyTorch sanity check ─
+# py-spy/memray are small, useful during incident triage.
+RUN python3 -m pip install --no-cache-dir py-spy memray \
+    && (python3 -m pip cache purge 2>/dev/null || true) \
+    && find / -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find / -name "*.py[co]" -delete 2>/dev/null || true \
+    && python3 -c "import torch; assert torch.version.hip is not None, 'CUDA torch detected!'; print('OK: PyTorch', torch.__version__, 'HIP', torch.version.hip)"
+
+# ── Profile env vars (generated by build-runtime.sh) ────────────────
+COPY build/.runtime-env /etc/flexinfer/runtime.env
+
+# ── Diffusers server + entrypoint ────────────────────────────────────
+COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py
+COPY build/runtime-entrypoint.sh /usr/local/bin/runtime-entrypoint.sh
+RUN chmod +x /usr/local/bin/runtime-entrypoint.sh
+
+# ── Copy llama.cpp binary ────────────────────────────────────────────
+COPY --from=llamacpp-builder /opt/src/llama.cpp/build/bin/ /opt/llamacpp/bin/
+ENV PATH="/opt/llamacpp/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/llamacpp/bin:${LD_LIBRARY_PATH}"
+
+# ── Copy ollama binary ───────────────────────────────────────────────
+COPY --from=ollama-builder /build/ollama /usr/local/bin/ollama
+ENV OLLAMA_MODELS=/models/ollama
+
+# ── Copy flexinfer-runtime binary ────────────────────────────────────
+COPY --from=go-builder /runtime /usr/local/bin/flexinfer-runtime
+
+RUN mkdir -p /models /var/lib/flexinfer/compile-cache /etc/flexinfer
+
+WORKDIR /workspace
+
+EXPOSE 8080 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8080/healthz || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/runtime-entrypoint.sh"]
+CMD ["flexinfer-runtime", "--listen", ":8080"]
