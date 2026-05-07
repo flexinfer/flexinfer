@@ -86,6 +86,7 @@ platforms:
       session_end_event: "SessionEnd"
       heartbeat_event: "AfterTool"
       heartbeat_matcher: "run_shell_command"
+      extras: ["telemetry_eventEmit"]
     capabilities:
       mcp_servers: true
       permissions: false
@@ -110,6 +111,7 @@ platforms:
       events: ["notify"]
       policy_refs: ["gitops_flux"]
       enforcement: "proxy"
+      extras: ["telemetry_eventEmit"]
     loom_proxy:
       agent_hint: "codex"
       tool_profile: "llm-core"
