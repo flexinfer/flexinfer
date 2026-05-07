@@ -28,6 +28,7 @@ struct ContentView: View {
     enum PeopleSection: String, CaseIterable, Identifiable {
         case agents
         case sessions
+        case live
 
         var id: String { rawValue }
     }
@@ -359,14 +360,13 @@ struct ContentView: View {
                     Picker("Agents Section", selection: $selectedPeopleSection) {
                         Text("Roster").tag(PeopleSection.agents)
                         Text("Sessions").tag(PeopleSection.sessions)
+                        Text("Live").tag(PeopleSection.live)
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 190)
+                    .frame(width: 260)
                 }
 
-                Text(selectedPeopleSection == .agents
-                     ? "Every agent on your fleet — live, idle, offline."
-                     : "Agent sessions across every namespace.")
+                Text(peopleSectionSubtitle)
                     .font(.caption)
                     .foregroundStyle(LoomColors.textSecondary)
                     .lineLimit(1)
@@ -398,10 +398,23 @@ struct ContentView: View {
                             selectedTab = .work
                         }
                     )
+                case .live:
+                    LiveSessionsView(broadcaster: sseBroadcaster)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var peopleSectionSubtitle: String {
+        switch selectedPeopleSection {
+        case .agents:
+            return "Every agent on your fleet — live, idle, offline."
+        case .sessions:
+            return "Agent sessions across every namespace."
+        case .live:
+            return "Live tool calls flowing through every active session — public-tier redacted."
+        }
     }
 
     // MARK: - SSE Lifecycle
