@@ -11,7 +11,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: llamacpp
-  source: HF://Qwen/Qwen3-1.7B-GGUF
+  source: HF://rippertnt/Qwen3-1.7B-Q4_K_M-GGUF
   cache:
     size: 2Gi
     storageClass: nvme-1r
@@ -28,7 +28,7 @@ spec:
     idleTimeout: 5m
     coldStartTimeout: 5m
   config:
-    ggufFile: Qwen3-1.7B-Q4_K_M.gguf
+    ggufFile: qwen3-1.7b-q4_k_m.gguf
     contextSize: 8192
     nGPULayers: 999
     batchSize: 1024
