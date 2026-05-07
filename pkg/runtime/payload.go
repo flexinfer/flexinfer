@@ -292,10 +292,19 @@ func applyGPUProfileDeviceDefaults(config map[string]any, vendor backend.GPUVend
 }
 
 func applyGPUProfileRuntimeEnv(env []EnvVar, config map[string]any, vendor backend.GPUVendor, profile *aiv1alpha2.GPUProfileSpec) []EnvVar {
-	if profile == nil || len(profile.UsableDeviceIndices) == 0 {
+	if profile == nil {
 		return env
 	}
-	if vendor != backend.GPUVendorNVIDIA {
+
+	// GPUProfile-declared env is authoritative for the runtime path. Push it
+	// into the payload so the runtime manager's overlayEnvVars(req.Env) step
+	// overrides the in-code ROCmEnvVars baseline. See
+	// backend.ResolveBackendROCmEnv for the precedence contract.
+	if profileEnv, ok := backend.EnvFromProfile(profile); ok {
+		env = appendCoreEnvVars(env, profileEnv)
+	}
+
+	if len(profile.UsableDeviceIndices) == 0 || vendor != backend.GPUVendorNVIDIA {
 		return env
 	}
 

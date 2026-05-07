@@ -269,6 +269,137 @@ func TestResolveBackendImage_ProfileEntryWithEmptyImageFallsThrough(t *testing.T
 	}
 }
 
+// envVarSliceEqual reports whether two []corev1.EnvVar slices contain the same
+// (Name, Value) pairs in the same order.
+func envVarSliceEqual(a, b []corev1.EnvVar) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name || a[i].Value != b[i].Value {
+			return false
+		}
+	}
+	return true
+}
+
+func TestResolveBackendROCmEnv_GPUProfileWins(t *testing.T) {
+	profileEnv := []corev1.EnvVar{
+		{Name: "HSA_OVERRIDE_GFX_VERSION", Value: "12.0.0"},
+		{Name: "PYTORCH_ROCM_ARCH", Value: "gfx1200"},
+	}
+	profile := &aiv1alpha2.GPUProfileSpec{
+		Architecture: "gfx1100",
+		Vendor:       "amd",
+		Env:          profileEnv,
+	}
+
+	got := ResolveBackendROCmEnv(profile, GPUVendorAMD, "gfx1100")
+	if !envVarSliceEqual(got, profileEnv) {
+		t.Fatalf("ResolveBackendROCmEnv = %+v, want profile env %+v", got, profileEnv)
+	}
+
+	// Confirm we did NOT call into ROCmEnvVars by checking we got the
+	// profile-declared "12.0.0" rather than the gfx1100 hardcoded "11.0.0".
+	for _, e := range got {
+		if e.Name == "HSA_OVERRIDE_GFX_VERSION" && e.Value == "11.0.0" {
+			t.Fatalf("ResolveBackendROCmEnv used ROCmEnvVars fallback when profile.Env was set")
+		}
+	}
+}
+
+func TestResolveBackendROCmEnv_ExplicitNilFallsThroughToROCmEnvVars(t *testing.T) {
+	got := ResolveBackendROCmEnv(nil, GPUVendorAMD, "gfx1100")
+	want := ROCmEnvVars("gfx1100")
+	if !envVarSliceEqual(got, want) {
+		t.Fatalf("ResolveBackendROCmEnv(nil) = %+v, want ROCmEnvVars(gfx1100) = %+v", got, want)
+	}
+	// Sanity: gfx1100 fallback must include the HSA override at 11.0.0.
+	foundOverride := false
+	for _, e := range got {
+		if e.Name == "HSA_OVERRIDE_GFX_VERSION" && e.Value == "11.0.0" {
+			foundOverride = true
+			break
+		}
+	}
+	if !foundOverride {
+		t.Fatalf("expected gfx1100 fallback to include HSA_OVERRIDE_GFX_VERSION=11.0.0; got %+v", got)
+	}
+}
+
+func TestResolveBackendROCmEnv_ProfileWithoutEnvFallsThrough(t *testing.T) {
+	// Profile is non-nil but declares no env entries — fall through to the
+	// in-code ROCmEnvVars switch.
+	profile := &aiv1alpha2.GPUProfileSpec{
+		Architecture: "gfx906",
+		Vendor:       "amd",
+		// no Env field
+	}
+
+	got := ResolveBackendROCmEnv(profile, GPUVendorAMD, "gfx906")
+	want := ROCmEnvVars("gfx906")
+	if !envVarSliceEqual(got, want) {
+		t.Fatalf("ResolveBackendROCmEnv(profile w/o env) = %+v, want fallback %+v", got, want)
+	}
+	// Sanity: gfx906 fallback must include the HSA override at 9.0.6.
+	foundOverride := false
+	for _, e := range got {
+		if e.Name == "HSA_OVERRIDE_GFX_VERSION" && e.Value == "9.0.6" {
+			foundOverride = true
+			break
+		}
+	}
+	if !foundOverride {
+		t.Fatalf("expected gfx906 fallback to include HSA_OVERRIDE_GFX_VERSION=9.0.6; got %+v", got)
+	}
+}
+
+func TestResolveBackendROCmEnv_ProfileWithEmptyEnvFallsThrough(t *testing.T) {
+	// Profile declares Env explicitly as an empty slice — equivalent to no
+	// override, so fall through to ROCmEnvVars.
+	profile := &aiv1alpha2.GPUProfileSpec{
+		Architecture: "gfx1100",
+		Vendor:       "amd",
+		Env:          []corev1.EnvVar{},
+	}
+
+	got := ResolveBackendROCmEnv(profile, GPUVendorAMD, "gfx1100")
+	want := ROCmEnvVars("gfx1100")
+	if !envVarSliceEqual(got, want) {
+		t.Fatalf("ResolveBackendROCmEnv(profile w/ empty env) = %+v, want fallback %+v", got, want)
+	}
+}
+
+func TestResolveBackendROCmEnv_NonAMDWithoutProfileReturnsNil(t *testing.T) {
+	// For non-AMD vendors with no profile env, the helper returns an empty
+	// slice — ROCmEnvVars is ROCm-specific and must not leak into NVIDIA pods.
+	got := ResolveBackendROCmEnv(nil, GPUVendorNVIDIA, "sm_89")
+	if len(got) != 0 {
+		t.Fatalf("ResolveBackendROCmEnv(nil, nvidia, sm_89) = %+v, want nil", got)
+	}
+}
+
+func TestEnvFromProfile_NilProfile(t *testing.T) {
+	got, ok := EnvFromProfile(nil)
+	if ok {
+		t.Fatalf("EnvFromProfile(nil) ok = true, want false")
+	}
+	if got != nil {
+		t.Fatalf("EnvFromProfile(nil) = %+v, want nil", got)
+	}
+}
+
+func TestEnvFromProfile_EmptyEnv(t *testing.T) {
+	profile := &aiv1alpha2.GPUProfileSpec{Architecture: "gfx1100"}
+	got, ok := EnvFromProfile(profile)
+	if ok {
+		t.Fatalf("EnvFromProfile(profile w/o env) ok = true, want false")
+	}
+	if got != nil {
+		t.Fatalf("EnvFromProfile(profile w/o env) = %+v, want nil", got)
+	}
+}
+
 func TestQuantizerImageFromProfile_NormalizesFormatCase(t *testing.T) {
 	profile := &aiv1alpha2.GPUProfileSpec{
 		Quantization: &aiv1alpha2.QuantizationProfile{

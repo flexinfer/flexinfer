@@ -192,11 +192,13 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	args := b.Args(spec)
 	env := b.Env(spec)
 
-	// Merge GPUProfile env vars (override hardcoded ROCmEnvVars with profile-declared env).
-	if r.GPUProfiles != nil {
-		if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok && len(profile.Env) > 0 {
-			env = mergeEnv(env, profile.Env)
-		}
+	// Override hardcoded ROCmEnvVars (baked into b.Env()) with GPUProfile-declared
+	// env when present. backend.ResolveBackendROCmEnv enforces the GPUProfile-first
+	// contract: when profile.Env is set it is returned; otherwise it falls through
+	// to ROCmEnvVars(arch), which b.Env() already injected — so no merge is needed
+	// in the fallback case.
+	if profileEnv, ok := backend.EnvFromProfile(profileSpec); ok {
+		env = mergeEnv(env, profileEnv)
 	}
 	probe := b.ReadinessProbe()
 	startupProbe := b.StartupProbe()

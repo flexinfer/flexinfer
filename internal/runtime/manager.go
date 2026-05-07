@@ -178,6 +178,12 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	env := b.Env(spec)
 
 	// Add architecture-specific env vars for AMD.
+	//
+	// ROCmEnvVars provides the in-code fallback. GPUProfile-declared env is
+	// applied later via overlayEnvVars(req.Env) at the end of this block (the
+	// payload builder injects profile.Env into req.Env), so profile entries
+	// override these baseline values per the GPUProfile-first contract — see
+	// backend.ResolveBackendROCmEnv.
 	if m.gpuVendor == backend.GPUVendorAMD {
 		env = append(env, backend.ROCmEnvVars(m.gpuArch)...)
 		env = append(env, backend.DeviceIsolationEnvVars(spec)...)

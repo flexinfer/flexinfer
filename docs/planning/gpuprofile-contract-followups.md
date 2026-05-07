@@ -12,23 +12,35 @@ profile-with-empty-image).
 The next agent should keep the slices small and shippable. Pick the highest
 priority item, ship it, then update this doc.
 
-## Priority 1 — Push GPUProfile-first into env-vars on the runtime/Job paths
+## Priority 1 — Push GPUProfile-first into env-vars on the runtime/Job paths — COMPLETED
 
-`controllers/model_runtime.go` and `pkg/quantization/gpu_job.go` still call
-`backend.ROCmEnvVars(arch)` (`backend/interface.go:299`) before merging
-`profile.Env`. That ordering means the in-code switch on `gfx110*/gfx90a/gfx942/gfx906`
-"wins" until the controller-side merge fires later. The contract should be:
-profile env declarations are authoritative for the architectures they cover,
-and `ROCmEnvVars` is only consulted when the profile is nil OR has no env entries.
+Shipped in `feat/gpuprofile-env-helper` (slice 2).
 
-Files to touch:
-- `backend/interface.go:299-353` (`ROCmEnvVars` switch)
-- `controllers/model_deployment.go:189-196` (env merge)
-- `controllers/model_runtime.go` (mirror the same merge order)
-- `pkg/quantization/gpu_job.go` (job env)
+`backend.ResolveBackendROCmEnv(profile, vendor, arch)` (and the underlying
+`backend.EnvFromProfile(profile)` accessor) live next to `ResolveBackendImage`
+in `backend/gpu_compat.go`. Precedence: `profile.Env` (when non-empty) wins;
+otherwise the helper falls through to `backend.ROCmEnvVars(arch)` for AMD
+vendors (and returns nil for other vendors so ROCm env never leaks into NVIDIA
+or CPU pods).
 
-Add a `backend.ResolveBackendEnv(profile, vendor, arch)` helper alongside
-`ResolveBackendImage` and migrate all three callers in one MR.
+Migrated callers:
+
+- `controllers/model_deployment.go` now overlays `profile.Env` on top of the
+  ROCmEnvVars baseline that `b.Env(spec)` already injects. The merge is a
+  no-op when the profile declares no env entries, which makes the
+  GPUProfile-first contract explicit at the call site.
+- `pkg/runtime/payload.go::applyGPUProfileRuntimeEnv` pushes `profile.Env`
+  into the runtime load payload so `internal/runtime/manager.go`'s
+  `overlayEnvVars(req.Env)` step overrides the in-code ROCmEnvVars baseline.
+  This was the actual gap on the runtime path — previously profile env was
+  never plumbed into the runtime load request.
+- `internal/runtime/manager.go` keeps its `backend.ROCmEnvVars(m.gpuArch)`
+  call as the in-code fallback. A comment now documents that profile env
+  arrives via `req.Env` and overrides this baseline.
+
+Tests in `backend/gpu_compat_test.go` cover the four precedence states
+(profile wins, explicit nil, profile-without-env, profile-with-empty-env),
+plus a non-AMD-without-profile guard and two `EnvFromProfile` accessor cases.
 
 ## Priority 2 — Replace per-backend `Image()` rules with profile-first inside the backend
 
