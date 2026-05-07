@@ -2,6 +2,35 @@
 
 Chronological notes while executing the plan (useful for handoffs and debugging).
 
+## 2026-05-06 (round 1 closeout)
+
+### Next-round parallel plan + first-wave shipping
+
+- What changed:
+  - Added `.loom/gfx1100-gfx906-next-round-plan.md` decomposing remaining gfx1100/gfx906 work into eight tracks (A-H) for parallel sub-agent execution.
+  - Spawned four first-wave sub-agents on Tracks A, E, F, H in isolated worktrees.
+  - Tracks F (MR !273), E (MR !274), A (MR !275) merged. Track H produced a local-only investigation report at `.loom/local/qwen36-coherence-triage.md` and added a matrix pointer.
+  - Track A also produced `docs/planning/gpuprofile-contract-followups.md` with five prioritized next slices.
+- Why:
+  - The 2026-05-07 worklog deltas (gfx906 runtime paused for disk-pressure, qwen36-27b-gptq quarantined, 5930k fast-chat fallback removed) invalidated the prior single-ladder sequencing and surfaced new tracks.
+  - User asked for parallel-execution shaping of the next gfx1100/gfx906 round.
+- First-wave outcomes (concrete next moves):
+  - Track A → next slice is `ROCmEnvVars` GPUProfile-first push at `backend/interface.go:299-353`.
+  - Track E → matrix is now the canonical runtime-promotion table; four required canary rows labeled.
+  - Track F → consistency-test-only locked in; revisit when a third profile lands.
+  - Track H → one-line CRD fix queued at `deploy/modelcaches/qwen36-27b-gptq-gfx1100.yaml:87` (`dynamicExclusion: "gdn"`); confirming experiment is a `model.safetensors.index.json` grep on PVC `qwen36-27b-oci`.
+- Held for round 2:
+  - Track B (gfx906 disk-pressure unblock) — needs operator pairing on `cblevins-radeonvii`.
+  - Track C (gfx906 vLLM revive-or-retire) — coordinate with active `backlog/31-vllm-gfx906-build` worktree.
+  - Track D (gfx1100 capability push) — first concrete unlock is the qwen36 dynamic-exclusion fix from H.
+  - Track G (fast-chat resilience after 5930k MLC fallback removal).
+- Validation:
+  - `git log --oneline origin/master | head -8` shows merges 273/274/275 in sequence.
+  - Round-end `git diff --check` clean.
+- Next:
+  - Spawn round 2: Track D (qwen36 one-line fix + re-quant smoke) is the cheapest concrete win; Track A slice 2 (env-vars) extends round 1.
+  - Pair on Track B and decide Track C path before touching disk-pressure.
+
 ## 2026-05-07
 
 ### RALPH Slice 3/RG-4 bridge — gfx906 runtime digest promotion
