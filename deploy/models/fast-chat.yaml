@@ -8,13 +8,13 @@ spec:
   source: pvc://mlc-8b-abliterated-nvme-5930k/Qwen3-8B-abliterated-q4f32_1-MLC
   gpu:
     vendor: amd
-    shared: 5930k-models
-    # Fallback fast-chat; yields to glm47 (140) and qwen3-14b-claude-distill (160).
-    priority: 120
+    shared: 5930k-imagegen-textgen
+    # Fallback text lane on the second gfx1100. Higher than imagegen so text
+    # demand can preempt, but the 7900XTX route owns the default aliases.
+    priority: 220
     vramEstimateMB: 12000
   serverless:
     enabled: true
-    # Yields GPU to higher-priority models in the 5930k-models group (glm47 at 140, claude-distill at 160).
     minReplicas: 0
     idleTimeout: 5m
     coldStartTimeout: 10m
@@ -35,12 +35,12 @@ spec:
       cpu: "8"
       memory: 24Gi
   serviceLabels:
+    - fast-chat-5930k
     - fast-chat-fallback
-    - fast-text
-    - gpt-3.5-turbo
-    - copilot
+    - fast-text-5930k
   litellm:
     enabled: true
     servedModelName: qwen3-8b-fast
     aliases:
+      - fast-chat-5930k
       - fast-chat-fallback
