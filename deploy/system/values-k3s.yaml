@@ -338,7 +338,7 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx906
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:dd0a1936f350ec117da1ab6a589618a571074d6828c2ccb5e273f2f6eb195b97"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:94045d0ca4b12deb3c46bb22070f67bfedad8b719bb992e5d3ce128ad27ad597"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1
@@ -347,11 +347,12 @@ runtime:
       memoryRequest: "4Gi"
       nodeSelector:
         kubernetes.io/hostname: cblevins-radeonvii
-        # 2026-05-07: paused after repeated digest pulls drove the Radeon VII
-        # root filesystem to 100% and triggered kubelet DiskPressure evictions.
-        # Remove this selector only after the runtime image is slimmed, moved
-        # off root-backed containerd storage, or the node root LV is expanded.
-        flexinfer.ai/runtime-paused: "true"
+        # 2026-05-07: pause lifted after Track B-3 cycle 2 slim image
+        # (sha256:94045d0c, 36.9 GB extracted vs 59.2 GB before) plus moving
+        # /var/lib/flexinfer/models to /mnt/nvme/longhorn/flexinfer/models via
+        # bind-mount on the Radeon VII node. Pre-pull verified root holds at
+        # 65% (78G/127G used) post-pull. Re-pause via this annotation if the
+        # runtime image grows back into root-pressure territory.
 
 grafanaDashboard:
   enabled: true
