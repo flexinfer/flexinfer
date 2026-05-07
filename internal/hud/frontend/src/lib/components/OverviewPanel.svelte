@@ -16,6 +16,7 @@
   import { millsStore } from '../stores/mills.svelte.ts';
   import { otelStore } from '../stores/otel.svelte.ts';
   import MillsKPIRow from './Mills/MillsKPIRow.svelte';
+  import LiveSessionsCard from './LiveSessionsCard.svelte';
   import { navigateToAgentSessionOrTraces } from '../utils/drilldown.ts';
 
   const fleetPollingOwner = Symbol('OverviewPanel');
@@ -644,6 +645,11 @@
           </button>
         {/each}
       </div>
+    </section>
+
+    <!-- ═══ Live Sessions (Phase 3 spectator) ═══ -->
+    <section class="live-sessions-section">
+      <LiveSessionsCard />
     </section>
 
     <!-- ═══ Mills KPIs ═══ -->

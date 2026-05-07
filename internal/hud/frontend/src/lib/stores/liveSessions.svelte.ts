@@ -1,0 +1,284 @@
+// liveSessions store — Phase 3 of the spectator plan
+// (`.loom/99-implementation-plan-agent-telemetry-spectator-2026-05-04.md`).
+//
+// Subscribes to the daemon EventBus events emitted by Phase 2.x:
+//   - session.start / session.end          (from agentcontext + hooks)
+//   - tool.call.start / tool.call.end      (from spawn telemetry + hooks)
+//   - agent.status.change                  (from presence transitions)
+//
+// Data model: a per-agent session map keyed by `session_id`, each carrying
+// a fixed-size ring buffer of the last `RECENT_CALLS_PER_SESSION` tool calls.
+// All bookkeeping is event-driven — no polling — so the store stays cheap
+// even when many sessions are active.
+//
+// Event payloads are best-effort; missing fields fall back to safe defaults
+// rather than crashing the renderer (the producer side at
+// `cmd/loom/cmd_agent_event_emit.go` and `internal/hud/bridge/spawn_telemetry.go`
+// guarantees redaction at TierPublic before publication).
+
+import { eventStore, type SSEEvent } from './events.svelte.ts';
+
+/** Maximum tool calls retained per session in the ring buffer. */
+export const RECENT_CALLS_PER_SESSION = 20;
+
+/** A session entry stays "recently ended" this many ms before disappearing. */
+const ENDED_RETENTION_MS = 30_000;
+
+export type AgentStatus = 'active' | 'idle' | 'offline' | 'expired' | 'unknown';
+
+export interface ToolCall {
+  call_id: string;
+  tool_name: string;
+  /** Server name for MCP-routed tools; empty for builtin/native tools. */
+  server_name?: string;
+  args_redacted?: Record<string, unknown>;
+  /** Set on tool.call.end — undefined while the call is in flight. */
+  duration_ms?: number;
+  exit_code?: number;
+  result_summary?: string;
+  error?: string;
+  status?: string;
+  /** Wall-clock string from the producer (ISO-8601). */
+  started_at?: string;
+  ended_at?: string;
+  /** True until tool.call.end arrives. */
+  in_flight: boolean;
+}
+
+export interface LiveSession {
+  session_id: string;
+  agent_id: string;
+  agent_status: AgentStatus;
+  /** Most recent first. Capped at RECENT_CALLS_PER_SESSION. */
+  recent_calls: ToolCall[];
+  /** Wall-clock when this session entry was first seen by the store. */
+  first_seen: number;
+  /** Wall-clock of most recent activity (call/start/status change). */
+  last_activity: number;
+  /** Set when a session.end event arrives; entry is reaped after ENDED_RETENTION_MS. */
+  ended_at?: number;
+}
+
+class LiveSessionsStore {
+  /** Keyed by session_id. Sessions appear when any event mentions them. */
+  sessions = $state<Map<string, LiveSession>>(new Map());
+
+  /**
+   * Monotonic event counter. Used by the card to render a "last update X ago"
+   * indicator and by tests to assert events flowed through.
+   */
+  eventCount = $state(0);
+
+  private unsubs: Array<() => void> = [];
+  private reapTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Connect to the SSE event stream (idempotent). */
+  connect() {
+    if (this.unsubs.length > 0) return;
+
+    this.unsubs.push(eventStore.on('session.start', (e) => this.onSessionStart(e)));
+    this.unsubs.push(eventStore.on('session.end', (e) => this.onSessionEnd(e)));
+    this.unsubs.push(eventStore.on('agent.status.change', (e) => this.onStatusChange(e)));
+    this.unsubs.push(eventStore.on('tool.call.start', (e) => this.onToolCallStart(e)));
+    this.unsubs.push(eventStore.on('tool.call.end', (e) => this.onToolCallEnd(e)));
+
+    if (!this.reapTimer) {
+      this.reapTimer = setInterval(() => this.reapEnded(), 5_000);
+    }
+  }
+
+  disconnect() {
+    for (const u of this.unsubs) u();
+    this.unsubs = [];
+    if (this.reapTimer) {
+      clearInterval(this.reapTimer);
+      this.reapTimer = null;
+    }
+  }
+
+  /** Active sessions sorted by most-recent activity desc. */
+  get visibleSessions(): LiveSession[] {
+    return Array.from(this.sessions.values())
+      .filter((s) => s.ended_at === undefined || Date.now() - s.ended_at < ENDED_RETENTION_MS)
+      .sort((a, b) => b.last_activity - a.last_activity);
+  }
+
+  get activeSessionCount(): number {
+    return this.visibleSessions.filter((s) => s.ended_at === undefined).length;
+  }
+
+  /** In-flight tool calls across all visible sessions. */
+  get inFlightCallCount(): number {
+    let n = 0;
+    for (const s of this.visibleSessions) {
+      for (const c of s.recent_calls) {
+        if (c.in_flight) n++;
+      }
+    }
+    return n;
+  }
+
+  /** Reset state — used by tests. */
+  reset() {
+    this.sessions = new Map();
+    this.eventCount = 0;
+  }
+
+  private touch() {
+    this.eventCount++;
+    // Replace the map reference so $state reactivity picks up the change.
+    this.sessions = new Map(this.sessions);
+  }
+
+  private getOrCreate(sessionID: string, agentID: string): LiveSession {
+    const existing = this.sessions.get(sessionID);
+    if (existing) {
+      // Late-arriving agent_id wins over the empty placeholder we may have
+      // created when the first event for this session lacked one.
+      if (!existing.agent_id && agentID) {
+        existing.agent_id = agentID;
+      }
+      return existing;
+    }
+    const now = Date.now();
+    const fresh: LiveSession = {
+      session_id: sessionID,
+      agent_id: agentID,
+      agent_status: 'unknown',
+      recent_calls: [],
+      first_seen: now,
+      last_activity: now,
+    };
+    this.sessions.set(sessionID, fresh);
+    return fresh;
+  }
+
+  private onSessionStart(e: SSEEvent) {
+    const sid = stringField(e.data, 'session_id');
+    const aid = stringField(e.data, 'agent_id');
+    if (!sid) return;
+    const session = this.getOrCreate(sid, aid);
+    session.last_activity = Date.now();
+    session.ended_at = undefined; // re-opened
+    this.touch();
+  }
+
+  private onSessionEnd(e: SSEEvent) {
+    const sid = stringField(e.data, 'session_id');
+    if (!sid) return;
+    const session = this.sessions.get(sid);
+    if (!session) return; // never seen — ignore
+    session.ended_at = Date.now();
+    session.last_activity = Date.now();
+    this.touch();
+  }
+
+  private onStatusChange(e: SSEEvent) {
+    const aid = stringField(e.data, 'agent_id');
+    const status = stringField(e.data, 'status') as AgentStatus;
+    if (!aid || !status) return;
+    // agent.status.change is keyed on agent_id, not session_id. Update every
+    // session belonging to this agent.
+    for (const s of this.sessions.values()) {
+      if (s.agent_id === aid) {
+        s.agent_status = status;
+        s.last_activity = Date.now();
+      }
+    }
+    this.touch();
+  }
+
+  private onToolCallStart(e: SSEEvent) {
+    const sid = stringField(e.data, 'session_id');
+    const aid = stringField(e.data, 'agent_id');
+    const callID = stringField(e.data, 'call_id');
+    const toolName = stringField(e.data, 'tool_name');
+    if (!sid || !callID) return;
+    const session = this.getOrCreate(sid, aid);
+    const call: ToolCall = {
+      call_id: callID,
+      tool_name: toolName,
+      server_name: stringField(e.data, 'server_name') || undefined,
+      args_redacted:
+        (e.data.args_redacted as Record<string, unknown>) ?? undefined,
+      started_at: stringField(e.data, 'started_at') || undefined,
+      in_flight: true,
+    };
+    // Push at front (most recent first) and trim the tail.
+    session.recent_calls.unshift(call);
+    if (session.recent_calls.length > RECENT_CALLS_PER_SESSION) {
+      session.recent_calls.length = RECENT_CALLS_PER_SESSION;
+    }
+    session.last_activity = Date.now();
+    this.touch();
+  }
+
+  private onToolCallEnd(e: SSEEvent) {
+    const sid = stringField(e.data, 'session_id');
+    const callID = stringField(e.data, 'call_id');
+    if (!sid) return;
+    const session = this.sessions.get(sid);
+    if (!session) return;
+    const idx = callID ? session.recent_calls.findIndex((c) => c.call_id === callID) : -1;
+    if (idx >= 0) {
+      const call = session.recent_calls[idx];
+      call.in_flight = false;
+      const dur = numberField(e.data, 'duration_ms');
+      if (dur !== undefined) call.duration_ms = dur;
+      const ec = numberField(e.data, 'exit_code');
+      if (ec !== undefined) call.exit_code = ec;
+      call.result_summary = stringField(e.data, 'result_summary') || undefined;
+      call.error = stringField(e.data, 'error') || undefined;
+      call.status = stringField(e.data, 'status') || undefined;
+      call.ended_at = stringField(e.data, 'ended_at') || undefined;
+    } else {
+      // No matching start — could be a coarse codex.turn event without prior
+      // start. Synthesize a closed entry so the user sees activity.
+      const tool = stringField(e.data, 'tool_name') || 'unknown';
+      const synthetic: ToolCall = {
+        call_id: callID || `synthetic-${Date.now()}`,
+        tool_name: tool,
+        duration_ms: numberField(e.data, 'duration_ms'),
+        exit_code: numberField(e.data, 'exit_code'),
+        result_summary: stringField(e.data, 'result_summary') || undefined,
+        error: stringField(e.data, 'error') || undefined,
+        status: stringField(e.data, 'status') || undefined,
+        ended_at: stringField(e.data, 'ended_at') || undefined,
+        in_flight: false,
+      };
+      session.recent_calls.unshift(synthetic);
+      if (session.recent_calls.length > RECENT_CALLS_PER_SESSION) {
+        session.recent_calls.length = RECENT_CALLS_PER_SESSION;
+      }
+    }
+    session.last_activity = Date.now();
+    this.touch();
+  }
+
+  private reapEnded() {
+    let dirty = false;
+    const now = Date.now();
+    for (const [sid, s] of this.sessions) {
+      if (s.ended_at !== undefined && now - s.ended_at >= ENDED_RETENTION_MS) {
+        this.sessions.delete(sid);
+        dirty = true;
+      }
+    }
+    if (dirty) this.touch();
+  }
+}
+
+export const liveSessionsStore = new LiveSessionsStore();
+
+// --- Internal helpers ---
+
+function stringField(data: Record<string, unknown>, key: string): string {
+  const v = data?.[key];
+  return typeof v === 'string' ? v : '';
+}
+
+function numberField(data: Record<string, unknown>, key: string): number | undefined {
+  const v = data?.[key];
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  return undefined;
+}
