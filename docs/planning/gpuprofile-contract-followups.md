@@ -130,17 +130,79 @@ Files migrated:
 - `pkg/quantization/image.go:84-100` — `gfx906` hardcoded branch removed,
   `ResolveImageFromProfile` added at top of file (~33 LOC).
 
-## Priority 4 — `BackendCanary` status annotation contract (deferred)
+## Priority 4 — `BackendCanary` status annotation contract — COMPLETED
 
-The plan recommended a `BackendCanary` status annotation rather than a new
-spec enum. This MR did not add it because none of the migrated callers needed
-it yet. When the `gfx906`/`gfx1100` canary lanes start writing per-backend
-canary results, add a typed helper:
+Shipped in `feat/backend-canary-annotations` (slice 6 of Track A — schema-only,
+no consumers wired). The slice ships the contract recommended in slice 1 of
+the gfx1100/gfx906 plan: canary state lives as ObjectMeta annotations on a
+GPUProfile, not as a new `BackendProfile.Support` enum value.
 
-- `func SetBackendCanary(profile *GPUProfile, backendName, status, reason string)` in `api/v1alpha2/gpuprofile_types.go`
-- Stored under `metadata.annotations["ai.flexinfer.io/canary.<backend>"]` to avoid schema churn.
+Annotation contract (three keys per backend, scoped per-arch via the GPUProfile
+the annotations live on):
 
-Wire consumers in a separate MR — keep this slice schema-only with one unit test.
+- `flexinfer.ai/backend-canary-<backend>          : "true" | "false"`
+  Whether the backend is in canary mode on this GPU architecture. Absent or
+  any non-"true" value (case-insensitive, whitespace-tolerant) is "not canary".
+- `flexinfer.ai/backend-canary-<backend>-since    : RFC3339 timestamp`
+  When the canary state was last set. Refreshed on every Set call. Absent or
+  unparseable -> zero time.
+- `flexinfer.ai/backend-canary-<backend>-evidence : URL or path string`
+  Free-form pointer to the validation matrix row, runbook, MR, or dashboard
+  documenting why canary mode is active. Absent -> "".
+
+The three keys move together: `SetBackendCanary` writes all three;
+`ClearBackendCanary` deletes all three; `GetBackendCanary` surfaces the tuple.
+
+Helpers (in `api/v1alpha2/gpuprofile_canary.go`):
+
+- `GetBackendCanary(profile *GPUProfile, backend string) (isCanary bool, since time.Time, evidence string)`
+  — returns the canary tuple, treating partial/malformed annotations
+  conservatively (parse failures collapse to false / zero / "").
+- `SetBackendCanary(profile *GPUProfile, backend string, evidence string)`
+  — annotates the profile in-memory; refreshes "-since" on every call so
+  Set can also serve as "renew evidence".
+- `ClearBackendCanary(profile *GPUProfile, backend string)` — deletes the
+  annotation triple. Other annotations on the profile are preserved.
+
+The helpers mutate the GPUProfile object in memory only; controller callers
+are responsible for persisting the change via Update or Patch. This keeps
+the contract testable without a fake client and matches the slice-1..5
+helper style.
+
+Tests in `api/v1alpha2/gpuprofile_canary_test.go` (12 test functions, 29
+subcases) cover: annotation key formatting, no-annotations / empty-backend
+zero return, Set→Get roundtrip, Set overwrite refreshes the timestamp, Set
+nil/empty no-op, Clear removes all three keys, Clear preserves unrelated
+annotations, Clear nil/empty no-op, multiple backends coexist on the same
+profile (and per-backend Clear isolates), and malformed-annotation parsing
+(boolean false, whitespace+case, garbage truthy, unparseable timestamp,
+since-only without evidence).
+
+Files added:
+- `api/v1alpha2/gpuprofile_canary.go` — annotation key constants, three
+  helpers, godoc-documented contract.
+- `api/v1alpha2/gpuprofile_canary_test.go` — unit tests.
+
+No CRD schema changes — annotations are sufficient for status as the design
+intended. `make manifests` produced only controller-gen version churn, which
+was restored before commit.
+
+**Consumers are not wired in this MR**. The next slice should layer
+controller-side checks on top of this contract:
+
+- `controllers/model_controller.go::validateBackendGPUCompatibility` (or a
+  sibling step) should call `GetBackendCanary(profile, backendName)` and emit
+  a `BackendCanary` event when serving on a canary backend, mirroring the
+  existing `ExperimentalGPUSupport` pattern.
+- `scheduler/scheduler.go` may want a defense-in-depth check, though the
+  scheduler currently has no GPUProfile cache in scope (same caveat as slice
+  5's `LookupGPUArchSupport` call).
+- A tiny `kubectl flexinfer canary <gpuprofile> <backend> --evidence=<url>`
+  CLI surface (or operator-facing runbook step) that calls Set/Clear via
+  the controller client.
+
+Keep that follow-up small: one consumer + one event + one test, mirroring
+the slice-1..5 cadence.
 
 ## Priority 5 — Replace `BackendGPUCompatibility` map with profile-only lookup — COMPLETED
 
