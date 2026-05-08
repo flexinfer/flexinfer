@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/crb2nu/loom/pkg/aimodels"
 )
 
 // Config holds all coordinator configuration.
@@ -59,10 +61,13 @@ type Config struct {
 	PlannerTimeout   time.Duration // Planner gets longer timeout (API only).
 }
 
-// DefaultConfig returns a Config with sensible defaults.
+// DefaultConfig returns a Config with sensible defaults. The default
+// model resolves through pkg/aimodels (RoleCoordinatorDefault) so the
+// coordinator and weaver share a single source of truth for what model
+// is canonical on this cluster.
 func DefaultConfig() Config {
 	return Config{
-		DefaultModel:  "qwen3-8b",
+		DefaultModel:  aimodels.DefaultResolver().ResolveOrDefault(aimodels.RoleCoordinatorDefault, "qwen3-8b"),
 		FallbackModel: "",
 		PlannerModel:  "",
 

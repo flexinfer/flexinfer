@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crb2nu/loom/pkg/aimodels"
 	"github.com/crb2nu/loom/pkg/httpclient"
 	"github.com/crb2nu/loom/pkg/mills/gates"
 	"github.com/crb2nu/loom/pkg/mills/pipeline"
@@ -35,10 +36,11 @@ type FlexInferConfig struct {
 	// Trailing slash is tolerated.
 	ProxyURL string
 	// JudgeModel is the model id the proxy resolves for rubric calls.
-	// Defaults to "qwen3-8b-instruct" — small, instruction-tuned, fast.
+	// Empty resolves through pkg/aimodels (RoleMillsJudge).
 	JudgeModel string
-	// WeaverModel may be larger (more grounded research). Defaults to
-	// JudgeModel when unset.
+	// WeaverModel may be larger (more grounded research). Empty
+	// resolves through pkg/aimodels (RoleMillsResearch); if that is
+	// also empty, falls back to JudgeModel.
 	WeaverModel string
 	// Token, when set, is sent as a Bearer auth header (the proxy
 	// supports OAuth bearer in front of vLLM).
@@ -61,10 +63,10 @@ func NewFlexInferClient(cfg FlexInferConfig) (*FlexInferClient, error) {
 		return nil, errors.New("flexinfer: ProxyURL required")
 	}
 	if cfg.JudgeModel == "" {
-		cfg.JudgeModel = "qwen3-8b-instruct"
+		cfg.JudgeModel = aimodels.DefaultResolver().ResolveOrDefault(aimodels.RoleMillsJudge, "qwen3-8b")
 	}
 	if cfg.WeaverModel == "" {
-		cfg.WeaverModel = cfg.JudgeModel
+		cfg.WeaverModel = aimodels.DefaultResolver().ResolveOrDefault(aimodels.RoleMillsResearch, cfg.JudgeModel)
 	}
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second

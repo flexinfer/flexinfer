@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crb2nu/loom/pkg/aimodels"
 	"github.com/crb2nu/loom/pkg/env"
 	"gopkg.in/yaml.v3"
 )
@@ -31,13 +32,22 @@ const (
 	EnvTimeoutDeprecated       = "ORCHESTRA_TIMEOUT"
 	EnvMaxConcurrentDeprecated = "ORCHESTRA_MAX_CONCURRENT"
 
-	DefaultRouterModel   = "gemma-4-turboquant"
-	DefaultSubagentModel = "gemma-4-turboquant"
 	DefaultMaxIterations = 8
 	DefaultTokenBudget   = 4096
 	DefaultTimeout       = 30 * time.Second
 	DefaultMaxConcurrent = 4
 	DefaultHTTPTimeout   = 60 * time.Second
+)
+
+// DefaultRouterModel and DefaultSubagentModel resolve through pkg/aimodels
+// so the canonical model names live in one place. They retain string
+// values to keep API-compat with callers that read them directly.
+//
+// Operators override at runtime via WEAVER_ROUTER_MODEL /
+// WEAVER_SUBAGENT_MODEL env vars or ~/.config/loom/aimodel-roles.yaml.
+var (
+	DefaultRouterModel   = aimodels.DefaultResolver().ResolveOrDefault(aimodels.RoleWeaverRouter, "qwen3-1p7b-tools-radeonvii")
+	DefaultSubagentModel = aimodels.DefaultResolver().ResolveOrDefault(aimodels.RoleWeaverSubagent, "qwen3-8b")
 )
 
 // ModelBehavior holds model-specific adjustments applied before LLM calls.
