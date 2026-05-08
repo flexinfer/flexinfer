@@ -15,6 +15,9 @@ import (
 	"time"
 
 	"gitlab.flexinfer.ai/libs/fi-accel/go/fiaccel"
+
+	healthpkg "github.com/crb2nu/loom/internal/visibility/contracts/health"
+	statuspkg "github.com/crb2nu/loom/internal/visibility/contracts/status"
 )
 
 // mockDaemon creates a mock daemon that speaks newline-delimited JSON-RPC
@@ -236,7 +239,7 @@ func TestDaemonClient_Status(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 
 	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
-		return &StatusResult{
+		return &statuspkg.DaemonRPCStatus{
 			Running:     true,
 			Servers:     5,
 			ActiveConns: 2,
@@ -273,10 +276,10 @@ func TestDaemonClient_Health(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 
 	handlers.handle("loom/health", func(_ json.RawMessage) (any, error) {
-		return &HealthResult{
-			Servers: map[string]ServerHealth{
+		return &healthpkg.HealthResult{
+			Servers: map[string]healthpkg.ServerHealth{
 				"git": {
-					Local: HealthEntry{
+					Local: healthpkg.HealthEntry{
 						Healthy:      true,
 						AvgLatencyMs: 12.5,
 					},
@@ -316,26 +319,26 @@ func TestDaemonClient_Health_WithDivergence(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 
 	handlers.handle("loom/health", func(_ json.RawMessage) (any, error) {
-		return &HealthResult{
-			Servers: map[string]ServerHealth{
+		return &healthpkg.HealthResult{
+			Servers: map[string]healthpkg.ServerHealth{
 				"git": {
-					Local: HealthEntry{
+					Local: healthpkg.HealthEntry{
 						Healthy:      true,
 						AvgLatencyMs: 12.5,
 					},
-					Monitor: &HealthEntry{
+					Monitor: &healthpkg.HealthEntry{
 						Healthy:     true,
 						ConsecFails: 0,
 					},
 					Target: "local",
-					Divergence: &HealthDivergence{
+					Divergence: &healthpkg.HealthDivergence{
 						MonitorHealthy:  true,
 						RouterAvailable: false,
 						Reason:          "monitor_healthy_router_unavailable",
 					},
 				},
 			},
-			Divergence: []HealthDivergenceEntry{
+			Divergence: []healthpkg.HealthDivergenceEntry{
 				{Server: "git", Reason: "monitor_healthy_router_unavailable"},
 			},
 		}, nil
@@ -388,10 +391,10 @@ func TestDaemonClient_Health_NoDivergence(t *testing.T) {
 	sockPath, handlers := mockDaemon(t)
 
 	handlers.handle("loom/health", func(_ json.RawMessage) (any, error) {
-		return &HealthResult{
-			Servers: map[string]ServerHealth{
+		return &healthpkg.HealthResult{
+			Servers: map[string]healthpkg.ServerHealth{
 				"git": {
-					Local:  HealthEntry{Healthy: true},
+					Local:  healthpkg.HealthEntry{Healthy: true},
 					Target: "local",
 				},
 			},
@@ -458,7 +461,7 @@ func TestDaemonClient_Reconnect(t *testing.T) {
 	callCount := 0
 	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
 		callCount++
-		return &StatusResult{Running: true, Servers: callCount}, nil
+		return &statuspkg.DaemonRPCStatus{Running: true, Servers: callCount}, nil
 	})
 
 	client := NewDaemonClient(sockPath, nil)
@@ -499,7 +502,7 @@ func TestDaemonClient_Timeout(t *testing.T) {
 	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
 		// Simulate slow response — sleep longer than the client timeout.
 		time.Sleep(250 * time.Millisecond)
-		return &StatusResult{Running: true}, nil
+		return &statuspkg.DaemonRPCStatus{Running: true}, nil
 	})
 
 	client := NewDaemonClient(sockPath, nil)

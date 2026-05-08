@@ -392,36 +392,18 @@ func (c *DaemonClient) callLocked(method string, params any) (json.RawMessage, e
 
 // --- Typed RPC result structs ---
 
-// StatusResult holds the response from loom/status.
+// EPIC 2 close-out (UNIFY-1d): Status/Health type aliases that lived here
+// as "Retained for backward compat during EPIC 2 (#66)" were removed once
+// every consumer (cmd/, internal/, pkg/, services/loom, apps/) was
+// confirmed clean of bridge.{StatusResult,HealthEntry,HealthDivergence,
+// HealthDivergenceEntry,HealthResult,ServerHealth} references. Use
+// internal/visibility/contracts/{status,health} directly.
 //
-// Deprecated: use internal/visibility/contracts/status.DaemonRPCStatus.
-// Retained as an alias for backward compatibility during EPIC 2 (#66).
-type StatusResult = statuspkg.DaemonRPCStatus
-
-// HealthEntry describes the health of one endpoint (local or hub).
-//
-// Deprecated: use internal/visibility/contracts/health.HealthEntry.
-type HealthEntry = healthpkg.HealthEntry
-
-// HealthDivergence represents a disagreement between the health monitor and the router.
-//
-// Deprecated: use internal/visibility/contracts/health.HealthDivergence.
-type HealthDivergence = healthpkg.HealthDivergence
-
-// HealthDivergenceEntry is a top-level divergence summary entry.
-//
-// Deprecated: use internal/visibility/contracts/health.HealthDivergenceEntry.
-type HealthDivergenceEntry = healthpkg.HealthDivergenceEntry
-
-// ServerHealth contains local and hub health plus the target.
-//
-// Deprecated: use internal/visibility/contracts/health.ServerHealth.
-type ServerHealth = healthpkg.ServerHealth
-
-// HealthResult holds the response from loom/health.
-//
-// Deprecated: use internal/visibility/contracts/health.HealthResult.
-type HealthResult = healthpkg.HealthResult
+// Cost and Presence aliases remain because bridge.DaemonClient.CostStats()
+// and bridge.AgentBridge.PresenceList() still return them as method
+// signatures. A follow-up slice can change those signatures to costpkg.*
+// / presencepkg.* directly (the alias means no caller needs updating —
+// the types are identical).
 
 // ServerInfo describes a registered MCP server.
 type ServerInfo struct {
@@ -471,12 +453,12 @@ type CacheStatsResult struct {
 // --- Typed RPC methods ---
 
 // Status returns the daemon status.
-func (c *DaemonClient) Status() (*StatusResult, error) {
+func (c *DaemonClient) Status() (*statuspkg.DaemonRPCStatus, error) {
 	raw, err := c.Call("loom/status", nil)
 	if err != nil {
 		return nil, err
 	}
-	var result StatusResult
+	var result statuspkg.DaemonRPCStatus
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, fmt.Errorf("unmarshal status: %w", err)
 	}
@@ -484,12 +466,12 @@ func (c *DaemonClient) Status() (*StatusResult, error) {
 }
 
 // Health returns the health of all servers.
-func (c *DaemonClient) Health() (*HealthResult, error) {
+func (c *DaemonClient) Health() (*healthpkg.HealthResult, error) {
 	raw, err := c.Call("loom/health", nil)
 	if err != nil {
 		return nil, err
 	}
-	var result HealthResult
+	var result healthpkg.HealthResult
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, fmt.Errorf("unmarshal health: %w", err)
 	}
