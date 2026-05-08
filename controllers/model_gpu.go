@@ -40,15 +40,20 @@ func (r *ModelReconciler) validateVRAMFit(model *aiv1alpha2.Model, b backend.Bac
 		return nil
 	}
 
-	// Try GPUProfile VRAM first, then fall back to hardcoded compatibility matrix.
-	var maxVRAMMB int
+	// Resolve max VRAM via the GPUProfile-first cascade. Profile.VRAMMB wins;
+	// falls through to BackendGPUCompatibility for nodes without a profile.
+	var profileSpec *aiv1alpha2.GPUProfileSpec
 	if r.GPUProfiles != nil {
-		if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok && profile.VRAMMB > 0 {
-			maxVRAMMB = int(profile.VRAMMB)
+		if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok {
+			profileSpec = profile
 		}
 	}
+	var maxVRAMMB int
+	if profileSpec != nil && profileSpec.VRAMMB > 0 {
+		maxVRAMMB = int(profileSpec.VRAMMB)
+	}
 	if maxVRAMMB == 0 {
-		support, found := backend.LookupGPUArchSupport(b.Name(), gpuArch)
+		support, found := backend.ResolveBackendGPUSupport(profileSpec, b.Name(), gpuArch)
 		if !found || support.MaxVRAMMB <= 0 {
 			return nil
 		}
@@ -81,19 +86,16 @@ func (r *ModelReconciler) validateVRAMFit(model *aiv1alpha2.Model, b backend.Bac
 // validateBackendGPUCompatibility checks if the backend is compatible with the target GPU arch.
 // Uses the GPU compatibility matrix for data-driven validation with fallback to architecture-specific checks.
 func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, gpuArch string) error {
-	// Try GPUProfile first, then fall back to hardcoded compatibility matrix.
+	// Resolve via the GPUProfile-first cascade. profile.Backends[name].Support
+	// wins; falls through to BackendGPUCompatibility for nodes without a
+	// profile.
 	var profileSpec *aiv1alpha2.GPUProfileSpec
-	var support backend.GPUArchSupport
-	var found bool
 	if r.GPUProfiles != nil {
 		if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok {
 			profileSpec = profile
-			support, found = backend.LookupGPUArchSupportFromProfile(profile, b.Name())
 		}
 	}
-	if !found {
-		support, found = backend.LookupGPUArchSupport(b.Name(), gpuArch)
-	}
+	support, found := backend.ResolveBackendGPUSupport(profileSpec, b.Name(), gpuArch)
 	if found {
 		switch support.Level {
 		case backend.SupportUnsupported:
