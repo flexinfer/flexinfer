@@ -56,6 +56,15 @@ public enum Endpoint: Sendable {
     case millsPipelineRuns
     case millsKPIs(window: String)
 
+    // Phase 7 / weaver-qwen3 S7b — Weaver screen reads. Same proxy
+    // pattern as Mills: HUD's /api/weaver/* (status/history/metrics)
+    // and /api/aimodels/roles. Read-only; the daemon-without-weaver
+    // case returns `{"enabled": false}`, not 404 or 503.
+    case weaverStatus
+    case weaverHistory
+    case weaverMetrics
+    case aimodelsRoles
+
     var method: String {
         switch self {
         case .ping, .dashboard, .controlPlane, .alertsPolicy, .sessions, .sessionDetail, .sessionEvents,
@@ -65,7 +74,8 @@ public enum Endpoint: Sendable {
              .eventsStream, .audit, .sandbox, .spawnList, .spawnConfig, .spawnDetail, .agents,
              .pipelines, .handoffs, .namespaces,
              .spawnTelemetry, .spawnTelemetryTools, .spawnTelemetryFiles, .spawnTelemetryErrors,
-             .millsPipelineRuns, .millsKPIs:
+             .millsPipelineRuns, .millsKPIs,
+             .weaverStatus, .weaverHistory, .weaverMetrics, .aimodelsRoles:
             return "GET"
         case .createSession, .endSession, .pushRegister, .pushUnregister,
              .sandboxStart, .sandboxStop, .spawnAgent, .spawnStop,
@@ -173,6 +183,14 @@ public enum Endpoint: Sendable {
             return "/api/mills/pipeline/runs"
         case .millsKPIs:
             return "/api/mills/kpis"
+        case .weaverStatus:
+            return "/api/weaver/status"
+        case .weaverHistory:
+            return "/api/weaver/history"
+        case .weaverMetrics:
+            return "/api/weaver/metrics"
+        case .aimodelsRoles:
+            return "/api/aimodels/roles"
         }
     }
 
