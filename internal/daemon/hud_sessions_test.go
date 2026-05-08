@@ -22,6 +22,7 @@ type fakeHUDApp struct {
 func (f *fakeHUDApp) StopMonitors()                             {}
 func (f *fakeHUDApp) RefreshMonitors()                          {}
 func (f *fakeHUDApp) SpawnOrchestrator() *hud.SpawnOrchestrator { return f.orch }
+func (f *fakeHUDApp) SetAdminToken(string)                      {}
 
 func TestHandleHUDSessions_EmptyWhenNoSessionManager(t *testing.T) {
 	d := &Daemon{daemonEpoch: 7, logger: slog.Default()}

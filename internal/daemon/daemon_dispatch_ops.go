@@ -91,6 +91,13 @@ func (d *Daemon) handleCostStats(ctx context.Context, msg *mcp.Message) (*mcp.Me
 func (d *Daemon) Reload(ctx context.Context) error {
 	d.logger.Info("reloading configuration")
 
+	// Refresh runtime-mutable env settings (HUD admin token, etc.)
+	// before touching the registry — keeps an out-of-band
+	// X-Admin-Token rotation effective even if registry reload fails.
+	if err := d.reloadEnvFile(); err != nil {
+		d.logger.Warn("env file reload failed", "path", d.cfg.EnvFilePath, "error", err)
+	}
+
 	// Reload registry
 	if d.cfg.RegistryPath != "" {
 		oldReg := d.registry

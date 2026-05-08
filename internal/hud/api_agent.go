@@ -76,7 +76,7 @@ func extractStringField(payload any, key string) (string, bool) {
 
 // requireAdminToken validates the admin token from request headers.
 func (a *App) requireAdminToken(w http.ResponseWriter, r *http.Request) bool {
-	expected := strings.TrimSpace(a.config.AdminToken)
+	expected := strings.TrimSpace(a.AdminToken())
 	if expected == "" {
 		a.writeError(w, http.StatusForbidden, "admin token is not configured; set HUD_ADMIN_TOKEN", nil)
 		return false

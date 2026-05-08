@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/pprof"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
@@ -116,6 +117,13 @@ type App struct {
 	cacheBackend string // "memory" or "redis" — exposed in /api/health.
 	logger       *slog.Logger
 
+	// runtimeAdminToken is a hot-reloadable override for config.AdminToken
+	// populated by SIGHUP-driven env-file reload (see daemon.Reload).
+	// When non-nil it takes precedence over the static config field; when
+	// nil, AdminToken() falls back to config.AdminToken so initial
+	// startup and tests that mutate config.AdminToken directly keep working.
+	runtimeAdminToken atomic.Pointer[string]
+
 	// Background monitors — poll the bridge and maintain cached snapshots.
 	fleetMonitor         *monitor.FleetMonitor
 	healthMonitor        *monitor.HealthMonitor
@@ -187,6 +195,29 @@ const (
 // so callers can reach Spawn/Wait/GetSpawn without the mobile facade.
 func (a *App) SpawnOrchestrator() *SpawnOrchestrator {
 	return a.spawner
+}
+
+// AdminToken returns the currently-effective admin token. When SIGHUP-
+// driven env reload has installed a runtime override, that value wins;
+// otherwise the static value passed at NewApp time via config.AdminToken
+// is returned. Callers should use this in preference to a.config.AdminToken
+// directly so hot-reload works.
+func (a *App) AdminToken() string {
+	if p := a.runtimeAdminToken.Load(); p != nil {
+		return *p
+	}
+	return a.config.AdminToken
+}
+
+// SetAdminToken installs a runtime admin-token override visible to
+// every subsequent AdminToken() read. An empty string clears the
+// override (falls back to config.AdminToken).
+func (a *App) SetAdminToken(token string) {
+	if token == "" {
+		a.runtimeAdminToken.Store(nil)
+		return
+	}
+	a.runtimeAdminToken.Store(&token)
 }
 
 // writeJSON marshals v as JSON and writes it to the response.

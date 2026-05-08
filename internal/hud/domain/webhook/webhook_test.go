@@ -18,6 +18,10 @@ type fakeDeps struct {
 	config          WebhookCfg
 	spawner         *fakeSpawner
 	broadcasts      []string
+	// activeAgents is the canned response for ActiveAgentsForBranch;
+	// keyed by branch name. Tests use this to simulate "an agent is
+	// already on this branch" routing scenarios.
+	activeAgents map[string][]ActiveAgent
 }
 
 func (f *fakeDeps) WriteJSON(w http.ResponseWriter, status int, v any) {
@@ -53,6 +57,10 @@ func (f *fakeDeps) Spawner() SpawnerOps {
 
 func (f *fakeDeps) WebhookConfig() WebhookCfg {
 	return f.config
+}
+
+func (f *fakeDeps) ActiveAgentsForBranch(branch string) []ActiveAgent {
+	return f.activeAgents[branch]
 }
 
 // fakeSpawner implements SpawnerOps for testing.
@@ -301,5 +309,161 @@ func TestEventRingBuffer(t *testing.T) {
 	}
 	if events[2].Source != "d" {
 		t.Errorf("newest event source = %q, want %q", events[2].Source, "d")
+	}
+}
+
+// --- workstream D: CI failure → active-session linking ---
+
+func TestMatchActiveAgentsForBranch(t *testing.T) {
+	agents := []ActiveAgent{
+		{AgentID: "a1", Branch: "feat/x", Status: "active"},
+		{AgentID: "a2", Branch: "feat/x", Status: "offline"},
+		{AgentID: "a3", Branch: "feat/x", Status: "expired"},
+		{AgentID: "a4", Branch: "feat/y", Status: "active"},
+		{AgentID: "a5", Branch: "feat/x", Status: "idle"},
+	}
+	got := matchActiveAgentsForBranch(agents, "feat/x")
+	if len(got) != 2 {
+		t.Fatalf("matched %d agents, want 2; got: %+v", len(got), got)
+	}
+	wantIDs := map[string]bool{"a1": false, "a5": false}
+	for _, a := range got {
+		if _, ok := wantIDs[a.AgentID]; !ok {
+			t.Errorf("unexpected agent %q in match", a.AgentID)
+		}
+		wantIDs[a.AgentID] = true
+	}
+	for id, seen := range wantIDs {
+		if !seen {
+			t.Errorf("agent %q missing from match", id)
+		}
+	}
+
+	// Empty branch and empty list both produce nil.
+	if got := matchActiveAgentsForBranch(agents, ""); got != nil {
+		t.Errorf("empty branch should return nil, got %v", got)
+	}
+	if got := matchActiveAgentsForBranch(nil, "feat/x"); got != nil {
+		t.Errorf("nil agents should return nil, got %v", got)
+	}
+}
+
+// TestHandleGitLabWebhook_RoutesToActiveAgent confirms that when the
+// webhook arrives for a branch with an active agent on it, the mapper
+// routes via EventBus + skips the spawn call entirely.
+func TestHandleGitLabWebhook_RoutesToActiveAgent(t *testing.T) {
+	spawner := &fakeSpawner{}
+	deps := &fakeDeps{
+		adminTokenValid: true,
+		config:          WebhookCfg{InboundEnabled: true, GitLabSecret: "test-token"},
+		spawner:         spawner,
+		activeAgents: map[string][]ActiveAgent{
+			"feat/cool": {
+				{AgentID: "claude-code-x", SessionID: "s1", AgentType: "claude-code", Status: "active", Branch: "feat/cool"},
+			},
+		},
+	}
+	d := New(deps)
+
+	payload := GitLabPipelineEvent{}
+	payload.ObjectKind = "pipeline"
+	payload.ObjectAttributes.Status = "failed"
+	payload.ObjectAttributes.ID = 42
+	payload.ObjectAttributes.Ref = "feat/cool"
+	payload.Project.PathWithNamespace = "homelab/loom-core"
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/api/webhook/gitlab", bytes.NewReader(body))
+	req.Header.Set("X-Gitlab-Token", "test-token")
+	w := httptest.NewRecorder()
+
+	d.handleGitLabWebhook(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if len(spawner.spawnCalls) != 0 {
+		t.Errorf("expected zero spawn calls when routed, got %d", len(spawner.spawnCalls))
+	}
+	// Routed broadcast first, then webhook.received.
+	wantBroadcasts := []string{"ci.pipeline.failure.routed", "webhook.received"}
+	if len(deps.broadcasts) != len(wantBroadcasts) {
+		t.Fatalf("broadcasts = %v, want %v", deps.broadcasts, wantBroadcasts)
+	}
+	for i, want := range wantBroadcasts {
+		if deps.broadcasts[i] != want {
+			t.Errorf("broadcast[%d] = %q, want %q", i, deps.broadcasts[i], want)
+		}
+	}
+}
+
+// TestHandleGitLabWebhook_FallsBackToSpawnWhenNoMatch confirms the
+// pre-existing spawn path still fires when no active agent matches.
+func TestHandleGitLabWebhook_FallsBackToSpawnWhenNoMatch(t *testing.T) {
+	spawner := &fakeSpawner{}
+	deps := &fakeDeps{
+		adminTokenValid: true,
+		config:          WebhookCfg{InboundEnabled: true, GitLabSecret: "test-token"},
+		spawner:         spawner,
+		activeAgents: map[string][]ActiveAgent{
+			// Match exists for a different branch only.
+			"feat/other": {{AgentID: "claude-code-x", Branch: "feat/other", Status: "active"}},
+		},
+	}
+	d := New(deps)
+
+	payload := GitLabPipelineEvent{}
+	payload.ObjectKind = "pipeline"
+	payload.ObjectAttributes.Status = "failed"
+	payload.ObjectAttributes.ID = 99
+	payload.ObjectAttributes.Ref = "feat/cool"
+	payload.Project.PathWithNamespace = "homelab/loom-core"
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/api/webhook/gitlab", bytes.NewReader(body))
+	req.Header.Set("X-Gitlab-Token", "test-token")
+	w := httptest.NewRecorder()
+
+	d.handleGitLabWebhook(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if len(spawner.spawnCalls) != 1 {
+		t.Errorf("expected spawn fallback, got %d calls", len(spawner.spawnCalls))
+	}
+	// Only webhook.received broadcasts when spawn-fresh path is taken.
+	if len(deps.broadcasts) != 1 || deps.broadcasts[0] != "webhook.received" {
+		t.Errorf("broadcasts = %v, want [webhook.received]", deps.broadcasts)
+	}
+}
+
+// TestHandleGitLabWebhook_RouteOnlyOfflineAgentsFallsBack confirms an
+// "active session" with status=offline does NOT block the spawn — we
+// only route to a session that's actually present.
+func TestHandleGitLabWebhook_OfflineAgentsAreNotMatches(t *testing.T) {
+	spawner := &fakeSpawner{}
+	deps := &fakeDeps{
+		adminTokenValid: true,
+		config:          WebhookCfg{InboundEnabled: true, GitLabSecret: "test-token"},
+		spawner:         spawner,
+		activeAgents: map[string][]ActiveAgent{
+			"feat/cool": {{AgentID: "claude-code-old", Branch: "feat/cool", Status: "offline"}},
+		},
+	}
+	d := New(deps)
+
+	payload := GitLabPipelineEvent{}
+	payload.ObjectKind = "pipeline"
+	payload.ObjectAttributes.Status = "failed"
+	payload.ObjectAttributes.Ref = "feat/cool"
+	payload.Project.PathWithNamespace = "homelab/loom-core"
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/api/webhook/gitlab", bytes.NewReader(body))
+	req.Header.Set("X-Gitlab-Token", "test-token")
+	w := httptest.NewRecorder()
+
+	d.handleGitLabWebhook(w, req)
+
+	if len(spawner.spawnCalls) != 1 {
+		t.Errorf("offline-only match should fall back to spawn, got %d calls", len(spawner.spawnCalls))
 	}
 }

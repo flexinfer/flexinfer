@@ -54,6 +54,7 @@ func main() {
 	flags.StringVar(&metricsAddr, "metrics-addr", metricsDefault, "Address for metrics/health/events endpoint (e.g., 127.0.0.1:9876; empty disables)")
 	flags.StringVar(&cfg.HTTPAddr, "http-addr", "", "Address for Streamable HTTP listener (e.g., :8088)")
 	flags.IntVar(&hudPort, "hud-port", 0, "Enable embedded HUD on this port (shortcut: sets --http-addr and embedded_hud.enabled)")
+	flags.StringVar(&cfg.EnvFilePath, "env-file", defaultCfg.EnvFilePath, "Optional KEY=VALUE file re-read on SIGHUP for runtime-mutable settings (HUD_ADMIN_TOKEN, etc.)")
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

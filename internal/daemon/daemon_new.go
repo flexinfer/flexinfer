@@ -27,7 +27,7 @@ import (
 // DefaultConfig returns the default daemon configuration.
 func DefaultConfig() Config {
 	home, _ := os.UserHomeDir()
-	return Config{
+	cfg := Config{
 		SocketPath:   filepath.Join(home, ".config", "loom", "loom.sock"),
 		RegistryPath: "",
 		Target:       "codex",
@@ -37,6 +37,10 @@ func DefaultConfig() Config {
 		WarmOnStart:  nil,
 		Debug:        false,
 	}
+	if home != "" {
+		cfg.EnvFilePath = filepath.Join(home, ".config", "loom", "hud.env")
+	}
+	return cfg
 }
 
 // New creates a new daemon instance.
