@@ -436,6 +436,68 @@ func TestHandleGitLabWebhook_FallsBackToSpawnWhenNoMatch(t *testing.T) {
 	}
 }
 
+// TestHandleGitLabWebhook_NoAdminTokenRequired confirms that the
+// webhook endpoint accepts inbound POSTs without HUD admin token
+// auth — the X-Gitlab-Token shared secret is the only check. This
+// regression-pins the fix that removed RequireAdminToken from the
+// handler entry; GitLab cannot send the admin token, and requiring
+// it made every real-world webhook 403 even when the GitLab secret
+// matched.
+func TestHandleGitLabWebhook_NoAdminTokenRequired(t *testing.T) {
+	deps := &fakeDeps{
+		// adminTokenValid: false simulates a real GitLab webhook —
+		// no X-Admin-Token header. Pre-fix this would have been a 403.
+		adminTokenValid: false,
+		config:          WebhookCfg{InboundEnabled: true, GitLabSecret: "the-secret"},
+		spawner:         &fakeSpawner{},
+	}
+	d := New(deps)
+	payload := GitLabPipelineEvent{}
+	payload.ObjectKind = "pipeline"
+	payload.ObjectAttributes.Status = "success"
+	payload.ObjectAttributes.Ref = "main"
+	payload.Project.PathWithNamespace = "homelab/loom-core"
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/api/webhook/gitlab", bytes.NewReader(body))
+	req.Header.Set("X-Gitlab-Token", "the-secret")
+	w := httptest.NewRecorder()
+
+	d.handleGitLabWebhook(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleGitHubWebhook_NoAdminTokenRequired mirrors the GitLab
+// test for the GitHub HMAC-verified path.
+func TestHandleGitHubWebhook_NoAdminTokenRequired(t *testing.T) {
+	secret := "gh-secret"
+	deps := &fakeDeps{
+		adminTokenValid: false,
+		config:          WebhookCfg{InboundEnabled: true, GitHubSecret: secret},
+		spawner:         &fakeSpawner{},
+	}
+	d := New(deps)
+	payload := GitHubCheckSuiteEvent{Action: "completed"}
+	payload.CheckSuite.ID = 1
+	payload.CheckSuite.Conclusion = "success"
+	payload.CheckSuite.HeadBranch = "main"
+	payload.Repository.FullName = "user/loom-core"
+	body, _ := json.Marshal(payload)
+	sig := computeGitHubSignature(secret, body)
+	req := httptest.NewRequest("POST", "/api/webhook/github", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "check_suite")
+	req.Header.Set("X-Hub-Signature-256", sig)
+	w := httptest.NewRecorder()
+
+	d.handleGitHubWebhook(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+}
+
 // TestHandleGitLabWebhook_RouteOnlyOfflineAgentsFallsBack confirms an
 // "active session" with status=offline does NOT block the spawn — we
 // only route to a session that's actually present.

@@ -10,18 +10,22 @@ import (
 )
 
 // handleGitLabWebhook handles POST /api/webhook/gitlab.
+//
+// Authentication is the X-Gitlab-Token shared secret only — GitLab
+// cannot send the HUD admin token, and the secret-comparison via
+// verifyGitLabToken provides the same blast-radius guarantee. The
+// /api/webhook/{config,events} inspection endpoints retain the admin-
+// token gate via their own RequireAdminToken calls.
 func (d *Domain) handleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
-	if !d.deps.RequireAdminToken(w, r) {
-		return
-	}
-
 	cfg := d.deps.WebhookConfig()
 	if !cfg.InboundEnabled {
 		d.deps.WriteError(w, http.StatusServiceUnavailable, "inbound webhooks not enabled", nil)
 		return
 	}
 
-	// Verify GitLab token
+	// Verify GitLab token. When no secret is configured the verifier
+	// returns true (open by default for local dev), so production
+	// deployments must always set WEBHOOK_GITLAB_SECRET.
 	token := r.Header.Get("X-Gitlab-Token")
 	if !verifyGitLabToken(token, cfg.GitLabSecret) {
 		d.deps.WriteError(w, http.StatusUnauthorized, "invalid gitlab token", nil)
@@ -112,11 +116,13 @@ func (d *Domain) handleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGitHubWebhook handles POST /api/webhook/github.
+//
+// Authentication is the X-Hub-Signature-256 HMAC over the request body
+// using the configured WEBHOOK_GITHUB_SECRET. Same rationale as
+// handleGitLabWebhook for skipping the HUD admin-token gate — the
+// originating system can't send that token, the HMAC is the
+// canonical webhook auth mechanism.
 func (d *Domain) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
-	if !d.deps.RequireAdminToken(w, r) {
-		return
-	}
-
 	cfg := d.deps.WebhookConfig()
 	if !cfg.InboundEnabled {
 		d.deps.WriteError(w, http.StatusServiceUnavailable, "inbound webhooks not enabled", nil)
