@@ -13,6 +13,7 @@ import (
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/coordinator"
+	"github.com/crb2nu/loom/pkg/aimodels"
 )
 
 // --- Types ---
@@ -110,7 +111,7 @@ func NewAutoFixEngine(
 		logger = slog.Default()
 	}
 	if model == "" {
-		model = "qwen3-8b"
+		model = aimodels.DefaultResolver().ResolveOrDefault(aimodels.RoleAutofix, "qwen3-8b")
 	}
 	return &AutoFixEngine{
 		llm:        llm,
