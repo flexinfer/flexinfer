@@ -118,6 +118,7 @@
 		D072038A27840743FE92BC02 /* ConnectionRemediation.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF1F234E71EBAD74BAF8F8FB /* ConnectionRemediation.swift */; };
 		D421FC34ED0A54A079FAAD3E /* AgentDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 688B2D28C7B1A98136D0787C /* AgentDetailView.swift */; };
 		D51570C66C0B485EBCF6ADB6 /* PipelineLiveActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 351DF692E793E5470B23617D /* PipelineLiveActivityView.swift */; };
+		D65AE3CF513FC8B2D4B6AA5A /* WeaverAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71C35C089D66AC1E05B916DC /* WeaverAPI.swift */; };
 		D6D076BBCEE2E4A397785CF9 /* LoomShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAF63671E767B7D9DE9F7F13 /* LoomShortcuts.swift */; };
 		D77C8009DB2CA7718861ED82 /* LoomCompanionWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C741CB755724B8C8116D674A /* LoomCompanionWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		DA600382FA8A38A745C7D345 /* SessionActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3703200137BBE6449920551 /* SessionActivity.swift */; };
@@ -127,6 +128,7 @@
 		E3AE33E013D5ED66431516CA /* NavigationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC42DDAAC5EBA6BF3E7280E5 /* NavigationCoordinator.swift */; };
 		E455390F8D671F1C5FEC003D /* SpawnBudgetWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB3701A886BB8AD9A90F9FD6 /* SpawnBudgetWidget.swift */; };
 		E6194D5C397C9AA9C5C1A08F /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7C6C5A521E38D6D36836C8F0 /* SwiftUI.framework */; };
+		E742A413A267EDB27B24259F /* WeaverScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FC2F9770F07AFBE46949A16 /* WeaverScreen.swift */; };
 		E943F11E27034571454731BE /* FleetSummaryCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CF7388A60BCC73E46496965 /* FleetSummaryCard.swift */; };
 		E9B782C41E17B21B8A033500 /* MillsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B8D25D7DF35968C9F98B65B /* MillsScreen.swift */; };
 		E9DD7BD5630A1354ADCA7C85 /* OpsContextSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE765D2A48410A9872E4AE9B /* OpsContextSection.swift */; };
@@ -246,6 +248,7 @@
 		5CFF203EEBD1AF6A4A2AB4D2 /* AlertsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertsViewModel.swift; sourceTree = "<group>"; };
 		5E96EE11EC79E0AB9D4A62AF /* SessionEventsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionEventsView.swift; sourceTree = "<group>"; };
 		5ECADE37851D1276E6C36516 /* SpawnTelemetryModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpawnTelemetryModels.swift; sourceTree = "<group>"; };
+		5FC2F9770F07AFBE46949A16 /* WeaverScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeaverScreen.swift; sourceTree = "<group>"; };
 		6061C1B1FD3CAEC4C1ACC226 /* SessionInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionInfo.swift; sourceTree = "<group>"; };
 		6062C007A1A6883CBBFA06DA /* TasksWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksWidget.swift; sourceTree = "<group>"; };
 		62324BA9DC53973102DF1B85 /* CompactSparkline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompactSparkline.swift; sourceTree = "<group>"; };
@@ -258,6 +261,7 @@
 		6C288D842D503B7776E8F0AB /* SessionMetadataView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionMetadataView.swift; sourceTree = "<group>"; };
 		6CCA5BB226DF7900CF791225 /* AgentFilterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentFilterView.swift; sourceTree = "<group>"; };
 		6DF3DC44CF14DC2FB3F085E0 /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
+		71C35C089D66AC1E05B916DC /* WeaverAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeaverAPI.swift; sourceTree = "<group>"; };
 		739732758AF97A105DE5A77E /* DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLink.swift; sourceTree = "<group>"; };
 		7AD6F95E28AFA49A9FA77CF5 /* PushRegistration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRegistration.swift; sourceTree = "<group>"; };
 		7B34ABB0F4EB13226360A9DB /* FleetHealthWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FleetHealthWidget.swift; sourceTree = "<group>"; };
@@ -438,6 +442,14 @@
 			path = Agents;
 			sourceTree = "<group>";
 		};
+		44C1E6AE0742F0BD12BB0B96 /* Weaver */ = {
+			isa = PBXGroup;
+			children = (
+				5FC2F9770F07AFBE46949A16 /* WeaverScreen.swift */,
+			);
+			path = Weaver;
+			sourceTree = "<group>";
+		};
 		4DDCF8E9200D33074DEB19BC = {
 			isa = PBXGroup;
 			children = (
@@ -463,6 +475,14 @@
 				F04AB112226E5AFF58611F8C /* MillsAPI.swift */,
 			);
 			path = Mills;
+			sourceTree = "<group>";
+		};
+		6E350833E8B38363E7558406 /* Weaver */ = {
+			isa = PBXGroup;
+			children = (
+				71C35C089D66AC1E05B916DC /* WeaverAPI.swift */,
+			);
+			path = Weaver;
 			sourceTree = "<group>";
 		};
 		7C0185E86B5B88DAC95F5BD1 /* DesignSystem */ = {
@@ -508,6 +528,7 @@
 				9D4BCF9F36EB467A7AC99AF4 /* Sessions */,
 				9E3AB81F7F45D768CE409B3E /* Shared */,
 				5B5C969B517E14D8E56AA2A2 /* Spawn */,
+				44C1E6AE0742F0BD12BB0B96 /* Weaver */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -658,6 +679,7 @@
 				DE723BFA102C44EB318ACE38 /* Networking */,
 				2C5B5E8E4ED8B1A15914E3D1 /* Services */,
 				B39CFD1AD6E2DA65E866D2C5 /* ViewModels */,
+				6E350833E8B38363E7558406 /* Weaver */,
 			);
 			path = LoomCompanionKit;
 			sourceTree = "<group>";
@@ -914,6 +936,7 @@
 				B03747CEFD8DAB35671BF975 /* StatusBadge.swift in Sources */,
 				7B90BC5EB2D5A482C5059181 /* TaskStatusChart.swift in Sources */,
 				529481AA1364F008AABB1D7A /* TimelineListView.swift in Sources */,
+				E742A413A267EDB27B24259F /* WeaverScreen.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -979,6 +1002,7 @@
 				48B4E56980B5F596C1A51EE3 /* TimelineEntry.swift in Sources */,
 				AE26BF83C8AEFE0B08F1DA96 /* TokenStore.swift in Sources */,
 				5CF5B5DB89BBB3A35F5BD427 /* UnifiedAgent.swift in Sources */,
+				D65AE3CF513FC8B2D4B6AA5A /* WeaverAPI.swift in Sources */,
 				42D910D3C59EC1EC7A49487A /* WidgetData.swift in Sources */,
 				3D7DF6B0BB43A73F01DD47DE /* WorkflowActivity.swift in Sources */,
 			);

@@ -14,6 +14,11 @@ public struct MillsScreen: View {
     @State private var loading = true
     @State private var loadError: String?
 
+    /// Stashed when initialized with `apiClient:` so the toolbar
+    /// "Weaver" button can build the WeaverAPI without needing the
+    /// connection VM. Nil when constructed via the test initializer
+    /// (in which case the toolbar button is hidden).
+    private let apiClientForLinks: APIClient?
     private let api: MillsAPIProtocol?
 
     /// Initializer accepting an optional concrete API. When the user
@@ -22,11 +27,13 @@ public struct MillsScreen: View {
     /// state in that case.
     public init(apiClient: APIClient?) {
         self.api = apiClient.map(MillsAPI.init(client:))
+        self.apiClientForLinks = apiClient
     }
 
     /// Test-only initializer that accepts a fake protocol implementation.
     public init(api: MillsAPIProtocol?) {
         self.api = api
+        self.apiClientForLinks = nil
     }
 
     public var body: some View {
@@ -43,6 +50,21 @@ public struct MillsScreen: View {
         .navigationTitle("Mills")
         .refreshable { await reload() }
         .task { await reload() }
+        .toolbar {
+            if apiClientForLinks != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        WeaverScreen(apiClient: apiClientForLinks)
+                    } label: {
+                        // Visible chip-style entry to weaver. The Mills
+                        // screen owns this surface for now since both
+                        // panels watch FlexInfer-backed work; a future
+                        // slice may promote weaver to its own tab.
+                        Label("Weaver", systemImage: "circles.hexagonpath")
+                    }
+                }
+            }
+        }
     }
 
     // MARK: KPI row

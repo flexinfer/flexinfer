@@ -42,6 +42,10 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
     var spawnConfigResponse: SpawnConfig?
     var millsPipelineRunsResponse: [MillsPipelineRun]?
     var millsKPIResponse: MillsKPISnapshot?
+    var weaverStatusResponse: WeaverStatus?
+    var weaverHistoryResponse: WeaverHistoryResponse?
+    var weaverMetricsResponse: WeaverMetrics?
+    var aimodelsRolesResponse: AIModelRolesResponse?
 
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         if let specificError = endpointFailures[endpoint.path] {
@@ -127,6 +131,14 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
             if let r = millsPipelineRunsResponse as? T { return r }
         case .millsKPIs:
             if let r = millsKPIResponse as? T { return r }
+        case .weaverStatus:
+            if let r = weaverStatusResponse as? T { return r }
+        case .weaverHistory:
+            if let r = weaverHistoryResponse as? T { return r }
+        case .weaverMetrics:
+            if let r = weaverMetricsResponse as? T { return r }
+        case .aimodelsRoles:
+            if let r = aimodelsRolesResponse as? T { return r }
         }
 
         throw LoomAPIError.noToken
