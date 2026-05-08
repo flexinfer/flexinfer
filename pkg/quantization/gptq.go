@@ -709,7 +709,7 @@ if fc_match and eval_found:
     replacement = (
         f'{indent}# --- Injected by controller: conditional meta-device loading ---\n'
         f'{indent}if quantize_device_map and quantize_device_map != "cpu":\n'
-        f'{indent}    from accelerate import init_empty_weights, infer_auto_device_map, load_checkpoint_in_model\n'
+        f'{indent}    from accelerate import init_empty_weights, infer_auto_device_map, load_checkpoint_in_model, dispatch_model\n'
         f'{indent}    from accelerate.utils import get_max_memory\n'
         f'{indent}    with init_empty_weights():\n'
         f'{indent}        model = {loader_expr}.from_config(config, **init_kwargs)\n'
@@ -747,7 +747,14 @@ if fc_match and eval_found:
         f'{indent}        dtype=dtype,\n'
         f'{indent}        offload_folder=_accel_offload,\n'
         f'{indent}    )\n'
-        f'{indent}    print("Model loaded via load_checkpoint_in_model (no dispatch hooks)")\n'
+        f'{indent}    # Add dispatch hooks so disk-offloaded modules transparently load on\n'
+        f'{indent}    # forward. Without this, GPTQModel.cache_inputs hits NotImplementedError:\n'
+        f'{indent}    #   Cannot copy out of meta tensor; no data!\n'
+        f'{indent}    # because load_checkpoint_in_model writes weights but does NOT add the\n'
+        f'{indent}    # forward-time hooks needed to materialize disk-offloaded layers.\n'
+        f'{indent}    # Hit on 2026-05-08 cycle 4 of qwen36-27b-gptq with dynamicExclusion=gdn.\n'
+        f'{indent}    model = dispatch_model(model, device_map=device_map, offload_dir=_accel_offload)\n'
+        f'{indent}    print("Model loaded via load_checkpoint_in_model + dispatch_model")\n'
         f'{indent}else:\n'
         f'{indent}    # CPU path: create real tensors directly (no meta device) to avoid\n'
         f'{indent}    # GPTQModel shell_module_materialize crash on meta tensors.\n'
@@ -778,7 +785,7 @@ if fc_match and eval_found:
         r'\n    # Dispatch model across devices.*?print\(f"WARN: device_map dispatch.*?"\)\n',
         '\n', src, flags=re.DOTALL
     )
-    print("Injected init_empty_weights + load_checkpoint_in_model (no dispatch hooks)")
+    print("Injected init_empty_weights + load_checkpoint_in_model + dispatch_model")
 else:
     print(f"WARN: could not find markers for combined replacement", file=sys.stderr)
     print(f"  from_config match: {fc_match is not None} (pattern: {fc_pattern.pattern})", file=sys.stderr)
