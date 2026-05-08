@@ -41,6 +41,16 @@ func (d *Daemon) startEmbeddedHUD(ctx context.Context, mux *http.ServeMux) error
 		CoordinatorModel:     firstNonEmpty(cfg.CoordinatorModel, os.Getenv("COORDINATOR_MODEL")),
 		MillsOperatorURL:     os.Getenv("LOOM_MILLS_OPERATOR_URL"),
 		MillsOperatorToken:   os.Getenv("LOOM_MILLS_OPERATOR_TOKEN"),
+
+		// Inbound webhook intake (GitLab/GitHub CI failure routing).
+		// File config wins; envs are fallbacks for K8s secret injection.
+		// `WEBHOOK_INBOUND_ENABLED=true` flips the gate; secrets are HMAC
+		// verifiers, not bearer tokens, and are required when the
+		// originating system signs its requests (always on for GitLab,
+		// recommended for GitHub).
+		WebhookInboundEnabled: cfg.WebhookInboundEnabled || envBoolTrue(os.Getenv("WEBHOOK_INBOUND_ENABLED")),
+		WebhookGitLabSecret:   firstNonEmpty(cfg.WebhookGitLabSecret, os.Getenv("WEBHOOK_GITLAB_SECRET")),
+		WebhookGitHubSecret:   firstNonEmpty(cfg.WebhookGitHubSecret, os.Getenv("WEBHOOK_GITHUB_SECRET")),
 	}
 
 	// Default mobile operator scopes when token is set.
@@ -199,4 +209,17 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// envBoolTrue interprets a string from os.Getenv as a permissive boolean.
+// Returns true for "1", "true", "yes", "on" (case-insensitive); false for
+// anything else (including empty). Mirrors the relaxed semantics of the
+// existing SPAWN_ENABLED check in startEmbeddedHUD so operators don't have
+// to remember which env vars are strict-equal vs lenient.
+func envBoolTrue(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }

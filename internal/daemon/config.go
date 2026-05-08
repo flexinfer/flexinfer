@@ -111,6 +111,14 @@ type EmbeddedHUDConfig struct {
 	FlexInferURL         string `yaml:"flexinfer_url,omitempty"`
 	FlexInferKey         string `yaml:"flexinfer_key,omitempty"`
 	CoordinatorModel     string `yaml:"coordinator_model,omitempty"`
+
+	// Inbound webhook receiver — feeds the GitLab/GitHub CI failure
+	// routing path in internal/hud/domain/webhook. Disabled by default
+	// because the endpoint accepts unauthenticated POSTs from external
+	// systems and depends on token / HMAC verification for safety.
+	WebhookInboundEnabled bool   `yaml:"webhook_inbound_enabled"`
+	WebhookGitLabSecret   string `yaml:"webhook_gitlab_secret,omitempty"`
+	WebhookGitHubSecret   string `yaml:"webhook_github_secret,omitempty"`
 }
 
 // OTelConfig controls OpenTelemetry trace export.
