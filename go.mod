@@ -1,6 +1,6 @@
 module github.com/crb2nu/loom
 
-go 1.25.9
+go 1.25.10
 
 require (
 	cloud.google.com/go/compute v1.54.0

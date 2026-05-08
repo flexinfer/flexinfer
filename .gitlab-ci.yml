@@ -48,7 +48,7 @@ default:
 
 variables:
   AUTO_DEVOPS_ENABLED: "false"
-  GO_VERSION: "1.25.9"
+  GO_VERSION: "1.25.10"
   BINARY_NAME: "loom"
   # Limit static-analysis scans to first-party packages.
   GO_APP_PKGS: "./cmd/... ./internal/... ./pkg/..."
