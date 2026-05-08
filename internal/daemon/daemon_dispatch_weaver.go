@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"gitlab.flexinfer.ai/libs/mcp-go"
 
@@ -93,14 +94,30 @@ func (d *Daemon) handleWeaverGather(ctx context.Context, msg *mcp.Message) (*mcp
 	return mcp.NewResponse(msg.ID, result)
 }
 
-// handleWeaverStatus handles loom/weaver/status requests.
+// handleWeaverStatus handles loom/weaver/status requests. Merges the
+// router's static config snapshot with the daemon's most recent
+// preflight (model catalog availability). HUD/iOS/extension surface
+// the merged degraded/missing_models/ready_models fields as a yellow
+// banner so operators see broken model bindings before the first
+// query 404s.
 func (d *Daemon) handleWeaverStatus(_ context.Context, msg *mcp.Message) (*mcp.Message, error) {
 	if d.weaver == nil {
 		return mcp.NewResponse(msg.ID, map[string]any{
 			"enabled": false,
 		})
 	}
-	return mcp.NewResponse(msg.ID, d.weaver.Status())
+	status := d.weaver.Status()
+	if pre, ok := d.weaverPreflight.Get(); ok {
+		status["degraded"] = pre.Degraded
+		status["missing_models"] = pre.MissingModels
+		status["ready_models"] = pre.ReadyModels
+		status["catalog_size"] = pre.CatalogSize
+		if pre.CatalogError != "" {
+			status["catalog_error"] = pre.CatalogError
+		}
+		status["preflight_at"] = pre.CheckedAt.Format(time.RFC3339)
+	}
+	return mcp.NewResponse(msg.ID, status)
 }
 
 // handleWeaverHistory handles loom/weaver/history requests.
