@@ -130,3 +130,40 @@ func TestInferGitNamespace(t *testing.T) {
 	}
 	t.Logf("inferGitNamespace() = %q", got)
 }
+
+func TestStripWorktreeFromRepoRoot(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "main checkout passthrough",
+			in:   "/Users/me/workspace/services/loom-core",
+			want: "/Users/me/workspace/services/loom-core",
+		},
+		{
+			name: "workspace-standard worktree collapses",
+			in:   "/Users/me/workspace/services/loom-core/.worktrees/feat-xyz",
+			want: "/Users/me/workspace/services/loom-core",
+		},
+		{
+			name: "claude-managed worktree collapses",
+			in:   "/Users/me/workspace/services/loom-core/.claude/worktrees/competent-allen-d7252d",
+			want: "/Users/me/workspace/services/loom-core",
+		},
+		{
+			name: "claude-managed wins when both patterns appear",
+			in:   "/repo/.claude/worktrees/wt1/.worktrees/inner",
+			want: "/repo",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripWorktreeFromRepoRoot(tt.in)
+			if got != tt.want {
+				t.Errorf("stripWorktreeFromRepoRoot(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

@@ -5,6 +5,24 @@ import (
 	"testing"
 )
 
+func TestHookNamespaceVars_HandlesClaudeWorktrees(t *testing.T) {
+	got := hookNamespaceVars()
+	// Regression: prior version only matched "/.worktrees/" and treated
+	// "<repo>/.claude/worktrees/<branch>" paths as nested project roots,
+	// producing a "worktrees/<branch>/claude/<branch>" namespace instead
+	// of the parent repo's "<workspace>/<repo>/<branch>".
+	if !strings.Contains(got, "/.claude/worktrees/") {
+		t.Errorf("hookNamespaceVars() missing claude-worktrees branch; got: %q", got)
+	}
+	if !strings.Contains(got, "${WS_ROOT%%/.claude/worktrees/*}") {
+		t.Errorf("hookNamespaceVars() missing claude-worktrees parameter expansion; got: %q", got)
+	}
+	// Existing standard worktree pattern must still be supported.
+	if !strings.Contains(got, "${WS_ROOT%%/.worktrees/*}") {
+		t.Errorf("hookNamespaceVars() lost standard-worktrees parameter expansion; got: %q", got)
+	}
+}
+
 func TestSessionEndRetroHooks_ReturnsNonEmpty(t *testing.T) {
 	hooks := sessionEndRetroHooks("")
 	if len(hooks) == 0 {
