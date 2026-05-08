@@ -142,22 +142,70 @@ canary results, add a typed helper:
 
 Wire consumers in a separate MR — keep this slice schema-only with one unit test.
 
-## Priority 5 — Replace `BackendGPUCompatibility` map with profile-only lookup
+## Priority 5 — Replace `BackendGPUCompatibility` map with profile-only lookup — COMPLETED
 
-`backend/gpu_compat.go:43-93` is the single largest hardcoded `(backend, arch)`
-table. Every entry is duplicated in `deploy/gpuprofiles/*.yaml`. After
-priority-2 lands, the map is only consulted when no profile is reconciled.
-Once `LookupOrFetch` is wired everywhere (`controllers/gpuprofile_controller.go:55`),
-delete the map and treat its entries as the seeds for the GPUProfile manifests
-that ship in `platform/gitops`.
+Shipped in `refactor/backend-compat-gpuprofile-first` (slice 5 of Track A).
 
-Files to touch:
-- `backend/gpu_compat.go:43-93`
-- `controllers/model_gpu.go:83-108` (`validateBackendGPUCompatibility`)
-- `controllers/model_gpu.go:38-79` (`validateVRAMFit`)
+- Added `backend.ResolveBackendGPUSupport(profile, backendName, gpuArch)` in
+  `backend/gpu_compat.go`, mirroring the slice-1 / slice-4
+  `ResolveBackendImage` / `ResolveImageFromProfile` precedence pattern.
+  Profile-declared `backends.<name>.support` wins; the helper falls through to
+  the legacy `BackendGPUCompatibility` map only when the profile is nil or
+  declares no entry for the backend.
+- Added `backend.IsBackendSupported(profile, backendName, gpuArch)` as the
+  policy boolean. `SupportFull` and `SupportExperimental` return `true`
+  (allow-with-caveats — the controller emits an `ExperimentalGPUSupport`
+  event separately); `SupportUnsupported` and "no entry found" return
+  `false`. The godoc explicitly documents this so future canary work can
+  layer additional gates without redefining the static support semantics.
+- Migrated `controllers/model_gpu.go::validateBackendGPUCompatibility` and
+  `validateVRAMFit` to use `ResolveBackendGPUSupport`. Both functions used
+  to write the profile-then-map cascade inline; they now call the shared
+  helper, which removes a duplicated branch and aligns the precedence rule
+  with the rest of slice 1-4.
+- Kept `BackendGPUCompatibility` and `LookupGPUArchSupport` exported and in
+  use by `scheduler/scheduler.go:292` (defense-in-depth filter at scheduler
+  time, no GPUProfile cache available there). Both are now annotated as
+  `Deprecated` in their godoc — new callers should prefer the
+  GPUProfile-aware helpers, but the table itself is the documented backstop
+  for nodes/processes outside the controller's profile cache.
 
-Validation: confirm `scripts/check-runtime-profile-consistency.sh` covers all
-backends after the map is removed; extend the check if it does not.
+Tests:
+- `backend/gpu_compat_test.go::TestResolveBackendGPUSupport` covers eight
+  cases: profile full wins, profile experimental wins, profile unsupported
+  downgrades a legacy-full entry, profile-without-backend-entry falls
+  through, profile with unknown support string falls through, nil profile
+  uses the legacy map, nil profile + unknown backend returns not-found,
+  profile entry with empty `Support` (image-only) falls through.
+- `backend/gpu_compat_test.go::TestIsBackendSupported` documents the
+  full→true / experimental→true / unsupported→false / no-entry→false
+  policy mapping with both profile-driven and legacy-fallback cases.
+- Existing `controllers/model_gpu_test.go::TestValidateBackendGPUCompatibility`
+  and `controllers/model_controller_test.go` Maxwell/gfx906 tests continue to
+  pass without modification — the controller-side migration preserves the
+  observable behavior.
+
+Files migrated:
+- `backend/gpu_compat.go:42-50` — `BackendGPUCompatibility` annotated `Deprecated`.
+- `backend/gpu_compat.go:96-105` — `LookupGPUArchSupport` annotated `Deprecated`.
+- `backend/gpu_compat.go:132-187` — added `ResolveBackendGPUSupport` and `IsBackendSupported`.
+- `controllers/model_gpu.go:43-61` — `validateVRAMFit` cascade folded into `ResolveBackendGPUSupport`.
+- `controllers/model_gpu.go:88-115` — `validateBackendGPUCompatibility` cascade folded into `ResolveBackendGPUSupport`.
+
+Validation:
+- `make manifests` (controller-gen churn restored before commit).
+- `go test ./backend/... ./controllers/... ./api/v1alpha2/... ./pkg/quantization/... ./pkg/runtime/... ./internal/runtime/... ./scheduler/...` — all green.
+- `scripts/check-runtime-profile-consistency.sh` — passes; the script already
+  inspects `deploy/gpuprofiles/*.yaml` against the runtime image manifests, no
+  extension was needed because the support-level field was already present in
+  every profile after slice 2.
+
+Remaining legacy callers documented:
+- `scheduler/scheduler.go:292` keeps `LookupGPUArchSupport` because the
+  extender does not have a GPUProfileReconciler in scope. Wiring that in is
+  a separate, larger refactor (the scheduler would need to load profiles
+  from the cluster on its own); for now the legacy map is the documented
+  backstop for the scheduler's defense-in-depth `SupportUnsupported` reject.
 
 ## Priority 6 — Strip `Default` from NVIDIA Maxwell (`sm_5`) rule entries
 

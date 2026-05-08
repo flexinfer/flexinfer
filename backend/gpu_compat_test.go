@@ -578,6 +578,191 @@ func TestQuantizerImageFromProfile_NormalizesFormatCase(t *testing.T) {
 	}
 }
 
+// TestResolveBackendGPUSupport asserts the slice-5 contract: profile-declared
+// support wins, no entry on the profile falls through to the legacy
+// BackendGPUCompatibility table, and explicit nil profile uses the legacy table.
+func TestResolveBackendGPUSupport(t *testing.T) {
+	tests := []struct {
+		name        string
+		profile     *aiv1alpha2.GPUProfileSpec
+		backendName string
+		gpuArch     string
+		wantLevel   GPUArchSupportLevel
+		wantVRAM    int
+		wantFound   bool
+		desc        string
+	}{
+		{
+			name:        "profile declares full beats legacy map",
+			profile:     &aiv1alpha2.GPUProfileSpec{VRAMMB: 24576, Backends: map[string]aiv1alpha2.BackendProfile{"vllm": {Support: "full"}}},
+			backendName: "vllm",
+			gpuArch:     "gfx1100",
+			wantLevel:   SupportFull,
+			wantVRAM:    24576,
+			wantFound:   true,
+			desc:        "profile.Support=full -> SupportFull",
+		},
+		{
+			name:        "profile declares experimental wins",
+			profile:     &aiv1alpha2.GPUProfileSpec{VRAMMB: 16384, Backends: map[string]aiv1alpha2.BackendProfile{"comfyui": {Support: "experimental"}}},
+			backendName: "comfyui",
+			gpuArch:     "gfx906",
+			wantLevel:   SupportExperimental,
+			wantVRAM:    16384,
+			wantFound:   true,
+			desc:        "profile.Support=experimental -> SupportExperimental",
+		},
+		{
+			name:        "profile declares unsupported overrides full in legacy map",
+			profile:     &aiv1alpha2.GPUProfileSpec{VRAMMB: 24576, Backends: map[string]aiv1alpha2.BackendProfile{"vllm": {Support: "unsupported"}}},
+			backendName: "vllm",
+			gpuArch:     "gfx1100",
+			wantLevel:   SupportUnsupported,
+			wantVRAM:    24576,
+			wantFound:   true,
+			desc:        "profile can downgrade a backend the legacy map marks as full",
+		},
+		{
+			name:        "profile lacks backend entry falls through to legacy map",
+			profile:     &aiv1alpha2.GPUProfileSpec{VRAMMB: 24576, Backends: map[string]aiv1alpha2.BackendProfile{"diffusers": {Support: "full"}}},
+			backendName: "vllm",
+			gpuArch:     "gfx1100",
+			wantLevel:   SupportFull,
+			wantVRAM:    24576,
+			wantFound:   true,
+			desc:        "no vllm in profile -> legacy map entry for gfx1100",
+		},
+		{
+			name:        "profile with unknown support level falls through to legacy",
+			profile:     &aiv1alpha2.GPUProfileSpec{Backends: map[string]aiv1alpha2.BackendProfile{"vllm": {Support: "canary"}}},
+			backendName: "vllm",
+			gpuArch:     "gfx1100",
+			wantLevel:   SupportFull,
+			wantVRAM:    24576,
+			wantFound:   true,
+			desc:        "unknown support strings are not recognized; helper falls through",
+		},
+		{
+			name:        "nil profile uses legacy map",
+			profile:     nil,
+			backendName: "vllm",
+			gpuArch:     "gfx906",
+			wantLevel:   SupportFull,
+			wantVRAM:    16384,
+			wantFound:   true,
+			desc:        "nil profile -> legacy map (backstop for nodes without a profile)",
+		},
+		{
+			name:        "nil profile and unknown backend returns not found",
+			profile:     nil,
+			backendName: "nonexistent",
+			gpuArch:     "gfx1100",
+			wantFound:   false,
+			desc:        "no profile and no legacy entry -> not found",
+		},
+		{
+			name:        "profile entry without support falls through to legacy",
+			profile:     &aiv1alpha2.GPUProfileSpec{Backends: map[string]aiv1alpha2.BackendProfile{"vllm": {Image: "registry.example.com/vllm:profile"}}},
+			backendName: "vllm",
+			gpuArch:     "gfx1100",
+			wantLevel:   SupportFull,
+			wantVRAM:    24576,
+			wantFound:   true,
+			desc:        "profile.Image without Support -> not a support entry, fall through",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, found := ResolveBackendGPUSupport(tt.profile, tt.backendName, tt.gpuArch)
+			if found != tt.wantFound {
+				t.Fatalf("ResolveBackendGPUSupport found = %v, want %v (%s)", found, tt.wantFound, tt.desc)
+			}
+			if !found {
+				return
+			}
+			if got.Level != tt.wantLevel {
+				t.Errorf("Level = %v, want %v (%s)", got.Level, tt.wantLevel, tt.desc)
+			}
+			if got.MaxVRAMMB != tt.wantVRAM {
+				t.Errorf("MaxVRAMMB = %d, want %d (%s)", got.MaxVRAMMB, tt.wantVRAM, tt.desc)
+			}
+		})
+	}
+}
+
+// TestIsBackendSupported documents the policy mapping from support levels to
+// the boolean "may run here?" decision. SupportExperimental returns true (the
+// controller emits a warning event separately); SupportUnsupported and
+// "not found" return false.
+func TestIsBackendSupported(t *testing.T) {
+	tests := []struct {
+		name        string
+		profile     *aiv1alpha2.GPUProfileSpec
+		backendName string
+		gpuArch     string
+		want        bool
+		desc        string
+	}{
+		{
+			name:        "profile full -> true",
+			profile:     &aiv1alpha2.GPUProfileSpec{Backends: map[string]aiv1alpha2.BackendProfile{"vllm": {Support: "full"}}},
+			backendName: "vllm",
+			gpuArch:     "gfx1100",
+			want:        true,
+			desc:        "production-ready backends are supported",
+		},
+		{
+			name:        "profile experimental -> true (allow with caveats)",
+			profile:     &aiv1alpha2.GPUProfileSpec{Backends: map[string]aiv1alpha2.BackendProfile{"comfyui": {Support: "experimental"}}},
+			backendName: "comfyui",
+			gpuArch:     "gfx906",
+			want:        true,
+			desc:        "experimental returns true; the controller warns separately",
+		},
+		{
+			name:        "profile unsupported -> false",
+			profile:     &aiv1alpha2.GPUProfileSpec{Backends: map[string]aiv1alpha2.BackendProfile{"vllm": {Support: "unsupported"}}},
+			backendName: "vllm",
+			gpuArch:     "gfx1100",
+			want:        false,
+			desc:        "unsupported blocks deployment",
+		},
+		{
+			name:        "nil profile uses legacy map (vllm gfx1100 full)",
+			profile:     nil,
+			backendName: "vllm",
+			gpuArch:     "gfx1100",
+			want:        true,
+			desc:        "nil profile -> legacy map -> full -> true",
+		},
+		{
+			name:        "nil profile uses legacy map (vllm sm_52 unsupported)",
+			profile:     nil,
+			backendName: "vllm",
+			gpuArch:     "sm_52",
+			want:        false,
+			desc:        "Maxwell vllm is unsupported in the legacy map",
+		},
+		{
+			name:        "no profile and unknown backend -> false",
+			profile:     nil,
+			backendName: "nonexistent",
+			gpuArch:     "gfx1100",
+			want:        false,
+			desc:        "absent entry is treated as unsupported",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsBackendSupported(tt.profile, tt.backendName, tt.gpuArch); got != tt.want {
+				t.Errorf("IsBackendSupported = %v, want %v (%s)", got, tt.want, tt.desc)
+			}
+		})
+	}
+}
+
 func TestGPUArchSupportLevel_String(t *testing.T) {
 	tests := []struct {
 		level GPUArchSupportLevel
