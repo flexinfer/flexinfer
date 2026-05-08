@@ -649,7 +649,7 @@
 
     <!-- ═══ Live Sessions (Phase 3 spectator) ═══ -->
     <section class="live-sessions-section">
-      <LiveSessionsCard />
+      <LiveSessionsCard agentCount={agentCount} />
     </section>
 
     <!-- ═══ Mills KPIs ═══ -->

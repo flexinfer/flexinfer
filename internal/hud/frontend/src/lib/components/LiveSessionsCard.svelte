@@ -16,6 +16,12 @@
   import { liveSessionsStore, type LiveSession, type ToolCall } from '../stores/liveSessions.svelte.ts';
   import EmptyState from './shared/EmptyState.svelte';
 
+  // agentCount lets the empty state distinguish "no agents connected at all"
+  // from "agents connected but idle between turns". Without this, operators
+  // who saw N live agents in the footer + zero sessions assumed something
+  // was wrong with the spectator pipeline (it was just idle).
+  let { agentCount = 0 }: { agentCount?: number } = $props();
+
   let expandedSessionID: string | null = $state(null);
 
   onMount(() => {
@@ -84,10 +90,17 @@
   </header>
 
   {#if sessions.length === 0}
-    <EmptyState
-      heading="No active sessions yet"
-      description="Sessions appear here as soon as a Claude Code, Gemini, or Codex CLI emits a SessionStart hook. Public-tier event redaction is applied at the producer; secrets never reach this view."
-    />
+    {#if agentCount > 0}
+      <EmptyState
+        heading="{agentCount} agent{agentCount === 1 ? '' : 's'} connected, awaiting first session"
+        description="Sessions begin when a Claude Code, Gemini, or Codex CLI starts a turn — your agents may simply be idle. Public-tier event redaction is applied at the producer; secrets never reach this view."
+      />
+    {:else}
+      <EmptyState
+        heading="No active sessions yet"
+        description="Sessions appear here as soon as a Claude Code, Gemini, or Codex CLI emits a SessionStart hook. Public-tier event redaction is applied at the producer; secrets never reach this view."
+      />
+    {/if}
   {:else}
     <ul class="session-list">
       {#each sessions as session (session.session_id)}
