@@ -48,21 +48,48 @@ func (d *Domain) handleGitLabWebhook(w http.ResponseWriter, r *http.Request) {
 		Status:    ev.ObjectAttributes.Status,
 	}
 
-	// Attempt to map event to spawn request
+	// Attempt to map event to spawn request. The mapper only fires
+	// for failed pipelines today, so spawnReq != nil implies a CI
+	// failure we want to act on.
 	spawnReq := mapGitLabEvent(&ev)
 	if spawnReq != nil {
-		spawner := d.deps.Spawner()
-		if spawner != nil {
-			spawnID, err := spawner.Spawn(r.Context(), *spawnReq)
-			if err != nil {
-				logEntry.Error = err.Error()
-				d.deps.Logger().Warn("webhook spawn failed", "source", "gitlab", "error", err)
-			} else {
-				logEntry.SpawnID = spawnID
-				logEntry.Action = "spawned"
+		// Prefer routing the failure to a session that's actively
+		// working the affected branch (the original author, in
+		// almost every case) — spawning a fresh agent is wasteful
+		// when someone is already at the keyboard. Falls back to
+		// spawn-fresh below when no active session matches.
+		branch := gitLabFailureBranch(&ev)
+		matched := matchActiveAgentsForBranch(d.deps.ActiveAgentsForBranch(branch), branch)
+		if len(matched) > 0 {
+			task := gitLabFailureTask(&ev, branch)
+			payload := map[string]any{
+				"branch":      branch,
+				"project":     ev.Project.PathWithNamespace,
+				"pipeline_id": ev.ObjectAttributes.ID,
+				"status":      ev.ObjectAttributes.Status,
+				"task":        task,
+				"agents":      activeAgentIDs(matched),
+				"source":      "gitlab",
 			}
+			if ev.MergeRequest != nil {
+				payload["mr_iid"] = ev.MergeRequest.IID
+			}
+			d.deps.BroadcastAgentEvent("ci.pipeline.failure.routed", payload)
+			logEntry.Action = "routed"
 		} else {
-			logEntry.Action = "spawn_unavailable"
+			spawner := d.deps.Spawner()
+			if spawner != nil {
+				spawnID, err := spawner.Spawn(r.Context(), *spawnReq)
+				if err != nil {
+					logEntry.Error = err.Error()
+					d.deps.Logger().Warn("webhook spawn failed", "source", "gitlab", "error", err)
+				} else {
+					logEntry.SpawnID = spawnID
+					logEntry.Action = "spawned"
+				}
+			} else {
+				logEntry.Action = "spawn_unavailable"
+			}
 		}
 	} else {
 		logEntry.Action = "ignored"
@@ -169,6 +196,24 @@ func (d *Domain) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 
 // trySpawn attempts to spawn an agent from a webhook event.
 func (d *Domain) trySpawn(r *http.Request, req *spawn.Request, logEntry *WebhookEvent) {
+	// Prefer routing to an active session on the same branch before
+	// spawning a fresh agent — see handleGitLabWebhook for the
+	// equivalent path. Avoids waking a fresh devbox / k8s pod when
+	// the original author is already at the keyboard on this branch.
+	branch := req.BaseBranch
+	matched := matchActiveAgentsForBranch(d.deps.ActiveAgentsForBranch(branch), branch)
+	if len(matched) > 0 {
+		d.deps.BroadcastAgentEvent("ci.pipeline.failure.routed", map[string]any{
+			"branch":  branch,
+			"project": req.Project,
+			"task":    req.TaskDescription,
+			"agents":  activeAgentIDs(matched),
+			"source":  logEntry.Source,
+		})
+		logEntry.Action = "routed"
+		return
+	}
+
 	spawner := d.deps.Spawner()
 	if spawner == nil {
 		logEntry.Action = "spawn_unavailable"

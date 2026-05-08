@@ -41,6 +41,25 @@ type Config struct {
 	WarmOnStart  []string
 	Debug        bool
 	HTTPAddr     string // Address for Streamable HTTP listener (e.g., ":8088")
+	// EnvFilePath, when non-empty, is read at startup and on each SIGHUP-
+	// driven Reload() to refresh runtime-mutable settings (currently:
+	// HUD_ADMIN_TOKEN). Format is the same KEY=VALUE shape launchd
+	// EnvironmentFile uses; see internal/daemon/env_file.go. Optional —
+	// missing file is a no-op, parser errors are logged at warn level
+	// and reload continues.
+	EnvFilePath string
+	// CacheDir overrides the path used by the cache-eviction loop. When
+	// empty, defaults to ~/.cache/loom (see defaultLoomCacheDir).
+	CacheDir string
+	// CacheEvictionMaxAge sets the staleness threshold for hook
+	// agent-id-* / parent-session-* marker files. Zero means "use the
+	// default of 14 days". Negative disables eviction.
+	CacheEvictionMaxAge time.Duration
+	// CacheEvictionInterval controls how often the eviction loop ticks
+	// after the initial startup sweep. Zero means "use the default of
+	// 1 hour". Negative disables periodic eviction (startup sweep
+	// still runs).
+	CacheEvictionInterval time.Duration
 }
 
 // ToolCache holds cached aggregated tools from all servers.
@@ -67,6 +86,12 @@ type hudAppStopper interface {
 	StopMonitors()
 	RefreshMonitors()
 	SpawnOrchestrator() *hud.SpawnOrchestrator
+	// SetAdminToken installs a runtime admin-token override consumed
+	// by the HUD's requireAdminToken middleware. Used by SIGHUP-driven
+	// env-file reload so a rotated HUD_ADMIN_TOKEN takes effect without
+	// restarting the daemon (which would interrupt every active agent's
+	// keepalive).
+	SetAdminToken(token string)
 }
 
 // Daemon is the main Loom daemon.

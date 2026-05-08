@@ -157,3 +157,34 @@ func (w *webhookDepsAdapter) WebhookConfig() domainwebhook.WebhookCfg {
 		GitHubSecret:   w.app.config.WebhookGitHubSecret,
 	}
 }
+
+// ActiveAgentsForBranch returns presence-active agents whose
+// last-known branch matches the failing pipeline's source ref. Used
+// by the webhook mapper to route CI failures to the original author's
+// running session before falling back to a fresh spawn. Returns nil
+// when the agent bridge is unavailable or presence query fails — the
+// mapper treats that as "no match → spawn fresh".
+func (w *webhookDepsAdapter) ActiveAgentsForBranch(branch string) []domainwebhook.ActiveAgent {
+	if w.app.agent == nil || branch == "" {
+		return nil
+	}
+	presence, err := w.app.agent.PresenceList(false)
+	if err != nil {
+		w.app.logger.Warn("presence list for ci routing failed", "branch", branch, "error", err)
+		return nil
+	}
+	var matches []domainwebhook.ActiveAgent
+	for _, p := range presence {
+		if p.Branch != branch {
+			continue
+		}
+		matches = append(matches, domainwebhook.ActiveAgent{
+			AgentID:   p.AgentID,
+			SessionID: p.SessionID,
+			AgentType: p.AgentType,
+			Status:    p.Status,
+			Branch:    p.Branch,
+		})
+	}
+	return matches
+}

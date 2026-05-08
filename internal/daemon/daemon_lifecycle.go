@@ -165,6 +165,16 @@ func (d *Daemon) Start(ctx context.Context) (err error) {
 	// Start metrics collector
 	go d.metricsCollectorLoop()
 
+	// Apply env-file overrides (HUD_ADMIN_TOKEN, etc.) once at startup so
+	// a launchd plist that has the token but a stale process picks it
+	// up on next launch without operator intervention.
+	if err := d.reloadEnvFile(); err != nil {
+		d.logger.Warn("env file load at startup failed", "path", d.cfg.EnvFilePath, "error", err)
+	}
+
+	// Sweep stale ~/.cache/loom/agent-id-* + parent-session-* files.
+	go d.cacheEvictionLoop(ctx)
+
 	// Start health monitor
 	if d.healthMonitor != nil {
 		d.healthMonitor.Start()
