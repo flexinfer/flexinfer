@@ -23,6 +23,9 @@ export interface SpawnRequest {
   multi_turn?: boolean;
   max_cost_usd?: number;
   max_turns?: number;
+  /** Caller-supplied tags. The weaver spawn bridge writes
+   * `weaver_query_id` and `weaver_domain` here for HUD correlation. */
+  metadata?: Record<string, string>;
 }
 
 // SpawnTokenUsage mirrors internal/hud/bridge/spawn_telemetry.go SpawnTokenUsage.

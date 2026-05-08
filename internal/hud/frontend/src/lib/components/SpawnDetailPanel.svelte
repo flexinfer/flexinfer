@@ -300,6 +300,17 @@
             {'\u25A6'} Traces
           </button>
         {/if}
+        {#if spawn?.request.metadata?.weaver_query_id}
+          <span
+            class="weaver-link-chip"
+            title="Spawned by weaver query {spawn.request.metadata.weaver_query_id}{spawn.request.metadata.weaver_domain ? ' (' + spawn.request.metadata.weaver_domain + ')' : ''}"
+          >
+            {'↪'} weaver
+            {#if spawn.request.metadata.weaver_domain}
+              <span class="weaver-domain">{spawn.request.metadata.weaver_domain}</span>
+            {/if}
+          </span>
+        {/if}
       </div>
       <div class="metrics-row">
         {#if !spawn.request.max_turns}
@@ -647,6 +658,25 @@
   .session-link-chip:hover {
     border-color: var(--accent);
     background: rgba(129, 240, 254, 0.08);
+  }
+
+  /* Weaver origin chip (S6.3) — read-only, no click. */
+  .weaver-link-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    margin-left: var(--space-2);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    color: var(--fg-muted, #888);
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+  }
+  .weaver-link-chip .weaver-domain {
+    color: var(--accent);
+    margin-left: 2px;
   }
 
   .trace-card-header {
