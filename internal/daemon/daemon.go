@@ -175,6 +175,11 @@ type Daemon struct {
 	// weaver is the MCP weaver router (nil when not enabled).
 	weaver *weaver.Router
 
+	// weaverPreflight holds the latest model-catalog preflight result.
+	// Surfaces in loom/weaver/status as degraded/missing_models/ready_models.
+	// Nil-safe via the preflightStore guard.
+	weaverPreflight preflightStore
+
 	// toolRefresh debounces tool-cache refreshes triggered by upstream
 	// disconnect/reconnect events (see scheduleToolRefresh). Lazily created
 	// on first use via toolRefreshOnce.

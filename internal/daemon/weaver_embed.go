@@ -77,6 +77,24 @@ func (d *Daemon) startEmbeddedWeaver(ctx context.Context) error {
 		}
 	}
 
+	// Run a non-blocking model preflight. Failure is logged but never
+	// blocks daemon startup — operators see degraded state in
+	// /api/weaver/status instead.
+	pre := runWeaverPreflight(ctx, client, cfg, router.Registry())
+	d.weaverPreflight.Set(pre)
+	if pre.Degraded {
+		d.logger.Warn("weaver: model preflight degraded",
+			"missing_models", pre.MissingModels,
+			"catalog_size", pre.CatalogSize,
+			"catalog_error", pre.CatalogError,
+		)
+	} else {
+		d.logger.Info("weaver: model preflight ok",
+			"ready_models", pre.ReadyModels,
+			"catalog_size", pre.CatalogSize,
+		)
+	}
+
 	d.logger.Info("weaver started",
 		"router_model", cfg.RouterModel,
 		"subagent_model", cfg.SubagentModel,
