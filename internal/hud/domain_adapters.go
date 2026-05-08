@@ -10,6 +10,7 @@ import (
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/hud/domain"
+	domainaimodels "github.com/crb2nu/loom/internal/hud/domain/aimodels"
 	domainalerting "github.com/crb2nu/loom/internal/hud/domain/alerting"
 	"github.com/crb2nu/loom/internal/hud/domain/codebase"
 	domainctx "github.com/crb2nu/loom/internal/hud/domain/context"
@@ -28,6 +29,7 @@ import (
 	domainwebhook "github.com/crb2nu/loom/internal/hud/domain/webhook"
 	"github.com/crb2nu/loom/internal/hud/domain/workflow"
 	"github.com/crb2nu/loom/internal/hud/monitor"
+	"github.com/crb2nu/loom/pkg/aimodels"
 	"github.com/crb2nu/loom/pkg/projectmeta"
 )
 
@@ -52,12 +54,39 @@ func (a *App) initDomainRegistry() {
 	a.domainRegistry.Register(domainalerting.New(&alertingDepsAdapter{app: a}))
 	a.domainRegistry.Register(domainweaver.New(&weaverDepsAdapter{app: a}))
 	a.domainRegistry.Register(domainwebhook.New(&webhookDepsAdapter{app: a}))
+	a.domainRegistry.Register(domainaimodels.New(&aimodelsDepsAdapter{app: a}))
+}
+
+// --- aimodels domain adapter ---
+
+// aimodelsDepsAdapter exposes the App's process-wide pkg/aimodels
+// resolver to the aimodels HUD domain. Read-only — handlers only call
+// Resolver.Roles() etc.
+type aimodelsDepsAdapter struct{ app *App }
+
+func (a *aimodelsDepsAdapter) WriteJSON(w http.ResponseWriter, status int, v any) {
+	a.app.WriteJSON(w, status, v)
+}
+
+func (a *aimodelsDepsAdapter) WriteError(w http.ResponseWriter, status int, msg string, err error) {
+	a.app.WriteError(w, status, msg, err)
+}
+
+func (a *aimodelsDepsAdapter) AIModelsResolver() *aimodels.Resolver {
+	return a.app.AIModelsResolver()
 }
 
 // --- Shared Deps methods (used by multiple domains) ---
 
 func (a *App) Agent() *bridge.AgentBridge { return a.agent }
 func (a *App) Logger() *slog.Logger       { return a.logger }
+
+// AIModelsResolver returns the process-wide pkg/aimodels resolver.
+// Currently returns DefaultResolver() to match S3's call-site behavior;
+// a future S8 slice promotes this to a stored, YAML-loaded instance.
+func (a *App) AIModelsResolver() *aimodels.Resolver {
+	return aimodels.DefaultResolver()
+}
 
 func (a *App) Monitors() mobile.Monitors {
 	return mobile.Monitors{

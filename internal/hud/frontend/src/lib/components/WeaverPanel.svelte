@@ -6,6 +6,7 @@
   let domains = $state(null);
   let history = $state(null);
   let metrics = $state(null);
+  let aimodels = $state(null);
   let loading = $state(true);
   let error = $state('');
   let pollTimer = $state(null);
@@ -13,17 +14,19 @@
 
   async function fetchAll() {
     try {
-      const [sRes, dRes, hRes, mRes] = await Promise.all([
+      const [sRes, dRes, hRes, mRes, aRes] = await Promise.all([
         fetch('/api/weaver/status'),
         fetch('/api/weaver/domains'),
         fetch('/api/weaver/history'),
         fetch('/api/weaver/metrics'),
+        fetch('/api/aimodels/roles'),
       ]);
       if (!sRes.ok) throw new Error(`Status: HTTP ${sRes.status}`);
       status = await sRes.json();
       domains = dRes.ok ? await dRes.json() : null;
       history = hRes.ok ? await hRes.json() : null;
       metrics = mRes.ok ? await mRes.json() : null;
+      aimodels = aRes.ok ? await aRes.json() : null;
       error = '';
     } catch (e) {
       error = e.message ?? 'Failed to fetch weaver data';
@@ -82,6 +85,20 @@
   let totalTokens = $derived(metrics?.total_tokens ?? 0);
   let errorCount = $derived(metrics?.error_count ?? 0);
 
+  // Preflight (S4) — model catalog comparison surfaced from
+  // loom/weaver/status. degraded=true when at least one configured
+  // model isn't advertised by FlexInfer.
+  let degraded = $derived(status?.degraded === true);
+  let missingModels = $derived(Array.isArray(status?.missing_models) ? status.missing_models : []);
+  let readyModels = $derived(Array.isArray(status?.ready_models) ? status.ready_models : []);
+  let catalogSize = $derived(status?.catalog_size ?? 0);
+  let catalogError = $derived(status?.catalog_error ?? '');
+  let preflightAt = $derived(status?.preflight_at ?? '');
+
+  // Defaults (S6.2) — pkg/aimodels role table.
+  let roles = $derived(Array.isArray(aimodels?.roles) ? aimodels.roles : []);
+  let overridePath = $derived(aimodels?.override_path ?? '');
+
   function toggleDomain(name) {
     expandedDomain = expandedDomain === name ? null : name;
   }
@@ -134,6 +151,43 @@
     <div class="error-banner">{error}</div>
   {:else}
 
+    <!-- Preflight degraded banner (S4) -->
+    {#if degraded}
+      <section class="section degraded-banner">
+        <h3>Model preflight: degraded</h3>
+        {#if catalogError}
+          <p class="degraded-detail">
+            Could not reach FlexInfer <code>/v1/models</code>:
+            <code>{catalogError}</code>. Showing all configured models as missing.
+          </p>
+        {:else}
+          <p class="degraded-detail">
+            {missingModels.length} configured model{missingModels.length === 1 ? '' : 's'}
+            not advertised by FlexInfer (catalog size: {catalogSize}).
+            Weaver queries against {missingModels.length === 1 ? 'this model' : 'these models'} will 404.
+          </p>
+        {/if}
+        {#if missingModels.length > 0}
+          <div class="model-chips">
+            {#each missingModels as m}
+              <span class="model-chip missing">{m}</span>
+            {/each}
+          </div>
+        {/if}
+        {#if readyModels.length > 0}
+          <p class="degraded-detail">
+            Ready ({readyModels.length}):
+            {#each readyModels as m, i}
+              <span class="model-chip ready">{m}</span>{i < readyModels.length - 1 ? ' ' : ''}
+            {/each}
+          </p>
+        {/if}
+        {#if preflightAt}
+          <p class="degraded-detail muted">Last checked: {fmtTime(preflightAt)}</p>
+        {/if}
+      </section>
+    {/if}
+
     <!-- Status Card -->
     <section class="section">
       <h3>Status</h3>
@@ -156,6 +210,31 @@
         </div>
       </div>
     </section>
+
+    <!-- Defaults (pkg/aimodels role resolver, S6.2) -->
+    {#if roles.length > 0}
+      <section class="section">
+        <h3>Role defaults</h3>
+        <p class="muted">
+          Resolved by <code>pkg/aimodels</code>. Override at
+          <code>{overridePath || '~/.config/loom/aimodel-roles.yaml'}</code>.
+        </p>
+        <div class="roles-table">
+          {#each roles as r}
+            <div class="role-row">
+              <span class="role-name text-mono">{r.role}</span>
+              <span class="role-primary text-mono">{r.primary || '—'}</span>
+              {#if r.fallbacks?.length > 0}
+                <span class="role-fallbacks">
+                  fallbacks:
+                  {#each r.fallbacks as f, i}<code>{f}</code>{i < r.fallbacks.length - 1 ? ', ' : ''}{/each}
+                </span>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      </section>
+    {/if}
 
     <!-- Metrics Summary -->
     <section class="section">
@@ -550,5 +629,82 @@
     text-align: right;
     flex-shrink: 0;
     font-family: var(--font-mono);
+  }
+
+  /* Preflight degraded banner (S4) */
+  .degraded-banner {
+    border-left: 3px solid var(--color-warning, #ffae00);
+    background: var(--bg-warning-soft, rgba(255, 174, 0, 0.08));
+    padding-left: 12px;
+  }
+  .degraded-banner h3 {
+    color: var(--color-warning, #ffae00);
+  }
+  .degraded-detail {
+    margin: 6px 0;
+    font-size: 0.92rem;
+    line-height: 1.4;
+  }
+  .degraded-detail.muted {
+    color: var(--fg-muted);
+    font-size: 0.85rem;
+  }
+  .model-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 0;
+  }
+  .model-chip {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border-default, #2a3142);
+  }
+  .model-chip.missing {
+    background: var(--bg-danger-soft, rgba(255, 80, 80, 0.12));
+    border-color: var(--color-danger, #ff5050);
+    color: var(--color-danger, #ff5050);
+  }
+  .model-chip.ready {
+    background: var(--bg-success-soft, rgba(80, 200, 120, 0.10));
+    border-color: var(--color-success, #50c878);
+    color: var(--color-success, #50c878);
+  }
+
+  /* Role defaults subview (S6.2) */
+  .roles-table {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .role-row {
+    display: grid;
+    grid-template-columns: 200px 220px 1fr;
+    gap: 12px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    background: var(--bg-row, rgba(255, 255, 255, 0.02));
+    align-items: center;
+  }
+  .role-row:hover {
+    background: var(--bg-row-hover, rgba(255, 255, 255, 0.04));
+  }
+  .role-name {
+    color: var(--fg-secondary);
+  }
+  .role-primary {
+    color: var(--fg-default);
+    font-weight: 500;
+  }
+  .role-fallbacks {
+    font-size: 0.85rem;
+    color: var(--fg-muted);
+  }
+  .role-fallbacks code {
+    font-family: var(--font-mono);
+    margin: 0 2px;
   }
 </style>
