@@ -11,6 +11,11 @@ import (
 )
 
 // Recipe represents a structured, proven solution to a specific problem class.
+//
+// Recipes are the Tier-1 surface of the engram tech tree (see svc_engrams.go).
+// Existing recipe call sites continue to work; new fields default to safe values
+// (Tier=1, empty Prerequisites, ProofStatus=unverified). Engram-aware callers
+// should prefer agent_engram_* tools.
 type Recipe struct {
 	Title    string   `json:"title"`
 	Problem  string   `json:"problem"`
@@ -19,93 +24,67 @@ type Recipe struct {
 	Tags     []string `json:"tags,omitempty"`
 	Language string   `json:"language,omitempty"`
 	Scope    string   `json:"scope,omitempty"` // "project", "workspace", "universal"
+
+	// Engram extensions (additive; optional for plain recipes).
+	Family        string    `json:"family,omitempty"`        // logical group; same problem in another lang shares family
+	Tier          int       `json:"tier,omitempty"`          // 1=idiom, 2=composite, 3=system; defaults to 1
+	Prerequisites []string  `json:"prerequisites,omitempty"` // engram URIs this depends on
+	ProofStatus   string    `json:"proof_status,omitempty"`  // unverified | verified | stale | failing
+	UnlockedIn    []string  `json:"unlocked_in,omitempty"`   // repo/branch refs where proof has run green
+	LastVerified  time.Time `json:"last_verified,omitempty"`
 }
 
 // HandleRecipeAdd adds a structured recipe to the memory hierarchy.
-// Recipes are stored as long-term memory items with category "recipe".
+//
+// Implementation now delegates to HandleEngramAdd with tier=1 and empty
+// prerequisites. The result envelope keeps the legacy recipe shape so
+// existing callers remain unaffected.
 func (s *Service) HandleRecipeAdd(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
-	title := v.Required("title")
-	problem := v.Required("problem")
-	solution := v.Required("solution")
-	proof := v.Required("proof")
+	v.Required("title")
+	v.Required("problem")
+	v.Required("solution")
+	v.Required("proof")
 
 	if err := v.Validate(); err != nil {
 		return mcp.ErrorResult(err), nil
 	}
 
-	// Build tags
-	tags := v.StringSlice("tags")
-	tags = append(tags, "recipe") // Always tag as recipe
-
-	language := v.String("language", "")
-	if language != "" {
-		tags = append(tags, "lang:"+language)
+	// Recipes are tier-1 engrams with no prerequisites. Force the contract
+	// regardless of any tier/prerequisites the caller smuggled in.
+	engramArgs := make(map[string]any, len(args)+2)
+	for k, val := range args {
+		switch k {
+		case "tier", "prerequisites":
+			// drop — recipes are always tier 1 with no prereqs
+		default:
+			engramArgs[k] = val
+		}
 	}
+	engramArgs["tier"] = 1
 
-	scope := v.String("scope", "project")
-	tags = append(tags, "scope:"+scope)
-
-	// Build content as structured markdown
-	content := fmt.Sprintf("## Problem\n\n%s\n\n## Solution\n\n%s\n\n## Proof\n\n%s", problem, solution, proof)
-
-	// Build metadata
-	metadata := map[string]any{
-		"recipe_problem":  problem,
-		"recipe_solution": solution,
-		"recipe_proof":    proof,
-		"recipe_language": language,
-		"recipe_scope":    scope,
-		"created_at":      time.Now().UTC().Format(time.RFC3339),
-	}
-
-	// Store as a long-term memory item via the existing memory infrastructure
-	memoryArgs := map[string]any{
-		"items": []any{
-			map[string]any{
-				"title":      title,
-				"content":    content,
-				"tier":       "long_term",
-				"importance": "high",
-				"category":   "recipe",
-				"tags":       toAnySlice(tags),
-				"metadata":   metadata,
-			},
-		},
-	}
-
-	// Pass through optional context fields
-	if sid := v.String("session_id", ""); sid != "" {
-		memoryArgs["session_id"] = sid
-	}
-	if aid := v.String("agent_id", ""); aid != "" {
-		memoryArgs["agent_id"] = aid
-	}
-	if ns := v.String("namespace", ""); ns != "" {
-		memoryArgs["namespace"] = ns
-	}
-
-	result, err := s.HandleMemoryAdd(ctx, memoryArgs)
+	result, err := s.HandleEngramAdd(ctx, engramArgs)
 	if err != nil {
 		return nil, err
 	}
-
-	// Wrap the result to indicate it is a recipe
-	if !result.IsError {
-		return mcp.JSONResult(map[string]any{
-			"ok":       true,
-			"title":    title,
-			"scope":    scope,
-			"language": language,
-			"tags":     tags,
-			"proof":    proof,
-		})
+	if result.IsError {
+		return result, nil
 	}
 
-	return result, nil
+	// Preserve the legacy recipe response shape.
+	return mcp.JSONResult(map[string]any{
+		"ok":       true,
+		"title":    v.String("title", ""),
+		"scope":    v.String("scope", "project"),
+		"language": v.String("language", ""),
+		"tags":     buildLegacyRecipeTags(v),
+		"proof":    v.String("proof", ""),
+	})
 }
 
-// HandleRecipeRecall recalls recipes matching a query using the memory recall system.
+// HandleRecipeRecall recalls recipes matching a query. Searches both
+// engram-category items (new) and legacy recipe-category items so historical
+// data continues to surface unchanged.
 func (s *Service) HandleRecipeRecall(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	query := v.Required("query")
@@ -114,10 +93,9 @@ func (s *Service) HandleRecipeRecall(ctx context.Context, args map[string]any) (
 		return mcp.ErrorResult(err), nil
 	}
 
-	// Build recall args with recipe-specific filters
 	recallArgs := map[string]any{
 		"query":      query,
-		"categories": []string{"recipe"},
+		"categories": []string{"engram", "recipe"},
 		"tiers":      []string{"long_term"},
 	}
 
@@ -128,7 +106,6 @@ func (s *Service) HandleRecipeRecall(ctx context.Context, args map[string]any) (
 		recallArgs["token_budget"] = budget
 	}
 
-	// Build tag filters
 	tags := buildRecipeTagFilters(v)
 	if len(tags) > 0 {
 		recallArgs["tags"] = tags
@@ -137,19 +114,18 @@ func (s *Service) HandleRecipeRecall(ctx context.Context, args map[string]any) (
 	return s.HandleMemoryRecall(ctx, recallArgs)
 }
 
-// HandleRecipeList lists recipes, optionally filtered.
+// HandleRecipeList lists recipes, optionally filtered. Searches both engram
+// and legacy recipe categories.
 func (s *Service) HandleRecipeList(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 
-	// Build recall args for listing
 	recallArgs := map[string]any{
 		"query":      "*",
-		"categories": []string{"recipe"},
+		"categories": []string{"engram", "recipe"},
 		"tiers":      []string{"long_term"},
 		"limit":      v.Int("limit", 50),
 	}
 
-	// Build tag filters
 	tags := buildRecipeTagFilters(v)
 	if len(tags) > 0 {
 		recallArgs["tags"] = tags
@@ -175,6 +151,20 @@ func buildRecipeTagFilters(v *validate.Args) []string {
 		tags = append(tags, "scope:"+scope)
 	}
 
+	return tags
+}
+
+// buildLegacyRecipeTags reconstructs the tag list a recipe-add response used
+// to advertise (recipe + lang:X + scope:Y + caller tags). Engram storage
+// tags are richer; this helper keeps the legacy response stable.
+func buildLegacyRecipeTags(v *validate.Args) []string {
+	tags := v.StringSlice("tags")
+	tags = append(tags, "recipe")
+	if lang := v.String("language", ""); lang != "" {
+		tags = append(tags, "lang:"+lang)
+	}
+	scope := v.String("scope", "project")
+	tags = append(tags, "scope:"+scope)
 	return tags
 }
 
