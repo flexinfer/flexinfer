@@ -4,6 +4,14 @@
 # VRAM: ~1.5 GB Q4_K_M — coexists with BGE embeddings in 16 GB.
 # Part of the radeonvii-models shared group at priority 120.
 #
+# 2026-05-08: bumped minReplicas 0 -> 1 because Loom's weaver Router
+# resolves to this model on every query (via pkg/aimodels
+# RoleWeaverRouter); a 60-120s llamacpp cold start on the radeonvii
+# was unacceptable for a per-query routing path. Subagent calls remain
+# serverless (cold-start absorbed by qwen3-8b-fast-7900xtx Ready
+# replica). See services/loom-core/.loom/111-product-spec-weaver-qwen3-
+# integration-2026-05-08.md (MR-003).
+#
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -24,7 +32,7 @@ spec:
     vramEstimateMB: 2000
   serverless:
     enabled: true
-    minReplicas: 0
+    minReplicas: 1
     idleTimeout: 5m
     coldStartTimeout: 5m
   config:
@@ -55,9 +63,14 @@ spec:
   serviceLabels:
     - tool-router
     - fast
+    - qwen3-router
   litellm:
     enabled: true
     servedModelName: qwen3-1.7b-tools
     aliases:
       - tool-router
       - qwen3-1.7b
+      # 2026-05-08: canonical alias for Loom's pkg/aimodels resolver
+      # (RoleWeaverRouter). Lets callers resolve to "qwen3-router"
+      # without coupling to the GPU-specific CR name.
+      - qwen3-router

@@ -43,6 +43,8 @@ spec:
     - fast-text
     - gpt-3.5-turbo
     - copilot
+    - qwen3-8b
+    - qwen3-default
   litellm:
     enabled: true
     servedModelName: qwen3-8b-fast-7900xtx
@@ -51,3 +53,9 @@ spec:
       - fast-chat-7900
       - fast-text
       - gpt-3.5-turbo
+      # 2026-05-08: canonical short aliases consumed by Loom's pkg/aimodels
+      # resolver (RoleWeaverSubagent, RoleMillsJudge, RoleCoordinatorDefault,
+      # RoleAutofix). See loom-core MR !328 / !329 and
+      # services/loom-core/.loom/111-product-spec-weaver-qwen3-integration-2026-05-08.md.
+      - qwen3-8b
+      - qwen3-default
