@@ -1,5 +1,9 @@
 # Agent Recipe Schema
 
+> **Note:** Recipes are now Tier-1 entries in the [engram tech tree](../../agent-engrams/references/engram-schema.md).
+> The `agent_recipe_*` tools still work and write into the same storage as `agent_engram_add`.
+> When you need prerequisites or a stronger proof contract, prefer `agent_engram_add` directly.
+
 Recipes are structured, proven solutions to specific problem classes.
 
 ## Schema

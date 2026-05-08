@@ -6772,11 +6772,99 @@ skills:
         enabled: true
         type: rule
 
+  - name: agent-engrams
+    categories: [knowledge, memory, automation, patterns]
+    common:
+      description: |
+        Engram tech tree: prerequisite-aware library of software patterns and algorithms. Engrams extend recipes with tiered proof contracts (1=idiom, 2=composite needs runnable test, 3=system needs test+benchmark/dashboard) and a DAG of prerequisites. Use to recall established patterns before introducing new ones, and to record a novel solution as a reusable, proof-gated capsule.
+      instructions: |
+        # Agent Engrams
+
+        Compact, proof-gated, prerequisite-aware capsules for software patterns and
+        algorithms. Each engram has a stable URI, a tier-graded proof contract, and
+        zero or more prerequisite engrams. Together they form a tech tree.
+
+        ## When to Use
+
+        - **Recall an engram** before solving a problem to check whether a vetted
+          solution and its prerequisites already exist in this codebase
+        - **Add an engram** after solving a non-trivial problem so future agents
+          (and you) can reuse the pattern with proof of correctness
+        - **Walk the graph** to understand which patterns a higher-tier engram
+          assumes, or which dependent engrams a base pattern unlocks
+        - When you only have a self-contained, language-specific recipe with no
+          prerequisites, the legacy `agent_recipe_*` tools still work and write
+          into the same storage
+
+        ## Tools
+
+        | Tool | Purpose |
+        |------|---------|
+        | `agent_engram_add` | Add an engram (validates tier/proof, rejects cycles, rejects duplicate URIs) |
+        | `agent_engram_recall` | Recall by query; optionally pull in transitive prerequisites at depth N |
+        | `agent_engram_list` | List engrams filtered by tier, family, language, scope, proof_status |
+        | `agent_engram_graph` | Adjacency list for the prerequisite graph rooted at a URI |
+
+        ## Identity
+
+        Each engram has a URI of the form `engram://<family>/<slug>` (kebab-case,
+        max 64 chars per segment). Same problem in another language = same family,
+        different slug.
+
+        ## Tier / Proof Contract
+
+        | Tier | Examples | Required proof |
+        |------|----------|----------------|
+        | 1 — Idiom | Error wrapping, structured logging keys, retry-with-jitter | File reference (`pkg/x/y.go:42-58`) |
+        | 2 — Composite | Connection pool with healthcheck, debounce queue, idempotency write path | Must include `command:` (runnable test) |
+        | 3 — System | Saga coordinator, distributed tracing, agent-handoff protocol | Must include `command:` AND (`benchmark:` OR `dashboard:`) |
+
+        `agent_engram_add` rejects writes that violate the contract. Format proof
+        with literal `command: ...`, `benchmark: ...`, `dashboard: ...` lines.
+
+        ## Cycles
+
+        Cycle detection is enforced at write time. Self-prereqs are rejected
+        directly; transitive cycles are rejected after walking the prereq DAG.
+
+        ## Recall with Prerequisites
+
+        ```
+        agent_engram_recall(query="retry", depth=1)
+        ```
+
+        Returns the matching engrams plus their direct prerequisites, ordered
+        lowest-tier-first within `token_budget`. `depth=0` skips prerequisites;
+        higher depths pull in transitive ancestors.
+
+        See `references/engram-schema.md` for the full schema and worked examples.
+      scripts: []
+      references:
+        - engram-schema.md
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+      kilocode:
+        enabled: true
+        type: skill
+      gemini:
+        enabled: true
+        type: instruction
+      antigravity:
+        enabled: true
+        type: command
+
   - name: agent-recipes
     categories: [knowledge, memory, automation]
     common:
       description: |
-        Structured recipe library for proven solutions. Recipes have required proof (file reference, test command, or URL). Use when recording a novel solution or recalling how a problem class was previously solved.
+        Structured recipe library for proven solutions. Recipes have required proof (file reference, test command, or URL). Use when recording a novel solution or recalling how a problem class was previously solved. Recipes are Tier-1 entries in the engram tech tree (see agent-engrams skill).
       instructions: |
         # Agent Recipes
 
