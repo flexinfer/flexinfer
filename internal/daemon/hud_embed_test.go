@@ -9,6 +9,33 @@ import (
 	"testing"
 )
 
+func TestEnvBoolTrue(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"true", true}, {"TRUE", true}, {"True", true},
+		{"1", true},
+		{"yes", true}, {"YES", true},
+		{"on", true},
+		{"  true  ", true},
+		{"", false},
+		{"0", false},
+		{"false", false},
+		{"no", false},
+		{"off", false},
+		{"enabled", false}, // explicit allowlist — not a fuzzy match
+		{"1.0", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			if got := envBoolTrue(tt.in); got != tt.want {
+				t.Errorf("envBoolTrue(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFirstNonEmpty_ReturnsFirst(t *testing.T) {
 	got := firstNonEmpty("hello", "world")
 	if got != "hello" {
