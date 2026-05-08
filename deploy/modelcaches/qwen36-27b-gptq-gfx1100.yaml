@@ -96,7 +96,14 @@ spec:
     dynamicExclusion: "gdn"
     useGPU: true
     # GPTQ uses the same gfx1100 driver reservation path as abliteration.
-    maxMemoryGB: 40
+    # 2026-05-08: bumped 40 -> 56 after the dynamicExclusion: gdn cycle hit
+    # `ValueError: ...will be offloaded to disk, please pass along an
+    # offload_folder`. Excluding 48 GDN linear-attn modules from int4
+    # quantization keeps them as FP, which makes accelerate's auto-device-map
+    # pick disk offload for some submodules under the prior 40Gi container
+    # ceiling. Memory note (Quantization Job Infrastructure): 56Gi works,
+    # 64Gi OOM'd previously.
+    maxMemoryGB: 56
     timeoutSeconds: 28800  # 8 h upper bound; 27B GPTQ on gfx1100 is ~3-6 h
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
