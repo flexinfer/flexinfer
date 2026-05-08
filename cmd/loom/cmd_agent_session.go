@@ -375,10 +375,27 @@ Example:
 	return cmd
 }
 
+// stripWorktreeFromRepoRoot returns the main repo root for a given git
+// repoRoot, collapsing both workspace-standard (<repo>/.worktrees/<branch>)
+// and Claude Code tool-managed (<repo>/.claude/worktrees/<branch>) linked
+// tree layouts back to <repo>. Returns the input unchanged when neither
+// pattern is present.
+func stripWorktreeFromRepoRoot(repoRoot string) string {
+	if idx := strings.Index(repoRoot, "/.claude/worktrees/"); idx >= 0 {
+		return repoRoot[:idx]
+	}
+	if idx := strings.Index(repoRoot, "/.worktrees/"); idx >= 0 {
+		return repoRoot[:idx]
+	}
+	return repoRoot
+}
+
 // inferGitNamespace derives a namespace from the current git repository and branch.
 // Returns "parent/repo-name/branch" (workspace-relative) or empty string if git
-// context is unavailable. For worktrees under <repo>/.worktrees/, resolves to the
-// parent repo path so namespaces stay consistent across main and worktree checkouts.
+// context is unavailable. For worktrees under <repo>/.worktrees/ or
+// <repo>/.claude/worktrees/ (Claude Code tool-managed worktrees), resolves to
+// the parent repo path so namespaces stay consistent across main and worktree
+// checkouts.
 func inferGitNamespace() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -389,10 +406,7 @@ func inferGitNamespace() string {
 	}
 	repoRoot := strings.TrimSpace(string(toplevel))
 
-	// For worktrees, resolve to the main repo root above .worktrees/.
-	if idx := strings.Index(repoRoot, "/.worktrees/"); idx >= 0 {
-		repoRoot = repoRoot[:idx]
-	}
+	repoRoot = stripWorktreeFromRepoRoot(repoRoot)
 
 	// Use parent/basename for workspace-relative namespacing
 	// (e.g. "services/loom-core" instead of just "loom-core").

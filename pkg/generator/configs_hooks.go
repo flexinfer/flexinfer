@@ -27,10 +27,15 @@ func hookProfileHasEvent(hp HookProfile, event string) bool {
 
 // hookNamespaceVars returns a shell snippet that computes NS_PROJECT (workspace-
 // relative 2-level project path) and NS_BRANCH from the WS_ROOT variable set by
-// hookAgentIDBootstrap. For worktrees under <repo>/.worktrees/, NS_PROJECT
-// resolves to the parent repo path so namespace stays consistent.
+// hookAgentIDBootstrap. Resolves to the main repo root for both workspace-
+// standard (<repo>/.worktrees/<branch>) and Claude Code tool-managed
+// (<repo>/.claude/worktrees/<branch>) linked-tree layouts so namespace stays
+// consistent across main and worktree checkouts.
 func hookNamespaceVars() string {
-	return `if echo "$WS_ROOT" | grep -q '/.worktrees/'; then ` +
+	return `if echo "$WS_ROOT" | grep -q '/.claude/worktrees/'; then ` +
+		`_MAIN="${WS_ROOT%%/.claude/worktrees/*}"; ` +
+		`NS_PROJECT="$(basename "$(dirname "$_MAIN")")/$(basename "$_MAIN")"; ` +
+		`elif echo "$WS_ROOT" | grep -q '/.worktrees/'; then ` +
 		`_MAIN="${WS_ROOT%%/.worktrees/*}"; ` +
 		`NS_PROJECT="$(basename "$(dirname "$_MAIN")")/$(basename "$_MAIN")"; ` +
 		`else ` +
