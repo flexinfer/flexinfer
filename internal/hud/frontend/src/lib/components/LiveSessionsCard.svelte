@@ -85,8 +85,8 @@
 
   {#if sessions.length === 0}
     <EmptyState
-      title="No active sessions yet"
-      hint="Sessions appear here as soon as a Claude Code, Gemini, or Codex CLI emits a SessionStart hook. Public-tier event redaction is applied at the producer; secrets never reach this view."
+      heading="No active sessions yet"
+      description="Sessions appear here as soon as a Claude Code, Gemini, or Codex CLI emits a SessionStart hook. Public-tier event redaction is applied at the producer; secrets never reach this view."
     />
   {:else}
     <ul class="session-list">
