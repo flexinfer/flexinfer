@@ -1,0 +1,98 @@
+# Qwen3-1.7B via vLLM on AMD gfx906 (Radeon VII) — canary lane
+#
+# Closes Track C of `.loom/gfx1100-gfx906-next-round-plan.md` (revive-or-retire
+# decision for gfx906 vLLM): chose Path A (revive). Track C investigation
+# (`.loom/local/track-c-vllm-gfx906-investigation.md`) recommended the
+# `mixa3607` base, but the live merged Dockerfile path (commit ea0bc1e0,
+# 2026-05-02) reverted to source-built vLLM 0.7.3 on `rocm/vllm-dev:base`.
+# That build is what's pushed at digest
+# `sha256:beadf394fc81c031799799f5d965664e419e5f3ffb4c5873a9d7677f0e1e06b8`
+# (image tag `registry.harbor.lan/flexinfer/vllm:rocm-gfx906`).
+#
+# This manifest is the smallest model that exercises the full vLLM serve
+# path on gfx906 hardware:
+#   - Qwen3-1.7B FP16 ≈ 3.5 GB weights
+#   - vLLM overhead ≈ 5-7 GB (KV cache + activations)
+#   - Total budget: ~10-12 GB on a 16 GB Vega20 dGPU
+#
+# Coexists with the existing radeonvii-models pool entries: bge embeddings
+# (~600 MB), qwen3-1p7b-tools llama.cpp tool-router (~1.5 GB), and SDXL
+# inpainting (~6-8 GB CPU-offloaded). vLLM canary at priority 80 stays
+# below the tool-router (120) and below qwen3-8b-radeonvii (100) so the
+# established lanes preempt this canary if GPU pressure rises.
+#
+# Default: scaled to zero. Smoke procedure (manual; do NOT auto-promote):
+#   1. kubectl scale -n flexinfer-system deployment/qwen3-1.7b-vllm-radeonvii --replicas=1
+#      (or just hit the proxy alias and let serverless cold-start)
+#   2. Wait for Ready phase + pod 1/1 Running.
+#   3. curl /v1/completions through flexinfer-proxy with prompt
+#      "The color of the sky is" (deterministic). Expect coherent reply.
+#   4. Record evidence in .loom/60-validation-matrix.md as a `gfx906` textgen
+#      canary row. If pass, follow up with a small MR flipping
+#      `deploy/gpuprofiles/gfx906.yaml` `vllm.support: experimental → full`.
+#
+# Block: vLLM 0.7.3 has known limits on gfx906 (no FP8 KV, no Marlin kernels;
+# Triton AWQ is slow). Do NOT promote to a serving lane based on this canary
+# alone — the canary's purpose is to validate the *import-and-serve* path,
+# not to claim parity with the gfx1100 vLLM lane.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-1.7b-vllm-radeonvii
+  namespace: flexinfer-system
+spec:
+  backend: vllm
+  source: HF://Qwen/Qwen3-1.7B
+  gpu:
+    vendor: amd
+    shared: radeonvii-models
+    # Below tool-router (120) and qwen3-8b (100). Canary should yield to
+    # established lanes if GPU pressure rises.
+    priority: 80
+    count: 1
+    vramEstimateMB: 10000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 10m
+    coldStartTimeout: 15m
+  config:
+    dtype: half
+    maxModelLen: 4096
+    gpuMemoryUtilization: "0.85"
+    maxNumSeqs: 2
+    # ROCm gfx906 vLLM 0.7.3 — eager mode required to avoid CUDA-graph
+    # compilation issues (gfx906 lacks the toolchain support that gfx1100/
+    # gfx942 have).
+    enforceEager: true
+    trustRemoteCode: true
+    servedModelName: qwen3-1.7b-vllm
+    # gfx906 reports as gfx900; HSA_OVERRIDE_GFX_VERSION=9.0.6 is supplied
+    # by the gfx906 GPUProfile env block. No per-model override needed.
+    rocrVisibleDevices: "0"
+  cache:
+    size: 6Gi
+    storageClass: nvme-1r
+    strategy: SharedPVC
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  resources:
+    requests:
+      cpu: "2"
+      memory: 8Gi
+    limits:
+      cpu: "6"
+      memory: 16Gi
+  serviceLabels:
+    - vllm-canary
+    - qwen3-1.7b-vllm
+  litellm:
+    enabled: true
+    servedModelName: qwen3-1.7b-vllm
+    # Carry only canary-scoped aliases. The bare `qwen3-1.7b` alias is owned
+    # by the llama.cpp tool-router (qwen3-1p7b-tools-radeonvii) and must NOT
+    # be claimed here — would conflict with the existing fast-routing lane.
+    aliases:
+      - vllm-canary
+      - qwen3-1.7b-vllm
+      - qwen3-1.7b-vllm-vii

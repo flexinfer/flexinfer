@@ -63,6 +63,7 @@ resources:
   # image-storage headroom. The llama.cpp GGUF lane pulls a much smaller image
   # and gives the Radeon VII a useful low-latency routing workload.
   - qwen3-1.7b-tools-radeonvii.yaml # llama.cpp GGUF, fast tool-router lane
+  - qwen3-1.7b-vllm-radeonvii.yaml  # vllm canary, scaled to 0; closes Track C revive path (priority 80)
   - gonzalomo-fluxpony-imagegen.yaml # diffusers, SDXL text-to-image, on-demand (priority 200)
   - sdxl-inpainting-radeonvii.yaml   # diffusers, SDXL inpainting, cache-ready; runtime/image path paused
 
