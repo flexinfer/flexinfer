@@ -201,13 +201,23 @@ func (s *Service) HandleEngramRecall(ctx context.Context, args map[string]any) (
 	tierMax := v.Int("tier_max", 0) // 0 = unbounded
 	limit := v.Int("limit", 10)
 	tokenBudget := v.Int("token_budget", 4000)
+	includeLocked := v.Bool("include_locked", true)
+	repo := v.String("repo", "")
 
+	// Request a generous budget at the memory layer so the recall layer's
+	// own token-budget truncation does not pre-empt the engram-aware
+	// truncation below. We need the full candidate set to pick which items
+	// (high-tier prereqs vs. locked vs. matches) to drop in priority order.
+	memoryBudget := tokenBudget * 4
+	if memoryBudget < 16000 {
+		memoryBudget = 16000
+	}
 	req := MemoryRecallRequest{
 		Query:       query,
 		Categories:  []string{EngramCategory, "recipe"},
 		Tiers:       []MemoryTier{MemoryTierLongTerm},
 		Tags:        buildRecipeTagFilters(v),
-		TokenBudget: tokenBudget,
+		TokenBudget: memoryBudget,
 		Limit:       limit,
 	}
 
@@ -248,29 +258,45 @@ func (s *Service) HandleEngramRecall(ctx context.Context, args map[string]any) (
 		}
 	}
 
-	all := append([]MemoryItem{}, matches...)
-	all = append(all, prereqItems...)
+	// Apply lock filter if requested. Locked = not present in unlocked_in for
+	// the given repo (or any repo when repo == "").
+	matchedCount := len(matches)
+	prereqCount := len(prereqItems)
+	lockedDropped := 0
+	if !includeLocked {
+		matches, lockedDropped = filterUnlocked(matches, repo, lockedDropped)
+		prereqItems, lockedDropped = filterUnlocked(prereqItems, repo, lockedDropped)
+	}
+
+	// Apply token budget by progressive degradation: highest-tier prereqs
+	// first, then locked engrams (across both groups), then tail-truncate
+	// matches as a last resort. Matches and prereqs stay in separate slices
+	// during truncation so the match-protection invariant survives the
+	// final tier sort.
+	keptMatches, keptPrereqs, droppedForBudget := truncateForBudget(matches, prereqItems, tokenBudget)
+
+	all := append([]MemoryItem{}, keptMatches...)
+	all = append(all, keptPrereqs...)
 	all = sortByTierThenURI(all)
 
 	out := make([]map[string]any, 0, len(all))
-	totalTokens := 0
 	for _, item := range all {
-		summary := engramItemToMap(item)
-		out = append(out, summary)
-		totalTokens += item.OriginalTokens
-		if tokenBudget > 0 && totalTokens >= tokenBudget {
-			break
-		}
+		out = append(out, engramItemToMap(item))
 	}
+	totalTokens := sumTokens(all)
 
 	return mcp.JSONResult(map[string]any{
 		"ok":              true,
 		"count":           len(out),
 		"items":           out,
-		"matched_count":   len(matches),
-		"prereq_count":    len(prereqItems),
+		"matched_count":   matchedCount,
+		"prereq_count":    prereqCount,
+		"locked_dropped":  lockedDropped,
+		"budget_dropped":  droppedForBudget,
 		"depth":           depth,
-		"truncated":       totalTokens >= tokenBudget && tokenBudget > 0 && len(out) < len(all),
+		"include_locked":  includeLocked,
+		"repo":            repo,
+		"truncated":       droppedForBudget > 0,
 		"total_tokens":    totalTokens,
 		"requested_query": query,
 	})
@@ -561,6 +587,148 @@ func engramItemToMap(item MemoryItem) map[string]any {
 		"proof":         metadataString(item.Metadata, mdRecipeProof),
 		"tags":          item.Tags,
 	}
+}
+
+// filterUnlocked drops items where unlocked_in does not include `repo`. When
+// repo is empty, an item is considered unlocked if `unlocked_in` is non-empty
+// (i.e. unlocked anywhere). Returns the filtered list and the running drop
+// counter incremented by however many were filtered out here.
+func filterUnlocked(items []MemoryItem, repo string, droppedSoFar int) ([]MemoryItem, int) {
+	out := items[:0]
+	for _, item := range items {
+		unlocked := metadataStringSlice(item.Metadata, mdEngramUnlockedIn)
+		if isUnlockedFor(unlocked, repo) {
+			out = append(out, item)
+			continue
+		}
+		droppedSoFar++
+	}
+	return out, droppedSoFar
+}
+
+// isUnlockedFor reports whether `unlocked` includes `repo`. Empty repo means
+// any repo unlocks the engram.
+func isUnlockedFor(unlocked []string, repo string) bool {
+	if len(unlocked) == 0 {
+		return false
+	}
+	if repo == "" {
+		return true
+	}
+	for _, u := range unlocked {
+		if u == repo {
+			return true
+		}
+	}
+	return false
+}
+
+// truncateForBudget enforces tokenBudget while respecting engram semantics:
+//
+//  1. Highest-tier prerequisites are dropped first (they assume the most
+//     additional context an agent can re-recall on demand).
+//  2. Locked items (proof_status != verified) are dropped next, since they
+//     cannot be safely applied anyway.
+//  3. As a last resort, prereqs are tail-truncated, then matches.
+//
+// Matches and prereqs stay in separate slices so the "matches are preserved"
+// invariant survives any subsequent tier sort. Returns the kept matches,
+// kept prereqs, and the count of items dropped for budget reasons.
+func truncateForBudget(matches, prereqs []MemoryItem, tokenBudget int) (keptMatches, keptPrereqs []MemoryItem, dropped int) {
+	keptMatches = append([]MemoryItem(nil), matches...)
+	keptPrereqs = append([]MemoryItem(nil), prereqs...)
+
+	if tokenBudget <= 0 {
+		return keptMatches, keptPrereqs, 0
+	}
+
+	used := func() int { return sumTokens(keptMatches) + sumTokens(keptPrereqs) }
+
+	// Stage 1: drop highest-tier prereqs while over budget.
+	for used() > tokenBudget && len(keptPrereqs) > 0 {
+		idx := highestTierIndex(keptPrereqs)
+		if idx < 0 {
+			break
+		}
+		keptPrereqs = append(keptPrereqs[:idx], keptPrereqs[idx+1:]...)
+		dropped++
+	}
+
+	// Stage 2: drop locked items (in either slice) while over budget.
+	for used() > tokenBudget {
+		if idx := firstLockedIndex(keptPrereqs); idx >= 0 {
+			keptPrereqs = append(keptPrereqs[:idx], keptPrereqs[idx+1:]...)
+			dropped++
+			continue
+		}
+		if idx := firstLockedIndex(keptMatches); idx >= 0 {
+			keptMatches = append(keptMatches[:idx], keptMatches[idx+1:]...)
+			dropped++
+			continue
+		}
+		break
+	}
+
+	// Stage 3: tail-truncate remaining prereqs, then matches.
+	for used() > tokenBudget && len(keptPrereqs) > 0 {
+		keptPrereqs = keptPrereqs[:len(keptPrereqs)-1]
+		dropped++
+	}
+	for used() > tokenBudget && len(keptMatches) > 0 {
+		keptMatches = keptMatches[:len(keptMatches)-1]
+		dropped++
+	}
+
+	return keptMatches, keptPrereqs, dropped
+}
+
+// itemTokens returns the per-item token count for budgeting; falls back to
+// OriginalTokens when no compressed estimate is available.
+func itemTokens(item MemoryItem) int {
+	if item.CompressedTokens > 0 {
+		return item.CompressedTokens
+	}
+	return item.OriginalTokens
+}
+
+// sumTokens returns the total tokens for a slice.
+func sumTokens(items []MemoryItem) int {
+	total := 0
+	for i := range items {
+		total += itemTokens(items[i])
+	}
+	return total
+}
+
+// highestTierIndex returns the index of the highest-tier item in the slice;
+// ties broken by lowest URI alphabetically (deterministic). Returns -1 if
+// empty.
+func highestTierIndex(items []MemoryItem) int {
+	best := -1
+	bestTier := -1
+	bestURI := ""
+	for i := range items {
+		t := metadataInt(items[i].Metadata, mdEngramTier, DefaultEngramTier)
+		uri := metadataString(items[i].Metadata, mdEngramURI)
+		if best < 0 || t > bestTier || (t == bestTier && uri < bestURI) {
+			best = i
+			bestTier = t
+			bestURI = uri
+		}
+	}
+	return best
+}
+
+// firstLockedIndex returns the index of the first item whose proof_status is
+// not "verified". Returns -1 if all items are verified.
+func firstLockedIndex(items []MemoryItem) int {
+	for i := range items {
+		status := metadataStringDefault(items[i].Metadata, mdEngramProofStatus, ProofStatusUnverified)
+		if status != ProofStatusVerified {
+			return i
+		}
+	}
+	return -1
 }
 
 // filterByTier keeps items whose engram_tier is <= tierMax. tierMax==0

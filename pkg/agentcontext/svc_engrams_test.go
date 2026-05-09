@@ -529,6 +529,229 @@ func TestHandleEngramList_TierFilter(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// S2: Locked filter + token budget truncation
+// ---------------------------------------------------------------------------
+
+// markVerified flips proof_status to "verified" and pushes repo onto unlocked_in
+// for the engram with the given URI. Used by S2 tests to simulate the
+// outcome of the proof verification job (S3) without running it.
+func markVerified(t *testing.T, svc *Service, uri, repo string) {
+	t.Helper()
+	item, err := svc.lookupEngramByURI(uri)
+	if err != nil || item == nil {
+		t.Fatalf("lookup %s: err=%v item=%v", uri, err, item)
+	}
+	stored, err := svc.memoryHierarchy.GetItem(item.ID)
+	if err != nil {
+		t.Fatalf("get %s: %v", item.ID, err)
+	}
+	if stored.Metadata == nil {
+		stored.Metadata = map[string]any{}
+	}
+	stored.Metadata[mdEngramProofStatus] = ProofStatusVerified
+	unlocked := metadataStringSlice(stored.Metadata, mdEngramUnlockedIn)
+	for _, u := range unlocked {
+		if u == repo {
+			return
+		}
+	}
+	unlocked = append(unlocked, repo)
+	stored.Metadata[mdEngramUnlockedIn] = stringSliceToAny(unlocked)
+	if err := svc.memoryHierarchy.UpdateItem(stored); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+}
+
+func TestHandleEngramRecall_LockedFilterDropsUnverified(t *testing.T) {
+	t.Parallel()
+	svc := newEngramTestService()
+	ctx := context.Background()
+
+	if _, err := svc.HandleEngramAdd(ctx, map[string]any{
+		"title": "verified", "problem": "p", "solution": "s", "proof": "f:1",
+		"family": "verified-fam", "slug": "x",
+	}); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if _, err := svc.HandleEngramAdd(ctx, map[string]any{
+		"title": "unverified", "problem": "p", "solution": "s", "proof": "f:1",
+		"family": "unverified-fam", "slug": "x",
+	}); err != nil {
+		t.Fatalf("%v", err)
+	}
+	markVerified(t, svc, "engram://verified-fam/x", "demo-repo")
+
+	res, err := svc.HandleEngramRecall(ctx, map[string]any{
+		"query":          "p",
+		"include_locked": false,
+	})
+	if err != nil {
+		t.Fatalf("recall: %v", err)
+	}
+	payload := readResultJSON(t, res)
+	items := payload["items"].([]any)
+
+	gotURIs := map[string]bool{}
+	for _, it := range items {
+		gotURIs[it.(map[string]any)["uri"].(string)] = true
+	}
+	if !gotURIs["engram://verified-fam/x"] {
+		t.Error("verified engram missing from results")
+	}
+	if gotURIs["engram://unverified-fam/x"] {
+		t.Error("locked unverified engram should be filtered out")
+	}
+	if payload["locked_dropped"].(float64) < 1 {
+		t.Errorf("expected locked_dropped >= 1, got %v", payload["locked_dropped"])
+	}
+}
+
+func TestHandleEngramRecall_LockedFilterScopedByRepo(t *testing.T) {
+	t.Parallel()
+	svc := newEngramTestService()
+	ctx := context.Background()
+
+	if _, err := svc.HandleEngramAdd(ctx, map[string]any{
+		"title": "scope test", "problem": "p", "solution": "s", "proof": "f:1",
+		"family": "scope-test", "slug": "x",
+	}); err != nil {
+		t.Fatalf("%v", err)
+	}
+	markVerified(t, svc, "engram://scope-test/x", "repo-a")
+
+	// Asking for repo-a: should appear.
+	resA, _ := svc.HandleEngramRecall(ctx, map[string]any{
+		"query":          "scope",
+		"include_locked": false,
+		"repo":           "repo-a",
+	})
+	if itemsCount(t, resA) != 1 {
+		t.Errorf("repo-a should see the engram, got %d items", itemsCount(t, resA))
+	}
+
+	// Asking for repo-b: filtered out.
+	resB, _ := svc.HandleEngramRecall(ctx, map[string]any{
+		"query":          "scope",
+		"include_locked": false,
+		"repo":           "repo-b",
+	})
+	if itemsCount(t, resB) != 0 {
+		t.Errorf("repo-b should NOT see the engram, got %d items", itemsCount(t, resB))
+	}
+
+	// Default include_locked=true: visible regardless of repo.
+	resAll, _ := svc.HandleEngramRecall(ctx, map[string]any{"query": "scope"})
+	if itemsCount(t, resAll) != 1 {
+		t.Errorf("include_locked=true (default) should see the engram, got %d", itemsCount(t, resAll))
+	}
+}
+
+func TestHandleEngramRecall_TokenBudgetDropsHighestTierPrereqsFirst(t *testing.T) {
+	t.Parallel()
+	svc := newEngramTestService()
+	ctx := context.Background()
+
+	// Add a tier-1 base, a tier-2 mid, and a tier-3 system that depends on both.
+	add := func(title, family, slug string, tier int, proof string, prereqs []any) {
+		args := map[string]any{
+			"title": title, "problem": "p", "solution": "s",
+			"proof": proof, "family": family, "slug": slug, "tier": tier,
+		}
+		if len(prereqs) > 0 {
+			args["prerequisites"] = prereqs
+		}
+		if _, err := svc.HandleEngramAdd(ctx, args); err != nil {
+			t.Fatalf("add %s: %v", family, err)
+		}
+	}
+	add("base idiom", "budget-base", "x", 1, "f:1", nil)
+	add("composite", "budget-comp", "x", 2, "command: go test", []any{"engram://budget-base/x"})
+	add("system", "budget-sys", "x", 3,
+		"command: go test\nbenchmark: go test -bench=.",
+		[]any{"engram://budget-base/x", "engram://budget-comp/x"})
+
+	// Budget that fits the match (~62 tokens) plus the tier-1 base (~41)
+	// but not the tier-2 composite (~46). Truncator should drop tier-2
+	// composite first, leaving match + base.
+	res, err := svc.HandleEngramRecall(ctx, map[string]any{
+		"query":        "system",
+		"depth":        3,
+		"token_budget": 110,
+	})
+	if err != nil {
+		t.Fatalf("recall: %v", err)
+	}
+	payload := readResultJSON(t, res)
+	items := payload["items"].([]any)
+
+	// Direct match (system, tier 3) must always be kept; the comp/base prereqs
+	// can be dropped to fit the budget.
+	hasMatch := false
+	for _, it := range items {
+		if it.(map[string]any)["uri"] == "engram://budget-sys/x" {
+			hasMatch = true
+		}
+	}
+	if !hasMatch {
+		t.Errorf("direct match should not be dropped; items=%v", items)
+	}
+	if payload["truncated"].(bool) != true {
+		t.Errorf("expected truncated=true with tight budget, got %v", payload["truncated"])
+	}
+	if payload["budget_dropped"].(float64) < 1 {
+		t.Errorf("expected budget_dropped >= 1, got %v", payload["budget_dropped"])
+	}
+}
+
+func TestHandleEngramRecall_NoBudgetKeepsEverything(t *testing.T) {
+	t.Parallel()
+	svc := newEngramTestService()
+	ctx := context.Background()
+
+	add := func(title, family string, prereqs []any) {
+		args := map[string]any{
+			"title": title, "problem": "p", "solution": "s",
+			"proof":  "f:1",
+			"family": family, "slug": "x",
+		}
+		if len(prereqs) > 0 {
+			args["prerequisites"] = prereqs
+		}
+		if _, err := svc.HandleEngramAdd(ctx, args); err != nil {
+			t.Fatalf("%v", err)
+		}
+	}
+	add("a", "no-budget-a", nil)
+	add("b", "no-budget-b", []any{"engram://no-budget-a/x"})
+
+	res, err := svc.HandleEngramRecall(ctx, map[string]any{
+		"query":        "b",
+		"depth":        1,
+		"token_budget": 0, // explicitly disable budget
+	})
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	payload := readResultJSON(t, res)
+	if payload["truncated"].(bool) {
+		t.Error("budget=0 should never truncate")
+	}
+	if payload["budget_dropped"].(float64) != 0 {
+		t.Errorf("budget_dropped expected 0, got %v", payload["budget_dropped"])
+	}
+}
+
+func itemsCount(t *testing.T, res *mcp.CallToolResult) int {
+	t.Helper()
+	payload := readResultJSON(t, res)
+	items, ok := payload["items"].([]any)
+	if !ok {
+		return 0
+	}
+	return len(items)
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
