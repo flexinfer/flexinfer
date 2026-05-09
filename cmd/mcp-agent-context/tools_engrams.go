@@ -46,18 +46,23 @@ func registerEngramTools(server *mcp.Server, svc *agentcontext.Service, tracer t
 	server.AddTool(mcp.Tool{
 		Name: "agent_engram_recall",
 		Description: "Recall engrams matching a query and optionally include their transitive prerequisites. " +
-			"Results are ordered lowest-tier-first within token_budget.",
+			"Results are ordered lowest-tier-first. When token_budget is exceeded, results are " +
+			"progressively degraded by dropping highest-tier prerequisites first, then locked engrams " +
+			"(proof_status != verified), then by tail truncation. Direct matches are preserved unless " +
+			"they are the only thing left to drop.",
 		InputSchema: mcp.InputSchema{
 			Type: "object",
 			Properties: map[string]any{
-				"query":        map[string]any{"type": "string", "description": "Search query."},
-				"depth":        map[string]any{"type": "integer", "description": "Prerequisite traversal depth. 0 = match only. Default 1."},
-				"tier_max":     map[string]any{"type": "integer", "description": "Cap returned tier (1, 2, or 3). 0 = unbounded."},
-				"limit":        map[string]any{"type": "integer", "description": "Max matched engrams (default 10)."},
-				"token_budget": map[string]any{"type": "integer", "description": "Max tokens to return (default 4000)."},
-				"tags":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Filter by tags."},
-				"language":     map[string]any{"type": "string", "description": "Filter by language."},
-				"scope":        map[string]any{"type": "string", "enum": []string{"project", "workspace", "universal"}},
+				"query":          map[string]any{"type": "string", "description": "Search query."},
+				"depth":          map[string]any{"type": "integer", "description": "Prerequisite traversal depth. 0 = match only. Default 1."},
+				"tier_max":       map[string]any{"type": "integer", "description": "Cap returned tier (1, 2, or 3). 0 = unbounded."},
+				"limit":          map[string]any{"type": "integer", "description": "Max matched engrams (default 10)."},
+				"token_budget":   map[string]any{"type": "integer", "description": "Max tokens to return (default 4000). 0 = no budget."},
+				"include_locked": map[string]any{"type": "boolean", "description": "When false, omit engrams whose proof has not been verified in the requested repo. Default true."},
+				"repo":           map[string]any{"type": "string", "description": "Repo or branch ref for the locked-check. Empty = unlocked anywhere."},
+				"tags":           map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Filter by tags."},
+				"language":       map[string]any{"type": "string", "description": "Filter by language."},
+				"scope":          map[string]any{"type": "string", "enum": []string{"project", "workspace", "universal"}},
 			},
 			Required: []string{"query"},
 		},
