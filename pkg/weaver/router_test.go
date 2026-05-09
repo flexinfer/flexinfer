@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -331,6 +332,106 @@ func TestRouter_SetTracer(t *testing.T) {
 func TestRouter_TokensPerIterationConstant(t *testing.T) {
 	if tokensPerIteration != 512 {
 		t.Errorf("expected tokensPerIteration=512, got %d", tokensPerIteration)
+	}
+}
+
+// fakeQueryRecorder captures every QueryRecord for assertion.
+type fakeQueryRecorder struct {
+	mu      sync.Mutex
+	records []QueryRecord
+}
+
+func (f *fakeQueryRecorder) RecordQuery(_ context.Context, rec QueryRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.records = append(f.records, rec)
+}
+
+func (f *fakeQueryRecorder) Records() []QueryRecord {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]QueryRecord, len(f.records))
+	copy(out, f.records)
+	return out
+}
+
+func TestRouter_QueryRecorder_OK(t *testing.T) {
+	router, _, _ := newTestRouter(t, func(req chatCompletionRequestWithTools, callIdx int) chatCompletionResponseWithTools {
+		if callIdx == 1 {
+			return terminalResponse(`{"domains":["codebase"]}`)
+		}
+		return terminalResponse("answer body")
+	})
+
+	rec := &fakeQueryRecorder{}
+	router.SetQueryRecorder(rec)
+
+	_, err := router.Query(context.Background(), QueryRequest{
+		Query:           "do thing",
+		ParentSessionID: "sess-123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := rec.Records()
+	if len(got) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(got))
+	}
+	r := got[0]
+	if r.Status != "ok" {
+		t.Errorf("Status = %q, want ok", r.Status)
+	}
+	if r.ParentSessionID != "sess-123" {
+		t.Errorf("ParentSessionID = %q, want sess-123", r.ParentSessionID)
+	}
+	if r.Query != "do thing" {
+		t.Errorf("Query = %q, want do thing", r.Query)
+	}
+	if r.QueryID == "" {
+		t.Error("QueryID should be set")
+	}
+	if r.Answer == "" {
+		t.Error("Answer should be set on ok status")
+	}
+	if len(r.Domains) == 0 {
+		t.Error("Domains should be populated")
+	}
+}
+
+func TestRouter_QueryRecorder_NoMatch(t *testing.T) {
+	router, _, _ := newTestRouter(t, func(req chatCompletionRequestWithTools, callIdx int) chatCompletionResponseWithTools {
+		// Classification returns no domains.
+		return terminalResponse(`{"domains":[]}`)
+	})
+
+	rec := &fakeQueryRecorder{}
+	router.SetQueryRecorder(rec)
+
+	_, err := router.Query(context.Background(), QueryRequest{Query: "ambiguous"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := rec.Records()
+	if len(got) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(got))
+	}
+	if got[0].Status != "no_match" {
+		t.Errorf("Status = %q, want no_match", got[0].Status)
+	}
+}
+
+func TestRouter_QueryRecorder_NilRecorderIsSafe(t *testing.T) {
+	router, _, _ := newTestRouter(t, func(req chatCompletionRequestWithTools, callIdx int) chatCompletionResponseWithTools {
+		if callIdx == 1 {
+			return terminalResponse(`{"domains":["codebase"]}`)
+		}
+		return terminalResponse("ok")
+	})
+	router.SetQueryRecorder(nil)
+	if _, err := router.Query(context.Background(), QueryRequest{Query: "x"}); err != nil {
+		t.Fatalf("unexpected error with nil recorder: %v", err)
 	}
 }
 

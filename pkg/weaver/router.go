@@ -80,9 +80,37 @@ type Router struct {
 	tracer      trace.Tracer
 	logger      *slog.Logger
 	spawnBridge SpawnBridge
+	recorder    QueryRecorder
 
 	historyMu sync.Mutex
 	history   []QueryHistoryEntry
+}
+
+// QueryRecord describes a completed orchestrated query for downstream
+// recorders (agent-context entry, observability sink, etc.). Status is
+// "ok", "error", or "no_match"; Answer is empty for non-ok results.
+type QueryRecord struct {
+	QueryID         string
+	ParentSessionID string
+	Query           string
+	Status          string
+	Answer          string
+	Domains         []string
+	LatencyMs       int64
+	TotalTokens     int
+	StartedAt       time.Time
+}
+
+// QueryRecorder receives one record per completed Query call. The
+// daemon installs an agent-context recorder so queries with a
+// ParentSessionID become a `weaver_query` entry, stitching weaver
+// activity into the originating session's context graph.
+//
+// Implementations must be cheap and non-blocking; the router calls
+// them inline at the end of Query(). Errors are logged but do not fail
+// the query — recorder is observability, not control flow.
+type QueryRecorder interface {
+	RecordQuery(ctx context.Context, rec QueryRecord)
 }
 
 // NewRouter creates a Router with the given dependencies.
@@ -122,6 +150,12 @@ func (r *Router) SetMetrics(m *Metrics) {
 // SetTracer sets the OpenTelemetry tracer for trace span instrumentation.
 func (r *Router) SetTracer(t trace.Tracer) {
 	r.tracer = t
+}
+
+// SetQueryRecorder installs a QueryRecorder called once per completed
+// Query (success, error, or no-match). Pass nil to clear.
+func (r *Router) SetQueryRecorder(rec QueryRecorder) {
+	r.recorder = rec
 }
 
 // Registry returns the domain registry for external registration.
@@ -200,10 +234,12 @@ func (r *Router) Query(ctx context.Context, req QueryRequest) (QueryResult, erro
 			Timestamp: start, QueryID: queryID, Query: req.Query,
 			Status: "no_match", LatencyMs: time.Since(start).Milliseconds(),
 		})
-		return QueryResult{
+		noMatch := QueryResult{
 			Answer:    "No matching domains found for this query.",
 			LatencyMs: time.Since(start).Milliseconds(),
-		}, nil
+		}
+		r.maybeRecord(ctx, queryID, req, "no_match", noMatch, nil, start)
+		return noMatch, nil
 	}
 
 	result, err := r.dispatch(ctx, domains, req, queryID, qlog)
@@ -213,6 +249,7 @@ func (r *Router) Query(ctx context.Context, req QueryRequest) (QueryResult, erro
 			Timestamp: start, QueryID: queryID, Query: req.Query, Domains: domains,
 			Status: "error", LatencyMs: time.Since(start).Milliseconds(),
 		})
+		r.maybeRecord(ctx, queryID, req, "error", QueryResult{}, domains, start)
 		return QueryResult{}, err
 	}
 
@@ -222,7 +259,36 @@ func (r *Router) Query(ctx context.Context, req QueryRequest) (QueryResult, erro
 		Timestamp: start, QueryID: queryID, Query: req.Query, Domains: domains,
 		Status: "ok", LatencyMs: result.LatencyMs, TotalTokens: result.TotalTokens,
 	})
+	r.maybeRecord(ctx, queryID, req, "ok", result, domains, start)
 	return result, nil
+}
+
+// maybeRecord invokes the installed QueryRecorder if any. Always
+// safe to call. Recorder errors are caller-side; this method has no
+// failure mode of its own.
+func (r *Router) maybeRecord(
+	ctx context.Context,
+	queryID string,
+	req QueryRequest,
+	status string,
+	result QueryResult,
+	domains []string,
+	start time.Time,
+) {
+	if r.recorder == nil {
+		return
+	}
+	r.recorder.RecordQuery(ctx, QueryRecord{
+		QueryID:         queryID,
+		ParentSessionID: req.ParentSessionID,
+		Query:           req.Query,
+		Status:          status,
+		Answer:          result.Answer,
+		Domains:         domains,
+		LatencyMs:       result.LatencyMs,
+		TotalTokens:     result.TotalTokens,
+		StartedAt:       start,
+	})
 }
 
 // Gather executes an orchestrated query against specified domains (no classification).

@@ -70,6 +70,15 @@ func (d *Daemon) startEmbeddedWeaver(ctx context.Context) error {
 
 	d.weaver = router
 
+	// Install the agent-context recorder so completed Query calls
+	// emit `weaver.query.complete` on the daemon EventBus. The HUD
+	// SSE hub forwards these to subscribers (HUD, iOS, spectator)
+	// and any future agent-context bridge can consume them to write
+	// `weaver_query` entries on the originating session. See
+	// .loom/111 (AC-002) and pkg/agentcontext/schema.go
+	// (EntryTypeWeaverQuery).
+	router.SetQueryRecorder(newWeaverContextRecorder(d.logger, d.eventBus))
+
 	// Validate domain tool references against available tools.
 	if warnings := router.Registry().ValidateTools(lister); len(warnings) > 0 {
 		for _, w := range warnings {
