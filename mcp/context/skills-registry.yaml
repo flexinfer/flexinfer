@@ -64,7 +64,7 @@
 # Sync: loom sync <profile> --regen --hub-mode --all-projects --skip-worktrees
 
 version: 1
-updated: 2026-05-07
+updated: 2026-05-09
 skills:
   - name: flux-gitops-operator
     categories: [kubernetes, gitops, operations]
@@ -7847,6 +7847,122 @@ skills:
       kilocode:
         enabled: true
         type: workflow
+      gemini:
+        enabled: true
+        type: skill
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
+
+  - name: brainstorm
+    categories: [planning, ideation, creative]
+    common:
+      description: |
+        Generate distinct framings of a problem or solution space, cross-pollinate to find combinations and tensions, then converge on 1-2 recommendations with explicit tradeoffs. Use when stuck, when exploring options before committing, or when the obvious framing feels too narrow. Output to a shareable .loom/ doc.
+      instructions: |
+        # Brainstorm
+
+        Three-phase generative ideation: **Diverge → Cross-Pollinate → Converge**. Forces breadth before convergence so the user gets real options, not a single rationalized recommendation.
+
+        ## Use This When
+
+        - The user is stuck or asks "what are my options for X"
+        - The obvious framing of a problem feels too narrow
+        - Before writing a spec or plan, when the direction isn't yet clear
+        - To stress-test a default approach by forcing alternatives onto the table
+
+        ## Don't Use This When
+
+        - The direction is already chosen and the work is execution → use `feature-dev` / `small-change-loop`
+        - You need facts to ground a known decision → use `research`
+        - You're critiquing an existing artifact → use `multi-lens-product-review`
+        - You're scoring a known list → use `tech-debt-planning`
+
+        ## Required Inputs
+
+        - The problem or decision under consideration, in one sentence
+        - Constraints the user has stated (budget, deadline, must-use-X, must-not-Y)
+        - Optional: any framings the user has already considered (so you don't just repeat them)
+
+        ## Core Workflow
+
+        ### Phase 1 — Diverge (5-8 framings)
+
+        Generate distinct framings. Each framing is one paragraph + a `Bet` line + a `Risk` line.
+
+        - **Distinctness test**: Two framings are distinct only if their bet *or* their risk differs materially. Reject rephrasings.
+        - **Anti-anchor**: Force at least 3 framings unrelated to whatever the user proposed first.
+        - **No ranking yet.** No "this is probably the best."
+
+        Useful self-prompts:
+        - "What's the framing the user would never propose themselves?"
+        - "Name the lazy default everyone reaches for first, then move past it."
+        - "What if the constraint we accepted is wrong?"
+
+        ### Phase 2 — Cross-Pollinate (1-3 combinations or tensions)
+
+        - **Combinations**: Can framing A's mechanism + framing B's framing produce something neither has alone?
+        - **Tensions**: Which framings are in direct opposition? Naming the opposition usually clarifies which axis the real decision lives on.
+
+        Don't combine for the sake of combining. If A+B is just "do both," skip it.
+
+        ### Phase 3 — Converge (1-2 recommendations)
+
+        - **Recommended**: one framing or combination, one paragraph on why it wins given current context.
+        - **Runner-up**: one framing, one paragraph on what would tip the choice the other way.
+        - **Open question**: one question the user has to answer before the recommended path is chosen.
+
+        Recommending more than 2 is not converging.
+
+        ## Output Document
+
+        Write to `.loom/brainstorm-<slug>-<YYYY-MM-DD>.md` using the template at `assets/templates/brainstorm-doc.md`. Per workspace policy, root `.loom/` is git-tracked so other agents can see it.
+
+        If the brainstorm leads to a real spec or plan, link the brainstorm doc from the resulting `.loom/NNN-product-spec-*.md` so the lineage is preserved.
+
+        ## Triggers
+
+        - "brainstorm X", "give me options for X", "I'm stuck on X"
+        - "/brainstorm"
+        - User explicitly asks for ideation, alternatives, or framings
+
+        ## Handoff
+
+        Once a direction is chosen, hand off:
+        - Structured plan needed → `plan-loom-core`
+        - Direct implementation → `feature-dev` / `small-change-loop`
+        - Need facts to validate the choice → `research`
+
+        ## References / Templates
+
+        - Phase guide with anti-patterns: `references/phases.md`
+        - Output template: `assets/templates/brainstorm-doc.md`
+      scripts: []
+      references:
+        - phases.md
+      assets:
+        - templates/brainstorm-doc.md
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+        instructions_append: |
+          ## Codex Notes
+          - Use `multi_tool_use.parallel` to generate framings concurrently when divergence stalls
+          - Use `spawn_agent` to assign different framings to different agents for adversarial diversity
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+        instructions_append: |
+          ## Claude Code Notes
+          - For deep divergence, use the `Task` tool to spawn parallel general-purpose agents, each tasked with a different angle (e.g. "what would a backend engineer propose", "what would a product manager propose"), then merge
+          - Keep each phase's output visible to the user before moving to the next — don't collapse all three phases into one response
+      kilocode:
+        enabled: true
+        type: rule
       gemini:
         enabled: true
         type: skill
