@@ -90,10 +90,22 @@ spec:
     # `.loom/60-validation-matrix.md`). At runtime, vLLM's GDN
     # `gdn_attention_core` and FLA chunk/recurrent kernels expect FP weights
     # for these projections; serving the int4-quantized variant collapsed
-    # logits to flat punctuation. Switching to `gdn` keeps full-attention
-    # q/k/v/o + FFN under GPTQ INT4 while leaving the GDN linear projections
-    # in their FP source dtype.
-    dynamicExclusion: "gdn"
+    # logits to flat punctuation.
+    #
+    # 2026-05-09: switched from "gdn" to "gdn-min" after cycles 4 and 5
+    # (MRs !293 + !294 chasing accelerate disk-offload + dispatch_model)
+    # repeatedly hit GPTQModel.shell_module_materialize crashing on
+    # disk-offloaded meta tensors. Root cause: full "gdn" mode keeps ALL
+    # linear_attn sub-modules in FP, which inflates the working set past
+    # what the 5930k can hold (24 GB GPU + 48 GiB cgroup). accelerate
+    # falls back to disk; GPTQModel cannot materialize disk-offloaded
+    # layers via .to(device).
+    #
+    # "gdn-min" excludes only the high-loss sub-modules (in_proj_qkv +
+    # in_proj_z; quant_log.csv layer-0 losses 0.005 and 0.003 respectively).
+    # out_proj (loss 3.9e-6) and conv1d (sub-MB) get quantized; the FP
+    # working set shrinks ~50% so accelerate can fit gpu+cpu without disk.
+    dynamicExclusion: "gdn-min"
     useGPU: true
     # GPTQ uses the same gfx1100 driver reservation path as abliteration.
     # 2026-05-08: 40 -> 56 to give the dynamicExclusion: gdn cycle headroom

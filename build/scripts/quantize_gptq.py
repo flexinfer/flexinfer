@@ -2385,6 +2385,27 @@ elif dynamic_exclusion == "gdn":
     }
     print(f"GDN exclusion (mode=gdn): keeping linear_attn modules at full precision")
     print(f"Dynamic exclusion patterns: {list(dynamic_config.keys())}")
+elif dynamic_exclusion == "gdn-min":
+    # Narrow GDN exclusion: keep only the high-loss GDN sub-modules at full
+    # precision (in_proj_qkv, in_proj_z) while quantizing the others
+    # (out_proj, conv1d).  Shrinks the FP-retained working set by ~50% vs the
+    # full `gdn` mode, which is the difference between fitting on the 5930k
+    # node (24 GB GPU + 48 GiB cgroup) vs accelerate disk-offloading layers
+    # that crash GPTQModel.shell_module_materialize during cache_inputs.
+    #
+    # Module choice rationale (from cycle-3 quant_log.csv on 2026-05-08):
+    #   in_proj_qkv  loss 0.00524  -> EXCLUDE (highest, packs 3x q/k/v dim)
+    #   in_proj_z    loss 0.00343  -> EXCLUDE (gating projection, second highest)
+    #   out_proj     loss 3.9e-6   -> QUANTIZE (negligible loss, safe at int4)
+    #   conv1d       (1D, tiny)    -> QUANTIZE (sub-MB, low risk)
+    dynamic_config = {
+        "-:.*linear_attn\\.in_proj_qkv.*": {},
+        "-:.*linear_attn\\.in_proj_z.*": {},
+    }
+    print(
+        f"GDN-min exclusion (mode=gdn-min): keeping only in_proj_qkv and in_proj_z at full precision"
+    )
+    print(f"Dynamic exclusion patterns: {list(dynamic_config.keys())}")
 elif dynamic_exclusion == "moe":
     # MoE-only exclusion: keep routed expert FFN weights at full precision
     # while quantizing shared attention and non-expert modules.  MoE expert
