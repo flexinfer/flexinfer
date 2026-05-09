@@ -189,7 +189,7 @@ func run(cfg Config) error {
 	// Worker dispatcher: real clients where configured, NoOpDispatcher
 	// for stages whose backing service isn't wired yet. The operator
 	// logs each gap so it's obvious which surfaces are stub vs production.
-	dispatcher := buildDispatcher(cfg, flexClient, hubClient, logger)
+	dispatcher := buildDispatcher(cfg, flexClient, hubClient, st, logger)
 
 	pipelineRunner := pipeline.New(st, gateRegistry, dispatcher, pm)
 	pipelineRunner.Logger = logger
@@ -471,19 +471,32 @@ func buildGitLabClient(cfg Config, logger *slog.Logger) *clients.GitLabClient {
 // production deployments can see exactly what's still stub.
 //
 // Wired stages (when env-configured):
-//   - WeaverWorker (research): FlexInfer proxy
+//   - WeaverWorker (research): FlexInfer proxy. When
+//     MILLS_RESEARCH_VIA_WEAVER=shadow|on AND a weaver URL is
+//     configured, the worker also calls the routed multi-domain
+//     dispatch via WeaverHTTPDelegator and (in shadow mode) records
+//     the diff to pipeline_runs.research_diff via PipelineDAO.
 //   - GitLabWorker (mr/ci_watch/merge/cleanup): GitLab REST API
 //   - DevboxWorker (tests): mcp-devbox via MCP hub
 //   - SpawnWorker (plan_slice/implement/pr_self_review): HUD mobile API
-func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCPHubClient, logger *slog.Logger) pipeline.WorkerDispatcher {
+func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCPHubClient, st *store.Store, logger *slog.Logger) pipeline.WorkerDispatcher {
 	noop := &pipeline.NoOpDispatcher{}
 	gitlab := buildGitLabClient(cfg, logger)
 	spawn := buildHUDSpawnClient(cfg, logger)
 
 	routes := map[string]pipeline.Worker{}
 	if flex != nil {
-		routes["research"] = &pipeline.WeaverWorker{Client: clients.NewWeaverClient(flex)}
-		logger.Info("research stage wired to FlexInfer (WeaverClient)")
+		wc := clients.NewWeaverClient(flex)
+		// Mode is read at construction time from MILLS_RESEARCH_VIA_
+		// WEAVER. When non-default, attach the delegator + recorder
+		// so shadow/on can actually do something. Mode==off ignores
+		// both, so wiring them unconditionally would be wasteful.
+		if wc.Mode != clients.ResearchModeOff {
+			attachWeaverDelegation(wc, cfg, st, logger)
+		}
+		routes["research"] = &pipeline.WeaverWorker{Client: wc}
+		logger.Info("research stage wired to FlexInfer (WeaverClient)",
+			"research_mode", string(wc.Mode))
 	} else {
 		logger.Warn("research stage stub: NoOpDispatcher (FLEXINFER_PROXY_URL unset)")
 	}
@@ -574,6 +587,64 @@ func stagePromptFor(stage string) func(jc pipeline.JobContext) string {
 		}
 		return fmt.Sprintf(tmpl, id, title)
 	}
+}
+
+// attachWeaverDelegation wires the routed weaver delegator + research
+// diff recorder onto wc when MILLS_RESEARCH_VIA_WEAVER is "shadow" or
+// "on". Falls back gracefully — every missing piece is a warn log, not
+// a startup failure, so the operator can still serve the legacy
+// FlexInfer chat path.
+//
+// Resolution order for the weaver URL:
+//  1. LOOM_WEAVER_URL (cfg.WeaverURL)
+//  2. LOOM_HUD_URL    (cfg.HUDBaseURL) — same loomd hosts both today
+//
+// Without a URL, the WeaverClient remains in shadow/on mode but
+// without a delegator; flexinfer.go falls back to legacy + records a
+// "delegator not configured" diff entry in shadow mode. That's
+// intentional: the env knob is the source of truth for "we want the
+// shadow signal," and the operator log surfaces the missing URL so
+// operators can fix it without flipping the knob back.
+func attachWeaverDelegation(wc *clients.WeaverClient, cfg Config, st *store.Store, logger *slog.Logger) {
+	weaverURL := strings.TrimSpace(cfg.WeaverURL)
+	if weaverURL == "" {
+		weaverURL = strings.TrimSpace(cfg.HUDBaseURL)
+	}
+	if weaverURL == "" {
+		logger.Warn("weaver delegation requested but no URL configured",
+			"mode", string(wc.Mode),
+			"hint", "set LOOM_WEAVER_URL or LOOM_HUD_URL")
+		return
+	}
+	delegator, err := clients.NewWeaverHTTPDelegator(clients.WeaverHTTPConfig{
+		BaseURL: weaverURL,
+		Token:   cfg.WeaverToken,
+		AgentID: "loom-mills-operator",
+	})
+	if err != nil {
+		logger.Warn("weaver delegator init failed; falling back to legacy chat",
+			"error", err, "weaver_url", weaverURL)
+		return
+	}
+	wc.Delegator = delegator
+
+	// The recorder is only useful in shadow mode (the diff comparison).
+	// On mode delegates fully so there's no diff to record. Wiring it
+	// for both modes is harmless but the log noise is cleaner this way.
+	if wc.Mode == clients.ResearchModeShadow {
+		if st == nil || st.Pipeline == nil {
+			logger.Warn("research diff recorder disabled: store unavailable")
+		} else {
+			wc.DiffRecorder = clients.NewPipelineDAOResearchDiffRecorder(st.Pipeline, logger)
+			logger.Info("research diff recorder wired (shadow mode → pipeline_runs.research_diff)")
+		}
+	}
+
+	logger.Info("weaver delegation wired",
+		"mode", string(wc.Mode),
+		"weaver_url", weaverURL,
+		"recorder_enabled", wc.DiffRecorder != nil,
+		"token_set", cfg.WeaverToken != "")
 }
 
 // buildHUDSpawnClient returns a configured SpawnClient when LOOM_HUD_URL

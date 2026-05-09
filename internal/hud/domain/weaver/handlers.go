@@ -2,8 +2,17 @@ package weaver
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
 )
+
+// maxQueryBodyBytes caps the POST /api/weaver/query body so a malformed
+// caller can't pin the HUD process on a giant unbounded read. A real
+// query payload is well under 64 KB; the cap is generous for prompts
+// with embedded code blocks.
+const maxQueryBodyBytes = 256 * 1024
 
 // handleStatus returns the weaver configuration and overall state.
 func (d *WeaverDomain) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -148,4 +157,78 @@ func emptyMetrics() map[string]any {
 		"total_tokens":   0,
 		"error_count":    0,
 	}
+}
+
+// handleQuery proxies POST /api/weaver/query to the daemon's
+// loom/weaver/query JSON-RPC. Used by in-cluster callers (the Mills
+// operator) that want the routed multi-domain weaver dispatch without
+// embedding the Router themselves.
+//
+// Request body (all fields optional except query):
+//
+//	{
+//	  "query":             "<prompt>",
+//	  "domains":           ["codebase", "ci-pipeline"],   // optional
+//	  "max_tokens":        1024,                           // optional
+//	  "agent_id":          "loom-mills-operator",          // optional
+//	  "session_id":        "<parent agent-context session>", // optional
+//	  "parent_session_id": "<proxy session>"               // optional
+//	}
+//
+// Response: pkg/weaver.QueryResult JSON, surfaced verbatim from the
+// daemon.
+func (d *WeaverDomain) handleQuery(w http.ResponseWriter, r *http.Request) {
+	br := d.deps.WeaverBridge()
+	if br == nil {
+		d.deps.WriteError(w, http.StatusServiceUnavailable, "weaver bridge not configured", nil)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxQueryBodyBytes+1))
+	if err != nil {
+		d.deps.WriteError(w, http.StatusBadRequest, "read request body", err)
+		return
+	}
+	if len(body) > maxQueryBodyBytes {
+		d.deps.WriteError(w, http.StatusRequestEntityTooLarge,
+			fmt.Sprintf("request body exceeds %d bytes", maxQueryBodyBytes), nil)
+		return
+	}
+
+	var params struct {
+		Query           string   `json:"query"`
+		Domains         []string `json:"domains,omitempty"`
+		MaxTokens       int      `json:"max_tokens,omitempty"`
+		AgentID         string   `json:"agent_id,omitempty"`
+		SessionID       string   `json:"session_id,omitempty"`
+		ParentSessionID string   `json:"parent_session_id,omitempty"`
+	}
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &params); err != nil {
+			d.deps.WriteError(w, http.StatusBadRequest, "invalid JSON", err)
+			return
+		}
+	}
+	params.Query = strings.TrimSpace(params.Query)
+	if params.Query == "" {
+		d.deps.WriteError(w, http.StatusBadRequest, "query is required", nil)
+		return
+	}
+
+	// Forward to the daemon. The bridge's Call uses (method, params),
+	// so we hand it the same struct shape the daemon's
+	// handleWeaverQuery decodes — daemon-side validation is the source
+	// of truth for required fields.
+	raw, err := br.Call("loom/weaver/query", params)
+	if err != nil {
+		d.deps.WriteError(w, http.StatusBadGateway, "weaver query failed", err)
+		return
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		d.deps.WriteError(w, http.StatusInternalServerError, "failed to parse weaver result", err)
+		return
+	}
+	d.deps.WriteJSON(w, http.StatusOK, result)
 }

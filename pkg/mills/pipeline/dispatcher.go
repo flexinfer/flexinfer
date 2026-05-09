@@ -245,6 +245,12 @@ type WeaverClient interface {
 
 // WeaverRequest is the bundle a research call ships off.
 type WeaverRequest struct {
+	// RunID is the pipeline_runs.id the call belongs to. Carried so the
+	// shadow-mode diff recorder can update the research_diff column on
+	// the right row (PipelineDAO.SetResearchDiff is keyed by run id).
+	// Zero/empty when the caller doesn't have a run context — the
+	// recorder must tolerate that and skip the persist.
+	RunID     string
 	BacklogID string
 	Prompt    string
 	Env       map[string]string
@@ -277,7 +283,12 @@ func (w *WeaverWorker) Run(ctx context.Context, jc JobContext) (StageOutput, err
 	if w.PromptFor != nil {
 		prompt = w.PromptFor(jc)
 	}
+	runID := ""
+	if jc.Run != nil {
+		runID = jc.Run.ID
+	}
 	resp, err := w.Client.Research(ctx, WeaverRequest{
+		RunID:     runID,
 		BacklogID: jc.Item.ID,
 		Prompt:    prompt,
 		Env:       jc.Env,

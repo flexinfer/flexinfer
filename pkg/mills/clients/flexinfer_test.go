@@ -234,14 +234,16 @@ func (f *fakeDelegator) Delegate(_ context.Context, req pipeline.WeaverRequest) 
 
 // fakeDiffRecorder captures recorded diffs for assertion.
 type fakeDiffRecorder struct {
-	calls int
-	last  map[string]any
-	id    string
+	calls     int
+	last      map[string]any
+	runID     string
+	backlogID string
 }
 
-func (f *fakeDiffRecorder) Record(_ context.Context, backlogID string, diff map[string]any) {
+func (f *fakeDiffRecorder) Record(_ context.Context, runID, backlogID string, diff map[string]any) {
 	f.calls++
-	f.id = backlogID
+	f.runID = runID
+	f.backlogID = backlogID
 	f.last = diff
 }
 
@@ -372,7 +374,7 @@ func TestWeaverClient_ResearchModeShadow_RecordsDiff(t *testing.T) {
 	w.DiffRecorder = rec
 
 	resp, err := w.Research(context.Background(), pipeline.WeaverRequest{
-		BacklogID: "BL-9", Prompt: "p",
+		RunID: "RUN-9", BacklogID: "BL-9", Prompt: "p",
 	})
 	if err != nil {
 		t.Fatalf("research: %v", err)
@@ -384,8 +386,17 @@ func TestWeaverClient_ResearchModeShadow_RecordsDiff(t *testing.T) {
 	if rec.calls != 1 {
 		t.Fatalf("diff recorder should be called once (got %d)", rec.calls)
 	}
-	if rec.id != "BL-9" {
-		t.Errorf("diff backlog_id = %q, want BL-9", rec.id)
+	if rec.runID != "RUN-9" {
+		t.Errorf("diff run_id = %q, want RUN-9", rec.runID)
+	}
+	if rec.backlogID != "BL-9" {
+		t.Errorf("diff backlog_id = %q, want BL-9", rec.backlogID)
+	}
+	if rec.last["run_id"] != "RUN-9" {
+		t.Errorf("diff[run_id] = %v, want RUN-9", rec.last["run_id"])
+	}
+	if rec.last["backlog_id"] != "BL-9" {
+		t.Errorf("diff[backlog_id] = %v, want BL-9", rec.last["backlog_id"])
 	}
 	if rec.last["legacy_chars"].(int) <= 0 {
 		t.Errorf("legacy_chars should be > 0: %v", rec.last["legacy_chars"])
