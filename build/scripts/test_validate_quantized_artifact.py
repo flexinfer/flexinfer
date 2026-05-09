@@ -267,6 +267,150 @@ class ValidateQuantizedArtifactTests(unittest.TestCase):
             result["checks"]["repeated_tensor_guard"]["duplicate_groups"], []
         )
 
+    def test_qwen36_gdn_qweights_warn_validation(self) -> None:
+        self._write_json(
+            "config.json",
+            {
+                "model_type": "qwen3_5",
+                "architectures": ["Qwen3_5ForConditionalGeneration"],
+                "num_hidden_layers": 64,
+                "vocab_size": 248320,
+                "quantization_config": {
+                    "modules_in_block_to_quantize": [
+                        "self_attn.q_proj",
+                        "self_attn.k_proj",
+                        "self_attn.v_proj",
+                        "self_attn.o_proj",
+                        "mlp.gate_proj",
+                        "mlp.up_proj",
+                        "mlp.down_proj",
+                        "linear_attn.in_proj_qkv",
+                        "linear_attn.in_proj_z",
+                        "linear_attn.out_proj",
+                    ]
+                },
+            },
+        )
+        self._write_json(
+            "model.safetensors.index.json",
+            {
+                "weight_map": {
+                    "model.layers.0.linear_attn.in_proj_qkv.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.linear_attn.in_proj_qkv.qzeros": "model-00001-of-00001.safetensors",
+                    "model.layers.0.linear_attn.in_proj_z.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.linear_attn.out_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.3.self_attn.q_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.3.self_attn.q_proj.qzeros": "model-00001-of-00001.safetensors",
+                }
+            },
+        )
+        self._touch("model-00001-of-00001.safetensors")
+
+        result = validator.validate_artifact(self.artifact, requested_layout="auto")
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["layout"], "vllm-gptq")
+        self.assertEqual(result["family"], "qwen36-27b")
+        self.assertTrue(
+            any("GDN GPTQ policy warning" in warning for warning in result["warnings"]),
+            result["warnings"],
+        )
+        self.assertEqual(
+            result["checks"]["gdn_gptq_policy"]["quantized_gdn_modules"],
+            {
+                "linear_attn.in_proj_qkv": 1,
+                "linear_attn.in_proj_z": 1,
+                "linear_attn.out_proj": 1,
+            },
+        )
+
+    def test_qwen36_gdn_policy_passes_when_linear_attention_is_fp(self) -> None:
+        self._write_json(
+            "config.json",
+            {
+                "text_config": {
+                    "model_type": "qwen3_5_text",
+                    "architectures": ["Qwen3_5ForConditionalGeneration"],
+                    "num_hidden_layers": 64,
+                    "vocab_size": 248320,
+                },
+                "quantization_config": {
+                    "modules_in_block_to_quantize": [
+                        "self_attn.q_proj",
+                        "self_attn.k_proj",
+                        "self_attn.v_proj",
+                        "self_attn.o_proj",
+                        "mlp.gate_proj",
+                        "mlp.up_proj",
+                        "mlp.down_proj",
+                    ]
+                },
+            },
+        )
+        self._write_json(
+            "model.safetensors.index.json",
+            {
+                "weight_map": {
+                    "model.layers.0.linear_attn.in_proj_qkv.weight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.linear_attn.in_proj_z.weight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.linear_attn.out_proj.weight": "model-00001-of-00001.safetensors",
+                    "model.layers.3.self_attn.q_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.3.self_attn.q_proj.qzeros": "model-00001-of-00001.safetensors",
+                    "model.layers.3.mlp.down_proj.qweight": "model-00001-of-00001.safetensors",
+                }
+            },
+        )
+        self._touch("model-00001-of-00001.safetensors")
+
+        result = validator.validate_artifact(
+            self.artifact, requested_layout="vllm-gptq"
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["family"], "qwen36-27b")
+        self.assertFalse(
+            any("GDN GPTQ policy warning" in warning for warning in result["warnings"]),
+            result["warnings"],
+        )
+        self.assertEqual(
+            result["checks"]["gdn_gptq_policy"]["quantized_gdn_modules"], {}
+        )
+
+    def test_qwen35_metadata_without_qwen36_shape_does_not_autodetect_qwen36(
+        self,
+    ) -> None:
+        self._write_json(
+            "config.json",
+            {
+                "model_type": "qwen3_5",
+                "architectures": ["Qwen3_5ForConditionalGeneration"],
+                "num_hidden_layers": 32,
+                "vocab_size": 151936,
+                "quantization_config": {
+                    "modules_in_block_to_quantize": [
+                        "self_attn.q_proj",
+                        "mlp.down_proj",
+                    ]
+                },
+            },
+        )
+        self._write_json(
+            "model.safetensors.index.json",
+            {
+                "weight_map": {
+                    "model.layers.0.self_attn.q_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.self_attn.q_proj.qzeros": "model-00001-of-00001.safetensors",
+                }
+            },
+        )
+        self._touch("model-00001-of-00001.safetensors")
+
+        result = validator.validate_artifact(self.artifact, requested_layout="auto")
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["family"], "auto")
+        self.assertNotIn("gdn_gptq_policy", result["checks"])
+
     def test_required_and_forbidden_quantized_modules(self) -> None:
         self._seed_base_config(
             quantization_config={

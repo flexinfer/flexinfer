@@ -166,7 +166,7 @@ The default calibration dataset is `mit-han-lab/pile-val-backup` (requires the `
 |-------|---------|-------------|
 | `sym` | `true` | Symmetric quantization. `true` is required for ExLlama v2 kernels, the fastest decode path on ROCm. |
 | `descAct` | `false` | Activation reordering. `false` = faster inference. `true` = slightly better quality. |
-| `dynamicExclusion` | `auto` | Module exclusion strategy. `auto` detects hybrid architectures and keeps attention/expert/vision/MTP at full precision. `none` quantizes all modules (pure INT4). |
+| `dynamicExclusion` | `auto` | Module exclusion strategy. `auto` detects hybrid architectures and keeps attention/expert/vision/MTP at full precision. `gdn` keeps GDN `linear_attn.*` modules full precision while quantizing full-attention and FFN modules. `none` quantizes all modules (pure INT4). |
 | `gpuMemoryFraction` | `"0.80"` | Fraction of GPU VRAM available to quantization (e.g. `"0.95"`). Lower values leave headroom for ROCm GTT overhead. |
 
 ```yaml

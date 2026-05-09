@@ -111,7 +111,7 @@ Full list: `build/scripts/vllm_qwen35_patches.py`
 | `normThreshold` | *string | "100" | Abort if refusal norm exceeds |
 | `ablitateLmHead` | *bool | true | Abliterate output projection |
 | `targetLayers` | *string | "auto" | Layer selection (e.g. "27,31,35") |
-| `dynamicExclusion` | *string | "auto" | GPTQ exclusion pattern |
+| `dynamicExclusion` | *string | "auto" | GPTQ exclusion pattern (`auto`, `gdn`, or `none`) |
 | `denseModulePolicy` | *string | unset / "fallback" | Optional dense GPTQ family validation policy |
 | `denseModuleCosineThreshold` | *string | "0.98" | Optional dense GPTQ dequant/source cosine gate |
 
