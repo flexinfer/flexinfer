@@ -85,6 +85,19 @@ type Config struct {
 	// HUDToken is the mobile bearer token configured via
 	// HUD_MOBILE_OPERATOR_TOKEN on the HUD process.
 	HUDToken string
+
+	// WeaverURL is the HTTP base for the routed weaver dispatch (POST
+	// /api/weaver/query). When set together with MILLS_RESEARCH_VIA_
+	// WEAVER=shadow|on, the WeaverWorker delegates research to the
+	// loom Router instead of the legacy single-prompt FlexInfer chat.
+	// Defaults to HUDBaseURL when unset (the same loomd process owns
+	// both surfaces). Empty + non-default mode logs a warning and
+	// keeps the legacy chat path.
+	WeaverURL string
+	// WeaverToken is an optional bearer for /api/weaver/query. Today
+	// the endpoint sits behind the HUD's withCORS middleware (no
+	// token required); the field is plumbed for future hardening.
+	WeaverToken string
 }
 
 // DefaultConfig returns the values used when neither flag nor env supplies one.
@@ -162,6 +175,12 @@ func (c *Config) ApplyEnv() {
 	}
 	if v := strings.TrimSpace(os.Getenv("LOOM_HUD_TOKEN")); v != "" {
 		c.HUDToken = v
+	}
+	if v := strings.TrimSpace(os.Getenv("LOOM_WEAVER_URL")); v != "" {
+		c.WeaverURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("LOOM_WEAVER_TOKEN")); v != "" {
+		c.WeaverToken = v
 	}
 }
 

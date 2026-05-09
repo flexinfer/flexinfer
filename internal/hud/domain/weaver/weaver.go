@@ -23,4 +23,5 @@ func (d *WeaverDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFu
 	mux.HandleFunc("GET /api/weaver/domains", mw(d.handleDomains))
 	mux.HandleFunc("GET /api/weaver/history", mw(d.handleHistory))
 	mux.HandleFunc("GET /api/weaver/metrics", mw(d.handleMetrics))
+	mux.HandleFunc("POST /api/weaver/query", mw(d.handleQuery))
 }

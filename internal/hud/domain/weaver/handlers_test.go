@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -12,9 +13,16 @@ import (
 type mockBridge struct {
 	responses map[string]json.RawMessage
 	errors    map[string]error
+	// captured holds the params of the last Call per method, so tests
+	// can assert that the handler forwarded the right struct shape.
+	captured map[string]any
 }
 
-func (m *mockBridge) Call(method string, _ any) (json.RawMessage, error) {
+func (m *mockBridge) Call(method string, params any) (json.RawMessage, error) {
+	if m.captured == nil {
+		m.captured = map[string]any{}
+	}
+	m.captured[method] = params
 	if m.errors != nil {
 		if err, ok := m.errors[method]; ok {
 			return nil, err
@@ -419,6 +427,135 @@ func TestHandleMetrics_BridgeError(t *testing.T) {
 	}
 	if resp["error_count"].(float64) != 0 {
 		t.Errorf("expected error_count=0 on error, got %v", resp["error_count"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleQuery tests
+// ---------------------------------------------------------------------------
+
+func TestHandleQuery_Success(t *testing.T) {
+	bridge := &mockBridge{
+		responses: map[string]json.RawMessage{
+			"loom/weaver/query": json.RawMessage(`{
+				"answer": "k3s nodes are healthy",
+				"domain_results": [
+					{"domain": "cluster-ops", "answer": "k3s nodes are healthy", "tokens": 120, "latency_ms": 850}
+				],
+				"total_tokens": 120,
+				"latency_ms": 850,
+				"domains_used": ["cluster-ops"]
+			}`),
+		},
+	}
+	d := New(&mockDeps{bridge: bridge})
+
+	body := `{"query":"check k3s health","max_tokens":1024,"agent_id":"loom-mills-operator"}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/weaver/query", strings.NewReader(body))
+	d.handleQuery(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["answer"] != "k3s nodes are healthy" {
+		t.Errorf("expected forwarded answer, got %v", resp["answer"])
+	}
+	if resp["total_tokens"].(float64) != 120 {
+		t.Errorf("expected total_tokens=120, got %v", resp["total_tokens"])
+	}
+
+	// The handler must forward params to the daemon; sniff the captured
+	// struct to make sure agent_id + max_tokens propagated.
+	captured, ok := bridge.captured["loom/weaver/query"]
+	if !ok {
+		t.Fatal("expected loom/weaver/query to be called")
+	}
+	raw, _ := json.Marshal(captured)
+	var got map[string]any
+	_ = json.Unmarshal(raw, &got)
+	if got["query"] != "check k3s health" {
+		t.Errorf("forwarded query = %v, want %q", got["query"], "check k3s health")
+	}
+	if got["agent_id"] != "loom-mills-operator" {
+		t.Errorf("forwarded agent_id = %v, want loom-mills-operator", got["agent_id"])
+	}
+}
+
+func TestHandleQuery_TrimsAndValidatesQuery(t *testing.T) {
+	d := New(&mockDeps{bridge: &mockBridge{}})
+	for _, body := range []string{`{"query":""}`, `{"query":"   "}`, `{}`} {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/weaver/query", strings.NewReader(body))
+		d.handleQuery(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body %q: expected 400, got %d", body, w.Code)
+		}
+	}
+}
+
+func TestHandleQuery_BridgeError(t *testing.T) {
+	bridge := &mockBridge{
+		errors: map[string]error{
+			"loom/weaver/query": errors.New("router off"),
+		},
+	}
+	d := New(&mockDeps{bridge: bridge})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/weaver/query",
+		strings.NewReader(`{"query":"q"}`))
+	d.handleQuery(w, r)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d", w.Code)
+	}
+}
+
+func TestHandleQuery_NoBridge(t *testing.T) {
+	d := New(&mockDeps{bridge: nil})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/weaver/query",
+		strings.NewReader(`{"query":"q"}`))
+	d.handleQuery(w, r)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestHandleQuery_BodyTooLarge(t *testing.T) {
+	d := New(&mockDeps{bridge: &mockBridge{}})
+
+	// Build a JSON body whose query field overflows the cap. The
+	// LimitReader keeps the read bounded; the handler must still
+	// produce a 413 even when JSON unmarshal would otherwise succeed.
+	big := strings.Repeat("x", maxQueryBodyBytes+128)
+	body := `{"query":"` + big + `"}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/weaver/query", strings.NewReader(body))
+	d.handleQuery(w, r)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", w.Code)
+	}
+}
+
+func TestHandleQuery_InvalidJSON(t *testing.T) {
+	d := New(&mockDeps{bridge: &mockBridge{}})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/weaver/query",
+		strings.NewReader(`{"query":}`))
+	d.handleQuery(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
 

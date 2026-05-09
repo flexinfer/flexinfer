@@ -402,11 +402,18 @@ type WeaverDelegator interface {
 // persist to the pipeline_runs.research_diff column or a metrics
 // sink. Nil is safe — shadow comparisons just skip recording.
 //
-// Diff is a marshal-stable JSON object with keys: backlog_id,
-// legacy_chars, shadow_chars, legacy_cost_usd, shadow_cost_usd,
-// length_delta_pct, shadow_error.
+// runID is the pipeline_runs.id the diff belongs to (empty when the
+// caller has no run context — production recorders should skip the
+// persist in that case rather than write to a fabricated key).
+// backlogID is supplied for human-readable context; the diff map also
+// includes "backlog_id" and "run_id" entries so a recorder writing to
+// a metrics sink doesn't have to plumb both keys separately.
+//
+// Diff keys: backlog_id, run_id, legacy_chars, shadow_chars,
+// legacy_cost_usd, shadow_cost_usd, length_delta_pct,
+// shadow_error (when present), legacy_error (when present).
 type ResearchDiffRecorder interface {
-	Record(ctx context.Context, backlogID string, diff map[string]any)
+	Record(ctx context.Context, runID, backlogID string, diff map[string]any)
 }
 
 // WeaverClient satisfies pipeline.WeaverClient. The research stage in
@@ -548,6 +555,7 @@ func (w *WeaverClient) recordDiff(
 	}
 	diff := map[string]any{
 		"backlog_id":       req.BacklogID,
+		"run_id":           req.RunID,
 		"legacy_chars":     legacyChars,
 		"shadow_chars":     shadowChars,
 		"legacy_cost_usd":  legacy.resp.CostUSD,
@@ -560,7 +568,7 @@ func (w *WeaverClient) recordDiff(
 	if legacy.err != nil {
 		diff["legacy_error"] = legacy.err.Error()
 	}
-	w.DiffRecorder.Record(ctx, req.BacklogID, diff)
+	w.DiffRecorder.Record(ctx, req.RunID, req.BacklogID, diff)
 }
 
 func (w *WeaverClient) logger() *slog.Logger {
