@@ -61,6 +61,19 @@ Engrams are stored as long-term memory items with `category="engram"`, the URI i
 | `agent_engram_recall` | Recall by query; optionally pull in transitive prerequisites at depth N |
 | `agent_engram_list` | List engrams filtered by tier, family, language, scope, proof_status |
 | `agent_engram_graph` | Adjacency list for the prerequisite graph rooted at a URI; direction `down` walks prereqs, `up` walks dependents |
+| `agent_engram_verify` | Verify an engram's proof. File-ref proofs check existence + line range; URL proofs run a HEAD request; command proofs are skipped (devbox sandbox deferred). Updates `proof_status`, `last_verified`, and (on success) appends the repo to `unlocked_in`. Pass `uri` for one engram or `all=true` to sweep the workspace. |
+
+## Verification
+
+`agent_engram_verify` is the bridge between the proof contract and reality. It dispatches based on the proof string:
+
+- **file_ref** (`pkg/foo/bar.go:42-58` or just `pkg/foo/bar.go`) — checks the file exists relative to `repo_root` (defaults to cwd) and that any line range fits the file's length.
+- **url** (`https://...`) — runs a HEAD request with a 5-second timeout; 2xx/3xx is `verified`, anything else is `failing`.
+- **command** (`command: go test ./...`) — currently returns `status=skipped` with a clear reason. Running arbitrary commands needs the devbox sandbox; that work is tracked as a follow-up.
+
+After verification, the service updates `proof_status` (`verified`/`stale`/`failing`/unchanged-on-skip), refreshes `last_verified`, refreshes the `engram-status:*` tag, and on a successful verify appends the `repo` argument (defaulting to the basename of cwd, worktree-aware) to `unlocked_in` so other agents can see "this engram has been proven against repo X recently."
+
+The HUD exposes a summary at `GET /api/engrams/summary` returning `{total, by_status, by_tier}` for the catalog view.
 
 ## When to Add an Engram vs. a Recipe
 
