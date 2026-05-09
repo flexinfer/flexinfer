@@ -92,20 +92,21 @@ spec:
     # for these projections; serving the int4-quantized variant collapsed
     # logits to flat punctuation.
     #
-    # 2026-05-09: switched from "gdn" to "gdn-min" after cycles 4 and 5
-    # (MRs !293 + !294 chasing accelerate disk-offload + dispatch_model)
-    # repeatedly hit GPTQModel.shell_module_materialize crashing on
-    # disk-offloaded meta tensors. Root cause: full "gdn" mode keeps ALL
-    # linear_attn sub-modules in FP, which inflates the working set past
-    # what the 5930k can hold (24 GB GPU + 48 GiB cgroup). accelerate
-    # falls back to disk; GPTQModel cannot materialize disk-offloaded
-    # layers via .to(device).
-    #
-    # "gdn-min" excludes only the high-loss sub-modules (in_proj_qkv +
-    # in_proj_z; quant_log.csv layer-0 losses 0.005 and 0.003 respectively).
-    # out_proj (loss 3.9e-6) and conv1d (sub-MB) get quantized; the FP
-    # working set shrinks ~50% so accelerate can fit gpu+cpu without disk.
-    dynamicExclusion: "gdn-min"
+    # 2026-05-09 path:
+    #   - Cycles 4-5 hit GPTQModel.shell_module_materialize crashing on
+    #     accelerate disk-offloaded meta tensors. Root cause was the
+    #     manual_sharded_state_dict loader constructing GPTQModel with
+    #     turtle_model=None, forcing the .to(device) fallthrough.
+    #   - Briefly tried `gdn-min` to dodge memory pressure, but the CRD
+    #     enum (debt/DEBT-302 commit 10d4a7ef) only accepts auto;gdn;none.
+    #     Flux blocked the modelcache update; live spec stayed at "gdn".
+    #   - Real fix landed in MR !300: qwen3.5-text policy uses stock
+    #     GPTQModel.load(offload_to_disk=true) which sets turtle_model
+    #     to LazyTurtle. shell_module_materialize then routes through
+    #     undo_offload_to_disk to materialize layers on demand. This
+    #     handles disk-offloaded layers cleanly so the full "gdn" mode
+    #     no longer needs to fit in physical memory.
+    dynamicExclusion: "gdn"
     useGPU: true
     # GPTQ uses the same gfx1100 driver reservation path as abliteration.
     # 2026-05-08: 40 -> 56 to give the dynamicExclusion: gdn cycle headroom
