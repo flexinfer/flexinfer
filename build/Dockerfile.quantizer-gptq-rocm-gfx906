@@ -1,27 +1,73 @@
 # Dockerfile.quantizer-gptq-rocm-gfx906
-# Thin GPTQ quantizer overlay for AMD Radeon VII (gfx906).
+# GPTQ quantizer overlay for AMD Radeon VII (gfx906).
 #
-# The gfx906 runtime image already carries the ROCm/PyTorch/GPTQModel stack
-# needed for quantization. The historical failure here was not missing deps;
-# it was that the image lacked the controller's version sentinel files under
-# /app and /workspace. Build the smallest possible overlay so deploy-quantizer
-# stays fast and we can prove the live job is using the fixed artifact.
+# History: this used to be a thin overlay on a runtime base that already
+# carried the GPTQModel stack. The B-3 cycle 2 runtime base (mixa3607
+# PyTorch 2.9 + transformers 5.x) does NOT include GPTQModel, so the
+# overlay now installs it explicitly. Pattern mirrors the gfx1100
+# Dockerfile.quantizer-gptq-rocm: --no-deps to keep ROCm torch from being
+# replaced by the CUDA wheel that gptqmodel pulls transitively.
 #
 # Build:
 #   docker --context 7900xtx build -f build/Dockerfile.quantizer-gptq-rocm-gfx906 \
-#     -t registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx906 .
+#     -t registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx906-mixa3607 .
 
-ARG BASE_IMAGE=registry.harbor.lan/flexinfer/runtime@sha256:ba4570f515af05fe62f8b6672449b4029e1f15c2f606412e8d6d800e3e0e2dbf
+ARG BASE_IMAGE=registry.harbor.lan/flexinfer/runtime@sha256:94045d0ca4b12deb3c46bb22070f67bfedad8b719bb992e5d3ce128ad27ad597
 FROM ${BASE_IMAGE}
 
-# Refresh the controller-managed scripts in case the runtime image lags.
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTORCH_ROCM_ARCH=gfx906 \
+    HSA_OVERRIDE_GFX_VERSION=9.0.6
+
+# Install GPTQModel without dragging in CUDA torch>=2.8 from PyPI.
+# The mixa3607 base already has pypcre, but install defensively in case
+# of upstream churn. ext_modules=[] on ROCm — pure Python build.
+RUN python3 -m pip install pypcre && \
+    python3 -m pip install -v "gptqmodel>=6.0.3" \
+    --no-build-isolation --no-deps
+
+# GPTQModel runtime deps that aren't in the runtime base. transformers,
+# accelerate, safetensors, huggingface_hub, hf_transfer, protobuf, pillow,
+# sentencepiece, numpy/pandas/scipy/scikit-learn, triton, pypcre,
+# threadpoolctl, bitsandbytes are already shipped by the base.
+RUN python3 -m pip install \
+    datasets \
+    device-smi \
+    tokenicer \
+    logbar \
+    maturin \
+    pyarrow \
+    dill \
+    zstandard \
+    defuser
+
+# FlexInfer quantization and abliteration scripts (referenced by controller wrapper)
 COPY build/scripts/quantize_gptq.py /opt/flexinfer/scripts/quantize_gptq.py
 COPY build/scripts/abliterate.py /opt/flexinfer/scripts/abliterate.py
 
 # The controller probes tiny sentinel files for version compatibility before it
-# ever executes the full quantize script. Keep those sentinels import-safe.
+# ever executes the full quantize script. Keep them import-safe and aligned
+# with the script's FLEXINFER_SCRIPT_VERSION constant.
 RUN mkdir -p /app && \
-    printf 'FLEXINFER_SCRIPT_VERSION = "v11"\n' > /app/quantize_gptq.py && \
+    printf 'FLEXINFER_SCRIPT_VERSION = "v14"\n' > /app/quantize_gptq.py && \
     printf 'FLEXINFER_SCRIPT_VERSION = "v1"\n' > /app/abliterate.py
+
+# The controller probes /workspace/quantize_gptq.py before anything else, but the
+# pod mounts /workspace as an emptyDir. Seed that mount before the wrapper runs.
+RUN mv /bin/bash /bin/bash.real && \
+    printf '%s\n' \
+      '#!/bin/sh' \
+      'mkdir -p /workspace' \
+      'if [ ! -f /workspace/quantize_gptq.py ]; then' \
+      '  printf '\''FLEXINFER_SCRIPT_VERSION = "v14"\n'\'' > /workspace/quantize_gptq.py' \
+      'fi' \
+      'if [ ! -f /workspace/abliterate.py ]; then' \
+      '  printf '\''FLEXINFER_SCRIPT_VERSION = "v1"\n'\'' > /workspace/abliterate.py' \
+      'fi' \
+      'exec /bin/bash.real "$@"' \
+      > /bin/bash && \
+    chmod +x /bin/bash
 
 ENTRYPOINT ["/bin/bash"]
