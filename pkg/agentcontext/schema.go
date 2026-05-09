@@ -27,6 +27,13 @@ const (
 	EntryTypeHandoff       EntryType = "handoff"
 	EntryTypeAnnotation    EntryType = "annotation"
 	EntryTypePipelineEvent EntryType = "pipeline_event"
+	// EntryTypeWeaverQuery records a completed weaver router Query.
+	// Written by the daemon when a Query carries a non-empty
+	// ParentSessionID so the originating agent-context session can
+	// trace which questions were asked through the weaver. See
+	// services/loom-core/.loom/111-product-spec-weaver-qwen3-
+	// integration-2026-05-08.md (AC-002).
+	EntryTypeWeaverQuery EntryType = "weaver_query"
 )
 
 // TaskStatus defines the status of a task
