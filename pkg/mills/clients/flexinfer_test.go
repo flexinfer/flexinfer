@@ -216,6 +216,201 @@ func TestWeaverClient_NilClientErrors(t *testing.T) {
 	}
 }
 
+// ----- ResearchMode switch (S5 / MW-001/002/003) -----
+
+// fakeDelegator captures Delegate inputs and returns a canned response.
+type fakeDelegator struct {
+	calls   int
+	resp    pipeline.WeaverResponse
+	err     error
+	lastReq pipeline.WeaverRequest
+}
+
+func (f *fakeDelegator) Delegate(_ context.Context, req pipeline.WeaverRequest) (pipeline.WeaverResponse, error) {
+	f.calls++
+	f.lastReq = req
+	return f.resp, f.err
+}
+
+// fakeDiffRecorder captures recorded diffs for assertion.
+type fakeDiffRecorder struct {
+	calls int
+	last  map[string]any
+	id    string
+}
+
+func (f *fakeDiffRecorder) Record(_ context.Context, backlogID string, diff map[string]any) {
+	f.calls++
+	f.id = backlogID
+	f.last = diff
+}
+
+func TestParseResearchMode(t *testing.T) {
+	cases := map[string]ResearchMode{
+		"":        ResearchModeOff,
+		"off":     ResearchModeOff,
+		"  Off  ": ResearchModeOff,
+		"shadow":  ResearchModeShadow,
+		"SHADOW":  ResearchModeShadow,
+		"on":      ResearchModeOn,
+		"oN":      ResearchModeOn,
+		"bogus":   ResearchModeOff,
+		"weaver":  ResearchModeOff,
+	}
+	for input, want := range cases {
+		if got := ParseResearchMode(input); got != want {
+			t.Errorf("ParseResearchMode(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestWeaverClient_ResearchModeOff_UsesLegacy(t *testing.T) {
+	cli := newStubClient(t, successBody, 200)
+	w := NewWeaverClient(cli)
+	w.Mode = ResearchModeOff
+	delegator := &fakeDelegator{resp: pipeline.WeaverResponse{Notes: "delegated"}}
+	w.Delegator = delegator
+
+	resp, err := w.Research(context.Background(), pipeline.WeaverRequest{Prompt: "p"})
+	if err != nil {
+		t.Fatalf("research: %v", err)
+	}
+	if delegator.calls != 0 {
+		t.Errorf("delegator should not be called in off mode (calls=%d)", delegator.calls)
+	}
+	if !strings.Contains(resp.Notes, "verdict") {
+		t.Errorf("expected legacy notes, got %q", resp.Notes)
+	}
+}
+
+func TestWeaverClient_ResearchModeOn_UsesDelegator(t *testing.T) {
+	cli := newStubClient(t, successBody, 200)
+	w := NewWeaverClient(cli)
+	w.Mode = ResearchModeOn
+	delegator := &fakeDelegator{
+		resp: pipeline.WeaverResponse{
+			Notes:   "delegated answer",
+			SpawnID: "weaver-router",
+			CostUSD: 0.001,
+		},
+	}
+	w.Delegator = delegator
+
+	resp, err := w.Research(context.Background(), pipeline.WeaverRequest{
+		BacklogID: "BL-1", Prompt: "p",
+	})
+	if err != nil {
+		t.Fatalf("research: %v", err)
+	}
+	if delegator.calls != 1 {
+		t.Fatalf("delegator should be called once (got %d)", delegator.calls)
+	}
+	if delegator.lastReq.BacklogID != "BL-1" {
+		t.Errorf("delegator got BacklogID=%q, want BL-1", delegator.lastReq.BacklogID)
+	}
+	if resp.Notes != "delegated answer" {
+		t.Errorf("expected delegated notes, got %q", resp.Notes)
+	}
+}
+
+func TestWeaverClient_ResearchModeOn_FallsBackOnDelegatorError(t *testing.T) {
+	cli := newStubClient(t, successBody, 200)
+	w := NewWeaverClient(cli)
+	w.Mode = ResearchModeOn
+	delegator := &fakeDelegator{err: errors.New("delegator down")}
+	w.Delegator = delegator
+
+	resp, err := w.Research(context.Background(), pipeline.WeaverRequest{Prompt: "p"})
+	if err != nil {
+		t.Fatalf("research should fall back, not error: %v", err)
+	}
+	if delegator.calls != 1 {
+		t.Errorf("delegator should be tried once before fallback (got %d)", delegator.calls)
+	}
+	if !strings.Contains(resp.Notes, "verdict") {
+		t.Errorf("expected legacy fallback notes, got %q", resp.Notes)
+	}
+}
+
+func TestWeaverClient_ResearchModeOn_NoDelegatorFallsBack(t *testing.T) {
+	cli := newStubClient(t, successBody, 200)
+	w := NewWeaverClient(cli)
+	w.Mode = ResearchModeOn
+	// No delegator configured.
+
+	resp, err := w.Research(context.Background(), pipeline.WeaverRequest{Prompt: "p"})
+	if err != nil {
+		t.Fatalf("research: %v", err)
+	}
+	if !strings.Contains(resp.Notes, "verdict") {
+		t.Errorf("expected legacy fallback notes when delegator absent, got %q", resp.Notes)
+	}
+}
+
+func TestWeaverClient_ResearchModeOn_ContextCancelPropagates(t *testing.T) {
+	cli := newStubClient(t, successBody, 200)
+	w := NewWeaverClient(cli)
+	w.Mode = ResearchModeOn
+	delegator := &fakeDelegator{err: context.Canceled}
+	w.Delegator = delegator
+
+	_, err := w.Research(context.Background(), pipeline.WeaverRequest{Prompt: "p"})
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("context.Canceled should propagate, got %v", err)
+	}
+}
+
+func TestWeaverClient_ResearchModeShadow_RecordsDiff(t *testing.T) {
+	cli := newStubClient(t, successBody, 200)
+	w := NewWeaverClient(cli)
+	w.Mode = ResearchModeShadow
+	delegator := &fakeDelegator{
+		resp: pipeline.WeaverResponse{Notes: "x", CostUSD: 0.002},
+	}
+	rec := &fakeDiffRecorder{}
+	w.Delegator = delegator
+	w.DiffRecorder = rec
+
+	resp, err := w.Research(context.Background(), pipeline.WeaverRequest{
+		BacklogID: "BL-9", Prompt: "p",
+	})
+	if err != nil {
+		t.Fatalf("research: %v", err)
+	}
+	// Returns the legacy result, not the shadow.
+	if !strings.Contains(resp.Notes, "verdict") {
+		t.Errorf("shadow mode must return legacy notes, got %q", resp.Notes)
+	}
+	if rec.calls != 1 {
+		t.Fatalf("diff recorder should be called once (got %d)", rec.calls)
+	}
+	if rec.id != "BL-9" {
+		t.Errorf("diff backlog_id = %q, want BL-9", rec.id)
+	}
+	if rec.last["legacy_chars"].(int) <= 0 {
+		t.Errorf("legacy_chars should be > 0: %v", rec.last["legacy_chars"])
+	}
+	if rec.last["shadow_chars"].(int) != len("x") {
+		t.Errorf("shadow_chars = %v, want 1", rec.last["shadow_chars"])
+	}
+}
+
+func TestWeaverClient_ResearchModeShadow_NoDelegatorRecordsError(t *testing.T) {
+	cli := newStubClient(t, successBody, 200)
+	w := NewWeaverClient(cli)
+	w.Mode = ResearchModeShadow
+	rec := &fakeDiffRecorder{}
+	w.DiffRecorder = rec
+	// No delegator.
+
+	if _, err := w.Research(context.Background(), pipeline.WeaverRequest{BacklogID: "BL-X"}); err != nil {
+		t.Fatalf("research: %v", err)
+	}
+	if rec.last["shadow_error"] == nil {
+		t.Errorf("shadow_error should be recorded when no delegator (got %+v)", rec.last)
+	}
+}
+
 // ----- Composition: gate flow end-to-end against the stub proxy -----
 
 func TestSpecConformanceGate_AgainstFlexInferStub(t *testing.T) {

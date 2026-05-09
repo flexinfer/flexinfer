@@ -69,7 +69,7 @@ func auditOpFixture(t *testing.T) (*operator, func()) {
 	rev := &fakeAuditReviewer{}
 	d := audit.New(map[string]audit.Reviewer{rev.Backend(): rev}, audit.MustLoadRubric())
 	policy := &audit.PoolPolicy{
-		Bulk: []audit.PoolMember{{Backend: "flexinfer", Model: "llama-4-70b"}},
+		Bulk: []audit.PoolMember{{Backend: "flexinfer", Model: "qwen3-8b"}},
 	}
 	w := audit.NewQueueWorker(d, op.store.Audit, *policy, audit.QueueOptions{
 		Capacity:      8,
