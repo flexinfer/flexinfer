@@ -36,6 +36,8 @@ class FamilyProfile:
     name: str
     aliases: tuple[str, ...]
     known_vllm_flat_modules: frozenset[str]
+    gdn_fp_module_prefixes: tuple[str, ...] = ()
+    variant_hints_required: bool = False
     # variant_hints must ALL be present in the metadata hint blob for the
     # profile to be considered. Used to disambiguate variants (e.g. 26B vs 31B)
     # whose model_type/architectures strings alone are identical.
@@ -53,6 +55,24 @@ _GEMMA4_VLLM_FLAT_MODULES = frozenset(
         "mlp.gate_proj",
         "mlp.up_proj",
         "mlp.down_proj",
+    )
+)
+
+_QWEN35_VLLM_FLAT_MODULES = frozenset(
+    (
+        "self_attn.q_proj",
+        "self_attn.k_proj",
+        "self_attn.v_proj",
+        "self_attn.o_proj",
+        "mlp.gate_proj",
+        "mlp.up_proj",
+        "mlp.down_proj",
+        "linear_attn.in_proj_qkv",
+        "linear_attn.in_proj_qkvz",
+        "linear_attn.in_proj_ba",
+        "linear_attn.in_proj_z",
+        "linear_attn.out_proj",
+        "linear_attn.conv1d",
     )
 )
 
@@ -81,6 +101,21 @@ FAMILY_PROFILES: dict[str, FamilyProfile] = {
         ),
         variant_hints=("num_hidden_layers=42",),
         known_vllm_flat_modules=_GEMMA4_VLLM_FLAT_MODULES,
+    ),
+    "qwen36-27b": FamilyProfile(
+        name="qwen36-27b",
+        aliases=(
+            "qwen/qwen3.6-27b",
+            "qwen3.6-27b",
+            "qwen36-27b",
+            "qwen3_5",
+            "qwen3_5forconditionalgeneration",
+            "qwen3_5_text",
+        ),
+        known_vllm_flat_modules=_QWEN35_VLLM_FLAT_MODULES,
+        gdn_fp_module_prefixes=("linear_attn.",),
+        variant_hints_required=True,
+        variant_hints=("num_hidden_layers=64", "vocab_size=248320"),
     ),
 }
 
@@ -271,9 +306,15 @@ def _collect_family_hints(
     config_qcfg: dict[str, Any] | None,
 ) -> list[str]:
     hints: list[str] = []
+    config_candidates: list[dict[str, Any]] = []
     if isinstance(config, dict):
+        config_candidates.append(config)
+        text_config = config.get("text_config")
+        if isinstance(text_config, dict):
+            config_candidates.append(text_config)
+    for candidate_config in config_candidates:
         for field in ("_name_or_path", "model_type", "architectures", "torch_dtype"):
-            value = config.get(field)
+            value = candidate_config.get(field)
             if isinstance(value, str):
                 hints.append(value.lower())
             elif isinstance(value, list):
@@ -286,10 +327,18 @@ def _collect_family_hints(
             "num_hidden_layers",
             "num_experts",
             "moe_intermediate_size",
+            "vocab_size",
         ):
-            value = config.get(numeric_field)
+            value = candidate_config.get(numeric_field)
             if isinstance(value, int):
                 hints.append(f"{numeric_field}={value}")
+        layer_types = candidate_config.get("layer_types")
+        if isinstance(layer_types, list):
+            counts = Counter(str(item).lower() for item in layer_types)
+            hints.extend(
+                f"layer_types.{layer_type}={count}"
+                for layer_type, count in sorted(counts.items())
+            )
     for candidate in (quantize_config, config_qcfg):
         if not isinstance(candidate, dict):
             continue
@@ -312,6 +361,10 @@ def _detect_family(
     hint_blob = " ".join(hints)
     scores: list[tuple[int, str]] = []
     for profile in FAMILY_PROFILES.values():
+        if profile.variant_hints_required and not all(
+            hint in hint_blob for hint in profile.variant_hints
+        ):
+            continue
         score = sum(1 for alias in profile.aliases if alias in hint_blob)
         if score > 0:
             scores.append((score, profile.name))
@@ -413,6 +466,50 @@ def _collect_quantized_module_counts(tensor_keys: Sequence[str]) -> dict[str, in
     return dict(sorted(counts.items()))
 
 
+def _validate_gdn_fp_policy(
+    resolved_layout: str,
+    resolved_family: str,
+    quantized_module_counts: dict[str, int],
+) -> tuple[dict[str, Any] | None, str | None]:
+    if resolved_layout != "vllm-gptq" or resolved_family not in FAMILY_PROFILES:
+        return None, None
+
+    profile = FAMILY_PROFILES[resolved_family]
+    prefixes = profile.gdn_fp_module_prefixes
+    if not prefixes:
+        return None, None
+
+    quantized_gdn_modules = {
+        module: count
+        for module, count in sorted(quantized_module_counts.items())
+        if any(module.startswith(prefix) for prefix in prefixes)
+    }
+    non_gdn_modules = {
+        module: count
+        for module, count in sorted(quantized_module_counts.items())
+        if module not in quantized_gdn_modules
+    }
+    check = {
+        "enabled": True,
+        "policy": "gdn-linear-attention-must-remain-fp",
+        "severity": "warning",
+        "fp_module_prefixes": list(prefixes),
+        "quantized_gdn_modules": quantized_gdn_modules,
+        "non_gdn_quantized_module_count": len(non_gdn_modules),
+    }
+    if not quantized_gdn_modules:
+        return check, None
+
+    modules = ", ".join(
+        f"{module}={count}" for module, count in list(quantized_gdn_modules.items())[:8]
+    )
+    return (
+        check,
+        "GDN GPTQ policy warning: linear-attention modules should remain FP "
+        f"for family={resolved_family}, but qweight tensors were found for {modules}",
+    )
+
+
 def _tensor_signature(tensor: Any) -> str:
     if hasattr(tensor, "detach"):
         tensor = tensor.detach().cpu().contiguous()
@@ -443,8 +540,6 @@ def _detect_repeated_layer_qweights(
         "candidate_count": 0,
         "duplicate_groups": [],
     }
-    if _safe_open is None:
-        return check, "safetensors not installed; cannot run repeated tensor guard"
 
     effective_weight_map = dict(weight_map)
     if not effective_weight_map and (artifact_path / "model.safetensors").exists():
@@ -470,6 +565,8 @@ def _detect_repeated_layer_qweights(
     check["candidate_count"] = len(candidates)
     if len(candidates) < 2:
         return check, None
+    if _safe_open is None:
+        return check, "safetensors not installed; cannot run repeated tensor guard"
 
     by_shard: dict[str, list[tuple[int, str, str]]] = defaultdict(list)
     for layer, module, key, shard in candidates:
@@ -687,6 +784,14 @@ def validate_artifact(
     checks["declared_quantized_modules"] = declared_modules
     checks["quantized_modules"] = quantized_modules
     checks["quantized_module_counts"] = quantized_module_counts
+
+    gdn_policy_check, gdn_policy_warning = _validate_gdn_fp_policy(
+        resolved_layout, resolved_family, quantized_module_counts
+    )
+    if gdn_policy_check is not None:
+        checks["gdn_gptq_policy"] = gdn_policy_check
+    if gdn_policy_warning:
+        warnings.append(gdn_policy_warning)
 
     if declared_modules and quantized_modules:
         missing_declared = sorted(set(declared_modules) - set(quantized_modules))

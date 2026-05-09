@@ -119,6 +119,13 @@ spec:
     secretRef: "harbor-oci-creds"
     maxMemoryGB: 8
     timeoutSeconds: 7200
+    validate:
+      enabled: true
+      layout: vllm-gptq
+      family: qwen36-27b
+      # DEBT-302: warning-first while qwen36 recovery is still canary-only.
+      # Set true after the first dynamicExclusion=gdn artifact proves clean.
+      failOnWarnings: false
   retentionPriority: 60
   evictionPolicy: LRU
   evictionThresholdPercent: 85

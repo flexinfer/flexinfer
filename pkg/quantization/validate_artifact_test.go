@@ -131,6 +131,31 @@ func TestBuildValidateArtifactJob_LayoutAndFamilyOverrides(t *testing.T) {
 	}
 }
 
+func TestBuildValidateArtifactJob_Qwen36GDNValidationGate(t *testing.T) {
+	t.Setenv("FLEXINFER_RUNTIME_IMAGE", "runtime:img")
+
+	spec := &aiv1alpha1.PublishValidateSpec{
+		Enabled:        true,
+		Layout:         ptrString("vllm-gptq"),
+		Family:         ptrString("qwen36-27b"),
+		FailOnWarnings: ptrBool(false),
+	}
+	job, err := BuildValidateArtifactJob(validateBaseParams(), spec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	args := strings.Join(job.Spec.Template.Spec.Containers[0].Args, " ")
+	for _, want := range []string{
+		"--layout 'vllm-gptq'",
+		"--family 'qwen36-27b'",
+		"--json",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("qwen36 validation wrapper missing %q: %s", want, args)
+		}
+	}
+}
+
 func TestBuildValidateArtifactJob_CustomImageWinsOverEnv(t *testing.T) {
 	t.Setenv("FLEXINFER_RUNTIME_IMAGE", "runtime:env")
 	t.Setenv("FLEXINFER_VALIDATOR_IMAGE", "validator:env")
