@@ -237,6 +237,34 @@ func (d *PipelineDAO) CountActive(ctx context.Context) (int, error) {
 }
 
 // ListByBacklog returns all pipeline runs (across attempts) for a backlog item.
+// SetResearchDiff persists a JSON-encoded shadow vs. legacy research
+// comparison for the pipeline run. Migration 003 adds the column; this
+// is the only writer. Pass a non-nil JSON byte slice; the empty string
+// is allowed and clears the column.
+//
+// Used by ResearchModeShadow in pkg/mills/clients/flexinfer.go during
+// the soak window (MILLS_RESEARCH_VIA_WEAVER=shadow). Wiring from
+// WeaverClient.DiffRecorder to this method lands when the operator
+// gains a way to thread the current run id through WeaverRequest;
+// until then this stays available for tests + future use.
+func (d *PipelineDAO) SetResearchDiff(ctx context.Context, runID string, diffJSON string) error {
+	if runID == "" {
+		return errors.New("pipeline set-research-diff: run id required")
+	}
+	res, err := d.db.ExecContext(ctx,
+		`UPDATE pipeline_runs SET research_diff = ? WHERE id = ?`,
+		diffJSON, runID,
+	)
+	if err != nil {
+		return fmt.Errorf("pipeline set-research-diff: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (d *PipelineDAO) ListByBacklog(ctx context.Context, backlogID string) ([]*PipelineRun, error) {
 	rows, err := d.db.QueryContext(ctx,
 		`SELECT `+pipelineColumns+` FROM pipeline_runs WHERE backlog_id = ? ORDER BY attempts ASC`,

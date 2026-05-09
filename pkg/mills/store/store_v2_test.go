@@ -63,8 +63,9 @@ func TestMigrate_v2_Idempotent(t *testing.T) {
 		}
 		versions = append(versions, v)
 	}
-	if len(versions) != 2 || versions[0] != 1 || versions[1] != 2 {
-		t.Errorf("schema_migrations versions: got %v want [1 2]", versions)
+	// 003 (research_diff column) lands alongside the v2 migrations.
+	if len(versions) != 3 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 {
+		t.Errorf("schema_migrations versions: got %v want [1 2 3]", versions)
 	}
 }
 

@@ -12,7 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -342,19 +344,97 @@ func (c *FlexInferClient) Chat(ctx context.Context, model, prompt string, maxTok
 
 // ----- WeaverClient (research stage) -----
 
-// WeaverClient satisfies pipeline.WeaverClient. The research stage in
-// the autonomy spec is described as a "weaver subagent (codebase
-// domain)"; our v1 implementation is a single FlexInfer call that
-// asks the model to produce structured research notes against the
-// given prompt. Tool-using research is a future enhancement.
-type WeaverClient struct {
-	Client    *FlexInferClient
-	MaxTokens int // default 1024
+// ResearchMode controls how WeaverClient.Research dispatches a call.
+// See services/loom-core/.loom/111-product-spec-weaver-qwen3-
+// integration-2026-05-08.md (MW-001/002/003).
+type ResearchMode string
+
+const (
+	// ResearchModeOff calls the legacy single-prompt chat against the
+	// configured WeaverModel. Backward-compatible default.
+	ResearchModeOff ResearchMode = "off"
+
+	// ResearchModeShadow calls both the legacy path AND the
+	// WeaverDelegator (when one is configured), returns the legacy
+	// result, and records the shadow result + diff for offline
+	// analysis. Used during the soak before flipping to "on".
+	ResearchModeShadow ResearchMode = "shadow"
+
+	// ResearchModeOn delegates to the configured WeaverDelegator.
+	// Falls back to the legacy chat if the delegator is unconfigured
+	// or returns a non-context error — degraded but never silently
+	// broken.
+	ResearchModeOn ResearchMode = "on"
+
+	// EnvResearchMode is the env var read at construction time when no
+	// explicit mode is set. Values: "off" (default), "shadow", "on".
+	EnvResearchMode = "MILLS_RESEARCH_VIA_WEAVER"
+)
+
+// ParseResearchMode validates a string against the known modes.
+// Empty or unknown values fall back to ResearchModeOff.
+func ParseResearchMode(s string) ResearchMode {
+	switch ResearchMode(strings.ToLower(strings.TrimSpace(s))) {
+	case ResearchModeShadow:
+		return ResearchModeShadow
+	case ResearchModeOn:
+		return ResearchModeOn
+	default:
+		return ResearchModeOff
+	}
 }
 
-// NewWeaverClient wires a FlexInfer-backed research client.
+// WeaverDelegator forwards a research request to the routed
+// pkg/weaver Router. Production implementation issues an in-cluster
+// loom/weaver/query JSON-RPC against the daemon socket; that wiring
+// lands in a follow-up MR (the daemon-RPC client is its own focused
+// surface).
+//
+// Returning an error from Delegate causes the WeaverClient to fall
+// back to the legacy chat in "on" mode, or to record a "delegate_
+// failed" diff entry in "shadow" mode.
+type WeaverDelegator interface {
+	Delegate(ctx context.Context, req pipeline.WeaverRequest) (pipeline.WeaverResponse, error)
+}
+
+// ResearchDiffRecorder receives a structured snapshot of the legacy
+// + shadow paths during ResearchModeShadow runs. Implementations
+// persist to the pipeline_runs.research_diff column or a metrics
+// sink. Nil is safe — shadow comparisons just skip recording.
+//
+// Diff is a marshal-stable JSON object with keys: backlog_id,
+// legacy_chars, shadow_chars, legacy_cost_usd, shadow_cost_usd,
+// length_delta_pct, shadow_error.
+type ResearchDiffRecorder interface {
+	Record(ctx context.Context, backlogID string, diff map[string]any)
+}
+
+// WeaverClient satisfies pipeline.WeaverClient. The research stage in
+// the autonomy spec is described as a "weaver subagent (codebase
+// domain)"; the legacy v1 implementation is a single FlexInfer call.
+// MW-001 introduces an optional delegator that issues a routed weaver
+// query (multi-domain dispatch) gated behind ResearchMode.
+type WeaverClient struct {
+	Client       *FlexInferClient
+	MaxTokens    int // default 1024
+	Mode         ResearchMode
+	Delegator    WeaverDelegator
+	DiffRecorder ResearchDiffRecorder
+	Logger       *slog.Logger
+}
+
+// NewWeaverClient wires a FlexInfer-backed research client. Reads
+// MILLS_RESEARCH_VIA_WEAVER from the environment at construction
+// time; callers that want explicit control can override Mode +
+// Delegator on the returned struct.
 func NewWeaverClient(c *FlexInferClient) *WeaverClient {
-	return &WeaverClient{Client: c, MaxTokens: 1024}
+	mode := ParseResearchMode(os.Getenv(EnvResearchMode))
+	return &WeaverClient{
+		Client:    c,
+		MaxTokens: 1024,
+		Mode:      mode,
+		Logger:    slog.Default().With("component", "mills-weaver-client"),
+	}
 }
 
 // Research implements pipeline.WeaverClient.
@@ -362,6 +442,19 @@ func (w *WeaverClient) Research(ctx context.Context, req pipeline.WeaverRequest)
 	if w == nil || w.Client == nil {
 		return pipeline.WeaverResponse{}, errors.New("weaver: client not configured")
 	}
+	switch w.Mode {
+	case ResearchModeShadow:
+		return w.shadowResearch(ctx, req)
+	case ResearchModeOn:
+		return w.delegatedResearch(ctx, req)
+	default:
+		// off + unknown
+		return w.legacyResearch(ctx, req)
+	}
+}
+
+// legacyResearch is the original single-prompt FlexInfer path.
+func (w *WeaverClient) legacyResearch(ctx context.Context, req pipeline.WeaverRequest) (pipeline.WeaverResponse, error) {
 	maxTokens := w.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = 1024
@@ -381,6 +474,100 @@ func (w *WeaverClient) Research(ctx context.Context, req pipeline.WeaverRequest)
 			"completion_tokens": usageCompletionTokens(resp),
 		},
 	}, nil
+}
+
+// delegatedResearch routes to the configured WeaverDelegator. Falls
+// back to legacy when the delegator is unconfigured or returns a
+// non-context error so a transient delegation failure never breaks
+// the pipeline.
+func (w *WeaverClient) delegatedResearch(ctx context.Context, req pipeline.WeaverRequest) (pipeline.WeaverResponse, error) {
+	if w.Delegator == nil {
+		w.logger().Warn("research mode=on but no delegator configured; falling back to legacy")
+		return w.legacyResearch(ctx, req)
+	}
+	resp, err := w.Delegator.Delegate(ctx, req)
+	if err != nil {
+		// Context errors propagate; everything else falls back so
+		// pipeline progress isn't held hostage to delegator health.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return pipeline.WeaverResponse{}, err
+		}
+		w.logger().Warn("weaver delegate failed; falling back to legacy",
+			"backlog_id", req.BacklogID, "error", err)
+		return w.legacyResearch(ctx, req)
+	}
+	return resp, nil
+}
+
+// shadowResearch runs the legacy and (optionally) the delegator paths
+// in parallel, returns the legacy result for backward-compat, and
+// records the diff. Used during the soak window before flipping to
+// "on".
+func (w *WeaverClient) shadowResearch(ctx context.Context, req pipeline.WeaverRequest) (pipeline.WeaverResponse, error) {
+	type shadowResult struct {
+		resp pipeline.WeaverResponse
+		err  error
+	}
+	legacyCh := make(chan shadowResult, 1)
+	go func() {
+		r, e := w.legacyResearch(ctx, req)
+		legacyCh <- shadowResult{r, e}
+	}()
+	shadowCh := make(chan shadowResult, 1)
+	if w.Delegator != nil {
+		go func() {
+			r, e := w.Delegator.Delegate(ctx, req)
+			shadowCh <- shadowResult{r, e}
+		}()
+	} else {
+		shadowCh <- shadowResult{err: errors.New("delegator not configured")}
+	}
+
+	legacy := <-legacyCh
+	shadow := <-shadowCh
+	w.recordDiff(ctx, req, legacy, shadow)
+	return legacy.resp, legacy.err
+}
+
+func (w *WeaverClient) recordDiff(
+	ctx context.Context,
+	req pipeline.WeaverRequest,
+	legacy, shadow struct {
+		resp pipeline.WeaverResponse
+		err  error
+	},
+) {
+	if w.DiffRecorder == nil {
+		return
+	}
+	legacyChars := len(legacy.resp.Notes)
+	shadowChars := len(shadow.resp.Notes)
+	var deltaPct float64
+	if legacyChars > 0 {
+		deltaPct = float64(shadowChars-legacyChars) / float64(legacyChars) * 100
+	}
+	diff := map[string]any{
+		"backlog_id":       req.BacklogID,
+		"legacy_chars":     legacyChars,
+		"shadow_chars":     shadowChars,
+		"legacy_cost_usd":  legacy.resp.CostUSD,
+		"shadow_cost_usd":  shadow.resp.CostUSD,
+		"length_delta_pct": deltaPct,
+	}
+	if shadow.err != nil {
+		diff["shadow_error"] = shadow.err.Error()
+	}
+	if legacy.err != nil {
+		diff["legacy_error"] = legacy.err.Error()
+	}
+	w.DiffRecorder.Record(ctx, req.BacklogID, diff)
+}
+
+func (w *WeaverClient) logger() *slog.Logger {
+	if w.Logger != nil {
+		return w.Logger
+	}
+	return slog.Default()
 }
 
 func usagePromptTokens(resp *chatResponse) int {

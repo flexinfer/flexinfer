@@ -802,10 +802,20 @@ func buildAuditSubsystem(
 	dispatcher := audit.New(map[string]audit.Reviewer{reviewer.Backend(): reviewer}, rubric)
 	dispatcher.Logger = logger
 
+	// Pool defaults align with FlexInfer models actually deployed on the
+	// canonical cluster. Prior values (`llama-4-70b-instruct`,
+	// `qwen-3-32b`) were absent from /v1/models and 404'd on first audit
+	// dispatch. See services/loom-core/.loom/111-product-spec-weaver-
+	// qwen3-integration-2026-05-08.md (MW-004); the gitops policy
+	// ConfigMap is updated in lockstep at platform/gitops/k3s/mills/
+	// configmap-policy.yaml. Escalation entries retain the `flexinfer`
+	// backend tag because audit.PoolMember has no driver field today;
+	// the policy.AuditPool YAML mirror keeps the per-driver split for
+	// the eventual spawn-backend wiring (v2.1).
 	policy := &audit.PoolPolicy{
 		Bulk: []audit.PoolMember{
-			{Backend: "flexinfer", Model: "llama-4-70b-instruct"},
-			{Backend: "flexinfer", Model: "qwen-3-32b"},
+			{Backend: "flexinfer", Model: "qwen3-8b"},
+			{Backend: "flexinfer", Model: "qwen3-14b-abliterated"},
 		},
 		Escalation: []audit.PoolMember{
 			{Backend: "flexinfer", Model: "claude-opus-4-7"},
