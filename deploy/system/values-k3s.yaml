@@ -234,11 +234,18 @@ quantization:
       remap_model_type: qwen3_5_text
       architectures:
         - Qwen3_5ForCausalLM
-      loader: manual_sharded_state_dict
+      # 2026-05-09: switched manual_sharded_state_dict -> gptqmodel.
+      # Stock GPTQModel.load(offload_to_disk=true) sets turtle_model=LazyTurtle
+      # which routes shell_module_materialize through undo_offload_to_disk
+      # so disk-offloaded layers materialize on demand instead of crashing.
+      # Architectures pin above prevents the multimodal loader regression
+      # that originally motivated the manual_sharded_state_dict workaround.
+      # See pkg/quantization/gptq.go default policies block + MR !300.
+      loader: gptqmodel
       python_packages:
         - git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea
       quantize_config_overrides:
-        offload_to_disk: false
+        offload_to_disk: true
       calibration_overrides:
         max_samples: 16
         max_seq_len: 512
