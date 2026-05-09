@@ -1404,14 +1404,23 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"name\":\"qwen3.5-text\"") {
 		t.Errorf("QUANTIZE_MODEL_POLICIES missing qwen3.5 policy: %q", env["QUANTIZE_MODEL_POLICIES"])
 	}
-	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"loader\":\"manual_sharded_state_dict\"") {
-		t.Errorf("QUANTIZE_MODEL_POLICIES missing manual_sharded_state_dict loader override: %q", env["QUANTIZE_MODEL_POLICIES"])
+	// Switched 2026-05-09 from "manual_sharded_state_dict" to stock "gptqmodel"
+	// loader for the qwen3.5-text policy. See gptq.go default policies block
+	// for the full rationale; in short, the stock loader sets turtle_model to
+	// LazyTurtle which routes through GPTQModel's undo_offload_to_disk path
+	// during shell_module_materialize, fixing the meta-tensor crash that hit
+	// qwen36-27b-gptq cycles 4 and 5.
+	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"loader\":\"gptqmodel\"") {
+		t.Errorf("QUANTIZE_MODEL_POLICIES missing gptqmodel loader for qwen3.5-text: %q", env["QUANTIZE_MODEL_POLICIES"])
 	}
 	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"match_path_substrings\":[\"qwen35\",\"qwen3.5\"]") {
 		t.Errorf("QUANTIZE_MODEL_POLICIES missing path-based matcher for remapped retries: %q", env["QUANTIZE_MODEL_POLICIES"])
 	}
-	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"offload_to_disk\":false") {
-		t.Errorf("QUANTIZE_MODEL_POLICIES missing offload_to_disk override: %q", env["QUANTIZE_MODEL_POLICIES"])
+	// Stock GPTQModel uses its own LazyTurtle disk-offload path when
+	// offload_to_disk=true; the prior false value forced a manual loader path
+	// that did not handle accelerate-managed disk-offloaded layers.
+	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"offload_to_disk\":true") {
+		t.Errorf("QUANTIZE_MODEL_POLICIES missing offload_to_disk=true override: %q", env["QUANTIZE_MODEL_POLICIES"])
 	}
 	if env["GPTQ_HESSIAN_REPAIR"] != "true" {
 		t.Errorf("GPTQ_HESSIAN_REPAIR env = %q, want true", env["GPTQ_HESSIAN_REPAIR"])
