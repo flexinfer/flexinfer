@@ -105,4 +105,22 @@ func registerEngramTools(server *mcp.Server, svc *agentcontext.Service, tracer t
 	}, traced(tracer, "agent_engram_graph", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 		return svc.HandleEngramGraph(ctx, args)
 	}))
+
+	server.AddTool(mcp.Tool{
+		Name: "agent_engram_verify",
+		Description: "Verify an engram's proof. File-ref proofs check existence + line range; URL proofs run a HEAD request; command proofs are skipped (devbox sandboxing deferred). " +
+			"Updates proof_status, last_verified, and unlocked_in. Pass uri to verify a single engram or all=true to verify every engram in the workspace.",
+		InputSchema: mcp.InputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"uri":          map[string]any{"type": "string", "description": "Engram URI (engram://family/slug). Mutually exclusive with all."},
+				"all":          map[string]any{"type": "boolean", "description": "Verify every engram. Mutually exclusive with uri."},
+				"repo":         map[string]any{"type": "string", "description": "Repo identifier appended to unlocked_in on success. Defaults to the basename of cwd (worktree-aware)."},
+				"repo_root":    map[string]any{"type": "string", "description": "Directory file-ref proofs are resolved against. Defaults to cwd."},
+				"skip_command": map[string]any{"type": "boolean", "description": "If true (default), command: proofs return status=skipped. Command verification needs the devbox sandbox (S4)."},
+			},
+		},
+	}, traced(tracer, "agent_engram_verify", func(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+		return svc.HandleEngramVerify(ctx, args)
+	}))
 }

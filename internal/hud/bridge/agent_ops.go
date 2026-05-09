@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -453,4 +454,52 @@ func (a *AgentBridge) WorktreeAllocate(p WorktreeAllocateParams) (*WorktreeAlloc
 		return nil, err
 	}
 	return &result, nil
+}
+
+// --- Engram methods ---
+
+// EngramSummary returns aggregate counts of engrams by proof_status and tier.
+// Powers the HUD catalog summary line.
+func (a *AgentBridge) EngramSummary() (*EngramSummaryResult, error) {
+	var result struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := a.callAgentTool("agent_engram_list", map[string]any{"limit": 1000}, &result); err != nil {
+		return nil, err
+	}
+	summary := &EngramSummaryResult{
+		ByStatus: map[string]int{
+			"unverified": 0,
+			"verified":   0,
+			"stale":      0,
+			"failing":    0,
+		},
+		ByTier: map[string]int{},
+	}
+	for _, item := range result.Items {
+		summary.Total++
+
+		status, _ := item["proof_status"].(string)
+		if status == "" {
+			status = "unverified"
+		}
+		summary.ByStatus[status]++
+
+		tierKey := "tier:1"
+		switch t := item["tier"].(type) {
+		case float64:
+			tierKey = fmt.Sprintf("tier:%d", int(t))
+		case int:
+			tierKey = fmt.Sprintf("tier:%d", t)
+		}
+		summary.ByTier[tierKey]++
+	}
+	return summary, nil
+}
+
+// EngramSummaryResult is the shape returned by EngramSummary.
+type EngramSummaryResult struct {
+	Total    int            `json:"total"`
+	ByStatus map[string]int `json:"by_status"`
+	ByTier   map[string]int `json:"by_tier"`
 }

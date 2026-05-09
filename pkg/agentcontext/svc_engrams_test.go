@@ -447,7 +447,7 @@ func TestHandleRecipeAdd_DelegatesToEngram(t *testing.T) {
 		t.Errorf("language: %v", payload["language"])
 	}
 	tags := toStringSlice(payload["tags"])
-	if !contains(tags, "recipe") {
+	if !containsTagOrPrefix(tags, "recipe") {
 		t.Errorf("tags missing 'recipe': %v", tags)
 	}
 
@@ -755,7 +755,10 @@ func itemsCount(t *testing.T, res *mcp.CallToolResult) int {
 // helpers
 // ---------------------------------------------------------------------------
 
-func contains(haystack []string, needle string) bool {
+// containsTagOrPrefix reports whether any tag in haystack equals needle or
+// has needle as a prefix. Used to assert that an emitted tag set advertises
+// the engram (or recipe) class plus any related "key:value" tags.
+func containsTagOrPrefix(haystack []string, needle string) bool {
 	for _, h := range haystack {
 		if h == needle {
 			return true

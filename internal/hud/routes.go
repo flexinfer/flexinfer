@@ -59,6 +59,9 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/catalog/{name}/enable", a.withCORS(a.handleCatalogEnable))
 	mux.HandleFunc("POST /api/catalog/{name}/disable", a.withCORS(a.handleCatalogDisable))
 
+	// API routes — engram tech-tree summary (counts by proof_status + tier).
+	mux.HandleFunc("GET /api/engrams/summary", a.withCORS(a.handleEngramSummary))
+
 	// API routes — topology graph.
 	mux.HandleFunc("GET /api/topology", a.withCORS(a.handleTopology))
 
