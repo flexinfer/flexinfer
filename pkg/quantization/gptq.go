@@ -279,12 +279,40 @@ func defaultGPTQModelPoliciesJSON() string {
 			CopyRootKeys:        []string{"bos_token_id", "eos_token_id", "pad_token_id"},
 			RemapModelType:      "qwen3_5_text",
 			Architectures:       []string{"Qwen3_5ForCausalLM"},
-			Loader:              "manual_sharded_state_dict",
+			// Switched from "manual_sharded_state_dict" to stock "gptqmodel"
+			// loader on 2026-05-09 after the research at
+			// .loom/local/qwen36-meta-tensor-disk-offload-research.md showed:
+			//   - GPTQModel.shell_module_materialize handles meta tensors
+			//     ONLY when self.turtle_model is a LazyTurtle.
+			//   - Our manual_sharded_state_dict loader constructs the
+			//     GPTQModel with turtle_model=None which forces the
+			//     .to(device) fallthrough that crashes on accelerate
+			//     disk-offloaded layers (NotImplementedError on meta tensor).
+			//   - Stock GPTQModel.load(offload_to_disk=True) sets
+			//     turtle_model=LazyTurtle which goes through GPTQModel's
+			//     own undo_offload_to_disk path and handles offloaded
+			//     layers correctly.
+			//   - Qwen3_5TextQModel.module_tree natively excludes GDN
+			//     sub-modules via ":!" markers, so the qwen36 dynamicExclusion
+			//     gdn-min spec field stays as belt-and-suspenders.
+			//   - The community palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4 ships
+			//     with gptqmodel 6.0.3 + offload_to_disk=true on the same
+			//     Qwen3_5TextQModel architecture, confirming the path.
+			//
+			// Architectures above pins Qwen3_5ForCausalLM so the prior
+			// multimodal-loader regression (which motivated the manual
+			// loader workaround) does not reoccur.
+			Loader: "gptqmodel",
 			PythonPackages: []string{
 				"git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea",
 			},
 			QuantizeConfigOverride: map[string]any{
-				"offload_to_disk": false,
+				// Let GPTQModel's LazyTurtle disk-offload mechanism handle
+				// any layers that don't fit GPU+CPU. This is GPTQModel's
+				// OWN offload path (not accelerate's), and shell_module_materialize
+				// has the undo_offload_to_disk hook that materializes a
+				// layer on demand for cache_inputs / quantization.
+				"offload_to_disk": true,
 			},
 			CalibrationOverrides: map[string]int{
 				"max_samples": 16,
