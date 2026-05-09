@@ -653,8 +653,8 @@ fi
 # Inject conditional model loading into quantize_gptq.py.
 # Replaces from_config + shard loading + dispatch in a SINGLE combined replacement.
 # GPU path: init_empty_weights creates meta skeleton (0 bytes), then
-# load_checkpoint_in_model materializes weights on target devices WITHOUT adding
-# accelerate dispatch hooks (which conflict with GPTQModel's shell_module_materialize).
+# load_checkpoint_in_model materializes weights on target devices, then
+# dispatch_model installs forward-time hooks for any disk-offloaded modules.
 # CPU path: from_config creates real CPU tensors directly (peak RSS = model size),
 # then shard loading replaces parameter data. This avoids meta tensors entirely,
 # which prevents GPTQModel shell_module_materialize crash ("Cannot copy out of

@@ -1513,6 +1513,21 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(script, "load_checkpoint_in_model") {
 		t.Error("expected GPTQ wrapper script to use load_checkpoint_in_model for shard-by-shard loading")
 	}
+	if !contains(script, "ACCELERATE_OFFLOAD_FOLDER") {
+		t.Error("expected GPTQ wrapper script to make the accelerate offload folder configurable")
+	}
+	if !contains(script, "offload_folder=_accel_offload") {
+		t.Error("expected GPTQ wrapper script to pass offload_folder to load_checkpoint_in_model")
+	}
+	if !contains(script, "dispatch_model(model, device_map=device_map, offload_dir=_accel_offload)") {
+		t.Error("expected GPTQ wrapper script to install dispatch hooks for disk-offloaded modules")
+	}
+	if contains(script, "Model loaded via load_checkpoint_in_model (no dispatch hooks)") {
+		t.Error("expected GPTQ wrapper script to remove the stale no-dispatch-hooks load path")
+	}
+	if !contains(script, "Model loaded via load_checkpoint_in_model + dispatch_model") {
+		t.Error("expected GPTQ wrapper script to announce the dispatch-hook load path")
+	}
 	if !contains(script, "fc_pattern = re.compile(r'^([ \\t]+)model = ([A-Za-z_][A-Za-z0-9_\\.]*)\\.from_config\\(config, \\*\\*init_kwargs\\)'") {
 		t.Error("expected GPTQ wrapper script to match both model_definition.loader and loader_cls from_config calls")
 	}
