@@ -73,7 +73,7 @@ The operator runs as a single-replica Deployment in the `loom-mills` namespace o
 | `platform/gitops/k3s/mills/namespace.yaml` | `loom-mills` namespace |
 | `platform/gitops/k3s/mills/serviceaccount.yaml` + `role.yaml` + `rolebinding.yaml` | RBAC for cross-namespace secret read (`cluster-agent-auth`, `cluster-agent-api-keys`) and own-namespace ConfigMap patch |
 | `platform/gitops/k3s/mills/pvc.yaml` | `mills-state` Longhorn RWO 5Gi |
-| `platform/gitops/k3s/mills/deployment.yaml` | Deployment with amd64 `nodeSelector`, liveness/readiness probes, `imagePullSecrets: [harbor-creds]` |
+| `platform/gitops/k3s/mills/deployment.yaml` | Deployment with amd64 `nodeSelector`, liveness/readiness probes, `imagePullSecrets: [harbor-creds]`, and a `/workspace/loom-core` repo-root mount |
 | `platform/gitops/k3s/mills/service.yaml` | ClusterIP for in-cluster MCP/REST |
 | `platform/gitops/k3s/mills/configmap-policy.yaml` | Mounted at `/etc/loom-mills/policy.yaml` |
 | `platform/gitops/k3s/mills/servicemonitor.yaml` | Prometheus scrape |
@@ -111,6 +111,8 @@ Environment variables (canonical prefix `LOOM_MILLS_*`); see `cmd/loom-mills-ope
 | `LOOM_HUD_URL` / `LOOM_HUD_TOKEN` | unset | Required for `plan_slice/implement/pr_self_review` spawn-driven stages. |
 | `LOOM_MCP_HUB_URL` / `LOOM_MCP_PROFILE` | unset | Required for devbox/handoff/worktree clients. |
 | Admin token | env (operator-side) | Required for mutating endpoints; check `cmd/loom-mills-operator/auth.go`. |
+
+At startup, the operator attempts to bootstrap `LOOM_MILLS_REPO_ROOT` as a shallow `services/loom-core` checkout when GitLab URL/project/token configuration and the `git` binary are available. In k3s this path is mounted from the singleton Longhorn PVC at `/workspace/loom-core`, sharing the same single-writer ownership model as SQLite. If the clone, fetch, git metadata, `.loom` existence, or writability check fails, the pod still serves read-only APIs but the `repo_root` capability stays red and unattended backlog execution remains blocked.
 
 When a backing service env is missing, the operator boots in a degraded mode: affected stages fall back to a NoOp dispatcher and the gap is logged and exposed in the capability matrix. The scheduler and read-only APIs may still run, but the reconciler skips queued work while `autonomy_ready=false`; no unattended pipeline starts are allowed until the required capability rows are green.
 

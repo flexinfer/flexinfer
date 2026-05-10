@@ -72,8 +72,9 @@ RUN --mount=type=secret,id=ci_job_token,required=false \
 FROM ${RUNTIME_REGISTRY}/dockerhub-cache/library/alpine:3.21 AS runtime
 
 # ca-certificates: outbound TLS to Anthropic / OpenAI / GitLab.
+# git: repo-root bootstrap + integration branch merging.
 # tini: clean signal forwarding for SIGTERM-driven shutdown.
-RUN apk add --no-cache ca-certificates tini
+RUN apk add --no-cache ca-certificates git tini
 
 # Non-root user; matches the platform-wide convention (see Dockerfile).
 RUN adduser -D -u 1000 -h /home/mills mills

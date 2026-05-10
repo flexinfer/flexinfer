@@ -28,6 +28,13 @@ spawn/MCP hub dependencies, NoOp dispatcher coverage on write stages, or fake
 council participants. Read-only APIs may stay healthy while these blockers are
 present.
 
+In k3s, `LOOM_MILLS_REPO_ROOT=/workspace/loom-core` is backed by the same
+Longhorn RWO PVC as `/var/lib/loom-mills`. On boot, the operator uses the
+GitLab project token to clone or fast-forward that checkout. If credentials,
+network, `git`, or the checkout itself fail, the pod should still become
+service-ready, but `/api/mills/capabilities` must show `repo_root` red and
+`autonomy_ready=false`.
+
 ## Pause and resume
 
 The kill switch is `policy.enabled: false`. Edits to the mounted ConfigMap propagate via fsnotify within seconds; in-flight runs continue under their captured policy, but no new runs start.
